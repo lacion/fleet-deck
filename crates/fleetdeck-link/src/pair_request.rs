@@ -41,6 +41,9 @@ pub const OFFERABLE_SCOPES: [Scope; 4] = [Scope::Read, Scope::Drive, Scope::Appr
 /// Stable reason codes of a pairing request (design 5.4, DL-178).
 pub mod reason {
     pub const WINDOW_CLOSED: &str = "window_closed";
+    /// Station side only: the connection ended before the deck answered.
+    /// The request may still be valid, so it is kept.
+    pub const NOT_ACCEPTED: &str = "not_accepted";
     pub const BUSY: &str = "busy";
     pub const ALREADY_PAIRED: &str = "already_paired";
     pub const REQUEST_ID_CONFLICT: &str = "request_id_conflict";

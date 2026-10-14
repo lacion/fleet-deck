@@ -489,6 +489,7 @@ close         { reason, detail }                            either way, reasons 
 - `signature`: Ed25519 by the deck link key over the approval message of §10.3, 128 hex digits.
 - A deck refuses a request whose `request_id` it already holds with another key or another canonical request (`request_id_conflict`). A second request of a key that has one waiting is `busy`; the old connection stays. A key that is already paired is `already_paired`.
 - A resume is a fresh handshake with the same station key. The deck answers with `pair_approved` over the **new** transcript from its stored completion record, only when the record exists, the proven key, `request_id` and `nonce` equal it, and the key is still paired as a station; else it closes with `unknown_request` or `revoked`. A resume never creates or changes a record, and it is accepted on any link listener without the window.
+- Station-side code `not_accepted`: the deck ended the connection after TLS and before it answered (a closed window, or a deck without `pair_request.v1`). It is retryable: the retry file stays and the same command resumes it. Only an answer frame of the deck (`window_closed`, `denied`, ...) ends a request.
 - Messages of a key that is not pinned are at most 16 KiB on a tailnet listener. A waiting connection gets a WebSocket ping every 15 seconds and closes after 45 seconds without a pong.
 
 ### 10.2 Encodings

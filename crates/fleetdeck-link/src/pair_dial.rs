@@ -52,7 +52,8 @@ fn is_certificate_failure(e: &std::io::Error) -> bool {
 /// A failed connect: a deck key other than the confirmed one is
 /// `fingerprint_mismatch`; a deck that ended the connection after the
 /// handshake did not accept this key (the window is closed, or the deck is
-/// older than this feature).
+/// older than this feature). That is `not_accepted`, which keeps the
+/// request: only an answer frame of the deck ends it.
 fn connect_failure(e: LinkError) -> LinkError {
     match &e {
         LinkError::Net(NetError::Io(io)) if is_certificate_failure(io) => LinkError::closed(
@@ -60,8 +61,8 @@ fn connect_failure(e: LinkError) -> LinkError {
             "the deck link key is not the confirmed fingerprint",
         ),
         LinkError::Ws(_) => LinkError::closed(
-            reason::WINDOW_CLOSED,
-            "the deck did not accept the connection: its pairing window is closed, or it does not accept pairing requests",
+            reason::NOT_ACCEPTED,
+            "the deck did not accept the connection: its pairing window may be closed, or it does not accept pairing requests; the request is kept, run the same command again",
         ),
         _ => e,
     }
@@ -99,10 +100,10 @@ pub async fn open_pair(
 /// `request` (or to answer the stored approval again).
 ///
 /// # Errors
-/// [`LinkError`] with a stable [`reason`] code: `window_closed`, `busy`,
-/// `already_paired`, `request_id_conflict`, `denied`, `expired`,
-/// `cancelled`, `unknown_request`, `revoked`, `fingerprint_mismatch`,
-/// `unsupported`, `timeout`, `bad_signature`.
+/// [`LinkError`] with a stable [`reason`] code: `window_closed`,
+/// `not_accepted`, `busy`, `already_paired`, `request_id_conflict`,
+/// `denied`, `expired`, `cancelled`, `unknown_request`, `revoked`,
+/// `fingerprint_mismatch`, `unsupported`, `timeout`, `bad_signature`.
 ///
 /// `before_send` runs once, after the handshake and before `PairRequest`
 /// leaves (never for a resume): the caller writes its retry file there. An

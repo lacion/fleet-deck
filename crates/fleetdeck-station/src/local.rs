@@ -244,12 +244,10 @@ async fn connection(
         let response = match serde_json::from_slice::<LocalRequest>(&line) {
             // A tailnet join waits for the owner for minutes. When the CLI
             // goes away, the join ends and its pair connection closes, so
-            // the deck cancels the waiting request.
+            // the deck cancels the waiting request. After a verified
+            // approval the join runs to its end whether the CLI stays or not.
             Ok(request @ LocalRequest::JoinTailnet { .. }) => {
-                tokio::select! {
-                    r = handle(&manager, node.as_deref(), request) => r,
-                    () = client_gone(&mut reader) => return,
-                }
+                tailnet(&manager, node.as_deref(), request, client_gone(&mut reader)).await
             }
             Ok(request) => handle(&manager, node.as_deref(), request).await,
             // serde's message can quote the input; never echo a line that
@@ -330,6 +328,7 @@ async fn tailnet(
     manager: &Arc<SessionManager>,
     node: Option<&StationNode>,
     request: LocalRequest,
+    gone: impl std::future::Future<Output = ()> + Send,
 ) -> LocalResponse {
     use crate::link::{NodeError, TailnetJoin, TailnetResult};
     use fleetdeck_core::identity::Fingerprint;
@@ -384,7 +383,7 @@ async fn tailnet(
         }
         _ => return error("not a tailnet request".to_owned()),
     };
-    match node.join_tailnet(&join).await {
+    match node.join_tailnet(&join, gone).await {
         Ok(TailnetResult::Observed(fp)) => LocalResponse::TailnetObserved {
             fingerprint: fp.to_string(),
         },
@@ -470,7 +469,7 @@ async fn handle(
             return pairing(node, request).await;
         }
         LocalRequest::JoinTailnet { .. } | LocalRequest::JoinTailnetCancel => {
-            return tailnet(manager, node, request).await;
+            return tailnet(manager, node, request, std::future::pending()).await;
         }
         LocalRequest::SettingsGet
         | LocalRequest::SettingsSet { .. }

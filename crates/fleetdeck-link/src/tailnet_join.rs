@@ -10,7 +10,8 @@
 //!   (`unknown_request`) never approved that request, so the station sends
 //!   the same request again.
 //! - Every answer of the deck that ends the request removes the file. A
-//!   failure of the network, a timeout and `busy` keep it.
+//!   failure of the network, a timeout, `busy` and `not_accepted` (the
+//!   connection ended before the deck answered) keep it.
 //!
 //! The function stores no deck pin. The caller stores the pin, its grants
 //! and the dial target in one local transaction, and removes the file after

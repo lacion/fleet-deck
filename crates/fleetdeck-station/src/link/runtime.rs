@@ -28,7 +28,7 @@ use fleetdeck_link::pairing::{Invitation, Invitations, PairError, PairedPeer};
 use fleetdeck_link::reconnect::{BackoffPolicy, DialerEvent, spawn_dialer};
 use fleetdeck_link::retry_file;
 use fleetdeck_link::revoke::revoke;
-use fleetdeck_link::tailnet_join::{JoinError, JoinPlan, drive};
+use fleetdeck_link::tailnet_join::{JoinError, JoinPlan, Joined, drive};
 use fleetdeck_link::tailnet_target;
 use fleetdeck_link::tls::Role;
 use fleetdeck_link::ws::LinkError;
@@ -117,6 +117,19 @@ pub struct TailnetJoin {
     /// checked against `tailscale status`. The local socket never sets it.
     #[doc(hidden)]
     pub dial: Option<Vec<SocketAddr>>,
+}
+
+/// How the waiting part of a tailnet join ended.
+enum JoinStep {
+    /// The probe of the deck key (no fingerprint was given).
+    Observed(TailnetResult),
+    /// The deck approved and the signed answer is verified.
+    Approved {
+        joined: Joined,
+        device: String,
+        deck_fingerprint: Fingerprint,
+        dir: std::path::PathBuf,
+    },
 }
 
 /// The running link node of a station.
@@ -459,53 +472,45 @@ impl StationNode {
     /// The retry file `pair-pending.json` holds the request from before it
     /// is sent until the pin is stored; the same command resumes it.
     ///
+    /// `gone` resolves when the caller went away. It ends the join only
+    /// while the station waits for the deck (the status, the probe and the
+    /// request); the steps after a verified approval never stop for it.
+    ///
     /// # Errors
     /// [`NodeError`]: a deck is paired already, the host is not a peer of
-    /// `tailscale status`, or the request ended with a code
-    /// ([`NodeError::Tailnet`]).
-    pub async fn join_tailnet(&self, join: &TailnetJoin) -> Result<TailnetResult, NodeError> {
+    /// `tailscale status`, the caller went away (`client_gone`), or the
+    /// request ended with a code ([`NodeError::Tailnet`]).
+    pub async fn join_tailnet(
+        &self,
+        join: &TailnetJoin,
+        gone: impl std::future::Future<Output = ()> + Send,
+    ) -> Result<TailnetResult, NodeError> {
         let Ok(_one) = self.join_gate.try_lock() else {
             return Err(tailnet_refusal(
                 "busy",
                 "another `station join --tailnet` is running",
             ));
         };
-        self.refuse_if_paired().await?;
-        let dir = self.data_dir()?.to_path_buf();
-        let status = join.cli.status().await.map_err(|e| {
-            tailnet_refusal(
-                "tailscale_unavailable",
-                format!("Tailscale is not available: {}", e.reason()),
-            )
-        })?;
-        let target = tailnet_target::find(&status, &join.host)
-            .map_err(|e| tailnet_refusal("not_in_tailnet", e.to_string()))?;
-        let addrs: Vec<SocketAddr> = join.dial.clone().unwrap_or_else(|| {
-            target
-                .ips
-                .iter()
-                .map(|ip| SocketAddr::new(*ip, join.port))
-                .collect()
-        });
-        // Without a fingerprint the station only observes the key of the
-        // deck; the person confirms it and runs the join again.
-        let Some(deck_fingerprint) = join.deck_fingerprint else {
-            return self.observe(&addrs).await;
+        tokio::pin!(gone);
+        let step = tokio::select! {
+            r = self.join_until_approved(join) => r?,
+            () = &mut gone => {
+                return Err(tailnet_refusal(
+                    "client_gone",
+                    "the command ended before the deck answered",
+                ));
+            }
         };
-        let plan = JoinPlan {
-            host: join.host.clone(),
-            port: join.port,
-            deck: deck_fingerprint,
-            name: join.name.clone(),
-            scopes: join.scopes.clone(),
-            addrs,
-            dir: dir.clone(),
-            wait: fleetdeck_link::pair_dial::WAIT_FOR_OWNER,
+        let (joined, device, deck_fingerprint, dir) = match step {
+            JoinStep::Observed(result) => return Ok(result),
+            JoinStep::Approved {
+                joined,
+                device,
+                deck_fingerprint,
+                dir,
+            } => (joined, device, deck_fingerprint, dir),
         };
-        let joined = drive(&self.ctx.node, &plan).await.map_err(|e| match &e {
-            JoinError::Link(_) => tailnet_refusal(e.code(), describe_join(&e)),
-            _ => tailnet_refusal(e.code(), e.to_string()),
-        })?;
+        // The approval is verified: nothing below stops for `gone`.
         let deck = joined.approved.deck;
         if !deck.fingerprint().matches(&deck_fingerprint) {
             // TLS pinned the fingerprint; this is a second check.
@@ -534,8 +539,55 @@ impl StationNode {
         tracing::info!(deck = %deck.fingerprint().short(), "paired with the deck by request");
         self.dial(joined.addr, deck);
         Ok(TailnetResult::Paired {
-            device: target.name,
+            device,
             deck: deck.fingerprint(),
+        })
+    }
+
+    /// The part of the join that waits for the deck: the checks, the
+    /// probe, and the request up to the signed approval.
+    async fn join_until_approved(&self, join: &TailnetJoin) -> Result<JoinStep, NodeError> {
+        self.refuse_if_paired().await?;
+        let dir = self.data_dir()?.to_path_buf();
+        let status = join.cli.status().await.map_err(|e| {
+            tailnet_refusal(
+                "tailscale_unavailable",
+                format!("Tailscale is not available: {}", e.reason()),
+            )
+        })?;
+        let target = tailnet_target::find(&status, &join.host)
+            .map_err(|e| tailnet_refusal("not_in_tailnet", e.to_string()))?;
+        let addrs: Vec<SocketAddr> = join.dial.clone().unwrap_or_else(|| {
+            target
+                .ips
+                .iter()
+                .map(|ip| SocketAddr::new(*ip, join.port))
+                .collect()
+        });
+        // Without a fingerprint the station only observes the key of the
+        // deck; the person confirms it and runs the join again.
+        let Some(deck_fingerprint) = join.deck_fingerprint else {
+            return self.observe(&addrs).await.map(JoinStep::Observed);
+        };
+        let plan = JoinPlan {
+            host: join.host.clone(),
+            port: join.port,
+            deck: deck_fingerprint,
+            name: join.name.clone(),
+            scopes: join.scopes.clone(),
+            addrs,
+            dir: dir.clone(),
+            wait: fleetdeck_link::pair_dial::WAIT_FOR_OWNER,
+        };
+        let joined = drive(&self.ctx.node, &plan).await.map_err(|e| match &e {
+            JoinError::Link(_) => tailnet_refusal(e.code(), describe_join(&e)),
+            _ => tailnet_refusal(e.code(), e.to_string()),
+        })?;
+        Ok(JoinStep::Approved {
+            joined,
+            device: target.name,
+            deck_fingerprint,
+            dir,
         })
     }
 
