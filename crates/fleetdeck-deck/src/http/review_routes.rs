@@ -448,8 +448,8 @@ async fn prepare(
             CommandOrigin::Board,
             CommandKind::Session { command },
             i64::MAX,
+            (None, Some(principal.actor())),
             None,
-            Some(principal.actor()),
         )
         .await
         .map_err(|e| deck(&e))
