@@ -197,3 +197,27 @@
 | Finding | Change |
 | --- | --- |
 | BLOCKER one provenance list for two channels | §14.4 `tailnet_auto_listen` and `tailnet_auto_link_listen`; an address already manual in a channel is never recorded as automatic there; manual saves and turning the mode off reconcile the provenance in the same save; §14.5 regression test |
+
+## 15. Owner decision: automatic by default (proposed, 2026-10-14)
+
+- **Owner decision (2026-10-14):** "this should be all automatically detected, and in any case overriden. the user experience is paramount, they should not be experts". It changes §14.1 (the Windows program needed the owner's elevated "Use this program") and the default of §14.4 (`tailnet_auto` off).
+- **Review finding overridden by the owner:** the §14 revision-1 BLOCKER "a regular-file check does not establish trust in the Windows executable" was closed by the elevated choice. The owner now accepts automatic use, with these limits: only the standard install path is used, and `C:\Program Files` is writable only by Windows administrators (a Windows administrator already controls the machine and WSL). The Windows-environment exposure (§14.1) is the same as running `tailscale` in a Windows terminal; the card states it.
+
+### 15.1 Program choice
+
+- The program choice of §2 is: `tailscale_bin` (when set); else `tailscale` on `PATH`; else (macOS) the app's program; else, **only when the process runs in WSL (§14.1 detection: the kernel string and the interop file)**, `/mnt/c/Program Files/Tailscale/tailscale.exe` when it is a regular file (`symlink_metadata`; a symbolic link is not used). No other Windows path is ever tried (no `PATH` search on the Windows side, no other drive, no user directory).
+- The same choice applies to the deck, the station and the CLI (`fleetdeck tailnet status`, `fleetdeck station join --tailnet`).
+- `GET /api/tailnet` reports the chosen program kind: `program: "path" | "configured" | "macos_app" | "windows"`. With `windows`, the Tailnet card shows "Using Tailscale for Windows. It runs as your Windows user, with your Windows environment, the same as in a Windows terminal." The "Use this program" button of §14.1 is removed; `tailscale_bin` still overrides the choice (Settings → Network).
+- The child environment stays the §2 minimal environment.
+
+### 15.2 Default of "Use Tailscale automatically"
+
+- `tailnet_auto` defaults to `true` when the key is absent from `deck.toml` (a saved `false` stays `false`). The danger rule stays: turning it on from `false` needs the owner's elevation; the default needs none, because it is the owner's product decision.
+- With the default on, at the first start where Tailscale is available and not userspace, the deck adds its tailnet addresses (§14.4 rules: only automatic entries, manual entries untouched, the 3 s deadline, skip on failure). The board is then reachable from the owner's tailnet devices; every board request still needs the login, CSRF and TLS. The operations guide states this default and how to turn it off.
+- When Tailscale is not available, nothing changes and the card says why (§14.4).
+
+### 15.3 Tests
+
+- Program choice: WSL + the standard file → `windows`; WSL + a symbolic link at that path → not used; not WSL → not used; `tailscale_bin` and `PATH` win; the station and the CLI use the same choice.
+- `tailnet_auto` absent → on; saved `false` → off; turning on from `false` needs elevation.
+- The card text for `windows`; no "Use this program" button.
