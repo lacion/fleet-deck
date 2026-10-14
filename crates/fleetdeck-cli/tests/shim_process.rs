@@ -314,7 +314,8 @@ async fn a_socket_directory_with_another_owner_or_open_mode_is_refused() {
         rig.files.records().unwrap(),
         vec![Record::Created {
             shim_id: rig.spec.shim_id.clone(),
-            incarnation: INC.to_owned()
+            incarnation: INC.to_owned(),
+            boot_id: None,
         }]
     );
     // An open shims directory.
@@ -643,7 +644,8 @@ async fn only_an_intact_journal_without_spawn_attempted_retires_a_launch_as_shim
         vec![
             Record::Created {
                 shim_id: rig.spec.shim_id.clone(),
-                incarnation: INC.to_owned()
+                incarnation: INC.to_owned(),
+                boot_id: None,
             },
             Record::Fenced
         ]

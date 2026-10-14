@@ -31,6 +31,7 @@ use crate::capability::{Capabilities, Operation, Unsupported};
 use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
 use crate::conflicts::FileConflict;
 use crate::event::{Event, EventEnvelope};
+use crate::execution::{ExecutionCheck, ExecutionCheckQuery, ProcessInfo};
 use crate::files::{
     FileContent, FileListQuery, FileListing, FileReadQuery, FileSearch, FileSearchQuery,
     SessionDiff, SessionDiffQuery, TurnDiff, TurnDiffQuery,
@@ -282,6 +283,9 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         AssistAnswer::export_all(&cfg),
         AssistRoute::export_all(&cfg),
         AssistSession::export_all(&cfg),
+        ExecutionCheckQuery::export_all(&cfg),
+        ExecutionCheck::export_all(&cfg),
+        ProcessInfo::export_all(&cfg),
     ];
     for result in results {
         result.map_err(io::Error::other)?;

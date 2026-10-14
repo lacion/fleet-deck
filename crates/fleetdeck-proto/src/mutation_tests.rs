@@ -77,6 +77,9 @@ pub(crate) fn sample(method: &str) -> Value {
                     json!({"op": op, "session_id": s, "grant_id": "g-1", "generation": 2})
                 }
                 "coordinator_revoke" => json!({"op": op, "session_id": s, "grant_id": "g-1"}),
+                "reconcile_execution" => {
+                    json!({"op": op, "session_id": s, "shim_id": "01J0000000000000000000000H"})
+                }
                 "worktree_purge" => {
                     json!({"op": op, "session_id": s, "confirm_name": "app--fd-x--01j000000000"})
                 }
@@ -114,7 +117,7 @@ fn every_mutating_method_parses_its_envelope_and_names_its_method() {
             count += 1;
         }
     }
-    assert_eq!(count, 30);
+    assert_eq!(count, 31);
 }
 
 #[test]

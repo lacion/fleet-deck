@@ -72,6 +72,21 @@ pub struct NewShim {
     pub shim_id: String,
     pub session_id: SessionId,
     pub socket_path: PathBuf,
+    /// The boot id that the station read before the spawn and wrote into
+    /// the launch journal (DL-182 §4.1).
+    pub launch_boot_id: Option<String>,
+    /// The native id that a resume or an import continues; `None` for a new
+    /// conversation (DL-182 §3).
+    pub native_target: Option<String>,
+}
+
+/// The facts that the station learns when a shim reports its provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RunningFacts {
+    /// The shim protocol version that the attach picked.
+    pub protocol: Option<u32>,
+    /// The process id of the shim.
+    pub shim_pid: Option<u32>,
 }
 
 /// One `shims` row.
@@ -88,6 +103,17 @@ pub struct ShimRow {
     pub cursor: u64,
     pub next_write_seq: u64,
     pub reason: Option<String>,
+    /// The inspection version of the exit report; 0 for an older shim or
+    /// a row that has no exit report (DL-182 §1a).
+    pub inspection_version: u32,
+    pub shim_pid: Option<u32>,
+    /// `ended_by_reboot` or `reconciled_by_owner` (DL-182 §4).
+    pub proof: Option<String>,
+    pub proof_boot_id: Option<String>,
+    pub launch_boot_id: Option<String>,
+    pub native_target: Option<String>,
+    /// The creation time (Unix ms): the order of the executions.
+    pub created_at: i64,
 }
 
 impl ShimRow {
@@ -101,6 +127,7 @@ impl ShimRow {
             generation: self.generation,
             cursor: self.cursor,
             next_write_seq: self.next_write_seq,
+            shim_pid: self.shim_pid,
         }
     }
 }
@@ -116,10 +143,11 @@ pub enum OutputCommit {
     CursorBehind { committed: u64 },
 }
 
-const COLUMNS: &str = "shim_id, session_id, incarnation, state, owner_generation, socket_path,
-    provider_identity, cursor, next_write_seq, reason";
+pub(super) const COLUMNS: &str = "shim_id, session_id, incarnation, state, owner_generation,
+    socket_path, provider_identity, cursor, next_write_seq, reason, inspection_version, shim_pid,
+    proof, proof_boot_id, launch_boot_id, native_target, created_at";
 
-fn row(r: &Row<'_>) -> rusqlite::Result<ShimRowRaw> {
+pub(super) fn row(r: &Row<'_>) -> rusqlite::Result<ShimRowRaw> {
     Ok(ShimRowRaw {
         shim_id: r.get(0)?,
         session_id: r.get(1)?,
@@ -131,10 +159,17 @@ fn row(r: &Row<'_>) -> rusqlite::Result<ShimRowRaw> {
         cursor: r.get(7)?,
         next_write_seq: r.get(8)?,
         reason: r.get(9)?,
+        inspection_version: r.get(10)?,
+        shim_pid: r.get(11)?,
+        proof: r.get(12)?,
+        proof_boot_id: r.get(13)?,
+        launch_boot_id: r.get(14)?,
+        native_target: r.get(15)?,
+        created_at: r.get(16)?,
     })
 }
 
-struct ShimRowRaw {
+pub(super) struct ShimRowRaw {
     shim_id: String,
     session_id: String,
     incarnation: String,
@@ -145,10 +180,17 @@ struct ShimRowRaw {
     cursor: i64,
     next_write_seq: i64,
     reason: Option<String>,
+    inspection_version: i64,
+    shim_pid: Option<i64>,
+    proof: Option<String>,
+    proof_boot_id: Option<String>,
+    launch_boot_id: Option<String>,
+    native_target: Option<String>,
+    created_at: i64,
 }
 
 impl ShimRowRaw {
-    fn decode(self) -> Result<ShimRow> {
+    pub(super) fn decode(self) -> Result<ShimRow> {
         Ok(ShimRow {
             shim_id: self.shim_id,
             session_id: SessionId::from(self.session_id),
@@ -163,11 +205,22 @@ impl ShimRowRaw {
             cursor: to_u64(self.cursor)?,
             next_write_seq: to_u64(self.next_write_seq)?,
             reason: self.reason,
+            inspection_version: u32::try_from(self.inspection_version)
+                .map_err(|_| StoreError::Corrupt("inspection version".to_owned()))?,
+            shim_pid: self
+                .shim_pid
+                .map(|p| u32::try_from(p).map_err(|_| StoreError::Corrupt("shim pid".to_owned())))
+                .transpose()?,
+            proof: self.proof,
+            proof_boot_id: self.proof_boot_id,
+            launch_boot_id: self.launch_boot_id,
+            native_target: self.native_target,
+            created_at: self.created_at,
         })
     }
 }
 
-fn get(conn: &Connection, shim_id: &str) -> Result<Option<ShimRow>> {
+pub(super) fn get(conn: &Connection, shim_id: &str) -> Result<Option<ShimRow>> {
     conn.query_row(
         &format!("SELECT {COLUMNS} FROM shims WHERE shim_id = ?1"),
         [shim_id],
@@ -227,13 +280,15 @@ impl Store {
             }
             conn.execute(
                 "INSERT INTO shims (shim_id, session_id, incarnation, state, socket_path,
-                     created_at, updated_at)
-                 VALUES (?1, ?2, ?3, 'starting', ?4, ?5, ?5)",
+                     launch_boot_id, native_target, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, 'starting', ?4, ?5, ?6, ?7, ?7)",
                 params![
                     shim.shim_id,
                     shim.session_id.as_str(),
                     incarnation,
                     socket,
+                    shim.launch_boot_id,
+                    shim.native_target,
                     now
                 ],
             )?;
@@ -250,6 +305,22 @@ impl Store {
     /// # Errors
     /// A database error.
     pub async fn shim_running(&self, shim_id: String, identity: ProviderIdentity) -> Result<bool> {
+        self.shim_running_with(shim_id, identity, RunningFacts::default())
+            .await
+    }
+
+    /// [`Self::shim_running`] with the protocol version and the shim's
+    /// process id, which the station keeps for the upgrade trial (ADR-005
+    /// §5.3) and the owner's execution check (DL-182 §4.2).
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn shim_running_with(
+        &self,
+        shim_id: String,
+        identity: ProviderIdentity,
+        facts: RunningFacts,
+    ) -> Result<bool> {
         let json = serde_json::to_string(&identity)?;
         self.write(move |conn, now, _| {
             let Some(found) = get(conn, &shim_id)? else {
@@ -259,9 +330,10 @@ impl Store {
                 ShimState::Starting => {
                     conn.execute(
                         "UPDATE shims SET state = 'running', provider_identity = ?2,
+                             protocol = COALESCE(?4, protocol), shim_pid = COALESCE(?5, shim_pid),
                              updated_at = ?3
                          WHERE shim_id = ?1 AND state = 'starting'",
-                        params![shim_id, json, now],
+                        params![shim_id, json, now, facts.protocol, facts.shim_pid],
                     )?;
                     Ok(true)
                 }
@@ -271,6 +343,48 @@ impl Store {
         })
         .await
         .map(|(ok, _)| ok)
+    }
+
+    /// Rewrites the boot ids that a row stores (its launch boot id and the
+    /// boot id of its provider identity), so that a test can make a run look
+    /// as if it ended with another boot (feature `fault-injection`).
+    ///
+    /// # Errors
+    /// A database error.
+    #[cfg(feature = "fault-injection")]
+    pub async fn shim_rewrite_boot(&self, shim_id: String, boot: String) -> Result<()> {
+        self.write(move |conn, now, _| {
+            conn.execute(
+                "UPDATE shims SET launch_boot_id = ?2,
+                     provider_identity = CASE WHEN provider_identity IS NULL THEN NULL
+                         ELSE json_set(provider_identity, '$.boot_id', ?2) END,
+                     updated_at = ?3
+                 WHERE shim_id = ?1",
+                params![shim_id, boot, now],
+            )?;
+            Ok(())
+        })
+        .await
+        .map(|((), _)| ())
+    }
+
+    /// Stores the protocol version that an attach picked for an open row
+    /// (ADR-005 §5.3, DL-182): the upgrade trial reads it without an
+    /// attach.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn shim_picked_protocol(&self, shim_id: String, protocol: u32) -> Result<()> {
+        self.write(move |conn, now, _| {
+            conn.execute(
+                "UPDATE shims SET protocol = ?2, updated_at = ?3
+                 WHERE shim_id = ?1 AND state IN ('starting', 'running')",
+                params![shim_id, protocol, now],
+            )?;
+            Ok(())
+        })
+        .await
+        .map(|((), _)| ())
     }
 
     /// Commits and returns the next attach generation of an open row
@@ -399,6 +513,8 @@ impl Store {
 
     /// Ends an open row with `state` (`exited`, `never_started` or `lost`)
     /// and `reason`; `false` when the row had ended already.
+    /// `inspection_version` is the version of the shim's exit report (0
+    /// when the row has none, DL-182 §1a).
     ///
     /// # Errors
     /// A database error, or an open `state`.
@@ -407,6 +523,7 @@ impl Store {
         shim_id: String,
         state: ShimState,
         reason: String,
+        inspection_version: u32,
     ) -> Result<bool> {
         if state.is_open() {
             return Err(StoreError::Corrupt(format!(
@@ -416,9 +533,10 @@ impl Store {
         }
         self.write(move |conn, now, _| {
             let n = conn.execute(
-                "UPDATE shims SET state = ?2, reason = ?3, updated_at = ?4
+                "UPDATE shims SET state = ?2, reason = ?3, inspection_version = ?5,
+                     updated_at = ?4
                  WHERE shim_id = ?1 AND state IN ('starting', 'running')",
-                params![shim_id, state.as_str(), reason, now],
+                params![shim_id, state.as_str(), reason, now, inspection_version],
             )?;
             Ok(n == 1)
         })

@@ -65,6 +65,11 @@ pub mod feature {
     /// base commit (R1.2).
     pub const SESSION_DIFF: &str = "files.session_diff.v1";
 
+    /// `session.execution_check` and `session.reconcile_execution`: the
+    /// termination check and the owner's reconciliation for resume on the
+    /// shim host (DL-182).
+    pub const SHIM_RESUME: &str = "shim.resume.v1";
+
     /// `artifacts.publish`, `artifacts.list`, `artifacts.get` and
     /// `artifacts.file`: the artifact service (R12, DL-165).
     pub const ARTIFACTS: &str = "artifacts.v1";
@@ -114,6 +119,7 @@ pub mod feature {
         ASSIST,
         ACCOUNTS,
         SETTINGS,
+        SHIM_RESUME,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

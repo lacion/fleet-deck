@@ -8,7 +8,21 @@
 //! this build: [`identity_of`] fails closed there, and the station keeps the
 //! direct host on macOS (owner/platform validation).
 
+use std::sync::Arc;
+
 use super::wire::ProviderIdentity;
+
+/// Reads the boot id of this machine. The station reads it through this
+/// (launch evidence, recovery, the dispatch revalidation, DL-182 §4.1), so
+/// that a test can show a reboot or a memory restore. The shim always reads
+/// the real id.
+pub type BootIdReader = Arc<dyn Fn() -> std::io::Result<String> + Send + Sync>;
+
+/// The reader of the real boot id.
+#[must_use]
+pub fn real_boot_id_reader() -> BootIdReader {
+    Arc::new(|| boot_id().map_err(|e| std::io::Error::other(e.to_string())))
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum IdentityError {

@@ -313,6 +313,8 @@ async fn a_session_lost_with_execution_unknown_is_never_continued() {
             shim_id: "shim-1".to_owned(),
             session_id: s.clone(),
             socket_path: "/nonexistent/sock".into(),
+            launch_boot_id: None,
+            native_target: None,
         })
         .await
         .unwrap();
@@ -321,6 +323,7 @@ async fn a_session_lost_with_execution_unknown_is_never_continued() {
             "shim-1".to_owned(),
             crate::store::ShimState::Lost,
             "execution_unknown".to_owned(),
+            0,
         )
         .await
         .unwrap();

@@ -190,6 +190,8 @@ async fn a_resume_is_refused_unless_the_session_ended_and_its_execution_is_prove
             shim_id: "shim-1".to_owned(),
             session_id: s.clone(),
             socket_path: "/nonexistent/sock".into(),
+            launch_boot_id: None,
+            native_target: None,
         })
         .await
         .unwrap();
@@ -198,6 +200,7 @@ async fn a_resume_is_refused_unless_the_session_ended_and_its_execution_is_prove
             "shim-1".to_owned(),
             crate::store::ShimState::Lost,
             "execution_unknown".to_owned(),
+            0,
         )
         .await
         .unwrap();
@@ -265,11 +268,15 @@ async fn shim_row(
             shim_id: id.to_owned(),
             session_id: session.clone(),
             socket_path: "/nonexistent/sock".into(),
+            launch_boot_id: None,
+            native_target: None,
         })
         .await
         .unwrap();
+    // A clean exit carries the complete inspection (DL-182 §1a).
+    let inspection = u32::from(state == crate::store::ShimState::Exited && reason == "exited");
     store
-        .shim_end(id.to_owned(), state, reason.to_owned())
+        .shim_end(id.to_owned(), state, reason.to_owned(), inspection)
         .await
         .unwrap();
 }

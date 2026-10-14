@@ -35,6 +35,8 @@ fn shim(id: &str) -> NewShim {
         shim_id: id.to_owned(),
         session_id: "s1".into(),
         socket_path: PathBuf::from(format!("/run/x/{id}.sock")),
+        launch_boot_id: None,
+        native_target: None,
     }
 }
 
@@ -112,14 +114,15 @@ async fn generations_rise_on_every_commit_and_stop_after_the_row_ends() {
         s.shim_end(
             "a".to_owned(),
             ShimState::Lost,
-            "execution_unknown".to_owned()
+            "execution_unknown".to_owned(),
+            0
         )
         .await
         .unwrap()
     );
     assert_eq!(s.shim_next_generation("a".to_owned()).await.unwrap(), None);
     assert!(
-        !s.shim_end("a".to_owned(), ShimState::Exited, "exited".to_owned())
+        !s.shim_end("a".to_owned(), ShimState::Exited, "exited".to_owned(), 1)
             .await
             .unwrap(),
         "an ended row never ends again"
@@ -130,7 +133,7 @@ async fn generations_rise_on_every_commit_and_stop_after_the_row_ends() {
         (ShimState::Lost, Some("execution_unknown"))
     );
     assert!(
-        s.shim_end("a".to_owned(), ShimState::Running, String::new())
+        s.shim_end("a".to_owned(), ShimState::Running, String::new(), 0)
             .await
             .is_err()
     );
@@ -183,7 +186,7 @@ async fn output_commits_events_and_cursor_together_only_for_the_current_generati
             .unwrap(),
         OutputCommit::Committed(e) if e.is_empty()
     ));
-    s.shim_end("a".to_owned(), ShimState::Exited, "exited".to_owned())
+    s.shim_end("a".to_owned(), ShimState::Exited, "exited".to_owned(), 1)
         .await
         .unwrap();
     assert_eq!(
@@ -238,9 +241,14 @@ async fn recovery_lists_open_rows_of_this_incarnation_starting_first() {
         .unwrap();
     s.shim_starting(shim("start")).await.unwrap();
     s.shim_starting(shim("done")).await.unwrap();
-    s.shim_end("done".to_owned(), ShimState::NeverStarted, "x".to_owned())
-        .await
-        .unwrap();
+    s.shim_end(
+        "done".to_owned(),
+        ShimState::NeverStarted,
+        "x".to_owned(),
+        0,
+    )
+    .await
+    .unwrap();
     let ids: Vec<String> = s
         .shims_to_recover()
         .await
@@ -361,7 +369,7 @@ async fn frame_state_changes_are_fenced_by_the_owner_generation_and_the_current_
         .unwrap()
         .unwrap();
     assert!(
-        s.shim_end("a".into(), ShimState::Lost, "x".into())
+        s.shim_end("a".into(), ShimState::Lost, "x".into(), 0)
             .await
             .unwrap()
     );

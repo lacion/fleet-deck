@@ -192,11 +192,17 @@ pub async fn recover_station(
             }),
             Err(reason) => {
                 store
-                    .shim_end(row.shim_id.clone(), ShimState::Lost, reason.clone())
+                    .shim_end(row.shim_id.clone(), ShimState::Lost, reason.clone(), 0)
                     .await?;
                 ended.push((row.shim_id.clone(), reason));
             }
         }
+    }
+    // The verified reboot (DL-182 §4.1): after every row is settled and
+    // before the first command, so that a resume sees the proof.
+    let proven = super::shims::prove_reboots(store, host).await?;
+    if proven > 0 {
+        tracing::info!(proven, "shim executions ended by a reboot");
     }
     let live = restored.iter().map(|r| r.process.clone()).collect();
     let report = store.recover(live).await?;

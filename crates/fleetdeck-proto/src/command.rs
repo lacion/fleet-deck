@@ -294,6 +294,14 @@ pub enum SessionCommand {
     WorktreeRelease {
         session_id: SessionId,
     },
+    /// The owner marks the previous run of a session under a shim as ended
+    /// (DL-182, design `shim-resume.md` §4.2). The station checks the
+    /// processes again and refuses while any of them lives. Owner action,
+    /// scope `admin`.
+    ReconcileExecution {
+        session_id: SessionId,
+        shim_id: String,
+    },
 }
 
 /// How the owner resolves a revert that needs reconciliation (DL-097).
@@ -385,6 +393,7 @@ impl SessionCommand {
             Self::WorktreeRestore { .. } => "session.worktree_restore",
             Self::WorktreePurge { .. } => "session.worktree_purge",
             Self::WorktreeRelease { .. } => "session.worktree_release",
+            Self::ReconcileExecution { .. } => "session.reconcile_execution",
         }
     }
 
@@ -412,7 +421,8 @@ impl SessionCommand {
             | Self::WorktreeTrash { session_id }
             | Self::WorktreeRestore { session_id }
             | Self::WorktreePurge { session_id, .. }
-            | Self::WorktreeRelease { session_id } => Some(session_id),
+            | Self::WorktreeRelease { session_id }
+            | Self::ReconcileExecution { session_id, .. } => Some(session_id),
         }
     }
 }

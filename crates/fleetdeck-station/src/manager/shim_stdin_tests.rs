@@ -91,6 +91,8 @@ async fn a_partial_stdin_write_blocks_input_and_still_admits_interrupt_and_stop(
         shim_id: "a".to_owned(),
         session_id: "s1".into(),
         socket_path: PathBuf::from("/run/x/a.sock"),
+        launch_boot_id: None,
+        native_target: None,
     })
     .await
     .unwrap();
@@ -233,6 +235,8 @@ async fn the_frame_count_is_stored_with_frame_0_and_claims_stay_in_order() {
         shim_id: "a".to_owned(),
         session_id: "s1".into(),
         socket_path: PathBuf::from("/run/x/a.sock"),
+        launch_boot_id: None,
+        native_target: None,
     })
     .await
     .unwrap();

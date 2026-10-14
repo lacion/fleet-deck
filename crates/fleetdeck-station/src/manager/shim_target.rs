@@ -39,7 +39,7 @@ use tokio::sync::Mutex;
 use super::super::shim_claude::DurableClaude;
 use super::super::shim_codex::DurableCodex;
 use super::super::shim_station::{Durable, Restored};
-use super::super::shims::{self, LaunchError, launch_shim, reason};
+use super::super::shims::{self, LaunchError, launch_shim_for, reason};
 use super::super::turns::SessionTurns;
 use super::{Live, REASON_PROCESS_EXIT, SessionTarget, Sessions};
 use crate::store::{
@@ -247,7 +247,94 @@ impl SessionTarget {
         }
     }
 
-    /// Starts a session under a shim and writes its first input.
+    /// The boot id reader of the shim host, once the target hosts shims.
+    #[must_use]
+    pub fn boot_reader(&self) -> Option<fleetdeck_providers::host::shim::identity::BootIdReader> {
+        self.shims
+            .as_ref()
+            .map(|s| Arc::clone(&s.host.config().boot_id_reader))
+    }
+
+    /// Why a resume or an import of `native` must not start a provider:
+    /// another execution of the conversation may still run, or a reboot
+    /// proof does not hold any more (DL-182 §3, §4.1). A store error
+    /// blocks too.
+    async fn resume_blocked(
+        &self,
+        session_id: &SessionId,
+        kind: fleetdeck_proto::event::ProviderKind,
+        native: &str,
+        shims: &ShimSettings,
+    ) -> Option<String> {
+        let found = self
+            .store
+            .execution_exclusion(
+                Some(session_id.clone()),
+                kind,
+                Some(native.to_owned()),
+                Some(session_id.clone()),
+            )
+            .await;
+        let found = match found {
+            Ok(found) => found,
+            Err(e) => return Some(format!("store: {e}")),
+        };
+        if found.blocked.is_some() {
+            return found.blocked;
+        }
+        shims::revalidate(&shims.host.config().boot_id_reader, &found.reboot_rows)
+    }
+
+    /// Resumes a conversation under a new shim (DL-182 §3): the termination
+    /// evidence is read again at the dispatch, the adapter builds the
+    /// durable resume launch, and the session starts like a new durable
+    /// one, with the resume's prompt as its first input. There is no
+    /// fallback to the direct host.
+    // The dispatch needs the effect, the spec, the prompt, the native id,
+    // the adapter, the settings and the cancel signal.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn resume_durable(
+        &self,
+        effect: &Effect,
+        spec: &SessionSpec,
+        prompt: Option<&InputRecord>,
+        native: &str,
+        adapter: &Arc<dyn ProviderAdapter>,
+        shims: &ShimSettings,
+        cancel: Option<&tokio::sync::watch::Receiver<bool>>,
+    ) -> Dispatch {
+        let session_id = effect.session_id.clone();
+        #[cfg(test)]
+        self.resume_dispatch.hold().await;
+        if let Some(why) = self
+            .resume_blocked(&session_id, adapter.kind(), native, shims)
+            .await
+        {
+            self.start_failed(
+                &session_id,
+                &format!("the previous execution is not proven ended: {why}"),
+            )
+            .await;
+            return Dispatch::NotDispatched("execution_not_ended".into());
+        }
+        let id = fleetdeck_providers::adapter::NativeSessionId(native.to_owned());
+        let launch = match adapter.durable_resume_launch(spec, &id) {
+            Ok(launch) => launch,
+            Err(e) => {
+                self.start_failed(&session_id, &e.to_string()).await;
+                return Dispatch::NotDispatched(format!("start_failed: {e}"));
+            }
+        };
+        self.start_durable(effect, spec, prompt, shims, launch, Some(native), cancel)
+            .await
+    }
+
+    /// Starts a session under a shim and writes its first input. With
+    /// `native`, the launch continues that conversation (a resume or an
+    /// import); the row holds it before the spawn (DL-182 §3).
+    // The launch needs the effect, the spec, the prompt, the settings, the
+    // launch, the native target and the cancel signal.
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn start_durable(
         &self,
         effect: &Effect,
@@ -255,6 +342,7 @@ impl SessionTarget {
         prompt: Option<&InputRecord>,
         shims: &ShimSettings,
         launch: DurableLaunch,
+        native: Option<&str>,
         cancel: Option<&tokio::sync::watch::Receiver<bool>>,
     ) -> Dispatch {
         let session_id = effect.session_id.clone();
@@ -266,12 +354,13 @@ impl SessionTarget {
         }
         let turns = self.turns(&session_id, Path::new(&spec.cwd)).await;
         let from = *self.store.subscribe().borrow();
-        let attached = match launch_shim(
+        let attached = match launch_shim_for(
             &self.store,
             &shims.host,
             &session_id,
             &launch.process,
             AckMode::Manual,
+            native,
         )
         .await
         {
@@ -315,9 +404,13 @@ impl SessionTarget {
         let driver = match driver {
             Ok(driver) => driver,
             Err(e) => {
-                // The driver's pump commits the exit of the killed provider.
+                // The driver's pump commits the exit of the killed provider;
+                // the row ends with the shim's own evidence, so that the
+                // failed launch does not block the next resume (DL-182 §6).
                 let _report = control.kill().await;
                 self.observe_end(&session_id, &process).await;
+                let _ended = tokio::time::timeout(EXIT_REPORT_WAIT, control.wait()).await;
+                end_rows(&self.store, &session_id, control.exit_state().as_ref()).await;
                 return Dispatch::NotDispatched(format!("start_failed: {e}"));
             }
         };
@@ -565,7 +658,7 @@ async fn end_observed(
     // The terminal event can be committed before the shim's report is
     // read; wait for the attachment's end (bounded).
     let _ended = tokio::time::timeout(EXIT_REPORT_WAIT, shim.wait()).await;
-    let why = shims::exit_reason(shim.exit_state().as_ref());
+    let exit = shim.exit_state();
     if let Ok(mut map) = sessions.lock() {
         map.remove(session_id);
     }
@@ -575,10 +668,22 @@ async fn end_observed(
     {
         tracing::error!(error = %e, "process end not stored");
     }
+    end_rows(store, session_id, exit.as_ref()).await;
+}
+
+/// Ends the open shim rows of `session_id` as `exited` with the reason and
+/// the inspection version of the shim's `exit` report (DL-120, DL-182).
+async fn end_rows(
+    store: &Store,
+    session_id: &SessionId,
+    exit: Option<&fleetdeck_providers::host::shim::wire::ExitState>,
+) {
+    let why = shims::exit_reason(exit);
+    let inspection = shims::inspection_of(exit);
     if let Ok(rows) = store.shims_of_session(session_id.clone()).await {
         for shim_id in rows {
             let _ended = store
-                .shim_end(shim_id, ShimState::Exited, why.to_owned())
+                .shim_end(shim_id, ShimState::Exited, why.to_owned(), inspection)
                 .await;
         }
     }

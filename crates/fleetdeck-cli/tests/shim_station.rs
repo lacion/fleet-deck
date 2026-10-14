@@ -521,6 +521,8 @@ async fn starting_row(rig: &Rig) -> (String, ShimFiles, Prepared) {
             shim_id: id.clone(),
             session_id: "s1".into(),
             socket_path: prepared.record.socket_path.clone(),
+            launch_boot_id: None,
+            native_target: None,
         })
         .await
         .unwrap();
@@ -674,7 +676,8 @@ async fn a_persisted_exit_report_ends_the_session_exited_with_a_gap_for_unacknow
         termination: "signal:9".to_owned(),
         cause: "killed".to_owned(),
         stderr_tail: String::new(),
-        descendants_remaining: 0,
+        descendants_remaining: Some(0),
+        inspection: 1,
         final_offset: committed + 100,
     };
     ShimFiles::new(&rig.host().config().shims_dir(), &shim_id)

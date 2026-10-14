@@ -289,6 +289,21 @@ pub trait ProviderAdapter: Send + Sync {
             "this adapter has no durable driver",
         ))
     }
+    /// The launch of a native resume of `native_id` under a durable host
+    /// (DL-182): [`Self::durable_launch`] for the stored spec, with the
+    /// provider's resume of the conversation in its arguments (Claude) or
+    /// its handshake (Codex). Adapters without it refuse.
+    ///
+    /// # Errors
+    /// The checks of a start fail, or the adapter has no durable resume.
+    fn durable_resume_launch(
+        &self,
+        spec: &SessionSpec,
+        native_id: &NativeSessionId,
+    ) -> Result<crate::durable::DurableLaunch> {
+        let _ = (spec, native_id);
+        Err(Unsupported::new(Operation::Resume).into())
+    }
 }
 
 /// One running provider session. Every operation that the provider does not

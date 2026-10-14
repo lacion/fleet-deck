@@ -14,11 +14,12 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-/// The protocol version of this build (N).
-pub const PROTOCOL: u32 = 1;
-/// The versions this build speaks: N and N−1 (ADR-005 §5.3). Version 1 is
-/// the first, so N−1 does not exist yet.
-pub const PROTOCOLS: &[u32] = &[PROTOCOL];
+/// The protocol version of this build (N). Version 2 reports an
+/// unavailable descendant count as `null` and tags the exit report with
+/// its inspection version (DL-182).
+pub const PROTOCOL: u32 = 2;
+/// The versions this build speaks: N and N−1 (ADR-005 §5.3).
+pub const PROTOCOLS: &[u32] = &[PROTOCOL, 1];
 /// The largest payload of one frame (ADR-005 §4.3: 1 MiB).
 pub const MAX_PAYLOAD: usize = 1024 * 1024;
 /// The largest header of one frame.
@@ -69,12 +70,43 @@ pub struct ExitState {
     pub cause: String,
     pub stderr_tail: String,
     /// The members of the provider's process group or session that were
-    /// still alive after the exit, before the shim signalled them.
-    pub descendants_remaining: u32,
+    /// still alive after the exit, before the shim signalled them. `None`:
+    /// the inspection was incomplete (an unreadable `/proc`, or a platform
+    /// without a reader), so the count proves nothing (DL-182 §1a).
+    pub descendants_remaining: Option<u32>,
     /// The stdout offset after the last byte.
     pub final_offset: u64,
+    /// The inspection version of the report. 1: the count was taken by the
+    /// complete inspection of DL-182. Absent (0): an older shim; its count
+    /// is not a proof of an ended execution.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub inspection: u32,
 }
 
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+/// The inspection version that the shim of this build writes.
+pub const INSPECTION: u32 = 1;
+
+impl ExitState {
+    /// The report as a peer that negotiated `protocol` reads it. The older
+    /// protocol has no `null` count and no inspection field: an unavailable
+    /// count becomes `u32::MAX`, which an older station reads as
+    /// descendants remaining (ADR-005 §5.3, DL-182 §1a).
+    #[must_use]
+    pub fn for_protocol(&self, protocol: u32) -> Self {
+        if protocol >= 2 {
+            return self.clone();
+        }
+        Self {
+            descendants_remaining: Some(self.descendants_remaining.unwrap_or(u32::MAX)),
+            inspection: 0,
+            ..self.clone()
+        }
+    }
+}
 /// Why the shim reports a range of stdout as lost (ADR-005 §4.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -370,4 +402,64 @@ pub fn unhex(text: &str) -> Option<Vec<u8>> {
         .step_by(2)
         .map(|i| u8::from_str_radix(text.get(i..i + 2)?, 16).ok())
         .collect()
+}
+
+#[cfg(test)]
+mod exit_tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    fn report(count: Option<u32>) -> ExitState {
+        ExitState {
+            termination: "code:0".to_owned(),
+            cause: "exited".to_owned(),
+            stderr_tail: String::new(),
+            descendants_remaining: count,
+            final_offset: 7,
+            inspection: INSPECTION,
+        }
+    }
+
+    #[test]
+    fn the_protocol_is_two_and_one_stays_spoken() {
+        assert_eq!(PROTOCOL, 2);
+        assert_eq!(PROTOCOLS, &[2, 1]);
+        assert_eq!(pick_protocol(&[1]), Some(1));
+        assert_eq!(pick_protocol(&[1, 2]), Some(2));
+        assert_eq!(pick_protocol(&[3]), None);
+    }
+
+    #[test]
+    fn an_unavailable_count_is_null_on_the_wire_of_version_two() {
+        let text = serde_json::to_string(&report(None)).unwrap();
+        assert!(text.contains(r#""descendants_remaining":null"#), "{text}");
+        assert!(text.contains(r#""inspection":1"#), "{text}");
+        let back: ExitState = serde_json::from_str(&text).unwrap();
+        assert_eq!(back, report(None));
+    }
+
+    #[test]
+    fn version_one_says_unknown_as_the_largest_count_and_has_no_inspection_field() {
+        let old = report(None).for_protocol(1);
+        assert_eq!(old.descendants_remaining, Some(u32::MAX));
+        assert_eq!(old.inspection, 0);
+        let text = serde_json::to_string(&old).unwrap();
+        assert!(!text.contains("inspection"), "{text}");
+        // A known count passes as it is.
+        assert_eq!(
+            report(Some(3)).for_protocol(1).descendants_remaining,
+            Some(3)
+        );
+        // Version two keeps the report.
+        assert_eq!(report(None).for_protocol(2), report(None));
+    }
+
+    #[test]
+    fn a_report_of_an_older_shim_or_an_old_exit_file_reads_as_unverified() {
+        let old = r#"{"termination":"code:0","cause":"exited","stderr_tail":"","descendants_remaining":0,"final_offset":5}"#;
+        let parsed: ExitState = serde_json::from_str(old).unwrap();
+        assert_eq!(parsed.descendants_remaining, Some(0));
+        assert_eq!(parsed.inspection, 0, "no inspection: not a proof");
+    }
 }

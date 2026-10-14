@@ -86,6 +86,10 @@ pub struct SessionTarget {
     /// The points where a test holds a start (tests only).
     #[cfg(test)]
     hooks: setup_task::Hooks,
+    /// Right before the dispatch recheck of a resume on the shim host
+    /// (tests only, DL-182 §3).
+    #[cfg(test)]
+    resume_dispatch: setup_task::StartHook,
     /// The instances whose probed version is on the adapter's deny list
     /// (R8.2, DL-162): their starts are refused.
     broken: Arc<StdMutex<BTreeMap<ProviderInstanceId, &'static str>>>,
@@ -122,6 +126,8 @@ impl SessionTarget {
             this: Weak::new(),
             #[cfg(test)]
             hooks: setup_task::Hooks::default(),
+            #[cfg(test)]
+            resume_dispatch: setup_task::StartHook::default(),
             shells: ShellsSlot::default(),
             broken: Arc::default(),
             restart: Arc::default(),
@@ -153,6 +159,13 @@ impl SessionTarget {
     #[cfg(test)]
     pub(super) fn hooks(&self) -> &setup_task::Hooks {
         &self.hooks
+    }
+
+    /// The point where a test holds a resume on the shim host, right
+    /// before its recheck of the termination evidence.
+    #[cfg(test)]
+    pub(super) fn resume_dispatch_hook(&self) -> &setup_task::StartHook {
+        &self.resume_dispatch
     }
 
     /// The target in an `Arc` that knows itself. A start with a setup command
@@ -270,13 +283,6 @@ impl SessionTarget {
                 .await;
             return Dispatch::NotDispatched("unknown_provider".into());
         };
-        if resume.is_some() && self.shims.is_some() {
-            // A shim-host resume needs the ADR-005 §6 termination evidence
-            // and a durable resume launch; neither is built (DL-118).
-            self.start_failed(&session_id, "resume is not supported on the shim host yet")
-                .await;
-            return Dispatch::NotDispatched(REASON_RESUME_UNSUPPORTED.into());
-        }
         let fleet_only = spec.coordinator.is_none();
         let coordinator = match spec.coordinator.as_deref() {
             // A session without a grant gets the session's own tools when
@@ -309,9 +315,16 @@ impl SessionTarget {
                 }
             },
         };
+        if let (Some(native), Some(shims)) = (resume, self.shims.clone()) {
+            // A resume on the shim host (DL-182): a new shim and a new
+            // provider process, never a reattachment.
+            return self
+                .resume_durable(effect, spec, prompt, native, &adapter, &shims, cancel)
+                .await;
+        }
         if let Some((shims, launch)) = self.durable_launch(&adapter, spec) {
             return self
-                .start_durable(effect, spec, prompt, &shims, launch, cancel)
+                .start_durable(effect, spec, prompt, &shims, launch, None, cancel)
                 .await;
         }
         let turns = SessionTurns::open(
@@ -746,9 +759,6 @@ mod target_spawn_tests;
 
 /// The dispatch reason of a start that a stop cancelled during its setup.
 pub const REASON_SETUP_STOPPED: &str = "setup_stopped";
-
-/// The dispatch reason of a resume on the shim host (DL-118).
-pub const REASON_RESUME_UNSUPPORTED: &str = "resume_not_supported_on_the_shim_host";
 
 pub use shim_target::{REASON_REVERT_UNSUPPORTED, ShimSettings};
 

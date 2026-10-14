@@ -70,6 +70,8 @@ impl Rig {
             shim_id: SHIM.to_owned(),
             session_id: "s1".into(),
             socket_path: PathBuf::from("/run/x/shim-1.sock"),
+            launch_boot_id: None,
+            native_target: None,
         })
         .await
         .unwrap();
@@ -214,7 +216,7 @@ async fn a_historical_restore_is_refused_while_a_shim_is_live_and_a_permitted_on
     // The shim ends; nothing advanced: the restore is permitted.
     let s = rig.open().await;
     assert!(
-        s.shim_end(SHIM.to_owned(), ShimState::Exited, "exited".to_owned())
+        s.shim_end(SHIM.to_owned(), ShimState::Exited, "exited".to_owned(), 1)
             .await
             .unwrap()
     );

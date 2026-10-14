@@ -110,6 +110,7 @@ fn commands() -> Vec<SessionCommand> {
         json!({"op": "worktree_restore", "session_id": s}),
         json!({"op": "worktree_purge", "session_id": s, "confirm_name": "app--fd-x--01j000000000"}),
         json!({"op": "worktree_release", "session_id": s}),
+        json!({"op": "reconcile_execution", "session_id": s, "shim_id": "01J0000000000000000000000H"}),
     ];
     let commands: Vec<SessionCommand> = samples
         .into_iter()
@@ -138,7 +139,8 @@ fn commands() -> Vec<SessionCommand> {
             | SessionCommand::WorktreeTrash { .. }
             | SessionCommand::WorktreeRestore { .. }
             | SessionCommand::WorktreePurge { .. }
-            | SessionCommand::WorktreeRelease { .. } => {}
+            | SessionCommand::WorktreeRelease { .. }
+            | SessionCommand::ReconcileExecution { .. } => {}
         }
     }
     commands
@@ -148,14 +150,16 @@ fn commands() -> Vec<SessionCommand> {
 fn every_session_command_is_a_mutating_deck_to_station_method_of_the_adr_table() {
     let table = method_table();
     let commands = commands();
-    assert_eq!(commands.len(), 20);
+    assert_eq!(commands.len(), 21);
     for c in &commands {
         let r = row(&table, c.method());
         assert!(r.mutating, "`{}` must be mutating", c.method());
         assert_eq!(r.direction, "deck → station", "{}", c.method());
         let scope = if c.method() == "approval.answer" {
             "approve"
-        } else if c.method().starts_with("session.worktree_") {
+        } else if c.method().starts_with("session.worktree_")
+            || c.method() == "session.reconcile_execution"
+        {
             "admin"
         } else {
             "drive"

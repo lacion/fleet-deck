@@ -9,18 +9,29 @@ use fleetdeck_proto::command::SessionSpec;
 use super::super::core::CoreConfig;
 use super::super::{Launch, capabilities, cli_args};
 use super::ClaudeAdapter;
-use crate::adapter::{Result, canonical_workspace};
+use crate::adapter::{NativeSessionId, Result, canonical_workspace};
 use crate::durable::{DurableConfig, DurableLaunch};
 use crate::host::ProcessSpec;
 
 impl ClaudeAdapter {
     pub(super) fn launch_durable(&self, spec: &SessionSpec) -> Result<DurableLaunch> {
+        self.launch_durable_as(spec, None)
+    }
+
+    /// The launch of a new session, or with `resume` the native resume of
+    /// that conversation (DL-182): `--resume <id>` and `resumed = true`.
+    /// The mode rules are those of a new session.
+    pub(super) fn launch_durable_as(
+        &self,
+        spec: &SessionSpec,
+        resume: Option<&NativeSessionId>,
+    ) -> Result<DurableLaunch> {
         let cwd = canonical_workspace(Path::new(&spec.cwd))?;
         let caps = capabilities(self.config.allow_bypass);
         let launch = Launch {
             model: spec.model.clone(),
             mode: spec.mode.clone(),
-            resume: None,
+            resume: resume.cloned(),
             fork: false,
             extra_args: self.config.extra_args.clone(),
         };
@@ -39,9 +50,91 @@ impl ClaudeAdapter {
                 provider_instance: spec.provider_instance.clone(),
                 cwd: cwd.to_string_lossy().into_owned(),
                 capabilities: caps,
-                resumed: None,
+                resumed: resume.map(|_| true),
             }),
             stop: self.config.stop,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::sync::Arc;
+
+    use fleetdeck_core::ChildEnv;
+
+    use super::*;
+    use crate::adapter::ProviderAdapter as _;
+    use crate::claude::{ClaudeAdapter, ClaudeAdapterConfig};
+    use crate::host::DirectChildHost;
+
+    fn adapter() -> ClaudeAdapter {
+        let config =
+            ClaudeAdapterConfig::new("claude".into(), "claude".into(), ChildEnv::from_process());
+        ClaudeAdapter::new(config, Arc::new(DirectChildHost::new()))
+    }
+
+    fn spec(dir: &std::path::Path, mode: Option<&str>) -> SessionSpec {
+        SessionSpec {
+            provider_instance: "claude".into(),
+            cwd: dir.to_string_lossy().into_owned(),
+            mode: mode.map(str::to_owned),
+            model: None,
+            title: None,
+            coordinator: None,
+        }
+    }
+
+    fn flag(args: &[OsString], name: &str) -> Option<String> {
+        let at = args.iter().position(|a| a == name)?;
+        args.get(at + 1).map(|a| a.to_string_lossy().into_owned())
+    }
+
+    #[test]
+    fn a_durable_resume_has_the_resume_flag_the_stored_mode_and_the_resumed_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = NativeSessionId("native-1".to_owned());
+        let launch = adapter()
+            .durable_resume_launch(&spec(dir.path(), Some("acceptEdits")), &id)
+            .unwrap();
+        assert_eq!(
+            flag(&launch.process.args, "--resume").as_deref(),
+            Some("native-1")
+        );
+        assert_eq!(
+            flag(&launch.process.args, "--permission-mode").as_deref(),
+            Some("acceptEdits")
+        );
+        assert!(!launch.process.args.iter().any(|a| a == "--fork-session"));
+        let DurableConfig::Claude(core) = launch.core else {
+            panic!("a Claude core");
+        };
+        assert_eq!(core.resumed, Some(true));
+    }
+
+    #[test]
+    fn a_durable_resume_runs_an_unoffered_mode_as_the_safest_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = NativeSessionId("native-1".to_owned());
+        let launch = adapter()
+            .durable_resume_launch(&spec(dir.path(), Some("a_mode_of_a_later_build")), &id)
+            .unwrap();
+        assert_eq!(
+            flag(&launch.process.args, "--permission-mode").as_deref(),
+            Some("default")
+        );
+    }
+
+    #[test]
+    fn a_new_durable_launch_has_no_resume_flag_and_no_resumed_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let launch = adapter().durable_launch(&spec(dir.path(), None)).unwrap();
+        assert!(!launch.process.args.iter().any(|a| a == "--resume"));
+        let DurableConfig::Claude(core) = launch.core else {
+            panic!("a Claude core");
+        };
+        assert_eq!(core.resumed, None);
     }
 }

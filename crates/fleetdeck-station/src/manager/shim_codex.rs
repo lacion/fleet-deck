@@ -74,14 +74,18 @@ impl DurableCore for CodexCore {
             }),
             EffectPayload::SetMode { mode } => self.set_mode(mode),
             EffectPayload::SetModel { model } => self.set_model(model),
-            // The first input of a launch (the start effect is claimed
-            // while it is written, DL-113).
+            // The first input of a launch (the start or resume effect is
+            // claimed while it is written, DL-113, DL-182).
             EffectPayload::Start {
+                prompt: Some(input),
+                ..
+            }
+            | EffectPayload::Resume {
                 prompt: Some(input),
                 ..
             } => self.prompt(&host_input(input)),
             EffectPayload::Start { prompt: None, .. }
-            | EffectPayload::Resume { .. }
+            | EffectPayload::Resume { prompt: None, .. }
             | EffectPayload::Stop { .. }
             | EffectPayload::Revert { .. }
             | EffectPayload::Worktree { .. } => Err(not_a_command()),

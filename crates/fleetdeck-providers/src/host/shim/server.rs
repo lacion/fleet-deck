@@ -28,8 +28,8 @@ use super::launch::{LaunchReply, LaunchSpec};
 use super::output::OutputBuffer;
 use super::proof::{AttachDecision, AttachKey, decide_attach, nonce, peer_allowed};
 use super::wire::{
-    ExitState, FromShim, GapReason, PROTOCOLS, ProviderIdentity, Refusal, StatusAnswer, ToShim,
-    WriteState, hex, pick_protocol, read_frame, write_frame,
+    ExitState, FromShim, GapReason, INSPECTION, PROTOCOLS, ProviderIdentity, Refusal, StatusAnswer,
+    ToShim, WriteState, hex, pick_protocol, read_frame, write_frame,
 };
 use super::writes::{Admission, WriteTable, write_tracked};
 use crate::host::STDERR_TAIL_BYTES;
@@ -137,10 +137,19 @@ async fn serve(shim_id: &str) -> i32 {
             reply(&LaunchReply::Fenced);
             return 0;
         }
-        Some(records)
-            if matches!(records.first(), Some(Record::Created { shim_id: id, incarnation })
-                if id == shim_id && incarnation == &spec.incarnation) => {}
-        _ => return failed(false, "the launch journal is missing or foreign"),
+        Some(records) => match records.first() {
+            Some(Record::Created {
+                shim_id: id,
+                incarnation,
+                boot_id,
+            }) if id == shim_id && incarnation == &spec.incarnation => {
+                if let Some(why) = boot_refusal(boot_id.as_deref()) {
+                    return failed(false, why);
+                }
+            }
+            _ => return failed(false, "the launch journal is missing or foreign"),
+        },
+        None => return failed(false, "the launch journal is missing or foreign"),
     }
     let listener = match bind(&spec) {
         Ok(listener) => listener,
@@ -175,6 +184,21 @@ async fn serve(shim_id: &str) -> i32 {
     shim.run(&mut child, listener).await
 }
 
+/// DL-182 §4.1: the shim spawns the provider only on the boot that the
+/// station recorded in the launch journal. A journal without a boot id is
+/// one of an older station (the old behavior). Its own boot id is always
+/// the real one. `Some(reason)` refuses the launch.
+fn boot_refusal(journal: Option<&str>) -> Option<&'static str> {
+    let journal = journal?;
+    let Ok(own) = super::identity::boot_id() else {
+        return Some("the boot id cannot be read");
+    };
+    if journal.is_empty() || journal != own {
+        return Some("the boot id differs from the launch journal");
+    }
+    None
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -184,6 +208,9 @@ fn now_ms() -> u64 {
 /// The current attachment.
 struct Conn {
     generation: u64,
+    /// The protocol version that the attach negotiated; the exit report is
+    /// encoded for it (ADR-005 §5.3).
+    protocol: u32,
     tx: mpsc::Sender<Out>,
     /// The next stdout offset to stream; `None` until the first `replay`.
     sent: Option<u64>,
@@ -293,6 +320,28 @@ impl Shim {
         }
     }
 
+    /// Sends the exit report to the current attachment, encoded for the
+    /// protocol that it negotiated.
+    fn notify_exit(&self, exit: &ExitState) {
+        let sent = self
+            .lock()
+            .conn
+            .as_ref()
+            .map(|c| (c.tx.clone(), c.protocol));
+        if let Some((tx, protocol)) = sent
+            && tx
+                .try_send((
+                    FromShim::Exited {
+                        exit: exit.for_protocol(protocol),
+                    },
+                    Vec::new(),
+                ))
+                .is_err()
+        {
+            tracing::warn!("the attachment queue is full; the exit report was not sent");
+        }
+    }
+
     async fn run(self: Arc<Self>, child: &mut Child, listener: UnixListener) -> i32 {
         let (Some(stdout), Some(stderr), Some(stdin)) =
             (child.stdout.take(), child.stderr.take(), child.stdin.take())
@@ -328,6 +377,9 @@ impl Shim {
             Err(_) => "unknown".to_owned(),
         };
         let descendants_remaining = group_members(self.pid());
+        if descendants_remaining.is_none() {
+            tracing::warn!("the process inspection was incomplete; the exit is unverified");
+        }
         signal_group(self.pid(), rustix::process::Signal::KILL);
         self.wait_stdout_end(eof).await;
         reap_orphans();
@@ -341,11 +393,12 @@ impl Shim {
                 stderr_tail,
                 descendants_remaining,
                 final_offset: state.buffer.end(),
+                inspection: INSPECTION,
             };
             state.exit = Some(exit.clone());
             exit
         };
-        self.notify_conn(FromShim::Exited { exit: exit.clone() });
+        self.notify_exit(&exit);
         tokio::spawn(Arc::clone(self).publish_exit(exit));
     }
 

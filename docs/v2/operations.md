@@ -246,13 +246,25 @@ Limits of this release (DL-127, follow-ups in `docs/v2/progress/m3-durable.md`):
 - Auto-continue works only with `host = "direct"`. With `host = "shim"`, the station skips a lost session with the reason `unsupported`.
 - The station checks every ADR-007 rule when it stores the continuation. Right before the dispatch, it checks again only these rules: identity, proven end of the old process, newer owner work, requested stop and the time window. It does not check again the preference, the turn state, the capability, the workspace or a free session slot.
 
+### Resume on the shim host (DL-182)
+
+With `host = "shim"` a resume starts a new shim and a new agent process. It is never a reattachment. The board shows `resumed`.
+
+- Resume on the shim host works on Linux only. On another platform the station refuses `session.resume`, `session.import`, the input of a hibernated session and a handover with `unsupported` ("resume on the shim host needs Linux").
+- The station resumes a session only when it can prove that the earlier agent run ended. The proof is one of these: a clean exit that the shim checked completely, a launch that never started, a verified reboot (the boot id differs from the one that the run stored), or your reconciliation.
+- A reboot proof is checked again at the resume. If the boot id is the old one again (for example after a restore of the VM memory) or a process with the stored identity lives, the resume is refused.
+- Reconciliation: for a run whose end is not proven, the station method `session.execution_check` lists the processes that still belong to it (the agent, its process group and its session). Stop them on the station. Then the command `session.reconcile_execution` marks the run as ended. The station checks the processes again and refuses while one lives or when the check is incomplete. The board page for this action comes in a later release; the station methods exist now.
+- Detached hooks: the station cannot see a process that left the agent's process group and session (it called `setsid()`). A hook that detaches and keeps a writable descriptor on the transcript can write to it after a resume. The direct host has the same limit. The check lists such processes for information only.
+- Rollback: a launch journal of this release has a `boot_id` field. A station of an earlier release reads that journal as unknown evidence and fails closed: the session stays `lost` there. A shim of this release speaks the shim protocol 2 and the previous version 1 (an unavailable process count is `u32::MAX` on version 1).
+- Auto-continue stays off with `host = "shim"`.
+
 ## 11. Troubleshooting
 
 Run `fleetdeck doctor` first. It changes nothing. It prints one line for each check (`ok`, `warn` or `fail`) and then a summary, and its exit code is 1 when a check fails. It checks the data directory and its mode, `station.toml` and `deck.toml` (parse and mode), `git`, the `--version` of each provider binary (a `warn` when it is older than the version that Fleet Deck is tested with, a `fail` when it is known to break the protocol), `allow_shell`, the deck local socket, the board listener, and the v1 Fleet Deck Claude plugin. Remove the v1 plugin after the cutover: its hooks slow every stop of a v2 session.
 
 | Symptom | What to do |
 | --- | --- |
-| A session is `lost` | The station restarted and could not prove what happened to the agent. Read the detail in the timeline. Resume the session if the provider supports resume. |
+| A session is `lost` | The station restarted and could not prove what happened to the agent. Read the detail in the timeline. Resume the session if the provider supports resume. With `host = "shim"`, the resume needs proof that the agent ended (see "Resume on the shim host"). |
 | A command is `outcome_unknown` | The station cannot prove whether the provider received it. It never resends it. Check the session and send a new command if needed. |
 | A revert needs reconciliation | The station could not prove the state of the files or the conversation. Read the revert card and resolve it; input stays blocked until then. |
 | The station is not on the board | Check the link: the station log, the `listen`/`link_listen` addresses, and the pairing. `fleetdeck deck stations` shows the link state. |

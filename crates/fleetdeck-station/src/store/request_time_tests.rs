@@ -23,6 +23,8 @@ async fn shim(s: &Store) {
         shim_id: SHIM.to_owned(),
         session_id: S1.into(),
         socket_path: PathBuf::from("/run/x/shim-1.sock"),
+        launch_boot_id: None,
+        native_target: None,
     })
     .await
     .unwrap();
