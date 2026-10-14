@@ -198,7 +198,7 @@
 | --- | --- |
 | BLOCKER one provenance list for two channels | §14.4 `tailnet_auto_listen` and `tailnet_auto_link_listen`; an address already manual in a channel is never recorded as automatic there; manual saves and turning the mode off reconcile the provenance in the same save; §14.5 regression test |
 
-## 15. Owner decision: automatic by default (revision 4, proposed, 2026-10-14)
+## 15. Owner decision: automatic by default (revision 4, accepted, 2026-10-14; extra review PASS)
 
 - **Owner decision (2026-10-14):** "this should be all automatically detected, and in any case overriden. the user experience is paramount, they should not be experts". It changes §14.1 (the Windows program needed the owner's elevated "Use this program") and the default of §14.4 (`tailnet_auto` off).
 - **Review finding overridden by the owner:** the §14 revision-1 BLOCKER "a regular-file check does not establish trust in the Windows executable" was closed by the elevated choice. The owner now accepts automatic use, with the limits of §15.1. The Windows-environment exposure (§14.1) is the same as running `tailscale` in a Windows terminal; the card states it.
