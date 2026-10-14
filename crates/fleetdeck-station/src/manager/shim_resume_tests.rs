@@ -73,12 +73,21 @@ async fn a_resume_import_and_hibernated_input_on_a_platform_without_a_reader_are
     assert_eq!(message, "resume on the shim host needs Linux");
     // The input of a hibernated session resumes it, so it is refused too.
     let live = rig.start("claude").await;
-    rig.det
-        .advance(Duration::from_millis(u64::from(AFTER) * 60_000 + 1));
+    // Events of the first turn can still move `updated_at` after the start:
+    // advance and sweep again until the session is idle for the interval.
     let (store, policy) = (rig.store(), rig.manager.policy());
-    let swept = hibernate::sweep(&store, &policy, &Bindings::default(), AFTER)
-        .await
-        .unwrap();
+    let mut swept = 0;
+    for _ in 0..50 {
+        rig.det
+            .advance(Duration::from_millis(u64::from(AFTER) * 60_000 + 1));
+        swept = hibernate::sweep(&store, &policy, &Bindings::default(), AFTER)
+            .await
+            .unwrap();
+        if swept > 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
     assert!(swept >= 1);
     rig.wait_state(&live, SessionState::Exited).await;
     let (code, message) = rig
