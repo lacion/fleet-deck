@@ -133,6 +133,26 @@ fn safe_path_keeps_the_canonical_directory_of_a_link() {
 }
 
 #[test]
+fn safe_path_drops_a_link_whose_target_holds_a_colon() {
+    let tmp = tempfile::tempdir().unwrap();
+    // The parents of the temp dir are not safe on this machine.
+    if !tmp_is_safe(tmp.path()) {
+        return;
+    }
+    let target = dir(tmp.path(), "safe:evil", 0o755);
+    let link = tmp.path().join("link");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    let uid = my_uid(&target);
+    let (path, notes) = safe_path(&link.to_string_lossy(), uid);
+    assert_eq!(path, None);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].ends_with("its directory name holds a `:`"),
+        "{notes:?}"
+    );
+}
+
+#[test]
 fn safe_path_drops_a_directory_with_a_parent_that_others_can_write() {
     let tmp = tempfile::tempdir().unwrap();
     // The parents of the temp dir are not safe on this machine.

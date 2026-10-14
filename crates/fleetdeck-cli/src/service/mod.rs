@@ -107,6 +107,12 @@ fn safe_path(path: &str, uid: u32) -> (Option<String>, Vec<String>) {
             notes.push(format!("{entry}: not a directory"));
             continue;
         };
+        // A `:` in the target would split it into more PATH entries that
+        // nobody checked (NV-22).
+        if text.contains(':') {
+            notes.push(format!("{entry}: its directory name holds a `:`"));
+            continue;
+        }
         match unsafe_reason(&canonical, uid) {
             None if kept.iter().any(|k| k == text) => {}
             None => kept.push(text.to_owned()),
