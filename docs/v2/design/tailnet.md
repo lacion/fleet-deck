@@ -198,26 +198,46 @@
 | --- | --- |
 | BLOCKER one provenance list for two channels | §14.4 `tailnet_auto_listen` and `tailnet_auto_link_listen`; an address already manual in a channel is never recorded as automatic there; manual saves and turning the mode off reconcile the provenance in the same save; §14.5 regression test |
 
-## 15. Owner decision: automatic by default (proposed, 2026-10-14)
+## 15. Owner decision: automatic by default (revision 2, proposed, 2026-10-14)
 
 - **Owner decision (2026-10-14):** "this should be all automatically detected, and in any case overriden. the user experience is paramount, they should not be experts". It changes §14.1 (the Windows program needed the owner's elevated "Use this program") and the default of §14.4 (`tailnet_auto` off).
-- **Review finding overridden by the owner:** the §14 revision-1 BLOCKER "a regular-file check does not establish trust in the Windows executable" was closed by the elevated choice. The owner now accepts automatic use, with these limits: only the standard install path is used, and `C:\Program Files` is writable only by Windows administrators (a Windows administrator already controls the machine and WSL). The Windows-environment exposure (§14.1) is the same as running `tailscale` in a Windows terminal; the card states it.
+- **Review finding overridden by the owner:** the §14 revision-1 BLOCKER "a regular-file check does not establish trust in the Windows executable" was closed by the elevated choice. The owner now accepts automatic use, with the limits of §15.1. The Windows-environment exposure (§14.1) is the same as running `tailscale` in a Windows terminal; the card states it.
+- **Revision 1** got DESIGN REVIEW FAIL (1 blocker, 3 major; `/tmp/fd-goal/adversary-report-tn15.md`); §15.5 maps each finding.
 
 ### 15.1 Program choice
 
-- The program choice of §2 is: `tailscale_bin` (when set); else `tailscale` on `PATH`; else (macOS) the app's program; else, **only when the process runs in WSL (§14.1 detection: the kernel string and the interop file)**, `/mnt/c/Program Files/Tailscale/tailscale.exe` when it is a regular file (`symlink_metadata`; a symbolic link is not used). No other Windows path is ever tried (no `PATH` search on the Windows side, no other drive, no user directory).
-- The same choice applies to the deck, the station and the CLI (`fleetdeck tailnet status`, `fleetdeck station join --tailnet`).
+- The program choice of §2 is: `tailscale_bin` (when set); else `tailscale` on `PATH`; else (macOS) the app's program; else, **only when the process runs in WSL (§14.1 detection)**, the Windows program at the standard install path, after these checks (all in the shared core resolver, `TailscaleCli::locate`, so the deck, the station and the CLI use the same rule):
+  1. `/mnt/c` is a mount point of the WSL drive C: (`/proc/self/mountinfo` has an entry with mount point `/mnt/c` and file system type `9p` or `drvfs`).
+  2. Each of `/mnt/c/Program Files`, `/mnt/c/Program Files/Tailscale` is a real directory and `/mnt/c/Program Files/Tailscale/tailscale.exe` a regular file, checked component by component with `symlink_metadata` (no component is a symbolic link; WSL shows Windows junctions and symbolic links as symbolic links, so a reparse point fails the check).
+  3. Else no Windows program is used. No other Windows path is ever tried.
+- **Residual risk (accepted, stated):** between the check and the start, the file or a directory could be replaced by someone who can write to `C:\Program Files\Tailscale`; on Windows only administrators can, and a Windows administrator already controls the machine and WSL. Fleet Deck does not try to defend against a Windows administrator.
 - `GET /api/tailnet` reports the chosen program kind: `program: "path" | "configured" | "macos_app" | "windows"`. With `windows`, the Tailnet card shows "Using Tailscale for Windows. It runs as your Windows user, with your Windows environment, the same as in a Windows terminal." The "Use this program" button of §14.1 is removed; `tailscale_bin` still overrides the choice (Settings → Network).
 - The child environment stays the §2 minimal environment.
 
 ### 15.2 Default of "Use Tailscale automatically"
 
-- `tailnet_auto` defaults to `true` when the key is absent from `deck.toml` (a saved `false` stays `false`). The danger rule stays: turning it on from `false` needs the owner's elevation; the default needs none, because it is the owner's product decision.
-- With the default on, at the first start where Tailscale is available and not userspace, the deck adds its tailnet addresses (§14.4 rules: only automatic entries, manual entries untouched, the 3 s deadline, skip on failure). The board is then reachable from the owner's tailnet devices; every board request still needs the login, CSRF and TLS. The operations guide states this default and how to turn it off.
-- When Tailscale is not available, nothing changes and the card says why (§14.4).
+- `tailnet_auto` defaults to `true` when the key is absent from `deck.toml` (a saved `false` stays `false`). The danger rule: a change whose resulting value is `true` while the saved value is `false` needs the owner's elevation; the default needs none, because it is the owner's product decision.
+- **Provenance follows the resulting value:** the manual-save reconciliation (§14.4) clears both provenance lists only when the resulting effective `tailnet_auto` is `false`; a reset to the default (`null`, absent) keeps them, because the default is on. (§14 revision-3 code cleared them for `null` too; that changes with this default.)
+- With the default on, at the first start where Tailscale is available and not userspace, the deck adds its tailnet addresses (§14.4 rules). The board is then reachable from the owner's tailnet devices; every request still needs the login, CSRF and TLS. The operations guide states this default and how to turn it off.
 
-### 15.3 Tests
+### 15.3 The start boundary
 
-- Program choice: WSL + the standard file → `windows`; WSL + a symbolic link at that path → not used; not WSL → not used; `tailscale_bin` and `PATH` win; the station and the CLI use the same choice.
-- `tailnet_auto` absent → on; saved `false` → off; turning on from `false` needs elevation.
+- The whole Tailscale call of the automatic start (the program choice of §15.1 with its file checks, the process start, the output read and the child cleanup) runs on a dedicated OS thread. The start waits for its answer until the one absolute deadline (§14.4, 3 s) and then goes on without it. The thread is never joined by the start; an answer that arrives after the deadline is dropped (a generation number, checked before the save, makes a late answer inert). The child is killed when the thread sees the deadline passed.
+- **Certificate:** adding an automatic address can change the names of the board certificate (the deck makes a new self-signed one when the names change). When preparing the certificate with the automatic entries fails, the deck binds the manual entries only, with the existing certificate, and the card says "Use Tailscale automatically: not applied at start — the board certificate could not be updated (<reason>)". The new certificate (with the tailnet name and address) has a new fingerprint; the device-link dialog shows it.
+
+### 15.4 Tests
+
+- Program choice: WSL + the standard tree → `windows`; a symbolic link at any component → not used; `/mnt/c` not a drvfs/9p mount → not used; not WSL → not used; `tailscale_bin` and `PATH` win; the station and the CLI use the same choice.
+- `tailnet_auto` absent → on; saved `false` → off; on → `null` keeps the provenance; `false` → `null` (on) needs elevation and keeps nothing to clear; turning on from `false` needs elevation.
+- A stalled launch (a fake program on a path whose start blocks, or a test hook that blocks the thread past the deadline): the deck starts with the manual listeners at the deadline; a late answer saves nothing.
+- A certificate write failure with an automatic entry: the deck starts with the manual entries and the old certificate; the card reason; the migration from an absent key.
 - The card text for `windows`; no "Use this program" button.
+
+### 15.5 Review map (revision 1 → revision 2)
+
+| Finding | Change |
+| --- | --- |
+| BLOCKER pathname check does not enforce the protected install | §15.1 component-by-component checks, the drvfs/9p mount of C:, reparse points fail; the residual (a Windows administrator) stated |
+| MAJOR reset to `null` erases provenance while on | §15.2 provenance follows the resulting effective value |
+| MAJOR deadline not enforced during the launch | §15.3 a dedicated thread under the absolute deadline; late answers inert |
+| MAJOR TLS update can stop the start | §15.3 fall back to the manual entries and the existing certificate; card reason |
