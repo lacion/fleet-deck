@@ -107,6 +107,18 @@ describe('the sections of the page (DL-172)', () => {
     expect(deck.map((g) => g.title)).toEqual(['Network', 'Notifications']);
     expect(deck[0]?.fields.map((f) => f.key)).toEqual(['link_listen', 'tailnet_hostname']);
   });
+
+  test('the fleet control keys have their section and tailscale_bin is in Network (ADR-008)', () => {
+    const groups = groupFields([
+      meta('allow_fleet_control', 'Allow fleet control', 'bool'),
+      meta('fleet_control', 'Fleet control', 'bool'),
+      meta('tailscale_bin', 'Tailscale binary', 'text'),
+      meta('listen', 'Listen', 'text'),
+    ]);
+    expect(groups.map((g) => g.title)).toEqual(['Fleet control', 'Network']);
+    expect(groups[0]?.fields.map((f) => f.key)).toEqual(['fleet_control', 'allow_fleet_control']);
+    expect(groups[1]?.fields.map((f) => f.key)).toEqual(['listen', 'tailscale_bin']);
+  });
 });
 
 describe('field rendering for each kind', () => {

@@ -258,3 +258,22 @@
   font-family: var(--font-data);
   font-size: var(--fs-data);
 }
+/* ADR-008: the fleet-control switches under the Coordinator checkbox. */
+.fd-spawn .fd-spawn-fleet {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  margin: 4px 0 4px 1.5em;
+}
+.fd-spawn .fd-spawn-fleet > legend {
+  padding: 0;
+  margin-bottom: var(--sp-2);
+  font-family: var(--font-data);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--faint);
+}

@@ -9,6 +9,16 @@ import { FolderPicker } from '../ui/FolderPicker';
 import { useNow } from '../ui/useNow';
 import { BranchFields } from './BranchFields';
 import { CloneAccess } from './CloneAccess';
+import { FleetControlFields } from './FleetControlFields';
+import {
+  answerCapProblem,
+  type FleetControl,
+  fleetElevation,
+  fleetOn,
+  grantFields,
+  NO_FLEET,
+  showFleetFields,
+} from './fleetControl';
 import { ModelField } from './ModelField';
 import { type CloneDefaults, cloneDefaultsOf, DEFAULT_CLONE, resolveRepo } from './repoRef';
 import { SetupField } from './SetupField';
@@ -32,6 +42,7 @@ import {
   versionWarning,
   workspaceRequest,
 } from './spawn';
+import { useFleetElevation } from './useFleetElevation';
 
 type Props = {
   readonly stations: readonly StationView[];
@@ -115,6 +126,8 @@ export function SpawnForm({
   const [checking, setChecking] = useState(false);
   const [batch, setBatch] = useState(false);
   const [coordinator, setCoordinator] = useState(false);
+  const [fleet, setFleet] = useState<FleetControl>(NO_FLEET);
+  const { ask, node: elevationNode } = useFleetElevation(settingsEnv);
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<SpawnOutcome | null>(null);
   const [setupCmd, setSetupCmd] = useState('');
@@ -197,6 +210,8 @@ export function SpawnForm({
       .then((result) => setAccess({ stationId: id, url, result }))
       .finally(() => setChecking(false));
   };
+  const fleetShown = showFleetFields(settingsEnv !== undefined, coordinator, importing);
+  const fleetBad = coordinator && fleetOn(fleet) && answerCapProblem(fleet) !== null;
   const cloneReady =
     place !== 'clone' || importId.trim() !== '' || (cloneUrl !== '' && cloneName.trim() !== '');
   const ready =
@@ -208,7 +223,8 @@ export function SpawnForm({
     cwd?.startsWith('/') === true &&
     cloneReady &&
     !setupBad &&
-    !refProblem;
+    !refProblem &&
+    !fleetBad;
   // Say why the start button is off: a disabled button alone looks like a
   // button that does nothing (owner report after M3).
   const missing = [
@@ -231,6 +247,7 @@ export function SpawnForm({
       ? 'fix the base'
       : null,
     setupBad ? 'fix the setup command' : null,
+    fleetBad ? 'fix the answer limit' : null,
   ].filter((m): m is string => m !== null);
 
   return (
@@ -277,7 +294,7 @@ export function SpawnForm({
                 ? {
                     coordinator: {
                       grant_id: '',
-                      classes: ['read', 'mail', 'drive'],
+                      ...grantFields(fleet),
                       idle_ttl_ms: 0,
                       expires_at: 0,
                       control_skill: { version: '', text: '' },
@@ -298,6 +315,15 @@ export function SpawnForm({
                 ? newBatchId()
                 : null;
             void (async () => {
+              const gate = await fleetElevation({ coordinator, importing, fleet }, ask);
+              if (!gate.ok) {
+                setOutcome({
+                  ok: false,
+                  text: 'Start cancelled: fleet control needs your confirmation.',
+                  sessionId: null,
+                });
+                return;
+              }
               let last: SpawnOutcome | null = null;
               let started = 0;
               for (const [i, p] of prompts.entries()) {
@@ -309,6 +335,7 @@ export function SpawnForm({
                   importing ? native : undefined,
                   setup,
                   batchId === null ? undefined : batchRef(batchId, i + 1, prompts.length),
+                  gate.elevation,
                 );
                 if (!last.ok) break;
                 if (started === 0 && setup !== undefined) {
@@ -528,11 +555,15 @@ export function SpawnForm({
               <input
                 type="checkbox"
                 checked={coordinator}
-                onChange={(event) => setCoordinator(event.target.checked)}
+                onChange={(event) => {
+                  setCoordinator(event.target.checked);
+                  if (!event.target.checked) setFleet(NO_FLEET);
+                }}
               />
               Coordinator: this session may read the fleet, send mail and drive the sessions it
               starts
             </label>
+            {fleetShown ? <FleetControlFields fleet={fleet} onChange={setFleet} /> : null}
             <label>
               Import CLI session id (optional)
               <input
@@ -592,6 +623,7 @@ export function SpawnForm({
           </div>
         </form>
       )}
+      {elevationNode}
     </section>
   );
 }

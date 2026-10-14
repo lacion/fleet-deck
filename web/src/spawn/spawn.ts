@@ -46,6 +46,8 @@ export type SpawnActions = {
     setupCmd?: string,
     /** R1.4: the batch of this start (an `Nx` or multi-line batch); only a plain start carries it. */
     batch?: BatchRef,
+    /** ADR-008: the owner's elevation of a fleet-control start; an import never sends it. */
+    elevation?: string,
   ): Promise<SpawnOutcome>;
 };
 
@@ -398,7 +400,16 @@ export function spawnActions(
         return { ok: false, text: error instanceof Error ? error.message : 'The request failed.' };
       }
     },
-    start: async (stationId, spec, prompt, workspace = null, importId, setupCmd, batch) => {
+    start: async (
+      stationId,
+      spec,
+      prompt,
+      workspace = null,
+      importId,
+      setupCmd,
+      batch,
+      elevation,
+    ) => {
       const first = prompt.trim() === '' ? null : { text: prompt };
       const native = importId?.trim() ?? '';
       const command =
@@ -412,7 +423,12 @@ export function spawnActions(
               ...(batch === undefined ? {} : { batch }),
             }
           : { op: 'import', spec, native_session_id: native, prompt: first };
-      const body = { station: stationId, command_id: newId(), command };
+      const body = {
+        station: stationId,
+        command_id: newId(),
+        command,
+        ...(elevation === undefined || native !== '' ? {} : { elevation }),
+      };
       try {
         const reply = await post(`/api/commands/session.${command.op}`, body);
         const outcome = outcomeOf(reply);
