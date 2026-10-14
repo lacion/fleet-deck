@@ -19,7 +19,9 @@ use fleetdeck_proto::files::{
 use super::policy::{Policy, WorkspaceError};
 use crate::store::{RowSide, RowState, Store};
 use crate::workspace::files::{self, FileError, Found, walk_search_for};
-use crate::workspace::{CheckpointKey, Git, GitOptions, Phase, PrivatePaths, Worktree};
+use crate::workspace::{
+    CAPTURE_VERIFIED, CheckpointKey, Git, GitOptions, Phase, PrivatePaths, Worktree,
+};
 
 /// The longest a list or read may take.
 pub const READ_TIMEOUT: Duration = Duration::from_secs(5);
@@ -488,6 +490,14 @@ pub async fn diff_as(
         };
         if &start.commit != from || &end.commit != to {
             return Err(no_diff("a checkpoint ref changed"));
+        }
+        // A checkpoint of an older capture can hold the bytes of a private
+        // file (FDV2-003): only the owner views the turn.
+        if member && (start.capture < CAPTURE_VERIFIED || end.capture < CAPTURE_VERIFIED) {
+            return Err(FileError::new(
+                "forbidden",
+                "this turn was recorded before a security fix; only the owner can view it",
+            ));
         }
         // The private paths of the station are left out by git itself, for
         // every caller; the member deny filters the text afterwards.

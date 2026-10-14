@@ -70,10 +70,15 @@ async fn station(dir: &Path, root: PathBuf, cwd: &Path) -> Arc<StationNode> {
         .await
         .unwrap();
     let policy = Policy::new(vec![root], 2, OfflineApprovalPolicy::Wait, BTreeMap::new());
-    let manager = SessionManager::start(store, policy, Adapters::new(), ids)
-        .await
-        .unwrap();
-    manager.set_private_paths(Arc::new(PrivatePaths::default()));
+    let manager = SessionManager::start(
+        store,
+        policy,
+        Adapters::new(),
+        ids,
+        Arc::new(PrivatePaths::default()),
+    )
+    .await
+    .unwrap();
     StationNode::start_with_dirs(
         Arc::new(manager),
         Arc::new(Identity::generate().unwrap()),

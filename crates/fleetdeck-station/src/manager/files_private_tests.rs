@@ -360,32 +360,32 @@ async fn a_turn_diff_drops_the_private_paths_from_the_patch_and_the_summary() {
 }
 
 #[tokio::test]
-async fn a_manager_without_private_paths_refuses_every_file_call() {
+async fn a_manager_that_started_with_deny_all_refuses_every_file_call() {
     use crate::manager::{Adapters, SessionManager};
     let det = Det::new();
-    let (_t, home, private) = world();
+    let (_t, home, _private) = world();
     let store = store_with_session(&det, &home).await;
-    let manager = SessionManager::start(store.clone(), policy(&home), Adapters::new(), det.ids())
-        .await
-        .unwrap();
-    let unset = manager.private_paths();
-    assert!(unset.is_private(&home.join("notes.txt")));
+    let manager = SessionManager::start(
+        store.clone(),
+        policy(&home),
+        Adapters::new(),
+        det.ids(),
+        Arc::new(PrivatePaths::deny_all()),
+    )
+    .await
+    .unwrap();
+    let denied = manager.private_paths();
+    assert!(denied.is_private(&home.join("notes.txt")));
     let err = list_as(
         &store,
         &manager.policy(),
-        &unset,
+        &denied,
         list_query(session(), ""),
         false,
     )
     .await
     .unwrap_err();
     assert_eq!(err.code, code::OUTSIDE_ROOTS);
-    // The setter works once; the first call wins.
-    manager.set_private_paths(Arc::new(private));
-    manager.set_private_paths(Arc::new(PrivatePaths::deny_all()));
-    let set = manager.private_paths();
-    assert!(!set.is_private(&home.join("notes.txt")));
-    assert!(set.is_private(&home.join(".ssh/id_ed25519")));
     manager
         .shutdown(fleetdeck_proto::command::StopMode::Graceful)
         .await;

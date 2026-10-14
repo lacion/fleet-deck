@@ -105,6 +105,14 @@ impl SessionTarget {
         self
     }
 
+    /// The private paths of the station (FDV2-003): a turn checkpoint and a
+    /// revert never read or write a private file.
+    #[must_use]
+    pub fn with_private(mut self, private: Arc<crate::workspace::PrivatePaths>) -> Self {
+        self.private = private;
+        self
+    }
+
     /// The durable launch of `spec`, if this target hosts shims and the
     /// adapter has a durable driver.
     pub(super) fn durable_launch(
@@ -164,6 +172,7 @@ impl SessionTarget {
             &self.fences,
             session_id.clone(),
             cwd,
+            Arc::clone(&self.private),
         )
         .await
     }
@@ -431,6 +440,7 @@ impl SessionTarget {
                         store: &self.store,
                         git: &self.git,
                         limits: self.limits,
+                        private: &self.private,
                     };
                     let timeout = self
                         .shims

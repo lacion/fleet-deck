@@ -64,7 +64,11 @@ async fn open(dir: &Path) -> Worktree {
 }
 
 async fn published(wt: &Worktree, k: &CheckpointKey) -> Checkpoint {
-    match wt.capture(k, Limits::default()).await.unwrap() {
+    match wt
+        .capture(k, Limits::default(), &PrivatePaths::default())
+        .await
+        .unwrap()
+    {
         Captured::Published(c) => c,
         other => panic!("expected a published checkpoint, got {other:?}"),
     }
@@ -135,7 +139,10 @@ async fn a_second_capture_of_the_same_turn_returns_the_first_checkpoint_unchange
     let k = key("T1", Phase::Completion);
     let first = published(&wt, &k).await;
     write(&dir, "a.txt", "later writes of another turn\n");
-    let again = wt.capture(&k, Limits::default()).await.unwrap();
+    let again = wt
+        .capture(&k, Limits::default(), &PrivatePaths::default())
+        .await
+        .unwrap();
     assert_eq!(again, Captured::Existing(first.clone()));
     assert_eq!(wt.read(&k).await.unwrap(), Some(first));
 }
@@ -148,7 +155,8 @@ async fn bad_key_parts_are_rejected() {
         let mut k = key("T1", Phase::Start);
         k.turn = bad.into();
         assert!(matches!(
-            wt.capture(&k, Limits::default()).await,
+            wt.capture(&k, Limits::default(), &PrivatePaths::default())
+                .await,
             Err(CheckpointError::BadKey(_))
         ));
     }
@@ -178,7 +186,9 @@ async fn two_worktrees_of_one_repository_have_separate_ids_and_reject_each_other
         Err(CheckpointError::OtherWorktree(_))
     ));
     assert!(matches!(
-        linked.plan_restore(&c, Limits::default()).await,
+        linked
+            .plan_restore(&c, Limits::default(), &PrivatePaths::default())
+            .await,
         Err(CheckpointError::OtherWorktree(_))
     ));
     // The linked worktree's own checkpoint works and leaves its index alone.
@@ -201,7 +211,11 @@ async fn a_submodule_makes_the_checkpoint_unavailable() {
     git(&dir, &["update-index", "--add", "--cacheinfo", &entry]);
     let wt = open(&dir).await;
     let got = wt
-        .capture(&key("T1", Phase::Start), Limits::default())
+        .capture(
+            &key("T1", Phase::Start),
+            Limits::default(),
+            &PrivatePaths::default(),
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -224,7 +238,10 @@ async fn filters_skip_worktree_entries_and_size_limits_make_the_checkpoint_unava
         max_file_bytes: 3,
         ..Limits::default()
     };
-    let got = wt.capture(&k, small).await.unwrap();
+    let got = wt
+        .capture(&k, small, &PrivatePaths::default())
+        .await
+        .unwrap();
     assert!(matches!(
         got,
         Captured::Unavailable(Unavailable::FileTooLarge { .. })
@@ -233,7 +250,10 @@ async fn filters_skip_worktree_entries_and_size_limits_make_the_checkpoint_unava
         max_total_bytes: 5,
         ..Limits::default()
     };
-    let got = wt.capture(&k, total).await.unwrap();
+    let got = wt
+        .capture(&k, total, &PrivatePaths::default())
+        .await
+        .unwrap();
     assert!(matches!(
         got,
         Captured::Unavailable(Unavailable::TooLarge { .. })
@@ -243,7 +263,7 @@ async fn filters_skip_worktree_entries_and_size_limits_make_the_checkpoint_unava
         ..Limits::default()
     };
     assert_eq!(
-        wt.capture(&k, few).await.unwrap(),
+        wt.capture(&k, few, &PrivatePaths::default()).await.unwrap(),
         Captured::Unavailable(Unavailable::TooManyFiles(3))
     );
 
@@ -262,14 +282,20 @@ async fn filters_skip_worktree_entries_and_size_limits_make_the_checkpoint_unava
             ),
         ],
     );
-    let got = wt.capture(&k, Limits::default()).await.unwrap();
+    let got = wt
+        .capture(&k, Limits::default(), &PrivatePaths::default())
+        .await
+        .unwrap();
     assert!(
         matches!(got, Captured::Unavailable(Unavailable::Filter { ref path, .. }) if path == "big.bin")
     );
     git(&dir, &["rm", "-q", "--cached", "big.bin", ".gitattributes"]);
 
     git(&dir, &["update-index", "--skip-worktree", "a.txt"]);
-    let got = wt.capture(&k, Limits::default()).await.unwrap();
+    let got = wt
+        .capture(&k, Limits::default(), &PrivatePaths::default())
+        .await
+        .unwrap();
     assert_eq!(
         got,
         Captured::Unavailable(Unavailable::SkipWorktree("a.txt".into()))
@@ -292,7 +318,10 @@ async fn an_assume_unchanged_entry_makes_the_checkpoint_unavailable_instead_of_d
     assert_eq!(git(&dir, &["status", "--porcelain", "--", "a.txt"]), "");
     let before = index_bytes(&dir);
 
-    let got = wt.capture(&k, Limits::default()).await.unwrap();
+    let got = wt
+        .capture(&k, Limits::default(), &PrivatePaths::default())
+        .await
+        .unwrap();
     assert_eq!(
         got,
         Captured::Unavailable(Unavailable::AssumeUnchanged("a.txt".into()))
@@ -304,7 +333,9 @@ async fn an_assume_unchanged_entry_makes_the_checkpoint_unavailable_instead_of_d
     // A combined skip-worktree + assume-unchanged entry (`s`) also fails.
     git(&dir, &["update-index", "--skip-worktree", "a.txt"]);
     assert_eq!(
-        wt.capture(&k, Limits::default()).await.unwrap(),
+        wt.capture(&k, Limits::default(), &PrivatePaths::default())
+            .await
+            .unwrap(),
         Captured::Unavailable(Unavailable::SkipWorktree("a.txt".into()))
     );
 
@@ -400,13 +431,16 @@ async fn a_restore_brings_back_tracked_content_and_keeps_untracked_ignored_files
     let index = index_bytes(&dir);
 
     let plan = wt
-        .plan_restore(&start, Limits::default())
+        .plan_restore(&start, Limits::default(), &PrivatePaths::default())
         .await
         .unwrap()
         .unwrap();
     assert_eq!(plan.remove, ["added.rs"]);
     assert_eq!(index_bytes(&dir), index, "planning changes nothing");
-    let report = wt.apply_restore(&plan).await.unwrap();
+    let report = wt
+        .apply_restore(&plan, &PrivatePaths::default())
+        .await
+        .unwrap();
     assert!(report.matches);
     assert_eq!(read(&dir, "a.txt"), "staged\n");
     assert_eq!(read(&dir, "src/lib.rs"), "fn a() {}\n");
@@ -428,7 +462,10 @@ async fn a_restore_onto_an_untracked_file_is_rejected_before_any_change() {
     write(&dir, "a.txt", "edit\n");
     let refs = git(&dir, &["for-each-ref"]);
 
-    let got = wt.plan_restore(&start, Limits::default()).await.unwrap();
+    let got = wt
+        .plan_restore(&start, Limits::default(), &PrivatePaths::default())
+        .await
+        .unwrap();
     assert_eq!(got, Err(Rejected::UntrackedConflict("later.rs".into())));
     assert_eq!(
         read(&dir, "later.rs"),
@@ -451,7 +488,10 @@ async fn a_restore_below_a_symlink_is_rejected() {
     std::fs::create_dir(&outside).unwrap();
     std::fs::rename(dir.join("src"), tmp.path().join("moved")).unwrap();
     std::os::unix::fs::symlink(&outside, dir.join("src")).unwrap();
-    let got = wt.plan_restore(&start, Limits::default()).await.unwrap();
+    let got = wt
+        .plan_restore(&start, Limits::default(), &PrivatePaths::default())
+        .await
+        .unwrap();
     assert_eq!(got, Err(Rejected::SymlinkAncestor("src/lib.rs".into())));
     assert!(
         std::fs::read_dir(&outside).unwrap().next().is_none(),
@@ -471,11 +511,14 @@ async fn a_file_to_directory_change_is_restored() {
     write(&dir, "doc", "a file now\n");
     git(&dir, &["add", "doc"]);
     let plan = wt
-        .plan_restore(&start, Limits::default())
+        .plan_restore(&start, Limits::default(), &PrivatePaths::default())
         .await
         .unwrap()
         .unwrap();
-    let report = wt.apply_restore(&plan).await.unwrap();
+    let report = wt
+        .apply_restore(&plan, &PrivatePaths::default())
+        .await
+        .unwrap();
     assert!(report.matches);
     assert_eq!(read(&dir, "doc/x"), "x\n");
 }

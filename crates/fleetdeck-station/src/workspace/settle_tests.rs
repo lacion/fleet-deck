@@ -15,6 +15,7 @@ use crate::store::{
     AppTurnId, NewSession, NewTurnCheckpoint, OfflineApprovalPolicy, ReadResult, RowSide, RowState,
     Store, StoreConfig, Which,
 };
+use crate::workspace::PrivatePaths;
 
 const S1: &str = "s1";
 
@@ -89,7 +90,11 @@ fn row(w: &Worktree, turn: &str, input: &str) -> NewTurnCheckpoint {
 }
 
 async fn publish(w: &Worktree, k: &CheckpointKey) -> String {
-    match w.capture(k, Limits::default()).await.unwrap() {
+    match w
+        .capture(k, Limits::default(), &PrivatePaths::default())
+        .await
+        .unwrap()
+    {
         Captured::Published(c) | Captured::Existing(c) => c.commit,
         Captured::Unavailable(why) => panic!("unavailable: {why:?}"),
     }

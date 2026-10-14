@@ -20,7 +20,6 @@ use async_trait::async_trait;
 use fleetdeck_core::{SharedIds, new_id};
 use fleetdeck_proto::command::{SessionSpec, StopMode};
 use fleetdeck_proto::event::ProviderKind;
-use fleetdeck_proto::session::SessionBase;
 use fleetdeck_proto::{Event, ProviderInstanceId, SessionId};
 use fleetdeck_providers::host::HostError;
 use fleetdeck_providers::{
@@ -68,6 +67,9 @@ pub struct SessionTarget {
     sessions: Sessions,
     git: GitOptions,
     limits: Limits,
+    /// The private paths of the station, for the turn checkpoints and the
+    /// reverts (FDV2-003). The default refuses every path (fail closed).
+    private: Arc<crate::workspace::PrivatePaths>,
     fences: super::turns::Fences,
     shims: Option<shim_target::ShimSettings>,
     /// The coordinator bindings that a coordinator start adds to (DL-216).
@@ -111,6 +113,7 @@ impl SessionTarget {
             sessions: Arc::default(),
             git: GitOptions::isolated(),
             limits: Limits::default(),
+            private: Arc::new(crate::workspace::PrivatePaths::deny_all()),
             fences: super::turns::Fences::default(),
             shims: None,
             coordinator: crate::coordinator::Bindings::default(),
@@ -319,6 +322,7 @@ impl SessionTarget {
             &self.fences,
             session_id.clone(),
             Path::new(&spec.cwd),
+            Arc::clone(&self.private),
         )
         .await;
         let (sink, rx) = EventSink::channel(SINK_CAPACITY);
@@ -434,53 +438,6 @@ impl SessionTarget {
         Dispatch::Confirmed
     }
 
-    /// True when the session has a base already, or when the summary cannot
-    /// be read (no base is then recorded).
-    async fn has_base(&self, session_id: &SessionId) -> bool {
-        match self.store.summary(session_id.clone()).await {
-            Ok(summary) => summary.is_some_and(|s| s.base.is_some()),
-            Err(e) => {
-                tracing::warn!(error = %e, "the summary is unreadable; no base is recorded");
-                true
-            }
-        }
-    }
-
-    /// Appends `session.base` (R1.1). The station emits it, not the provider.
-    async fn record_base(&self, session_id: &SessionId, base: Option<SessionBase>) {
-        let Some(base) = base else { return };
-        let event = Event::SessionBase {
-            git_ref: base.git_ref,
-            oid: base.oid,
-            inferred: base.inferred,
-        };
-        if let Err(e) = self
-            .store
-            .append(session_id.clone(), vec![NewEvent::from(event)])
-            .await
-        {
-            tracing::warn!(error = %e, "the session base was not stored");
-        }
-    }
-
-    /// A start that never got a process ends the session (`exited`).
-    async fn start_failed(&self, session_id: &SessionId, message: &str) {
-        let events = vec![
-            NewEvent::from(Event::Error {
-                code: "start_failed".into(),
-                message: message.to_owned(),
-                retry_at: None,
-            }),
-            NewEvent::from(Event::SessionEnded {
-                reason: "start_failed".into(),
-                exit_code: None,
-            }),
-        ];
-        if let Err(e) = self.store.append(session_id.clone(), events).await {
-            tracing::error!(error = %e, "start failure not stored");
-        }
-    }
-
     async fn operate(&self, effect: &Effect) -> Dispatch {
         let Some(live) = self.live(&effect.session_id) else {
             return Dispatch::NotDispatched("no_process".into());
@@ -565,6 +522,7 @@ impl SessionTarget {
                     store: &self.store,
                     git: &self.git,
                     limits: self.limits,
+                    private: &self.private,
                 };
                 return super::revert_run::run(env, &turns, session.as_mut(), &process, revert_id)
                     .await;
@@ -775,6 +733,9 @@ mod shim_target;
 
 #[path = "setup_task.rs"]
 mod setup_task;
+
+#[path = "target_base.rs"]
+mod target_base;
 
 #[path = "target_spawn.rs"]
 mod target_spawn;

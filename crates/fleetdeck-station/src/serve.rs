@@ -179,22 +179,34 @@ impl RunningStation {
         let socket = local::socket_path(&station_dir);
         let listener = local::bind(&socket).await?;
         let policy = Policy::from_config(config).with_setup_envs(setup_envs_from_config(config)?);
-        let manager = Arc::new(match config.host {
-            HostChoice::Direct => SessionManager::start(store, policy, adapters, ids).await?,
-            HostChoice::Shim => {
-                let shims = shim_settings(config, &station_dir, &store)?;
-                SessionManager::start_with_shims(store, policy, adapters, ids, shims).await?
-            }
-        });
         // The station's own credential and config locations (DL-173): the
-        // set loads and scans its inode registry here, before any store
-        // writes a credential and before the link starts.
+        // set loads and scans its inode registry here, before the manager
+        // starts (its turn checkpoints and reverts refuse these files,
+        // FDV2-003), before any store writes a credential and before the
+        // link starts.
         let private = Arc::new(PrivatePaths::new(
             dirs,
             Env::from_process().home.as_deref(),
             deck.as_ref().map(|(c, d)| (c.as_path(), d.as_path())),
             &PrivateEnv::from_process(),
         ));
+        let manager = Arc::new(match config.host {
+            HostChoice::Direct => {
+                SessionManager::start(store, policy, adapters, ids, Arc::clone(&private)).await?
+            }
+            HostChoice::Shim => {
+                let shims = shim_settings(config, &station_dir, &store)?;
+                SessionManager::start_with_shims(
+                    store,
+                    policy,
+                    adapters,
+                    ids,
+                    shims,
+                    Arc::clone(&private),
+                )
+                .await?
+            }
+        });
         // The credential store of the connected accounts (DL-173): mode
         // 0700, durable before the first account is written.
         manager.integrations().accounts().attach(
@@ -207,9 +219,6 @@ impl RunningStation {
             assist_instances(config),
         ));
         manager.set_assist(Arc::clone(&assist));
-        // Before the link starts: the file and artifact methods refuse the
-        // station's own credential and config locations (DL-173).
-        manager.set_private_paths(Arc::clone(&private));
         manager.set_settings(Arc::new(crate::settings_svc::StationSettings::new(
             &dirs.station_config(),
             &station_dir.join("secrets"),

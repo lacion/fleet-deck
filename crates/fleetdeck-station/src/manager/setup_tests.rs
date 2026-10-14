@@ -53,7 +53,7 @@ async fn station_with(allow: bool, log: Option<&std::path::Path>) -> Station {
         }
     };
     let adapters = Adapters::from([("claude".into(), provider)]);
-    let manager = SessionManager::start(store, policy, adapters, ids)
+    let manager = SessionManager::start(store, policy, adapters, ids, Arc::default())
         .await
         .unwrap();
     Station {

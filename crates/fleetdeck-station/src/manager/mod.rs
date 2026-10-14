@@ -149,9 +149,9 @@ pub struct SessionManager {
     /// The model help of the station, once the station process set it
     /// (R10, DL-167).
     assist: std::sync::OnceLock<Arc<crate::assist::Assist>>,
-    /// The private paths of the station (DL-173), once the station process
-    /// set them. Built once; not part of the live policy snapshot.
-    private_paths: std::sync::OnceLock<Arc<crate::workspace::PrivatePaths>>,
+    /// The private paths of the station (DL-173), given at the start. Built
+    /// once; not part of the live policy snapshot.
+    private_paths: Arc<crate::workspace::PrivatePaths>,
     /// The settings holder of the station, once the station process set it
     /// (DL-172). Without it the settings methods answer `unsupported`.
     settings: std::sync::OnceLock<Arc<crate::settings_svc::StationSettings>>,
@@ -177,8 +177,18 @@ impl SessionManager {
         policy: Policy,
         adapters: Adapters,
         ids: SharedIds,
+        private: Arc<crate::workspace::PrivatePaths>,
     ) -> Result<Self> {
-        Self::start_inner(store, policy, Holders::default(), adapters, ids, None).await
+        Self::start_inner(
+            store,
+            policy,
+            Holders::default(),
+            adapters,
+            ids,
+            None,
+            private,
+        )
+        .await
     }
 
     /// [`Self::start`] with the runtime holders that the caller built (the
@@ -192,8 +202,9 @@ impl SessionManager {
         holders: Holders,
         adapters: Adapters,
         ids: SharedIds,
+        private: Arc<crate::workspace::PrivatePaths>,
     ) -> Result<Self> {
-        Self::start_inner(store, policy, holders, adapters, ids, None).await
+        Self::start_inner(store, policy, holders, adapters, ids, None, private).await
     }
 
     /// [`Self::start`] for a station that hosts sessions under shims
@@ -211,6 +222,7 @@ impl SessionManager {
         adapters: Adapters,
         ids: SharedIds,
         shims: target::ShimSettings,
+        private: Arc<crate::workspace::PrivatePaths>,
     ) -> Result<Self> {
         Self::start_inner(
             store,
@@ -219,6 +231,7 @@ impl SessionManager {
             adapters,
             ids,
             Some(shims),
+            private,
         )
         .await
     }
@@ -230,6 +243,7 @@ impl SessionManager {
         adapters: Adapters,
         ids: SharedIds,
         shims: Option<target::ShimSettings>,
+        private: Arc<crate::workspace::PrivatePaths>,
     ) -> Result<Self> {
         // Turn checkpoint rows that a crash left open are settled from
         // their refs before any command (DL-082). With shims they are
@@ -269,6 +283,7 @@ impl SessionManager {
             store: &store,
             git: &git,
             limits: crate::workspace::Limits::default(),
+            private: &private,
         };
         let recovered = revert_run::recover(env).await?;
         if recovered > 0 {
@@ -306,7 +321,8 @@ impl SessionManager {
             .with_restart(Arc::clone(&restart))
             .with_coordinator(coordinator.clone())
             .with_policy(Arc::clone(&hub))
-            .with_shells(shells.clone());
+            .with_shells(shells.clone())
+            .with_private(Arc::clone(&private));
         if let Some(settings) = shims {
             target = target.with_shims(settings);
         }
@@ -352,7 +368,7 @@ impl SessionManager {
             shells,
             artifacts: std::sync::OnceLock::new(),
             assist: std::sync::OnceLock::new(),
-            private_paths: std::sync::OnceLock::new(),
+            private_paths: private,
             settings: std::sync::OnceLock::new(),
         })
     }
@@ -377,20 +393,10 @@ impl SessionManager {
         let _ = self.artifacts.set(service);
     }
 
-    /// Gives the manager the private paths of the station (DL-173), before
-    /// the link starts. The first call wins.
-    pub fn set_private_paths(&self, private: Arc<crate::workspace::PrivatePaths>) {
-        let _ = self.private_paths.set(private);
-    }
-
-    /// The private paths of the station. Without a set the answer refuses
-    /// every path (fail closed).
+    /// The private paths of the station, given at the start.
     #[must_use]
     pub fn private_paths(&self) -> Arc<crate::workspace::PrivatePaths> {
-        self.private_paths.get().map_or_else(
-            || Arc::new(crate::workspace::PrivatePaths::deny_all()),
-            Arc::clone,
-        )
+        Arc::clone(&self.private_paths)
     }
 
     /// The artifact service, if the station has a directory for it.

@@ -195,6 +195,7 @@ async fn a_queued_start_is_refused_at_dispatch_when_the_roots_narrowed() {
     let hub = Arc::new(PolicyHub::new(policy.clone()));
     let target = SessionTarget::new(store.clone(), Adapters::new(), det.ids())
         .with_policy(Arc::clone(&hub))
+        .with_private(Arc::new(crate::workspace::PrivatePaths::default()))
         .shared();
     let cwd = root
         .path()

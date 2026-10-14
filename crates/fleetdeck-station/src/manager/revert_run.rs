@@ -33,7 +33,9 @@ use super::turns::SessionTurns;
 use crate::store::{
     Dispatch, ProcessIncarnation, RevertRow, RevertStep, RowState, Store, StoreError,
 };
-use crate::workspace::{Checkpoint, CheckpointKey, GitOptions, Limits, Phase, Worktree};
+use crate::workspace::{
+    Checkpoint, CheckpointKey, GitOptions, Limits, Phase, PrivatePaths, Rejected, Worktree,
+};
 
 /// The station services that a revert uses.
 #[derive(Clone, Copy)]
@@ -41,6 +43,9 @@ pub struct RevertEnv<'a> {
     pub store: &'a Store,
     pub git: &'a GitOptions,
     pub limits: Limits,
+    /// The private paths of the station: a restore never reads or writes
+    /// a private file (FDV2-003).
+    pub private: &'a PrivatePaths,
 }
 
 /// Why a revert ended.
@@ -56,6 +61,9 @@ pub mod reason {
     pub const ROLLBACK_UNCERTAIN: &str = "rollback_uncertain";
     pub const RESTORE_FAILED: &str = "restore_failed";
     pub const RESTORE_INCOMPLETE: &str = "restore_incomplete";
+    /// "This checkpoint was recorded before a security fix and cannot be
+    /// restored."
+    pub const CHECKPOINT_UNVERIFIED: &str = "checkpoint_unverified";
     pub const STATION_RESTART: &str = "station_restart";
 }
 
@@ -253,8 +261,12 @@ async fn restore_files(env: RevertEnv<'_>, row: &RevertRow) -> Result<(), &'stat
     if current.commit != row.revert.current_commit {
         return Err(reason::CHECKPOINT_CHANGED);
     }
-    let plan = match worktree.plan_restore(&target, env.limits).await {
+    let plan = match worktree
+        .plan_restore(&target, env.limits, env.private)
+        .await
+    {
         Ok(Ok(plan)) => plan,
+        Ok(Err(Rejected::OldCapture)) => return Err(reason::CHECKPOINT_UNVERIFIED),
         Ok(Err(_)) | Err(_) => return Err(reason::RESTORE_FAILED),
     };
     if plan.current_tree == target.tree {
@@ -264,7 +276,7 @@ async fn restore_files(env: RevertEnv<'_>, row: &RevertRow) -> Result<(), &'stat
     if plan.current_tree != current.tree {
         return Err(reason::WORKSPACE_CHANGED);
     }
-    match worktree.apply_restore(&plan).await {
+    match worktree.apply_restore(&plan, env.private).await {
         Ok(report) if report.matches => Ok(()),
         Ok(_) => Err(reason::RESTORE_INCOMPLETE),
         Err(_) => Err(reason::RESTORE_FAILED),
@@ -329,7 +341,10 @@ async fn check(
         Ok(cp) if cp.commit == row.revert.current_commit => cp,
         Ok(_) | Err(_) => return Ok(Err(reason::CHECKPOINT_CHANGED)),
     };
-    match worktree.plan_restore(&target, env.limits).await {
+    match worktree
+        .plan_restore(&target, env.limits, env.private)
+        .await
+    {
         Ok(Ok(plan)) if plan.current_tree == current.tree => Ok(Ok(())),
         Ok(Ok(_)) => Ok(Err(reason::WORKSPACE_CHANGED)),
         Ok(Err(rejected)) => Ok(Err(rejected.code())),

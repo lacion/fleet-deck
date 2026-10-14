@@ -88,9 +88,15 @@ impl Station {
             ("claude".into(), adapter(program)),
             ("codex".into(), codex_adapter()),
         ]);
-        let manager = SessionManager::start(store, policy, adapters, det.ids())
-            .await
-            .unwrap();
+        let manager = SessionManager::start(
+            store,
+            policy,
+            adapters,
+            det.ids(),
+            Arc::new(crate::workspace::PrivatePaths::default()),
+        )
+        .await
+        .unwrap();
         Self {
             det,
             manager: Arc::new(manager),

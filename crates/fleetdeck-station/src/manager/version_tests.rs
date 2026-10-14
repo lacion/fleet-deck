@@ -93,6 +93,7 @@ async fn manager(version: &'static str) -> (SessionManager, Det, tempfile::TempD
         policy,
         Adapters::from([("claude".into(), adapter)]),
         det.ids(),
+        Arc::new(crate::workspace::PrivatePaths::default()),
     )
     .await
     .unwrap();

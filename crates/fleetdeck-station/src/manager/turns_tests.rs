@@ -19,7 +19,7 @@ use super::SessionTurns;
 use crate::store::{
     NewSession, OfflineApprovalPolicy, ReadResult, RowState, Store, StoreConfig, TurnCheckpointRow,
 };
-use crate::workspace::{CheckpointKey, GitOptions, Limits, Phase, Worktree};
+use crate::workspace::{CheckpointKey, GitOptions, Limits, Phase, PrivatePaths, Worktree};
 
 pub(crate) const S1: &str = "s1";
 
@@ -76,6 +76,7 @@ pub(crate) async fn setup(det: &Det, cwd: &Path) -> (Store, Arc<SessionTurns>) {
         &super::Fences::default(),
         S1.into(),
         cwd,
+        Arc::new(PrivatePaths::default()),
     )
     .await;
     turns.set_process("proc-1".to_owned().into());
@@ -430,6 +431,7 @@ async fn sessions_in_one_worktree_share_one_fence() {
                 &fences,
                 id.into(),
                 &cwd,
+                Arc::new(PrivatePaths::default()),
             )
             .await
         }

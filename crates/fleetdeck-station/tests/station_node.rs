@@ -109,9 +109,15 @@ async fn station() -> Station {
     .await
     .unwrap();
     let policy = Policy::new(Vec::new(), 4, OfflineApprovalPolicy::Wait, BTreeMap::new());
-    let manager = SessionManager::start(store.clone(), policy, Adapters::new(), ids)
-        .await
-        .unwrap();
+    let manager = SessionManager::start(
+        store.clone(),
+        policy,
+        Adapters::new(),
+        ids,
+        Arc::new(fleetdeck_station::workspace::PrivatePaths::default()),
+    )
+    .await
+    .unwrap();
     Station {
         _dir: dir,
         store,

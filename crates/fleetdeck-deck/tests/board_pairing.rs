@@ -65,9 +65,15 @@ async fn station(name: &str, max_sessions: u32) -> Station {
         // without a version.
         BTreeMap::from([("codex".into(), fleetdeck_proto::event::ProviderKind::Codex)]),
     );
-    let manager = SessionManager::start(store, policy, Adapters::new(), ids)
-        .await
-        .unwrap();
+    let manager = SessionManager::start(
+        store,
+        policy,
+        Adapters::new(),
+        ids,
+        Arc::new(fleetdeck_station::workspace::PrivatePaths::default()),
+    )
+    .await
+    .unwrap();
     let node = StationNode::start(
         Arc::new(manager),
         Arc::new(Identity::generate().unwrap()),

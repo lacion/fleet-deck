@@ -153,6 +153,7 @@ impl Rig {
             self.adapters(),
             self.det.ids(),
             shims,
+            Arc::new(fleetdeck_station::workspace::PrivatePaths::default()),
         )
         .await
         .unwrap();

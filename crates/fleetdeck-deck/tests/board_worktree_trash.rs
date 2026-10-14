@@ -113,9 +113,15 @@ async fn station(dir: &Path, root: PathBuf, worktree: &Path) -> Arc<StationNode>
     ];
     store.append("wt-session".into(), events).await.unwrap();
     let policy = Policy::new(vec![root], 2, OfflineApprovalPolicy::Wait, BTreeMap::new());
-    let manager = SessionManager::start(store, policy, Adapters::new(), ids)
-        .await
-        .unwrap();
+    let manager = SessionManager::start(
+        store,
+        policy,
+        Adapters::new(),
+        ids,
+        Arc::new(fleetdeck_station::workspace::PrivatePaths::default()),
+    )
+    .await
+    .unwrap();
     StationNode::start(
         Arc::new(manager),
         Arc::new(Identity::generate().unwrap()),
