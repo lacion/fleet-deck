@@ -622,6 +622,11 @@ pub enum Event {
     /// shows the session as hibernated and resumes it on the next input.
     #[serde(rename = "session.hibernated")]
     SessionHibernated { after_min: u32 },
+    /// The owner marked the previous run of the session (shim `shim_id`) as
+    /// ended after the station checked its processes (DL-182). Older peers
+    /// decode this kind as unknown.
+    #[serde(rename = "session.execution_reconciled")]
+    ExecutionReconciled { shim_id: String },
     /// The station's model help named the session (DL-167, R10.1). It
     /// follows the internal `session.renamed` that set `title`; the fold
     /// marks the title as generated while the title is still the same.

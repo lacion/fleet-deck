@@ -69,6 +69,7 @@ const METHODS: Record<SessionCommand['op'], string> = {
   worktree_restore: 'session.worktree_restore',
   worktree_purge: 'session.worktree_purge',
   worktree_release: 'session.worktree_release',
+  reconcile_execution: 'session.reconcile_execution',
 };
 
 /** A command id: `b` and 24 random base-36 characters (`[0-9A-Za-z_-]{1,64}`). */

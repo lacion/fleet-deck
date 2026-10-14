@@ -13,7 +13,9 @@
 //! - its provider instance is still configured, its provider reported the
 //!   `resume` capability, and it reported a native resume identity;
 //! - every earlier execution is proven ended: no open shim row, and no shim
-//!   row lost without termination evidence (ADR-005 §4.6, §6);
+//!   row lost without termination evidence (ADR-005 §4.6, §6), and no other
+//!   session or launch holds the same native conversation (DL-182 §3);
+//! - on the shim host the platform can resume there (Linux, DL-182);
 //! - no revert of the session waits for reconciliation and no revert holds
 //!   the worktree;
 //! - the workspace is still inside the allowed roots and the station has a
@@ -81,6 +83,9 @@ pub(crate) fn resumable(
             "only an ended session can be resumed",
         ));
     }
+    if let Some(why) = policy.shim_host_refusal() {
+        return Err(reject(RejectCode::Unsupported, why));
+    }
     if let Some(cwd) = &s.cwd {
         super::trash::custody(d, cwd)?;
     }
@@ -90,12 +95,12 @@ pub(crate) fn resumable(
             "the session never started a provider",
         )
     })?;
-    if policy.instance(&instance).is_none() {
+    let Some(kind) = policy.instance(&instance) else {
         return Err(reject(
             RejectCode::UnknownProvider,
             format!("`{instance}` is not a provider instance of this station"),
         ));
-    }
+    };
     let caps = s.capabilities.as_ref().ok_or_else(|| {
         reject(
             RejectCode::InvalidState,
@@ -113,6 +118,14 @@ pub(crate) fn resumable(
         return Err(reject(
             RejectCode::InvalidState,
             format!("not_resumable: the previous execution may still run ({why})"),
+        ));
+    }
+    // One native conversation, one execution: across every session and
+    // provider instance of the station (DL-182 §3).
+    if let Some(why) = d.unended_native(kind, &native, Some(session_id))? {
+        return Err(reject(
+            RejectCode::InvalidState,
+            format!("not_resumable: another execution of this conversation may still run ({why})"),
         ));
     }
     if s.revert.as_ref().is_some_and(|r| r.blocks_input()) {
@@ -149,6 +162,35 @@ pub(crate) fn resumable(
         instance,
         cwd,
     })
+}
+
+/// The shim-host rules of an import (DL-182): the platform can resume
+/// there, and no other session or launch holds the native conversation.
+///
+/// # Errors
+/// A stored rejection, or a database error.
+pub(crate) fn import_exclusion(
+    d: &Decision<'_>,
+    policy: &Policy,
+    kind: fleetdeck_proto::event::ProviderKind,
+    native: &str,
+) -> Result<(), DecideError> {
+    if let Some(why) = policy.shim_host_refusal() {
+        return Err(reject(RejectCode::Unsupported, why));
+    }
+    if let Some(other) = d.native_session_in_use(native)? {
+        return Err(reject(
+            RejectCode::InvalidState,
+            format!("session `{other}` already drives this native session"),
+        ));
+    }
+    if let Some(why) = d.unended_native(kind, native, None)? {
+        return Err(reject(
+            RejectCode::InvalidState,
+            format!("not_resumable: another execution of this conversation may still run ({why})"),
+        ));
+    }
+    Ok(())
 }
 
 /// The terminal exclusion of a resume and of a handover (DL-140): the

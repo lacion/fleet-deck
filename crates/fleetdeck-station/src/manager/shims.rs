@@ -18,16 +18,23 @@
 use std::path::Path;
 use std::time::Duration;
 
-use fleetdeck_proto::SessionId;
+use fleetdeck_proto::command::{CommandOrigin, CommandResult};
 use fleetdeck_proto::event::ProviderKind;
+use fleetdeck_proto::execution::{ExecutionCheck, ProcessInfo};
+use fleetdeck_proto::{Event, RejectCode, SessionId};
 use fleetdeck_providers::checkpoint;
 use fleetdeck_providers::host::shim::attach::AttachFailure;
 use fleetdeck_providers::host::shim::host::{AckMode, Attached, ShimHost};
+use fleetdeck_providers::host::shim::identity::BootIdReader;
+use fleetdeck_providers::host::shim::inspect::{self, Inspection, Proc};
 use fleetdeck_providers::host::shim::journal::{Fence, LaunchEvidence, ShimFiles};
 use fleetdeck_providers::host::shim::wire::{ExitState, Refusal};
 use fleetdeck_providers::host::{HostError, ProcessSpec};
 
-use crate::store::{NewShim, Result, ShimRow, ShimState, Store, StoreError};
+use crate::store::resumes::{describe, effective_reason, proves_end};
+use crate::store::{
+    DecideError, Decision, NewShim, Result, RunningFacts, ShimRow, ShimState, Store, StoreError,
+};
 
 /// How long recovery waits for the socket of a live `starting` shim.
 pub const STARTING_WAIT: Duration = Duration::from_secs(30);
@@ -40,13 +47,27 @@ pub const IN_FLIGHT_WAIT: Duration =
 /// DL-120): [`reason::EXITED`] only when no member of the provider's
 /// process group or session outlived the exit. A member that was still
 /// alive, or a missing report, is not a proven end.
+///
+/// DL-182 §1a: a zero count proves the end only when it came from the
+/// complete inspection (`inspection >= 1`). An unavailable count (`None`)
+/// and a zero count of an older shim are [`reason::EXIT_UNVERIFIED`]: not a
+/// proof.
 #[must_use]
 pub fn exit_reason(exit: Option<&ExitState>) -> &'static str {
     match exit {
-        Some(exit) if exit.descendants_remaining == 0 => reason::EXITED,
-        Some(_) => reason::EXITED_DESCENDANTS_REMAINING,
+        Some(exit) => match exit.descendants_remaining {
+            Some(0) if exit.inspection >= 1 => reason::EXITED,
+            Some(n) if n > 0 => reason::EXITED_DESCENDANTS_REMAINING,
+            _ => reason::EXIT_UNVERIFIED,
+        },
         None => reason::EXIT_NOT_REPORTED,
     }
+}
+
+/// The inspection version of an exit report, 0 without one.
+#[must_use]
+pub fn inspection_of(exit: Option<&ExitState>) -> u32 {
+    exit.map_or(0, |e| e.inspection)
 }
 
 pub mod reason {
@@ -69,6 +90,10 @@ pub mod reason {
     /// The session ended, and no exit report of the shim arrived (the end
     /// is not proven, DL-120).
     pub const EXIT_NOT_REPORTED: &str = "exit_not_reported";
+    /// The shim reported the exit, but not by the complete inspection of
+    /// DL-182 (an unavailable count, or a shim without it): the end is not
+    /// proven.
+    pub const EXIT_UNVERIFIED: &str = crate::store::resumes::EXIT_UNVERIFIED;
 }
 
 /// What recovery did with one row.
@@ -129,6 +154,24 @@ pub async fn launch_shim(
     spec: &ProcessSpec,
     mode: AckMode,
 ) -> std::result::Result<Attached, LaunchError> {
+    launch_shim_for(store, host, session_id, spec, mode, None).await
+}
+
+/// [`launch_shim`] for a resume or an import: `native_target` is the
+/// native id that the new provider continues. The row holds it before the
+/// spawn, so a crash after the spawn still names the conversation (DL-182
+/// §3). The row also holds the boot id of the launch journal.
+///
+/// # Errors
+/// [`LaunchError`].
+pub async fn launch_shim_for(
+    store: &Store,
+    host: &ShimHost,
+    session_id: &SessionId,
+    spec: &ProcessSpec,
+    mode: AckMode,
+    native_target: Option<&str>,
+) -> std::result::Result<Attached, LaunchError> {
     let prepared = host.prepare(spec).map_err(LaunchError::Prepare)?;
     let shim_id = prepared.record.shim_id.clone();
     store
@@ -136,6 +179,8 @@ pub async fn launch_shim(
             shim_id: shim_id.clone(),
             session_id: session_id.clone(),
             socket_path: prepared.record.socket_path.clone(),
+            launch_boot_id: Some(prepared.launch_boot_id.clone()),
+            native_target: native_target.map(str::to_owned),
         })
         .await?;
     let settle = async |error: String| -> std::result::Result<Attached, LaunchError> {
@@ -160,14 +205,26 @@ pub async fn launch_shim(
     let Some(identity) = record.provider_identity.clone() else {
         return settle("no provider identity".to_owned()).await;
     };
-    if !store.shim_running(shim_id.clone(), identity).await? {
+    let facts = RunningFacts {
+        protocol: None,
+        shim_pid: record.shim_pid,
+    };
+    if !store
+        .shim_running_with(shim_id.clone(), identity, facts)
+        .await?
+    {
         return settle("the identity did not commit".to_owned()).await;
     }
     let Some(generation) = store.shim_next_generation(shim_id.clone()).await? else {
         return settle("the row ended".to_owned()).await;
     };
     match host.attach(&record, generation, mode, false).await {
-        Ok(attached) => Ok(attached),
+        Ok(attached) => {
+            store
+                .shim_picked_protocol(shim_id.clone(), attached.protocol)
+                .await?;
+            Ok(attached)
+        }
         Err(e) => settle(e.to_string()).await,
     }
 }
@@ -220,8 +277,12 @@ pub async fn recover_shim(
         Recovered::NeverStarted => (ShimState::NeverStarted, reason::SHIM_NEVER_STARTED),
         Recovered::Lost(why) => (ShimState::Lost, *why),
     };
+    let inspection = match &outcome {
+        Recovered::Exited(exit) => inspection_of(Some(exit)),
+        _ => 0,
+    };
     store
-        .shim_end(row.shim_id.clone(), state, why.to_owned())
+        .shim_end(row.shim_id.clone(), state, why.to_owned(), inspection)
         .await?;
     if matches!(outcome, Recovered::Reattached(_)) {
         return Ok(Recovered::Lost(why));
@@ -315,7 +376,14 @@ async fn attach(
                     let Some(identity) = attached.record.provider_identity.clone() else {
                         return Ok(Recovered::Lost(reason::IDENTITY_MISMATCH));
                     };
-                    if !store.shim_running(row.shim_id.clone(), identity).await? {
+                    let facts = RunningFacts {
+                        protocol: Some(attached.protocol),
+                        shim_pid: None,
+                    };
+                    if !store
+                        .shim_running_with(row.shim_id.clone(), identity, facts)
+                        .await?
+                    {
                         return Ok(Recovered::Lost(reason::IDENTITY_MISMATCH));
                     }
                 }
@@ -347,4 +415,300 @@ fn classify(failure: &AttachFailure, files: &ShimFiles, socket: &Path) -> Recove
         | AttachFailure::NoAttachedFrame
         | AttachFailure::Send(_) => Recovered::Lost(reason::EXECUTION_UNKNOWN),
     }
+}
+
+// ---------------------------------------------------------------------
+// The termination evidence after a shim loss (DL-182, design
+// `shim-resume.md` §4, ADR-005 §4.6): the verified reboot, the owner's
+// execution check and the owner's reconciliation.
+//
+// - `prove_reboots` runs at every station start, after the shim rows were
+//   recovered and before the first command. A row whose end is not proven
+//   gets the proof `ended_by_reboot` next to its state when the current
+//   boot id differs from the one stored with its execution. A missing,
+//   empty or unreadable value gives no proof (fail closed). A row without a
+//   provider identity is fenced first (ADR-005 §3.2 step 1) and then
+//   compared by its launch boot id.
+// - `revalidate` runs at the dispatch of a resume or an import. A reboot
+//   proof holds only while the boot id still differs and no live process
+//   has the stored identity: a restored VM memory brings the old boot id
+//   back.
+// - `check_row` is the owner's check (`session.execution_check`): the
+//   processes of the previous execution on the same boot. It never kills
+//   anything. `decide_reconcile` marks the run as ended; it refuses while
+//   the check finds a live process or is incomplete.
+// ---------------------------------------------------------------------
+
+/// The text of an incomplete check on a platform without a reader.
+pub const NO_INSPECTION: &str = "process inspection is not available on this platform";
+
+/// The boot id of the execution that `row` ran in: its provider's, or the
+/// launch journal's for a row without an identity. `None` for neither or an
+/// empty value.
+fn stored_boot(row: &ShimRow) -> Option<&str> {
+    row.provider_identity
+        .as_ref()
+        .map(|i| i.boot_id.as_str())
+        .or(row.launch_boot_id.as_deref())
+        .filter(|id| !id.is_empty())
+}
+
+/// The current boot id; `None` when it cannot be read or is empty.
+fn current_boot(boot: &BootIdReader) -> Option<String> {
+    match boot() {
+        Ok(id) if !id.is_empty() => Some(id),
+        Ok(_) => None,
+        Err(e) => {
+            tracing::warn!(error = %e, "the boot id cannot be read");
+            None
+        }
+    }
+}
+
+/// Records `ended_by_reboot` next to every unresolved row whose boot id
+/// differs from the current one. Returns the number of rows proven.
+///
+/// # Errors
+/// A store error.
+pub async fn prove_reboots(store: &Store, host: &ShimHost) -> Result<usize> {
+    let Some(current) = current_boot(&host.config().boot_id_reader) else {
+        return Ok(0);
+    };
+    let incarnation = store.incarnation().as_str().to_owned();
+    let mut proven = 0;
+    for row in store.shims_unresolved(None).await? {
+        if row.incarnation != incarnation {
+            continue;
+        }
+        let Some(stored) = stored_boot(&row) else {
+            continue;
+        };
+        if stored == current {
+            continue;
+        }
+        if row.provider_identity.is_none() {
+            // The launch is fenced before the reboot rule applies: a late
+            // shim start of the old boot exits without a provider.
+            let files = ShimFiles::new(&host.config().shims_dir(), &row.shim_id);
+            match files.fence(&row.incarnation) {
+                Ok(Fence::Fenced(_)) => {}
+                Ok(Fence::Held) => continue,
+                Err(e) => {
+                    tracing::warn!(shim = %row.shim_id, error = %e, "cannot fence the launch");
+                    continue;
+                }
+            }
+        }
+        if store
+            .shim_prove_reboot(row.shim_id.clone(), current.clone())
+            .await?
+        {
+            proven += 1;
+        }
+    }
+    Ok(proven)
+}
+
+/// Checks the rows whose end rests on a reboot proof at the dispatch of a
+/// resume or an import (design §4.1 "Revalidation at launch"). `Some(why)`
+/// when one proof does not hold any more.
+#[must_use]
+pub fn revalidate(boot: &BootIdReader, rows: &[ShimRow]) -> Option<String> {
+    if rows.is_empty() {
+        return None;
+    }
+    let Some(current) = current_boot(boot) else {
+        return Some("the boot id cannot be read".to_owned());
+    };
+    for row in rows {
+        let Some(stored) = stored_boot(row) else {
+            return Some(format!("{}: no boot evidence", describe(row)));
+        };
+        if stored == current {
+            return Some(format!(
+                "{}: the boot id is the one of the previous execution",
+                describe(row)
+            ));
+        }
+        if let Some(identity) = &row.provider_identity {
+            match inspect::identity_alive(identity) {
+                Some(false) => {}
+                Some(true) => {
+                    return Some(format!(
+                        "{}: a process with the stored identity is alive",
+                        describe(row)
+                    ));
+                }
+                None => {
+                    return Some(format!(
+                        "{}: the process check is not available",
+                        describe(row)
+                    ));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn infos(list: &[Proc]) -> Vec<ProcessInfo> {
+    list.iter()
+        .map(|p| ProcessInfo {
+            pid: p.pid,
+            command: p.command.clone(),
+        })
+        .collect()
+}
+
+/// The owner's check of one shim row (see the module documentation).
+#[must_use]
+pub fn check_row(boot: &BootIdReader, row: &ShimRow) -> ExecutionCheck {
+    let mut out = ExecutionCheck {
+        shim_id: Some(row.shim_id.clone()),
+        reason: format!("{} ({})", row.state.as_str(), effective_reason(row)),
+        ..ExecutionCheck::nothing_unresolved()
+    };
+    out.complete = false;
+    if !cfg!(target_os = "linux") {
+        out.error = Some(NO_INSPECTION.to_owned());
+        return out;
+    }
+    let Some(stored) = stored_boot(row) else {
+        out.error = Some("no boot id was recorded for this run".to_owned());
+        return out;
+    };
+    let Some(current) = current_boot(boot) else {
+        out.error = Some("the boot id cannot be read".to_owned());
+        return out;
+    };
+    if stored != current {
+        // The execution ended with the old boot: the reboot proof covers it.
+        out.same_boot = false;
+        out.complete = true;
+        return out;
+    }
+    out.same_boot = true;
+    let Some(identity) = &row.provider_identity else {
+        out.error = Some("no provider identity was recorded for this run".to_owned());
+        return out;
+    };
+    let Inspection {
+        identity_alive,
+        group,
+        session,
+        escaped,
+        complete,
+        error,
+    } = inspect::inspect(identity, row.shim_pid);
+    out.identity_alive = identity_alive;
+    out.group_members = infos(&group);
+    out.session_members = infos(&session);
+    out.escaped = infos(&escaped);
+    out.complete = complete;
+    out.error = error;
+    out
+}
+
+/// The check that answers `session.execution_check`, for the unresolved
+/// rows of a session (see `Store::shims_unresolved`).
+#[must_use]
+pub fn check_unresolved(boot: &BootIdReader, rows: &[ShimRow]) -> ExecutionCheck {
+    // `rows` come oldest first: the newest unresolved row is checked.
+    match rows.last() {
+        Some(row) => check_row(boot, row),
+        None => ExecutionCheck::nothing_unresolved(),
+    }
+}
+
+/// The processes of `check` in words, for a refusal.
+fn running(check: &ExecutionCheck) -> String {
+    let mut parts = Vec::new();
+    if check.identity_alive {
+        parts.push("the provider process".to_owned());
+    }
+    for p in check.group_members.iter().chain(&check.session_members) {
+        parts.push(format!("{} ({})", p.pid, p.command));
+    }
+    parts.join(", ")
+}
+
+/// Decides `session.reconcile_execution` (design §4.2). `check` is the
+/// check that the manager ran for `shim_id` before the decision; the
+/// decision rechecks only the row state. Refusals: `forbidden` (another
+/// origin than the board or the local socket), `unknown_session`,
+/// `invalid_command` (an unknown shim), `invalid_state` (running, already
+/// proven, a live process or an incomplete check).
+///
+/// # Errors
+/// A stored rejection, or a database error.
+pub fn decide_reconcile(
+    d: &mut Decision<'_>,
+    origin: CommandOrigin,
+    session_id: &SessionId,
+    shim_id: &str,
+    check: Option<&ExecutionCheck>,
+) -> std::result::Result<CommandResult, DecideError> {
+    if !matches!(origin, CommandOrigin::Board | CommandOrigin::Local) {
+        return Err(super::decide::reject(
+            RejectCode::Forbidden,
+            "only the owner can mark a run as ended",
+        ));
+    }
+    if d.summary(session_id)?.is_none() {
+        return Err(super::decide::reject(
+            RejectCode::UnknownSession,
+            "no such session",
+        ));
+    }
+    let row = d
+        .shim_row(shim_id)?
+        .filter(|row| &row.session_id == session_id)
+        .ok_or_else(|| super::decide::reject(RejectCode::InvalidCommand, "unknown shim"))?;
+    if matches!(row.state, ShimState::Starting | ShimState::Running) {
+        return Err(super::decide::reject(
+            RejectCode::InvalidState,
+            "the shim is running",
+        ));
+    }
+    if proves_end(&row) {
+        return Err(super::decide::reject(
+            RejectCode::InvalidState,
+            "the previous run is already proven ended",
+        ));
+    }
+    let Some(check) = check.filter(|c| c.shim_id.as_deref() == Some(shim_id)) else {
+        return Err(super::decide::reject(
+            RejectCode::InvalidState,
+            "the process check is incomplete: it was not made",
+        ));
+    };
+    if !check.complete {
+        return Err(super::decide::reject(
+            RejectCode::InvalidState,
+            format!(
+                "the process check is incomplete: {}",
+                check.error.as_deref().unwrap_or("unknown reason")
+            ),
+        ));
+    }
+    if check.still_runs() {
+        return Err(super::decide::reject(
+            RejectCode::InvalidState,
+            format!("the previous run still has processes: {}", running(check)),
+        ));
+    }
+    if !d.set_owner_proof(shim_id)? {
+        return Err(super::decide::reject(
+            RejectCode::InvalidState,
+            "the previous run is already proven ended",
+        ));
+    }
+    d.append(
+        session_id,
+        Event::ExecutionReconciled {
+            shim_id: shim_id.to_owned(),
+        }
+        .into(),
+    )?;
+    Ok(super::decide::result(session_id, None))
 }

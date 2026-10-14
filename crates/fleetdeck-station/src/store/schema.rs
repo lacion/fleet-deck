@@ -550,6 +550,27 @@ CREATE TABLE assist_usage (
 ) STRICT;
 ";
 
+const V23: &str = "
+-- DL-182 (resume on the shim host). Forward only, like the other shim columns;
+-- no row is rewritten. Every old row reads as `inspection_version = 0`, which
+-- the queries treat as an unverified exit.
+--   inspection_version  the inspection version of the shim's exit report
+--   shim_pid            the process id of the shim itself (escaped-descendant check)
+--   proof               NULL, 'ended_by_reboot' or 'reconciled_by_owner'; next to the
+--                       row's state and reason, which stay as they are
+--   proof_boot_id       the boot id that the reboot proof read
+--   launch_boot_id      the boot id the station read before the spawn
+--   native_target       the native id that a resume or an import continues
+ALTER TABLE shims ADD COLUMN inspection_version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE shims ADD COLUMN shim_pid INTEGER;
+ALTER TABLE shims ADD COLUMN proof TEXT
+    CHECK (proof IS NULL OR proof IN ('ended_by_reboot', 'reconciled_by_owner'));
+ALTER TABLE shims ADD COLUMN proof_boot_id TEXT;
+ALTER TABLE shims ADD COLUMN launch_boot_id TEXT;
+ALTER TABLE shims ADD COLUMN native_target TEXT;
+CREATE INDEX shims_native_target ON shims(native_target) WHERE native_target IS NOT NULL;
+";
+
 /// The `station.db` migrations. V4 is the link epochs table of
 /// `fleetdeck-link` (G1).
 #[must_use]
@@ -577,6 +598,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V20),
         M::up(V21),
         M::up(V22),
+        M::up(V23),
     ])
 }
 

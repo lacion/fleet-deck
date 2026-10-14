@@ -54,7 +54,7 @@ impl Rig {
         prepare_dir(&shims).unwrap();
         let id = shim_id();
         let files = ShimFiles::new(&shims, &id);
-        files.create_journal(INC).unwrap();
+        files.create_journal(INC, None).unwrap();
         let key = AttachKey::generate().unwrap();
         files.write_key(&key).unwrap();
         let rec = tmp.path().join("rec");

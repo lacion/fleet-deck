@@ -78,6 +78,7 @@ impl Shim {
                 }
                 state.conn = Some(Conn {
                     generation,
+                    protocol,
                     tx: tx.clone(),
                     sent: None,
                     closed: Arc::clone(&closed),
@@ -86,7 +87,7 @@ impl Shim {
                     generation,
                     provider_identity: Some(self.identity.clone()),
                     cursor_floor: state.buffer.floor(),
-                    exit: state.exit.clone(),
+                    exit: state.exit.as_ref().map(|e| e.for_protocol(protocol)),
                 })
             }
         };

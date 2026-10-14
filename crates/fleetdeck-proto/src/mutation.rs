@@ -76,6 +76,7 @@ pub const SESSION_METHODS: &[&str] = &[
     "session.worktree_restore",
     "session.worktree_purge",
     "session.worktree_release",
+    "session.reconcile_execution",
     "approval.answer",
 ];
 

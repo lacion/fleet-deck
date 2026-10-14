@@ -150,14 +150,45 @@ impl Connection {
 
     /// `attach` with a given proof (tests of a bad proof).
     pub async fn attach_with_proof(
-        mut self,
+        self,
         incarnation: &str,
         generation: u64,
         proof: String,
         wait: Duration,
     ) -> Result<AttachResult, ClientError> {
+        // The highest version that both sides speak (ADR-005 §5.3); a shim
+        // with no common version refuses the attach.
+        let protocol = super::wire::pick_protocol(&self.hello.protocols).unwrap_or(PROTOCOL);
+        self.attach_picking(incarnation, generation, proof, protocol, wait)
+            .await
+    }
+
+    /// `attach` as a station of another build: it names `protocol`, which
+    /// the shim keeps for this connection (tests of the N−1 encoding,
+    /// ADR-005 §5.3).
+    pub async fn attach_with_protocol(
+        self,
+        key: &AttachKey,
+        incarnation: &str,
+        generation: u64,
+        protocol: u32,
+        wait: Duration,
+    ) -> Result<AttachResult, ClientError> {
+        let proof = hex(&key.proof(&self.hello.nonce, incarnation, generation));
+        self.attach_picking(incarnation, generation, proof, protocol, wait)
+            .await
+    }
+
+    async fn attach_picking(
+        mut self,
+        incarnation: &str,
+        generation: u64,
+        proof: String,
+        protocol: u32,
+        wait: Duration,
+    ) -> Result<AttachResult, ClientError> {
         let frame = ToShim::Attach {
-            protocol: PROTOCOL,
+            protocol,
             incarnation: incarnation.to_owned(),
             generation,
             proof,

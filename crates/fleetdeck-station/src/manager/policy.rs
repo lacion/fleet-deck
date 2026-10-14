@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 
 use fleetdeck_core::ChildEnv;
 use fleetdeck_core::config::{
-    DEFAULT_MAX_SHELLS, ModelHelpConfig, OfflineApprovalPolicy as ConfigOffline, StationConfig,
-    TrackerConfig,
+    DEFAULT_MAX_SHELLS, HostChoice, ModelHelpConfig, OfflineApprovalPolicy as ConfigOffline,
+    StationConfig, TrackerConfig,
 };
 use fleetdeck_proto::ProviderInstanceId;
 use fleetdeck_proto::event::ProviderKind;
@@ -25,6 +25,19 @@ pub enum WorkspaceError {
     #[error("`{0}` is outside the allowed roots of this station")]
     Outside(String),
 }
+
+/// The platform facts of a station that hosts its sessions under shims
+/// (DL-182). Without it the station runs the direct host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShimHostPlatform {
+    /// Resume on the shim host needs the Linux process and boot readers
+    /// (`/proc`); on another platform a resume, an import, the input of a
+    /// hibernated session and a handover are refused.
+    pub supported: bool,
+}
+
+/// The refusal of a resume on a shim host that this platform cannot run.
+pub const SHIM_HOST_NEEDS_LINUX: &str = "resume on the shim host needs Linux";
 
 /// The environment of each provider instance, as a provider process gets it:
 /// the environment of its setup command too (DL-148).
@@ -63,6 +76,9 @@ pub struct Policy {
     /// The files hidden from the members of a shared session (R11.9,
     /// DL-166): the default list plus `member_deny` of `station.toml`.
     member_deny: MemberDeny,
+    /// `Some` for a station with `host = "shim"` (DL-182); `None` is the
+    /// direct host.
+    shim_host: Option<ShimHostPlatform>,
 }
 
 impl Policy {
@@ -98,6 +114,9 @@ impl Policy {
             max_shells: config.max_shells,
             model_help: config.model_help.clone(),
             member_deny: MemberDeny::new(&config.member_deny),
+            shim_host: matches!(config.host, HostChoice::Shim).then_some(ShimHostPlatform {
+                supported: cfg!(target_os = "linux"),
+            }),
         }
         .with_repo_groups(&config.repo_groups)
     }
@@ -157,6 +176,36 @@ impl Policy {
             max_shells: DEFAULT_MAX_SHELLS,
             model_help: ModelHelpConfig::default(),
             member_deny: MemberDeny::default(),
+            shim_host: None,
+        }
+    }
+
+    /// The same policy for a station on the shim host; `supported` is
+    /// false on a platform that cannot resume there (DL-182). Tests use it
+    /// to show the refusal on Linux.
+    #[must_use]
+    pub fn with_shim_host(mut self, supported: bool) -> Self {
+        self.shim_host = Some(ShimHostPlatform { supported });
+        self
+    }
+
+    /// The same policy for a station that hosts its sessions under shims:
+    /// a host that the policy already names stays (a test sets it).
+    #[must_use]
+    pub fn on_shim_host(mut self) -> Self {
+        self.shim_host.get_or_insert(ShimHostPlatform {
+            supported: cfg!(target_os = "linux"),
+        });
+        self
+    }
+
+    /// Why a resume, an import, the input of a hibernated session or a
+    /// handover is refused for the platform, if it is.
+    #[must_use]
+    pub fn shim_host_refusal(&self) -> Option<&'static str> {
+        match self.shim_host {
+            Some(ShimHostPlatform { supported: false }) => Some(SHIM_HOST_NEEDS_LINUX),
+            _ => None,
         }
     }
 
@@ -208,6 +257,8 @@ impl Policy {
         let mut next = Self::from_config(config);
         next.instances.clone_from(&self.instances);
         next.setup_envs.clone_from(&self.setup_envs);
+        // The host applies at a restart (DL-182).
+        next.shim_host = self.shim_host;
         next
     }
 

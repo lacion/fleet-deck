@@ -120,6 +120,25 @@ async fn write_temp(ctx: &StationLink, params: serde_json::Value) -> Outcome {
     }
 }
 
+/// `session.execution_check` (DL-182 §4.2): what still runs of the previous
+/// execution of a session under a shim. Error code `unknown_session`.
+async fn execution_check(ctx: &StationLink, params: serde_json::Value) -> Outcome {
+    let query: fleetdeck_proto::execution::ExecutionCheckQuery =
+        match serde_json::from_value(params) {
+            Ok(q) => q,
+            Err(e) => return bad_params(e),
+        };
+    match ctx.manager.store().summary(query.session_id.clone()).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return Outcome::Err(WireError::new("unknown_session", "no such session")),
+        Err(e) => return internal(e),
+    }
+    match ctx.manager.execution_check(&query.session_id).await {
+        Ok(check) => ok(check),
+        Err(e) => internal(e),
+    }
+}
+
 /// `workspace.preflight` (DL-144): the Git access check of a clone URL. A
 /// failed check is an answer with `ok: false`. Error codes `invalid_url`,
 /// `forbidden` (the URL rules of a clone) and `internal`.
@@ -382,6 +401,7 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
         "workspace.preflight" => preflight(ctx, req.params).await,
         "workspace.precheck" => precheck(ctx, req.params).await,
         "assist.generate" => assist(ctx, req.params).await,
+        "session.execution_check" => execution_check(ctx, req.params).await,
         "files.write_temp" => write_temp(ctx, req.params).await,
         m if crate::integrations::Integrations::serves(m) => integration(ctx, m, req.params).await,
         m if crate::integrations::Integrations::serves_accounts(m) => {

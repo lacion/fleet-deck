@@ -83,7 +83,12 @@ fn decide_hibernate(
     if d.native_session_id(session_id)?.is_none() {
         return Err(refused("the provider reported no native session id"));
     }
-    if d.unended_execution(session_id)?.is_some() {
+    // The running execution is the one that this hibernation stops; every
+    // earlier unresolved execution still refuses (DL-182 §5).
+    let current = d.current_shim(session_id)?;
+    if d.unended_execution_except_current(session_id, current.as_deref())?
+        .is_some()
+    {
         return Err(refused("an earlier execution may still run"));
     }
     let stop = SessionCommand::Stop {

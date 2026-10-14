@@ -282,6 +282,9 @@ fn samples() -> Vec<Event> {
         Event::SessionDigest {
             text: "- Read the router\n- Fixed the redirect".into(),
         },
+        Event::ExecutionReconciled {
+            shim_id: "01JABCDEFGHJKMNPQRSTVWXYZ0".into(),
+        },
     ]
 }
 

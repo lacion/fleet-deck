@@ -25,6 +25,13 @@ pub enum Record {
     Created {
         shim_id: String,
         incarnation: String,
+        /// The boot id that the station read before it started the shim
+        /// (DL-182 §4.1). The shim refuses to spawn when its own boot id
+        /// differs. Absent in a journal of an older station: the shim then
+        /// spawns as before. An older station reads a journal with this
+        /// field as unknown evidence and fails closed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        boot_id: Option<String>,
     },
     /// The shim wrote this before it started the provider.
     SpawnAttempted,
@@ -154,11 +161,13 @@ impl ShimFiles {
         self.path("exit")
     }
 
-    /// Writes the first record. Fails if a journal exists.
-    pub fn create_journal(&self, incarnation: &str) -> io::Result<()> {
+    /// Writes the first record. Fails if a journal exists. `boot_id` is
+    /// the station's boot evidence of the launch (DL-182 §4.1).
+    pub fn create_journal(&self, incarnation: &str, boot_id: Option<&str>) -> io::Result<()> {
         let record = Record::Created {
             shim_id: self.shim_id.clone(),
             incarnation: incarnation.to_owned(),
+            boot_id: boot_id.map(str::to_owned),
         };
         self.write_record(&record, true)
     }
@@ -214,7 +223,7 @@ impl ShimFiles {
         };
         let created = matches!(
             records.first(),
-            Some(Record::Created { shim_id, incarnation: inc })
+            Some(Record::Created { shim_id, incarnation: inc, .. })
                 if shim_id == &self.shim_id && inc == incarnation
         );
         let spawned = records.contains(&Record::SpawnAttempted);

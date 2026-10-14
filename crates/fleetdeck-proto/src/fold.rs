@@ -259,6 +259,9 @@ impl SessionSummary {
             | Event::InterruptResult { .. }
             | Event::InputUpdated { .. }
             | Event::OutputGap { .. }
+            // The reconciliation changes no summary field; the board reads the
+            // execution check instead (DL-182).
+            | Event::ExecutionReconciled { .. }
             // A late checkpoint never changes the activity (L13).
             | Event::TurnFinalized { .. } => {}
         }

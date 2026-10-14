@@ -282,6 +282,14 @@ impl ProviderAdapter for ClaudeAdapter {
         self.launch_durable(spec)
     }
 
+    fn durable_resume_launch(
+        &self,
+        spec: &SessionSpec,
+        native_id: &NativeSessionId,
+    ) -> Result<crate::durable::DurableLaunch> {
+        self.launch_durable_as(spec, Some(native_id))
+    }
+
     async fn resume(
         &self,
         native_id: &NativeSessionId,

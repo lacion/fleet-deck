@@ -284,6 +284,12 @@ pub fn decide(
             }
             plain_effect(d, &session_id, EffectPayload::Stop { how })
         }
+        // The session manager runs the process check first (`submit`); a
+        // direct call has none and is refused after the row checks (DL-182).
+        SessionCommand::ReconcileExecution {
+            session_id,
+            shim_id,
+        } => super::shims::decide_reconcile(d, origin, &session_id, &shim_id, None),
         // The session manager decides these with the shells of the station
         // (`SessionManager::submit`); here no shell list is known (DL-150).
         command @ (SessionCommand::WorktreeTrash { .. }
@@ -548,13 +554,8 @@ fn start(
         ));
     }
     super::trash::custody(d, &spec.cwd)?;
-    if let Some(native) = &import
-        && let Some(other) = d.native_session_in_use(native)?
-    {
-        return Err(reject(
-            RejectCode::InvalidState,
-            format!("session `{other}` already drives this native session"),
-        ));
+    if let Some(native) = &import {
+        super::resume::import_exclusion(d, policy, provider, native)?;
     }
     if let Some(native) = &import
         && let Some(other) = d.native_session_held(native)?

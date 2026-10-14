@@ -546,6 +546,22 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::TRASH),
         true,
     ),
+    // Resume on the shim host (DL-182): the check reads processes of the
+    // station (`read`); marking a run as ended is an owner action (`admin`).
+    m(
+        "session.execution_check",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::SHIM_RESUME),
+        false,
+    ),
+    m(
+        "session.reconcile_execution",
+        DeckToStation,
+        Scope::Admin,
+        Some(feature::SHIM_RESUME),
+        true,
+    ),
     m("approval.answer", DeckToStation, Scope::Approve, None, true),
     m("station.configure", DeckToStation, Scope::Admin, None, true),
     m("link.rotate_key", Either, Scope::Admin, None, true),

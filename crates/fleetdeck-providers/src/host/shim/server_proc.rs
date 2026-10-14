@@ -98,44 +98,10 @@ pub(super) fn signal_group(pid: u32, sig: rustix::process::Signal) {
 }
 
 /// The live members of the provider's process group or session (Linux;
-/// zombies do not count). Other platforms report 0.
-pub(super) fn group_members(leader: u32) -> u32 {
-    #[cfg(target_os = "linux")]
-    {
-        let Ok(entries) = std::fs::read_dir("/proc") else {
-            return 0;
-        };
-        let mut count = 0;
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let Some(pid) = name.to_str().and_then(|n| n.parse::<u32>().ok()) else {
-                continue;
-            };
-            if pid == leader {
-                continue;
-            }
-            let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
-                continue;
-            };
-            let Some(rest) = stat.rfind(')').map(|i| &stat[i + 1..]) else {
-                continue;
-            };
-            let mut fields = rest.split_whitespace();
-            let state = fields.next();
-            let _ppid = fields.next();
-            let pgrp = fields.next().and_then(|f| f.parse::<u32>().ok());
-            let session = fields.next().and_then(|f| f.parse::<u32>().ok());
-            if state != Some("Z") && (pgrp == Some(leader) || session == Some(leader)) {
-                count += 1;
-            }
-        }
-        count
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = leader;
-        0
-    }
+/// zombies do not count). `None` when the inspection is incomplete or the
+/// platform has no reader: the count then proves nothing (DL-182 §1a).
+pub(super) fn group_members(leader: u32) -> Option<u32> {
+    crate::host::shim::inspect::group_members(leader)
 }
 
 /// Reaps orphaned descendants that came back to the subreaper shim.

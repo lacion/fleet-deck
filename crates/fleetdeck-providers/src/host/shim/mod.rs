@@ -18,6 +18,7 @@ pub mod attach;
 pub mod client;
 pub mod host;
 pub mod identity;
+pub mod inspect;
 pub mod journal;
 pub mod launch;
 pub mod output;

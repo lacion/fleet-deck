@@ -83,7 +83,7 @@ pub use reverts::{NewRevert, RevertRow, RevertStep};
 pub use sharing::overlaps;
 pub use shim_driver::{FrameState, ShimFrame, ShimTransition};
 pub use shim_writes::ClaimedWrite;
-pub use shims::{NewShim, OutputCommit, OutputMeta, ShimRow, ShimState};
+pub use shims::{NewShim, OutputCommit, OutputMeta, RunningFacts, ShimRow, ShimState};
 pub use turn_checkpoints::{
     AppTurnId, Finalized, NewTurnCheckpoint, RowSide, RowState, TurnCheckpointRow, Which,
 };

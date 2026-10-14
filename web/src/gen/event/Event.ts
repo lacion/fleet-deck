@@ -104,7 +104,7 @@ inferred: boolean, } | { "kind": "artifact.published", artifact_id: string, vers
 /**
  * Named `artifact_kind` because `kind` is the event tag.
  */
-artifact_kind: ArtifactKind, } | { "kind": "artifact.suggested", path: string, } | { "kind": "session.focus", text: string, } | { "kind": "session.batch", batch: BatchRef, } | { "kind": "session.hibernated", after_min: number, } | { "kind": "session.title_generated", title: string, } | { "kind": "session.digest", text: string, } | { "kind": "run.completed", run_id: RunId, status: TurnStatus, 
+artifact_kind: ArtifactKind, } | { "kind": "artifact.suggested", path: string, } | { "kind": "session.focus", text: string, } | { "kind": "session.batch", batch: BatchRef, } | { "kind": "session.hibernated", after_min: number, } | { "kind": "session.execution_reconciled", shim_id: string, } | { "kind": "session.title_generated", title: string, } | { "kind": "session.digest", text: string, } | { "kind": "run.completed", run_id: RunId, status: TurnStatus, 
 /**
  * Background work still runs; the session is not idle (L7).
  */

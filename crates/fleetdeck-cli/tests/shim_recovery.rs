@@ -290,7 +290,8 @@ async fn a_shim_that_was_killed_is_exited_with_its_exit_file_or_lost_without_one
         termination: "signal:9".to_owned(),
         cause: "killed".to_owned(),
         stderr_tail: String::new(),
-        descendants_remaining: 0,
+        descendants_remaining: Some(0),
+        inspection: 1,
         final_offset: 0,
     };
     rig.files(&with_exit.record.shim_id)
@@ -368,6 +369,8 @@ async fn starting(
             shim_id: id.clone(),
             session_id: "s1".into(),
             socket_path: prepared.record.socket_path.clone(),
+            launch_boot_id: None,
+            native_target: None,
         })
         .await
         .unwrap();
@@ -409,7 +412,7 @@ async fn a_launch_interrupted_after_spawn_attempted_or_with_lost_evidence_is_nev
     let (foreign, _) = starting(&rig, "true").await;
     std::fs::remove_file(rig.files(&foreign).journal()).unwrap();
     rig.files(&foreign)
-        .create_journal("another-incarnation")
+        .create_journal("another-incarnation", None)
         .unwrap();
     // The volatile runtime files are gone, as after a reboot.
     let done = rig.recover().await;

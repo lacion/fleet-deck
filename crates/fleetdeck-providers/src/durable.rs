@@ -30,3 +30,63 @@ pub struct DurableLaunch {
     pub core: DurableConfig,
     pub stop: StopPolicy,
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use async_trait::async_trait;
+    use fleetdeck_proto::Capabilities;
+    use fleetdeck_proto::command::SessionSpec;
+    use fleetdeck_proto::event::ProviderKind;
+
+    use crate::adapter::{
+        EventSink, LiveSession, NativeSessionId, ProviderAdapter, ProviderError, ProviderProbe,
+        Result,
+    };
+
+    /// An adapter that overrides nothing optional.
+    struct Plain;
+
+    #[async_trait]
+    impl ProviderAdapter for Plain {
+        fn kind(&self) -> ProviderKind {
+            ProviderKind::Claude
+        }
+        fn capabilities(&self) -> Capabilities {
+            Capabilities::minimal()
+        }
+        async fn probe(&self) -> Result<ProviderProbe> {
+            Err(ProviderError::SessionEnded)
+        }
+        async fn start(&self, _: SessionSpec, _: EventSink) -> Result<Box<dyn LiveSession>> {
+            Err(ProviderError::SessionEnded)
+        }
+        async fn resume(
+            &self,
+            _: &NativeSessionId,
+            _: SessionSpec,
+            _: EventSink,
+        ) -> Result<Box<dyn LiveSession>> {
+            Err(ProviderError::SessionEnded)
+        }
+    }
+
+    #[test]
+    fn the_trait_default_of_a_durable_resume_is_unsupported() {
+        let spec = SessionSpec {
+            provider_instance: "x".into(),
+            cwd: "/w".to_owned(),
+            mode: None,
+            model: None,
+            title: None,
+            coordinator: None,
+        };
+        let err = Plain
+            .durable_resume_launch(&spec, &NativeSessionId("n".to_owned()))
+            .unwrap_err();
+        assert!(matches!(err, ProviderError::Unsupported(_)), "{err:?}");
+        // The launch of a new session is still refused as before.
+        assert!(Plain.durable_launch(&spec).is_err());
+    }
+}

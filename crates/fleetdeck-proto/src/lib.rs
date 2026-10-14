@@ -15,6 +15,7 @@ pub mod capability;
 pub mod command;
 pub mod conflicts;
 pub mod event;
+pub mod execution;
 pub mod files;
 pub mod fold;
 pub mod ids;

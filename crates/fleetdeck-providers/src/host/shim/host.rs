@@ -30,7 +30,6 @@ use super::attach::AttachFailure;
 use super::client::{AttachResult, Connection, FrameReader, FrameWriter};
 use super::identity::{IdentityCheck, check_identity};
 use super::journal::ShimFiles;
-use super::output::DEFAULT_CAPACITY;
 use super::server::STDIN_CLOSED;
 use super::wire::{
     ExitState, FromShim, GapReason, MAX_PAYLOAD, ProviderIdentity, Refusal, StatusAnswer, ToShim,
@@ -47,44 +46,7 @@ pub const PIPE_BYTES: usize = 256 * 1024;
 /// queued control frames; stdin writes wait for their answer one by one).
 const QUEUE: usize = 64;
 
-/// Where and how a [`ShimHost`] launches shims.
-#[derive(Debug, Clone)]
-pub struct ShimHostConfig {
-    /// The `fleetdeck` binary (it has the hidden `shim` subcommand).
-    pub exe: PathBuf,
-    /// The persistent station directory; shim files go to `<dir>/shims`.
-    pub station_dir: PathBuf,
-    /// `$XDG_RUNTIME_DIR`, if set (ADR-005 §5.1).
-    pub runtime_dir: Option<PathBuf>,
-    /// `${TMPDIR:-/tmp}` for the short-path fallback.
-    pub tmp_dir: PathBuf,
-    /// The station database incarnation.
-    pub incarnation: String,
-    /// The shim output buffer (ADR-005 §4.1).
-    pub buffer_bytes: usize,
-    /// The bound of each launch, connect and attach step.
-    pub wait: Duration,
-}
-
-impl ShimHostConfig {
-    #[must_use]
-    pub fn new(exe: PathBuf, station_dir: PathBuf, incarnation: String) -> Self {
-        Self {
-            exe,
-            station_dir,
-            runtime_dir: std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from),
-            tmp_dir: std::env::temp_dir(),
-            incarnation,
-            buffer_bytes: DEFAULT_CAPACITY,
-            wait: Duration::from_secs(10),
-        }
-    }
-
-    #[must_use]
-    pub fn shims_dir(&self) -> PathBuf {
-        self.station_dir.join("shims")
-    }
-}
+pub use super::start::ShimHostConfig;
 
 /// What the station stores about one shim (the `shims` row, ADR-005 §3).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,6 +60,9 @@ pub struct ShimRecord {
     pub cursor: u64,
     /// The next stdin write sequence number.
     pub next_write_seq: u64,
+    /// The process id of the shim itself, once the launch reported it
+    /// (DL-182 §4.2: the escaped-descendant check of the owner).
+    pub shim_pid: Option<u32>,
 }
 
 /// When the host acknowledges stdout.
@@ -111,6 +76,8 @@ pub enum AckMode {
 
 /// An attached shim.
 pub struct Attached {
+    /// The protocol version that the attach negotiated (ADR-005 §5.3).
+    pub protocol: u32,
     pub record: ShimRecord,
     pub process: Arc<ShimProcess>,
     pub stdout: DuplexStream,
@@ -196,9 +163,9 @@ impl ShimHost {
         if conn.hello.shim_id != record.shim_id {
             return Err(AttachFailure::WrongShim);
         }
-        if super::wire::pick_protocol(&conn.hello.protocols).is_none() {
+        let Some(protocol) = super::wire::pick_protocol(&conn.hello.protocols) else {
             return Err(AttachFailure::Incompatible);
-        }
+        };
         let attached = conn
             .attach(&key, &c.incarnation, generation, c.wait)
             .await
@@ -284,6 +251,7 @@ impl ShimHost {
         record.generation = generation;
         record.provider_identity = provider_identity;
         Ok(Attached {
+            protocol,
             record,
             process,
             stdout,
