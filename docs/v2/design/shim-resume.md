@@ -146,3 +146,7 @@ For a session with any unresolved shim row (any `lost` reason, `exit_unverified`
 | Finding (rev 3) | Change |
 | --- | --- |
 | B unknown-id guard has no recovery when the identity was never committed | §4.1 launch boot evidence in the journal and on the row before the spawn, shim check, fence-then-reboot-proof for identity-less rows; tests 22–23. |
+
+## 13. Architect refinement during the build (2026-10-14)
+
+The implementation found that §3's rule "every session of the same provider kind with an unresolved execution whose native id is unknown blocks every resume or import of that kind" would make any fresh session (a Claude process reports its native id only after its first input) block all resumes and imports of its provider kind. Refinement, recorded in DL-182: a row or session blocks a resume or import of native id N only when (a) it is a session of the same provider kind whose stored native id is N and whose execution is not proven ended, or (b) it is a shim row of the same provider kind whose `native_target` is N and has no proof. A row whose `native_target` is NULL started a new conversation and cannot be N, so it never blocks another conversation. This is narrower than revision 4 and keeps the safety goal (no second execution of one conversation). It has not been through an adversary design round; the PRE-PR review of the code covers it.
