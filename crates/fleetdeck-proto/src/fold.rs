@@ -67,6 +67,9 @@ impl SessionSummary {
                 self.capabilities = Some(capabilities.as_ref().clone());
                 self.state = SessionState::Running;
                 self.hibernated = false;
+                // A start or resume that worked ends the error of an earlier
+                // attempt; the timeline keeps the error event as history.
+                self.last_error = None;
             }
             Event::SessionStateChanged { state, .. } => {
                 self.state = *state;
@@ -76,7 +79,11 @@ impl SessionSummary {
                     self.clear_running();
                 }
             }
-            Event::RunStarted { run_id, .. } => self.current_run = Some(run_id.clone()),
+            Event::RunStarted { run_id, .. } => {
+                self.current_run = Some(run_id.clone());
+                // A new run means the session takes input again.
+                self.last_error = None;
+            }
             Event::TurnStarted { turn_id, .. } => self.current_turn = Some(turn_id.clone()),
             Event::TurnCompleted { turn_id, .. } => {
                 if self.current_turn.as_ref() == Some(turn_id) {
@@ -268,7 +275,8 @@ impl SessionSummary {
     }
 
     /// Ends every run, turn, tool and background task of the summary. The
-    /// timeline history, the open requests and `last_error` stay.
+    /// timeline history, the open requests and `last_error` stay (a later
+    /// `session.started` or `run.started` clears `last_error`).
     fn clear_running(&mut self) {
         self.current_run = None;
         self.current_turn = None;

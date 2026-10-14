@@ -240,6 +240,23 @@ fn expiry_closes_a_request_and_errors_are_kept() {
 }
 
 #[test]
+fn a_start_or_a_new_run_clears_the_error_of_an_earlier_attempt() {
+    let error = || Event::Error {
+        code: "not_dispatched".to_owned(),
+        message: "resume was not sent: an old reason".to_owned(),
+        retry_at: None,
+    };
+    let mut f = Feed::new();
+    f.push(started());
+    assert!(f.push(error()).last_error.is_some());
+    // A resume that worked starts the session again.
+    assert!(f.push(started()).last_error.is_none());
+    assert!(f.push(error()).last_error.is_some());
+    // A new run means the session takes input again.
+    assert!(f.push(run("run-9")).last_error.is_none());
+}
+
+#[test]
 fn a_replayed_event_and_an_unknown_kind_change_nothing_else() {
     let mut f = Feed::new();
     f.push(started());
