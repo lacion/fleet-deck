@@ -1,6 +1,6 @@
 # Resume on the shim host (DL-182)
 
-- **Status:** Proposed (revision 3, 2026-10-14). Revision 2 (commit 403a1d69) got RE-REVIEW FAIL (4 blockers, 3 major; `/tmp/adversary-report-403a1d69.md`); §11 maps them; this is the last review round allowed for this design. Earlier: Revision 1 (commit 3fda6b7f) got DESIGN REVIEW FAIL (4 blockers, 4 major, 2 minor; `/tmp/adversary-report-9fbb0832.md`); §10 maps them. Extends ADR-005 (revision 3, accepted) §4.5, §4.6 and §6. Needs a PASS before code.
+- **Status:** Proposed (revision 4, 2026-10-14). Revision 3 (commit e0d1bf5f) got RE-REVIEW FAIL (1 blocker; `/tmp/adversary-report-5f21c469.md`); the round limit was reached and, following the owner's choice for over-limit designs, revision 4 applies Codex's replacement sentence for one extra focused review (§12). Earlier: Revision 2 (commit 403a1d69) got RE-REVIEW FAIL (4 blockers, 3 major; `/tmp/adversary-report-403a1d69.md`); §11 maps them; this is the last review round allowed for this design. Earlier: Revision 1 (commit 3fda6b7f) got DESIGN REVIEW FAIL (4 blockers, 4 major, 2 minor; `/tmp/adversary-report-9fbb0832.md`); §10 maps them. Extends ADR-005 (revision 3, accepted) §4.5, §4.6 and §6. Needs a PASS before code.
 - **Platform scope:** Linux only. Shim resume, the reboot proof and the execution reconciliation exist only on Linux. On macOS a shim cannot launch today (`host/shim/identity.rs:55,61` return `Unsupported`, so `server.rs:163` fails every launch), so a macOS station keeps the direct host; a `session.resume` on a station whose shim host is not Linux is refused at decision with `unsupported` ("resume on the shim host needs Linux").
 - **Owner request (2026-10-14):** "do 2. The real fix: build resume on the shim host." The owner's station runs `host = "shim"`; every resume ends with `start_failed: resume is not supported on the shim host yet` (DL-118).
 - **Unchanged:** every ADR-005 rule (launch journal, attach handshake, identities, cursors, stdin settlement, exit acknowledgment, recovery order). A resume starts a **new** shim and a **new** provider process; it never reattaches, and it is shown as `resumed`, never `reattached` (ADR-005 §6).
@@ -46,6 +46,9 @@ The same path serves every resume: the board's Resume and "Resume all", a hibern
 ## 4. Termination evidence after a shim loss
 
 ### 4.1 Verified reboot (ADR-005 §4.6), Linux only
+
+- **Launch boot evidence (before the spawn).** The station writes the current boot id into the launch journal's `created` record (`created { shim_id, incarnation, boot_id }`, `crates/fleetdeck-providers/src/host/shim/journal.rs:23-34`) before it starts the shim, and stores it on the `starting` row (new column `launch_boot_id`). The shim reads its own boot id at start and refuses to spawn the provider (exits without `spawn_attempted`) when it differs from the journal's. So every launch has boot evidence from before the provider could exist, also when the provider identity is never committed.
+- **Rows without a provider identity.** For a row that has no `provider_identity` (power loss after the spawn and before `shim_running` committed), recovery first fences the launch exactly as ADR-005 §3.2 step 1 does (lock acquired, `fenced` appended); only then does the reboot rule apply, using `launch_boot_id`: a current boot id that differs from it proves that the launch's provider (and everything it started) ended with the old boot. Revalidation at launch (below) uses `launch_boot_id` for such rows, and the "stored identity not alive" check is skipped only because no identity exists.
 
 - At recovery (ADR-005 §3.2), for **every** unresolved shim row of this incarnation that has a stored `provider_identity` (whatever its diagnostic reason: `execution_unknown`, `attach_refused`, `identity_mismatch`, `exit_not_reported`, `exit_unverified`, a checkpoint or driver failure from `manager/shims.rs:214`, `manager/shim_station.rs:195-257`, or `exited_descendants_remaining`), the station reads the current boot id (`/proc/sys/kernel/random/boot_id`). When both values are non-empty and differ, it records the proof `ended_by_reboot` **next to** the row (a new column `proof`, the row's `state` and diagnostic `reason` stay as they are), with the boot id it read (`proof_boot_id`). Equal, empty, missing or unreadable → no proof (fail closed).
 - **Revalidation at launch.** `ended_by_reboot` is not permanent: the dispatch of a resume or import (§3 step 1) reads the boot id again and accepts the proof only when the current boot id still differs from the row's stored `provider_identity.boot_id` **and** no live process has the stored `provider_identity` (pid + start time). A VM memory restore that brings back the old boot id therefore makes the proof invalid again.
@@ -100,6 +103,8 @@ For a session with any unresolved shim row (any `lost` reason, `exit_unverified`
   18. A crash after the spawn and before `session.started` committed: the row has `native_target` (resume) or an unknown native id (new session); a resume or import of that provider kind is refused until recovery or reconciliation.
   19. Legacy `exited/exited` rows and exit files without `inspection` are `exit_unverified`; reconciliation with a complete check makes them resumable.
   20. Reconciliation with an incomplete check is refused.
+  22. Power loss after the spawn and before the identity commit: the row has `launch_boot_id` and no identity; with the same boot id it stays unresolved (resume and import of the provider kind refused); after a reboot, recovery fences the launch, the reboot proof applies, and resume and import become available again across instances.
+  23. A shim whose boot id differs from its journal's refuses to spawn the provider.
   21. N−1 encoding: an N shim attached by an N−1 station reports `u32::MAX` for an unverified exit, and the older station treats it as descendants remaining.
 - Deck and board: the two routes (owner only, CSRF, audit), the "previous process may still run" panel and its three states, Resume enabled after reconciliation.
 
@@ -135,3 +140,9 @@ For a session with any unresolved shim row (any `lost` reason, `exit_unverified`
 | M nullable count breaks N−1 | §1a N−1 encoding `u32::MAX`; test 21. |
 | M acknowledgment override | §4.2 removed; test 20. |
 | M macOS cannot launch | Status: Linux only, refused elsewhere; test 16. |
+
+## 12. Extra review map (revision 3 → revision 4)
+
+| Finding (rev 3) | Change |
+| --- | --- |
+| B unknown-id guard has no recovery when the identity was never committed | §4.1 launch boot evidence in the journal and on the row before the spawn, shim check, fence-then-reboot-proof for identity-less rows; tests 22–23. |
