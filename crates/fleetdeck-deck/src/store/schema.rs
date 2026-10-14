@@ -10,7 +10,7 @@
 //! library. V7 (M3 6-2, 6-4): mail and tasks. V8 (M3 6-7): file touches.
 //! V13 (R2.1): the `blocked` and `question` task states. V14 (R12): artifacts.
 //! V16 (R5): automations. V17 (R6): read cursors. V20 (ADR-008): fleet
-//! control.
+//! control. V22 (DL-178): pairing completion records.
 
 use rusqlite_migration::{M, Migrations};
 
@@ -675,6 +675,29 @@ CREATE TABLE review_attempts (
 ) STRICT;
 ";
 
+/// Pairing completion records (DL-178, tailnet design 5.4). One row for each
+/// approved pairing request, written in the transaction that stores the
+/// station, and deleted when the station is removed, paired again or its key
+/// rotates. It holds no secret: a request id, two public keys, a nonce and
+/// digest of the request, the requested name and the two scope lists. To
+/// reverse the migration, drop the table: the only loss is the retry of a
+/// lost `PairApproved` (the station can then be removed and asked again).
+const V22: &str = "
+CREATE TABLE pairing_completions (
+    request_id        TEXT    PRIMARY KEY,
+    station_key       TEXT    NOT NULL,
+    deck_key          TEXT    NOT NULL,
+    request_digest    TEXT    NOT NULL,
+    nonce             TEXT    NOT NULL,
+    requested_name    TEXT    NOT NULL,
+    offered_scopes    TEXT    NOT NULL,
+    granted_scopes    TEXT    NOT NULL,
+    window_generation INTEGER NOT NULL,
+    approved_at       INTEGER NOT NULL
+) STRICT;
+CREATE INDEX pairing_completions_station ON pairing_completions (station_key);
+";
+
 /// The `deck.db` migrations.
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
@@ -702,6 +725,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V19),
         M::up(V20),
         M::up(V21),
+        M::up(V22),
     ])
 }
 

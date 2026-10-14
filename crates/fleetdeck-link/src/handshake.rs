@@ -32,6 +32,8 @@ pub(crate) struct Own<'a> {
     /// `Some` on the dialer of a control or data channel.
     pub attempt: Option<&'a Attempt>,
     pub limit: Duration,
+    /// The most bytes of one handshake message (`usize::MAX`: no limit).
+    pub max_text: usize,
 }
 
 /// Hello + Auth on one channel, bounded by `own.limit`.
@@ -63,7 +65,7 @@ async fn steps(
         _ => own.local.listener_hello(own.identity, nonce, channel),
     };
     let own_text = ws::send_frame(ws, &HandshakeFrame::Hello(mine.clone())).await?;
-    let (peer_text, frame) = ws::recv_frame(ws).await?;
+    let (peer_text, frame) = ws::recv_frame_capped(ws, own.max_text).await?;
     let HandshakeFrame::Hello(peer_hello) = frame else {
         return Err(ws::refuse(ws, HandshakeError::Protocol("expected Hello".into())).await);
     };
@@ -84,7 +86,7 @@ async fn steps(
         Side::Listener => hello::transcript(&exporter, &peer_text, &own_text, &peer_key, &own_key),
     };
     ws::send_frame(ws, &hello::sign(own.identity, &tr, side)).await?;
-    let (_, frame) = ws::recv_frame(ws).await?;
+    let (_, frame) = ws::recv_frame_capped(ws, own.max_text).await?;
     let HandshakeFrame::Auth { signature } = frame else {
         return Err(ws::refuse(ws, HandshakeError::Protocol("expected Auth".into())).await);
     };

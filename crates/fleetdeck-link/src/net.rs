@@ -99,6 +99,29 @@ pub async fn connect(
     Ok((tls, key))
 }
 
+/// Observes the key of the listener at `addr` and nothing else: a TLS
+/// connection with a verifier that records the proven key and accepts it,
+/// no client certificate, no WebSocket, no frame. The connection ends at
+/// once. This is the probe of `station join --tailnet` without
+/// `--deck-fingerprint`; the dialer's own verifier (which refuses any key)
+/// is not used here.
+pub async fn observe_key(addr: SocketAddr) -> Result<PeerKey, NetError> {
+    let (config, seen) =
+        crate::tls::observing_client_config().map_err(|e| NetError::PeerKey(e.to_string()))?;
+    let tcp = dial_tcp(addr).await?;
+    let name = ServerName::try_from(SERVER_NAME)
+        .map_err(|e| NetError::PeerKey(e.to_string()))?
+        .to_owned();
+    // The listener may end the handshake because it wants a client
+    // certificate; the key is known by then.
+    let _ = tokio::time::timeout(
+        HANDSHAKE_TIMEOUT,
+        TlsConnector::from(config).connect(name, tcp),
+    )
+    .await;
+    seen.seen().ok_or(NetError::NoPeerCertificate)
+}
+
 /// Accepts one connection: D13 source check, then the TLS handshake. Returns
 /// the stream, the key that the dialer proved, and its address.
 pub async fn accept(
@@ -117,10 +140,20 @@ pub async fn handshake_accepted(
     from: SocketAddr,
     config: Arc<ServerConfig>,
 ) -> Result<(server::TlsStream<Stream>, PeerKey), NetError> {
+    handshake_accepted_within(tcp, from, config, HANDSHAKE_TIMEOUT).await
+}
+
+/// [`handshake_accepted`] with the TLS stage deadline `limit`.
+pub async fn handshake_accepted_within(
+    tcp: Stream,
+    from: SocketAddr,
+    config: Arc<ServerConfig>,
+    limit: Duration,
+) -> Result<(server::TlsStream<Stream>, PeerKey), NetError> {
     check_peer(from)?;
-    let tls = tokio::time::timeout(HANDSHAKE_TIMEOUT, TlsAcceptor::from(config).accept(tcp))
+    let tls = tokio::time::timeout(limit, TlsAcceptor::from(config).accept(tcp))
         .await
-        .map_err(|_| NetError::Timeout(HANDSHAKE_TIMEOUT))??;
+        .map_err(|_| NetError::Timeout(limit))??;
     let key = peer_of(tls.get_ref().1.peer_certificates())?;
     Ok((tls, key))
 }

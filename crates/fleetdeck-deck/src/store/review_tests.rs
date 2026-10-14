@@ -254,7 +254,7 @@ pub(super) fn rejected(id: &str) -> Settle {
 // ---- schema, ids, cleanup ------------------------------------------------
 
 #[tokio::test]
-async fn migration_v21_is_valid_and_last_and_makes_the_review_tables() {
+async fn migration_v21_is_valid_and_makes_the_review_tables() {
     super::schema::migrations().validate().unwrap();
     let w = setup().await;
     for table in [

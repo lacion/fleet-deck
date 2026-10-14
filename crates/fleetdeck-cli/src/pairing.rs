@@ -11,7 +11,7 @@ use anyhow::bail;
 use fleetdeck_core::paths::NodeDirs;
 use fleetdeck_station::local::{InvitationText, LocalRequest, LocalResponse};
 
-use crate::cli::InviteInput;
+use crate::cli::JoinArgs;
 use crate::station::call;
 
 /// `fleetdeck station invite --listen ADDR`: prints the invitation.
@@ -29,9 +29,16 @@ pub async fn invite(dirs: &NodeDirs, listen: SocketAddr) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `fleetdeck station join [--stdin | --invite-file F]`.
-pub async fn join(dirs: &NodeDirs, input: &InviteInput) -> anyhow::Result<()> {
-    let text = crate::invite::read(input)?;
+/// `fleetdeck station join [--stdin | --invite-file F]`, or `--tailnet`.
+pub async fn join(
+    dirs: &NodeDirs,
+    env: &fleetdeck_core::paths::Env,
+    args: &JoinArgs,
+) -> anyhow::Result<()> {
+    if args.tailnet.is_some() {
+        return crate::tailnet_join::run(dirs, env, args).await;
+    }
+    let text = crate::invite::read(&args.input)?;
     let request = LocalRequest::Join {
         invitation: InvitationText(text.expose().clone()),
     };

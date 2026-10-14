@@ -84,7 +84,7 @@ pub fn key_hex(key: &PeerKey) -> String {
         })
 }
 
-fn key_from_hex(text: &str) -> Result<PeerKey> {
+pub(crate) fn key_from_hex(text: &str) -> Result<PeerKey> {
     let bad = || DeckError::Corrupt(format!("station key `{text}`"));
     if text.len() != 64 || !text.is_ascii() {
         return Err(bad());
@@ -198,6 +198,11 @@ impl DeckStore {
                      WHERE station_id = ?1",
                     params![id, scopes, new.dial_url, direction.name()],
                 )?;
+                // A new pairing replaces the approval that made the old one.
+                tx.execute(
+                    "DELETE FROM pairing_completions WHERE station_key = ?1",
+                    [&hex],
+                )?;
                 id
             } else {
                 let fingerprint = new.key.fingerprint().to_string();
@@ -253,6 +258,11 @@ impl DeckStore {
                     "DELETE FROM stations WHERE station_id = ?1",
                     [rec.station_id.as_str()],
                 )?;
+                // The approval record goes with its station.
+                tx.execute(
+                    "DELETE FROM pairing_completions WHERE station_key = ?1",
+                    [key_hex(&key)],
+                )?;
                 super::commands::fail_station(&tx, &rec.station_id, now)?;
                 bump_generation(&tx)?;
             }
@@ -284,6 +294,10 @@ impl DeckStore {
             if moved == 0 {
                 return Err(DeckError::UnknownStation(old.fingerprint().short()));
             }
+            tx.execute(
+                "DELETE FROM pairing_completions WHERE station_key = ?1",
+                [key_hex(&old)],
+            )?;
             bump_generation(&tx)?;
             tx.commit()?;
             Ok(())

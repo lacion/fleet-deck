@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use fleetdeck_core::identity::{Fingerprint, PeerKey};
 use fleetdeck_link::Grants;
 use fleetdeck_link::grants::GrantSource;
+use fleetdeck_link::pair_hub::{CommitError, Completion, PairApprover};
 use fleetdeck_link::pairing::{PairedPeer, PairingSink};
 use fleetdeck_link::tls::{PinSet, Role};
 use fleetdeck_proto::link::Scope;
@@ -157,5 +158,30 @@ impl PairingSink for DeckPeers {
         self.cache.revoke(&old.fingerprint());
         self.cache.grant(new.fingerprint(), scopes);
         Ok(())
+    }
+}
+
+/// The approval of a pairing request (DL-178): the station, its grants and
+/// the completion record in one transaction. `pin_station` is never used
+/// here; a key that is already paired is refused.
+#[async_trait::async_trait]
+impl PairApprover for DeckPeers {
+    async fn commit(&self, completion: &Completion) -> std::result::Result<(), CommitError> {
+        self.store.commit_pairing(completion.clone()).await?;
+        self.cache.grant(
+            completion.station_key.fingerprint(),
+            completion.granted_scopes.iter().copied(),
+        );
+        Ok(())
+    }
+
+    async fn completion(
+        &self,
+        request_id: &str,
+    ) -> std::result::Result<Option<Completion>, String> {
+        self.store
+            .pairing_completion(request_id.to_owned())
+            .await
+            .map_err(|e| e.to_string())
     }
 }

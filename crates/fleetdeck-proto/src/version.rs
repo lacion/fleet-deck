@@ -93,6 +93,11 @@ pub mod feature {
     /// `station.restart`: the settings of a station and its restart (DL-172).
     pub const SETTINGS: &str = "settings.v1";
 
+    /// `PairRequest`, `PairPending`, `PairApproved` and `PairResume` on the
+    /// pair channel: a station asks a deck to pair without an invitation,
+    /// and the owner approves on the board (DL-178, ADR-004 §10).
+    pub const PAIR_REQUEST: &str = "pair_request.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -120,6 +125,7 @@ pub mod feature {
         ACCOUNTS,
         SETTINGS,
         SHIM_RESUME,
+        PAIR_REQUEST,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

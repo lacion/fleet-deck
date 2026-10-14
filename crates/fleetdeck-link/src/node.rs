@@ -23,6 +23,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
 use fleetdeck_core::identity::{Identity, PeerKey};
+use fleetdeck_core::netscope::{self, AddrClass};
 use fleetdeck_proto::IncarnationId;
 
 use crate::admission::Admission;
@@ -33,6 +34,7 @@ use crate::hello::{
     Attempt, Channel, HandshakeError, HandshakeFrame, LocalHello, Negotiated, Side, feature,
 };
 use crate::net::{self, NetError};
+use crate::pair_hub::PairRequests;
 use crate::pairing::{Invitations, PairLimiter, PairingSink};
 use crate::table::{Admitted, Closing, Dialer, LinkId, LinkTable, SUPERSEDED, TableGuard};
 use crate::tls::{self, InvitationGate, PeerPolicy, PinSet, Role};
@@ -43,6 +45,65 @@ use crate::ws::{self, LinkError, STEP_DATA, Ws};
 pub const NO_CONTROL_CHANNEL: &str = "no_control_channel";
 /// The close reason when the dialer never opened the data channel.
 pub const NO_DATA_CHANNEL: &str = "no_data_channel";
+
+/// Which kind of address a link listener is bound to. A tailnet listener
+/// has the stricter rules of the tailnet design (5.1, 5.4): the pairing
+/// window, 64 unauthenticated permits with stage deadlines and the 16 KiB
+/// pair-channel message limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListenerKind {
+    /// Loopback, LAN and every other allowed address.
+    Other,
+    /// An address in the Tailscale range.
+    Tailnet,
+}
+
+impl ListenerKind {
+    /// The kind of a bound address.
+    #[must_use]
+    pub fn of(addr: SocketAddr) -> Self {
+        if netscope::classify(addr.ip()) == AddrClass::Tailnet {
+            Self::Tailnet
+        } else {
+            Self::Other
+        }
+    }
+}
+
+/// The limits that only a tailnet link listener applies (design 5.4). The
+/// defaults are the values of the design; tests use shorter ones.
+#[derive(Debug, Clone, Copy)]
+pub struct TailnetLimits {
+    /// The TLS handshake after accept.
+    pub tls: Duration,
+    /// The WebSocket upgrade.
+    pub upgrade: Duration,
+    /// The Hello/Auth exchange, and the wait for a Hello before a refusal.
+    pub hello: Duration,
+    /// The most bytes of one pair-channel message.
+    pub max_message: usize,
+}
+
+impl Default for TailnetLimits {
+    fn default() -> Self {
+        Self {
+            tls: Duration::from_secs(5),
+            upgrade: Duration::from_secs(5),
+            hello: Duration::from_secs(5),
+            max_message: 16 * 1024,
+        }
+    }
+}
+
+/// The stage deadlines and message limit of one listener.
+#[derive(Clone, Copy)]
+pub(crate) struct Listening {
+    pub kind: ListenerKind,
+    pub tls: Duration,
+    pub upgrade: Duration,
+    pub hello: Duration,
+    pub max_message: usize,
+}
 
 /// An invitation gate that never has an open invitation.
 #[derive(Debug)]
@@ -79,6 +140,15 @@ pub struct NodeConfig {
     pub invitations: Option<Arc<Invitations>>,
     /// Admission of pairing handshakes on this node's listeners (G11).
     pub pair_limiter: PairLimiter,
+    /// The pairing request window of a deck and its pending requests
+    /// (DL-178); `None`: the node accepts no `PairRequest`.
+    pub pair_requests: Option<Arc<PairRequests>>,
+    /// The limits of the tailnet link listeners of this node.
+    pub tailnet: TailnetLimits,
+    /// Tests: treats every listener as this kind instead of classifying its
+    /// address.
+    #[doc(hidden)]
+    pub listener_kind: Option<ListenerKind>,
 }
 
 impl NodeConfig {
@@ -99,7 +169,18 @@ impl NodeConfig {
             sink: grants,
             invitations: None,
             pair_limiter: PairLimiter::default(),
+            pair_requests: None,
+            tailnet: TailnetLimits::default(),
+            listener_kind: None,
         }
+    }
+
+    /// Lets this node's tailnet link listeners accept pairing requests while
+    /// the window of `requests` is open.
+    #[must_use]
+    pub fn with_pair_requests(mut self, requests: Arc<PairRequests>) -> Self {
+        self.pair_requests = Some(requests);
+        self
     }
 
     /// Uses `store` both to read grants and to store pairing changes.
@@ -129,6 +210,19 @@ impl NodeConfig {
             local: &self.local,
             attempt,
             limit: self.handshake_timeout,
+            max_text: usize::MAX,
+        }
+    }
+
+    /// [`Self::own`] for the listener side of one listener: its Hello
+    /// deadline and its message limit.
+    pub(crate) fn own_on(&self, on: &Listening) -> Own<'_> {
+        Own {
+            identity: &self.identity,
+            local: &self.local,
+            attempt: None,
+            limit: on.hello,
+            max_text: on.max_message,
         }
     }
 }
@@ -322,6 +416,9 @@ pub struct LinkListener {
     incoming: mpsc::Receiver<Result<OpenLink, LinkError>>,
     admission: Arc<Admission>,
     task: JoinHandle<()>,
+    kind: ListenerKind,
+    /// Counts this listener as a tailnet listener of the pairing hub.
+    _counted: Option<crate::pair_hub::ListenerGuard>,
 }
 
 impl LinkListener {
@@ -335,6 +432,19 @@ impl LinkListener {
     #[must_use]
     pub fn admitted(&self) -> usize {
         self.admission.admitted()
+    }
+
+    /// The connections in TLS or in the upgrade (tailnet listeners).
+    #[doc(hidden)]
+    #[must_use]
+    pub fn in_setup(&self) -> usize {
+        self.admission.in_setup()
+    }
+
+    /// The kind of address this listener is bound to.
+    #[must_use]
+    pub fn kind(&self) -> ListenerKind {
+        self.kind
     }
 
     /// The next accepted link; failed attempts are skipped.
@@ -354,21 +464,63 @@ impl Drop for LinkListener {
     }
 }
 
-/// Binds `addr` (D13 rules) and accepts links from pinned peers.
+/// Lets an unpinned key through TLS while an invitation or the pairing
+/// window is open (tailnet listeners of a deck).
+#[derive(Debug)]
+struct EitherGate(Arc<dyn InvitationGate>, Arc<PairRequests>);
+
+impl InvitationGate for EitherGate {
+    fn has_open(&self) -> bool {
+        self.0.has_open() || self.1.is_open()
+    }
+}
+
+/// Binds `addr` (D13 rules) and accepts links from pinned peers. An address
+/// in the Tailscale range gets the rules of a tailnet listener.
 pub async fn listen(node: NodeConfig, addr: SocketAddr) -> Result<LinkListener, LinkError> {
     let listener = net::bind(addr).await?;
     let local_addr = listener.local_addr().map_err(NetError::Io)?;
+    let kind = node
+        .listener_kind
+        .unwrap_or_else(|| ListenerKind::of(local_addr));
+    let tailnet = kind == ListenerKind::Tailnet;
+    let invites: Arc<dyn InvitationGate> = match (&node.pair_requests, tailnet) {
+        (Some(requests), true) => Arc::new(EitherGate(node.invites.clone(), requests.clone())),
+        _ => node.invites.clone(),
+    };
+    let counted = match (&node.pair_requests, tailnet) {
+        (Some(requests), true) => Some(requests.add_listener(local_addr)),
+        _ => None,
+    };
     let config = tls::server_config(
         &node.identity,
         PeerPolicy::PinnedOrInvited {
             pins: node.pins.clone(),
             role: node.peer_role(),
-            invites: node.invites.clone(),
+            invites,
         },
     )?;
     let (tx, incoming) = mpsc::channel(16);
     let admission = Arc::new(Admission::default());
     let accepting = Arc::clone(&admission);
+    let limits = if tailnet {
+        let t = node.tailnet;
+        Listening {
+            kind,
+            tls: t.tls.min(net::HANDSHAKE_TIMEOUT),
+            upgrade: t.upgrade.min(node.handshake_timeout),
+            hello: t.hello.min(node.handshake_timeout),
+            max_message: t.max_message,
+        }
+    } else {
+        Listening {
+            kind,
+            tls: net::HANDSHAKE_TIMEOUT,
+            upgrade: node.handshake_timeout,
+            hello: node.handshake_timeout,
+            max_message: usize::MAX,
+        }
+    };
     let task = tokio::spawn(async move {
         while let Ok((stream, from)) = listener.accept().await {
             // The permit comes first: a refused connection gets no task and
@@ -380,9 +532,20 @@ pub async fn listen(node: NodeConfig, addr: SocketAddr) -> Result<LinkListener, 
                 drop(stream);
                 continue;
             };
+            // A tailnet listener also bounds the connections in TLS and in
+            // the upgrade.
+            let setup = if tailnet {
+                let Some(setup) = accepting.try_setup() else {
+                    drop(stream);
+                    continue;
+                };
+                Some(setup)
+            } else {
+                None
+            };
             let (node, config, tx) = (node.clone(), config.clone(), tx.clone());
             tokio::spawn(async move {
-                let result = accept_one(&node, stream, from, config).await;
+                let result = accept_one(&node, stream, from, config, limits, setup).await;
                 // An established link holds no pending-handshake permit, and
                 // a full channel must not hold one either.
                 drop(permit);
@@ -397,27 +560,42 @@ pub async fn listen(node: NodeConfig, addr: SocketAddr) -> Result<LinkListener, 
         incoming,
         admission,
         task,
+        kind,
+        _counted: counted,
     })
 }
 
 /// Handles one connection. `None` for a data channel that was handed to its
-/// control channel.
+/// control channel. `setup` is the place in the TLS and upgrade stages of a
+/// tailnet listener; it is released after the upgrade.
 async fn accept_one(
     node: &NodeConfig,
     stream: crate::transport::Stream,
     from: SocketAddr,
     config: Arc<rustls::ServerConfig>,
+    on: Listening,
+    setup: Option<tokio::sync::OwnedSemaphorePermit>,
 ) -> Option<Result<OpenLink, LinkError>> {
-    let limit = node.handshake_timeout;
+    let limit = on.hello;
+    let tailnet = on.kind == ListenerKind::Tailnet;
     let accepted = async {
-        let (mut ws, peer, channel, exporter) = ws::accept(stream, from, config, limit).await?;
-        if channel == Channel::Pair && node.invitations.is_some() {
+        let opts = ws::AcceptOpts {
+            tls: on.tls,
+            upgrade: on.upgrade,
+            unpinned_cap: tailnet.then(|| (on.max_message, &*node.pins, node.peer_role())),
+        };
+        let accepted = ws::accept(stream, from, config, opts).await;
+        drop(setup);
+        let (mut ws, peer, channel, exporter) = accepted?;
+        if channel == Channel::Pair && (node.invitations.is_some() || node.pair_requests.is_some())
+        {
             return Ok(Err(crate::join::accept(
                 node,
                 ws,
                 peer,
                 from.ip(),
                 exporter,
+                &on,
             )
             .await));
         }
@@ -427,7 +605,8 @@ async fn accept_one(
             // Read the dialer's Hello first (bounded): a socket closed before
             // that write gives the dialer a broken pipe instead of the reason
             // (DL-025).
-            let _ = tokio::time::timeout(limit, ws::recv_text(&mut ws)).await;
+            let _ =
+                tokio::time::timeout(limit, ws::recv_text_capped(&mut ws, on.max_message)).await;
             let e = if channel == Channel::Pair {
                 HandshakeError::Protocol("pairing is not open on this listener".into())
             } else {
@@ -437,7 +616,7 @@ async fn accept_one(
         }
         let est = handshake::run(
             &mut ws,
-            &node.own(None),
+            &node.own_on(&on),
             Side::Listener,
             channel,
             exporter,

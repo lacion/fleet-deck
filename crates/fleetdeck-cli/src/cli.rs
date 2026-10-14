@@ -247,8 +247,9 @@ pub enum StationCommand {
         listen: SocketAddr,
     },
     /// Pair this station with a deck. Reads the invitation from a prompt,
-    /// stdin, or `--invite-file`.
-    Join(InviteInput),
+    /// stdin, or `--invite-file`; or, with `--tailnet`, asks a deck on your
+    /// tailnet to pair (its owner approves on the board).
+    Join(JoinArgs),
     /// Unpin the deck key on this station and close its links.
     ForgetDeck,
     /// List the sessions of this station (works without the deck).
@@ -311,6 +312,40 @@ pub enum UpgradeCommand {
         /// Update id.
         update: String,
     },
+}
+
+/// `station join`: an invitation, or a request over the tailnet.
+#[derive(Debug, Args)]
+pub struct JoinArgs {
+    #[command(flatten)]
+    pub input: InviteInput,
+    /// Ask the deck at `<host>[:<port>]`, a device of your tailnet (default
+    /// port 7421), to pair without an invitation. The owner approves on the
+    /// board.
+    #[arg(
+        long,
+        value_name = "HOST[:PORT]",
+        num_args = 0..=1,
+        default_missing_value = "",
+        conflicts_with_all = ["invite_file", "stdin"]
+    )]
+    pub tailnet: Option<Option<String>>,
+    /// The deck link key fingerprint (64 hex digits) from the board. Without
+    /// it, the command shows the fingerprint that the deck presents and
+    /// asks you to confirm it.
+    #[arg(long, requires = "tailnet", value_name = "HEX")]
+    pub deck_fingerprint: Option<String>,
+    /// The scopes this station gives to the deck: read, drive, approve,
+    /// admin (default: all four).
+    #[arg(long, requires = "tailnet", value_delimiter = ',', value_name = "LIST")]
+    pub scopes: Option<Vec<String>>,
+    /// The name of this station on the deck (default: the name in
+    /// station.toml).
+    #[arg(long, requires = "tailnet")]
+    pub name: Option<String>,
+    /// Remove the pending pairing request of this station (its retry file).
+    #[arg(long, requires = "tailnet")]
+    pub cancel: bool,
 }
 
 /// Where an invitation comes from. Never from argv (G12).
@@ -387,6 +422,32 @@ mod tests {
             &["station", "invite", "--listen", "192.168.1.5:7443"],
             &["station", "join", "--invite-file", "inv.txt"],
             &["station", "join"],
+            &["station", "join", "--tailnet", "deck.tail.ts.net"],
+            &[
+                "station",
+                "join",
+                "--tailnet",
+                "deck.tail.ts.net:7421",
+                "--name",
+                "laptop",
+            ],
+            &[
+                "station",
+                "join",
+                "--tailnet",
+                "d",
+                "--scopes",
+                "read,drive",
+            ],
+            &[
+                "station",
+                "join",
+                "--tailnet",
+                "d",
+                "--deck-fingerprint",
+                "ab",
+            ],
+            &["station", "join", "--tailnet", "--cancel"],
             &["station", "forget-deck"],
             &["station", "sessions"],
             &["station", "sessions", "--json"],
@@ -457,6 +518,49 @@ mod tests {
             panic!("not a settings set");
         };
         assert_eq!((key.as_str(), value.as_str(), station), ("a", "-5", true));
+    }
+
+    #[test]
+    fn the_tailnet_flags_need_tailnet_and_exclude_an_invitation() {
+        for flag in [
+            &["--deck-fingerprint", "ab"][..],
+            &["--scopes", "read"],
+            &["--name", "x"],
+            &["--cancel"],
+        ] {
+            let mut args = vec!["station", "join"];
+            args.extend(flag);
+            assert!(parse(&args).is_err(), "{flag:?} needs --tailnet");
+        }
+        assert!(parse(&["station", "join", "--tailnet", "d", "--stdin"]).is_err());
+        assert!(parse(&["station", "join", "--tailnet", "d", "--invite-file", "x"]).is_err());
+        // `--tailnet --cancel` has no host.
+        let cli = parse(&["station", "join", "--tailnet", "--cancel"]).unwrap();
+        let Command::Station {
+            command: Some(StationCommand::Join(args)),
+        } = cli.command
+        else {
+            panic!("not a join");
+        };
+        assert_eq!(args.tailnet, Some(Some(String::new())));
+        assert!(args.cancel);
+        let cli = parse(&[
+            "station",
+            "join",
+            "--tailnet",
+            "d:9",
+            "--scopes",
+            "read,admin",
+        ])
+        .unwrap();
+        let Command::Station {
+            command: Some(StationCommand::Join(args)),
+        } = cli.command
+        else {
+            panic!("not a join");
+        };
+        assert_eq!(args.tailnet, Some(Some("d:9".into())));
+        assert_eq!(args.scopes, Some(vec!["read".into(), "admin".into()]));
     }
 
     #[test]

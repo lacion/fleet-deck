@@ -141,6 +141,32 @@ pub enum HandshakeFrame {
     Paired {
         proof: String,
     },
+    /// Pair channel, station → deck (feature `pair_request.v1`): asks the
+    /// deck to pair without an invitation. `request_id` is 32 hex digits
+    /// made by the station, `nonce` 64 hex digits (DL-178).
+    PairRequest {
+        request_id: String,
+        name: String,
+        nonce: String,
+        offered_scopes: Vec<fleetdeck_proto::link::Scope>,
+    },
+    /// Pair channel, deck → station: the request waits for the owner.
+    PairPending {
+        request_id: String,
+    },
+    /// Pair channel, deck → station: the owner approved. `signature` is the
+    /// deck's Ed25519 signature over the approval message (ADR-004 §10).
+    PairApproved {
+        request_id: String,
+        granted_scopes: Vec<fleetdeck_proto::link::Scope>,
+        signature: String,
+    },
+    /// Pair channel, station → deck: asks for the stored approval of
+    /// `request_id` again, on a new connection.
+    PairResume {
+        request_id: String,
+        nonce: String,
+    },
 }
 
 /// Why a handshake failed. `reason()` is the stable code that goes into the

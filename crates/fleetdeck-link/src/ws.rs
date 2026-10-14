@@ -20,7 +20,7 @@ use fleetdeck_proto::link::MAX_CONTROL_FRAME_BYTES;
 
 use crate::hello::{Channel, EXPORTER_LABEL, HandshakeError, HandshakeFrame};
 use crate::net::{self, NetError};
-use crate::tls::{SERVER_NAME, TlsError};
+use crate::tls::{PinSet, Role, SERVER_NAME, TlsError};
 use crate::transport::Stream;
 
 /// One WebSocket channel over mutual TLS.
@@ -127,19 +127,46 @@ pub(crate) async fn connect(
     Ok((ws, peer, exporter))
 }
 
-/// TLS accept + WebSocket upgrade; the request path names the channel.
+/// The `Host` value that the dialer of this protocol sends (§6 of the
+/// tailnet design). A browser can not send it for an address of the deck.
+fn host_is_ours(req: &Request) -> bool {
+    req.headers()
+        .get("host")
+        .and_then(|h| h.to_str().ok())
+        .is_some_and(|h| h.eq_ignore_ascii_case(SERVER_NAME))
+}
+
+/// The stage deadlines of an accept, and the message limit for a key that
+/// is not pinned (tailnet listeners).
+pub(crate) struct AcceptOpts<'a> {
+    pub tls: Duration,
+    pub upgrade: Duration,
+    /// `(limit, pins, role)`: a peer key without `role` in `pins` gets
+    /// messages of at most `limit` bytes.
+    pub unpinned_cap: Option<(usize, &'a PinSet, Role)>,
+}
+
+/// TLS accept + WebSocket upgrade; the request path names the channel. A
+/// request with an `Origin` header, or with another `Host` than
+/// [`SERVER_NAME`], is refused (a browser is not a link peer).
 pub(crate) async fn accept(
     stream: Stream,
     from: SocketAddr,
     config: Arc<rustls::ServerConfig>,
-    limit: Duration,
+    opts: AcceptOpts<'_>,
 ) -> Result<(Ws, PeerKey, Channel, [u8; 32]), LinkError> {
-    let (tls, peer) = net::handshake_accepted(stream, from, config).await?;
+    let limit = opts.upgrade;
+    let (tls, peer) = net::handshake_accepted_within(stream, from, config, opts.tls).await?;
     let exporter = exporter_of(tls.get_ref().1)?;
     let mut chosen = None;
     // The callback type is fixed by tungstenite.
     #[allow(clippy::result_large_err)]
     let pick = |req: &Request, resp: Response| -> Result<Response, ErrorResponse> {
+        if req.headers().contains_key("origin") || !host_is_ours(req) {
+            let mut e = ErrorResponse::new(Some("not a link peer".into()));
+            *e.status_mut() = StatusCode::FORBIDDEN;
+            return Err(e);
+        }
         match Channel::from_path(req.uri().path()) {
             Some(c) => {
                 chosen = Some(c);
@@ -154,11 +181,14 @@ pub(crate) async fn accept(
     };
     // The largest limit of any channel; the data channel never sends more
     // than a chunk, and a control frame is checked again when parsed.
-    let upgrade = accept_hdr_async_with_config(
-        tokio_rustls::TlsStream::Server(tls),
-        pick,
-        Some(ws_config(Channel::Control)),
-    );
+    let mut ws_cfg = ws_config(Channel::Control);
+    if let Some((cap, pins, role)) = opts.unpinned_cap
+        && pins.role_of(&peer) != Some(role)
+    {
+        ws_cfg = ws_cfg.max_message_size(Some(cap)).max_frame_size(Some(cap));
+    }
+    let upgrade =
+        accept_hdr_async_with_config(tokio_rustls::TlsStream::Server(tls), pick, Some(ws_cfg));
     let ws = tokio::time::timeout(limit, upgrade)
         .await
         .map_err(|_| LinkError::Timeout(STEP_UPGRADE, limit))?
@@ -175,12 +205,19 @@ pub(crate) async fn send_frame(ws: &mut Ws, frame: &HandshakeFrame) -> Result<St
     Ok(text)
 }
 
-/// The next text message; WebSocket ping/pong is skipped.
-pub(crate) async fn recv_text(ws: &mut Ws) -> Result<String, LinkError> {
+/// The next text message, at most `cap` bytes; WebSocket ping/pong is
+/// skipped.
+pub(crate) async fn recv_text_capped(ws: &mut Ws, cap: usize) -> Result<String, LinkError> {
     loop {
         match ws.next().await {
             None => return Err(LinkError::closed("eof", "the peer closed the connection")),
             Some(Err(e)) => return Err(LinkError::ws(e)),
+            Some(Ok(Message::Text(t))) if t.len() > cap => {
+                return Err(LinkError::Protocol(format!(
+                    "a message of {} bytes is above the limit of {cap}",
+                    t.len()
+                )));
+            }
             Some(Ok(Message::Text(t))) => return Ok(t.as_str().to_owned()),
             Some(Ok(Message::Close(_))) => {
                 return Err(LinkError::closed("eof", "the peer closed the WebSocket"));
@@ -199,7 +236,15 @@ pub(crate) async fn recv_text(ws: &mut Ws) -> Result<String, LinkError> {
 /// [`HandshakeError::PeerClosed`]; a `stale_link_epoch` close keeps its
 /// `min_epoch` as [`HandshakeError::StaleEpoch`].
 pub(crate) async fn recv_frame(ws: &mut Ws) -> Result<(String, HandshakeFrame), LinkError> {
-    let text = recv_text(ws).await?;
+    recv_frame_capped(ws, usize::MAX).await
+}
+
+/// [`recv_frame`] that refuses a message above `cap` bytes.
+pub(crate) async fn recv_frame_capped(
+    ws: &mut Ws,
+    cap: usize,
+) -> Result<(String, HandshakeFrame), LinkError> {
+    let text = recv_text_capped(ws, cap).await?;
     let frame = serde_json::from_str(&text)
         .map_err(|e| LinkError::Handshake(HandshakeError::BadHello(e.to_string())))?;
     match frame {

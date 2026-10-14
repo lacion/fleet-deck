@@ -58,6 +58,10 @@ pub async fn revoke(node: &NodeConfig, key: &PeerKey) -> bool {
     }
     let was_pinned = node.pins.unpin(key);
     close_revoked(node, key);
+    // A pairing request of this key that still waits ends with `cancelled`.
+    if let Some(hub) = &node.pair_requests {
+        hub.cancel_key(key).await;
+    }
     tracing::info!(peer = %fp.short(), "key revoked");
     was_pinned
 }

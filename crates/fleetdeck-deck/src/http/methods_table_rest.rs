@@ -116,6 +116,44 @@ pub const API_REST: &[ApiMethod] = &[
         Some(Scope::Admin),
         false,
     ),
+    // The pairing request window and the pending requests (DL-178): `admin`,
+    // and the handlers also require the owner's board login (DL-138). The
+    // window and the approval also need the owner's elevation.
+    m(
+        "pairing.window_get",
+        Method::GET,
+        "/api/pairing/window",
+        Some(Scope::Admin),
+        false,
+    ),
+    m(
+        "pairing.window_set",
+        Method::POST,
+        "/api/pairing/window",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "pairing.requests",
+        Method::GET,
+        "/api/pairing/requests",
+        Some(Scope::Admin),
+        false,
+    ),
+    m(
+        "pairing.approve",
+        Method::POST,
+        "/api/pairing/requests/{request_id}/approve",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "pairing.deny",
+        Method::POST,
+        "/api/pairing/requests/{request_id}/deny",
+        Some(Scope::Admin),
+        true,
+    ),
     // The human shell (PLAN §6.8, DL-404): `admin`, and the handlers also
     // require the owner's board login (DL-138).
     m(

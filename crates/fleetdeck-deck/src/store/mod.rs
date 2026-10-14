@@ -33,6 +33,7 @@ pub mod fleet;
 pub mod grants;
 pub mod members;
 pub mod outbox;
+pub mod pairing;
 pub mod plans;
 pub mod presence;
 pub mod project_sessions;
