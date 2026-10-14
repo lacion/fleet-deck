@@ -214,6 +214,7 @@ async fn a_resume_claimed_before_a_crash_settles_as_outcome_unknown_and_is_never
                             input: text("never sent twice"),
                         }),
                         continue_by: None,
+                        import: false,
                         authority: None,
                     },
                 )?;

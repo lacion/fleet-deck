@@ -95,15 +95,40 @@ async fn blocked(
     native: &str,
     except: Option<&str>,
 ) -> Option<String> {
+    blocked_for(s, kind, native, except, Purpose::Resume).await
+}
+
+async fn blocked_for(
+    s: &Store,
+    kind: ProviderKind,
+    native: &str,
+    except: Option<&str>,
+    purpose: Purpose,
+) -> Option<String> {
     s.execution_exclusion(
         None,
         kind,
         Some(native.to_owned()),
         except.map(SessionId::from),
+        purpose,
     )
     .await
     .unwrap()
     .blocked
+}
+
+/// Sets the state of `session` (a session starts in `starting`).
+async fn set_state(s: &Store, session: &str, state: &str) {
+    let (session, state) = (session.to_owned(), state.to_owned());
+    call(&s.inner.db, move |conn| {
+        conn.execute(
+            "UPDATE sessions SET state = ?2 WHERE session_id = ?1",
+            [session, state],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -331,6 +356,7 @@ async fn the_exclusion_lists_the_rows_that_rest_on_a_reboot_proof() {
             ProviderKind::Claude,
             Some("N".to_owned()),
             Some("a".into()),
+            Purpose::Resume,
         )
         .await
         .unwrap();
@@ -372,4 +398,123 @@ async fn the_v23_columns_default_to_unverified_and_no_proof() {
         (None, None, None)
     );
     assert!(!proves_end(old));
+}
+
+/// A fresh provider created conversation N, the station crashed before
+/// `session.started` and the reattach failed: the session is `lost`, its
+/// shim row is `lost`, and no native id is stored anywhere.
+async fn lost_without_a_native_id(s: &Store, id: &str, shim: &str) {
+    session(s, id, ProviderKind::Claude, "claude", None).await;
+    row(s, id, shim, ShimState::Lost, "execution_unknown", 0, None).await;
+    set_state(s, id, "lost").await;
+}
+
+#[tokio::test]
+async fn an_import_is_refused_while_a_lost_run_with_an_unknown_native_id_is_unproven() {
+    let det = Det::new();
+    let s = store(&det).await;
+    lost_without_a_native_id(&s, "u", "u1").await;
+    // Any id may be the conversation of that run.
+    for native in ["N", "ANY-OTHER"] {
+        let why = blocked_for(&s, ProviderKind::Claude, native, None, Purpose::Import).await;
+        assert!(
+            why.as_deref()
+                .is_some_and(|w| w.contains("session `u`") && w.contains("shim u1 is lost")),
+            "{why:?}"
+        );
+    }
+    // Another provider kind is not concerned.
+    assert_eq!(
+        blocked_for(&s, ProviderKind::Codex, "N", None, Purpose::Import).await,
+        None
+    );
+    // A resume of the stored id of another session is not blocked by it.
+    assert_eq!(blocked(&s, ProviderKind::Claude, "N", None).await, None);
+    // The same check at dispatch: the import's own session is `except`, and
+    // its own rows are the business of `own`.
+    session(&s, "imp", ProviderKind::Claude, "claude", Some("N")).await;
+    let at_dispatch = |purpose| {
+        s.execution_exclusion(
+            Some("imp".into()),
+            ProviderKind::Claude,
+            Some("N".to_owned()),
+            Some("imp".into()),
+            purpose,
+        )
+    };
+    let found = at_dispatch(Purpose::Import).await.unwrap();
+    assert!(
+        found.blocked.as_deref().is_some_and(|w| w.contains("`u`")),
+        "{found:?}"
+    );
+    assert_eq!(at_dispatch(Purpose::Resume).await.unwrap().blocked, None);
+    // A proof of the owner frees the import.
+    call(&s.inner.db, |conn| {
+        conn.execute(
+            "UPDATE shims SET proof = 'reconciled_by_owner' WHERE shim_id = 'u1'",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        blocked_for(&s, ProviderKind::Claude, "N", None, Purpose::Import).await,
+        None
+    );
+    assert_eq!(at_dispatch(Purpose::Import).await.unwrap().blocked, None);
+}
+
+#[tokio::test]
+async fn a_live_session_with_an_unknown_native_id_blocks_an_import_until_it_stores_the_id() {
+    let det = Det::new();
+    let s = store(&det).await;
+    session(&s, "fresh", ProviderKind::Claude, "claude", None).await;
+    set_state(&s, "fresh", "running").await;
+    let why = blocked_for(&s, ProviderKind::Claude, "N", None, Purpose::Import).await;
+    assert_eq!(
+        why.as_deref(),
+        Some(
+            "session `fresh` has a run whose conversation id is not known yet; an import waits \
+             until that session reports its id or its run is proven ended"
+        )
+    );
+    // A resume of another conversation, and an import of a free kind, pass.
+    assert_eq!(blocked(&s, ProviderKind::Claude, "N", None).await, None);
+    assert_eq!(
+        blocked_for(&s, ProviderKind::Codex, "N", None, Purpose::Import).await,
+        None
+    );
+    // The session itself is the one that continues the conversation.
+    assert_eq!(
+        blocked_for(
+            &s,
+            ProviderKind::Claude,
+            "N",
+            Some("fresh"),
+            Purpose::Import
+        )
+        .await,
+        None
+    );
+    // Once the native id is stored, the session is no longer unknown: it
+    // blocks only the conversation it holds (rule (a)).
+    call(&s.inner.db, |conn| {
+        conn.execute(
+            "UPDATE sessions SET native_session_id = 'HELD' WHERE session_id = 'fresh'",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        blocked_for(&s, ProviderKind::Claude, "N", None, Purpose::Import).await,
+        None
+    );
+    assert!(
+        blocked_for(&s, ProviderKind::Claude, "HELD", None, Purpose::Import)
+            .await
+            .is_some()
+    );
 }

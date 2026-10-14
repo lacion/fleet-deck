@@ -33,6 +33,7 @@ use fleetdeck_proto::{
 
 use super::decide::{reject, result};
 use super::policy::{Policy, WorkspaceError};
+use crate::store::resumes::Purpose;
 use crate::store::{DecideError, Decision, EffectPayload, InputRecord};
 
 /// Decides `session.resume` for `session_id` (see the module documentation).
@@ -122,7 +123,7 @@ pub(crate) fn resumable(
     }
     // One native conversation, one execution: across every session and
     // provider instance of the station (DL-182 §3).
-    if let Some(why) = d.unended_native(kind, &native, Some(session_id))? {
+    if let Some(why) = d.unended_native(kind, &native, Some(session_id), Purpose::Resume)? {
         return Err(reject(
             RejectCode::InvalidState,
             format!("not_resumable: another execution of this conversation may still run ({why})"),
@@ -184,7 +185,7 @@ pub(crate) fn import_exclusion(
             format!("session `{other}` already drives this native session"),
         ));
     }
-    if let Some(why) = d.unended_native(kind, native, None)? {
+    if let Some(why) = d.unended_native(kind, native, None, Purpose::Import)? {
         return Err(reject(
             RejectCode::InvalidState,
             format!("not_resumable: another execution of this conversation may still run ({why})"),
@@ -258,6 +259,7 @@ pub fn admit_resume(
             prompt,
             continue_by,
             authority: None,
+            import: false,
         },
     )?;
     // The session is starting again from this commit: it counts against
