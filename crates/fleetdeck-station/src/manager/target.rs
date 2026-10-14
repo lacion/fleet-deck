@@ -22,10 +22,7 @@ use fleetdeck_proto::command::{SessionSpec, StopMode};
 use fleetdeck_proto::event::ProviderKind;
 use fleetdeck_proto::{Event, ProviderInstanceId, SessionId};
 use fleetdeck_providers::host::HostError;
-use fleetdeck_providers::{
-    Answer, ControlId, EventSink, LiveSession, ModelId, PermissionMode, ProviderAdapter,
-    ProviderError,
-};
+use fleetdeck_providers::{EventSink, LiveSession, ProviderAdapter, ProviderError};
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
 
 use super::durable::host_input;
@@ -90,6 +87,9 @@ pub struct SessionTarget {
     /// (tests only, DL-182 §3).
     #[cfg(test)]
     resume_dispatch: setup_task::StartHook,
+    /// Right before the authority gate of a start (tests only).
+    #[cfg(test)]
+    gate_hook: setup_task::StartHook,
     /// The instances whose probed version is on the adapter's deny list
     /// (R8.2, DL-162): their starts are refused.
     broken: Arc<StdMutex<BTreeMap<ProviderInstanceId, &'static str>>>,
@@ -128,6 +128,8 @@ impl SessionTarget {
             hooks: setup_task::Hooks::default(),
             #[cfg(test)]
             resume_dispatch: setup_task::StartHook::default(),
+            #[cfg(test)]
+            gate_hook: setup_task::StartHook::default(),
             shells: ShellsSlot::default(),
             broken: Arc::default(),
             restart: Arc::default(),
@@ -166,6 +168,13 @@ impl SessionTarget {
     #[cfg(test)]
     pub(super) fn resume_dispatch_hook(&self) -> &setup_task::StartHook {
         &self.resume_dispatch
+    }
+
+    /// The point where a test holds a start right before its authority
+    /// gate.
+    #[cfg(test)]
+    pub(in crate::manager) fn gate_hook(&self) -> &setup_task::StartHook {
+        &self.gate_hook
     }
 
     /// The target in an `Arc` that knows itself. A start with a setup command
@@ -274,11 +283,6 @@ impl SessionTarget {
         cancel: Option<&watch::Receiver<bool>>,
     ) -> Dispatch {
         let session_id = effect.session_id.clone();
-        // ADR-008 §6.2: right before the spawn, a fleet-control start or
-        // resume asks the deck whether its authority still holds.
-        if let Some(refused) = self.authority_gate(effect).await {
-            return refused;
-        }
         if let Some(reason) = self.broken_reason(&spec.provider_instance) {
             self.start_failed(&session_id, &reason).await;
             return Dispatch::NotDispatched("provider_broken".into());
@@ -361,6 +365,14 @@ impl SessionTarget {
             self.start_failed(&session_id, STOPPED_MESSAGE).await;
             return Dispatch::NotDispatched(REASON_SETUP_STOPPED.into());
         }
+        // ADR-008 §6.2: after every awaited step, right before the spawn.
+        #[cfg(test)]
+        self.gate_hook.hold().await;
+        if let Some(refused) = self.gate_now(effect).await {
+            drop(ready_tx);
+            self.coordinator.revoke_session(&session_id);
+            return refused;
+        }
         let started = target_spawn::Spawn {
             bindings: &self.coordinator,
             session_id: &session_id,
@@ -400,6 +412,7 @@ impl SessionTarget {
         self.hooks.input.hold().await;
         // A stop that came during the setup: the first input is not sent.
         let mut cancelled_input = prompt.is_some() && setup_task::cancelled(cancel);
+        let mut refused_input = None;
         if let Some(input) = prompt.filter(|_| !cancelled_input) {
             let fence = turns.fence().await;
             turns.begin_input(&fence, &input.input_id).await;
@@ -410,6 +423,10 @@ impl SessionTarget {
             if setup_task::cancelled(cancel) {
                 turns.input_not_sent(&input.input_id).await;
                 cancelled_input = true;
+            } else if let Some(refused) = self.gate_input(effect).await {
+                // ADR-008 §6.2: the authority ended before the first input.
+                turns.input_not_sent(&input.input_id).await;
+                refused_input = Some(refused);
             } else {
                 turns.input_sent(&input.input_id);
                 sent_prompt = session.prompt(host_input(input)).await;
@@ -437,6 +454,14 @@ impl SessionTarget {
             if let Err(e) = self
                 .store
                 .first_input_failed(effect.effect_id.clone(), not_sent)
+                .await
+            {
+                tracing::error!(error = %e, "the first input failure was not stored");
+            }
+        } else if let Some(refused) = refused_input {
+            if let Err(e) = self
+                .store
+                .first_input_failed(effect.effect_id.clone(), refused)
                 .await
             {
                 tracing::error!(error = %e, "the first input failure was not stored");
@@ -469,101 +494,17 @@ impl SessionTarget {
             return Dispatch::NotDispatched("process_changed".into());
         }
         // ADR-008 §6.2: with the session lock held, right before the write.
-        // An unbound stop got its check in `dispatch`.
-        if !unbound_stop && let Some(refused) = self.authority_gate(effect).await {
+        // An input gates itself after its fence and checkpoint work.
+        if !target_base::gates_itself(&effect.payload)
+            && let Some(refused) = self.gate_now(effect).await
+        {
             return refused;
         }
         if let Some(durable) = live.durable.as_ref() {
             let turns = Arc::clone(&live.turns);
             return self.operate_durable(effect, durable, &turns).await;
         }
-        if let EffectPayload::Stop { how, .. } = &effect.payload {
-            let Some(mut session) = live.session.take() else {
-                return Dispatch::NotDispatched("already_stopping".into());
-            };
-            let how = *how;
-            // A graceful stop can take the whole grace period; the worker
-            // goes on. `session.ended` confirms the stop.
-            tokio::spawn(async move {
-                if let Err(e) = session.stop(how).await {
-                    tracing::warn!(error = %e, "stop");
-                }
-            });
-            return Dispatch::Sent;
-        }
-        let turns = Arc::clone(&live.turns);
-        let process = live.process.clone();
-        let Some(session) = live.session.as_mut() else {
-            return Dispatch::NotDispatched("stopping".into());
-        };
-        let sent = match &effect.payload {
-            EffectPayload::Prompt { input, .. } | EffectPayload::FollowUp { input, .. } => {
-                // The start checkpoint is published before the write, under
-                // the workspace fence (PLAN §6.6).
-                let fence = turns.fence().await;
-                turns.begin_input(&fence, &input.input_id).await;
-                turns.input_sent(&input.input_id);
-                let sent = if matches!(effect.payload, EffectPayload::Prompt { .. }) {
-                    session.prompt(host_input(input)).await
-                } else {
-                    session.follow_up(host_input(input)).await
-                };
-                if let Err(e) = &sent
-                    && matches!(classify(e), Dispatch::NotDispatched(_))
-                {
-                    turns.input_not_sent(&input.input_id).await;
-                }
-                sent
-            }
-            EffectPayload::Steer { input, .. } => {
-                // A due completion capture runs before the steer can write.
-                let _fence = turns.fence().await;
-                session.steer(host_input(input)).await
-            }
-            EffectPayload::Interrupt { .. } => {
-                session
-                    .interrupt(Some(ControlId(effect.effect_id.as_str().to_owned())))
-                    .await
-            }
-            EffectPayload::Answer {
-                request_id,
-                decision,
-                by,
-                ..
-            } => {
-                session
-                    .answer(Answer {
-                        request: request_id.clone(),
-                        decision: decision.clone(),
-                        by: *by,
-                    })
-                    .await
-            }
-            EffectPayload::SetMode { mode, .. } => {
-                session.set_mode(PermissionMode(mode.clone())).await
-            }
-            EffectPayload::SetModel { model } => session.set_model(ModelId(model.clone())).await,
-            EffectPayload::Revert { revert_id, .. } => {
-                let env = super::revert_run::RevertEnv {
-                    store: &self.store,
-                    git: &self.git,
-                    limits: self.limits,
-                    private: &self.private,
-                };
-                return super::revert_run::run(env, &turns, session.as_mut(), &process, revert_id)
-                    .await;
-            }
-            EffectPayload::Start { .. }
-            | EffectPayload::Resume { .. }
-            | EffectPayload::Worktree { .. }
-            | EffectPayload::Stop { .. } => {
-                return Dispatch::NotDispatched("not_a_live_operation".into());
-            }
-        };
-        match sent {
-            Ok(()) => Dispatch::Sent,
-            Err(e) => classify(&e),
-        }
+        self.operate_direct(effect, &mut live).await
     }
 }
 
@@ -579,7 +520,7 @@ impl EffectTarget for SessionTarget {
         // (DL-148). Its authority is checked here (ADR-008 §6.2).
         if matches!(effect.payload, EffectPayload::Stop { .. })
             && effect.process_incarnation.is_none()
-            && let Some(refused) = self.authority_gate(effect).await
+            && let Some(refused) = self.gate_now(effect).await
         {
             return refused;
         }

@@ -379,6 +379,58 @@ fn allow_always_sends_session_scoped_allow_rules_only() {
 }
 
 #[test]
+fn a_coordinator_answer_never_sends_updated_permissions() {
+    let suggestions = json!([
+        {"type":"addRules","behavior":"allow","destination":"localSettings","rules":[{"toolName":"Bash"}]}]);
+    for (by, expected) in [
+        (ResolvedBy::Coordinator, false),
+        (ResolvedBy::Board, true),
+        (ResolvedBy::Local, true),
+    ] {
+        let mut core = running_core();
+        feed(
+            &mut core,
+            json!({"type":"control_request","request_id":"n1","request":{
+                "subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"},
+                "permission_suggestions": suggestions}}),
+        );
+        let mut allow = answer("req-2", "allow_always");
+        allow.by = by;
+        let out = core.answer(&allow).unwrap();
+        let body = &writes(&out)[0]["response"]["response"];
+        assert_eq!(body["behavior"], "allow", "{by:?}");
+        assert_eq!(
+            body.get("updatedPermissions").is_some(),
+            expected,
+            "{by:?}: {body}"
+        );
+    }
+}
+
+#[test]
+fn a_coordinator_question_answer_writes_the_answers_without_permission_rules() {
+    let mut core = running_core();
+    let input = json!({"questions":[{"question":"Which?","options":[]}]});
+    feed(
+        &mut core,
+        json!({"type":"control_request","request_id":"n1","request":{
+            "subtype":"can_use_tool","tool_name":"AskUserQuestion","input":input,
+            "permission_suggestions":[
+                {"type":"addRules","behavior":"allow","destination":"localSettings","rules":[{"toolName":"Bash"}]}]}}),
+    );
+    let mut allow = answer("req-2", "allow");
+    allow.by = ResolvedBy::Coordinator;
+    let updated =
+        json!({"questions":[{"question":"Which?","options":[]}],"answers":{"Which?":"a"}});
+    allow.decision.updated_input = Some(updated.clone());
+    let out = core.answer(&allow).unwrap();
+    let body = &writes(&out)[0]["response"]["response"];
+    assert_eq!(body["behavior"], "allow");
+    assert_eq!(body["updatedInput"], updated);
+    assert!(body.get("updatedPermissions").is_none(), "{body}");
+}
+
+#[test]
 fn unknown_control_requests_fail_closed() {
     let mut core = running_core();
     let out = feed(

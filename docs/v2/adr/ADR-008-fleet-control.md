@@ -226,6 +226,15 @@ Board (`web/src/spawn/fleetcontrol.test.tsx`): 16. The switches ask for elevatio
 | B3 history in hunk headers | §4.4 step 5 rebuilds `@@` headers from numbers only and drops old-side metadata; suppression when not possible. Test 13. |
 | M1 delayed caller-policy test, contradictions | Test 8d rewritten (deck setting on, grant active, caller switch off, no write); tests 8 and 11 aligned. |
 
+## 16. PRE-PR fixes
+
+### Station (decisions 1 to 4)
+
+1. **Gate placement.** The `coordinator.authority_check` round trip of an effect runs after every awaited preparation and fence, immediately before the provider write or launch, with the session lock held. A prompt or a follow-up gates after the workspace fence and `begin_input()`; a steer, after the fence; `set_mode`, `interrupt`, `answer` and `stop`, right before the provider call; a start or a resume (direct, durable and import), right before the process launch; the first input of a start, after its fence and checkpoint work. The effect has one gate per write path and no earlier call. A refused input is `input_not_sent`; a refused direct start drops its `ready` signal and revokes the session; a refused start or resume ends the session as a failed start.
+2. **Reread after the round trip.** After the deck answers `valid`, the station reads its live setting `allow_fleet_control`, rule 3 and rule 2 once more, with no await between that read and the provider call. A change refuses the effect with `authority_lost`. The recheck reads the live setting itself (a closure on the policy hub), never a copy taken before the round trip.
+3. **Launch mode.** An effect that launches a provider (start, resume, import) or changes its mode (`set_mode`) sends `launch = { provider, mode }` in `coordinator.authority_check`. `provider` is the kind of the adapter of the spec's instance (`set_mode`: the kind in the stored session summary); `mode` is the mode that the launch really uses (`None`: the provider default). A provider that is not known fails closed (`authority_unknown`). Every other effect sends `launch: null`. A deck answer `valid: false` (also `mode_not_allowed`) refuses the effect. The ceiling is the deck's check.
+4. **Coordinator answers to questions.** A coordinator answers a question with the option `answer` plus its answers or text; any other option is a stored `forbidden`. A Claude question needs `question_answers` (an object whose keys are the `questions[].question` strings of the request and whose values are strings of at most 4096 characters); the station validates them before the claim and rewrites the decision to the one-time `allow`, with the tool input and `answers` set, never `allow_always`. `ClaudeCore::answer` sends no `updatedPermissions` for an answer whose `by` is the coordinator. Codex questions keep the existing validation. Board and owner answers are unchanged.
+
 ## 17. PRE-PR fixes (deck)
 
 The deck parts of the PRE-PR findings:

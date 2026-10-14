@@ -83,7 +83,7 @@ async fn a_coordinator_input_never_resumes_a_hibernated_session_but_a_board_inpu
     st.manager.shutdown(StopMode::Kill).await;
 }
 
-fn row(
+pub(super) fn row(
     id: &str,
     provider: ProviderKind,
     instance: &str,
@@ -291,10 +291,7 @@ async fn a_coordinator_answers_every_question_of_a_codex_question_request() {
     let store = st.manager.store().clone();
     let ws = st.workspace();
     let questions = serde_json::json!({"questions": [{"id": "a"}, {"id": "b"}]});
-    for (id, provider, instance) in [
-        ("codex-q", ProviderKind::Codex, "codex"),
-        ("claude-q", ProviderKind::Claude, "claude"),
-    ] {
+    for (id, provider, instance) in [("codex-q", ProviderKind::Codex, "codex")] {
         store
             .create_session(row(id, provider, instance, None, &ws))
             .await
@@ -365,9 +362,6 @@ async fn a_coordinator_answers_every_question_of_a_codex_question_request() {
             reply("codex-q", "codex-q-2", &["a"]),
         )
         .await;
-    assert_eq!(d.receipt.state, ReceiptState::Accepted, "{:?}", d.receipt);
-    // Claude: no station validation of the question answers.
-    let d = st.coord(reply("claude-q", "claude-q-3", &["a"])).await;
     assert_eq!(d.receipt.state, ReceiptState::Accepted, "{:?}", d.receipt);
     st.manager.shutdown(StopMode::Kill).await;
 }

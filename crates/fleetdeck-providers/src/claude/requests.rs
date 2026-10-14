@@ -3,7 +3,7 @@
 //! Unknown permission requests fail closed.
 
 use fleetdeck_proto::event::{
-    ApprovalOption, ExpiredReason, OptionKind, RequestKind, ResponseChannel, ToolKind,
+    ApprovalOption, ExpiredReason, OptionKind, RequestKind, ResolvedBy, ResponseChannel, ToolKind,
 };
 use fleetdeck_proto::{Event, RequestId};
 use serde_json::Value;
@@ -232,7 +232,10 @@ impl ClaudeCore {
             &decision,
             req.tool_use_id.as_deref(),
         );
+        // A coordinator never widens the session's permission rules
+        // (ADR-008 §5.3): its answer carries no `updatedPermissions`.
         if option_id == "allow_always"
+            && answer.by != ResolvedBy::Coordinator
             && let (Some(body), Some(rules)) = (
                 frame["response"]["response"].as_object_mut(),
                 req.suggestions.clone(),
