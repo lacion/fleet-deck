@@ -12,9 +12,9 @@ use fleetdeck_testkit::Det;
 
 use super::*;
 
-const DAY: Duration = Duration::from_secs(24 * 60 * 60);
+pub(super) const DAY: Duration = Duration::from_secs(24 * 60 * 60);
 
-async fn store(det: &Det) -> Store {
+pub(super) async fn store(det: &Det) -> Store {
     let s = Store::open_in_memory(det.clock(), det.ids(), StoreConfig::default())
         .await
         .unwrap();
@@ -22,7 +22,7 @@ async fn store(det: &Det) -> Store {
     s
 }
 
-fn new_session(id: &str) -> NewSession {
+pub(super) fn new_session(id: &str) -> NewSession {
     NewSession {
         session_id: id.into(),
         provider: ProviderKind::Claude,

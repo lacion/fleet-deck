@@ -20,7 +20,7 @@ mod fake;
 #[cfg(test)]
 mod tests;
 
-use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -61,7 +61,10 @@ pub struct Context {
     pub home: PathBuf,
     pub uid: u32,
     pub user: String,
+    /// The `PATH` of the service: only the safe entries (see [`safe_path`]).
     pub path: Option<String>,
+    /// One note for each `PATH` entry that the service leaves out.
+    pub path_dropped: Vec<String>,
     /// The raw `$XDG_CONFIG_HOME` (checked in the plan: it must be absolute).
     pub xdg_config_home: Option<String>,
     pub xdg_data_home: Option<String>,
@@ -75,6 +78,87 @@ pub struct Context {
     pub host: Option<HostChoice>,
     pub ready_limit: Duration,
     pub ready_step: Duration,
+}
+
+/// Keeps the `PATH` directories that only this user or root can change
+/// (NV-22). An entry stays when it is an absolute path to a directory that no
+/// group or other user can write, and that `uid` or root owns. Every parent
+/// directory up to `/` must be safe too. The service stores the canonical
+/// directory. It does not store a link, because another user can change the
+/// target of a link later. A later entry with the same canonical directory
+/// gives no note. Each dropped entry gives one note. An empty entry gives no
+/// note. The result is `None` when no entry stays.
+fn safe_path(path: &str, uid: u32) -> (Option<String>, Vec<String>) {
+    let mut kept: Vec<String> = Vec::new();
+    let mut notes = Vec::new();
+    for entry in path.split(':').filter(|e| !e.is_empty()) {
+        if !Path::new(entry).is_absolute() {
+            notes.push(format!("{entry}: not an absolute path"));
+            continue;
+        }
+        let canonical = match std::fs::canonicalize(entry) {
+            Ok(canonical) if canonical.is_dir() => canonical,
+            _ => {
+                notes.push(format!("{entry}: not a directory"));
+                continue;
+            }
+        };
+        let Some(text) = canonical.to_str() else {
+            notes.push(format!("{entry}: not a directory"));
+            continue;
+        };
+        // A `:` in the target would split it into more PATH entries that
+        // nobody checked (NV-22).
+        if text.contains(':') {
+            notes.push(format!("{entry}: its directory name holds a `:`"));
+            continue;
+        }
+        match unsafe_reason(&canonical, uid) {
+            None if kept.iter().any(|k| k == text) => {}
+            None => kept.push(text.to_owned()),
+            Some(reason) => notes.push(format!("{entry}: {reason}")),
+        }
+    }
+    let path = (!kept.is_empty()).then(|| kept.join(":"));
+    (path, notes)
+}
+
+/// Why a canonical directory is not safe for the `PATH` of the service, or
+/// `None` when it is safe (NV-22). The checks are the directory itself, then
+/// each parent up to `/`.
+fn unsafe_reason(dir: &Path, uid: u32) -> Option<String> {
+    let owned = |meta: &std::fs::Metadata| meta.uid() == uid || meta.uid() == 0;
+    let Ok(meta) = std::fs::symlink_metadata(dir) else {
+        return Some("not a directory".to_owned());
+    };
+    if meta.mode() & 0o022 != 0 {
+        return Some("the group or others can write it".to_owned());
+    }
+    if !owned(&meta) {
+        return Some("another user owns it".to_owned());
+    }
+    let mut child = dir;
+    for parent in dir.ancestors().skip(1) {
+        let safe = match std::fs::symlink_metadata(parent) {
+            Err(_) => false,
+            Ok(meta) if !owned(&meta) => false,
+            Ok(meta) if meta.mode() & 0o022 == 0 => true,
+            // A sticky parent is safe when the next component below it is
+            // owned by `uid` or root: others cannot rename or remove it.
+            Ok(meta) => {
+                meta.mode() & 0o1000 != 0
+                    && std::fs::symlink_metadata(child).is_ok_and(|below| owned(&below))
+            }
+        };
+        if !safe {
+            return Some(format!(
+                "a parent directory is not safe: {}",
+                parent.display()
+            ));
+        }
+        child = parent;
+    }
+    None
 }
 
 /// A text variable that is set and not empty. A value that is not UTF-8 is
@@ -98,6 +182,10 @@ impl Context {
         let exe = std::env::current_exe()
             .map_err(|e| anyhow!("Cannot find the path of this program ({e})."))?;
         let kernel = std::fs::read_to_string(tailscale_wsl::OSRELEASE).unwrap_or_default();
+        let (path, path_dropped) = match text_var("PATH")? {
+            Some(raw) => safe_path(&raw, uid),
+            None => (None, Vec::new()),
+        };
         let host = StationConfig::load(&dirs.station_config(), env)
             .ok()
             .map(|config| config.host);
@@ -112,7 +200,8 @@ impl Context {
             home,
             uid,
             user: text_var("USER")?.unwrap_or_else(|| uid.to_string()),
-            path: text_var("PATH")?,
+            path,
+            path_dropped,
             xdg_config_home: text_var("XDG_CONFIG_HOME")?,
             xdg_data_home: text_var("XDG_DATA_HOME")?,
             wsl: tailscale_wsl::is_wsl(),

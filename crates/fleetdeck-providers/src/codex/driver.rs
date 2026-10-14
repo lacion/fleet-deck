@@ -16,6 +16,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -24,12 +25,11 @@ use fleetdeck_proto::command::{SessionSpec, StopMode};
 use fleetdeck_proto::event::{ProviderKind, RawRef};
 use fleetdeck_proto::{Capabilities, Event, Operation, ProviderInstanceId};
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::sync::{Mutex, Notify, mpsc, watch};
 use tokio::task::JoinHandle;
 
 use super::core::{CodexCore, Output};
-use super::{ClientInfo, CoreConfig, app_server_args, capabilities, rpc};
+use super::{ClientInfo, CoreConfig, app_server_args, capabilities};
 use crate::adapter::{
     Answer, ControlId, EventSink, HostInput, LiveSession, ModelId, NativeSessionId, PermissionMode,
     ProviderAdapter, ProviderError, ProviderProbe, Result, canonical_workspace, require,
@@ -38,7 +38,9 @@ use crate::claude::RawLogSettings;
 use crate::coordinator::CoordinatorLaunch;
 use crate::host::{ProcessControl, ProcessSpec, SessionHost, StopPolicy};
 use crate::rawlog::{RawDir, RawFrameLog};
-use crate::stdio::{Write, flush, now_ms, write_failed};
+use crate::stdio::{
+    MAX_LINE_BYTES, Write, flush, now_ms, release_write, reserve_write, write_failed,
+};
 
 use super::probe::parse_version;
 
@@ -216,6 +218,7 @@ impl CodexAdapter {
             sink,
             raw: std::sync::Mutex::new(raw),
             poll: Notify::new(),
+            queued: AtomicUsize::new(0),
         });
         let (write_tx, write_rx) = mpsc::unbounded_channel::<Write>();
         let (frames_tx, frames_rx) = watch::channel(0);
@@ -230,6 +233,7 @@ impl CodexAdapter {
             process.stdout,
             write_tx.clone(),
             frames_tx,
+            MAX_LINE_BYTES,
         ));
         let poller = self
             .config
@@ -368,6 +372,8 @@ struct Shared {
     raw: std::sync::Mutex<Option<RawFrameLog>>,
     /// Wakes the background poller.
     poll: Notify,
+    /// The frames in the stdin queue that the writer did not take (NV-19).
+    queued: AtomicUsize,
 }
 
 impl Shared {
@@ -407,7 +413,11 @@ impl Shared {
         for o in out {
             match o {
                 Output::Write(v) => {
+                    // The queue is bounded: a process that does not read
+                    // stdin must not grow it without limit (NV-19).
+                    reserve_write(&self.queued)?;
                     if writes.send(Write::Frame(v)).is_err() {
+                        release_write(&self.queued);
                         return Err(if queued {
                             write_failed("the stdin writer stopped")
                         } else {
@@ -431,97 +441,6 @@ impl Shared {
         }
         Ok(())
     }
-}
-
-async fn write_loop(
-    shared: Arc<Shared>,
-    control: Arc<dyn ProcessControl>,
-    mut rx: mpsc::UnboundedReceiver<Write>,
-) {
-    while let Some(item) = rx.recv().await {
-        let frame = match item {
-            Write::Frame(frame) => frame,
-            Write::Close => {
-                control.close_stdin().await;
-                break;
-            }
-            Write::Flush(ack) => {
-                let _ = ack.send(());
-                continue;
-            }
-        };
-        shared.log(RawDir::In, &frame);
-        let mut line = frame.to_string();
-        line.push('\n');
-        if let Err(e) = control.write(line.as_bytes()).await {
-            tracing::debug!(error = %e, "codex stdin closed");
-            break;
-        }
-    }
-}
-
-async fn read_loop(
-    shared: Arc<Shared>,
-    control: Arc<dyn ProcessControl>,
-    stdout: Box<dyn AsyncRead + Send + Unpin>,
-    writes: mpsc::UnboundedSender<Write>,
-    frames: watch::Sender<u64>,
-) {
-    let mut lines = BufReader::new(stdout).lines();
-    let mut sink_open = true;
-    loop {
-        let line = match lines.next_line().await {
-            Ok(Some(line)) => line,
-            Ok(None) => break,
-            Err(e) => {
-                tracing::warn!(error = %e, "codex stdout read failed");
-                break;
-            }
-        };
-        if sink_open && !feed_line(&shared, &line, &writes).await {
-            // The station dropped the session's events: nobody owns it.
-            sink_open = false;
-            control.kill().await;
-        }
-        frames.send_modify(|n| *n += 1);
-    }
-    let report = control.wait().await;
-    if !report.stderr_tail.is_empty() {
-        shared.note(RawDir::Stderr, &report.stderr_tail);
-    }
-    let mut core = shared.core.lock().await;
-    let out = core.on_exit(report.code());
-    if sink_open {
-        let _ = shared.dispatch(out, None, &writes).await;
-    }
-    drop(core);
-    // The poller sees the ended core and stops.
-    shared.poll.notify_one();
-}
-
-/// Feeds one stdout line. False when the event sink is closed.
-async fn feed_line(shared: &Shared, line: &str, writes: &mpsc::UnboundedSender<Write>) -> bool {
-    if line.trim().is_empty() {
-        return true;
-    }
-    let (frame, raw_ref) = match serde_json::from_str::<Value>(line) {
-        Ok(v) => {
-            let raw_ref = (!is_token_delta(&v))
-                .then(|| shared.log(RawDir::Out, &v))
-                .flatten();
-            (rpc::parse_value(v), raw_ref)
-        }
-        Err(_) => {
-            shared.note(RawDir::Out, line);
-            (rpc::Incoming::Unknown(Value::from(line)), None)
-        }
-    };
-    let mut core = shared.core.lock().await;
-    let out = core.on_frame(frame);
-    !matches!(
-        shared.dispatch(out, raw_ref.as_ref(), writes).await,
-        Err(ProviderError::SinkClosed)
-    )
 }
 
 /// One running `codex app-server` process with one thread.
@@ -791,8 +710,15 @@ impl Drop for CodexSession {
 
 #[path = "durable_launch.rs"]
 mod durable_launch;
+#[path = "driver_io.rs"]
+mod io;
 #[path = "driver_poll.rs"]
 mod poll;
 #[path = "driver_probe.rs"]
 mod probe_cmd;
+use io::{read_loop, write_loop};
 use poll::poll_loop;
+
+#[cfg(test)]
+#[path = "driver_tests.rs"]
+mod tests;

@@ -13,6 +13,9 @@ use crate::workspace::{Git, GitError, GitOptions};
 
 /// The time limit of `git ls-remote`.
 pub const PREFLIGHT_TIMEOUT: Duration = Duration::from_secs(20);
+/// The most bytes of Git error text that preflight keeps (NV-30). Git
+/// output is not kept in memory beyond it.
+const MAX_PREFLIGHT_STDERR: usize = 64 * 1024;
 /// The most characters of the Git error text in an answer.
 pub const MESSAGE_CHARS: usize = 2000;
 
@@ -47,7 +50,7 @@ pub async fn run(
         },
     );
     let result = git
-        .status(
+        .status_stderr(
             &[
                 "-c",
                 "protocol.ext.allow=never",
@@ -60,17 +63,17 @@ pub async fn run(
                 url,
             ],
             &[],
-            None,
+            MAX_PREFLIGHT_STDERR,
         )
         .await;
     match result {
         // Exit code 2: no matching refs, an empty repository.
-        Ok((0 | 2, _, _)) => Ok(Preflight {
+        Ok((0 | 2, _)) => Ok(Preflight {
             ok: true,
             message: String::new(),
             hint: None,
         }),
-        Ok((_, _, stderr)) => Ok(failed(&stderr, false)),
+        Ok((_, stderr)) => Ok(failed(&stderr, false)),
         Err(e @ GitError::Timeout { .. }) => Ok(failed(&e.to_string(), true)),
         Err(e) => Err(PreflightError::Spawn(provision::scrub(&e.to_string()))),
     }
@@ -225,6 +228,52 @@ mod tests {
             hint("git ls-remote did not end", true)
                 .unwrap()
                 .contains("20 s")
+        );
+    }
+
+    /// A fake `git` program: a shell script with `body`.
+    fn fake_git(dir: &Path, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("fake-git");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[tokio::test]
+    async fn a_git_that_prints_a_lot_of_stderr_is_not_ok_and_the_message_is_cut() {
+        // NV-30
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let repo = root.join("r");
+        std::fs::create_dir(&repo).unwrap();
+        let program = fake_git(&root, "head -c 204800 /dev/zero | tr '\\0' 'x' >&2\nexit 1");
+        let got = run(&file_url(&repo), inside(&root), &program)
+            .await
+            .unwrap();
+        assert!(!got.ok);
+        assert!(!got.message.is_empty());
+        assert!(got.message.len() <= 2048, "{}", got.message.len());
+    }
+
+    #[tokio::test]
+    async fn a_git_that_prints_a_lot_of_stdout_and_exits_zero_is_ok() {
+        // NV-30
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let repo = root.join("r");
+        std::fs::create_dir(&repo).unwrap();
+        let program = fake_git(&root, "head -c 1048576 /dev/zero | tr '\\0' 'y'\nexit 0");
+        let got = run(&file_url(&repo), inside(&root), &program)
+            .await
+            .unwrap();
+        assert_eq!(
+            got,
+            Preflight {
+                ok: true,
+                message: String::new(),
+                hint: None
+            }
         );
     }
 

@@ -108,6 +108,8 @@ pub struct RunningDeck {
     server: tokio::task::JoinHandle<()>,
     /// The automations scheduler (R5, DL-168).
     scheduler: tokio::task::JoinHandle<()>,
+    /// The audit log prune (NV-11).
+    maintenance: tokio::task::JoinHandle<()>,
     shutdown: watch::Sender<bool>,
     socket: PathBuf,
 }
@@ -303,6 +305,7 @@ impl RunningDeck {
             live: live_cell,
         });
         let server = tokio::spawn(local::serve(listener, local, rx.clone()));
+        let maintenance = crate::maintenance::spawn(store.clone(), rx.clone());
         let scheduler = crate::scheduler::spawn(store.clone(), Arc::clone(node.link()), rx);
         Ok(Self {
             node,
@@ -313,6 +316,7 @@ impl RunningDeck {
             tailnet_start,
             server,
             scheduler,
+            maintenance,
             shutdown,
             socket,
         })
@@ -333,6 +337,7 @@ impl RunningDeck {
         let _ = self.shutdown.send(true);
         let _ = self.server.await;
         let _ = self.scheduler.await;
+        let _ = self.maintenance.await;
         self.board.join().await;
         self.node.shutdown();
         if let Err(e) = std::fs::remove_file(&self.socket) {

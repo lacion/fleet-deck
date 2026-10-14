@@ -498,8 +498,8 @@ async fn refused_elevation(board: &Board, code: &'static str) {
 
 /// `POST /api/auth/elevate { password }` or `{ code }` (DL-172): an
 /// elevation for the danger changes and the restart of the settings. Only
-/// the owner's board login may call it. A failure counts in the `password`
-/// flow of the login limits. Neither the password, the code nor the elevation goes
+/// the owner's board login may call it. A failure counts in the `elevate` flow
+/// of the login limits (NV-13). Neither the password, the code nor the elevation goes
 /// to a log or to the audit row.
 ///
 /// # Errors
@@ -518,7 +518,7 @@ pub async fn elevate(
             .await?;
     let refuse = |code: &'static str| refused_elevation(&board, code);
     let ip = request_source(peer);
-    if let Some(wait) = board.limiter.password.locked(ip, board.store.now_ms()) {
+    if let Some(wait) = board.limiter.elevate.locked(ip, board.store.now_ms()) {
         return Err(limit_refusal(&board, AUDIT, "owner", too_many_attempts(wait)).await);
     }
     let invalid = || {
@@ -534,13 +534,11 @@ pub async fn elevate(
     };
     let (attempt, valid) = match (body.password, body.code) {
         (Some(password), None) => {
-            let attempt =
-                start_attempt(&board, &board.limiter.password, ip, AUDIT, "owner").await?;
+            let attempt = start_attempt(&board, &board.limiter.elevate, ip, AUDIT, "owner").await?;
             verify_password(&board, attempt, AUDIT, "owner", password).await?
         }
         (None, Some(code)) => {
-            let attempt =
-                start_attempt(&board, &board.limiter.password, ip, AUDIT, "owner").await?;
+            let attempt = start_attempt(&board, &board.limiter.elevate, ip, AUDIT, "owner").await?;
             let valid = board.elevations.redeem_code(&code, board.store.now_ms());
             (attempt, valid)
         }

@@ -30,14 +30,12 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
+use fleetdeck_link::Control;
 use fleetdeck_proto::SessionId;
 use fleetdeck_proto::artifacts::{
-    ArtifactDetail, ArtifactFile, ArtifactFileQuery, ArtifactGetQuery, ArtifactKind,
-    ArtifactPublish, ArtifactPublishRequest, ArtifactPublished, ArtifactVersion, DeckArtifact,
-    DeckArtifactDetail, MAX_AUTHOR_CHARS, ShareLink, ShareRequest, ViewLink, ViewRequest,
-    content_type_of,
+    ArtifactDetail, ArtifactGetQuery, ArtifactKind, ArtifactPublish, ArtifactPublishRequest,
+    ArtifactPublished, ArtifactVersion, DeckArtifact, DeckArtifactDetail, MAX_AUTHOR_CHARS,
+    ShareLink, ShareRequest, ViewLink, ViewRequest, content_type_of,
 };
 use fleetdeck_proto::link::Outcome;
 use serde::Deserialize;
@@ -49,6 +47,10 @@ use crate::store::artifacts::{NewShare, ShareRow};
 use crate::store::auth::{random_token, secret_hash};
 use crate::store::{AuditResult, DeckError, NewAudit, Principal, StationRecord};
 
+#[path = "artifact_stream.rs"]
+mod stream;
+use stream::{Cache, ensure_cached, stream_file};
+
 /// The longest the deck waits for one answer of a station.
 pub const STATION_WAIT: Duration = Duration::from_secs(20);
 /// The longest share: one year.
@@ -56,6 +58,10 @@ pub const MAX_SHARE_DAYS: u32 = 365;
 /// How long the board's own view link lives.
 pub const VIEW_LINK_MS: i64 = 60 * 60 * 1000;
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+/// The largest version that the deck caches (NV-01). A larger version is
+/// streamed from the station and never cached; DL-155 keeps the publish
+/// without a size limit.
+const MAX_CACHED_VERSION_BYTES: u64 = 64 * 1024 * 1024;
 /// The content security policy of an HTML or SVG answer (DL-165).
 pub const SANDBOX_CSP: &str = "sandbox allow-scripts allow-popups allow-forms allow-modals; default-src * data: blob: 'unsafe-inline' 'unsafe-eval'";
 
@@ -102,24 +108,30 @@ fn station_error(code: &str, message: String) -> ApiError {
     ApiError::new(status, known, message)
 }
 
-/// Sends `method` to the station on its live link and decodes the answer.
-async fn ask<T: DeserializeOwned>(
-    board: &Board,
-    rec: &StationRecord,
+/// The live link of a station, or 409 `station_unreachable`.
+fn control_of(board: &Board, rec: &StationRecord) -> Result<Control, ApiError> {
+    board
+        .link
+        .control_for(&rec.station_id)
+        .ok_or_else(|| unreachable_error(&rec.name))
+}
+
+fn unreachable_error(name: &str) -> ApiError {
+    ApiError::new(
+        StatusCode::CONFLICT,
+        "station_unreachable",
+        format!("station `{name}` has no live link to this deck"),
+    )
+}
+
+/// Sends `method` on `control` to the station named `name` and decodes the
+/// answer.
+async fn ask_on<T: DeserializeOwned>(
+    control: &Control,
+    name: &str,
     method: &'static str,
     params: serde_json::Value,
 ) -> Result<T, ApiError> {
-    let unreachable = || {
-        ApiError::new(
-            StatusCode::CONFLICT,
-            "station_unreachable",
-            format!("station `{}` has no live link to this deck", rec.name),
-        )
-    };
-    let control = board
-        .link
-        .control_for(&rec.station_id)
-        .ok_or_else(unreachable)?;
     let outcome = tokio::time::timeout(STATION_WAIT, control.request(method, None, params))
         .await
         .map_err(|_| {
@@ -129,7 +141,7 @@ async fn ask<T: DeserializeOwned>(
                 "the station did not answer in time",
             )
         })?
-        .map_err(|_| unreachable())?;
+        .map_err(|_| unreachable_error(name))?;
     match outcome {
         Outcome::Ok(v) => serde_json::from_value(v)
             .map_err(|e| ApiError::new(StatusCode::BAD_GATEWAY, "station_error", e.to_string())),
@@ -137,85 +149,15 @@ async fn ask<T: DeserializeOwned>(
     }
 }
 
-/// Reads every file of one version from the station into the cache and
-/// stores the version metadata.
-async fn fill_cache(
+/// Sends `method` to the station on its live link and decodes the answer.
+async fn ask<T: DeserializeOwned>(
     board: &Board,
     rec: &StationRecord,
-    artifact_id: &str,
-    version: u32,
-) -> Result<(), ApiError> {
-    let detail: ArtifactDetail = ask(
-        board,
-        rec,
-        "artifacts.get",
-        serde_json::json!(ArtifactGetQuery {
-            artifact_id: artifact_id.to_owned(),
-            version: Some(version),
-        }),
-    )
-    .await?;
-    board
-        .store
-        .put_artifact_versions(rec.station_id.clone(), detail.versions.clone())
-        .await
-        .map_err(db)?;
-    for path in &detail.version.files {
-        let mut bytes = Vec::new();
-        loop {
-            let chunk: ArtifactFile = ask(
-                board,
-                rec,
-                "artifacts.file",
-                serde_json::json!(ArtifactFileQuery {
-                    artifact_id: artifact_id.to_owned(),
-                    version,
-                    path: path.clone(),
-                    offset: Some(bytes.len() as u64),
-                    length: None,
-                }),
-            )
-            .await?;
-            let part = STANDARD.decode(&chunk.data_base64).map_err(|e| {
-                ApiError::new(StatusCode::BAD_GATEWAY, "station_error", e.to_string())
-            })?;
-            bytes.extend_from_slice(&part);
-            if chunk.eof || part.is_empty() {
-                break;
-            }
-        }
-        board
-            .store
-            .put_artifact_file(
-                rec.station_id.clone(),
-                artifact_id.to_owned(),
-                version,
-                path.clone(),
-                bytes,
-            )
-            .await
-            .map_err(db)?;
-    }
-    Ok(())
-}
-
-/// Makes sure the cache holds `version`: it reads the version from the
-/// station when it does not.
-async fn ensure_cached(
-    board: &Board,
-    rec: &StationRecord,
-    artifact_id: &str,
-    version: u32,
-) -> Result<(), ApiError> {
-    let cached = board
-        .store
-        .cached_versions(rec.station_id.clone(), artifact_id.to_owned())
-        .await
-        .map_err(db)?;
-    if cached.contains(&version) {
-        return Ok(());
-    }
-    fill_cache(board, rec, artifact_id, version).await
+    method: &'static str,
+    params: serde_json::Value,
+) -> Result<T, ApiError> {
+    let control = control_of(board, rec)?;
+    ask_on(&control, &rec.name, method, params).await
 }
 
 /// `GET /api/artifacts` query.
@@ -328,9 +270,9 @@ fn ok_path(path: &str) -> bool {
     !path.contains('\0') && !path.contains('\\') && !path.split('/').any(|s| s == ".." || s == ".")
 }
 
-/// The response for one file: its content type, `nosniff`, and for a
+/// The headers for one file: its content type, `nosniff`, and for a
 /// document (HTML, SVG) the sandbox policy.
-fn file_response(path: &str, bytes: Vec<u8>) -> Response {
+fn file_headers(path: &str) -> HeaderMap {
     let content_type = content_type_of(path);
     let mut headers = HeaderMap::new();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
@@ -350,7 +292,12 @@ fn file_response(path: &str, bytes: Vec<u8>) -> Response {
             HeaderValue::from_static(SANDBOX_CSP),
         );
     }
-    (StatusCode::OK, headers, bytes).into_response()
+    headers
+}
+
+/// The response for one cached file.
+fn file_response(path: &str, bytes: Vec<u8>) -> Response {
+    (StatusCode::OK, file_headers(path), bytes).into_response()
 }
 
 /// `GET /api/artifacts/{station}/{id}/{version}/raw/{*path}`.
@@ -368,7 +315,9 @@ pub async fn raw(
     }
     let rec = station_of(&board, &station).await?;
     indexed(&board, &rec, &id).await?;
-    ensure_cached(&board, &rec, &id, version).await?;
+    if ensure_cached(&board, &rec, &id, version).await? == Cache::Stream {
+        return stream_file(&board, &rec, &id, version, &path).await;
+    }
     let bytes = board
         .store
         .cached_artifact_file(rec.station_id.clone(), id, version, path.clone())
@@ -472,7 +421,7 @@ async fn version_to_pin(
         ));
     }
     // The bytes go into the deck cache now: the link works while the
-    // station is off.
+    // station is off. A version over the cache limit is streamed instead.
     ensure_cached(board, rec, &artifact.artifact_id, version).await?;
     Ok(version)
 }
@@ -667,8 +616,10 @@ async fn share_of(board: &Board, token: &str) -> Option<(ShareRow, String)> {
 
 /// The version that a share serves: its pinned version, or the newest one
 /// whose bytes the deck holds (a share of "the latest" prefers the newest
-/// version and reads it from the station when it can).
-async fn served_version(board: &Board, row: &ShareRow) -> Option<u32> {
+/// version and reads it from the station when it can). A version over the
+/// cache limit is streamed while the station has a live link (NV-01); with
+/// no link it counts as a version that is not cached.
+async fn served_version(board: &Board, row: &ShareRow) -> Option<(u32, Cache)> {
     let rec = board
         .store
         .station(row.station_id.clone())
@@ -683,10 +634,14 @@ async fn served_version(board: &Board, row: &ShareRow) -> Option<u32> {
         .flatten()?
         .latest_version;
     let wanted = row.version.unwrap_or(latest);
-    if let Some(rec) = &rec
-        && let Err(e) = ensure_cached(board, rec, &row.artifact_id, wanted).await
-    {
-        tracing::debug!(code = e.code, "share version not read from the station");
+    if let Some(rec) = &rec {
+        match ensure_cached(board, rec, &row.artifact_id, wanted).await {
+            Ok(Cache::Stream) if board.link.control_for(&rec.station_id).is_some() => {
+                return Some((wanted, Cache::Stream));
+            }
+            Ok(_) => {}
+            Err(e) => tracing::debug!(code = e.code, "share version not read from the station"),
+        }
     }
     let cached = board
         .store
@@ -694,9 +649,9 @@ async fn served_version(board: &Board, row: &ShareRow) -> Option<u32> {
         .await
         .ok()?;
     if cached.contains(&wanted) {
-        Some(wanted)
+        Some((wanted, Cache::Cached))
     } else if row.version.is_none() {
-        cached.first().copied()
+        cached.first().map(|v| (*v, Cache::Cached))
     } else {
         None
     }
@@ -709,7 +664,7 @@ async fn public_file(board: &Board, token: &str, path: &str) -> Response {
     let Some((row, hash)) = share_of(board, token).await else {
         return gone();
     };
-    let Some(version) = served_version(board, &row).await else {
+    let Some((version, cache)) = served_version(board, &row).await else {
         return gone();
     };
     let versions = board
@@ -731,17 +686,34 @@ async fn public_file(board: &Board, token: &str, path: &str) -> Response {
     if !files.iter().any(|f| f == wanted) {
         return gone();
     }
-    let Ok(Some(bytes)) = board
-        .store
-        .cached_artifact_file(
-            row.station_id.clone(),
-            row.artifact_id.clone(),
-            version,
-            wanted.to_owned(),
-        )
-        .await
-    else {
-        return gone();
+    let response = match cache {
+        Cache::Cached => {
+            let Ok(Some(bytes)) = board
+                .store
+                .cached_artifact_file(
+                    row.station_id.clone(),
+                    row.artifact_id.clone(),
+                    version,
+                    wanted.to_owned(),
+                )
+                .await
+            else {
+                return gone();
+            };
+            file_response(wanted, bytes)
+        }
+        Cache::Stream => {
+            let Ok(Some(rec)) = board.store.station(row.station_id.clone()).await else {
+                return gone();
+            };
+            match stream_file(board, &rec, &row.artifact_id, version, wanted).await {
+                Ok(response) => response,
+                Err(e) => {
+                    tracing::debug!(code = e.code, "shared file not streamed from the station");
+                    return gone();
+                }
+            }
+        }
     };
     // One view is one open of the document, not one of its files.
     if wanted == main && row.kind == "share" {
@@ -761,7 +733,7 @@ async fn public_file(board: &Board, token: &str, path: &str) -> Response {
             )
             .await;
     }
-    file_response(wanted, bytes)
+    response
 }
 
 /// `GET /a/{token}/{*path}`: public; the token is the credential.

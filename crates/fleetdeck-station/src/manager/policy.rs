@@ -69,6 +69,8 @@ pub struct Policy {
     trackers: Vec<TrackerConfig>,
     /// `allow_shell` of `station.toml`: new shells and handovers.
     allow_shell: bool,
+    /// `allow_bypass_permissions` of `station.toml` (NV-24).
+    allow_bypass_permissions: bool,
     /// `allow_fleet_control` of `station.toml` (ADR-008 §3).
     allow_fleet_control: bool,
     /// `max_shells` of `station.toml`.
@@ -113,6 +115,7 @@ impl Policy {
             hibernate_after_min: config.hibernate_after_min,
             trackers: config.trackers.clone(),
             allow_shell: config.allow_shell,
+            allow_bypass_permissions: config.allow_bypass_permissions,
             allow_fleet_control: config.allow_fleet_control,
             max_shells: config.max_shells,
             model_help: config.model_help.clone(),
@@ -176,6 +179,7 @@ impl Policy {
             hibernate_after_min: 0,
             trackers: Vec::new(),
             allow_shell: true,
+            allow_bypass_permissions: false,
             allow_fleet_control: false,
             max_shells: DEFAULT_MAX_SHELLS,
             model_help: ModelHelpConfig::default(),
@@ -223,6 +227,12 @@ impl Policy {
     #[must_use]
     pub fn allow_shell(&self) -> bool {
         self.allow_shell
+    }
+
+    /// Whether a bypass or full-access mode may run (NV-24).
+    #[must_use]
+    pub fn allow_bypass_permissions(&self) -> bool {
+        self.allow_bypass_permissions
     }
 
     /// Whether coordinators with a fleet-control grant may act on this

@@ -5,7 +5,7 @@
 //! (20 s for each request), and shapes the answer. All text that comes from
 //! a file, a diff, an issue, a PR or an artifact goes into the untrusted
 //! envelope; ids, counts and states stay outside it. A station refusal
-//! reaches the tool as `"<code>: <message>"`.
+//! reaches the tool as `"<code>: <fenced message>"`.
 
 use std::time::Duration;
 
@@ -49,7 +49,9 @@ fn unreachable_station() -> Reject {
     )
 }
 
-/// The rejection for a station error `code`.
+/// The rejection for a station error `code`. The message can hold text of a
+/// tracker or a forge, so it goes into the untrusted envelope (NV-09). The
+/// code stays outside.
 fn station_refusal(code: &str, message: &str) -> Reject {
     let kind = match code {
         "invalid_params" | "unknown_session" | "not_found" | "invalid_path" | "invalid_query"
@@ -57,7 +59,7 @@ fn station_refusal(code: &str, message: &str) -> Reject {
         "forbidden" | "outside_roots" | "private_path" => RejectCode::Forbidden,
         _ => RejectCode::InvalidState,
     };
-    refusal(kind, format!("{code}: {message}"))
+    refusal(kind, format!("{code}: {}", fence("station_error", message)))
 }
 
 fn station_error(e: impl std::fmt::Display) -> Reject {

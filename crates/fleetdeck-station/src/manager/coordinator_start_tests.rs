@@ -132,6 +132,7 @@ async fn a_deck_start_with_a_grant_hands_the_credential_to_the_child_environment
                 &decide_policy,
                 &decide_bindings,
                 CommandOrigin::Board,
+                false,
                 command,
             )
         })
@@ -253,6 +254,7 @@ async fn a_deck_start_with_a_grant_hands_the_credential_to_the_child_environment
                 &decide_policy,
                 &decide_bindings,
                 CommandOrigin::Board,
+                false,
                 command,
             )
         })

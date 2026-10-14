@@ -2975,3 +2975,14 @@ Owner review: pending.
 - Choice (WSL): a Windows logon task (`\Fleet Deck\WSL <distro> <SID>`) starts the distro; one PowerShell program with mount and symbolic link checks; a failure is a warning.
 - Choice (tests): every automated test uses a recording runner; no test runs `systemctl`, `loginctl`, `launchctl` or PowerShell. Advisor review (Codex) of revision 1 applied (design §13).
 
+
+## DL-187 — Security audit fixes (owner decisions, 2026-10-15)
+
+- Source: `docs/security-audit.md` (source-only audit of `4d289c28`: 0 confirmed, 34 needs-validation leads, 1 rejected). Each lead has a fix or a documented residual in its "Resolution" section.
+- Owner choice (NV-01): keep no artifact size cap (DL-155). The deck streams a version over 64 MiB from the station and never caches it.
+- Owner choice (NV-06): an OSC 52 copy request asks each time (Copy or Ignore); nothing is copied without a click.
+- Owner choice (NV-08): the station refuses a `station.toml` with a plain provider `env` value when the group or others can read it.
+- Owner choice (NV-10, NV-11, NV-28): finished durable history is kept 90 days; the deck audit log keeps at most 200,000 rows.
+- Choice (high-risk designs): retention, stale snapshots, revocation errors, member mail and the live marker had two adversary design-review rounds (round 1: 5 blockers; round 2: 1 blocker, fixed by a revocation fence).
+- Choice (NV-13): only the owner's elevation gets its own failure window; the anonymous login flows keep the global window.
+- Choice (NV-23): no `--` in the Codex resume argv; the native id rule is checked when stored and again at the handover.

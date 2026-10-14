@@ -218,6 +218,7 @@ async fn a_queued_start_is_refused_at_dispatch_when_the_roots_narrowed() {
                 &policy,
                 &Bindings::default(),
                 CommandOrigin::Local,
+                false,
                 command,
             )
         })

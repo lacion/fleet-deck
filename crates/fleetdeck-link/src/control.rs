@@ -33,7 +33,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 pub use crate::grants::{GrantSource, Grants};
 use crate::methods::{self, MethodSpec, code};
-use crate::table::{Closing, TableGuard};
+use crate::table::{Closing, CurrentCheck, TableGuard};
 use crate::tls::Role;
 use crate::ws::{CLEANUP_LIMIT, LinkError};
 
@@ -229,6 +229,8 @@ fn refusal(code: &str, message: impl Into<String>) -> Outcome {
 pub struct Control {
     shared: Arc<Shared>,
     _alive: Arc<watch::Sender<()>>,
+    /// Whether the link is still the current link of its peer (NV-12).
+    current: Option<CurrentCheck>,
 }
 
 impl fmt::Debug for Control {
@@ -335,6 +337,14 @@ impl Control {
         self.shared.ended.borrow().clone()
     }
 
+    /// Whether this link is still the current link of its peer. A later
+    /// winner makes it `false` (NV-12). A control without a link table entry
+    /// is always current.
+    #[must_use]
+    pub fn is_current(&self) -> bool {
+        self.current.as_ref().is_none_or(CurrentCheck::is_current)
+    }
+
     /// Waits until the link ended.
     pub async fn closed(&self) -> Closing {
         self.shared.closed().await
@@ -404,6 +414,8 @@ where
         ended,
         last_rx: Mutex::new(Instant::now()),
     });
+    // Taken before the guard moves into the supervisor.
+    let current = guard.as_ref().map(TableGuard::check);
     let (sink, stream) = ws.split();
     let (final_tx, final_rx) = oneshot::channel();
     let writer = tokio::spawn(write_loop(sink, out_rx, final_rx, config.write_limit));
@@ -425,6 +437,7 @@ where
     let control = Control {
         shared,
         _alive: Arc::new(alive),
+        current,
     };
     (control, in_rx)
 }

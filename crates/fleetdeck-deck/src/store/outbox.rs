@@ -452,6 +452,7 @@ impl DeckStore {
             let Some((expires_at, station, payload, authority)) = found else {
                 return Ok(None);
             };
+            let has_authority = authority.is_some();
             // A fleet-control item checks its authority at the start of
             // every attempt (ADR-008 section 6.2): when it is gone the item
             // ends `dead` (`authority_lost`) and no command is made; a
@@ -475,6 +476,20 @@ impl DeckStore {
                         return Ok(None);
                     }
                 }
+            }
+            // A mail of a member checks its share at the start of every
+            // attempt (NV-17): when the share is gone the item ends `dead`
+            // (`authority_lost`) and no command is made.
+            if !has_authority && !mail_still_valid(&tx, &outbox_id, now)? {
+                set_state(
+                    &tx,
+                    &outbox_id,
+                    OutboxState::Dead,
+                    Some("authority_lost"),
+                    now,
+                )?;
+                tx.commit()?;
+                return Ok(None);
             }
             if cmd.retry_until > expires_at {
                 return Err(DeckError::Corrupt(format!(
@@ -659,48 +674,9 @@ pub fn authority_of(envelope: &serde_json::Value) -> Option<(CommandAuthority, O
 mod hold_tests;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+#[path = "outbox_tests.rs"]
+mod tests;
 
-    #[test]
-    fn the_backoff_doubles_from_five_seconds_up_to_five_minutes() {
-        assert_eq!(backoff(1), 5_000);
-        assert_eq!(backoff(2), 10_000);
-        assert_eq!(backoff(4), 40_000);
-        assert_eq!(backoff(7), MAX_BACKOFF_MS);
-        assert_eq!(backoff(u32::MAX), MAX_BACKOFF_MS);
-    }
-
-    /// ADR-008 §5.3: a station rejection `already_answered` ends the item
-    /// `dead`, and the reason names the code for `command_status`.
-    #[test]
-    fn a_station_rejection_already_answered_ends_the_item_with_its_code() {
-        let rejected = |code| {
-            let reject = fleetdeck_proto::Reject::new(code, "no");
-            let receipt = fleetdeck_proto::Receipt::rejected("c".into(), reject, 0);
-            commands::DeckCommand {
-                command_id: "c".into(),
-                station_id: "s".into(),
-                method: "approval.answer".to_owned(),
-                origin: "coordinator".to_owned(),
-                envelope: Value::Null,
-                retry_until: 0,
-                state: DeckCommandState::Done,
-                attempts: 1,
-                sent_at: Some(0),
-                receipt: Some(receipt),
-                reason: None,
-                author: None,
-                created_at: 0,
-                updated_at: 0,
-            }
-        };
-        for (code, reason) in [
-            (RejectCode::AlreadyAnswered, "rejected: already_answered"),
-            (RejectCode::AnswerCapReached, "rejected: answer_cap_reached"),
-        ] {
-            let got = next(&rejected(code));
-            assert_eq!(got, Some((OutboxState::Dead, Some(reason.to_owned()))));
-        }
-    }
-}
+#[path = "outbox_mail.rs"]
+mod mail;
+use mail::mail_still_valid;

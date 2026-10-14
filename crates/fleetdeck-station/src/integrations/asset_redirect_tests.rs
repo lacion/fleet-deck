@@ -265,6 +265,105 @@ async fn curl_gets_q_first_and_a_config_that_turns_redirects_off() {
     assert!(cfg.lines().any(|l| l == "no-location"), "{cfg}");
 }
 
+#[tokio::test]
+async fn the_auth_header_goes_only_to_the_origin_of_the_auth_host() {
+    let tmp = tempfile::tempdir().unwrap();
+    let hosts = vec!["t.example".to_owned()];
+    // NV-14: another port of the same host is not on a host of the binding.
+    let routes = [("https://t.example:8443/p.png", image())];
+    let err = fetch(
+        &programs(tmp.path(), &routes),
+        "https://t.example:8443/p.png",
+        &hosts,
+        Some((AUTH, "t.example")),
+        &["SECRET-TOKEN"],
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        err,
+        Fail::new(
+            code::INVALID_PARAMS,
+            "the asset URL is not on a host of this binding"
+        )
+    );
+    assert!(configs(tmp.path()).is_empty(), "curl got no call");
+
+    let tmp = tempfile::tempdir().unwrap();
+    let routes = [("https://t.example/p.png", image())];
+    fetch(
+        &programs(tmp.path(), &routes),
+        "https://t.example/p.png",
+        &hosts,
+        Some((AUTH, "t.example")),
+        &["SECRET-TOKEN"],
+    )
+    .await
+    .unwrap();
+    let cfgs = configs(tmp.path());
+    assert_eq!(cfgs.len(), 1);
+    assert!(cfgs[0].contains("header = \"Authorization: Bearer SECRET-TOKEN\""));
+}
+
+#[tokio::test]
+async fn a_host_entry_with_a_port_allows_that_port_only() {
+    let hosts = vec!["git.example:8443".to_owned()];
+    let tmp = tempfile::tempdir().unwrap();
+    let routes = [("https://git.example:8443/a.png", image())];
+    fetch(
+        &programs(tmp.path(), &routes),
+        "https://git.example:8443/a.png",
+        &hosts,
+        Some((AUTH, "git.example:8443")),
+        &["SECRET-TOKEN"],
+    )
+    .await
+    .unwrap();
+    assert!(configs(tmp.path())[0].contains("header = \"Authorization"));
+
+    let tmp = tempfile::tempdir().unwrap();
+    let routes = [("https://git.example/a.png", image())];
+    let err = fetch(
+        &programs(tmp.path(), &routes),
+        "https://git.example/a.png",
+        &hosts,
+        None,
+        &[],
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, code::INVALID_PARAMS);
+    assert!(configs(tmp.path()).is_empty());
+}
+
+#[tokio::test]
+async fn a_redirect_to_another_port_of_the_auth_host_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let routes = [
+        ("https://a.test/x", redirect("https://a.test:8443/y")),
+        ("https://a.test:8443/y", image()),
+    ];
+    let err = run(tmp.path(), &routes, "https://a.test/x")
+        .await
+        .unwrap_err();
+    assert_eq!(err, not_allowed_fail());
+    assert_eq!(configs(tmp.path()).len(), 1, "curl got one call");
+}
+
+#[test]
+fn an_entry_without_a_port_means_port_443() {
+    assert_eq!(origin_of_entry("T.Example"), "t.example:443");
+    assert_eq!(origin_of_entry("t.example:8443"), "t.example:8443");
+    let hosts = vec!["t.example".to_owned()];
+    assert!(in_hosts(&hosts, "t.example:443"));
+    assert!(!in_hosts(&hosts, "t.example:8443"));
+    assert!(auth_headers(Some((AUTH, "t.example")), "t.example:8443").is_empty());
+    assert_eq!(
+        auth_headers(Some((AUTH, "T.example")), "t.example:443"),
+        [AUTH]
+    );
+}
+
 /// True when a real `curl` is on the path.
 fn real_curl() -> bool {
     std::process::Command::new("curl")

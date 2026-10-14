@@ -511,9 +511,14 @@ pub async fn station_set(
     change.elevation = None;
     let params = json!(SettingsSetParams { change, elevated });
     let result = async {
-        let (_, outcome) = station_call(&board, &name, "settings.set", params).await?;
+        let (rec, outcome) = station_call(&board, &name, "settings.set", params).await?;
         match outcome {
-            Outcome::Ok(v) => serde_json::from_value::<SettingsSaved>(v).map_err(|_| bad_answer()),
+            Outcome::Ok(v) => {
+                // The change may be a new member deny list: the review
+                // caches of the station must not outlive it (NV-33).
+                super::review_anchor_cache::clear_station(&rec.station_id);
+                serde_json::from_value::<SettingsSaved>(v).map_err(|_| bad_answer())
+            }
             Outcome::Err(e) => Err(station_failure(&e, false)),
         }
     }

@@ -7,7 +7,8 @@
 //!   `invalid_state` ([`guard`]), and the effect worker does not claim a
 //!   queued start or resume effect (it stays queued and runs after the
 //!   re-exec; it is never failed).
-//! - A submit that creates a session and a claim of the worker count while
+//! - A submit that creates a session (or may resume one: an input to a
+//!   hibernated session, NV-27) and a claim of the worker count while
 //!   they run ([`InFlight`]). Each takes its count before it reads the flag,
 //!   and the admission sets the flag before it reads the counts, so one of
 //!   the two always sees the other.
@@ -168,6 +169,18 @@ pub fn creates_session(command: &SessionCommand) -> bool {
         SessionCommand::Start { .. }
             | SessionCommand::Import { .. }
             | SessionCommand::Resume { .. }
+    )
+}
+
+/// True for the inputs that resume a hibernated session: the decision
+/// turns them into a resume (NV-27).
+#[must_use]
+pub fn may_resume(command: &SessionCommand) -> bool {
+    matches!(
+        command,
+        SessionCommand::Prompt { .. }
+            | SessionCommand::FollowUp { .. }
+            | SessionCommand::Steer { .. }
     )
 }
 

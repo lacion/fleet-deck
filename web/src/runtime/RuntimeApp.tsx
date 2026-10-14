@@ -25,6 +25,7 @@ import { handoverFlow } from '../session/handoverFlow';
 import type { Outcome } from '../session/commands';
 import type { Watch } from '../terminal/handover';
 import { archived } from '../ui/archive';
+import { clearAuthoringState } from './authoringState';
 import type { Connection } from './connection';
 import { deviceLinkAction } from './deviceLink';
 import { viewsActions } from './views';
@@ -369,6 +370,8 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
             `${window.location.pathname}${window.location.search}#/`,
           );
           setJoinHash(null);
+          // NV-05: a join starts a new account.
+          clearAuthoringState();
           // The cookie is set: the connection asks the deck who this is.
           connection.stop();
           connection.start();

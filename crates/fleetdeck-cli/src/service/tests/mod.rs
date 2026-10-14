@@ -4,6 +4,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod manage;
+mod path;
 mod plans_launchd;
 mod plans_systemd;
 mod program;
@@ -47,6 +48,7 @@ impl Rig {
             uid: 1000,
             user: "luis".to_owned(),
             path: Some("/usr/bin:/home/luis/.local/bin".to_owned()),
+            path_dropped: Vec::new(),
             xdg_config_home: None,
             xdg_data_home: None,
             wsl: false,

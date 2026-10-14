@@ -15,6 +15,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -23,12 +24,10 @@ use fleetdeck_proto::command::{SessionSpec, StopMode};
 use fleetdeck_proto::event::{ProviderKind, RawRef};
 use fleetdeck_proto::{Capabilities, Operation, ProviderInstanceId};
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio::task::JoinHandle;
 
 use super::core::{ClaudeCore, CoreConfig, Output};
-use super::frames::{CliFrame, parse_value};
 use super::{Launch, capabilities, cli_args, parse_auth_status, parse_version};
 use crate::adapter::{
     Answer, ControlId, EventSink, HostInput, LiveSession, ModelId, NativeSessionId, PermissionMode,
@@ -42,7 +41,9 @@ use crate::host::{DEFAULT_IDLE_GRACE, ProcessControl, ProcessSpec, SessionHost, 
 /// fails with an unknown outcome instead of blocking the station.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 use crate::rawlog::{RawDir, RawFrameLog, RawLogLimits};
-use crate::stdio::{Write, flush, now_ms, write_failed};
+use crate::stdio::{
+    MAX_LINE_BYTES, Write, flush, now_ms, release_write, reserve_write, write_failed,
+};
 
 /// Where the raw-frame logs of the sessions go.
 #[derive(Debug, Clone)]
@@ -199,6 +200,7 @@ impl ClaudeAdapter {
             core: Mutex::new(core),
             sink,
             raw: std::sync::Mutex::new(raw),
+            queued: AtomicUsize::new(0),
         });
         let (write_tx, write_rx) = mpsc::unbounded_channel::<Write>();
         let (frames_tx, frames_rx) = watch::channel(0);
@@ -213,6 +215,7 @@ impl ClaudeAdapter {
             process.stdout,
             write_tx.clone(),
             frames_tx,
+            MAX_LINE_BYTES,
         ));
         let session = ClaudeSession {
             shared,
@@ -230,7 +233,12 @@ impl ClaudeAdapter {
         for o in init {
             if let Output::Write(v) = o {
                 // The writer runs: the send fails only if it already ended.
-                let _ = session.writes.send(Write::Frame(v));
+                // The queue is new, so it has room for the first frames.
+                if reserve_write(&session.shared.queued).is_ok()
+                    && session.writes.send(Write::Frame(v)).is_err()
+                {
+                    release_write(&session.shared.queued);
+                }
             }
         }
         Ok(session)
@@ -353,6 +361,8 @@ struct Shared {
     core: Mutex<ClaudeCore>,
     sink: EventSink,
     raw: std::sync::Mutex<Option<RawFrameLog>>,
+    /// The frames in the stdin queue that the writer did not take (NV-19).
+    queued: AtomicUsize,
 }
 
 impl Shared {
@@ -392,7 +402,11 @@ impl Shared {
         for o in out {
             match o {
                 Output::Write(v) => {
+                    // The queue is bounded: a process that does not read
+                    // stdin must not grow it without limit (NV-19).
+                    reserve_write(&self.queued)?;
                     if writes.send(Write::Frame(v)).is_err() {
+                        release_write(&self.queued);
                         // Nothing of this output reached the writer, unless
                         // an earlier frame of it did: then a part may be
                         // written, and the outcome is unknown.
@@ -409,105 +423,6 @@ impl Shared {
         }
         Ok(())
     }
-}
-
-/// Token deltas do not go to the raw-frame log (L12).
-fn is_token_delta(frame: &Value) -> bool {
-    frame.get("type").and_then(Value::as_str) == Some("stream_event")
-        && frame
-            .get("event")
-            .and_then(|e| e.get("type"))
-            .and_then(Value::as_str)
-            == Some("content_block_delta")
-}
-
-async fn write_loop(
-    shared: Arc<Shared>,
-    control: Arc<dyn ProcessControl>,
-    mut rx: mpsc::UnboundedReceiver<Write>,
-) {
-    while let Some(item) = rx.recv().await {
-        let frame = match item {
-            Write::Frame(frame) => frame,
-            Write::Close => {
-                control.close_stdin().await;
-                break;
-            }
-            Write::Flush(ack) => {
-                let _ = ack.send(());
-                continue;
-            }
-        };
-        shared.log(RawDir::In, &frame);
-        let mut line = frame.to_string();
-        line.push('\n');
-        if let Err(e) = control.write(line.as_bytes()).await {
-            tracing::debug!(error = %e, "claude stdin closed");
-            break;
-        }
-    }
-}
-
-async fn read_loop(
-    shared: Arc<Shared>,
-    control: Arc<dyn ProcessControl>,
-    stdout: Box<dyn AsyncRead + Send + Unpin>,
-    writes: mpsc::UnboundedSender<Write>,
-    frames: watch::Sender<u64>,
-) {
-    let mut lines = BufReader::new(stdout).lines();
-    let mut sink_open = true;
-    loop {
-        let line = match lines.next_line().await {
-            Ok(Some(line)) => line,
-            Ok(None) => break,
-            Err(e) => {
-                tracing::warn!(error = %e, "claude stdout read failed");
-                break;
-            }
-        };
-        if sink_open && !feed_line(&shared, &line, &writes).await {
-            // The station dropped the session's events: nobody owns it.
-            sink_open = false;
-            control.kill().await;
-        }
-        frames.send_modify(|n| *n += 1);
-    }
-    let report = control.wait().await;
-    if !report.stderr_tail.is_empty() {
-        shared.note(RawDir::Stderr, &report.stderr_tail);
-    }
-    let mut core = shared.core.lock().await;
-    let out = core.on_exit(report.code());
-    if sink_open {
-        let _ = shared.dispatch(out, None, &writes).await;
-    }
-}
-
-/// Feeds one stdout line. False when the event sink is closed.
-async fn feed_line(shared: &Shared, line: &str, writes: &mpsc::UnboundedSender<Write>) -> bool {
-    if line.trim().is_empty() {
-        return true;
-    }
-    let (frame, raw_ref) = match serde_json::from_str::<Value>(line) {
-        Ok(v) => {
-            let raw_ref = (!is_token_delta(&v))
-                .then(|| shared.log(RawDir::Out, &v))
-                .flatten();
-            let frame = parse_value(v).unwrap_or(CliFrame::Unknown(Value::Null));
-            (frame, raw_ref)
-        }
-        Err(_) => {
-            shared.note(RawDir::Out, line);
-            (CliFrame::Unknown(Value::from(line)), None)
-        }
-    };
-    let mut core = shared.core.lock().await;
-    let out = core.on_frame(frame);
-    !matches!(
-        shared.dispatch(out, raw_ref.as_ref(), writes).await,
-        Err(ProviderError::SinkClosed)
-    )
 }
 
 /// One running `claude -p` process.
@@ -740,3 +655,6 @@ mod tests;
 
 #[path = "durable_launch.rs"]
 mod durable_launch;
+#[path = "driver_io.rs"]
+mod io;
+use io::{read_loop, write_loop};

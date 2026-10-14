@@ -252,6 +252,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_token_created_again_under_a_revoked_name_starts_with_no_cursors() {
+        let (s, st) = setup().await;
+        let day = 86_400_000;
+        let key = (st.clone(), SessionId::from("s1"));
+        let scopes = || BTreeSet::from([Scope::Read]);
+        s.create_token("phone".to_owned(), scopes(), day)
+            .await
+            .unwrap();
+        s.apply_events(st.clone(), IncarnationId::from("i1"), vec![input(1, "s1")])
+            .await
+            .unwrap();
+        // Both tokens read the session far ahead of its rows.
+        for principal in ["token:phone", "token:other"] {
+            assert!(
+                s.mark_read(principal.into(), st.clone(), "s1".into(), 100)
+                    .await
+                    .unwrap()
+            );
+        }
+        // A revoke of an unknown name changes nothing.
+        assert!(!s.revoke_token("nobody".to_owned()).await.unwrap());
+        assert!(s.revoke_token("phone".to_owned()).await.unwrap());
+        s.create_token("phone".to_owned(), scopes(), day)
+            .await
+            .unwrap();
+        s.apply_events(
+            st.clone(),
+            IncarnationId::from("i1"),
+            vec![message(2, "s1")],
+        )
+        .await
+        .unwrap();
+        let phone = s.unread_counts("token:phone".to_owned()).await.unwrap();
+        assert_eq!(phone.get(&key), Some(&1));
+        // The cursor of another token stays.
+        let other = s.unread_counts("token:other".to_owned()).await.unwrap();
+        assert_eq!(other.get(&key), None);
+    }
+
+    #[tokio::test]
+    async fn a_new_token_removes_the_cursors_that_an_older_token_of_its_name_left() {
+        let (s, st) = setup().await;
+        s.apply_events(st.clone(), IncarnationId::from("i1"), vec![input(1, "s1")])
+            .await
+            .unwrap();
+        // A cursor with no token of that name: the state before the fix.
+        s.mark_read("token:phone".into(), st.clone(), "s1".into(), 100)
+            .await
+            .unwrap();
+        s.apply_events(
+            st.clone(),
+            IncarnationId::from("i1"),
+            vec![message(2, "s1")],
+        )
+        .await
+        .unwrap();
+        let key = (st, SessionId::from("s1"));
+        let before = s.unread_counts("token:phone".to_owned()).await.unwrap();
+        assert_eq!(before.get(&key), None);
+        s.create_token(
+            "phone".to_owned(),
+            BTreeSet::from([Scope::Read]),
+            86_400_000,
+        )
+        .await
+        .unwrap();
+        let after = s.unread_counts("token:phone".to_owned()).await.unwrap();
+        assert_eq!(after.get(&key), Some(&1));
+    }
+
+    #[tokio::test]
     async fn marking_an_unknown_session_changes_nothing() {
         let (s, st) = setup().await;
         assert!(

@@ -68,6 +68,24 @@ fn a_winner_supersedes_the_current_link_and_a_loser_is_refused() {
     assert!(table.is_empty());
 }
 
+#[test]
+fn a_current_check_turns_false_when_a_later_link_wins_admission() {
+    let (own, peer) = ordered();
+    let table = LinkTable::new(own);
+    let first = table
+        .insert(peer, id(1, "a", Dialer::Remote), false)
+        .unwrap();
+    let first_check = first.guard.check();
+    assert!(first_check.is_current());
+    let second = table
+        .insert(peer, id(2, "b", Dialer::Remote), false)
+        .unwrap();
+    let second_check = second.guard.check();
+    assert!(!first_check.is_current());
+    assert!(!first_check.clone().is_current());
+    assert!(second_check.is_current());
+}
+
 #[tokio::test]
 async fn a_superseded_setup_stops_waiting_for_its_data_channel() {
     let (own, peer) = ordered();

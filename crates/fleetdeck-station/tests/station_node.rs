@@ -222,6 +222,50 @@ async fn join_pins_the_deck_with_its_address_dials_it_and_redials_after_a_restar
     assert_eq!(node.forget_deck().await.unwrap(), 0);
 }
 
+/// Makes every delete of a pairing row fail, like a full disk.
+fn fail_pairing_deletes(station: &Station) {
+    let conn = rusqlite::Connection::open(station._dir.path().join("station.db")).unwrap();
+    conn.execute_batch(
+        "CREATE TRIGGER fail_pairing_delete BEFORE DELETE ON pairing
+         BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn forget_deck_reports_a_revocation_that_the_store_did_not_write() {
+    let mut deck = deck().await;
+    let station = station().await;
+    let node = station.node(&[]).await;
+    node.join(&deck.invitation()).await.unwrap();
+    let link = deck.accept().await;
+    fail_pairing_deletes(&station);
+
+    // NV-15: the store write failed, so the command is not a success. The
+    // key is unpinned and its link is closed anyway.
+    let failed = node.forget_deck().await;
+    match &failed {
+        Err(NodeError::Revoke(e)) => assert!(e.contains("disk full"), "{e}"),
+        other => panic!("expected NodeError::Revoke, got {other:?}"),
+    }
+    let closing = tokio::time::timeout(Duration::from_secs(1), link.control.closed())
+        .await
+        .expect("closed within 1 s");
+    assert_eq!(closing.reason, REVOKED);
+    assert_eq!(
+        station.store.paired_keys().await.unwrap().len(),
+        1,
+        "the pairing is still stored"
+    );
+
+    // With a working store, the same command revokes and counts the key.
+    let conn = rusqlite::Connection::open(station._dir.path().join("station.db")).unwrap();
+    conn.execute_batch("DROP TRIGGER fail_pairing_delete")
+        .unwrap();
+    assert_eq!(node.forget_deck().await.unwrap(), 1);
+    assert!(station.store.paired_keys().await.unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn invite_listens_now_and_after_a_restart_and_the_deck_pairs_and_dials() {
     let deck = deck().await;

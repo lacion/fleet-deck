@@ -5,7 +5,7 @@
 //! ([`Output`]). The live driver and the replay harness both wrap this core,
 //! so a replay runs the real mapping code (PLAN §13, L20).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use fleetdeck_proto::event::{
     ApprovalOption, BackgroundTask, ExpiredReason, InputState, ModelChoice, ProviderKind,
@@ -164,6 +164,10 @@ pub struct ClaudeCore {
     pub(super) host_requests: BTreeMap<String, HostRequest>,
     pub(super) requests: BTreeMap<RequestId, RuntimeRequest>,
     pub(super) native_to_app: BTreeMap<String, RequestId>,
+    /// The ids of the answered and expired requests, oldest first. The
+    /// oldest ones leave `requests` when there are too many (NV-18).
+    #[serde(default)]
+    pub(super) closed_order: VecDeque<RequestId>,
     pub(super) tools: BTreeMap<String, ToolNode>,
     pub(super) unknown_frames: usize,
     /// Events of frames before the first `system/init`; they follow
@@ -206,6 +210,7 @@ impl ClaudeCore {
             host_requests: BTreeMap::new(),
             requests: BTreeMap::new(),
             native_to_app: BTreeMap::new(),
+            closed_order: VecDeque::new(),
             tools: BTreeMap::new(),
             unknown_frames: 0,
             early: Vec::new(),
@@ -593,14 +598,19 @@ impl ClaudeCore {
 
     pub(super) fn expire_open(&mut self, reason: ExpiredReason) -> Vec<Output> {
         let mut out = Vec::new();
+        let mut closed = Vec::new();
         for (id, req) in &mut self.requests {
             if req.state == ReqState::Open {
                 req.state = ReqState::Expired(reason);
+                closed.push(id.clone());
                 out.push(Output::Emit(Event::ApprovalExpired {
                     request_id: id.clone(),
                     reason,
                 }));
             }
+        }
+        for id in closed {
+            self.note_closed(id);
         }
         out
     }

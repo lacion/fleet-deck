@@ -60,6 +60,55 @@ pub async fn rescan_credentials(
     }
 }
 
+/// The wait before the first history prune (NV-26).
+pub const PRUNE_FIRST: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The time between two history prunes (NV-26).
+pub const PRUNE_EVERY: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+/// Prunes the event log, the receipts and the finished history rows of `store`
+/// after `first`, then every `every`, until `shutdown` is set (NV-26). A
+/// failed prune is logged and the task goes on.
+pub async fn prune_history(
+    store: Store,
+    first: std::time::Duration,
+    every: std::time::Duration,
+    mut shutdown: watch::Receiver<bool>,
+) {
+    let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + first, every);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            _ = tick.tick() => match store.prune().await {
+                Ok(report) => tracing::debug!(
+                    events = report.events,
+                    receipts = report.receipts,
+                    history = report.history,
+                    "the history prune ran"
+                ),
+                Err(e) => tracing::warn!(error = %e, "the history prune failed"),
+            },
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// Marks the activated updates in `dir` live. A record that cannot be read or
+/// saved stops the start: a rollback must not restore a binary that the live
+/// database already left behind (NV-29).
+fn mark_live_or_fail(dir: &std::path::Path) -> Result<(), ServeError> {
+    crate::upgrade::mark_live(dir)
+        .map(|_| ())
+        .map_err(|error| ServeError::Upgrade {
+            dir: dir.to_owned(),
+            error,
+        })
+}
+
 /// Why the station cannot start.
 #[derive(Debug, thiserror::Error)]
 pub enum ServeError {
@@ -83,6 +132,16 @@ pub enum ServeError {
     ShimExe(std::io::Error),
     #[error("account store: {0}")]
     Accounts(#[from] crate::accounts::store::StoreError),
+    #[error(
+        "the update records in {dir} cannot be marked live: {error}. \
+         Fix or remove the named file, then start the station again.",
+        dir = .dir.display()
+    )]
+    Upgrade {
+        dir: PathBuf,
+        #[source]
+        error: crate::upgrade::UpgradeError,
+    },
 }
 
 /// The shim host of `host = "shim"` (ADR-005 §1, §5.1): this executable
@@ -137,6 +196,8 @@ pub struct RunningStation {
     assist: tokio::task::JoinHandle<()>,
     /// The periodic scan of the credential locations (DL-173).
     rescan: tokio::task::JoinHandle<()>,
+    /// The periodic prune of the event log and the history (NV-26).
+    prune: tokio::task::JoinHandle<()>,
 }
 
 impl RunningStation {
@@ -162,9 +223,7 @@ impl RunningStation {
         })?;
         // From here the live database advances: a rollback of an activated
         // update is binary-only (ADR-005 §3.3, DL-128).
-        if let Err(e) = crate::upgrade::mark_live(&station_dir.join("upgrades")) {
-            tracing::warn!(error = %e, "could not mark the activated update live");
-        }
+        mark_live_or_fail(&station_dir.join("upgrades"))?;
         let clock: SharedClock = Arc::new(SystemClock);
         let ids: SharedIds = Arc::new(UlidSource::new(Arc::clone(&clock)));
         let store = Store::open(
@@ -228,6 +287,12 @@ impl RunningStation {
         )));
         let (shutdown, rx) = watch::channel(false);
         let rescan = tokio::spawn(rescan_credentials(private, CREDENTIAL_RESCAN, rx.clone()));
+        let prune = tokio::spawn(prune_history(
+            manager.store().clone(),
+            PRUNE_FIRST,
+            PRUNE_EVERY,
+            rx.clone(),
+        ));
         let assist_task = tokio::spawn(crate::assist::watch::run(
             assist,
             Arc::clone(&manager),
@@ -274,6 +339,7 @@ impl RunningStation {
             shells,
             assist: assist_task,
             rescan,
+            prune,
         })
     }
 
@@ -285,6 +351,7 @@ impl RunningStation {
         let _ = self.server.await;
         let _ = self.assist.await;
         let _ = self.rescan.await;
+        let _ = self.prune.await;
         self.node.shutdown();
         // The stop waits for the terminal processes (up to the hangup grace).
         let shells = Arc::clone(&self.shells);
@@ -388,5 +455,99 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_prune_task_prunes_the_history_and_stops_on_shutdown() {
+        let det = fleetdeck_testkit::Det::new();
+        let store = Store::open_in_memory(det.clock(), det.ids(), StoreConfig::default())
+            .await
+            .unwrap();
+        store.recover(Vec::new()).await.unwrap();
+        store
+            .create_session(crate::store::NewSession {
+                session_id: "s1".into(),
+                provider: fleetdeck_proto::event::ProviderKind::Claude,
+                provider_instance: "claude".into(),
+                cwd: "/w".to_owned(),
+                worktree: None,
+                branch: None,
+                mode: None,
+                title: None,
+                offline_approval_policy: crate::store::OfflineApprovalPolicy::Wait,
+            })
+            .await
+            .unwrap();
+        assert!(
+            store
+                .artifact_suggest("s1".into(), "a.md".to_owned())
+                .await
+                .unwrap()
+        );
+        assert!(
+            !store
+                .artifact_suggest("s1".into(), "a.md".to_owned())
+                .await
+                .unwrap()
+        );
+        det.advance(std::time::Duration::from_secs(91 * 24 * 60 * 60));
+        let (stop, rx) = watch::channel(false);
+        let task = tokio::spawn(prune_history(
+            store.clone(),
+            std::time::Duration::from_millis(10),
+            std::time::Duration::from_millis(10),
+            rx,
+        ));
+        // The old suggestion is gone, so the same path is new again.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !store
+            .artifact_suggest("s1".into(), "a.md".to_owned())
+            .await
+            .unwrap()
+        {
+            assert!(tokio::time::Instant::now() < deadline, "not pruned");
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        stop.send(true).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[test]
+    fn a_malformed_update_record_stops_the_live_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("u1.json"), "{ not json").unwrap();
+        let err = mark_live_or_fail(tmp.path()).unwrap_err();
+        assert!(matches!(err, ServeError::Upgrade { .. }), "{err:?}");
+        let text = err.to_string();
+        assert!(text.contains("cannot be marked live"), "{text}");
+        assert!(text.contains("u1.json"), "{text}");
+        assert!(text.contains("start the station again"), "{text}");
+        // No upgrades directory is not an error.
+        mark_live_or_fail(&tmp.path().join("none")).unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_station_does_not_open_its_database_when_the_live_marker_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirs = NodeDirs {
+            config: tmp.path().join("config"),
+            data: tmp.path().join("data"),
+        };
+        let upgrades = dirs.station().join("upgrades");
+        std::fs::create_dir_all(&upgrades).unwrap();
+        std::fs::write(upgrades.join("u1.json"), "{ not json").unwrap();
+        let env = Env {
+            home: Some(tmp.path().to_owned()),
+            ..Env::default()
+        };
+        let config = StationConfig::load(&dirs.station_config(), &env).unwrap();
+        let err = RunningStation::start(&dirs, &config, None, None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ServeError::Upgrade { .. }), "{err:?}");
+        assert!(!dirs.station_db().exists());
     }
 }

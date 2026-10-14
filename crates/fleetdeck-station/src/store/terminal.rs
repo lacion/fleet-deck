@@ -9,6 +9,7 @@
 
 use std::path::PathBuf;
 
+use fleetdeck_proto::command::check_native_session_id;
 use fleetdeck_proto::session::TerminalHold;
 use fleetdeck_proto::{Event, EventEnvelope, ProviderInstanceId, SessionId};
 use rusqlite::{Connection, OptionalExtension as _};
@@ -73,7 +74,7 @@ impl Decision<'_> {
 impl Store {
     /// The launch facts of `session`: `None` when the session, its
     /// workspace, its provider instance or its native resume identity is
-    /// missing.
+    /// missing, or when the stored native id is not a valid one (NV-23).
     ///
     /// # Errors
     /// A database or JSON error.
@@ -95,6 +96,15 @@ impl Store {
             else {
                 return Ok(None);
             };
+            // The provider reported this id; it must never read as a TUI
+            // option (NV-23).
+            if check_native_session_id(&native).is_err() {
+                tracing::warn!(
+                    session = %session,
+                    "the stored native session id is not valid; no handover"
+                );
+                return Ok(None);
+            }
             Ok(Some(HandoverLaunch {
                 cwd: PathBuf::from(cwd),
                 provider_instance,
@@ -231,5 +241,65 @@ impl Store {
                 .optional()?)
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use fleetdeck_proto::event::ProviderKind;
+    use fleetdeck_testkit::Det;
+
+    use super::*;
+    use crate::store::{NewSession, OfflineApprovalPolicy, StoreConfig};
+
+    /// A session with the stored native id `native`, set in the table.
+    async fn store_with_native(native: &str) -> Store {
+        let det = Det::new();
+        let store = Store::open_in_memory(det.clock(), det.ids(), StoreConfig::default())
+            .await
+            .unwrap();
+        store.recover(Vec::new()).await.unwrap();
+        store
+            .create_session(NewSession {
+                session_id: "s-1".into(),
+                provider: ProviderKind::Codex,
+                provider_instance: "codex".into(),
+                cwd: "/w".to_owned(),
+                worktree: None,
+                branch: None,
+                mode: None,
+                title: None,
+                offline_approval_policy: OfflineApprovalPolicy::Wait,
+            })
+            .await
+            .unwrap();
+        let native = native.to_owned();
+        call(&store.inner.db, move |conn| {
+            conn.execute(
+                "UPDATE sessions SET native_session_id = ?1 WHERE session_id = 's-1'",
+                [native],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        store
+    }
+
+    #[tokio::test]
+    async fn a_stored_native_id_that_reads_as_an_option_gives_no_handover() {
+        // NV-23.
+        for bad in ["-c foo", "--oss", "", "a b"] {
+            let store = store_with_native(bad).await;
+            assert_eq!(store.handover_launch("s-1".into()).await.unwrap(), None);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_valid_stored_native_id_gives_a_handover() {
+        let store = store_with_native("abc-123").await;
+        let launch = store.handover_launch("s-1".into()).await.unwrap().unwrap();
+        assert_eq!(launch.native, "abc-123");
+        assert_eq!(launch.cwd, PathBuf::from("/w"));
     }
 }

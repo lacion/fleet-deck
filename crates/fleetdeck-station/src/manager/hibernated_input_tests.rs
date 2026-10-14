@@ -142,3 +142,47 @@ async fn a_follow_up_to_a_hibernated_session_is_refused_at_the_session_limit() {
     );
     st.manager.shutdown(StopMode::Kill).await;
 }
+
+/// NV-27: during a restart, an input that would resume a hibernated session
+/// is refused like a resume, and nothing is queued.
+#[tokio::test]
+async fn an_input_that_would_resume_a_hibernated_session_is_refused_while_restarting() {
+    for command in [prompt, steer, follow_up] {
+        let mut st = Station::new(4).await;
+        let s = hibernated(&mut st).await;
+        st.manager.begin_restart();
+        let d = st.send(command(&s, text("wake up"))).await;
+        assert_eq!(d.receipt.state, ReceiptState::Rejected, "{:?}", d.receipt);
+        let reject = d.receipt.reject.unwrap();
+        assert_eq!(reject.code, RejectCode::InvalidState);
+        assert_eq!(reject.message, "the station is restarting");
+        let effects = st.manager.store().session_effects(s.clone()).await.unwrap();
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e.payload, EffectPayload::Resume { .. })),
+            "{effects:?}"
+        );
+        assert_eq!(st.state(&s).await, SessionState::Exited);
+
+        // After a refusal of the restart the same input resumes.
+        st.manager.end_restart();
+        st.accepted(command(&s, text("wake up"))).await;
+        assert_eq!(st.state(&s).await, SessionState::Starting);
+        st.manager.shutdown(StopMode::Kill).await;
+    }
+}
+
+#[tokio::test]
+async fn an_input_to_a_live_session_is_not_refused_by_the_restart_rule() {
+    let mut st = Station::new(4).await;
+    let ws = st.workspace();
+    let s = st.start(&ws, Some("hello")).await;
+    st.wait_for("run completed", |e| {
+        matches!(e, Event::RunCompleted { .. }).then_some(())
+    })
+    .await;
+    st.manager.begin_restart();
+    st.accepted(prompt(&s, text("more"))).await;
+    st.manager.shutdown(StopMode::Kill).await;
+}

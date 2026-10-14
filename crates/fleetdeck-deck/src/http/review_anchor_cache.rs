@@ -12,8 +12,14 @@
 //! The caches are process-wide and their keys name the station id, which
 //! the deck derives from the station key, so two boards never share an
 //! entry by accident. Time is the deck clock.
+//!
+//! Each station has a generation. `clear_station` raises it. A fill that
+//! read the generation before its station call stores its answer only when
+//! the generation is still the same, so a fill that started before a
+//! settings change cannot put old data back (NV-33).
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
@@ -128,9 +134,36 @@ fn denies() -> &'static DenyCache {
     CACHE.get_or_init(Mutex::default)
 }
 
-/// Forgets what the caches hold for one station (tests).
-#[doc(hidden)]
+type Generations = Mutex<HashMap<StationId, u64>>;
+
+fn generations() -> &'static Generations {
+    static GENERATIONS: OnceLock<Generations> = OnceLock::new();
+    GENERATIONS.get_or_init(Mutex::default)
+}
+
+/// The generation of one station: how many times `clear_station` ran for
+/// it. 0 for a station that was never cleared (NV-33).
+fn generation(station: &StationId) -> u64 {
+    generations()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(station)
+        .copied()
+        .unwrap_or(0)
+}
+
+/// Forgets what the caches hold for one station: a settings change may
+/// change the member deny list (NV-33).
+///
+/// The generation rises first. A fill that read the old generation then
+/// cannot store. A fill checks the generation under the cache lock, so a
+/// fill that stored before the removals loses its entry to them (NV-33).
 pub fn clear_station(station: &StationId) {
+    {
+        let mut all = generations().lock().unwrap_or_else(PoisonError::into_inner);
+        let next = all.entry(station.clone()).or_insert(0);
+        *next = next.saturating_add(1);
+    }
     diffs()
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
@@ -140,6 +173,24 @@ pub fn clear_station(station: &StationId) {
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .remove(station);
+}
+
+/// How many entries the caches hold for one station: its diffs and its
+/// deny list (tests).
+#[doc(hidden)]
+pub fn cached_entries(station: &StationId) -> usize {
+    let diffs = diffs()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .map
+        .keys()
+        .filter(|(s, ..)| s == station)
+        .count();
+    let deny = denies()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .contains_key(station);
+    diffs + usize::from(deny)
 }
 
 fn unreachable_error(station: &StationId) -> ApiError {
@@ -287,46 +338,63 @@ pub async fn diff(
     {
         return Ok(hit);
     }
-    let patch = match snapshot {
-        Snapshot::Spawn(base) => {
-            let query = SessionDiffQuery {
-                session_id: session.into(),
-                max_bytes: None,
-            };
-            let params = with_member(json!(query), member);
-            let answer: SessionDiff =
-                match request(board, station, "files.session_diff", params).await? {
-                    Outcome::Ok(v) => decode(v)?,
-                    Outcome::Err(e) => {
-                        return Err(refusal(
-                            &e.code,
-                            &e.message,
-                            &[files_code::NO_DIFF, files_code::NO_BASE],
-                            not_in_diff("the session has no diff against a base commit"),
-                        ));
-                    }
+    fill_diff(key, || board.store.now_ms(), async {
+        let patch = match snapshot {
+            Snapshot::Spawn(base) => {
+                let query = SessionDiffQuery {
+                    session_id: session.into(),
+                    max_bytes: None,
                 };
-            if &answer.base_oid != base {
-                return Err(not_in_diff("the base commit of the session is another one"));
+                let params = with_member(json!(query), member);
+                let answer: SessionDiff =
+                    match request(board, station, "files.session_diff", params).await? {
+                        Outcome::Ok(v) => decode(v)?,
+                        Outcome::Err(e) => {
+                            return Err(refusal(
+                                &e.code,
+                                &e.message,
+                                &[files_code::NO_DIFF, files_code::NO_BASE],
+                                not_in_diff("the session has no diff against a base commit"),
+                            ));
+                        }
+                    };
+                if &answer.base_oid != base {
+                    return Err(not_in_diff("the base commit of the session is another one"));
+                }
+                answer.patch
             }
-            answer.patch
-        }
-        Snapshot::Turn { from, to } => {
-            let pair = CheckpointRef {
-                from_commit: from.clone(),
-                to_commit: to.clone(),
-            };
-            turn_diff(board, station, session, pair, member)
-                .await?
-                .patch
-        }
-    };
+            Snapshot::Turn { from, to } => {
+                let pair = CheckpointRef {
+                    from_commit: from.clone(),
+                    to_commit: to.clone(),
+                };
+                turn_diff(board, station, session, pair, member)
+                    .await?
+                    .patch
+            }
+        };
+        Ok(patch)
+    })
+    .await
+}
+
+/// Parses the patch that `fetch` returns and keeps it in the diff cache.
+/// The generation of the station is read before the fetch. The parsed diff
+/// is kept only when the generation is the same after it. The caller gets
+/// the diff in both cases, because the anchor path applies the current
+/// deny list (NV-33, a fill that started before `clear_station`).
+async fn fill_diff(
+    key: Key,
+    now: impl Fn() -> i64,
+    fetch: impl Future<Output = Result<String, ApiError>>,
+) -> Result<Arc<ParsedDiff>, ApiError> {
+    let before = generation(&key.0);
+    let patch = fetch.await?;
     let parsed = Arc::new(ParsedDiff::parse(&patch));
-    diffs().lock().unwrap_or_else(PoisonError::into_inner).put(
-        key,
-        board.store.now_ms(),
-        Arc::clone(&parsed),
-    );
+    let mut cache = diffs().lock().unwrap_or_else(PoisonError::into_inner);
+    if generation(&key.0) == before {
+        cache.put(key, now(), Arc::clone(&parsed));
+    }
     Ok(parsed)
 }
 
@@ -343,6 +411,16 @@ pub async fn deny_list(board: &Board, station: &StationId) -> Option<MemberDeny>
     {
         return Some(deny.clone());
     }
+    fill_deny(
+        station,
+        || board.store.now_ms(),
+        || fetch_deny(board, station),
+    )
+    .await
+}
+
+/// One `settings.get` of the station, read as a deny list.
+async fn fetch_deny(board: &Board, station: &StationId) -> Option<MemberDeny> {
     let Ok(Outcome::Ok(v)) = request(board, station, "settings.get", json!({})).await else {
         return None;
     };
@@ -354,12 +432,34 @@ pub async fn deny_list(board: &Board, station: &StationId) -> Option<MemberDeny>
         .iter()
         .map(|p| p.as_str().map(str::to_owned))
         .collect::<Option<_>>()?;
-    let deny = MemberDeny::new(&extra);
-    denies()
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .insert(station.clone(), (board.store.now_ms(), deny.clone()));
-    Some(deny)
+    Some(MemberDeny::new(&extra))
+}
+
+/// Fills the deny cache with the answer of `fetch`. The generation is read
+/// before each fetch. The answer is stored and returned only when the
+/// generation is the same after it. When a `clear_station` ran during the
+/// fetch, the fetch runs once more. When the generation changes again, or
+/// the second fetch fails, the result is `None` and callers fail closed
+/// (NV-33, a fill that started before `clear_station`).
+async fn fill_deny<F, Fut>(
+    station: &StationId,
+    now: impl Fn() -> i64,
+    mut fetch: F,
+) -> Option<MemberDeny>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Option<MemberDeny>>,
+{
+    for _ in 0..2 {
+        let before = generation(station);
+        let deny = fetch().await?;
+        let mut cache = denies().lock().unwrap_or_else(PoisonError::into_inner);
+        if generation(station) == before {
+            cache.insert(station.clone(), (now(), deny.clone()));
+            return Some(deny);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -419,5 +519,156 @@ mod tests {
         assert!(lru.map.contains_key(&key(0)));
         assert!(!lru.map.contains_key(&key(1)));
         assert!(lru.map.contains_key(&key(MAX_DIFFS)));
+    }
+
+    fn deny_with(pattern: &str) -> MemberDeny {
+        MemberDeny::new(&[pattern.to_owned()])
+    }
+
+    fn cached_deny(station: &StationId) -> bool {
+        denies().lock().unwrap().contains_key(station)
+    }
+
+    #[test]
+    fn clear_station_raises_the_generation_of_that_station_only() {
+        let one = StationId::from("gen-one");
+        let two = StationId::from("gen-two");
+        assert_eq!(generation(&one), 0);
+        clear_station(&one);
+        assert_eq!(generation(&one), 1);
+        clear_station(&one);
+        assert_eq!(generation(&one), 2);
+        assert_eq!(generation(&two), 0);
+    }
+
+    #[tokio::test]
+    async fn a_deny_fill_without_a_clear_is_stored_and_returned() {
+        let station = StationId::from("deny-plain");
+        let got = fill_deny(&station, || 5, || async { Some(deny_with("*.plain")) }).await;
+        assert!(got.unwrap().denies("a.plain"));
+        assert!(cached_deny(&station));
+    }
+
+    #[tokio::test]
+    async fn a_deny_fill_that_a_clear_overtook_is_fetched_again_and_the_new_answer_is_stored() {
+        let station = StationId::from("deny-retry");
+        let calls = std::cell::Cell::new(0);
+        let got = fill_deny(
+            &station,
+            || 5,
+            || {
+                calls.set(calls.get() + 1);
+                let first = calls.get() == 1;
+                let station = station.clone();
+                async move {
+                    if first {
+                        // The settings change lands while the old answer is pending.
+                        clear_station(&station);
+                        Some(deny_with("*.old"))
+                    } else {
+                        Some(deny_with("*.new"))
+                    }
+                }
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(calls.get(), 2);
+        assert!(got.denies("a.new"));
+        assert!(!got.denies("a.old"));
+        let kept = denies().lock().unwrap().get(&station).cloned().unwrap();
+        assert!(kept.1.denies("a.new"));
+        assert!(!kept.1.denies("a.old"));
+    }
+
+    #[tokio::test]
+    async fn a_deny_fill_that_a_clear_overtook_twice_is_not_stored_and_fails_closed() {
+        let station = StationId::from("deny-twice");
+        let calls = std::cell::Cell::new(0);
+        let got = fill_deny(
+            &station,
+            || 5,
+            || {
+                calls.set(calls.get() + 1);
+                let station = station.clone();
+                async move {
+                    clear_station(&station);
+                    Some(deny_with("*.old"))
+                }
+            },
+        )
+        .await;
+        assert_eq!(calls.get(), 2);
+        assert!(got.is_none());
+        assert!(!cached_deny(&station));
+    }
+
+    #[tokio::test]
+    async fn a_deny_fill_whose_second_fetch_fails_fails_closed() {
+        let station = StationId::from("deny-second-fails");
+        let calls = std::cell::Cell::new(0);
+        let got = fill_deny(
+            &station,
+            || 5,
+            || {
+                calls.set(calls.get() + 1);
+                let first = calls.get() == 1;
+                let station = station.clone();
+                async move {
+                    if first {
+                        clear_station(&station);
+                        Some(deny_with("*.old"))
+                    } else {
+                        None
+                    }
+                }
+            },
+        )
+        .await;
+        assert_eq!(calls.get(), 2);
+        assert!(got.is_none());
+        assert!(!cached_deny(&station));
+    }
+
+    fn diff_key(station: &StationId) -> Key {
+        (
+            station.clone(),
+            "session".to_owned(),
+            Snapshot::Spawn(A.to_owned()),
+            true,
+        )
+    }
+
+    fn diff_cached(key: &Key) -> bool {
+        diffs().lock().unwrap().map.contains_key(key)
+    }
+
+    #[tokio::test]
+    async fn a_diff_fill_without_a_clear_is_stored_and_returned() {
+        let station = StationId::from("diff-plain");
+        let key = diff_key(&station);
+        let got = fill_diff(key.clone(), || 5, async { Ok(String::new()) }).await;
+        assert!(got.is_ok());
+        assert!(diff_cached(&key));
+    }
+
+    #[tokio::test]
+    async fn a_diff_fill_that_a_clear_overtook_is_returned_but_not_stored() {
+        let station = StationId::from("diff-overtaken");
+        let key = diff_key(&station);
+        let other = StationId::from("diff-untouched");
+        let other_key = diff_key(&other);
+        let other_got = fill_diff(other_key.clone(), || 5, async { Ok(String::new()) }).await;
+        assert!(other_got.is_ok());
+        let clearing = station.clone();
+        let got = fill_diff(key.clone(), || 5, async move {
+            // The settings change lands while the fetch is pending.
+            clear_station(&clearing);
+            Ok(String::new())
+        })
+        .await;
+        assert!(got.is_ok(), "the caller still gets the diff");
+        assert!(!diff_cached(&key));
+        assert!(diff_cached(&other_key), "another station keeps its entry");
     }
 }

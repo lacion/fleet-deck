@@ -236,19 +236,89 @@ impl Git {
             })?
             .map_err(GitError::Spawn)?;
         self.ended();
-        let mut stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        if stderr.len() > STDERR_KEEP {
-            let mut cut = STDERR_KEEP;
-            while !stderr.is_char_boundary(cut) {
-                cut -= 1;
-            }
-            stderr.truncate(cut);
-        }
+        let stderr = shorten_stderr(&output.stderr);
         Ok((output.status.code().unwrap_or(-1), output.stdout, stderr))
     }
 }
 
+/// The stderr bytes as trimmed text of at most [`STDERR_KEEP`] bytes.
+fn shorten_stderr(bytes: &[u8]) -> String {
+    let mut stderr = String::from_utf8_lossy(bytes).trim().to_owned();
+    if stderr.len() > STDERR_KEEP {
+        let mut cut = STDERR_KEEP;
+        while !stderr.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        stderr.truncate(cut);
+    }
+    stderr
+}
+
 impl Git {
+    /// Runs `git <args>` and returns `(exit code, stderr)`. Stdout is
+    /// discarded. At most `max_stderr` bytes of stderr are kept; the rest is
+    /// read and dropped until the end, so the memory use is bounded (NV-30).
+    /// A signal gives the code -1. The timeout, the kill and the errors are
+    /// as for [`Self::status`].
+    pub async fn status_stderr(
+        &self,
+        args: &[&str],
+        env: &[(&str, &OsStr)],
+        max_stderr: usize,
+    ) -> Result<(i32, String), GitError> {
+        use tokio::io::AsyncReadExt;
+        let mut cmd = Command::new(&self.options.program);
+        cmd.current_dir(&self.dir)
+            .args(SAFE_CONFIG)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        self.grouped(&mut cmd);
+        for name in REDIRECTING_VARS {
+            cmd.env_remove(name);
+        }
+        cmd.env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .env("LC_ALL", "C");
+        if self.options.isolated {
+            cmd.env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null");
+        }
+        for (name, value) in env {
+            cmd.env(name, value);
+        }
+        let mut child = cmd.spawn().map_err(GitError::Spawn)?;
+        self.spawned(&child);
+        let Some(mut stderr) = child.stderr.take() else {
+            return Err(GitError::Spawn(std::io::Error::other("no stderr pipe")));
+        };
+        let work = async {
+            let mut kept = Vec::new();
+            let mut chunk = [0u8; 8192];
+            loop {
+                let n = stderr.read(&mut chunk).await.map_err(GitError::Spawn)?;
+                if n == 0 {
+                    break;
+                }
+                let room = max_stderr.saturating_sub(kept.len());
+                kept.extend_from_slice(&chunk[..n.min(room)]);
+            }
+            let status = child.wait().await.map_err(GitError::Spawn)?;
+            Ok::<_, GitError>((status.code().unwrap_or(-1), kept))
+        };
+        let secs = self.options.timeout.as_secs();
+        let (code, kept) = tokio::time::timeout(self.options.timeout, work)
+            .await
+            .map_err(|_| GitError::Timeout {
+                args: args.join(" "),
+                secs,
+            })??;
+        self.ended();
+        Ok((code, shorten_stderr(&kept)))
+    }
+
     /// Runs `git <args>` and keeps at most `max_bytes` of stdout; with more
     /// output the process is killed. Returns `(exit code, stdout, cut)`; a
     /// killed process gives the code -1. Stderr is discarded.

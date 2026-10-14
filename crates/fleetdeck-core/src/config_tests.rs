@@ -1,3 +1,5 @@
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use fleetdeck_proto::integrations::TrackerKind;
@@ -317,6 +319,68 @@ fn files_load_with_owner_rules() {
     fs::write(&deck, "name = \"d\"\n").unwrap();
     fs::set_permissions(&deck, fs::Permissions::from_mode(0o600)).unwrap();
     assert_eq!(DeckConfig::load(&deck).unwrap().name, "d");
+}
+
+/// Writes `text` to a station file with `mode` and loads it.
+fn load_station_with_mode(text: &str, mode: u32) -> Result<StationConfig, ConfigError> {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("station.toml");
+    fs::write(&path, text).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+    StationConfig::load(&path, &env())
+}
+
+const PLAIN_ENV: &str = "[[provider_instance]]\nid = \"a\"\ndriver = \"claude\"\n\
+                         env = { ANTHROPIC_API_KEY = \"x\" }\n";
+
+#[test]
+fn a_readable_station_file_with_a_plain_env_value_is_refused() {
+    let e = load_station_with_mode(PLAIN_ENV, 0o644).err().unwrap();
+    assert!(
+        matches!(e, ConfigError::ReadableSecrets { mode: 0o644, .. }),
+        "{e}"
+    );
+    let text = e.to_string();
+    assert!(text.contains("has mode 644"), "{text}");
+    assert!(text.contains("chmod 600"), "{text}");
+    assert!(text.contains("{ secret = \"name\" }"), "{text}");
+}
+
+#[test]
+fn a_group_readable_station_file_with_a_plain_env_value_is_refused() {
+    assert!(matches!(
+        load_station_with_mode(PLAIN_ENV, 0o640),
+        Err(ConfigError::ReadableSecrets { mode: 0o640, .. })
+    ));
+}
+
+#[test]
+fn a_private_station_file_with_a_plain_env_value_loads() {
+    assert!(load_station_with_mode(PLAIN_ENV, 0o600).is_ok());
+}
+
+#[test]
+fn a_readable_station_file_with_only_secret_references_loads() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = dir.path().join("secrets");
+    fs::create_dir(&store).unwrap();
+    fs::write(store.join("k"), "value").unwrap();
+    fs::set_permissions(store.join("k"), fs::Permissions::from_mode(0o600)).unwrap();
+    let path = dir.path().join("station.toml");
+    fs::write(
+        &path,
+        "[[provider_instance]]\nid = \"a\"\ndriver = \"claude\"\n\
+         env = { ANTHROPIC_API_KEY = { secret = \"k\" } }\n",
+    )
+    .unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(StationConfig::load_with_store(&path, &env(), &store).is_ok());
+}
+
+#[test]
+fn a_readable_station_file_with_an_empty_env_loads() {
+    let text = "[[provider_instance]]\nid = \"a\"\ndriver = \"claude\"\nenv = {}\n";
+    assert!(load_station_with_mode(text, 0o644).is_ok());
 }
 
 #[test]

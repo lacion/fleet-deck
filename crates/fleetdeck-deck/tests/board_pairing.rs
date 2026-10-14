@@ -162,6 +162,59 @@ fn expect(r: &Http, status: u16, code: &str) {
 }
 
 #[tokio::test]
+async fn removing_a_station_answers_500_and_audits_a_failure_when_the_store_write_fails() {
+    let d = deck(true).await;
+    let h = owner(&d.board).await;
+    let alpha = station("alpha", 4).await;
+    let text = alpha
+        .node
+        .invite("127.0.0.1:0".parse().unwrap())
+        .await
+        .unwrap();
+    let r = post(
+        &d.board,
+        &h,
+        "/api/stations",
+        json!({ "invitation": text.expose(), "name": "alpha-box" }),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    // A full disk: the delete of the station row fails.
+    let conn = rusqlite::Connection::open(d._dir.path().join("deck.db")).unwrap();
+    conn.execute_batch(
+        "CREATE TRIGGER fail_station_delete BEFORE DELETE ON stations
+         BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+    )
+    .unwrap();
+
+    // NV-15: the revocation was not stored, so the route is not a success.
+    let r = post(&d.board, &h, "/api/stations/alpha-box/remove", json!({})).await;
+    expect(&r, 500, "revoke_failed");
+    assert!(
+        r.body["message"]
+            .as_str()
+            .unwrap()
+            .contains("the revocation was not stored"),
+        "{}",
+        r.body
+    );
+    let rows = d.board.store.audit_log(100).await.unwrap();
+    let failed: Vec<_> = rows
+        .iter()
+        .filter(|e| e.action == "stations.remove" && e.result == AuditResult::Failed)
+        .map(|e| e.detail.clone().unwrap_or_default())
+        .collect();
+    assert_eq!(failed, vec!["revoke_failed".to_owned()]);
+    assert!(
+        !rows
+            .iter()
+            .any(|e| e.action == "stations.remove" && e.result == AuditResult::Ok),
+        "no success row"
+    );
+}
+
+#[tokio::test]
 async fn the_board_pairs_both_directions_reports_station_info_and_removes() {
     let d = deck(true).await;
     let h = owner(&d.board).await;

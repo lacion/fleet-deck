@@ -7,124 +7,15 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod common;
+mod share_support;
 
-use std::sync::Arc;
+use std::collections::BTreeSet;
 
-use common::board::{BoardClient, Http, board};
 use common::*;
 use fleetdeck_deck::store::AuditResult;
-use fleetdeck_proto::SessionSummary;
-use fleetdeck_proto::event::{ProviderKind, SessionState};
+use fleetdeck_proto::link::Scope;
 use serde_json::{Value, json};
-
-fn card(id: &str) -> SessionSummary {
-    let mut s = SessionSummary::new(id.into());
-    s.state = SessionState::Running;
-    s.cwd = Some("/p/app".to_owned());
-    s.provider = Some(ProviderKind::Claude);
-    s
-}
-
-type Headers = Vec<(String, String)>;
-
-fn refs(h: &Headers) -> Vec<(&str, &str)> {
-    h.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect()
-}
-
-async fn owner(c: &BoardClient) -> Headers {
-    let (cookie, csrf) = c.login().await;
-    vec![
-        ("Cookie".to_owned(), cookie),
-        ("X-CSRF-Token".to_owned(), csrf),
-    ]
-}
-
-async fn post(c: &BoardClient, h: &Headers, path: &str, body: Value) -> Http {
-    c.post(path, &refs(h), body).await
-}
-
-async fn get(c: &BoardClient, h: &Headers, path: &str) -> Http {
-    c.get(path, &refs(h)).await
-}
-
-fn expect(r: &Http, status: u16, code: &str) {
-    assert_eq!((r.status, r.code()), (status, code), "{}", r.body);
-}
-
-/// A deck with a linked station that holds the sessions `s1` and `s2`.
-async fn setup() -> (Fixture, fleetdeck_link::LiveLink, BoardClient, Headers) {
-    let mut f = fixture().await;
-    let station = f.connect().await;
-    f.store
-        .apply_snapshot(
-            f.station.clone(),
-            f.inc.clone(),
-            0,
-            vec![card("s1"), card("s2")],
-        )
-        .await
-        .unwrap();
-    let c = board(Arc::clone(&f.ctx)).await;
-    let h = owner(&c).await;
-    (f, station, c, h)
-}
-
-/// The owner makes a share; a person joins. Returns the member's headers.
-async fn join(
-    c: &BoardClient,
-    owner: &Headers,
-    share: Value,
-    name: &str,
-) -> (Headers, String, Value) {
-    let r = post(c, owner, "/api/shares", share).await;
-    assert_eq!(r.status, 200, "{}", r.body);
-    let share_id = r.body["share_id"].as_str().unwrap().to_owned();
-    let url = r.body["url"].as_str().unwrap();
-    let token = url.split("#join=").nth(1).unwrap();
-    let j = c
-        .post(
-            "/api/auth/join",
-            &[],
-            json!({ "token": token, "display_name": name }),
-        )
-        .await;
-    assert_eq!(j.status, 200, "{}", j.body);
-    let cookie = j
-        .header("set-cookie")
-        .unwrap()
-        .split(';')
-        .next()
-        .unwrap()
-        .to_owned();
-    let csrf = j.body["csrf"].as_str().unwrap().to_owned();
-    (
-        vec![
-            ("Cookie".to_owned(), cookie),
-            ("X-CSRF-Token".to_owned(), csrf),
-        ],
-        share_id,
-        j.body,
-    )
-}
-
-/// Posts a command that the station accepts; returns the answer and the
-/// request that the station got.
-async fn send_ok(
-    c: &BoardClient,
-    h: &Headers,
-    station: &mut fleetdeck_link::LiveLink,
-    method: &str,
-    body: Value,
-) -> (Http, fleetdeck_link::control::InboundRequest) {
-    let path = format!("/api/commands/{method}");
-    let call = post(c, h, &path, body);
-    tokio::join!(call, Fixture::answer(station, accepted))
-}
-
-fn prompt(st: &str, id: &str, session: &str) -> Value {
-    json!({ "station": st, "command_id": id,
-            "command": { "op": "prompt", "session_id": session, "input": { "text": "hi" } } })
-}
+use share_support::*;
 
 #[tokio::test]
 async fn a_member_joins_with_a_one_use_invite_and_sees_only_its_session() {
@@ -618,6 +509,51 @@ async fn the_side_chat_is_for_people_and_never_reaches_the_agent() {
     );
     // Nothing went to the station.
     no_request(&mut station, std::time::Duration::from_millis(300)).await;
+}
+
+#[tokio::test]
+async fn a_bearer_token_cannot_read_or_post_in_the_side_chat() {
+    let (f, mut station, c, h) = setup().await;
+    let st = f.station.0.clone();
+    let path = format!("/api/sessions/{st}/s1/chat");
+    let day = 86_400_000;
+    let (_, read) = f
+        .store
+        .create_token("reader".into(), BTreeSet::from([Scope::Read]), day)
+        .await
+        .unwrap();
+    let (_, drive) = f
+        .store
+        .create_token(
+            "driver".into(),
+            BTreeSet::from([Scope::Read, Scope::Drive]),
+            day,
+        )
+        .await
+        .unwrap();
+    let read_auth = format!("Bearer {}", read.expose());
+    let drive_auth = format!("Bearer {}", drive.expose());
+    let r = c.get(&path, &[("Authorization", read_auth.as_str())]).await;
+    expect(&r, 403, "owner_only");
+    let r = c
+        .post(
+            &path,
+            &[("Authorization", drive_auth.as_str())],
+            json!({ "text": "hello" }),
+        )
+        .await;
+    expect(&r, 403, "owner_only");
+    assert_eq!(
+        c.audited("chat.post", AuditResult::Refused).await.len(),
+        1,
+        "the refusal is audited"
+    );
+    // The owner still reads and posts.
+    let r = post(&c, &h, &path, json!({ "text": "from the owner" })).await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    let list = get(&c, &h, &path).await;
+    assert_eq!(list.body.as_array().unwrap().len(), 1);
+    no_request(&mut station, std::time::Duration::from_millis(100)).await;
 }
 
 #[tokio::test]

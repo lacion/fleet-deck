@@ -6,14 +6,17 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use fleetdeck_proto::event::SessionState;
+use fleetdeck_proto::event::{ProviderKind, SessionState};
 use fleetdeck_proto::shell::{ShellChange, ShellState};
-use fleetdeck_proto::{Event, SessionCommand, SessionId};
+use fleetdeck_proto::{Event, ProviderInstanceId, SessionCommand, SessionId};
+use fleetdeck_station::manager::{Policy, PolicyHub};
 use fleetdeck_station::shell::handover::recover_holds;
-use fleetdeck_station::shell::{ShellConfig, Shells};
+use fleetdeck_station::shell::{ShellConfig, Shells, dispatch};
+use fleetdeck_station::store::OfflineApprovalPolicy;
 
 mod tui_common;
 use tui_common::*;
@@ -214,6 +217,41 @@ async fn a_tui_that_does_not_start_releases_the_hold_and_fails_the_effect() {
         "{reasons:?}"
     );
     assert!(rig.shells.list().is_empty());
+}
+
+#[tokio::test]
+async fn a_handover_whose_folder_left_the_allowed_roots_does_not_start_the_tui() {
+    // NV-24: the policy at the dispatch decides, not the one at the admission.
+    let mut rig = Rig::new("echo \"$@\" > args.txt\nexec cat").await;
+    let s = rig.ended("s-a", "native-a").await;
+    let d = rig.handover("tui-1", &s).await;
+    accepted(&d);
+
+    let elsewhere = tempfile::tempdir().unwrap();
+    let later = Policy::new(
+        vec![std::fs::canonicalize(elsewhere.path()).unwrap()],
+        4,
+        OfflineApprovalPolicy::Wait,
+        BTreeMap::from([(ProviderInstanceId::new("claude"), ProviderKind::Claude)]),
+    )
+    .with_shell(true, 4);
+    let done = dispatch(&rig.store, &rig.shells, &PolicyHub::new(later))
+        .await
+        .unwrap();
+    assert_eq!(done, 1);
+
+    assert_eq!(rig.effect_state(&d.receipt.command_id).await, "failed");
+    assert!(rig.summary(&s).await.terminal.is_none(), "the hold ends");
+    let reasons = rig.reasons(&s).await;
+    assert!(
+        reasons
+            .last()
+            .unwrap()
+            .starts_with("the terminal did not start: the session directory is not allowed now: "),
+        "{reasons:?}"
+    );
+    assert!(rig.shells.list().is_empty());
+    assert!(!rig.root.join("args.txt").exists());
 }
 
 #[tokio::test]

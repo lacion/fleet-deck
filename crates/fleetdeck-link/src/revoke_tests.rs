@@ -34,10 +34,14 @@ async fn revoke_unpins_and_removes_every_grant() {
     let deck = Identity::generate().unwrap();
     node.pins.pin(deck.public_key(), Role::Deck);
     grants.grant(deck.fingerprint(), [Scope::Read, Scope::Drive]);
-    assert!(revoke(&node, &deck.public_key()).await);
+    assert_eq!(revoke(&node, &deck.public_key()).await, Ok(true));
     assert_eq!(node.pins.role_of(&deck.public_key()), None);
     assert!(grants.scopes(&deck.fingerprint()).is_empty());
-    assert!(!revoke(&node, &deck.public_key()).await, "already revoked");
+    assert_eq!(
+        revoke(&node, &deck.public_key()).await,
+        Ok(false),
+        "already revoked"
+    );
 }
 
 #[tokio::test]

@@ -20,7 +20,9 @@
 //! - **Retention.** Events stay until every paired deck acknowledged them
 //!   **and** the retention window passed; a cursor below the removed prefix
 //!   gets [`ReadResult::SnapshotRequired`]. Receipts stay for
-//!   [`RECEIPT_RETENTION_MS`].
+//!   [`RECEIPT_RETENTION_MS`]. Finished effects, requests, processes, shell
+//!   effects, coordinator outbox rows and artifact suggestions stay for
+//!   [`HISTORY_RETENTION_MS`].
 
 pub mod artifacts;
 pub mod assist;
@@ -92,6 +94,11 @@ pub use worktree_ops::{NewWorktreeOp, WorktreeOp};
 /// The default event retention after the deck acknowledged the events.
 pub const EVENT_RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 
+/// The default retention of the finished recovery and history rows: effects,
+/// runtime requests, dead processes, shell effects, coordinator outbox rows
+/// and artifact suggestions (NV-02, NV-10, NV-26, NV-28).
+pub const HISTORY_RETENTION_MS: i64 = 90 * 24 * 60 * 60 * 1000;
+
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     #[error(transparent)]
@@ -133,6 +140,8 @@ pub type Result<T, E = StoreError> = std::result::Result<T, E>;
 pub struct StoreConfig {
     pub event_retention_ms: i64,
     pub receipt_retention_ms: i64,
+    /// How long a finished history row stays (NV-26, NV-28).
+    pub history_retention_ms: i64,
     /// The most sessions in a snapshot batch (DL-051).
     pub snapshot_sessions: u64,
 }
@@ -142,6 +151,7 @@ impl Default for StoreConfig {
         Self {
             event_retention_ms: EVENT_RETENTION_MS,
             receipt_retention_ms: RECEIPT_RETENTION_MS,
+            history_retention_ms: HISTORY_RETENTION_MS,
             snapshot_sessions: MAX_SNAPSHOT_SESSIONS,
         }
     }
@@ -223,6 +233,8 @@ pub struct Snapshot {
 pub struct PruneReport {
     pub events: usize,
     pub receipts: usize,
+    /// The finished history rows that the prune removed (NV-26).
+    pub history: usize,
     pub pruned_through: u64,
 }
 
@@ -481,8 +493,9 @@ impl Store {
         .await
     }
 
-    /// Removes acknowledged events older than the retention window, and
-    /// receipts older than the receipt retention.
+    /// Removes acknowledged events older than the retention window, receipts
+    /// older than the receipt retention, and finished history rows older than
+    /// the history retention (see [`log::prune`]).
     ///
     /// # Errors
     /// A database error.
@@ -594,6 +607,8 @@ fn to_i64(v: u64) -> Result<i64> {
 
 #[cfg(test)]
 mod effects_tests;
+#[cfg(test)]
+mod retention_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

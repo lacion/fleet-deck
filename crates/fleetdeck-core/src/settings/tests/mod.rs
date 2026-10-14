@@ -8,6 +8,7 @@ mod secrets;
 mod tailnet_auto;
 mod testfs;
 
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -37,6 +38,9 @@ impl Fixture {
         let config = cfg.join("station.toml");
         if let Some(text) = text {
             std::fs::write(&config, text).unwrap();
+            // The settings writer writes mode 0600. NV-08 refuses a readable
+            // file with plain `env` values.
+            std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o600)).unwrap();
         }
         let store = dir.path().join("data").join("station").join("secrets");
         let env = Env {

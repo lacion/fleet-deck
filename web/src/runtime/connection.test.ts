@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
 import { Connection, IDLE_MS, TIMEOUT_MS } from './connection';
@@ -14,6 +14,46 @@ async function fixture() {
   env.latest().live();
   return { env, connection };
 }
+function draftStorage(): Storage {
+  const data = new Map<string, string>([['fd-draft:st/s-1', 'unsent']]);
+  return {
+    get length() {
+      return data.size;
+    },
+    clear: () => data.clear(),
+    getItem: (k) => data.get(k) ?? null,
+    key: (i) => [...data.keys()][i] ?? null,
+    removeItem: (k) => {
+      data.delete(k);
+    },
+    setItem: (k, v) => {
+      data.set(k, v);
+    },
+  };
+}
+const savedStorage = {
+  sessionStorage: Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage'),
+  localStorage: Object.getOwnPropertyDescriptor(globalThis, 'localStorage'),
+};
+function useStorage(session: Storage, local: Storage) {
+  Object.defineProperty(globalThis, 'sessionStorage', {
+    configurable: true,
+    writable: true,
+    value: session,
+  });
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    writable: true,
+    value: local,
+  });
+}
+afterEach(() => {
+  for (const name of ['sessionStorage', 'localStorage'] as const) {
+    const saved = savedStorage[name];
+    if (saved) Object.defineProperty(globalThis, name, saved);
+    else Reflect.deleteProperty(globalThis, name);
+  }
+});
 const timelineStart = {
   type: 'timeline_start',
   ...key,
@@ -22,6 +62,42 @@ const timelineStart = {
 } as const;
 
 describe('deck connection runtime', () => {
+  test('logout, login and a link token clear the drafts and a cookie reconnect keeps them (NV-05)', async () => {
+    const drafts = draftStorage();
+    useStorage(drafts, draftStorage());
+    const { env, connection } = await fixture();
+    expect(drafts.getItem('fd-draft:st/s-1')).toBe('unsent');
+    env.latest().drop();
+    env.advance(500);
+    await settle();
+    env.latest().live();
+    expect(drafts.getItem('fd-draft:st/s-1')).toBe('unsent');
+    env.reply = async () => new Response(null, { status: 204 });
+    await connection.logout();
+    expect(drafts.getItem('fd-draft:st/s-1')).toBeNull();
+    drafts.setItem('fd-draft:st/s-1', 'unsent');
+    env.reply = async () => Response.json(loginView);
+    await connection.login('pw');
+    expect(drafts.getItem('fd-draft:st/s-1')).toBeNull();
+    connection.stop();
+    drafts.setItem('fd-draft:st/s-1', 'unsent');
+    connection.start('one-time-secret');
+    expect(drafts.getItem('fd-draft:st/s-1')).toBeNull();
+    await settle();
+    connection.stop();
+  });
+
+  test('start without a token does not clear the drafts (NV-05)', async () => {
+    const drafts = draftStorage();
+    useStorage(drafts, draftStorage());
+    const env = new FakeEnvironment();
+    const connection = new Connection(env);
+    connection.start();
+    await settle();
+    expect(drafts.getItem('fd-draft:st/s-1')).toBe('unsent');
+    connection.stop();
+  });
+
   test('one page owns one socket and no retry loop starts twice', async () => {
     const { env, connection } = await fixture();
     connection.start();
