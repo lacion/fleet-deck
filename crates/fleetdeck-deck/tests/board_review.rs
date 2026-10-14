@@ -685,3 +685,45 @@ async fn a_deny_list_that_cannot_be_established_hides_every_comment_and_every_ex
     assert_eq!(m.status, 201);
     assert!(ids(&t.list(&ann).await).is_empty(), "even the own draft");
 }
+
+#[tokio::test]
+async fn an_import_replay_follows_the_deny_list_like_every_other_lookup() {
+    let t = setup().await;
+    let ann = member(&t, "collaborator", "Ann").await;
+    let top = id(&t.comment(&t.h, "src/lib.rs", "new", 2, "top").await);
+    let sent = t.send(&t.h, "k1", &[&top]).await;
+    assert_eq!(sent.status, 200, "{}", sent.body);
+    t.wait_follow_ups(1).await;
+    // A reply carries an import key and skips the anchor derivation of the
+    // route, so the replay reaches the store even when the diff hides the
+    // path.
+    let url = format!("{}/comments", t.base());
+    let reply = |key: &str| {
+        json!({ "snapshot": format!("spawn:{BASE}"), "path": "src/lib.rs", "side": "new",
+                "line_start": 2, "line_end": 2, "body": "old note", "import_key": key,
+                "thread_id": top })
+    };
+    let (ann_key, owner_key) = ("ab".repeat(32), "cd".repeat(32));
+    let made = t.post(&ann, &url, reply(&ann_key)).await;
+    assert_eq!(made.status, 201, "{}", made.body);
+    let mine = t.post(&t.h, &url, reply(&owner_key)).await;
+    assert_eq!(mine.status, 201, "{}", mine.body);
+    // The path is visible: the replay returns the stored comment.
+    let again = t.post(&ann, &url, reply(&ann_key)).await;
+    assert_eq!(again.status, 200, "{}", again.body);
+    assert_eq!(again.body["comment_id"], made.body["comment_id"]);
+    // The path becomes member-denied: the member replay is unknown and
+    // carries no anchor; the owner still gets its comment.
+    t.fake.set(|c| c.deny = Some(vec!["src/".to_owned()]));
+    let hidden = t.post(&ann, &url, reply(&ann_key)).await;
+    expect(&hidden, 404, "unknown_comment");
+    assert!(
+        !hidden.body.to_string().contains("fn two"),
+        "{}",
+        hidden.body
+    );
+    let kept = t.post(&t.h, &url, reply(&owner_key)).await;
+    assert_eq!(kept.status, 200, "{}", kept.body);
+    assert_eq!(kept.body["comment_id"], mine.body["comment_id"]);
+    assert!(kept.body["anchor_text"].is_string());
+}
