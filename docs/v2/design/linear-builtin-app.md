@@ -1,6 +1,6 @@
 # Built-in Linear app (DL-185)
 
-- **Status:** Proposed (revision 3, 2026-10-14). Revision 1 got DESIGN REVIEW FAIL (2 blockers, 3 major, 1 unverified, 1 minor; `/tmp/adversary-report-linear-design.md`); revision 2 got RE-REVIEW FAIL (1 blocker: the migration invents the issuing app; 1 minor: `app_changed` cannot reach the board; `/tmp/fd-goal/adversary-report-linear-design2.md`). §8 and §9 map the findings. Needs a PASS before code; the next review is the last round allowed.
+- **Status:** Accepted (revision 3, 2026-10-14; RE-REVIEW round 3 PASS, `/tmp/fd-goal/adversary-report-linear-design3.md`). The §4 release gate is still open. Revision 1 got DESIGN REVIEW FAIL (2 blockers, 3 major, 1 unverified, 1 minor; `/tmp/adversary-report-linear-design.md`); revision 2 got RE-REVIEW FAIL (1 blocker: the migration invents the issuing app; 1 minor: `app_changed` cannot reach the board; `/tmp/fd-goal/adversary-report-linear-design2.md`). §8 and §9 map the findings. 
 - **Owner request (2026-10-14):** "for jira and linear, github and gitlab can we create oauth apps that will just work for everyone? apps that we can publish?" Owner choices: "Linear public app, no broker", then for the redirect "Localhost only".
 - **Changes:** DL-173 (the owner registers a Jira or Linear OAuth app before a sign-in). Jira, GitHub and GitLab are unchanged.
 
@@ -44,7 +44,7 @@
 ### 2.4 Errors
 
 - Every new error is a stable code with a fixed text: `builtin_needs_localhost`, `app_changed`. The deck relays these two codes and their texts to the board unchanged (they carry no credential); every other station error keeps today's handling.
-- `app_changed` survives the station paths: `Accounts::fresh` and the refresh error mapping (`oauth.rs:416-421`) keep the code `app_changed` instead of turning it into `unavailable`, and the account's needs-login state (`mod.rs:297-318`) records the reason `reconnect` (`AccountView.needs: "login" | "reconnect"`), so the board can show "Connect again" with no free text.
+- `app_changed` survives the station paths: `Accounts::fresh` and the refresh error mapping (`oauth.rs:416-421`) keep the code `app_changed` instead of turning it into `unavailable`, and the account's needs-login state (`mod.rs:297-318`) records the reason `reconnect`: the account view gets the new status `needs_reconnect` (`AccountStatus::NeedsReconnect`, fixed message "The Linear app of this account changed. Connect the account again."), so the board can show "Connect again" with no free text.
 - Linear's answers are never returned or logged: a failed token exchange or refresh is `upstream` "the server answered HTTP <status>" or `timeout`, as `accounts/http.rs` does today. No code, verifier, token or secret appears in an error, a log, an audit row, an argv or a response.
 
 ### 2.5 Board
@@ -85,7 +85,7 @@ If check 2 shows a loose match, the built-in app does not ship and this design r
 - Finish and refresh: the form body has no `client_secret` for a built-in account (fake curl body capture) and has it for an owner account; refresh of a built-in account after an owner app is set still uses the account's `app_client_id`; an owner account after the owner app's client id changed gets `app_changed` and sends nothing.
 - Identity: connecting the same workspace with the built-in app and then with an owner app gives two records; reconnecting with the same app replaces the same record.
 - Legacy accounts: an old file reads as `legacy`; a reconnect of its workspace makes a new record; its refresh with the stored owner app binds it to that app when Linear accepts, and leaves it `legacy` with `app_changed` when Linear refuses or no owner app is stored; nothing is rewritten at start.
-- `app_changed` reaches the board: a refresh that fails with `app_changed` sets `needs: "reconnect"` on the account view through `fresh`, and the board shows "Connect again".
+- `app_changed` reaches the board: a refresh that fails with `app_changed` sets the status `needs_reconnect` on the account view through `fresh`, and the board shows "Connect again".
 - Errors: a fake Linear answer whose body contains a canary token, code and verifier gives an error, log line and response with none of them.
 - Board: the "built-in" text, the localhost note by origin, "Connect again" for `app_changed`.
 

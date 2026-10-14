@@ -2956,3 +2956,10 @@ Owner review: pending.
 - Choice (no member flag): every station request runs as the owner's session with the station's DL-173 private-path rules; the coordinator diff applies its own privacy (ADR-008 §4.4).
 - Tests: `tests/fleet_control_reads.rs` (the nine queries with fenced text and a hostile closing tag, classes and setting, both scopes, `needs_you` omissions, the limits, station refusals, no live link), `tests/board_fleet_control.rs` (class gate), `tests/common/fleet.rs` (shared helpers).
 - Owner review: pending.
+
+## DL-185 — A built-in Linear app (public client id, PKCE, localhost only) (owner decision, 2026-10-14)
+
+- Owner choices: "Linear public app, no broker", then "Localhost only". Design: `docs/v2/design/linear-builtin-app.md` (revision 3, accepted after three adversary rounds).
+- The station carries the public client id `66edc8f79eb0603f2aded18705bdfb99`; no secret exists anywhere. Without an owner app, a Linear sign-in uses it with PKCE and no `client_secret`, only from `https://127.0.0.1:7420` or `https://localhost:7420` (`builtin_needs_localhost` otherwise). An owner app still wins.
+- Each Linear account records `app_source` and `app_client_id`, is refreshed only with its own app, and is matched by its app in the upsert. Old accounts are `legacy` until a refresh with the stored owner app succeeds; else `app_changed` and the status `needs_reconnect`.
+- Release gate: the owner verifies Linear's redirect matching against the real app before release (design §4).
