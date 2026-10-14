@@ -379,9 +379,12 @@ fn prune_history_rows(tx: &rusqlite::Transaction<'_>, cutoff: i64) -> Result<usi
         [cutoff],
     )?;
     removed += tx.execute(
+        // A handover effect stays: the recovery of a terminal hold reads it
+        // (a hold without a pid and an `outcome_unknown` effect keeps the
+        // native session held).
         "DELETE FROM shell_effects
          WHERE state IN ('confirmed', 'failed', 'retired_not_dispatched', 'outcome_unknown')
-           AND updated_at < ?1",
+           AND op <> 'handover' AND updated_at < ?1",
         [cutoff],
     )?;
     removed += tx.execute(

@@ -129,7 +129,8 @@ async fn seed_history(s: &Store, young: i64) {
                    ('x-failed', 'c2', 'sh', 'open', '{{}}', 'failed', {old}, {old}),
                    ('x-unknown', 'c3', 'sh', 'open', '{{}}', 'outcome_unknown', {old}, {old}),
                    ('x-queued', 'c4', 'sh', 'open', '{{}}', 'queued', {old}, {old}),
-                   ('x-young', 'c5', 'sh', 'open', '{{}}', 'confirmed', {young}, {young});
+                   ('x-young', 'c5', 'sh', 'open', '{{}}', 'confirmed', {young}, {young}),
+                   ('x-handover', 'c6', 'sh', 'handover', '{{}}', 'outcome_unknown', {old}, {old});
             INSERT INTO coordinator_outbox (command_id, binding_id, generation, args_digest,
                                             envelope, state, retry_until, created_at, updated_at)
             VALUES ('o-done', 'b', 1, 'd', '{{}}', 'done', {old}, {old}, {old}),
@@ -162,7 +163,7 @@ async fn the_prune_removes_finished_history_rows_older_than_the_history_retentio
     );
     assert_eq!(
         column(&s, "SELECT effect_id FROM shell_effects ORDER BY 1").await,
-        ["x-queued", "x-young"]
+        ["x-handover", "x-queued", "x-young"]
     );
     // An `outcome_unknown` effect, an open effect and an effect that a shim row
     // names stay.
@@ -237,6 +238,6 @@ async fn a_young_history_row_goes_when_the_history_retention_passes() {
     );
     assert_eq!(
         column(&s, "SELECT effect_id FROM shell_effects ORDER BY 1").await,
-        ["x-queued"]
+        ["x-handover", "x-queued"]
     );
 }
