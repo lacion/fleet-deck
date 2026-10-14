@@ -212,7 +212,7 @@ export function useRoute(initial?: Route): [Route, Navigate] {
   const navigate = useCallback<Navigate>((next, opts) => {
     if (typeof window === 'undefined') return;
     if (opts?.replace === true) {
-      window.history.replaceState(null, '', formatHash(next));
+      window.history.replaceState(window.history.state, '', formatHash(next));
       setRoute(next);
     } else {
       window.location.hash = formatHash(next);

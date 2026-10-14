@@ -80,6 +80,22 @@ test('Back of a session returns to the Fleet page, or home on a deep link', asyn
   await expect(page).toHaveURL(/#\/$/);
 });
 
+test('Back of a session goes home after the browser Back returned to the first entry', async ({
+  page,
+}) => {
+  await start(page);
+  await go(page, `#/s/${ALPHA}/s2`);
+  // A reload makes the session the first entry of this board start.
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Back' })).toBeVisible();
+  await go(page, '#/fleet');
+  await page.goBack();
+  await expect(page).toHaveURL(new RegExp(`#/s/${ALPHA}/s2$`));
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expect(page).toHaveURL(/#\/$/);
+  await expect(page.locator('a.fd-srow').first()).toBeVisible();
+});
+
 test('the session menu fits the screen', async ({ page }) => {
   await start(page);
   await go(page, `#/s/${ALPHA}/s2`);
