@@ -263,7 +263,8 @@ impl DeckStore {
     /// `watermark` (one transaction). A new incarnation clears the timeline.
     ///
     /// # Errors
-    /// [`DeckError::UnknownStation`], or a database error.
+    /// [`DeckError::UnknownStation`], [`DeckError::StaleSnapshot`], or a
+    /// database error.
     pub async fn apply_snapshot(
         &self,
         station: StationId,
@@ -271,7 +272,7 @@ impl DeckStore {
         watermark: u64,
         sessions: Vec<SessionSummary>,
     ) -> Result<()> {
-        self.apply_snapshot_with(station, incarnation, watermark, sessions, None)
+        self.apply_snapshot_with(station, incarnation, watermark, sessions, None, None)
             .await
     }
 
@@ -281,8 +282,14 @@ impl DeckStore {
     /// before the link acknowledges the snapshot. `None` is an ordinary
     /// summary snapshot and changes no grant.
     ///
+    /// `current` tells whether the link of the snapshot is still the current
+    /// link of the station. The transaction asks it before any write. A
+    /// snapshot of a superseded link, or an older snapshot of the stored
+    /// incarnation, changes nothing (NV-12).
+    ///
     /// # Errors
-    /// [`DeckError::UnknownStation`], or a database error.
+    /// [`DeckError::UnknownStation`], [`DeckError::Superseded`],
+    /// [`DeckError::StaleSnapshot`], or a database error.
     pub async fn apply_snapshot_with(
         &self,
         station: StationId,
@@ -290,12 +297,20 @@ impl DeckStore {
         watermark: u64,
         sessions: Vec<SessionSummary>,
         coordinator: Option<Vec<fleetdeck_proto::CoordinatorBindingState>>,
+        current: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     ) -> Result<()> {
         let now = self.now_ms();
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let rec = station_by_id(&tx, &station)?
                 .ok_or_else(|| DeckError::UnknownStation(station.0.clone()))?;
+            // Nothing is written before these two checks (NV-12).
+            if current.as_ref().is_some_and(|is_current| !is_current()) {
+                return Err(DeckError::Superseded);
+            }
+            if rec.incarnation.as_ref() == Some(&incarnation) && rec.cursor > watermark {
+                return Err(DeckError::StaleSnapshot);
+            }
             if rec.incarnation.as_ref() != Some(&incarnation) {
                 tx.execute(
                     "DELETE FROM timeline WHERE station_id = ?1",

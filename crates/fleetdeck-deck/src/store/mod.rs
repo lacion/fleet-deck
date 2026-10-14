@@ -125,6 +125,10 @@ pub enum DeckError {
     Hash(String),
     #[error("corrupt store: {0}")]
     Corrupt(String),
+    #[error("a stale snapshot: the deck holds a newer state of this station")]
+    StaleSnapshot,
+    #[error("the link of this snapshot is no longer the current link of the station")]
+    Superseded,
 }
 
 impl From<rusqlite::Error> for DeckError {
@@ -549,6 +553,8 @@ pub(crate) fn to_i64(v: u64) -> Result<i64> {
     i64::try_from(v).map_err(|_| DeckError::Corrupt(format!("sequence {v} too large")))
 }
 
+#[cfg(test)]
+mod read_model_tests;
 #[cfg(test)]
 mod review_send_tests;
 #[cfg(test)]

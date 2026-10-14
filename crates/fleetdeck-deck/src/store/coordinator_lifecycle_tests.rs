@@ -380,6 +380,7 @@ async fn a_snapshot_recovery_with_an_unapplied_lifecycle_event_commits_the_grant
         6,
         sessions(),
         Some(vec![projected(&g.grant_id, 1, Phase::Active)]),
+        None,
     )
     .await
     .unwrap();
@@ -400,6 +401,7 @@ async fn a_snapshot_recovery_with_an_unapplied_lifecycle_event_commits_the_grant
         7,
         sessions(),
         Some(vec![projected(&g.grant_id, 2, Phase::Active)]),
+        None,
     )
     .await
     .unwrap();
@@ -415,6 +417,7 @@ async fn a_snapshot_recovery_with_an_unapplied_lifecycle_event_commits_the_grant
         8,
         sessions(),
         Some(vec![projected(&g.grant_id, 1, Phase::Expired)]),
+        None,
     )
     .await
     .unwrap();
@@ -429,6 +432,7 @@ async fn a_snapshot_recovery_with_an_unapplied_lifecycle_event_commits_the_grant
         9,
         sessions(),
         Some(vec![projected(&g.grant_id, 2, Phase::Active)]),
+        None,
     )
     .await
     .unwrap();
@@ -451,6 +455,7 @@ async fn a_snapshot_recovery_with_an_unapplied_lifecycle_event_commits_the_grant
         10,
         sessions(),
         Some(vec![projected(&g.grant_id, 3, Phase::Active)]),
+        None,
     )
     .await
     .unwrap();
@@ -471,9 +476,16 @@ async fn a_snapshot_recovery_with_an_unapplied_lifecycle_event_commits_the_grant
         (11, pending, GrantState::Active),
         (12, revoked, GrantState::Revoked),
     ] {
-        w.s.apply_snapshot_with(w.alpha.clone(), inc.clone(), seq, sessions(), Some(vec![p]))
-            .await
-            .unwrap();
+        w.s.apply_snapshot_with(
+            w.alpha.clone(),
+            inc.clone(),
+            seq,
+            sessions(),
+            Some(vec![p]),
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(
             w.s.grant(h.grant_id.clone()).await.unwrap().unwrap().state,
             want
