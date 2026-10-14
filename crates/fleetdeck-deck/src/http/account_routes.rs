@@ -163,6 +163,16 @@ fn station_error(code: &str) -> ApiError {
             "login_busy",
             "this station already runs three logins; finish or cancel one first",
         ),
+        "builtin_needs_localhost" => fixed(
+            StatusCode::CONFLICT,
+            "builtin_needs_localhost",
+            "The built-in Linear app works only from the board on the deck machine at https://127.0.0.1:7420 or https://localhost:7420. Open the board there, or set up your own Linear app.",
+        ),
+        "app_changed" => fixed(
+            StatusCode::CONFLICT,
+            "app_changed",
+            "The Linear app of this account changed. Connect the account again.",
+        ),
         "unexpected_cli_output" => fixed(
             StatusCode::BAD_GATEWAY,
             "unexpected_cli_output",
@@ -655,6 +665,8 @@ mod tests {
             "env_token_present",
             "device_flow_unsupported",
             "unexpected_cli_output",
+            "builtin_needs_localhost",
+            "app_changed",
             "internal",
             "anything",
         ] {

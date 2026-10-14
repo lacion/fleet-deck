@@ -138,6 +138,8 @@ impl Accounts {
             expires_at: None,
             email,
             generation: 0,
+            app_source: None,
+            app_client_id: None,
         };
         let id = self.save_account(&account).await?;
         Ok(self.view(&id, &account))

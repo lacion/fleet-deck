@@ -5,6 +5,7 @@ import { KIND_LABEL } from './flow';
 const STATUS: Readonly<Record<AccountView['status'], { text: string; tone: string }>> = {
   ok: { text: 'connected', tone: 'ok' },
   needs_login: { text: 'needs login', tone: 'act' },
+  needs_reconnect: { text: 'reconnect', tone: 'act' },
   error: { text: 'error', tone: 'hazard' },
 };
 
@@ -65,6 +66,16 @@ export function AccountTable({
                       onClick={() => onReconnect(a)}
                     >
                       Reconnect
+                    </button>
+                  ) : null}
+                  {own && a.status === 'needs_reconnect' && onReconnect !== undefined ? (
+                    <button
+                      type="button"
+                      className="fd-sm"
+                      disabled={busy === a.account_id}
+                      onClick={() => onReconnect(a)}
+                    >
+                      Connect again
                     </button>
                   ) : null}
                   {own ? (

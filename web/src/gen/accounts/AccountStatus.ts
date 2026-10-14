@@ -3,4 +3,4 @@
 /**
  * The state of an account.
  */
-export type AccountStatus = "ok" | "needs_login" | "error";
+export type AccountStatus = "ok" | "needs_login" | "needs_reconnect" | "error";

@@ -120,6 +120,7 @@ export function AccountsTab({ route, stations, navigate, actions, origin, initia
   }
   const list = state.kind === 'ok' ? state.value : null;
   const appOf = (kind: TrackerKind) => list?.apps.find((a) => a.kind === kind);
+  const boardOrigin = origin ?? (typeof window === 'undefined' ? '' : window.location.origin);
 
   const logout = async (a: AccountView) => {
     setBusy(a.account_id);
@@ -239,6 +240,7 @@ export function AccountsTab({ route, stations, navigate, actions, origin, initia
                   kind={kind}
                   app={appOf(kind)}
                   accounts={list.accounts.filter((a) => a.kind === kind)}
+                  origin={boardOrigin}
                   busy={busy}
                   waiting={waiting?.kind === kind}
                   authorizeUrl={waiting?.kind === kind ? waiting.url : null}
@@ -284,7 +286,7 @@ export function AccountsTab({ route, stations, navigate, actions, origin, initia
       {dialog?.kind === 'app' ? (
         <AppDialog
           kind={dialog.account}
-          redirectUrl={redirectUrlOf(origin ?? window.location.origin)}
+          redirectUrl={redirectUrlOf(boardOrigin)}
           initialClientId={appOf(dialog.account)?.client_id ?? ''}
           busy={dialogBusy}
           error={dialogError}

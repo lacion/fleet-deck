@@ -20,6 +20,7 @@ pub mod forge;
 pub mod forge_parse;
 pub mod http;
 pub mod oauth;
+pub mod oauth_app;
 pub mod store;
 pub mod tokens;
 
@@ -59,6 +60,12 @@ pub mod codes {
     pub const UNEXPECTED_CLI_OUTPUT: &str = "unexpected_cli_output";
     /// The station already runs three device logins.
     pub const LOGIN_BUSY: &str = "login_busy";
+    /// The built-in Linear app is used from an address it does not allow
+    /// (DL-185).
+    pub const BUILTIN_NEEDS_LOCALHOST: &str = "builtin_needs_localhost";
+    /// The Linear app of an account is not the app that the station has
+    /// now (DL-185).
+    pub const APP_CHANGED: &str = "app_changed";
 }
 
 /// The link methods of this service.
@@ -121,6 +128,8 @@ pub struct Accounts {
     pub(crate) logins: forge::Logins,
     pub(crate) login_gate: tokio::sync::Mutex<()>,
     pub(crate) needs_login: Mutex<HashSet<String>>,
+    /// The accounts whose Linear app changed (DL-185).
+    pub(crate) needs_reconnect: Mutex<HashSet<String>>,
     pub(crate) transactions: Mutex<Vec<oauth::Transaction>>,
     /// The lifecycle locks of the stored accounts (PRE-PR r1): one for all
     /// the Jira accounts (key `jira`: one rotating refresh token serves all
@@ -154,6 +163,7 @@ impl Accounts {
             logins: forge::Logins::default(),
             login_gate: tokio::sync::Mutex::new(()),
             needs_login: Mutex::new(HashSet::new()),
+            needs_reconnect: Mutex::new(HashSet::new()),
             transactions: Mutex::new(Vec::new()),
             refresh_locks: Mutex::new(HashMap::new()),
         }
@@ -300,7 +310,14 @@ impl Accounts {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .contains(id);
-        let (status, message) = if needs {
+        let reconnect = self
+            .needs_reconnect
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(id);
+        let (status, message) = if reconnect {
+            (AccountStatus::NeedsReconnect, APP_CHANGED_TEXT)
+        } else if needs {
             (AccountStatus::NeedsLogin, "Sign in again.")
         } else if a.method == AccountMethod::Oauth {
             (AccountStatus::Ok, "Connected with OAuth.")
@@ -342,16 +359,38 @@ impl Accounts {
         Err(invalid("no account has this id"))
     }
 
+    /// Marks the account `id` as needing a new sign-in, or clears every
+    /// mark of it (`needs` false clears `needs_reconnect` too).
     pub(crate) fn set_needs_login(&self, id: &str, needs: bool) {
         let mut set = self
             .needs_login
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        let mut reconnect = self
+            .needs_reconnect
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        reconnect.remove(id);
         if needs {
             set.insert(id.to_owned());
         } else {
             set.remove(id);
         }
+    }
+
+    /// Marks the account `id` as needing a new connection because its Linear
+    /// app changed (DL-185). It replaces the needs-login mark.
+    pub(crate) fn set_needs_reconnect(&self, id: &str) {
+        let mut set = self
+            .needs_login
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let mut reconnect = self
+            .needs_reconnect
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        set.remove(id);
+        reconnect.insert(id.to_owned());
     }
 
     /// Writes `account`, in the file of an account that has the same
@@ -374,7 +413,8 @@ impl Accounts {
                         && old.method == account.method
                         && old.site == account.site
                         && old.cloud_id == account.cloud_id
-                        && old.email == account.email =>
+                        && old.email == account.email
+                        && same_linear_app(&old, account) =>
                 {
                     found = Some(id);
                     break;
@@ -396,6 +436,22 @@ impl Accounts {
         self.set_needs_login(&id, false);
         Ok(id)
     }
+}
+
+/// The fixed text of an account whose Linear app changed.
+pub(crate) const APP_CHANGED_TEXT: &str =
+    "The Linear app of this account changed. Connect the account again.";
+
+/// A Linear OAuth account matches only an account made by the same app
+/// (`app_source` and `app_client_id`), and a legacy record (no
+/// `app_source`) never matches (DL-185). Every other account is unchanged.
+fn same_linear_app(old: &StoredAccount, new: &StoredAccount) -> bool {
+    if new.kind != AccountKind::Linear || new.method != AccountMethod::Oauth {
+        return true;
+    }
+    old.app_source.is_some()
+        && old.app_source == new.app_source
+        && old.app_client_id == new.app_client_id
 }
 
 /// The view of a `[[trackers]]` entry. Its id is the tracker id that a
