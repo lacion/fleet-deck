@@ -15,6 +15,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -23,7 +24,7 @@ use fleetdeck_proto::command::{SessionSpec, StopMode};
 use fleetdeck_proto::event::{ProviderKind, RawRef};
 use fleetdeck_proto::{Capabilities, Operation, ProviderInstanceId};
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
+use tokio::io::{AsyncRead, BufReader};
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio::task::JoinHandle;
 
@@ -42,7 +43,10 @@ use crate::host::{DEFAULT_IDLE_GRACE, ProcessControl, ProcessSpec, SessionHost, 
 /// fails with an unknown outcome instead of blocking the station.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 use crate::rawlog::{RawDir, RawFrameLog, RawLogLimits};
-use crate::stdio::{Write, flush, now_ms, write_failed};
+use crate::stdio::{
+    Fed, LineRead, MAX_LINE_BYTES, Write, flush, is_queue_full, now_ms, read_line_bounded,
+    release_write, reserve_write, write_failed,
+};
 
 /// Where the raw-frame logs of the sessions go.
 #[derive(Debug, Clone)]
@@ -199,6 +203,7 @@ impl ClaudeAdapter {
             core: Mutex::new(core),
             sink,
             raw: std::sync::Mutex::new(raw),
+            queued: AtomicUsize::new(0),
         });
         let (write_tx, write_rx) = mpsc::unbounded_channel::<Write>();
         let (frames_tx, frames_rx) = watch::channel(0);
@@ -213,6 +218,7 @@ impl ClaudeAdapter {
             process.stdout,
             write_tx.clone(),
             frames_tx,
+            MAX_LINE_BYTES,
         ));
         let session = ClaudeSession {
             shared,
@@ -230,7 +236,12 @@ impl ClaudeAdapter {
         for o in init {
             if let Output::Write(v) = o {
                 // The writer runs: the send fails only if it already ended.
-                let _ = session.writes.send(Write::Frame(v));
+                // The queue is new, so it has room for the first frames.
+                if reserve_write(&session.shared.queued).is_ok()
+                    && session.writes.send(Write::Frame(v)).is_err()
+                {
+                    release_write(&session.shared.queued);
+                }
             }
         }
         Ok(session)
@@ -353,6 +364,8 @@ struct Shared {
     core: Mutex<ClaudeCore>,
     sink: EventSink,
     raw: std::sync::Mutex<Option<RawFrameLog>>,
+    /// The frames in the stdin queue that the writer did not take (NV-19).
+    queued: AtomicUsize,
 }
 
 impl Shared {
@@ -392,7 +405,11 @@ impl Shared {
         for o in out {
             match o {
                 Output::Write(v) => {
+                    // The queue is bounded: a process that does not read
+                    // stdin must not grow it without limit (NV-19).
+                    reserve_write(&self.queued)?;
                     if writes.send(Write::Frame(v)).is_err() {
+                        release_write(&self.queued);
                         // Nothing of this output reached the writer, unless
                         // an earlier frame of it did: then a part may be
                         // written, and the outcome is unknown.
@@ -428,7 +445,10 @@ async fn write_loop(
 ) {
     while let Some(item) = rx.recv().await {
         let frame = match item {
-            Write::Frame(frame) => frame,
+            Write::Frame(frame) => {
+                release_write(&shared.queued);
+                frame
+            }
             Write::Close => {
                 control.close_stdin().await;
                 break;
@@ -454,24 +474,62 @@ async fn read_loop(
     stdout: Box<dyn AsyncRead + Send + Unpin>,
     writes: mpsc::UnboundedSender<Write>,
     frames: watch::Sender<u64>,
+    max_line: usize,
 ) {
-    let mut lines = BufReader::new(stdout).lines();
+    let mut reader = BufReader::new(stdout);
+    let mut buf = Vec::new();
     let mut sink_open = true;
     loop {
-        let line = match lines.next_line().await {
-            Ok(Some(line)) => line,
-            Ok(None) => break,
+        match read_line_bounded(&mut reader, &mut buf, max_line).await {
+            Ok(LineRead::Line) => {}
+            Ok(LineRead::Eof) => break,
+            Ok(LineRead::TooLong) => {
+                // The line is not read to its end: stop the session (NV-20).
+                tracing::warn!("provider stdout line over the limit");
+                shared.note(
+                    RawDir::Stderr,
+                    "a stdout line is over 16 MiB: the session is stopped",
+                );
+                control.kill().await;
+                break;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "claude stdout read failed");
+                break;
+            }
+        }
+        let line = match std::str::from_utf8(&buf) {
+            Ok(line) => line,
             Err(e) => {
                 tracing::warn!(error = %e, "claude stdout read failed");
                 break;
             }
         };
-        if sink_open && !feed_line(&shared, &line, &writes).await {
-            // The station dropped the session's events: nobody owns it.
-            sink_open = false;
-            control.kill().await;
+        let mut stop = false;
+        if sink_open {
+            match feed_line(&shared, line, &writes).await {
+                Fed::Open => {}
+                Fed::SinkClosed => {
+                    // The station dropped the session's events: nobody owns it.
+                    sink_open = false;
+                    control.kill().await;
+                }
+                Fed::QueueFull => {
+                    // The process does not read stdin: stop it (NV-19).
+                    tracing::warn!("provider stdin queue is full");
+                    shared.note(
+                        RawDir::Stderr,
+                        "the stdin queue is full: the session is stopped",
+                    );
+                    control.kill().await;
+                    stop = true;
+                }
+            }
         }
         frames.send_modify(|n| *n += 1);
+        if stop {
+            break;
+        }
     }
     let report = control.wait().await;
     if !report.stderr_tail.is_empty() {
@@ -484,10 +542,10 @@ async fn read_loop(
     }
 }
 
-/// Feeds one stdout line. False when the event sink is closed.
-async fn feed_line(shared: &Shared, line: &str, writes: &mpsc::UnboundedSender<Write>) -> bool {
+/// Feeds one stdout line.
+async fn feed_line(shared: &Shared, line: &str, writes: &mpsc::UnboundedSender<Write>) -> Fed {
     if line.trim().is_empty() {
-        return true;
+        return Fed::Open;
     }
     let (frame, raw_ref) = match serde_json::from_str::<Value>(line) {
         Ok(v) => {
@@ -504,10 +562,11 @@ async fn feed_line(shared: &Shared, line: &str, writes: &mpsc::UnboundedSender<W
     };
     let mut core = shared.core.lock().await;
     let out = core.on_frame(frame);
-    !matches!(
-        shared.dispatch(out, raw_ref.as_ref(), writes).await,
-        Err(ProviderError::SinkClosed)
-    )
+    match shared.dispatch(out, raw_ref.as_ref(), writes).await {
+        Err(ProviderError::SinkClosed) => Fed::SinkClosed,
+        Err(e) if is_queue_full(&e) => Fed::QueueFull,
+        _ => Fed::Open,
+    }
 }
 
 /// One running `claude -p` process.
