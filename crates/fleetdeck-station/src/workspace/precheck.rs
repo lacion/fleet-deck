@@ -4,7 +4,9 @@
 //! runs a setup command. The command runs under `/bin/sh -c` in its own
 //! process group, with the scrubbed station environment and no input. It has
 //! a limit of 60 s. When it ends or times out, the whole process group is
-//! stopped (TERM, then KILL), so a background child does not stay.
+//! stopped (TERM, then KILL), so a background child does not stay. A child
+//! that left the group (`setsid`) is found by the marker
+//! `FLEETDECK_PRECHECK_ID` in its environment and killed (FDV2-005).
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -15,11 +17,19 @@ use std::time::Duration;
 
 use fleetdeck_core::ChildEnv;
 use fleetdeck_proto::link::PrecheckResult;
+use ring::rand::{SecureRandom, SystemRandom};
 use rustix::process::{Pid, Signal, kill_process_group, test_kill_process_group};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
+use tokio::task::JoinError;
 use tokio::time::{Instant, sleep, timeout as time_limit};
 
+use super::setup_cleanup;
+
+/// The environment variable that marks every process of one precheck.
+pub const MARKER_VAR: &str = "FLEETDECK_PRECHECK_ID";
+/// The wait for the marked processes after the group is gone.
+pub const MARKED_WAIT: Duration = Duration::from_secs(5);
 /// The longest run of a precheck.
 pub const TIMEOUT: Duration = Duration::from_secs(60);
 /// The longest precheck command (characters), as a setup command.
@@ -40,6 +50,10 @@ pub enum PrecheckError {
     Invalid(String),
     /// The shell did not start, or a process did not stop.
     Run(String),
+    /// A process that carries the marker of the precheck may be left, or the
+    /// process scan could not run. The precheck counts as failed. The text
+    /// is "a precheck process could not be stopped".
+    Leftover,
 }
 
 /// Checks the text of a command.
@@ -66,20 +80,20 @@ pub fn check_cmd(cmd: &str) -> Result<(), PrecheckError> {
 }
 
 /// The prechecks that run now, by number, with their folder (DL-172: the
-/// restart list names what a restart would end).
-static RUNNING: Mutex<BTreeMap<u64, PathBuf>> = Mutex::new(BTreeMap::new());
+/// restart list names what a restart would end) and their marker id.
+static RUNNING: Mutex<BTreeMap<u64, (PathBuf, String)>> = Mutex::new(BTreeMap::new());
 static NEXT: AtomicU64 = AtomicU64::new(1);
 
 /// The entry of one running precheck; it leaves the registry on drop.
 struct Registered(u64);
 
 impl Registered {
-    fn new(cwd: &Path) -> Self {
+    fn new(cwd: &Path, marker: &str) -> Self {
         let n = NEXT.fetch_add(1, Ordering::Relaxed);
         RUNNING
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(n, cwd.to_path_buf());
+            .insert(n, (cwd.to_path_buf(), marker.to_owned()));
         Self(n)
     }
 }
@@ -100,8 +114,93 @@ pub fn running() -> Vec<(u64, PathBuf)> {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .iter()
-        .map(|(n, cwd)| (*n, cwd.clone()))
+        .map(|(n, (cwd, _))| (*n, cwd.clone()))
         .collect()
+}
+
+/// Kills the processes of every running precheck, found by their marker, in
+/// any process group (station shutdown). It blocks the thread: call it from
+/// a blocking context. A failure is logged.
+pub fn kill_all_marked() {
+    let ids: Vec<String> = RUNNING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .values()
+        .map(|(_, id)| id.clone())
+        .collect();
+    for id in ids {
+        match setup_cleanup::kill_marked(MARKER_VAR, &id, MARKED_WAIT) {
+            Ok(0) => {}
+            Ok(left) => tracing::warn!(left, "a precheck process stays after the shutdown"),
+            Err(e) => tracing::warn!(error = %e, "the precheck processes cannot be listed"),
+        }
+    }
+}
+
+/// 32 random hex characters from the OS generator.
+fn new_marker() -> Result<String, PrecheckError> {
+    let mut bytes = [0_u8; 16];
+    SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| PrecheckError::Run("the system random source failed".into()))?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Whether the result of the blocking marker cleanup says that a process may
+/// be left: one is left, the scan failed, or the scan task stopped.
+fn leftover(result: Result<Result<usize, String>, JoinError>) -> bool {
+    match result {
+        Ok(Ok(left)) => left > 0,
+        Ok(Err(e)) => {
+            tracing::error!(error = %e, "the precheck processes cannot be listed");
+            true
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "the precheck scan stopped");
+            true
+        }
+    }
+}
+
+/// Kills the marked processes of one precheck. True when one may be left.
+async fn kill_marked(id: &str) -> bool {
+    let id = id.to_owned();
+    leftover(
+        tokio::task::spawn_blocking(move || {
+            setup_cleanup::kill_marked(MARKER_VAR, &id, MARKED_WAIT)
+        })
+        .await,
+    )
+}
+
+/// Does the cleanup of a precheck whose `run` future was dropped before its
+/// own cleanup: KILL to the group, then the marker scan, on a detached
+/// thread. A failure is logged; nothing can return it.
+struct DropGuard {
+    pgid: Pid,
+    id: String,
+    armed: bool,
+}
+
+impl Drop for DropGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let (pgid, id) = (self.pgid, self.id.clone());
+        std::thread::spawn(move || {
+            if let Err(e) = kill_process_group(pgid, Signal::KILL)
+                && e != rustix::io::Errno::SRCH
+            {
+                tracing::warn!(error = %e, "cannot kill the dropped precheck group");
+            }
+            match setup_cleanup::kill_marked(MARKER_VAR, &id, MARKED_WAIT) {
+                Ok(0) => {}
+                Ok(left) => tracing::warn!(left, "a dropped precheck left a process"),
+                Err(e) => tracing::warn!(error = %e, "the dropped precheck scan failed"),
+            }
+        });
+    }
 }
 
 /// The captured output: the last [`TAIL_BYTES`] bytes of both streams.
@@ -136,7 +235,9 @@ async fn read_into(mut stream: impl AsyncRead + Unpin, tail: Arc<Tail>) {
 }
 
 /// Runs `cmd` in `cwd` and waits for it to end or for `timeout`. When this
-/// returns `Ok`, no process of the group is left.
+/// returns `Ok`, no process of the group is left, and no process that carries
+/// the marker of the precheck. When the future is dropped first, a guard
+/// does the same cleanup on a detached thread.
 ///
 /// # Errors
 /// [`PrecheckError`].
@@ -147,12 +248,14 @@ pub async fn run(
     timeout: Duration,
 ) -> Result<PrecheckResult, PrecheckError> {
     check_cmd(cmd)?;
-    let _registered = Registered::new(cwd);
+    let marker = new_marker()?;
+    let _registered = Registered::new(cwd, &marker);
     let mut child = Command::new("/bin/sh")
         .args(["-c", cmd])
         .current_dir(cwd)
         .env_clear()
         .envs(env.iter())
+        .env(MARKER_VAR, &marker)
         .process_group(0)
         .kill_on_drop(true)
         .stdin(Stdio::null())
@@ -167,6 +270,11 @@ pub async fn run(
     else {
         let _ = child.kill().await;
         return Err(PrecheckError::Run("the precheck has no process id".into()));
+    };
+    let mut guard = DropGuard {
+        pgid,
+        id: marker.clone(),
+        armed: true,
     };
     let tail = Arc::new(Tail::default());
     let readers: Vec<_> = [
@@ -184,6 +292,8 @@ pub async fn run(
     .collect();
     let waited = time_limit(timeout, child.wait()).await;
     let gone = stop_group(pgid, &mut child).await;
+    let left = kill_marked(&marker).await;
+    guard.armed = false;
     for mut reader in readers {
         if time_limit(READER_WAIT, &mut reader).await.is_err() {
             reader.abort();
@@ -191,6 +301,9 @@ pub async fn run(
     }
     if !gone {
         return Err(PrecheckError::Run("a precheck process did not stop".into()));
+    }
+    if left {
+        return Err(PrecheckError::Leftover);
     }
     match waited {
         Ok(Ok(status)) => Ok(PrecheckResult {
@@ -239,6 +352,10 @@ async fn group_gone(pgid: Pid, child: &mut tokio::process::Child) -> bool {
         sleep(GROUP_POLL).await;
     }
 }
+
+#[cfg(test)]
+#[path = "precheck_cleanup_tests.rs"]
+mod cleanup_tests;
 
 #[cfg(test)]
 mod tests {

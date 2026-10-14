@@ -16,9 +16,11 @@ pub struct Request {
     /// `Name: value` header lines. They may hold a credential.
     pub headers: Vec<String>,
     pub body: Option<String>,
-    /// Follow at most 3 https redirects (images).
-    pub follow: bool,
-    /// Append the content type after the body ([`split_content_type`]).
+    /// Pin the host of the URL to one address: the value of curl's
+    /// `resolve` option, `host:443:address` (images).
+    pub resolve: Option<String>,
+    /// Append the content type, the status and the redirect target after the
+    /// body ([`split_trailer`]). curl never follows a redirect.
     pub content_type: bool,
 }
 
@@ -48,9 +50,8 @@ pub fn config(req: &Request) -> String {
     let mut out = String::new();
     out.push_str(&format!("proto = {}\n", quote("=https")));
     out.push_str("max-time = 20\n");
-    if req.follow {
-        out.push_str("location\nmax-redirs = 3\n");
-        out.push_str(&format!("proto-redir = {}\n", quote("=https")));
+    if let Some(pin) = &req.resolve {
+        out.push_str(&format!("resolve = {}\n", quote(pin)));
     }
     out.push_str(&format!("url = {}\n", quote(&req.url)));
     out.push_str(&format!("request = {}\n", quote(req.method)));
@@ -61,27 +62,66 @@ pub fn config(req: &Request) -> String {
         out.push_str(&format!("data-binary = {}\n", quote(body)));
     }
     if req.content_type {
-        out.push_str(&format!("write-out = {}\n", quote("\n%{content_type}")));
+        out.push_str(&format!(
+            "write-out = {}\n",
+            quote("\n%{content_type}\n%{http_code}\n%{redirect_url}")
+        ));
     }
     out
 }
 
-/// The body and the content type of an answer that was made with
+/// What curl appends after the body of a request made with
 /// `content_type: true`.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Trailer {
+    /// The content type, lower case, without parameters.
+    pub content_type: String,
+    /// The HTTP status; 0 when the trailer is missing or not a number.
+    pub status: u16,
+    /// The absolute target of a redirect; empty when there is none.
+    pub redirect_url: String,
+}
+
+/// The body and the [`Trailer`] of an answer that was made with
+/// `content_type: true`: the last three lines are the content type, the
+/// status and the redirect target.
 #[must_use]
-pub fn split_content_type(stdout: &[u8]) -> (&[u8], String) {
-    match stdout.iter().rposition(|b| *b == b'\n') {
-        Some(at) => (
-            &stdout[..at],
-            String::from_utf8_lossy(&stdout[at + 1..])
-                .split(';')
-                .next()
-                .unwrap_or_default()
-                .trim()
-                .to_ascii_lowercase(),
-        ),
-        None => (stdout, String::new()),
+pub fn split_trailer(stdout: &[u8]) -> (&[u8], Trailer) {
+    let mut at = stdout.len();
+    let mut cuts = [0_usize; 3];
+    for cut in cuts.iter_mut().rev() {
+        match stdout[..at].iter().rposition(|b| *b == b'\n') {
+            Some(i) => {
+                *cut = i;
+                at = i;
+            }
+            None => {
+                let none = Trailer {
+                    content_type: String::new(),
+                    status: 0,
+                    redirect_url: String::new(),
+                };
+                return (stdout, none);
+            }
+        }
     }
+    let text = |from: usize, to: usize| String::from_utf8_lossy(&stdout[from..to]).into_owned();
+    let content_type = text(cuts[0] + 1, cuts[1])
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let status = text(cuts[1] + 1, cuts[2]).trim().parse().unwrap_or(0);
+    let redirect_url = text(cuts[2] + 1, stdout.len()).trim().to_owned();
+    (
+        &stdout[..cuts[0]],
+        Trailer {
+            content_type,
+            status,
+            redirect_url,
+        },
+    )
 }
 
 /// Sends `req`. A non-2xx answer is a [`Fail`] with the scrubbed body or
@@ -163,11 +203,45 @@ mod tests {
     }
 
     #[test]
-    fn the_content_type_is_split_from_the_body() {
-        let (body, kind) = split_content_type(b"\x89PNG\n\x00data\nimage/png; charset=binary");
+    fn the_config_pins_the_address_and_never_follows() {
+        let req = Request {
+            url: "https://cdn.example.test/a.png".into(),
+            method: "GET",
+            resolve: Some("cdn.example.test:443:93.184.216.34".into()),
+            content_type: true,
+            ..Request::default()
+        };
+        let text = config(&req);
+        assert!(text.contains("resolve = \"cdn.example.test:443:93.184.216.34\"\n"));
+        assert!(
+            text.contains("write-out = \"\\n%{content_type}\\n%{http_code}\\n%{redirect_url}\"\n")
+        );
+        assert!(!text.contains("location"));
+        assert!(!text.contains("max-redirs"));
+        assert!(!config(&Request::default()).contains("resolve"));
+    }
+
+    #[test]
+    fn the_trailer_is_split_from_the_body() {
+        let (body, t) = split_trailer(b"\x89PNG\n\x00data\nImage/PNG; charset=binary\n200\n");
         assert_eq!(body, b"\x89PNG\n\x00data");
-        assert_eq!(kind, "image/png");
-        let (body, kind) = split_content_type(b"nothing");
-        assert_eq!((body, kind.as_str()), (b"nothing".as_slice(), ""));
+        assert_eq!(
+            t,
+            Trailer {
+                content_type: "image/png".into(),
+                status: 200,
+                redirect_url: String::new(),
+            }
+        );
+        let (body, t) = split_trailer(b"\ntext/html\n302\nhttps://b.test/x");
+        assert!(body.is_empty());
+        assert_eq!(
+            (t.status, t.redirect_url.as_str()),
+            (302, "https://b.test/x")
+        );
+        // Without the three trailer lines the whole answer is the body.
+        let (body, t) = split_trailer(b"nothing\nimage/png");
+        assert_eq!(body, b"nothing\nimage/png");
+        assert_eq!((t.status, t.content_type.as_str()), (0, ""));
     }
 }

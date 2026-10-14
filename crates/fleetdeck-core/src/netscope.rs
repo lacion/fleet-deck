@@ -168,6 +168,42 @@ pub fn filter_resolved(
     }
 }
 
+/// True when `ip` is a public unicast address: not loopback, unspecified,
+/// private LAN, link-local, IPv6 ULA, Tailscale/CGNAT or multicast, and not
+/// in a reserved or documentation range (`0.0.0.0/8`, `192.0.0.0/24`,
+/// `192.0.2.0/24`, `198.18.0.0/15`, `198.51.100.0/24`, `203.0.113.0/24`,
+/// `240.0.0.0/4`, `2001:db8::/32`, and the whole NAT64 `64:ff9b::/96` and
+/// 6to4 `2002::/16` prefixes, which embed an IPv4 address).
+pub fn is_public(ip: IpAddr) -> bool {
+    if classify(ip) != AddrClass::Public {
+        return false;
+    }
+    match ip {
+        IpAddr::V4(v4) => !reserved_v4(v4),
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => !reserved_v4(v4),
+            None => !reserved_v6(v6),
+        },
+    }
+}
+
+fn reserved_v4(ip: Ipv4Addr) -> bool {
+    let [a, b, c, _] = ip.octets();
+    a == 0
+        || a >= 240
+        || (a == 192 && b == 0 && (c == 0 || c == 2))
+        || (a == 198 && (b & 0xfe) == 18)
+        || (a == 198 && b == 51 && c == 100)
+        || (a == 203 && b == 0 && c == 113)
+}
+
+fn reserved_v6(ip: Ipv6Addr) -> bool {
+    let s = ip.segments();
+    (s[0] == 0x2001 && s[1] == 0x0db8)
+        || (s[0] == 0x0064 && s[1] == 0xff9b && s[2..6] == [0, 0, 0, 0])
+        || s[0] == 0x2002
+}
+
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
@@ -177,6 +213,65 @@ mod tests {
 
     fn c(s: &str) -> AddrClass {
         classify(s.parse().unwrap())
+    }
+
+    #[test]
+    fn is_public_refuses_every_non_public_range() {
+        let refused = [
+            "127.0.0.1",
+            "::1",
+            "0.0.0.0",
+            "::",
+            "0.1.2.3",
+            "10.0.0.1",
+            "172.16.5.5",
+            "192.168.1.1",
+            "169.254.1.1",
+            "fe80::1",
+            "fc00::1",
+            "fd12::1",
+            "fd7a:115c:a1e0::1",
+            "100.64.0.1",
+            "100.100.1.1",
+            "100.127.255.255",
+            "224.0.0.1",
+            "ff02::1",
+            "255.255.255.255",
+            "192.0.0.8",
+            "192.0.2.1",
+            "198.18.0.1",
+            "198.19.255.255",
+            "198.51.100.7",
+            "203.0.113.9",
+            "240.0.0.1",
+            "2001:db8::1",
+            "64:ff9b::7f00:1",
+            "64:ff9b::808:808",
+            "2002:7f00:1::1",
+            "2002:808:808::1",
+            "::ffff:127.0.0.1",
+            "::ffff:10.0.0.1",
+        ];
+        for text in refused {
+            assert!(!is_public(text.parse().unwrap()), "{text}");
+        }
+        let accepted = [
+            "8.8.8.8",
+            "1.1.1.1",
+            "100.63.255.255",
+            "100.128.0.1",
+            "172.15.255.255",
+            "172.32.0.1",
+            "198.17.255.255",
+            "198.20.0.1",
+            "192.0.1.1",
+            "2606:4700::1111",
+            "2a00:1450:4001::1",
+            "::ffff:8.8.8.8",
+        ];
+        for text in accepted {
+            assert!(is_public(text.parse().unwrap()), "{text}");
+        }
     }
 
     #[test]
