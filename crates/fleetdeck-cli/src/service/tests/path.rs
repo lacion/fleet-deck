@@ -17,13 +17,36 @@ fn my_uid(path: &str) -> u32 {
     std::fs::metadata(path).unwrap().uid()
 }
 
+/// The canonical text of a path (a temp dir can be a link, like `/tmp` on
+/// macOS).
+fn canon(path: impl AsRef<Path>) -> String {
+    std::fs::canonicalize(path)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// True when the temp dir and its parents are safe for the user. A test that
+/// expects a kept directory returns early when this is false.
+fn tmp_is_safe(tmp: &Path) -> bool {
+    let uid = std::fs::metadata(tmp).unwrap().uid();
+    safe_path(&tmp.to_string_lossy(), uid).0.is_some()
+}
+
 #[test]
 fn safe_path_keeps_a_private_directory_of_the_user_and_root() {
     let tmp = tempfile::tempdir().unwrap();
+    // The parents of the temp dir are not safe on this machine.
+    if !tmp_is_safe(tmp.path()) {
+        return;
+    }
     let mine = dir(tmp.path(), "mine", 0o755);
     let uid = my_uid(&mine);
     let (path, notes) = safe_path(&format!("{mine}:/usr/bin"), uid);
-    assert_eq!(path, Some(format!("{mine}:/usr/bin")));
+    assert_eq!(
+        path,
+        Some(format!("{}:{}", canon(&mine), canon("/usr/bin")))
+    );
     assert!(notes.is_empty(), "{notes:?}");
 }
 
@@ -34,7 +57,7 @@ fn safe_path_drops_a_directory_that_others_can_write() {
     let group = dir(tmp.path(), "group", 0o775);
     let uid = my_uid(&open);
     let (path, notes) = safe_path(&format!("{open}:{group}:/usr/bin"), uid);
-    assert_eq!(path.as_deref(), Some("/usr/bin"));
+    assert_eq!(path, Some(canon("/usr/bin")));
     assert_eq!(
         notes,
         [
@@ -52,7 +75,7 @@ fn safe_path_drops_a_relative_entry_and_a_missing_directory() {
     std::fs::write(&file, "x").unwrap();
     let file = file.to_string_lossy().into_owned();
     let (path, notes) = safe_path(&format!("bin:.:{missing}:{file}:/usr/bin"), 0);
-    assert_eq!(path.as_deref(), Some("/usr/bin"));
+    assert_eq!(path, Some(canon("/usr/bin")));
     assert_eq!(
         notes,
         [
@@ -78,11 +101,66 @@ fn safe_path_drops_a_directory_of_another_user() {
 #[test]
 fn safe_path_drops_empty_entries_without_a_note_and_keeps_the_order() {
     let tmp = tempfile::tempdir().unwrap();
+    // The parents of the temp dir are not safe on this machine.
+    if !tmp_is_safe(tmp.path()) {
+        return;
+    }
     let a = dir(tmp.path(), "a", 0o755);
     let b = dir(tmp.path(), "b", 0o700);
     let uid = my_uid(&a);
     let (path, notes) = safe_path(&format!(":{b}::/usr/bin:{a}:"), uid);
-    assert_eq!(path, Some(format!("{b}:/usr/bin:{a}")));
+    assert_eq!(
+        path,
+        Some(format!("{}:{}:{}", canon(&b), canon("/usr/bin"), canon(&a)))
+    );
+    assert!(notes.is_empty(), "{notes:?}");
+}
+
+#[test]
+fn safe_path_keeps_the_canonical_directory_of_a_link() {
+    let tmp = tempfile::tempdir().unwrap();
+    // The parents of the temp dir are not safe on this machine.
+    if !tmp_is_safe(tmp.path()) {
+        return;
+    }
+    let safe = dir(tmp.path(), "safe", 0o755);
+    let link = tmp.path().join("link");
+    std::os::unix::fs::symlink(&safe, &link).unwrap();
+    let uid = my_uid(&safe);
+    let (path, notes) = safe_path(&link.to_string_lossy(), uid);
+    assert_eq!(path, Some(canon(&safe)));
+    assert!(notes.is_empty(), "{notes:?}");
+}
+
+#[test]
+fn safe_path_drops_a_directory_with_a_parent_that_others_can_write() {
+    let tmp = tempfile::tempdir().unwrap();
+    // The parents of the temp dir are not safe on this machine.
+    if !tmp_is_safe(tmp.path()) {
+        return;
+    }
+    let open = dir(tmp.path(), "open", 0o777);
+    let bin = dir(Path::new(&open), "bin", 0o755);
+    let uid = my_uid(&bin);
+    let (path, notes) = safe_path(&bin, uid);
+    assert_eq!(path, None);
+    assert_eq!(
+        notes,
+        [format!(
+            "{bin}: a parent directory is not safe: {}",
+            canon(&open)
+        )]
+    );
+}
+
+#[test]
+fn safe_path_keeps_a_directory_once_when_two_entries_have_the_same_target() {
+    // Only on a machine where `/bin` links to `/usr/bin`.
+    if std::fs::canonicalize("/bin").ok() != std::fs::canonicalize("/usr/bin").ok() {
+        return;
+    }
+    let (path, notes) = safe_path("/usr/bin:/bin", 0);
+    assert_eq!(path, Some(canon("/usr/bin")));
     assert!(notes.is_empty(), "{notes:?}");
 }
 

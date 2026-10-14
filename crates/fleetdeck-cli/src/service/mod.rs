@@ -80,38 +80,79 @@ pub struct Context {
     pub ready_step: Duration,
 }
 
-/// Keeps the `PATH` entries that only this user or root can change (NV-22).
-/// An entry stays when it is an absolute path to a directory that no group
-/// or other user can write, and that `uid` or root owns. Each dropped entry
-/// gives one note. An empty entry gives no note. The result is `None` when
-/// no entry stays.
+/// Keeps the `PATH` directories that only this user or root can change
+/// (NV-22). An entry stays when it is an absolute path to a directory that no
+/// group or other user can write, and that `uid` or root owns. Every parent
+/// directory up to `/` must be safe too. The service stores the canonical
+/// directory. It does not store a link, because another user can change the
+/// target of a link later. A later entry with the same canonical directory
+/// gives no note. Each dropped entry gives one note. An empty entry gives no
+/// note. The result is `None` when no entry stays.
 fn safe_path(path: &str, uid: u32) -> (Option<String>, Vec<String>) {
-    let mut kept = Vec::new();
+    let mut kept: Vec<String> = Vec::new();
     let mut notes = Vec::new();
     for entry in path.split(':').filter(|e| !e.is_empty()) {
-        let reason = if !Path::new(entry).is_absolute() {
-            Some("not an absolute path")
-        } else {
-            match std::fs::metadata(entry) {
-                Ok(meta) if meta.is_dir() => {
-                    if meta.mode() & 0o022 != 0 {
-                        Some("the group or others can write it")
-                    } else if meta.uid() != uid && meta.uid() != 0 {
-                        Some("another user owns it")
-                    } else {
-                        None
-                    }
-                }
-                _ => Some("not a directory"),
+        if !Path::new(entry).is_absolute() {
+            notes.push(format!("{entry}: not an absolute path"));
+            continue;
+        }
+        let canonical = match std::fs::canonicalize(entry) {
+            Ok(canonical) if canonical.is_dir() => canonical,
+            _ => {
+                notes.push(format!("{entry}: not a directory"));
+                continue;
             }
         };
-        match reason {
-            None => kept.push(entry),
+        let Some(text) = canonical.to_str() else {
+            notes.push(format!("{entry}: not a directory"));
+            continue;
+        };
+        match unsafe_reason(&canonical, uid) {
+            None if kept.iter().any(|k| k == text) => {}
+            None => kept.push(text.to_owned()),
             Some(reason) => notes.push(format!("{entry}: {reason}")),
         }
     }
     let path = (!kept.is_empty()).then(|| kept.join(":"));
     (path, notes)
+}
+
+/// Why a canonical directory is not safe for the `PATH` of the service, or
+/// `None` when it is safe (NV-22). The checks are the directory itself, then
+/// each parent up to `/`.
+fn unsafe_reason(dir: &Path, uid: u32) -> Option<String> {
+    let owned = |meta: &std::fs::Metadata| meta.uid() == uid || meta.uid() == 0;
+    let Ok(meta) = std::fs::symlink_metadata(dir) else {
+        return Some("not a directory".to_owned());
+    };
+    if meta.mode() & 0o022 != 0 {
+        return Some("the group or others can write it".to_owned());
+    }
+    if !owned(&meta) {
+        return Some("another user owns it".to_owned());
+    }
+    let mut child = dir;
+    for parent in dir.ancestors().skip(1) {
+        let safe = match std::fs::symlink_metadata(parent) {
+            Err(_) => false,
+            Ok(meta) if !owned(&meta) => false,
+            Ok(meta) if meta.mode() & 0o022 == 0 => true,
+            // A sticky parent is safe when the next component below it is
+            // owned by `uid` or root: others cannot rename or remove it.
+            Ok(meta) => {
+                meta.mode() & 0o1000 != 0
+                    && std::fs::symlink_metadata(child).is_ok_and(|below| owned(&below))
+            }
+        };
+        if !safe {
+            return Some(format!(
+                "a parent directory is not safe: {}",
+                parent.display()
+            ));
+        }
+        child = parent;
+    }
+    None
 }
 
 /// A text variable that is set and not empty. A value that is not UTF-8 is
