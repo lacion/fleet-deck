@@ -1,6 +1,6 @@
 //! The fake station and the helpers of the review tests (DL-179): the
-//! station answers `files.session_diff`, `files.diff`, `settings.get` and
-//! `session.follow_up` and records every request. Like the real station it
+//! station answers `files.session_diff`, `files.diff`, `settings.get`,
+//! `settings.set` and `session.follow_up` and records every request. Like the real station it
 //! removes the files of the deny list from a diff when the deck marks the call
 //! as made for a member.
 
@@ -179,6 +179,11 @@ pub fn answer(
             })),
             None => Outcome::Err(WireError::new("internal", "cannot read")),
         },
+        "settings.set" => Outcome::Ok(json!({
+            "values": { "member_deny": params["change"]["changes"]["member_deny"] },
+            "applied": ["member_deny"], "restart_needed": [], "unapplied": [],
+            "revision": "r2", "durability": "confirmed",
+        })),
         "session.follow_up" => {
             let id = command_id?;
             if cfg.follow == Follow::Silent {

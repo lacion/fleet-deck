@@ -10,6 +10,7 @@ mod review_support;
 
 use std::time::Duration;
 
+use fleetdeck_deck::http::review_anchor_cache::cached_entries;
 use fleetdeck_proto::link::Scope;
 use review_support::*;
 use serde_json::{Value, json};
@@ -657,6 +658,78 @@ async fn a_member_cannot_comment_on_or_read_a_denied_path_and_the_owner_review_h
 }
 
 #[tokio::test]
+async fn a_cached_member_diff_does_not_outlive_a_stricter_deny_list() {
+    let t = setup().await;
+    let ann = member(&t, "collaborator", "Ann").await;
+    let secret = "\
+diff --git a/secret.txt b/secret.txt
+--- a/secret.txt
++++ b/secret.txt
+@@ -1 +1,2 @@
+ old
++classified line
+";
+    t.fake.set(|c| {
+        c.patch = secret.to_owned();
+        c.deny = None;
+    });
+    // The deny list cannot be established (and is not kept): the member diff
+    // is fetched and cached, and the comment is refused.
+    expect(
+        &t.comment(&ann, "secret.txt", "new", 2, "x").await,
+        400,
+        "not_in_diff",
+    );
+    assert_eq!(t.fake.calls("files.session_diff").len(), 1);
+    // The station settings now deny the file. The cache of the diff still
+    // holds `secret.txt`, and the deny list is read again.
+    t.fake.cfg.lock().unwrap().deny = Some(vec!["secret.txt".to_owned()]);
+    expect(
+        &t.comment(&ann, "secret.txt", "new", 2, "x").await,
+        400,
+        "not_in_diff",
+    );
+    assert_eq!(
+        t.fake.calls("files.session_diff").len(),
+        1,
+        "the second answer came from the cache"
+    );
+    // No comment was stored.
+    assert!(ids(&t.list(&t.h).await).is_empty());
+    // The owner is not hidden from anything.
+    let own = t.comment(&t.h, "secret.txt", "new", 2, "own").await;
+    assert_eq!(own.status, 201, "{}", own.body);
+}
+
+#[tokio::test]
+async fn a_station_settings_save_clears_the_review_caches_of_the_station() {
+    let t = setup().await;
+    let ann = member(&t, "collaborator", "Ann").await;
+    let plain = t.comment(&ann, "src/lib.rs", "new", 2, "plain").await;
+    assert_eq!(plain.status, 201, "{}", plain.body);
+    // The member diff and the deny list of the station are cached.
+    assert_eq!(cached_entries(&t.fake.station), 2);
+    // The station applies the new list with the save. `Fake::set` is not
+    // used, because it clears the caches.
+    t.fake.cfg.lock().unwrap().deny = Some(vec!["src/".to_owned()]);
+    let save = t
+        .post(
+            &t.h,
+            "/api/stations/fake/settings",
+            json!({ "changes": { "member_deny": ["src/"] }, "revision": "r" }),
+        )
+        .await;
+    assert_eq!(save.status, 200, "{}", save.body);
+    assert_eq!(cached_entries(&t.fake.station), 0);
+    // The next member comment reads the new list at once.
+    expect(
+        &t.comment(&ann, "src/lib.rs", "new", 2, "again").await,
+        400,
+        "not_in_diff",
+    );
+}
+
+#[tokio::test]
 async fn a_deny_list_that_cannot_be_established_hides_every_comment_and_every_excerpt() {
     let t = setup().await;
     let ann = member(&t, "collaborator", "Ann").await;
@@ -679,11 +752,11 @@ async fn a_deny_list_that_cannot_be_established_hides_every_comment_and_every_ex
         text.contains("(excerpt hidden)") && !text.contains("fn one() {}"),
         "{text}"
     );
-    // A member cannot write either: the diff cannot be fetched as a member
-    // without a list? It can; but the comment is hidden from the member.
+    // A member cannot write either: without a list every path may be
+    // denied, so the path is not in the diff (NV-33).
     let m = t.comment(&ann, "src/lib.rs", "new", 1, "m").await;
-    assert_eq!(m.status, 201);
-    assert!(ids(&t.list(&ann).await).is_empty(), "even the own draft");
+    expect(&m, 400, "not_in_diff");
+    assert!(ids(&t.list(&ann).await).is_empty());
 }
 
 #[tokio::test]

@@ -284,7 +284,21 @@ async fn anchor_of(
                 })
         });
     match found {
-        Ok(a) => Ok(fields(a.text, a.other_path, AnchorKind::Diff)),
+        // A cached diff can be older than the deny list: a hidden path is
+        // "not in this diff", as a missing line is (NV-33).
+        Ok(a) => {
+            let hidden = |path: &str| match hide {
+                Hide::Nothing => false,
+                Hide::Everything => true,
+                Hide::Denied(d) => d.denies(path),
+            };
+            if hidden(&new.path) || a.other_path.as_deref().is_some_and(hidden) {
+                return Err(cache::not_in_diff(
+                    "the file or the lines are not in this diff",
+                ));
+            }
+            Ok(fields(a.text, a.other_path, AnchorKind::Diff))
+        }
         // An imported note whose line left the diff (design 7). A member
         // cannot import a path that the deny list hides or may hide.
         Err(e) if e.code == "not_in_diff" && new.import_key.is_some() => {
