@@ -26,7 +26,7 @@ use fleetdeck_providers::host::shim::settle::{self, EffectResult, Facts};
 use fleetdeck_providers::host::shim::stdin::{WriteOutcome, WriteTag};
 use fleetdeck_providers::host::shim::wire::{MAX_PAYLOAD, StatusAnswer, WriteState};
 
-use crate::store::{Dispatch, EffectId, Result, Store, StoreError};
+use crate::store::{Dispatch, EffectId, FrameState, Result, Store, StoreError};
 
 /// How long [`settle_writes`] waits between questions about a write in
 /// flight.
@@ -163,6 +163,51 @@ pub async fn write_claimed(
     Ok(Sent::Written)
 }
 
+/// The outcome of [`deliver`].
+#[derive(Debug)]
+pub enum Delivery {
+    /// The dispatch of an effect whose input reached, or may have reached,
+    /// the provider.
+    Done(Dispatch),
+    /// Nothing reached the provider (a gate refusal, or an effect that the
+    /// §4.3 table retires): the caller undoes the transition and settles
+    /// the effect with this dispatch.
+    Undone(Dispatch),
+}
+
+/// Claims frame 0 of the effect `effect_id`, runs the authority `gate`
+/// (when there is one) as the last step before the first byte, writes the
+/// frames and settles the live result. A refused claim sends nothing and
+/// needs no gate. `bytes` is not empty.
+///
+/// # Errors
+/// A database error.
+pub async fn deliver(
+    store: &Store,
+    process: &ShimProcess,
+    shim_id: &str,
+    effect_id: &EffectId,
+    bytes: &[u8],
+    gate: Option<&Gate<'_>>,
+) -> Result<Delivery> {
+    let first = claim_first(store, process, shim_id, effect_id, bytes).await?;
+    if first.is_some()
+        && let Some(gate) = gate
+        && let Some(refused) = gate().await
+    {
+        return Ok(Delivery::Undone(refused));
+    }
+    let sent = match first {
+        Some(first) => write_claimed(store, process, shim_id, effect_id, bytes, first).await?,
+        None => Sent::NotSent,
+    };
+    let result = settle_live(&sent);
+    Ok(match dispatch_of(store, shim_id, &result).await? {
+        Some(dispatch) => Delivery::Done(dispatch),
+        None => Delivery::Undone(Dispatch::NotDispatched(retired_reason(&result))),
+    })
+}
+
 /// Sends the bytes of the `claimed` effect `effect_id` to `process`.
 ///
 /// # Errors
@@ -211,6 +256,67 @@ pub fn settle_live(sent: &Sent) -> EffectResult {
         live: true,
         retire_enabled: settle::RETIRE_ROWS_ENABLED,
     })
+}
+
+/// Settles the generated frames that an earlier attachment claimed (the
+/// durable driver's restore): each is `done` when the shim reports it
+/// written, `pending` when proven unwritten, and an unknown fate blocks the
+/// input of the shim with `unknown_reason`. A newer owner (DL-111) stops it.
+///
+/// # Errors
+/// A database error.
+pub async fn settle_open_frames(
+    store: &Store,
+    process: &ShimProcess,
+    shim_id: &str,
+    wait: Duration,
+    unknown_reason: &'static str,
+) -> Result<()> {
+    for frame in store.shim_open_frames(shim_id.to_owned()).await? {
+        let (FrameState::Claimed, Some(tag)) = (frame.state, &frame.tag) else {
+            continue;
+        };
+        let deadline = tokio::time::Instant::now() + wait;
+        let state = loop {
+            match process.write_status(tag, wait).await {
+                Some(StatusAnswer::Known {
+                    state: WriteState::Received | WriteState::Writing { .. },
+                }) if tokio::time::Instant::now() < deadline => {
+                    tokio::time::sleep(ASK_AGAIN).await;
+                }
+                Some(StatusAnswer::Known {
+                    state: WriteState::Written,
+                }) => break Some(FrameState::Done),
+                Some(
+                    StatusAnswer::NotReceived
+                    | StatusAnswer::Known {
+                        state: WriteState::FailedUnwritten { .. } | WriteState::ClosedUnwritten,
+                    },
+                ) => break Some(FrameState::Pending),
+                _ => break None,
+            }
+        };
+        let Some(state) = state else {
+            store
+                .shim_block_input(shim_id.to_owned(), unknown_reason)
+                .await?;
+            return Ok(());
+        };
+        let fenced = store
+            .shim_frame_state(
+                shim_id.to_owned(),
+                process.generation(),
+                frame.frame_seq,
+                tag.clone(),
+                state,
+            )
+            .await?;
+        if !fenced {
+            // A newer owner took over (DL-111): it settles.
+            return Ok(());
+        }
+    }
+    Ok(())
 }
 
 /// The authority gate of an effect: `None` to go on, or the refusal to

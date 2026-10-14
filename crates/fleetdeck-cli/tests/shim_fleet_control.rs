@@ -2,7 +2,8 @@
 //! §6.2, RE-REVIEW round 2): the deck is asked after every awaited
 //! preparation, right before the first byte reaches the provider. Real
 //! shims, the fake Codex app-server, a fake deck that revokes while the
-//! station holds the effect at the gate.
+//! station holds the effect at the gate. Round 3 fixes: the outer gate, the
+//! gate of an effect without frames, and the gate of an answer.
 
 #![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -17,7 +18,8 @@ use std::time::{Duration, Instant};
 
 use fleetdeck_core::ChildEnv;
 use fleetdeck_proto::command::{
-    CommandOrigin, RETRY_WINDOW_MS, ReceiptState, SessionCommand, SessionSpec, StopMode, UserInput,
+    ApprovalDecision, CommandOrigin, RETRY_WINDOW_MS, ReceiptState, SessionCommand, SessionSpec,
+    StopMode, UserInput,
 };
 use fleetdeck_proto::event::ProviderKind;
 use fleetdeck_proto::link::Outcome;
@@ -267,6 +269,59 @@ impl Rig {
             .count()
     }
 
+    /// The `params` of every `turn/start` that reached the provider.
+    fn turn_start_params(&self) -> Vec<Value> {
+        std::fs::read_to_string(self.tmp.path().join("codex-stdin.log"))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|f| f["method"] == "turn/start")
+            .map(|f| f["params"].clone())
+            .collect()
+    }
+
+    /// The transition that the driver recorded for `effect`, if any.
+    async fn transition_of(
+        &self,
+        session: &SessionId,
+        effect: &Effect,
+    ) -> Option<fleetdeck_station::store::ShimTransition> {
+        let shim = self.store.shims_of_session(session.clone()).await.unwrap();
+        self.store
+            .shim_transitions(shim[0].clone())
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|t| t.effect.effect_id == effect.effect_id)
+    }
+
+    async fn wait_retired(&self, session: &SessionId, command: &CommandId) -> Effect {
+        let deadline = Instant::now() + WAIT;
+        loop {
+            let effect = self.effect_of(session, command).await.unwrap();
+            if effect.state == EffectState::RetiredNotDispatched {
+                return effect;
+            }
+            assert!(Instant::now() < deadline, "{effect:?}");
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    /// A durable Codex session whose first turn ended.
+    async fn idle_session(&mut self, deck: &Arc<FakeDeck>) -> SessionId {
+        link(self, deck);
+        let command = self.start_command("hello");
+        let decided = self.send(false, command).await;
+        let session = decided.receipt.result.unwrap().session_id.unwrap();
+        self.wait_events(&session, "the first turn", |e| {
+            e.iter().any(|e| matches!(e, Event::TurnCompleted { .. }))
+        })
+        .await;
+        let shim = self.store.shims_of_session(session.clone()).await.unwrap();
+        assert_eq!(shim.len(), 1, "the session runs under a shim");
+        session
+    }
+
     async fn events(&self, session: &SessionId) -> Vec<Event> {
         let ReadResult::Events { events, .. } = self.store.read_after(0, 10_000).await.unwrap()
         else {
@@ -365,7 +420,7 @@ async fn a_revocation_after_the_transition_and_the_frame_claim_stops_the_durable
         .find(|t| t.effect.effect_id == effect.effect_id)
         .expect("the transition is recorded");
     assert_eq!(transition.claimed, 1, "the first frame is claimed");
-    assert!(deck.asked().is_empty(), "nothing is asked before the gate");
+    assert_eq!(deck.asked().len(), 1, "only the outer gate was asked");
     assert_eq!(rig.turn_starts(), 1);
     deck.revoke();
     hook.release.notify_one();
@@ -380,7 +435,7 @@ async fn a_revocation_after_the_transition_and_the_frame_claim_stops_the_durable
         tokio::time::sleep(Duration::from_millis(25)).await;
     };
     assert_eq!(retired.reason.as_deref(), Some("authority_lost"));
-    assert_eq!(deck.asked().len(), 1);
+    assert_eq!(deck.asked().len(), 2, "the outer gate and the driver gate");
     assert_eq!(rig.errors(&session).await, ["authority_lost"]);
     let after = rig.store.shim_transitions(shim[0].clone()).await.unwrap();
     assert!(
@@ -443,4 +498,231 @@ async fn a_revocation_before_the_first_input_of_a_durable_start_stops_the_write(
         "{events:?}"
     );
     rig.manager.shutdown(StopMode::Graceful).await;
+}
+
+// Round 3 (blocker 1): `set_mode` of Codex has no frame; the mode would stay
+// pending until the next prompt. The gate runs under the core lock before the
+// transition: a revocation while the effect waits there leaves no pending
+// mode, no transition and no byte; the next prompt carries no mode.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_revoked_authority_stops_a_codex_set_mode_that_has_no_frame() {
+    let mut rig = Rig::new().await;
+    let deck = FakeDeck::new();
+    let session = rig.idle_session(&deck).await;
+    let manager = Arc::clone(&rig.manager);
+    let hook = manager.gate_hook();
+    hook.arm();
+    let decided = rig
+        .send(
+            true,
+            SessionCommand::SetMode {
+                session_id: session.clone(),
+                mode: "on-request/workspace-write".to_owned(),
+            },
+        )
+        .await;
+    let command_id = decided.receipt.command_id.clone();
+    tokio::time::timeout(WAIT, hook.reached.notified())
+        .await
+        .expect("the set_mode reaches the driver gate");
+    deck.revoke();
+    hook.release.notify_one();
+    let retired = rig.wait_retired(&session, &command_id).await;
+    assert_eq!(retired.reason.as_deref(), Some("authority_lost"));
+    assert!(rig.transition_of(&session, &retired).await.is_none());
+    assert!(
+        rig.errors(&session)
+            .await
+            .contains(&"authority_lost".to_owned())
+    );
+    // The next prompt (the owner's) carries no mode: nothing was pending.
+    rig.send(
+        false,
+        SessionCommand::Prompt {
+            session_id: session.clone(),
+            input: UserInput::new("next".to_owned()),
+        },
+    )
+    .await;
+    let deadline = Instant::now() + WAIT;
+    while rig.turn_starts() < 2 {
+        assert!(Instant::now() < deadline, "the next turn starts");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let starts = rig.turn_start_params();
+    assert!(starts[1].get("approvalPolicy").is_none(), "{starts:?}");
+    rig.manager.shutdown(StopMode::Graceful).await;
+}
+
+// Round 3 (blocker 1): a coordinator input is never queued inside the
+// provider core: while a turn runs, a coordinator follow-up is `provider_busy`
+// with no transition; a board follow-up in the same state is still queued.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_coordinator_follow_up_during_a_turn_is_not_queued_but_a_board_one_is() {
+    let mut rig = Rig::new().await;
+    let deck = FakeDeck::new();
+    link(&rig, &deck);
+    let command = rig.start_command("wait here");
+    let decided = rig.send(false, command).await;
+    let session = decided.receipt.result.unwrap().session_id.unwrap();
+    rig.wait_events(&session, "the running turn", |e| {
+        e.iter().any(|e| matches!(e, Event::TurnStarted { .. }))
+    })
+    .await;
+    let decided = rig
+        .send(
+            true,
+            SessionCommand::FollowUp {
+                session_id: session.clone(),
+                input: UserInput::new("later".to_owned()),
+            },
+        )
+        .await;
+    let retired = rig
+        .wait_retired(&session, &decided.receipt.command_id)
+        .await;
+    assert_eq!(retired.reason.as_deref(), Some("provider_busy"));
+    assert!(rig.transition_of(&session, &retired).await.is_none());
+    // The same state, a board follow-up: queued as before.
+    let decided = rig
+        .send(
+            false,
+            SessionCommand::FollowUp {
+                session_id: session.clone(),
+                input: UserInput::new("board".to_owned()),
+            },
+        )
+        .await;
+    let deadline = Instant::now() + WAIT;
+    let transition = loop {
+        let effect = rig
+            .effect_of(&session, &decided.receipt.command_id)
+            .await
+            .unwrap();
+        assert_ne!(
+            effect.state,
+            EffectState::RetiredNotDispatched,
+            "{effect:?}"
+        );
+        if let Some(t) = rig.transition_of(&session, &effect).await {
+            break t;
+        }
+        assert!(Instant::now() < deadline, "{effect:?}");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    };
+    assert_eq!(transition.frames, 0, "queued inside the core, no frame");
+    rig.manager.shutdown(StopMode::Kill).await;
+}
+
+// Round 3 (blocker 2): a refused coordinator answer produces no
+// `approval.resolved`: the request stays open and the answer claim is
+// released, so the owner can answer it afterwards and the provider gets it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_refused_coordinator_answer_leaves_the_request_open_for_the_owner() {
+    let mut rig = Rig::new().await;
+    let deck = FakeDeck::new();
+    link(&rig, &deck);
+    let command = rig.start_command("ask ls");
+    let decided = rig.send(false, command).await;
+    let session = decided.receipt.result.unwrap().session_id.unwrap();
+    rig.wait_events(&session, "the approval request", |e| {
+        e.iter()
+            .any(|e| matches!(e, Event::ApprovalRequested { .. }))
+    })
+    .await;
+    let request_id = rig
+        .events(&session)
+        .await
+        .into_iter()
+        .find_map(|e| match e {
+            Event::ApprovalRequested { request_id, .. } => Some(request_id),
+            _ => None,
+        })
+        .unwrap();
+    let answer = |by: &str| SessionCommand::Answer {
+        session_id: session.clone(),
+        request_id: request_id.clone(),
+        decision: ApprovalDecision {
+            option_id: "accept".to_owned(),
+            updated_input: None,
+            text: None,
+            answered_by: Some(by.to_owned()),
+        },
+    };
+    let manager = Arc::clone(&rig.manager);
+    let hook = manager.gate_hook();
+    hook.arm();
+    let decided = rig.send(true, answer("coordinator:coord-1")).await;
+    tokio::time::timeout(WAIT, hook.reached.notified())
+        .await
+        .expect("the answer reaches the driver gate");
+    deck.revoke();
+    hook.release.notify_one();
+    let retired = rig
+        .wait_retired(&session, &decided.receipt.command_id)
+        .await;
+    assert_eq!(retired.reason.as_deref(), Some("authority_lost"));
+    assert!(rig.transition_of(&session, &retired).await.is_none());
+    let summary = rig.store.summary(session.clone()).await.unwrap().unwrap();
+    assert!(
+        summary
+            .open_requests
+            .iter()
+            .any(|r| r.request_id == request_id),
+        "the request is still open: {:?}",
+        summary.open_requests
+    );
+    assert!(
+        !rig.events(&session)
+            .await
+            .iter()
+            .any(|e| matches!(e, Event::ApprovalResolved { .. })),
+        "nothing resolved the request"
+    );
+    // The owner answers it with a new command: it claims and reaches Codex.
+    rig.send(false, answer("owner")).await;
+    rig.wait_events(&session, "the resolution and the turn", |e| {
+        e.iter()
+            .any(|e| matches!(e, Event::ApprovalResolved { .. }))
+            && e.iter().any(|e| matches!(e, Event::TurnCompleted { .. }))
+    })
+    .await;
+    rig.manager.shutdown(StopMode::Graceful).await;
+}
+
+// Round 3 (decision 1): a durable effect is gated again before the driver
+// runs: a revocation before `operate_durable` refuses a durable prompt there,
+// so the driver gate (the hook) is never reached and no transition exists.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_revocation_before_the_driver_refuses_a_durable_prompt_at_the_outer_gate() {
+    let mut rig = Rig::new().await;
+    let deck = FakeDeck::new();
+    let session = rig.idle_session(&deck).await;
+    let manager = Arc::clone(&rig.manager);
+    let hook = manager.gate_hook();
+    hook.arm();
+    deck.revoke();
+    let decided = rig
+        .send(
+            true,
+            SessionCommand::Prompt {
+                session_id: session.clone(),
+                input: UserInput::new("again".to_owned()),
+            },
+        )
+        .await;
+    let retired = rig
+        .wait_retired(&session, &decided.receipt.command_id)
+        .await;
+    assert_eq!(retired.reason.as_deref(), Some("authority_lost"));
+    assert_eq!(deck.asked().len(), 1, "only the outer gate was asked");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), hook.reached.notified())
+            .await
+            .is_err(),
+        "the driver gate was never reached"
+    );
+    assert!(rig.transition_of(&session, &retired).await.is_none());
+    assert_eq!(rig.turn_starts(), 1, "no byte reached the provider");
+    rig.manager.shutdown(StopMode::Kill).await;
 }
