@@ -87,9 +87,11 @@ pub struct SessionTarget {
     /// (tests only, DL-182 §3).
     #[cfg(test)]
     resume_dispatch: setup_task::StartHook,
-    /// Right before the authority gate of a start (tests only).
-    #[cfg(test)]
-    gate_hook: setup_task::StartHook,
+    /// Right before the authority gate of a start, and after the awaited
+    /// preparation of a durable launch or write (tests and fault-injection
+    /// builds only).
+    #[cfg(any(test, feature = "fault-injection"))]
+    gate_hook: GateHook,
     /// The instances whose probed version is on the adapter's deny list
     /// (R8.2, DL-162): their starts are refused.
     broken: Arc<StdMutex<BTreeMap<ProviderInstanceId, &'static str>>>,
@@ -97,6 +99,43 @@ pub struct SessionTarget {
     shells: ShellsSlot,
     /// The restart freeze (PRE-PR r1).
     pub(super) restart: Arc<super::restart_gate::RestartState>,
+}
+
+/// One point where a test holds an effect before its authority gate (tests
+/// and fault-injection builds only).
+#[cfg(any(test, feature = "fault-injection"))]
+#[derive(Default)]
+pub struct GateHook {
+    armed: std::sync::atomic::AtomicBool,
+    /// The held task notifies this when it waits.
+    pub reached: tokio::sync::Notify,
+    /// The test notifies this to let the held task go on.
+    pub release: tokio::sync::Notify,
+}
+
+#[cfg(any(test, feature = "fault-injection"))]
+impl GateHook {
+    /// The next task that reaches the hook waits there.
+    pub fn arm(&self) {
+        self.armed.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(in crate::manager) async fn hold(&self) {
+        if self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            self.reached.notify_one();
+            self.release.notified().await;
+        }
+    }
+}
+
+#[cfg(any(test, feature = "fault-injection"))]
+impl super::SessionManager {
+    /// The point where a test holds an effect right before its authority
+    /// gate (tests and fault-injection builds only).
+    #[must_use]
+    pub fn gate_hook(&self) -> &GateHook {
+        &self.target.gate_hook
+    }
 }
 
 impl std::fmt::Debug for SessionTarget {
@@ -128,8 +167,8 @@ impl SessionTarget {
             hooks: setup_task::Hooks::default(),
             #[cfg(test)]
             resume_dispatch: setup_task::StartHook::default(),
-            #[cfg(test)]
-            gate_hook: setup_task::StartHook::default(),
+            #[cfg(any(test, feature = "fault-injection"))]
+            gate_hook: GateHook::default(),
             shells: ShellsSlot::default(),
             broken: Arc::default(),
             restart: Arc::default(),
@@ -170,10 +209,10 @@ impl SessionTarget {
         &self.resume_dispatch
     }
 
-    /// The point where a test holds a start right before its authority
+    /// The point where a test holds an effect right before its authority
     /// gate.
-    #[cfg(test)]
-    pub(in crate::manager) fn gate_hook(&self) -> &setup_task::StartHook {
+    #[cfg(any(test, feature = "fault-injection"))]
+    pub(in crate::manager) fn gate_hook(&self) -> &GateHook {
         &self.gate_hook
     }
 
@@ -366,7 +405,7 @@ impl SessionTarget {
             return Dispatch::NotDispatched(REASON_SETUP_STOPPED.into());
         }
         // ADR-008 §6.2: after every awaited step, right before the spawn.
-        #[cfg(test)]
+        #[cfg(any(test, feature = "fault-injection"))]
         self.gate_hook.hold().await;
         if let Some(refused) = self.gate_now(effect).await {
             drop(ready_tx);
@@ -494,8 +533,13 @@ impl SessionTarget {
             return Dispatch::NotDispatched("process_changed".into());
         }
         // ADR-008 §6.2: with the session lock held, right before the write.
-        // An input gates itself after its fence and checkpoint work.
+        // An input gates itself after its fence and checkpoint work. A
+        // durable write gates inside the driver, right before its first
+        // byte; a durable stop writes nothing and gates here.
+        let gated_by_driver =
+            live.durable.is_some() && !matches!(effect.payload, EffectPayload::Stop { .. });
         if !target_base::gates_itself(&effect.payload)
+            && !gated_by_driver
             && let Some(refused) = self.gate_now(effect).await
         {
             return refused;

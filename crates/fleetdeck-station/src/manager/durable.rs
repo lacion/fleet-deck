@@ -40,7 +40,7 @@ use fleetdeck_proto::Event;
 use fleetdeck_proto::event::OutputGapReason;
 use fleetdeck_providers::host::shim::wire::GapReason;
 
-use super::shim_stdin::{self, send_input};
+use super::shim_stdin::{self, Gate, claim_first, frame_count, no_gate, write_claimed};
 use crate::store::shim_gaps::REASON_ADAPTER_STATE_GAP;
 use crate::store::{
     Dispatch, Effect, FrameState, InputRecord, NewEvent, OutputCommit, OutputMeta, RequestTime,
@@ -303,11 +303,28 @@ impl<C: DurableCore> DurableDriver<C> {
         &self,
         op: impl FnOnce(&mut C) -> Result<Steps, ProviderError>,
     ) -> Result<(), DriverError> {
+        self.internal_gated(op, &no_gate).await.map(|_| ())
+    }
+
+    /// [`Self::internal`] with the authority `gate` (the first input of a
+    /// launch). The commit appends the events to the session log and cannot
+    /// be undone, so the gate runs after the core lock and right before the
+    /// core step and the commit (no await in between); only local database
+    /// steps and the frame writes follow. `Some` is the refusal: nothing
+    /// was changed or committed.
+    pub(super) async fn internal_gated(
+        &self,
+        op: impl FnOnce(&mut C) -> Result<Steps, ProviderError>,
+        gate: &Gate<'_>,
+    ) -> Result<Option<Dispatch>, DriverError> {
         let mut core = self.core.lock().await;
         // Checked under the core lock: a gap commit holds the same lock, so
         // a gap committed while this call waited is seen here.
         if self.has_adapter_gap() {
             return Err(ProviderError::NotReady(REASON_ADAPTER_STATE_GAP).into());
+        }
+        if let Some(refused) = gate().await {
+            return Ok(Some(refused));
         }
         let (events, frames) = op(&mut core)?;
         let checkpoint = snapshot(&*core)?;
@@ -315,7 +332,7 @@ impl<C: DurableCore> DurableDriver<C> {
         self.commit(cursor, events, RequestTime::Now, checkpoint, frames)
             .await?;
         self.flush(&core).await?;
-        Ok(())
+        Ok(None)
     }
 
     async fn commit(
@@ -445,17 +462,25 @@ impl<C: DurableCore> DurableDriver<C> {
         }
     }
 
-    /// Dispatches one claimed command effect (see the module
-    /// documentation).
+    /// Dispatches one claimed command effect that carries no authority (see
+    /// the module documentation).
     pub async fn apply(&self, effect: &Effect) -> Dispatch {
-        match self.apply_inner(effect).await {
+        self.apply_gated(effect, &no_gate).await
+    }
+
+    /// [`Self::apply`] with the authority `gate`: it runs after the core
+    /// lock, the transition and the claim of the first frame, right before
+    /// the first byte. Later frames are not gated again (the write has
+    /// begun). A refusal undoes the transition like `Retired`.
+    pub async fn apply_gated(&self, effect: &Effect, gate: &Gate<'_>) -> Dispatch {
+        match self.apply_inner(effect, gate).await {
             Ok(dispatch) => dispatch,
             Err(DriverError::Provider(e)) => Dispatch::NotDispatched(e.to_string()),
             Err(e) => Dispatch::Unknown(e.to_string()),
         }
     }
 
-    async fn apply_inner(&self, effect: &Effect) -> Result<Dispatch, DriverError> {
+    async fn apply_inner(&self, effect: &Effect, gate: &Gate<'_>) -> Result<Dispatch, DriverError> {
         let mut core = self.core.lock().await;
         // Checked under the core lock (see `internal`); the store also
         // refuses the transition and every frame claim after a gap.
@@ -476,12 +501,7 @@ impl<C: DurableCore> DurableDriver<C> {
             .iter()
             .flat_map(|f| f.bytes().chain(std::iter::once(b'\n')))
             .collect();
-        let count = u32::try_from(
-            bytes
-                .len()
-                .div_ceil(fleetdeck_providers::host::shim::wire::MAX_PAYLOAD),
-        )
-        .map_err(|_| DriverError::Checkpoint("too many frames".into()))?;
+        let count = frame_count(&bytes)?;
         let Some(seq) = self
             .store
             .shim_begin_transition(
@@ -507,7 +527,7 @@ impl<C: DurableCore> DurableDriver<C> {
         if bytes.is_empty() {
             return Ok(Dispatch::Sent);
         }
-        let sent = send_input(
+        let first = claim_first(
             &self.store,
             &self.process,
             &self.shim_id,
@@ -515,30 +535,41 @@ impl<C: DurableCore> DurableDriver<C> {
             &bytes,
         )
         .await?;
-        Ok(match shim_stdin::settle_live(&sent) {
-            fleetdeck_providers::host::shim::settle::EffectResult::Sent => Dispatch::Sent,
-            fleetdeck_providers::host::shim::settle::EffectResult::Retired(reason) => {
-                *core = rebuild(&self.config, &before)?;
-                self.store
-                    .shim_drop_transition(self.shim_id.clone(), seq)
-                    .await?;
-                Dispatch::NotDispatched(reason.to_owned())
+        // The last step before the first byte (ADR-008 §6.2). A refused
+        // claim sends nothing and needs no gate.
+        if first.is_some()
+            && let Some(refused) = gate().await
+        {
+            *core = rebuild(&self.config, &before)?;
+            self.store
+                .shim_drop_transition(self.shim_id.clone(), seq)
+                .await?;
+            return Ok(refused);
+        }
+        let sent = match first {
+            Some(first) => {
+                write_claimed(
+                    &self.store,
+                    &self.process,
+                    &self.shim_id,
+                    &effect.effect_id,
+                    &bytes,
+                    first,
+                )
+                .await?
             }
-            fleetdeck_providers::host::shim::settle::EffectResult::Unknown { block_input } => {
-                if block_input {
-                    self.store
-                        .shim_block_input(
-                            self.shim_id.clone(),
-                            crate::store::shim_writes::REASON_STDIN_PARTIAL,
-                        )
-                        .await?;
-                }
-                Dispatch::Unknown(crate::store::shim_writes::REASON_SHIM_UNKNOWN.to_owned())
-            }
-            fleetdeck_providers::host::shim::settle::EffectResult::AskAgain => {
-                Dispatch::Unknown(crate::store::shim_writes::REASON_SHIM_UNKNOWN.to_owned())
-            }
-        })
+            None => shim_stdin::Sent::NotSent,
+        };
+        let result = shim_stdin::settle_live(&sent);
+        if let Some(dispatch) = shim_stdin::dispatch_of(&self.store, &self.shim_id, &result).await?
+        {
+            return Ok(dispatch);
+        }
+        *core = rebuild(&self.config, &before)?;
+        self.store
+            .shim_drop_transition(self.shim_id.clone(), seq)
+            .await?;
+        Ok(Dispatch::NotDispatched(shim_stdin::retired_reason(&result)))
     }
 
     async fn run_pump(self: Arc<Self>, attached: Attached, start: u64) {
