@@ -33,7 +33,8 @@ use fleetdeck_providers::host::{HostError, ProcessSpec};
 
 use crate::store::resumes::{describe, effective_reason, proves_end};
 use crate::store::{
-    DecideError, Decision, NewShim, Result, RunningFacts, ShimRow, ShimState, Store, StoreError,
+    DecideError, Decision, Dispatch, NewShim, Result, RunningFacts, ShimRow, ShimState, Store,
+    StoreError,
 };
 
 /// How long recovery waits for the socket of a live `starting` shim.
@@ -132,6 +133,10 @@ pub enum LaunchError {
     Prepare(HostError),
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// The authority gate refused the launch after the `starting` row: no
+    /// shim started and the row is `never_started`.
+    #[error("the authority gate refused the launch")]
+    Refused(Dispatch),
     /// The launch failed and recovery settled the row with this outcome.
     #[error("the shim launch failed ({error}); the row is {settled}")]
     Settled {
@@ -154,13 +159,19 @@ pub async fn launch_shim(
     spec: &ProcessSpec,
     mode: AckMode,
 ) -> std::result::Result<Attached, LaunchError> {
-    launch_shim_for(store, host, session_id, spec, mode, None).await
+    launch_shim_for(store, host, session_id, spec, mode, None, &|| {
+        Box::pin(std::future::ready(None))
+    })
+    .await
 }
 
 /// [`launch_shim`] for a resume or an import: `native_target` is the
 /// native id that the new provider continues. The row holds it before the
 /// spawn, so a crash after the spawn still names the conversation (DL-182
-/// §3). The row also holds the boot id of the launch journal.
+/// §3). The row also holds the boot id of the launch journal. `gate` (the
+/// authority gate, ADR-008 §6.2) runs after the `starting` row and right
+/// before the shim starts; a refusal ends the row `never_started` and is
+/// [`LaunchError::Refused`].
 ///
 /// # Errors
 /// [`LaunchError`].
@@ -171,6 +182,7 @@ pub async fn launch_shim_for(
     spec: &ProcessSpec,
     mode: AckMode,
     native_target: Option<&str>,
+    gate: &super::shim_stdin::Gate<'_>,
 ) -> std::result::Result<Attached, LaunchError> {
     let prepared = host.prepare(spec).map_err(LaunchError::Prepare)?;
     let shim_id = prepared.record.shim_id.clone();
@@ -198,6 +210,18 @@ pub async fn launch_shim_for(
             }),
         }
     };
+    if let Some(refused) = gate().await {
+        // No shim started: the launch journal proves it.
+        store
+            .shim_end(
+                shim_id.clone(),
+                ShimState::NeverStarted,
+                reason::SHIM_NEVER_STARTED.to_owned(),
+                0,
+            )
+            .await?;
+        return Err(LaunchError::Refused(refused));
+    }
     let record = match host.start(prepared).await {
         Ok(record) => record,
         Err(e) => return settle(e.to_string()).await,

@@ -208,3 +208,146 @@ async fn a_mode_not_allowed_answer_refuses_the_resume() {
     assert_eq!(starts_of(&st, &s).await, started_before, "no new process");
     st.manager.shutdown(StopMode::Kill).await;
 }
+
+/// A station on the shim host whose shim executable does not exist: a launch
+/// that reaches `host.start` fails, so a test sees a gate that missed.
+async fn shim_station() -> Station {
+    use fleetdeck_providers::host::shim::host::{ShimHost, ShimHostConfig};
+
+    let det = Det::new();
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("projects/app")).unwrap();
+    std::fs::create_dir_all(root.path().join("station")).unwrap();
+    let store = Store::open_in_memory(det.clock(), det.ids(), StoreConfig::default())
+        .await
+        .unwrap();
+    let policy = Policy::new(
+        vec![root.path().join("projects")],
+        4,
+        OfflineApprovalPolicy::Wait,
+        BTreeMap::from([("claude".into(), ProviderKind::Claude)]),
+    );
+    let adapters = Adapters::from([(
+        "claude".into(),
+        adapter(FakeAgent::Claude.locate().unwrap()),
+    )]);
+    let mut config = ShimHostConfig::new(
+        PathBuf::from("/nonexistent/fleetdeck"),
+        root.path().join("station"),
+        store.incarnation().as_str().to_owned(),
+    );
+    config.runtime_dir = None;
+    config.tmp_dir = root.path().to_owned();
+    let host = ShimHost::new(config);
+    let shims = crate::manager::target::ShimSettings::new(Arc::new(host));
+    let manager = SessionManager::start_with_shims(
+        store,
+        policy,
+        adapters,
+        det.ids(),
+        shims,
+        Arc::new(crate::workspace::PrivatePaths::default()),
+    )
+    .await
+    .unwrap();
+    Station {
+        det,
+        manager: Arc::new(manager),
+        root,
+        next: 0,
+    }
+}
+
+// The gate of a durable launch runs after the `starting` row, right before
+// the shim starts (the test holds it there). A revocation up to then stops
+// the launch: no shim process starts, the row is `never_started`, and the
+// start failed with `authority_lost`.
+#[tokio::test]
+async fn a_revocation_after_the_starting_row_stops_the_shim_launch() {
+    use crate::store::ShimState;
+
+    let mut st = shim_station().await;
+    st.switch(true);
+    let deck = FakeDeck::new(Reply::Valid);
+    st.link_deck(&deck);
+    let manager = Arc::clone(&st.manager);
+    let hook = manager.gate_hook();
+    hook.arm();
+    let command = spec_start(&st);
+    let d = st.coord(command).await;
+    assert_eq!(d.receipt.state, ReceiptState::Accepted, "{:?}", d.receipt);
+    let s = d.receipt.result.unwrap().session_id.unwrap();
+    let reached = tokio::time::timeout(WAIT, hook.reached.notified()).await;
+    assert!(
+        reached.is_ok(),
+        "the launch reaches the gate: {:#?}",
+        st.events().await
+    );
+    let rows = st.manager.store().shim_rows(s.clone()).await.unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].state, ShimState::Starting);
+    assert!(deck.asked().is_empty(), "nothing is asked before the gate");
+    deck.set(Reply::Invalid);
+    hook.release.notify_one();
+    st.wait_for("the failed start", |e| match e {
+        Event::SessionEnded { reason, .. } if reason == "start_failed" => Some(()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(st.errors(&s).await, ["authority_lost"]);
+    let rows = st.manager.store().shim_rows(s.clone()).await.unwrap();
+    assert_eq!(rows[0].state, ShimState::NeverStarted, "{rows:?}");
+    assert_eq!(rows[0].reason.as_deref(), Some("shim_never_started"));
+    assert_eq!(starts_of(&st, &s).await, 0);
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+// Every gate of a launching effect sends its launch mode: both gates of a
+// start (the launch and the first input) and the mode change; an input sends
+// none.
+#[tokio::test]
+async fn the_first_input_gate_of_a_start_sends_the_launch_mode() {
+    let mut st = Station::new(4).await;
+    st.switch(true);
+    let deck = FakeDeck::new(Reply::Valid);
+    st.link_deck(&deck);
+    let command = spec_start(&st);
+    let d = st.coord(command).await;
+    assert_eq!(d.receipt.state, ReceiptState::Accepted, "{:?}", d.receipt);
+    let s = d.receipt.result.unwrap().session_id.unwrap();
+    st.wait_asked(&deck, 2).await;
+    let launch = Some(LaunchMode {
+        provider: ProviderKind::Claude,
+        mode: Some("default".to_owned()),
+    });
+    assert_eq!(deck.asked()[0].launch, launch, "the launch gate");
+    assert_eq!(deck.asked()[1].launch, launch, "the first-input gate");
+    st.wait_turns(&s, 1).await;
+    let deadline = tokio::time::Instant::now() + WAIT;
+    loop {
+        let d = st
+            .coord(SessionCommand::SetMode {
+                session_id: s.clone(),
+                mode: "plan".to_owned(),
+            })
+            .await;
+        if d.receipt.state == ReceiptState::Accepted {
+            break;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "{:?}", d.receipt);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    st.wait_asked(&deck, 3).await;
+    assert_eq!(
+        deck.asked()[2].launch,
+        Some(LaunchMode {
+            provider: ProviderKind::Claude,
+            mode: Some("plan".to_owned()),
+        })
+    );
+    let d = st.coord(follow_up(&s, "more")).await;
+    assert_eq!(d.receipt.state, ReceiptState::Accepted, "{:?}", d.receipt);
+    st.wait_asked(&deck, 4).await;
+    assert_eq!(deck.asked()[3].launch, None, "an input launches nothing");
+    st.manager.shutdown(StopMode::Kill).await;
+}

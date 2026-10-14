@@ -362,12 +362,8 @@ impl SessionTarget {
         }
         let turns = self.turns(&session_id, Path::new(&spec.cwd)).await;
         let from = *self.store.subscribe().borrow();
-        // ADR-008 §6.2: after every awaited step, right before the launch.
-        #[cfg(test)]
-        self.gate_hook().hold().await;
-        if let Some(refused) = self.gate_now(effect).await {
-            return refused;
-        }
+        // ADR-008 §6.2: the gate runs inside the launch, after the `starting`
+        // row and right before the shim starts.
         let attached = match launch_shim_for(
             &self.store,
             &shims.host,
@@ -375,9 +371,11 @@ impl SessionTarget {
             &launch.process,
             AckMode::Manual,
             native,
+            &|| Box::pin(self.gate_durable(effect)),
         )
         .await
         {
+            Err(LaunchError::Refused(refused)) => return refused,
             Ok(attached) => attached,
             Err(LaunchError::Prepare(e)) => {
                 self.start_failed(&session_id, &e.to_string()).await;
@@ -451,28 +449,21 @@ impl SessionTarget {
         if let Some(input) = prompt {
             let fence = turns.fence().await;
             turns.begin_input(&fence, &input.input_id).await;
-            // The fence and the checkpoint work can wait for long: the last
-            // check is right before the delivery, with no await between.
-            let refused = match super::setup_task::cancelled(cancel) {
-                true => Some(Dispatch::NotDispatched(super::REASON_SETUP_STOPPED.into())),
-                false => self.gate_input(effect).await,
-            };
-            if let Some(not_sent) = refused {
-                drop(fence);
-                turns.input_not_sent(&input.input_id).await;
-                if let Err(e) = self
-                    .store
-                    .first_input_failed(effect.effect_id.clone(), not_sent)
+            // The fence and the checkpoint work can wait for long: the
+            // authority gate runs inside `first_input`, right before the
+            // commit of the input (ADR-008 §6.2).
+            let sent = if super::setup_task::cancelled(cancel) {
+                Dispatch::NotDispatched(super::REASON_SETUP_STOPPED.into())
+            } else {
+                turns.input_sent(&input.input_id);
+                match driver
+                    .first_input(effect, &|| Box::pin(self.gate_first_input(effect)))
                     .await
                 {
-                    tracing::error!(error = %e, "the first input failure was not stored");
+                    Ok(None) => Dispatch::Sent,
+                    Ok(Some(refused)) => refused,
+                    Err(e) => Dispatch::NotDispatched(e.to_string()),
                 }
-                return Dispatch::Confirmed;
-            }
-            turns.input_sent(&input.input_id);
-            let sent = match driver.first_input(effect).await {
-                Ok(()) => Dispatch::Sent,
-                Err(e) => Dispatch::NotDispatched(e.to_string()),
             };
             drop(fence);
             if matches!(sent, Dispatch::NotDispatched(_)) {
@@ -491,6 +482,23 @@ impl SessionTarget {
             }
         }
         Dispatch::Confirmed
+    }
+
+    /// The authority gate of a durable launch or write. A test holds it
+    /// first, after the awaited preparation (`shim_starting`, the
+    /// transition and the frame claim).
+    async fn gate_durable(&self, effect: &Effect) -> Option<Dispatch> {
+        #[cfg(any(test, feature = "fault-injection"))]
+        self.gate_hook().hold().await;
+        self.gate_now(effect).await
+    }
+
+    /// The gate of the first input of a durable launch (held like
+    /// [`Self::gate_durable`]).
+    async fn gate_first_input(&self, effect: &Effect) -> Option<Dispatch> {
+        #[cfg(any(test, feature = "fault-injection"))]
+        self.gate_hook().hold().await;
+        self.gate_input(effect).await
     }
 
     async fn observe_end(&self, session_id: &SessionId, process: &ProcessIncarnation) {
@@ -531,12 +539,13 @@ impl SessionTarget {
             EffectPayload::Prompt { input, .. } | EffectPayload::FollowUp { input, .. } => {
                 let fence = turns.fence().await;
                 turns.begin_input(&fence, &input.input_id).await;
-                if let Some(refused) = self.gate_now(effect).await {
-                    turns.input_not_sent(&input.input_id).await;
-                    return refused;
-                }
                 turns.input_sent(&input.input_id);
-                let sent = durable.driver.apply(effect).await;
+                // The gate runs inside the driver, right before the first
+                // byte (ADR-008 §6.2); a refusal is not sent.
+                let sent = durable
+                    .driver
+                    .apply_gated(effect, &|| Box::pin(self.gate_durable(effect)))
+                    .await;
                 if matches!(sent, Dispatch::NotDispatched(_)) {
                     turns.input_not_sent(&input.input_id).await;
                 }
@@ -544,10 +553,10 @@ impl SessionTarget {
             }
             EffectPayload::Steer { .. } => {
                 let _fence = turns.fence().await;
-                if let Some(refused) = self.gate_now(effect).await {
-                    return refused;
-                }
-                durable.driver.apply(effect).await
+                durable
+                    .driver
+                    .apply_gated(effect, &|| Box::pin(self.gate_durable(effect)))
+                    .await
             }
             EffectPayload::Revert { revert_id, .. } => {
                 if let (Durable::Codex(driver), Some(process)) =
@@ -592,7 +601,12 @@ impl SessionTarget {
             EffectPayload::Start { .. } | EffectPayload::Resume { .. } => {
                 Dispatch::NotDispatched("not_a_live_operation".into())
             }
-            _ => durable.driver.apply(effect).await,
+            _ => {
+                durable
+                    .driver
+                    .apply_gated(effect, &|| Box::pin(self.gate_durable(effect)))
+                    .await
+            }
         }
     }
 }

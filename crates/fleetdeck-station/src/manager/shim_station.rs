@@ -67,18 +67,34 @@ impl Durable {
     /// adapter-generated frames: the provider's `session.started` already
     /// confirmed the start effect, so the input cannot be claimed under it.
     /// The frames are committed with the adapter state before they leave
-    /// and settle like every generated frame after a restart (DL-113).
+    /// and settle like every generated frame after a restart (DL-113). The
+    /// authority `gate` runs right before the commit (ADR-008 §6.2); `Some`
+    /// is its refusal, and nothing was committed.
     ///
     /// # Errors
     /// The core refused the input, or a store error.
     pub async fn first_input(
         &self,
         effect: &crate::store::Effect,
-    ) -> Result<(), super::durable::DriverError> {
+        gate: &super::shim_stdin::Gate<'_>,
+    ) -> Result<Option<crate::store::Dispatch>, super::durable::DriverError> {
         use super::durable::DurableCore as _;
         match self {
-            Self::Claude(d) => d.internal(|c| c.command(effect)).await,
-            Self::Codex(d) => d.internal(|c| c.command(effect)).await,
+            Self::Claude(d) => d.internal_gated(|c| c.command(effect), gate).await,
+            Self::Codex(d) => d.internal_gated(|c| c.command(effect), gate).await,
+        }
+    }
+
+    /// [`Self::apply`] with the authority `gate`, which runs right before
+    /// the first byte of the effect leaves (ADR-008 §6.2).
+    pub async fn apply_gated(
+        &self,
+        effect: &crate::store::Effect,
+        gate: &super::shim_stdin::Gate<'_>,
+    ) -> crate::store::Dispatch {
+        match self {
+            Self::Claude(d) => d.apply_gated(effect, gate).await,
+            Self::Codex(d) => d.apply_gated(effect, gate).await,
         }
     }
 

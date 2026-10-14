@@ -60,15 +60,16 @@ impl SessionTarget {
     }
 
     /// The same gate for the first input of a start or a resume, right
-    /// before its write: the process is live, so a refusal ends no session
-    /// and sends no launch mode.
+    /// before its write: the process is live, so a refusal ends no session.
+    /// It sends the launch mode of the effect like every gate of a launching
+    /// effect.
     pub(super) async fn gate_input(&self, effect: &Effect) -> Option<Dispatch> {
         self.gate(effect, false).await
     }
 
     async fn gate(&self, effect: &Effect, launch_point: bool) -> Option<Dispatch> {
         effect.payload.authority()?;
-        let result = match self.launch_mode(effect, launch_point).await {
+        let result = match self.launch_mode(effect).await {
             // The live setting is read again after the round trip.
             Ok(launch) => {
                 fleet_control::recheck(&self.coordinator, &|| self.live_switch(), effect, launch)
@@ -104,23 +105,17 @@ impl SessionTarget {
         )
     }
 
-    /// The provider launch or the mode change that the effect is about to
-    /// make (ADR-008 §5.2): the provider kind and the mode that it really
-    /// uses. `None` for any other effect. An unknown provider fails closed.
-    async fn launch_mode(
-        &self,
-        effect: &Effect,
-        launch_point: bool,
-    ) -> Result<Option<LaunchMode>, Refusal> {
+    /// The provider launch or the mode change that the effect makes (ADR-008
+    /// §5.2): the provider kind and the mode that it really uses. Every
+    /// gate of a start, a resume, an import or a set_mode sends it, the
+    /// first-input gate of a start too. `None` for any other effect. An
+    /// unknown provider fails closed.
+    async fn launch_mode(&self, effect: &Effect) -> Result<Option<LaunchMode>, Refusal> {
         let (provider, mode) = match &effect.payload {
-            EffectPayload::Start { spec, .. } | EffectPayload::Resume { spec, .. }
-                if launch_point =>
-            {
-                (
-                    self.adapters.get(&spec.provider_instance).map(|a| a.kind()),
-                    spec.mode.clone(),
-                )
-            }
+            EffectPayload::Start { spec, .. } | EffectPayload::Resume { spec, .. } => (
+                self.adapters.get(&spec.provider_instance).map(|a| a.kind()),
+                spec.mode.clone(),
+            ),
             EffectPayload::SetMode { mode, .. } => {
                 let summary = match self.store.summary(effect.session_id.clone()).await {
                     Ok(summary) => summary,

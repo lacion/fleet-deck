@@ -17,14 +17,16 @@
 //!   unknown fate). A later unwritten frame never retires an effect whose
 //!   earlier frames were written (DL-106).
 
+use std::future::Future;
+use std::pin::Pin;
 use std::time::{Duration, Instant};
 
 use fleetdeck_providers::host::shim::host::ShimProcess;
 use fleetdeck_providers::host::shim::settle::{self, EffectResult, Facts};
-use fleetdeck_providers::host::shim::stdin::WriteOutcome;
+use fleetdeck_providers::host::shim::stdin::{WriteOutcome, WriteTag};
 use fleetdeck_providers::host::shim::wire::{MAX_PAYLOAD, StatusAnswer, WriteState};
 
-use crate::store::{EffectId, Result, Store, StoreError};
+use crate::store::{Dispatch, EffectId, Result, Store, StoreError};
 
 /// How long [`settle_writes`] waits between questions about a write in
 /// flight.
@@ -59,40 +61,81 @@ pub enum Sent {
 /// identity: its fate is unknown.
 const LOST_FRAME: WriteState = WriteState::Writing { bytes_done: 0 };
 
-/// Sends the bytes of the `claimed` effect `effect_id` to `process`.
+/// The claim of frame 0 of an effect and the frame count: what
+/// [`write_claimed`] needs after [`claim_first`].
+#[derive(Debug)]
+pub struct FirstClaim {
+    tag: WriteTag,
+    frames: u32,
+}
+
+pub fn frame_count(bytes: &[u8]) -> Result<u32> {
+    u32::try_from(bytes.len().div_ceil(MAX_PAYLOAD))
+        .map_err(|_| StoreError::Corrupt("a stdin effect with too many frames".to_owned()))
+}
+
+/// Claims the identity of frame 0 of the effect `effect_id`, before any
+/// byte leaves. `None`: no frame can leave (the generation is stale, the
+/// row ended, or the effect is not `claimed`). `bytes` is not empty.
 ///
 /// # Errors
-/// A database error. A transport failure after a committed frame identity
-/// is not an error: it is `Sent::Ended(Writing)`, which settles as
-/// `outcome_unknown`.
-pub async fn send_input(
+/// A database error.
+pub async fn claim_first(
     store: &Store,
     process: &ShimProcess,
     shim_id: &str,
     effect_id: &EffectId,
     bytes: &[u8],
+) -> Result<Option<FirstClaim>> {
+    let frames = frame_count(bytes)?;
+    let tag = store
+        .shim_claim_write(
+            shim_id.to_owned(),
+            process.generation(),
+            Some(effect_id.clone()),
+            0,
+            frames,
+        )
+        .await?;
+    Ok(tag.map(|tag| FirstClaim { tag, frames }))
+}
+
+/// Writes frame 0 (claimed by [`claim_first`]) and then claims and writes
+/// the other frames of the effect.
+///
+/// # Errors
+/// As [`send_input`].
+pub async fn write_claimed(
+    store: &Store,
+    process: &ShimProcess,
+    shim_id: &str,
+    effect_id: &EffectId,
+    bytes: &[u8],
+    first: FirstClaim,
 ) -> Result<Sent> {
-    let frames = u32::try_from(bytes.len().div_ceil(MAX_PAYLOAD))
-        .map_err(|_| StoreError::Corrupt("a stdin effect with too many frames".to_owned()))?;
+    let FirstClaim { frames, tag } = first;
+    let mut first = Some(tag);
     for (ordinal, chunk) in (0u32..).zip(bytes.chunks(MAX_PAYLOAD)) {
-        let Some(tag) = store
-            .shim_claim_write(
-                shim_id.to_owned(),
-                process.generation(),
-                Some(effect_id.clone()),
-                ordinal,
-                frames,
-            )
-            .await?
-        else {
-            return Ok(if ordinal == 0 {
-                Sent::NotSent
-            } else {
-                Sent::Ended {
-                    frames_written: ordinal,
-                    state: LOST_FRAME,
-                }
-            });
+        let tag = match first.take() {
+            Some(tag) => tag,
+            None => {
+                let claimed = store
+                    .shim_claim_write(
+                        shim_id.to_owned(),
+                        process.generation(),
+                        Some(effect_id.clone()),
+                        ordinal,
+                        frames,
+                    )
+                    .await?;
+                let Some(next) = claimed else {
+                    return Ok(Sent::Ended {
+                        frames_written: ordinal,
+                        state: LOST_FRAME,
+                    });
+                };
+                next
+            }
         };
         let frames_written = ordinal;
         match process.write_tagged(&tag, chunk).await {
@@ -118,6 +161,28 @@ pub async fn send_input(
         }
     }
     Ok(Sent::Written)
+}
+
+/// Sends the bytes of the `claimed` effect `effect_id` to `process`.
+///
+/// # Errors
+/// A database error. A transport failure after a committed frame identity
+/// is not an error: it is `Sent::Ended(Writing)`, which settles as
+/// `outcome_unknown`.
+pub async fn send_input(
+    store: &Store,
+    process: &ShimProcess,
+    shim_id: &str,
+    effect_id: &EffectId,
+    bytes: &[u8],
+) -> Result<Sent> {
+    if bytes.is_empty() {
+        return Ok(Sent::Written);
+    }
+    match claim_first(store, process, shim_id, effect_id, bytes).await? {
+        Some(first) => write_claimed(store, process, shim_id, effect_id, bytes, first).await,
+        None => Ok(Sent::NotSent),
+    }
 }
 
 /// The effect result of a live [`Sent`] outcome (the §4.3 table with
@@ -146,6 +211,58 @@ pub fn settle_live(sent: &Sent) -> EffectResult {
         live: true,
         retire_enabled: settle::RETIRE_ROWS_ENABLED,
     })
+}
+
+/// The authority gate of an effect: `None` to go on, or the refusal to
+/// settle the effect with (ADR-008 §6.2). A driver runs it after every
+/// awaited preparation, immediately before the first byte leaves.
+pub type Gate<'a> =
+    dyn Fn() -> Pin<Box<dyn Future<Output = Option<Dispatch>> + Send + 'a>> + Sync + 'a;
+
+/// A gate that never refuses (an effect without authority).
+#[must_use]
+pub fn no_gate() -> Pin<Box<dyn Future<Output = Option<Dispatch>> + Send + 'static>> {
+    Box::pin(std::future::ready(None))
+}
+
+/// The dispatch of a live result, except `Retired`: that one is `None`, and
+/// the caller undoes the transition (see [`retired_reason`]). A partial
+/// write blocks the input of the session.
+///
+/// # Errors
+/// A database error.
+pub async fn dispatch_of(
+    store: &Store,
+    shim_id: &str,
+    result: &EffectResult,
+) -> Result<Option<Dispatch>> {
+    Ok(Some(match result {
+        EffectResult::Sent => Dispatch::Sent,
+        EffectResult::Retired(_) => return Ok(None),
+        EffectResult::Unknown { block_input } => {
+            if *block_input {
+                store
+                    .shim_block_input(
+                        shim_id.to_owned(),
+                        crate::store::shim_writes::REASON_STDIN_PARTIAL,
+                    )
+                    .await?;
+            }
+            Dispatch::Unknown(crate::store::shim_writes::REASON_SHIM_UNKNOWN.to_owned())
+        }
+        EffectResult::AskAgain => {
+            Dispatch::Unknown(crate::store::shim_writes::REASON_SHIM_UNKNOWN.to_owned())
+        }
+    }))
+}
+
+/// The reason of a `Retired` result (an empty text for any other).
+#[must_use]
+pub fn retired_reason(result: &EffectResult) -> String {
+    match result {
+        EffectResult::Retired(reason) => (*reason).to_owned(),
+        _ => String::new(),
+    }
 }
 
 /// What [`settle_writes`] did.
