@@ -8,6 +8,12 @@ use fleetdeck_proto::mutation::CommandAuthority;
 use fleetdeck_proto::{InputId, RequestId};
 use serde::{Deserialize, Serialize};
 
+/// `skip_serializing_if` for a flag that is false by default.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 /// A host input as the effect carries it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InputRecord {
@@ -81,6 +87,11 @@ pub enum EffectPayload {
         /// effect queued before this field existed has none and gets no check.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         authority: Option<CommandAuthority>,
+        /// True for `session.import`: the dispatch then also fails closed
+        /// for runs whose conversation id is not known (design
+        /// `shim-resume.md` §13). An effect stored without it is a resume.
+        #[serde(default, skip_serializing_if = "is_false")]
+        import: bool,
     },
     Prompt {
         input: InputRecord,
@@ -267,5 +278,44 @@ impl EffectPayload {
             Self::SetModel { model } => Some(model.clone()),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    fn resume(import: bool) -> EffectPayload {
+        EffectPayload::Resume {
+            native_session_id: "N".to_owned(),
+            spec: SessionSpec {
+                provider_instance: "claude".into(),
+                cwd: "/w".to_owned(),
+                mode: None,
+                model: None,
+                title: None,
+                coordinator: None,
+            },
+            prompt: None,
+            continue_by: None,
+            authority: None,
+            import,
+        }
+    }
+
+    #[test]
+    fn a_stored_resume_without_the_import_flag_reads_as_a_resume() {
+        let text = serde_json::to_string(&resume(true)).unwrap();
+        assert!(text.contains("\"import\":true"), "{text}");
+        let back: EffectPayload = serde_json::from_str(&text).unwrap();
+        assert_eq!(back, resume(true));
+        // A resume omits the flag, so an effect stored before it existed
+        // has the same shape.
+        let old = serde_json::to_string(&resume(false)).unwrap();
+        assert!(!old.contains("import"), "{old}");
+        let back: EffectPayload = serde_json::from_str(&old).unwrap();
+        assert_eq!(back, resume(false));
     }
 }

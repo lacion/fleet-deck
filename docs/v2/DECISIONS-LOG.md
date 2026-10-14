@@ -2932,6 +2932,7 @@ Owner review: pending.
 - Context: owner report 2026-10-14: "start_failed: resume is not supported on the shim host yet" on a station with `host = "shim"`; owner choice "build resume on the shim host". DL-118 refused every shim-host resume at dispatch because no durable resume launch existed; recovery never used the boot id, so a reboot left every shim session unresumable; the ADR-005 §4.6 owner reconciliation was not built.
 - Choice: `docs/v2/design/shim-resume.md`: `ProviderAdapter::durable_resume_launch` (Claude `--resume`, Codex `thread/resume`); the dispatch rechecks the termination evidence and starts a new shim; recovery turns a gone shim row into `exited`/`ended_by_reboot` when the stored boot id differs; an owner-only, audited "Mark the previous run as ended" after a session-and-group check that finds no live process.
 - Status: design accepted (revision 4); build in progress. Build refinement (design §13): the unknown-native-id rule blocks only rows whose `native_target` or stored native id is the conversation being resumed.
+- Review fixes (design §13, PRE-PR review): (1) an import fails closed for a busy or unproven session of the same kind whose native id is unknown (`Purpose::Import`, `import` flag on the resume effect, rechecked at dispatch); (2) a `/proc` census proves "no members left" only from a clean pass (no vanished pid, no zombie of the group or session), up to 20 passes, else the result is incomplete.
 
 ## DL-183 — ADR-008 station side built
 

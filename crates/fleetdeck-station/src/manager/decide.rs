@@ -561,6 +561,7 @@ fn start(
                 prompt,
                 continue_by: None,
                 authority: None,
+                import: true,
             }
         }
         None => EffectPayload::Start {

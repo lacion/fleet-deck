@@ -10,6 +10,7 @@
 //! always incomplete.
 
 use std::path::Path;
+use std::time::Duration;
 
 use super::wire::ProviderIdentity;
 
@@ -67,32 +68,105 @@ fn gone(e: &std::io::Error) -> bool {
         || e.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error())
 }
 
-/// Reads every process under `root` (a `/proc` mount). `Err` with the
-/// reason when the listing or any entry cannot be read completely.
+/// One pass over `/proc`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Scan {
+    pub procs: Vec<ProcStat>,
+    /// The listed pids whose `stat` was gone when it was read.
+    pub vanished: u32,
+}
+
+/// Reads every process under `root` (a `/proc` mount) once. `Err` with the
+/// reason when the listing or any entry cannot be read completely. A pid
+/// that ended between the listing and the read is counted in `vanished`.
 ///
 /// # Errors
 /// The reason text of the first failure.
-pub fn scan(root: &Path) -> Result<Vec<ProcStat>, String> {
+pub fn scan(root: &Path) -> Result<Scan, String> {
+    scan_with(root, &mut || {})
+}
+
+/// [`scan`] with `after_listing`, which runs once between the listing and
+/// the reads (tests change the fake `/proc` there).
+fn scan_with(root: &Path, after_listing: &mut dyn FnMut()) -> Result<Scan, String> {
     let entries =
         std::fs::read_dir(root).map_err(|e| format!("cannot list {}: {e}", root.display()))?;
-    let mut out = Vec::new();
+    let mut pids = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|e| format!("cannot list {}: {e}", root.display()))?;
         let name = entry.file_name();
-        let Some(pid) = name.to_str().and_then(|n| n.parse::<u32>().ok()) else {
-            continue;
-        };
+        if let Some(pid) = name.to_str().and_then(|n| n.parse::<u32>().ok()) {
+            pids.push(pid);
+        }
+    }
+    after_listing();
+    let mut out = Scan::default();
+    for pid in pids {
         let path = root.join(pid.to_string()).join("stat");
         let text = match std::fs::read_to_string(&path) {
             Ok(text) => text,
-            Err(e) if gone(&e) => continue,
+            Err(e) if gone(&e) => {
+                out.vanished += 1;
+                continue;
+            }
             Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
         };
         let stat = parse_stat(pid, &text)
             .ok_or_else(|| format!("the status of process {pid} is malformed"))?;
-        out.push(stat);
+        out.procs.push(stat);
     }
     Ok(out)
+}
+
+/// The most passes of one census.
+const PASSES: u32 = 20;
+/// The pause between two passes.
+const PASS_PAUSE: Duration = Duration::from_millis(25);
+/// The reason of a census that never saw a clean pass.
+const CHURN: &str = "processes kept changing during the check; try again";
+
+/// True when `p` is a process of the leader's group or session (the leader
+/// itself excluded), dead or alive.
+fn belongs(p: &ProcStat, leader: u32) -> bool {
+    p.pid != leader && (p.pgrp == leader || p.session == leader)
+}
+
+/// Reads `/proc` until a pass settles the question about the members of
+/// the group and session of `leader`. `settled` says whether the processes
+/// of a pass already show a member (or whatever else makes the answer
+/// final). `Ok(None)` when no pass settled it in [`PASSES`] passes.
+///
+/// A pass is clean when no listed pid vanished and no zombie belongs to
+/// the leader's group or session. The argument for a clean pass: a process
+/// cannot join a session from outside it, so a member that is alive at the
+/// end of a clean pass descends from a member that was listed at the start
+/// of the pass and was alive when read (then it is counted), or that died
+/// before its read. A member that died before its read is either a vanished
+/// pid or a zombie of the group or session, and both make the pass not
+/// clean. A pass that shows a member is final at once: that member was
+/// alive when read. Only a clean pass proves "no members".
+fn census(
+    root: &Path,
+    leader: u32,
+    pause: Duration,
+    after_listing: &mut dyn FnMut(),
+    settled: &dyn Fn(&[ProcStat]) -> bool,
+) -> Result<Option<Vec<ProcStat>>, String> {
+    for pass in 0..PASSES {
+        if pass > 0 {
+            std::thread::sleep(pause);
+        }
+        let scan = scan_with(root, after_listing)?;
+        let clean = scan.vanished == 0
+            && !scan
+                .procs
+                .iter()
+                .any(|p| p.is_zombie() && belongs(p, leader));
+        if clean || settled(&scan.procs) {
+            return Ok(Some(scan.procs));
+        }
+    }
+    Ok(None)
 }
 
 /// The mount that the inspection reads.
@@ -100,7 +174,8 @@ const PROC: &str = "/proc";
 
 /// The live members of the provider's process group or session, the
 /// leader excluded. `None` when the inspection is incomplete or the
-/// platform has no reader.
+/// platform has no reader. This blocks for up to about half a second when
+/// processes keep changing: call it from a blocking thread.
 #[must_use]
 pub fn group_members(leader: u32) -> Option<u32> {
     group_members_in(Path::new(PROC), leader)
@@ -109,15 +184,32 @@ pub fn group_members(leader: u32) -> Option<u32> {
 /// [`group_members`] over another `/proc` root (tests).
 #[must_use]
 pub fn group_members_in(root: &Path, leader: u32) -> Option<u32> {
+    group_members_with(root, leader, PASS_PAUSE, &mut || {})
+}
+
+fn live_members(procs: &[ProcStat], leader: u32) -> usize {
+    procs
+        .iter()
+        .filter(|p| !p.is_zombie() && belongs(p, leader))
+        .count()
+}
+
+/// [`group_members_in`] with the pause between passes and the hook of
+/// [`scan_with`] (tests).
+fn group_members_with(
+    root: &Path,
+    leader: u32,
+    pause: Duration,
+    after_listing: &mut dyn FnMut(),
+) -> Option<u32> {
     if !cfg!(target_os = "linux") {
         return None;
     }
-    let all = scan(root).ok()?;
-    let count = all
-        .iter()
-        .filter(|p| p.pid != leader && !p.is_zombie() && (p.pgrp == leader || p.session == leader))
-        .count();
-    Some(u32::try_from(count).unwrap_or(u32::MAX))
+    let procs = census(root, leader, pause, after_listing, &|procs| {
+        live_members(procs, leader) > 0
+    })
+    .ok()??;
+    Some(u32::try_from(live_members(&procs, leader)).unwrap_or(u32::MAX))
 }
 
 /// One process in an inspection answer.
@@ -167,14 +259,39 @@ pub fn inspect(identity: &ProviderIdentity, shim_pid: Option<u32>) -> Inspection
 /// [`inspect`] over another `/proc` root (tests).
 #[must_use]
 pub fn inspect_in(root: &Path, identity: &ProviderIdentity, shim_pid: Option<u32>) -> Inspection {
+    inspect_with(root, identity, shim_pid, PASS_PAUSE, &mut || {})
+}
+
+/// [`inspect_in`] with the pause between passes and the hook of
+/// [`scan_with`] (tests). It blocks while processes keep changing: the
+/// callers run it on a blocking thread.
+fn inspect_with(
+    root: &Path,
+    identity: &ProviderIdentity,
+    shim_pid: Option<u32>,
+    pause: Duration,
+    after_listing: &mut dyn FnMut(),
+) -> Inspection {
     if !cfg!(target_os = "linux") {
         return Inspection {
             error: Some("process inspection is not available on this platform".to_owned()),
             ..Inspection::default()
         };
     }
-    let all = match scan(root) {
-        Ok(all) => all,
+    let leader = identity.pid;
+    let alive =
+        |p: &ProcStat| p.pid == leader && p.start_time == identity.start_time && !p.is_zombie();
+    let found = census(root, leader, pause, after_listing, &|procs| {
+        procs.iter().any(alive) || live_members(procs, leader) > 0
+    });
+    let all = match found {
+        Ok(Some(all)) => all,
+        Ok(None) => {
+            return Inspection {
+                error: Some(CHURN.to_owned()),
+                ..Inspection::default()
+            };
+        }
         Err(error) => {
             return Inspection {
                 error: Some(error),
@@ -182,10 +299,7 @@ pub fn inspect_in(root: &Path, identity: &ProviderIdentity, shim_pid: Option<u32
             };
         }
     };
-    let leader = identity.pid;
-    let identity_alive = all
-        .iter()
-        .any(|p| p.pid == leader && p.start_time == identity.start_time && !p.is_zombie());
+    let identity_alive = all.iter().any(alive);
     let live = |p: &&ProcStat| !p.is_zombie() && p.pid != leader;
     let proc_of = |p: &ProcStat| Proc {
         pid: p.pid,
@@ -317,14 +431,119 @@ mod tests {
         // `stat` is a directory: reading it fails with EISDIR, not ENOENT.
         std::fs::create_dir_all(dir.path().join("100").join("stat")).unwrap();
         assert_eq!(group_members_in(dir.path(), 999), None);
-        // An entry without a `stat` file ended between listing and reading.
+        // An entry without a `stat` file ended between listing and reading:
+        // no clean pass ever happens, so the count is incomplete.
         let ended = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(ended.path().join("100")).unwrap();
-        assert_eq!(group_members_in(ended.path(), 999), Some(0));
+        assert_eq!(
+            group_members_with(ended.path(), 999, Duration::ZERO, &mut || {}),
+            None
+        );
         // A malformed line is incomplete too.
         let bad = tempfile::tempdir().unwrap();
         put(bad.path(), 100, "garbage");
         assert_eq!(group_members_in(bad.path(), 999), None);
+    }
+
+    /// A pid that is listed and has no `stat`: it vanished.
+    fn vanished(root: &Path, pid: u32) {
+        std::fs::create_dir_all(root.join(pid.to_string())).unwrap();
+    }
+
+    fn members(root: &Path, leader: u32, hook: &mut dyn FnMut()) -> Option<u32> {
+        group_members_with(root, leader, Duration::ZERO, hook)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn zero_members_from_only_unclean_passes_is_incomplete() {
+        let dir = tempfile::tempdir().unwrap();
+        vanished(dir.path(), 300);
+        let mut passes = 0;
+        assert_eq!(members(dir.path(), 100, &mut || passes += 1), None);
+        assert_eq!(passes, 20, "the census gives up after 20 passes");
+        let id = ProviderIdentity {
+            pid: 100,
+            start_time: 5,
+            boot_id: "b".to_owned(),
+        };
+        let got = inspect_with(dir.path(), &id, None, Duration::ZERO, &mut || {});
+        assert!(!got.complete);
+        assert_eq!(got.error.as_deref(), Some(CHURN));
+        assert!(!got.identity_alive && got.group.is_empty() && got.session.is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_member_found_in_an_unclean_pass_is_counted_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        vanished(dir.path(), 300);
+        put(dir.path(), 101, &stat_line(101, 'S', 100, 100, 100, 6));
+        let mut passes = 0;
+        assert_eq!(members(dir.path(), 100, &mut || passes += 1), Some(1));
+        assert_eq!(passes, 1);
+        let id = ProviderIdentity {
+            pid: 100,
+            start_time: 5,
+            boot_id: "b".to_owned(),
+        };
+        let got = inspect_with(dir.path(), &id, None, Duration::ZERO, &mut || {});
+        assert!(got.complete && got.error.is_none());
+        assert_eq!(got.group.iter().map(|p| p.pid).collect::<Vec<_>>(), [101]);
+        // A live leader with the stored identity is final too.
+        let alone = tempfile::tempdir().unwrap();
+        vanished(alone.path(), 300);
+        put(alone.path(), 100, &stat_line(100, 'S', 1, 100, 100, 5));
+        let got = inspect_with(alone.path(), &id, None, Duration::ZERO, &mut || {});
+        assert!(got.complete && got.identity_alive);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_pid_that_vanishes_between_the_listing_and_the_read_makes_a_pass_unclean() {
+        let dir = tempfile::tempdir().unwrap();
+        put(dir.path(), 300, &stat_line(300, 'S', 1, 300, 300, 9));
+        let root = dir.path().to_owned();
+        let mut passes = 0;
+        // The first pass lists 300; it ends before its `stat` is read.
+        let got = members(dir.path(), 100, &mut || {
+            passes += 1;
+            if passes == 1 {
+                std::fs::remove_dir_all(root.join("300")).unwrap();
+            }
+        });
+        assert_eq!(got, Some(0));
+        assert_eq!(passes, 2, "zero members needed a second, clean pass");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_zombie_of_the_group_or_session_makes_every_pass_unclean_until_it_is_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        put(dir.path(), 102, &stat_line(102, 'Z', 1, 100, 100, 7));
+        let mut passes = 0;
+        assert_eq!(members(dir.path(), 100, &mut || passes += 1), None);
+        assert_eq!(passes, 20);
+        // A zombie of the session only counts as well.
+        let session = tempfile::tempdir().unwrap();
+        put(session.path(), 103, &stat_line(103, 'Z', 1, 103, 100, 7));
+        assert_eq!(members(session.path(), 100, &mut || {}), None);
+        // The zombie is reaped after the first pass: the next pass is clean.
+        let root = dir.path().to_owned();
+        let mut passes = 0;
+        let got = members(dir.path(), 100, &mut || {
+            passes += 1;
+            if passes == 1 {
+                std::fs::remove_dir_all(root.join("102")).unwrap();
+            }
+        });
+        assert_eq!(got, Some(0));
+        // A zombie of another group does not matter.
+        let other = tempfile::tempdir().unwrap();
+        put(other.path(), 400, &stat_line(400, 'Z', 1, 400, 400, 7));
+        let mut passes = 0;
+        assert_eq!(members(other.path(), 100, &mut || passes += 1), Some(0));
+        assert_eq!(passes, 1);
     }
 
     #[cfg(not(target_os = "linux"))]

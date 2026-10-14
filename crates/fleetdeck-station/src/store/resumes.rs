@@ -98,6 +98,17 @@ fn session_rows(conn: &Connection, session: &SessionId) -> Result<Vec<ShimRow>> 
     raws.into_iter().map(|r| r.decode()).collect()
 }
 
+/// What a new execution of a native conversation is for. An import names a
+/// conversation that this station may have started without ever learning
+/// its id, so it fails closed for unresolved runs with an unknown id; a
+/// resume continues a conversation whose id the session stored itself
+/// (design `shim-resume.md` §13, review fix 1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Purpose {
+    Resume,
+    Import,
+}
+
 /// What stands between a native conversation and a new execution of it
 /// (DL-182 §3, rule of Q7).
 #[derive(Debug, Default)]
@@ -130,6 +141,17 @@ impl Exclusion {
     }
 }
 
+/// True (as a SQL value) when session `s` has not ended: its state is not
+/// final, a process of it is live, or a start or resume effect of it is
+/// not settled.
+const BUSY: &str = "(s.state NOT IN ('exited', 'lost')
+                 OR EXISTS (SELECT 1 FROM processes p
+                            WHERE p.session_id = s.session_id AND p.state = 'live')
+                 OR EXISTS (SELECT 1 FROM effects e
+                            WHERE e.session_id = s.session_id
+                              AND e.kind IN ('start', 'resume')
+                              AND e.state IN ('queued', 'claimed')))";
+
 /// The rows of `session` and of every other execution of the native
 /// conversation `native` of provider `kind` (any provider instance, any
 /// host): the rule is
@@ -139,7 +161,11 @@ impl Exclusion {
 ///   effect, or has a shim row without proof;
 /// - (b) a shim row of the same kind whose `native_target` is `native`
 ///   blocks while it has no proof. A row without `native_target` is a new
-///   conversation: it cannot be `native` and blocks nothing here.
+///   conversation: it cannot be `native` and blocks nothing here;
+/// - (c) for [`Purpose::Import`] only: a session of the same kind whose
+///   native id is still unknown may hold any conversation. It blocks while
+///   it is busy (the same test as (a)), and each of its shim rows without
+///   proof blocks.
 ///
 /// `except` is the session that continues the conversation (its own rows
 /// are the business of [`unended_execution`]).
@@ -149,6 +175,7 @@ pub(super) fn exclusion(
     kind: ProviderKind,
     native: Option<&str>,
     except: Option<&SessionId>,
+    purpose: Purpose,
 ) -> Result<Exclusion> {
     let mut out = Exclusion::default();
     if let Some(own) = own {
@@ -162,19 +189,12 @@ pub(super) fn exclusion(
     let kind = kind_text(kind);
     let except = except.map_or("", SessionId::as_str);
     // (a) the sessions that hold the conversation.
-    let mut stmt = conn.prepare(
-        "SELECT s.session_id,
-                (s.state NOT IN ('exited', 'lost')
-                 OR EXISTS (SELECT 1 FROM processes p
-                            WHERE p.session_id = s.session_id AND p.state = 'live')
-                 OR EXISTS (SELECT 1 FROM effects e
-                            WHERE e.session_id = s.session_id
-                              AND e.kind IN ('start', 'resume')
-                              AND e.state IN ('queued', 'claimed')))
+    let mut stmt = conn.prepare(&format!(
+        "SELECT s.session_id, {BUSY}
          FROM sessions s
          WHERE s.provider = ?1 AND s.native_session_id = ?2 AND s.session_id <> ?3
-         ORDER BY s.created_at, s.session_id",
-    )?;
+         ORDER BY s.created_at, s.session_id"
+    ))?;
     let holders = stmt
         .query_map(rusqlite::params![kind, native, except], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?))
@@ -207,6 +227,32 @@ pub(super) fn exclusion(
         let row = raw.decode()?;
         let who = format!("session `{}`", row.session_id);
         out.note(row, Some(&who));
+    }
+    // (c) the runs whose conversation id is not known (an import only).
+    if purpose == Purpose::Import {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT s.session_id, {BUSY}
+             FROM sessions s
+             WHERE s.provider = ?1 AND s.native_session_id IS NULL AND s.session_id <> ?2
+             ORDER BY s.created_at, s.session_id"
+        ))?;
+        let unknown = stmt
+            .query_map(rusqlite::params![kind, except], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for (other, busy) in unknown {
+            let other = SessionId::from(other);
+            if busy {
+                out.block(format!(
+                    "session `{other}` has a run whose conversation id is not known yet; \
+                     an import waits until that session reports its id or its run is proven ended"
+                ));
+            }
+            for row in session_rows(conn, &other)? {
+                out.note(row, Some(&format!("session `{other}`")));
+            }
+        }
     }
     Ok(out)
 }
@@ -361,8 +407,9 @@ impl Decision<'_> {
         kind: ProviderKind,
         native: &str,
         except: Option<&SessionId>,
+        purpose: Purpose,
     ) -> Result<Option<String>> {
-        Ok(exclusion(self.connection(), None, kind, Some(native), except)?.blocked)
+        Ok(exclusion(self.connection(), None, kind, Some(native), except, purpose)?.blocked)
     }
 
     /// Records that the owner reconciled `shim_id` (DL-182 §4.2). The
@@ -418,9 +465,17 @@ impl super::Store {
         kind: ProviderKind,
         native: Option<String>,
         except: Option<SessionId>,
+        purpose: Purpose,
     ) -> Result<Exclusion> {
         super::call(&self.inner.db, move |conn| {
-            exclusion(conn, own.as_ref(), kind, native.as_deref(), except.as_ref())
+            exclusion(
+                conn,
+                own.as_ref(),
+                kind,
+                native.as_deref(),
+                except.as_ref(),
+                purpose,
+            )
         })
         .await
     }

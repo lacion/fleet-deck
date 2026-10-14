@@ -42,6 +42,7 @@ use super::super::shim_station::{Durable, Restored};
 use super::super::shims::{self, LaunchError, launch_shim_for, reason};
 use super::super::turns::SessionTurns;
 use super::{Live, REASON_PROCESS_EXIT, SessionTarget, Sessions};
+use crate::store::resumes::Purpose;
 use crate::store::{
     Dispatch, Effect, EffectPayload, InputRecord, ProcessIncarnation, ReadResult, RevertStep,
     ShimState, Store,
@@ -264,6 +265,7 @@ impl SessionTarget {
         session_id: &SessionId,
         kind: fleetdeck_proto::event::ProviderKind,
         native: &str,
+        purpose: Purpose,
         shims: &ShimSettings,
     ) -> Option<String> {
         let found = self
@@ -273,6 +275,7 @@ impl SessionTarget {
                 kind,
                 Some(native.to_owned()),
                 Some(session_id.clone()),
+                purpose,
             )
             .await;
         let found = match found {
@@ -306,8 +309,13 @@ impl SessionTarget {
         let session_id = effect.session_id.clone();
         #[cfg(test)]
         self.resume_dispatch.hold().await;
+        // An import fails closed for runs with an unknown conversation id.
+        let purpose = match &effect.payload {
+            EffectPayload::Resume { import: true, .. } => Purpose::Import,
+            _ => Purpose::Resume,
+        };
         if let Some(why) = self
-            .resume_blocked(&session_id, adapter.kind(), native, shims)
+            .resume_blocked(&session_id, adapter.kind(), native, purpose, shims)
             .await
         {
             self.start_failed(

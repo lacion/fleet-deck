@@ -376,7 +376,19 @@ impl Shim {
             },
             Err(_) => "unknown".to_owned(),
         };
-        let descendants_remaining = group_members(self.pid());
+        // The shim reaps its own ended children first, so that they leave
+        // no zombie that makes every pass of the census unclean. The census
+        // sleeps between passes: it runs on a blocking thread.
+        let leader = self.pid();
+        let descendants_remaining = tokio::task::spawn_blocking(move || {
+            reap_orphans();
+            group_members(leader)
+        })
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "the process inspection did not run");
+            None
+        });
         if descendants_remaining.is_none() {
             tracing::warn!("the process inspection was incomplete; the exit is unverified");
         }
