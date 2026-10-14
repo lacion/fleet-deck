@@ -458,6 +458,7 @@ async fn an_unreadable_checkpoint_at_a_station_start_loses_the_session_and_leave
                     &policy,
                     &fleetdeck_station::coordinator::Bindings::default(),
                     CommandOrigin::Board,
+                    false,
                     envelope.command.clone(),
                 )
             }
