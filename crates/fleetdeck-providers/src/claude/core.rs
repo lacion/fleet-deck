@@ -516,14 +516,22 @@ impl ClaudeCore {
     /// the host input that starts it; `None` is a provider turn (trap 4).
     pub(super) fn start_turn(&mut self, input: Option<usize>) -> (TurnId, Vec<Output>) {
         let mut out = Vec::new();
-        let (origin, summary, uuid, author) = match input.and_then(|i| self.inputs.get(i)) {
+        let (origin, summary, uuid, author, input_id) = match input.and_then(|i| self.inputs.get(i))
+        {
             Some(e) => (
                 e.origin,
                 e.summary.clone(),
                 Some(e.uuid.clone()),
                 e.author.clone(),
+                Some(e.id.clone()),
             ),
-            None => (RunOrigin::Provider, "provider turn".to_owned(), None, None),
+            None => (
+                RunOrigin::Provider,
+                "provider turn".to_owned(),
+                None,
+                None,
+                None,
+            ),
         };
         let run_id = match &self.run {
             Some(r) => r.clone(),
@@ -535,6 +543,7 @@ impl ClaudeCore {
                     input_summary: summary,
                     origin,
                     author,
+                    input_id,
                 }));
                 r
             }

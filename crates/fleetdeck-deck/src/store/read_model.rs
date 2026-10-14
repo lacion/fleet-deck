@@ -332,6 +332,10 @@ impl DeckStore {
                     params![station.as_str(), id],
                 )?;
             }
+            // The review rows of a session that the batch does not name go
+            // too (DL-179). No foreign key joins them to `sessions`: this
+            // path deletes and inserts the session rows.
+            super::review::delete_unlisted(&tx, &station, &named)?;
             if let Some(projection) = &coordinator {
                 super::grants::apply_projection(&tx, &station, now, projection)?;
             }
@@ -372,6 +376,7 @@ impl DeckStore {
                 status,
                 unread: None,
                 project_id: None,
+                review_rev: None,
             });
         }
         Ok(out)

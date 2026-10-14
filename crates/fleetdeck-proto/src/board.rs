@@ -97,6 +97,12 @@ pub struct DeckSession {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub project_id: Option<String>,
+    /// The review counter of the session (DL-179): it grows with every
+    /// comment change, send and delivery change, so every open board fetches
+    /// the comments again. Absent when zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub review_rev: Option<u32>,
 }
 
 /// `POST /api/sessions/{station}/{session}/read` (R6.1, DL-169): the board

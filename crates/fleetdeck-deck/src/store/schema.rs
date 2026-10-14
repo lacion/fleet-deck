@@ -583,6 +583,98 @@ ALTER TABLE outbox ADD COLUMN call_id TEXT;
 CREATE INDEX outbox_call ON outbox (call_id) WHERE call_id IS NOT NULL;
 ";
 
+/// Review comments on the Changes diff (DL-179, design `review-comments.md`
+/// section 1). Named V21 next to the V20 of another goal branch; the list
+/// position decides at the merge. No foreign key joins these tables to
+/// `sessions`: the snapshot path deletes and inserts the session rows, and
+/// the cleanup code deletes the review rows of a session that is gone.
+///
+/// - `review_attempts`: one row per "Send again" (`attempt_key`), so a repeat
+///   of the same attempt returns its stored result and makes no second
+///   command (design 3, step 6).
+/// - `review_imports`: one row per imported local note (`import_key`), with
+///   the comment that it made, so a repeated import makes no duplicate (7).
+const V21: &str = "
+CREATE TABLE reviews (
+    review_id     TEXT    PRIMARY KEY,
+    short_id      TEXT    NOT NULL,
+    station_id    TEXT    NOT NULL,
+    session_id    TEXT    NOT NULL,
+    send_key      TEXT    NOT NULL,
+    fingerprint   TEXT    NOT NULL,
+    principal     TEXT    NOT NULL,
+    command_id    TEXT    NOT NULL,
+    delivery      TEXT    NOT NULL CHECK (delivery IN ('pending', 'delivered', 'failed', 'unknown')),
+    attempts      INTEGER NOT NULL DEFAULT 1 CHECK (attempts BETWEEN 1 AND 5),
+    input_id      TEXT,
+    reason        TEXT,
+    comment_count INTEGER NOT NULL,
+    sent_at       INTEGER NOT NULL,
+    UNIQUE (station_id, session_id, principal, send_key),
+    UNIQUE (station_id, session_id, short_id)
+) STRICT;
+CREATE INDEX reviews_command ON reviews (command_id);
+CREATE TABLE review_comments (
+    comment_id   TEXT    PRIMARY KEY,
+    short_id     TEXT    NOT NULL,
+    station_id   TEXT    NOT NULL,
+    session_id   TEXT    NOT NULL,
+    thread_id    TEXT    NOT NULL,
+    snapshot     TEXT    NOT NULL,
+    path         TEXT    NOT NULL,
+    other_path   TEXT,
+    side         TEXT    NOT NULL CHECK (side IN ('new', 'old')),
+    line_start   INTEGER NOT NULL CHECK (line_start >= 1),
+    line_end     INTEGER NOT NULL CHECK (line_end >= line_start AND line_end - line_start < 200),
+    anchor_text  TEXT    NOT NULL,
+    anchor_kind  TEXT    NOT NULL CHECK (anchor_kind IN ('diff', 'imported')),
+    body         TEXT    NOT NULL,
+    author_kind  TEXT    NOT NULL CHECK (author_kind IN ('owner', 'member')),
+    author_name  TEXT,
+    state        TEXT    NOT NULL CHECK (state IN ('draft', 'sent')),
+    resolved     INTEGER NOT NULL DEFAULT 0 CHECK (resolved IN (0, 1)),
+    review_id    TEXT    REFERENCES reviews (review_id),
+    created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL,
+    UNIQUE (station_id, session_id, short_id)
+) STRICT;
+CREATE INDEX review_comments_session ON review_comments (station_id, session_id, thread_id);
+CREATE INDEX review_comments_review ON review_comments (review_id);
+CREATE TABLE review_revs (
+    station_id TEXT    NOT NULL,
+    session_id TEXT    NOT NULL,
+    rev        INTEGER NOT NULL,
+    PRIMARY KEY (station_id, session_id)
+) STRICT;
+CREATE TABLE review_imports (
+    station_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    principal  TEXT NOT NULL,
+    import_key TEXT NOT NULL,
+    comment_id TEXT NOT NULL,
+    PRIMARY KEY (station_id, session_id, principal, import_key)
+) STRICT;
+CREATE TRIGGER review_comments_short_id_is_immutable
+BEFORE UPDATE OF short_id ON review_comments
+WHEN OLD.short_id <> NEW.short_id
+BEGIN
+    SELECT RAISE(ABORT, 'a short id never changes');
+END;
+CREATE TRIGGER reviews_short_id_is_immutable
+BEFORE UPDATE OF short_id ON reviews
+WHEN OLD.short_id <> NEW.short_id
+BEGIN
+    SELECT RAISE(ABORT, 'a short id never changes');
+END;
+CREATE TABLE review_attempts (
+    review_id   TEXT    NOT NULL REFERENCES reviews (review_id),
+    attempt_key TEXT    NOT NULL,
+    command_id  TEXT    NOT NULL,
+    attempt     INTEGER NOT NULL,
+    PRIMARY KEY (review_id, attempt_key)
+) STRICT;
+";
+
 /// The `deck.db` migrations.
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
@@ -609,6 +701,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V15),
         M::up(V19),
         M::up(V20),
+        M::up(V21),
     ])
 }
 

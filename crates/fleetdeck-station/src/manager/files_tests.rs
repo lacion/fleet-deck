@@ -581,7 +581,8 @@ async fn a_turn_diff_comes_from_the_checkpoint_refs_and_fails_closed() {
     Arc::clone(&turns).capture_due().await;
     let q = |turn: &str, max| TurnDiffQuery {
         session_id: S1.into(),
-        turn_id: TurnId::from(turn),
+        turn_id: Some(TurnId::from(turn)),
+        checkpoint: None,
         max_bytes: max,
     };
     let d = diff(
@@ -645,7 +646,8 @@ async fn a_turn_diff_comes_from_the_checkpoint_refs_and_fails_closed() {
         &git_options,
         TurnDiffQuery {
             session_id: "nope".into(),
-            turn_id: TurnId::from("turn-1"),
+            turn_id: Some(TurnId::from("turn-1")),
+            checkpoint: None,
             max_bytes: None,
         },
     )

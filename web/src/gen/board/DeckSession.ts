@@ -19,4 +19,10 @@ unread?: number,
  * match by folder, repository or forge. Absent when there is none. The
  * deck fills it for the owner and for tokens, never for a member.
  */
-project_id?: string, };
+project_id?: string, 
+/**
+ * The review counter of the session (DL-179): it grows with every
+ * comment change, send and delivery change, so every open board fetches
+ * the comments again. Absent when zero.
+ */
+review_rev?: number, };

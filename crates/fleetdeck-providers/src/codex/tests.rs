@@ -219,6 +219,11 @@ fn a_prompt_is_confirmed_only_by_its_own_user_message() {
         e,
         Event::RunStarted { origin: RunOrigin::Board, input_summary, .. } if input_summary == "hi"
     )));
+    // The run names the host input that started it (DL-179).
+    assert!(ev.iter().any(|e| matches!(
+        e,
+        Event::RunStarted { input_id: Some(id), .. } if id.as_str() == "in-1"
+    )));
     assert!(ev.iter().any(|e| matches!(e, Event::TurnStarted { .. })));
     let id = InputId::new("in-1");
     assert_eq!(

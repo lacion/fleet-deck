@@ -58,6 +58,9 @@ pub mod code {
     pub const BUSY: &str = "busy";
     /// The file system or `git` took too long.
     pub const TIMEOUT: &str = "timeout";
+    /// No finalized turn of the session has the commit pair of the
+    /// `checkpoint` selector (DL-179).
+    pub const CHECKPOINT_UNAVAILABLE: &str = "checkpoint_unavailable";
 }
 
 /// The directory that a query's paths are relative to.
@@ -201,6 +204,17 @@ pub struct FileSearch {
     pub backend: SearchBackend,
 }
 
+/// A pair of checkpoint commits that names one finalized turn exactly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "files/")]
+pub struct CheckpointRef {
+    /// The start checkpoint commit.
+    pub from_commit: String,
+    /// The completion checkpoint commit.
+    pub to_commit: String,
+}
+
 /// `files.diff` params: the diff of one finalized turn, from its start
 /// checkpoint to its completion checkpoint (L13: from checkpoint state, not
 /// from provider diff events).
@@ -209,7 +223,19 @@ pub struct FileSearch {
 #[ts(export_to = "files/")]
 pub struct TurnDiffQuery {
     pub session_id: SessionId,
-    pub turn_id: TurnId,
+    /// The provider turn id. The newest finalized turn with that id is used.
+    /// Ignored when `checkpoint` is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub turn_id: Option<TurnId>,
+    /// The stable selector (DL-179): the finalized checkpoint row of this
+    /// session whose commit pair equals it exactly. No such row:
+    /// `checkpoint_unavailable`.
+    /// A provider turn id can repeat after a provider restart; a commit pair
+    /// never changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub checkpoint: Option<CheckpointRef>,
     /// At most [`MAX_DIFF_BYTES`]; that is also the default.
     #[serde(default)]
     #[ts(type = "number | null")]

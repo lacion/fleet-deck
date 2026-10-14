@@ -35,6 +35,7 @@ fn samples() -> Vec<Event> {
         },
         Event::RunStarted {
             author: None,
+            input_id: None,
             run_id: "run-1".into(),
             input_summary: "hi".into(),
             origin: RunOrigin::Local,
@@ -466,4 +467,38 @@ fn a_session_base_without_a_ref_or_the_inferred_flag_decodes() {
     };
     assert_eq!(*git_ref, None);
     assert!(!*inferred);
+}
+
+/// `run.started.input_id` (DL-179) is optional on the wire: an older peer
+/// sends none, and the field is left out when it is absent.
+#[test]
+fn run_started_carries_an_optional_input_id() {
+    let old = r#"{"kind":"run.started","run_id":"r1","input_summary":"hi","origin":"board"}"#;
+    let Event::RunStarted { input_id, .. } = serde_json::from_str(old).unwrap() else {
+        panic!("not run.started");
+    };
+    assert_eq!(input_id, None);
+    let with = Event::RunStarted {
+        run_id: "r1".into(),
+        input_summary: "hi".into(),
+        origin: RunOrigin::Board,
+        author: None,
+        input_id: Some("in-7".into()),
+    };
+    let json = serde_json::to_value(&with).unwrap();
+    assert_eq!(json["input_id"], "in-7");
+    assert_eq!(serde_json::from_value::<Event>(json).unwrap(), with);
+    let without = Event::RunStarted {
+        run_id: "r1".into(),
+        input_summary: "hi".into(),
+        origin: RunOrigin::Board,
+        author: None,
+        input_id: None,
+    };
+    assert!(
+        serde_json::to_value(&without)
+            .unwrap()
+            .get("input_id")
+            .is_none()
+    );
 }

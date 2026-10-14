@@ -313,7 +313,8 @@ async fn a_turn_diff_drops_the_private_paths_from_the_patch_and_the_summary() {
     Arc::clone(&turns).capture_due().await;
     let q = || TurnDiffQuery {
         session_id: S1.into(),
-        turn_id: TurnId::from("turn-1"),
+        turn_id: Some(TurnId::from("turn-1")),
+        checkpoint: None,
         max_bytes: None,
     };
     // The control: without the private set the patch holds the station files

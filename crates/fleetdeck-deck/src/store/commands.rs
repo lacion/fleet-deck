@@ -152,6 +152,9 @@ fn list(conn: &Connection, sql: &str, p: impl rusqlite::Params) -> Result<Vec<De
     Ok(out)
 }
 
+/// Moves a `pending` command to `state`. The review of the command (DL-179)
+/// follows in the same transaction; the result is true when a review changed,
+/// so the caller tells the board.
 fn finish(
     conn: &Connection,
     id: &CommandId,
@@ -159,14 +162,17 @@ fn finish(
     receipt: Option<&Receipt>,
     reason: Option<&str>,
     now: i64,
-) -> Result<()> {
-    let receipt = receipt.map(serde_json::to_string).transpose()?;
-    conn.execute(
+) -> Result<bool> {
+    let json = receipt.map(serde_json::to_string).transpose()?;
+    let moved = conn.execute(
         "UPDATE commands SET state = ?2, receipt = ?3, reason = ?4, updated_at = ?5
          WHERE command_id = ?1 AND state = 'pending'",
-        params![id.as_str(), state_name(state), receipt, reason, now],
+        params![id.as_str(), state_name(state), json, reason, now],
     )?;
-    Ok(())
+    if moved == 0 {
+        return Ok(false);
+    }
+    super::review::command_ended(conn, id, state, receipt, reason)
 }
 
 /// Marks the pending commands of a removed station `failed`
@@ -346,22 +352,26 @@ impl DeckStore {
         let out = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let cmd = get(&tx, &id)?.ok_or_else(|| DeckError::UnknownCommand(id.0.clone()))?;
+            let mut review = false;
             if cmd.state == DeckCommandState::Pending {
                 let (state, reason) = next_state(&settle, cmd.attempts);
                 let receipt = match &settle {
                     Settle::Receipt(r) => Some(r),
                     Settle::Refused { .. } => None,
                 };
-                finish(&tx, &id, state, receipt, reason.as_deref(), now)?;
+                review = finish(&tx, &id, state, receipt, reason.as_deref(), now)?;
             }
             let out = get(&tx, &id)?
                 .ok_or_else(|| DeckError::Corrupt("a settled command is gone".to_owned()))?;
             tx.commit()?;
-            Ok(out)
+            Ok((out, review))
         })
         .await?;
         self.commands_changed();
-        Ok(out)
+        if out.1 {
+            self.board_changed();
+        }
+        Ok(out.0)
     }
 
     /// Ends every `pending` command whose `retry_until` has passed:
@@ -379,26 +389,30 @@ impl DeckStore {
                 "WHERE state = 'pending' AND retry_until <= ?1 ORDER BY created_at, command_id",
                 [now],
             )?;
+            let mut review = false;
             for cmd in &due {
                 let (state, reason) = if cmd.attempts > 0 {
                     (DeckCommandState::Ambiguous, "no_receipt")
                 } else {
                     (DeckCommandState::Failed, "not_sent")
                 };
-                finish(&tx, &cmd.command_id, state, None, Some(reason), now)?;
+                review |= finish(&tx, &cmd.command_id, state, None, Some(reason), now)?;
             }
             let mut changed = Vec::new();
             for cmd in due {
                 changed.extend(get(&tx, &cmd.command_id)?);
             }
             tx.commit()?;
-            Ok(changed)
+            Ok((changed, review))
         })
         .await?;
-        if !out.is_empty() {
+        if !out.0.is_empty() {
             self.commands_changed();
         }
-        Ok(out)
+        if out.1 {
+            self.board_changed();
+        }
+        Ok(out.0)
     }
 
     /// The `pending` commands of `station` before `retry_until`, oldest

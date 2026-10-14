@@ -8,7 +8,7 @@ use fleetdeck_proto::event::{Event, FileChange, ProviderKind};
 use fleetdeck_proto::files::{DiffScope, FileContent, SessionDiffQuery, code};
 use fleetdeck_testkit::Det;
 
-use super::{new_file_patch, repo_path, run};
+use super::{new_file_patch, repo_path, run, run_as};
 use crate::manager::policy::Policy;
 use crate::store::{NewEvent, NewSession, OfflineApprovalPolicy, Store, StoreConfig};
 use crate::workspace::private_paths::private_paths_tests::{
@@ -489,4 +489,52 @@ async fn a_session_whose_folder_is_private_has_no_diff() {
     .await
     .unwrap_err();
     assert_eq!(err.code, code::OUTSIDE_ROOTS);
+}
+
+/// The deck marks a call for a member (DL-179): the files of the member deny
+/// list leave the patch and the summary, tracked and untracked ones alike.
+#[tokio::test]
+async fn a_member_session_diff_loses_the_files_of_the_deny_list() {
+    let r = rig(true).await;
+    r.own_worktree().await;
+    std::fs::write(r.dir.join("a.txt"), "one\nmore\n").unwrap();
+    std::fs::write(r.dir.join(".env"), "TOKEN=abc\n").unwrap();
+    std::fs::write(r.dir.join("secrets.txt"), "password=x\n").unwrap();
+    std::fs::write(r.dir.join("plain.txt"), "fine\n").unwrap();
+    let ask = |member: bool| {
+        let (store, policy, private) = (r.store.clone(), r.policy.clone(), r.private.clone());
+        async move {
+            run_as(
+                &store,
+                &policy,
+                &private,
+                &GitOptions::isolated(),
+                SessionDiffQuery {
+                    session_id: "s1".into(),
+                    max_bytes: None,
+                },
+                member,
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let owner = ask(false).await;
+    for text in ["TOKEN=abc", "password=x", "+more", "+fine"] {
+        assert!(owner.patch.contains(text), "{text} in {}", owner.patch);
+    }
+    let member = ask(true).await;
+    for hidden in ["TOKEN", ".env", "password", "secrets.txt"] {
+        assert!(
+            !member.patch.contains(hidden),
+            "{hidden} in {}",
+            member.patch
+        );
+    }
+    assert!(member.patch.contains("+more") && member.patch.contains("+fine"));
+    assert_eq!(
+        member.summary.files_changed + 2,
+        owner.summary.files_changed
+    );
+    assert_eq!(member.base_oid, owner.base_oid);
 }

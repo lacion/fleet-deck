@@ -273,6 +273,7 @@ fn run(prompt: &str) -> Event {
         input_summary: prompt.to_owned(),
         origin: RunOrigin::Board,
         author: None,
+        input_id: None,
     }
 }
 

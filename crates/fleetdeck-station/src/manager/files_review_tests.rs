@@ -249,7 +249,8 @@ async fn a_turn_diff_leaves_out_private_paths_in_the_patch_and_the_summary() {
         &GitOptions::isolated(),
         TurnDiffQuery {
             session_id: S1.into(),
-            turn_id: TurnId::from("turn-1"),
+            turn_id: Some(TurnId::from("turn-1")),
+            checkpoint: None,
             max_bytes: None,
         },
     )
@@ -298,7 +299,8 @@ async fn a_large_diff_stops_at_the_budget() {
         &GitOptions::isolated(),
         TurnDiffQuery {
             session_id: S1.into(),
-            turn_id: TurnId::from("turn-1"),
+            turn_id: Some(TurnId::from("turn-1")),
+            checkpoint: None,
             max_bytes: Some(4096),
         },
     )

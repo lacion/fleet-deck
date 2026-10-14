@@ -28,6 +28,8 @@ pub mod project_session_routes;
 pub mod project_writes;
 pub mod projects_routes;
 pub mod read_routes;
+pub mod review_anchor_cache;
+pub mod review_routes;
 pub mod schedule_routes;
 pub mod secrets_routes;
 pub mod settings_routes;
@@ -47,7 +49,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::Extension;
 use axum::middleware;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, patch, post};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
@@ -434,6 +436,30 @@ pub fn router(board: Arc<Board>) -> Router {
         .route(
             "/api/sessions/{station}/{session}/drive/release",
             post(people_routes::drive_release),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/review",
+            get(review_routes::list),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/review/comments",
+            post(review_routes::add),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/review/comments/{comment}",
+            patch(review_routes::edit).delete(review_routes::delete),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/review/send",
+            post(review_routes::send),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/review/reviews/{review}/send-again",
+            post(review_routes::send_again),
+        )
+        .route(
+            "/api/stations/{station}/sessions/{session}/turn-diff",
+            get(review_routes::turn_diff),
         )
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&board),

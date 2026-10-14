@@ -309,6 +309,16 @@ impl DeckLink {
         Ok((cmd, new))
     }
 
+    /// Starts the first send of a command that a caller stored in its own
+    /// transaction (the review send, DL-179), after that transaction
+    /// committed. The router's pending-command recovery sends it too if this
+    /// call never runs.
+    pub(crate) fn dispatch_after_commit(self: &Arc<Self>, command_id: &CommandId) {
+        let ctx = Arc::clone(self);
+        let id = command_id.clone();
+        tokio::spawn(async move { ctx.send(&id).await });
+    }
+
     /// Sends the `pending` commands of `station` in their order.
     pub async fn dispatch_pending(&self, station: StationId) {
         match self.store.pending_commands(station).await {

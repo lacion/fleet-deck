@@ -154,6 +154,7 @@ impl Rig {
             };
             events.push(Event::RunStarted {
                 author: None,
+                input_id: None,
                 run_id: "run-1".into(),
                 input_summary: summary.to_owned(),
                 origin: RunOrigin::Board,
@@ -559,6 +560,7 @@ async fn a_maintenance_turn_after_the_intent_retires_the_undispatched_continuati
     let (s, intent) = stored_intent(&rig, "compact-later").await;
     let run = Event::RunStarted {
         author: None,
+        input_id: None,
         run_id: "run-2".into(),
         input_summary: "/compact".to_owned(),
         origin: RunOrigin::Board,

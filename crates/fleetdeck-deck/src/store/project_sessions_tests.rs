@@ -35,6 +35,7 @@ fn card(station: &str, id: &str, cwd: &str) -> DeckSession {
         status: CardStatus::Idle,
         unread: None,
         project_id: None,
+        review_rev: None,
     }
 }
 

@@ -67,7 +67,8 @@
       "kind": "run.started",
       "run_id": "run-1",
       "input_summary": "Ask me one question with your user-input question tool: which color do I prefer, red or blue? Then reply with exactly t…",
-      "origin": "board"
+      "origin": "board",
+      "input_id": "fd-in-1"
     }
   },
   {
