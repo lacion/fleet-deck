@@ -234,6 +234,11 @@ pub struct AccountsList {
     /// The names of the token variables found in the station environment
     /// (`GH_TOKEN`, ...). Never their values.
     pub env_tokens: Vec<String>,
+    /// True when the station offers the built-in Linear app (DL-185). Missing
+    /// means false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(optional, as = "Option<bool>")]
+    pub linear_builtin: bool,
 }
 
 #[cfg(test)]

@@ -59,7 +59,26 @@ pub const LINEAR_BUILTIN_REDIRECTS: [&str; 2] = [
     "https://localhost:7420/oauth/callback",
     "https://127.0.0.1:7420/oauth/callback",
 ];
+/// The owner flips this after the live checks of design §4 pass and records the result in the design file.
+pub const LINEAR_BUILTIN_VERIFIED: bool = false;
+/// The variable that turns the built-in Linear app on for the live checks.
+const LINEAR_BUILTIN_ENV: &str = "FLEETDECK_LINEAR_BUILTIN";
 const JIRA_SCOPE: &str = "read%3Ajira-work%20write%3Ajira-work%20read%3Ajira-user%20offline_access";
+
+/// True when the built-in Linear app is on: the release gate is passed, or
+/// the variable is `1`.
+pub(super) fn builtin_flag(verified: bool, env: Option<&str>) -> bool {
+    verified || env == Some("1")
+}
+
+/// [`builtin_flag`] with the constant and the station environment, read on
+/// each call.
+pub(super) fn linear_builtin_enabled() -> bool {
+    builtin_flag(
+        LINEAR_BUILTIN_VERIFIED,
+        std::env::var(LINEAR_BUILTIN_ENV).ok().as_deref(),
+    )
+}
 
 /// One open OAuth sign-in.
 pub struct Transaction {
@@ -161,23 +180,25 @@ impl Accounts {
     /// # Errors
     /// `invalid_params`; `unavailable` when the owner has set no app.
     pub fn oauth_start(&self, p: OAuthStartParams) -> Result<OAuthStarted, Fail> {
-        if !matches!(p.kind, AccountKind::Jira | AccountKind::Linear)
-            || !state_ok(&p.state)
-            || !redirect_ok(&p.redirect_uri)
-        {
+        if !matches!(p.kind, AccountKind::Jira | AccountKind::Linear) || !state_ok(&p.state) {
             return Err(invalid("the sign-in request is not valid"));
         }
-        let app = self.effective_app(p.kind)?.ok_or_else(|| {
+        let app = self.effective_app(p.kind)?;
+        // The built-in app has its own byte-equal list of redirects, checked
+        // first; any other redirect gets the localhost error.
+        if app.as_ref().is_some_and(|a| a.source == AppSource::Builtin) {
+            if !LINEAR_BUILTIN_REDIRECTS.contains(&p.redirect_uri.as_str()) {
+                return Err(Fail::new(
+                    codes::BUILTIN_NEEDS_LOCALHOST,
+                    BUILTIN_NEEDS_LOCALHOST_TEXT,
+                ));
+            }
+        } else if !redirect_ok(&p.redirect_uri) {
+            return Err(invalid("the sign-in request is not valid"));
+        }
+        let app = app.ok_or_else(|| {
             Fail::unavailable("the OAuth app of this tracker is not set; set it first")
         })?;
-        if app.source == AppSource::Builtin
-            && !LINEAR_BUILTIN_REDIRECTS.contains(&p.redirect_uri.as_str())
-        {
-            return Err(Fail::new(
-                codes::BUILTIN_NEEDS_LOCALHOST,
-                BUILTIN_NEEDS_LOCALHOST_TEXT,
-            ));
-        }
         let (url, verifier) = if p.kind == AccountKind::Jira {
             (
                 format!(

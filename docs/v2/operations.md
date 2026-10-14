@@ -90,6 +90,8 @@ Check the setup from the board (project preflight) or with the `integrations.sta
 
 Open Settings, then Accounts, then Linear. Fleet Deck has a built-in Linear app. Use it when you set up no Linear OAuth app of your own.
 
+Until the checks pass, `LINEAR_BUILTIN_VERIFIED` is false: the built-in app is off unless the station runs with `FLEETDECK_LINEAR_BUILTIN=1` (for the checks).
+
 - The section shows "Uses the built-in Fleet Deck app." and the Connect button is on.
 - The built-in app is a public client. The station holds a public client id and no client secret. The sign-in uses PKCE.
 - The built-in app accepts two addresses only: `https://127.0.0.1:7420/oauth/callback` and `https://localhost:7420/oauth/callback`. Open the board at `https://127.0.0.1:7420` or `https://localhost:7420` on the deck machine, then press Connect.

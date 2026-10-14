@@ -8,8 +8,9 @@ use fleetdeck_proto::accounts::{
     AccountKind, AccountMethod, AccountStatus, AppSet, OAuthFinishParams, OAuthStartParams,
 };
 
+use super::oauth::builtin_flag;
 use super::store::{AppSourceDisk, StoredAccount};
-use super::test_support::{curl, log, programs, service};
+use super::test_support::{curl, log, programs, script, service};
 use super::{Accounts, now_secs};
 
 const SECRET: &str = "client-secret-canary-1";
@@ -644,4 +645,145 @@ async fn a_refresh_drops_its_answer_when_the_file_is_gone_or_was_written_meanwhi
         .await
         .unwrap();
     assert_eq!(list["accounts"][0]["status"], "ok");
+}
+
+// DL-185 release gate: the built-in Linear app is off until the owner flips it.
+
+const BUILTIN_REDIRECT: &str = "https://127.0.0.1:7420/oauth/callback";
+
+fn start_at(
+    a: &Accounts,
+    kind: AccountKind,
+    redirect: &str,
+) -> Result<String, crate::integrations::exec::Fail> {
+    a.oauth_start(OAuthStartParams {
+        kind,
+        state: STATE.into(),
+        redirect_uri: redirect.into(),
+    })
+    .map(|s| s.authorize_url)
+}
+
+#[test]
+fn the_builtin_flag_is_on_for_the_verified_constant_or_the_value_one_only() {
+    assert!(builtin_flag(true, None));
+    assert!(builtin_flag(true, Some("0")));
+    assert!(builtin_flag(false, Some("1")));
+    assert!(!builtin_flag(false, None));
+    assert!(!builtin_flag(false, Some("0")));
+    assert!(!builtin_flag(false, Some("true")));
+    assert!(!builtin_flag(false, Some("")));
+}
+
+#[tokio::test]
+async fn with_the_gate_closed_linear_needs_an_owner_app_and_the_list_says_so() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut a = svc(tmp.path(), &[]);
+    let err = start_at(&a, AccountKind::Linear, BUILTIN_REDIRECT).unwrap_err();
+    assert_eq!(err.code, "unavailable");
+    assert_eq!(
+        err.message,
+        "the OAuth app of this tracker is not set; set it first"
+    );
+    // An owner app works with any valid redirect.
+    set_app(&a, AccountKind::Linear);
+    assert!(start_at(&a, AccountKind::Linear, REDIRECT).is_ok());
+    let list = a
+        .call("accounts.list", serde_json::json!({}), &[])
+        .await
+        .unwrap();
+    assert!(list.get("linear_builtin").is_none(), "{list}");
+    // The gate open: the list says so, and an owner app still wins.
+    a.builtin_probe = || true;
+    let list = a
+        .call("accounts.list", serde_json::json!({}), &[])
+        .await
+        .unwrap();
+    assert_eq!(list["linear_builtin"], true);
+    assert!(start_at(&a, AccountKind::Linear, REDIRECT).is_ok());
+}
+
+#[tokio::test]
+async fn a_builtin_account_made_earlier_refreshes_with_its_own_app_while_the_gate_is_closed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = svc(
+        tmp.path(),
+        &[("grant_type=refresh_token", &refresh_answer(), 200)],
+    );
+    let mut made = stored(AccountKind::Linear, -10, "https://linear.app/acme", None);
+    made.app_source = Some(AppSourceDisk::Builtin);
+    made.app_client_id = Some("builtin-made-it".into());
+    a.store()
+        .unwrap()
+        .put_account("linear-00000001", &made)
+        .unwrap();
+    assert_eq!(a.fresh("linear-00000001").await.unwrap().expose(), ACCESS2);
+    let stdin = log(&tmp.path().join("curl"), "stdin.log");
+    assert!(stdin.contains("client_id=builtin-made-it"), "{stdin}");
+    assert!(!stdin.contains("client_secret"), "{stdin}");
+}
+
+/// A legacy Linear account (no app record) with an owner app stored, whose
+/// refresh runs with `curl`.
+async fn legacy_refresh(
+    tmp: &Path,
+    curl: std::path::PathBuf,
+) -> (Accounts, crate::integrations::exec::Fail) {
+    let mut p = programs(tmp);
+    p.curl = curl;
+    let a = service(tmp, p);
+    set_app(&a, AccountKind::Linear);
+    a.store()
+        .unwrap()
+        .put_account(
+            "linear-00000001",
+            &stored(AccountKind::Linear, -10, "https://linear.app/acme", None),
+        )
+        .unwrap();
+    let err = a.fresh("linear-00000001").await.unwrap_err();
+    (a, err)
+}
+
+#[tokio::test]
+async fn a_legacy_refresh_that_fails_without_an_answer_is_not_app_changed() {
+    // curl exits 28 (timeout), and curl does not start.
+    let tmp = tempfile::tempdir().unwrap();
+    let timeout = script(tmp.path(), "curl-timeout", "cat > /dev/null; exit 28");
+    let missing = tmp.path().join("no-such-curl");
+    for curl in [timeout, missing] {
+        let (a, err) = legacy_refresh(tmp.path(), curl).await;
+        assert_eq!(err.code, "unavailable", "{err:?}");
+        let list = a
+            .call("accounts.list", serde_json::json!({}), &[])
+            .await
+            .unwrap();
+        assert_eq!(list["accounts"][0]["status"], "needs_login", "{list}");
+        let stored = a
+            .store()
+            .unwrap()
+            .account("linear-00000001")
+            .unwrap()
+            .unwrap();
+        assert!(stored.app_source.is_none() && stored.app_client_id.is_none());
+    }
+}
+
+#[tokio::test]
+async fn a_legacy_refresh_that_gets_a_non_2xx_answer_is_app_changed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let curl = curl(
+        &tmp.path().join("curl"),
+        &[(
+            "grant_type=refresh_token",
+            r#"{"error":"invalid_grant"}"#,
+            400,
+        )],
+    );
+    let (a, err) = legacy_refresh(tmp.path(), curl).await;
+    assert_eq!(err.code, "app_changed");
+    let list = a
+        .call("accounts.list", serde_json::json!({}), &[])
+        .await
+        .unwrap();
+    assert_eq!(list["accounts"][0]["status"], "needs_reconnect", "{list}");
 }

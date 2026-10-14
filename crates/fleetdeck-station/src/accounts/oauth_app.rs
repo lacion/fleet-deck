@@ -99,12 +99,15 @@ pub(super) fn app_changed() -> Fail {
 
 impl Accounts {
     /// The app of a new sign-in of `kind`: the stored owner app, else for
-    /// Linear the built-in app. Jira without an owner app has none.
+    /// Linear the built-in app when it is on (`builtin_probe`). Jira without
+    /// an owner app has none.
     pub(super) fn effective_app(&self, kind: AccountKind) -> Result<Option<EffectiveApp>, Fail> {
         let owner = self.store()?.app(kind).map_err(store_fail)?;
         Ok(match (owner, kind) {
             (Some(app), _) => Some(EffectiveApp::owner(app)),
-            (None, AccountKind::Linear) => {
+            // The release gate (design §4): without it, Linear needs an
+            // owner app for a new sign-in.
+            (None, AccountKind::Linear) if (self.builtin_probe)() => {
                 Some(EffectiveApp::builtin(LINEAR_BUILTIN_CLIENT_ID.to_owned()))
             }
             (None, _) => None,
@@ -119,7 +122,9 @@ impl Accounts {
     /// # Errors
     /// `app_changed` (no request) when the app of the account is not the
     /// stored one, and for a legacy account when no owner app is stored or
-    /// Linear does not accept the refresh; the provider failure otherwise.
+    /// Linear answers the refresh with a non-2xx status; the provider
+    /// failure otherwise (also for a legacy account whose request got no
+    /// answer).
     pub(super) async fn refresh_linear(
         &self,
         account: &StoredAccount,
@@ -153,8 +158,9 @@ impl Accounts {
         match http::post_form(&self.programs, LINEAR_TOKEN, &fields).await {
             Ok(answer) => Ok((answer, legacy.then(|| app.client_id.clone()))),
             // A legacy account: Linear refused the one app that the station
-            // may try, and no other is tried.
-            Err(_) if legacy => Err(app_changed()),
+            // may try, and no other is tried. A failure without an answer
+            // (timeout, curl) says nothing about the app.
+            Err(e) if legacy && e.status != 0 => Err(app_changed()),
             Err(e) => Err(e.fail),
         }
     }
@@ -223,7 +229,10 @@ mod tests {
     fn with_cases(tmp: &Path, cases: &[(&str, &str, u16)]) -> Accounts {
         let mut p = programs(tmp);
         p.curl = curl(&tmp.join("curl"), cases);
-        service(tmp, p)
+        let mut a = service(tmp, p);
+        // These tests are about the built-in app: the gate is open.
+        a.builtin_probe = || true;
+        a
     }
 
     fn set_owner(a: &Accounts, client_id: &str) {
@@ -314,19 +323,14 @@ mod tests {
             "https://127.0.0.1:7420.evil.example/oauth/callback",
             "https://localhost.evil.example:7420/oauth/callback",
             "https://LOCALHOST:7420/oauth/callback",
+            "https://127.0.0.1:7420/oauth/callback2",
+            "https://127.0.0.1:7420/oauth/callback?x=1",
+            "https://127.0.0.1:7420/oauth/callback#x",
         ] {
             let err = start(&a, AccountKind::Linear, bad).unwrap_err();
             assert_eq!(err.code, "builtin_needs_localhost", "{bad}");
             assert_eq!(err.message, BUILTIN_NEEDS_LOCALHOST_TEXT, "{bad}");
         }
-        // A path suffix does not pass the existing redirect check.
-        let err = start(
-            &a,
-            AccountKind::Linear,
-            "https://127.0.0.1:7420/oauth/callback2",
-        )
-        .unwrap_err();
-        assert_eq!(err.code, "invalid_params");
         assert!(log(&tmp.path().join("curl"), "argv.log").is_empty());
         assert!(a.transactions.lock().unwrap().is_empty());
     }

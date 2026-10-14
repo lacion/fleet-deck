@@ -240,6 +240,7 @@ export function AccountsTab({ route, stations, navigate, actions, origin, initia
                   kind={kind}
                   app={appOf(kind)}
                   accounts={list.accounts.filter((a) => a.kind === kind)}
+                  linearBuiltin={list.linear_builtin === true}
                   origin={boardOrigin}
                   busy={busy}
                   waiting={waiting?.kind === kind}

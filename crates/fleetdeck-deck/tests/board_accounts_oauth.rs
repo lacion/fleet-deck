@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use common::board::{BoardClient, Http};
 use common::*;
+use fleetdeck_proto::integrations::{ProjectInput, TrackerBinding, TrackerKind};
 use fleetdeck_proto::link::{Outcome, Scope, WireError};
 use harness::*;
 use serde_json::json;
@@ -379,6 +380,55 @@ async fn the_builtin_app_codes_reach_the_board_with_their_fixed_text() {
         .await;
         expect(&r, 409, code);
         assert_eq!(r.body["message"], text, "{}", r.text);
+        assert!(!r.text.contains(CANARY), "{}", r.text);
+    }
+}
+
+/// DL-185: a project issue read whose account refresh gives `app_changed` is
+/// a 409 with the fixed text; the station text does not reach the board.
+#[tokio::test]
+async fn a_project_issue_read_with_a_changed_app_is_a_409_with_the_fixed_text() {
+    const CANARY: &str = "station-text-canary-185";
+    const TEXT: &str = "The Linear app of this account changed. Connect the account again.";
+    let mut s = setup().await;
+    let project =
+        s.f.store
+            .create_project(
+                s.f.station.to_string(),
+                ProjectInput {
+                    name: "app".to_owned(),
+                    station: "fake".to_owned(),
+                    path: "/work/app".to_owned(),
+                    forge: None,
+                    trackers: vec![TrackerBinding {
+                        tracker: "acct".to_owned(),
+                        kind: TrackerKind::Linear,
+                        key: "ENG".to_owned(),
+                    }],
+                    prompt_template: None,
+                    review_prompt: None,
+                },
+            )
+            .await
+            .unwrap();
+    let headers = refs(&s.h);
+    for url in [
+        format!("/api/projects/{}/issues", project.project_id),
+        format!("/api/projects/{}/issues/ENG-1", project.project_id),
+    ] {
+        let call = s.c.get(&url, &headers);
+        let (r, req) = exchange(
+            &mut s.station,
+            call,
+            Outcome::Err(WireError::new(
+                "app_changed",
+                format!("the station says {CANARY}"),
+            )),
+        )
+        .await;
+        assert!(req.method.starts_with("issues."), "{}", req.method);
+        expect(&r, 409, "app_changed");
+        assert_eq!(r.body["message"], TEXT, "{}", r.text);
         assert!(!r.text.contains(CANARY), "{}", r.text);
     }
 }

@@ -47,11 +47,12 @@ pub fn log(dir: &Path, name: &str) -> String {
     std::fs::read_to_string(dir.join(name)).unwrap_or_default()
 }
 
-/// A service with a store in `tmp/data/accounts`, no environment token and
-/// short limits.
+/// A service with a store in `tmp/data/accounts`, no environment token, the
+/// built-in Linear app off and short limits.
 pub fn service(tmp: &Path, programs: Programs) -> Accounts {
     let mut accounts = Accounts::new(programs);
     accounts.env_probe = |_| false;
+    accounts.builtin_probe = || false;
     accounts.limits.start_wait = Duration::from_secs(5);
     accounts.attach(AccountStore::open(&tmp.join("data").join("accounts")).unwrap());
     accounts
