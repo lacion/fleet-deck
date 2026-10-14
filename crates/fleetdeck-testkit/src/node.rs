@@ -94,9 +94,18 @@ impl TempNode {
         self.write_config(self.dirs.station_config(), text)
     }
 
-    /// Writes `deck.toml` (mode 0600) and returns its path.
+    /// Writes `deck.toml` (mode 0600) and returns its path. A text without
+    /// `tailnet_auto` gets `tailnet_auto = false`, so a test deck never asks
+    /// the host's Tailscale.
     pub fn write_deck_toml(&self, text: &str) -> io::Result<PathBuf> {
-        self.write_config(self.dirs.deck_config(), text)
+        if text.contains("tailnet_auto") {
+            self.write_config(self.dirs.deck_config(), text)
+        } else {
+            self.write_config(
+                self.dirs.deck_config(),
+                &format!("{text}\ntailnet_auto = false\n"),
+            )
+        }
     }
 
     fn write_config(&self, path: PathBuf, text: &str) -> io::Result<PathBuf> {

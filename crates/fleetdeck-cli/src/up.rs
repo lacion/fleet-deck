@@ -160,9 +160,10 @@ mod tests {
     use super::*;
 
     async fn deck(node: &TempNode) -> RunningDeck {
-        let config =
-            DeckConfig::parse("listen = [\"127.0.0.1:0\"]\nlink_listen = [\"127.0.0.1:0\"]\n")
-                .unwrap();
+        let config = DeckConfig::parse(
+            "listen = [\"127.0.0.1:0\"]\nlink_listen = [\"127.0.0.1:0\"]\ntailnet_auto = false\n",
+        )
+        .unwrap();
         RunningDeck::start(
             node.dirs(),
             &config,
