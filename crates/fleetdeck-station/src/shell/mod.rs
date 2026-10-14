@@ -421,6 +421,7 @@ impl Shells {
     ///
     /// # Errors
     /// Why the shell did not start, and whether its process may still run.
+    #[allow(clippy::too_many_arguments)]
     pub fn handover(
         &self,
         shell_id: &str,
@@ -429,6 +430,7 @@ impl Shells {
         (cols, rows): (u16, u16),
         now: i64,
         max_shells: u32,
+        allow_bypass: bool,
     ) -> Result<Option<u32>, StartError> {
         let instance = self
             .config
@@ -449,6 +451,7 @@ impl Shells {
             &launch.native,
             launch.mode.as_deref(),
             launch.model.as_deref(),
+            allow_bypass,
         );
         let launch_env = Launch {
             program,

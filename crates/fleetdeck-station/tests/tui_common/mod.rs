@@ -198,6 +198,7 @@ impl Rig {
                     &policy,
                     &Bindings::default(),
                     CommandOrigin::Local,
+                    false,
                     command,
                 )
             })

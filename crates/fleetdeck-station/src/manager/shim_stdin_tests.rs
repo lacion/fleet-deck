@@ -68,6 +68,7 @@ async fn send(det: &Det, s: &Store, policy: &Policy, id: &str, command: SessionC
             &policy,
             &crate::coordinator::Bindings::default(),
             CommandOrigin::Board,
+            false,
             command,
         )
     })

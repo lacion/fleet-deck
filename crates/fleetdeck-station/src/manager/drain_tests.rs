@@ -96,3 +96,42 @@ fn a_draining_station_refuses_an_import() {
     assert!(drain::guard(true, &import).is_err());
     assert!(drain::guard(false, &import).is_ok());
 }
+
+/// NV-25: a submit that read the flag before the drain began holds the drain
+/// until its decision is done.
+#[tokio::test]
+async fn a_drain_waits_for_a_submit_that_is_being_decided() {
+    let st = Station::new(4).await;
+    let deciding = st.manager.enter_drain_submit();
+    let report = st.manager.drain(Duration::from_millis(150)).await.unwrap();
+    assert!(!report.idle, "{report:?}");
+    assert_eq!(
+        report.busy,
+        vec!["(a command was being decided)".to_owned()]
+    );
+
+    drop(deciding);
+    let report = st.manager.drain(WAIT).await.unwrap();
+    assert!(report.idle, "{report:?}");
+    assert!(report.busy.is_empty());
+}
+
+#[tokio::test]
+async fn a_submit_that_creates_no_work_does_not_hold_the_drain() {
+    let mut st = Station::new(4).await;
+    let cwd = st.workspace();
+    let s = st.start(&cwd, Some("hello")).await;
+    st.wait_for("turn done", |e| {
+        matches!(e, Event::TurnCompleted { .. }).then_some(())
+    })
+    .await;
+    st.manager.drain(WAIT).await.unwrap();
+    // The count of a settling command ends with its submit.
+    st.accepted(SessionCommand::Rename {
+        session_id: s,
+        title: Some("renamed".to_owned()),
+    })
+    .await;
+    let report = st.manager.drain(WAIT).await.unwrap();
+    assert!(report.idle, "{report:?}");
+}

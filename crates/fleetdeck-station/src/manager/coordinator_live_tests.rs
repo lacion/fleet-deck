@@ -227,7 +227,7 @@ async fn live_round(kind: ProviderKind) {
         manager
             .store()
             .decide(envelope, Caller::deck("k"), move |d| {
-                decide::decide(d, &p, &b, CommandOrigin::Board, command)
+                decide::decide(d, &p, &b, CommandOrigin::Board, false, command)
             })
             .await
             .unwrap()
