@@ -1,6 +1,7 @@
 # Resume on the shim host (DL-182)
 
-- **Status:** Proposed (revision 1, 2026-10-14). Extends ADR-005 (revision 3, accepted) §4.6 and §6. Needs an adversary DESIGN REVIEW PASS before code.
+- **Status:** Proposed (revision 2, 2026-10-14). Revision 1 (commit 3fda6b7f) got DESIGN REVIEW FAIL (4 blockers, 4 major, 2 minor; `/tmp/adversary-report-9fbb0832.md`); §10 maps them. Extends ADR-005 (revision 3, accepted) §4.5, §4.6 and §6. Needs a PASS before code.
+- **Platform scope:** Linux only for the new evidence (reboot, process inspection). On macOS the identity and inspection readers do not exist (`host/shim/identity.rs:55,61`): a shim exit there is never proof (§1a), so a macOS shim session can be resumed only after an owner reconciliation (§4.2), which on macOS always shows "inspection unavailable".
 - **Owner request (2026-10-14):** "do 2. The real fix: build resume on the shim host." The owner's station runs `host = "shim"`; every resume ends with `start_failed: resume is not supported on the shim host yet` (DL-118).
 - **Unchanged:** every ADR-005 rule (launch journal, attach handshake, identities, cursors, stdin settlement, exit acknowledgment, recovery order). A resume starts a **new** shim and a **new** provider process; it never reattaches, and it is shown as `resumed`, never `reattached` (ADR-005 §6).
 
@@ -11,21 +12,30 @@
 - Recovery never uses the boot id: a row whose shim is gone without a valid exit file becomes `lost` (`execution_unknown`), also after a reboot, so a reboot leaves every shim session unresumable. ADR-005 §4.6 names a verified reboot as sufficient termination evidence and an audited owner reconciliation as the other path; neither is built.
 - Hibernation (`manager/hibernate.rs`) stops idle sessions and relies on resume, without a host check.
 
+## 1a. The termination standard (what "ended" means)
+
+- A resume or an import may start a provider for a native conversation only when no earlier **provider execution** of that conversation may still run. The provider execution is the provider process (the stored `provider_identity`: pid, start time, boot id) and every live member of its process group and session.
+- **Escaped descendants** (a process that called `setsid()` and left both the group and the session, for example a background dev server) are **not** a provider execution: they do not hold the native conversation and cannot write to it. They are reported (§4.2) but do not block a resume. This is a deliberate scope decision of this design; ADR-005 §4.6's stricter rule stays for a **shim loss** (no exit report), where even the provider process itself is unproven.
+- **Inspection must be complete to count as proof.** Today `group_members` (`crates/fleetdeck-providers/src/host/shim/server_proc.rs:102`) returns 0 when `/proc` cannot be listed, skips entries it cannot read, and returns 0 on every non-Linux platform, so an incomplete or impossible inspection reads as "no members" (fail open). This design changes it to return `Option<u32>`: `None` when `/proc` cannot be listed, when any `/proc/<pid>/stat` read fails with an error other than `ENOENT`/`ESRCH` (a process that ended between the listing and the read is skipped), or on a platform without a reader. `ExitReport.descendants_remaining` becomes `Option<u32>` on the wire (shim protocol version +1, N/N−1 per ADR-005 §5.3: an older shim's value is treated as unverified). The station maps `None` to the new row reason `exit_unverified`, which is not proof.
+- Proof is therefore one of: `exited` with `descendants_remaining == Some(0)` (the shim saw the provider exit through `waitpid` and found no group or session member), `ended_by_reboot` (§4.1, revalidated at launch), or `reconciled_by_owner` (§4.2).
+
 ## 2. Durable resume launch (providers)
 
 - New `ProviderAdapter` method `durable_resume_launch(&self, spec: &SessionSpec, native_id: &NativeSessionId) -> Result<DurableLaunch>`; the default returns `ProviderError::Unsupported("durable resume")`.
 - Claude: the same as `launch_durable` with `Launch { resume: Some(native_id), fork: false, .. }` (so `cli_args` adds `--resume <id>`, exactly as the direct resume) and `CoreConfig.resumed = Some(true)`.
 - Codex: the same as `launch_durable` with `thread.resume = Some(native_id)`, `fork = false` (the durable handshake sends `thread/resume`), and `CoreConfig.resumed = Some(true)`.
-- The mode, model, capability and workspace rules are those of `launch_durable` (a mode the instance does not offer fails before any process). The resumed spec is the stored spec (DL-118), never more permissive.
+- The mode, model, capability and workspace rules are those of `launch_durable`: Claude falls back to the safest mode when the stored mode is not offered (`claude/args.rs:101`, `effective_mode`), Codex refuses an unoffered mode before any process (`codex/durable_launch.rs:19`). The resumed spec is the stored spec (DL-118), never more permissive.
 - The native id is not secret; it goes into argv for Claude as the direct resume already does.
 
 ## 3. Station dispatch
 
 In `SessionTarget::start` with `resume = Some(native)` and a shim host:
 
-1. **Recheck termination at dispatch:** read `unended_execution(session)` again (a store read, no decision). `Some(why)` → `start_failed("the previous execution is not proven ended: <why>")`, `NotDispatched("execution_not_ended")`. This closes the window between the decision and the dispatch.
+1. **Recheck termination at dispatch, across sessions:** read the new `unended_native(provider_instance, native_id, except_session)` (below) again (a store read, no decision). `Some(why)` → `start_failed("the previous execution is not proven ended: <why>")`, `NotDispatched("execution_not_ended")`. For an `ended_by_reboot` row it also rereads the current boot id and requires it to differ from the stored one (§4.1). This closes the window between the decision and the dispatch.
+
+**One native conversation, one execution (all sessions).** `unended_execution` today checks only the shim rows of one Fleet Deck session (`store/resumes.rs:137`), and `native_session_in_use` (`:49`) ignores `lost` and `exited` sessions, so an import of a lost session's native id creates a second session with no rows and passes. New store function `unended_native(instance, native_id, except)`: every session of this station whose native resume identity (the stored native session id, for Claude the `session_id`, for Codex the `thread_id`) equals `native_id` on the same provider instance is checked: it must not be live, starting, holding a start or resume effect that is not settled, or have any shim row without proof (§1a). It is used by the decision of `session.resume`, of `session.import` and of the hibernated-input resume (DL-180), and again at dispatch. The decision that admits a resume or an import also reserves the native conversation: the session's `state = starting` row and its unsettled effect are themselves an unresolved execution for every other session, so two admissions cannot both pass (the station decides in one writer transaction).
 2. `adapter.durable_resume_launch(spec, native)`: an error → `start_failed(<error>)`, `NotDispatched("start_failed: …")`. No fallback to a direct-host resume (a session keeps the host of its station, ADR-005 §2).
-3. `start_durable(effect, spec, prompt, shims, launch, cancel)` exactly as a new durable start: a new `shim_id`, the `starting` row, the journal, the attach, the driver, then the first input (the resume's prompt, if any). The new row is the session's newest shim row; earlier rows stay as they are (their termination is what the decision checked).
+3. `start_durable(effect, spec, prompt, shims, launch, cancel)` as a new durable start. Both durable cores (`manager/shim_claude.rs:86`, `manager/shim_codex.rs:84`) are changed to accept `EffectPayload::Resume { prompt: Some(input), .. }` as the first input through the same durable first-input path as `Start` (its checkpoint, frame identity, write settlement and failure recording); today they reject every `Resume` payload (`not_a_shim_command`). The flow: a new `shim_id`, the `starting` row, the journal, the attach, the driver, then the first input (the resume's prompt, if any). The new row is the session's newest shim row; earlier rows stay as they are (their termination is what the decision checked).
 4. The session tools (DL-165) follow the shim-host rule of a new durable start (today: `prepare_fleet` with `durable = true` gives "no session tools: durable host" and the info log).
 5. `REASON_RESUME_UNSUPPORTED` is removed; the `start_failed` text "resume is not supported on the shim host yet" no longer exists.
 
@@ -33,27 +43,26 @@ The same path serves every resume: the board's Resume and "Resume all", a hibern
 
 ## 4. Termination evidence after a shim loss
 
-### 4.1 Verified reboot (ADR-005 §4.6)
+### 4.1 Verified reboot (ADR-005 §4.6), Linux only
 
-- At recovery (ADR-005 §3.2), before a row is classified `lost` with `execution_unknown` (shim socket gone, no valid exit file, or the attach failed because the shim is gone), the station compares the row's stored `provider_identity.boot_id` with the current boot id (Linux `/proc/sys/kernel/random/boot_id`; macOS `kern.bootsessionuuid`, the same reader as `host/shim/identity.rs`).
-- Different, both non-empty and readable → the row becomes `exited` with the new reason `ended_by_reboot`; its open effects follow the exit rules (claimed effects `outcome_unknown` as for a lost shim; the session ends with `session.ended { reason: "station_reboot" }`).
-- Equal, empty, missing (a row in `starting` without an identity) or unreadable → unchanged: `lost`, `execution_unknown` (fail closed).
-- `unended_execution` accepts `exited` with reason `exited` **or** `ended_by_reboot` (new constant `PROVEN_BY_REBOOT`).
-- A row that the station already recorded as `lost` before this build: at the first recovery of this build, the same comparison runs for every `lost` row with `execution_unknown` whose session is not running; a match of the rule moves it to `ended_by_reboot` (the boot id cannot go back, so a later reboot keeps it true).
+- At recovery (ADR-005 §3.2), for **every** unresolved shim row of this incarnation that has a stored `provider_identity` (whatever its diagnostic reason: `execution_unknown`, `attach_refused`, `identity_mismatch`, `exit_not_reported`, `exit_unverified`, a checkpoint or driver failure from `manager/shims.rs:214`, `manager/shim_station.rs:195-257`, or `exited_descendants_remaining`), the station reads the current boot id (`/proc/sys/kernel/random/boot_id`). When both values are non-empty and differ, it records the proof `ended_by_reboot` **next to** the row (a new column `proof`, the row's `state` and diagnostic `reason` stay as they are), with the boot id it read (`proof_boot_id`). Equal, empty, missing or unreadable → no proof (fail closed).
+- **Revalidation at launch.** `ended_by_reboot` is not permanent: the dispatch of a resume or import (§3 step 1) reads the boot id again and accepts the proof only when the current boot id still differs from the row's stored `provider_identity.boot_id` **and** no live process has the stored `provider_identity` (pid + start time). A VM memory restore that brings back the old boot id therefore makes the proof invalid again.
+- The session's state stays as recovery set it (`lost` stays `lost`), so ADR-007 auto-continue discovery (`manager/auto_continue.rs:167-201`) is not disturbed. **Auto-continue on shim stations stays off** in this design (`auto_continue.rs:110` keeps its shim exclusion); a later design can lift it. The board's Resume uses the proof.
+- `unended_execution` and `unended_native` accept a row with `proof = 'ended_by_reboot'` (revalidated at dispatch) or `proof = 'reconciled_by_owner'`, or `state = 'exited'` with reason `exited` (a verified zero count, §1a).
 
 ### 4.2 Owner reconciliation (ADR-005 §4.6)
 
-For a session whose newest shim row is `lost` (`execution_unknown`, `attach_refused`, `identity_mismatch`, `exit_not_reported`) or `exited` with `exited_descendants_remaining`:
+For a session with any unresolved shim row (any `lost` reason, `exit_unverified`, or `exited_descendants_remaining`), whatever the diagnostic reason:
 
-- **Check** (`GET /api/sessions/{station}/{session}/execution`, owner only; station method `session.execution_check`, non-mutating): the station runs the ADR-005 §4.6 session-and-group check for the stored identity: (a) a live process with the stored `provider_identity` (pid + start time + boot id), (b) live members of the provider's process group or session (Linux `/proc/*/stat` fields 5–6; macOS `proc_listpids(PROC_PGRP_ONLY)` and the session id). Answer: `{ shim_id, reason, same_boot: bool, identity_alive: bool, group_members: [{pid, command (first 120 chars, no args)}], session_members: [...], complete: bool }`. Any read error → `complete: false` and the error text. The check never kills anything.
+- **Check** (`GET /api/sessions/{station}/{session}/execution`, owner only; station method `session.execution_check`, non-mutating): the station runs the ADR-005 §4.6 session-and-group check for the stored identity: (a) a live process with the stored `provider_identity` (pid + start time + boot id), (b) live members of the provider's process group or session (Linux `/proc/*/stat` fields 5–6; macOS `proc_listpids(PROC_PGRP_ONLY)` and the session id). Answer: `{ shim_id, reason, same_boot: bool, identity_alive: bool, group_members: [{pid, command (first 120 chars, no args)}], session_members: [...], complete: bool }`. Any read error → `complete: false` and the error text; on macOS always `complete: false` ("inspection unavailable on this platform"). The check also lists, for information only, processes outside the group and session whose parent chain leads to the provider's former pid (best effort, may be empty): these are escaped descendants (§1a) and do not block. The check never kills anything.
 - **Board:** a lost or descendants-remaining session shows "The previous process may still run" with the check result. With live members it lists them and says "Stop these processes on the station, then check again". With none and `complete: true` it offers "Mark the previous run as ended" with the warning "Fleet Deck cannot see a process that left its process group. Mark it ended only if you know that the agent is not running."
-- **Mark ended** (`POST …/execution/reconcile { shim_id }`, owner only, CSRF, audited, station command `session.reconcile_execution { session_id, shim_id }`, mutating with a receipt): the station runs the check again inside the decision path; it refuses (`invalid_state`, stored) when `identity_alive` or any group or session member is live, or when the check is incomplete; else it moves that row to `exited` with reason `reconciled_by_owner` and appends `session.execution_reconciled { shim_id }`. `unended_execution` accepts this reason too (`PROVEN_BY_OWNER`). It never touches a row that is `starting` or `running`.
+- **Mark ended** (`POST …/execution/reconcile { shim_id }`, owner only, CSRF, audited, station command `session.reconcile_execution { session_id, shim_id }`, mutating with a receipt): the station runs the check again inside the decision path; it refuses (`invalid_state`, stored) when `identity_alive` or any group or session member is live; when the check is incomplete (always on macOS) it is accepted only with the extra body field `"inspection_unavailable_ack": true`, which the board sends only after the owner ticks "I checked on the station that the agent is not running". Accepted: it sets `proof = 'reconciled_by_owner'` on that row (state and reason unchanged) and appends `session.execution_reconciled { shim_id, inspected: bool }`. `unended_execution` accepts this reason too (`PROVEN_BY_OWNER`). It never touches a row that is `starting` or `running`.
 - Member and token principals get `403`; the action needs the owner, like other owner-only station actions. No elevation (it changes no policy and no credential; the audit row records it).
 
 ## 5. Hibernation
 
-- `hibernate` candidates on a shim station: allowed, because a resume now works. A hibernation stop is graceful, so the shim reports the exit; a resume after it is admitted only when that exit is proven (`exited`, no descendants). When the exit leaves descendants (`exited_descendants_remaining`), the session is not resumable until §4.2, and the board shows that state instead of "Hibernated".
-- Before this design ships, no hibernation change is needed for safety: the decision already refuses a resume without proof.
+- Today hibernation never stops a running shim session: candidate selection requires `Running` (`manager/hibernate.rs:51`), then admission refuses any result of `unended_execution` (`:86`), and the session's own running row always is one. The admission changes to `unended_execution_except_current(session, current_shim_id)`: the row of the execution that the hibernation stops is excluded; every **earlier** unresolved row still refuses. Normal Stop admission is unchanged.
+- A later resume needs the §1a proof for the stopped execution (a graceful stop gives `exited` with a verified zero count in the normal case).
 
 ## 6. Failure behaviour
 
@@ -67,7 +76,7 @@ For a session whose newest shim row is `lost` (`execution_unknown`, `attach_refu
 
 ## 7. Tests
 
-- Providers: `durable_resume_launch` for Claude (argv has `--resume <id>`, the stored mode, `resumed = Some(true)`) and Codex (`thread/resume` with the thread id in the handshake, `resumed = Some(true)`); an unoffered mode fails; the trait default is `Unsupported`.
+- Providers: `durable_resume_launch` for Claude (argv has `--resume <id>`, the stored mode, `resumed = Some(true)`; an unoffered mode falls back to the safest mode) and Codex (`thread/resume` with the thread id in the handshake, `resumed = Some(true)`; an unoffered mode is refused); the trait default is `Unsupported`. Shim: `group_members` returns `None` for an unlistable `/proc`, for an unreadable entry (not `ENOENT`/`ESRCH`) and on non-Linux; `Some(0)` only after a complete listing; the exit report carries `None` → `exit_unverified`; an N−1 shim's report is unverified.
 - Station (shim host, the existing shim test harness with the fake agents, `crates/fleetdeck-cli/tests/shim_*.rs` style):
   1. A session that exited cleanly under a shim resumes under a new shim; the resume prompt is the first input; the board state is `resumed`; the old row stays `exited`.
   2. A Codex session does the same with `thread/resume`.
@@ -78,6 +87,13 @@ For a session whose newest shim row is `lost` (`execution_unknown`, `attach_refu
   7. An old `lost` row with `execution_unknown` and a different boot id is moved at the first recovery.
   8. `session.execution_check` reports a live group member (a test child that stays in the provider's group) and `complete`; `session.reconcile_execution` is refused while it lives and accepted after it ends; the receipt, the event and the audit row; a `running` row is never reconciled.
   9. A provider that cannot resume the native id → `start_failed` with its message and a committed exit.
+  10. The durable first input of a resume: the provider receives the prompt bytes once; a crash after the claim and before the write settles as `outcome_unknown` and is never resent (ADR-005 §4.3).
+  11. Import of a lost session's native id while that session's row is unresolved → refused; import after proof → accepted, then a resume of the original session → refused (the import's session holds the conversation); two concurrent admissions for one native id → exactly one passes.
+  12. Reboot proof revalidation: A (boot 1) → recovery in boot 2 records the proof → the boot id reader returns boot 1 again (simulated memory restore) → dispatch refuses; a live process with the stored identity → refused.
+  13. Reboot proof for each existing lost reason and for `exited_descendants_remaining`; the session stays `lost`; auto-continue does not pick it.
+  14. Hibernation of a normal running shim session is admitted; with an unresolved earlier row it is refused.
+  15. A `setsid()` descendant that outlives a normal provider exit: the exit is `exited` with `Some(0)` and the resume is admitted (§1a scope); the check of §4.2 lists it as an escaped descendant.
+  16. macOS (cfg): the shim's exit is `exit_unverified`; reconciliation without `inspection_unavailable_ack` refused, with it accepted.
 - Deck and board: the two routes (owner only, CSRF, audit), the "previous process may still run" panel and its three states, Resume enabled after reconciliation.
 
 ## 8. Risks
@@ -85,3 +101,18 @@ For a session whose newest shim row is `lost` (`execution_unknown`, `attach_refu
 - **Escaped descendants.** A process that left the provider's session and group is invisible to the check (ADR-005 §4.6). The owner's "Mark ended" accepts that risk explicitly, with the warning text; the action is audited.
 - **Reboot detection** depends on the boot id reader; a VM snapshot restore with the same boot id keeps sessions `execution_unknown` (safe side).
 - **Two executions of one native conversation** are possible only through a wrong owner reconciliation; the station never infers it.
+
+## 10. Review map (revision 1 → revision 2)
+
+| Finding (rev 1) | Change |
+| --- | --- |
+| B escaped descendants not covered by a clean exit | §1a: explicit standard — the provider process and its group/session; escaped descendants are out of scope and reported (a deliberate decision, told to the owner); incomplete inspection never proves (`Option` count, `exit_unverified`). |
+| B per-session check allows a duplicate via import | §3 `unended_native` across all sessions of the conversation, used at decision and dispatch, admission reserves the conversation. |
+| B owner reconciliation with a live escaped descendant | §1a scope makes escaped descendants non-blocking; reconciliation still refuses while the identity or any group/session member lives; an incomplete inspection needs an explicit owner acknowledgment. |
+| B reboot proof undone by a memory restore | §4.1 proof stored apart from the state and revalidated at launch (boot id differs again, stored identity not alive). |
+| M resume prompt rejected by durable cores | §3 step 3 cores accept `Resume` first inputs; test 10. |
+| M hibernation refuses running shim sessions | §5 exclude only the current execution; test 14. |
+| M auto-continue and the reboot event | §4.1 the state stays `lost`; auto-continue stays off on shim stations (stated). |
+| M other lost reasons excluded | §4.1 every unresolved row with an identity; §4.2 any unresolved row. |
+| m macOS reader missing | Status: Linux-only evidence; macOS exits are unverified; reconciliation with acknowledgment. |
+| m Claude mode fallback | §2 states the per-provider rule; tests. |
