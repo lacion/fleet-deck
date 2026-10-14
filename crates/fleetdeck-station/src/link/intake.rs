@@ -273,9 +273,10 @@ async fn file_method(ctx: &StationLink, method: &str, params: serde_json::Value)
             Err(e) => bad_params(e),
         },
         "files.session_diff" => match serde_json::from_value(params) {
-            Ok(q) => {
-                done(crate::workspace::session_diff::run(store, policy, private, &git, q).await)
-            }
+            Ok(q) => done(
+                crate::workspace::session_diff::run_as(store, policy, private, &git, q, member)
+                    .await,
+            ),
             Err(e) => bad_params(e),
         },
         other => Outcome::Err(WireError::new(

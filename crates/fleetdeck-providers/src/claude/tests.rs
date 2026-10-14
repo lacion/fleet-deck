@@ -184,6 +184,11 @@ fn a_simple_turn_maps_to_canonical_events_in_order() {
         &events[2],
         Event::RunStarted { input_summary, origin: RunOrigin::Board, .. } if input_summary == "hello"
     ));
+    // The run names the host input that started it (DL-179).
+    assert!(matches!(
+        &events[2],
+        Event::RunStarted { input_id: Some(id), .. } if id.as_str() == uuid(1)
+    ));
     assert!(matches!(
         &events[7],
         Event::TurnCompleted { status: TurnStatus::Done, usage: Some(u), .. }

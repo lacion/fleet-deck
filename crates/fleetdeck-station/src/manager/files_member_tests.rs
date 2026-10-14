@@ -245,7 +245,8 @@ async fn a_member_diff_loses_the_hunks_of_hidden_files() {
     Arc::clone(&turns).capture_due().await;
     let q = || TurnDiffQuery {
         session_id: S1.into(),
-        turn_id: TurnId::from("turn-1"),
+        turn_id: Some(TurnId::from("turn-1")),
+        checkpoint: None,
         max_bytes: None,
     };
     let owner = diff_as(&s, &p, &PrivatePaths::default(), &git, q(), false)

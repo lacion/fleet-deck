@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use fleetdeck_proto::TurnId;
 use fleetdeck_proto::files::{
     FileContent, FileListQuery, FileListing, FileReadQuery, FileRoot, FileSearch, FileSearchQuery,
     MAX_DIFF_BYTES, MAX_QUERY_CHARS, MAX_SEARCH_HITS, MIN_QUERY_CHARS, SearchBackend, SearchHit,
@@ -448,11 +449,36 @@ pub async fn diff_as(
         .await
         .map_err(|e| internal(&e))?;
     let no_diff = |why: &str| FileError::new(code::NO_DIFF, why.to_owned());
-    let row = rows
-        .iter()
-        .rev()
-        .find(|r| r.state == RowState::Finalized && r.turn_id.as_ref() == Some(&query.turn_id))
-        .ok_or_else(|| no_diff("no finalized turn of this session has that id"))?;
+    // The stable selector (DL-179): the finalized row of THIS session whose
+    // commit pair is exactly the one asked for. A provider turn id can repeat
+    // after a provider restart, a commit pair cannot.
+    let row = match (&query.checkpoint, &query.turn_id) {
+        (Some(pair), _) => rows
+            .iter()
+            .rev()
+            .find(|r| {
+                r.state == RowState::Finalized
+                    && matches!(&r.start, RowSide::Available(c) if *c == pair.from_commit)
+                    && matches!(&r.end, RowSide::Available(c) if *c == pair.to_commit)
+            })
+            .ok_or_else(|| {
+                FileError::new(
+                    code::CHECKPOINT_UNAVAILABLE,
+                    "no finalized turn of this session has that checkpoint pair",
+                )
+            })?,
+        (None, Some(turn)) => rows
+            .iter()
+            .rev()
+            .find(|r| r.state == RowState::Finalized && r.turn_id.as_ref() == Some(turn))
+            .ok_or_else(|| no_diff("no finalized turn of this session has that id"))?,
+        (None, None) => {
+            return Err(FileError::new(
+                code::INVALID_QUERY,
+                "name a turn id or a checkpoint pair",
+            ));
+        }
+    };
     let (RowSide::Available(from), RowSide::Available(to)) = (&row.start, &row.end) else {
         return Err(no_diff("the turn has no pair of available checkpoints"));
     };
@@ -520,7 +546,8 @@ pub async fn diff_as(
         }
         Ok(TurnDiff {
             session_id: query.session_id.clone(),
-            turn_id: query.turn_id.clone(),
+            // The turn id of the row; empty when the row has none.
+            turn_id: row.turn_id.clone().unwrap_or_else(|| TurnId::from("")),
             from_commit: start.commit,
             to_commit: end.commit,
             summary,
@@ -549,6 +576,10 @@ mod files_review2_tests;
 #[cfg(test)]
 #[path = "files_review3_tests.rs"]
 mod files_review3_tests;
+
+#[cfg(test)]
+#[path = "files_checkpoint_tests.rs"]
+mod files_checkpoint_tests;
 
 #[cfg(test)]
 #[path = "files_member_tests.rs"]

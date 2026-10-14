@@ -32,8 +32,8 @@ use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
 use crate::conflicts::FileConflict;
 use crate::event::{Event, EventEnvelope};
 use crate::files::{
-    FileContent, FileListQuery, FileListing, FileReadQuery, FileSearch, FileSearchQuery,
-    SessionDiff, SessionDiffQuery, TurnDiff, TurnDiffQuery,
+    CheckpointRef, FileContent, FileListQuery, FileListing, FileReadQuery, FileSearch,
+    FileSearchQuery, SessionDiff, SessionDiffQuery, TurnDiff, TurnDiffQuery,
 };
 use crate::integrations as it;
 use crate::link::{
@@ -133,6 +133,7 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         FileContent::export_all(&cfg),
         FileSearchQuery::export_all(&cfg),
         FileSearch::export_all(&cfg),
+        CheckpointRef::export_all(&cfg),
         TurnDiffQuery::export_all(&cfg),
         TurnDiff::export_all(&cfg),
         SessionDiffQuery::export_all(&cfg),
@@ -230,6 +231,19 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         it::CommentBody::export_all(&cfg),
         it::ReviewBody::export_all(&cfg),
         it::TransitionBody::export_all(&cfg),
+        crate::review::ReviewSide::export_all(&cfg),
+        crate::review::AnchorKind::export_all(&cfg),
+        crate::review::AuthorKind::export_all(&cfg),
+        crate::review::CommentState::export_all(&cfg),
+        crate::review::Delivery::export_all(&cfg),
+        crate::review::ReviewComment::export_all(&cfg),
+        crate::review::ReviewThread::export_all(&cfg),
+        crate::review::ReviewSummary::export_all(&cfg),
+        crate::review::ReviewThreads::export_all(&cfg),
+        crate::review::NewComment::export_all(&cfg),
+        crate::review::CommentPatch::export_all(&cfg),
+        crate::review::SendReview::export_all(&cfg),
+        crate::review::SendAgain::export_all(&cfg),
         ShareKind::export_all(&cfg),
         ShareRole::export_all(&cfg),
         Steering::export_all(&cfg),

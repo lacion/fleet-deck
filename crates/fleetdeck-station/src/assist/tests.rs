@@ -348,6 +348,7 @@ async fn session_with_run(store: &Store, id: &str) -> SessionId {
                     input_summary: "fix the login redirect".to_owned(),
                     origin: RunOrigin::Board,
                     author: None,
+                    input_id: None,
                 }
                 .into(),
                 Event::MessageCompleted {

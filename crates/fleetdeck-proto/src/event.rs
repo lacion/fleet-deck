@@ -376,6 +376,12 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         author: Option<String>,
+        /// The input of the station that started the run (DL-179): the
+        /// board matches it with the `input_id` of a review. Absent for a
+        /// run that a provider started and in events of older peers.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        input_id: Option<InputId>,
     },
     #[serde(rename = "turn.started")]
     TurnStarted {

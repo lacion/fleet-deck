@@ -79,7 +79,8 @@
       "kind": "run.started",
       "run_id": "run-1",
       "input_summary": "Use the AskUserQuestion tool to ask me one question: 'Which color?' with the options red and blue. Then reply with my an…",
-      "origin": "board"
+      "origin": "board",
+      "input_id": "00000000-0003-4bcc-8000-55a6bc306c62"
     }
   },
   {

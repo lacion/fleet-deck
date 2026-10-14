@@ -63,7 +63,13 @@ repo?: RepoInfo, } | { "kind": "session.state", state: SessionState, detail: str
  * Who typed the input, when it is not the owner: `member:<name>`
  * (R11.5, DL-166). Older peers send no field.
  */
-author?: string, } | { "kind": "turn.started", run_id: RunId, turn_id: TurnId, provider_refs: { [key in string]: JsonValue }, } | { "kind": "message.delta", turn_id: TurnId, 
+author?: string, 
+/**
+ * The input of the station that started the run (DL-179): the
+ * board matches it with the `input_id` of a review. Absent for a
+ * run that a provider started and in events of older peers.
+ */
+input_id?: InputId, } | { "kind": "turn.started", run_id: RunId, turn_id: TurnId, provider_refs: { [key in string]: JsonValue }, } | { "kind": "message.delta", turn_id: TurnId, 
 /**
  * The subagent tool call that produced the text, if any (L7).
  */

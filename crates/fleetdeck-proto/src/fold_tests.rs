@@ -59,6 +59,7 @@ fn started() -> Event {
 fn run(id: &str) -> Event {
     Event::RunStarted {
         author: None,
+        input_id: None,
         run_id: id.into(),
         input_summary: "hi".to_owned(),
         origin: RunOrigin::Board,

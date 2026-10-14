@@ -141,10 +141,12 @@ fn trap_4_provider_work_after_the_turn_is_a_provider_turn() {
         kinds(&ev),
         ["run.started", "turn.started", "message.completed"]
     );
+    // A provider turn has no input behind it, so no `input_id` (DL-179).
     assert!(matches!(
         &ev[0],
         Event::RunStarted {
             origin: RunOrigin::Provider,
+            input_id: None,
             ..
         }
     ));

@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
-use fleetdeck_proto::TurnId;
 use fleetdeck_proto::event::{Event, ProviderKind};
 use fleetdeck_proto::files::{SessionDiffQuery, TurnDiffQuery};
 use fleetdeck_testkit::Det;
@@ -548,11 +547,8 @@ async fn finalized_turn_with(
 }
 
 fn turn_query() -> TurnDiffQuery {
-    TurnDiffQuery {
-        session_id: "s1".into(),
-        turn_id: TurnId::from("turn-1"),
-        max_bytes: None,
-    }
+    // The wire form of a query by provider turn id.
+    serde_json::from_value(serde_json::json!({ "session_id": "s1", "turn_id": "turn-1" })).unwrap()
 }
 
 #[tokio::test]

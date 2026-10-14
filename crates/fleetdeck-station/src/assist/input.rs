@@ -104,6 +104,7 @@ mod tests {
                 input_summary: "fix the bug".into(),
                 origin: RunOrigin::Board,
                 author: None,
+                input_id: None,
             },
         )];
         for n in 0..25 {

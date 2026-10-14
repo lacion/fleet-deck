@@ -79,7 +79,8 @@
       "kind": "run.started",
       "run_id": "run-1",
       "input_summary": "Use the Task tool to start a general-purpose subagent with this prompt: 'Do not use any tools. Reply with exactly: sub-o…",
-      "origin": "board"
+      "origin": "board",
+      "input_id": "00000000-0003-45fb-8000-559856d5a04b"
     }
   },
   {

@@ -77,6 +77,23 @@ pub async fn run(
     git: &GitOptions,
     query: SessionDiffQuery,
 ) -> Result<SessionDiff, FileError> {
+    run_as(store, policy, private, git, query, false).await
+}
+
+/// `files.session_diff` for the owner (`member` false) or for a member: the
+/// files that the member deny list hides are removed from the patch and
+/// from the summary (R11.9, DL-179), as in `files.diff`.
+///
+/// # Errors
+/// As [`run`].
+pub async fn run_as(
+    store: &Store,
+    policy: &Policy,
+    private: &PrivatePaths,
+    git: &GitOptions,
+    query: SessionDiffQuery,
+    member: bool,
+) -> Result<SessionDiff, FileError> {
     let internal = |e: &dyn std::fmt::Display| FileError::new("internal", e.to_string());
     let summary = store
         .summary(query.session_id.clone())
@@ -129,9 +146,16 @@ pub async fn run(
         DiffScope::Worktree
     };
     let work = compute(root, base.oid.clone(), options, max, shared, private);
-    let (summary, patch, truncated) = tokio::time::timeout(DIFF_TIMEOUT, work)
+    let (mut summary, mut patch, truncated) = tokio::time::timeout(DIFF_TIMEOUT, work)
         .await
         .map_err(|_| FileError::new(code::TIMEOUT, "the diff took too long"))??;
+    if member {
+        let f = policy.member_deny().filter_patch(&patch);
+        summary.files_changed = summary.files_changed.saturating_sub(f.hidden_files);
+        summary.insertions = summary.insertions.saturating_sub(f.hidden_insertions);
+        summary.deletions = summary.deletions.saturating_sub(f.hidden_deletions);
+        patch = f.patch;
+    }
     Ok(SessionDiff {
         session_id: query.session_id,
         base_oid: base.oid,

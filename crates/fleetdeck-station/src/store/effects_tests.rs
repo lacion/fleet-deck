@@ -653,6 +653,7 @@ async fn crashed_station(det: &Det, path: &std::path::Path) -> (Effect, Effect) 
         &s,
         Event::RunStarted {
             author: None,
+            input_id: None,
             run_id: "run-1".into(),
             input_summary: "hi".to_owned(),
             origin: RunOrigin::Board,

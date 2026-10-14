@@ -612,13 +612,18 @@ impl CodexCore {
             return Vec::new();
         }
         let mut out = Vec::new();
-        let (origin, summary, author) = match self
+        let (origin, summary, author, input_id) = match self
             .turn_input
             .take()
             .and_then(|id| self.inputs.iter().find(|i| i.id == id))
         {
-            Some(e) => (e.origin, e.summary.clone(), e.author.clone()),
-            None => (RunOrigin::Provider, "provider turn".to_owned(), None),
+            Some(e) => (
+                e.origin,
+                e.summary.clone(),
+                e.author.clone(),
+                Some(e.id.clone()),
+            ),
+            None => (RunOrigin::Provider, "provider turn".to_owned(), None, None),
         };
         let run_id = self.ids.run();
         self.run = Some(run_id.clone());
@@ -627,6 +632,7 @@ impl CodexCore {
             input_summary: summary,
             origin,
             author,
+            input_id,
         }));
         let turn_id = TurnId(self.ids.next("turn"));
         self.turn = Some(turn_id.clone());
