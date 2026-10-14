@@ -168,8 +168,11 @@ async fn two_sessions_that_change_one_file_get_one_mail_each() {
         assert!(
             input
                 .text
-                .starts_with("[FLEETDECK MAIL from fleetdeck] Fleet Deck: ")
+                .starts_with("[FLEETDECK MAIL from fleetdeck]\n<untrusted source=\"conflict:"),
+            "{}",
+            input.text
         );
+        assert!(input.text.contains("\nFleet Deck: "), "{}", input.text);
     }
 
     // A third touch by either session mails nobody again.
@@ -379,10 +382,7 @@ async fn a_station_with_model_help_holds_the_mail_until_its_sentence_is_stored()
     );
     let due = s.due_outbox(station.clone()).await.unwrap();
     assert_eq!(due.len(), 1);
-    assert_eq!(
-        outbox_text(&due[0]),
-        format!("[FLEETDECK MAIL from fleetdeck] {}", with.text)
-    );
+    assert!(is_framed(&outbox_text(&due[0]), &with.text));
 
     // A failed call releases the plain mail unchanged.
     let second = &jobs[1];
@@ -397,10 +397,16 @@ async fn a_station_with_model_help_holds_the_mail_until_its_sentence_is_stored()
             .text
             .ends_with("Coordinate before you change it further.")
     );
-    assert!(
-        due.iter()
-            .any(|i| outbox_text(i) == format!("[FLEETDECK MAIL from fleetdeck] {}", plain.text))
-    );
+    assert!(due.iter().any(|i| is_framed(&outbox_text(i), &plain.text)));
+}
+
+/// True when `framed` is the conflict mail of `text`: the header, one
+/// untrusted envelope with the source `conflict:<station>`, and the text
+/// inside it (ADR-008 section 4.3).
+fn is_framed(framed: &str, text: &str) -> bool {
+    framed.starts_with("[FLEETDECK MAIL from fleetdeck]\n<untrusted source=\"conflict:")
+        && framed.ends_with(&format!("\n{text}\n</untrusted>"))
+        && framed.matches("<untrusted").count() == 1
 }
 
 #[tokio::test]
@@ -426,10 +432,7 @@ async fn a_sentence_for_a_mail_that_was_sent_already_changes_nothing() {
     let item = &due[0];
     let before = outbox_text(item);
     let mails = s.mails(10).await.unwrap();
-    let sent = mails
-        .iter()
-        .find(|m| format!("[FLEETDECK MAIL from fleetdeck] {}", m.text) == before)
-        .unwrap();
+    let sent = mails.iter().find(|m| is_framed(&before, &m.text)).unwrap();
     assert!(jobs.iter().any(|j| j.mail_id == sent.mail_id));
     s.start_attempt(
         item.outbox_id.clone(),

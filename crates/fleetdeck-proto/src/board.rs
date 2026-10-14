@@ -27,6 +27,12 @@ pub struct CommandRequest {
     pub station: String,
     pub command_id: CommandId,
     pub command: SessionCommand,
+    /// The owner's elevation code (DL-172). A coordinator start with a
+    /// fleet-control grant needs a fresh one (ADR-008 §3); every other
+    /// command ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub elevation: Option<String>,
 }
 
 /// `true` for an id of 1 to 64 characters from `[0-9A-Za-z_-]`.

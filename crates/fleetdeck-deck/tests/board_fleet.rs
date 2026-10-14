@@ -90,7 +90,7 @@ async fn a_mail_is_delivered_once_as_a_framed_follow_up_or_steer() {
     assert_eq!(req.params["command"]["session_id"], "s1");
     assert_eq!(
         req.params["command"]["input"]["text"],
-        "[FLEETDECK MAIL from owner] please rebase"
+        fleetdeck_proto::orchestration::mail_frame("owner", "please rebase")
     );
     until(&c, &h, "/api/mail", "state", "delivered").await;
 
@@ -177,7 +177,11 @@ async fn a_task_is_delivered_completed_once_and_its_waiter_sees_the_end() {
     assert_eq!(req.method, "session.follow_up");
     let text = req.params["command"]["input"]["text"].as_str().unwrap();
     assert!(
-        text.starts_with("[FLEETDECK TASK t1] write the docs"),
+        text.starts_with(&fleetdeck_proto::orchestration::task_frame(
+            "owner",
+            "t1",
+            "write the docs"
+        )),
         "{text}"
     );
     until(&c, &h, "/api/tasks", "delivery", "delivered").await;
@@ -252,7 +256,7 @@ async fn a_group_mail_reaches_each_live_session_of_the_group_once() {
     assert_eq!(req.params["command"]["session_id"], "s1");
     assert_eq!(
         req.params["command"]["input"]["text"],
-        "[FLEETDECK MAIL from owner] pause"
+        fleetdeck_proto::orchestration::mail_frame("owner", "pause")
     );
     // A resend stores and sends nothing new.
     let again = post(&c, &h, "/api/mail/group", body).await;

@@ -96,6 +96,10 @@ impl DeckLink {
         live.entry(id.clone())
             .or_default()
             .push((token, control.clone(), data));
+        // The features of this link, for the fleet-control checks (ADR-008
+        // section 3).
+        self.store
+            .set_link_features(id, token, control.params().negotiated.features.clone());
         self.store.set_reachable(id, true);
         LiveGuard {
             ctx: Arc::clone(self),
@@ -132,6 +136,7 @@ impl Drop for LiveGuard {
         let mut live = self.ctx.live.lock().unwrap_or_else(PoisonError::into_inner);
         let links = live.entry(self.id.clone()).or_default();
         links.retain(|(t, _, _)| *t != self.token);
+        self.ctx.store.clear_link_features(&self.id, self.token);
         if links.is_empty() {
             live.remove(&self.id);
             self.ctx.store.set_reachable(&self.id, false);

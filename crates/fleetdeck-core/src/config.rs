@@ -540,6 +540,8 @@ pub struct DeckConfig {
     /// Tell both sessions once when two sessions change the same file
     /// (DL-145). On by default.
     pub conflict_mail: bool,
+    /// Fleet control (ADR-008 section 3): off by default; off stops it all.
+    pub fleet_control: bool,
     /// The Git host of `owner/name` (lower case, `github.com` by default).
     pub clone_host: String,
     /// The owner or group of a repository given by name only (empty by default).
@@ -576,6 +578,7 @@ pub(crate) const RAW_DECK_KEYS: &[&str] = &[
     "link_listen",
     "tailnet_hostname",
     "conflict_mail",
+    "fleet_control",
     "clone_host",
     "clone_org",
     "clone_transport",
@@ -589,6 +592,7 @@ struct RawDeck {
     link_listen: Option<Vec<String>>,
     tailnet_hostname: Option<String>,
     conflict_mail: Option<bool>,
+    fleet_control: Option<bool>,
     clone_host: Option<String>,
     clone_org: Option<String>,
     clone_transport: Option<String>,
@@ -653,6 +657,7 @@ impl DeckConfig {
             link_listen,
             tailnet_hostname,
             conflict_mail: raw.conflict_mail.unwrap_or(true),
+            fleet_control: raw.fleet_control.unwrap_or(false),
             clone_host: clone_host.unwrap_or_else(|| "github.com".to_owned()),
             clone_org,
             clone_transport,

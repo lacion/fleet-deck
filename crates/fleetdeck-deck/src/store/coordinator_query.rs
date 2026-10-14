@@ -136,16 +136,45 @@ impl DeckStore {
             Ok(grant) => grant,
             Err(r) => return Ok(Err(r)),
         };
-        let needs_read = !matches!(env.query, CoordinatorQuery::CommandStatus { .. });
-        let allowed = if needs_read {
-            grant.classes.contains(&GrantClass::Read)
-        } else {
-            grant.classes.iter().any(|c| *c != GrantClass::Read)
+        let allowed = match &env.query {
+            // The new read queries need `inspect` (and `answer` for the
+            // open requests), never the ADR-006 `read` class (ADR-008 §3).
+            CoordinatorQuery::NeedsYou => {
+                grant.classes.contains(&GrantClass::Inspect)
+                    && grant.classes.contains(&GrantClass::Answer)
+            }
+            CoordinatorQuery::SessionTail { .. }
+            | CoordinatorQuery::SessionDiff { .. }
+            | CoordinatorQuery::Projects
+            | CoordinatorQuery::ProjectItems { .. }
+            | CoordinatorQuery::Artifacts { .. }
+            | CoordinatorQuery::Artifact { .. }
+            | CoordinatorQuery::FileRead { .. }
+            | CoordinatorQuery::FileSearch { .. } => grant.classes.contains(&GrantClass::Inspect),
+            CoordinatorQuery::CommandStatus { .. } => {
+                grant.classes.iter().any(|c| *c != GrantClass::Read)
+            }
+            _ => grant.classes.contains(&GrantClass::Read),
         };
         if !allowed {
             return Ok(Err(reject(
                 RejectCode::Forbidden,
                 "the grant has no class for this query",
+            )));
+        }
+        // Every new query needs the deck setting `fleet_control` (ADR-008
+        // §3, §4.1); the ADR-006 reads do not.
+        let new_query = !matches!(
+            env.query,
+            CoordinatorQuery::ListSessions
+                | CoordinatorQuery::CommandStatus { .. }
+                | CoordinatorQuery::WaitTask { .. }
+                | CoordinatorQuery::WaitTasks { .. }
+        );
+        if new_query && !self.fleet_control() {
+            return Ok(Err(reject(
+                RejectCode::Forbidden,
+                "fleet_control_off: fleet control is off on this deck",
             )));
         }
         let answer = match &env.query {
@@ -166,20 +195,42 @@ impl DeckStore {
             CoordinatorQuery::CommandStatus { command_id } => {
                 let caller = format!("{station}/{}", env.caller);
                 let id = command_id.as_str().to_owned();
-                let receipt: Option<String> = call(&self.inner.db, move |conn| {
-                    Ok(conn
+                let found: Option<(String, Vec<Value>)> = call(&self.inner.db, move |conn| {
+                    let receipt: Option<String> = conn
                         .query_row(
                             "SELECT receipt FROM coordinator_receipts
                              WHERE command_id = ?1 AND caller = ?2",
                             params![id, caller],
                             |r| r.get(0),
                         )
-                        .optional()?)
+                        .optional()?;
+                    let Some(receipt) = receipt else {
+                        return Ok(None);
+                    };
+                    // The deliveries of the call (ADR-008 §5.3): the outbox
+                    // items that it created, in creation order.
+                    let mut stmt = conn.prepare(
+                        "SELECT outbox_id, state, reason FROM outbox WHERE call_id = ?1
+                         ORDER BY created_at, outbox_id",
+                    )?;
+                    let deliveries = stmt
+                        .query_map([&id], |r| {
+                            Ok(json!({
+                                "outbox_id": r.get::<_, String>(0)?,
+                                "state": r.get::<_, String>(1)?,
+                                "reason": r.get::<_, Option<String>>(2)?,
+                            }))
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    Ok(Some((receipt, deliveries)))
                 })
                 .await?;
-                match receipt {
-                    Some(text) => json!({ "receipt": serde_json::from_str::<Value>(&text)? }),
-                    None => json!({ "receipt": null }),
+                match found {
+                    Some((text, deliveries)) => json!({
+                        "receipt": serde_json::from_str::<Value>(&text)?,
+                        "deliveries": deliveries,
+                    }),
+                    None => json!({ "receipt": null, "deliveries": [] }),
                 }
             }
             CoordinatorQuery::WaitTask { task_id } => loop {

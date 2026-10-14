@@ -22,12 +22,19 @@ use fleetdeck_link::control::Control;
 use fleetdeck_link::methods::code;
 use fleetdeck_proto::command::{CommandOrigin, DeckCommandState, RETRY_WINDOW_MS, SessionCommand};
 use fleetdeck_proto::link::Outcome;
-use fleetdeck_proto::mutation::{StationChange, StationConfigureEnvelope};
-use fleetdeck_proto::{CommandEnvelope, CommandId, Receipt, StationId};
+use fleetdeck_proto::mutation::{
+    CommandAuthority, PolicyNow, PolicyNowAnswer, StationChange, StationConfigureEnvelope,
+};
+use fleetdeck_proto::{CommandEnvelope, CommandId, Receipt, SessionId, StationId};
 use serde::{Deserialize, Serialize};
 
 use super::DeckLink;
+use crate::store::outbox::{Gate, authority_of};
 use crate::store::{DeckCommand, DeckError, NewCommand, Settle};
+
+/// How long the deck waits for the caller station's `coordinator.policy_now`
+/// answer (ADR-008 section 6.2).
+pub const POLICY_NOW_DEADLINE: Duration = Duration::from_secs(3);
 
 /// A mutating command for one station.
 // `Start` grew by the issue link and the origin flag (DL-164).
@@ -121,6 +128,42 @@ impl DeckLink {
         live.keys().cloned().collect()
     }
 
+    /// The live fleet-control policy of the caller station (ADR-008 section
+    /// 6.2): `coordinator.policy_now` with a deadline of 3 s. `None` for any
+    /// error, a timeout, no live link or a link without `coordinator.v2`;
+    /// the caller treats it as `fleet_control: false` (fail closed).
+    pub async fn policy_now(
+        &self,
+        station: &StationId,
+        caller_session: &SessionId,
+    ) -> Option<PolicyNowAnswer> {
+        let control = self.control_for(station)?;
+        let params = serde_json::to_value(PolicyNow {
+            caller_session: caller_session.clone(),
+        })
+        .ok()?;
+        let outcome = tokio::time::timeout(
+            POLICY_NOW_DEADLINE,
+            control.request("coordinator.policy_now", None, params),
+        )
+        .await;
+        match outcome {
+            Ok(Ok(Outcome::Ok(value))) => serde_json::from_value(value).ok(),
+            Ok(Ok(Outcome::Err(e))) => {
+                tracing::debug!(station = %station, code = %e.code, "policy_now refused");
+                None
+            }
+            Ok(Err(e)) => {
+                tracing::debug!(station = %station, error = %e, "policy_now failed");
+                None
+            }
+            Err(_) => {
+                tracing::debug!(station = %station, "policy_now timed out");
+                None
+            }
+        }
+    }
+
     /// Builds the stored command of `kind` for `station`: a new
     /// `command_id`, the station incarnation that the read model holds as
     /// `target_incarnation`, and `retry_until` = now + [`RETRY_WINDOW_MS`].
@@ -134,7 +177,7 @@ impl DeckLink {
         origin: CommandOrigin,
         kind: CommandKind,
     ) -> Result<NewCommand, DeckError> {
-        self.build_until(station, origin, kind, i64::MAX, None, None)
+        self.build_until(station, origin, kind, i64::MAX, (None, None), None)
             .await
     }
 
@@ -149,8 +192,8 @@ impl DeckLink {
         origin: CommandOrigin,
         kind: CommandKind,
         latest: i64,
-        command_id: Option<CommandId>,
-        author: Option<String>,
+        (command_id, author): (Option<CommandId>, Option<String>),
+        authority: Option<CommandAuthority>,
     ) -> Result<NewCommand, DeckError> {
         let rec = self
             .store
@@ -166,7 +209,7 @@ impl DeckLink {
             CommandKind::Session { command } => (
                 command.method().to_owned(),
                 serde_json::to_value(CommandEnvelope {
-                    authority: None,
+                    authority,
                     command_id: command_id.clone(),
                     target_incarnation: Some(target),
                     retry_until,
@@ -248,7 +291,14 @@ impl DeckLink {
         author: Option<String>,
     ) -> Result<(DeckCommand, bool), DeckError> {
         let new = self
-            .build_until(station, origin, kind, i64::MAX, Some(command_id), author)
+            .build_until(
+                station,
+                origin,
+                kind,
+                i64::MAX,
+                (Some(command_id), author),
+                None,
+            )
             .await?;
         let (cmd, new) = self.store.insert_or_existing(new).await?;
         if new {
@@ -304,6 +354,27 @@ impl DeckLink {
         let Some(control) = self.control_for(&cmd.station_id) else {
             return;
         };
+        // A fleet-control command checks its authority before every send and
+        // resend (ADR-008 section 6.2).
+        if let Some((authority, target)) = authority_of(&cmd.envelope) {
+            let gate = self
+                .store
+                .gate_authority(
+                    cmd.command_id.clone(),
+                    cmd.station_id.clone(),
+                    authority,
+                    target,
+                )
+                .await;
+            match gate {
+                Ok(Gate::Open) => {}
+                Ok(Gate::Wait | Gate::Lost) => return,
+                Err(e) => {
+                    tracing::warn!(error = %e, "authority gate");
+                    return;
+                }
+            }
+        }
         let cmd = match self.store.mark_sent(id.clone()).await {
             Ok(Some(cmd)) => cmd,
             Ok(None) => return,

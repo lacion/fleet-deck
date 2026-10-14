@@ -71,8 +71,8 @@ impl DeckLink {
                 origin,
                 kind,
                 item.expires_at,
-                None,
-                None,
+                (None, None),
+                item.authority.clone(),
             )
             .await?;
         self.store

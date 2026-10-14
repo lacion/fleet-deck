@@ -268,6 +268,14 @@ pub fn deck_fields() -> Vec<FieldMeta> {
             "Tell both sessions once when two sessions change the same file.",
         ),
         field(
+            "fleet_control",
+            "Fleet control",
+            K::Bool,
+            Live,
+            "Lets coordinator sessions with a fleet-control grant drive any session, read the fleet and answer approvals. Off stops every fleet-control action at once.",
+        )
+        .danger(),
+        field(
             "clone_host",
             "Default Git host",
             K::Text,

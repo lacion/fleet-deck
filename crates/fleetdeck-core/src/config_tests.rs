@@ -225,6 +225,19 @@ fn deck_defaults_and_rules() {
             .conflict_mail
     );
     assert!(DeckConfig::parse("conflict_mail = 1").is_err());
+    // Fleet control is off by default (ADR-008 section 3).
+    assert!(!d.fleet_control);
+    assert!(
+        DeckConfig::parse("fleet_control = true")
+            .unwrap()
+            .fleet_control
+    );
+    assert!(
+        !DeckConfig::parse("fleet_control = false")
+            .unwrap()
+            .fleet_control
+    );
+    assert!(DeckConfig::parse("fleet_control = 1").is_err());
     let e = |t: &str| DeckConfig::parse(t).unwrap_err().to_string();
     assert!(e("listen = []").contains("listen"));
     assert!(e("listen = [\"0.0.0.0:7420\"]").contains("refusing to listen"));

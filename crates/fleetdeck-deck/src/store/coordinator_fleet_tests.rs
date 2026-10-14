@@ -150,7 +150,10 @@ async fn ask_coordinator_stores_a_question_and_mails_the_coordinator_once() {
         .filter_map(|o| o.payload["command"]["input"]["text"].as_str())
         .find(|t| t.contains("QUESTION"))
         .unwrap();
-    assert_eq!(text, "[FLEETDECK QUESTION from worker-1] which key?");
+    assert_eq!(
+        text,
+        fleetdeck_proto::orchestration::question_frame("worker-1", "which key?")
+    );
 
     // A replay of the same call stores nothing new.
     decide(&w, from_worker(&w, &worker, "q1", ask_op("  which key?  "))).await;
@@ -366,7 +369,10 @@ async fn a_worker_without_a_grant_asks_the_coordinator_that_assigned_its_task() 
         .filter_map(|o| o.payload["command"]["input"]["text"].as_str())
         .find(|t| t.contains("QUESTION"))
         .unwrap();
-    assert_eq!(text, "[FLEETDECK QUESTION from worker-1] which key?");
+    assert_eq!(
+        text,
+        fleetdeck_proto::orchestration::question_frame("worker-1", "which key?")
+    );
     // The call is audited as the session; the question is not in the row.
     let log = w.s.audit_log(10).await.unwrap();
     let row = log.iter().find(|a| a.action == "coordinator.ask").unwrap();

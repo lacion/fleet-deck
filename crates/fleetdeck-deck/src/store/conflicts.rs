@@ -19,7 +19,7 @@ use fleetdeck_proto::conflicts::{
     CONFLICT_WINDOW_MS, FileConflict, FileTouch, MAX_CONFLICTS, touch_key,
 };
 use fleetdeck_proto::event::{Event, EventBody, SessionState};
-use fleetdeck_proto::orchestration::{MailDelivery, mail_frame};
+use fleetdeck_proto::orchestration::{MailDelivery, mail_frame_from};
 use fleetdeck_proto::{EventEnvelope, SessionId, SessionSummary, StationId};
 use ring::digest::{SHA256, digest};
 use rusqlite::{OptionalExtension, Transaction, params};
@@ -115,6 +115,12 @@ fn station_name(tx: &Transaction<'_>, station: &StationId) -> Result<String> {
     Ok(name.unwrap_or_else(|| station.as_str().to_owned()))
 }
 
+/// The `source` of the untrusted envelope in a framed mail text.
+fn frame_source(framed: &str) -> Option<String> {
+    let rest = framed.split_once("<untrusted source=\"")?.1;
+    Some(rest.split_once('"')?.0.to_owned())
+}
+
 /// Queues the mail from `other` to `recipient` unless it exists already.
 fn mail_party(
     tx: &Transaction<'_>,
@@ -153,7 +159,11 @@ fn mail_party(
     );
     let command = SessionCommand::FollowUp {
         session_id: recipient.session.clone(),
-        input: UserInput::new(mail_frame(MAIL_SENDER, &text)),
+        input: UserInput::new(mail_frame_from(
+            MAIL_SENDER,
+            &format!("conflict:{other_station}"),
+            &text,
+        )),
     };
     let item = NewOutboxItem {
         station_id: recipient.station.clone(),
@@ -374,7 +384,9 @@ impl DeckStore {
                     command: SessionCommand::FollowUp { input, .. },
                 } = &mut kind
                 {
-                    *input = UserInput::new(mail_frame(MAIL_SENDER, &text));
+                    // The source of the first frame stays (one fence).
+                    let source = frame_source(&input.text).unwrap_or_else(|| "conflict".to_owned());
+                    *input = UserInput::new(mail_frame_from(MAIL_SENDER, &source, &text));
                 }
                 payload = serde_json::to_value(&kind)?;
                 tx.execute(

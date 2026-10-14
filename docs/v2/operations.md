@@ -93,6 +93,7 @@ Check the setup from the board (project preflight) or with the `integrations.sta
 | `link_listen` | `127.0.0.1:7421` | The link listener for stations that dial the deck. |
 | `tailnet_hostname` | (none) | The tailnet DNS name of the deck, for the WebSocket `Origin` check. |
 | `conflict_mail` | `true` | When two sessions change the same file within 30 minutes, the deck sends each session one follow-up mail about it (DL-145). Set `false` to turn this off. |
+| `fleet_control` | `false` | Lets coordinator sessions with a fleet-control grant drive any session, read the fleet and answer approvals (ADR-008). Off stops every fleet-control action at once. Applies at once. Turning it on needs the owner's elevation; turning it off does not. See §7.3. |
 | `clone_host` | `github.com` | The Git host for a repository that the board gets as `owner/name`. A lower-case host name, for example `gitlab.com`. Applies at once. |
 | `clone_org` | (empty) | The owner or group for a repository that the board gets by name only. Use `acme` or a group path such as `acme/tools`. Applies at once. |
 | `clone_transport` | `https` | `https` uses your Git credential helper. `ssh` uses your SSH keys. It decides the URL that the board builds from a short name. Applies at once. |
@@ -194,6 +195,21 @@ A coordinator session can read the fleet, send mail and drive the sessions that 
 5. To stop the coordinator calls, select "Revoke" on its grant. A grant that expired after an idle time shows "Renew".
 
 The deck creates the grant with the classes `read`, `mail` and `drive` and with its default expiry. It gives the session the control skill (`crates/fleetdeck-deck/src/control_skill.md`). The start fails for a resumed session, for a shim-hosted session and for a station without the coordinator endpoint (§11).
+
+### 7.3 Fleet control (ADR-008)
+
+A fleet-control grant lets a coordinator drive any session on its stations, start sessions in projects, read the fleet and answer approvals. A grant is a fleet-control grant when it has the fleet scope or one of the classes `inspect`, `manage` or `answer`.
+
+> **Caution:** a coordinator reads third-party text (issues, pull requests, files, the output of other sessions). A prompt injection in that text can make it approve a tool call in another session. Give the `answer` class only for trusted work. A coordinator answers once, with "allow once" or "deny". It never edits the tool input, never chooses "always" or an amendment, and never starts, resumes or sets a session into a bypass mode.
+
+- To create the grant, turn on "Fleet control" in the spawn form. The owner's elevation is in the same request. A member, a share guest or an API token cannot create one.
+- The coordinator station and every station of the grant must run the link feature `coordinator.v2` on the current link. Otherwise the start is refused with `unsupported`.
+- Two switches stop fleet control. The deck setting `fleet_control` is the switch for the whole deck. The station setting `allow_fleet_control` is the switch of one station. Both are off by default.
+- A coordinator never acts for another coordinator, for itself, or for a shared session. Share guests and members never extend a coordinator.
+- A fleet-control intent expires after 10 minutes. The deck checks the grant again before each send and each resend. When the grant is revoked, expired or changed, or a switch is off, the deck does not send the command and the item ends `dead` with the reason `authority_lost`.
+- The answer cap of a grant is 500 by default (0 to 5000). The deck counts only an accepted answer.
+
+Residual windows (ADR-008 §6.2). A revocation, or a switch that you turn off, stops every action whose provider write has not begun. Two short windows stay open. (a) Between a `valid` answer of `coordinator.authority_check` and the provider write inside the target station process: no wait for another process, a few milliseconds. (b) Between the `coordinator.policy_now` answer of the caller station and that `valid` answer: one deck step, at most the 5 s deadline of the check. No window comes from the propagation of a setting, because each switch is read live from its own process.
 
 ## 8. Back up
 

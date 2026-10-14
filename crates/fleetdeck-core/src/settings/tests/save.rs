@@ -387,6 +387,32 @@ fn the_deck_holder_saves_and_checks_its_danger_keys() {
 }
 
 #[test]
+fn turning_fleet_control_on_needs_elevation_and_off_does_not() {
+    let fx = Fixture::new(None);
+    let deck = fx.dir.path().join("cfg").join("deck.toml");
+    std::fs::write(&deck, "name = \"d\"\n").unwrap();
+    let w = SettingsWriter::<DeckHolder>::new(&deck, None, &fx.env);
+    let view = view_deck(&deck, &[]).unwrap();
+    assert_eq!(view.values["fleet_control"], json!(false));
+    let on = change_with(&view.revision, json!({ "fleet_control": true }));
+    let err = w.save(&on, false, ok_prepare).unwrap_err();
+    assert_eq!(
+        err,
+        SaveError::ElevationRequired {
+            keys: vec!["fleet_control".into()]
+        }
+    );
+    let (saved, new, ()) = w.save(&on, true, ok_prepare).unwrap();
+    assert!(new.fleet_control);
+    assert_eq!(saved.applied, vec!["fleet_control"]);
+    let view = view_deck(&deck, &[]).unwrap();
+    let off = change_with(&view.revision, json!({ "fleet_control": false }));
+    let (saved, new, ()) = w.save(&off, false, ok_prepare).unwrap();
+    assert!(!new.fleet_control);
+    assert_eq!(saved.applied, vec!["fleet_control"]);
+}
+
+#[test]
 fn a_canary_is_absent_from_every_answer() {
     let fx = Fixture::new(Some(&inline_station()));
     let w = fx.writer();

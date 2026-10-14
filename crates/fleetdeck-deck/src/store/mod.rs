@@ -69,6 +69,18 @@ pub use read_model::{DeckSession, TIMELINE_CAP};
 pub use schedules::StoredSchedule;
 pub use stations::{Direction, StationRecord};
 
+/// What the deck knows about `coordinator.v2` on the links of a station
+/// (ADR-008 §3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkV2 {
+    /// No live link.
+    Down,
+    /// A live link, and at least one live link did not negotiate it.
+    Without,
+    /// Every live link negotiated it.
+    Negotiated,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum DeckError {
     #[error(transparent)]
@@ -147,6 +159,12 @@ struct Inner {
     infos: Mutex<BTreeMap<StationId, (StationInfo, i64)>>,
     /// Whether two sessions that change one file get a mail (DL-145).
     conflict_mail: AtomicBool,
+    /// The deck setting `fleet_control` (ADR-008 §3): every fleet-control
+    /// decision and send check reads it here, so it is always current.
+    fleet_control: AtomicBool,
+    /// The features that each live link of a station negotiated, by link
+    /// token (ADR-008 §3 "every send needs v2"); in memory only.
+    link_features: Mutex<BTreeMap<StationId, BTreeMap<u64, BTreeSet<String>>>>,
     /// Presence, chat and mob-driver updates for the board sockets (R11).
     social: broadcast::Sender<Arc<presence::SocialEvent>>,
     /// Who has a session open now (R11.5); in memory only.
@@ -157,6 +175,25 @@ struct Inner {
     sentence_jobs: Mutex<Vec<conflicts::SentenceJob>>,
     /// The `ask_coordinator` calls of the workers in the last hour (R2.3).
     ask_limits: coordinator_fleet::AskLimiter,
+}
+
+impl Inner {
+    /// The deck setting `fleet_control` and the `coordinator.v2` state of
+    /// every station with a live link, right now. A database closure calls
+    /// it, so a decision reads the values of its own turn.
+    pub(crate) fn fleet_env(&self) -> coordinator::FleetEnv {
+        let links = self
+            .link_features
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        coordinator::FleetEnv {
+            fleet_control: self.fleet_control.load(Ordering::SeqCst),
+            links: links
+                .iter()
+                .map(|(s, l)| (s.clone(), v2_state(l)))
+                .collect(),
+        }
+    }
 }
 
 /// The deck store. Clones share one database thread.
@@ -235,6 +272,8 @@ impl DeckStore {
                 reachable: Mutex::default(),
                 infos: Mutex::default(),
                 conflict_mail: AtomicBool::new(true),
+                fleet_control: AtomicBool::new(false),
+                link_features: Mutex::default(),
                 social: broadcast::channel(LIVE_BUFFER).0,
                 presence: Mutex::default(),
                 sockets: std::sync::atomic::AtomicU64::new(1),
@@ -259,6 +298,55 @@ impl DeckStore {
     /// Turns the conflict mail on or off (`deck.toml` `conflict_mail`, DL-145).
     pub fn set_conflict_mail(&self, on: bool) {
         self.inner.conflict_mail.store(on, Ordering::Relaxed);
+    }
+
+    /// Turns fleet control on or off (the deck setting `fleet_control`,
+    /// ADR-008 §3).
+    pub fn set_fleet_control(&self, on: bool) {
+        self.inner.fleet_control.store(on, Ordering::SeqCst);
+    }
+
+    /// The deck setting `fleet_control`.
+    #[must_use]
+    pub fn fleet_control(&self) -> bool {
+        self.inner.fleet_control.load(Ordering::SeqCst)
+    }
+
+    /// Records the features that link `token` of `station` negotiated.
+    pub fn set_link_features(&self, station: &StationId, token: u64, features: Vec<String>) {
+        let mut map = self.link_features();
+        map.entry(station.clone())
+            .or_default()
+            .insert(token, features.into_iter().collect());
+    }
+
+    /// Forgets link `token` of `station` (the link ended).
+    pub fn clear_link_features(&self, station: &StationId, token: u64) {
+        let mut map = self.link_features();
+        if let Some(links) = map.get_mut(station) {
+            links.remove(&token);
+            if links.is_empty() {
+                map.remove(station);
+            }
+        }
+    }
+
+    /// Whether `station` has a live link and whether every live link
+    /// negotiated `coordinator.v2` (the intersection over its links; ADR-008
+    /// §3, fail closed).
+    #[must_use]
+    pub fn link_v2(&self, station: &StationId) -> LinkV2 {
+        let map = self.link_features();
+        map.get(station).map_or(LinkV2::Down, v2_state)
+    }
+
+    fn link_features(
+        &self,
+    ) -> std::sync::MutexGuard<'_, BTreeMap<StationId, BTreeMap<u64, BTreeSet<String>>>> {
+        self.inner
+            .link_features
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// The deck clock in Unix milliseconds.
@@ -370,6 +458,17 @@ impl DeckStore {
             to_u64(n)
         })
         .await
+    }
+}
+
+fn v2_state(links: &BTreeMap<u64, BTreeSet<String>>) -> LinkV2 {
+    let v2 = fleetdeck_proto::version::feature::COORDINATOR_V2;
+    if links.is_empty() {
+        LinkV2::Down
+    } else if links.values().all(|f| f.contains(v2)) {
+        LinkV2::Negotiated
+    } else {
+        LinkV2::Without
     }
 }
 
