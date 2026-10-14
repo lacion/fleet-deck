@@ -12,6 +12,47 @@
 - **Delegated review:** 4 reconnaissance calls, 32 coverage-led hunter calls across 14 waves, 14 immediate post-wave critics, one distinct final-clean critic, 3 Phase 3 verifier batches and 3 separate Phase 5 fresh-eyes batches (57 calls total).
 - **Coverage closure:** both the post-Wave-14 critic and a distinct final-clean critic returned clean. There are no deferred, blocked or out-of-scope ledger units.
 
+## Resolution (2026-10-15, branch v2)
+
+Every needs-validation lead has a source fix, a hardening that removes the claimed path, or an owner decision. The fixes were not validated against the runtime scenarios of this audit. Each fix has unit or integration tests that run in `make check`. High-risk designs (NV-10, NV-11, NV-12, NV-15, NV-17, NV-28, NV-29) had two adversary design-review rounds before they were built. The decisions are in DL-187.
+
+| ID | Status | Fix | Residual or owner choice |
+| --- | --- | --- | --- |
+| NV-01 | Mitigated | The deck streams a version over 64 MiB from the station chunk by chunk and never caches it in memory or in SQLite. | No publish size or version limit (owner choice, DL-155). Station disk use grows with publications. |
+| NV-02 | Fixed | A suggested path has at most 1024 bytes; a session has at most 200 suggestions; suggestions are pruned after 90 days. | — |
+| NV-03 | Fixed | `codex exec` for model help runs with its tools turned off (`-c features.*=false`, web search off). A run with any tool item is refused and its text is never returned. | A tool that Codex runs anyway is refused only after the run; its output never reaches the caller. |
+| NV-04 | Fixed | The assist runner reads at most 256 KiB + 1 byte of stdout; more kills the CLI and fails the call. | — |
+| NV-05 | Fixed | Login, a login link, a member join and logout clear every `fd-draft:` and `fd-notes:` key. | A reconnect of the same login keeps the drafts. |
+| NV-06 | Fixed | OSC 52 never writes the clipboard. The terminal shows the request (count and preview) with Copy and Ignore (owner choice). | — |
+| NV-07 | Fixed | Side chat GET and POST refuse bearer tokens (`owner_only`). | — |
+| NV-08 | Fixed | The station refuses to load a `station.toml` that holds a plain provider `env` value and that the group or others can read (owner choice). | Existing installations with such a file must run `chmod 600` or use secret references. |
+| NV-09 | Fixed | A station error text that reaches a coordinator is inside the untrusted fence. | — |
+| NV-10 | Fixed | Finished coordinator outbox rows are pruned after 90 days. | — |
+| NV-11 | Fixed | An hourly deck task deletes audit rows older than 90 days and keeps at most the newest 200,000 rows. | — |
+| NV-12 | Fixed | A snapshot of a superseded link (checked against the link-table generation inside the DB transaction) or an older snapshot of the stored incarnation changes nothing. | — |
+| NV-13 | Fixed | Owner elevation has its own failure window. | The anonymous login flows keep a global window (abuse-control trade-off). |
+| NV-14 | Fixed | Asset credentials go only to the configured HTTPS origin (host and port; no port means 443). | — |
+| NV-15 | Fixed | `revoke` returns a store error; `forget-deck` and `remove-station` report it (HTTP 500 `revoke_failed`, audit `Failed`). | The key is unpinned in memory only until restart; run the command again. |
+| NV-16 | Fixed | Revoking or creating a token deletes the read cursors of `token:<name>`. | — |
+| NV-17 | Fixed | Member mail is rechecked against the share at every attempt and before every send; a share revocation waits for sends in flight. | The mob-driver state is not rechecked. A command written to the link before the revocation is not recalled. |
+| NV-18 | Fixed | Claude and Codex adapters keep at most 256 closed requests in their checkpoints. | Entries of checkpoints made before this change are not evicted. |
+| NV-19 | Fixed | At most 4096 queued stdin frames per session; a provider that does not read stdin is stopped. | — |
+| NV-20 | Fixed | A provider stdout line over 16 MiB stops the session (the shim limit). | — |
+| NV-21 | Fixed | A Codex request with the id of an open request gets a JSON-RPC error and no approval prompt. | — |
+| NV-22 | Fixed | `fleetdeck service install` keeps only `PATH` entries that are absolute directories owned by the user or root and not group- or other-writable; it warns for each dropped entry. | A provider CLI in a dropped directory is not found by the service. |
+| NV-23 | Fixed | A provider-reported native id is stored only when it passes `check_native_session_id`, and the handover checks it again. | No `--` is added to the argv; the id rule makes an option impossible. |
+| NV-24 | Fixed | The handover checks the session folder against the current allowed roots and downgrades a bypass/full-access mode when bypass is not allowed now. | — |
+| NV-25 | Fixed | Drain counts work-creating submits before it reads its flag and reports idle only when none is being decided. | — |
+| NV-26 | Fixed | The station prunes its history 60 s after start and then every hour. | — |
+| NV-27 | Fixed | During a restart, an input that would resume a hibernated session is refused (`invalid_state`); inputs are counted by the restart admission. | — |
+| NV-28 | Fixed | Finished effects, requests, processes and shell effects older than 90 days are pruned when no unfinished row needs them. | Never pruned: `outcome_unknown` effects, sessions, turn checkpoints, reverts, shim rows, setup runs, worktree ops, artifacts. |
+| NV-29 | Fixed | The station does not start when the live marker cannot be written or an update record cannot be read. | The owner fixes or removes the named record. |
+| NV-30 | Fixed | Preflight discards stdout and keeps at most 64 KiB of stderr. | — |
+| NV-31 | Fixed | Without HOME, every path that ends in a gh, glab, ssh, Claude or Codex credential location is private (also for Git pathspecs). | — |
+| NV-32 | Fixed | Restore removes files with descriptor-relative no-follow walks and checks the parents of written paths the same way. | Git writes the files by name after the check; Git itself does not write through a symbolic link in a leading path. |
+| NV-33 | Fixed | A station settings change clears the review caches of the station, and a cached diff anchor applies the current deny list. | — |
+| NV-34 | Mitigated | At most two session diffs run at once per station. | The Git objects that a diff writes stay until Git gc. |
+
 ## Executive assessment
 
 Fleet Deck has a strong source-visible security baseline for a system that centralizes browser, station, provider, workspace and integration authority. The audit found substantial fail-closed authorization, pinned peer identity, scoped link methods, lifecycle rechecks, filesystem containment and bounded protocol handling. It also found 34 concrete paths where a real security boundary may fail, but the decisive result depends on runtime behavior, deployment topology, provider semantics, operating-system races or bounded resource measurements that source alone cannot establish.

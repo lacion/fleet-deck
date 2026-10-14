@@ -16,6 +16,8 @@ The data directories have mode 0700. The configuration files must have mode 0600
 
 A missing file gives the defaults. An unknown key is an error.
 
+Only you may write the file (no group or other write bit). When a `[[provider_instance]]` has a plain `env` value (for example an API key), only you may read the file too: run `chmod 600 station.toml`, or use a secret reference (`{ secret = "name" }`). Else the station does not start (DL-187, NV-08).
+
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `name` | the host name | The station name on the board. |
@@ -141,7 +143,7 @@ Run `fleetdeck service install` to start Fleet Deck at boot or login. Use `both`
 - WSL: systemd must be on (`[boot]` and `systemd=true` in `/etc/wsl.conf`). The command also adds a Windows logon task that starts the distro when you sign in to Windows.
 - macOS: a launchd user agent (`dev.fleetdeck.<kind>`). It starts at login and ends at logout. Logs: `~/Library/Logs/fleetdeck/<up|deck|station>.log`.
 - The service runs a copy of the program under `<data>/station/bin/current` (`deck`: `<data>/deck/bin/current`). Run `fleetdeck service install` again after you build or install a new version.
-- The service gets the `PATH` of your shell. Run the command again after you install a provider CLI in a new directory.
+- The service gets the `PATH` of your shell, without the unsafe entries: an entry stays only when it is an absolute directory that you or root own and that no group or other user can write. The command prints a warning for each entry that it leaves out (DL-187, NV-22). Run the command again after you install a provider CLI in a new directory.
 - With `host = "direct"` (default), the station ends its agents when the service stops. Set `host = "shim"` in `station.toml` to keep them running.
 - `fleetdeck service install --dry-run` prints the files and the commands and changes nothing.
 - `fleetdeck service start`, `stop` and `status [--json]` control and show the services. `fleetdeck service uninstall` removes them. Your data stays.
@@ -285,6 +287,7 @@ Residual windows (ADR-008 §6.2). A revocation, or a switch that you turn off, s
 - The station event log (`station.db`) is the source of truth for sessions. The deck database (`deck.db`) is the source of truth for mail, plans, tasks, routing and settings.
 - Stop the node, then copy the database file with its `-wal` and `-shm` files. A copy of a running database without its WAL file can lose recent events.
 - The identity keys are in the same directories. A lost station key needs a new pairing.
+- Retention (DL-187): the station removes acknowledged events after 7 days and finished history (effects, requests, processes, shell effects, coordinator outbox rows, artifact suggestions) after 90 days, every hour. The deck removes audit rows after 90 days and keeps at most 200,000. Back up before that time if you need older rows.
 
 ## 9. Drain and upgrade a station
 
@@ -335,6 +338,9 @@ Run `fleetdeck doctor` first. It changes nothing. It prints one line for each ch
 | --- | --- |
 | A session is `lost` | The station restarted and could not prove what happened to the agent. Read the detail in the timeline. Resume the session if the provider supports resume. With `host = "shim"`, the resume needs proof that the agent ended (see "Resume on the shim host"). |
 | A command is `outcome_unknown` | The station cannot prove whether the provider received it. It never resends it. Check the session and send a new command if needed. |
+| The station does not start: "cannot be marked live" | An update record in `<data>/station/upgrades/` cannot be read or written. The station does not open its database, so a later rollback cannot restore an old snapshot over newer state (DL-187, NV-29). Fix or remove the named file, then start the station again. |
+| The station does not start: "holds a plain `env` value" | `station.toml` has a plain provider `env` value and other users can read it (NV-08). Run `chmod 600` on the file, or use a secret reference. |
+| `forget-deck` or remove-station says "the revocation was not stored" | The key is unpinned in memory, but the store write failed (NV-15). Fix the disk or database problem and run the command again before a restart. |
 | A revert needs reconciliation | The station could not prove the state of the files or the conversation. Read the revert card and resolve it; input stays blocked until then. |
 | The station is not on the board | Check the link: the station log, the `listen`/`link_listen` addresses, and the pairing. `fleetdeck deck stations` shows the link state. |
 | Usage shows "unknown" | The provider did not report usage for that window. Fleet Deck never shows unknown usage as zero. |
