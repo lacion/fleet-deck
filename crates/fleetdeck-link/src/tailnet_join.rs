@@ -66,9 +66,7 @@ pub struct Joined {
 #[derive(Debug, thiserror::Error)]
 pub enum JoinError {
     /// A retry file of another deck or fingerprint exists.
-    #[error(
-        "a pairing request is pending; run `fleetdeck station join --tailnet --cancel` first"
-    )]
+    #[error("a pairing request is pending; run `fleetdeck station join --tailnet --cancel` first")]
     Pending,
     /// The deck (or this station) ended the request with a stable code.
     #[error("{code}: {detail}")]
@@ -127,9 +125,7 @@ fn refused(e: &LinkError) -> Option<JoinError> {
 }
 
 fn same_deck(record: &RetryRecord, plan: &JoinPlan) -> bool {
-    record.host.trim_end_matches('.').eq_ignore_ascii_case(plan.host.trim_end_matches('.'))
-        && record.port == plan.port
-        && record.deck_fingerprint == plan.deck.to_string()
+    record.is_for(&plan.host, plan.port) && record.deck_fingerprint == plan.deck.to_string()
 }
 
 /// Runs the join. See the module text.
@@ -142,7 +138,9 @@ pub async fn drive(node: &NodeConfig, plan: &JoinPlan) -> Result<Joined, JoinErr
     }
     let (request, mut mode, scopes) = match retry_file::read(&plan.dir)? {
         Some(record) if same_deck(&record, plan) => {
-            let request = record.request().ok_or(RetryError::Invalid(plan.dir.clone()))?;
+            let request = record
+                .request()
+                .ok_or(RetryError::Invalid(plan.dir.clone()))?;
             let scopes = record.offered();
             (request, PairMode::Resume, scopes)
         }
@@ -193,7 +191,7 @@ pub async fn drive(node: &NodeConfig, plan: &JoinPlan) -> Result<Joined, JoinErr
             }
         }
     }
-    Err(JoinError::Link(
-        last.unwrap_or_else(|| LinkError::Protocol("no address answered".into())),
-    ))
+    Err(JoinError::Link(last.unwrap_or_else(|| {
+        LinkError::Protocol("no address answered".into())
+    })))
 }

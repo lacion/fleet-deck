@@ -142,13 +142,12 @@ pub(crate) async fn accept(
         peer,
     )
     .await?;
-    let frame = match tokio::time::timeout(limit, ws::recv_frame_capped(&mut ws, on.max_message))
-        .await
-    {
-        Ok(Ok((_, frame))) => frame,
-        Ok(Err(e)) => return Err(e),
-        Err(_) => return Err(ws::timed_out(&mut ws, STEP_PROOF, limit).await),
-    };
+    let frame =
+        match tokio::time::timeout(limit, ws::recv_frame_capped(&mut ws, on.max_message)).await {
+            Ok(Ok((_, frame))) => frame,
+            Ok(Err(e)) => return Err(e),
+            Err(_) => return Err(ws::timed_out(&mut ws, STEP_PROOF, limit).await),
+        };
     if let HandshakeFrame::PairResume { request_id, nonce } = frame {
         return crate::pair_accept::resume(node, ws, &est, peer, &request_id, &nonce).await;
     }

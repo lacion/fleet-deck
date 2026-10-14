@@ -27,7 +27,7 @@ use fleetdeck_proto::link::{ControlFrame, Outcome, ReplayParams, WireError};
 
 pub use intake::NOT_IMPLEMENTED;
 pub use peers::StationPeers;
-pub use runtime::{NodeError, StationNode};
+pub use runtime::{NodeError, StationNode, TailnetJoin, TailnetResult};
 use stream::{Start, Stream};
 
 use crate::manager::SessionManager;

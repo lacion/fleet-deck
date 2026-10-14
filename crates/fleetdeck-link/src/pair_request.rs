@@ -60,7 +60,9 @@ pub enum RequestError {
     BadId,
     #[error("the nonce is not 64 hex digits")]
     BadNonce,
-    #[error("the requested name must have 1 to {MAX_NAME_CHARS} characters, none of them a control or direction character")]
+    #[error(
+        "the requested name must have 1 to {MAX_NAME_CHARS} characters, none of them a control or direction character"
+    )]
     BadName,
     #[error("a requested scope is not one of read, drive, approve, admin")]
     BadScope,
@@ -136,14 +138,12 @@ pub struct CanonicalRequest {
 
 impl CanonicalRequest {
     /// A new request with a random id and nonce.
-    pub fn generate(
-        name: &str,
-        offered_scopes: BTreeSet<Scope>,
-    ) -> Result<Self, RequestError> {
+    pub fn generate(name: &str, offered_scopes: BTreeSet<Scope>) -> Result<Self, RequestError> {
         let mut request_id = [0u8; 16];
         let mut nonce = [0u8; 32];
         let rng = SystemRandom::new();
-        rng.fill(&mut request_id).map_err(|_| RequestError::Random)?;
+        rng.fill(&mut request_id)
+            .map_err(|_| RequestError::Random)?;
         rng.fill(&mut nonce).map_err(|_| RequestError::Random)?;
         Self::new(request_id, name.to_owned(), nonce, offered_scopes)
     }
@@ -254,7 +254,10 @@ impl Approval<'_> {
         push(&mut out, &self.request.request_id);
         push(&mut out, &self.request.nonce);
         push(&mut out, &self.request.digest());
-        push(&mut out, scopes_text(&self.request.offered_scopes).as_bytes());
+        push(
+            &mut out,
+            scopes_text(&self.request.offered_scopes).as_bytes(),
+        );
         push(&mut out, scopes_text(self.granted_scopes).as_bytes());
         out
     }

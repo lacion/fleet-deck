@@ -21,7 +21,7 @@ use fleetdeck_link::tls::Role;
 use fleetdeck_link::{PairMode, REVOKED};
 use fleetdeck_proto::link::Scope;
 use pair_support::{
-    approve_first, ask, ask_at, code, deck, deck_with, open, pending, quick, request, result, T,
+    T, approve_first, ask, ask_at, code, deck, deck_with, open, pending, quick, request, result,
 };
 
 #[tokio::test]
@@ -145,7 +145,11 @@ async fn an_old_peer_without_the_feature_is_refused_and_nothing_is_stored() {
     let deck = deck(HubConfig::default()).await;
     open(&deck).await;
     let mut station = node(Role::Station);
-    station.config.local.features.retain(|f| f != feature::PAIR_REQUEST);
+    station
+        .config
+        .local
+        .features
+        .retain(|f| f != feature::PAIR_REQUEST);
     let r = result(ask(&station, &deck, &request("a"), PairMode::Request)).await;
     assert_eq!(code(&r), "unsupported");
     assert!(deck.hub.list().await.is_empty());
@@ -321,7 +325,11 @@ async fn a_lost_answer_is_resumed_with_the_stored_context_over_a_new_connection(
         .unwrap();
     assert_eq!(resumed.deck, deck.node.config.identity.public_key());
     assert_eq!(resumed.granted_scopes, [Scope::Admin].into());
-    assert_eq!(deck.memory.done.lock().unwrap().len(), 1, "never paired twice");
+    assert_eq!(
+        deck.memory.done.lock().unwrap().len(),
+        1,
+        "never paired twice"
+    );
 }
 
 #[tokio::test]
@@ -405,11 +413,25 @@ async fn a_resume_is_accepted_on_a_listener_that_is_not_a_tailnet_listener() {
     // listener.
     deck.hub.close_window().await;
     let lan = deck.listen_as(ListenerKind::Other).await;
-    let r = result(ask_at(&station, lan.local_addr, deck.fp(), &req, PairMode::Resume)).await;
+    let r = result(ask_at(
+        &station,
+        lan.local_addr,
+        deck.fp(),
+        &req,
+        PairMode::Resume,
+    ))
+    .await;
     assert!(r.is_ok(), "{r:?}");
     // A request on that listener is refused.
     let other = node(Role::Station);
-    let r = result(ask_at(&other, lan.local_addr, deck.fp(), &request("b"), PairMode::Request)).await;
+    let r = result(ask_at(
+        &other,
+        lan.local_addr,
+        deck.fp(),
+        &request("b"),
+        PairMode::Request,
+    ))
+    .await;
     assert_eq!(code(&r), "window_closed");
 }
 
@@ -420,7 +442,14 @@ async fn the_station_checks_the_deck_key_and_the_deck_signature() {
     let station = node(Role::Station);
     // A wrong confirmed fingerprint: TLS fails, nothing reaches the deck.
     let wrong = node(Role::Deck).config.identity.fingerprint();
-    let r = result(ask_at(&station, deck.addr(), wrong, &request("a"), PairMode::Request)).await;
+    let r = result(ask_at(
+        &station,
+        deck.addr(),
+        wrong,
+        &request("a"),
+        PairMode::Request,
+    ))
+    .await;
     assert_eq!(code(&r), "fingerprint_mismatch");
     assert!(deck.hub.list().await.is_empty());
 }

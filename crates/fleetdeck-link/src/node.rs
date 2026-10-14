@@ -587,8 +587,7 @@ async fn accept_one(
         let accepted = ws::accept(stream, from, config, opts).await;
         drop(setup);
         let (mut ws, peer, channel, exporter) = accepted?;
-        if channel == Channel::Pair
-            && (node.invitations.is_some() || node.pair_requests.is_some())
+        if channel == Channel::Pair && (node.invitations.is_some() || node.pair_requests.is_some())
         {
             return Ok(Err(crate::join::accept(
                 node,
@@ -606,8 +605,8 @@ async fn accept_one(
             // Read the dialer's Hello first (bounded): a socket closed before
             // that write gives the dialer a broken pipe instead of the reason
             // (DL-025).
-            let _ = tokio::time::timeout(limit, ws::recv_text_capped(&mut ws, on.max_message))
-                .await;
+            let _ =
+                tokio::time::timeout(limit, ws::recv_text_capped(&mut ws, on.max_message)).await;
             let e = if channel == Channel::Pair {
                 HandshakeError::Protocol("pairing is not open on this listener".into())
             } else {

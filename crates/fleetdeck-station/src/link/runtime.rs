@@ -15,7 +15,7 @@
 //! - **Forget.** `forget_deck` revokes every deck key: one transaction in
 //!   the store, and the link layer closes the links within 1 s (G5).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -24,9 +24,12 @@ use fleetdeck_core::Secret;
 use fleetdeck_core::identity::{Fingerprint, Identity, PeerKey};
 use fleetdeck_link::hello::LocalHello;
 use fleetdeck_link::node::{self, LinkListener, NodeConfig};
-use fleetdeck_link::pairing::{Invitation, Invitations, PairError};
+use fleetdeck_link::pairing::{Invitation, Invitations, PairError, PairedPeer};
 use fleetdeck_link::reconnect::{BackoffPolicy, DialerEvent, spawn_dialer};
+use fleetdeck_link::retry_file;
 use fleetdeck_link::revoke::revoke;
+use fleetdeck_link::tailnet_join::{JoinError, JoinPlan, drive};
+use fleetdeck_link::tailnet_target;
 use fleetdeck_link::tls::Role;
 use fleetdeck_link::ws::LinkError;
 use fleetdeck_link::{Epochs, start};
@@ -64,6 +67,56 @@ pub enum NodeError {
     Store(#[from] StoreError),
     #[error("the coordinator endpoint did not start: {0}")]
     Coordinator(std::io::Error),
+    /// `station join --tailnet` did not finish; `code` is the stable code
+    /// of the refusal.
+    #[error("{code}: {detail}")]
+    Tailnet { code: String, detail: String },
+}
+
+fn tailnet_refusal(code: &str, detail: impl Into<String>) -> NodeError {
+    NodeError::Tailnet {
+        code: code.to_owned(),
+        detail: detail.into(),
+    }
+}
+
+/// The result of `station join --tailnet`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TailnetResult {
+    /// No fingerprint was known: this is the key the deck showed. Nothing
+    /// was written or sent; the person confirms it and runs the command
+    /// again with the fingerprint.
+    Observed(Fingerprint),
+    /// The owner approved: the deck is paired.
+    Paired {
+        /// The DNS name (or host name) of the deck device.
+        device: String,
+        deck: Fingerprint,
+    },
+}
+
+/// What `station join --tailnet` asks of the station.
+#[derive(Debug, Clone)]
+pub struct TailnetJoin {
+    /// The deck as the person typed it: a DNS name, a short name or an
+    /// address. It must be a peer in `tailscale status`.
+    pub host: String,
+    pub port: u16,
+    /// The deck link key fingerprint that the person confirmed. Without
+    /// one, the station only observes the key of the deck (see
+    /// [`TailnetResult::Observed`]).
+    pub deck_fingerprint: Option<Fingerprint>,
+    /// The scopes this station gives to the deck.
+    pub scopes: BTreeSet<Scope>,
+    /// The requested name of this station on the deck.
+    pub name: String,
+    /// The `tailscale` program of this station.
+    pub cli: fleetdeck_core::tailscale::TailscaleCli,
+    /// Tests only: dial these addresses instead of the tailnet addresses of
+    /// the peer (a test host has no tailnet address). The host is still
+    /// checked against `tailscale status`. The local socket never sets it.
+    #[doc(hidden)]
+    pub dial: Option<Vec<SocketAddr>>,
 }
 
 /// The running link node of a station.
@@ -78,6 +131,11 @@ pub struct StationNode {
     /// tool calls go to the current deck link.
     coordinator: crate::coordinator::Ingress,
     bindings: crate::coordinator::Bindings,
+    /// The station data directory; it holds the retry file of a tailnet
+    /// join. Set by the local socket, which knows the directory.
+    data_dir: std::sync::OnceLock<std::path::PathBuf>,
+    /// One tailnet join at a time.
+    join_gate: tokio::sync::Mutex<()>,
 }
 
 impl std::fmt::Debug for StationNode {
@@ -207,6 +265,8 @@ impl StationNode {
             backoff,
             coordinator,
             bindings,
+            data_dir: std::sync::OnceLock::new(),
+            join_gate: tokio::sync::Mutex::new(()),
         });
         this.spawn(tokio::spawn(this.ctx.coordinator.clone().run()));
         // Probe the providers once at start: the coordinator handoff check
@@ -377,6 +437,134 @@ impl StationNode {
         }
     }
 
+    /// Tells the node the station data directory (the first call wins).
+    pub fn set_data_dir(&self, dir: &std::path::Path) {
+        let _ = self.data_dir.set(dir.to_path_buf());
+    }
+
+    fn data_dir(&self) -> Result<&std::path::Path, NodeError> {
+        self.data_dir
+            .get()
+            .map(std::path::PathBuf::as_path)
+            .ok_or_else(|| tailnet_refusal("unsupported", "this station has no data directory"))
+    }
+
+    /// `station join --tailnet`: asks the deck of `join` to pair, waits for
+    /// its owner (at most 11 minutes), checks the signed answer, stores the
+    /// deck pin, the grants and the dial address in **one** transaction and
+    /// starts dialing the deck. Returns the name of the deck device and its
+    /// key fingerprint.
+    ///
+    /// The retry file `pair-pending.json` holds the request from before it
+    /// is sent until the pin is stored; the same command resumes it.
+    ///
+    /// # Errors
+    /// [`NodeError`]: a deck is paired already, the host is not a peer of
+    /// `tailscale status`, or the request ended with a code
+    /// ([`NodeError::Tailnet`]).
+    pub async fn join_tailnet(&self, join: &TailnetJoin) -> Result<TailnetResult, NodeError> {
+        let Ok(_one) = self.join_gate.try_lock() else {
+            return Err(tailnet_refusal(
+                "busy",
+                "another `station join --tailnet` is running",
+            ));
+        };
+        self.refuse_if_paired().await?;
+        let dir = self.data_dir()?.to_path_buf();
+        let status = join.cli.status().await.map_err(|e| {
+            tailnet_refusal(
+                "tailscale_unavailable",
+                format!("Tailscale is not available: {}", e.reason()),
+            )
+        })?;
+        let target = tailnet_target::find(&status, &join.host)
+            .map_err(|e| tailnet_refusal("not_in_tailnet", e.to_string()))?;
+        let addrs: Vec<SocketAddr> = join.dial.clone().unwrap_or_else(|| {
+            target
+                .ips
+                .iter()
+                .map(|ip| SocketAddr::new(*ip, join.port))
+                .collect()
+        });
+        // Without a fingerprint the station only observes the key of the
+        // deck; the person confirms it and runs the join again.
+        let Some(deck_fingerprint) = join.deck_fingerprint else {
+            return self.observe(&addrs).await;
+        };
+        let plan = JoinPlan {
+            host: join.host.clone(),
+            port: join.port,
+            deck: deck_fingerprint,
+            name: join.name.clone(),
+            scopes: join.scopes.clone(),
+            addrs,
+            dir: dir.clone(),
+            wait: fleetdeck_link::pair_dial::WAIT_FOR_OWNER,
+        };
+        let joined = drive(&self.ctx.node, &plan).await.map_err(|e| match &e {
+            JoinError::Link(_) => tailnet_refusal(e.code(), describe_join(&e)),
+            _ => tailnet_refusal(e.code(), e.to_string()),
+        })?;
+        let deck = joined.approved.deck;
+        if !deck.fingerprint().matches(&deck_fingerprint) {
+            // TLS pinned the fingerprint; this is a second check.
+            return Err(tailnet_refusal(
+                "fingerprint_mismatch",
+                "the deck key is not the confirmed fingerprint",
+            ));
+        }
+        // The pin, the grants and the dial address: one local transaction.
+        self.ctx
+            .peers
+            .dial_after_pairing(deck.fingerprint(), joined.addr);
+        let paired = PairedPeer {
+            key: deck,
+            role: Role::Deck,
+            scopes: joined.scopes,
+        };
+        if let Err(detail) = self.ctx.node.sink.paired(&paired).await {
+            self.ctx.peers.pairing_failed(&deck.fingerprint());
+            return Err(tailnet_refusal("pairing_failed", detail));
+        }
+        self.ctx.node.pins.pin(deck, Role::Deck);
+        if let Err(e) = retry_file::remove(&dir) {
+            tracing::warn!(error = %e, "the retry file of the pairing request stays");
+        }
+        tracing::info!(deck = %deck.fingerprint().short(), "paired with the deck by request");
+        self.dial(joined.addr, deck);
+        Ok(TailnetResult::Paired {
+            device: target.name,
+            deck: deck.fingerprint(),
+        })
+    }
+
+    /// The observation-only probe: the key of the deck, from a TLS connect.
+    /// It writes and sends nothing.
+    async fn observe(&self, addrs: &[SocketAddr]) -> Result<TailnetResult, NodeError> {
+        let mut last = String::from("no address");
+        for addr in addrs {
+            match fleetdeck_link::net::observe_key(*addr).await {
+                Ok(key) => return Ok(TailnetResult::Observed(key.fingerprint())),
+                Err(e) => last = format!("{addr}: {e}"),
+            }
+        }
+        Err(tailnet_refusal(
+            "probe_failed",
+            format!("the deck link key could not be observed ({last})"),
+        ))
+    }
+
+    /// `station join --tailnet --cancel`: removes the retry file. Returns
+    /// whether there was one. A request that already reached the deck is not
+    /// withdrawn; the deck forgets it when the connection ends.
+    ///
+    /// # Errors
+    /// [`NodeError::Tailnet`] when the file can not be removed.
+    pub fn cancel_tailnet(&self) -> Result<bool, NodeError> {
+        let dir = self.data_dir()?;
+        retry_file::remove(dir).map_err(|e| tailnet_refusal("retry_file", e.to_string()))
+    }
+
     /// `station forget-deck`: revokes every deck key and closes its links.
     /// Returns how many keys were revoked.
     ///
@@ -399,6 +587,13 @@ impl StationNode {
         for task in tasks {
             task.abort();
         }
+    }
+}
+
+fn describe_join(e: &JoinError) -> String {
+    match e {
+        JoinError::Link(l) => describe(l),
+        other => other.to_string(),
     }
 }
 

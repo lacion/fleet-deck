@@ -22,7 +22,8 @@ use std::time::Duration;
 use fleetdeck_core::Secret;
 use fleetdeck_core::identity::{Identity, PeerKey};
 use fleetdeck_link::hello::LocalHello;
-use fleetdeck_link::node::{self, LinkListener, NodeConfig};
+use fleetdeck_link::node::{self, LinkListener, ListenerKind, NodeConfig, TailnetLimits};
+use fleetdeck_link::pair_hub::{HubConfig, PairApprover, PairRequests};
 use fleetdeck_link::pairing::{Invitation, Invitations, PairError};
 use fleetdeck_link::reconnect::{BackoffPolicy, DialerEvent, spawn_dialer};
 use fleetdeck_link::revoke::revoke;
@@ -79,10 +80,22 @@ pub enum NodeError {
     Store(#[from] DeckError),
 }
 
+/// What a test changes in the link node: the limits of the pairing window
+/// and of the tailnet listeners, and the kind of every listener (a loopback
+/// socket that has the rules of a tailnet listener). The default is the
+/// production behaviour.
+#[derive(Debug, Clone, Default)]
+pub struct NodeOptions {
+    pub hub: HubConfig,
+    pub tailnet: Option<TailnetLimits>,
+    pub listener_kind: Option<ListenerKind>,
+}
+
 /// The running link node of the deck.
 pub struct DeckNode {
     ctx: Arc<DeckLink>,
     invitations: Arc<Invitations>,
+    pair_requests: Arc<PairRequests>,
     listening: Vec<SocketAddr>,
     tasks: Mutex<Vec<JoinHandle<()>>>,
     backoff: BackoffPolicy,
@@ -109,15 +122,50 @@ impl DeckNode {
         link_listen: &[SocketAddr],
         backoff: BackoffPolicy,
     ) -> Result<Arc<Self>, NodeError> {
+        Self::start_with(
+            store,
+            identity,
+            link_listen,
+            backoff,
+            NodeOptions::default(),
+        )
+        .await
+    }
+
+    /// [`DeckNode::start`] with `options`.
+    ///
+    /// # Errors
+    /// As [`DeckNode::start`].
+    pub async fn start_with(
+        store: DeckStore,
+        identity: Arc<Identity>,
+        link_listen: &[SocketAddr],
+        backoff: BackoffPolicy,
+        options: NodeOptions,
+    ) -> Result<Arc<Self>, NodeError> {
         let peers = DeckPeers::load(store.clone()).await?;
         let invitations = Invitations::new();
-        let node = NodeConfig::new(
-            identity,
+        let mut node = NodeConfig::new(
+            Arc::clone(&identity),
             LocalHello::new(Role::Deck, store.incarnation().clone()),
             Arc::new(Epochs::sqlite(store.db())),
         )
         .with_store(Arc::clone(&peers))
         .with_invitations(Arc::clone(&invitations));
+        // The pairing request window and its pending requests (DL-178): in
+        // memory only; a restart closes the window.
+        let pair_requests = PairRequests::new(
+            identity.public_key(),
+            STATION_SCOPES.into_iter().collect(),
+            Arc::clone(&node.pins),
+            Arc::clone(&peers) as Arc<dyn PairApprover>,
+            options.hub,
+        );
+        node = node.with_pair_requests(Arc::clone(&pair_requests));
+        if let Some(limits) = options.tailnet {
+            node.tailnet = limits;
+        }
+        node.listener_kind = options.listener_kind;
         let stations = peers.pin_all(&node.pins).await?;
         let ctx = Arc::new(DeckLink::new(store, peers, node));
         let mut listeners = Vec::new();
@@ -135,6 +183,7 @@ impl DeckNode {
         let this = Arc::new(Self {
             ctx,
             invitations,
+            pair_requests,
             listening: listeners.iter().map(|l| l.local_addr).collect(),
             tasks: Mutex::default(),
             backoff,
@@ -155,6 +204,12 @@ impl DeckNode {
             }
         }));
         Ok(this)
+    }
+
+    /// The pairing request window and the pending requests.
+    #[must_use]
+    pub fn pair_requests(&self) -> &Arc<PairRequests> {
+        &self.pair_requests
     }
 
     /// The shared link context.
@@ -314,8 +369,10 @@ impl DeckNode {
         Ok(st)
     }
 
-    /// Stops the listeners and the dialers and closes every link.
+    /// Stops the listeners and the dialers and closes every link. A pairing
+    /// request that waits ends with `cancelled`.
     pub fn shutdown(&self) {
+        self.pair_requests.cancel_all_now();
         let tasks = std::mem::take(&mut *self.tasks.lock().unwrap_or_else(PoisonError::into_inner));
         for task in tasks {
             task.abort();

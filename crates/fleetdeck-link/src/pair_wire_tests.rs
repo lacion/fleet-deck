@@ -24,9 +24,7 @@ use crate::handshake;
 use crate::hello::{Channel, HandshakeFrame, LocalHello, Side, feature};
 use crate::net;
 use crate::node::{self, ListenerKind, NodeConfig, TailnetLimits};
-use crate::pair_hub::{
-    CommitError, Completion, HubConfig, PairApprover, PairRequests,
-};
+use crate::pair_hub::{CommitError, Completion, HubConfig, PairApprover, PairRequests};
 use crate::pairing::{Invitations, PairLimiter};
 use crate::tls::{self, PeerPolicy, Role};
 use crate::ws::{self, Ws};
@@ -166,11 +164,8 @@ async fn pair_handshake(
 }
 
 fn request_frame(name: &str) -> HandshakeFrame {
-    let req = crate::pair_request::CanonicalRequest::generate(
-        name,
-        BTreeSet::from([Scope::Read]),
-    )
-    .unwrap();
+    let req = crate::pair_request::CanonicalRequest::generate(name, BTreeSet::from([Scope::Read]))
+        .unwrap();
     HandshakeFrame::PairRequest {
         request_id: req.id_hex(),
         name: req.name.clone(),
@@ -251,7 +246,11 @@ async fn a_request_with_another_host_is_refused_with_403() {
     let deck = deck(TailnetLimits::default(), HubConfig::default()).await;
     let station = Identity::generate().unwrap();
     deck.config.pins.pin(station.public_key(), Role::Station);
-    for host in ["evil.example", "127.0.0.1", "node.fleet-deck.invalid.evil.example"] {
+    for host in [
+        "evil.example",
+        "127.0.0.1",
+        "node.fleet-deck.invalid.evil.example",
+    ] {
         let r = upgrade(
             deck.listener.local_addr,
             &station,
@@ -309,12 +308,42 @@ async fn a_request_with_bad_fields_is_a_protocol_error() {
         unreachable!()
     };
     for (id, name, nonce, scopes) in [
-        ("zz".to_owned(), "a".to_owned(), nonce.clone(), offered_scopes.clone()),
-        (request_id.clone(), "a".to_owned(), "00".into(), offered_scopes.clone()),
-        (request_id.clone(), String::new(), nonce.clone(), offered_scopes.clone()),
-        (request_id.clone(), "x".repeat(65), nonce.clone(), offered_scopes.clone()),
-        (request_id.clone(), "a\u{202E}b".to_owned(), nonce.clone(), offered_scopes.clone()),
-        (request_id.clone(), "a".to_owned(), nonce.clone(), vec![Scope::Coordinate]),
+        (
+            "zz".to_owned(),
+            "a".to_owned(),
+            nonce.clone(),
+            offered_scopes.clone(),
+        ),
+        (
+            request_id.clone(),
+            "a".to_owned(),
+            "00".into(),
+            offered_scopes.clone(),
+        ),
+        (
+            request_id.clone(),
+            String::new(),
+            nonce.clone(),
+            offered_scopes.clone(),
+        ),
+        (
+            request_id.clone(),
+            "x".repeat(65),
+            nonce.clone(),
+            offered_scopes.clone(),
+        ),
+        (
+            request_id.clone(),
+            "a\u{202E}b".to_owned(),
+            nonce.clone(),
+            offered_scopes.clone(),
+        ),
+        (
+            request_id.clone(),
+            "a".to_owned(),
+            nonce.clone(),
+            vec![Scope::Coordinate],
+        ),
     ] {
         let (mut ws, _) = pair_handshake(&deck, &station, None).await;
         let frame = HandshakeFrame::PairRequest {
@@ -456,7 +485,10 @@ async fn an_unknown_key_on_the_control_or_data_path_is_refused_and_its_permit_re
             }
         })
         .await;
-        assert!(ended.is_ok(), "{channel:?}: the stalled connection was closed");
+        assert!(
+            ended.is_ok(),
+            "{channel:?}: the stalled connection was closed"
+        );
         eventually("the permit is released", || deck.listener.admitted() == 0).await;
     }
 }
@@ -559,4 +591,20 @@ async fn sixty_four_permits_stay_taken_until_the_sockets_close_and_the_65th_is_r
     assert_eq!(deck.listener.admitted(), 64);
     drop(held);
     eventually("the permits are released", || deck.listener.admitted() == 0).await;
+}
+
+#[tokio::test]
+async fn a_window_that_closes_between_the_handshake_and_the_request_creates_no_request() {
+    let deck = deck(TailnetLimits::default(), HubConfig::default()).await;
+    let station = node(Role::Station);
+    // The handshake runs while the window is open.
+    let (mut ws, est) = pair_handshake(&deck, &station, None).await;
+    assert!(est.negotiated.has(feature::PAIR_REQUEST));
+    // The window closes before the station sends its request.
+    assert!(deck.hub.close_window().await);
+    ws::send_frame(&mut ws, &request_frame("a")).await.unwrap();
+    assert_eq!(next_close(&mut ws).await, "window_closed");
+    assert!(deck.hub.list().await.is_empty());
+    assert!(deck.config.pins.is_empty());
+    eventually("the permit is released", || deck.listener.admitted() == 0).await;
 }

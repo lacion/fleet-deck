@@ -378,7 +378,9 @@ impl PairRequests {
     }
 
     fn listeners_lock(&self) -> std::sync::MutexGuard<'_, Vec<SocketAddr>> {
-        self.listeners.lock().unwrap_or_else(PoisonError::into_inner)
+        self.listeners
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Counts a tailnet link listener of the deck, bound to `addr`. It

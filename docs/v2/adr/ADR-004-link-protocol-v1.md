@@ -119,6 +119,7 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `workspace.trash.v1` | `session.worktree_trash`, `session.worktree_restore`, `session.worktree_purge`, `session.worktree_release` (DL-150; a worktree moved to a trash folder, restored, deleted for good, or released) |
 | `artifacts.v1` | `artifacts.publish`, `artifacts.list`, `artifacts.get`, `artifacts.file` (DL-165; R12 artifacts: versioned files that a session or a person publishes, stored in the station's data directory) |
 | `shim.resume.v1` | `session.execution_check`, `session.reconcile_execution` (DL-182; the termination check and the owner's reconciliation for resume on the shim host) |
+| `pair_request.v1` | The pair-channel frames `pair_request`, `pair_pending`, `pair_approved` and `pair_resume` (DL-178, §10): a station asks a deck to pair without an invitation and the owner approves on the board |
 
 A method whose feature was not negotiated gets the error `feature_not_negotiated`. Behaviour depends on the negotiated features, not only on the version.
 
@@ -221,6 +222,7 @@ Every refusal has a stable reason code that both sides can show:
 | `version_mismatch`, `role_mismatch`, `node_id_mismatch`, `channel_mismatch`, `missing_feature`, `bad_hello`, `bad_signature`, `protocol_error` | handshake |
 | `not_paired`, `stale_link_epoch`, `superseded`, `no_control_channel`, `no_data_channel`, `data_channel_lost` | link table and channels |
 | `bad_invitation`, `address_refused`, `invitation_expired`, `invalid_invitation`, `too_many_attempts`, `inviter_proof_failed` | pairing |
+| `window_closed`, `busy`, `already_paired`, `request_id_conflict`, `denied`, `expired`, `cancelled`, `unknown_request`, `revoked`, `fingerprint_mismatch`, `unsupported` | pairing requests (§10) |
 | `unknown_method`, `feature_not_negotiated`, `forbidden`, `missing_command_id` | request errors in a `response` |
 | `timeout` | any bounded step |
 | `self_connect` | a dial whose TCP socket connected to itself (no listener on a loopback port) |
@@ -460,3 +462,83 @@ These do not change the wire contract; `fleetdeck-link` implements them with one
 ### 9.8 New reason codes
 
 `superseded` (now also for reciprocal links), `stale_link_epoch` (with `min_epoch`), `flow_control_violation`, `too_many_requests`, `bad_stream_token`, `wrong_role`, `revoked`, `incarnation_mismatch` and `expired` (receipts), `invalid_command`.
+
+## 10. Pairing requests (DL-178, feature `pair_request.v1`)
+
+Design: `docs/v2/design/tailnet.md` section 5. This section is the wire contract.
+
+### 10.1 Frames
+
+All four are JSON text frames on `/fdlink/v1/pair`, after the normal handshake (§2.5, both keys proven, epoch 0). A node sends them only when both sides negotiated `pair_request.v1`; a peer without the feature gets `unsupported` and nothing is stored.
+
+```text
+pair_request  { request_id, name, nonce, offered_scopes }   station -> deck
+pair_pending  { request_id }                                deck -> station
+pair_approved { request_id, granted_scopes, signature }     deck -> station
+pair_resume   { request_id, nonce }                         station -> deck
+close         { reason, detail }                            either way, reasons of §2.11
+```
+
+- `request_id`: 16 random bytes made by the station, 32 lowercase hex digits. The station writes its retry file (`<station data>/pair-pending.json`, mode 0600, file and directory synced) before it sends `pair_request`.
+- `name`: 1 to 64 characters, no control character and no text direction character (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069).
+- `nonce`: 32 random bytes, 64 lowercase hex digits.
+- `offered_scopes`: what the station grants to the deck on the station. Only `read`, `drive`, `approve`, `admin` (never `coordinate`).
+- `granted_scopes`: what the deck grants to the station on the deck. It is always `["admin"]`; it is not editable.
+- `signature`: Ed25519 by the deck link key over the approval message of §10.3, 128 hex digits.
+- A deck refuses a request whose `request_id` it already holds with another key or another canonical request (`request_id_conflict`). A second request of a key that has one waiting is `busy`; the old connection stays. A key that is already paired is `already_paired`.
+- A resume is a fresh handshake with the same station key. The deck answers with `pair_approved` over the **new** transcript from its stored completion record, only when the record exists, the proven key, `request_id` and `nonce` equal it, and the key is still paired as a station; else it closes with `unknown_request` or `revoked`. A resume never creates or changes a record, and it is accepted on any link listener without the window.
+- Messages of a key that is not pinned are at most 16 KiB on a tailnet listener. A waiting connection gets a WebSocket ping every 15 seconds and closes after 45 seconds without a pong.
+
+### 10.2 Encodings
+
+Every field is prefixed with its length as 8 bytes, big endian ("lp"). A scope list is sorted by name and joined with `,` (ASCII).
+
+```text
+request digest  = SHA-256( "fleetdeck pair-request v1"
+                           || lp(request_id, 16 bytes) || lp(name, UTF-8) || lp(nonce, 32 bytes)
+                           || lp(offered scopes) )
+
+pending digest  = SHA-256( "fleetdeck pair-pending v1"
+                           || lp(request digest, 32 bytes) || lp(station fingerprint, 32 bytes)
+                           || lp(source IP, text of the canonical form) || lp(admitted_at, Unix ms as decimal text) )
+```
+
+The pending digest is what the board shows as `digest`; the owner sends it back with the approval, so an approval names the record that the owner saw.
+
+### 10.3 The signed approval
+
+```text
+message = "fleetdeck pair-approved v1"
+          || lp(transcript hash, 32 bytes)      SHA-256 of the handshake transcript of this connection (§2.5 step 4)
+          || lp(station fingerprint, 32 bytes)  SHA-256 of the raw station link key
+          || lp(deck fingerprint, 32 bytes)
+          || lp(request_id, 16 bytes) || lp(nonce, 32 bytes)
+          || lp(request digest, 32 bytes)
+          || lp(offered scopes) || lp(granted scopes)
+signature = Ed25519(deck link key, message)
+```
+
+The station checks the signature with the deck key that TLS proved (and that the person confirmed by its fingerprint), against its saved request (never against the current station name). The deck commits the station, its grants and a completion record in one transaction **before** it sends `pair_approved`.
+
+### 10.4 Test vectors
+
+Keys come from the seeds `01` x 32 (station) and `02` x 32 (deck) (`Identity::from_seed`). The request is `request_id` = bytes `00..0f`, `name` = `laptop`, `nonce` = bytes `20..3f`, offered scopes `read,drive` (sorted: `drive,read`), granted scopes `admin`. The transcript is the text `fleet-deck link transcript v1\0 test vector`; the source IP is `100.64.0.7`; `admitted_at` is `1800000000123`. The unit test `pair_request_tests.rs` checks each value.
+
+```text
+station fingerprint  34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e
+deck fingerprint     6a3803d5f059902a1c6dafbc9ba4729212f7caac08634cc3ae76b27529f03827
+transcript hash      e09327588059314b411bb09d84d6b410f5a61f0022bbfcf50d1541f286c6e547
+request digest       e79c65b4306975d100484529afbf9911cd036698d4fab06c91fcee53b50e595f
+pending digest       5e177bae222802c44477051778076b22000a351c4087e6e692a5c423634ab91a
+approval message     666c6565746465636b20706169722d617070726f7665642076310000000000000020e09327588059314b411bb09d84d6b410f5a61f0022bbfcf50d1541f286c6e547000000000000002034750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e00000000000000206a3803d5f059902a1c6dafbc9ba4729212f7caac08634cc3ae76b27529f038270000000000000010000102030405060708090a0b0c0d0e0f0000000000000020202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f0000000000000020e79c65b4306975d100484529afbf9911cd036698d4fab06c91fcee53b50e595f000000000000000a64726976652c72656164000000000000000561646d696e
+signature            a57391c1a69ce4e16613b87450f746786a8b05addfa33a74976dff0fdda2dac6c5f2436c6eba354b1ff700ca981af503cfc977840238b66807c01ed4e0ad7f06
+```
+
+### 10.5 Tailnet link listeners
+
+A link listener bound to a Tailscale-range address (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) has stricter rules. LAN and loopback listeners never accept a request without an invitation.
+
+- The window: the owner opens it for 10 minutes (new generation, fixed deadline, memory only). An unknown client key passes TLS only while an invitation or the window is open; the gate is checked again when the request is admitted.
+- 64 unauthenticated connection permits (16 for one source, an IPv6 source counted by its /64 prefix) from accept to close; at most 32 connections in TLS or in the upgrade. Stage deadlines: TLS 5 s, upgrade 5 s, the whole `Hello`/`Auth` exchange 5 s. A refused connection is closed at once after its refusal frame.
+- At most 16 waiting requests, 1 for each key, 2 for each source, and 30 new requests a minute; a request expires at the earlier of 10 minutes and the deadline of the window that admitted it; a denied key waits 10 minutes.
+- A request that carries an `Origin` header, or a `Host` other than `node.fleet-deck.invalid`, gets HTTP 403 on every link listener (a browser is not a link peer).

@@ -22,7 +22,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::handshake::Established;
 use crate::hello::{HandshakeError, HandshakeFrame, feature};
-use crate::node::{Listening, ListenerKind, NodeConfig};
+use crate::node::{ListenerKind, Listening, NodeConfig};
 use crate::pair_hub::{Admitted, Decision, PairRequests, Refusal};
 use crate::pair_request::{Approval, CanonicalRequest, reason, transcript_hash};
 use crate::pairing::{hex, unhex};
@@ -224,7 +224,10 @@ async fn answer(
         Waited::Expired => {
             Err(ws::close_reason(&mut ws, reason::EXPIRED, closed_text(reason::EXPIRED)).await)
         }
-        Waited::Dead => Err(LinkError::Timeout("pairing request heartbeat", hub.config().dead_after)),
+        Waited::Dead => Err(LinkError::Timeout(
+            "pairing request heartbeat",
+            hub.config().dead_after,
+        )),
         Waited::Protocol => {
             let e = HandshakeError::Protocol("unexpected message while the request waits".into());
             Err(ws::refuse(&mut ws, e).await)
@@ -272,7 +275,9 @@ pub(crate) async fn resume(
         return Err(unsupported(&mut ws, "this node accepts no pairing requests").await);
     };
     if unhex::<16>(request_id).is_none() || unhex::<32>(nonce).is_none() {
-        let e = HandshakeError::Protocol("a resume needs a 32 hex request id and a 64 hex nonce".into());
+        let e = HandshakeError::Protocol(
+            "a resume needs a 32 hex request id and a 64 hex nonce".into(),
+        );
         return Err(ws::refuse(&mut ws, e).await);
     }
     let done = match hub.approver().completion(request_id).await {
@@ -280,12 +285,19 @@ pub(crate) async fn resume(
         Ok(_) => return Err(unknown_request(&mut ws).await),
         Err(e) => {
             tracing::warn!(error = %e, "a stored approval could not be read");
-            return Err(ws::close_reason(&mut ws, "pairing_failed", "the deck could not read its records".to_owned()).await);
+            return Err(ws::close_reason(
+                &mut ws,
+                "pairing_failed",
+                "the deck could not read its records".to_owned(),
+            )
+            .await);
         }
     };
     // The pairing must be current: the key is still pinned as a station and
     // the deck key is the one that signed the approval.
-    if node.pins.role_of(&peer) != Some(Role::Station) || done.deck_key != node.identity.public_key() {
+    if node.pins.role_of(&peer) != Some(Role::Station)
+        || done.deck_key != node.identity.public_key()
+    {
         return Err(ws::close_reason(
             &mut ws,
             reason::REVOKED,

@@ -187,11 +187,8 @@ pub(crate) async fn accept(
     {
         ws_cfg = ws_cfg.max_message_size(Some(cap)).max_frame_size(Some(cap));
     }
-    let upgrade = accept_hdr_async_with_config(
-        tokio_rustls::TlsStream::Server(tls),
-        pick,
-        Some(ws_cfg),
-    );
+    let upgrade =
+        accept_hdr_async_with_config(tokio_rustls::TlsStream::Server(tls), pick, Some(ws_cfg));
     let ws = tokio::time::timeout(limit, upgrade)
         .await
         .map_err(|_| LinkError::Timeout(STEP_UPGRADE, limit))?

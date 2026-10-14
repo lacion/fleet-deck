@@ -66,6 +66,23 @@ pub enum LocalRequest {
     Invite { listen: std::net::SocketAddr },
     /// `station join`: pair with the deck of the invitation and dial it.
     Join { invitation: InvitationText },
+    /// `station join --tailnet` (DL-178): asks the deck at `host:port`, a
+    /// device of the tailnet, to pair. The station checks the host against
+    /// its own `tailscale status`, writes the retry file, sends the request,
+    /// waits for the owner (at most 11 minutes) and stores the deck pin, the
+    /// grants (`scopes`: what this station gives the deck) and the dial
+    /// target in one transaction. Without `deck_fingerprint` it only
+    /// observes the key of the deck and answers
+    /// [`LocalResponse::TailnetObserved`].
+    JoinTailnet {
+        host: String,
+        port: u16,
+        deck_fingerprint: Option<[u8; 32]>,
+        scopes: Vec<fleetdeck_proto::link::Scope>,
+        name: String,
+    },
+    /// `station join --tailnet --cancel`: removes the retry file only.
+    JoinTailnetCancel,
     /// `station forget-deck`: revoke every deck key.
     ForgetDeck,
     /// `station drain`: refuse new work and wait until no session has open
@@ -101,6 +118,25 @@ pub enum LocalResponse {
     /// [`LocalRequest::Join`] paired with the deck of this fingerprint.
     Paired {
         deck: String,
+    },
+    /// [`LocalRequest::JoinTailnet`] without a fingerprint: the full link key
+    /// fingerprint (64 hex) that the deck showed. Nothing was written.
+    TailnetObserved {
+        fingerprint: String,
+    },
+    /// [`LocalRequest::JoinTailnet`] paired with this deck device.
+    TailnetPaired {
+        device: String,
+        deck: String,
+    },
+    /// The result of [`LocalRequest::JoinTailnetCancel`].
+    TailnetCancelled {
+        removed: bool,
+    },
+    /// [`LocalRequest::JoinTailnet`] ended with a stable code.
+    TailnetRefused {
+        code: String,
+        detail: String,
     },
     /// [`LocalRequest::ForgetDeck`] revoked this many deck keys.
     Forgotten {
@@ -163,6 +199,14 @@ pub async fn serve(
     node: Option<Arc<StationNode>>,
     mut shutdown: watch::Receiver<bool>,
 ) {
+    // The node keeps the retry file of a tailnet join in the directory of
+    // this socket (the station data directory).
+    if let Some(node) = &node
+        && let Ok(addr) = listener.local_addr()
+        && let Some(dir) = addr.as_pathname().and_then(Path::parent)
+    {
+        node.set_data_dir(dir);
+    }
     loop {
         tokio::select! {
             accepted = localsock::accept_own(&listener) => match accepted {
@@ -198,6 +242,15 @@ async fn connection(
             }
         };
         let response = match serde_json::from_slice::<LocalRequest>(&line) {
+            // A tailnet join waits for the owner for minutes. When the CLI
+            // goes away, the join ends and its pair connection closes, so
+            // the deck cancels the waiting request.
+            Ok(request @ LocalRequest::JoinTailnet { .. }) => {
+                tokio::select! {
+                    r = handle(&manager, node.as_deref(), request) => r,
+                    () = client_gone(&mut reader) => return,
+                }
+            }
             Ok(request) => handle(&manager, node.as_deref(), request).await,
             // serde's message can quote the input; never echo a line that
             // may carry an invitation (G12).
@@ -207,6 +260,13 @@ async fn connection(
             return;
         }
     }
+}
+
+/// Returns when the client closed the socket (or sent more than it may
+/// while it waits for an answer).
+async fn client_gone(reader: &mut BufReader<tokio::net::unix::OwnedReadHalf>) {
+    use tokio::io::AsyncBufReadExt as _;
+    let _ = reader.fill_buf().await;
 }
 
 fn error(message: String) -> LocalResponse {
@@ -238,6 +298,109 @@ async fn pairing(node: Option<&StationNode>, request: LocalRequest) -> LocalResp
         _ => return error("not a pairing request".to_owned()),
     };
     result.unwrap_or_else(|e| error(e.to_string()))
+}
+
+fn refused(code: &str, detail: impl Into<String>) -> LocalResponse {
+    LocalResponse::TailnetRefused {
+        code: code.to_owned(),
+        detail: detail.into(),
+    }
+}
+
+/// The `tailscale` program of this station: the setting `tailscale_bin`,
+/// else the lookup of `fleetdeck_core::tailscale`.
+async fn tailscale_cli(manager: &Arc<SessionManager>) -> fleetdeck_core::tailscale::TailscaleCli {
+    let mut configured = None;
+    if let Some(holder) = manager.settings()
+        && let Outcome::Ok(v) = holder.get().await
+        && let Ok(view) = serde_json::from_value::<SettingsView>(v)
+    {
+        configured = view
+            .values
+            .get("tailscale_bin")
+            .and_then(|b| b.as_str())
+            .filter(|b| !b.is_empty())
+            .map(PathBuf::from);
+    }
+    fleetdeck_core::tailscale::TailscaleCli::locate(configured.as_deref())
+}
+
+/// `station join --tailnet` and its cancel (DL-178).
+async fn tailnet(
+    manager: &Arc<SessionManager>,
+    node: Option<&StationNode>,
+    request: LocalRequest,
+) -> LocalResponse {
+    use crate::link::{NodeError, TailnetJoin, TailnetResult};
+    use fleetdeck_core::identity::Fingerprint;
+    use fleetdeck_link::pair_request::{validate_name, validate_scopes};
+
+    let Some(node) = node else {
+        return error("this station runs without its link node".to_owned());
+    };
+    let join = match request {
+        LocalRequest::JoinTailnetCancel => {
+            return match node.cancel_tailnet() {
+                Ok(removed) => LocalResponse::TailnetCancelled { removed },
+                Err(NodeError::Tailnet { code, detail }) => refused(&code, detail),
+                Err(e) => error(e.to_string()),
+            };
+        }
+        LocalRequest::JoinTailnet {
+            host,
+            port,
+            deck_fingerprint,
+            scopes,
+            name,
+        } => {
+            let scopes: std::collections::BTreeSet<_> = scopes.into_iter().collect();
+            if let Err(e) = validate_name(&name).and_then(|()| validate_scopes(&scopes)) {
+                return refused("invalid_request", e.to_string());
+            }
+            if host.trim().is_empty() || port == 0 {
+                return refused("invalid_request", "the deck needs a host and a port");
+            }
+            let deck_fingerprint = match deck_fingerprint {
+                None => None,
+                Some(bytes) => {
+                    let text: String = bytes.iter().map(|x| format!("{x:02x}")).collect();
+                    match text.parse::<Fingerprint>() {
+                        Ok(fp) => Some(fp),
+                        Err(_) => {
+                            return refused("invalid_request", "the fingerprint is not valid");
+                        }
+                    }
+                }
+            };
+            TailnetJoin {
+                host,
+                port,
+                deck_fingerprint,
+                scopes,
+                name,
+                cli: tailscale_cli(manager).await,
+                dial: None,
+            }
+        }
+        _ => return error("not a tailnet request".to_owned()),
+    };
+    match node.join_tailnet(&join).await {
+        Ok(TailnetResult::Observed(fp)) => LocalResponse::TailnetObserved {
+            fingerprint: fp.to_string(),
+        },
+        Ok(TailnetResult::Paired { device, deck }) => LocalResponse::TailnetPaired {
+            device,
+            deck: deck.to_string(),
+        },
+        Err(NodeError::Tailnet { code, detail }) => refused(&code, detail),
+        Err(NodeError::AlreadyPaired(fp)) => refused(
+            "already_paired",
+            format!(
+                "this station is already paired with deck {fp}; run `fleetdeck station forget-deck` first"
+            ),
+        ),
+        Err(e) => error(e.to_string()),
+    }
 }
 
 fn settings_error(code: &str, message: &str) -> LocalResponse {
@@ -305,6 +468,9 @@ async fn handle(
     let (command_id, command) = match request {
         LocalRequest::Invite { .. } | LocalRequest::Join { .. } | LocalRequest::ForgetDeck => {
             return pairing(node, request).await;
+        }
+        LocalRequest::JoinTailnet { .. } | LocalRequest::JoinTailnetCancel => {
+            return tailnet(manager, node, request).await;
         }
         LocalRequest::SettingsGet
         | LocalRequest::SettingsSet { .. }

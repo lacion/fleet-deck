@@ -124,7 +124,11 @@ async fn the_limits_are_one_per_key_two_per_source_and_sixteen_in_all() {
     }
     assert_eq!(held.len(), 16);
     let full = hub.admit(request("x"), key(), ip(99), false).await;
-    assert_eq!(full.unwrap_err(), Refusal::Busy, "the 17th is refused, none is evicted");
+    assert_eq!(
+        full.unwrap_err(),
+        Refusal::Busy,
+        "the 17th is refused, none is evicted"
+    );
     assert_eq!(hub.list().await.len(), 16);
 }
 
@@ -241,7 +245,11 @@ async fn approve_refuses_a_wrong_key_a_wrong_digest_and_writes_nothing() {
         .unwrap_err();
     assert_eq!(err, ApproveError::DigestMismatch);
     let err = hub
-        .approve("00000000000000000000000000000000", &k.fingerprint(), &digest)
+        .approve(
+            "00000000000000000000000000000000",
+            &k.fingerprint(),
+            &digest,
+        )
         .await
         .unwrap_err();
     assert_eq!(err, ApproveError::UnknownRequest);
@@ -263,10 +271,16 @@ async fn a_failed_commit_leaves_the_request_pending_and_pins_nothing() {
             CommitError::NameTaken("laptop".into()),
             ApproveError::NameTaken("laptop".into()),
         ),
-        (CommitError::Store("disk".into()), ApproveError::Store("disk".into())),
+        (
+            CommitError::Store("disk".into()),
+            ApproveError::Store("disk".into()),
+        ),
     ] {
         *memory.fail.lock().unwrap() = Some(set);
-        let err = hub.approve(&a.id, &k.fingerprint(), &digest).await.unwrap_err();
+        let err = hub
+            .approve(&a.id, &k.fingerprint(), &digest)
+            .await
+            .unwrap_err();
         assert_eq!(err, expect);
         assert!(pins.is_empty());
         assert_eq!(hub.list().await.len(), 1, "the owner can still deny it");
@@ -283,14 +297,20 @@ async fn approval_is_refused_after_a_close_and_after_a_close_and_reopen() {
     // Close: the request closes with `window_closed`; approval is refused.
     hub.close_window().await;
     assert_eq!(a.decision.await.unwrap(), Decision::Closed("window_closed"));
-    let err = hub.approve(&a.id, &k.fingerprint(), &digest).await.unwrap_err();
+    let err = hub
+        .approve(&a.id, &k.fingerprint(), &digest)
+        .await
+        .unwrap_err();
     assert_eq!(err, ApproveError::WindowClosed);
     // Close and reopen: a new generation; the old request is never approvable.
     let b = hub.admit(request("b"), key(), ip(2), false).await;
     assert_eq!(b.unwrap_err(), Refusal::WindowClosed);
     hub.open_window().await.unwrap();
     assert_eq!(hub.window().generation, first + 1);
-    let err = hub.approve(&a.id, &k.fingerprint(), &digest).await.unwrap_err();
+    let err = hub
+        .approve(&a.id, &k.fingerprint(), &digest)
+        .await
+        .unwrap_err();
     assert_eq!(err, ApproveError::WindowClosed);
     assert!(memory.done.lock().unwrap().is_empty());
     // A reopen while a request waits closes it too.
@@ -315,9 +335,15 @@ async fn a_request_expires_at_the_window_deadline_and_a_late_timer_does_not_appr
     let digest = digest_of(&hub.list().await[0]);
     tokio::time::advance(Duration::from_secs(21)).await;
     // The connection's own timer has not run, but the approval is refused.
-    let err = hub.approve(&a.id, &k.fingerprint(), &digest).await.unwrap_err();
+    let err = hub
+        .approve(&a.id, &k.fingerprint(), &digest)
+        .await
+        .unwrap_err();
     assert!(
-        matches!(err, ApproveError::UnknownRequest | ApproveError::WindowClosed),
+        matches!(
+            err,
+            ApproveError::UnknownRequest | ApproveError::WindowClosed
+        ),
         "{err:?}"
     );
     assert!(memory.done.lock().unwrap().is_empty());
@@ -331,7 +357,10 @@ async fn deny_closes_with_denied_and_starts_a_cooldown_of_that_key() {
     let a = hub.admit(request("a"), k, ip(1), false).await.unwrap();
     assert_eq!(hub.deny(&a.id).await.unwrap(), k);
     assert_eq!(a.decision.await.unwrap(), Decision::Closed("denied"));
-    assert_eq!(hub.deny(&a.id).await.unwrap_err(), ApproveError::UnknownRequest);
+    assert_eq!(
+        hub.deny(&a.id).await.unwrap_err(),
+        ApproveError::UnknownRequest
+    );
     let again = hub.admit(request("b"), k, ip(2), false).await;
     assert_eq!(again.unwrap_err(), Refusal::Denied);
     // Another key is not affected.
@@ -364,7 +393,10 @@ async fn a_dropped_connection_cancels_the_request_before_an_approval() {
     let digest = digest_of(&hub.list().await[0]);
     // The connection task is gone: its receiver drops.
     drop(a.decision);
-    let err = hub.approve(&a.id, &k.fingerprint(), &digest).await.unwrap_err();
+    let err = hub
+        .approve(&a.id, &k.fingerprint(), &digest)
+        .await
+        .unwrap_err();
     assert_eq!(err, ApproveError::UnknownRequest);
     assert!(memory.done.lock().unwrap().is_empty());
     // And a finish after the approval reports that a decision came first.

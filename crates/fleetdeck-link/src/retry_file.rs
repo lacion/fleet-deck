@@ -86,6 +86,17 @@ impl RetryRecord {
         .then_some(request)
     }
 
+    /// True when the file is for the deck `host`:`port` (the host compared
+    /// without case and without a trailing dot).
+    #[must_use]
+    pub fn is_for(&self, host: &str, port: u16) -> bool {
+        self.port == port
+            && self
+                .host
+                .trim_end_matches('.')
+                .eq_ignore_ascii_case(host.trim_end_matches('.'))
+    }
+
     #[must_use]
     pub fn offered(&self) -> BTreeSet<Scope> {
         self.offered_scopes.iter().copied().collect()
@@ -200,10 +211,7 @@ mod tests {
         let mut record = RetryRecord::new("h", 1, &"ab".repeat(32), &request());
         record.name = "other".into();
         write(dir.path(), &record).unwrap();
-        assert!(matches!(
-            read(dir.path()),
-            Err(RetryError::Invalid(_))
-        ));
+        assert!(matches!(read(dir.path()), Err(RetryError::Invalid(_))));
         std::fs::write(dir.path().join(FILE_NAME), b"not json").unwrap();
         assert!(matches!(read(dir.path()), Err(RetryError::Invalid(_))));
     }

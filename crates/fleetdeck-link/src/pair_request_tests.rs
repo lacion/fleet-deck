@@ -24,7 +24,13 @@ fn vector_request() -> CanonicalRequest {
     for (i, b) in nonce.iter_mut().enumerate() {
         *b = 0x20 + u8::try_from(i).unwrap();
     }
-    CanonicalRequest::new(id, "laptop".into(), nonce, set(&[Scope::Read, Scope::Drive])).unwrap()
+    CanonicalRequest::new(
+        id,
+        "laptop".into(),
+        nonce,
+        set(&[Scope::Read, Scope::Drive]),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -120,7 +126,14 @@ fn a_name_has_one_to_64_characters_and_no_control_or_bidi_character() {
     assert!(validate_name(&"é".repeat(64)).is_ok());
     assert!(validate_name("").is_err());
     assert!(validate_name(&"a".repeat(65)).is_err());
-    for bad in ["a\nb", "a\0b", "a\u{202E}b", "a\u{2066}b", "a\u{200F}b", "\u{7f}"] {
+    for bad in [
+        "a\nb",
+        "a\0b",
+        "a\u{202E}b",
+        "a\u{2066}b",
+        "a\u{200F}b",
+        "\u{7f}",
+    ] {
         assert!(validate_name(bad).is_err(), "{bad:?}");
     }
 }
@@ -161,8 +174,11 @@ fn a_frame_request_needs_lowercase_hex_of_the_right_length() {
 
 const VECTOR_STATION_FP: &str = "34750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e";
 const VECTOR_DECK_FP: &str = "6a3803d5f059902a1c6dafbc9ba4729212f7caac08634cc3ae76b27529f03827";
-const VECTOR_TRANSCRIPT_HASH: &str = "e09327588059314b411bb09d84d6b410f5a61f0022bbfcf50d1541f286c6e547";
-const VECTOR_REQUEST_DIGEST: &str = "e79c65b4306975d100484529afbf9911cd036698d4fab06c91fcee53b50e595f";
-const VECTOR_PENDING_DIGEST: &str = "5e177bae222802c44477051778076b22000a351c4087e6e692a5c423634ab91a";
+const VECTOR_TRANSCRIPT_HASH: &str =
+    "e09327588059314b411bb09d84d6b410f5a61f0022bbfcf50d1541f286c6e547";
+const VECTOR_REQUEST_DIGEST: &str =
+    "e79c65b4306975d100484529afbf9911cd036698d4fab06c91fcee53b50e595f";
+const VECTOR_PENDING_DIGEST: &str =
+    "5e177bae222802c44477051778076b22000a351c4087e6e692a5c423634ab91a";
 const VECTOR_MESSAGE: &str = "666c6565746465636b20706169722d617070726f7665642076310000000000000020e09327588059314b411bb09d84d6b410f5a61f0022bbfcf50d1541f286c6e547000000000000002034750f98bd59fcfc946da45aaabe933be154a4b5094e1c4abf42866505f3c97e00000000000000206a3803d5f059902a1c6dafbc9ba4729212f7caac08634cc3ae76b27529f038270000000000000010000102030405060708090a0b0c0d0e0f0000000000000020202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f0000000000000020e79c65b4306975d100484529afbf9911cd036698d4fab06c91fcee53b50e595f000000000000000a64726976652c72656164000000000000000561646d696e";
 const VECTOR_SIGNATURE: &str = "a57391c1a69ce4e16613b87450f746786a8b05addfa33a74976dff0fdda2dac6c5f2436c6eba354b1ff700ca981af503cfc977840238b66807c01ed4e0ad7f06";

@@ -46,7 +46,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 pub use router::CommandKind;
-pub use runtime::{DeckNode, NodeError};
+pub use runtime::{DeckNode, NodeError, NodeOptions};
 
 use crate::peers::DeckPeers;
 use crate::store::{DeckError, DeckStore};

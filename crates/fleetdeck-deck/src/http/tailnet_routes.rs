@@ -74,7 +74,7 @@ async fn status_fresh(cli: &TailscaleCli) -> Result<Status, TailscaleError> {
 }
 
 /// The saved values of `deck.toml` that the routes use.
-struct Saved {
+pub(super) struct Saved {
     listen: Vec<SocketAddr>,
     link_listen: Vec<SocketAddr>,
     tailnet_hostname: Option<String>,
@@ -100,7 +100,7 @@ fn addresses(values: &Map<String, Value>, key: &str) -> Option<Vec<SocketAddr>> 
 }
 
 /// The saved settings, or `None` when this deck has no settings file.
-async fn read_saved(board: &Board) -> Result<Option<Saved>, ApiError> {
+pub(super) async fn read_saved(board: &Board) -> Result<Option<Saved>, ApiError> {
     let Some(settings) = board.settings.as_ref() else {
         return Ok(None);
     };
@@ -128,7 +128,7 @@ async fn read_saved(board: &Board) -> Result<Option<Saved>, ApiError> {
     }))
 }
 
-fn cli_of(saved: Option<&Saved>) -> TailscaleCli {
+pub(super) fn cli_of(saved: Option<&Saved>) -> TailscaleCli {
     TailscaleCli::locate(saved.and_then(|s| s.tailscale_bin.as_deref()))
 }
 
@@ -454,9 +454,10 @@ struct DeviceView {
     login: Option<String>,
     tags: Vec<String>,
     online: bool,
-    /// `paired` or `none`.
+    /// `paired`, `request waiting` or `none`.
     state: &'static str,
-    /// The command for the station owner; a later task makes it.
+    /// The command for the station owner while the pairing window is open
+    /// (tailnet design 5.2); `null` otherwise, and for a paired device.
     command: Option<String>,
 }
 
@@ -535,11 +536,27 @@ pub async fn devices(
         .filter_map(|s| s.dial_url.as_deref())
         .map(host_of)
         .collect();
+    let hub = board.pairing.as_ref().map(|n| n.pair_requests());
+    let command = match hub {
+        Some(hub) if hub.is_open() => join_command(&status.this, hub),
+        _ => None,
+    };
     let mut peers = status.peers;
     peers.sort_by(|a, b| (&a.host_name, &a.dns_name).cmp(&(&b.host_name, &b.dns_name)));
-    let devices = peers
-        .iter()
-        .map(|d| DeviceView {
+    let mut devices = Vec::new();
+    for d in &peers {
+        let mut state = state_of(d, &hosts);
+        if state != "paired"
+            && let Some(hub) = hub
+        {
+            for ip in &d.ips {
+                if hub.has_request_from(*ip).await {
+                    state = "request waiting";
+                    break;
+                }
+            }
+        }
+        devices.push(DeviceView {
             host_name: d.host_name.clone(),
             dns_name: d.dns_name.clone(),
             ips: texts(&d.ips),
@@ -547,13 +564,38 @@ pub async fn devices(
             login: d.login.clone(),
             tags: d.tags.clone(),
             online: d.online,
-            state: state_of(d, &hosts),
-            command: None,
-        })
-        .collect();
+            state,
+            command: if state == "paired" {
+                None
+            } else {
+                command.clone()
+            },
+        });
+    }
     Ok(Json(DevicesView {
         available: true,
         reason: None,
         devices,
     }))
+}
+
+/// The exact station command of tailnet design 5.2 and DL-178:
+/// `fleetdeck station join --tailnet <host>:<port> --deck-fingerprint <64 hex>`.
+/// The host is the DNS name of this deck, or its first tailnet address when
+/// it has no DNS name (an IPv6 address in brackets); the port is the one of
+/// the first running tailnet link listener. `None` without such a listener.
+fn join_command(this: &Node, hub: &fleetdeck_link::pair_hub::PairRequests) -> Option<String> {
+    let port = hub.tailnet_addrs().first()?.port();
+    let host = if this.dns_name.is_empty() {
+        match this.ips.first()? {
+            IpAddr::V6(v6) => format!("[{v6}]"),
+            IpAddr::V4(v4) => v4.to_string(),
+        }
+    } else {
+        this.dns_name.clone()
+    };
+    Some(format!(
+        "fleetdeck station join --tailnet {host}:{port} --deck-fingerprint {}",
+        hub.deck_key().fingerprint()
+    ))
 }

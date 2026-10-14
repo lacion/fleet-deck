@@ -156,7 +156,11 @@ pub async fn request_pairing(
             Err(_) => return Err(ws::timed_out(&mut ws, "pending answer", limit).await),
         }
     }
-    let wait = if mode == PairMode::Request { wait } else { limit };
+    let wait = if mode == PairMode::Request {
+        wait
+    } else {
+        limit
+    };
     let (granted, signature) = match tokio::time::timeout(wait, ws::recv_frame(&mut ws)).await {
         Ok(Ok((
             _,

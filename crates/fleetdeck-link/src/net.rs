@@ -106,8 +106,8 @@ pub async fn connect(
 /// `--deck-fingerprint`; the dialer's own verifier (which refuses any key)
 /// is not used here.
 pub async fn observe_key(addr: SocketAddr) -> Result<PeerKey, NetError> {
-    let (config, seen) = crate::tls::observing_client_config()
-        .map_err(|e| NetError::PeerKey(e.to_string()))?;
+    let (config, seen) =
+        crate::tls::observing_client_config().map_err(|e| NetError::PeerKey(e.to_string()))?;
     let tcp = dial_tcp(addr).await?;
     let name = ServerName::try_from(SERVER_NAME)
         .map_err(|e| NetError::PeerKey(e.to_string()))?

@@ -25,11 +25,28 @@ fn name_of(text: &str) -> String {
     text.trim().trim_end_matches('.').to_ascii_lowercase()
 }
 
+/// The peer that a host names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Target {
+    /// The DNS name of the peer, or its host name when it has no DNS name.
+    pub name: String,
+    /// Its tailnet addresses: IPv4 first, then IPv6.
+    pub ips: Vec<IpAddr>,
+}
+
 /// The addresses of the peer that `host` names: IPv4 first, then IPv6.
 ///
 /// # Errors
 /// [`TargetError`] when `host` names no peer, or more than one.
 pub fn resolve(status: &Status, host: &str) -> Result<Vec<IpAddr>, TargetError> {
+    find(status, host).map(|t| t.ips)
+}
+
+/// [`resolve`] with the name of the peer.
+///
+/// # Errors
+/// As [`resolve`].
+pub fn find(status: &Status, host: &str) -> Result<Target, TargetError> {
     let wanted = name_of(host);
     let literal = wanted
         .trim_start_matches('[')
@@ -58,7 +75,12 @@ pub fn resolve(status: &Status, host: &str) -> Result<Vec<IpAddr>, TargetError> 
     if ips.is_empty() {
         return Err(TargetError::NoAddress(host.to_owned()));
     }
-    Ok(ips)
+    let name = if peer.dns_name.is_empty() {
+        peer.host_name.clone()
+    } else {
+        peer.dns_name.clone()
+    };
+    Ok(Target { name, ips })
 }
 
 #[cfg(test)]
@@ -96,7 +118,10 @@ mod tests {
     #[test]
     fn a_dns_name_a_host_name_or_an_address_names_a_peer_and_ipv4_comes_first() {
         let s = status();
-        let want: Vec<IpAddr> = vec!["100.64.0.5".parse().unwrap(), "fd7a:115c:a1e0::5".parse().unwrap()];
+        let want: Vec<IpAddr> = vec![
+            "100.64.0.5".parse().unwrap(),
+            "fd7a:115c:a1e0::5".parse().unwrap(),
+        ];
         for host in [
             "deck.tail.ts.net",
             "DECK.tail.ts.net.",
@@ -112,7 +137,14 @@ mod tests {
     #[test]
     fn a_host_that_is_not_a_peer_is_refused() {
         let s = status();
-        for host in ["me", "me.tail.ts.net", "100.64.0.1", "example.com", "10.0.0.1", ""] {
+        for host in [
+            "me",
+            "me.tail.ts.net",
+            "100.64.0.1",
+            "example.com",
+            "10.0.0.1",
+            "",
+        ] {
             assert!(
                 matches!(resolve(&s, host), Err(TargetError::NotInTailnet(_))),
                 "{host}"
@@ -123,7 +155,10 @@ mod tests {
     #[test]
     fn a_short_name_of_two_devices_is_ambiguous_and_the_dns_name_is_not() {
         let s = status();
-        assert!(matches!(resolve(&s, "laptop"), Err(TargetError::Ambiguous(_))));
+        assert!(matches!(
+            resolve(&s, "laptop"),
+            Err(TargetError::Ambiguous(_))
+        ));
         assert_eq!(
             resolve(&s, "laptop.other.ts.net").unwrap(),
             vec!["100.64.0.7".parse::<IpAddr>().unwrap()]

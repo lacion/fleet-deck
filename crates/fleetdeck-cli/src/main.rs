@@ -10,6 +10,7 @@ mod restart;
 mod settings;
 mod station;
 mod tailnet;
+mod tailnet_join;
 mod up;
 mod upgrade;
 
@@ -58,8 +59,12 @@ fn main() -> ExitCode {
             restart::restart_failed(&startup.exec())
         }
         Ok(code) => code,
+        // A refusal of `station join --tailnet` prints `<code>: <detail>`.
         Err(err) => {
-            eprintln!("fleetdeck: {err:#}");
+            match err.downcast_ref::<tailnet_join::Refused>() {
+                Some(refused) => eprintln!("{refused}"),
+                None => eprintln!("fleetdeck: {err:#}"),
+            }
             ExitCode::from(1)
         }
     }
@@ -144,7 +149,7 @@ enum Local<'a> {
     Drain(u64),
     Upgrade(&'a cli::UpgradeCommand),
     Invite(std::net::SocketAddr),
-    Join(&'a cli::InviteInput),
+    Join(&'a cli::JoinArgs),
     ForgetDeck,
 }
 
@@ -178,7 +183,7 @@ async fn local_main(
         Local::Drain(secs) => upgrade::drain(dirs, secs).await,
         Local::Upgrade(command) => upgrade::run(dirs, command).await,
         Local::Invite(listen) => pairing::invite(dirs, listen).await,
-        Local::Join(input) => pairing::join(dirs, input).await,
+        Local::Join(args) => pairing::join(dirs, env, args).await,
         Local::ForgetDeck => pairing::forget_deck(dirs).await,
     }
 }

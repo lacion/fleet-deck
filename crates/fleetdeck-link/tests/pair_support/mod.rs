@@ -9,12 +9,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use fleetdeck_core::identity::{Fingerprint, Identity};
+use fleetdeck_link::hello::LocalHello;
 use fleetdeck_link::node::{self, ListenerKind, NodeConfig};
 use fleetdeck_link::pair_hub::{
     CommitError, Completion, HubConfig, PairApprover, PairRequests, PendingView,
 };
 use fleetdeck_link::pair_request::CanonicalRequest;
-use fleetdeck_link::hello::LocalHello;
 use fleetdeck_link::tls::Role;
 use fleetdeck_link::{
     Epochs, Grants, Invitations, LinkError, LinkListener, PairApproved, PairMode, request_pairing,
@@ -115,7 +115,13 @@ pub async fn restart_deck(identity: Arc<Identity>, memory: Arc<Memory>) -> Deck 
     for done in memory.done.lock().unwrap().values() {
         config.pins.pin(done.station_key, Role::Station);
     }
-    deck_from(Node { config, grants }, memory, HubConfig::default(), |_| {}).await
+    deck_from(
+        Node { config, grants },
+        memory,
+        HubConfig::default(),
+        |_| {},
+    )
+    .await
 }
 
 async fn deck_from(
@@ -180,7 +186,16 @@ pub fn ask_at(
     let config = station.config.clone();
     let req = req.clone();
     tokio::spawn(async move {
-        request_pairing(&config, addr, deck_fp, &req, mode, Duration::from_secs(30), || Ok(())).await
+        request_pairing(
+            &config,
+            addr,
+            deck_fp,
+            &req,
+            mode,
+            Duration::from_secs(30),
+            || Ok(()),
+        )
+        .await
     })
 }
 
@@ -236,5 +251,8 @@ pub async fn approve_first(deck: &Deck) -> fleetdeck_link::pair_hub::Approved {
 
 /// Opens the window of `deck` (its listener is a tailnet listener).
 pub async fn open(deck: &Deck) {
-    deck.hub.open_window().await.expect("a tailnet listener runs");
+    deck.hub
+        .open_window()
+        .await
+        .expect("a tailnet listener runs");
 }

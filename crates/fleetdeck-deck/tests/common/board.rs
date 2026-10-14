@@ -130,6 +130,8 @@ pub struct Extras {
     pub settings: Option<DeckSettings>,
     pub restart: Option<Arc<dyn Restart>>,
     pub local_station: Option<StationId>,
+    /// The link node for the pairing routes, next to the settings.
+    pub pairing: Option<Arc<fleetdeck_deck::link::DeckNode>>,
 }
 
 /// Serves the board API of `link` with `extras`.
@@ -173,7 +175,9 @@ async fn serve_with(
                 self_signed: true,
                 tickets: fleetdeck_deck::http::ws::Tickets::default(),
                 ws_recheck: Duration::from_millis(200),
-                pairing: pairing.clone(),
+                pairing: pairing
+                    .clone()
+                    .or_else(|| extras.as_mut().and_then(|e| e.pairing.take())),
                 assets: assets.clone(),
                 live: fleetdeck_deck::live::LiveCell::new(fleetdeck_deck::live::DeckLive {
                     name: "test deck".to_owned(),

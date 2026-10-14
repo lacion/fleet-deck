@@ -21,6 +21,7 @@ pub mod fleet_routes;
 pub mod grant_routes;
 pub mod guard;
 pub mod methods;
+pub mod pairing_routes;
 pub mod paste_routes;
 pub mod people_routes;
 pub mod plan_routes;
@@ -118,6 +119,19 @@ pub fn router(board: Arc<Board>) -> Router {
         .route("/api/tailnet", get(tailnet_routes::get))
         .route("/api/tailnet/use", post(tailnet_routes::use_tailnet))
         .route("/api/tailnet/devices", get(tailnet_routes::devices))
+        .route(
+            "/api/pairing/window",
+            get(pairing_routes::window_get).post(pairing_routes::window_set),
+        )
+        .route("/api/pairing/requests", get(pairing_routes::requests))
+        .route(
+            "/api/pairing/requests/{request_id}/approve",
+            post(pairing_routes::approve),
+        )
+        .route(
+            "/api/pairing/requests/{request_id}/deny",
+            post(pairing_routes::deny),
+        )
         .route(
             "/api/stations/{station}/settings",
             get(settings_routes::station_get).post(settings_routes::station_set),
