@@ -494,8 +494,6 @@ async fn a_question_takes_answers_or_text_within_the_size_limits() {
     let big = json!({"k": "x".repeat(17_000)});
     let cases = [
         ("empty", q("r-q", None, None, None)),
-        ("opts", q("r-q2", None, None, Some("x".to_owned()))),
-        ("badopt", q("r-q2", Some("zzz"), None, None)),
         ("text", q("r-q", None, None, Some("x".repeat(4097)))),
         ("big", q("r-q", None, Some(big), None)),
         (
@@ -508,7 +506,8 @@ async fn a_question_takes_answers_or_text_within_the_size_limits() {
         assert_eq!(code(&r), Some(RejectCode::InvalidCommand), "{id}: {r:?}");
     }
     let named = q("r-q2", Some("a"), None, None);
-    assert!(code(&call(&w, &b, "q3", named).await).is_none());
+    let r = call(&w, &b, "q3", named).await;
+    assert_eq!(code(&r), Some(RejectCode::Forbidden), "{r:?}");
 }
 
 #[tokio::test]

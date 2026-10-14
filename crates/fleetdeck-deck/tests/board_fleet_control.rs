@@ -19,14 +19,10 @@ use common::fleet::*;
 use common::*;
 use fleetdeck_deck::store::outbox::{Gate, OutboxItem, OutboxState};
 use fleetdeck_deck::store::{GrantClass, NewCommand, QueryAnswer};
-use fleetdeck_proto::command::{CommandEnvelope, CommandOrigin, GrantScope, RETRY_WINDOW_MS};
+use fleetdeck_proto::RejectCode;
+use fleetdeck_proto::command::{CommandEnvelope, CommandOrigin, GrantScope};
 use fleetdeck_proto::command::{ControlSkill, CoordinatorSpec, SessionCommand};
-use fleetdeck_proto::link::Outcome;
-use fleetdeck_proto::mutation::{
-    AuthorityCheck, CoordinatorBinding, CoordinatorCall, CoordinatorCallEnvelope, CoordinatorOp,
-    CoordinatorQuery,
-};
-use fleetdeck_proto::{CommandId, Receipt, RejectCode};
+use fleetdeck_proto::mutation::{AuthorityCheck, CoordinatorBinding, CoordinatorQuery};
 use serde_json::{Value, json};
 use settings_support::*;
 
@@ -197,42 +193,6 @@ async fn the_deck_setting_turns_on_with_an_elevation_and_off_without_one() {
     assert!(!f.store.fleet_control() && !c.state.live.get().fleet_control);
 }
 
-fn stop(f: &Fixture, session: &str) -> CoordinatorOp {
-    CoordinatorOp::Stop {
-        station: f.station.clone(),
-        session_id: session.into(),
-    }
-}
-
-async fn call(f: &Fixture, b: &CoordinatorBinding, id: &str, op: CoordinatorOp) -> Receipt {
-    call_from(f, &f.station, b, id, op).await
-}
-
-async fn call_from(
-    f: &Fixture,
-    st: &fleetdeck_proto::StationId,
-    b: &CoordinatorBinding,
-    id: &str,
-    op: CoordinatorOp,
-) -> Receipt {
-    let caller = b.native_id.strip_prefix("n-").unwrap();
-    let envelope = CoordinatorCallEnvelope {
-        command_id: CommandId::from(id),
-        target_incarnation: f.store.incarnation().clone(),
-        retry_until: f.store.now_ms() + RETRY_WINDOW_MS,
-        call: CoordinatorCall {
-            caller: caller.into(),
-            binding: b.clone(),
-            idempotency_key: None,
-            op,
-        },
-    };
-    f.store
-        .decide_coordinator(st.clone(), envelope)
-        .await
-        .unwrap()
-}
-
 /// ADR-008 §9 test 4.
 #[tokio::test]
 async fn a_read_grant_gets_none_of_the_new_queries_and_the_setting_stops_them_all() {
@@ -300,55 +260,6 @@ fn attempt(item: &OutboxItem, id: &str) -> NewCommand {
         retry_until: item.expires_at,
         author: None,
     }
-}
-
-#[derive(Clone, Copy, Debug)]
-enum Loss {
-    Revoked,
-    Generation,
-    TargetIsCoordinator,
-    SettingOff,
-    LinkV1,
-}
-
-const LOSSES: [Loss; 5] = [
-    Loss::Revoked,
-    Loss::Generation,
-    Loss::TargetIsCoordinator,
-    Loss::SettingOff,
-    Loss::LinkV1,
-];
-
-async fn revoke(f: &Fixture, b: &CoordinatorBinding) -> bool {
-    let id = b.grant_id.clone();
-    f.store.revoke_grant(id, "owner".to_owned()).await.unwrap()
-}
-
-/// Takes the authority away; returns the authority to check with.
-async fn lose(
-    f: &Fixture,
-    b: &CoordinatorBinding,
-    item: &OutboxItem,
-    loss: Loss,
-) -> fleetdeck_proto::mutation::CommandAuthority {
-    let authority = item.authority.clone().unwrap();
-    match loss {
-        Loss::Revoked => assert!(revoke(f, b).await),
-        Loss::Generation => {
-            // The station moved the binding to a higher generation.
-            let id = b.grant_id.clone();
-            let sql = "UPDATE tokens SET bound_generation = 2 WHERE grant_id = ?1";
-            let db = f.store.db();
-            let moved = db.call(move |conn| Ok(conn.execute(sql, [id])?)).await;
-            assert_eq!(moved.unwrap(), 1);
-        }
-        Loss::TargetIsCoordinator => {
-            bound(f, "w1", &[GrantClass::Drive], false).await;
-        }
-        Loss::SettingOff => f.store.set_fleet_control(false),
-        Loss::LinkV1 => f.store.set_link_features(&f.station, 98, vec![]),
-    }
-    authority
 }
 
 /// An accepted call on a rig whose station is not linked (no router work).
@@ -495,32 +406,6 @@ async fn a_station_without_a_live_link_makes_the_item_wait_and_ten_minutes_end_i
         (last.state, last.reason.as_deref()),
         (OutboxState::Dead, Some("expired"))
     );
-}
-
-/// The first request that the fake station gets, with its command id.
-async fn wire(r: &mut Rig) -> (CommandId, Value) {
-    let req = next_request(&mut r.station).await;
-    (req.command_id.clone().unwrap(), req.params)
-}
-
-async fn authority_check(r: &mut Rig, check: &AuthorityCheck, policy: Option<Value>) -> Value {
-    let control = r.station.control.clone();
-    let ask = control.request("coordinator.authority_check", None, json!(check));
-    let serve = async {
-        let Some(answer) = policy else { return };
-        let req = next_request(&mut r.station).await;
-        assert_eq!(req.method, "coordinator.policy_now");
-        r.station
-            .control
-            .respond(req.id, Outcome::Ok(answer))
-            .await
-            .unwrap();
-    };
-    let (out, ()) = tokio::join!(ask, serve);
-    match out.unwrap() {
-        Outcome::Ok(v) => v,
-        Outcome::Err(e) => panic!("{e}"),
-    }
 }
 
 /// ADR-008 §9 tests 8a and 8d (the deck part): the authority travels on the

@@ -6,20 +6,25 @@
 use std::collections::BTreeSet;
 
 use fleetdeck_core::identity::Identity;
+use fleetdeck_deck::store::outbox::OutboxItem;
 use fleetdeck_deck::store::shares::NewShareRow;
 use fleetdeck_deck::store::stations::NewStation;
 use fleetdeck_deck::store::{GrantClass, NewGrant, QueryAnswer};
 use fleetdeck_link::LiveLink;
-use fleetdeck_proto::command::GrantScope;
+use fleetdeck_proto::command::{GrantScope, RETRY_WINDOW_MS};
 use fleetdeck_proto::event::{
     ApprovalOption, Event, EventBody, OptionKind, RequestKind, ResponseChannel, SessionState,
 };
 use fleetdeck_proto::link::{Outcome, Scope, WireError};
-use fleetdeck_proto::mutation::{CoordinatorBinding, CoordinatorQuery, CoordinatorQueryEnvelope};
+use fleetdeck_proto::mutation::{
+    AuthorityCheck, CoordinatorBinding, CoordinatorCall, CoordinatorCallEnvelope, CoordinatorOp,
+    CoordinatorQuery, CoordinatorQueryEnvelope,
+};
 use fleetdeck_proto::session::OpenRequest;
 use fleetdeck_proto::share::{ShareKind, ShareRole, Steering};
 use fleetdeck_proto::{
-    EventEnvelope, IncarnationId, Reject, RejectCode, SessionId, SessionSummary, StationId,
+    CommandId, EventEnvelope, IncarnationId, Receipt, Reject, RejectCode, SessionId,
+    SessionSummary, StationId,
 };
 use serde_json::{Value, json};
 
@@ -72,13 +77,28 @@ pub async fn bound_for(
     classes: &[GrantClass],
     (fleet, more): (bool, &[StationId]),
 ) -> CoordinatorBinding {
+    bound_edit(f, st, session, classes, |g| {
+        g.stations.insert(f.station.clone());
+        g.stations.extend(more.iter().cloned());
+        if fleet {
+            g.scope = GrantScope::Fleet;
+        }
+    })
+    .await
+}
+
+/// A bound grant of `session` of station `st` that `edit` changes before it
+/// is stored.
+pub async fn bound_edit(
+    f: &Fixture,
+    st: &StationId,
+    session: &str,
+    classes: &[GrantClass],
+    edit: impl FnOnce(&mut NewGrant),
+) -> CoordinatorBinding {
     let mut g = NewGrant::new(st.clone(), session.into());
     g.classes = classes.iter().copied().collect();
-    g.stations.insert(f.station.clone());
-    g.stations.extend(more.iter().cloned());
-    if fleet {
-        g.scope = GrantScope::Fleet;
-    }
+    edit(&mut g);
     let stored = f.store.create_grant(g).await.unwrap();
     let b = CoordinatorBinding {
         binding_id: format!("b-{session}"),
@@ -187,18 +207,18 @@ pub fn request(id: &str, at: i64, input: Option<Value>) -> OpenRequest {
         request_id: id.into(),
         node_id: None,
         request_kind: RequestKind::Command,
-        title: "Bash".to_owned(),
+        title: format!("Bash {HOSTILE}"),
         details: format!("details of {id} {HOSTILE}"),
         input,
         options: vec![
             ApprovalOption {
                 option_id: "once".to_owned(),
-                label: "Allow once".to_owned(),
+                label: format!("Allow once {HOSTILE}"),
                 kind: Some(OptionKind::AllowOnce),
             },
             ApprovalOption {
                 option_id: "no".to_owned(),
-                label: "Deny".to_owned(),
+                label: format!("Deny {HOSTILE}"),
                 kind: None,
             },
         ],
@@ -228,7 +248,7 @@ pub async fn world() -> World {
     let mut sessions = ["coord-1", "w1", "w2", "w3", "coord-2", "sh"]
         .map(card)
         .to_vec();
-    sessions[1].title = Some("Worker one".to_owned());
+    sessions[1].title = Some(format!("Worker one {HOSTILE}"));
     sessions[1].open_requests = vec![
         request("r2", 2_000, Some(json!({"cmd": "ls"}))),
         request("r1", 1_000, None),
@@ -315,4 +335,148 @@ pub fn delta(id: &str, seq: u64) -> EventEnvelope {
         text: "DELTA-MARKER".to_owned(),
     });
     e
+}
+pub fn stop(f: &Fixture, session: &str) -> CoordinatorOp {
+    CoordinatorOp::Stop {
+        station: f.station.clone(),
+        session_id: session.into(),
+    }
+}
+
+pub async fn call(f: &Fixture, b: &CoordinatorBinding, id: &str, op: CoordinatorOp) -> Receipt {
+    call_from(f, &f.station, b, id, op).await
+}
+
+pub async fn call_from(
+    f: &Fixture,
+    st: &fleetdeck_proto::StationId,
+    b: &CoordinatorBinding,
+    id: &str,
+    op: CoordinatorOp,
+) -> Receipt {
+    let caller = b.native_id.strip_prefix("n-").unwrap();
+    let envelope = CoordinatorCallEnvelope {
+        command_id: CommandId::from(id),
+        target_incarnation: f.store.incarnation().clone(),
+        retry_until: f.store.now_ms() + RETRY_WINDOW_MS,
+        call: CoordinatorCall {
+            caller: caller.into(),
+            binding: b.clone(),
+            idempotency_key: None,
+            op,
+        },
+    };
+    f.store
+        .decide_coordinator(st.clone(), envelope)
+        .await
+        .unwrap()
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Loss {
+    Revoked,
+    Generation,
+    TargetIsCoordinator,
+    SettingOff,
+    LinkV1,
+}
+
+pub const LOSSES: [Loss; 5] = [
+    Loss::Revoked,
+    Loss::Generation,
+    Loss::TargetIsCoordinator,
+    Loss::SettingOff,
+    Loss::LinkV1,
+];
+
+pub async fn revoke(f: &Fixture, b: &CoordinatorBinding) -> bool {
+    let id = b.grant_id.clone();
+    f.store.revoke_grant(id, "owner".to_owned()).await.unwrap()
+}
+
+/// Takes the authority away; returns the authority to check with.
+pub async fn lose(
+    f: &Fixture,
+    b: &CoordinatorBinding,
+    item: &OutboxItem,
+    loss: Loss,
+) -> fleetdeck_proto::mutation::CommandAuthority {
+    let authority = item.authority.clone().unwrap();
+    match loss {
+        Loss::Revoked => assert!(revoke(f, b).await),
+        Loss::Generation => {
+            // The station moved the binding to a higher generation.
+            let id = b.grant_id.clone();
+            let sql = "UPDATE tokens SET bound_generation = 2 WHERE grant_id = ?1";
+            let db = f.store.db();
+            let moved = db.call(move |conn| Ok(conn.execute(sql, [id])?)).await;
+            assert_eq!(moved.unwrap(), 1);
+        }
+        Loss::TargetIsCoordinator => {
+            bound(f, "w1", &[GrantClass::Drive], false).await;
+        }
+        Loss::SettingOff => f.store.set_fleet_control(false),
+        Loss::LinkV1 => f.store.set_link_features(&f.station, 98, vec![]),
+    }
+    authority
+}
+
+/// The first request that the fake station gets, with its command id.
+pub async fn wire(r: &mut Rig) -> (CommandId, Value) {
+    let req = next_request(&mut r.station).await;
+    (req.command_id.clone().unwrap(), req.params)
+}
+
+/// [`wire`], and the station accepts the command.
+pub async fn wire_accepted(r: &mut Rig) -> (CommandId, Value) {
+    let req = super::Fixture::answer(&mut r.station, super::accepted).await;
+    (req.command_id.clone().unwrap(), req.params)
+}
+
+pub async fn authority_check(r: &mut Rig, check: &AuthorityCheck, policy: Option<Value>) -> Value {
+    let control = r.station.control.clone();
+    let ask = control.request("coordinator.authority_check", None, json!(check));
+    let serve = async {
+        let Some(answer) = policy else { return };
+        let req = next_request(&mut r.station).await;
+        assert_eq!(req.method, "coordinator.policy_now");
+        r.station
+            .control
+            .respond(req.id, Outcome::Ok(answer))
+            .await
+            .unwrap();
+    };
+    let (out, ()) = tokio::join!(ask, serve);
+    match out.unwrap() {
+        Outcome::Ok(v) => v,
+        Outcome::Err(e) => panic!("{e}"),
+    }
+}
+
+/// [`authority_check`] whose `coordinator.policy_now` answer comes only
+/// after `during` ran: the state changes while the deck waits for the caller
+/// station.
+pub async fn authority_check_held(
+    r: &mut Rig,
+    check: &AuthorityCheck,
+    policy: Value,
+    during: impl std::future::Future<Output = ()>,
+) -> Value {
+    let control = r.station.control.clone();
+    let ask = control.request("coordinator.authority_check", None, json!(check));
+    let serve = async {
+        let req = next_request(&mut r.station).await;
+        assert_eq!(req.method, "coordinator.policy_now");
+        during.await;
+        r.station
+            .control
+            .respond(req.id, Outcome::Ok(policy))
+            .await
+            .unwrap();
+    };
+    let (out, ()) = tokio::join!(ask, serve);
+    match out.unwrap() {
+        Outcome::Ok(v) => v,
+        Outcome::Err(e) => panic!("{e}"),
+    }
 }

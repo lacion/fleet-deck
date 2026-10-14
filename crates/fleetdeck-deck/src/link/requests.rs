@@ -23,6 +23,7 @@ use fleetdeck_proto::mutation::{
 use fleetdeck_proto::{CommandId, Receipt, StationId};
 
 use super::{DeckLink, NOT_IMPLEMENTED};
+use crate::store::coordinator::AuthorityLocal;
 use crate::store::{LinkV2, QueryAnswer};
 
 /// The whole round trip of `coordinator.authority_check` (ADR-008 section
@@ -129,31 +130,54 @@ async fn authority_check(ctx: &DeckLink, station: StationId, req: &InboundReques
     }
 }
 
-async fn authority_answer(
+/// The checks that the deck makes alone (ADR-008 section 6.2): the grant, the
+/// generation, the deck setting, the command, the launch mode, and the links
+/// of the caller station and of the target station. The first reason that
+/// fails, else the facts for the target rule.
+async fn local_pass(
     ctx: &DeckLink,
     station: &StationId,
-    check: AuthorityCheck,
-) -> Result<AuthorityAnswer, crate::store::DeckError> {
+    check: &AuthorityCheck,
+) -> Result<Result<AuthorityLocal, &'static str>, crate::store::DeckError> {
     let local = match ctx
         .store
         .authority_local(station.clone(), check.clone())
         .await?
     {
         Ok(local) => local,
-        Err(reason) => return Ok(invalid(reason)),
+        Err(reason) => return Ok(Err(reason)),
     };
     let caller = ctx.store.link_v2(&check.caller_station);
     if caller == LinkV2::Down {
-        return Ok(invalid("caller_unreachable"));
+        return Ok(Err("caller_unreachable"));
     }
     if caller == LinkV2::Without || ctx.store.link_v2(station) != LinkV2::Negotiated {
-        return Ok(invalid("no_v2"));
+        return Ok(Err("no_v2"));
+    }
+    Ok(Ok(local))
+}
+
+async fn authority_answer(
+    ctx: &DeckLink,
+    station: &StationId,
+    check: AuthorityCheck,
+) -> Result<AuthorityAnswer, crate::store::DeckError> {
+    // The first pass saves the `policy_now` round trip for an authority that
+    // is invalid already.
+    if let Err(reason) = local_pass(ctx, station, &check).await? {
+        return Ok(invalid(reason));
     }
     let Some(policy) = ctx
         .policy_now(&check.caller_station, &check.caller_session)
         .await
     else {
         return Ok(invalid("caller_unreachable"));
+    };
+    // `policy_now` can wait up to 3 s: the grant, the deck setting and the
+    // links can change meanwhile, so the deck checks them again.
+    let local = match local_pass(ctx, station, &check).await? {
+        Ok(local) => local,
+        Err(reason) => return Ok(invalid(reason)),
     };
     if !policy.bound {
         return Ok(invalid("caller_unbound"));
