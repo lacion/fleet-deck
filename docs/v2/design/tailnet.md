@@ -78,7 +78,7 @@
 | Failure | Behaviour |
 | --- | --- |
 | No Tailscale, or userspace networking | The card says why; manual pairing stays. |
-| Window closed | The station prints `window_closed`; nothing is stored. |
+| Window closed | The station prints `window_closed` (the deck answered) or `not_accepted` (the deck refused the connection; the retry file stays and the same command resumes); nothing is stored on the deck. |
 | Key differs from the confirmed fingerprint | TLS fails; nothing is stored. |
 | Approval answer lost | The station retries; it gets the stored completion re-signed; the deck never pairs twice. |
 | Pending list full | Immediate refusal (`busy`). |
