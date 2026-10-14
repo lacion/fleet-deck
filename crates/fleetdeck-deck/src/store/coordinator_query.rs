@@ -10,8 +10,11 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
+use fleetdeck_proto::artifacts::ArtifactKind;
 use fleetdeck_proto::link::Scope;
-use fleetdeck_proto::mutation::{CoordinatorBinding, CoordinatorQuery, CoordinatorQueryEnvelope};
+use fleetdeck_proto::mutation::{
+    CoordinatorBinding, CoordinatorQuery, CoordinatorQueryEnvelope, ProjectItemKind,
+};
 use fleetdeck_proto::orchestration::{MAX_WAIT_IDS, TaskState};
 use fleetdeck_proto::{Reject, RejectCode, SessionId, StationId};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -25,9 +28,55 @@ pub const QUERY_DEADLINE_MS: i64 = 30_000;
 pub const WAIT_DEADLINE_MS: i64 = 60_000;
 const WAIT_TICK: Duration = Duration::from_millis(100);
 
-type Answer = std::result::Result<Value, Reject>;
+/// What the deck decided for a query: a value, or a read that a station
+/// must serve (ADR-008 §4.1). The store did all the authorization and the
+/// `touch` before it returns a [`QueryAnswer::Station`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum QueryAnswer {
+    Value(Value),
+    Station(StationRead),
+}
 
-fn reject(code: RejectCode, message: &str) -> Reject {
+/// One read of a station that a coordinator query needs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StationRead {
+    pub station: StationId,
+    /// The link method of the first request.
+    pub method: &'static str,
+    pub params: Value,
+    pub shape: ReadShape,
+    /// The label of the untrusted envelope of the answer (an artifact adds
+    /// `/<path>` for each file).
+    pub source: String,
+}
+
+/// How the answer of a station read becomes the answer of the query.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ReadShape {
+    SessionDiff {
+        session_id: SessionId,
+    },
+    FileRead {
+        session_id: SessionId,
+        path: String,
+    },
+    FileSearch {
+        session_id: SessionId,
+    },
+    ProjectItems {
+        project_id: String,
+        kind: ProjectItemKind,
+    },
+    Artifact {
+        kind: ArtifactKind,
+        artifact_id: String,
+        version: Option<u32>,
+    },
+}
+
+type Answer = std::result::Result<QueryAnswer, Reject>;
+
+pub(super) fn reject(code: RejectCode, message: &str) -> Reject {
     Reject::new(code, message)
 }
 
@@ -97,8 +146,8 @@ fn touch(conn: &Connection, grant: &Grant, now: i64) -> Result<()> {
 }
 
 impl DeckStore {
-    /// Answers one `coordinator.query` from `station`: the result value or
-    /// the rejection (never stored).
+    /// Answers one `coordinator.query` from `station`: the result value, a
+    /// station read to serve, or the rejection (never stored).
     ///
     /// # Errors
     /// A database error.
@@ -190,7 +239,7 @@ impl DeckStore {
                                "cwd": s.summary.cwd, "status": s.status})
                     })
                     .collect();
-                json!({ "sessions": sessions })
+                QueryAnswer::Value(json!({ "sessions": sessions }))
             }
             CoordinatorQuery::CommandStatus { command_id } => {
                 let caller = format!("{station}/{}", env.caller);
@@ -225,13 +274,13 @@ impl DeckStore {
                     Ok(Some((receipt, deliveries)))
                 })
                 .await?;
-                match found {
+                QueryAnswer::Value(match found {
                     Some((text, deliveries)) => json!({
                         "receipt": serde_json::from_str::<Value>(&text)?,
                         "deliveries": deliveries,
                     }),
                     None => json!({ "receipt": null, "deliveries": [] }),
-                }
+                })
             }
             CoordinatorQuery::WaitTask { task_id } => loop {
                 let Some(task) = self.task(task_id.clone()).await? else {
@@ -244,7 +293,7 @@ impl DeckStore {
                     )));
                 }
                 if task.state != TaskState::Open || self.now_ms() >= env.deadline {
-                    break json!({ "task": task });
+                    break QueryAnswer::Value(json!({ "task": task }));
                 }
                 tokio::time::sleep(WAIT_TICK).await;
                 if let Err(r) = self.query_grant(&station, &env).await? {
@@ -276,7 +325,7 @@ impl DeckStore {
                     }
                     let ready = tasks.into_iter().find(|t| t.state != TaskState::Open);
                     if ready.is_some() || self.now_ms() >= env.deadline {
-                        break json!({ "task": ready });
+                        break QueryAnswer::Value(json!({ "task": ready }));
                     }
                     tokio::time::sleep(WAIT_TICK).await;
                     if let Err(r) = self.query_grant(&station, &env).await? {
@@ -284,25 +333,11 @@ impl DeckStore {
                     }
                 }
             }
-            // Placeholder until the ADR-008 deck task replaces it.
-            CoordinatorQuery::SessionTail { .. }
-            | CoordinatorQuery::SessionDiff { .. }
-            | CoordinatorQuery::NeedsYou
-            | CoordinatorQuery::Projects
-            | CoordinatorQuery::ProjectItems { .. }
-            | CoordinatorQuery::Artifacts { .. }
-            | CoordinatorQuery::Artifact { .. }
-            | CoordinatorQuery::FileRead { .. }
-            | CoordinatorQuery::FileSearch { .. } => {
-                let name = serde_json::to_value(&env.query)
-                    .ok()
-                    .and_then(|v| v.get("query").and_then(|n| n.as_str().map(str::to_owned)))
-                    .unwrap_or_default();
-                return Ok(Err(reject(
-                    RejectCode::Unsupported,
-                    &format!("{name} is not implemented yet"),
-                )));
-            }
+            // The ADR-008 read queries (`coordinator_query_reads`).
+            read => match self.read_query(&grant, read).await? {
+                Ok(answer) => answer,
+                Err(r) => return Ok(Err(r)),
+            },
         };
         let now = self.now_ms();
         call(&self.inner.db, move |conn| touch(conn, &grant, now)).await?;

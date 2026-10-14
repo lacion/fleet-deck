@@ -144,7 +144,7 @@ pub(super) async fn ask<T: DeserializeOwned>(
 
 /// The binding of a project that `source` names: a tracker id, `forge`, or
 /// (absent) the first tracker, else the forge.
-pub(super) fn binding(project: &Project, source: Option<&str>) -> Result<Binding, ApiError> {
+pub(crate) fn binding(project: &Project, source: Option<&str>) -> Result<Binding, ApiError> {
     let forge = || {
         project.forge.clone().map(Binding::Forge).ok_or_else(|| {
             ApiError::new(
@@ -179,7 +179,7 @@ pub(super) fn binding(project: &Project, source: Option<&str>) -> Result<Binding
 }
 
 /// The forge of a project, for the pull request routes.
-pub(super) fn forge_of(project: &Project) -> Result<ForgeBinding, ApiError> {
+pub(crate) fn forge_of(project: &Project) -> Result<ForgeBinding, ApiError> {
     project.forge.clone().ok_or_else(|| {
         ApiError::new(
             StatusCode::CONFLICT,

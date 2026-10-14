@@ -23,6 +23,7 @@
 //! coordinator receipts (G7); the others with `not_implemented` (DL-050,
 //! DL-053).
 
+mod coordinator_reads;
 mod outbox;
 mod requests;
 pub mod router;
