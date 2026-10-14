@@ -138,34 +138,55 @@
 
 §3's stored key `tailnet_managed` is dropped: the settings writer refuses read-only keys and has no hidden field. The managed entries are instead every `listen` / `link_listen` entry in the Tailscale address range (`netscope::classify == Tailnet`); "Use tailnet"/"Update" replaces those in each list and keeps every other entry. The effect is the same as §3 for every address the deck added, and a hand-written tailnet-range address is treated as managed. Only locally assigned tailnet IPs are added; when none is assigned the deck reports userspace networking.
 
-## 14. Addendum: Tailscale on WSL and "Use Tailscale automatically" (proposed, 2026-10-14)
+## 14. Addendum: Tailscale on WSL and "Use Tailscale automatically" (revision 2, proposed, 2026-10-14)
 
-- **Owner request (2026-10-14):** "all of this settings can we detect them automatically? … maybe we could have a toggle use tailscale and if tailscale is in the path and configured it will just setup everything up correctly? also in this specific case we are in wsl, tailscale is installed in windows how will that work?"
-- **Facts (checked on the owner's machine):** WSL 2 (`WSL_DISTRO_NAME=Ubuntu`) with `networkingMode=Mirrored`; `tailscale` is not on the WSL `PATH`; `/mnt/c/Program Files/Tailscale/tailscale.exe` runs from WSL with the §2 minimal environment and `status --json` returns the node (`TUN: true`, `TailscaleIPs` 100.89.30.8 and an IPv6 address); 100.89.30.8 is assigned to `eth4` inside WSL (mirrored networking), so the deck can bind it. Under the WSL default NAT networking the Windows tailnet addresses are not assigned inside WSL.
+- **Owner request (2026-10-14):** "all of this settings can we detect them automatically? … maybe we could have a toggle use tailscale and if tailscale is in the path and configured it will just setup everything up correctly? also in this specific case we are in wsl, tailscale is installed in windows how will that work?" The owner approved the proposal.
+- **Revision 1** got DESIGN REVIEW FAIL (2 blockers, 4 major, 1 minor; `/tmp/fd-goal/adversary-report-tailnet14.md`); §14.6 maps each finding.
+- **Facts (checked on the owner's machine):** WSL 2 with `networkingMode=Mirrored`; `tailscale` is not on the WSL `PATH`; `/mnt/c/Program Files/Tailscale/tailscale.exe` runs from WSL and `status --json` returns the node; 100.89.30.8 is assigned to `eth4` inside WSL (mirrored networking). Under the WSL default NAT networking the Windows tailnet addresses are not assigned inside WSL. A Windows program started from WSL runs as the Windows user with an environment that Windows builds from the user's Windows environment (the WSL interop merges, it does not replace), so Fleet Deck cannot limit what that program sees.
 
-### 14.1 Program on WSL
+### 14.1 WSL: a hint, never an automatic program
 
-- The program choice of §2 gains a last step: when no program is found yet, the process runs in WSL (`/proc/sys/fs/binfmt_misc/WSLInterop` exists, or `WSL_DISTRO_NAME` is set), and `/mnt/c/Program Files/Tailscale/tailscale.exe` is a regular file, that program is used. The setting `tailscale_bin` still wins; a path on `PATH` still wins.
-- The child environment of §2 adds `WSL_INTEROP` and `WSL_DISTRO_NAME` when they are set in the parent (a socket path and a name; no credential), so a Windows program can start on every WSL version.
-- The output schema is the same (the Windows program prints the same `status --json`); the parser, limits and timeouts of §2 apply unchanged.
-- The same program choice applies to the station (`fleetdeck station join --tailnet`, `fleetdeck tailnet status`).
+- **WSL detection:** the kernel says WSL (`/proc/sys/kernel/osrelease` contains `microsoft` or `WSL`, case-insensitive) **and** WSL interop is registered (`/proc/sys/fs/binfmt_misc/WSLInterop` exists). An environment variable alone never counts.
+- When no Tailscale program is found (§2: `tailscale_bin`, `PATH`, macOS bundle) and the process runs in WSL and `/mnt/c/Program Files/Tailscale/tailscale.exe` exists, the deck does **not** run it. `GET /api/tailnet` answers `available: false` with `reason: "windows_tailscale"` and `windows_program: "/mnt/c/Program Files/Tailscale/tailscale.exe"`; only a metadata check (`symlink_metadata`, regular file) happens, inside the start deadline of §14.4.
+- The Tailnet card then says: "Tailscale for Windows is installed. Fleet Deck can use it from WSL. It then runs as your Windows user, with your Windows environment, the same as in a Windows terminal." and offers **"Use this program"**, which saves `tailscale_bin = "/mnt/c/Program Files/Tailscale/tailscale.exe"` through the normal settings writer. `tailscale_bin` is a danger setting (§2), so the save needs the owner's elevation: this is the owner's explicit, elevated choice of that executable. After it, §2 applies unchanged (the child environment rule covers the Linux side only; the card text above states the Windows side).
+- No other change to the child environment: no `WSL_INTEROP` or other new variable is added (the program runs with the §2 minimal environment, which works on the owner's WSL; if a WSL version needs more, the owner sees the program's failure reason on the card).
 
 ### 14.2 Addresses on WSL
 
-- §3's local-assignment check decides, as today: a Self IP that is not assigned inside WSL is not usable.
-- When no Self IP is usable and the process runs in WSL, the reason text is: "Tailscale runs on Windows and WSL uses NAT networking, so the tailnet address is not on this machine. Set `networkingMode=mirrored` in `%UserProfile%\.wslconfig`, run `wsl --shutdown`, and start Fleet Deck again; or install Tailscale inside WSL." (`userspace: true`, `409 tailnet_userspace` as today.)
+- When no Self IP is local and the process runs in WSL, the reason text is: "Tailscale runs on Windows and WSL uses NAT networking, so the tailnet address is not on this machine. Set `networkingMode=mirrored` in `%UserProfile%\.wslconfig`, run `wsl --shutdown`, and start Fleet Deck again; or install Tailscale inside WSL." (`userspace: true`, `409 tailnet_userspace` as today.)
 
-### 14.3 "Use Tailscale automatically"
+### 14.3 Local assignment
 
-- New deck setting `tailnet_auto: bool` (default `false`, `apply: Restart`, `danger: true`: turning it on needs the owner's elevation, as the listen addresses do; turning it off does not).
-- When it is on, the deck runs the §3 "Use tailnet" computation once at start, **before it binds any listener**: it reads `tailscale status`, and if Tailscale is available and not userspace, it replaces only the tailnet-range entries of `listen` and `link_listen` and the `tailnet_hostname` with the current values (the §3 rules: the ports of each list, IPv4 and IPv6, usable addresses only), writes them through the normal settings writer (one atomic save, revision checked; no elevation at start, because the owner gave it when turning the setting on), and then binds. Entries outside the tailnet range are never touched.
-- If Tailscale is not available, not running, userspace, or the save fails, the deck starts with the saved values unchanged and the board shows the reason on the Tailnet card ("Use Tailscale automatically: not applied at start — <reason>"). The start never fails because of Tailscale.
-- While the deck runs, nothing changes listeners (they apply at restart). The Tailnet card compares the current tailnet addresses with the saved ones every time it loads; when they differ it shows "Your tailnet address changed. Restart the deck to use it."
-- Board: the Tailnet card gets the toggle "Use Tailscale automatically" (with the elevation dialog to turn it on) next to the existing "Use tailnet" / "Update" button; with the toggle on, the button stays for an immediate update.
-- Audit: `tailnet.auto` (keys changed, at start) next to `tailnet.use`.
+- An address is local only when it is assigned to an interface of this machine: IPv4 from the kernel's local table (`/proc/net/fib_trie`, the `/32 host LOCAL` entries), IPv6 from `/proc/net/if_inet6`. On another platform, the §3 `UdpSocket::bind` check stays.
+- When `/proc/sys/net/ipv4/ip_nonlocal_bind` or `/proc/sys/net/ipv6/ip_nonlocal_bind` is `1`, the automatic mode of §14.4 does not run ("Non-local binding is on; set the tailnet addresses by hand."); the manual "Use tailnet" still uses the interface list.
 
-### 14.4 Tests
+### 14.4 "Use Tailscale automatically"
 
-- Program choice: WSL detected + the Windows path present → that program; not WSL → not used; `tailscale_bin` and `PATH` win; the child environment holds `WSL_INTEROP`/`WSL_DISTRO_NAME` only when set, and no other new variable.
-- WSL NAT reason text when no Self IP is local in WSL.
-- `tailnet_auto`: on → at start the tailnet-range entries are replaced before the listeners bind and a manual LAN entry stays; Tailscale unavailable/userspace/save failure → start with the saved values and the card reason; off → nothing changes; turning it on needs elevation, turning it off does not.
+- New deck settings: `tailnet_auto: bool` (default `false`, `apply: Restart`, `danger: true`: turning it on needs the owner's elevation; turning it off does not) and `tailnet_auto_entries: Vec<SocketAddr>` (written only by the deck, not editable on the board: the entries that the automatic mode added to `listen` and `link_listen`).
+- **At start, when `tailnet_auto` is on, before any listener binds,** inside one deadline of 3 s that covers the program choice, the process start, the output read and the child cleanup (a late answer is dropped and never saved):
+  1. Read `tailscale status`. If it is not available, not running, userspace, or non-local binding is on: no change to the saved settings.
+  2. Else compute the wanted automatic entries: the usable (§14.3) current tailnet addresses with the ports of §3 (the port of the first entry of each list, else 7420/7421). Replace in `listen` and `link_listen` only the entries listed in `tailnet_auto_entries` with the wanted ones (manual entries, also manual tailnet-range entries, stay as they are), set `tailnet_hostname` from `Self.DNSName` when valid, and store the new `tailnet_auto_entries`, in one save through the normal writer (revision checked). No elevation at start: the owner gave it when turning the setting on.
+- **Bind (with or without a save):** the deck binds every manual entry as today (a failure stops the start, as today). For each entry in `tailnet_auto_entries`, the deck first checks §14.3 again; an entry that is not local, or whose bind fails, is skipped with a warning and the reason on the Tailnet card ("Use Tailscale automatically: <address> not used — <reason>"); it never stops the start. If every entry of a list is skipped and the list has no manual entry, that channel has no listener, as a list that is empty today.
+- While the deck runs, nothing changes listeners. The Tailnet card compares the current tailnet addresses with `tailnet_auto_entries` when it loads; when they differ it shows "Your tailnet address changed. Restart the deck to use it."
+- "Use tailnet" / "Update" (the manual button of §3) keeps its §13 rule (it replaces every tailnet-range entry) and also writes `tailnet_auto_entries` = the entries it added, so the automatic mode can take them over.
+- Board: the Tailnet card gets the toggle "Use Tailscale automatically" (the elevation dialog to turn it on) next to the button.
+- Audit: `tailnet.auto` (the keys changed at start).
+
+### 14.5 Tests
+
+- WSL detection: kernel string + interop file → WSL; `WSL_DISTRO_NAME` alone on a non-WSL host → not WSL.
+- The Windows program is never run without `tailscale_bin`: `/api/tailnet` answers `windows_tailscale` with the path; "Use this program" saves `tailscale_bin` and needs elevation.
+- Local assignment from the interface lists; `ip_nonlocal_bind = 1` stops the automatic mode.
+- Automatic start: only `tailnet_auto_entries` are replaced, a manual LAN entry and a manual tailnet-range entry stay; Tailscale unavailable/userspace/timeout → no save; a late answer after the deadline is not saved; an automatic entry that is not local or fails to bind is skipped and the deck starts with the manual listeners; turning it on needs elevation.
+
+### 14.6 Review map (revision 1 → revision 2)
+
+| Finding | Change |
+| --- | --- |
+| BLOCKER untrusted Windows executable | §14.1 never run automatically; an elevated "Use this program" saves `tailscale_bin` (the owner's explicit choice) |
+| BLOCKER Windows environment not controlled | §14.1 states it on the card at the owner's choice; no claim of a credential-free Windows environment |
+| MAJOR stale saved address stops the start | §14.4 automatic entries are checked and skipped on failure; manual entries keep today's rule |
+| MAJOR bind check is not local assignment | §14.3 interface lists; `ip_nonlocal_bind` stops the automatic mode |
+| MAJOR manual tailnet entries removed | §14.4 `tailnet_auto_entries`: the automatic mode replaces only its own entries |
+| MAJOR startup not bounded | §14.4 one 3 s deadline over choice, start, read and cleanup; late answers dropped |
+| MINOR WSL detection by environment | §14.1 kernel string and interop file |
