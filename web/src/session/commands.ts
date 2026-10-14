@@ -13,6 +13,7 @@ import type {
   SessionCommand,
   SessionKey,
 } from '../gen';
+import { type FleetAnswers, isFleetAnswers } from './fleetAnswers';
 import type { Reply } from './question';
 import { type FileActions, fileActions } from './workspace';
 
@@ -52,6 +53,8 @@ export type SessionActions = {
   checkExecution(): Promise<ExecutionCheck>;
   /** Mark the previous run (shim `shimId`) as ended; the station checks the processes again. */
   reconcileExecution(shimId: string): Promise<Outcome>;
+  /** What the coordinator session answered (ADR-008 §5.3, owner only). */
+  fleetAnswers(): Promise<FleetAnswers>;
   /** The file service of the session; `null` without a reader (tests). */
   readonly files: FileActions | null;
 };
@@ -199,6 +202,13 @@ export function sessionActions(
       return v;
     },
     reconcileExecution: (shim_id) => run({ op: 'reconcile_execution', session_id, shim_id }),
+    fleetAnswers: async () => {
+      if (get === null) throw new Error('No reader.');
+      const path = `/api/sessions/${encodeURIComponent(key.station_id)}/${encodeURIComponent(session_id)}/fleet-answers`;
+      const v = await get(path);
+      if (!isFleetAnswers(v)) throw new Error('The deck sent invalid fleet answers.');
+      return v;
+    },
     files: get ? fileActions(get, key) : null,
   };
 }
