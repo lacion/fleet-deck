@@ -51,6 +51,46 @@ export type FakeReview = {
   posted: { path: string; body: unknown }[];
 };
 
+/** The tailnet and pairing state that `FakeDeck.tailnet` keeps in memory (DL-178). */
+export type FakeTailnet = {
+  /** `GET /api/tailnet` answers this; "Use tailnet" fills `current` from `managed`. */
+  view: {
+    available: boolean;
+    reason?: string;
+    self?: { dns_name: string; ips: string[] };
+    userspace: boolean;
+    managed: { listen: string[]; link_listen: string[] };
+    current: { listen: string[]; link_listen: string[] };
+  };
+  windowOpen: boolean;
+  generation: number;
+  devices: {
+    host_name: string;
+    dns_name: string;
+    ips: string[];
+    os?: string;
+    tags: string[];
+    online: boolean;
+    state: 'paired' | 'request waiting' | 'none';
+  }[];
+  requests: {
+    request_id: string;
+    requested_name: string;
+    station_fingerprint: string;
+    offered_scopes: string[];
+    source_ip: string;
+    admitted_at: number;
+    expires_at: number;
+    digest: string;
+    tailscale: null | { host_name?: string; login?: string; tags: string[] };
+  }[];
+  /** The bodies of the POSTs, with the path. */
+  posted: { path: string; body: unknown }[];
+};
+
+/** The elevation that the fake deck's `/api/auth/elevate` gives. */
+export const ELEVATION = 'elevation-e2e';
+
 const SHORT = 'abcdefghijkmnpqrstuvwxyz23456789';
 const shortId = (prefix: string, n: number): string => {
   let id = '';
@@ -200,6 +240,119 @@ export class FakeDeck {
       };
       state.reviews.unshift(summary);
       return { status: 200, body: summary };
+    });
+    return state;
+  }
+
+  /**
+   * The tailnet and pairing routes (DL-178) with the state in memory, and the elevation route of
+   * the settings (the password of `PASSWORD` gives `ELEVATION`). A deck with no Tailscale
+   * detail is not covered here: set `state.view.available`. The caller is the owner.
+   */
+  tailnet(initial: Partial<FakeTailnet> = {}): FakeTailnet {
+    const state: FakeTailnet = {
+      view: {
+        available: true,
+        self: { dns_name: 'deck.tail1234.ts.net', ips: ['100.64.0.1'] },
+        userspace: false,
+        managed: { listen: ['100.64.0.1:7420'], link_listen: ['100.64.0.1:7421'] },
+        current: { listen: ['127.0.0.1:7420'], link_listen: ['127.0.0.1:7421'] },
+      },
+      windowOpen: false,
+      generation: 0,
+      devices: [],
+      requests: [],
+      posted: [],
+      ...initial,
+    };
+    const window = () => ({
+      open: state.windowOpen,
+      generation: state.generation,
+      deadline_ms: state.windowOpen ? Date.now() + 10 * 60_000 : null,
+    });
+    this.on('/api/auth/elevate', (raw) => {
+      const ok = (raw as { password?: unknown } | null)?.password === PASSWORD;
+      return ok
+        ? { status: 200, body: { elevation: ELEVATION, expires_at: Date.now() + 300_000 } }
+        : { status: 401, body: { code: 'bad_password', message: 'The password is wrong.' } };
+    });
+    this.on('/api/settings/deck', () => ({
+      status: 200,
+      body: { values: {}, fields: [], revision: 'rev-e2e', overrides: [] },
+    }));
+    this.on('/api/tailnet', () => ({ status: 200, body: state.view }));
+    this.on('/api/tailnet/use', (raw) => {
+      state.posted.push({ path: '/api/tailnet/use', body: raw });
+      if ((raw as { elevation?: unknown } | null)?.elevation !== ELEVATION) {
+        return { status: 400, body: { code: 'elevation_required', message: 'Confirm it is you.' } };
+      }
+      state.view.current = {
+        listen: [...state.view.current.listen, ...state.view.managed.listen],
+        link_listen: [...state.view.current.link_listen, ...state.view.managed.link_listen],
+      };
+      return {
+        status: 200,
+        body: { saved: true, restart_needed: true, ...state.view.managed },
+      };
+    });
+    this.on('/api/tailnet/devices', () => ({
+      status: 200,
+      body: {
+        available: state.view.available,
+        devices: state.devices.map((d) => ({
+          ...d,
+          command:
+            state.windowOpen && d.state === 'none'
+              ? `fleetdeck station join --tailnet ${state.view.self?.dns_name ?? ''}`
+              : null,
+        })),
+      },
+    }));
+    this.on('/api/pairing/window', (raw) => {
+      if (raw === null) return { status: 200, body: window() };
+      state.posted.push({ path: '/api/pairing/window', body: raw });
+      const b = raw as { open?: boolean; elevation?: unknown };
+      if (b.open === true) {
+        if (b.elevation !== ELEVATION) {
+          return {
+            status: 400,
+            body: { code: 'elevation_required', message: 'Confirm it is you.' },
+          };
+        }
+        if (!state.windowOpen) state.generation += 1;
+        state.windowOpen = true;
+      } else {
+        state.windowOpen = false;
+        state.requests = [];
+      }
+      return { status: 200, body: window() };
+    });
+    this.on('/api/pairing/requests', () => ({
+      status: 200,
+      body: { window: window(), requests: state.windowOpen ? state.requests : [] },
+    }));
+    this.route('POST', /^\/api\/pairing\/requests\/([^/]+)\/approve$/, (m, raw) => {
+      state.posted.push({ path: m[0], body: raw });
+      const b = raw as { fingerprint?: string; digest?: string; elevation?: unknown };
+      if (b.elevation !== ELEVATION) {
+        return { status: 400, body: { code: 'elevation_required', message: 'Confirm it is you.' } };
+      }
+      const found = state.requests.find((r) => r.request_id === decodeURIComponent(m[1] ?? ''));
+      if (found === undefined) {
+        return { status: 404, body: { code: 'unknown_request', message: 'No such request.' } };
+      }
+      if (b.fingerprint !== found.station_fingerprint || b.digest !== found.digest) {
+        return { status: 409, body: { code: 'digest_mismatch', message: 'The request changed.' } };
+      }
+      state.requests = state.requests.filter((r) => r !== found);
+      return { status: 200, body: { approved: true, station_id: 'st-new' } };
+    });
+    this.route('POST', /^\/api\/pairing\/requests\/([^/]+)\/deny$/, (m, raw) => {
+      state.posted.push({ path: m[0], body: raw });
+      state.requests = state.requests.filter(
+        (r) => r.request_id !== decodeURIComponent(m[1] ?? ''),
+      );
+      return { status: 200, body: { denied: true } };
     });
     return state;
   }

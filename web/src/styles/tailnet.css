@@ -1,0 +1,75 @@
+/* DL-178: the Tailnet card of Settings → Deck and the "On your tailnet" tab of Add station. */
+.fd-tailnet {
+  display: grid;
+  gap: var(--sp-3);
+  min-width: 0;
+  margin-bottom: var(--sp-4);
+  padding: var(--sp-4);
+}
+.fd-tailnet h2 {
+  margin: 0;
+}
+.fd-tailnet p {
+  margin: 0;
+}
+.fd-tailnet-table {
+  border-collapse: collapse;
+  max-width: 100%;
+}
+.fd-tailnet-table th,
+.fd-tailnet-table td {
+  padding: var(--sp-1) var(--sp-3) var(--sp-1) 0;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.fd-int-dialog > .fd-pane-tabs {
+  padding: 0;
+}
+.fd-fingerprint {
+  font-family: var(--font-data);
+  word-break: break-all;
+}
+.fd-pair-request {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+  margin: var(--sp-3) 0;
+  padding: var(--sp-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+}
+.fd-pair-request p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.fd-pair-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.fd-tailnet-devices {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fd-tailnet-devices > li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-3);
+  min-width: 0;
+  padding: var(--sp-2) 0;
+  border-bottom: 1px solid var(--border-soft);
+  overflow-wrap: anywhere;
+}
+.fd-tailnet-devices code {
+  word-break: break-all;
+}
+@media (max-width: 600px) {
+  .fd-pair-actions > button {
+    flex: 1 1 100%;
+  }
+}

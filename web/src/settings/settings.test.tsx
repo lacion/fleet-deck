@@ -703,7 +703,20 @@ describe('the restart flow (DL-172 7)', () => {
 });
 
 describe('the Settings link (DL-172)', () => {
-  const env = { settings: fake({}).actions, accounts: {} as never };
+  const env = {
+    settings: fake({}).actions,
+    accounts: {} as never,
+    tailnet: {
+      view: () => Promise.reject(new Error('not in this test')),
+      use: () => Promise.reject(new Error('not in this test')),
+      devices: () => Promise.reject(new Error('not in this test')),
+      window: () => Promise.reject(new Error('not in this test')),
+      setWindow: () => Promise.reject(new Error('not in this test')),
+      requests: () => Promise.reject(new Error('not in this test')),
+      approve: () => Promise.reject(new Error('not in this test')),
+      deny: () => Promise.reject(new Error('not in this test')),
+    },
+  };
 
   test('the sidebar and More show it for the owner login only', () => {
     const more = (withEnv: boolean) =>

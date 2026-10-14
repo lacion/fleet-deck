@@ -2,11 +2,13 @@
 // through one context. It is present only for the owner's login.
 import { createContext, type ReactNode, useContext } from 'react';
 import { type AccountActions } from '../accounts/actions';
+import type { TailnetActions } from '../tailnet/api';
 import type { SettingsActions } from './actions';
 
 export type SettingsEnv = {
   readonly settings: SettingsActions;
   readonly accounts: AccountActions;
+  readonly tailnet: TailnetActions;
 };
 
 const Context = createContext<SettingsEnv | undefined>(undefined);
