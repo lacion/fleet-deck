@@ -532,16 +532,21 @@ impl SessionTarget {
         if !unbound_stop && effect.process_incarnation.as_ref() != Some(&live.process) {
             return Dispatch::NotDispatched("process_changed".into());
         }
-        // ADR-008 §6.2: with the session lock held, right before the write.
-        // An input gates itself after its fence and checkpoint work. A
-        // durable write gates inside the driver, right before its first
-        // byte; a durable stop writes nothing and gates here.
-        let gated_by_driver =
-            live.durable.is_some() && !matches!(effect.payload, EffectPayload::Stop { .. });
-        if !target_base::gates_itself(&effect.payload)
-            && !gated_by_driver
+        // ADR-008 §6.2: with the session lock held, before the write. A
+        // direct input gates itself after its fence and checkpoint work. A
+        // durable effect is gated here too (the first of its gates): the
+        // driver then gates again under its core lock, where the state
+        // change is made (RE-REVIEW round 3).
+        let durable = live.durable.is_some();
+        if (durable || !target_base::gates_itself(&effect.payload))
             && let Some(refused) = self.gate_now(effect).await
         {
+            if durable
+                && let EffectPayload::Prompt { input, .. } | EffectPayload::FollowUp { input, .. } =
+                    &effect.payload
+            {
+                live.turns.input_not_sent(&input.input_id).await;
+            }
             return refused;
         }
         if let Some(durable) = live.durable.as_ref() {

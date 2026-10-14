@@ -40,20 +40,21 @@ use fleetdeck_proto::Event;
 use fleetdeck_proto::event::OutputGapReason;
 use fleetdeck_providers::host::shim::wire::GapReason;
 
-use super::shim_stdin::{self, Gate, claim_first, frame_count, no_gate, write_claimed};
+use super::shim_stdin::{self, Delivery, Gate, frame_count, no_gate};
 use crate::store::shim_gaps::REASON_ADAPTER_STATE_GAP;
 use crate::store::{
-    Dispatch, Effect, FrameState, InputRecord, NewEvent, OutputCommit, OutputMeta, RequestTime,
-    Store, StoreError,
+    Dispatch, Effect, EffectPayload, FrameState, InputRecord, NewEvent, OutputCommit, OutputMeta,
+    RequestTime, Store, StoreError,
 };
 
 /// The `input_blocked` reason of a generated frame whose fate the shim
 /// cannot prove.
 pub const REASON_FRAME_UNKNOWN: &str = "internal_frame_unknown";
+/// The `not_dispatched` reason of a coordinator input that the provider
+/// would queue behind a running turn.
+pub const REASON_PROVIDER_BUSY: &str = "provider_busy";
 /// How long a handshake step waits.
 const OPEN_WAIT: Duration = Duration::from_secs(15);
-/// The pause between two `write_status` questions about an in-flight frame.
-const ASK_AGAIN: Duration = Duration::from_millis(100);
 /// How long the pump waits for the shim's exit state after EOF.
 const EXIT_WAIT: Duration = Duration::from_secs(10);
 /// The `error` code of an overlong provider line (ADR-005 §4.2).
@@ -233,67 +234,19 @@ impl<C: DurableCore> DurableDriver<C> {
             this.start_pump(attached);
             return Ok(this);
         }
-        this.settle_frames(in_flight_wait).await?;
+        shim_stdin::settle_open_frames(
+            &this.store,
+            &this.process,
+            &this.shim_id,
+            in_flight_wait,
+            REASON_FRAME_UNKNOWN,
+        )
+        .await?;
         let guard = this.core.lock().await;
         this.flush(&guard).await?;
         drop(guard);
         this.start_pump(attached);
         Ok(this)
-    }
-
-    /// Settles generated frames that an earlier attachment claimed.
-    async fn settle_frames(&self, wait: Duration) -> Result<(), StoreError> {
-        for frame in self.store.shim_open_frames(self.shim_id.clone()).await? {
-            let (FrameState::Claimed, Some(tag)) = (frame.state, &frame.tag) else {
-                continue;
-            };
-            let deadline = tokio::time::Instant::now() + wait;
-            let state = loop {
-                let answer = self.process.write_status(tag, wait).await;
-                match answer {
-                    Some(StatusAnswer::Known {
-                        state: WriteState::Received | WriteState::Writing { .. },
-                    }) if tokio::time::Instant::now() < deadline => {
-                        tokio::time::sleep(ASK_AGAIN).await;
-                    }
-                    Some(StatusAnswer::Known {
-                        state: WriteState::Written,
-                    }) => break Some(FrameState::Done),
-                    Some(
-                        StatusAnswer::NotReceived
-                        | StatusAnswer::Known {
-                            state: WriteState::FailedUnwritten { .. } | WriteState::ClosedUnwritten,
-                        },
-                    ) => break Some(FrameState::Pending),
-                    _ => break None,
-                }
-            };
-            match state {
-                Some(state) => {
-                    let fenced = self
-                        .store
-                        .shim_frame_state(
-                            self.shim_id.clone(),
-                            self.process.generation(),
-                            frame.frame_seq,
-                            tag.clone(),
-                            state,
-                        )
-                        .await?;
-                    if !fenced {
-                        // A newer owner took over (DL-111): it settles.
-                        return Ok(());
-                    }
-                }
-                None => {
-                    self.store
-                        .shim_block_input(self.shim_id.clone(), REASON_FRAME_UNKNOWN)
-                        .await?;
-                    return Ok(());
-                }
-            }
-        }
-        Ok(())
     }
 
     /// Runs an adapter-internal step (a handshake step): commits its events,
@@ -468,10 +421,17 @@ impl<C: DurableCore> DurableDriver<C> {
         self.apply_gated(effect, &no_gate).await
     }
 
-    /// [`Self::apply`] with the authority `gate`: it runs after the core
-    /// lock, the transition and the claim of the first frame, right before
-    /// the first byte. Later frames are not gated again (the write has
-    /// begun). A refusal undoes the transition like `Retired`.
+    /// [`Self::apply`] with the authority `gate`, which runs once per effect
+    /// that has an authority, under the core lock:
+    /// - an answer: before the core step, so that a refusal produces no
+    ///   `approval.resolved` and the request stays open;
+    /// - an effect without frames (a pending mode, an input that the core
+    ///   would queue): after the core step and before the transition. A
+    ///   coordinator input is never queued (`provider_busy`);
+    /// - any other effect: after the transition and the claim of the first
+    ///   frame, right before the first byte. Later frames are not gated
+    ///   again (the write has begun). A refusal undoes the transition like
+    ///   `Retired`.
     pub async fn apply_gated(&self, effect: &Effect, gate: &Gate<'_>) -> Dispatch {
         match self.apply_inner(effect, gate).await {
             Ok(dispatch) => dispatch,
@@ -489,6 +449,13 @@ impl<C: DurableCore> DurableDriver<C> {
             // incomplete adapter state.
             return Ok(Dispatch::NotDispatched(REASON_ADAPTER_STATE_GAP.to_owned()));
         }
+        // An answer is gated before the core step: the step emits
+        // `approval.resolved`, which the transition appends to the log.
+        let has_authority = effect.payload.authority().is_some();
+        let answer_gated = has_authority && matches!(effect.payload, EffectPayload::Answer { .. });
+        if answer_gated && let Some(refused) = gate().await {
+            return Ok(refused);
+        }
         let before = snapshot(&*core)?;
         let (events, frames) = match core.command(effect) {
             Ok(steps) => steps,
@@ -497,6 +464,23 @@ impl<C: DurableCore> DurableDriver<C> {
                 return Err(e.into());
             }
         };
+        if has_authority && frames.is_empty() {
+            // No frame: the state change alone would reach the provider
+            // later (a pending mode, a queued input) with no gate.
+            if matches!(
+                effect.payload,
+                EffectPayload::Prompt { .. }
+                    | EffectPayload::FollowUp { .. }
+                    | EffectPayload::Steer { .. }
+            ) {
+                *core = rebuild(&self.config, &before)?;
+                return Ok(Dispatch::NotDispatched(REASON_PROVIDER_BUSY.to_owned()));
+            }
+            if !answer_gated && let Some(refused) = gate().await {
+                *core = rebuild(&self.config, &before)?;
+                return Ok(refused);
+            }
+        }
         let bytes: Vec<u8> = frames
             .iter()
             .flat_map(|f| f.bytes().chain(std::iter::once(b'\n')))
@@ -527,49 +511,26 @@ impl<C: DurableCore> DurableDriver<C> {
         if bytes.is_empty() {
             return Ok(Dispatch::Sent);
         }
-        let first = claim_first(
+        // `None`: an answer was gated before the core step.
+        let gate = (!answer_gated).then_some(gate);
+        let undone = match shim_stdin::deliver(
             &self.store,
             &self.process,
             &self.shim_id,
             &effect.effect_id,
             &bytes,
+            gate,
         )
-        .await?;
-        // The last step before the first byte (ADR-008 §6.2). A refused
-        // claim sends nothing and needs no gate.
-        if first.is_some()
-            && let Some(refused) = gate().await
+        .await?
         {
-            *core = rebuild(&self.config, &before)?;
-            self.store
-                .shim_drop_transition(self.shim_id.clone(), seq)
-                .await?;
-            return Ok(refused);
-        }
-        let sent = match first {
-            Some(first) => {
-                write_claimed(
-                    &self.store,
-                    &self.process,
-                    &self.shim_id,
-                    &effect.effect_id,
-                    &bytes,
-                    first,
-                )
-                .await?
-            }
-            None => shim_stdin::Sent::NotSent,
+            Delivery::Done(dispatch) => return Ok(dispatch),
+            Delivery::Undone(dispatch) => dispatch,
         };
-        let result = shim_stdin::settle_live(&sent);
-        if let Some(dispatch) = shim_stdin::dispatch_of(&self.store, &self.shim_id, &result).await?
-        {
-            return Ok(dispatch);
-        }
         *core = rebuild(&self.config, &before)?;
         self.store
             .shim_drop_transition(self.shim_id.clone(), seq)
             .await?;
-        Ok(Dispatch::NotDispatched(shim_stdin::retired_reason(&result)))
+        Ok(undone)
     }
 
     async fn run_pump(self: Arc<Self>, attached: Attached, start: u64) {
