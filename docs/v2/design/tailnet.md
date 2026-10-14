@@ -138,7 +138,7 @@
 
 §3's stored key `tailnet_managed` is dropped: the settings writer refuses read-only keys and has no hidden field. The managed entries are instead every `listen` / `link_listen` entry in the Tailscale address range (`netscope::classify == Tailnet`); "Use tailnet"/"Update" replaces those in each list and keeps every other entry. The effect is the same as §3 for every address the deck added, and a hand-written tailnet-range address is treated as managed. Only locally assigned tailnet IPs are added; when none is assigned the deck reports userspace networking.
 
-## 14. Addendum: Tailscale on WSL and "Use Tailscale automatically" (revision 3, proposed, 2026-10-14)
+## 14. Addendum: Tailscale on WSL and "Use Tailscale automatically" (revision 3, accepted and built, 2026-10-14)
 
 - **Owner request (2026-10-14):** "all of this settings can we detect them automatically? … maybe we could have a toggle use tailscale and if tailscale is in the path and configured it will just setup everything up correctly? also in this specific case we are in wsl, tailscale is installed in windows how will that work?" The owner approved the proposal.
 - **Revision 1** got DESIGN REVIEW FAIL (2 blockers, 4 major, 1 minor; `/tmp/fd-goal/adversary-report-tailnet14.md`); revision 2 got RE-REVIEW FAIL (1 blocker: one provenance list for two channels; `/tmp/fd-goal/adversary-report-tailnet14-r2.md`). §14.6 and §14.7 map the findings.
