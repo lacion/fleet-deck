@@ -341,3 +341,96 @@ fn every_other_payload_targets_no_session() {
     assert_eq!(target_session(&json!({ "kind": "configure" })), None);
     assert_eq!(target_session(&json!("text")), None);
 }
+
+#[test]
+fn only_a_running_session_can_take_input() {
+    for (state, want) in [
+        (SessionState::Starting, false),
+        (SessionState::Running, true),
+        (SessionState::Stopping, false),
+        (SessionState::Exited, false),
+        (SessionState::Lost, false),
+    ] {
+        assert_eq!(can_take_input(state), want, "{state:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_mail_rejected_while_its_session_is_starting_is_held() {
+    let det = Det::new();
+    let (s, st) = setup(&det).await;
+    show(&s, &st, &[("s1", SessionState::Starting)]).await;
+    let item = queue(&s, &st, follow_up("s1"), TTL_MS).await;
+    let held = rejected(&s, &st, &item, RejectCode::InvalidState).await;
+    assert_held(&held);
+    assert!(due(&s, &st).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_stopping_session_does_not_hold_an_invalid_state_rejection() {
+    let det = Det::new();
+    let (s, st) = setup(&det).await;
+    show(&s, &st, &[("s1", SessionState::Stopping)]).await;
+    let item = queue(&s, &st, follow_up("s1"), TTL_MS).await;
+    let dead = rejected(&s, &st, &item, RejectCode::InvalidState).await;
+    assert_eq!(dead.state, OutboxState::Dead);
+    assert_eq!(dead.reason.as_deref(), Some("rejected: invalid_state"));
+}
+
+#[tokio::test]
+async fn a_starting_summary_does_not_release_a_held_item_but_running_does() {
+    let det = Det::new();
+    let (s, st) = setup(&det).await;
+    show(&s, &st, &[("s1", SessionState::Exited)]).await;
+    let item = queue(&s, &st, follow_up("s1"), TTL_MS).await;
+    assert_held(&rejected(&s, &st, &item, RejectCode::InvalidState).await);
+
+    // A resume emits `starting` before a process exists: the item stays held.
+    let inc: IncarnationId = "inc".into();
+    s.apply_events(
+        st.clone(),
+        inc.clone(),
+        vec![state_event(1, "s1", SessionState::Starting)],
+    )
+    .await
+    .unwrap();
+    assert_held(
+        &s.outbox_item(item.outbox_id.clone())
+            .await
+            .unwrap()
+            .unwrap(),
+    );
+    assert!(due(&s, &st).await.is_empty());
+
+    // A stopping summary releases nothing either.
+    s.apply_events(
+        st.clone(),
+        inc.clone(),
+        vec![state_event(2, "s1", SessionState::Stopping)],
+    )
+    .await
+    .unwrap();
+    assert_held(
+        &s.outbox_item(item.outbox_id.clone())
+            .await
+            .unwrap()
+            .unwrap(),
+    );
+
+    det.advance(Duration::from_secs(5));
+    s.apply_events(
+        st.clone(),
+        inc,
+        vec![state_event(3, "s1", SessionState::Running)],
+    )
+    .await
+    .unwrap();
+    let released = s
+        .outbox_item(item.outbox_id.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(released.state, OutboxState::Queued);
+    assert_eq!(released.reason, None);
+    assert_eq!(due(&s, &st).await, vec![item.outbox_id]);
+}
