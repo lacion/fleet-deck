@@ -52,6 +52,12 @@ pub enum Command {
         #[command(subcommand)]
         command: SettingsCommand,
     },
+    /// Show what Tailscale tells about this machine and what the deck
+    /// listens on (read-only).
+    Tailnet {
+        #[command(subcommand)]
+        command: TailnetCommand,
+    },
     /// Print a one-time board login URL (from the deck's owner-only socket).
     Open {
         /// Print a one-time elevation code for the board instead (single use,
@@ -188,6 +194,19 @@ pub enum SettingsCommand {
         /// Use the station of this machine (the deck has no secrets).
         #[arg(long)]
         station: bool,
+    },
+}
+
+/// `fleetdeck tailnet` (DL-178).
+#[derive(Debug, Subcommand)]
+pub enum TailnetCommand {
+    /// Show the view of the deck and of the local station: is Tailscale
+    /// available, the name and addresses of this machine, userspace
+    /// networking, and the tailnet listen addresses of the deck.
+    Status {
+        /// Print the status as JSON.
+        #[arg(long)]
+        json: bool,
     },
 }
 

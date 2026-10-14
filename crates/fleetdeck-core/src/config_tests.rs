@@ -594,3 +594,58 @@ fn allow_bypass_permissions_parses() {
     assert!(c.allow_bypass_permissions);
     assert!(StationConfig::parse("allow_bypass_permissions = \"yes\"\n", &env()).is_err());
 }
+
+#[test]
+fn tailscale_bin_is_absolute_and_empty_means_unset() {
+    let station = |text: &str| StationConfig::parse(text, &env());
+    assert_eq!(station("").unwrap().tailscale_bin, None);
+    assert_eq!(
+        station("tailscale_bin = \"\"\n").unwrap().tailscale_bin,
+        None
+    );
+    assert_eq!(
+        station("tailscale_bin = \"/opt/ts/tailscale\"\n")
+            .unwrap()
+            .tailscale_bin,
+        Some(PathBuf::from("/opt/ts/tailscale"))
+    );
+    // The station expands `~` as for every other path.
+    assert_eq!(
+        station("tailscale_bin = \"~/bin/tailscale\"\n")
+            .unwrap()
+            .tailscale_bin,
+        Some(PathBuf::from("/home/ana/bin/tailscale"))
+    );
+    let deck = |text: &str| DeckConfig::parse(text);
+    assert_eq!(deck("").unwrap().tailscale_bin, None);
+    assert_eq!(deck("tailscale_bin = \"\"\n").unwrap().tailscale_bin, None);
+    assert_eq!(
+        deck("tailscale_bin = \"/opt/ts/tailscale\"\n")
+            .unwrap()
+            .tailscale_bin,
+        Some(PathBuf::from("/opt/ts/tailscale"))
+    );
+    // A relative path, a bare name and a NUL byte are refused on both; the
+    // deck does not expand `~`.
+    for text in [
+        "tailscale_bin = \"tailscale\"\n",
+        "tailscale_bin = \"bin/tailscale\"\n",
+        "tailscale_bin = \"./tailscale\"\n",
+        "tailscale_bin = \"/opt/\\u0000ts\"\n",
+    ] {
+        let a = station(text).unwrap_err().to_string();
+        let b = deck(text).unwrap_err().to_string();
+        for message in [a, b] {
+            assert!(
+                message.contains("tailscale_bin must be an absolute path"),
+                "{text}: {message}"
+            );
+        }
+    }
+    let message = deck("tailscale_bin = \"~/bin/tailscale\"\n")
+        .unwrap_err()
+        .to_string();
+    assert!(message.contains("must be an absolute path"), "{message}");
+    assert!(station("tailscale_bin = 5\n").is_err());
+    assert!(deck("tailscale_bin = [\"/a\"]\n").is_err());
+}

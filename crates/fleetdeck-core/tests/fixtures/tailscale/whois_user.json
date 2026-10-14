@@ -1,0 +1,12 @@
+{
+  "Node": {
+    "ID": 1234,
+    "StableID": "nPEER1",
+    "Name": "laptop.tail1234.ts.net.",
+    "Addresses": ["100.64.0.11/32", "fd7a:115c:a1e0::b/128"],
+    "User": 1001,
+    "Tags": null
+  },
+  "UserProfile": {"ID": 1001, "LoginName": "owner@example.com", "DisplayName": "Owner"},
+  "CapMap": {"x": []}
+}

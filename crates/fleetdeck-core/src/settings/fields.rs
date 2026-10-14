@@ -226,6 +226,14 @@ pub fn station_fields() -> Vec<FieldMeta> {
             "The most tokens that model help spends in one UTC day.",
         )
         .range(1, 1_000_000_000),
+        field(
+            "tailscale_bin",
+            "Tailscale program",
+            K::Text,
+            Live,
+            "The full path of the tailscale program. Leave it empty to find tailscale on PATH.",
+        )
+        .danger(),
     ]
     .into_iter()
     .map(|f| f.0)
@@ -297,6 +305,14 @@ pub fn deck_fields() -> Vec<FieldMeta> {
             "https uses your Git credential helper; ssh uses your SSH keys.",
         )
         .options(&["https", "ssh"]),
+        field(
+            "tailscale_bin",
+            "Tailscale program",
+            K::Text,
+            Live,
+            "The full path of the tailscale program. Leave it empty to find tailscale on PATH.",
+        )
+        .danger(),
     ]
     .into_iter()
     .map(|f| f.0)

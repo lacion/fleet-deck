@@ -34,6 +34,7 @@ pub mod settings_routes;
 pub mod share_routes;
 pub mod shell_routes;
 pub mod station_routes;
+pub mod tailnet_routes;
 pub mod tls;
 pub mod workspace_routes;
 pub mod worktree_routes;
@@ -114,6 +115,9 @@ pub fn router(board: Arc<Board>) -> Router {
             get(settings_routes::deck_get).post(settings_routes::deck_set),
         )
         .route("/api/settings/restart", post(settings_routes::restart))
+        .route("/api/tailnet", get(tailnet_routes::get))
+        .route("/api/tailnet/use", post(tailnet_routes::use_tailnet))
+        .route("/api/tailnet/devices", get(tailnet_routes::devices))
         .route(
             "/api/stations/{station}/settings",
             get(settings_routes::station_get).post(settings_routes::station_set),

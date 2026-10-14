@@ -36,6 +36,9 @@ pub use model_help_cfg::{
     DEFAULT_ASSIST_CLAUDE_MODEL, DEFAULT_ASSIST_CODEX_MODEL, DEFAULT_ASSIST_DAILY_TOKEN_CAP,
     DEFAULT_ASSIST_MAX_OUTPUT_TOKENS, ModelHelpConfig,
 };
+#[path = "config_tailnet.rs"]
+mod tailnet_cfg;
+pub(crate) use tailnet_cfg::valid_dns_name;
 #[path = "config_toml.rs"]
 mod toml_text;
 #[path = "config_trackers.rs"]
@@ -236,6 +239,8 @@ pub struct StationConfig {
     /// `[model_help]`: small generated text from the owner's own provider
     /// login (R10, DL-167).
     pub model_help: ModelHelpConfig,
+    /// `tailscale_bin`: the absolute path of the program, or `None`: look it up.
+    pub tailscale_bin: Option<PathBuf>,
 }
 
 /// The keys of `station.toml` (`RawStation`). `model_help` is a table; its
@@ -259,6 +264,7 @@ pub(crate) const RAW_STATION_KEYS: &[&str] = &[
     "trackers",
     "member_deny",
     "model_help",
+    "tailscale_bin",
 ];
 
 #[derive(Deserialize)]
@@ -281,6 +287,7 @@ struct RawStation {
     trackers: Option<Vec<RawTracker>>,
     member_deny: Option<Vec<String>>,
     model_help: Option<RawModelHelp>,
+    tailscale_bin: Option<String>,
 }
 
 /// The keys of one `[[provider_instance]]` (`RawInstance`).
@@ -430,6 +437,7 @@ impl StationConfig {
             Some(raw) => raw.validate()?,
             None => ModelHelpConfig::default(),
         };
+        let tailscale_bin = tailnet_cfg::parse_station(raw.tailscale_bin, home)?;
         Ok(Self {
             name,
             allowed_roots,
@@ -448,6 +456,7 @@ impl StationConfig {
             trackers,
             member_deny,
             model_help,
+            tailscale_bin,
         })
     }
 
@@ -548,6 +557,8 @@ pub struct DeckConfig {
     pub clone_org: String,
     /// How the board clones a repository that it gets as a short name.
     pub clone_transport: CloneTransport,
+    /// `tailscale_bin`: the absolute path of the program, or `None`: look it up.
+    pub tailscale_bin: Option<PathBuf>,
 }
 
 /// How a clone reaches the Git host.
@@ -582,6 +593,7 @@ pub(crate) const RAW_DECK_KEYS: &[&str] = &[
     "clone_host",
     "clone_org",
     "clone_transport",
+    "tailscale_bin",
 ];
 
 #[derive(Deserialize)]
@@ -596,6 +608,7 @@ struct RawDeck {
     clone_host: Option<String>,
     clone_org: Option<String>,
     clone_transport: Option<String>,
+    tailscale_bin: Option<String>,
 }
 
 impl DeckConfig {
@@ -625,16 +638,7 @@ impl DeckConfig {
             raw.link_listen
                 .unwrap_or_else(|| vec![DEFAULT_LINK_LISTEN.to_owned()]),
         )?;
-        let tailnet_hostname = match raw.tailnet_hostname.filter(|h| !h.is_empty()) {
-            None => None,
-            Some(h) if valid_dns_name(&h) => Some(h.to_ascii_lowercase()),
-            Some(h) => {
-                return Err(invalid(
-                    "tailnet_hostname",
-                    format!("`{h}` is not a DNS name"),
-                ));
-            }
-        };
+        let tailnet_hostname = tailnet_cfg::parse_hostname(raw.tailnet_hostname)?;
         let clone_host = raw.clone_host.map(|h| h.to_ascii_lowercase());
         if let Some(h) = clone_host.as_deref().filter(|h| !valid_clone_host(h)) {
             return Err(invalid(
@@ -651,6 +655,7 @@ impl DeckConfig {
             Some("ssh") => CloneTransport::Ssh,
             Some(_) => return Err(invalid("clone_transport", "use \"https\" or \"ssh\"")),
         };
+        let tailscale_bin = tailnet_cfg::parse_deck(raw.tailscale_bin)?;
         Ok(Self {
             name,
             listen,
@@ -661,6 +666,7 @@ impl DeckConfig {
             clone_host: clone_host.unwrap_or_else(|| "github.com".to_owned()),
             clone_org,
             clone_transport,
+            tailscale_bin,
         })
     }
 }
@@ -779,18 +785,6 @@ fn valid_clone_host(host: &str) -> bool {
 fn valid_clone_org(org: &str) -> bool {
     let name = |c: u8| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-');
     org.len() <= 200 && org.split('/').all(|s| !s.is_empty() && s.bytes().all(name))
-}
-
-fn valid_dns_name(name: &str) -> bool {
-    name.len() <= 253
-        && name.split('.').all(|label| {
-            (1..=63).contains(&label.len())
-                && !label.starts_with('-')
-                && !label.ends_with('-')
-                && label
-                    .bytes()
-                    .all(|c| c.is_ascii_alphanumeric() || c == b'-')
-        })
 }
 
 #[cfg(test)]
