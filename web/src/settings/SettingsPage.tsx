@@ -4,6 +4,7 @@ import type { DeckSession, StationView } from '../gen';
 import type { Navigate, Route } from '../app/routes';
 import type { ListWorkspaces } from '../ui/FolderPicker';
 import { Page } from '../ui/page';
+import { TailnetCard } from '../tailnet/TailnetCard';
 import { SettingsTab } from './SettingsTab';
 import { useSettings } from './context';
 
@@ -87,15 +88,18 @@ export function SettingsPage({ route, stations, navigate, live, list, sessions }
   let panel: React.ReactNode;
   if (route.tab === 'deck') {
     panel = (
-      <SettingsTab
-        key="deck"
-        stationId={null}
-        name="deck"
-        actions={env.settings}
-        live={live}
-        list={list}
-        sessions={sessions}
-      />
+      <>
+        <TailnetCard env={env} />
+        <SettingsTab
+          key="deck"
+          stationId={null}
+          name="deck"
+          actions={env.settings}
+          live={live}
+          list={list}
+          sessions={sessions}
+        />
+      </>
     );
   } else if (route.tab === 'station') {
     panel =

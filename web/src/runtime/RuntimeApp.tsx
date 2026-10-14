@@ -11,6 +11,7 @@ import { integrationActions } from '../integrations/actions';
 import { integrationHttp } from '../integrations/http';
 import { accountActions } from '../accounts/actions';
 import { settingsActions } from '../settings/actions';
+import { tailnetActions } from '../tailnet/api';
 import { deckHttp } from '../settings/http';
 import type { FleetExtras, SessionKey } from '../gen';
 import { sessionActions } from '../session/commands';
@@ -239,7 +240,11 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       () => connection.getSnapshot().login?.csrf ?? null,
       SETTINGS_WAIT_MS,
     );
-    return { settings: settingsActions(io), accounts: accountActions(io) };
+    return {
+      settings: settingsActions(io),
+      accounts: accountActions(io),
+      tailnet: tailnetActions(io),
+    };
   }, [connection, owner, canAdmin, guest]);
   const filesFor = useMemo(
     () =>
