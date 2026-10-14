@@ -178,6 +178,7 @@ async fn serve_with(
                 live: fleetdeck_deck::live::LiveCell::new(fleetdeck_deck::live::DeckLive {
                     name: "test deck".to_owned(),
                     conflict_mail: true,
+                    fleet_control: false,
                 }),
                 elevations: Arc::default(),
                 settings: extras.as_mut().and_then(|e| e.settings.take()),

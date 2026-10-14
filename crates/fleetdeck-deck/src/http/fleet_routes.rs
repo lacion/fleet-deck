@@ -301,7 +301,11 @@ pub async fn create_task(
         let station = target(&board, &req.station, &req.session_id).await?;
         let command = SessionCommand::FollowUp {
             session_id: req.session_id.clone(),
-            input: UserInput::new(task_frame(&req.task_id, req.title.trim())),
+            input: UserInput::new(task_frame(
+                &principal.actor(),
+                &req.task_id,
+                req.title.trim(),
+            )),
         };
         let item = intent(&board, station, command)?;
         let task = NewTask {

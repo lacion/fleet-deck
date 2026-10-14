@@ -538,6 +538,10 @@ pub enum RejectCode {
     BindingStale,
     /// The grant's lifetime spawn cap is used (ADR-006 §6.4); stored.
     SpawnCapReached,
+    /// The grant's lifetime answer cap is used (ADR-008 §3); stored.
+    AnswerCapReached,
+    /// The request has an answer already (ADR-008 §5.3); stored.
+    AlreadyAnswered,
     /// A code of a newer peer.
     #[serde(other)]
     Unknown,

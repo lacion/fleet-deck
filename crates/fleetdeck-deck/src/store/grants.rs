@@ -8,7 +8,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use fleetdeck_proto::mutation::CoordinatorBinding;
+use fleetdeck_proto::command::GrantScope;
+use fleetdeck_proto::mutation::{CommandAuthority, CoordinatorBinding};
 use fleetdeck_proto::{ProviderInstanceId, SessionId, StationId};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,10 @@ pub const MAX_IDLE_TTL_MS: i64 = 24 * 60 * 60 * 1000;
 pub const DEFAULT_TTL_MS: i64 = 12 * 60 * 60 * 1000;
 /// The longest lifetime: 7 days.
 pub const MAX_TTL_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+/// The default answer cap of a grant with the `answer` class (ADR-008 §3).
+pub const DEFAULT_ANSWER_CAP: u32 = 500;
+/// The highest answer cap.
+pub const MAX_ANSWER_CAP: u32 = 5000;
 
 /// A class of coordinator operations (ADR-006 §6.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -36,6 +41,28 @@ pub enum GrantClass {
     Mail,
     Drive,
     Spawn,
+    /// Every new read query (ADR-008 §3, fleet control).
+    Inspect,
+    /// Resume, rename, set mode, move to a project, start in a project
+    /// (fleet control).
+    Manage,
+    /// Answer approvals and questions (fleet control).
+    Answer,
+}
+
+impl GrantClass {
+    /// True for the classes of fleet control (ADR-008 §2).
+    #[must_use]
+    pub fn is_fleet_control(self) -> bool {
+        matches!(self, Self::Inspect | Self::Manage | Self::Answer)
+    }
+
+    /// True for the classes that change something; a session that holds an
+    /// active grant with one of them is a coordinator (ADR-008 §4.2 rule 3).
+    #[must_use]
+    pub fn is_mutating(self) -> bool {
+        !matches!(self, Self::Read | Self::Inspect)
+    }
 }
 
 /// The state of a grant.
@@ -65,6 +92,10 @@ pub struct NewGrant {
     /// session id stays empty until the station names the session, and a
     /// resend of the same start returns the same grant.
     pub start_command_id: Option<String>,
+    /// The reach of the grant (ADR-008 §3).
+    pub scope: GrantScope,
+    /// The lifetime answer cap; `None` without the `answer` class.
+    pub answer_cap: Option<u32>,
 }
 
 impl NewGrant {
@@ -82,6 +113,8 @@ impl NewGrant {
             idle_ttl_ms: DEFAULT_IDLE_TTL_MS,
             ttl_ms: DEFAULT_TTL_MS,
             start_command_id: None,
+            scope: GrantScope::Lineage,
+            answer_cap: None,
         }
     }
 }
@@ -105,11 +138,39 @@ pub struct Grant {
     /// `None` until the station reports the binding.
     pub binding: Option<CoordinatorBinding>,
     pub last_used_at: Option<i64>,
+    /// The reach of the grant (ADR-008 §3).
+    pub scope: GrantScope,
+    /// The lifetime answer cap; `None` without the `answer` class.
+    pub answer_cap: Option<u32>,
+    /// The answers that the grant made, for good (never pruned).
+    pub answer_used: u32,
+}
+
+impl Grant {
+    /// A fleet-control grant has the fleet scope or a fleet-control class
+    /// (ADR-008 §2).
+    #[must_use]
+    pub fn is_fleet_control(&self) -> bool {
+        self.scope == GrantScope::Fleet || self.classes.iter().any(|c| c.is_fleet_control())
+    }
+
+    /// The authority that a fleet-control intent carries (ADR-008 §6.1);
+    /// `None` for a grant that is not bound yet.
+    #[must_use]
+    pub fn authority(&self) -> Option<CommandAuthority> {
+        self.binding.as_ref().map(|b| CommandAuthority {
+            grant_id: self.grant_id.clone(),
+            caller_station: self.station_id.clone(),
+            caller_session: self.session_id.clone(),
+            generation: b.generation,
+        })
+    }
 }
 
 pub(crate) const GRANT_COLUMNS: &str = "grant_id, station_id, session_id, classes, stations, \
     spawn_cap, spawn_used, max_modes, idle_ttl_ms, created_at, expires_at, state, revoked_reason, \
-    bound_generation, bound_native_id, bound_provider_instance, binding_id, last_used_at";
+    bound_generation, bound_native_id, bound_provider_instance, binding_id, last_used_at, \
+    scope, answer_cap, answer_used";
 
 fn state_of(text: &str) -> GrantState {
     match text {
@@ -139,6 +200,9 @@ pub(crate) fn grant_row(r: &Row<'_>) -> rusqlite::Result<(Grant, String, String,
     let state: String = r.get(11)?;
     let cap: i64 = r.get(5)?;
     let used: i64 = r.get(6)?;
+    let scope: String = r.get(18)?;
+    let answer_cap: Option<i64> = r.get(19)?;
+    let answer_used: i64 = r.get(20)?;
     Ok((
         Grant {
             grant_id,
@@ -156,6 +220,14 @@ pub(crate) fn grant_row(r: &Row<'_>) -> rusqlite::Result<(Grant, String, String,
             revoked_reason: r.get(12)?,
             binding,
             last_used_at: r.get(17)?,
+            // Unknown text is the narrow scope (fail closed).
+            scope: if scope == "fleet" {
+                GrantScope::Fleet
+            } else {
+                GrantScope::Lineage
+            },
+            answer_cap: answer_cap.map(|c| u32::try_from(c).unwrap_or(0)),
+            answer_used: u32::try_from(answer_used).unwrap_or(u32::MAX),
         },
         r.get(3)?,
         r.get(4)?,
@@ -209,7 +281,7 @@ impl DeckStore {
     ///
     /// # Errors
     /// [`DeckError::Invalid`] for a value out of range, or a database error.
-    pub async fn create_grant(&self, grant: NewGrant) -> Result<Grant> {
+    pub async fn create_grant(&self, mut grant: NewGrant) -> Result<Grant> {
         if grant.spawn_cap > MAX_SPAWN_CAP
             || !(1..=MAX_IDLE_TTL_MS).contains(&grant.idle_ttl_ms)
             || !(1..=MAX_TTL_MS).contains(&grant.ttl_ms)
@@ -220,6 +292,21 @@ impl DeckStore {
                  at most 7 days and at least one station"
                     .to_owned(),
             ));
+        }
+        // The answer cap (ADR-008 §3): 0 to 5000, only with the `answer`
+        // class, 500 when the class has no value.
+        let answers = grant.classes.contains(&GrantClass::Answer);
+        match grant.answer_cap {
+            Some(_) if !answers => {
+                return Err(DeckError::Invalid(
+                    "answer_cap needs the answer class".to_owned(),
+                ));
+            }
+            Some(cap) if cap > MAX_ANSWER_CAP => {
+                return Err(DeckError::Invalid("answer_cap is 0 to 5000".to_owned()));
+            }
+            None if answers => grant.answer_cap = Some(DEFAULT_ANSWER_CAP),
+            _ => {}
         }
         let now = self.now_ms();
         let grant_id: String = new_id(self.inner.ids.as_ref());
@@ -260,8 +347,8 @@ impl DeckStore {
             tx.execute(
                 "INSERT INTO tokens (grant_id, station_id, session_id, classes, stations,
                      spawn_cap, max_modes, idle_ttl_ms, created_at, expires_at, state,
-                     start_command_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active', ?11)",
+                     start_command_id, scope, answer_cap)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active', ?11, ?12, ?13)",
                 params![
                     grant_id,
                     grant.station_id.as_str(),
@@ -273,7 +360,13 @@ impl DeckStore {
                     grant.idle_ttl_ms,
                     now,
                     now.saturating_add(grant.ttl_ms),
-                    grant.start_command_id
+                    grant.start_command_id,
+                    if grant.scope == GrantScope::Fleet {
+                        "fleet"
+                    } else {
+                        "lineage"
+                    },
+                    grant.answer_cap
                 ],
             )?;
             let stored = get_grant(&tx, &grant_id)?

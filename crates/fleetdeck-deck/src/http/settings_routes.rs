@@ -416,9 +416,11 @@ pub async fn deck_view(settings: &DeckSettings) -> Result<SettingsView, String> 
 }
 
 /// Publishes the live fields: the board reads them per use, and the store
-/// reads its flag for the conflict mail at every fold.
+/// reads its flags for the conflict mail at every fold and for fleet control
+/// at every decision and send check.
 fn publish(store: &DeckStore, cell: &LiveCell, live: DeckLive) {
     store.set_conflict_mail(live.conflict_mail);
+    store.set_fleet_control(live.fleet_control);
     cell.publish(live);
 }
 

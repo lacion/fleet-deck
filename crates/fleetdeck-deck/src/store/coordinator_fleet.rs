@@ -6,17 +6,27 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, PoisonError};
 
-use fleetdeck_proto::RejectCode;
-use fleetdeck_proto::command::{SessionCommand, UserInput};
-use fleetdeck_proto::mutation::{CoordinatorDelivery, CoordinatorOp};
+use fleetdeck_proto::command::{
+    ApprovalDecision, MAX_TITLE_CHARS, SessionCommand, SessionSpec, UserInput, WorkspaceRequest,
+};
+use fleetdeck_proto::event::{OptionKind, RequestKind};
+use fleetdeck_proto::mutation::{CoordinatorDelivery, CoordinatorOp, ProjectTarget};
 use fleetdeck_proto::orchestration::{
     MailDelivery, MailGroup, TaskCompletion, TaskState, mail_frame, question_frame,
 };
-use fleetdeck_proto::{SessionId, StationId};
+use fleetdeck_proto::session::OpenRequest;
+use fleetdeck_proto::{
+    EventEnvelope, ProviderInstanceId, RejectCode, RequestId, SessionId, SessionSummary, StationId,
+};
 use rusqlite::{Connection, OptionalExtension, params};
+use std::sync::atomic::Ordering;
 
 use super::Result;
-use super::coordinator_ops::{Context, Decision, check_text, session_known};
+use super::coordinator::strict_target;
+use super::coordinator_ops::{
+    Context, Decision, check_text, enqueue, family_of, is_bypass, mode_within, session_known,
+    spawn_target, start,
+};
 use super::fleet::{NewMail, group_mail_id, group_members, insert_mail, write_completion};
 use super::grants::Grant;
 use super::outbox::NewOutboxItem;
@@ -68,6 +78,12 @@ pub(super) fn send_group(
         .collect();
     if members.is_empty() {
         return no(RejectCode::InvalidState, "no live session is in the group");
+    }
+    if let Some(d) = members
+        .iter()
+        .find_map(|m| super::coordinator::v2_refusal(grant, ctx, &m.station_id))
+    {
+        return Ok(d);
     }
     let (mail_delivery, steer) = match delivery {
         CoordinatorDelivery::FollowUp => (MailDelivery::FollowUp, false),
@@ -267,4 +283,454 @@ pub(super) fn decide_worker(
         (command_id, true),
         now,
     )
+}
+
+// ---------------------------------------------------------------------------
+// Fleet control (ADR-008): the gate, the target rules and the new ops.
+// ---------------------------------------------------------------------------
+
+/// The provider family and the mode of a session from the read model.
+fn session_family(
+    ctx: &Context,
+    station: &StationId,
+    session: &SessionId,
+) -> Option<(String, Option<String>)> {
+    let card = ctx
+        .sessions
+        .iter()
+        .find(|s| &s.station_id == station && &s.summary.session_id == session)?;
+    let instance = card.summary.provider_instance.as_ref()?;
+    let family = family_of(ctx.infos.get(station), instance)?;
+    Some((family, card.summary.mode.clone()))
+}
+
+/// The mode rules of ADR-008 §5.2 for a session that moves into `mode`
+/// (`None`: the provider default): the family has a ceiling, the mode is
+/// within it and it is not a bypass mode.
+fn mode_refusal(grant: &Grant, family: Option<&str>, mode: Option<&str>) -> Option<Decision> {
+    let forbidden = |m: String| Some(Decision::Rejected(RejectCode::Forbidden, m));
+    let Some(family) = family else {
+        return forbidden("the provider of the session is not known".to_owned());
+    };
+    let Some(ceiling) = grant.max_modes.get(family) else {
+        return forbidden(format!("the grant has no mode ceiling for `{family}`"));
+    };
+    if is_bypass(family, mode) {
+        return forbidden("a coordinator never moves a session into a bypass mode".to_owned());
+    }
+    if !mode_within(family, mode, ceiling) {
+        return forbidden(format!("the mode is above the grant's ceiling `{ceiling}`"));
+    }
+    None
+}
+
+/// `resume_session`: the effective resumed mode is the stored mode, or the
+/// provider default (ADR-008 §5.2).
+pub(super) fn resume(
+    tx: &Connection,
+    grant: &Grant,
+    ctx: &Context,
+    (station, session): (&StationId, &SessionId),
+    now: i64,
+) -> Result<Decision> {
+    if let Some(d) = strict_target(tx, grant, (station, session), (true, now))? {
+        return Ok(d);
+    }
+    let found = session_family(ctx, station, session);
+    let (family, mode) = found.map_or((None, None), |(f, m)| (Some(f), m));
+    if let Some(d) = mode_refusal(grant, family.as_deref(), mode.as_deref()) {
+        return Ok(d);
+    }
+    let command = SessionCommand::Resume {
+        session_id: session.clone(),
+    };
+    enqueue(tx, ctx, station, command, now)?;
+    Ok(Decision::Accepted(Some(session.clone())))
+}
+
+/// `rename_session`: a title of 1 to 80 characters after trimming; no
+/// clearing.
+pub(super) fn rename(
+    tx: &Connection,
+    grant: &Grant,
+    ctx: &Context,
+    (station, session): (&StationId, &SessionId),
+    title: &str,
+    now: i64,
+) -> Result<Decision> {
+    if let Some(d) = strict_target(tx, grant, (station, session), (true, now))? {
+        return Ok(d);
+    }
+    let title = title.trim();
+    if title.is_empty() || title.chars().count() > MAX_TITLE_CHARS {
+        return no(
+            RejectCode::InvalidCommand,
+            format!("the title needs 1 to {MAX_TITLE_CHARS} characters"),
+        );
+    }
+    let command = SessionCommand::Rename {
+        session_id: session.clone(),
+        title: Some(title.to_owned()),
+    };
+    enqueue(tx, ctx, station, command, now)?;
+    Ok(Decision::Accepted(Some(session.clone())))
+}
+
+/// `set_mode`: the new mode is within the ceiling of the family and not a
+/// bypass mode (ADR-008 §5.2).
+pub(super) fn set_mode(
+    tx: &Connection,
+    grant: &Grant,
+    ctx: &Context,
+    (station, session): (&StationId, &SessionId),
+    mode: &str,
+    now: i64,
+) -> Result<Decision> {
+    if let Some(d) = strict_target(tx, grant, (station, session), (true, now))? {
+        return Ok(d);
+    }
+    let family = session_family(ctx, station, session).map(|(f, _)| f);
+    if let Some(d) = mode_refusal(grant, family.as_deref(), Some(mode)) {
+        return Ok(d);
+    }
+    let command = SessionCommand::SetMode {
+        session_id: session.clone(),
+        mode: mode.to_owned(),
+    };
+    enqueue(tx, ctx, station, command, now)?;
+    Ok(Decision::Accepted(Some(session.clone())))
+}
+
+/// The station and the path of a project.
+fn project_row(tx: &Connection, id: &str) -> Result<Option<(StationId, String)>> {
+    Ok(tx
+        .query_row(
+            "SELECT station_id, path FROM projects WHERE project_id = ?1",
+            [id],
+            |r| Ok((StationId(r.get(0)?), r.get(1)?)),
+        )
+        .optional()?)
+}
+
+/// `move_to_project`: the manual choice of the session, in the decision
+/// transaction; the project and the session share a station (DL-176).
+pub(super) fn project_assign(
+    tx: &Connection,
+    grant: &Grant,
+    ctx: &Context,
+    (station, session): (&StationId, &SessionId),
+    target: &ProjectTarget,
+    now: i64,
+) -> Result<Decision> {
+    if let Some(d) = strict_target(tx, grant, (station, session), (true, now))? {
+        return Ok(d);
+    }
+    match target {
+        ProjectTarget::Project { id } => {
+            let Some((project_station, _)) = project_row(tx, id)? else {
+                return no(RejectCode::InvalidCommand, "unknown project");
+            };
+            if &project_station != station {
+                return no(
+                    RejectCode::InvalidCommand,
+                    "wrong_station: the session and the project are on different stations",
+                );
+            }
+            super::project_sessions::set_project_tx(tx, station, session, Some(id), now)?;
+        }
+        ProjectTarget::None => {
+            super::project_sessions::set_project_tx(tx, station, session, None, now)?;
+        }
+        ProjectTarget::Auto => {
+            super::project_sessions::reset_project_tx(tx, station, session)?;
+        }
+    }
+    ctx.flags.board.store(true, Ordering::SeqCst);
+    Ok(Decision::Accepted(Some(session.clone())))
+}
+
+/// `start_in_project`: a start in the path of a project of a station of the
+/// grant, under the spawn rules, the mode rules and the spawn cap.
+pub(super) fn project_start(
+    tx: &Connection,
+    grant: &Grant,
+    ctx: &Context,
+    (project_id, prompt, instance, worktree): (&str, &str, Option<&ProviderInstanceId>, bool),
+    command_id: &str,
+    now: i64,
+) -> Result<Decision> {
+    let Some((station, path)) = project_row(tx, project_id)? else {
+        return no(RejectCode::InvalidCommand, "unknown project");
+    };
+    if !grant.stations.contains(&station) {
+        return no(
+            RejectCode::Forbidden,
+            "the station of the project is not in the grant",
+        );
+    }
+    if let Some(d) = super::coordinator::v2_refusal(grant, ctx, &station) {
+        return Ok(d);
+    }
+    if let Some(d) = check_text(prompt) {
+        return Ok(d);
+    }
+    let instance = match instance {
+        Some(i) => i.clone(),
+        None => match spawn_target(grant, ctx, None, Some(&station)) {
+            Some((_, i)) => i,
+            None => {
+                return no(
+                    RejectCode::InvalidCommand,
+                    "no provider instance of the station can start a session",
+                );
+            }
+        },
+    };
+    let spec = SessionSpec {
+        provider_instance: instance,
+        cwd: path,
+        mode: None,
+        model: None,
+        title: None,
+        coordinator: None,
+    };
+    let workspace = worktree.then(|| {
+        Box::new(WorkspaceRequest::Worktree {
+            branch: None,
+            base: None,
+        })
+    });
+    start(
+        tx,
+        grant,
+        ctx,
+        (
+            &station,
+            spec,
+            Some(UserInput::new(prompt.trim())),
+            workspace,
+        ),
+        command_id,
+        now,
+    )
+}
+
+/// The longest `question_answers` of an answer, in bytes of its JSON.
+const MAX_QUESTION_ANSWERS_BYTES: usize = 16 * 1024;
+/// The longest free text of an answer.
+const MAX_ANSWER_TEXT_BYTES: usize = 4 * 1024;
+
+/// What the read model knows about a request.
+enum RequestState {
+    Open(Box<OpenRequest>),
+    Closed,
+    Unknown,
+}
+
+/// The state of `request` of a session: open in the summary, else seen in
+/// the timeline (answered or closed), else unknown.
+fn request_state(
+    tx: &Connection,
+    station: &StationId,
+    session: &SessionId,
+    request: &RequestId,
+) -> Result<RequestState> {
+    let summary: Option<String> = tx
+        .query_row(
+            "SELECT summary FROM sessions WHERE station_id = ?1 AND session_id = ?2",
+            params![station.as_str(), session.0],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(text) = summary
+        && let Ok(summary) = serde_json::from_str::<SessionSummary>(&text)
+        && let Some(open) = summary
+            .open_requests
+            .into_iter()
+            .find(|r| &r.request_id == request)
+    {
+        return Ok(RequestState::Open(Box::new(open)));
+    }
+    let mut stmt = tx.prepare(
+        "SELECT envelope FROM timeline
+         WHERE station_id = ?1 AND session_id = ?2 AND kind = 'approval.requested'",
+    )?;
+    let rows = stmt
+        .query_map(params![station.as_str(), session.0], |r| {
+            r.get::<_, String>(0)
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for text in rows {
+        let env: EventEnvelope = serde_json::from_str(&text)?;
+        if let fleetdeck_proto::EventBody::Known(fleetdeck_proto::Event::ApprovalRequested {
+            request_id,
+            ..
+        }) = env.event
+            && &request_id == request
+        {
+            return Ok(RequestState::Closed);
+        }
+    }
+    Ok(RequestState::Unknown)
+}
+
+fn kind_name(kind: Option<OptionKind>) -> &'static str {
+    match kind {
+        Some(OptionKind::AllowOnce) => "allow_once",
+        Some(OptionKind::Deny) => "deny",
+        _ => "none",
+    }
+}
+
+type Pick = std::result::Result<String, (RejectCode, &'static str)>;
+
+/// The option id of an answer to a question (ADR-008 section 5.3): the given
+/// one, else the literal `answer` when the request has no options or has that
+/// one. A question needs one of `option_id`, `question_answers`, `text`.
+fn pick_for_question(request: &OpenRequest, given: (Option<&str>, bool, bool)) -> Pick {
+    let invalid = |m| Err((RejectCode::InvalidCommand, m));
+    let has = |id: &str| request.options.iter().any(|o| o.option_id == id);
+    match given {
+        (None, false, false) => invalid("a question needs option_id, question_answers or text"),
+        (Some(id), _, _) if has(id) => Ok(id.to_owned()),
+        (Some(_), _, _) => invalid("option_id is not an option"),
+        (None, _, _) if request.options.is_empty() || has("answer") => Ok("answer".to_owned()),
+        (None, _, _) => invalid("option_id is required for this question"),
+    }
+}
+
+/// The option id of an answer to an approval: an option of the request with
+/// the kind `allow_once` or `deny`, and no `question_answers`. `note` records
+/// the kind of the option for the audit row.
+fn pick_for_approval(
+    request: &OpenRequest,
+    (option_id, question_answers): (Option<&str>, bool),
+    note: &dyn Fn(&str),
+) -> Pick {
+    let invalid = |m| Err((RejectCode::InvalidCommand, m));
+    if question_answers {
+        return invalid("an approval takes no question_answers");
+    }
+    let Some(id) = option_id else {
+        return invalid("option_id is required");
+    };
+    let Some(option) = request.options.iter().find(|o| o.option_id == id) else {
+        return invalid("option_id is not an option");
+    };
+    note(kind_name(option.kind));
+    if matches!(option.kind, Some(OptionKind::AllowOnce | OptionKind::Deny)) {
+        Ok(id.to_owned())
+    } else {
+        Err((
+            RejectCode::Forbidden,
+            "a coordinator answers only once, with allow once or deny",
+        ))
+    }
+}
+
+/// `answer_request` (ADR-008 §5): a one-time allow or a deny for an
+/// approval; `question_answers` and/or `text` for a question. Counts against
+/// the answer cap of the grant, in this transaction.
+pub(super) fn answer(
+    tx: &Connection,
+    grant: &Grant,
+    ctx: &Context,
+    op: &CoordinatorOp,
+    now: i64,
+) -> Result<Decision> {
+    let CoordinatorOp::Answer {
+        station,
+        session_id,
+        request_id,
+        option_id,
+        question_answers,
+        text,
+    } = op
+    else {
+        return no(RejectCode::InvalidCommand, "not an answer");
+    };
+    let note = |kind: &str| {
+        let mut slot = ctx
+            .flags
+            .note
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *slot = Some(format!(
+            "grant={} request={request_id} kind={kind}",
+            grant.grant_id
+        ));
+    };
+    note("none");
+    if let Some(d) = strict_target(tx, grant, (station, session_id), (true, now))? {
+        return Ok(d);
+    }
+    let request = match request_state(tx, station, session_id, request_id)? {
+        RequestState::Open(request) => request,
+        RequestState::Closed => {
+            return no(RejectCode::RequestClosed, "the request is closed already");
+        }
+        RequestState::Unknown => return no(RejectCode::UnknownRequest, "no such request"),
+    };
+    if text
+        .as_deref()
+        .is_some_and(|t| t.len() > MAX_ANSWER_TEXT_BYTES)
+    {
+        return no(RejectCode::InvalidCommand, "the text is longer than 4 KiB");
+    }
+    let too_big = question_answers
+        .as_ref()
+        .is_some_and(|v| v.to_string().len() > MAX_QUESTION_ANSWERS_BYTES);
+    if too_big {
+        return no(
+            RejectCode::InvalidCommand,
+            "question_answers is longer than 16 KiB",
+        );
+    }
+    let question = request.request_kind == RequestKind::Question;
+    let given = (option_id.as_deref(), question_answers.is_some());
+    let picked = if question {
+        note("question");
+        pick_for_question(&request, (given.0, given.1, text.is_some()))
+    } else {
+        pick_for_approval(&request, given, &note)
+    };
+    let chosen = match picked {
+        Ok(chosen) => chosen,
+        Err((code, message)) => return no(code, message),
+    };
+    // The cap check and the count are in this write transaction; the deck
+    // has one writer, so two decisions never take the last slot.
+    let (cap, used): (Option<i64>, i64) = tx.query_row(
+        "SELECT answer_cap, answer_used FROM tokens WHERE grant_id = ?1",
+        [grant.grant_id.as_str()],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let cap = cap.unwrap_or(0);
+    if used >= cap {
+        return no(
+            RejectCode::AnswerCapReached,
+            format!("the grant has used its {cap} answers"),
+        );
+    }
+    let decision = ApprovalDecision {
+        option_id: chosen,
+        updated_input: if question {
+            question_answers.clone()
+        } else {
+            None
+        },
+        text: text.clone(),
+        answered_by: Some(format!("coordinator:{}", grant.session_id)),
+    };
+    let command = SessionCommand::Answer {
+        session_id: session_id.clone(),
+        request_id: request_id.clone(),
+        decision,
+    };
+    enqueue(tx, ctx, station, command, now)?;
+    tx.execute(
+        "UPDATE tokens SET answer_used = answer_used + 1 WHERE grant_id = ?1",
+        [grant.grant_id.as_str()],
+    )?;
+    Ok(Decision::Accepted(Some(session_id.clone())))
 }

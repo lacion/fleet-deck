@@ -13,7 +13,9 @@ use fleetdeck_proto::orchestration::GrantView;
 use super::Board;
 use super::fleet_routes::{LIST_PAGE, audited};
 use super::guard::ApiError;
-use crate::store::{Grant, GrantClass, GrantState, Principal};
+use super::settings_routes::is_elevated;
+use crate::store::auth::LoginSession;
+use crate::store::{Grant, GrantClass, GrantState, LinkV2, Principal};
 
 fn view(g: Grant) -> GrantView {
     let class = |c: &GrantClass| {
@@ -22,6 +24,9 @@ fn view(g: Grant) -> GrantView {
             GrantClass::Mail => "mail",
             GrantClass::Drive => "drive",
             GrantClass::Spawn => "spawn",
+            GrantClass::Inspect => "inspect",
+            GrantClass::Manage => "manage",
+            GrantClass::Answer => "answer",
         }
         .to_owned()
     };
@@ -191,14 +196,21 @@ pub const CONTROL_SKILL: &str = include_str!("../control_skill.md");
 /// its control skill. Whatever grant id or skill the board sent is
 /// replaced. A resend of the same `command_id` finds the same grant.
 ///
+/// A fleet-control grant (the fleet scope, or the class `inspect`, `manage`
+/// or `answer`) needs the owner's elevation in the same request, and the
+/// coordinator's station and every station of the grant must have negotiated
+/// `coordinator.v2` on their current link (ADR-008 section 3).
+///
 /// # Errors
-/// 400 `invalid_grant` for an unknown class, no class or a limit out of
-/// range; 500 for a database error.
+/// 400 `invalid_grant` for an unknown class, no class, an answer cap out of
+/// range or without the `answer` class, or a limit out of range; 400
+/// `elevation_required`; 409 `unsupported`; 500 for a database error.
 pub(super) async fn owner_start(
     board: &Board,
     station: &fleetdeck_proto::StationId,
     command_id: &fleetdeck_proto::CommandId,
     spec: &mut fleetdeck_proto::command::CoordinatorSpec,
+    (session, elevation): (&LoginSession, Option<&str>),
 ) -> Result<(), ApiError> {
     let invalid = |m: String| ApiError::new(StatusCode::BAD_REQUEST, "invalid_grant", m);
     let mut classes = std::collections::BTreeSet::new();
@@ -212,12 +224,47 @@ pub(super) async fn owner_start(
     }
     let mut grant = crate::store::NewGrant::new(station.clone(), "".into());
     grant.classes = classes;
+    grant.scope = spec.scope;
+    grant.answer_cap = spec.answer_cap;
     grant.start_command_id = Some(command_id.to_string());
     if spec.idle_ttl_ms > 0 {
         grant.idle_ttl_ms = i64::try_from(spec.idle_ttl_ms).unwrap_or(i64::MAX);
     }
     if spec.expires_at > 0 {
         grant.ttl_ms = spec.expires_at.saturating_sub(board.store.now_ms());
+    }
+    let fleet = spec.scope == fleetdeck_proto::command::GrantScope::Fleet
+        || grant.classes.iter().any(|c| c.is_fleet_control());
+    if fleet {
+        // The answer cap is checked first: a bad request is a bad request
+        // with or without elevation.
+        let answers = grant.classes.contains(&GrantClass::Answer);
+        match grant.answer_cap {
+            Some(_) if !answers => {
+                return Err(invalid("answer_cap needs the answer class".to_owned()));
+            }
+            Some(cap) if cap > crate::store::grants::MAX_ANSWER_CAP => {
+                return Err(invalid("answer_cap is 0 to 5000".to_owned()));
+            }
+            _ => {}
+        }
+        if !is_elevated(board, session, elevation) {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "elevation_required",
+                "a fleet-control grant needs the owner's elevation".to_owned(),
+            ));
+        }
+        // The stations of a new grant are the coordinator's own station.
+        for st in &grant.stations {
+            if board.store.link_v2(st) != LinkV2::Negotiated {
+                return Err(ApiError::new(
+                    StatusCode::CONFLICT,
+                    "unsupported",
+                    format!("station `{st}` has no link that negotiated coordinator.v2"),
+                ));
+            }
+        }
     }
     let g = board.store.create_grant(grant).await.map_err(|e| match e {
         crate::store::DeckError::Invalid(m) => invalid(m),
@@ -235,6 +282,8 @@ pub(super) async fn owner_start(
     spec.idle_ttl_ms = u64::try_from(g.idle_ttl_ms).unwrap_or(0);
     spec.expires_at = g.expires_at;
     spec.classes = view_classes(&g.classes);
+    spec.scope = g.scope;
+    spec.answer_cap = g.answer_cap;
     spec.control_skill = fleetdeck_proto::command::ControlSkill {
         version: CONTROL_SKILL_VERSION.to_owned(),
         text: CONTROL_SKILL.to_owned(),

@@ -119,6 +119,7 @@ impl RunningDeck {
         let ids: SharedIds = Arc::new(UlidSource::new(Arc::clone(&clock)));
         let store = DeckStore::open(&dirs.deck_db(), clock, ids).await?;
         store.set_conflict_mail(config.conflict_mail);
+        store.set_fleet_control(config.fleet_control);
         let socket = local::socket_path(&deck_dir);
         let listener = local::bind(&socket).await?;
         let identity = Arc::new(Identity::load_or_create(&deck_dir)?);

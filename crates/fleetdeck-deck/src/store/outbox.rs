@@ -32,15 +32,19 @@
 //! station makes its open items `dead` (`station_removed`) in the removal
 //! transaction.
 
+use std::sync::Arc;
+
 use fleetdeck_core::ids::new_id;
-use fleetdeck_proto::command::{DeckCommandState, ReceiptState, SessionCommand};
+use fleetdeck_proto::command::{CommandEnvelope, DeckCommandState, ReceiptState, SessionCommand};
 use fleetdeck_proto::event::SessionState;
+use fleetdeck_proto::mutation::CommandAuthority;
 use fleetdeck_proto::{CommandId, RejectCode, SessionId, SessionSummary, StationId};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::commands::{self, NewCommand};
+use super::coordinator::{Check, recheck, strict_session};
 use super::{DeckError, DeckStore, Result, call};
 use crate::link::router::CommandKind;
 
@@ -106,6 +110,14 @@ pub struct OutboxItem {
     pub reason: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+    /// The authority of a fleet-control intent (ADR-008 §6.1); `None` for
+    /// every other item.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority: Option<CommandAuthority>,
+    /// The `coordinator.call` that made the item; `None` for every other
+    /// item.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
 }
 
 /// An item to queue.
@@ -119,9 +131,11 @@ pub struct NewOutboxItem {
 }
 
 const COLUMNS: &str = "outbox_id, station_id, origin, payload, state, command_id, attempts, \
-                       next_at, expires_at, reason, created_at, updated_at";
+                       next_at, expires_at, reason, created_at, updated_at, authority, call_id";
 
-fn from_row(row: &Row<'_>) -> rusqlite::Result<(OutboxItem, String, String)> {
+type RawItem = (OutboxItem, String, String, Option<String>);
+
+fn from_row(row: &Row<'_>) -> rusqlite::Result<RawItem> {
     let attempts: i64 = row.get(6)?;
     Ok((
         OutboxItem {
@@ -137,16 +151,20 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<(OutboxItem, String, String)> {
             reason: row.get(9)?,
             created_at: row.get(10)?,
             updated_at: row.get(11)?,
+            authority: None,
+            call_id: row.get(13)?,
         },
         row.get(3)?,
         row.get(4)?,
+        row.get(12)?,
     ))
 }
 
-fn finish_row(raw: (OutboxItem, String, String)) -> Result<OutboxItem> {
-    let (mut item, payload, state) = raw;
+fn finish_row(raw: RawItem) -> Result<OutboxItem> {
+    let (mut item, payload, state, authority) = raw;
     item.payload = serde_json::from_str(&payload)?;
     item.state = OutboxState::parse(&state)?;
+    item.authority = authority.as_deref().map(serde_json::from_str).transpose()?;
     Ok(item)
 }
 
@@ -419,19 +437,45 @@ impl DeckStore {
         cmd: NewCommand,
     ) -> Result<Option<OutboxItem>> {
         let now = self.now_ms();
+        let inner = Arc::clone(&self.inner);
         let out = call(&self.inner.db, move |conn| {
+            let env = inner.fleet_env();
             let tx = conn.transaction()?;
-            let expires_at: Option<i64> = tx
+            let found: Option<(i64, String, String, Option<String>)> = tx
                 .query_row(
-                    "SELECT expires_at FROM outbox
+                    "SELECT expires_at, station_id, payload, authority FROM outbox
                      WHERE outbox_id = ?1 AND state = 'queued' AND expires_at > ?2",
                     params![outbox_id, now],
-                    |r| r.get(0),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
                 )
                 .optional()?;
-            let Some(expires_at) = expires_at else {
+            let Some((expires_at, station, payload, authority)) = found else {
                 return Ok(None);
             };
+            // A fleet-control item checks its authority at the start of
+            // every attempt (ADR-008 section 6.2): when it is gone the item
+            // ends `dead` (`authority_lost`) and no command is made; a
+            // station without a live link makes the item wait.
+            if let Some(text) = authority {
+                let authority: CommandAuthority = serde_json::from_str(&text)?;
+                let target = crate::store::coordinator::strict_session_of(&payload);
+                let station = StationId(station);
+                match recheck(&tx, &env, &authority, (&station, target.as_ref()), now)? {
+                    Check::Valid => {}
+                    Check::Wait => return Ok(None),
+                    Check::Lost(_) => {
+                        set_state(
+                            &tx,
+                            &outbox_id,
+                            OutboxState::Dead,
+                            Some("authority_lost"),
+                            now,
+                        )?;
+                        tx.commit()?;
+                        return Ok(None);
+                    }
+                }
+            }
             if cmd.retry_until > expires_at {
                 return Err(DeckError::Corrupt(format!(
                     "an attempt of outbox item {outbox_id} outlives its expires_at"
@@ -543,6 +587,73 @@ impl DeckStore {
     }
 }
 
+/// The answer of a gate before a send.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gate {
+    /// Every check holds: send.
+    Open,
+    /// A station has no live link: send later.
+    Wait,
+    /// The authority is gone: the command and its item ended.
+    Lost,
+}
+
+impl DeckStore {
+    /// The gate before a send or a resend of a routed command with
+    /// `authority` (ADR-008 section 6.2). When the authority is gone, the
+    /// command ends `failed` (`authority_lost`) and its item `dead`
+    /// (`authority_lost`), in one transaction.
+    ///
+    /// # Errors
+    /// A database error (the caller stops this send and tries on the next
+    /// tick).
+    pub async fn gate_authority(
+        &self,
+        command: CommandId,
+        station: StationId,
+        authority: CommandAuthority,
+        target: Option<SessionId>,
+    ) -> Result<Gate> {
+        let now = self.now_ms();
+        let inner = Arc::clone(&self.inner);
+        let gate = call(&self.inner.db, move |conn| {
+            let env = inner.fleet_env();
+            let tx = conn.transaction()?;
+            match recheck(&tx, &env, &authority, (&station, target.as_ref()), now)? {
+                Check::Valid => return Ok(Gate::Open),
+                Check::Wait => return Ok(Gate::Wait),
+                Check::Lost(_) => {}
+            }
+            tx.execute(
+                "UPDATE commands SET state = 'failed', reason = 'authority_lost', updated_at = ?2
+                 WHERE command_id = ?1 AND state = 'pending'",
+                params![command.as_str(), now],
+            )?;
+            tx.execute(
+                "UPDATE outbox SET state = 'dead', reason = 'authority_lost', updated_at = ?2
+                 WHERE command_id = ?1 AND state IN ('queued', 'sending')",
+                params![command.as_str(), now],
+            )?;
+            tx.commit()?;
+            Ok(Gate::Lost)
+        })
+        .await?;
+        if gate == Gate::Lost {
+            self.commands_changed();
+        }
+        Ok(gate)
+    }
+}
+
+/// The authority and the acted-on session of a stored command envelope,
+/// when it carries an authority.
+#[must_use]
+pub fn authority_of(envelope: &serde_json::Value) -> Option<(CommandAuthority, Option<SessionId>)> {
+    let env: CommandEnvelope = serde_json::from_value(envelope.clone()).ok()?;
+    let target = strict_session(&env.command).cloned();
+    env.authority.map(|a| (a, target))
+}
+
 #[cfg(test)]
 #[path = "outbox_hold_tests.rs"]
 mod hold_tests;
@@ -558,5 +669,38 @@ mod tests {
         assert_eq!(backoff(4), 40_000);
         assert_eq!(backoff(7), MAX_BACKOFF_MS);
         assert_eq!(backoff(u32::MAX), MAX_BACKOFF_MS);
+    }
+
+    /// ADR-008 §5.3: a station rejection `already_answered` ends the item
+    /// `dead`, and the reason names the code for `command_status`.
+    #[test]
+    fn a_station_rejection_already_answered_ends_the_item_with_its_code() {
+        let rejected = |code| {
+            let reject = fleetdeck_proto::Reject::new(code, "no");
+            let receipt = fleetdeck_proto::Receipt::rejected("c".into(), reject, 0);
+            commands::DeckCommand {
+                command_id: "c".into(),
+                station_id: "s".into(),
+                method: "approval.answer".to_owned(),
+                origin: "coordinator".to_owned(),
+                envelope: Value::Null,
+                retry_until: 0,
+                state: DeckCommandState::Done,
+                attempts: 1,
+                sent_at: Some(0),
+                receipt: Some(receipt),
+                reason: None,
+                author: None,
+                created_at: 0,
+                updated_at: 0,
+            }
+        };
+        for (code, reason) in [
+            (RejectCode::AlreadyAnswered, "rejected: already_answered"),
+            (RejectCode::AnswerCapReached, "rejected: answer_cap_reached"),
+        ] {
+            let got = next(&rejected(code));
+            assert_eq!(got, Some((OutboxState::Dead, Some(reason.to_owned()))));
+        }
     }
 }

@@ -9,7 +9,8 @@
 //! and audit tables follow in P3-8 (V5). V6 (M3 6-6): the plan
 //! library. V7 (M3 6-2, 6-4): mail and tasks. V8 (M3 6-7): file touches.
 //! V13 (R2.1): the `blocked` and `question` task states. V14 (R12): artifacts.
-//! V16 (R5): automations. V17 (R6): read cursors.
+//! V16 (R5): automations. V17 (R6): read cursors. V20 (ADR-008): fleet
+//! control.
 
 use rusqlite_migration::{M, Migrations};
 
@@ -565,6 +566,23 @@ CREATE TABLE project_sessions (
 ) STRICT;
 ";
 
+/// Fleet control (ADR-008 §3, §6.1). A grant has a `scope` and an answer
+/// budget with a durable lifetime counter (like `spawn_used`). An outbox item
+/// made by a fleet-control op keeps its `authority` (JSON of
+/// `CommandAuthority`); every outbox item of a coordinator call keeps the id
+/// of that call, so `command_status` can show its deliveries.
+const V20: &str = "
+ALTER TABLE tokens ADD COLUMN scope TEXT NOT NULL DEFAULT 'lineage'
+    CHECK (scope IN ('lineage', 'fleet'));
+ALTER TABLE tokens ADD COLUMN answer_cap INTEGER
+    CHECK (answer_cap IS NULL OR answer_cap BETWEEN 0 AND 5000);
+ALTER TABLE tokens ADD COLUMN answer_used INTEGER NOT NULL DEFAULT 0
+    CHECK (answer_used >= 0);
+ALTER TABLE outbox ADD COLUMN authority TEXT;
+ALTER TABLE outbox ADD COLUMN call_id TEXT;
+CREATE INDEX outbox_call ON outbox (call_id) WHERE call_id IS NOT NULL;
+";
+
 /// The `deck.db` migrations.
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
@@ -590,6 +608,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V18),
         M::up(V15),
         M::up(V19),
+        M::up(V20),
     ])
 }
 

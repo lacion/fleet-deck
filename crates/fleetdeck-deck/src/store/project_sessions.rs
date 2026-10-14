@@ -8,7 +8,8 @@ use std::collections::BTreeMap;
 
 use fleetdeck_proto::board::DeckSession;
 use fleetdeck_proto::integrations::Project;
-use rusqlite::params;
+use fleetdeck_proto::{SessionId, StationId};
+use rusqlite::{Connection, params};
 
 use super::{DeckStore, Principal, Result, call};
 
@@ -106,6 +107,38 @@ pub fn project_of(
     }
 }
 
+/// Stores the manual choice of a session inside the caller's transaction (a
+/// coordinator's `move_to_project` commits it with the receipt).
+pub(super) fn set_project_tx(
+    conn: &Connection,
+    station: &StationId,
+    session: &SessionId,
+    project: Option<&str>,
+    now: i64,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO project_sessions (station_id, session_id, project_id, assigned_at)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT (station_id, session_id) DO UPDATE SET
+             project_id = excluded.project_id, assigned_at = excluded.assigned_at",
+        params![station.as_str(), session.as_str(), project, now],
+    )?;
+    Ok(())
+}
+
+/// Removes the manual choice of a session inside the caller's transaction;
+/// `false` when there was none.
+pub(super) fn reset_project_tx(
+    conn: &Connection,
+    station: &StationId,
+    session: &SessionId,
+) -> Result<bool> {
+    Ok(conn.execute(
+        "DELETE FROM project_sessions WHERE station_id = ?1 AND session_id = ?2",
+        params![station.as_str(), session.as_str()],
+    )? > 0)
+}
+
 impl DeckStore {
     /// Every manual choice.
     ///
@@ -137,14 +170,13 @@ impl DeckStore {
     ) -> Result<()> {
         let now = self.now_ms();
         call(&self.inner.db, move |conn| {
-            conn.execute(
-                "INSERT INTO project_sessions (station_id, session_id, project_id, assigned_at)
-                 VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT (station_id, session_id) DO UPDATE SET
-                     project_id = excluded.project_id, assigned_at = excluded.assigned_at",
-                params![station, session, project, now],
-            )?;
-            Ok(())
+            set_project_tx(
+                conn,
+                &StationId(station),
+                &SessionId(session),
+                project.as_deref(),
+                now,
+            )
         })
         .await?;
         self.board_changed();
@@ -158,10 +190,7 @@ impl DeckStore {
     /// A database error.
     pub async fn reset_session_project(&self, station: String, session: String) -> Result<bool> {
         let removed = call(&self.inner.db, move |conn| {
-            Ok(conn.execute(
-                "DELETE FROM project_sessions WHERE station_id = ?1 AND session_id = ?2",
-                params![station, session],
-            )? > 0)
+            reset_project_tx(conn, &StationId(station), &SessionId(session))
         })
         .await?;
         if removed {

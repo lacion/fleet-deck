@@ -12,4 +12,10 @@ export type CommandRequest = {
 /**
  * The station name or id.
  */
-station: string, command_id: CommandId, command: SessionCommand, };
+station: string, command_id: CommandId, command: SessionCommand, 
+/**
+ * The owner's elevation code (DL-172). A coordinator start with a
+ * fleet-control grant needs a fresh one (ADR-008 §3); every other
+ * command ignores it.
+ */
+elevation?: string, };

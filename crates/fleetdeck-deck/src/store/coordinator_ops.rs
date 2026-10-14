@@ -5,10 +5,14 @@
 //! task, lineage) commit together with the receipt.
 
 use std::collections::BTreeMap;
+use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
 
 use fleetdeck_proto::RejectCode;
 use fleetdeck_proto::board::DeckSession;
-use fleetdeck_proto::command::{SessionCommand, SessionSpec, StopMode, UserInput};
+use fleetdeck_proto::command::{
+    SessionCommand, SessionSpec, StopMode, UserInput, WorkspaceRequest,
+};
 use fleetdeck_proto::link::StationInfo;
 use fleetdeck_proto::mutation::{CoordinatorDelivery, CoordinatorOp, CoordinatorTarget};
 use fleetdeck_proto::orchestration::{
@@ -18,7 +22,8 @@ use fleetdeck_proto::{ProviderInstanceId, SessionId, StationId};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::Result;
-use super::coordinator_fleet::{ask, send_group};
+use super::coordinator::FleetEnv;
+use super::coordinator_fleet::{self, ask, send_group};
 use super::fleet::write_completion;
 use super::grants::{Grant, GrantClass};
 use super::outbox::{NewOutboxItem, insert_item};
@@ -26,7 +31,10 @@ use crate::link::router::CommandKind;
 use crate::routing::{Needs, pick_session};
 
 /// How long a coordinator intent waits in the deck outbox: 24 h.
-const INTENT_TTL_MS: i64 = 24 * 60 * 60 * 1000;
+pub(super) const INTENT_TTL_MS: i64 = 24 * 60 * 60 * 1000;
+/// How long an intent of a fleet-control grant waits: 10 minutes (ADR-008
+/// section 6.1).
+pub(super) const FLEET_INTENT_TTL_MS: i64 = 10 * 60 * 1000;
 
 /// Claude native modes, most restrictive first (the provider adapter's
 /// `NATIVE_MODES`).
@@ -50,6 +58,22 @@ pub(crate) struct Context {
     pub infos: BTreeMap<StationId, StationInfo>,
     pub buried: BTreeMap<SessionId, u32>,
     pub outbox_id: String,
+    /// The deck setting `fleet_control` and the `coordinator.v2` state of the
+    /// links when the call began (ADR-008 section 3).
+    pub env: FleetEnv,
+    /// What the decision tells the caller of the transaction.
+    pub flags: CallFlags,
+}
+
+/// Facts that a decision hands back to [`super::coordinator`]: a change of
+/// the board view and more audit detail.
+#[derive(Debug, Default)]
+pub(crate) struct CallFlags {
+    /// The board view changed (`project_assign`); the store tells the board
+    /// after the commit.
+    pub board: AtomicBool,
+    /// More audit detail (an answer: the request and the option kind).
+    pub note: Mutex<Option<String>>,
 }
 
 /// The result of step 6.
@@ -62,25 +86,38 @@ fn no(code: RejectCode, message: impl Into<String>) -> Result<Decision> {
     Ok(Decision::Rejected(code, message.into()))
 }
 
-/// The class that an op needs (§6.3).
-fn class_of(op: &CoordinatorOp) -> GrantClass {
+/// The classes that an op needs (§6.3, ADR-008 §4.1): all of them.
+fn classes_of(op: &CoordinatorOp) -> Vec<GrantClass> {
     match op {
         CoordinatorOp::Send { .. }
         | CoordinatorOp::Assign { .. }
         | CoordinatorOp::AssignAuto { .. }
         | CoordinatorOp::SendGroup { .. }
         | CoordinatorOp::AskCoordinator { .. }
-        | CoordinatorOp::CompleteTask { .. } => GrantClass::Mail,
-        CoordinatorOp::Interrupt { .. } | CoordinatorOp::Stop { .. } => GrantClass::Drive,
-        CoordinatorOp::Spawn { .. } => GrantClass::Spawn,
-        // Placeholder until the ADR-008 deck task: the new ops are refused in
-        // `decide` before the class matters.
+        | CoordinatorOp::CompleteTask { .. } => vec![GrantClass::Mail],
+        CoordinatorOp::Interrupt { .. } | CoordinatorOp::Stop { .. } => vec![GrantClass::Drive],
+        CoordinatorOp::Spawn { .. } => vec![GrantClass::Spawn],
         CoordinatorOp::Resume { .. }
         | CoordinatorOp::Rename { .. }
         | CoordinatorOp::SetMode { .. }
-        | CoordinatorOp::ProjectAssign { .. }
-        | CoordinatorOp::ProjectStart { .. }
-        | CoordinatorOp::Answer { .. } => GrantClass::Drive,
+        | CoordinatorOp::ProjectAssign { .. } => vec![GrantClass::Manage],
+        CoordinatorOp::ProjectStart { .. } => vec![GrantClass::Spawn, GrantClass::Manage],
+        CoordinatorOp::Answer { .. } => vec![GrantClass::Answer],
+    }
+}
+
+/// True for a mode that skips the permission checks (ADR-008 §5.2): Claude
+/// `bypassPermissions`, or Codex approval `never` with the sandbox
+/// `danger-full-access`. No coordinator operation starts, resumes or sets a
+/// session into one.
+#[must_use]
+pub fn is_bypass(family: &str, mode: Option<&str>) -> bool {
+    match family {
+        "claude" => mode == Some("bypassPermissions"),
+        "codex" => mode
+            .and_then(|m| m.split_once('/'))
+            .is_some_and(|(policy, sandbox)| policy == "never" && sandbox == "danger-full-access"),
+        _ => false,
     }
 }
 
@@ -109,7 +146,10 @@ pub fn mode_within(family: &str, mode: Option<&str>, ceiling: &str) -> bool {
     }
 }
 
-fn family_of(info: Option<&StationInfo>, instance: &ProviderInstanceId) -> Option<String> {
+pub(super) fn family_of(
+    info: Option<&StationInfo>,
+    instance: &ProviderInstanceId,
+) -> Option<String> {
     let p = info?.providers.iter().find(|p| &p.instance == instance)?;
     serde_json::to_value(p.provider)
         .ok()?
@@ -169,7 +209,10 @@ pub(super) fn check_text(text: &str) -> Option<Decision> {
     })
 }
 
-/// The checks and the intent of one op for `grant` (§6.2 step 6).
+/// The checks and the intent of one op for `grant` (§6.2 step 6). An
+/// accepted call marks its outbox items with the call and, for a
+/// fleet-control grant, with the authority and the 10-minute expiry (ADR-008
+/// §6.1).
 pub(crate) fn decide(
     tx: &Connection,
     grant: &Grant,
@@ -178,12 +221,48 @@ pub(crate) fn decide(
     command_id: &str,
     now: i64,
 ) -> Result<Decision> {
-    let class = class_of(op);
-    if !grant.classes.contains(&class) {
+    let decision = decide_op(tx, grant, op, ctx, command_id, now)?;
+    if matches!(decision, Decision::Accepted(_)) {
+        let fleet = grant.is_fleet_control();
+        let authority = match (fleet, grant.authority()) {
+            (true, Some(a)) => Some(serde_json::to_string(&a)?),
+            _ => None,
+        };
+        let ttl = if fleet {
+            FLEET_INTENT_TTL_MS
+        } else {
+            INTENT_TTL_MS
+        };
+        // The item of the call and the items of a group mail (`<id>-<n>`).
+        tx.execute(
+            "UPDATE outbox SET call_id = ?2, authority = ?3,
+                 expires_at = MIN(expires_at, created_at + ?4)
+             WHERE outbox_id = ?1 OR substr(outbox_id, 1, length(?1) + 1) = ?1 || '-'",
+            params![ctx.outbox_id, command_id, authority, ttl],
+        )?;
+    }
+    Ok(decision)
+}
+
+fn decide_op(
+    tx: &Connection,
+    grant: &Grant,
+    op: &CoordinatorOp,
+    ctx: &Context,
+    command_id: &str,
+    now: i64,
+) -> Result<Decision> {
+    if let Some(class) = classes_of(op)
+        .into_iter()
+        .find(|c| !grant.classes.contains(c))
+    {
         return no(
             RejectCode::Forbidden,
             format!("the grant has no `{class:?}` class"),
         );
+    }
+    if let Some(d) = super::coordinator::fleet_gate(grant, op, ctx) {
+        return Ok(d);
     }
     let sender = format!("coordinator {}", grant.session_id);
     match op {
@@ -273,11 +352,14 @@ pub(crate) fn decide(
             station,
             session_id,
         } => {
-            if !grant.stations.contains(station) || !in_lineage(tx, grant, station, session_id)? {
-                return no(
-                    RejectCode::Forbidden,
-                    "the session is not on a station of the grant or not in its lineage",
-                );
+            let must_exist = grant.scope == fleetdeck_proto::command::GrantScope::Fleet;
+            if let Some(d) = super::coordinator::strict_target(
+                tx,
+                grant,
+                (station, session_id),
+                (must_exist, now),
+            )? {
+                return Ok(d);
             }
             let session_id = session_id.clone();
             let command = if matches!(op, CoordinatorOp::Interrupt { .. }) {
@@ -303,30 +385,44 @@ pub(crate) fn decide(
                 tx,
                 grant,
                 ctx,
-                station,
-                spec.clone(),
-                prompt.clone(),
+                (station, spec.clone(), prompt.clone(), None),
                 command_id,
                 now,
             )
         }
-        // Placeholder until the ADR-008 deck task replaces it: a stored
-        // rejection.
-        CoordinatorOp::Resume { .. }
-        | CoordinatorOp::Rename { .. }
-        | CoordinatorOp::SetMode { .. }
-        | CoordinatorOp::ProjectAssign { .. }
-        | CoordinatorOp::ProjectStart { .. }
-        | CoordinatorOp::Answer { .. } => {
-            let name = serde_json::to_value(op)
-                .ok()
-                .and_then(|v| v.get("op").and_then(|n| n.as_str().map(str::to_owned)))
-                .unwrap_or_default();
-            no(
-                RejectCode::Unsupported,
-                format!("{name} is not implemented yet"),
-            )
-        }
+        CoordinatorOp::Resume {
+            station,
+            session_id,
+        } => coordinator_fleet::resume(tx, grant, ctx, (station, session_id), now),
+        CoordinatorOp::Rename {
+            station,
+            session_id,
+            title,
+        } => coordinator_fleet::rename(tx, grant, ctx, (station, session_id), title, now),
+        CoordinatorOp::SetMode {
+            station,
+            session_id,
+            mode,
+        } => coordinator_fleet::set_mode(tx, grant, ctx, (station, session_id), mode, now),
+        CoordinatorOp::ProjectAssign {
+            station,
+            session_id,
+            target,
+        } => coordinator_fleet::project_assign(tx, grant, ctx, (station, session_id), target, now),
+        CoordinatorOp::ProjectStart {
+            project_id,
+            prompt,
+            provider_instance,
+            worktree,
+        } => coordinator_fleet::project_start(
+            tx,
+            grant,
+            ctx,
+            (project_id, prompt, provider_instance.as_ref(), *worktree),
+            command_id,
+            now,
+        ),
+        CoordinatorOp::Answer { .. } => coordinator_fleet::answer(tx, grant, ctx, op, now),
         CoordinatorOp::AssignAuto { task, requirements } => {
             if let Some(d) = check_text(task) {
                 return Ok(d);
@@ -346,6 +442,9 @@ pub(crate) fn decide(
             };
             if let Some(s) = pick_session(&mine, &needs, &ctx.buried) {
                 let (station, session) = (s.station_id.clone(), s.summary.session_id.clone());
+                if let Some(d) = super::coordinator::v2_refusal(grant, ctx, &station) {
+                    return Ok(d);
+                }
                 assign_to(
                     tx, ctx, grant, &sender, command_id, task, &station, &session, now,
                 )?;
@@ -360,12 +459,16 @@ pub(crate) fn decide(
             if !grant.classes.contains(&GrantClass::Spawn) {
                 return no(RejectCode::InvalidState, "no session fits the task");
             }
-            let Some((station, instance)) = spawn_target(grant, ctx, requirements.provider) else {
+            let Some((station, instance)) = spawn_target(grant, ctx, requirements.provider, None)
+            else {
                 return no(
                     RejectCode::InvalidState,
                     "no session fits and no station of the grant can start one",
                 );
             };
+            if let Some(d) = super::coordinator::v2_refusal(grant, ctx, &station) {
+                return Ok(d);
+            }
             let spec = SessionSpec {
                 provider_instance: instance,
                 cwd: repo,
@@ -378,7 +481,14 @@ pub(crate) fn decide(
                 "{ASSIGNMENT_PREFIX}{}",
                 task.trim()
             )));
-            start(tx, grant, ctx, &station, spec, prompt, command_id, now)
+            start(
+                tx,
+                grant,
+                ctx,
+                (&station, spec, prompt, None),
+                command_id,
+                now,
+            )
         }
     }
 }
@@ -417,7 +527,7 @@ fn assign_to(
 ) -> Result<()> {
     let command = SessionCommand::FollowUp {
         session_id: session.clone(),
-        input: UserInput::new(task_frame(command_id, task.trim())),
+        input: UserInput::new(task_frame(sender, command_id, task.trim())),
     };
     enqueue(tx, ctx, station, command, now)?;
     tx.execute(
@@ -472,7 +582,7 @@ fn complete(
     Ok(Decision::Accepted(Some(grant.session_id.clone())))
 }
 
-fn in_lineage(
+pub(super) fn in_lineage(
     tx: &Connection,
     grant: &Grant,
     station: &StationId,
@@ -497,38 +607,49 @@ fn in_lineage(
         .is_some())
 }
 
-/// The first station of the grant (by id) with a signed-in provider of the
-/// wanted kind whose family has a mode ceiling.
-fn spawn_target(
+/// The first station of the grant (by id, or only `only`) with a signed-in
+/// provider of the wanted kind whose family has a mode ceiling.
+pub(super) fn spawn_target(
     grant: &Grant,
     ctx: &Context,
     kind: Option<fleetdeck_proto::event::ProviderKind>,
+    only: Option<&StationId>,
 ) -> Option<(StationId, ProviderInstanceId)> {
-    grant.stations.iter().find_map(|station| {
-        let info = ctx.infos.get(station)?;
-        info.providers
-            .iter()
-            .filter(|p| p.auth == "signed_in")
-            .filter(|p| kind.is_none_or(|k| k == p.provider))
-            .find(|p| {
-                family_of(Some(info), &p.instance).is_some_and(|f| grant.max_modes.contains_key(&f))
-            })
-            .map(|p| (station.clone(), p.instance.clone()))
-    })
+    grant
+        .stations
+        .iter()
+        .filter(|s| only.is_none_or(|o| o == *s))
+        .find_map(|station| {
+            let info = ctx.infos.get(station)?;
+            info.providers
+                .iter()
+                .filter(|p| p.auth == "signed_in")
+                .filter(|p| kind.is_none_or(|k| k == p.provider))
+                .find(|p| {
+                    family_of(Some(info), &p.instance)
+                        .is_some_and(|f| grant.max_modes.contains_key(&f))
+                })
+                .map(|p| (station.clone(), p.instance.clone()))
+        })
 }
 
-/// A start intent under the spawn rules (§6.3) and the cap (§6.4).
-#[allow(clippy::too_many_arguments)]
-fn start(
+/// A start intent under the spawn rules (§6.3), the mode rules (ADR-008
+/// §5.2) and the cap (§6.4). `what` is the station, the spec, the prompt and
+/// the workspace request of the start.
+pub(super) fn start(
     tx: &Connection,
     grant: &Grant,
     ctx: &Context,
-    station: &StationId,
-    spec: SessionSpec,
-    prompt: Option<UserInput>,
+    what: (
+        &StationId,
+        SessionSpec,
+        Option<UserInput>,
+        Option<Box<WorkspaceRequest>>,
+    ),
     command_id: &str,
     now: i64,
 ) -> Result<Decision> {
+    let (station, spec, prompt, workspace) = what;
     let Some(family) = family_of(ctx.infos.get(station), &spec.provider_instance) else {
         return no(
             RejectCode::UnknownProvider,
@@ -544,6 +665,12 @@ fn start(
             format!("the grant has no mode ceiling for `{family}`"),
         );
     };
+    if is_bypass(&family, spec.mode.as_deref()) {
+        return no(
+            RejectCode::Forbidden,
+            "a coordinator never starts a session in a bypass mode",
+        );
+    }
     if !mode_within(&family, spec.mode.as_deref(), ceiling) {
         return no(
             RejectCode::Forbidden,
@@ -581,7 +708,7 @@ fn start(
         SessionCommand::Start {
             spec,
             prompt,
-            workspace: None,
+            workspace,
             setup_cmd: None,
             batch: None,
             issue: None,
@@ -607,3 +734,7 @@ fn start(
     )?;
     Ok(Decision::Accepted(None))
 }
+
+#[cfg(test)]
+#[path = "fleet_control_tests.rs"]
+mod fleet_control_tests;

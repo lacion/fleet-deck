@@ -13,6 +13,8 @@ pub struct DeckLive {
     pub name: String,
     /// Tell both sessions once when two sessions change the same file.
     pub conflict_mail: bool,
+    /// The deck setting `fleet_control` (ADR-008 §3).
+    pub fleet_control: bool,
 }
 
 impl DeckLive {
@@ -22,6 +24,7 @@ impl DeckLive {
         Self {
             name: config.name.clone(),
             conflict_mail: config.conflict_mail,
+            fleet_control: config.fleet_control,
         }
     }
 }
@@ -60,14 +63,17 @@ mod tests {
         let cell = LiveCell::new(DeckLive {
             name: "a".into(),
             conflict_mail: true,
+            fleet_control: false,
         });
         let before = cell.get();
         cell.publish(DeckLive {
             name: "b".into(),
             conflict_mail: false,
+            fleet_control: true,
         });
         assert_eq!(before.name, "a");
         let now = cell.get();
         assert_eq!((now.name.as_str(), now.conflict_mail), ("b", false));
+        assert!(now.fleet_control && !before.fleet_control);
     }
 }

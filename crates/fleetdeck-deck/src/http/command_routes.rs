@@ -216,9 +216,26 @@ async fn route(
                 ),
             ));
         }
-        super::grant_routes::owner_start(board, &rec.station_id, &req.command_id, coordinator)
-            .await
-            .map_err(|e| (station.clone(), id.clone(), e))?;
+        let Principal::Owner(session) = principal else {
+            return Err((
+                station.clone(),
+                id.clone(),
+                ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "owner_only",
+                    "only the owner's board login starts a coordinator session".to_owned(),
+                ),
+            ));
+        };
+        super::grant_routes::owner_start(
+            board,
+            &rec.station_id,
+            &req.command_id,
+            coordinator,
+            (session, req.elevation.as_deref()),
+        )
+        .await
+        .map_err(|e| (station.clone(), id.clone(), e))?;
     }
     let kind = CommandKind::Session { command };
     board

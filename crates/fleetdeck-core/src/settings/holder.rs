@@ -242,6 +242,7 @@ impl Holder for DeckHolder {
         m.insert("link_listen".into(), addrs(&c.link_listen));
         m.insert("tailnet_hostname".into(), json!(c.tailnet_hostname));
         m.insert("conflict_mail".into(), json!(c.conflict_mail));
+        m.insert("fleet_control".into(), json!(c.fleet_control));
         m.insert("clone_host".into(), json!(c.clone_host));
         m.insert("clone_org".into(), json!(c.clone_org));
         m.insert("clone_transport".into(), json!(c.clone_transport.as_str()));
@@ -255,6 +256,11 @@ impl Holder for DeckHolder {
         }
         if new_non_loopback(&old.link_listen, &new.link_listen) {
             keys.push("link_listen".to_owned());
+        }
+        // Turning fleet control on needs the owner's elevation; off does not
+        // (ADR-008 section 3).
+        if !old.fleet_control && new.fleet_control {
+            keys.push("fleet_control".to_owned());
         }
         keys
     }
