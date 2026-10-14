@@ -350,6 +350,71 @@ pub fn client_config_raw(
     Ok(Arc::new(config))
 }
 
+/// A verifier that accepts any listener key and records it. It is only for
+/// the observation of a key that a person then confirms (`observe_key`).
+#[derive(Debug, Default)]
+pub struct ObservingVerifier {
+    seen: std::sync::Mutex<Option<PeerKey>>,
+}
+
+impl ObservingVerifier {
+    /// The key that the listener proved, if the handshake got that far.
+    pub fn seen(&self) -> Option<PeerKey> {
+        *self.seen.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+impl ServerCertVerifier for ObservingVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        check_chain(intermediates)?;
+        let key = peer_key(end_entity)?;
+        *self.seen.lock().unwrap_or_else(|e| e.into_inner()) = Some(key);
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        tls12_refused()
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        verify13(&provider(), message, cert, dss)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        vec![SignatureScheme::ED25519]
+    }
+}
+
+/// A client configuration for [`ObservingVerifier`]: TLS 1.3 only, no client
+/// certificate, no session resumption.
+pub fn observing_client_config() -> Result<(Arc<ClientConfig>, Arc<ObservingVerifier>), TlsError> {
+    let verifier = Arc::new(ObservingVerifier::default());
+    let mut config = ClientConfig::builder_with_provider(provider())
+        .with_protocol_versions(&[&rustls::version::TLS13])?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::clone(&verifier) as Arc<dyn ServerCertVerifier>)
+        .with_no_client_auth();
+    config.resumption = rustls::client::Resumption::disabled();
+    Ok((Arc::new(config), verifier))
+}
+
 /// The listener's TLS configuration: TLS 1.3 only, mandatory client
 /// certificate checked against `policy`.
 pub fn server_config(

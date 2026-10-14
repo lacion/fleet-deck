@@ -15,6 +15,8 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 pub const LINK_MAX_PREAUTH: usize = 64;
 /// Most pending handshakes of one source.
 pub const LINK_MAX_PREAUTH_PER_IP: usize = 16;
+/// Most connections of a tailnet listener in TLS or in the upgrade.
+pub const LINK_MAX_SETUP: usize = 32;
 /// Most sources in the map.
 pub const MAX_KEYS: usize = 4096;
 /// At most one log line for refused connections in this time.
@@ -37,6 +39,7 @@ pub fn source_key(ip: IpAddr) -> IpAddr {
 #[derive(Debug)]
 pub struct Admission {
     global: Arc<Semaphore>,
+    setup: Arc<Semaphore>,
     per_ip: Arc<Mutex<HashMap<IpAddr, usize>>>,
     last_refusal_log: Mutex<Option<Instant>>,
 }
@@ -45,6 +48,7 @@ impl Default for Admission {
     fn default() -> Self {
         Self {
             global: Arc::new(Semaphore::new(LINK_MAX_PREAUTH)),
+            setup: Arc::new(Semaphore::new(LINK_MAX_SETUP)),
             per_ip: Arc::default(),
             last_refusal_log: Mutex::default(),
         }
@@ -72,6 +76,20 @@ impl Admission {
             per_ip: Arc::clone(&self.per_ip),
             key,
         })
+    }
+
+    /// A place in the TLS and upgrade stages of a tailnet listener (at most
+    /// [`LINK_MAX_SETUP`]), or `None`. The caller drops it after the
+    /// upgrade.
+    #[must_use]
+    pub fn try_setup(&self) -> Option<OwnedSemaphorePermit> {
+        Arc::clone(&self.setup).try_acquire_owned().ok()
+    }
+
+    /// The connections in TLS or in the upgrade of a tailnet listener.
+    #[must_use]
+    pub fn in_setup(&self) -> usize {
+        LINK_MAX_SETUP - self.setup.available_permits()
     }
 
     /// The number of live guards (pending handshakes).

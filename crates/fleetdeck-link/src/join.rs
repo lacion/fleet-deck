@@ -18,10 +18,11 @@ use std::net::IpAddr;
 
 use fleetdeck_core::identity::PeerKey;
 use fleetdeck_proto::link::Scope;
+use tokio::sync::OwnedSemaphorePermit;
 
 use crate::handshake;
 use crate::hello::{Channel, HandshakeError, HandshakeFrame, Side};
-use crate::node::NodeConfig;
+use crate::node::{Listening, NodeConfig};
 use crate::pairing::{Invitation, InvitationId, PairError, PairedPeer, reason};
 use crate::tls::{self, PeerPolicy};
 use crate::ws::{self, LinkError, Ws};
@@ -89,46 +90,112 @@ pub async fn pair(
     Ok(paired)
 }
 
+/// Admits one pairing attempt of `ip`: the rate limit and one of the 4
+/// handshake slots. A refused attempt reads the joiner's Hello first (when
+/// `read_hello`), so it gets the reason and not a broken pipe (DL-025).
+async fn admit_attempt(
+    node: &NodeConfig,
+    ws: &mut Ws,
+    ip: IpAddr,
+    limit: std::time::Duration,
+    max_message: usize,
+    read_hello: bool,
+) -> Result<OwnedSemaphorePermit, LinkError> {
+    match node.pair_limiter.admit(ip) {
+        Ok(permit) => Ok(permit),
+        Err(e) => {
+            if read_hello {
+                let _ = tokio::time::timeout(limit, ws::recv_text_capped(ws, max_message)).await;
+            }
+            tracing::warn!(%ip, reason = e.reason(), "pairing attempt refused");
+            Err(ws::close_reason(ws, e.reason(), e.to_string()).await)
+        }
+    }
+}
+
 /// The inviter's side of the pair channel, after the WebSocket upgrade.
+///
+/// A key that is not pinned takes a handshake slot first, as before. A
+/// pinned station key can only resume an approval (`PairResume`) or pair
+/// again: it takes its slot after its first frame, and `PairResume` takes
+/// none (it only re-signs a stored approval for the same proven key).
 pub(crate) async fn accept(
     node: &NodeConfig,
     mut ws: Ws,
     peer: PeerKey,
     ip: IpAddr,
     exporter: [u8; 32],
+    on: &Listening,
 ) -> Result<(), LinkError> {
-    let limit = node.handshake_timeout;
-    let Some(invitations) = node.invitations.clone() else {
-        let e = HandshakeError::Protocol("pairing is not open on this listener".into());
-        return Err(ws::refuse(&mut ws, e).await);
-    };
-    let _slot = match node.pair_limiter.admit(ip) {
-        Ok(permit) => permit,
-        Err(e) => {
-            // Read the joiner's Hello first, so it gets the reason and not a
-            // broken pipe (DL-025).
-            let _ = tokio::time::timeout(limit, ws::recv_text(&mut ws)).await;
-            tracing::warn!(%ip, reason = e.reason(), "pairing attempt refused");
-            return Err(ws::close_reason(&mut ws, e.reason(), e.to_string()).await);
-        }
-    };
+    let limit = on.hello;
+    let pinned = node.pins.role_of(&peer) == Some(node.peer_role());
+    let mut slot = None;
+    if !pinned {
+        slot = Some(admit_attempt(node, &mut ws, ip, limit, on.max_message, true).await?);
+    }
     let est = handshake::run(
         &mut ws,
-        &node.own(None),
+        &node.own_on(on),
         Side::Listener,
         Channel::Pair,
         exporter,
         peer,
     )
     .await?;
-    let (id, proof) = match tokio::time::timeout(limit, ws::recv_frame(&mut ws)).await {
-        Ok(Ok((_, HandshakeFrame::PairProof { invitation, proof }))) => (invitation, proof),
-        Ok(Ok(_)) => {
-            let e = HandshakeError::Protocol("expected PairProof".into());
-            return Err(ws::refuse(&mut ws, e).await);
-        }
+    let frame = match tokio::time::timeout(limit, ws::recv_frame_capped(&mut ws, on.max_message))
+        .await
+    {
+        Ok(Ok((_, frame))) => frame,
         Ok(Err(e)) => return Err(e),
         Err(_) => return Err(ws::timed_out(&mut ws, STEP_PROOF, limit).await),
+    };
+    if let HandshakeFrame::PairResume { request_id, nonce } = frame {
+        return crate::pair_accept::resume(node, ws, &est, peer, &request_id, &nonce).await;
+    }
+    let slot = match slot {
+        Some(slot) => slot,
+        None => admit_attempt(node, &mut ws, ip, limit, on.max_message, false).await?,
+    };
+    match frame {
+        HandshakeFrame::PairProof { invitation, proof } => {
+            invite(node, ws, &est, peer, ip, (invitation, proof), limit, slot).await
+        }
+        HandshakeFrame::PairRequest {
+            request_id,
+            name,
+            nonce,
+            offered_scopes,
+        } => {
+            let fields = crate::pair_accept::Fields {
+                request_id,
+                name,
+                nonce,
+                offered_scopes,
+            };
+            crate::pair_accept::request(node, ws, &est, (peer, ip), on, fields, slot).await
+        }
+        _ => {
+            let e = HandshakeError::Protocol("expected PairProof".into());
+            Err(ws::refuse(&mut ws, e).await)
+        }
+    }
+}
+
+/// The invitation proof of the pair channel.
+#[allow(clippy::too_many_arguments)]
+async fn invite(
+    node: &NodeConfig,
+    mut ws: Ws,
+    est: &crate::handshake::Established,
+    peer: PeerKey,
+    ip: IpAddr,
+    (id, proof): (String, String),
+    limit: std::time::Duration,
+    _slot: OwnedSemaphorePermit,
+) -> Result<(), LinkError> {
+    let Some(invitations) = node.invitations.clone() else {
+        let e = HandshakeError::Protocol("pairing is not open on this listener".into());
+        return Err(ws::refuse(&mut ws, e).await);
     };
     let Some(id) = InvitationId::parse(&id) else {
         let e = PairError::InvalidProof;

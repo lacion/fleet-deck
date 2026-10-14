@@ -35,10 +35,17 @@ pub mod methods;
 pub mod mux;
 pub mod net;
 pub mod node;
+mod pair_accept;
+pub mod pair_dial;
+pub mod pair_hub;
+pub mod pair_request;
 pub mod pairing;
 pub mod reconnect;
+pub mod retry_file;
 pub mod revoke;
 pub mod table;
+pub mod tailnet_join;
+pub mod tailnet_target;
 pub mod tls;
 pub mod tokens;
 pub mod transport;
@@ -50,7 +57,8 @@ pub use epochs::{Epochs, LINK_EPOCHS_SQL};
 pub use handshake::Established;
 pub use join::pair;
 pub use live::{DataLink, LiveLink, start};
-pub use node::{LinkListener, NodeConfig, OpenLink, dial, listen};
+pub use node::{LinkListener, ListenerKind, NodeConfig, OpenLink, TailnetLimits, dial, listen};
+pub use pair_dial::{PairApproved, PairMode, open_pair, request_pairing};
 pub use pairing::{
     Invitation, InvitationId, Invitations, PairError, PairLimiter, PairedPeer, PairingSink,
 };
@@ -61,3 +69,6 @@ pub use revoke::{
 pub use table::{Closing, Dialer, LinkId, LinkTable};
 pub use tokens::{StreamToken, StreamTokens};
 pub use ws::LinkError;
+
+#[cfg(test)]
+mod pair_wire_tests;
