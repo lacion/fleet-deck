@@ -606,6 +606,7 @@ impl SessionManager {
             let _ = task.await;
         }
         self.target.stop_all(how).await;
+        let _ = tokio::task::spawn_blocking(crate::workspace::precheck::kill_all_marked).await;
     }
 }
 

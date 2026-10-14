@@ -182,6 +182,7 @@ async fn precheck(ctx: &StationLink, params: serde_json::Value) -> Outcome {
         Ok(answer) => ok(answer),
         Err(PrecheckError::Invalid(m)) => Outcome::Err(WireError::new("invalid_params", m)),
         Err(PrecheckError::Run(m)) => internal(m),
+        Err(PrecheckError::Leftover) => internal("a precheck process could not be stopped"),
     }
 }
 

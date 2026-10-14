@@ -87,7 +87,9 @@ async fn report_left(store: &Store, run: &SetupRun) {
 /// Returns true when a process may be left (also when the scan cannot run).
 async fn stop_run(run: &SetupRun) -> bool {
     let (effect, pgid) = (run.effect_id.clone(), run.pgid);
-    match tokio::task::spawn_blocking(move || kill_marked_in(&effect, pgid, SCAN_WAIT)).await {
+    match tokio::task::spawn_blocking(move || kill_marked_in(MARKER_VAR, &effect, pgid, SCAN_WAIT))
+        .await
+    {
         Ok(Ok(left)) => left > 0,
         Ok(Err(e)) => {
             tracing::error!(error = %e, "the setup processes cannot be listed");
@@ -100,23 +102,23 @@ async fn stop_run(run: &SetupRun) -> bool {
     }
 }
 
-/// SIGKILLs every process of the station's user that carries the marker of
-/// `effect_id`, in any process group, and scans again until none is left or
-/// `wait` has passed. Returns the number of processes that the last scan
+/// SIGKILLs every process of the station's user that carries the marker
+/// `var=id` in its environment, in any process group, and scans again until
+/// none is left or `wait` has passed. Returns the number of processes that the last scan
 /// still found. It blocks the thread: call it from a blocking context.
 ///
 /// # Errors
 /// The text of the error when the processes cannot be listed.
-pub(crate) fn kill_marked(effect_id: &str, wait: Duration) -> Result<usize, String> {
-    kill_marked_in(effect_id, 0, wait)
+pub(crate) fn kill_marked(var: &str, id: &str, wait: Duration) -> Result<usize, String> {
+    kill_marked_in(var, id, 0, wait)
 }
 
 /// [`kill_marked`] with the process group of the run, which is also killed
 /// when all of its processes carry the marker.
-fn kill_marked_in(effect_id: &str, pgid: i32, wait: Duration) -> Result<usize, String> {
+fn kill_marked_in(var: &str, id: &str, pgid: i32, wait: Duration) -> Result<usize, String> {
     let deadline = std::time::Instant::now() + wait;
     loop {
-        let found = scan(effect_id, pgid).map_err(|e| e.to_string())?;
+        let found = scan(var, id, pgid).map_err(|e| e.to_string())?;
         if found.marked.is_empty() {
             return Ok(0);
         }
@@ -155,11 +157,11 @@ fn kill_found(found: &Found, pgid: i32) {
 /// Lists the processes of the station's user that carry the marker of
 /// `effect_id`, on Linux from `/proc`.
 #[cfg(target_os = "linux")]
-fn scan(effect_id: &str, pgid: i32) -> std::io::Result<Found> {
+fn scan(var: &str, id: &str, pgid: i32) -> std::io::Result<Found> {
     use std::os::unix::fs::MetadataExt as _;
 
     let uid = rustix::process::getuid().as_raw();
-    let marker = format!("{MARKER_VAR}={effect_id}");
+    let marker = format!("{var}={id}");
     let own = i32::try_from(std::process::id()).unwrap_or(0);
     let mut found = Found::default();
     for entry in std::fs::read_dir("/proc")? {
@@ -208,7 +210,7 @@ pub(crate) fn stat_pgrp(stat: &str) -> Option<i32> {
 /// Lists the processes of the station's user that carry the marker, on macOS
 /// from `ps -E`. The process group is not checked on macOS.
 #[cfg(target_os = "macos")]
-fn scan(effect_id: &str, _pgid: i32) -> std::io::Result<Found> {
+fn scan(var: &str, id: &str, _pgid: i32) -> std::io::Result<Found> {
     let uid = rustix::process::getuid().as_raw().to_string();
     let out = std::process::Command::new("ps")
         .args(["-E", "-ww", "-o", "pid=,command=", "-U", &uid])
@@ -220,7 +222,7 @@ fn scan(effect_id: &str, _pgid: i32) -> std::io::Result<Found> {
     let text = String::from_utf8_lossy(&out.stdout);
     let marked = text
         .lines()
-        .filter_map(|line| ps_match(line, effect_id))
+        .filter_map(|line| ps_match(line, var, id))
         .filter(|pid| *pid != own)
         .collect();
     Ok(Found {
@@ -231,7 +233,7 @@ fn scan(effect_id: &str, _pgid: i32) -> std::io::Result<Found> {
 
 /// A platform without a process listing cannot find the processes.
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn scan(_effect_id: &str, _pgid: i32) -> std::io::Result<Found> {
+fn scan(_var: &str, _id: &str, _pgid: i32) -> std::io::Result<Found> {
     Err(std::io::Error::other(
         "this platform cannot list the setup processes",
     ))
@@ -241,8 +243,8 @@ fn scan(_effect_id: &str, _pgid: i32) -> std::io::Result<Found> {
 /// it followed by a space.
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub(crate) fn ps_match(line: &str, effect_id: &str) -> Option<i32> {
-    let marker = format!(" {MARKER_VAR}={effect_id}");
+pub(crate) fn ps_match(line: &str, var: &str, id: &str) -> Option<i32> {
+    let marker = format!(" {var}={id}");
     let found = line.match_indices(&marker).any(|(at, _)| {
         let after = &line[at + marker.len()..];
         after.is_empty() || after.starts_with(' ')
@@ -342,9 +344,15 @@ mod tests {
     #[test]
     fn a_ps_line_matches_the_marker_only_as_a_whole_variable() {
         let line = " 4242 sleep 60 HOME=/h FLEETDECK_SETUP_ID=abc PATH=/bin";
-        assert_eq!(ps_match(line, "abc"), Some(4242));
-        assert_eq!(ps_match(" 7 sh FLEETDECK_SETUP_ID=abc", "abc"), Some(7));
-        assert_eq!(ps_match(line, "ab"), None);
-        assert_eq!(ps_match(" 7 sh XFLEETDECK_SETUP_ID=abc", "abc"), None);
+        assert_eq!(ps_match(line, MARKER_VAR, "abc"), Some(4242));
+        assert_eq!(
+            ps_match(" 7 sh FLEETDECK_SETUP_ID=abc", MARKER_VAR, "abc"),
+            Some(7)
+        );
+        assert_eq!(ps_match(line, MARKER_VAR, "ab"), None);
+        assert_eq!(
+            ps_match(" 7 sh XFLEETDECK_SETUP_ID=abc", MARKER_VAR, "abc"),
+            None
+        );
     }
 }

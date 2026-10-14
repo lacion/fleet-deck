@@ -74,7 +74,7 @@ async fn linear_values_travel_as_variables_and_a_transition_uses_the_state_id() 
 #[tokio::test]
 async fn an_asset_must_be_an_image_from_a_host_of_the_binding() {
     let tmp = tempfile::tempdir().unwrap();
-    let svc = service(tmp.path(), &[], &[], &[("a.png", "<svg/>\ntext/html")]);
+    let svc = service(tmp.path(), &[], &[], &[("a.png", "<svg/>\ntext/html\n200")]);
     let query =
         |url: &str| json!({"binding": serde_json::to_value(jira_binding()).unwrap(), "url": url});
     // Allowed host, but the bytes are not an image.
@@ -115,7 +115,7 @@ async fn a_real_png_is_returned_as_base64() {
     let curl = tmp.path().join("curl/curl");
     std::fs::write(
         &curl,
-        "#!/bin/sh\ncat > /dev/null\nprintf '\\211PNG\\r\\n\\032\\nDATA\\nimage/png'\n",
+        "#!/bin/sh\ncat > /dev/null\nprintf '\\211PNG\\r\\n\\032\\nDATA\\nimage/png\\n200\\n'\n",
     )
     .unwrap();
     let got: Asset = serde_json::from_value(

@@ -316,7 +316,7 @@ async fn go_and_wait(
 async fn kill_marked(effect_id: &str) -> bool {
     let effect = effect_id.to_owned();
     match tokio::task::spawn_blocking(move || {
-        super::setup_cleanup::kill_marked(&effect, MARKED_WAIT)
+        super::setup_cleanup::kill_marked(MARKER_VAR, &effect, MARKED_WAIT)
     })
     .await
     {
