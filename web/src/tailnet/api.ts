@@ -14,12 +14,15 @@ export type AutoView = {
   changed: boolean;
 };
 
+/** The program choice: `tailscale_bin`, `PATH`, the macOS app, or Tailscale for Windows (WSL). */
+export type ProgramKind = 'configured' | 'path' | 'macos_app' | 'windows';
+
 export type TailnetView = {
   available: boolean;
-  /** `windows_tailscale` when only the Windows program exists; else a text of the deck. */
+  /** Why Tailscale is not available, or a text of the deck (the WSL NAT text). */
   reason?: string;
-  /** The Windows program of WSL that the owner can choose (with `windows_tailscale`). */
-  windows_program?: string;
+  /** How the deck chose the Tailscale program (design 15.1); absent when it found none. */
+  program?: ProgramKind;
   self?: { dns_name: string; ips: string[]; login?: string; os?: string };
   userspace: boolean;
   /** What "Use tailnet" would save now. */

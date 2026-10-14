@@ -83,38 +83,27 @@ function suite() {
     expect(await fitsWidth(page)).toBe(true);
   });
 
-  test('the Windows program: the hint, "Use this program" and the elevation', async ({ page }) => {
+  test('Tailscale for Windows: the text, no "Use this program" button', async ({ page }) => {
     const { state } = await start(page);
-    state.view = {
-      ...state.view,
-      available: false,
-      reason: 'windows_tailscale',
-      windows_program: '/mnt/c/Program Files/Tailscale/tailscale.exe',
-    };
-    delete state.view.self;
+    state.view.program = 'windows';
     await go(page, '#/settings');
     const card = page.getByRole('region', { name: 'Tailnet' });
     await expect(card).toContainText(
-      'Tailscale for Windows is installed. Fleet Deck can use it from WSL. It then runs as your Windows user, with your Windows environment, the same as in a Windows terminal.',
+      'Using Tailscale for Windows. It runs as your Windows user, with your Windows environment, the same as in a Windows terminal.',
     );
     await expect(card).not.toContainText('Tailscale is not available');
-    await card.getByRole('button', { name: 'Use this program' }).click();
-    await confirm(page);
-    await expect(card).toContainText('Saved. Fleet Deck uses the Tailscale program of Windows.');
-    expect(state.posted).toEqual([
-      {
-        path: '/api/settings/deck',
-        body: {
-          changes: { tailscale_bin: '/mnt/c/Program Files/Tailscale/tailscale.exe' },
-          revision: 'rev-e2e',
-          elevation: ELEVATION,
-        },
-      },
-    ]);
-    // The card reloads: the normal view, and no hint.
     await expect(card).toContainText('Board address');
     await expect(card.getByRole('button', { name: 'Use this program' })).toHaveCount(0);
+    expect(state.posted).toEqual([]);
     expect(await fitsWidth(page)).toBe(true);
+  });
+
+  test('the toggle is on when the key is absent', async ({ page }) => {
+    await start(page);
+    await go(page, '#/settings');
+    const card = page.getByRole('region', { name: 'Tailnet' });
+    await expect(card.getByRole('checkbox', { name: 'Use Tailscale automatically' })).toBeChecked();
+    await expect(card).not.toContainText('Using Tailscale for Windows');
   });
 
   test('the toggle "Use Tailscale automatically" and its notes', async ({ page }) => {

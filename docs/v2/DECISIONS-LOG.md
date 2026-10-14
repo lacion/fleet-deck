@@ -2900,6 +2900,7 @@ Owner review: pending.
 - Build 2 (backend, 2026-10-14): the second half is built (no board UI yet). Link: feature `pair_request.v1` with the frames `pair_request`, `pair_pending`, `pair_approved`, `pair_resume`; the in-memory window hub (`PairRequests`: generation, deadline, limits, cooldown, one serialized decision); the signed approval (ADR-004 §10 with test vectors); tailnet link listeners (classified by address) with 64 unauthenticated permits held to the socket close, stage deadlines 5 s, 16 KiB limit for an unpinned key, heartbeat 15 s / 45 s; `Origin` and `Host` rules on every link listener. Deck: migration V22 `pairing_completions`, `commit_pairing` (station and record in one transaction, never `pin_station`), routes `GET/POST /api/pairing/window`, `GET /api/pairing/requests`, `POST .../approve` and `.../deny` (owner only, elevation to open and approve), devices `request waiting` and `command`. Station: `LocalRequest::JoinTailnet` and `JoinTailnetCancel`, the retry file `pair-pending.json`, `fleetdeck station join --tailnet`.
 - Status: built (backend). The board UI (window control, request card, copy command) is a later task.
 - §14 built: the WSL hint for the Windows Tailscale program with an elevated "Use this program", the WSL NAT reason, the interface-based local check, and "Use Tailscale automatically" with per-channel provenance applied at start.
+- §15 built.
 
 ## DL-179 — review comments on the Changes diff (design)
 

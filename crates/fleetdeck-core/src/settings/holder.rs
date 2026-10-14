@@ -281,8 +281,10 @@ impl Holder for DeckHolder {
         if old.tailscale_bin != new.tailscale_bin {
             keys.push("tailscale_bin".to_owned());
         }
-        // Turning the automatic tailnet mode on needs the elevation; off
-        // does not (tailnet design section 14.4).
+        // The values are the effective ones (an absent key is on): a change
+        // from an effective `false` to an effective `true` needs the
+        // elevation, also a reset of a saved `false` to the default; every
+        // other change does not (tailnet design sections 14.4 and 15.2).
         if !old.tailnet_auto && new.tailnet_auto {
             keys.push("tailnet_auto".to_owned());
         }

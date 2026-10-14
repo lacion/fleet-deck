@@ -17,7 +17,7 @@ use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use serde::de::{self, DeserializeOwned, MapAccess, SeqAccess, Visitor};
@@ -126,10 +126,38 @@ pub struct WhoIs {
     pub shared: Option<bool>,
 }
 
+/// How the program of a [`TailscaleCli`] was chosen (design section 15.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProgramKind {
+    /// The setting `tailscale_bin`, or a program given to [`TailscaleCli::new`].
+    Configured,
+    /// `tailscale` on `PATH` (also the bare name when nothing is found).
+    Path,
+    /// The program of the macOS app.
+    MacosApp,
+    /// `tailscale.exe` of Windows, under WSL, after the checks of
+    /// [`crate::tailscale_wsl::windows_program_ok`].
+    Windows,
+}
+
+impl ProgramKind {
+    /// The name on the wire (`GET /api/tailnet`).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Configured => "configured",
+            Self::Path => "path",
+            Self::MacosApp => "macos_app",
+            Self::Windows => "windows",
+        }
+    }
+}
+
 /// The `tailscale` program.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TailscaleCli {
     program: PathBuf,
+    kind: ProgramKind,
 }
 
 impl TailscaleCli {
@@ -138,24 +166,59 @@ impl TailscaleCli {
     pub fn new(program: impl Into<PathBuf>) -> Self {
         Self {
             program: program.into(),
+            kind: ProgramKind::Configured,
         }
     }
 
-    /// The program of this machine: the setting `tailscale_bin`, else
-    /// `tailscale` on `PATH`, else (macOS) the program of the app.
+    /// The program of this machine (design section 15.1): the setting
+    /// `tailscale_bin`, else `tailscale` on `PATH`, else (macOS) the program
+    /// of the app, else (WSL only) the Windows program when its checks pass.
+    /// The checks read files: call it off the async threads.
     #[must_use]
     pub fn locate(configured: Option<&Path>) -> Self {
         let bundled = cfg!(target_os = "macos").then(|| Path::new(MACOS_BUNDLED));
-        Self::new(select_program(
+        Self::locate_with(
             configured,
             std::env::var_os("PATH").as_deref(),
             bundled,
-        ))
+            crate::tailscale_wsl::windows_program_ok,
+        )
+    }
+
+    /// [`Self::locate`] with its inputs: `windows` gives the Windows
+    /// program when WSL and every check of it pass (a test gives its own).
+    /// When nothing is found the bare name `tailscale` is the program, so
+    /// that a run reports "not installed".
+    #[must_use]
+    pub fn locate_with(
+        configured: Option<&Path>,
+        path_var: Option<&OsStr>,
+        bundled: Option<&Path>,
+        windows: impl FnOnce() -> Option<PathBuf>,
+    ) -> Self {
+        let (program, kind) = if let Some(path) = configured {
+            (path.to_path_buf(), ProgramKind::Configured)
+        } else if let Some(found) = on_path(path_var) {
+            (found, ProgramKind::Path)
+        } else if let Some(app) = bundled.filter(|p| p.is_file()) {
+            (app.to_path_buf(), ProgramKind::MacosApp)
+        } else if let Some(exe) = windows() {
+            (exe, ProgramKind::Windows)
+        } else {
+            (PathBuf::from("tailscale"), ProgramKind::Path)
+        };
+        Self { program, kind }
     }
 
     #[must_use]
     pub fn program(&self) -> &Path {
         &self.program
+    }
+
+    /// How the program was chosen.
+    #[must_use]
+    pub fn kind(&self) -> ProgramKind {
+        self.kind
     }
 
     /// `tailscale status --json`.
@@ -165,7 +228,20 @@ impl TailscaleCli {
     /// document that is too large or does not fit the schema, or a backend
     /// that is not running.
     pub async fn status(&self) -> Result<Status, TailscaleError> {
-        let out = self.run(&["status", "--json"], ambient_env()).await?;
+        self.status_until(Instant::now() + TIMEOUT).await
+    }
+
+    /// [`Self::status`] that ends at `deadline` (at most [`TIMEOUT`] from the
+    /// call): the child is killed and reaped then, and the answer is
+    /// [`TailscaleError::Timeout`].
+    ///
+    /// # Errors
+    /// As [`Self::status`].
+    pub async fn status_until(&self, deadline: Instant) -> Result<Status, TailscaleError> {
+        let deadline = deadline.min(Instant::now() + TIMEOUT);
+        let out = self
+            .run(&["status", "--json"], ambient_env(), deadline)
+            .await?;
         parse_status(&out)
     }
 
@@ -175,12 +251,24 @@ impl TailscaleCli {
     /// As [`Self::status`].
     pub async fn whois(&self, ip: IpAddr) -> Result<WhoIs, TailscaleError> {
         let ip = ip.to_string();
-        let out = self.run(&["whois", "--json", &ip], ambient_env()).await?;
+        let out = self
+            .run(
+                &["whois", "--json", &ip],
+                ambient_env(),
+                Instant::now() + TIMEOUT,
+            )
+            .await?;
         parse_whois(&out)
     }
 
-    /// Runs the program with `args` and `env` and returns its stdout.
-    async fn run(&self, args: &[&str], env: ChildEnv) -> Result<Vec<u8>, TailscaleError> {
+    /// Runs the program with `args` and `env` and returns its stdout. The
+    /// run ends at `deadline`.
+    async fn run(
+        &self,
+        args: &[&str],
+        env: ChildEnv,
+        deadline: Instant,
+    ) -> Result<Vec<u8>, TailscaleError> {
         let mut cmd = Command::new(&self.program);
         cmd.args(args)
             .env_clear()
@@ -204,7 +292,8 @@ impl TailscaleCli {
             let status = child.wait().await.map_err(|e| io_error(&e))?;
             Ok::<_, TailscaleError>((out, err, status))
         };
-        let done = tokio::time::timeout(TIMEOUT, io).await;
+        let left = deadline.saturating_duration_since(Instant::now());
+        let done = tokio::time::timeout(left, io).await;
         let (out, err, status) = match done {
             Ok(Ok(all)) => all,
             Ok(Err(e)) => {
@@ -283,7 +372,12 @@ pub fn select_program(
 /// `bundled` when that file exists.
 #[must_use]
 pub fn find_program(path_var: Option<&OsStr>, bundled: Option<&Path>) -> Option<PathBuf> {
-    let found = path_var.and_then(|paths| {
+    on_path(path_var).or_else(|| bundled.filter(|p| p.is_file()).map(Path::to_path_buf))
+}
+
+/// The first executable `tailscale` in an absolute directory of `path_var`.
+fn on_path(path_var: Option<&OsStr>) -> Option<PathBuf> {
+    path_var.and_then(|paths| {
         std::env::split_paths(paths)
             .filter(|dir| dir.is_absolute())
             .map(|dir| dir.join("tailscale"))
@@ -291,12 +385,12 @@ pub fn find_program(path_var: Option<&OsStr>, bundled: Option<&Path>) -> Option<
                 p.metadata()
                     .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
             })
-    });
-    found.or_else(|| bundled.filter(|p| p.is_file()).map(Path::to_path_buf))
+    })
 }
 
 /// True when the lookup of this machine finds a program without a setting:
-/// `tailscale` on `PATH`, or the macOS app.
+/// `tailscale` on `PATH`, or the macOS app. (The Windows program of WSL is
+/// not counted: see [`TailscaleCli::locate`].)
 #[must_use]
 pub fn is_installed() -> bool {
     let bundled = cfg!(target_os = "macos").then(|| Path::new(MACOS_BUNDLED));

@@ -57,7 +57,7 @@ export type FakeTailnet = {
   view: {
     available: boolean;
     reason?: string;
-    windows_program?: string;
+    program?: 'configured' | 'path' | 'macos_app' | 'windows';
     self?: { dns_name: string; ips: string[] };
     userspace: boolean;
     managed: { listen: string[]; link_listen: string[] };
@@ -264,7 +264,8 @@ export class FakeDeck {
         userspace: false,
         managed: { listen: ['100.64.0.1:7420'], link_listen: ['100.64.0.1:7421'] },
         current: { listen: ['127.0.0.1:7420'], link_listen: ['127.0.0.1:7421'] },
-        auto: { enabled: false, skipped: [], changed: false },
+        // The key is absent from deck.toml: the mode is on (design 15.2).
+        auto: { enabled: true, skipped: [], changed: false },
       },
       windowOpen: false,
       generation: 0,
@@ -291,23 +292,17 @@ export class FakeDeck {
           body: { values: {}, fields: [], revision: 'rev-e2e', overrides: [] },
         };
       }
-      // A save of one key from the Tailnet card: `tailscale_bin` and turning
-      // `tailnet_auto` on need the elevation, as in the real deck.
+      // A save of one key from the Tailnet card: turning `tailnet_auto` on
+      // needs the elevation, as in the real deck.
       state.posted.push({ path: '/api/settings/deck', body: raw });
       const b = raw as { changes?: Record<string, unknown>; elevation?: unknown };
       const changes = b.changes ?? {};
-      const needs = 'tailscale_bin' in changes || changes['tailnet_auto'] === true;
+      const needs = changes['tailnet_auto'] === true;
       if (needs && b.elevation !== ELEVATION) {
         return {
           status: 400,
           body: { error: 'elevation_required', message: 'Confirm it is you.', keys: [] },
         };
-      }
-      if (typeof changes['tailscale_bin'] === 'string') {
-        // The program of Windows runs now: the card shows the normal view.
-        delete state.view.windows_program;
-        delete state.view.reason;
-        state.view.available = true;
       }
       if (typeof changes['tailnet_auto'] === 'boolean') {
         state.view.auto.enabled = changes['tailnet_auto'];

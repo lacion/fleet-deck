@@ -5,14 +5,14 @@ import type { SettingsEnv } from '../settings/context';
 import { useElevation } from '../settings/elevation';
 import { DeckError, describe } from '../settings/http';
 import type { TailnetView } from './api';
-import { autoNotes, offersWindows, useButton } from './model';
+import { autoNotes, useButton, usesWindows } from './model';
 import { saveDeckKey } from './save';
 
 const list = (items: readonly string[]) => items.join(', ');
 
-/** The text of the card when only the Windows program of WSL exists (design 14.1). */
+/** The text of the card when the deck uses Tailscale for Windows from WSL (design 15.1). */
 export const WINDOWS_TEXT =
-  'Tailscale for Windows is installed. Fleet Deck can use it from WSL. It then runs as your Windows user, with your Windows environment, the same as in a Windows terminal.';
+  'Using Tailscale for Windows. It runs as your Windows user, with your Windows environment, the same as in a Windows terminal.';
 
 /** The toggle "Use Tailscale automatically" with its help and its notes (design 14.4). */
 function AutoSection({
@@ -52,27 +52,12 @@ function CardBody({
   view,
   busy,
   onUse,
-  onUseProgram,
 }: {
   readonly view: TailnetView;
   readonly busy: boolean;
   readonly onUse: () => void;
-  readonly onUseProgram: () => void;
 }) {
   const button = useButton(view);
-  if (offersWindows(view)) {
-    return (
-      <>
-        <p className="fd-note">{WINDOWS_TEXT}</p>
-        <p>
-          <code>{view.windows_program}</code>
-        </p>
-        <button type="button" disabled={busy} onClick={onUseProgram}>
-          Use this program
-        </button>
-      </>
-    );
-  }
   if (!view.available) {
     return (
       <p className="fd-note">
@@ -133,19 +118,18 @@ export function TailnetCardView({
   busy,
   note,
   onUse,
-  onUseProgram,
   onAuto,
 }: {
   readonly view: TailnetView;
   readonly busy: boolean;
   readonly note: string | null;
   readonly onUse: () => void;
-  readonly onUseProgram: () => void;
   readonly onAuto: (on: boolean) => void;
 }) {
   return (
     <>
-      <CardBody view={view} busy={busy} onUse={onUse} onUseProgram={onUseProgram} />
+      {usesWindows(view) ? <p className="fd-note">{WINDOWS_TEXT}</p> : null}
+      <CardBody view={view} busy={busy} onUse={onUse} />
       <AutoSection view={view} busy={busy} onAuto={onAuto} />
       {note === null ? null : <p role="status">{note}</p>}
     </>
@@ -209,7 +193,7 @@ export function TailnetCard({ env }: { readonly env: SettingsEnv }) {
     }
   };
 
-  // One deck key from the card: the program of Windows, or the automatic mode.
+  // One deck key from the card: the automatic mode.
   const saveKey = async (
     key: string,
     value: unknown,
@@ -243,16 +227,6 @@ export function TailnetCard({ env }: { readonly env: SettingsEnv }) {
           busy={busy}
           note={note}
           onUse={() => void use()}
-          onUseProgram={() => {
-            if (view.windows_program === undefined) return;
-            void saveKey(
-              'tailscale_bin',
-              view.windows_program,
-              ['Tailscale program'],
-              true,
-              'Saved. Fleet Deck uses the Tailscale program of Windows.',
-            );
-          }}
           onAuto={(on) =>
             void saveKey(
               'tailnet_auto',

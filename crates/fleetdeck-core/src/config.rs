@@ -688,7 +688,7 @@ impl DeckConfig {
             clone_org,
             clone_transport,
             tailscale_bin,
-            tailnet_auto: raw.tailnet_auto.unwrap_or(false),
+            tailnet_auto: raw.tailnet_auto.unwrap_or(true),
             tailnet_auto_listen,
             tailnet_auto_link_listen,
         })
