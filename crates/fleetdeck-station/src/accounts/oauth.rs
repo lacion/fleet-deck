@@ -30,8 +30,9 @@ use ring::rand::{SecureRandom, SystemRandom};
 use serde_json::{Value, json};
 
 use super::http::{self, pct};
-use super::store::{StoredAccount, StoredApp};
-use super::{Accounts, invalid, now_secs, store_fail};
+use super::oauth_app::{AppSource, BUILTIN_NEEDS_LOCALHOST_TEXT, EffectiveApp, app_changed};
+use super::store::{AppSourceDisk, StoredAccount, StoredApp};
+use super::{Accounts, codes, invalid, now_secs, store_fail};
 use crate::integrations::exec::Fail;
 
 /// How long an OAuth transaction lives.
@@ -48,8 +49,16 @@ const JIRA_TOKEN: &str = "https://auth.atlassian.com/oauth/token";
 const JIRA_RESOURCES: &str = "https://api.atlassian.com/oauth/token/accessible-resources";
 const JIRA_API: &str = "https://api.atlassian.com/ex/jira";
 const LINEAR_AUTHORIZE: &str = "https://linear.app/oauth/authorize";
-const LINEAR_TOKEN: &str = "https://api.linear.app/oauth/token";
+pub(super) const LINEAR_TOKEN: &str = "https://api.linear.app/oauth/token";
 const LINEAR_GRAPHQL: &str = "https://api.linear.app/graphql";
+/// The public client id of the built-in Fleet Deck app of Linear (DL-185).
+/// A client id is public; the app has no client secret.
+pub const LINEAR_BUILTIN_CLIENT_ID: &str = "66edc8f79eb0603f2aded18705bdfb99";
+/// The only redirect URIs of the built-in Linear app (DL-185).
+pub const LINEAR_BUILTIN_REDIRECTS: [&str; 2] = [
+    "https://localhost:7420/oauth/callback",
+    "https://127.0.0.1:7420/oauth/callback",
+];
 const JIRA_SCOPE: &str = "read%3Ajira-work%20write%3Ajira-work%20read%3Ajira-user%20offline_access";
 
 /// One open OAuth sign-in.
@@ -58,7 +67,8 @@ pub struct Transaction {
     state: String,
     /// Linear only.
     verifier: Option<Secret<String>>,
-    generation: u32,
+    /// The app that started the sign-in.
+    app: EffectiveApp,
     redirect_uri: String,
     started: Instant,
 }
@@ -67,7 +77,7 @@ impl std::fmt::Debug for Transaction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Transaction")
             .field("kind", &self.kind)
-            .field("generation", &self.generation)
+            .field("app", &self.app)
             .finish_non_exhaustive()
     }
 }
@@ -157,13 +167,17 @@ impl Accounts {
         {
             return Err(invalid("the sign-in request is not valid"));
         }
-        let app = self
-            .store()?
-            .app(p.kind)
-            .map_err(store_fail)?
-            .ok_or_else(|| {
-                Fail::unavailable("the OAuth app of this tracker is not set; set it first")
-            })?;
+        let app = self.effective_app(p.kind)?.ok_or_else(|| {
+            Fail::unavailable("the OAuth app of this tracker is not set; set it first")
+        })?;
+        if app.source == AppSource::Builtin
+            && !LINEAR_BUILTIN_REDIRECTS.contains(&p.redirect_uri.as_str())
+        {
+            return Err(Fail::new(
+                codes::BUILTIN_NEEDS_LOCALHOST,
+                BUILTIN_NEEDS_LOCALHOST_TEXT,
+            ));
+        }
         let (url, verifier) = if p.kind == AccountKind::Jira {
             (
                 format!(
@@ -200,7 +214,7 @@ impl Accounts {
             kind: p.kind,
             state: p.state,
             verifier,
-            generation: app.generation,
+            app,
             redirect_uri: p.redirect_uri,
             started: Instant::now(),
         });
@@ -230,16 +244,13 @@ impl Accounts {
         let tx = tx
             .filter(|t| t.started.elapsed() < self.limits.oauth_ttl)
             .ok_or_else(|| invalid("this sign-in is unknown, used or expired"))?;
-        let app = self
-            .store()?
-            .app(tx.kind)
-            .map_err(store_fail)?
-            .filter(|a| a.generation == tx.generation)
+        self.effective_app(tx.kind)?
+            .filter(|now| now.same_as(&tx.app))
             .ok_or_else(|| invalid("the OAuth app changed; start the sign-in again"))?;
         let ids = if tx.kind == AccountKind::Jira {
-            self.finish_jira(&app, &tx, &p.code).await?
+            self.finish_jira(&tx, &p.code).await?
         } else {
-            self.finish_linear(&app, &tx, &p.code).await?
+            self.finish_linear(&tx, &p.code).await?
         };
         let store = self.store()?;
         let first = ids.first().ok_or_else(|| Fail::bad_answer("no account"))?;
@@ -250,16 +261,15 @@ impl Accounts {
         Ok(self.view(first, &account))
     }
 
-    async fn finish_jira(
-        &self,
-        app: &StoredApp,
-        tx: &Transaction,
-        code_text: &str,
-    ) -> Result<Vec<String>, Fail> {
+    async fn finish_jira(&self, tx: &Transaction, code_text: &str) -> Result<Vec<String>, Fail> {
+        let app = &tx.app;
+        let secret = app.client_secret.as_ref().ok_or_else(|| {
+            Fail::unavailable("the OAuth app of this tracker is not set; set it first")
+        })?;
         let body = json!({
             "grant_type": "authorization_code",
             "client_id": app.client_id,
-            "client_secret": app.client_secret.expose(),
+            "client_secret": secret.expose(),
             "code": code_text,
             "redirect_uri": tx.redirect_uri,
         });
@@ -308,35 +318,32 @@ impl Accounts {
                 expires_at: tokens.expires_at,
                 email: None,
                 generation: 0,
+                app_source: None,
+                app_client_id: None,
             };
             ids.push(self.save_account(&account).await?);
         }
         Ok(ids)
     }
 
-    async fn finish_linear(
-        &self,
-        app: &StoredApp,
-        tx: &Transaction,
-        code_text: &str,
-    ) -> Result<Vec<String>, Fail> {
+    async fn finish_linear(&self, tx: &Transaction, code_text: &str) -> Result<Vec<String>, Fail> {
+        let app = &tx.app;
         let verifier = tx
             .verifier
             .as_ref()
             .ok_or_else(|| Fail::bad_answer("the sign-in has no verifier"))?;
-        let answer = http::post_form(
-            &self.programs,
-            LINEAR_TOKEN,
-            &[
-                ("grant_type", "authorization_code"),
-                ("code", code_text),
-                ("redirect_uri", &tx.redirect_uri),
-                ("client_id", &app.client_id),
-                ("client_secret", app.client_secret.expose()),
-                ("code_verifier", verifier.expose()),
-            ],
-        )
-        .await?;
+        let mut fields = vec![
+            ("grant_type", "authorization_code"),
+            ("code", code_text),
+            ("redirect_uri", tx.redirect_uri.as_str()),
+            ("client_id", app.client_id.as_str()),
+            ("code_verifier", verifier.expose().as_str()),
+        ];
+        // The built-in app is a public client: no secret.
+        if let Some(secret) = &app.client_secret {
+            fields.push(("client_secret", secret.expose().as_str()));
+        }
+        let answer = http::post_form(&self.programs, LINEAR_TOKEN, &fields).await?;
         let tokens = Tokens::parse(&answer)?;
         let viewer = http::post_json(
             &self.programs,
@@ -369,6 +376,8 @@ impl Accounts {
             expires_at: tokens.expires_at,
             email: None,
             generation: 0,
+            app_source: Some(app.source.into()),
+            app_client_id: Some(app.client_id.clone()),
         };
         Ok(vec![self.save_account(&account).await?])
     }
@@ -413,6 +422,13 @@ impl Accounts {
             // The account was logged out or replaced during the refresh: it
             // does not need a sign-in, it is gone or new.
             Err(fail) if fail.code == code::INVALID_PARAMS => Err(fail),
+            // The app of the account is gone or unknown: the owner connects
+            // the account again (DL-185).
+            Err(fail) if fail.code == codes::APP_CHANGED => {
+                self.set_needs_reconnect(id);
+                tracing::warn!(account = %id, "the Linear app of the account changed");
+                Err(fail)
+            }
             Err(fail) => {
                 self.set_needs_login(id, true);
                 tracing::warn!(account = %id, code = fail.code, "the token refresh failed");
@@ -425,13 +441,16 @@ impl Accounts {
 
     async fn refresh(&self, id: &str, account: &StoredAccount) -> Result<Secret<String>, Fail> {
         let store = self.store()?;
-        let (Some(old), Some(app)) = (
-            account.refresh_token.as_ref(),
-            store.app(account.kind).map_err(store_fail)?,
-        ) else {
+        let Some(old) = account.refresh_token.as_ref() else {
             return Err(Fail::unavailable("the account has no refresh token or app"));
         };
+        // For a legacy Linear account that Linear accepted: the client id
+        // of the owner app that this write binds the account to.
+        let mut bind = None;
         let answer = if account.kind == AccountKind::Jira {
+            let Some(app) = store.app(AccountKind::Jira).map_err(store_fail)? else {
+                return Err(Fail::unavailable("the account has no refresh token or app"));
+            };
             http::post_json(
                 &self.programs,
                 JIRA_TOKEN,
@@ -444,21 +463,15 @@ impl Accounts {
                 }),
             )
             .await
+            .map_err(|e| e.fail)?
         } else {
-            http::post_form(
-                &self.programs,
-                LINEAR_TOKEN,
-                &[
-                    ("grant_type", "refresh_token"),
-                    ("refresh_token", old.expose()),
-                    ("client_id", &app.client_id),
-                    ("client_secret", app.client_secret.expose()),
-                ],
-            )
-            .await
-        }
-        .map_err(|e| e.fail)?;
-        let tokens = Tokens::parse(&answer)?;
+            let (answer, bound) = self.refresh_linear(account, old).await?;
+            bind = bound;
+            answer
+        };
+        // A legacy account binds only to an answer that holds tokens.
+        let tokens = Tokens::parse(&answer)
+            .map_err(|fail| if bind.is_some() { app_changed() } else { fail })?;
         let new_refresh = tokens
             .refresh
             .clone()
@@ -478,6 +491,10 @@ impl Accounts {
         updated.access_token = Secret::new(tokens.access.clone());
         updated.refresh_token = Some(Secret::new(new_refresh.clone()));
         updated.expires_at = tokens.expires_at;
+        if let Some(client_id) = bind {
+            updated.app_source = Some(AppSourceDisk::Owner);
+            updated.app_client_id = Some(client_id);
+        }
         store.put_account(id, &updated).map_err(store_fail)?;
         // The other Jira sites of the same sign-in share the rotated pair.
         if account.kind == AccountKind::Jira {

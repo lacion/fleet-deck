@@ -57,6 +57,17 @@ impl fmt::Debug for StoredApp {
     }
 }
 
+/// Which OAuth app made a Linear account (DL-185). A file without this
+/// field is a legacy account: the app that issued it is unknown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppSourceDisk {
+    /// The built-in Fleet Deck app.
+    Builtin,
+    /// The app that the owner registered.
+    Owner,
+}
+
 /// One connected account of the store.
 pub struct StoredAccount {
     pub kind: AccountKind,
@@ -73,6 +84,11 @@ pub struct StoredAccount {
     /// [`AccountStore::put_account`] writes the old value plus one. A refresh
     /// that read generation N writes only while the file still has N.
     pub generation: u64,
+    /// The app that made a Linear OAuth account; `None` for a legacy
+    /// account and for every other account (DL-185).
+    pub app_source: Option<AppSourceDisk>,
+    /// The client id of that app; `None` when `app_source` is `None`.
+    pub app_client_id: Option<String>,
 }
 
 impl fmt::Debug for StoredAccount {
@@ -91,6 +107,8 @@ impl fmt::Debug for StoredAccount {
             .field("expires_at", &self.expires_at)
             .field("email", &self.email)
             .field("generation", &self.generation)
+            .field("app_source", &self.app_source)
+            .field("app_client_id", &self.app_client_id)
             .finish()
     }
 }
@@ -111,6 +129,8 @@ impl Clone for StoredAccount {
             expires_at: self.expires_at,
             email: self.email.clone(),
             generation: self.generation,
+            app_source: self.app_source,
+            app_client_id: self.app_client_id.clone(),
         }
     }
 }
@@ -144,6 +164,10 @@ struct AccountDisk {
     email: Option<String>,
     #[serde(default)]
     generation: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    app_source: Option<AppSourceDisk>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    app_client_id: Option<String>,
 }
 
 /// True for an account id of the store: `jira-` or `linear-` and 8 hex
@@ -284,6 +308,8 @@ impl AccountStore {
             expires_at: d.expires_at,
             email: d.email,
             generation: d.generation,
+            app_source: d.app_source,
+            app_client_id: d.app_client_id,
         }))
     }
 
@@ -315,6 +341,8 @@ impl AccountStore {
             expires_at: a.expires_at,
             email: a.email.clone(),
             generation,
+            app_source: a.app_source,
+            app_client_id: a.app_client_id.clone(),
         };
         let bytes = serde_json::to_vec(&disk).map_err(|_| StoreError::BadRecord)?;
         self.write(&format!("acct-{id}.json"), &bytes)
@@ -434,6 +462,8 @@ mod tests {
             expires_at: Some(1_900_000_000),
             email: None,
             generation: 0,
+            app_source: None,
+            app_client_id: None,
         }
     }
 

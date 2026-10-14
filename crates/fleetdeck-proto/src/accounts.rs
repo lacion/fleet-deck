@@ -44,6 +44,9 @@ pub enum AccountMethod {
 pub enum AccountStatus {
     Ok,
     NeedsLogin,
+    /// The Linear app that made the account is not the app that the station
+    /// has now (DL-185): the owner connects the account again.
+    NeedsReconnect,
     Error,
 }
 

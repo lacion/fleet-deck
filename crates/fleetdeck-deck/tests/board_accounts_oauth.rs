@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use common::board::{BoardClient, Http};
 use common::*;
-use fleetdeck_proto::link::Scope;
+use fleetdeck_proto::link::{Outcome, Scope, WireError};
 use harness::*;
 use serde_json::json;
 
@@ -346,4 +346,39 @@ async fn a_finish_needs_the_callback_and_a_fresh_code() {
         )
         .await;
     expect(&r, 404, "unknown_transaction");
+}
+
+/// DL-185: the two codes of the built-in Linear app reach the board as a 409
+/// with their fixed text; the station text does not.
+#[tokio::test]
+async fn the_builtin_app_codes_reach_the_board_with_their_fixed_text() {
+    const CANARY: &str = "station-text-canary-185";
+    let mut s = setup().await;
+    for (code, text) in [
+        (
+            "builtin_needs_localhost",
+            "The built-in Linear app works only from the board on the deck machine at https://127.0.0.1:7420 or https://localhost:7420. Open the board there, or set up your own Linear app.",
+        ),
+        (
+            "app_changed",
+            "The Linear app of this account changed. Connect the account again.",
+        ),
+    ] {
+        let h = s.h.clone();
+        let headers = refs(&h);
+        let call = s.c.post(
+            "/api/accounts/oauth/start",
+            &headers,
+            json!({ "station": "fake", "kind": "linear" }),
+        );
+        let (r, _) = exchange(
+            &mut s.station,
+            call,
+            Outcome::Err(WireError::new(code, format!("the station says {CANARY}"))),
+        )
+        .await;
+        expect(&r, 409, code);
+        assert_eq!(r.body["message"], text, "{}", r.text);
+        assert!(!r.text.contains(CANARY), "{}", r.text);
+    }
 }

@@ -241,6 +241,8 @@ async fn a_link_to_a_deleted_or_replaced_credential_is_not_published() {
         expires_at: None,
         email: None,
         generation: 0,
+        app_source: None,
+        app_client_id: None,
     };
     let swap = |path: &std::path::Path, text: &str| {
         let tmp = path.with_extension("tmp-swap");

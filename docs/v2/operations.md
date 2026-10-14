@@ -86,6 +86,23 @@ token_file = "~/.config/fleetdeck/linear.token"
 
 Check the setup from the board (project preflight) or with the `integrations.status` link method. `gh`, `glab` and `curl` must be on the `PATH` of the station.
 
+### Accounts: Linear sign-in with the built-in app (DL-185)
+
+Open Settings, then Accounts, then Linear. Fleet Deck has a built-in Linear app. Use it when you set up no Linear OAuth app of your own.
+
+- The section shows "Uses the built-in Fleet Deck app." and the Connect button is on.
+- The built-in app is a public client. The station holds a public client id and no client secret. The sign-in uses PKCE.
+- The built-in app accepts two addresses only: `https://127.0.0.1:7420/oauth/callback` and `https://localhost:7420/oauth/callback`. Open the board at `https://127.0.0.1:7420` or `https://localhost:7420` on the deck machine, then press Connect.
+- If you open the board at another address (a tailnet or LAN address, another port, `http`, or `[::1]`), the station refuses the sign-in with `builtin_needs_localhost`. The board shows a note next to the Connect button. Nothing goes to Linear.
+- For other addresses, choose "Set up your own OAuth app…". An app of your own takes the place of the built-in app for new sign-ins.
+
+Each Linear account remembers the app that made it. A refresh uses that app only.
+
+- The same workspace that you connect with the built-in app and with your own app gives two accounts. Log out of the one that you do not want.
+- An account that your own app made needs that app. If you replace your own app with another client id, the account shows the status "reconnect" (`needs_reconnect`) and the button "Connect again". Press it to sign in with the app that is set now. Accounts that the built-in app made keep working.
+- An account from an earlier version has no record of its app. Fleet Deck tries one refresh with your own app, if you set one. If Linear accepts, the account is bound to that app. If not, or if you set no own app, the account shows "Connect again". Connecting again makes a new account. Log out of the old one.
+- If the deck restarts during a sign-in, the board shows "The sign-in expired. Sign in again."
+
 ## 3. Deck configuration (`deck.toml`)
 
 | Key | Default | Meaning |

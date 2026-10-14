@@ -8,7 +8,7 @@ use fleetdeck_proto::accounts::{
     AccountKind, AccountMethod, AccountStatus, AppSet, OAuthFinishParams, OAuthStartParams,
 };
 
-use super::store::StoredAccount;
+use super::store::{AppSourceDisk, StoredAccount};
 use super::test_support::{curl, log, programs, service};
 use super::{Accounts, now_secs};
 
@@ -392,6 +392,8 @@ fn stored(kind: AccountKind, expires_in: i64, site: &str, cloud: Option<&str>) -
         expires_at: Some(now_secs() + expires_in),
         email: None,
         generation: 0,
+        app_source: None,
+        app_client_id: None,
     }
 }
 
@@ -477,12 +479,13 @@ async fn a_failed_refresh_marks_the_account_and_a_later_success_clears_it() {
         )],
     );
     set_app(&a, AccountKind::Linear);
+    // Made by the owner app that is stored now: Linear refuses the refresh.
+    let mut owned = stored(AccountKind::Linear, -10, "https://linear.app/acme", None);
+    owned.app_source = Some(AppSourceDisk::Owner);
+    owned.app_client_id = Some("client-1".into());
     a.store()
         .unwrap()
-        .put_account(
-            "linear-00000001",
-            &stored(AccountKind::Linear, -10, "https://linear.app/acme", None),
-        )
+        .put_account("linear-00000001", &owned)
         .unwrap();
     let err = a.fresh("linear-00000001").await.unwrap_err();
     assert_eq!(err.code, "unavailable");

@@ -57,6 +57,8 @@ fn account(kind: AccountKind, method: AccountMethod) -> StoredAccount {
         expires_at: None,
         email: None,
         generation: 0,
+        app_source: None,
+        app_client_id: None,
     }
 }
 

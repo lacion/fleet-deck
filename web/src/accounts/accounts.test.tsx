@@ -100,6 +100,86 @@ const tab = (route: Partial<Parameters<typeof AccountsTab>[0]['route']> = {}, li
     />,
   );
 
+const tabAt = (origin: string, list: AccountsList) =>
+  renderToStaticMarkup(
+    <AccountsTab
+      route={{ name: 'settings', tab: 'accounts', station: null, finish: null, oauthError: null }}
+      stations={[station('station-a')]}
+      navigate={noop}
+      actions={fake().actions}
+      origin={origin}
+      initial={list}
+    />,
+  );
+
+describe('the built-in Linear app (DL-185)', () => {
+  const NOTE =
+    'The built-in Linear app works only from the board on the deck machine at https://127.0.0.1:7420 or https://localhost:7420. Open the board there, or set up your own Linear app.';
+
+  test('without an owner Linear app the section says so and Connect is on', () => {
+    // LIST has a Jira app only.
+    const html = tabAt('https://127.0.0.1:7420', LIST);
+    expect(html).toContain('Uses the built-in Fleet Deck app.');
+    expect(html).toContain('Set up your own OAuth app…');
+    expect(html).not.toContain('Set up the OAuth app first. Then you can connect.');
+    expect(html).toMatch(/<button[^>]*>Connect Linear<\/button>/);
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Connect Linear<\/button>/);
+  });
+
+  test('the localhost note shows for every other origin and not for the two registered ones', () => {
+    const list = LIST;
+    for (const ok of ['https://127.0.0.1:7420', 'https://localhost:7420']) {
+      expect(tabAt(ok, list)).not.toContain(NOTE);
+    }
+    for (const other of [
+      'https://deck.example',
+      'https://127.0.0.1:7421',
+      'http://127.0.0.1:7420',
+      'https://[::1]:7420',
+      'https://100.64.0.1:7420',
+    ]) {
+      const html = tabAt(other, list);
+      expect(html).toContain(NOTE);
+      expect(html).toMatch(/<button[^>]*>Connect Linear<\/button>/);
+    }
+  });
+
+  test('with an owner Linear app the section is as before', () => {
+    const list: AccountsList = {
+      ...LIST,
+      apps: [{ kind: 'linear', client_id: 'own-1', has_secret: true, generation: 1 }],
+    };
+    const html = tabAt('https://deck.example', list);
+    expect(html).not.toContain('Uses the built-in Fleet Deck app.');
+    expect(html).not.toContain(NOTE);
+    expect(html).toContain('own-1');
+  });
+
+  test('an account with needs_reconnect shows its message and "Connect again"', () => {
+    const message = 'The Linear app of this account changed. Connect the account again.';
+    const list: AccountsList = {
+      ...LIST,
+      accounts: [
+        account({
+          account_id: 'linear-1',
+          kind: 'linear',
+          site: 'https://linear.app/acme',
+          user: 'Ana',
+          status: 'needs_reconnect',
+          message,
+        }),
+      ],
+    };
+    const html = tabAt('https://127.0.0.1:7420', list);
+    expect(html).toContain('>Connect again<');
+    expect(html).toContain(message);
+    expect(html).toContain('>reconnect<');
+    expect(html).not.toContain('>Reconnect<');
+    // The other states have no "Connect again".
+    expect(tab()).not.toContain('>Connect again<');
+  });
+});
+
 describe('the Accounts tab (DL-173)', () => {
   test('a station select when there is more than one station', () => {
     const html = tab();
@@ -137,13 +217,20 @@ describe('the Accounts tab (DL-173)', () => {
     expect(html).toContain('OAuth app: client id');
     expect(html).toContain('abc123');
     expect(html).toContain('secret set');
-    expect(html).toContain('No OAuth app yet.');
     expect(html).toContain('Set up the OAuth app…');
     expect(html).toContain('Connect Jira');
     expect(html).toContain('Use an API token instead');
-    // Linear has no app: its connect button is off.
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Connect Linear<\/button>/);
+    // Linear has no owner app: it uses the built-in app and its connect button is on.
+    expect(html).not.toContain('No OAuth app yet.');
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Connect Linear<\/button>/);
     expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Connect Jira<\/button>/);
+  });
+
+  test('Jira without an owner app has no built-in app (DL-185)', () => {
+    const html = tab({}, { ...LIST, apps: [] });
+    expect(html).toContain('No OAuth app yet.');
+    expect(html).toContain('Set up the OAuth app first. Then you can connect.');
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Connect Jira<\/button>/);
   });
 
   test('"Reconnect" shows for needs_login', () => {
