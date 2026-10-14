@@ -118,6 +118,9 @@ pub struct Decision<'a> {
     ids: &'a dyn IdSource,
     now: i64,
     command_id: CommandId,
+    /// The authority of the command (ADR-008 section 6.1). Each effect that
+    /// the decision queues carries it to the dispatch recheck.
+    authority: Option<fleetdeck_proto::mutation::CommandAuthority>,
     events: Vec<EventEnvelope>,
     effects: Vec<Effect>,
 }
@@ -149,6 +152,13 @@ impl Decision<'_> {
     #[must_use]
     pub fn command_id(&self) -> &CommandId {
         &self.command_id
+    }
+
+    /// The authority of the command that this decision decides (ADR-008
+    /// section 6.1). Every effect that the decision queues carries it.
+    #[must_use]
+    pub fn authority(&self) -> Option<&fleetdeck_proto::mutation::CommandAuthority> {
+        self.authority.as_ref()
     }
 
     /// A new id from the station's id source.
@@ -235,7 +245,7 @@ impl Decision<'_> {
             self.now,
             Some(&self.command_id),
             session_id,
-            payload,
+            payload.with_authority(self.authority.clone()),
         )?;
         self.effects.push(effect);
         self.effects
@@ -427,6 +437,10 @@ where
             ids,
             now,
             command_id: command_id.clone(),
+            authority: match mutation {
+                Mutation::Session(e) => e.authority.clone(),
+                _ => None,
+            },
             events: Vec::new(),
             effects: Vec::new(),
         };

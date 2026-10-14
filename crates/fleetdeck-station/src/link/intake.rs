@@ -298,11 +298,32 @@ async fn file_method(ctx: &StationLink, method: &str, params: serde_json::Value)
             ),
             Err(e) => bad_params(e),
         },
+        "files.coordinator_diff" => match serde_json::from_value(params) {
+            Ok(q) => {
+                done(crate::workspace::coordinator_diff::run(store, policy, private, &git, q).await)
+            }
+            Err(e) => bad_params(e),
+        },
         other => Outcome::Err(WireError::new(
             NOT_IMPLEMENTED,
             format!("`{other}` is not served by this station build"),
         )),
     }
+}
+
+/// `coordinator.policy_now` (ADR-008 §6.2): the live fleet-control policy of
+/// this station for the deck: the live setting `allow_fleet_control`, and
+/// whether the caller session still holds a binding of a grant here.
+fn policy_now(ctx: &StationLink, params: serde_json::Value) -> Outcome {
+    let query: fleetdeck_proto::mutation::PolicyNow = match serde_json::from_value(params) {
+        Ok(q) => q,
+        Err(e) => return bad_params(e),
+    };
+    ok(crate::manager::fleet_control::policy_now_answer(
+        &ctx.manager.policy(),
+        ctx.manager.coordinator_bindings(),
+        &query,
+    ))
 }
 
 /// The `artifacts.*` methods (R12, DL-165). A station without an artifact
@@ -408,9 +429,13 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
         m if crate::integrations::Integrations::serves_accounts(m) => {
             accounts(ctx, m, req.params).await
         }
-        "files.list" | "files.read" | "files.search" | "files.diff" | "files.session_diff" => {
-            file_method(ctx, &req.method, req.params).await
-        }
+        "coordinator.policy_now" => policy_now(ctx, req.params),
+        "files.list"
+        | "files.read"
+        | "files.search"
+        | "files.diff"
+        | "files.session_diff"
+        | "files.coordinator_diff" => file_method(ctx, &req.method, req.params).await,
         "artifacts.publish" | "artifacts.list" | "artifacts.get" | "artifacts.file" => {
             artifact_method(ctx, &req.method, req.params).await
         }

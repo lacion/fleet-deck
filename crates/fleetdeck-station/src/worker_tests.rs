@@ -105,6 +105,7 @@ async fn queue(s: &Store, det: &Det, id: &str) -> Effect {
                         origin: RunOrigin::Board,
                         input: UserInput::new("hi".to_owned()),
                     },
+                    authority: None,
                 },
             )?;
             Ok(CommandResult {

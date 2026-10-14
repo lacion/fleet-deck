@@ -10,9 +10,12 @@ use std::time::Instant;
 
 use fleetdeck_core::secret::Secret;
 use fleetdeck_proto::SessionId;
+use fleetdeck_proto::command::GrantScope;
 use fleetdeck_proto::event::ProviderKind;
 use ring::rand::{SecureRandom, SystemRandom};
 use tokio::sync::Semaphore;
+
+use super::forward::Transport;
 
 /// The prefix of a coordinator credential.
 pub const TOKEN_PREFIX: &str = "fdc1_";
@@ -30,6 +33,13 @@ pub enum ToolClass {
     Mail,
     Drive,
     Spawn,
+    /// Every read query that ADR-008 adds (fleet control).
+    Inspect,
+    /// Resume, rename, set mode, move to a project, start in a project
+    /// (fleet control).
+    Manage,
+    /// Answer approvals and questions (fleet control).
+    Answer,
     /// The session's own tools (`publish_artifact`, `set_focus`,
     /// `ask_coordinator`; DL-165). Every binding has it; no grant names
     /// it ([`ToolClass::parse`] never returns it).
@@ -56,6 +66,8 @@ pub struct Binding {
     pub native_id: Option<String>,
     pub generation: u32,
     pub classes: BTreeSet<ToolClass>,
+    /// The reach of the grant (ADR-008 §3).
+    pub scope: GrantScope,
     pub state: BindingState,
     /// The cached control skill (§7.1), served as MCP `instructions`.
     pub control_skill: String,
@@ -119,6 +131,9 @@ struct Entry {
     window: (Instant, u32),
 }
 
+/// The serial of a deck link and its request path.
+type DeckLink = (u64, Arc<dyn Transport>);
+
 /// The handoff check of a provider version (ADR-006 §5.4).
 pub type HandoffCheck = fn(ProviderKind, Option<&str>) -> Result<(), &'static str>;
 
@@ -135,6 +150,12 @@ pub struct Bindings {
     /// passes the handoff check only when every probed instance of its
     /// family has a verified version.
     versions: Arc<Mutex<HashMap<ProviderKind, Vec<String>>>>,
+    /// The live `allow_fleet_control` of this station (ADR-008 §3), set at
+    /// the start and at every publish of the policy. Off until set.
+    fleet_control: Arc<std::sync::atomic::AtomicBool>,
+    /// The current deck link: the serial of the link and its request path
+    /// (`LinkForward` sets it on connect and clears it on disconnect).
+    deck: Arc<Mutex<Option<DeckLink>>>,
 }
 
 impl std::fmt::Debug for Bindings {
@@ -158,7 +179,8 @@ pub(crate) enum Auth {
 }
 
 impl ToolClass {
-    /// The class of a grant class name (`read`, `mail`, `drive`, `spawn`).
+    /// The class of a grant class name (`read`, `mail`, `drive`, `spawn`,
+    /// `inspect`, `manage`, `answer`). Unknown names fail closed.
     #[must_use]
     pub fn parse(name: &str) -> Option<Self> {
         Some(match name {
@@ -166,8 +188,26 @@ impl ToolClass {
             "mail" => Self::Mail,
             "drive" => Self::Drive,
             "spawn" => Self::Spawn,
+            "inspect" => Self::Inspect,
+            "manage" => Self::Manage,
+            "answer" => Self::Answer,
             _ => return None,
         })
+    }
+
+    /// The fleet-control classes (ADR-008 §2).
+    #[must_use]
+    pub fn is_fleet_control(self) -> bool {
+        matches!(self, Self::Inspect | Self::Manage | Self::Answer)
+    }
+
+    /// The classes of a grant that change something (ADR-008 §4.2 rule 3).
+    #[must_use]
+    pub fn is_mutating(self) -> bool {
+        matches!(
+            self,
+            Self::Mail | Self::Drive | Self::Spawn | Self::Manage | Self::Answer
+        )
     }
 }
 
@@ -179,6 +219,14 @@ impl Binding {
     pub fn is_fleet_only(&self) -> bool {
         self.grant_id.is_empty()
     }
+
+    /// True for the binding of a fleet-control grant: scope `fleet`, or at
+    /// least one of the classes `inspect`, `manage` and `answer`
+    /// (ADR-008 §2).
+    #[must_use]
+    pub fn is_fleet_control(&self) -> bool {
+        self.scope == GrantScope::Fleet || self.classes.iter().any(|c| c.is_fleet_control())
+    }
 }
 
 impl Bindings {
@@ -188,6 +236,71 @@ impl Bindings {
             .endpoint
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(url);
+    }
+
+    /// Records the live `allow_fleet_control` of the station (ADR-008 §3).
+    pub fn set_fleet_control(&self, on: bool) {
+        self.fleet_control
+            .store(on, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// The live `allow_fleet_control` of the station; off until set.
+    #[must_use]
+    pub fn fleet_control(&self) -> bool {
+        self.fleet_control.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// A deck link came up: the request path for `coordinator.authority_check`
+    /// (ADR-008 §6.2).
+    pub fn set_deck(&self, serial: u64, transport: Arc<dyn Transport>) {
+        *self
+            .deck
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((serial, transport));
+    }
+
+    /// The deck link of `serial` ended; a newer link stays.
+    pub fn clear_deck(&self, serial: u64) {
+        let mut deck = self
+            .deck
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if deck.as_ref().is_some_and(|(s, _)| *s == serial) {
+            *deck = None;
+        }
+    }
+
+    /// The request path of the current deck link, if one is connected.
+    #[must_use]
+    pub fn deck(&self) -> Option<Arc<dyn Transport>> {
+        self.deck
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .map(|(_, t)| Arc::clone(t))
+    }
+
+    /// True when the session holds an active binding of a grant (not the
+    /// session-tools binding): `coordinator.policy_now` `bound` (ADR-008
+    /// §6.2).
+    #[must_use]
+    pub fn holds_grant(&self, session_id: &SessionId) -> bool {
+        self.lock().values().any(|e| {
+            let b = &e.binding;
+            &b.session_id == session_id && b.state == BindingState::Active && !b.is_fleet_only()
+        })
+    }
+
+    /// True when the session holds an active binding with a mutating class
+    /// on this station: it is a coordinator (ADR-008 §4.2 rule 3).
+    #[must_use]
+    pub fn holds_mutating(&self, session_id: &SessionId) -> bool {
+        self.lock().values().any(|e| {
+            let b = &e.binding;
+            &b.session_id == session_id
+                && b.state == BindingState::Active
+                && b.classes.iter().any(|c| c.is_mutating())
+        })
     }
 
     /// The loopback URL of the ingress, if it listens.
@@ -463,5 +576,67 @@ impl Binding {
             native_id: self.native_id.clone().unwrap_or_default(),
             generation: self.generation,
         })
+    }
+}
+
+/// The whole round trip of `coordinator.authority_check` (ADR-008 §6.2).
+pub const AUTHORITY_CHECK_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The result of one `coordinator.authority_check` (ADR-008 §6.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Authority {
+    /// The deck answered `valid`.
+    Valid,
+    /// The deck answered `invalid`, or refused with `forbidden`: the
+    /// authority ended (`authority_lost`).
+    Lost,
+    /// No answer: no deck link, a link without `coordinator.v2`, a
+    /// timeout, another error or an answer that does not parse
+    /// (`authority_unknown`).
+    Unknown,
+}
+
+impl Bindings {
+    /// Asks the deck whether the authority of a routed command still holds
+    /// (ADR-008 §6.2): one request, 5 s in all. The station never caches an
+    /// answer.
+    pub async fn authority_check(
+        &self,
+        check: &fleetdeck_proto::mutation::AuthorityCheck,
+    ) -> Authority {
+        self.authority_check_within(check, AUTHORITY_CHECK_DEADLINE)
+            .await
+    }
+
+    /// [`Self::authority_check`] with another deadline (station tests).
+    pub async fn authority_check_within(
+        &self,
+        check: &fleetdeck_proto::mutation::AuthorityCheck,
+        deadline: std::time::Duration,
+    ) -> Authority {
+        use fleetdeck_proto::link::Outcome;
+        use fleetdeck_proto::mutation::AuthorityAnswer;
+        let Some(deck) = self.deck() else {
+            return Authority::Unknown;
+        };
+        let Ok(params) = serde_json::to_value(check) else {
+            return Authority::Unknown;
+        };
+        let asked = tokio::time::timeout(
+            deadline,
+            deck.request("coordinator.authority_check", None, params),
+        )
+        .await;
+        match asked {
+            Ok(Ok(Outcome::Ok(value))) => match serde_json::from_value::<AuthorityAnswer>(value) {
+                Ok(AuthorityAnswer { valid: true, .. }) => Authority::Valid,
+                Ok(_) => Authority::Lost,
+                Err(_) => Authority::Unknown,
+            },
+            Ok(Ok(Outcome::Err(e))) if e.code == fleetdeck_link::methods::code::FORBIDDEN => {
+                Authority::Lost
+            }
+            Ok(Ok(Outcome::Err(_)) | Err(_)) | Err(_) => Authority::Unknown,
+        }
     }
 }

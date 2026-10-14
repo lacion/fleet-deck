@@ -494,7 +494,7 @@ impl SessionTarget {
         turns: &Arc<SessionTurns>,
     ) -> Dispatch {
         match &effect.payload {
-            EffectPayload::Stop { how } => {
+            EffectPayload::Stop { how, .. } => {
                 let process = durable.driver.process();
                 let (how, mut policy) = (*how, durable.stop);
                 if how == StopMode::Graceful && durable.driver.idle() {
@@ -511,7 +511,7 @@ impl SessionTarget {
                 });
                 Dispatch::Sent
             }
-            EffectPayload::Prompt { input } | EffectPayload::FollowUp { input } => {
+            EffectPayload::Prompt { input, .. } | EffectPayload::FollowUp { input, .. } => {
                 let fence = turns.fence().await;
                 turns.begin_input(&fence, &input.input_id).await;
                 turns.input_sent(&input.input_id);

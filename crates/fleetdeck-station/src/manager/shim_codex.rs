@@ -58,21 +58,24 @@ impl DurableCore for CodexCore {
 
     fn command(&mut self, effect: &Effect) -> Result<Steps, ProviderError> {
         let out = match &effect.payload {
-            EffectPayload::Prompt { input } | EffectPayload::FollowUp { input } => {
+            EffectPayload::Prompt { input, .. } | EffectPayload::FollowUp { input, .. } => {
                 self.prompt(&host_input(input))
             }
-            EffectPayload::Steer { input } => self.steer(&host_input(input)),
-            EffectPayload::Interrupt => self.interrupt(Some(effect.effect_id.as_str().to_owned())),
+            EffectPayload::Steer { input, .. } => self.steer(&host_input(input)),
+            EffectPayload::Interrupt { .. } => {
+                self.interrupt(Some(effect.effect_id.as_str().to_owned()))
+            }
             EffectPayload::Answer {
                 request_id,
                 decision,
                 by,
+                ..
             } => self.answer(&Answer {
                 request: request_id.clone(),
                 decision: decision.clone(),
                 by: *by,
             }),
-            EffectPayload::SetMode { mode } => self.set_mode(mode),
+            EffectPayload::SetMode { mode, .. } => self.set_mode(mode),
             EffectPayload::SetModel { model } => self.set_model(model),
             // The first input of a launch (the start or resume effect is
             // claimed while it is written, DL-113, DL-182).

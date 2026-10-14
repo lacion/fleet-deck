@@ -3,20 +3,17 @@
 //! in the command's transaction. Nothing here touches a provider.
 
 use fleetdeck_proto::command::{
-    ApprovalDecision, CommandOrigin, CommandResult, SessionCommand, SessionSpec, WorkspaceRequest,
+    CommandOrigin, CommandResult, SessionCommand, SessionSpec, WorkspaceRequest,
 };
-use fleetdeck_proto::event::{
-    ProviderKind, RequestKind, ResolvedBy, ResponseChannel, RunOrigin, SessionState,
-};
+use fleetdeck_proto::event::{ProviderKind, RequestKind, ResolvedBy, RunOrigin, SessionState};
 use fleetdeck_proto::session::BatchRef;
 use fleetdeck_proto::{InputId, Operation, Reject, RejectCode, SessionId, SessionSummary};
-use fleetdeck_providers::codex::validate_question_answer;
 
 use super::policy::{Policy, WorkspaceError};
 use crate::coordinator::Bindings;
 use crate::store::{
     AnswerClaim, DecideError, Decision, EffectPayload, InputRecord, NewSession, RequestState,
-    RuntimeRequest, WorkspacePlan,
+    WorkspacePlan,
 };
 use crate::workspace::clone_reuse::{self, CloneTarget};
 use crate::workspace::provision;
@@ -59,6 +56,7 @@ pub fn decide(
     command: SessionCommand,
 ) -> Result<CommandResult, DecideError> {
     let origin_run = run_origin(origin);
+    super::fleet_control::check(d, policy, bindings, &command)?;
     match command {
         SessionCommand::Start {
             spec,
@@ -150,27 +148,21 @@ pub fn decide(
                 return Ok(resumed);
             }
             let s = live_session(d, &session_id, Operation::Prompt)?;
-            input_effect(d, &s, origin_run, input, |input| EffectPayload::Prompt {
-                input,
-            })
+            input_effect(d, &s, origin_run, input, EffectPayload::prompt)
         }
         SessionCommand::Steer { session_id, input } => {
             if let Some(resumed) = resume_hibernated(d, policy, &session_id, origin_run, &input)? {
                 return Ok(resumed);
             }
             let s = live_session(d, &session_id, Operation::Steer)?;
-            input_effect(d, &s, origin_run, input, |input| EffectPayload::Steer {
-                input,
-            })
+            input_effect(d, &s, origin_run, input, EffectPayload::steer)
         }
         SessionCommand::FollowUp { session_id, input } => {
             if let Some(resumed) = resume_hibernated(d, policy, &session_id, origin_run, &input)? {
                 return Ok(resumed);
             }
             let s = live_session(d, &session_id, Operation::FollowUp)?;
-            input_effect(d, &s, origin_run, input, |input| EffectPayload::FollowUp {
-                input,
-            })
+            input_effect(d, &s, origin_run, input, EffectPayload::follow_up)
         }
         SessionCommand::Interrupt { session_id } => {
             let s = live_session(d, &session_id, Operation::Interrupt)?;
@@ -180,7 +172,7 @@ pub fn decide(
             {
                 return Err(reject(RejectCode::InvalidState, "no turn runs"));
             }
-            plain_effect(d, &session_id, EffectPayload::Interrupt)
+            plain_effect(d, &session_id, EffectPayload::Interrupt { authority: None })
         }
         SessionCommand::Answer {
             session_id,
@@ -217,7 +209,7 @@ pub fn decide(
             // take, or it would hold the request's answer slot with an
             // effect that the provider refuses.
             if request.state == RequestState::Open && request.receipt.is_none() {
-                admit_answer(d, &session_id, &request, &decision)?;
+                super::fleet_control::admit_answer(d, &session_id, &request, &decision, origin)?;
             }
             let by = resolved_by(origin);
             match d.claim_answer(&request.request_id, &decision.option_id, by)? {
@@ -226,12 +218,15 @@ pub fn decide(
                         request_id,
                         decision,
                         by,
+                        authority: None,
                     };
                     plain_effect(d, &session_id, payload)
                 }
                 // L3: a second answer gets the first answer's outcome and
-                // sends nothing.
-                AnswerClaim::Repeated(_) => Ok(result(&session_id, None)),
+                // sends nothing (a coordinator: `already_answered`, ADR-008).
+                AnswerClaim::Repeated(first) => {
+                    super::fleet_control::repeated(&session_id, origin, &first)
+                }
                 AnswerClaim::Closed(state) => Err(reject(
                     RejectCode::RequestClosed,
                     match state {
@@ -258,7 +253,14 @@ pub fn decide(
                     format!("`{mode}` is not a mode of this session"),
                 ));
             }
-            plain_effect(d, &session_id, EffectPayload::SetMode { mode })
+            plain_effect(
+                d,
+                &session_id,
+                EffectPayload::SetMode {
+                    mode,
+                    authority: None,
+                },
+            )
         }
         SessionCommand::SetModel { session_id, model } => {
             live_session(d, &session_id, Operation::SetModel)?;
@@ -282,7 +284,14 @@ pub fn decide(
             {
                 live_session(d, &session_id, Operation::Stop)?;
             }
-            plain_effect(d, &session_id, EffectPayload::Stop { how })
+            plain_effect(
+                d,
+                &session_id,
+                EffectPayload::Stop {
+                    how,
+                    authority: None,
+                },
+            )
         }
         // The session manager runs the process check first (`submit`); a
         // direct call has none and is refused after the row checks (DL-182).
@@ -300,70 +309,6 @@ pub fn decide(
         }
     }
 }
-
-/// Checks the payload of a first answer to an open request against the
-/// provider's own rules, before the answer is claimed. Only Codex questions
-/// have payload rules here: an RPC question needs the answer map that
-/// [`validate_question_answer`] accepts, and the free answer (`answer`) of a
-/// message question needs a text. Other requests pass unchanged. Missing
-/// request metadata fails closed.
-fn admit_answer(
-    d: &Decision<'_>,
-    session_id: &SessionId,
-    request: &RuntimeRequest,
-    decision: &ApprovalDecision,
-) -> Result<(), DecideError> {
-    if request.kind != RequestKind::Question
-        || !request
-            .options
-            .iter()
-            .any(|o| o.option_id == decision.option_id)
-    {
-        // An unknown option keeps its own refusal from the claim.
-        return Ok(());
-    }
-    let missing = || {
-        reject(
-            RejectCode::InvalidCommand,
-            "the station has no record of this question's input",
-        )
-    };
-    let summary = d.summary(session_id)?.ok_or_else(missing)?;
-    match summary.provider {
-        Some(ProviderKind::Claude) => return Ok(()),
-        Some(ProviderKind::Codex) => {}
-        Some(ProviderKind::Unknown) | None => return Err(missing()),
-    }
-    let open = summary
-        .open_requests
-        .iter()
-        .find(|r| r.request_id == request.request_id)
-        .ok_or_else(missing)?;
-    match open.response {
-        ResponseChannel::RpcReply => {
-            let params = open.input.as_ref().ok_or_else(missing)?;
-            validate_question_answer(params, decision.updated_input.as_ref())
-                .map(|_| ())
-                .map_err(|e| reject(RejectCode::InvalidCommand, e.to_string()))
-        }
-        ResponseChannel::Message => {
-            // The same rule as the Codex core: the free answer needs a
-            // non-empty text; an offered option is its own answer.
-            if decision.option_id == CODEX_FREE_ANSWER
-                && decision.text.as_ref().is_none_or(String::is_empty)
-            {
-                return Err(reject(
-                    RejectCode::InvalidCommand,
-                    "the answer needs a message",
-                ));
-            }
-            Ok(())
-        }
-    }
-}
-
-/// The option id of a Codex free answer (`codex/requests.rs`).
-const CODEX_FREE_ANSWER: &str = "answer";
 
 /// `session.rename` (DL-095): a station event and no effect. It changes no
 /// provider state, so an ended session or a session in a revert can be
@@ -615,6 +560,7 @@ fn start(
                 spec,
                 prompt,
                 continue_by: None,
+                authority: None,
             }
         }
         None => EffectPayload::Start {
@@ -622,6 +568,7 @@ fn start(
             prompt,
             workspace: plan,
             setup_cmd,
+            authority: None,
         },
     };
     d.enqueue(&session_id, payload)?;
@@ -754,6 +701,10 @@ fn resume_hibernated(
     origin: RunOrigin,
     input: &fleetdeck_proto::command::UserInput,
 ) -> Result<Option<CommandResult>, DecideError> {
+    // ADR-008 §5.2: no implicit continuation by a coordinator.
+    if origin == RunOrigin::Coordinator || d.authority().is_some() {
+        return Ok(None);
+    }
     let Some(summary) = d.summary(session_id)? else {
         return Ok(None);
     };

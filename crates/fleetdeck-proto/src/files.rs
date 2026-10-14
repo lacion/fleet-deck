@@ -61,6 +61,8 @@ pub mod code {
     /// No finalized turn of the session has the commit pair of the
     /// `checkpoint` selector (DL-179).
     pub const CHECKPOINT_UNAVAILABLE: &str = "checkpoint_unavailable";
+    /// A privacy check of a coordinator diff could not run (ADR-008 §4.4).
+    pub const PRIVACY_UNKNOWN: &str = "privacy_unknown";
 }
 
 /// The directory that a query's paths are relative to.
@@ -280,6 +282,15 @@ pub struct SessionDiffQuery {
     #[serde(default)]
     #[ts(type = "number | null")]
     pub max_bytes: Option<u64>,
+}
+
+/// `files.coordinator_diff` params (ADR-008 §4.4, feature `coordinator.v2`,
+/// scope `read`): the diff of a session for a coordinator. The answer is a
+/// [`SessionDiff`] whose patch holds no byte of the old side.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CoordinatorDiffQuery {
+    pub session_id: SessionId,
 }
 
 /// The `files.session_diff` answer: the same parts as [`TurnDiff`], against

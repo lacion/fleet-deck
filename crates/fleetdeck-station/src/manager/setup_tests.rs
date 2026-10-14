@@ -6,7 +6,7 @@ use fleetdeck_testkit::fake::STDIN_LOG_ENV;
 use fleetdeck_testkit::sim_claude::StdinLog;
 
 use super::*;
-use crate::store::Dispatch;
+use crate::store::{Dispatch, EffectPayload};
 
 /// A station whose policy allows (or refuses) setup commands, with the
 /// environment of the `claude` instance.
@@ -295,15 +295,17 @@ async fn a_slow_setup_does_not_block_other_sessions_and_a_stop_ends_it() {
     st.manager.shutdown(StopMode::Kill).await;
 }
 
-/// A stop effect without a process incarnation, as the decision stores it
-/// during a setup command.
+/// A stop effect without a process incarnation, as stored during a setup command.
 fn unbound_stop(session: &SessionId, how: StopMode) -> crate::store::Effect {
     crate::store::Effect {
         effect_id: crate::store::EffectId::from("stop-test".to_owned()),
         command_id: None,
         session_id: session.clone(),
         process_incarnation: None,
-        payload: crate::store::EffectPayload::Stop { how },
+        payload: EffectPayload::Stop {
+            how,
+            authority: None,
+        },
         state: EffectState::Claimed,
         fence_token: None,
         reason: None,

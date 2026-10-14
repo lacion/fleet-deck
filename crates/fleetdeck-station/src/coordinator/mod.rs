@@ -7,6 +7,7 @@
 //! granted tool classes; the deck decides every operation (§6.2).
 
 pub mod bindings;
+pub mod fleet_tools;
 pub mod forward;
 pub mod handoff;
 pub mod ingress;
@@ -20,6 +21,9 @@ pub use handoff::{Handoff, HandoffError};
 pub use ingress::{FleetTools, Forward, Ingress, Limits};
 pub use outbox::CallOutbox;
 
+#[cfg(test)]
+#[path = "fleet_control_tests.rs"]
+mod fleet_control_tests;
 #[cfg(test)]
 #[path = "ingress_tests.rs"]
 mod ingress_tests;

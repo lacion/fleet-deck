@@ -4,6 +4,7 @@
 
 use fleetdeck_proto::command::{ApprovalDecision, SessionSpec, StopMode, UserInput};
 use fleetdeck_proto::event::{ResolvedBy, RunOrigin};
+use fleetdeck_proto::mutation::CommandAuthority;
 use fleetdeck_proto::{InputId, RequestId};
 use serde::{Deserialize, Serialize};
 
@@ -57,6 +58,10 @@ pub enum EffectPayload {
         /// provider starts (DL-148).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         setup_cmd: Option<String>,
+        /// The authority of a fleet-control command (ADR-008 section 6.1). An
+        /// effect queued before this field existed has none and gets no check.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authority: Option<CommandAuthority>,
     },
     /// A native resume of an ended session (DL-118): a new provider
     /// process continues `native_session_id` with `spec` (the stored
@@ -72,30 +77,63 @@ pub enum EffectPayload {
         /// window of ADR-007 §2.2 rule 9, rechecked at dispatch (§2.4).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         continue_by: Option<i64>,
+        /// The authority of a fleet-control command (ADR-008 section 6.1). An
+        /// effect queued before this field existed has none and gets no check.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authority: Option<CommandAuthority>,
     },
     Prompt {
         input: InputRecord,
+        /// The authority of a fleet-control command (ADR-008 section 6.1). An
+        /// effect queued before this field existed has none and gets no check.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authority: Option<CommandAuthority>,
     },
     Steer {
         input: InputRecord,
+        /// The authority of a fleet-control command (ADR-008 section 6.1). An
+        /// effect queued before this field existed has none and gets no check.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authority: Option<CommandAuthority>,
     },
     FollowUp {
         input: InputRecord,
+        /// The authority of a fleet-control command (ADR-008 section 6.1). An
+        /// effect queued before this field existed has none and gets no check.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authority: Option<CommandAuthority>,
     },
-    Interrupt,
+    Interrupt {
+        /// The authority of a fleet-control command (ADR-008 section 6.1). An
+        /// effect queued before this field existed has none and gets no check.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authority: Option<CommandAuthority>,
+    },
     Answer {
         request_id: RequestId,
         decision: ApprovalDecision,
         by: ResolvedBy,
+        /// The authority of a fleet-control command (ADR-008 section 6.1). An
+        /// effect queued before this field existed has none and gets no check.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authority: Option<CommandAuthority>,
     },
     SetMode {
         mode: String,
+        /// The authority of a fleet-control command (ADR-008 section 6.1). An
+        /// effect queued before this field existed has none and gets no check.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authority: Option<CommandAuthority>,
     },
     SetModel {
         model: String,
     },
     Stop {
         how: StopMode,
+        /// The authority of a fleet-control command (ADR-008 section 6.1). An
+        /// effect queued before this field existed has none and gets no check.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authority: Option<CommandAuthority>,
     },
     /// Roll back the conversation by `turns` whole turns, then restore the
     /// workspace to the start checkpoint of `app_turn` (PLAN §6.6, DL-087).
@@ -122,7 +160,7 @@ impl EffectPayload {
             Self::Prompt { .. } => "prompt",
             Self::Steer { .. } => "steer",
             Self::FollowUp { .. } => "follow_up",
-            Self::Interrupt => "interrupt",
+            Self::Interrupt { .. } => "interrupt",
             Self::Answer { .. } => "answer",
             Self::SetMode { .. } => "set_mode",
             Self::SetModel { .. } => "set_model",
@@ -142,13 +180,77 @@ impl EffectPayload {
         )
     }
 
+    /// A prompt effect; the decision adds the authority of its command.
+    #[must_use]
+    pub fn prompt(input: InputRecord) -> Self {
+        Self::Prompt {
+            input,
+            authority: None,
+        }
+    }
+
+    /// A steer effect; the decision adds the authority of its command.
+    #[must_use]
+    pub fn steer(input: InputRecord) -> Self {
+        Self::Steer {
+            input,
+            authority: None,
+        }
+    }
+
+    /// A follow-up effect; the decision adds the authority of its command.
+    #[must_use]
+    pub fn follow_up(input: InputRecord) -> Self {
+        Self::FollowUp {
+            input,
+            authority: None,
+        }
+    }
+
+    /// The authority of the fleet-control command that queued the effect
+    /// (ADR-008 section 6.1). `None` for every other effect.
+    #[must_use]
+    pub fn authority(&self) -> Option<&CommandAuthority> {
+        match self {
+            Self::Start { authority, .. }
+            | Self::Resume { authority, .. }
+            | Self::Prompt { authority, .. }
+            | Self::Steer { authority, .. }
+            | Self::FollowUp { authority, .. }
+            | Self::Interrupt { authority }
+            | Self::Answer { authority, .. }
+            | Self::SetMode { authority, .. }
+            | Self::Stop { authority, .. } => authority.as_ref(),
+            Self::SetModel { .. } | Self::Revert { .. } | Self::Worktree { .. } => None,
+        }
+    }
+
+    /// The same effect with the authority of the command that queues it.
+    /// An effect kind that a fleet-control command never queues keeps none.
+    #[must_use]
+    pub fn with_authority(mut self, value: Option<CommandAuthority>) -> Self {
+        match &mut self {
+            Self::Start { authority, .. }
+            | Self::Resume { authority, .. }
+            | Self::Prompt { authority, .. }
+            | Self::Steer { authority, .. }
+            | Self::FollowUp { authority, .. }
+            | Self::Interrupt { authority }
+            | Self::Answer { authority, .. }
+            | Self::SetMode { authority, .. }
+            | Self::Stop { authority, .. } => *authority = value,
+            Self::SetModel { .. } | Self::Revert { .. } | Self::Worktree { .. } => {}
+        }
+        self
+    }
+
     /// The host input that the effect delivers.
     #[must_use]
     pub fn input(&self) -> Option<&InputRecord> {
         match self {
-            Self::Prompt { input } | Self::Steer { input } | Self::FollowUp { input } => {
-                Some(input)
-            }
+            Self::Prompt { input, .. }
+            | Self::Steer { input, .. }
+            | Self::FollowUp { input, .. } => Some(input),
             Self::Start { prompt, .. } => prompt.as_ref(),
             _ => None,
         }
@@ -157,11 +259,11 @@ impl EffectPayload {
     /// The key that the confirming evidence carries.
     pub(super) fn correlation(&self) -> Option<String> {
         match self {
-            Self::Prompt { input } | Self::Steer { input } | Self::FollowUp { input } => {
-                Some(input.input_id.0.clone())
-            }
+            Self::Prompt { input, .. }
+            | Self::Steer { input, .. }
+            | Self::FollowUp { input, .. } => Some(input.input_id.0.clone()),
             Self::Answer { request_id, .. } => Some(request_id.0.clone()),
-            Self::SetMode { mode } => Some(mode.clone()),
+            Self::SetMode { mode, .. } => Some(mode.clone()),
             Self::SetModel { model } => Some(model.clone()),
             _ => None,
         }

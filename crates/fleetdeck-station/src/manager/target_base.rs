@@ -5,7 +5,8 @@ use fleetdeck_proto::session::SessionBase;
 use fleetdeck_proto::{Event, SessionId};
 
 use super::SessionTarget;
-use crate::store::NewEvent;
+use crate::manager::fleet_control::{self, Refusal};
+use crate::store::{Dispatch, Effect, EffectPayload, NewEvent};
 
 impl SessionTarget {
     /// True when the session has a base already, or when the summary cannot
@@ -34,6 +35,46 @@ impl SessionTarget {
             .await
         {
             tracing::warn!(error = %e, "the session base was not stored");
+        }
+    }
+
+    /// The dispatch recheck of an effect that carries the authority of a
+    /// fleet-control command (ADR-008 §6.2): `None` to go on, or the refusal
+    /// to settle the effect with. A refused effect writes an `error` event
+    /// (`authority_lost`, `authority_unknown`); a start or a resume that is
+    /// refused ends the session as a failed start. Nothing is retried.
+    pub(super) async fn authority_gate(&self, effect: &Effect) -> Option<Dispatch> {
+        effect.payload.authority()?;
+        // The live setting: the snapshot of the policy hub, else the value
+        // that the bindings hold.
+        let live = self.current_policy().map_or_else(
+            || self.coordinator.fleet_control(),
+            |policy| policy.allow_fleet_control(),
+        );
+        let Err(refusal) = fleet_control::recheck(&self.coordinator, live, effect).await else {
+            return None;
+        };
+        self.authority_refused(effect, refusal).await;
+        Some(Dispatch::NotDispatched(refusal.code().into()))
+    }
+
+    async fn authority_refused(&self, effect: &Effect, refusal: Refusal) {
+        let mut events = vec![NewEvent::from(Event::Error {
+            code: refusal.code().into(),
+            message: refusal.message().into(),
+            retry_at: None,
+        })];
+        if matches!(
+            effect.payload,
+            EffectPayload::Start { .. } | EffectPayload::Resume { .. }
+        ) {
+            events.push(NewEvent::from(Event::SessionEnded {
+                reason: "start_failed".into(),
+                exit_code: None,
+            }));
+        }
+        if let Err(e) = self.store.append(effect.session_id.clone(), events).await {
+            tracing::error!(error = %e, "the authority refusal was not stored");
         }
     }
 

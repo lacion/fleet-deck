@@ -102,6 +102,14 @@ pub fn station_fields() -> Vec<FieldMeta> {
         )
         .danger(),
         field(
+            "allow_fleet_control",
+            "Fleet control on this station",
+            K::Bool,
+            Live,
+            "Lets coordinator sessions with a fleet-control grant act on the sessions of this station. Off stops their actions here at once.",
+        )
+        .danger(),
+        field(
             "max_shells",
             "Most terminals",
             K::Int,

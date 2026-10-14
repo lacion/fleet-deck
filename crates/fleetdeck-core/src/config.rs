@@ -36,6 +36,8 @@ pub use model_help_cfg::{
     DEFAULT_ASSIST_CLAUDE_MODEL, DEFAULT_ASSIST_CODEX_MODEL, DEFAULT_ASSIST_DAILY_TOKEN_CAP,
     DEFAULT_ASSIST_MAX_OUTPUT_TOKENS, ModelHelpConfig,
 };
+#[path = "config_fleet.rs"]
+mod fleet_cfg;
 #[path = "config_tailnet.rs"]
 mod tailnet_cfg;
 pub(crate) use tailnet_cfg::valid_dns_name;
@@ -213,6 +215,8 @@ pub struct StationConfig {
     /// `allow_bypass_permissions`: offer the mode that skips every permission
     /// check (Claude `bypassPermissions`, Codex `danger-full-access`).
     pub allow_bypass_permissions: bool,
+    /// `allow_fleet_control`: coordinators with a fleet-control grant may act here (ADR-008).
+    pub allow_fleet_control: bool,
     pub max_shells: u32,
     pub offline_approval_policy: OfflineApprovalPolicy,
     pub listen: Vec<SocketAddr>,
@@ -253,6 +257,7 @@ pub(crate) const RAW_STATION_KEYS: &[&str] = &[
     "allow_setup_cmd",
     "allow_shell",
     "allow_bypass_permissions",
+    "allow_fleet_control",
     "max_shells",
     "offline_approval_policy",
     "listen",
@@ -276,6 +281,7 @@ struct RawStation {
     allow_setup_cmd: Option<bool>,
     allow_shell: Option<bool>,
     allow_bypass_permissions: Option<bool>,
+    allow_fleet_control: Option<bool>,
     max_shells: Option<u32>,
     offline_approval_policy: Option<String>,
     listen: Option<Vec<String>>,
@@ -445,6 +451,7 @@ impl StationConfig {
             allow_setup_cmd: raw.allow_setup_cmd.unwrap_or(false),
             allow_shell: raw.allow_shell.unwrap_or(false),
             allow_bypass_permissions: raw.allow_bypass_permissions.unwrap_or(false),
+            allow_fleet_control: fleet_cfg::parse(raw.allow_fleet_control),
             max_shells,
             offline_approval_policy,
             listen,

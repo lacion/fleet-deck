@@ -24,7 +24,7 @@ async fn send_all(s: &Store) -> u64 {
 async fn a_turn_or_run_that_ends_does_not_confirm_an_interrupt() {
     let det = Det::new();
     let s = running(&det, OfflineApprovalPolicy::Wait).await;
-    let interrupt = queue(&s, &det, "c1", EffectPayload::Interrupt).await;
+    let interrupt = queue(&s, &det, "c1", EffectPayload::Interrupt { authority: None }).await;
     send_all(&s).await;
     for status in [
         TurnStatus::Done,
@@ -78,8 +78,8 @@ async fn a_turn_or_run_that_ends_does_not_confirm_an_interrupt() {
 async fn each_interrupt_answer_settles_only_its_own_effect() {
     let det = Det::new();
     let s = running(&det, OfflineApprovalPolicy::Wait).await;
-    let first = queue(&s, &det, "c1", EffectPayload::Interrupt).await;
-    let second = queue(&s, &det, "c2", EffectPayload::Interrupt).await;
+    let first = queue(&s, &det, "c1", EffectPayload::Interrupt { authority: None }).await;
+    let second = queue(&s, &det, "c2", EffectPayload::Interrupt { authority: None }).await;
     send_all(&s).await;
     emit(&s, interrupted(&second, false)).await;
     assert_eq!(state(&s, &first).await, EffectState::Claimed);
@@ -97,7 +97,7 @@ async fn each_interrupt_answer_settles_only_its_own_effect() {
 async fn a_late_interrupt_answer_confirms_an_outcome_unknown_effect_after_a_worker_restart() {
     let det = Det::new();
     let s = running(&det, OfflineApprovalPolicy::Wait).await;
-    let interrupt = queue(&s, &det, "c1", EffectPayload::Interrupt).await;
+    let interrupt = queue(&s, &det, "c1", EffectPayload::Interrupt { authority: None }).await;
     send_all(&s).await;
     // The worker restarts while the process lives: the claim is unknown.
     s.register_worker().await.unwrap();

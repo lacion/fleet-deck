@@ -738,6 +738,8 @@ mod codex;
 mod coordinator_command;
 #[path = "drain_tests.rs"]
 mod drain;
+#[path = "fleet_control_tests.rs"]
+mod fleet_control_tests;
 #[path = "hibernate_tests.rs"]
 mod hibernate_tests;
 #[path = "hibernated_input_tests.rs"]

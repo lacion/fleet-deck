@@ -148,6 +148,10 @@ fn the_tables_are_well_formed() {
     let bypass = get("allow_bypass_permissions");
     assert!(bypass.danger && bypass.apply == fleetdeck_proto::settings::Apply::Restart);
     assert_eq!(bypass.kind, FieldKind::Bool);
+    let fleet = get("allow_fleet_control");
+    assert!(fleet.danger && fleet.apply == fleetdeck_proto::settings::Apply::Live);
+    assert_eq!(fleet.kind, FieldKind::Bool);
+    assert_eq!(fleet.label, "Fleet control on this station");
     assert_eq!(get("max_sessions").max, Some(256));
 }
 

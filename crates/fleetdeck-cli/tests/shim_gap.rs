@@ -381,7 +381,7 @@ async fn a_below_floor_gap_invalidates_the_adapter_state_at_once_while_the_provi
         .decide(envelope, Caller::local(), |d| {
             d.enqueue(
                 &"s1".into(),
-                fleetdeck_station::store::EffectPayload::Interrupt,
+                fleetdeck_station::store::EffectPayload::Interrupt { authority: None },
             )?;
             Ok(CommandResult {
                 session_id: Some("s1".into()),
@@ -544,7 +544,7 @@ async fn a_dispatch_racing_an_adapter_state_gap_sends_nothing() {
         .decide(envelope, Caller::local(), |d| {
             d.enqueue(
                 &"s1".into(),
-                fleetdeck_station::store::EffectPayload::Interrupt,
+                fleetdeck_station::store::EffectPayload::Interrupt { authority: None },
             )?;
             Ok(CommandResult {
                 session_id: Some("s1".into()),
@@ -652,7 +652,7 @@ async fn a_gap_after_an_earlier_input_block_still_stops_every_dispatch() {
         .decide(envelope, Caller::local(), |d| {
             d.enqueue(
                 &"s1".into(),
-                fleetdeck_station::store::EffectPayload::Interrupt,
+                fleetdeck_station::store::EffectPayload::Interrupt { authority: None },
             )?;
             Ok(CommandResult {
                 session_id: Some("s1".into()),

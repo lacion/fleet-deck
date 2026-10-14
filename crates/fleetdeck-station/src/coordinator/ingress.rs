@@ -272,6 +272,7 @@ async fn handle(req: Request<Incoming>, shared: &Shared) -> Response<String> {
         &binding,
         shared.forward.as_ref(),
         shared.fleet.as_deref(),
+        shared.bindings.fleet_control(),
     )
     .await
     {

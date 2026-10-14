@@ -31,12 +31,18 @@ fn tool_text(text: &str, is_error: bool) -> Value {
     json!({"content": [{"type": "text", "text": text}], "isError": is_error})
 }
 
-/// Answer one JSON-RPC message of an authenticated binding.
+/// The tool error of a fleet-control call while the switch is off.
+const FLEET_CONTROL_OFF: &str = "not_granted: fleet control is off on this station";
+
+/// Answer one JSON-RPC message of an authenticated binding. `fleet_control`
+/// is the live station setting `allow_fleet_control`, read for this
+/// request (ADR-008 §3).
 pub async fn answer(
     msg: Value,
     binding: &Binding,
     forward: &dyn Forward,
     fleet: Option<&dyn FleetTools>,
+    fleet_control: bool,
 ) -> Answer {
     let Some(id) = msg.get("id").cloned() else {
         return Answer::Accepted;
@@ -70,6 +76,15 @@ pub async fn answer(
                     tool_text("forbidden: the grant has no such tool", true),
                 ),
                 Some(tool) => match (binding.state, binding.caller()) {
+                    // A fleet-control grant (a new tool, or an ADR-006 tool
+                    // under such a grant) is never forwarded while the
+                    // switch is off. The session's own tools are not
+                    // fleet control.
+                    (BindingState::Active, Some(_))
+                        if !fleet_control && binding.is_fleet_control() && !tool.is_own() =>
+                    {
+                        result(&id, tool_text(FLEET_CONTROL_OFF, true))
+                    }
                     (BindingState::Active, Some(caller)) => {
                         let outcome = if tool.is_own() {
                             match fleet {

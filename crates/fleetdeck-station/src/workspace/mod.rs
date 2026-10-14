@@ -7,6 +7,7 @@ pub mod boundary;
 pub mod checkpoint;
 pub mod checkpoint_refs;
 pub mod clone_reuse;
+pub mod coordinator_diff;
 pub mod files;
 pub mod git;
 pub mod paste;

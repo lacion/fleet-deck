@@ -235,7 +235,8 @@ impl StationNode {
         let paired = peers.pin_all(&node.pins).await?;
         let bindings = manager.coordinator_bindings().clone();
         // The durable coordinator outbox (ADR-006 §6.5, DL-218).
-        let forward = crate::coordinator::LinkForward::with_outbox(store.clone(), bindings.clone());
+        let forward = crate::coordinator::LinkForward::with_outbox(store.clone(), bindings.clone())
+            .with_bindings(bindings.clone());
         // The session's own tools are answered by the station (DL-165).
         let fleet =
             crate::artifacts::fleet::StationFleet::new(store.clone(), manager.artifacts().cloned());

@@ -69,6 +69,8 @@ pub struct Policy {
     trackers: Vec<TrackerConfig>,
     /// `allow_shell` of `station.toml`: new shells and handovers.
     allow_shell: bool,
+    /// `allow_fleet_control` of `station.toml` (ADR-008 §3).
+    allow_fleet_control: bool,
     /// `max_shells` of `station.toml`.
     max_shells: u32,
     /// `[model_help]` of `station.toml` (R10, DL-167).
@@ -111,6 +113,7 @@ impl Policy {
             hibernate_after_min: config.hibernate_after_min,
             trackers: config.trackers.clone(),
             allow_shell: config.allow_shell,
+            allow_fleet_control: config.allow_fleet_control,
             max_shells: config.max_shells,
             model_help: config.model_help.clone(),
             member_deny: MemberDeny::new(&config.member_deny),
@@ -173,6 +176,7 @@ impl Policy {
             hibernate_after_min: 0,
             trackers: Vec::new(),
             allow_shell: true,
+            allow_fleet_control: false,
             max_shells: DEFAULT_MAX_SHELLS,
             model_help: ModelHelpConfig::default(),
             member_deny: MemberDeny::default(),
@@ -219,6 +223,21 @@ impl Policy {
     #[must_use]
     pub fn allow_shell(&self) -> bool {
         self.allow_shell
+    }
+
+    /// Whether coordinators with a fleet-control grant may act on this
+    /// station (ADR-008 §3). Read it live: at intake, at the decision and
+    /// at the dispatch.
+    #[must_use]
+    pub fn allow_fleet_control(&self) -> bool {
+        self.allow_fleet_control
+    }
+
+    /// The same policy with fleet control on or off.
+    #[must_use]
+    pub fn with_allow_fleet_control(mut self, on: bool) -> Self {
+        self.allow_fleet_control = on;
+        self
     }
 
     /// The most shells that run at the same time.

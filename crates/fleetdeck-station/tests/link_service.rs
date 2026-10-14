@@ -363,6 +363,7 @@ async fn a_forced_snapshot_carries_the_coordinator_binding_projection_without_th
             classes: BTreeSet::new(),
             state: BindingState::Active,
             control_skill: "skill".to_owned(),
+            scope: fleetdeck_proto::command::GrantScope::Lineage,
         },
     );
     let mut deck = f.connect().await;

@@ -16,6 +16,7 @@ pub mod decide;
 pub mod drain;
 pub mod durable;
 pub mod files;
+pub mod fleet_control;
 pub mod hibernate;
 pub mod policy;
 pub mod policy_hub;
@@ -320,7 +321,7 @@ impl SessionManager {
         } = holders;
         let integrations = integrations
             .unwrap_or_else(|| crate::integrations::Integrations::new(policy.trackers().to_vec()));
-        let hub = Arc::new(PolicyHub::new(policy));
+        let hub = Arc::new(PolicyHub::new(policy).with_fleet_control(coordinator.clone()));
         let restart = Arc::<restart_gate::RestartState>::default();
         let mut target = SessionTarget::new(store.clone(), adapters, Arc::clone(&ids))
             .with_restart(Arc::clone(&restart))

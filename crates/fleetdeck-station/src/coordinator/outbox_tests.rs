@@ -87,6 +87,7 @@ fn binding() -> Binding {
         classes: [ToolClass::Mail].into_iter().collect(),
         state: BindingState::Active,
         control_skill: "SKILL".to_owned(),
+        scope: fleetdeck_proto::command::GrantScope::Lineage,
     }
 }
 
