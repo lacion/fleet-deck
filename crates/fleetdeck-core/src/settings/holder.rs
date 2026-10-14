@@ -152,6 +152,7 @@ impl Holder for StationHolder {
             "model_help.daily_token_cap".into(),
             json!(h.daily_token_cap),
         );
+        m.insert("tailscale_bin".into(), tailscale_bin_text(&c.tailscale_bin));
         m
     }
 
@@ -210,6 +211,7 @@ impl Holder for StationHolder {
             "provider_instance",
         );
         add(old.host != new.host, "host");
+        add(old.tailscale_bin != new.tailscale_bin, "tailscale_bin");
         keys
     }
 
@@ -246,6 +248,7 @@ impl Holder for DeckHolder {
         m.insert("clone_host".into(), json!(c.clone_host));
         m.insert("clone_org".into(), json!(c.clone_org));
         m.insert("clone_transport".into(), json!(c.clone_transport.as_str()));
+        m.insert("tailscale_bin".into(), tailscale_bin_text(&c.tailscale_bin));
         m
     }
 
@@ -262,8 +265,21 @@ impl Holder for DeckHolder {
         if !old.fleet_control && new.fleet_control {
             keys.push("fleet_control".to_owned());
         }
+        // The program runs as the owner: any change, also an unset, needs
+        // the elevation (tailnet design section 2).
+        if old.tailscale_bin != new.tailscale_bin {
+            keys.push("tailscale_bin".to_owned());
+        }
         keys
     }
+}
+
+/// The text of `tailscale_bin`: the path, or an empty text when it is unset.
+fn tailscale_bin_text(path: &Option<std::path::PathBuf>) -> Value {
+    json!(
+        path.as_ref()
+            .map_or_else(String::new, |p| p.display().to_string())
+    )
 }
 
 /// The order of the offline policies, from the least to the most

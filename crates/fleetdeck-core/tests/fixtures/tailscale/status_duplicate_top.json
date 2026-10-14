@@ -1,0 +1,5 @@
+{
+  "BackendState": "Running",
+  "Self": {"HostName": "a", "DNSName": "a.t.ts.net.", "TailscaleIPs": ["100.64.0.1"]},
+  "Self": {"HostName": "b", "DNSName": "b.t.ts.net.", "TailscaleIPs": ["100.64.0.2"]}
+}

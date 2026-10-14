@@ -9,6 +9,7 @@ mod pairing;
 mod restart;
 mod settings;
 mod station;
+mod tailnet;
 mod up;
 mod upgrade;
 
@@ -94,6 +95,9 @@ fn run(cli: Cli, restart: &restart::RestartHandle) -> anyhow::Result<ExitCode> {
         Command::Open { elevate: true } => done(runtime()?.block_on(auth::elevate(&dirs))),
         Command::Doctor => Ok(runtime()?.block_on(doctor::run(&dirs, &env))),
         Command::Settings { command } => done(runtime()?.block_on(settings::run(&dirs, command))),
+        Command::Tailnet { command } => {
+            done(runtime()?.block_on(tailnet::run(&dirs, &env, command)))
+        }
         Command::Station { .. } | Command::Shim { .. } | Command::ShimExec { .. } => {
             anyhow::bail!("internal error: the command was not dispatched")
         }

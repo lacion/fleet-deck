@@ -93,6 +93,29 @@ pub const API_REST: &[ApiMethod] = &[
         Some(Scope::Admin),
         true,
     ),
+    // The tailnet (DL-178): `admin`, and the handlers also require the
+    // owner's board login (DL-138). Tailscale only fills the display.
+    m(
+        "tailnet.get",
+        Method::GET,
+        "/api/tailnet",
+        Some(Scope::Admin),
+        false,
+    ),
+    m(
+        "tailnet.use",
+        Method::POST,
+        "/api/tailnet/use",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "tailnet.devices",
+        Method::GET,
+        "/api/tailnet/devices",
+        Some(Scope::Admin),
+        false,
+    ),
     // The human shell (PLAN §6.8, DL-404): `admin`, and the handlers also
     // require the owner's board login (DL-138).
     m(

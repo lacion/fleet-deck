@@ -32,6 +32,7 @@ A missing file gives the defaults. An unknown key is an error.
 | `repo_groups` | (empty) | Repository path → group name, for the conflict radar. |
 | `[[trackers]]` | (none) | A Jira or Linear tracker for the board's issue views (R3, DL-164). See "Trackers" below. |
 | `[model_help]` | on | Small generated text from the station's own provider login (R10, DL-167): `enabled` (the off switch), `claude_model` (`claude-haiku-5-5`), `codex_model` (`gpt-5.6-luna`), `provider` (`claude` or `codex`; default the first signed-in instance), `per_call_max_output_tokens` (`400`), `daily_token_cap` (`200000`, one UTC day). The use shows on the usage panel as "Fleet Deck". |
+| `tailscale_bin` | (none) | The absolute path of the `tailscale` program (§6.1). Empty or missing: `tailscale` on the `PATH`. A danger setting: any change needs an elevation. Applies at once. |
 | `[[provider_instance]]` | `claude` and `codex` | `id`, `driver` (`claude` or `codex`), `binary`, `config_home`, `env` (values are secrets; they never leave the station). |
 
 Example:
@@ -97,6 +98,7 @@ Check the setup from the board (project preflight) or with the `integrations.sta
 | `clone_host` | `github.com` | The Git host for a repository that the board gets as `owner/name`. A lower-case host name, for example `gitlab.com`. Applies at once. |
 | `clone_org` | (empty) | The owner or group for a repository that the board gets by name only. Use `acme` or a group path such as `acme/tools`. Applies at once. |
 | `clone_transport` | `https` | `https` uses your Git credential helper. `ssh` uses your SSH keys. It decides the URL that the board builds from a short name. Applies at once. |
+| `tailscale_bin` | (none) | The absolute path of the `tailscale` program (§6.1). Empty or missing: `tailscale` on the `PATH`. A danger setting: any change needs an elevation. Applies at once. |
 
 > **Caution:** use only loopback, private LAN or tailnet addresses. The deck refuses a public address. Do not forward a port from a router.
 
@@ -155,6 +157,18 @@ Deck dials the station (the station has a fixed private address):
 2. On the deck: `fleetdeck deck add-station`.
 
 To unpair: `fleetdeck deck remove-station <station>` on the deck, or `fleetdeck station forget-deck` on the station.
+
+### 6.1 Tailnet (DL-178)
+
+Fleet Deck reads the `tailscale` CLI to show the tailnet. Tailscale is a display source only: its answers never authorize a connection, a pairing or a login. The link still needs the pinned keys.
+
+1. **Program.** Fleet Deck runs `tailscale status --json`. It looks for the program in this order: the setting `tailscale_bin` (an absolute path), then `tailscale` on the `PATH`, then (macOS) `/Applications/Tailscale.app/Contents/MacOS/Tailscale`. The station expands a leading `~` in `tailscale_bin`; the deck does not. `tailscale_bin` exists in `deck.toml` and in `station.toml`. Each change, also an unset, is a danger change and needs an elevation.
+2. **Limits.** Each call gets a minimal environment (`PATH`, `HOME`, `LANG`, and on macOS `TAILSCALE_BE_CLI=1`), no standard input, 3 seconds, at most 2 MiB of standard output and 64 KiB of standard error. A call over a limit is stopped. A duplicate JSON key, a missing required field or an address outside the Tailscale range makes the answer "not available" with a reason.
+3. **Use tailnet.** `GET /api/tailnet` shows this machine (name, addresses, login), the `listen` and `link_listen` lists that "Use tailnet" would save, and the saved lists. `POST /api/tailnet/use` saves them as a normal elevated settings save (the board shows the changes first). The deck manages the tailnet-range listen addresses: in `listen` and in `link_listen` it removes every entry in the Tailscale range (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) and adds `<tailnet address>:<port>` for each tailnet address of this machine, IPv4 and IPv6 (IPv6 in brackets). The port is the port of the first entry of the list; the defaults are 7420 and 7421. Every other entry (loopback, LAN) stays. The same save sets `tailnet_hostname` to the MagicDNS name of this machine. "Update" is the same action when the tailnet addresses changed. An address is added only when a local network interface has it.
+4. **Restart.** `listen` and `link_listen` apply at the next start. After the save the answer says `restart_needed: true`; restart the deck from the board or with `fleetdeck`.
+5. **Userspace networking.** When Tailscale runs with `--tun=userspace-networking`, its addresses are not on a local interface. The deck then offers no "Use tailnet" (`409 tailnet_userspace`). Set the listen addresses by hand, or run Tailscale with a TUN device.
+6. **Devices.** `GET /api/tailnet/devices` lists the peers of `tailscale status` (online and offline) with host name, DNS name, addresses, OS, login, tags and a pairing state. `paired` means that a paired station is dialed at one of the addresses or at the DNS name of the device. Every other device is `none`. The deck sends no probe to any device. The copy command for a station comes with a later change (`command` is `null`). `tailscale status` is cached for 5 seconds.
+7. **CLI.** `fleetdeck tailnet status` (add `--json`) reads `deck.toml` and `station.toml` and runs `tailscale` for each. It prints, for the deck and the local station, if Tailscale is available (with the reason when not), the DNS name, the addresses, if it runs in userspace networking, and the tailnet listen addresses of the deck.
 
 ## 7. Work without the deck
 

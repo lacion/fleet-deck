@@ -427,3 +427,75 @@ fn a_canary_is_absent_from_every_answer() {
     // The file still holds the inline value: only a secret write moves it.
     assert!(fx.text().contains(CANARY));
 }
+
+#[test]
+fn tailscale_bin_is_a_live_danger_change_in_both_holders() {
+    // Any change of the key needs the elevation: a new value, a new path,
+    // and also an unset.
+    let fx = Fixture::new(Some("tailscale_bin = \"/opt/a/tailscale\"\n"));
+    let w = fx.writer();
+    for value in [json!("/opt/b/tailscale"), json!(null)] {
+        let change = fx.change(json!({ "tailscale_bin": value }));
+        let err = w.save(&change, false, ok_prepare).unwrap_err();
+        assert_eq!(
+            err,
+            SaveError::ElevationRequired {
+                keys: vec!["tailscale_bin".into()]
+            }
+        );
+    }
+    assert!(fx.text().contains("/opt/a/tailscale"));
+    let change = fx.change(json!({ "tailscale_bin": "/opt/b/tailscale" }));
+    let (saved, new, ()) = w.save(&change, true, ok_prepare).unwrap();
+    assert_eq!(saved.applied, vec!["tailscale_bin"]);
+    assert!(saved.restart_needed.is_empty());
+    assert_eq!(new.tailscale_bin, Some("/opt/b/tailscale".into()));
+    assert_eq!(saved.values["tailscale_bin"], json!("/opt/b/tailscale"));
+    let change = fx.change(json!({ "tailscale_bin": null }));
+    let (saved, new, ()) = w.save(&change, true, ok_prepare).unwrap();
+    assert_eq!(new.tailscale_bin, None);
+    assert_eq!(saved.values["tailscale_bin"], json!(""));
+    // A relative path is refused, also with the elevation.
+    let change = fx.change(json!({ "tailscale_bin": "tailscale" }));
+    assert!(matches!(
+        w.save(&change, true, ok_prepare).unwrap_err(),
+        SaveError::Invalid { .. }
+    ));
+    // The key is in both field tables as a live danger key.
+    for fields in [
+        crate::settings::station_fields(),
+        crate::settings::deck_fields(),
+    ] {
+        let f = fields.iter().find(|f| f.key == "tailscale_bin").unwrap();
+        assert!(f.danger && f.apply == fleetdeck_proto::settings::Apply::Live);
+    }
+
+    let deck = fx.dir.path().join("cfg").join("deck.toml");
+    std::fs::write(&deck, "name = \"d\"\n").unwrap();
+    let w = SettingsWriter::<DeckHolder>::new(&deck, None, &fx.env);
+    let view = view_deck(&deck, &[]).unwrap();
+    assert_eq!(view.values["tailscale_bin"], json!(""));
+    let set = change_with(
+        &view.revision,
+        json!({ "tailscale_bin": "/opt/ts/tailscale" }),
+    );
+    assert_eq!(
+        w.save(&set, false, ok_prepare).unwrap_err(),
+        SaveError::ElevationRequired {
+            keys: vec!["tailscale_bin".into()]
+        }
+    );
+    let (saved, new, ()) = w.save(&set, true, ok_prepare).unwrap();
+    assert_eq!(saved.applied, vec!["tailscale_bin"]);
+    assert_eq!(new.tailscale_bin, Some("/opt/ts/tailscale".into()));
+    let view = view_deck(&deck, &[]).unwrap();
+    let unset = change_with(&view.revision, json!({ "tailscale_bin": null }));
+    assert_eq!(
+        w.save(&unset, false, ok_prepare).unwrap_err(),
+        SaveError::ElevationRequired {
+            keys: vec!["tailscale_bin".into()]
+        }
+    );
+    let (_, new, ()) = w.save(&unset, true, ok_prepare).unwrap();
+    assert_eq!(new.tailscale_bin, None);
+}

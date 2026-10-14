@@ -17,6 +17,7 @@ pub mod paths;
 pub mod restart;
 pub mod secret;
 pub mod settings;
+pub mod tailscale;
 
 pub use childenv::ChildEnv;
 pub use clock::{Clock, ManualClock, SharedClock, SystemClock};

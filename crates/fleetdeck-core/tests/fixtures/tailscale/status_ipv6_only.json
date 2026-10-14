@@ -1,0 +1,11 @@
+{
+  "BackendState": "Running",
+  "Self": {
+    "HostName": "v6-only",
+    "DNSName": "v6-only.tail1234.ts.net.",
+    "TailscaleIPs": ["fd7a:115c:a1e0::1234"],
+    "OS": "linux"
+  },
+  "CurrentTailnet": {"MagicDNSSuffix": "tail1234.ts.net"},
+  "Peer": null
+}

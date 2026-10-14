@@ -30,6 +30,7 @@ fn sample(f: &FieldMeta) -> String {
         FieldKind::Bool => "true".to_owned(),
         FieldKind::Int => f.min.unwrap_or(1).to_string(),
         FieldKind::Text if f.key == "tailnet_hostname" => "\"deck.example\"".to_owned(),
+        FieldKind::Text if f.key == "tailscale_bin" => "\"/usr/bin/tailscale\"".to_owned(),
         FieldKind::Text if f.key == "clone_host" => "\"git.example.com\"".to_owned(),
         FieldKind::Text if f.key == "offline_approval_policy" => "\"wait\"".to_owned(),
         FieldKind::Text | FieldKind::Path => "\"x\"".to_owned(),
