@@ -36,6 +36,17 @@ use crate::store::{DeckCommand, DeckError, NewCommand, Settle};
 /// answer (ADR-008 section 6.2).
 pub const POLICY_NOW_DEADLINE: Duration = Duration::from_secs(3);
 
+/// Held for reading by every send, and for writing by a share revocation
+/// (NV-17).
+static MEMBER_DISPATCH: tokio::sync::RwLock<()> = tokio::sync::RwLock::const_new(());
+
+/// The fence of a share revocation. A revocation holds it, so it waits for
+/// every member mail that is being sent now; a later send sees the
+/// revocation (NV-17).
+pub(crate) async fn member_revocation_fence() -> tokio::sync::RwLockWriteGuard<'static, ()> {
+    MEMBER_DISPATCH.write().await
+}
+
 /// A mutating command for one station.
 // `Start` grew by the issue link and the origin flag (DL-164).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -361,6 +372,8 @@ impl DeckLink {
                 return;
             }
         };
+        // A share revocation waits for this send to end (NV-17).
+        let _fence = MEMBER_DISPATCH.read().await;
         let Some(control) = self.control_for(&cmd.station_id) else {
             return;
         };
@@ -383,6 +396,16 @@ impl DeckLink {
                     tracing::warn!(error = %e, "authority gate");
                     return;
                 }
+            }
+        }
+        // A mail of a member checks its share before every send and resend
+        // (NV-17).
+        match self.store.gate_member_mail(cmd.command_id.clone()).await {
+            Ok(Gate::Open) => {}
+            Ok(Gate::Wait | Gate::Lost) => return,
+            Err(e) => {
+                tracing::warn!(error = %e, "member mail gate");
+                return;
             }
         }
         let cmd = match self.store.mark_sent(id.clone()).await {
@@ -452,5 +475,21 @@ impl DeckLink {
                 Ok(Err(_)) | Err(_) => return Ok(cmd),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn the_revocation_fence_waits_for_a_send_in_flight() {
+        let send = MEMBER_DISPATCH.read().await;
+        let blocked =
+            tokio::time::timeout(Duration::from_millis(100), member_revocation_fence()).await;
+        assert!(blocked.is_err(), "the fence must wait for the send");
+        drop(send);
+        let free = tokio::time::timeout(Duration::from_secs(5), member_revocation_fence()).await;
+        assert!(free.is_ok(), "the fence opens when the send ended");
     }
 }
