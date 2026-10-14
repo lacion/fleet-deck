@@ -14,6 +14,7 @@ pub mod assets;
 pub mod assign_routes;
 pub mod assist_routes;
 pub mod auth_routes;
+pub mod body_deadline;
 pub mod command_routes;
 pub mod file_routes;
 pub mod fleet_routes;
@@ -450,6 +451,8 @@ pub fn router(board: Arc<Board>) -> Router {
             get(crate::oauth::callback).layer(Extension(oauth)),
         )
         .fallback(board_files)
+        // A body that is not received in time ends its connection (M1).
+        .layer(middleware::from_fn(body_deadline::body_deadline))
         .with_state(board)
 }
 

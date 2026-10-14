@@ -28,6 +28,7 @@ use super::checkpoint::{
 };
 use super::git::nul_fields;
 use super::private_paths::PrivatePaths;
+use super::stage::IndexTrust;
 use fleetdeck_proto::event::DiffSummary;
 use fleetdeck_proto::files::HIDDEN_NAMES;
 
@@ -343,7 +344,7 @@ impl Worktree {
             .call(&["read-tree", &plan.target.tree], &env, None)
             .await?;
         if let Err(why) = self
-            .stage_changes(&index, Limits::default(), private)
+            .stage_changes(&index, Limits::default(), private, IndexTrust::Trusted)
             .await?
         {
             tracing::warn!(code = why.code(), "the restored content cannot be checked");

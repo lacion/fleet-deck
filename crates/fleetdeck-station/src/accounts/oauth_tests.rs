@@ -66,7 +66,7 @@ fn assert_no_secret_in_argv(tmp: &Path) {
     for canary in [SECRET, CODE, ACCESS, REFRESH, ACCESS2, REFRESH2] {
         assert!(!argv.contains(canary), "{canary} is in argv: {argv}");
     }
-    assert!(argv.lines().all(|l| l == "-sS -K -"), "{argv}");
+    assert!(argv.lines().all(|l| l == "-q -sS -K -"), "{argv}");
 }
 
 #[test]

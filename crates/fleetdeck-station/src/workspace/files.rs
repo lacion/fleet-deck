@@ -94,7 +94,7 @@ fn dir_flags() -> OFlags {
     OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC
 }
 
-fn file_flags() -> OFlags {
+pub(crate) fn file_flags() -> OFlags {
     OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC | OFlags::NOCTTY
 }
 
@@ -155,7 +155,7 @@ pub fn pinned_dir(dir: &OwnedFd) -> Option<std::path::PathBuf> {
 /// Opens the directory `segments` below `base`, one component at a time,
 /// each relative to its parent's descriptor and without following a
 /// symlink.
-fn descend(base: &OwnedFd, segments: &[&str]) -> rustix::io::Result<OwnedFd> {
+pub(crate) fn descend(base: &OwnedFd, segments: &[&str]) -> rustix::io::Result<OwnedFd> {
     let mut dir = rustix::fs::openat(base, c".", dir_flags(), Mode::empty())?;
     for segment in segments {
         dir = rustix::fs::openat(&dir, *segment, dir_flags(), Mode::empty())?;
