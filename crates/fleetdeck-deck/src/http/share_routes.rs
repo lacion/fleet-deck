@@ -169,6 +169,8 @@ pub async fn revoke_share(
 ) -> Result<Json<ShareInfo>, ApiError> {
     let result = async {
         owner_only(&principal, "revokes a share")?;
+        // Wait for the member mail that is being sent now (NV-17).
+        let _fence = crate::link::router::member_revocation_fence().await;
         let view = board
             .store
             .revoke_share(share_id.clone())
