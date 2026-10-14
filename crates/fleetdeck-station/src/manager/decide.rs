@@ -177,7 +177,7 @@ pub fn decide(
         SessionCommand::Answer {
             session_id,
             request_id,
-            decision,
+            mut decision,
         } => {
             let request = d
                 .request(&request_id)?
@@ -209,7 +209,13 @@ pub fn decide(
             // take, or it would hold the request's answer slot with an
             // effect that the provider refuses.
             if request.state == RequestState::Open && request.receipt.is_none() {
-                super::fleet_control::admit_answer(d, &session_id, &request, &decision, origin)?;
+                super::fleet_control::admit_answer(
+                    d,
+                    &session_id,
+                    &request,
+                    &mut decision,
+                    origin,
+                )?;
             }
             let by = resolved_by(origin);
             match d.claim_answer(&request.request_id, &decision.option_id, by)? {

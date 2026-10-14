@@ -362,6 +362,12 @@ impl SessionTarget {
         }
         let turns = self.turns(&session_id, Path::new(&spec.cwd)).await;
         let from = *self.store.subscribe().borrow();
+        // ADR-008 §6.2: after every awaited step, right before the launch.
+        #[cfg(test)]
+        self.gate_hook().hold().await;
+        if let Some(refused) = self.gate_now(effect).await {
+            return refused;
+        }
         let attached = match launch_shim_for(
             &self.store,
             &shims.host,
@@ -447,10 +453,13 @@ impl SessionTarget {
             turns.begin_input(&fence, &input.input_id).await;
             // The fence and the checkpoint work can wait for long: the last
             // check is right before the delivery, with no await between.
-            if super::setup_task::cancelled(cancel) {
+            let refused = match super::setup_task::cancelled(cancel) {
+                true => Some(Dispatch::NotDispatched(super::REASON_SETUP_STOPPED.into())),
+                false => self.gate_input(effect).await,
+            };
+            if let Some(not_sent) = refused {
                 drop(fence);
                 turns.input_not_sent(&input.input_id).await;
-                let not_sent = Dispatch::NotDispatched(super::REASON_SETUP_STOPPED.into());
                 if let Err(e) = self
                     .store
                     .first_input_failed(effect.effect_id.clone(), not_sent)
@@ -522,6 +531,10 @@ impl SessionTarget {
             EffectPayload::Prompt { input, .. } | EffectPayload::FollowUp { input, .. } => {
                 let fence = turns.fence().await;
                 turns.begin_input(&fence, &input.input_id).await;
+                if let Some(refused) = self.gate_now(effect).await {
+                    turns.input_not_sent(&input.input_id).await;
+                    return refused;
+                }
                 turns.input_sent(&input.input_id);
                 let sent = durable.driver.apply(effect).await;
                 if matches!(sent, Dispatch::NotDispatched(_)) {
@@ -531,6 +544,9 @@ impl SessionTarget {
             }
             EffectPayload::Steer { .. } => {
                 let _fence = turns.fence().await;
+                if let Some(refused) = self.gate_now(effect).await {
+                    return refused;
+                }
                 durable.driver.apply(effect).await
             }
             EffectPayload::Revert { revert_id, .. } => {

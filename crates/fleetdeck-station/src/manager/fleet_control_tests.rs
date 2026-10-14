@@ -35,6 +35,8 @@ enum Reply {
     Valid,
     Invalid,
     Forbidden,
+    /// `valid: false` for a launch mode above the grant ceiling.
+    ModeNotAllowed,
     OtherError,
     LinkGone,
 }
@@ -94,6 +96,9 @@ impl Transport for FakeDeck {
             Reply::Valid => Ok(Outcome::Ok(serde_json::json!({"valid": true}))),
             Reply::Invalid => Ok(Outcome::Ok(
                 serde_json::json!({"valid": false, "reason": "revoked"}),
+            )),
+            Reply::ModeNotAllowed => Ok(Outcome::Ok(
+                serde_json::json!({"valid": false, "reason": "mode_not_allowed"}),
             )),
             Reply::Forbidden => Ok(Outcome::Err(WireError::new("forbidden", "no"))),
             Reply::OtherError => Ok(Outcome::Err(WireError::new("protocol_error", "bad"))),
@@ -455,7 +460,9 @@ async fn wait_retired(st: &Station, s: &SessionId, command: &CommandId) -> Effec
 }
 
 // Tests 8e and 8d (station part): the target station's switch turned off
-// between the decision and the dispatch.
+// between the decision and the dispatch. The effect that waits in its round
+// trip is refused after the answer (the station reads the switch again,
+// PRE-PR fix 1); the effect behind it is refused before the deck is asked.
 #[tokio::test]
 async fn the_switch_turned_off_between_decision_and_dispatch_stops_the_effect_without_a_deck_question()
  {
@@ -465,13 +472,32 @@ async fn the_switch_turned_off_between_decision_and_dispatch_stops_the_effect_wi
     gate.notify_one();
     let retired = wait_retired(&st, &s, &second.receipt.command_id).await;
     assert_eq!(retired.reason.as_deref(), Some("authority_lost"));
-    st.wait_turns(&s, 2).await;
     assert_eq!(
         deck.asked().len(),
         1,
-        "the live setting stops it before the deck is asked"
+        "the live setting stops the second before the deck is asked"
     );
-    assert_eq!(st.turns_done(&s).await, 2, "only the first follow-up ran");
+    assert_eq!(st.turns_done(&s).await, 1, "neither follow-up ran");
+    assert_eq!(st.errors(&s).await, ["authority_lost", "authority_lost"]);
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+// PRE-PR fix 1: the switch turned off while the deck answers `valid` is read
+// again after the round trip: the provider gets no write.
+#[tokio::test]
+async fn the_switch_turned_off_between_the_round_trip_and_the_write_stops_the_effect() {
+    let mut st = Station::new(4).await;
+    let s = idle_session(&mut st).await;
+    let (deck, gate) = FakeDeck::held(Reply::Valid);
+    st.link_deck(&deck);
+    let d = st.coord(follow_up(&s, "late")).await;
+    assert_eq!(d.receipt.state, ReceiptState::Accepted, "{:?}", d.receipt);
+    st.wait_asked(&deck, 1).await;
+    st.switch(false);
+    gate.notify_one();
+    let retired = wait_retired(&st, &s, &d.receipt.command_id).await;
+    assert_eq!(retired.reason.as_deref(), Some("authority_lost"));
+    assert_eq!(st.turns_done(&s).await, 1, "the provider got no write");
     assert_eq!(st.errors(&s).await, ["authority_lost"]);
     st.manager.shutdown(StopMode::Kill).await;
 }
@@ -537,5 +563,9 @@ async fn a_fleet_control_start_is_checked_before_the_spawn() {
     st.manager.shutdown(StopMode::Kill).await;
 }
 
+#[path = "fleet_control_gate_tests.rs"]
+mod gate;
+#[path = "fleet_control_question_tests.rs"]
+mod question;
 #[path = "fleet_control_rules_tests.rs"]
 mod rules;
