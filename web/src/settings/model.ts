@@ -16,6 +16,7 @@ const SECTIONS: readonly { readonly title: string; readonly keys: readonly strin
       'host',
       'shim_buffer_mib',
       'allow_bypass_permissions',
+      'allow_fleet_control',
     ],
   },
   { title: 'Folders', keys: ['allowed_roots', 'repo_groups'] },

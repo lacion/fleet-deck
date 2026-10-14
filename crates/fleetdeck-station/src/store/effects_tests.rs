@@ -77,6 +77,7 @@ fn prompt(input: &str) -> EffectPayload {
             origin: RunOrigin::Board,
             input: UserInput::new("hi".to_owned()),
         },
+        authority: None,
     }
 }
 
@@ -90,6 +91,7 @@ fn answer(request: &str, option: &str) -> EffectPayload {
             text: None,
         },
         by: ResolvedBy::Board,
+        authority: None,
     }
 }
 
@@ -222,6 +224,7 @@ async fn an_effect_needs_a_live_process_and_a_failed_enqueue_stores_nothing() {
         prompt: None,
         workspace: None,
         setup_cmd: None,
+        authority: None,
     };
     let e = queue(&s, &det, "c2", start).await;
     assert_eq!(e.process_incarnation, None);
@@ -380,16 +383,18 @@ async fn confirmations_follow_the_evidence_table() {
         "c1",
         EffectPayload::SetMode {
             mode: "plan".to_owned(),
+            authority: None,
         },
     )
     .await;
-    let interrupt = queue(&s, &det, "c2", EffectPayload::Interrupt).await;
+    let interrupt = queue(&s, &det, "c2", EffectPayload::Interrupt { authority: None }).await;
     let stop = queue(
         &s,
         &det,
         "c3",
         EffectPayload::Stop {
             how: StopMode::Graceful,
+            authority: None,
         },
     )
     .await;
@@ -565,6 +570,7 @@ async fn deny_after_denies_overdue_requests_with_the_provider_deny_option() {
         request_id,
         decision,
         by,
+        ..
     } = &sent[0].payload
     else {
         panic!("answer expected")
@@ -603,7 +609,7 @@ async fn a_lost_process_retires_queued_effects_and_expires_its_requests() {
     let s = running(&det, OfflineApprovalPolicy::Wait).await;
     let claimed = queue(&s, &det, "c1", prompt("in-1")).await;
     let queued = queue(&s, &det, "c2", prompt("in-2")).await;
-    let interrupt = queue(&s, &det, "c3", EffectPayload::Interrupt).await;
+    let interrupt = queue(&s, &det, "c3", EffectPayload::Interrupt { authority: None }).await;
     let fence = s.register_worker().await.unwrap();
     s.claim_next(fence).await.unwrap().unwrap();
     emit(&s, approval("req-1", "node-1", &["allow", "deny"])).await;
@@ -630,7 +636,7 @@ async fn a_lost_process_retires_queued_effects_and_expires_its_requests() {
     // New commands find no process.
     let err = s
         .decide(envelope(&det, "c4"), Caller::local(), |d| {
-            d.enqueue(&S1.into(), EffectPayload::Interrupt)?;
+            d.enqueue(&S1.into(), EffectPayload::Interrupt { authority: None })?;
             Ok(accepted())
         })
         .await

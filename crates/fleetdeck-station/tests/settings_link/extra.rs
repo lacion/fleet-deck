@@ -63,6 +63,7 @@ impl Rig {
             prompt: None,
             workspace: None,
             setup_cmd: None,
+            authority: None,
         };
         let session = id.to_owned();
         store

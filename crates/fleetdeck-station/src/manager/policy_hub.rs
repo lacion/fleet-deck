@@ -56,6 +56,10 @@ pub struct Prepared {
 pub struct PolicyHub {
     inner: RwLock<Arc<Policy>>,
     version: AtomicU64,
+    /// The coordinator bindings of the station: they hold the live
+    /// `allow_fleet_control` for the intake of the coordinator tools
+    /// (ADR-008 §3). Each swap of the snapshot updates it.
+    fleet: Option<Bindings>,
 }
 
 impl PolicyHub {
@@ -65,7 +69,18 @@ impl PolicyHub {
         Self {
             inner: RwLock::new(Arc::new(policy)),
             version: AtomicU64::new(1),
+            fleet: None,
         }
+    }
+
+    /// This hub with the bindings that hold the live `allow_fleet_control`
+    /// (ADR-008 §3): they get the value of the current snapshot now and of
+    /// every later snapshot.
+    #[must_use]
+    pub fn with_fleet_control(mut self, bindings: Bindings) -> Self {
+        bindings.set_fleet_control(self.current().allow_fleet_control());
+        self.fleet = Some(bindings);
+        self
     }
 
     /// The current snapshot.
@@ -86,6 +101,9 @@ impl PolicyHub {
     /// with it.
     pub(crate) fn swap(&self, policy: Policy) {
         let mut slot = self.inner.write().unwrap_or_else(PoisonError::into_inner);
+        if let Some(bindings) = &self.fleet {
+            bindings.set_fleet_control(policy.allow_fleet_control());
+        }
         *slot = Arc::new(policy);
         self.version.fetch_add(1, Ordering::SeqCst);
     }

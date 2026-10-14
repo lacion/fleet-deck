@@ -9,12 +9,13 @@ use serde_json::{Value, json};
 
 use super::bindings::ToolClass;
 
-/// One tool: its name, class and input schema.
+/// One tool: its name, classes and input schema. A grant lists the tool
+/// when it has every class of the tool (ADR-008 §4.1).
 pub struct Tool {
     pub name: &'static str,
-    pub class: ToolClass,
+    pub classes: &'static [ToolClass],
     pub description: &'static str,
-    schema: fn() -> Value,
+    pub(super) schema: fn() -> Value,
 }
 
 fn target() -> Value {
@@ -97,80 +98,80 @@ fn set_focus() -> Value {
 pub const TOOLS: &[Tool] = &[
     Tool {
         name: "list_sessions",
-        class: ToolClass::Read,
+        classes: &[ToolClass::Read],
         description: "List the sessions that the grant can see.",
         schema: list,
     },
     Tool {
         name: "wait_task",
-        class: ToolClass::Read,
+        classes: &[ToolClass::Read],
         description: "Wait for the end of a task.",
         schema: task,
     },
     Tool {
         name: "wait_tasks",
-        class: ToolClass::Read,
+        classes: &[ToolClass::Read],
         description: "Wait for the first of several tasks to end, block or ask a question.",
         schema: tasks,
     },
     Tool {
         name: "send_mail",
-        class: ToolClass::Mail,
+        classes: &[ToolClass::Mail],
         description: "Send mail to a session.",
         schema: send,
     },
     Tool {
         name: "assign",
-        class: ToolClass::Mail,
+        classes: &[ToolClass::Mail],
         description: "Assign a task to a session.",
         schema: assign,
     },
     Tool {
         name: "assign_auto",
-        class: ToolClass::Mail,
+        classes: &[ToolClass::Mail],
         description: "Assign a task to the best session.",
         schema: assign_auto,
     },
     Tool {
         name: "complete_task",
-        class: ToolClass::Mail,
+        classes: &[ToolClass::Mail],
         description: "Report the end of a task assigned to you: done, failed, blocked (with a \
                       reason) or question (with a reason and a question).",
         schema: complete,
     },
     Tool {
         name: "ask_coordinator",
-        class: ToolClass::Mail,
+        classes: &[ToolClass::Mail],
         description: "Ask the coordinator that gave you a task a question.",
         schema: ask,
     },
     Tool {
         name: "interrupt",
-        class: ToolClass::Drive,
+        classes: &[ToolClass::Drive],
         description: "Interrupt a session that you started.",
         schema: target,
     },
     Tool {
         name: "stop",
-        class: ToolClass::Drive,
+        classes: &[ToolClass::Drive],
         description: "Stop a session that you started.",
         schema: target,
     },
     Tool {
         name: "spawn",
-        class: ToolClass::Spawn,
+        classes: &[ToolClass::Spawn],
         description: "Start a session.",
         schema: spawn,
     },
     Tool {
         name: "publish_artifact",
-        class: ToolClass::Own,
+        classes: &[ToolClass::Own],
         description: "Keep a file of your workspace (HTML, Markdown, an image, SVG, PDF), or inline text that you pass as `content` with a `name`, as a versioned artifact that the owner opens in Fleet Deck. An HTML file is kept with the local files that it names. Give exactly one of `path` or `content`.",
         schema: publish_artifact,
     },
     Tool {
         name: "set_focus",
-        class: ToolClass::Own,
+        classes: &[ToolClass::Own],
         description: "Set the one line that Fleet Deck shows on your card (at most 120 characters).",
         schema: set_focus,
     },
@@ -181,26 +182,36 @@ impl Tool {
     /// `Mail` tool, and every session's own binding (`Own`) has it too
     /// (DL-165): there the call goes to the deck without a grant (R2.3).
     pub fn granted(&self, classes: &BTreeSet<ToolClass>) -> bool {
-        classes.contains(&self.class)
+        self.classes.iter().all(|c| classes.contains(c))
             || (self.name == "ask_coordinator" && classes.contains(&ToolClass::Own))
     }
 
     /// Whether the station's own session tools answer this call: an `Own`
     /// tool. `ask_coordinator` is always forwarded to the deck (R2.3).
     pub fn is_own(&self) -> bool {
-        self.class == ToolClass::Own
+        self.classes == [ToolClass::Own]
+    }
+
+    /// True for a tool that only a fleet-control grant has: one of its
+    /// classes is `inspect`, `manage` or `answer` (ADR-008 §2).
+    pub fn is_fleet_control(&self) -> bool {
+        self.classes.iter().any(|c| c.is_fleet_control())
     }
 }
 
 /// The tool by name.
 pub fn tool(name: &str) -> Option<&'static Tool> {
-    TOOLS.iter().find(|t| t.name == name)
+    TOOLS
+        .iter()
+        .chain(super::fleet_tools::FLEET_TOOLS)
+        .find(|t| t.name == name)
 }
 
 /// The `tools/list` result for the granted classes.
 pub fn catalog(classes: &BTreeSet<ToolClass>) -> Value {
     let tools: Vec<Value> = TOOLS
         .iter()
+        .chain(super::fleet_tools::FLEET_TOOLS)
         .filter(|t| t.granted(classes))
         .map(|t| json!({"name": t.name, "description": t.description, "inputSchema": (t.schema)()}))
         .collect();
@@ -208,7 +219,8 @@ pub fn catalog(classes: &BTreeSet<ToolClass>) -> Value {
 }
 
 /// The `coordinator.call` operation of a mutating tool call. Read tools
-/// (`list_sessions`, `wait_task`, `wait_tasks`) are queries and give `Ok(None)`. Arguments
+/// (`list_sessions`, `wait_task`, `wait_tasks` and the fleet-control read
+/// tools) are queries and give `Ok(None)`. Arguments
 /// that are not in the tool's schema are refused: no argument can name the
 /// caller (ADR-006 §5.3).
 pub fn to_op(
@@ -221,6 +233,11 @@ pub fn to_op(
     let mut obj = obj.clone();
     let op = match tool {
         "list_sessions" | "wait_task" | "wait_tasks" => return Ok(None),
+        t if super::fleet_tools::is_query(t) => return Ok(None),
+        "resume_session" | "rename_session" | "set_mode" | "move_to_project"
+        | "start_in_project" | "answer_request" => {
+            return super::fleet_tools::op(tool, args).map(Some);
+        }
         "send_mail" => {
             obj.entry("delivery").or_insert(json!("follow_up"));
             if obj.get("to").is_some_and(Value::is_string) {

@@ -293,6 +293,7 @@ async fn a_crash_after_an_outbound_dispatch_before_any_response_recovers_the_cor
     let prompt = rig
         .claimed(EffectPayload::Prompt {
             input: input("in-1", "wait here"),
+            authority: None,
         })
         .await;
     // The response stays at the shim: the pump stops before it.
@@ -318,7 +319,9 @@ async fn a_crash_after_an_outbound_dispatch_before_any_response_recovers_the_cor
     let driver = rig.crash_and_restore(driver).await;
     // The replayed response finds its correlation.
     rig.wait_event("turn.started", turn_started).await;
-    let interrupt = rig.claimed(EffectPayload::Interrupt).await;
+    let interrupt = rig
+        .claimed(EffectPayload::Interrupt { authority: None })
+        .await;
     assert_eq!(driver.apply(&interrupt).await, Dispatch::Sent);
     let frames = rig
         .wait_frames("turn/interrupt", |f| {
@@ -351,6 +354,7 @@ async fn a_busy_follow_up_and_a_mode_or_model_change_without_later_stdout_surviv
     let prompt = rig
         .claimed(EffectPayload::Prompt {
             input: input("in-1", "wait here"),
+            authority: None,
         })
         .await;
     assert_eq!(driver.apply(&prompt).await, Dispatch::Sent);
@@ -360,9 +364,11 @@ async fn a_busy_follow_up_and_a_mode_or_model_change_without_later_stdout_surviv
     for payload in [
         EffectPayload::FollowUp {
             input: input("in-2", "second"),
+            authority: None,
         },
         EffectPayload::SetMode {
             mode: "on-request/workspace-write".to_owned(),
+            authority: None,
         },
         EffectPayload::SetModel {
             model: "gpt-next".to_owned(),
@@ -376,7 +382,9 @@ async fn a_busy_follow_up_and_a_mode_or_model_change_without_later_stdout_surviv
     assert_eq!(rig.method_count("turn/start"), 1, "nothing was resent");
     // The queued follow-up goes out with the new mode and model when the
     // running turn ends.
-    let interrupt = rig.claimed(EffectPayload::Interrupt).await;
+    let interrupt = rig
+        .claimed(EffectPayload::Interrupt { authority: None })
+        .await;
     assert_eq!(driver.apply(&interrupt).await, Dispatch::Sent);
     let frames = rig
         .wait_frames("second turn/start", |f| {
@@ -403,6 +411,7 @@ async fn a_reattached_codex_session_answers_an_approval_opened_before_the_crash_
     let prompt = rig
         .claimed(EffectPayload::Prompt {
             input: input("in-1", "ask touch x"),
+            authority: None,
         })
         .await;
     assert_eq!(driver.apply(&prompt).await, Dispatch::Sent);
@@ -423,6 +432,7 @@ async fn a_reattached_codex_session_answers_an_approval_opened_before_the_crash_
                 text: None,
             },
             by: ResolvedBy::Board,
+            authority: None,
         })
         .await;
     assert_eq!(driver.apply(&answer).await, Dispatch::Sent);
@@ -522,6 +532,7 @@ async fn a_delayed_old_owner_cannot_make_the_new_owner_resend_a_completed_frame(
     let prompt = rig
         .claimed(EffectPayload::Prompt {
             input: input("in-1", "hello"),
+            authority: None,
         })
         .await;
     assert_eq!(driver.apply(&prompt).await, Dispatch::Sent);

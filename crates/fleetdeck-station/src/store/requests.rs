@@ -367,6 +367,7 @@ pub(super) fn release_if_answer(conn: &Connection, effect: &Effect, now: i64) ->
         request_id,
         decision,
         by,
+        ..
     } = &effect.payload
     else {
         return Ok(false);
@@ -486,6 +487,7 @@ pub(super) fn deny_overdue(
                     text: Some("denied by the station: the deck was not reachable".to_owned()),
                 },
                 by: ResolvedBy::Timeout,
+                authority: None,
             },
         )?);
     }
@@ -506,6 +508,7 @@ pub(super) fn retire_expired_allow(
         request_id,
         decision,
         by,
+        ..
     } = &effect.payload
     else {
         return Ok(false);

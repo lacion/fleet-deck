@@ -265,6 +265,7 @@ fn prompt(id: &str, text: &str) -> EffectPayload {
             origin: RunOrigin::Board,
             input: UserInput::new(text.to_owned()),
         },
+        authority: None,
     }
 }
 
@@ -495,6 +496,7 @@ fn start_effect() -> EffectPayload {
         prompt: None,
         workspace: None,
         setup_cmd: None,
+        authority: None,
     }
 }
 

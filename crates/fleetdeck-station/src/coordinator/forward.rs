@@ -29,7 +29,7 @@ use fleetdeck_proto::{CommandId, IncarnationId, ProviderInstanceId, Receipt, Rej
 use ring::rand::{SecureRandom, SystemRandom};
 use serde_json::Value;
 
-use super::bindings::Caller;
+use super::bindings::{Bindings, Caller};
 use super::ingress::Forward;
 use super::tools::to_op;
 
@@ -90,6 +90,9 @@ pub struct LinkForward {
     serial: Arc<std::sync::atomic::AtomicU64>,
     pub(super) clock: Clock,
     pub(super) outbox: Option<super::outbox::CallOutbox>,
+    /// The bindings of the station: a deck link is also handed to them for
+    /// `coordinator.authority_check` (ADR-008 §6.2).
+    bindings: Option<Bindings>,
 }
 
 impl Default for LinkForward {
@@ -164,7 +167,7 @@ fn query(tool: &str, args: &Value) -> Result<(CoordinatorQuery, Duration), Strin
                 })?;
             Ok((CoordinatorQuery::WaitTasks { task_ids: ids }, WAIT_LIMIT))
         }
-        other => Err(format!("invalid_params: no read tool `{other}`")),
+        other => super::fleet_tools::query(other, args).map(|q| (q, QUERY_LIMIT)),
     }
 }
 
@@ -178,7 +181,16 @@ impl LinkForward {
             serial: Arc::default(),
             clock,
             outbox: None,
+            bindings: None,
         }
+    }
+
+    /// This forwarder with the station bindings: every deck link that it
+    /// connects is set on them, and cleared on disconnect.
+    #[must_use]
+    pub fn with_bindings(mut self, bindings: Bindings) -> Self {
+        self.bindings = Some(bindings);
+        self
     }
 
     /// A deck link came up: coordinator traffic goes to it. Returns the
@@ -201,6 +213,9 @@ impl LinkForward {
             .serial
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             + 1;
+        if let Some(bindings) = &self.bindings {
+            bindings.set_deck(serial, Arc::clone(&transport));
+        }
         *self.current.lock().unwrap_or_else(PoisonError::into_inner) = Some(DeckLink {
             transport,
             incarnation,
@@ -237,6 +252,9 @@ impl LinkForward {
 
     /// The deck link of `serial` ended; a newer link stays.
     pub fn disconnect(&self, serial: u64) {
+        if let Some(bindings) = &self.bindings {
+            bindings.clear_deck(serial);
+        }
         let mut current = self.current.lock().unwrap_or_else(PoisonError::into_inner);
         if current.as_ref().is_some_and(|l| l.serial == serial) {
             *current = None;

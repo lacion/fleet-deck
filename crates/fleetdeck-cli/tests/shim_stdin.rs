@@ -161,6 +161,7 @@ impl Rig {
                             origin: RunOrigin::Board,
                             input: UserInput::new(format!("prompt {n}")),
                         },
+                        authority: None,
                     },
                 )?;
                 Ok(CommandResult {

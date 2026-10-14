@@ -257,6 +257,7 @@ pub fn admit_resume(
             spec,
             prompt,
             continue_by,
+            authority: None,
         },
     )?;
     // The session is starting again from this commit: it counts against

@@ -107,6 +107,18 @@ describe('the sections of the page (DL-172)', () => {
     expect(deck.map((g) => g.title)).toEqual(['Network', 'Notifications']);
     expect(deck[0]?.fields.map((f) => f.key)).toEqual(['link_listen', 'tailnet_hostname']);
   });
+
+  test('the fleet control switch is in the Sessions section, next to bypass permissions (ADR-008)', () => {
+    const groups = groupFields([
+      meta('allow_bypass_permissions', 'Allow bypass permissions', 'bool', { danger: true }),
+      meta('allow_fleet_control', 'Fleet control on this station', 'bool', { danger: true }),
+    ]);
+    expect(groups.map((g) => g.title)).toEqual(['Sessions']);
+    expect(groups[0]?.fields.map((f) => f.key)).toEqual([
+      'allow_bypass_permissions',
+      'allow_fleet_control',
+    ]);
+  });
 });
 
 describe('field rendering for each kind', () => {

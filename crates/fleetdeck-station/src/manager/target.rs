@@ -274,6 +274,11 @@ impl SessionTarget {
         cancel: Option<&watch::Receiver<bool>>,
     ) -> Dispatch {
         let session_id = effect.session_id.clone();
+        // ADR-008 §6.2: right before the spawn, a fleet-control start or
+        // resume asks the deck whether its authority still holds.
+        if let Some(refused) = self.authority_gate(effect).await {
+            return refused;
+        }
         if let Some(reason) = self.broken_reason(&spec.provider_instance) {
             self.start_failed(&session_id, &reason).await;
             return Dispatch::NotDispatched("provider_broken".into());
@@ -463,11 +468,16 @@ impl SessionTarget {
         if !unbound_stop && effect.process_incarnation.as_ref() != Some(&live.process) {
             return Dispatch::NotDispatched("process_changed".into());
         }
+        // ADR-008 §6.2: with the session lock held, right before the write.
+        // An unbound stop got its check in `dispatch`.
+        if !unbound_stop && let Some(refused) = self.authority_gate(effect).await {
+            return refused;
+        }
         if let Some(durable) = live.durable.as_ref() {
             let turns = Arc::clone(&live.turns);
             return self.operate_durable(effect, durable, &turns).await;
         }
-        if let EffectPayload::Stop { how } = &effect.payload {
+        if let EffectPayload::Stop { how, .. } = &effect.payload {
             let Some(mut session) = live.session.take() else {
                 return Dispatch::NotDispatched("already_stopping".into());
             };
@@ -487,7 +497,7 @@ impl SessionTarget {
             return Dispatch::NotDispatched("stopping".into());
         };
         let sent = match &effect.payload {
-            EffectPayload::Prompt { input } | EffectPayload::FollowUp { input } => {
+            EffectPayload::Prompt { input, .. } | EffectPayload::FollowUp { input, .. } => {
                 // The start checkpoint is published before the write, under
                 // the workspace fence (PLAN §6.6).
                 let fence = turns.fence().await;
@@ -505,12 +515,12 @@ impl SessionTarget {
                 }
                 sent
             }
-            EffectPayload::Steer { input } => {
+            EffectPayload::Steer { input, .. } => {
                 // A due completion capture runs before the steer can write.
                 let _fence = turns.fence().await;
                 session.steer(host_input(input)).await
             }
-            EffectPayload::Interrupt => {
+            EffectPayload::Interrupt { .. } => {
                 session
                     .interrupt(Some(ControlId(effect.effect_id.as_str().to_owned())))
                     .await
@@ -519,6 +529,7 @@ impl SessionTarget {
                 request_id,
                 decision,
                 by,
+                ..
             } => {
                 session
                     .answer(Answer {
@@ -528,7 +539,9 @@ impl SessionTarget {
                     })
                     .await
             }
-            EffectPayload::SetMode { mode } => session.set_mode(PermissionMode(mode.clone())).await,
+            EffectPayload::SetMode { mode, .. } => {
+                session.set_mode(PermissionMode(mode.clone())).await
+            }
             EffectPayload::SetModel { model } => session.set_model(ModelId(model.clone())).await,
             EffectPayload::Revert { revert_id, .. } => {
                 let env = super::revert_run::RevertEnv {
@@ -561,12 +574,22 @@ impl EffectTarget for SessionTarget {
     }
 
     async fn dispatch(&self, effect: &Effect) -> Dispatch {
+        // A stop of a start that waits for its setup command has no process
+        // incarnation; it cancels the task and never reaches `operate`
+        // (DL-148). Its authority is checked here (ADR-008 §6.2).
+        if matches!(effect.payload, EffectPayload::Stop { .. })
+            && effect.process_incarnation.is_none()
+            && let Some(refused) = self.authority_gate(effect).await
+        {
+            return refused;
+        }
         match &effect.payload {
             EffectPayload::Start {
                 spec,
                 prompt,
                 workspace,
                 setup_cmd,
+                ..
             } => {
                 // The queued start is checked again against the current
                 // policy (DL-172 §1.4).
@@ -633,7 +656,7 @@ impl EffectTarget for SessionTarget {
             }
             // A stop during the setup command or the workspace work cancels it; the task ends
             // the session.
-            EffectPayload::Stop { how } if self.cancel_setup(&effect.session_id, *how) => {
+            EffectPayload::Stop { how, .. } if self.cancel_setup(&effect.session_id, *how) => {
                 Dispatch::Confirmed
             }
             // The file work of a worktree trash needs no provider process

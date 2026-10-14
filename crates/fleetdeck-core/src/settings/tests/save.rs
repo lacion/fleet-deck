@@ -288,6 +288,13 @@ fn the_danger_rules() {
         .is_empty()
     );
     assert!(d("", "allow_bypass_permissions = false").is_empty());
+    // Fleet control (ADR-008 §3): turning it on is a danger change, off is not.
+    assert_eq!(
+        d("", "allow_fleet_control = true"),
+        vec!["allow_fleet_control"]
+    );
+    assert!(d("allow_fleet_control = true", "allow_fleet_control = false").is_empty());
+    assert!(d("", "allow_fleet_control = false").is_empty());
     assert_eq!(
         d(
             "allowed_roots = [\"/a\"]",

@@ -80,6 +80,10 @@ fn an_empty_file_gives_the_defaults() {
         !c.allow_bypass_permissions,
         "bypass permissions are off unless the owner turns them on"
     );
+    assert!(
+        !c.allow_fleet_control,
+        "fleet control is off unless the owner turns it on"
+    );
     let ids: Vec<&str> = c.provider_instances.iter().map(|i| i.id.as_str()).collect();
     assert_eq!(ids, ["claude", "codex"]);
 }
@@ -586,6 +590,13 @@ fn a_bad_model_help_value_is_refused() {
     }
     assert!(err("[model_help]\nprovider = \"pi\"").contains("unknown variant"));
     assert!(err("[model_help]\nbogus = 1").contains("unknown field"));
+}
+
+#[test]
+fn allow_fleet_control_parses() {
+    let c = StationConfig::parse("allow_fleet_control = true\n", &env()).unwrap();
+    assert!(c.allow_fleet_control);
+    assert!(StationConfig::parse("allow_fleet_control = \"yes\"\n", &env()).is_err());
 }
 
 #[test]

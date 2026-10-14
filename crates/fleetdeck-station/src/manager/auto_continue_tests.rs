@@ -277,6 +277,7 @@ fn follow_up(text: &str) -> EffectPayload {
             origin: RunOrigin::Board,
             input: UserInput::new(text),
         },
+        authority: None,
     }
 }
 
@@ -358,6 +359,7 @@ async fn a_requested_stop_prevents_the_continuation() {
         &s,
         EffectPayload::Stop {
             how: StopMode::Graceful,
+            authority: None,
         },
     )
     .await;
@@ -502,6 +504,7 @@ async fn the_continued_session_runs_with_the_stored_mode_never_a_more_permissive
         spec,
         prompt,
         continue_by,
+        ..
     } = intent.payload
     else {
         unreachable!()

@@ -309,6 +309,7 @@ async fn a_crash_after_an_outbound_dispatch_before_any_response_recovers_the_cla
     let prompt = rig
         .claimed(EffectPayload::Prompt {
             input: input(IN_1, "wait here"),
+            authority: None,
         })
         .await;
     // The CLI's answer stays at the shim: the pump stops before it.
@@ -326,7 +327,9 @@ async fn a_crash_after_an_outbound_dispatch_before_any_response_recovers_the_cla
     let driver = rig.crash_and_restore(driver).await;
     // The replayed output finds the restored input.
     rig.wait_event("turn.started", turn_started).await;
-    let interrupt = rig.claimed(EffectPayload::Interrupt).await;
+    let interrupt = rig
+        .claimed(EffectPayload::Interrupt { authority: None })
+        .await;
     assert_eq!(driver.apply(&interrupt).await, Dispatch::Sent);
     let frames = rig
         .wait_frames("interrupt", |f| {
@@ -362,6 +365,7 @@ async fn a_busy_follow_up_and_a_mode_or_model_change_survive_a_claude_restart() 
     let prompt = rig
         .claimed(EffectPayload::Prompt {
             input: input(IN_1, "wait here"),
+            authority: None,
         })
         .await;
     assert_eq!(driver.apply(&prompt).await, Dispatch::Sent);
@@ -373,9 +377,11 @@ async fn a_busy_follow_up_and_a_mode_or_model_change_survive_a_claude_restart() 
     for payload in [
         EffectPayload::FollowUp {
             input: input(IN_2, "second"),
+            authority: None,
         },
         EffectPayload::SetMode {
             mode: "acceptEdits".to_owned(),
+            authority: None,
         },
     ] {
         let effect = rig.claimed(payload).await;
@@ -406,7 +412,9 @@ async fn a_busy_follow_up_and_a_mode_or_model_change_survive_a_claude_restart() 
     )
     .await;
     // The first turn ends; the queued follow-up runs; nothing is resent.
-    let interrupt = rig.claimed(EffectPayload::Interrupt).await;
+    let interrupt = rig
+        .claimed(EffectPayload::Interrupt { authority: None })
+        .await;
     assert_eq!(driver.apply(&interrupt).await, Dispatch::Sent);
     rig.wait_event(
         "second turn",
@@ -428,6 +436,7 @@ async fn a_reattached_claude_session_answers_an_approval_opened_before_the_crash
     let prompt = rig
         .claimed(EffectPayload::Prompt {
             input: input(IN_1, "ask touch x"),
+            authority: None,
         })
         .await;
     assert_eq!(driver.apply(&prompt).await, Dispatch::Sent);
@@ -448,6 +457,7 @@ async fn a_reattached_claude_session_answers_an_approval_opened_before_the_crash
                 text: None,
             },
             by: ResolvedBy::Board,
+            authority: None,
         })
         .await;
     assert_eq!(driver.apply(&answer).await, Dispatch::Sent);
@@ -484,13 +494,16 @@ async fn a_claude_driver_is_idle_before_a_prompt_and_not_while_a_turn_runs() {
     let prompt = rig
         .claimed(EffectPayload::Prompt {
             input: input(IN_1, "wait here"),
+            authority: None,
         })
         .await;
     assert_eq!(driver.apply(&prompt).await, Dispatch::Sent);
     rig.wait_event("turn.started", turn_started).await;
     assert!(!driver.idle());
     assert!(!durable.idle());
-    let interrupt = rig.claimed(EffectPayload::Interrupt).await;
+    let interrupt = rig
+        .claimed(EffectPayload::Interrupt { authority: None })
+        .await;
     assert_eq!(driver.apply(&interrupt).await, Dispatch::Sent);
     rig.wait_event("turn.completed", |e| {
         matches!(e, Event::TurnCompleted { .. })

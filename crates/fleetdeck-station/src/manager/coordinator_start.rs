@@ -9,7 +9,7 @@
 //! session without a grant gets the session's own tools on a start and on
 //! a resume when it can (DL-165).
 
-use fleetdeck_proto::command::{CoordinatorSpec, SessionSpec};
+use fleetdeck_proto::command::{CoordinatorSpec, GrantScope, SessionSpec};
 use fleetdeck_proto::event::ProviderKind;
 use fleetdeck_proto::{Event, SessionId};
 use fleetdeck_providers::coordinator::CoordinatorLaunch;
@@ -120,6 +120,7 @@ pub(super) fn prepare(
             native_id: None,
             generation: 0,
             classes,
+            scope: coordinator.scope,
             state: BindingState::Pending,
             control_skill: coordinator.control_skill.text.clone(),
         },
@@ -196,6 +197,7 @@ pub(super) fn prepare_fleet(
             native_id: None,
             generation: 0,
             classes: std::iter::once(ToolClass::Own).collect(),
+            scope: GrantScope::Lineage,
             state: BindingState::Pending,
             control_skill: FLEET_SKILL.to_owned(),
         },

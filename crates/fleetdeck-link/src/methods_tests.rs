@@ -237,6 +237,11 @@ fn the_fleet_control_methods_have_the_adr_008_rows() {
     assert_eq!(policy.scope, Scope::Read);
     assert_eq!(policy.feature, Some(feature::COORDINATOR_V2));
     assert!(!policy.mutating);
+    let diff = method("files.coordinator_diff").unwrap();
+    assert_eq!(diff.callers, Callers::DeckToStation);
+    assert_eq!(diff.scope, Scope::Read);
+    assert_eq!(diff.feature, Some(feature::COORDINATOR_V2));
+    assert!(!diff.mutating);
 }
 
 #[test]

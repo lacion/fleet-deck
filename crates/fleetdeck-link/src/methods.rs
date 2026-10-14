@@ -310,6 +310,15 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::SESSION_DIFF),
         false,
     ),
+    // The diff of a session for a coordinator, with no old-side byte (ADR-008
+    // §4.4).
+    m(
+        "files.coordinator_diff",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::COORDINATOR_V2),
+        false,
+    ),
     m(
         "shell.list",
         DeckToStation,

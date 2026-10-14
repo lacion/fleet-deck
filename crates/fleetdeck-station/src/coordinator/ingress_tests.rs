@@ -51,6 +51,7 @@ fn binding(id: &str, state: BindingState, classes: &[ToolClass]) -> Binding {
         classes: classes.iter().copied().collect(),
         state,
         control_skill: "SKILL v1".to_owned(),
+        scope: fleetdeck_proto::command::GrantScope::Lineage,
     }
 }
 

@@ -75,6 +75,7 @@ impl Station {
                 classes: [ToolClass::Read].into_iter().collect(),
                 state,
                 control_skill: String::new(),
+                scope: fleetdeck_proto::command::GrantScope::Lineage,
             },
         );
     }

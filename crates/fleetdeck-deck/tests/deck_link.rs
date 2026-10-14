@@ -446,6 +446,7 @@ async fn a_bound_coordinator_reaches_the_deck_through_the_station_endpoint() {
             classes: [ToolClass::Read, ToolClass::Mail].into_iter().collect(),
             state: BindingState::Active,
             control_skill: "skill".to_owned(),
+            scope: fleetdeck_proto::command::GrantScope::Lineage,
         },
     );
     let call = serde_json::json!({
