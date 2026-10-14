@@ -118,17 +118,24 @@ fn scan_with(root: &Path, after_listing: &mut dyn FnMut()) -> Result<Scan, Strin
     Ok(out)
 }
 
-/// The most passes of one census.
-const PASSES: u32 = 20;
+/// The most passes of one census. A busy machine starts and ends processes
+/// all the time; a pass takes milliseconds, so many short tries find a
+/// clean one.
+const PASSES: u32 = 200;
 /// The pause between two passes.
-const PASS_PAUSE: Duration = Duration::from_millis(25);
+const PASS_PAUSE: Duration = Duration::from_millis(10);
 /// The reason of a census that never saw a clean pass.
 const CHURN: &str = "processes kept changing during the check; try again";
 
 /// True when `p` is a process of the leader's group or session (the leader
 /// itself excluded), dead or alive.
 fn belongs(p: &ProcStat, leader: u32) -> bool {
-    p.pid != leader && (p.pgrp == leader || p.session == leader)
+    p.pid != leader && in_group_or_session(p, leader)
+}
+
+/// True when `p` is the leader or a process of its group or session.
+fn in_group_or_session(p: &ProcStat, leader: u32) -> bool {
+    p.pid == leader || p.pgrp == leader || p.session == leader
 }
 
 /// Reads `/proc` until a pass settles the question about the members of
@@ -136,8 +143,9 @@ fn belongs(p: &ProcStat, leader: u32) -> bool {
 /// of a pass already show a member (or whatever else makes the answer
 /// final). `Ok(None)` when no pass settled it in [`PASSES`] passes.
 ///
-/// A pass is clean when no listed pid vanished and no zombie belongs to
-/// the leader's group or session. The argument for a clean pass: a process
+/// A pass is clean when no listed pid vanished and no zombie is the leader
+/// or belongs to the leader's group or session (a leader that forked and
+/// died before its read is such a zombie). The argument for a clean pass: a process
 /// cannot join a session from outside it, so a member that is alive at the
 /// end of a clean pass descends from a member that was listed at the start
 /// of the pass and was alive when read (then it is counted), or that died
@@ -161,7 +169,7 @@ fn census(
             && !scan
                 .procs
                 .iter()
-                .any(|p| p.is_zombie() && belongs(p, leader));
+                .any(|p| p.is_zombie() && in_group_or_session(p, leader));
         if clean || settled(&scan.procs) {
             return Ok(Some(scan.procs));
         }
@@ -461,7 +469,7 @@ mod tests {
         vanished(dir.path(), 300);
         let mut passes = 0;
         assert_eq!(members(dir.path(), 100, &mut || passes += 1), None);
-        assert_eq!(passes, 20, "the census gives up after 20 passes");
+        assert_eq!(passes, PASSES, "the census gives up after PASSES passes");
         let id = ProviderIdentity {
             pid: 100,
             start_time: 5,
@@ -523,7 +531,7 @@ mod tests {
         put(dir.path(), 102, &stat_line(102, 'Z', 1, 100, 100, 7));
         let mut passes = 0;
         assert_eq!(members(dir.path(), 100, &mut || passes += 1), None);
-        assert_eq!(passes, 20);
+        assert_eq!(passes, PASSES);
         // A zombie of the session only counts as well.
         let session = tempfile::tempdir().unwrap();
         put(session.path(), 103, &stat_line(103, 'Z', 1, 103, 100, 7));
@@ -544,6 +552,36 @@ mod tests {
         let mut passes = 0;
         assert_eq!(members(other.path(), 100, &mut || passes += 1), Some(0));
         assert_eq!(passes, 1);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_zombie_leader_makes_a_pass_unclean_so_no_zero_is_proven() {
+        // The leader 100 forked a member after the listing and died before
+        // its read: the member is not listed, nothing vanished, and only the
+        // zombie leader is left. That pass proves nothing.
+        let dir = tempfile::tempdir().unwrap();
+        put(dir.path(), 100, &stat_line(100, 'Z', 1, 100, 100, 7));
+        let mut passes = 0;
+        assert_eq!(members(dir.path(), 100, &mut || passes += 1), None);
+        assert_eq!(passes, PASSES);
+        let id = ProviderIdentity {
+            pid: 100,
+            start_time: 7,
+            boot_id: "b".to_owned(),
+        };
+        let check = inspect_with(dir.path(), &id, Some(50), Duration::ZERO, &mut || {});
+        assert!(!check.complete, "{check:?}");
+        // Once the zombie is reaped, a clean pass proves zero members.
+        let root = dir.path().to_owned();
+        let mut passes = 0;
+        let got = members(dir.path(), 100, &mut || {
+            passes += 1;
+            if passes == 1 {
+                std::fs::remove_dir_all(root.join("100")).unwrap();
+            }
+        });
+        assert_eq!(got, Some(0));
     }
 
     #[cfg(not(target_os = "linux"))]
