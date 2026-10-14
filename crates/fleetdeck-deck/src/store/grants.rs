@@ -16,6 +16,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{DeckError, DeckStore, Result, call, new_id};
 
+#[path = "fleet_answers.rs"]
+mod fleet_answers;
+pub use fleet_answers::FleetAnswers;
+
 /// The default spawn cap (ADR-006 §4).
 pub const DEFAULT_SPAWN_CAP: u32 = 3;
 /// The highest spawn cap.

@@ -18,6 +18,7 @@ pub mod body_deadline;
 pub mod command_routes;
 pub mod execution_routes;
 pub mod file_routes;
+pub mod fleet_answers_routes;
 pub mod fleet_routes;
 pub mod grant_routes;
 pub mod guard;
@@ -479,6 +480,10 @@ pub fn router(board: Arc<Board>) -> Router {
         .route(
             "/api/sessions/{station}/{session}/execution",
             get(execution_routes::check),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/fleet-answers",
+            get(fleet_answers_routes::list),
         )
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&board),

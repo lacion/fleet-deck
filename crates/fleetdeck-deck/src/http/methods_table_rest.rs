@@ -424,6 +424,13 @@ pub const API_REST: &[ApiMethod] = &[
         Some(Scope::Admin),
         false,
     ),
+    m(
+        "session.fleet_answers",
+        Method::GET,
+        "/api/sessions/{station}/{session}/fleet-answers",
+        Some(Scope::Admin),
+        false,
+    ),
     cmd("session.start", Scope::Drive),
     cmd("session.resume", Scope::Drive),
     cmd("session.import", Scope::Drive),

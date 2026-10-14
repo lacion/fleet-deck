@@ -1291,3 +1291,35 @@ button.fd-cchip:hover:not(:disabled) {
 .fd-overlay .fd-exec > .fd-exec-foot {
   justify-self: stretch;
 }
+
+/* The answers of a fleet-control coordinator (ADR-008 §5.3). */
+.fd-fleet-chip {
+  align-self: flex-start;
+  flex: none;
+  margin: 4px 12px;
+  border-color: var(--act);
+  color: var(--act);
+  cursor: pointer;
+}
+.fd-fleet-answers-wrap {
+  overflow-x: auto;
+}
+.fd-fleet-answers {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.fd-fleet-answers th,
+.fd-fleet-answers td {
+  padding: 3px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.fd-fleet-answers th {
+  color: var(--dim);
+  font-weight: 600;
+}
+.fd-fleet-answers-time {
+  font-family: var(--font-data);
+  white-space: nowrap;
+}

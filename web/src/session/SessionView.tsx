@@ -36,6 +36,7 @@ import { useSessionController } from './controller';
 import { FilesPanel } from './FilesPanel';
 import { handoverFlow } from './handoverFlow';
 import { ExecutionDialog } from './ExecutionDialog';
+import { FleetControlChip } from './FleetControlChip';
 import { SessionHeader } from './SessionHeader';
 import { buildTimeline, sessionModels, slashCommands } from './timeline';
 import { RevertStatus, TurnsPanel } from './TurnsPanel';
@@ -318,6 +319,7 @@ export function SessionView(props: SessionViewProps) {
           guest === null && actions?.canAdmin === true ? () => setChecking(true) : undefined
         }
       />
+      {guest === null && actions?.canAdmin === true ? <FleetControlChip actions={actions} /> : null}
       {checking && actions ? (
         <ExecutionDialog actions={actions} onClose={() => setChecking(false)} />
       ) : null}

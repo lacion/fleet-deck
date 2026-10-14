@@ -230,6 +230,7 @@ describe('overlays block the board hotkeys (R7.4)', () => {
         'DeviceLinkDialog.tsx',
         'Dialog.tsx',
         'ExecutionDialog.tsx',
+        'FleetAnswersDialog.tsx',
         'HelpOverlay.tsx',
         'Layout.tsx',
         'Palette.tsx',
