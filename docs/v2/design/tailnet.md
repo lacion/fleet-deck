@@ -138,10 +138,10 @@
 
 §3's stored key `tailnet_managed` is dropped: the settings writer refuses read-only keys and has no hidden field. The managed entries are instead every `listen` / `link_listen` entry in the Tailscale address range (`netscope::classify == Tailnet`); "Use tailnet"/"Update" replaces those in each list and keeps every other entry. The effect is the same as §3 for every address the deck added, and a hand-written tailnet-range address is treated as managed. Only locally assigned tailnet IPs are added; when none is assigned the deck reports userspace networking.
 
-## 14. Addendum: Tailscale on WSL and "Use Tailscale automatically" (revision 2, proposed, 2026-10-14)
+## 14. Addendum: Tailscale on WSL and "Use Tailscale automatically" (revision 3, proposed, 2026-10-14)
 
 - **Owner request (2026-10-14):** "all of this settings can we detect them automatically? … maybe we could have a toggle use tailscale and if tailscale is in the path and configured it will just setup everything up correctly? also in this specific case we are in wsl, tailscale is installed in windows how will that work?" The owner approved the proposal.
-- **Revision 1** got DESIGN REVIEW FAIL (2 blockers, 4 major, 1 minor; `/tmp/fd-goal/adversary-report-tailnet14.md`); §14.6 maps each finding.
+- **Revision 1** got DESIGN REVIEW FAIL (2 blockers, 4 major, 1 minor; `/tmp/fd-goal/adversary-report-tailnet14.md`); revision 2 got RE-REVIEW FAIL (1 blocker: one provenance list for two channels; `/tmp/fd-goal/adversary-report-tailnet14-r2.md`). §14.6 and §14.7 map the findings.
 - **Facts (checked on the owner's machine):** WSL 2 with `networkingMode=Mirrored`; `tailscale` is not on the WSL `PATH`; `/mnt/c/Program Files/Tailscale/tailscale.exe` runs from WSL and `status --json` returns the node; 100.89.30.8 is assigned to `eth4` inside WSL (mirrored networking). Under the WSL default NAT networking the Windows tailnet addresses are not assigned inside WSL. A Windows program started from WSL runs as the Windows user with an environment that Windows builds from the user's Windows environment (the WSL interop merges, it does not replace), so Fleet Deck cannot limit what that program sees.
 
 ### 14.1 WSL: a hint, never an automatic program
@@ -162,13 +162,14 @@
 
 ### 14.4 "Use Tailscale automatically"
 
-- New deck settings: `tailnet_auto: bool` (default `false`, `apply: Restart`, `danger: true`: turning it on needs the owner's elevation; turning it off does not) and `tailnet_auto_entries: Vec<SocketAddr>` (written only by the deck, not editable on the board: the entries that the automatic mode added to `listen` and `link_listen`).
+- New deck settings: `tailnet_auto: bool` (default `false`, `apply: Restart`, `danger: true`: turning it on needs the owner's elevation; turning it off does not) and two provenance lists, one per channel: `tailnet_auto_listen: Vec<SocketAddr>` (the entries that the automatic mode added to `listen`) and `tailnet_auto_link_listen: Vec<SocketAddr>` (the same for `link_listen`), written only by the deck and not editable on the board.
 - **At start, when `tailnet_auto` is on, before any listener binds,** inside one deadline of 3 s that covers the program choice, the process start, the output read and the child cleanup (a late answer is dropped and never saved):
   1. Read `tailscale status`. If it is not available, not running, userspace, or non-local binding is on: no change to the saved settings.
-  2. Else compute the wanted automatic entries: the usable (§14.3) current tailnet addresses with the ports of §3 (the port of the first entry of each list, else 7420/7421). Replace in `listen` and `link_listen` only the entries listed in `tailnet_auto_entries` with the wanted ones (manual entries, also manual tailnet-range entries, stay as they are), set `tailnet_hostname` from `Self.DNSName` when valid, and store the new `tailnet_auto_entries`, in one save through the normal writer (revision checked). No elevation at start: the owner gave it when turning the setting on.
-- **Bind (with or without a save):** the deck binds every manual entry as today (a failure stops the start, as today). For each entry in `tailnet_auto_entries`, the deck first checks §14.3 again; an entry that is not local, or whose bind fails, is skipped with a warning and the reason on the Tailnet card ("Use Tailscale automatically: <address> not used — <reason>"); it never stops the start. If every entry of a list is skipped and the list has no manual entry, that channel has no listener, as a list that is empty today.
-- While the deck runs, nothing changes listeners. The Tailnet card compares the current tailnet addresses with `tailnet_auto_entries` when it loads; when they differ it shows "Your tailnet address changed. Restart the deck to use it."
-- "Use tailnet" / "Update" (the manual button of §3) keeps its §13 rule (it replaces every tailnet-range entry) and also writes `tailnet_auto_entries` = the entries it added, so the automatic mode can take them over.
+  2. Else compute the wanted automatic entries: the usable (§14.3) current tailnet addresses with the ports of §3 (the port of the first entry of each list, else 7420/7421). Per channel, independently: remove from the list exactly the entries of that channel's provenance list, then add each wanted entry that the list does not already hold (an address that is already a manual entry of that channel is neither added again nor recorded as automatic); the channel's new provenance list is the set of entries that were added. Manual entries, also manual tailnet-range entries, stay as they are. Set `tailnet_hostname` from `Self.DNSName` when valid. Write both lists, both provenance lists and the host name in one save through the normal writer (revision checked). No elevation at start: the owner gave it when turning the setting on.
+- **Bind (with or without a save):** the deck binds every manual entry as today (a failure stops the start, as today). For each entry of a channel's provenance list, the deck first checks §14.3 again; an entry that is not local, or whose bind fails, is skipped with a warning and the reason on the Tailnet card ("Use Tailscale automatically: <address> not used — <reason>"); it never stops the start. If every entry of a list is skipped and the list has no manual entry, that channel has no listener, as a list that is empty today.
+- While the deck runs, nothing changes listeners. The Tailnet card compares the current tailnet addresses with the provenance lists when it loads; when they differ it shows "Your tailnet address changed. Restart the deck to use it."
+- "Use tailnet" / "Update" (the manual button of §3) keeps its §13 rule (it replaces every tailnet-range entry) and also writes each channel's provenance list = the entries it added to that channel, so the automatic mode can take them over.
+- **Manual edits:** every settings save that changes `listen` or `link_listen` by hand (the board fields, `fleetdeck settings`) sets, in the same save, that channel's provenance list to its old entries that are still in the new list: an entry the owner removed is forgotten; an entry the owner kept stays automatic. Turning `tailnet_auto` off empties both provenance lists in the same save, so every entry becomes manual.
 - Board: the Tailnet card gets the toggle "Use Tailscale automatically" (the elevation dialog to turn it on) next to the button.
 - Audit: `tailnet.auto` (the keys changed at start).
 
@@ -177,7 +178,7 @@
 - WSL detection: kernel string + interop file → WSL; `WSL_DISTRO_NAME` alone on a non-WSL host → not WSL.
 - The Windows program is never run without `tailscale_bin`: `/api/tailnet` answers `windows_tailscale` with the path; "Use this program" saves `tailscale_bin` and needs elevation.
 - Local assignment from the interface lists; `ip_nonlocal_bind = 1` stops the automatic mode.
-- Automatic start: only `tailnet_auto_entries` are replaced, a manual LAN entry and a manual tailnet-range entry stay; Tailscale unavailable/userspace/timeout → no save; a late answer after the deadline is not saved; an automatic entry that is not local or fails to bind is skipped and the deck starts with the manual listeners; turning it on needs elevation.
+- Automatic start: per channel only that channel's provenance entries are replaced; a manual LAN entry and a manual tailnet-range entry stay; the same address manual in `link_listen` and automatic in `listen` keeps the manual link entry across an IP change; a wanted address that is already manual in a channel is not recorded as automatic there; a manual save keeps only the kept provenance entries; turning the mode off empties both provenance lists; Tailscale unavailable/userspace/timeout → no save; a late answer after the deadline is not saved; an automatic entry that is not local or fails to bind is skipped and the deck starts with the manual listeners; turning it on needs elevation.
 
 ### 14.6 Review map (revision 1 → revision 2)
 
@@ -190,3 +191,9 @@
 | MAJOR manual tailnet entries removed | §14.4 `tailnet_auto_entries`: the automatic mode replaces only its own entries |
 | MAJOR startup not bounded | §14.4 one 3 s deadline over choice, start, read and cleanup; late answers dropped |
 | MINOR WSL detection by environment | §14.1 kernel string and interop file |
+
+### 14.7 Re-review map (revision 2 → revision 3)
+
+| Finding | Change |
+| --- | --- |
+| BLOCKER one provenance list for two channels | §14.4 `tailnet_auto_listen` and `tailnet_auto_link_listen`; an address already manual in a channel is never recorded as automatic there; manual saves and turning the mode off reconcile the provenance in the same save; §14.5 regression test |
