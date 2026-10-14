@@ -167,6 +167,7 @@ The following controls were traced to implementation and exercised by the passin
 | `cd web && bun run lint` | Pass with 24 existing Biome warnings and no errors |
 | `cd web && bun test src` | Pass: 1,023 tests across 84 files |
 | `cd web && bun audit` | Inconclusive: registry request failed with `DNSResolveFailed`; Bun returned exit code 0 despite the error |
+| `cd web && bun audit` (rerun 2026-10-14 with registry access) | Pass: "No vulnerabilities found (checked 169 packages)" |
 
 The first sandboxed Rust test attempt could not create a Unix socket and failed with `Operation not permitted`. The same locked workspace suite was rerun outside that sandbox and passed. This was an execution-environment limitation, not a repository test failure.
 
