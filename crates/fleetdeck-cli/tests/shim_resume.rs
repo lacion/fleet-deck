@@ -96,18 +96,28 @@ async fn the_input_to_a_hibernated_session_resumes_it_under_a_new_shim_and_arriv
     })
     .await;
     // The hibernation of a normal running shim session is admitted (14).
-    rig.det.advance(std::time::Duration::from_millis(
-        u64::from(AFTER) * 60_000 + 1,
-    ));
+    // Events of the finished turn can still arrive after the run ended and
+    // move the session's `updated_at`: advance and sweep again until the
+    // session is idle for the whole interval.
     let policy = st.manager.policy();
-    let swept = hibernate::sweep(
-        &st.store,
-        &policy,
-        &fleetdeck_station::coordinator::Bindings::default(),
-        AFTER,
-    )
-    .await
-    .unwrap();
+    let mut swept = 0;
+    for _ in 0..50 {
+        rig.det.advance(std::time::Duration::from_millis(
+            u64::from(AFTER) * 60_000 + 1,
+        ));
+        swept = hibernate::sweep(
+            &st.store,
+            &policy,
+            &fleetdeck_station::coordinator::Bindings::default(),
+            AFTER,
+        )
+        .await
+        .unwrap();
+        if swept > 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
     assert_eq!(swept, 1, "a running shim session hibernates");
     wait_state(&st.store, &session, SessionState::Exited).await;
     let rows = wait_rows(&st.store, &session, "the row ends", |rows| {

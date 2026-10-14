@@ -91,6 +91,9 @@ impl Db {
         let owned = path.to_path_buf();
         Self::start(Some(owned.clone()), migrations, move || {
             let conn = Connection::open(&owned)?;
+            // The wait comes first: the journal-mode change needs a lock,
+            // and another connection may still hold one (a restart).
+            conn.busy_timeout(std::time::Duration::from_millis(BUSY_TIMEOUT_MS.into()))?;
             conn.pragma_update(None, "journal_mode", "WAL")?;
             Ok(conn)
         })
