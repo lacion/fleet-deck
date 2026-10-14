@@ -9,7 +9,7 @@ export const unsentNotes = (notes: readonly Note[]): Note[] => notes.filter((n) 
 
 /** The text of the prompt. */
 export const importPrompt = (n: number): string =>
-  `You have ${n} local notes from an older version. Import them as draft comments?`;
+  `You have ${n} local ${n === 1 ? 'note' : 'notes'} from an older version. Import ${n === 1 ? 'it' : 'them'} as draft comments?`;
 
 /** Lower-case hex SHA-256 of `text`. */
 export async function sha256Hex(text: string): Promise<string> {
@@ -35,7 +35,7 @@ export type ImportResult = {
 
 /** "Imported 1 of 3 notes. <first error>". */
 export const importFailureText = (r: ImportResult): string =>
-  `Imported ${r.imported} of ${r.total} notes. ${r.error ?? ''}`.trimEnd();
+  `Imported ${r.imported} of ${r.total} ${r.total === 1 ? 'note' : 'notes'}. ${r.error ?? ''}`.trimEnd();
 
 /**
  * Imports the unsent notes, in order, as draft comments on the new side of the Since-spawn diff.

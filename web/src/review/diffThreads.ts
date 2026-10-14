@@ -121,5 +121,5 @@ export function authorLabel(c: ReviewComment, self: string): string {
 
 /** "Resolved thread c-xxxxxx · 2 comments". */
 export function resolvedLine(shortId: string, count: number): string {
-  return `Resolved thread ${shortId} · ${count} comments`;
+  return `Resolved thread ${shortId} · ${count} ${count === 1 ? 'comment' : 'comments'}`;
 }
