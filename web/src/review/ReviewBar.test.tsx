@@ -181,8 +181,43 @@ describe('the send key', () => {
     expect(bodies).toEqual([{ send_key: 'k', comment_ids: ['t1', 'r1'] }]);
   });
 
+  test('another selection after a lost answer gets another key, and a retry keeps its key', async () => {
+    let n = 0;
+    const holder = keyHolder(() => `key${++n}`);
+    const seen: string[] = [];
+    let fail = true;
+    const fake = {
+      send: async (_k: SessionKey, body: { send_key: string }) => {
+        seen.push(body.send_key);
+        if (fail) throw new Error('offline');
+        return review('r1');
+      },
+    };
+    const first = [thread(comment('t1'), comment('r1'))];
+    const other = [thread(comment('t2'))];
+    // The answer of the first send is lost; the bar reloads with other drafts.
+    await expect(sendDrafts(fake, session, holder, first)).rejects.toThrow('offline');
+    await expect(sendDrafts(fake, session, holder, other)).rejects.toThrow('offline');
+    // A retry of the other selection keeps the key that it got.
+    await expect(sendDrafts(fake, session, holder, other)).rejects.toThrow('offline');
+    fail = false;
+    await sendDrafts(fake, session, holder, other);
+    expect(seen).toEqual(['key1', 'key2', 'key2', 'key2']);
+  });
+
+  test('a held key is bound to its selection until a success rotates it', () => {
+    let n = 0;
+    const holder = keyHolder(() => `key${++n}`);
+    expect(holder.current('a,b')).toBe('key1');
+    expect(holder.current('a,b')).toBe('key1');
+    expect(holder.current('a')).toBe('key2');
+    holder.rotate();
+    expect(holder.current('a')).toBe('key3');
+    expect(holder.current('a')).toBe('key3');
+  });
+
   test('the key of the board is 25 characters of [0-9a-z]', () => {
-    expect(keyHolder().current()).toMatch(/^[0-9a-z]{25}$/);
+    expect(keyHolder().current('t1')).toMatch(/^[0-9a-z]{25}$/);
   });
 });
 
