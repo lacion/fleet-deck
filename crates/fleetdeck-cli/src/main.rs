@@ -7,6 +7,7 @@ mod doctor;
 mod invite;
 mod pairing;
 mod restart;
+mod service;
 mod settings;
 mod station;
 mod tailnet;
@@ -103,6 +104,14 @@ fn run(cli: Cli, restart: &restart::RestartHandle) -> anyhow::Result<ExitCode> {
         Command::Tailnet { command } => {
             done(runtime()?.block_on(tailnet::run(&dirs, &env, command)))
         }
+        Command::Service { command } => done(runtime()?.block_on(async {
+            let ctx = service::Context::detect(&dirs, &env, cli.data_dir.is_some())?;
+            let command = command.clone();
+            tokio::task::spawn_blocking(move || {
+                service::run(&command, &ctx, &service::System, &mut std::io::stdout())
+            })
+            .await?
+        })),
         Command::Station { .. } | Command::Shim { .. } | Command::ShimExec { .. } => {
             anyhow::bail!("internal error: the command was not dispatched")
         }

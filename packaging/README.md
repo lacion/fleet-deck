@@ -1,5 +1,7 @@
 # Fleet Deck v2 packaging
 
+Run `fleetdeck service install` (deck and local station), `fleetdeck service install deck` or `fleetdeck service install station`. It writes and starts the service for this platform (docs/v2/operations.md §4.1). The files below are for a manual setup.
+
 This directory holds the service units and the container file of Fleet Deck v2 (PLAN Phase 7 "Packaging", DL-400). The release archives of `cargo-dist` (`dist-workspace.toml`) include these files. `make package-check` runs their static checks and the offline smoke test of the built binary (`crates/fleetdeck-cli/tests/packaging.rs`).
 
 ## Install the binary

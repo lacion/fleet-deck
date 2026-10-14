@@ -321,3 +321,11 @@ fn the_offline_built_binary_reports_its_version() {
         format!("fleetdeck {version}")
     );
 }
+
+#[test]
+fn the_generated_service_units_start_real_commands() {
+    assert_real_command(&["up"], "service both");
+    assert_real_command(&["deck", "serve"], "service deck");
+    assert_real_command(&["station", "serve"], "service station");
+    assert_real_command(&["service", "install"], "service");
+}

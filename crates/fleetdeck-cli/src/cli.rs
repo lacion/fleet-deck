@@ -65,6 +65,11 @@ pub enum Command {
         #[arg(long)]
         elevate: bool,
     },
+    /// Run the deck, the station, or both as a service that starts at boot or login.
+    Service {
+        #[command(subcommand)]
+        command: ServiceCommand,
+    },
     /// The durable provider shim (ADR-005 §2). The station starts it and
     /// sends the launch frame on its stdin; it is not a user command.
     #[command(hide = true)]
@@ -81,6 +86,47 @@ pub enum Command {
         #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
         program: Vec<std::ffi::OsString>,
     },
+}
+
+/// `fleetdeck service` (design service.md §3).
+#[derive(Debug, Clone, Subcommand)]
+pub enum ServiceCommand {
+    /// Install and start the service (default: both = `fleetdeck up`).
+    Install {
+        #[arg(value_enum, default_value_t = ServiceKind::Both)]
+        kind: ServiceKind,
+        /// Print the files and the commands; change nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Stop and remove the service (default: every installed one).
+    Uninstall {
+        #[arg(value_enum)]
+        kind: Option<ServiceKind>,
+    },
+    /// Start the service (default: every installed one).
+    Start {
+        #[arg(value_enum)]
+        kind: Option<ServiceKind>,
+    },
+    /// Stop the service until the next boot or login (default: every installed one).
+    Stop {
+        #[arg(value_enum)]
+        kind: Option<ServiceKind>,
+    },
+    /// Show the installed services.
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+/// What a service runs: `both` is `fleetdeck up`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum ServiceKind {
+    Both,
+    Deck,
+    Station,
 }
 
 /// Listen options of a serving process.

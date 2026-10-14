@@ -13,8 +13,10 @@ use crate::local_addrs;
 
 /// The Tailscale program of Windows, as WSL sees it.
 pub const WINDOWS_PROGRAM: &str = "/mnt/c/Program Files/Tailscale/tailscale.exe";
+/// The PowerShell program under WSL (design service.md §6).
+pub const POWERSHELL: &str = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe";
 
-const OSRELEASE: &str = "/proc/sys/kernel/osrelease";
+pub const OSRELEASE: &str = "/proc/sys/kernel/osrelease";
 const INTEROP: &str = "/proc/sys/fs/binfmt_misc/WSLInterop";
 const MOUNTINFO: &str = "/proc/self/mountinfo";
 /// The WSL mount of the drive C:.
@@ -181,6 +183,69 @@ pub fn windows_tree_ok(root: &Path) -> bool {
     kind(&files).is_ok_and(|t| t.is_dir())
         && kind(&dir).is_ok_and(|t| t.is_dir())
         && kind(&exe).is_ok_and(|t| t.is_file())
+}
+
+/// The components of `program` below `/mnt/c`, each with its full path:
+/// `("/mnt/c/Windows", "Windows")`, ... `None` when `program` is not below
+/// `/mnt/c`.
+fn components_below_c(program: &str) -> Option<Vec<(String, String)>> {
+    let rest = program.strip_prefix(C_DRIVE)?.strip_prefix('/')?;
+    let mut full = C_DRIVE.to_owned();
+    let mut out = Vec::new();
+    for part in rest.split('/') {
+        if part.is_empty() {
+            return None;
+        }
+        full.push('/');
+        full.push_str(part);
+        out.push((full.clone(), part.to_owned()));
+    }
+    Some(out)
+}
+
+/// [`c_drive_mount_ok`], and no mount on a component of `program` below
+/// `/mnt/c`. A `program` that is not below `/mnt/c` fails.
+#[must_use]
+pub fn c_drive_mount_ok_for(entries: &[MountEntry], program: &str) -> bool {
+    let Some(parts) = components_below_c(program) else {
+        return false;
+    };
+    c_drive_mount_ok(entries)
+        && !entries
+            .iter()
+            .any(|e| parts.iter().any(|(full, _)| *full == e.mount_point))
+}
+
+/// Each component of `program` below `/mnt/c` (with `root` standing for
+/// `/mnt/c`) is a directory and the last is a regular file, by
+/// `symlink_metadata`: no component is a symbolic link.
+#[must_use]
+pub fn windows_file_ok(root: &Path, program: &str) -> bool {
+    let Some(parts) = components_below_c(program) else {
+        return false;
+    };
+    let mut path = root.to_path_buf();
+    let last = parts.len() - 1;
+    parts.iter().enumerate().all(|(i, (_, part))| {
+        path.push(part);
+        std::fs::symlink_metadata(&path)
+            .map(|m| m.file_type())
+            .is_ok_and(|t| if i == last { t.is_file() } else { t.is_dir() })
+    })
+}
+
+/// [`POWERSHELL`], when this is WSL and both checks pass on
+/// `/proc/self/mountinfo` and `/mnt/c`. Nothing is run. `None` when
+/// `mountinfo` cannot be read or parsed.
+#[must_use]
+pub fn windows_powershell_ok() -> Option<PathBuf> {
+    if !is_wsl() {
+        return None;
+    }
+    let text = std::fs::read_to_string(MOUNTINFO).ok()?;
+    let entries = parse_mountinfo(&text)?;
+    (c_drive_mount_ok_for(&entries, POWERSHELL) && windows_file_ok(Path::new(C_DRIVE), POWERSHELL))
+        .then(|| PathBuf::from(POWERSHELL))
 }
 
 /// The Windows program of Tailscale, when this is WSL and every check of
@@ -398,6 +463,77 @@ mod tests {
         // A good mount and a tree that is missing.
         let empty = tempfile::tempdir().unwrap();
         assert_eq!(program_from(true, Some(OWNER), empty.path()), None);
+    }
+
+    fn powershell_tree(root: &Path) {
+        let dir = root.join("Windows/System32/WindowsPowerShell/v1.0");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("powershell.exe"), b"x").unwrap();
+    }
+
+    #[test]
+    fn the_powershell_mount_checks() {
+        let entries = |text: &str| parse_mountinfo(text).unwrap();
+        // The owner entry passes.
+        assert!(c_drive_mount_ok_for(&entries(OWNER), POWERSHELL));
+        // A mount on any component of the program is refused.
+        for point in [
+            "/mnt/c/Windows",
+            "/mnt/c/Windows/System32",
+            "/mnt/c/Windows/System32/WindowsPowerShell",
+            "/mnt/c/Windows/System32/WindowsPowerShell/v1.0",
+            POWERSHELL,
+        ] {
+            let text = format!("{OWNER}\n9 1 8:1 /x {point} rw - ext4 /dev/sda1 rw");
+            assert!(
+                !c_drive_mount_ok_for(&entries(&text), POWERSHELL),
+                "{point}"
+            );
+        }
+        // A mount elsewhere does not matter; a wrong drive mount does.
+        let other = "9 1 8:1 /x /mnt/c/Users/other rw - ext4 /dev/sda1 rw";
+        assert!(c_drive_mount_ok_for(
+            &entries(&format!("{OWNER}\n{other}")),
+            POWERSHELL
+        ));
+        assert!(!c_drive_mount_ok_for(&entries(ROOT), POWERSHELL));
+        // A program outside `/mnt/c` is refused.
+        assert!(!c_drive_mount_ok_for(&entries(OWNER), "/usr/bin/pwsh"));
+    }
+
+    #[test]
+    fn the_powershell_tree_needs_real_directories_and_a_regular_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(!windows_file_ok(tmp.path(), POWERSHELL));
+        powershell_tree(tmp.path());
+        assert!(windows_file_ok(tmp.path(), POWERSHELL));
+        assert!(!windows_file_ok(tmp.path(), "/usr/bin/pwsh"));
+        // A directory in place of the file.
+        let exe = tmp
+            .path()
+            .join("Windows/System32/WindowsPowerShell/v1.0/powershell.exe");
+        std::fs::remove_file(&exe).unwrap();
+        std::fs::create_dir(&exe).unwrap();
+        assert!(!windows_file_ok(tmp.path(), POWERSHELL));
+    }
+
+    #[test]
+    fn a_symbolic_link_at_windows_or_system32_fails_the_powershell_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("real");
+        powershell_tree(&real);
+        // `Windows` is a link.
+        let root = tmp.path().join("c1");
+        std::fs::create_dir(&root).unwrap();
+        symlink(real.join("Windows"), root.join("Windows")).unwrap();
+        assert!(!windows_file_ok(&root, POWERSHELL));
+        // `System32` is a link.
+        let root = tmp.path().join("c2");
+        std::fs::create_dir_all(root.join("Windows")).unwrap();
+        symlink(real.join("Windows/System32"), root.join("Windows/System32")).unwrap();
+        assert!(!windows_file_ok(&root, POWERSHELL));
+        // The real tree passes.
+        assert!(windows_file_ok(&real, POWERSHELL));
     }
 
     #[test]

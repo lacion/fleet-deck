@@ -2965,3 +2965,13 @@ Owner review: pending.
 - The station carries the public client id `66edc8f79eb0603f2aded18705bdfb99`; no secret exists anywhere. Without an owner app, a Linear sign-in uses it with PKCE and no `client_secret`, only from `https://127.0.0.1:7420` or `https://localhost:7420` (`builtin_needs_localhost` otherwise). An owner app still wins.
 - Each Linear account records `app_source` and `app_client_id`, is refreshed only with its own app, and is matched by its app in the upsert. Old accounts are `legacy` until a refresh with the stored owner app succeeds; else `app_changed` and the status `needs_reconnect`.
 - Release gate: the owner verifies Linear's redirect matching against the real app before release (design §4).
+
+## DL-186 — `fleetdeck service`
+
+- Choice (command): `fleetdeck service install|uninstall|start|stop|status`, for `both` (`fleetdeck up`), `deck` and `station`. It writes systemd user services (Linux, WSL) or launchd user agents (macOS). Design: `docs/v2/design/service.md` (revision 2, built).
+- Choice (program): the service runs a managed copy (`<root>/current`, `-svc-` releases, the `Launcher` of the station upgrade), never the build directory. A new build reaches the service with `fleetdeck service install`.
+- Choice (one installation): the service file records its data directory (systemd `# fleetdeck-data:`, launchd a hex comment). A conflict (`both` with `deck` or `station`) or another data directory fails before any change.
+- Choice (another process): when the service is not active and a socket answers, `install` writes the files and enables them but does not start; `start` fails with the same advice.
+- Choice (WSL): a Windows logon task (`\Fleet Deck\WSL <distro> <SID>`) starts the distro; one PowerShell program with mount and symbolic link checks; a failure is a warning.
+- Choice (tests): every automated test uses a recording runner; no test runs `systemctl`, `loginctl`, `launchctl` or PowerShell. Advisor review (Codex) of revision 1 applied (design §13).
+
