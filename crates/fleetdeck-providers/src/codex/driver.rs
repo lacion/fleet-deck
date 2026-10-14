@@ -25,12 +25,11 @@ use fleetdeck_proto::command::{SessionSpec, StopMode};
 use fleetdeck_proto::event::{ProviderKind, RawRef};
 use fleetdeck_proto::{Capabilities, Event, Operation, ProviderInstanceId};
 use serde_json::Value;
-use tokio::io::{AsyncRead, BufReader};
 use tokio::sync::{Mutex, Notify, mpsc, watch};
 use tokio::task::JoinHandle;
 
 use super::core::{CodexCore, Output};
-use super::{ClientInfo, CoreConfig, app_server_args, capabilities, rpc};
+use super::{ClientInfo, CoreConfig, app_server_args, capabilities};
 use crate::adapter::{
     Answer, ControlId, EventSink, HostInput, LiveSession, ModelId, NativeSessionId, PermissionMode,
     ProviderAdapter, ProviderError, ProviderProbe, Result, canonical_workspace, require,
@@ -40,8 +39,7 @@ use crate::coordinator::CoordinatorLaunch;
 use crate::host::{ProcessControl, ProcessSpec, SessionHost, StopPolicy};
 use crate::rawlog::{RawDir, RawFrameLog};
 use crate::stdio::{
-    Fed, LineRead, MAX_LINE_BYTES, Write, flush, is_queue_full, now_ms, read_line_bounded,
-    release_write, reserve_write, write_failed,
+    MAX_LINE_BYTES, Write, flush, now_ms, release_write, reserve_write, write_failed,
 };
 
 use super::probe::parse_version;
@@ -445,139 +443,6 @@ impl Shared {
     }
 }
 
-async fn write_loop(
-    shared: Arc<Shared>,
-    control: Arc<dyn ProcessControl>,
-    mut rx: mpsc::UnboundedReceiver<Write>,
-) {
-    while let Some(item) = rx.recv().await {
-        let frame = match item {
-            Write::Frame(frame) => {
-                release_write(&shared.queued);
-                frame
-            }
-            Write::Close => {
-                control.close_stdin().await;
-                break;
-            }
-            Write::Flush(ack) => {
-                let _ = ack.send(());
-                continue;
-            }
-        };
-        shared.log(RawDir::In, &frame);
-        let mut line = frame.to_string();
-        line.push('\n');
-        if let Err(e) = control.write(line.as_bytes()).await {
-            tracing::debug!(error = %e, "codex stdin closed");
-            break;
-        }
-    }
-}
-
-async fn read_loop(
-    shared: Arc<Shared>,
-    control: Arc<dyn ProcessControl>,
-    stdout: Box<dyn AsyncRead + Send + Unpin>,
-    writes: mpsc::UnboundedSender<Write>,
-    frames: watch::Sender<u64>,
-    max_line: usize,
-) {
-    let mut reader = BufReader::new(stdout);
-    let mut buf = Vec::new();
-    let mut sink_open = true;
-    loop {
-        match read_line_bounded(&mut reader, &mut buf, max_line).await {
-            Ok(LineRead::Line) => {}
-            Ok(LineRead::Eof) => break,
-            Ok(LineRead::TooLong) => {
-                // The line is not read to its end: stop the session (NV-20).
-                tracing::warn!("provider stdout line over the limit");
-                shared.note(
-                    RawDir::Stderr,
-                    "a stdout line is over 16 MiB: the session is stopped",
-                );
-                control.kill().await;
-                break;
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "codex stdout read failed");
-                break;
-            }
-        }
-        let line = match std::str::from_utf8(&buf) {
-            Ok(line) => line,
-            Err(e) => {
-                tracing::warn!(error = %e, "codex stdout read failed");
-                break;
-            }
-        };
-        let mut stop = false;
-        if sink_open {
-            match feed_line(&shared, line, &writes).await {
-                Fed::Open => {}
-                Fed::SinkClosed => {
-                    // The station dropped the session's events: nobody owns it.
-                    sink_open = false;
-                    control.kill().await;
-                }
-                Fed::QueueFull => {
-                    // The process does not read stdin: stop it (NV-19).
-                    tracing::warn!("provider stdin queue is full");
-                    shared.note(
-                        RawDir::Stderr,
-                        "the stdin queue is full: the session is stopped",
-                    );
-                    control.kill().await;
-                    stop = true;
-                }
-            }
-        }
-        frames.send_modify(|n| *n += 1);
-        if stop {
-            break;
-        }
-    }
-    let report = control.wait().await;
-    if !report.stderr_tail.is_empty() {
-        shared.note(RawDir::Stderr, &report.stderr_tail);
-    }
-    let mut core = shared.core.lock().await;
-    let out = core.on_exit(report.code());
-    if sink_open {
-        let _ = shared.dispatch(out, None, &writes).await;
-    }
-    drop(core);
-    // The poller sees the ended core and stops.
-    shared.poll.notify_one();
-}
-
-/// Feeds one stdout line.
-async fn feed_line(shared: &Shared, line: &str, writes: &mpsc::UnboundedSender<Write>) -> Fed {
-    if line.trim().is_empty() {
-        return Fed::Open;
-    }
-    let (frame, raw_ref) = match serde_json::from_str::<Value>(line) {
-        Ok(v) => {
-            let raw_ref = (!is_token_delta(&v))
-                .then(|| shared.log(RawDir::Out, &v))
-                .flatten();
-            (rpc::parse_value(v), raw_ref)
-        }
-        Err(_) => {
-            shared.note(RawDir::Out, line);
-            (rpc::Incoming::Unknown(Value::from(line)), None)
-        }
-    };
-    let mut core = shared.core.lock().await;
-    let out = core.on_frame(frame);
-    match shared.dispatch(out, raw_ref.as_ref(), writes).await {
-        Err(ProviderError::SinkClosed) => Fed::SinkClosed,
-        Err(e) if is_queue_full(&e) => Fed::QueueFull,
-        _ => Fed::Open,
-    }
-}
-
 /// One running `codex app-server` process with one thread.
 #[derive(Debug)]
 pub struct CodexSession {
@@ -845,109 +710,15 @@ impl Drop for CodexSession {
 
 #[path = "durable_launch.rs"]
 mod durable_launch;
+#[path = "driver_io.rs"]
+mod io;
 #[path = "driver_poll.rs"]
 mod poll;
 #[path = "driver_probe.rs"]
 mod probe_cmd;
+use io::{read_loop, write_loop};
 use poll::poll_loop;
 
 #[cfg(test)]
-mod tests {
-    use std::io::Cursor;
-    use std::sync::atomic::Ordering;
-
-    use serde_json::json;
-
-    use super::*;
-    use crate::codex::tests::config;
-    use crate::stdio::test_support::FakeControl;
-    use crate::stdio::{MAX_QUEUED_WRITES, is_queue_full};
-
-    fn shared(queued: usize) -> Arc<Shared> {
-        let (sink, _events) = EventSink::channel(64);
-        Arc::new(Shared {
-            core: Mutex::new(CodexCore::new(config("/w"))),
-            sink,
-            raw: std::sync::Mutex::new(None),
-            poll: Notify::new(),
-            queued: AtomicUsize::new(queued),
-        })
-    }
-
-    async fn run_read_loop(
-        shared: &Arc<Shared>,
-        stdout: Vec<u8>,
-        max_line: usize,
-    ) -> (Arc<FakeControl>, u64) {
-        let control = Arc::new(FakeControl::default());
-        let (writes, _rx) = mpsc::unbounded_channel::<Write>();
-        let (frames_tx, frames_rx) = watch::channel(0);
-        tokio::time::timeout(
-            Duration::from_secs(5),
-            read_loop(
-                Arc::clone(shared),
-                control.clone(),
-                Box::new(Cursor::new(stdout)),
-                writes,
-                frames_tx,
-                max_line,
-            ),
-        )
-        .await
-        .unwrap();
-        let seen = *frames_rx.borrow();
-        (control, seen)
-    }
-
-    #[tokio::test]
-    async fn a_stdout_line_over_the_limit_stops_the_session() {
-        // NV-20: the line is over the limit; the next line is never read.
-        let shared = shared(0);
-        let mut stdout = vec![b'x'; 40];
-        stdout.extend_from_slice(b"\n{\"method\":\"brand/new\"}\n");
-        let (control, seen) = run_read_loop(&shared, stdout, 16).await;
-        assert!(control.was_killed());
-        assert_eq!(seen, 0);
-        assert!(shared.core.lock().await.has_ended());
-    }
-
-    #[tokio::test]
-    async fn a_stdout_line_at_the_limit_is_fed_to_the_core() {
-        let shared = shared(0);
-        let line = "{\"method\":\"brand/new\"}";
-        let stdout = format!("{line}\n{line}\n").into_bytes();
-        let (control, seen) = run_read_loop(&shared, stdout, line.len()).await;
-        assert!(!control.was_killed());
-        assert_eq!(seen, 2);
-    }
-
-    #[tokio::test]
-    async fn a_dispatch_with_a_full_stdin_queue_writes_nothing() {
-        // NV-19.
-        let shared = shared(MAX_QUEUED_WRITES);
-        let (tx, mut rx) = mpsc::unbounded_channel::<Write>();
-        let r = shared
-            .dispatch(vec![Output::Write(json!({"n": 1}))], None, &tx)
-            .await;
-        assert!(is_queue_full(&r.unwrap_err()));
-        assert!(rx.try_recv().is_err());
-        assert_eq!(shared.queued.load(Ordering::Acquire), MAX_QUEUED_WRITES);
-    }
-
-    #[tokio::test]
-    async fn a_dispatch_counts_the_queued_frames_and_a_closed_writer_leaves_the_count() {
-        let shared = shared(0);
-        let (tx, rx) = mpsc::unbounded_channel::<Write>();
-        shared
-            .dispatch(vec![Output::Write(json!({"n": 1}))], None, &tx)
-            .await
-            .unwrap();
-        assert_eq!(shared.queued.load(Ordering::Acquire), 1);
-        drop(rx);
-        let r = shared
-            .dispatch(vec![Output::Write(json!({"n": 2}))], None, &tx)
-            .await;
-        assert!(matches!(r, Err(ProviderError::SessionEnded)), "{r:?}");
-        assert_eq!(shared.queued.load(Ordering::Acquire), 1);
-    }
-}
+#[path = "driver_tests.rs"]
+mod tests;

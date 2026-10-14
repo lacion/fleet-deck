@@ -44,18 +44,23 @@ use std::time::Duration;
 use fleetdeck_core::config::{Driver, StationConfig};
 use fleetdeck_core::{ChildEnv, SharedIds};
 use fleetdeck_proto::command::{CommandEnvelope, SessionCommand, StopMode};
-use fleetdeck_proto::link::{StationProvider, VersionStatus};
+use fleetdeck_proto::link::StationProvider;
+use fleetdeck_providers::ProviderAdapter;
 use fleetdeck_providers::claude::{ClaudeAdapter, ClaudeAdapterConfig, RawLogSettings};
 use fleetdeck_providers::codex::{CodexAdapter, CodexAdapterConfig};
 use fleetdeck_providers::host::SessionHost;
 use fleetdeck_providers::rawlog::RawLogLimits;
-use fleetdeck_providers::{AuthState, ProviderAdapter};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 pub use policy::{Policy, WorkspaceError};
 pub use policy_hub::{Holders, PolicyHub, PrepareError, Prepared};
 pub use target::{Adapters, SessionTarget};
+
+#[path = "manager_execution.rs"]
+mod execution_checks;
+#[path = "manager_providers.rs"]
+mod providers_info;
 
 use crate::store::{Caller, Decided, Result, Store};
 use crate::worker::EffectWorker;
@@ -517,56 +522,6 @@ impl SessionManager {
         fleetdeck_core::new_id(self.ids.as_ref())
     }
 
-    /// The configured provider instances with the version and sign-in state
-    /// of one probe each (`station.info`, M2 P4-2). The first call probes,
-    /// each probe bounded by [`PROBE_TIMEOUT`]; later calls reuse the
-    /// result for the life of the station process (DL-059). An instance
-    /// without an adapter, or a failed probe, reports no version and
-    /// `unknown` sign-in.
-    pub async fn providers(&self) -> Vec<StationProvider> {
-        self.providers
-            .get_or_init(|| async {
-                let mut out = Vec::new();
-                let policy = self.policy.current();
-                for (instance, kind) in policy.instances() {
-                    let probe = match self.target.adapter(instance) {
-                        Some(adapter) => tokio::time::timeout(PROBE_TIMEOUT, adapter.probe())
-                            .await
-                            .ok()
-                            .and_then(std::result::Result::ok),
-                        None => None,
-                    };
-                    let auth = match probe.as_ref().map(|p| &p.auth) {
-                        Some(AuthState::SignedIn { .. }) => "signed_in",
-                        Some(AuthState::SignedOut) => "signed_out",
-                        Some(AuthState::Unknown) | None => "unknown",
-                    };
-                    let version = probe.and_then(|p| p.version);
-                    let version_status =
-                        fleetdeck_providers::version::version_status(*kind, version.as_deref());
-                    if version_status == VersionStatus::Broken {
-                        // Starts of this instance are refused (R8.2, DL-162).
-                        self.target.mark_broken(instance, *kind);
-                    }
-                    if let Some(v) = &version {
-                        // The coordinator handoff check (DL-219).
-                        self.coordinator.record_version(*kind, v.clone());
-                    }
-                    out.push(StationProvider {
-                        instance: instance.clone(),
-                        provider: *kind,
-                        version,
-                        auth: auth.to_owned(),
-                        capabilities: self.target.adapter(instance).map(|a| a.capabilities()),
-                        version_status,
-                    });
-                }
-                out
-            })
-            .await
-            .clone()
-    }
-
     /// The number of sessions with a live provider process.
     #[must_use]
     pub fn live_sessions(&self) -> usize {
@@ -620,59 +575,6 @@ impl SessionManager {
                 }
             })
             .await
-    }
-
-    /// The boot id reader of this station: the one of its shim host, or
-    /// the real reader.
-    fn boot_reader(&self) -> fleetdeck_providers::host::shim::identity::BootIdReader {
-        self.target
-            .boot_reader()
-            .unwrap_or_else(fleetdeck_providers::host::shim::identity::real_boot_id_reader)
-    }
-
-    /// The check of `session.reconcile_execution`: the processes of the
-    /// run of `shim_id`. `None` when the row is unknown, belongs to another
-    /// session, runs, or is proven ended already: the decision then
-    /// refuses from the row.
-    async fn reconcile_check(
-        &self,
-        command: &SessionCommand,
-    ) -> Option<fleetdeck_proto::execution::ExecutionCheck> {
-        let SessionCommand::ReconcileExecution {
-            session_id,
-            shim_id,
-        } = command
-        else {
-            return None;
-        };
-        let row = self.store.shim(shim_id.clone()).await.ok().flatten()?;
-        if &row.session_id != session_id
-            || row.state.is_open()
-            || crate::store::resumes::proves_end(&row)
-        {
-            return None;
-        }
-        let boot = self.boot_reader();
-        tokio::task::spawn_blocking(move || shims::check_row(&boot, &row))
-            .await
-            .ok()
-    }
-
-    /// `session.execution_check` (DL-182 §4.2): the newest unresolved shim
-    /// execution of `session` and what still runs of it. It changes nothing
-    /// and kills nothing.
-    ///
-    /// # Errors
-    /// A database error.
-    pub async fn execution_check(
-        &self,
-        session: &fleetdeck_proto::SessionId,
-    ) -> Result<fleetdeck_proto::execution::ExecutionCheck> {
-        let rows = self.store.shims_unresolved(Some(session.clone())).await?;
-        let boot = self.boot_reader();
-        tokio::task::spawn_blocking(move || shims::check_unresolved(&boot, &rows))
-            .await
-            .map_err(|e| crate::store::StoreError::Corrupt(format!("the check did not run: {e}")))
     }
 
     /// Stops the worker and the ticker, then every live session. Commands
