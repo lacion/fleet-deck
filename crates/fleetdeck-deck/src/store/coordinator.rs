@@ -38,7 +38,7 @@ use fleetdeck_proto::{CommandId, Receipt, Reject, RejectCode, SessionId, Station
 use ring::digest::{SHA256, digest};
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::coordinator_fleet::decide_worker;
+use super::coordinator_fleet::{decide_worker, mode_refusal};
 use super::coordinator_ops::{CallFlags, Context, Decision, decide, in_lineage, session_known};
 use super::grants::{Grant, GrantClass, GrantState, caller_grant, get_grant};
 use super::members::scope_of;
@@ -755,6 +755,14 @@ impl DeckStore {
                 .is_none_or(|s| s == &check.target_session);
             if !same || !same_target {
                 return Ok(Err("unknown_command"));
+            }
+            if let Some(launch) = &check.launch {
+                let family = serde_json::to_value(launch.provider)
+                    .ok()
+                    .and_then(|v| v.as_str().map(str::to_owned));
+                if mode_refusal(&grant, family.as_deref(), launch.mode.as_deref()).is_some() {
+                    return Ok(Err("mode_not_allowed"));
+                }
             }
             let target_excluded = match strict_session(&command) {
                 Some(s) => strict_refusal(&tx, &grant, (&station, s), (false, now))?.is_some(),

@@ -154,15 +154,42 @@ async fn needs_you_lists_the_open_requests_and_omits_the_caller_a_coordinator_an
     let r2 = &list[1];
     assert_eq!(r2["station"], json!(f.station));
     assert_eq!(r2["session_id"], "w1");
-    assert_eq!(r2["title"], "Worker one");
-    assert_eq!(r2["request_kind"], "command");
-    assert_eq!(r2["tool"], "Bash");
-    assert_eq!(r2["age_ms"], f.store.now_ms() - 2_000);
-    assert_eq!(
-        r2["options"],
-        json!([{"option_id": "once", "label": "Allow once", "kind": "allow_once"},
-               {"option_id": "no", "label": "Deny", "kind": null}])
+    // The provider-controlled texts are fenced; ids and kinds stay outside.
+    one_fence(&r2["title"]);
+    assert!(r2["title"].as_str().unwrap().contains("Worker one"));
+    assert!(
+        r2["title"]
+            .as_str()
+            .unwrap()
+            .contains("<\u{200B}/untrusted>")
     );
+    assert_eq!(r2["request_kind"], "command");
+    one_fence(&r2["tool"]);
+    let tool = r2["tool"].as_str().unwrap();
+    assert!(
+        tool.contains("Bash") && tool.contains("<\u{200B}/untrusted>"),
+        "{tool}"
+    );
+    assert!(
+        tool.contains("request:") && tool.contains("/r2/title"),
+        "{tool}"
+    );
+    assert_eq!(r2["age_ms"], f.store.now_ms() - 2_000);
+    let options = r2["options"].as_array().unwrap();
+    assert_eq!(options.len(), 2);
+    for (o, (id, kind, label)) in options.iter().zip([
+        ("once", json!("allow_once"), "Allow once"),
+        ("no", Value::Null, "Deny"),
+    ]) {
+        assert_eq!((&o["option_id"], &o["kind"]), (&json!(id), &kind));
+        one_fence(&o["label"]);
+        let text = o["label"].as_str().unwrap();
+        assert!(
+            text.contains(label) && text.contains("<\u{200B}/untrusted>"),
+            "{text}"
+        );
+        assert!(text.contains("/r2/option"), "{text}");
+    }
     one_fence(&r2["input"]);
     let input = r2["input"].as_str().unwrap();
     assert!(
@@ -171,7 +198,8 @@ async fn needs_you_lists_the_open_requests_and_omits_the_caller_a_coordinator_an
     );
     assert!(input.contains("<\u{200B}/untrusted>"), "{input}");
     // A session without a title shows its callsign or its id.
-    assert_eq!(list[2]["title"], "w3");
+    one_fence(&list[2]["title"]);
+    assert!(list[2]["title"].as_str().unwrap().contains("w3"));
     // A lineage grant sees only the requests of its lineage.
     let own = bound(f, "w2", &[GrantClass::Inspect, GrantClass::Answer], false).await;
     let got = ask(f, &own, CoordinatorQuery::NeedsYou).await.unwrap();

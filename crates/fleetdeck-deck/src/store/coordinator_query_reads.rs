@@ -286,6 +286,7 @@ impl DeckStore {
                 .clone()
                 .or_else(|| summary.callsign.clone())
                 .unwrap_or_else(|| session.to_string());
+            let title = fence(&format!("session:{station}/{session}"), &title);
             for r in &summary.open_requests {
                 let mut text = r.details.clone();
                 if let Some(input) = &r.input {
@@ -296,14 +297,18 @@ impl DeckStore {
                 let options: Vec<Value> = r
                     .options
                     .iter()
-                    .map(|o| json!({"option_id": o.option_id, "label": o.label, "kind": o.kind}))
+                    .map(|o| {
+                        let label = fence(&format!("{source}/option"), &o.label);
+                        json!({"option_id": o.option_id, "label": label, "kind": o.kind})
+                    })
                     .collect();
+                let tool = fence(&format!("{source}/title"), &r.title);
                 found.push((
                     r.requested_at,
                     json!({
                         "station": station, "session_id": session, "title": title,
                         "request_id": r.request_id, "request_kind": r.request_kind,
-                        "tool": r.title,
+                        "tool": tool,
                         "input": fence_cut(&source, &text, REQUEST_CHARS),
                         "options": options,
                         "age_ms": now.saturating_sub(r.requested_at).max(0),

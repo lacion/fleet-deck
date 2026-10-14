@@ -225,3 +225,12 @@ Board (`web/src/spawn/fleetcontrol.test.tsx`): 16. The switches ask for elevatio
 | B2 caller switch does not stop accepted effects | §3 station switch read live for the caller too; §6.2 `coordinator.policy_now` step in `authority_check`, fail closed; windows (a)–(c). Tests 8, 8d, 11 aligned. |
 | B3 history in hunk headers | §4.4 step 5 rebuilds `@@` headers from numbers only and drops old-side metadata; suppression when not possible. Test 13. |
 | M1 delayed caller-policy test, contradictions | Test 8d rewritten (deck setting on, grant active, caller switch off, no write); tests 8 and 11 aligned. |
+
+## 17. PRE-PR fixes (deck)
+
+The deck parts of the PRE-PR findings:
+
+- **Stale authority after `policy_now` (blocker 2).** `coordinator.policy_now` can wait up to 3 s. `coordinator.authority_check` therefore runs the deck-local checks (grant, generation, deck setting `fleet_control`, the command, the launch mode, the target rule, and the links of the caller station and of the target station) twice: before the `policy_now` round trip, which saves the round trip for an authority that is invalid already, and again after it. The deck answers `valid: true` only when the second run also passes; a change in between gives the reason of the failed check.
+- **Launch mode (blocker 4).** `AuthorityCheck.launch` carries the provider and the mode that the target station will really use. `authority_local` applies the mode rules of section 5.2 (the ceiling of the family and the bypass rule) to it, in the transaction of the grant check, and answers `mode_not_allowed` when they fail. A check without `launch` makes no mode check.
+- **Answer to a question (blocker 3).** A coordinator answers a question with `question_answers` or `text`, never with an option: an answer with `option_id` is `forbidden`, because an option of a question can carry a standing allow (for example `allow_always`). An answer without `option_id` gets the literal option id `answer`, which the station maps for the question.
+- **`needs_you` text (major 5).** The tool title, each option label and the session title come from a provider or from a session and are inside the untrusted fence. `option_id` and `kind` stay outside, because the coordinator needs them to answer.

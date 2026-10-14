@@ -307,7 +307,11 @@ fn session_family(
 /// The mode rules of ADR-008 §5.2 for a session that moves into `mode`
 /// (`None`: the provider default): the family has a ceiling, the mode is
 /// within it and it is not a bypass mode.
-fn mode_refusal(grant: &Grant, family: Option<&str>, mode: Option<&str>) -> Option<Decision> {
+pub(super) fn mode_refusal(
+    grant: &Grant,
+    family: Option<&str>,
+    mode: Option<&str>,
+) -> Option<Decision> {
     let forbidden = |m: String| Some(Decision::Rejected(RejectCode::Forbidden, m));
     let Some(family) = family else {
         return forbidden("the provider of the session is not known".to_owned());
@@ -584,18 +588,22 @@ fn kind_name(kind: Option<OptionKind>) -> &'static str {
 
 type Pick = std::result::Result<String, (RejectCode, &'static str)>;
 
-/// The option id of an answer to a question (ADR-008 section 5.3): the given
-/// one, else the literal `answer` when the request has no options or has that
-/// one. A question needs one of `option_id`, `question_answers`, `text`.
-fn pick_for_question(request: &OpenRequest, given: (Option<&str>, bool, bool)) -> Pick {
-    let invalid = |m| Err((RejectCode::InvalidCommand, m));
-    let has = |id: &str| request.options.iter().any(|o| o.option_id == id);
+/// The option id of an answer to a question (ADR-008 section 5.3): a
+/// coordinator answers with `question_answers` or `text`, never with an
+/// option (an option of a question can carry a standing allow), so the id is
+/// the literal `answer`, which the station maps for the question. A question
+/// needs one of `option_id`, `question_answers`, `text`.
+fn pick_for_question(given: (Option<&str>, bool, bool)) -> Pick {
     match given {
-        (None, false, false) => invalid("a question needs option_id, question_answers or text"),
-        (Some(id), _, _) if has(id) => Ok(id.to_owned()),
-        (Some(_), _, _) => invalid("option_id is not an option"),
-        (None, _, _) if request.options.is_empty() || has("answer") => Ok("answer".to_owned()),
-        (None, _, _) => invalid("option_id is required for this question"),
+        (None, false, false) => Err((
+            RejectCode::InvalidCommand,
+            "a question needs option_id, question_answers or text",
+        )),
+        (Some(_), _, _) => Err((
+            RejectCode::Forbidden,
+            "a coordinator answers a question with its answers or text, never an option",
+        )),
+        (None, _, _) => Ok("answer".to_owned()),
     }
 }
 
@@ -690,7 +698,7 @@ pub(super) fn answer(
     let given = (option_id.as_deref(), question_answers.is_some());
     let picked = if question {
         note("question");
-        pick_for_question(&request, (given.0, given.1, text.is_some()))
+        pick_for_question((given.0, given.1, text.is_some()))
     } else {
         pick_for_approval(&request, given, &note)
     };
