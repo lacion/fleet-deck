@@ -246,6 +246,9 @@ pub struct OpenLink {
     /// The database incarnation that the peer's `hello` named (ADR-004
     /// §9.3): the `target_incarnation` of the envelopes that it holds.
     pub peer_incarnation: IncarnationId,
+    /// The remote address of the control connection: the address that
+    /// dialed in (listener side) or the address that was dialed.
+    pub remote: Option<SocketAddr>,
     pub control: Ws,
     /// Present when both sides negotiated `data_streams.v1`.
     pub data: Option<Ws>,
@@ -402,6 +405,7 @@ async fn dial_attempt(
         side: Side::Dialer,
         negotiated,
         peer_incarnation,
+        remote: Some(addr),
         control,
         data,
         closing,
@@ -647,6 +651,7 @@ async fn accept_one(
                 (epoch, attempt_id),
                 est.negotiated,
                 est.peer_hello.incarnation,
+                from,
             )
             .await,
         ),
@@ -680,6 +685,7 @@ async fn admit_control(
     (epoch, attempt_id): (u64, String),
     negotiated: Negotiated,
     peer_incarnation: IncarnationId,
+    remote: SocketAddr,
 ) -> Result<OpenLink, LinkError> {
     let fp = peer.fingerprint();
     if let Err(min_epoch) = node.epochs.accept(&fp, epoch).await? {
@@ -738,6 +744,7 @@ async fn admit_control(
         side: Side::Listener,
         negotiated,
         peer_incarnation,
+        remote: Some(remote),
         control: ws,
         data,
         closing,

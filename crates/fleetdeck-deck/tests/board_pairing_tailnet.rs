@@ -625,6 +625,65 @@ async fn the_devices_list_shows_a_waiting_request_and_the_station_command() {
 }
 
 #[tokio::test]
+async fn a_station_that_dials_the_deck_is_paired_while_its_link_is_live() {
+    let d = deck(Some(ListenerKind::Tailnet)).await;
+    let c = &d.board;
+    let h = owner(c).await;
+    open_window(c, &h).await;
+    // A station paired by request dials the deck: it has no stored address.
+    let st = c
+        .store
+        .pin_station(NewStation {
+            key: Identity::generate().unwrap().public_key(),
+            name: "alpha-station".into(),
+            scopes: BTreeSet::from([Scope::Read]),
+            dial_url: None,
+        })
+        .await
+        .unwrap();
+    let state = |devices: &Value, name: &str| {
+        let dev = devices["devices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["host_name"] == name)
+            .unwrap()
+            .clone();
+        (dev["state"].clone(), dev["command"].clone())
+    };
+    let r = get(c, &h, "/api/tailnet/devices").await;
+    assert_eq!(state(&r.body, "alpha").0, "none");
+    // A live link from the tailnet address of `alpha`: paired, no command.
+    c.store
+        .set_link_peer(&st.station_id, 1, "100.64.0.11".parse().unwrap());
+    let r = get(c, &h, "/api/tailnet/devices").await;
+    assert_eq!(state(&r.body, "alpha"), (json!("paired"), Value::Null));
+    assert_eq!(state(&r.body, "bravo").0, "none");
+    // The link ends: the device is not paired by that link any more.
+    c.store.clear_link_features(&st.station_id, 1);
+    let r = get(c, &h, "/api/tailnet/devices").await;
+    assert_eq!(state(&r.body, "alpha").0, "none");
+    assert!(state(&r.body, "alpha").1.is_string());
+}
+
+#[tokio::test]
+async fn a_live_link_records_its_remote_address_until_it_ends() {
+    let mut f = fixture().await;
+    let loopback: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+    assert!(f.store.link_peer_ips().is_empty());
+    let station = f.connect().await;
+    assert_eq!(f.store.link_peer_ips(), BTreeSet::from([loopback]));
+    station.control.close("test", "the test ends the link");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !f.store.link_peer_ips().is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the address goes with the link");
+}
+
+#[tokio::test]
 async fn the_command_uses_the_first_tailnet_address_when_the_deck_has_no_dns_name() {
     let d = deck_with(
         Some(ListenerKind::Tailnet),

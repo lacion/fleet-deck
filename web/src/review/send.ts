@@ -54,15 +54,25 @@ export const sendLabel = (n: number): string =>
 
 export const confirmText = (n: number): string => `Delete ${n} ${n === 1 ? 'draft' : 'drafts'}?`;
 
-/** A key that stays the same until `rotate()`: a repeat of a send with the same key is safe. */
-export type KeyHolder = { current(): string; rotate(): void };
+/**
+ * A key bound to one selection of comments: a repeat of the same selection keeps its key (a send
+ * is safe to repeat), another selection gets a new key, `rotate()` follows a send that returned.
+ */
+export type KeyHolder = { current(ids: string): string; rotate(): void };
 
 export function keyHolder(make: () => string = commandId): KeyHolder {
   let key = make();
+  // The selection that `key` is bound to; null until the first send after a new key.
+  let bound: string | null = null;
   return {
-    current: () => key,
+    current: (ids) => {
+      if (bound !== null && bound !== ids) key = make();
+      bound = ids;
+      return key;
+    },
     rotate: () => {
       key = make();
+      bound = null;
     },
   };
 }
@@ -85,16 +95,17 @@ export function keyMap(make: () => string = commandId): KeyMap {
   };
 }
 
-/** Sends the drafts. The key changes only after a send that succeeded. */
+/** Sends the drafts. The key changes after a send that succeeded, and for another selection. */
 export async function sendDrafts(
   actions: Pick<ReviewActions, 'send'>,
   session: SessionKey,
   holder: KeyHolder,
   threads: readonly ReviewThread[],
 ): Promise<ReviewSummary> {
+  const ids = sendIds(threads);
   const done = await actions.send(session, {
-    send_key: holder.current(),
-    comment_ids: sendIds(threads),
+    send_key: holder.current([...ids].sort().join(',')),
+    comment_ids: ids,
   });
   holder.rotate();
   return done;

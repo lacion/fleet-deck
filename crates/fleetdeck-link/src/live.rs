@@ -10,6 +10,7 @@
 //! - Dropping the local data handles does not end the link.
 
 use std::fmt;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -44,6 +45,8 @@ pub struct LiveLink {
     /// The database incarnation that the peer's `hello` named (ADR-004
     /// §9.3): a station targets the deck's with `coordinator.*`.
     pub peer_incarnation: fleetdeck_proto::IncarnationId,
+    /// The remote address of the control connection (see `OpenLink`).
+    pub remote: Option<SocketAddr>,
     pub control: Control,
     pub inbound: mpsc::Receiver<Inbound>,
     /// Present when both sides negotiated `data_streams.v1`.
@@ -93,6 +96,7 @@ pub fn start(node: &NodeConfig, link: OpenLink) -> LiveLink {
         id: link.id,
         side: link.side,
         peer_incarnation: link.peer_incarnation,
+        remote: link.remote,
         control,
         inbound,
         data,

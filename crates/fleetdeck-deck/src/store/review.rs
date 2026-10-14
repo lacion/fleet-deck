@@ -573,7 +573,8 @@ impl DeckStore {
     ///
     /// # Errors
     /// Refusals `too_many_comments`, `unknown_comment` (a reply whose top
-    /// comment the viewer cannot see); a database error.
+    /// comment the viewer cannot see, or a replayed `import_key` whose
+    /// stored comment the viewer cannot see); a database error.
     pub async fn review_add(
         &self,
         station: StationId,
@@ -601,6 +602,11 @@ impl DeckStore {
                     if let Some(old) = old
                         && let Some(c) = find(&tx, &station, &session, &old)?
                     {
+                        // The same visibility rule as every other lookup of a
+                        // comment (`edit`, `delete`).
+                        if !visible(&c, &viewer, &hide) {
+                            refuse!("unknown_comment", "no such comment");
+                        }
                         return Ok(Ok((c, false)));
                     }
                 }
