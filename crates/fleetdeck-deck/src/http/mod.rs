@@ -7,6 +7,7 @@ pub mod access;
 pub mod account_routes;
 pub mod account_secrets;
 pub mod activity_routes;
+pub mod admission;
 pub mod archive_routes;
 pub mod artifact_routes;
 pub mod assets;
@@ -49,12 +50,13 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioIo, TokioTimer};
 use hyper_util::service::TowerToHyperService;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_rustls::TlsAcceptor;
 
-pub use auth_routes::{DeviceLinkLimiter, LoginLimiter, SessionView};
+pub use admission::LoginLimits;
+pub use auth_routes::{DeviceLinkLimiter, SessionView};
 pub use guard::{ApiError, Origins};
 pub use tls::BoardTls;
 
@@ -68,7 +70,7 @@ pub struct Board {
     /// The command router (P3-9a).
     pub link: Arc<DeckLink>,
     pub origins: Origins,
-    pub limiter: LoginLimiter,
+    pub limiter: LoginLimits,
     /// The rate limit of `POST /api/auth/device-link` (DL-146).
     pub device_links: DeviceLinkLimiter,
     /// The SHA-256 of the board certificate, for a device link.
@@ -467,11 +469,16 @@ pub struct BoardServer {
     pub addrs: Vec<SocketAddr>,
     /// The certificate the listeners present.
     pub tls: BoardTls,
+    admission: Arc<admission::Admission>,
     tasks: Vec<JoinHandle<()>>,
 }
 
 /// How long a client has for the TLS handshake.
 const HANDSHAKE: Duration = Duration::from_secs(10);
+/// How long a client has to send the request headers, also between two
+/// requests of a keep-alive connection (hyper starts the clock again when it
+/// waits for the next request).
+const HEADER_READ: Duration = Duration::from_secs(10);
 
 impl BoardServer {
     /// Binds every address. The board's [`Origins`] and the certificate
@@ -509,6 +516,7 @@ impl BoardServer {
         let (board, tls) = build(&bound).map_err(BindError::Build)?;
         let app = router(board);
         let acceptor = TlsAcceptor::from(Arc::clone(&tls.config));
+        let admission = Arc::new(admission::Admission::default());
         let tasks = listeners
             .into_iter()
             .map(|listener| {
@@ -516,6 +524,7 @@ impl BoardServer {
                     listener,
                     acceptor.clone(),
                     app.clone(),
+                    Arc::clone(&admission),
                     shutdown.clone(),
                 ))
             })
@@ -523,8 +532,16 @@ impl BoardServer {
         Ok(Self {
             addrs: bound,
             tls,
+            admission,
             tasks,
         })
+    }
+
+    /// The open board connections (live admission guards).
+    #[doc(hidden)]
+    #[must_use]
+    pub fn admitted(&self) -> usize {
+        self.admission.admitted()
     }
 
     /// Waits for the listeners after the shutdown signal.
@@ -560,27 +577,25 @@ async fn serve_tls(
     listener: TcpListener,
     acceptor: TlsAcceptor,
     app: Router,
+    admission: Arc<admission::Admission>,
     mut shutdown: watch::Receiver<bool>,
 ) {
     let mut conns = JoinSet::new();
     loop {
         tokio::select! {
             accepted = listener.accept() => match accepted {
-                Ok((tcp, _)) => {
-                    let acceptor = acceptor.clone();
-                    let service = TowerToHyperService::new(app.clone());
-                    conns.spawn(async move {
-                        let Ok(Ok(tls)) = tokio::time::timeout(HANDSHAKE, acceptor.accept(tcp)).await
-                        else {
-                            return;
-                        };
-                        let conn = hyper::server::conn::http1::Builder::new()
-                            .serve_connection(TokioIo::new(tls), service)
-                            .with_upgrades();
-                        if let Err(e) = conn.await {
-                            tracing::debug!(error = %e, "board connection");
+                Ok((tcp, peer)) => {
+                    // Admission comes first: a refused connection gets no
+                    // task and no TLS work.
+                    let Some(guard) = admission.try_admit(peer.ip()) else {
+                        if admission.should_log_refusal() {
+                            tracing::debug!(peer = %peer.ip(), "board connection refused: too many open connections");
                         }
-                    });
+                        drop(tcp);
+                        continue;
+                    };
+                    let acceptor = acceptor.clone();
+                    conns.spawn(serve_connection(tcp, peer, acceptor, app.clone(), guard));
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "board accept");
@@ -592,4 +607,33 @@ async fn serve_tls(
         }
     }
     conns.abort_all();
+}
+
+/// One board connection: TLS, then HTTP/1.1 with upgrades. The guard lives
+/// in the stream, so it lives as long as an upgraded WebSocket.
+async fn serve_connection(
+    tcp: tokio::net::TcpStream,
+    peer: SocketAddr,
+    acceptor: TlsAcceptor,
+    app: Router,
+    guard: admission::AdmitGuard,
+) {
+    let Ok(Ok(tls)) = tokio::time::timeout(HANDSHAKE, acceptor.accept(tcp)).await else {
+        return;
+    };
+    let inner = TowerToHyperService::new(app);
+    let service =
+        hyper::service::service_fn(move |mut req: axum::http::Request<hyper::body::Incoming>| {
+            req.extensions_mut().insert(admission::PeerAddr(peer));
+            hyper::service::Service::call(&inner, req)
+        });
+    let conn = hyper::server::conn::http1::Builder::new()
+        .timer(TokioTimer::new())
+        .header_read_timeout(HEADER_READ)
+        .keep_alive(true)
+        .serve_connection(TokioIo::new(admission::Guarded::new(tls, guard)), service)
+        .with_upgrades();
+    if let Err(e) = conn.await {
+        tracing::debug!(error = %e, "board connection");
+    }
 }

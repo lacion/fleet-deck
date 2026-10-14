@@ -25,6 +25,7 @@ use tokio::task::JoinHandle;
 use fleetdeck_core::identity::{Identity, PeerKey};
 use fleetdeck_proto::IncarnationId;
 
+use crate::admission::Admission;
 use crate::control::{ControlConfig, GrantSource, Grants};
 use crate::epochs::Epochs;
 use crate::handshake::{self, Own};
@@ -319,6 +320,7 @@ async fn dial_attempt(
 pub struct LinkListener {
     pub local_addr: SocketAddr,
     incoming: mpsc::Receiver<Result<OpenLink, LinkError>>,
+    admission: Arc<Admission>,
     task: JoinHandle<()>,
 }
 
@@ -326,6 +328,13 @@ impl LinkListener {
     /// The next accepted link, or the error of a failed attempt.
     pub async fn next(&mut self) -> Option<Result<OpenLink, LinkError>> {
         self.incoming.recv().await
+    }
+
+    /// The pending handshakes (live admission guards).
+    #[doc(hidden)]
+    #[must_use]
+    pub fn admitted(&self) -> usize {
+        self.admission.admitted()
     }
 
     /// The next accepted link; failed attempts are skipped.
@@ -358,11 +367,26 @@ pub async fn listen(node: NodeConfig, addr: SocketAddr) -> Result<LinkListener, 
         },
     )?;
     let (tx, incoming) = mpsc::channel(16);
+    let admission = Arc::new(Admission::default());
+    let accepting = Arc::clone(&admission);
     let task = tokio::spawn(async move {
         while let Ok((stream, from)) = listener.accept().await {
+            // The permit comes first: a refused connection gets no task and
+            // no TLS work.
+            let Some(permit) = accepting.try_admit(from.ip()) else {
+                if accepting.should_log_refusal() {
+                    tracing::debug!(peer = %from.ip(), "link connection refused: too many pending handshakes");
+                }
+                drop(stream);
+                continue;
+            };
             let (node, config, tx) = (node.clone(), config.clone(), tx.clone());
             tokio::spawn(async move {
-                if let Some(r) = accept_one(&node, stream, from, config).await {
+                let result = accept_one(&node, stream, from, config).await;
+                // An established link holds no pending-handshake permit, and
+                // a full channel must not hold one either.
+                drop(permit);
+                if let Some(r) = result {
                     let _ = tx.send(r).await;
                 }
             });
@@ -371,6 +395,7 @@ pub async fn listen(node: NodeConfig, addr: SocketAddr) -> Result<LinkListener, 
     Ok(LinkListener {
         local_addr,
         incoming,
+        admission,
         task,
     })
 }
