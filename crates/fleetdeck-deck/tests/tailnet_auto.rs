@@ -11,13 +11,14 @@ mod settings_support;
 use std::net::{IpAddr, SocketAddr};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use fleetdeck_core::config::DeckConfig;
 use fleetdeck_core::paths::NodeDirs;
-use fleetdeck_core::tailscale;
+use fleetdeck_core::tailscale::{self, TailscaleCli};
 use fleetdeck_core::tailscale_wsl::{HostFacts, WINDOWS_PROGRAM};
 use fleetdeck_deck::serve::{RunningDeck, StartOptions};
-use fleetdeck_deck::tailnet_auto::{self, TailnetStart, apply_at_start};
+use fleetdeck_deck::tailnet_auto::{self, TailnetStart, apply_at_start, apply_at_start_with};
 use fleetdeck_link::reconnect::BackoffPolicy;
 use settings_support::deck_settings;
 
@@ -50,6 +51,11 @@ fn fake(dir: &Path, name: &str, doc: &str, marker: Option<&Path>) -> String {
     )
 }
 
+/// The deadline of a start check: 3 s from now.
+fn deadline() -> Instant {
+    Instant::now() + tailnet_auto::DEADLINE
+}
+
 fn all_usable(_: IpAddr) -> bool {
     true
 }
@@ -77,7 +83,8 @@ async fn run(
     let settings = deck_settings(dir, toml);
     let config = DeckConfig::load(&settings.path).unwrap();
     let before = std::fs::read_to_string(&settings.path).unwrap();
-    let (config, start) = apply_at_start(&settings, config, overrides, facts, usable).await;
+    let (config, start) =
+        apply_at_start(&settings, config, overrides, facts, usable, deadline()).await;
     let text = std::fs::read_to_string(&settings.path).unwrap();
     Run {
         config,
@@ -232,6 +239,7 @@ async fn a_second_start_with_the_same_addresses_saves_nothing() {
         &[],
         &HostFacts::default(),
         &all_usable,
+        deadline(),
     )
     .await;
     assert!(applied(&start));
@@ -259,6 +267,7 @@ async fn a_listen_that_the_command_line_set_is_left_alone() {
         &overrides,
         &HostFacts::default(),
         &all_usable,
+        deadline(),
     )
     .await;
     assert!(applied(&start), "{start:?}");
@@ -425,12 +434,86 @@ async fn a_failed_save_changes_nothing_and_says_why() {
         &[],
         &HostFacts::default(),
         &all_usable,
+        deadline(),
     )
     .await;
     assert_eq!(next, config);
     assert_eq!(
         start.start_reason.as_deref(),
         Some("The settings could not be saved: settings_unreadable.")
+    );
+    assert_eq!(std::fs::read_to_string(&settings.path).unwrap(), before);
+}
+
+/// A program lookup that blocks ends at the deadline, with the timeout
+/// reason and no save.
+#[tokio::test]
+async fn a_program_lookup_that_blocks_ends_at_the_deadline_and_saves_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = fake(tmp.path(), "tailscale", STATUS, None);
+    let settings = deck_settings(tmp.path(), &head(&bin));
+    let config = DeckConfig::load(&settings.path).unwrap();
+    let before = std::fs::read_to_string(&settings.path).unwrap();
+    let started = Instant::now();
+    let (next, start) = apply_at_start_with(
+        &settings,
+        config.clone(),
+        &[],
+        &HostFacts::default(),
+        &all_usable,
+        Instant::now() + Duration::from_millis(300),
+        |configured| {
+            std::thread::sleep(Duration::from_secs(5));
+            TailscaleCli::new(configured.unwrap())
+        },
+    )
+    .await;
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(next, config);
+    assert!(start.enabled && start.skipped.is_empty());
+    assert_eq!(
+        start.start_reason.as_deref(),
+        Some("Tailscale did not answer within 3 seconds.")
+    );
+    assert_eq!(std::fs::read_to_string(&settings.path).unwrap(), before);
+}
+
+/// A status answer that comes after the deadline is not saved.
+#[tokio::test]
+async fn a_status_answer_after_the_deadline_is_not_saved() {
+    let tmp = tempfile::tempdir().unwrap();
+    let doc = tmp.path().join("doc.json");
+    std::fs::write(&doc, STATUS).unwrap();
+    let bin = script(
+        &tmp.path().join("tailscale"),
+        &format!("sleep 2\ncat '{}'", doc.display()),
+    );
+    let settings = deck_settings(tmp.path(), &head(&bin));
+    let config = DeckConfig::load(&settings.path).unwrap();
+    let before = std::fs::read_to_string(&settings.path).unwrap();
+    let started = Instant::now();
+    let (next, start) = apply_at_start(
+        &settings,
+        config.clone(),
+        &[],
+        &HostFacts::default(),
+        &all_usable,
+        Instant::now() + Duration::from_millis(500),
+    )
+    .await;
+    assert!(
+        started.elapsed() < Duration::from_millis(1900),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(next, config);
+    assert_eq!(
+        start.start_reason.as_deref(),
+        Some("Tailscale did not answer within 3 seconds.")
     );
     assert_eq!(std::fs::read_to_string(&settings.path).unwrap(), before);
 }
@@ -488,8 +571,11 @@ async fn an_automatic_entry_that_is_not_local_is_skipped_and_the_deck_starts() {
     // Not on any machine of this test: the top of the tailnet range.
     let gone_board = "100.127.254.254:7420";
     let gone_link = "100.127.254.254:7421";
+    // The mode is on, with a program that does not exist: nothing is saved.
+    let missing = tmp.path().join("no-such-tailscale").display().to_string();
     let toml = format!(
-        "name = \"d\"\nlisten = [\"127.0.0.1:0\", \"{gone_board}\"]\n\
+        "name = \"d\"\ntailnet_auto = true\ntailscale_bin = \"{missing}\"\n\
+         listen = [\"127.0.0.1:0\", \"{gone_board}\"]\n\
          link_listen = [\"127.0.0.1:0\", \"{gone_link}\"]\n\
          tailnet_auto_listen = [\"{gone_board}\"]\n\
          tailnet_auto_link_listen = [\"{gone_link}\"]\n"
@@ -542,8 +628,10 @@ async fn an_automatic_entry_that_cannot_be_bound_is_skipped() {
     std::fs::create_dir_all(&dirs.config).unwrap();
     let busy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let busy_addr = busy.local_addr().unwrap();
+    let missing = tmp.path().join("no-such-tailscale").display().to_string();
     let toml = format!(
-        "name = \"d\"\nlisten = [\"127.0.0.1:0\"]\n\
+        "name = \"d\"\ntailnet_auto = true\ntailscale_bin = \"{missing}\"\n\
+         listen = [\"127.0.0.1:0\"]\n\
          link_listen = [\"127.0.0.1:0\", \"{busy_addr}\"]\n\
          tailnet_auto_link_listen = [\"{busy_addr}\"]\n"
     );
@@ -612,6 +700,7 @@ async fn the_audit_row_has_the_changed_keys_only() {
         &overrides,
         &HostFacts::default(),
         &all_usable,
+        deadline(),
     )
     .await;
     tailnet_auto::audit(&store, &config, &next).await;
@@ -663,4 +752,28 @@ async fn the_board_skips_an_optional_address_that_is_not_local_or_is_busy() {
     // The board answers on its manual address.
     let r = c.req("GET", "/api/tailnet", &[], None).await;
     assert_eq!(r.status, 401, "{}", r.body);
+}
+
+/// With the mode off, a provenance entry that cannot be bound fails the
+/// start like a manual entry: the provenance lists are ignored.
+#[tokio::test]
+async fn with_the_mode_off_a_provenance_entry_that_cannot_bind_fails_the_start() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dirs = dirs_of(tmp.path());
+    std::fs::create_dir_all(&dirs.config).unwrap();
+    let gone_link = "100.127.254.254:7421";
+    let toml = format!(
+        "name = \"d\"\nlisten = [\"127.0.0.1:0\"]\n\
+         link_listen = [\"127.0.0.1:0\", \"{gone_link}\"]\n\
+         tailnet_auto_link_listen = [\"{gone_link}\"]\n"
+    );
+    let path = dirs.deck_config();
+    std::fs::write(&path, &toml).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let config = DeckConfig::load(&path).unwrap();
+    assert!(!config.tailnet_auto);
+    let err = RunningDeck::start(&dirs, &config, fast(), StartOptions::default())
+        .await
+        .expect_err("the start fails");
+    assert!(err.to_string().contains("link"), "{err}");
 }
