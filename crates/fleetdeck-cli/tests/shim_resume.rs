@@ -61,6 +61,7 @@ async fn a_clean_exit_resumes_under_a_new_shim(instance: &str, rig: &mut Rig) {
     st.manager
         .shutdown(fleetdeck_proto::command::StopMode::Graceful)
         .await;
+    drop(st);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -153,6 +154,7 @@ async fn the_input_to_a_hibernated_session_resumes_it_under_a_new_shim_and_arriv
     st.manager
         .shutdown(fleetdeck_proto::command::StopMode::Graceful)
         .await;
+    drop(st);
 }
 
 /// Design §7 test 9: a provider that cannot resume the native id gives
@@ -167,6 +169,7 @@ async fn a_provider_that_cannot_resume_the_native_id_fails_the_start_and_ends_it
         st.manager
             .shutdown(fleetdeck_proto::command::StopMode::Graceful)
             .await;
+        drop(st);
         session
     };
     // The same station directory, a CLI that ends at once.
@@ -252,6 +255,7 @@ async fn a_launch_with_a_wrong_boot_id_in_its_journal_starts_no_provider() {
     st.manager
         .shutdown(fleetdeck_proto::command::StopMode::Graceful)
         .await;
+    drop(st);
 }
 
 /// An unreadable boot id gives no launch at all (the journal needs one).
@@ -272,4 +276,5 @@ async fn a_launch_without_a_readable_boot_id_does_not_start() {
     st.manager
         .shutdown(fleetdeck_proto::command::StopMode::Graceful)
         .await;
+    drop(st);
 }

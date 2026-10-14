@@ -101,7 +101,7 @@ pub(super) fn signal_group(pid: u32, sig: rustix::process::Signal) {
 /// zombies do not count). `None` when the inspection is incomplete or the
 /// platform has no reader: the count then proves nothing (DL-182 §1a).
 pub(super) fn group_members(leader: u32) -> Option<u32> {
-    crate::host::shim::inspect::group_members(leader)
+    crate::host::shim::inspect::group_members_reaping(leader, &mut reap_orphans)
 }
 
 /// Reaps orphaned descendants that came back to the subreaper shim.

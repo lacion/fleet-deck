@@ -45,6 +45,8 @@ async fn lost_under_a_dead_shim(
             .await
             .unwrap();
     }
+    // The next station of the rig opens the same database: this one closes.
+    drop(st);
     (session, shim_id)
 }
 
@@ -91,6 +93,7 @@ async fn a_gone_shim_after_a_reboot_is_proven_ended_and_its_session_resumes() {
     );
     assert_eq!(rows[1].state, ShimState::Running);
     st.manager.shutdown(StopMode::Graceful).await;
+    drop(st);
 }
 
 fn real_boot() -> String {
@@ -111,6 +114,7 @@ async fn without_a_changed_boot_id_the_session_needs_the_owner_check_and_reconci
     let row = st.store.shim(shim_id.clone()).await.unwrap().unwrap();
     assert_eq!(row.proof, None);
     st.manager.shutdown(StopMode::Graceful).await;
+    drop(st);
     // The same boot id: no proof either.
     rig.set_boot(Boot::Real);
     let st = rig.station().await;
@@ -166,6 +170,7 @@ async fn without_a_changed_boot_id_the_session_needs_the_owner_check_and_reconci
     wait_turns(&st.store, &session, 2).await;
     assert_eq!(st.store.shim_rows(session.clone()).await.unwrap().len(), 2);
     st.manager.shutdown(StopMode::Graceful).await;
+    drop(st);
     let _ = CommandOrigin::Local;
 }
 
@@ -243,4 +248,5 @@ async fn a_resume_claimed_before_a_crash_settles_as_outcome_unknown_and_is_never
     assert_eq!(st.store.shim_rows(session.clone()).await.unwrap().len(), 1);
     assert_eq!(rig.log_count("claude", "never sent twice"), 0);
     st.manager.shutdown(StopMode::Graceful).await;
+    drop(st);
 }

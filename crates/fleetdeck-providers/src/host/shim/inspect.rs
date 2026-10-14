@@ -122,6 +122,11 @@ fn scan_with(root: &Path, after_listing: &mut dyn FnMut()) -> Result<Scan, Strin
 /// all the time; a pass takes milliseconds, so many short tries find a
 /// clean one.
 const PASSES: u32 = 200;
+/// The longest census at a provider exit: the exit report waits for it, and
+/// an incomplete census only leaves the exit unverified (fail closed).
+const EXIT_BUDGET: Duration = Duration::from_secs(1);
+/// The longest census of the owner's check, which runs on demand.
+const CHECK_BUDGET: Duration = Duration::from_secs(3);
 /// The pause between two passes.
 const PASS_PAUSE: Duration = Duration::from_millis(10);
 /// The reason of a census that never saw a clean pass.
@@ -155,14 +160,21 @@ fn in_group_or_session(p: &ProcStat, leader: u32) -> bool {
 /// alive when read. Only a clean pass proves "no members".
 fn census(
     root: &Path,
-    leader: u32,
+    (leader, budget): (u32, Duration),
     pause: Duration,
-    after_listing: &mut dyn FnMut(),
+    (between_passes, after_listing): (&mut dyn FnMut(), &mut dyn FnMut()),
     settled: &dyn Fn(&[ProcStat]) -> bool,
 ) -> Result<Option<Vec<ProcStat>>, String> {
+    let started = std::time::Instant::now();
     for pass in 0..PASSES {
+        if pass > 0 && started.elapsed() >= budget {
+            break;
+        }
         if pass > 0 {
             std::thread::sleep(pause);
+            // A fresh listing follows, so reaping here is sound: a member
+            // whose zombie goes away left its children in the next listing.
+            between_passes();
         }
         let scan = scan_with(root, after_listing)?;
         let clean = scan.vanished == 0
@@ -192,7 +204,15 @@ pub fn group_members(leader: u32) -> Option<u32> {
 /// [`group_members`] over another `/proc` root (tests).
 #[must_use]
 pub fn group_members_in(root: &Path, leader: u32) -> Option<u32> {
-    group_members_with(root, leader, PASS_PAUSE, &mut || {})
+    group_members_with(root, leader, PASS_PAUSE, &mut || {}, &mut || {})
+}
+
+/// [`group_members`] for the shim at a provider exit: `reap` (the shim's
+/// own `waitpid` of its ended children) runs between two passes, so that a
+/// child that ends during the census leaves no zombie in every pass.
+#[must_use]
+pub fn group_members_reaping(leader: u32, reap: &mut dyn FnMut()) -> Option<u32> {
+    group_members_with(Path::new(PROC), leader, PASS_PAUSE, reap, &mut || {})
 }
 
 fn live_members(procs: &[ProcStat], leader: u32) -> usize {
@@ -208,14 +228,19 @@ fn group_members_with(
     root: &Path,
     leader: u32,
     pause: Duration,
+    between_passes: &mut dyn FnMut(),
     after_listing: &mut dyn FnMut(),
 ) -> Option<u32> {
     if !cfg!(target_os = "linux") {
         return None;
     }
-    let procs = census(root, leader, pause, after_listing, &|procs| {
-        live_members(procs, leader) > 0
-    })
+    let procs = census(
+        root,
+        (leader, EXIT_BUDGET),
+        pause,
+        (between_passes, after_listing),
+        &|procs| live_members(procs, leader) > 0,
+    )
     .ok()??;
     Some(u32::try_from(live_members(&procs, leader)).unwrap_or(u32::MAX))
 }
@@ -289,9 +314,13 @@ fn inspect_with(
     let leader = identity.pid;
     let alive =
         |p: &ProcStat| p.pid == leader && p.start_time == identity.start_time && !p.is_zombie();
-    let found = census(root, leader, pause, after_listing, &|procs| {
-        procs.iter().any(alive) || live_members(procs, leader) > 0
-    });
+    let found = census(
+        root,
+        (leader, CHECK_BUDGET),
+        pause,
+        (&mut || {}, after_listing),
+        &|procs| procs.iter().any(alive) || live_members(procs, leader) > 0,
+    );
     let all = match found {
         Ok(Some(all)) => all,
         Ok(None) => {
@@ -444,7 +473,7 @@ mod tests {
         let ended = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(ended.path().join("100")).unwrap();
         assert_eq!(
-            group_members_with(ended.path(), 999, Duration::ZERO, &mut || {}),
+            group_members_with(ended.path(), 999, Duration::ZERO, &mut || {}, &mut || {}),
             None
         );
         // A malformed line is incomplete too.
@@ -459,7 +488,7 @@ mod tests {
     }
 
     fn members(root: &Path, leader: u32, hook: &mut dyn FnMut()) -> Option<u32> {
-        group_members_with(root, leader, Duration::ZERO, hook)
+        group_members_with(root, leader, Duration::ZERO, &mut || {}, hook)
     }
 
     #[cfg(target_os = "linux")]
