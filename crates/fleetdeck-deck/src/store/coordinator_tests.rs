@@ -21,6 +21,7 @@ use fleetdeck_testkit::Det;
 
 use super::*;
 use crate::store::coordinator_ops::mode_within;
+use crate::store::coordinator_query::QueryAnswer;
 use crate::store::grants::{GrantClass, GrantState, NewGrant};
 use crate::store::stations::NewStation;
 
@@ -571,10 +572,11 @@ fn query(
 }
 
 async fn ask(w: &World, e: CoordinatorQueryEnvelope) -> Result<serde_json::Value, RejectCode> {
-    w.s.coordinator_query(w.alpha.clone(), e)
-        .await
-        .unwrap()
-        .map_err(|r| r.code)
+    let answer = w.s.coordinator_query(w.alpha.clone(), e).await.unwrap();
+    match answer.map_err(|r| r.code)? {
+        QueryAnswer::Value(v) => Ok(v),
+        QueryAnswer::Station(_) => panic!("expected a value"),
+    }
 }
 
 #[tokio::test]

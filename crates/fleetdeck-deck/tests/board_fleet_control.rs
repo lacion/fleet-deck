@@ -11,36 +11,24 @@
 mod common;
 mod settings_support;
 
-use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
 use common::board::{Extras, board, board_with_extras};
+use common::fleet::*;
 use common::*;
 use fleetdeck_deck::store::outbox::{Gate, OutboxItem, OutboxState};
-use fleetdeck_deck::store::{GrantClass, NewCommand, NewGrant};
-use fleetdeck_link::LiveLink;
+use fleetdeck_deck::store::{GrantClass, NewCommand, QueryAnswer};
 use fleetdeck_proto::command::{CommandEnvelope, CommandOrigin, GrantScope, RETRY_WINDOW_MS};
 use fleetdeck_proto::command::{ControlSkill, CoordinatorSpec, SessionCommand};
-use fleetdeck_proto::event::SessionState;
-use fleetdeck_proto::link::{Outcome, Scope};
+use fleetdeck_proto::link::Outcome;
 use fleetdeck_proto::mutation::{
     AuthorityCheck, CoordinatorBinding, CoordinatorCall, CoordinatorCallEnvelope, CoordinatorOp,
-    CoordinatorQuery, CoordinatorQueryEnvelope,
+    CoordinatorQuery,
 };
-use fleetdeck_proto::{CommandId, Receipt, RejectCode, SessionSummary};
+use fleetdeck_proto::{CommandId, Receipt, RejectCode};
 use serde_json::{Value, json};
 use settings_support::*;
-
-fn coordinate() -> BTreeSet<Scope> {
-    BTreeSet::from([Scope::Admin, Scope::Coordinate])
-}
-
-fn card(id: &str) -> SessionSummary {
-    let mut s = SessionSummary::new(id.into());
-    s.state = SessionState::Running;
-    s
-}
 
 const START: &str = "/api/commands/session.start";
 
@@ -209,59 +197,6 @@ async fn the_deck_setting_turns_on_with_an_elevation_and_off_without_one() {
     assert!(!f.store.fleet_control() && !c.state.live.get().fleet_control);
 }
 
-struct Rig {
-    f: Fixture,
-    station: LiveLink,
-}
-
-/// A connected station that knows `coord-1`, `w1` and `w2`; fleet control on.
-async fn rig() -> Rig {
-    let mut f = fixture_with(coordinate()).await;
-    let station = f.connect().await;
-    let sessions = ["coord-1", "w1", "w2"].map(card).to_vec();
-    f.store
-        .apply_snapshot(f.station.clone(), f.inc.clone(), 0, sessions)
-        .await
-        .unwrap();
-    f.store.set_fleet_control(true);
-    Rig { f, station }
-}
-
-/// A bound grant of `session` of station `st`; it names the fixture station.
-async fn bound_on(
-    f: &Fixture,
-    st: &fleetdeck_proto::StationId,
-    session: &str,
-    classes: &[GrantClass],
-    fleet: bool,
-) -> CoordinatorBinding {
-    let mut g = NewGrant::new(st.clone(), session.into());
-    g.classes = classes.iter().copied().collect();
-    g.stations.insert(f.station.clone());
-    if fleet {
-        g.scope = GrantScope::Fleet;
-    }
-    let stored = f.store.create_grant(g).await.unwrap();
-    let b = CoordinatorBinding {
-        binding_id: format!("b-{session}"),
-        grant_id: stored.grant_id,
-        generation: 1,
-        provider_instance: "claude".into(),
-        native_id: format!("n-{session}"),
-    };
-    assert!(f.store.bind_grant(b.clone()).await.unwrap());
-    b
-}
-
-async fn bound(
-    f: &Fixture,
-    session: &str,
-    classes: &[GrantClass],
-    fleet: bool,
-) -> CoordinatorBinding {
-    bound_on(f, &f.station, session, classes, fleet).await
-}
-
 fn stop(f: &Fixture, session: &str) -> CoordinatorOp {
     CoordinatorOp::Stop {
         station: f.station.clone(),
@@ -298,29 +233,6 @@ async fn call_from(
         .unwrap()
 }
 
-fn query(f: &Fixture, b: &CoordinatorBinding, query: CoordinatorQuery) -> CoordinatorQueryEnvelope {
-    CoordinatorQueryEnvelope {
-        query_id: "q".to_owned(),
-        target_incarnation: f.store.incarnation().clone(),
-        caller: b.native_id.strip_prefix("n-").unwrap().into(),
-        binding: b.clone(),
-        deadline: f.store.now_ms() + 5_000,
-        query,
-    }
-}
-
-async fn ask(
-    f: &Fixture,
-    b: &CoordinatorBinding,
-    q: CoordinatorQuery,
-) -> Result<Value, RejectCode> {
-    let answer = f
-        .store
-        .coordinator_query(f.station.clone(), query(f, b, q))
-        .await;
-    answer.unwrap().map_err(|r| r.code)
-}
-
 /// ADR-008 §9 test 4.
 #[tokio::test]
 async fn a_read_grant_gets_none_of_the_new_queries_and_the_setting_stops_them_all() {
@@ -345,11 +257,17 @@ async fn a_read_grant_gets_none_of_the_new_queries_and_the_setting_stops_them_al
         assert_eq!(ask(f, &read, q).await.unwrap_err(), RejectCode::Forbidden);
     }
     let classes = [GrantClass::Read, GrantClass::Inspect, GrantClass::Answer];
-    let b = bound(f, "coord-1", &classes, false).await;
-    // The class gate passes: the placeholder arm answers (the reads are
-    // another task).
+    // A fleet-scope grant: the lineage of `coord-1` holds no session yet.
+    let b = bound(f, "coord-1", &classes, true).await;
+    // The class gate passes: the store answers (the station read of
+    // `session_diff` is served by the link layer; see `fleet_control_reads`).
     for q in new() {
-        assert_eq!(ask(f, &b, q).await.unwrap_err(), RejectCode::Unsupported);
+        match ask_any(f, &b, q.clone()).await.unwrap() {
+            QueryAnswer::Value(_) => assert!(!matches!(q, CoordinatorQuery::SessionDiff { .. })),
+            QueryAnswer::Station(_) => {
+                assert!(matches!(q, CoordinatorQuery::SessionDiff { .. }));
+            }
+        }
     }
     f.store.set_fleet_control(false);
     for q in new() {
@@ -760,7 +678,11 @@ async fn the_status_of_a_call_lists_its_deliveries_and_a_lineage_call_has_no_aut
         );
         let station = f.station.clone();
         async move {
-            let got = store.coordinator_query(station, q).await.unwrap().unwrap();
+            let QueryAnswer::Value(got) =
+                store.coordinator_query(station, q).await.unwrap().unwrap()
+            else {
+                panic!("expected a value");
+            };
             got["deliveries"][0]["state"] == "delivered"
         }
     })

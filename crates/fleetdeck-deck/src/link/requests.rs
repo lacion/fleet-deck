@@ -5,6 +5,7 @@
 //!   rejected receipt that is not stored.
 //! - `coordinator.query` is answered by [`crate::store::coordinator_query`]
 //!   (M3 6-5, ADR-006 §6.6): the result, or `{"reject": ...}`; no receipt.
+//!   An ADR-008 read of a station is served by [`super::coordinator_reads`].
 //! - Every other method (`link.rotate_key` of a station) answers
 //!   `not_implemented` in this build (DL-050, DL-053).
 //!
@@ -22,7 +23,7 @@ use fleetdeck_proto::mutation::{
 use fleetdeck_proto::{CommandId, Receipt, StationId};
 
 use super::{DeckLink, NOT_IMPLEMENTED};
-use crate::store::LinkV2;
+use crate::store::{LinkV2, QueryAnswer};
 
 /// The whole round trip of `coordinator.authority_check` (ADR-008 section
 /// 6.2).
@@ -82,7 +83,8 @@ async fn coordinator_query(ctx: &DeckLink, station: StationId, req: &InboundRequ
         Err(e) => return Outcome::Err(WireError::new(code::PROTOCOL_ERROR, e.to_string())),
     };
     match ctx.store.coordinator_query(station, envelope).await {
-        Ok(Ok(v)) => Outcome::Ok(v),
+        Ok(Ok(QueryAnswer::Value(v))) => Outcome::Ok(v),
+        Ok(Ok(QueryAnswer::Station(read))) => super::coordinator_reads::run(ctx, read).await,
         Ok(Err(reject)) => Outcome::Ok(serde_json::json!({ "reject": reject })),
         Err(e) => {
             tracing::warn!(error = %e, "coordinator query");
