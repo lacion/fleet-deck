@@ -23,9 +23,11 @@ use std::ffi::OsStr;
 use std::path::Path;
 
 use super::checkpoint::{
-    Checkpoint, CheckpointError, Limits, PrivateIndex, Result, Unavailable, Worktree,
+    CAPTURE_VERIFIED, Checkpoint, CheckpointError, Limits, PrivateIndex, Result, Snapshot,
+    Unavailable, Worktree,
 };
 use super::git::nul_fields;
+use super::private_paths::PrivatePaths;
 use fleetdeck_proto::event::DiffSummary;
 use fleetdeck_proto::files::HIDDEN_NAMES;
 
@@ -54,6 +56,9 @@ pub enum Rejected {
     UntrackedConflict(String),
     /// A changed path lies below a symlink.
     SymlinkAncestor(String),
+    /// The target was captured before the checked staging of FDV2-003
+    /// (`capture` below 2): it can hold the bytes of a private file.
+    OldCapture,
 }
 
 impl Rejected {
@@ -63,6 +68,7 @@ impl Rejected {
             Self::Unavailable(why) => why.code(),
             Self::UntrackedConflict(_) => "untracked_conflict",
             Self::SymlinkAncestor(_) => "symlink_ancestor",
+            Self::OldCapture => "checkpoint_unverified",
         }
     }
 }
@@ -77,6 +83,9 @@ pub struct RestorePlan {
     pub write: Vec<String>,
     /// Tracked paths that the target does not have.
     pub remove: Vec<String>,
+    /// Tracked paths whose file is private now: a restore never writes or
+    /// removes them, and never reads them from the work tree.
+    pub hidden: Vec<String>,
 }
 
 /// The result of an applied restore.
@@ -188,13 +197,20 @@ impl Worktree {
         &self,
         target: &Checkpoint,
         limits: Limits,
+        private: &PrivatePaths,
     ) -> Result<std::result::Result<RestorePlan, Rejected>> {
         self.own(target)?;
+        if target.capture < CAPTURE_VERIFIED {
+            return Ok(Err(Rejected::OldCapture));
+        }
         if let Some(why) = self.target_out_of_scope(target, limits).await? {
             return Ok(Err(Rejected::Unavailable(why)));
         }
-        let current_tree = match self.snapshot_tree(limits).await? {
-            Ok(tree) => tree,
+        let Snapshot {
+            tree: current_tree,
+            hidden,
+        } = match self.snapshot_tree(limits, private).await? {
+            Ok(snapshot) => snapshot,
             Err(why) => return Ok(Err(Rejected::Unavailable(why))),
         };
         let out = self
@@ -217,6 +233,10 @@ impl Worktree {
             let Ok(path) = std::str::from_utf8(path) else {
                 return Ok(Err(Rejected::Unavailable(Unavailable::NonUtf8Path)));
             };
+            // A private file is never restored over (FDV2-003).
+            if hidden.iter().any(|h| h == path) {
+                continue;
+            }
             // `:<old mode> <new mode> <old> <new> <status>`
             if head.last() == Some(&b'D') {
                 remove.push(path.to_owned());
@@ -252,13 +272,24 @@ impl Worktree {
             current_tree,
             write: write.into_iter().map(|(p, _)| p).collect(),
             remove,
+            hidden,
         }))
     }
 
     /// Step 2 of the module docs. The caller holds the revert fence and has
     /// just made the plan; a concurrent writer is reported by `matches`.
-    pub async fn apply_restore(&self, plan: &RestorePlan) -> Result<RestoreReport> {
+    pub async fn apply_restore(
+        &self,
+        plan: &RestorePlan,
+        private: &PrivatePaths,
+    ) -> Result<RestoreReport> {
         self.own(&plan.target)?;
+        if !plan.hidden.is_empty() {
+            tracing::info!(
+                count = plan.hidden.len(),
+                "private files were left unchanged by a restore"
+            );
+        }
         for path in &plan.remove {
             match std::fs::remove_file(self.root().join(path)) {
                 Ok(()) => {}
@@ -285,7 +316,7 @@ impl Worktree {
                 )
                 .await?;
         }
-        let matches = self.matches_target(plan).await?;
+        let matches = self.matches_target(plan, private).await?;
         Ok(RestoreReport {
             written: plan.write.len(),
             removed: plan.remove.len(),
@@ -298,7 +329,7 @@ impl Worktree {
     /// untracked for Git afterwards (the index is preserved), so the check
     /// reads the target tree into a private index instead of copying the
     /// real one.
-    async fn matches_target(&self, plan: &RestorePlan) -> Result<bool> {
+    async fn matches_target(&self, plan: &RestorePlan, private: &PrivatePaths) -> Result<bool> {
         if plan
             .remove
             .iter()
@@ -311,9 +342,13 @@ impl Worktree {
         self.git()
             .call(&["read-tree", &plan.target.tree], &env, None)
             .await?;
-        self.git()
-            .call(&["add", "-u", "--", ":/"], &env, None)
-            .await?;
+        if let Err(why) = self
+            .stage_changes(&index, Limits::default(), private)
+            .await?
+        {
+            tracing::warn!(code = why.code(), "the restored content cannot be checked");
+            return Ok(false);
+        }
         let tree = self.git().call(&["write-tree"], &env, None).await?;
         Ok(String::from_utf8_lossy(&tree).trim() == plan.target.tree)
     }

@@ -66,9 +66,15 @@ async fn fixture_with(shells: ShellConfig, allow_shell: bool) -> Fixture {
         .unwrap();
     let policy = Policy::new(Vec::new(), 4, OfflineApprovalPolicy::Wait, BTreeMap::new())
         .with_shell(allow_shell, 8);
-    let manager = SessionManager::start(store.clone(), policy, Adapters::new(), det.ids())
-        .await
-        .unwrap();
+    let manager = SessionManager::start(
+        store.clone(),
+        policy,
+        Adapters::new(),
+        det.ids(),
+        Arc::new(fleetdeck_station::workspace::PrivatePaths::default()),
+    )
+    .await
+    .unwrap();
     let deck = Arc::new(Identity::generate().unwrap());
     store
         .pin_peer(PairedKey {

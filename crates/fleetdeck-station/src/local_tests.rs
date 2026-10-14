@@ -35,9 +35,15 @@ async fn server() -> Server {
         BTreeMap::new(),
     );
     let manager = Arc::new(
-        SessionManager::start(store, policy, Adapters::new(), det.ids())
-            .await
-            .unwrap(),
+        SessionManager::start(
+            store,
+            policy,
+            Adapters::new(),
+            det.ids(),
+            Arc::new(crate::workspace::PrivatePaths::default()),
+        )
+        .await
+        .unwrap(),
     );
     let path = socket_path(dir.path());
     let listener = bind(&path).await.unwrap();

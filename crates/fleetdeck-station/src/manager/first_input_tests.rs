@@ -182,6 +182,7 @@ impl Rig {
             policy,
             Adapters::from([("claude".into(), adapter)]),
             det.ids(),
+            Arc::new(crate::workspace::PrivatePaths::default()),
         )
         .await
         .unwrap();

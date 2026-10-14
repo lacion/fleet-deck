@@ -20,12 +20,13 @@ pub mod session_diff;
 pub mod settle;
 pub mod setup;
 pub mod setup_cleanup;
+mod stage;
 pub mod trash;
 pub mod worktrees;
 
 pub use checkpoint::{
-    Captured, Checkpoint, CheckpointError, CheckpointKey, Limits, Phase, REF_ROOT, SCOPE_TRACKED,
-    Unavailable, Worktree,
+    CAPTURE_VERIFIED, Captured, Checkpoint, CheckpointError, CheckpointKey, Limits, Phase,
+    REF_ROOT, SCOPE_TRACKED, Snapshot, Unavailable, Worktree,
 };
 pub use git::{Git, GitError, GitOptions};
 pub use private_paths::{PrivateEnv, PrivatePaths};

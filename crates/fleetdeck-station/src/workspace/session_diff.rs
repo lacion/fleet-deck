@@ -32,7 +32,7 @@ use fleetdeck_proto::files::{
     SessionDiffQuery, code, hidden_path,
 };
 
-use super::checkpoint::{Limits, Worktree};
+use super::checkpoint::{Limits, Snapshot, Worktree};
 use super::files::{self, FileError};
 use super::git::nul_fields;
 use super::private_paths::PrivatePaths;
@@ -156,7 +156,7 @@ async fn compute(
         .await
         .map_err(|_| no_diff("the working directory is not a Git worktree".to_owned()))?;
     let git = worktree.git();
-    let excludes = private.excludes_for(worktree.root());
+    let mut excludes = private.excludes_for(worktree.root());
     let has_base = git
         .status(
             &["cat-file", "-e", &format!("{base}^{{commit}}")],
@@ -178,12 +178,12 @@ async fn compute(
     if only.as_ref().is_some_and(BTreeSet::is_empty) {
         return Ok((numstat(""), String::new(), false));
     }
-    let tree = match worktree
-        .snapshot_tree(Limits::default())
+    let Snapshot { tree, hidden } = match worktree
+        .snapshot_tree(Limits::default(), private)
         .await
         .map_err(|e| internal(&e))?
     {
-        Ok(tree) => tree,
+        Ok(snapshot) => snapshot,
         Err(why) => {
             return Err(no_diff(format!(
                 "the working tree is out of the snapshot scope ({})",
@@ -191,6 +191,16 @@ async fn compute(
             )));
         }
     };
+    // A tracked path whose file is private is not in the snapshot, and it is
+    // left out of the diff too (FDV2-003). The log has the count only.
+    if !hidden.is_empty() {
+        tracing::info!("a private file was left out of the session diff");
+        excludes.extend(
+            hidden
+                .iter()
+                .map(|path| format!(":(exclude,literal){path}")),
+        );
+    }
     let (mut summary, mut patch, cut) = match &only {
         Some(only) => tracked_in(git, &base, &tree, only, max, &excludes).await?,
         None => {

@@ -39,7 +39,8 @@ use crate::workspace::boundary::{
     REASON_NOT_DISPATCHED, REASON_SESSION_ENDED, Side, StartPlan,
 };
 use crate::workspace::{
-    Captured, CheckpointKey, GitOptions, Limits, Phase, SCOPE_TRACKED, Worktree, settle,
+    Captured, CheckpointKey, GitOptions, Limits, Phase, PrivatePaths, SCOPE_TRACKED, Worktree,
+    settle,
 };
 
 /// The workspace fence, held over an input write, a completion capture and
@@ -84,6 +85,9 @@ pub struct SessionTurns {
     ids: SharedIds,
     options: GitOptions,
     limits: Limits,
+    /// The private paths of the station: a checkpoint never holds the
+    /// bytes of a private file (FDV2-003).
+    private: Arc<PrivatePaths>,
     session_id: SessionId,
     worktree: Option<Worktree>,
     fence: Arc<Mutex<()>>,
@@ -118,6 +122,7 @@ impl SessionTurns {
         fences: &Fences,
         session_id: SessionId,
         cwd: &Path,
+        private: Arc<PrivatePaths>,
     ) -> Arc<Self> {
         let worktree = Worktree::open(cwd, options.clone()).await.ok();
         let fence = worktree.as_ref().map_or_else(
@@ -129,6 +134,7 @@ impl SessionTurns {
             ids,
             options,
             limits,
+            private,
             session_id,
             worktree,
             fence,
@@ -179,7 +185,7 @@ impl SessionTurns {
             turn: app_turn.as_str().to_owned(),
             phase,
         };
-        match worktree.capture(&key, self.limits).await {
+        match worktree.capture(&key, self.limits, &self.private).await {
             Ok(Captured::Published(c) | Captured::Existing(c)) => Side::Available(c.commit),
             Ok(Captured::Unavailable(why)) => Side::Unavailable(why.code().to_owned()),
             Err(e) => {

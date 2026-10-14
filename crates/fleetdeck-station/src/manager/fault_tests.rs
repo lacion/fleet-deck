@@ -106,11 +106,14 @@ impl Rig {
         config.delivery_grace = Duration::from_millis(500);
         let adapter: Arc<dyn fleetdeck_providers::ProviderAdapter> =
             Arc::new(ClaudeAdapter::new(config, Arc::new(DirectChildHost::new())));
-        let target = Arc::new(SessionTarget::new(
-            store.clone(),
-            Adapters::from([("claude".into(), adapter)]),
-            det.ids(),
-        ));
+        let target = Arc::new(
+            SessionTarget::new(
+                store.clone(),
+                Adapters::from([("claude".into(), adapter)]),
+                det.ids(),
+            )
+            .with_private(Arc::new(crate::workspace::PrivatePaths::default())),
+        );
         let policy = Arc::new(Policy::new(
             vec![root.path().join("projects")],
             4,

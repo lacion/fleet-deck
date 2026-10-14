@@ -208,6 +208,7 @@ async fn live_round(kind: ProviderKind) {
         holders,
         Adapters::from([("live".into(), adapter)]),
         det.ids(),
+        Arc::new(crate::workspace::PrivatePaths::default()),
     )
     .await
     .unwrap();

@@ -28,7 +28,9 @@ use crate::manager::turns::turns_tests::{
 use crate::store::{
     Caller, Dispatch, NewRevert, ReadResult, RevertStep, RowSide, Store, TurnCheckpointRow,
 };
-use crate::workspace::{Captured, CheckpointKey, GitOptions, Limits, Phase, Worktree};
+use crate::workspace::{
+    Captured, CheckpointKey, GitOptions, Limits, Phase, PrivatePaths, Worktree,
+};
 
 #[derive(Clone)]
 enum Rollback {
@@ -65,8 +67,10 @@ async fn repoint(dir: &std::path::Path, end_ref: &str) {
         turn: "t-replacement".into(),
         phase: Phase::Completion,
     };
-    let Captured::Published(replacement) =
-        worktree.capture(&other, Limits::default()).await.unwrap()
+    let Captured::Published(replacement) = worktree
+        .capture(&other, Limits::default(), &PrivatePaths::default())
+        .await
+        .unwrap()
     else {
         panic!("no replacement checkpoint");
     };
@@ -167,6 +171,7 @@ struct Rig {
     store: Store,
     turns: Arc<SessionTurns>,
     git: GitOptions,
+    private: PrivatePaths,
 }
 
 impl Rig {
@@ -181,6 +186,7 @@ impl Rig {
             store,
             turns,
             git: GitOptions::isolated(),
+            private: PrivatePaths::default(),
         };
         rig.turn("in-1", "turn-1", "a.txt", "one\nT1\n").await;
         rig.turn("in-2", "turn-2", "b.txt", "two\nT2\n").await;
@@ -207,6 +213,7 @@ impl Rig {
             store: &self.store,
             git: &self.git,
             limits: Limits::default(),
+            private: &self.private,
         }
     }
 

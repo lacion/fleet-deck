@@ -123,9 +123,15 @@ async fn world(dir: &Path, config: ModelHelpConfig) -> World {
         BTreeMap::new(),
     );
     let manager = Arc::new(
-        SessionManager::start(store, policy, Adapters::new(), ids)
-            .await
-            .unwrap(),
+        SessionManager::start(
+            store,
+            policy,
+            Adapters::new(),
+            ids,
+            Arc::new(fleetdeck_station::workspace::PrivatePaths::default()),
+        )
+        .await
+        .unwrap(),
     );
     let fake = Arc::new(Fake::default());
     let config = ModelHelpConfig {

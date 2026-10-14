@@ -8,7 +8,11 @@
 //! - **Scope.** A checkpoint holds the tracked working-tree content,
 //!   including tracked edits that are not staged. Untracked and ignored
 //!   files are out of scope. The snapshot uses a private copy of the index;
-//!   the real index is never written.
+//!   the real index is never written. Git never reads a changed tracked
+//!   path itself: the station opens each one without following a symlink,
+//!   refuses a private file by the identity of the opened file, and hands
+//!   Git the checked bytes ([`super::stage`], FDV2-003). A private file is
+//!   left out of the snapshot: the tree keeps the blob that the index had.
 //! - **Unavailable.** Submodules, unmerged, skip-worktree or assume-unchanged
 //!   entries (Git would silently leave out their unstaged edits), clean or
 //!   encoding filters, non-UTF-8 paths and the size limits make a checkpoint
@@ -25,12 +29,19 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::git::{Git, GitError, GitOptions, nul_fields};
+use super::private_paths::PrivatePaths;
 
 /// The root of every checkpoint ref.
 pub const REF_ROOT: &str = "refs/fleetdeck/checkpoints";
 
 /// The snapshot scope recorded in every checkpoint.
 pub const SCOPE_TRACKED: &str = "tracked";
+
+/// The capture version that new checkpoints record (`capture: 2`). A
+/// checkpoint without the line (version 1) was captured before the checked
+/// staging of FDV2-003 and is unverified: it can hold the bytes of a
+/// private file.
+pub const CAPTURE_VERIFIED: u32 = 2;
 
 /// Git file mode of a submodule (gitlink) entry.
 const GITLINK: &str = "160000";
@@ -81,6 +92,11 @@ pub enum Unavailable {
         bytes: u64,
     },
     TooManyFiles(usize),
+    /// More tracked paths changed than one snapshot stages.
+    TooManyChanges(usize),
+    /// A changed tracked path is a directory, a FIFO, a socket, a device,
+    /// or a symlink where a regular file was opened.
+    NotRegular(String),
 }
 
 impl Unavailable {
@@ -98,6 +114,8 @@ impl Unavailable {
             Self::FileTooLarge { .. } => "file_too_large",
             Self::TooLarge { .. } => "too_large",
             Self::TooManyFiles(_) => "too_many_files",
+            Self::TooManyChanges(_) => "too_many_changes",
+            Self::NotRegular(_) => "not_regular",
         }
     }
 }
@@ -163,6 +181,17 @@ pub struct Checkpoint {
     pub tree: String,
     pub worktree_id: String,
     pub scope: String,
+    /// The capture version: 2 for a checkpoint of the checked staging
+    /// ([`CAPTURE_VERIFIED`]); 1 when the commit has no `capture:` line.
+    pub capture: u32,
+}
+
+/// A snapshot of the tracked content: the tree, and the tracked paths that
+/// the snapshot left out because the file at the path is private.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Snapshot {
+    pub tree: String,
+    pub hidden: Vec<String>,
 }
 
 /// The result of a capture.
@@ -239,17 +268,28 @@ impl Worktree {
     }
 
     /// Captures the tracked content as the checkpoint `key`.
-    pub async fn capture(&self, key: &CheckpointKey, limits: Limits) -> Result<Captured> {
+    pub async fn capture(
+        &self,
+        key: &CheckpointKey,
+        limits: Limits,
+        private: &PrivatePaths,
+    ) -> Result<Captured> {
         let ref_name = self.ref_name(key)?;
         if let Some(found) = self.read_ref(&ref_name).await? {
             return Ok(Captured::Existing(found));
         }
-        let tree = match self.snapshot_tree(limits).await? {
-            Ok(tree) => tree,
+        let Snapshot { tree, hidden } = match self.snapshot_tree(limits, private).await? {
+            Ok(snapshot) => snapshot,
             Err(why) => return Ok(Captured::Unavailable(why)),
         };
+        if !hidden.is_empty() {
+            tracing::info!(
+                count = hidden.len(),
+                "private files were left out of a turn checkpoint"
+            );
+        }
         let message = format!(
-            "fleetdeck checkpoint\n\nworktree-id: {}\nincarnation: {}\nsession: {}\nturn: {}\nphase: {}\nscope: {SCOPE_TRACKED}\n",
+            "fleetdeck checkpoint\n\nworktree-id: {}\nincarnation: {}\nsession: {}\nturn: {}\nphase: {}\nscope: {SCOPE_TRACKED}\ncapture: {CAPTURE_VERIFIED}\n",
             self.id,
             key.incarnation,
             key.session,
@@ -295,6 +335,7 @@ impl Worktree {
             tree,
             worktree_id: self.id.clone(),
             scope: SCOPE_TRACKED.to_owned(),
+            capture: CAPTURE_VERIFIED,
         }))
     }
 
@@ -348,6 +389,9 @@ impl Worktree {
             tree,
             worktree_id,
             scope: field("scope: ").unwrap_or_default(),
+            capture: field("capture: ")
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(1),
         }))
     }
 
@@ -356,17 +400,22 @@ impl Worktree {
     pub(super) async fn snapshot_tree(
         &self,
         limits: Limits,
-    ) -> Result<std::result::Result<String, Unavailable>> {
+        private: &PrivatePaths,
+    ) -> Result<std::result::Result<Snapshot, Unavailable>> {
         if let Err(why) = self.check_tracked(limits).await? {
             return Ok(Err(why));
         }
         let index = PrivateIndex::copy_of(&self.git_dir)?;
+        let hidden = match self.stage_changes(&index, limits, private).await? {
+            Ok(hidden) => hidden,
+            Err(why) => return Ok(Err(why)),
+        };
         let env = [("GIT_INDEX_FILE", index.path().as_os_str())];
-        self.git
-            .call(&["add", "-u", "--", ":/"], &env, None)
-            .await?;
         let tree = self.git.call(&["write-tree"], &env, None).await?;
-        Ok(Ok(String::from_utf8_lossy(&tree).trim().to_owned()))
+        Ok(Ok(Snapshot {
+            tree: String::from_utf8_lossy(&tree).trim().to_owned(),
+            hidden,
+        }))
     }
 
     /// The pre-capture checks of the module docs.
@@ -580,3 +629,7 @@ fn identity_env() -> [(&'static str, String); 4] {
         ),
     ]
 }
+
+#[cfg(test)]
+#[path = "snapshot_private_tests.rs"]
+mod snapshot_private_tests;

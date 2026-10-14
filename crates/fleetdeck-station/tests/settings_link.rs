@@ -132,6 +132,7 @@ impl Rig {
                 Policy::from_config(&parsed),
                 adapters,
                 det.ids(),
+                Arc::new(PrivatePaths::default()),
             )
             .await
             .unwrap(),

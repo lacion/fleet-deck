@@ -90,6 +90,7 @@ async fn a_deck_start_with_a_grant_hands_the_credential_to_the_child_environment
         holders,
         Adapters::from([("claude".into(), adapter)]),
         det.ids(),
+        Arc::new(crate::workspace::PrivatePaths::default()),
     )
     .await
     .unwrap();

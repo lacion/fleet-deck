@@ -84,9 +84,16 @@ async fn station(dir: &Path, root: PathBuf, gh: PathBuf) -> Arc<StationNode> {
         integrations: Some(integrations),
         ..Holders::default()
     };
-    let manager = SessionManager::start_with_holders(store, policy, holders, Adapters::new(), ids)
-        .await
-        .unwrap();
+    let manager = SessionManager::start_with_holders(
+        store,
+        policy,
+        holders,
+        Adapters::new(),
+        ids,
+        Arc::new(fleetdeck_station::workspace::PrivatePaths::default()),
+    )
+    .await
+    .unwrap();
     StationNode::start(
         Arc::new(manager),
         Arc::new(Identity::generate().unwrap()),

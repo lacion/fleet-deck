@@ -29,7 +29,7 @@ use fleetdeck_station::manager::{Adapters, Policy, SessionManager, durable_confi
 use fleetdeck_station::store::{
     Caller, Decided, OfflineApprovalPolicy, ReadResult, Store, StoreConfig,
 };
-use fleetdeck_station::workspace::{GitOptions, settle_unsettled};
+use fleetdeck_station::workspace::{GitOptions, PrivatePaths, settle_unsettled};
 use fleetdeck_testkit::Det;
 use fleetdeck_testkit::fake::{FakeAgent, SCENARIO_ENV, STDIN_LOG_ENV};
 use serde_json::Value;
@@ -158,6 +158,7 @@ impl Rig {
             self.adapters(),
             self.det.ids(),
             shims,
+            Arc::new(PrivatePaths::default()),
         )
         .await
         .unwrap();
@@ -636,8 +637,9 @@ async fn adoption_observes_the_turns_that_restored_drivers_committed_before_it()
             )
     })
     .await;
-    let target =
-        SessionTarget::new(store.clone(), rig.adapters(), rig.det.ids()).with_shims(settings);
+    let target = SessionTarget::new(store.clone(), rig.adapters(), rig.det.ids())
+        .with_shims(settings)
+        .with_private(Arc::new(PrivatePaths::default()));
     target
         .adopt(start.restored, StopPolicy::default(), from)
         .await;
@@ -696,8 +698,9 @@ async fn a_buffered_turn_that_completes_before_the_provider_exits_is_finalized_b
         store.summary(session.clone()).await.unwrap().unwrap().state,
         SessionState::Exited
     );
-    let target =
-        SessionTarget::new(store.clone(), rig.adapters(), rig.det.ids()).with_shims(settings);
+    let target = SessionTarget::new(store.clone(), rig.adapters(), rig.det.ids())
+        .with_shims(settings)
+        .with_private(Arc::new(PrivatePaths::default()));
     target
         .adopt(start.restored, StopPolicy::default(), from)
         .await;

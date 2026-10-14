@@ -144,6 +144,7 @@ async fn the_manager_trashes_and_restores_a_worktree_for_the_board_only() {
         r.policy.clone(),
         Adapters::new(),
         r.det.ids(),
+        Arc::new(crate::workspace::PrivatePaths::default()),
     )
     .await
     .unwrap();
@@ -243,6 +244,7 @@ async fn a_station_start_runs_a_move_that_the_earlier_process_left_in_trashing()
         r.policy.clone(),
         Adapters::new(),
         r.det.ids(),
+        Arc::new(crate::workspace::PrivatePaths::default()),
     )
     .await
     .unwrap();

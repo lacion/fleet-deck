@@ -81,7 +81,7 @@ Recommended remediation:
 ### FDV2-003 — A tracked hard link to a private file can enter checkpoints and diffs
 
 - **Severity:** Medium
-- **Status:** Open; also acknowledged in `docs/v2/SECURITY-CHECKLIST.md`
+- **Status:** Fixed in 1d9bcbf1: changed tracked paths are staged from the opened file (no `git add -u`), a private file is left out of the snapshot, and checkpoints without `capture: 2` are not shown to members or restored.
 - **Impact:** Disclosure of local credentials through a session diff or retained Git checkpoint
 
 Direct file reads, search, and artifact staging inspect the opened file's device, inode, and link count. They refuse known credential inodes and conservatively refuse regular files with more than one hard link. The tracked Git snapshot path does not apply that check. It asks Git to update a private index from all tracked paths; the later diff excludes private *names* only.
