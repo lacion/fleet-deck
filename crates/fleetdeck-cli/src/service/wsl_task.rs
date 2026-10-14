@@ -171,14 +171,18 @@ pub fn remove(ctx: &Context, deps: &dyn Deps) -> Result<(), String> {
     done.map_err(|reason| remove_warning(&reason))
 }
 
-/// The state of the task: `absent`, `state=<State>` or `unknown`.
+/// The state of the task: `absent`, its state (for example `Running`) or
+/// `unknown`.
 pub fn status(ctx: &Context, deps: &dyn Deps) -> String {
     let answer = target(ctx).and_then(|(distro, _)| call(ctx, deps, &status_script(&distro)));
     match answer {
         Ok(out) => match out.last_line() {
             Some("absent") => "absent".to_owned(),
-            Some(line) if line.starts_with("state=") => line.to_owned(),
-            _ => "unknown".to_owned(),
+            Some(line) => match line.strip_prefix("state=") {
+                Some(state) if !state.is_empty() => state.to_owned(),
+                _ => "unknown".to_owned(),
+            },
+            None => "unknown".to_owned(),
         },
         Err(_) => "unknown".to_owned(),
     }

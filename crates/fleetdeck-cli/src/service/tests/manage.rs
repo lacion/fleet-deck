@@ -187,7 +187,7 @@ fn status_text_and_json() {
     let expect = format!(
         "both: installed\n  file: {}\n  data directory: {}\n  program: {} -> {}\n  running: yes\n  \
          enabled: yes\n  logs: journalctl --user -u fleetdeck-up.service\n\
-         deck: not installed\nstation: not installed\nlinger: on\nWindows logon task: state=Running\n",
+         deck: not installed\nstation: not installed\nlinger: on\nWindows logon task: Running\n",
         file.display(),
         rig.data(),
         root.join("current").display(),
@@ -211,7 +211,7 @@ fn status_text_and_json() {
     let value: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(value["platform"], "systemd");
     assert_eq!(value["linger"], true);
-    assert_eq!(value["wsl_task"], "state=Running");
+    assert_eq!(value["wsl_task"], "Running");
     assert_eq!(value["services"][0]["kind"], "both");
     assert_eq!(value["services"][0]["installed"], true);
     assert_eq!(value["services"][0]["active"], true);
