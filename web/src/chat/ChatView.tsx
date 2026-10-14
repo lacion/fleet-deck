@@ -1,7 +1,7 @@
 // The chat view of a session: the primary projection of the canonical events
 // (UI-PLAN §2.1). It renders `Item`s from `buildTimeline`; it owns no data.
 import { type ReactNode, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { ProviderKind } from '../gen';
+import type { ProviderKind, ReviewComment, ReviewSummary } from '../gen';
 import { hasChanges } from '../session/changes';
 import { type Item, type Subagent, type SubagentStatus, subagentLabel } from '../session/timeline';
 import {
@@ -30,6 +30,18 @@ import { runLabel } from './labels';
 import { applyChatFilter, compactRuns, type Tool, useChatFilter, type ChatFilter } from './filter';
 import { FilterBar } from './FilterBar';
 import { Markdown } from './Markdown';
+import { ChipText } from '../review/CommentChip';
+import { ReviewCard } from '../review/ReviewCard';
+
+/** The review comments of this session (DL-179): the cards, and the chips of the comment ids. */
+export type ChatReview = {
+  readonly reviews: readonly ReviewSummary[];
+  readonly byShort: ReadonlyMap<string, ReviewComment>;
+  /** The short ids that the caller may see. */
+  readonly known: ReadonlySet<string>;
+  /** A chip or a card row: open the thread in Changes. */
+  onOpen(shortId: string): void;
+};
 
 export type ChatViewProps = {
   readonly items: readonly Item[];
@@ -41,6 +53,7 @@ export type ChatViewProps = {
   readonly provider?: ProviderKind | null;
   /** The filter to start with; the saved filter of this browser when absent (tests). */
   readonly initialFilter?: ChatFilter;
+  readonly review?: ChatReview | undefined;
 };
 
 type OpenChanges = ((turnId: string) => void) | undefined;
@@ -92,10 +105,11 @@ type ItemsProps = {
   onOpenChanges: OpenChanges;
   compact: boolean;
   provider: ProviderKind | null;
+  review?: ChatReview | undefined;
 };
 
 function Items(props: ItemsProps): ReactNode {
-  const { compact, provider, onOpenChanges } = props;
+  const { compact, provider, onOpenChanges, review } = props;
   return compactRuns(props.items, compact, provider).map((row) =>
     row.kind === 'fold' ? (
       <ToolFold
@@ -103,10 +117,14 @@ function Items(props: ItemsProps): ReactNode {
         items={row.items}
         failed={row.failed}
         summary={row.summary}
-        {...{ onOpenChanges, compact, provider }}
+        {...{ onOpenChanges, compact, provider, review }}
       />
     ) : (
-      <ItemView key={row.item.key} item={row.item} {...{ onOpenChanges, compact, provider }} />
+      <ItemView
+        key={row.item.key}
+        item={row.item}
+        {...{ onOpenChanges, compact, provider, review }}
+      />
     ),
   );
 }
@@ -211,12 +229,36 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item }) {
     case 'run': {
       // R11.5: a prompt of a member shows its name after the time; the owner shows nothing extra.
       const name = item.author === undefined ? null : memberName(item.author);
+      // DL-179: a run is a Review card only when its input is the follow-up of a review.
+      const sent =
+        props.review !== undefined && item.input_id !== undefined
+          ? props.review.reviews.find((r) => r.input_id === item.input_id)
+          : undefined;
       return (
         <div className="fd-chat-run">
           {runLabel(item.origin) !== 'You' ? (
             <span className="fd-chat-run-label">{runLabel(item.origin)}</span>
           ) : null}
-          <div className="fd-chat-bubble">{item.input}</div>
+          {sent !== undefined && props.review !== undefined ? (
+            <ReviewCard
+              review={sent}
+              text={item.input}
+              byShort={props.review.byShort}
+              onOpen={props.review.onOpen}
+            />
+          ) : (
+            <div className="fd-chat-bubble">
+              {props.review === undefined ? (
+                item.input
+              ) : (
+                <ChipText
+                  text={item.input}
+                  known={props.review.known}
+                  onOpen={props.review.onOpen}
+                />
+              )}
+            </div>
+          )}
           {name === null ? null : (
             <span className="fd-chat-run-label fd-chat-author">
               {item.at === undefined ? '' : `${clock(item.at)} `}— {name}
@@ -228,7 +270,12 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item }) {
     case 'message':
       return (
         <div className={item.done ? 'fd-chat-message' : 'fd-chat-message fd-chat-streaming'}>
-          <Markdown text={item.text} />
+          <Markdown
+            text={item.text}
+            {...(props.review === undefined
+              ? {}
+              : { comments: props.review.known, onComment: props.review.onOpen })}
+          />
         </div>
       );
     case 'reasoning':
@@ -373,6 +420,7 @@ export function ChatView(props: ChatViewProps) {
           onOpenChanges={props.onOpenChanges}
           compact={filter.compact}
           provider={provider}
+          review={props.review}
         />
       );
   }

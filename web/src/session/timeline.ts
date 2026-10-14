@@ -29,6 +29,8 @@ export type Item =
       author?: string;
       /** Unix ms of the run start; set with `author`. */
       at?: number;
+      /** The input of the station that started the run (DL-179: it ties a run to a review). */
+      input_id?: string;
     }
   | { type: 'message'; key: string; text: string; done: boolean }
   | {
@@ -186,6 +188,7 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
           input: e.input_summary,
           origin: e.origin,
           ...(e.author === undefined ? {} : { author: e.author, at: env.at }),
+          ...(e.input_id === undefined ? {} : { input_id: e.input_id }),
         });
         messages.delete('');
         break;

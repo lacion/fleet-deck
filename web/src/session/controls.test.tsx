@@ -12,6 +12,7 @@ import { type Controller, sessionFlags } from './controller';
 import { SessionHeader } from './SessionHeader';
 import { ModelPicker } from './SessionSettings';
 import { matchSlash } from './slash';
+import { matchHash } from '../review/hashMenu';
 
 const key = { station_id: 'station-a', session_id: 's1' };
 const drive = sessionActions(async () => ({}), key, ['read', 'drive', 'approve']);
@@ -697,5 +698,23 @@ describe('model picker (DL-151)', () => {
   test('a disabled picker disables the select', () => {
     expect(picker('opus', models, false)).toMatch(/<select[^>]*disabled/);
     expect(picker('opus', null, false)).toMatch(/<input[^>]*disabled/);
+  });
+});
+
+describe('the # comment menu of the composer (DL-179)', () => {
+  const comments = [{ shortId: 'c-abc234', label: 'a.ts:1 hi' }];
+  const render = (props: Partial<Parameters<typeof Composer>[0]> = {}) =>
+    renderToStaticMarkup(
+      <Composer enabled working={false} steer={false} nativeQueue onSend={() => {}} {...props} />,
+    );
+  test('with comments but no # word the composer shows no menu', () => {
+    const html = render({ comments });
+    expect(html).not.toContain('role="listbox"');
+    expect(html).toContain('<textarea');
+  });
+  test('# is not a trigger of the other menus', () => {
+    expect(matchHash('#ab', 3)).toEqual({ query: 'ab', start: 0 });
+    expect(matchAt('#ab', 3)).toBeNull();
+    expect(matchSlash('#ab', ['help'], [])).toBeNull();
   });
 });

@@ -1,7 +1,8 @@
-// R1.3: line notes on a diff. A note is one line of text on one line of a
+// R1.3: the old line notes on a diff. A note is one line of text on one line of a
 // file. The notes of a session live in memory and in `localStorage`
-// (`fd-notes:<station>/<session>`); "Send notes" sends them as one follow-up.
-// Every read and write survives a blocked or full storage.
+// (`fd-notes:<station>/<session>`). Since DL-179 the board writes no new note: the Changes tab
+// offers to import the unsent ones as draft review comments. Every read and write survives a
+// blocked or full storage.
 import { useSyncExternalStore } from 'react';
 
 export type Note = {
@@ -13,60 +14,9 @@ export type Note = {
   readonly sent: boolean;
 };
 
-/** The most characters of one note. */
-export const MAX_NOTE_CHARS = 500;
-
 /** The `localStorage` key of the notes of one session. */
 export const notesStorageKey = (station: string, session: string): string =>
   `fd-notes:${station}/${session}`;
-
-/** Where each line of a unified diff lies: the file and the new line number, or `null` (no new line). */
-export function linePositions(
-  patch: string,
-): readonly ({ readonly file: string; readonly line: number } | null)[] {
-  let file: string | null = null;
-  let next = 0;
-  let inHunk = false;
-  return patch.split('\n').map((line) => {
-    if (line.startsWith('diff --git ')) {
-      file = /^diff --git a\/.* b\/(.+)$/.exec(line)?.[1] ?? null;
-      inHunk = false;
-      return null;
-    }
-    const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
-    if (hunk?.[1] !== undefined) {
-      next = Number(hunk[1]);
-      inHunk = true;
-      return null;
-    }
-    if (!inHunk || file === null) return null;
-    if (line.startsWith('+') || line.startsWith(' ')) {
-      const at = { file, line: next };
-      next += 1;
-      return at;
-    }
-    return null;
-  });
-}
-
-/** The follow-up text for `notes`: one line per note. */
-export function notesMessage(notes: readonly Note[]): string {
-  const lines = notes.map((n) => `- ${n.file} L${n.line}: ${n.text.replace(/\s+/g, ' ').trim()}`);
-  return `Review notes:\n${lines.join('\n')}`;
-}
-
-/** `notes` with the note on `file` line `line` set to `text`; an empty text removes it. */
-export function withNote(
-  notes: readonly Note[],
-  file: string,
-  line: number,
-  text: string,
-): readonly Note[] {
-  const rest = notes.filter((n) => !(n.file === file && n.line === line));
-  const clean = text.replace(/\s+/g, ' ').trim().slice(0, MAX_NOTE_CHARS);
-  if (clean === '') return rest;
-  return [...rest, { file, line, text: clean, sent: false }];
-}
 
 const isNote = (v: unknown): v is Note => {
   if (typeof v !== 'object' || v === null) return false;

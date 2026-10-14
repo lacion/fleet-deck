@@ -19,6 +19,9 @@ import type { Freshness, Timeline } from '../runtime/state';
 import { usePeople } from '../sharing/context';
 import { usePresenceHeartbeat, useSessionPeople } from '../sharing/hooks';
 import { roleAccess } from '../sharing/member';
+import { useReviewActions } from '../review/context';
+import { commentOptions } from '../review/hashMenu';
+import { useReview } from '../review/useReview';
 import { MobStrip } from '../sharing/MobStrip';
 import { SideChat } from '../sharing/SideChat';
 import type { ShellActions } from '../shell/shell';
@@ -153,6 +156,23 @@ export function SessionView(props: SessionViewProps) {
   const tabsOffered = filesOffered && !sideOpen;
   const artifactsEnv = useArtifacts();
   const artifactsOffered = artifactsEnv !== undefined;
+  // DL-179: review comments. The board hides what the deck refuses; the deck still decides.
+  const reviewActions = useReviewActions();
+  const review = useReview(key, session.review_rev, freshness === 'live');
+  const self = guest === null ? 'owner' : guest.name;
+  const canWriteReview =
+    guest === null ? actions?.canDrive === true : roleAccess(guest.role).composer;
+  const [focus, setFocus] = useState<{ threadId: string; nonce: number } | null>(null);
+  const openComment = useCallback(
+    (shortId: string) => {
+      const found = review.byShort.get(shortId);
+      if (found === undefined) return;
+      setFocus({ threadId: found.thread_id, nonce: Date.now() });
+      onTab('changes');
+    },
+    [review.byShort, onTab],
+  );
+  const commentChoices = useMemo(() => commentOptions(review.byShort.values()), [review.byShort]);
   const wanted: PaneTab = props.tab ?? 'chat';
   const peopleOffered = people.offered;
   const tab: PaneTab =
@@ -379,6 +399,16 @@ export function SessionView(props: SessionViewProps) {
                 ready={timeline?.ready === true}
                 error={timeline?.error ?? null}
                 onOpenChanges={() => onTab('changes')}
+                review={
+                  reviewActions === undefined
+                    ? undefined
+                    : {
+                        reviews: review.data?.reviews ?? [],
+                        byShort: review.byShort,
+                        known: review.known,
+                        onOpen: openComment,
+                      }
+                }
               />
               <div className="fd-pane-foot">
                 {access.questions ? (
@@ -436,6 +466,7 @@ export function SessionView(props: SessionViewProps) {
                     slashCommands={s.slash_commands ?? slashCommands(events)}
                     skills={s.skills ?? []}
                     searchFiles={searchFiles}
+                    {...(commentChoices.length > 0 ? { comments: commentChoices } : {})}
                     draftKey={`${session.station_id}/${s.session_id}`}
                   />
                 ) : guest?.role === 'viewer' ? (
@@ -468,6 +499,18 @@ export function SessionView(props: SessionViewProps) {
                   act={panelAct}
                   onOpenFile={onOpenFile}
                   station={session.station_id}
+                  review={
+                    reviewActions === undefined
+                      ? undefined
+                      : {
+                          state: review,
+                          actions: reviewActions,
+                          key,
+                          canWrite: canWriteReview,
+                          self,
+                          focus,
+                        }
+                  }
                 />
               </>
             ) : (

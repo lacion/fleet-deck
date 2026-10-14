@@ -3,7 +3,15 @@
 // built board runs unchanged. The real deck/station flows of P4-5 use real
 // processes instead.
 import { expect, type Page, type Request, type WebSocketRoute } from '@playwright/test';
-import type { DeckCommand, DeckSession, EventEnvelope, StationView } from '../src/gen';
+import type {
+  DeckCommand,
+  DeckSession,
+  EventEnvelope,
+  ReviewComment,
+  ReviewSummary,
+  StationView,
+} from '../src/gen';
+import { anchorText, parseDiff } from '../src/review/diffModel';
 
 export type Reply = { status: number; body: unknown };
 export type Call = { path: string; body: unknown; csrf: string | null };
@@ -28,6 +36,32 @@ export type ShellPost = {
   change: { op: string; shell_id: string; session_id?: string; cols?: number; rows?: number };
 };
 
+/** A route with a path pattern (an id in the path) and a method; `match` holds the groups. */
+type Route = {
+  method: string;
+  re: RegExp;
+  handler: (match: RegExpExecArray, body: unknown, query: URLSearchParams) => Reply;
+};
+
+/** The review state that `FakeDeck.review` keeps in memory. */
+export type FakeReview = {
+  comments: ReviewComment[];
+  reviews: ReviewSummary[];
+  /** The bodies of the POSTs to `…/review/comments`, `…/review/send` and so on. */
+  posted: { path: string; body: unknown }[];
+};
+
+const SHORT = 'abcdefghijkmnpqrstuvwxyz23456789';
+const shortId = (prefix: string, n: number): string => {
+  let id = '';
+  let rest = n + 1000;
+  for (let i = 0; i < 6; i += 1) {
+    id = SHORT.charAt(rest % 32) + id;
+    rest = Math.floor(rest / 32);
+  }
+  return `${prefix}-${id}`;
+};
+
 export const CSRF = 'csrf-e2e';
 export const PASSWORD = 'correct horse battery staple';
 
@@ -42,6 +76,7 @@ export class FakeDeck {
   private sockets: WebSocketRoute[] = [];
   private signedIn = false;
   private handlers = new Map<string, Handler>();
+  private routes: Route[] = [];
   /** Timeline events by `station/session`; `station_seq` must grow. */
   private timelines = new Map<string, EventEnvelope[]>();
   private subscribed = new Map<WebSocketRoute, Set<string>>();
@@ -52,6 +87,121 @@ export class FakeDeck {
    * CSRF token, like the real deck. */
   on(path: string, handler: Handler): void {
     this.handlers.set(path, handler);
+  }
+
+  /** Answers the requests whose method is `method` and whose path matches `re`. */
+  route(method: string, re: RegExp, handler: Route['handler']): void {
+    this.routes.push({ method, re, handler });
+  }
+
+  /**
+   * The review routes of one session (DL-179), with the comments in memory: list, add, edit,
+   * delete and send. `patch` is the Since-spawn diff; the deck reads each anchor from it, as the
+   * real deck does. The caller is the owner.
+   */
+  review(stationId: string, sessionId: string, patch: string): FakeReview {
+    const state: FakeReview = { comments: [], reviews: [], posted: [] };
+    const base = `/api/sessions/${stationId}/${sessionId}/review`;
+    let counter = 0;
+    const parsed = parseDiff(patch);
+    const threads = () => {
+      const ids = [...new Set(state.comments.map((c) => c.thread_id))];
+      return ids.map((id) => ({
+        thread_id: id,
+        comments: state.comments
+          .filter((c) => c.thread_id === id)
+          .sort((a, b) => a.created_at - b.created_at),
+      }));
+    };
+    this.on(base, () => ({
+      status: 200,
+      body: {
+        threads: threads(),
+        reviews: state.reviews,
+        rev: state.reviews.length,
+        more_reviews: false,
+      },
+    }));
+    this.on(`${base}/comments`, (raw) => {
+      state.posted.push({ path: `${base}/comments`, body: raw });
+      const b = raw as {
+        snapshot: string;
+        path: string;
+        side: 'new' | 'old';
+        line_start: number;
+        line_end: number;
+        body: string;
+        thread_id?: string;
+      };
+      const text = anchorText(parsed, b.side, b.path, b.line_start, b.line_end);
+      if (b.thread_id === undefined && text === null) {
+        return {
+          status: 422,
+          body: { error: 'not_in_diff', message: 'The lines are not in the diff.' },
+        };
+      }
+      counter += 1;
+      const id = `01J${String(counter).padStart(23, '0')}`;
+      const reply = b.thread_id !== undefined;
+      const comment: ReviewComment = {
+        comment_id: id,
+        short_id: shortId('c', counter),
+        thread_id: b.thread_id ?? id,
+        snapshot: b.snapshot,
+        path: b.path,
+        side: b.side,
+        line_start: b.line_start,
+        line_end: b.line_end,
+        anchor_text: reply
+          ? (state.comments.find((c) => c.comment_id === b.thread_id)?.anchor_text ?? '')
+          : (text ?? ''),
+        anchor_kind: 'diff',
+        body: b.body,
+        author_kind: 'owner',
+        state: 'draft',
+        resolved: false,
+        created_at: counter,
+        updated_at: Date.now(),
+      };
+      state.comments.push(comment);
+      return { status: 201, body: comment };
+    });
+    this.route('PATCH', new RegExp(`^${base}/comments/([^/]+)$`), (m, raw) => {
+      const found = state.comments.find((c) => c.comment_id === m[1]);
+      if (found === undefined)
+        return { status: 404, body: { error: 'not_found', message: 'No such comment.' } };
+      const patchBody = raw as { body?: string; resolved?: boolean };
+      if (patchBody.body !== undefined) found.body = patchBody.body;
+      if (patchBody.resolved !== undefined) found.resolved = patchBody.resolved;
+      return { status: 200, body: found };
+    });
+    this.route('DELETE', new RegExp(`^${base}/comments/([^/]+)$`), (m) => {
+      state.comments = state.comments.filter((c) => c.comment_id !== m[1]);
+      return { status: 204, body: null };
+    });
+    this.on(`${base}/send`, (raw) => {
+      state.posted.push({ path: `${base}/send`, body: raw });
+      const b = raw as { send_key: string; comment_ids: string[] };
+      const review_id = `01R${String(state.reviews.length + 1).padStart(23, '0')}`;
+      const picked = state.comments.filter((c) => b.comment_ids.includes(c.comment_id));
+      for (const c of picked) {
+        c.state = 'sent';
+        c.review_id = review_id;
+      }
+      const summary: ReviewSummary = {
+        review_id,
+        short_id: shortId('r', state.reviews.length + 1),
+        principal: 'owner',
+        delivery: 'delivered',
+        attempts: 1,
+        sent_at: Date.now(),
+        comment_ids: picked.map((c) => c.short_id),
+        command_id: b.send_key,
+      };
+      state.reviews.unshift(summary);
+      return { status: 200, body: summary };
+    });
+    return state;
   }
 
   /**
@@ -87,7 +237,7 @@ export class FakeDeck {
       await route.fulfill({
         status: reply.status,
         contentType: 'application/json',
-        body: JSON.stringify(reply.body),
+        ...(reply.status === 204 ? {} : { body: JSON.stringify(reply.body) }),
       });
     });
     await page.routeWebSocket('**/api/ws', (ws) => {
@@ -221,7 +371,8 @@ export class FakeDeck {
   private answer(request: Request): Reply {
     const url = new URL(request.url());
     const path = url.pathname;
-    const body: unknown = request.method() === 'POST' ? request.postDataJSON() : null;
+    const method = request.method();
+    const body: unknown = method === 'POST' || method === 'PATCH' ? request.postDataJSON() : null;
     this.calls.push({ path, body, csrf: request.headers()['x-csrf-token'] ?? null });
     const login = {
       actor: 'owner',
@@ -242,9 +393,16 @@ export class FakeDeck {
         ? { status: 200, body: login }
         : { status: 401, body: { code: 'bad_password', message: 'The password is wrong.' } };
     }
+    const csrf = request.headers()['x-csrf-token'] === CSRF;
+    for (const r of this.routes) {
+      const match = method === r.method ? r.re.exec(path) : null;
+      if (match === null) continue;
+      if (!csrf) return { status: 403, body: { code: 'csrf', message: 'Missing CSRF token.' } };
+      return r.handler(match, body, url.searchParams);
+    }
     const handler = this.handlers.get(path);
     if (handler === undefined) return { status: 404, body: { code: 'not_found', message: path } };
-    if (request.method() === 'POST' && request.headers()['x-csrf-token'] !== CSRF) {
+    if (method === 'POST' && !csrf) {
       return { status: 403, body: { code: 'csrf', message: 'Missing CSRF token.' } };
     }
     return handler(body, url.searchParams);
