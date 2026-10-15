@@ -65,6 +65,10 @@ pub mod feature {
     /// base commit (R1.2).
     pub const SESSION_DIFF: &str = "files.session_diff.v1";
 
+    /// `session.history`: the earlier conversation of a session, from the
+    /// station's snapshot of the provider transcript (DL-189).
+    pub const HISTORY: &str = "history.v1";
+
     /// `session.execution_check` and `session.reconcile_execution`: the
     /// termination check and the owner's reconciliation for resume on the
     /// shim host (DL-182).
@@ -118,6 +122,7 @@ pub mod feature {
         WRITE_TEMP,
         TRASH,
         SESSION_DIFF,
+        HISTORY,
         ARTIFACTS,
         PRECHECK,
         INTEGRATIONS,

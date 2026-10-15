@@ -1,0 +1,37 @@
+{
+  "items": [
+    {
+      "id": "9d627634-8b85-4dd6-b4da-50f7032b8ada",
+      "kind": "assistant",
+      "text": "<text 3>",
+      "tool": null
+    },
+    {
+      "id": "7e2f4e5d-c537-434b-bbcf-a641fd5eab71",
+      "kind": "user",
+      "text": "<text 5>",
+      "tool": null
+    },
+    {
+      "id": "b64a7c04-f5a5-44bf-845c-d92e11f4f6fa",
+      "kind": "assistant",
+      "text": "<text 11>",
+      "tool": null
+    },
+    {
+      "id": "01a13f1c-8356-4de4-bd14-42dbb8e9548e",
+      "kind": "user",
+      "text": "<text 25>",
+      "tool": null
+    },
+    {
+      "id": "ca3ed4b1-edbd-4d58-ab39-78a1d82859f0",
+      "kind": "user",
+      "text": "<text 30>\n\n[image]",
+      "tool": null
+    }
+  ],
+  "state": {
+    "kind": "complete"
+  }
+}

@@ -18,6 +18,7 @@ pub mod event;
 pub mod execution;
 pub mod files;
 pub mod fold;
+pub mod history;
 pub mod ids;
 pub mod input;
 pub mod integrations;

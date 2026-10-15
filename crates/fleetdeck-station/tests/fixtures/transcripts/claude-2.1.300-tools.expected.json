@@ -1,0 +1,63 @@
+{
+  "items": [
+    {
+      "id": "45a3fd4f-e7fc-4587-9068-5cc1bf83c0f3",
+      "kind": "assistant",
+      "text": "",
+      "tool": {
+        "name": "Bash",
+        "status": "failed",
+        "summary": "<command 1>"
+      }
+    },
+    {
+      "id": "0523a10e-16ec-4203-88f6-049a923a64bc",
+      "kind": "assistant",
+      "text": "<text 153>",
+      "tool": null
+    },
+    {
+      "id": "66af0fed-7c02-4dcd-892c-ba780cdf3a93",
+      "kind": "assistant",
+      "text": "",
+      "tool": {
+        "name": "Agent",
+        "status": "ok",
+        "summary": ""
+      }
+    },
+    {
+      "id": "1cac23c5-23aa-4813-bece-94e0bfae301e",
+      "kind": "assistant",
+      "text": "",
+      "tool": {
+        "name": "Read",
+        "status": "ok",
+        "summary": "<path 126>"
+      }
+    },
+    {
+      "id": "337527e9-3854-46b0-95c3-5ee0174fc9fa",
+      "kind": "assistant",
+      "text": "",
+      "tool": {
+        "name": "Bash",
+        "status": "ok",
+        "summary": "<command 3>"
+      }
+    },
+    {
+      "id": "0fa0d41c-73d4-4671-9612-f0c014926b20",
+      "kind": "assistant",
+      "text": "",
+      "tool": {
+        "name": "Bash",
+        "status": "ok",
+        "summary": "<command 5>"
+      }
+    }
+  ],
+  "state": {
+    "kind": "complete"
+  }
+}
