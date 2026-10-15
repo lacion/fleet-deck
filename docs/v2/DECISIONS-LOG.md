@@ -3012,3 +3012,11 @@ Owner review: pending.
 - Design: `docs/v2/design/subagents-worktrees.md` revision 3 (round 1 FAIL: Git could run repository programs, `worktree list` could leak files, the parser dropped subagent records; round 2 FAIL: no `for-each-ref -z`, the agent id was dropped, the home was lost on resume; round 3 PASS).
 - Decision: (A) the station records the subagent's agent id from its own Claude stream (`ToolCompleted.provider_refs.agent_id`) with the launch home in a binding row, and serves `session.subagent` from one bounded read of that transcript; (B) `session.branches` and `files.branch_diff` list the repository's branches with one hardened `for-each-ref` and diff a listed branch against its merge base. Owner only. Git 2.45 or newer.
 - The adversary PRE-PR review of the code is the next gate.
+
+## DL-192 — Release and dev version numbers (owner request, 2026-10-15)
+
+- Context: the owner: "fleetdeck --version always shows 0.0". The workspace version was `0.0.0`, and the build identity (B5) only added `+<commit>`.
+- Decision: the workspace version is `2.0.0`. A release build (`FLEETDECK_RELEASE=1` at build time) reports `2.0.0`; every other build reports `2.0.0-dev.<YYYYMMDD>+<commit>` (the UTC date of the commit), or `2.0.0-dev` when git is not available.
+- `crates/fleetdeck-core/build.rs` sets `FLEETDECK_BUILD_DATE` and `FLEETDECK_RELEASE`; `fleetdeck_core::build` has `DATE`, `RELEASE` and `version()`. The `build-info` JSON has `"release": bool`.
+- `make release-build` runs `FLEETDECK_RELEASE=1 cargo build --release --locked -p fleetdeck-cli`. cargo-dist 0.30.0 has no build environment setting: release jobs must export `FLEETDECK_RELEASE=1` (a comment in `dist-workspace.toml`).
+- The upgrade check keeps the package version (`2.0.0`); the link protocol versions, `shim_build` and the provider client versions do not change.

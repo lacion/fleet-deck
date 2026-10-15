@@ -652,7 +652,7 @@ checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 
 [[package]]
 name = "fleetdeck-cli"
-version = "0.0.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -675,7 +675,7 @@ dependencies = [
 
 [[package]]
 name = "fleetdeck-core"
-version = "0.0.0"
+version = "2.0.0"
 dependencies = [
  "ed25519-dalek",
  "fleetdeck-proto",
@@ -701,7 +701,7 @@ dependencies = [
 
 [[package]]
 name = "fleetdeck-deck"
-version = "0.0.0"
+version = "2.0.0"
 dependencies = [
  "argon2",
  "async-trait",
@@ -735,7 +735,7 @@ dependencies = [
 
 [[package]]
 name = "fleetdeck-link"
-version = "0.0.0"
+version = "2.0.0"
 dependencies = [
  "async-trait",
  "fleetdeck-core",
@@ -760,7 +760,7 @@ dependencies = [
 
 [[package]]
 name = "fleetdeck-proto"
-version = "0.0.0"
+version = "2.0.0"
 dependencies = [
  "proptest",
  "serde",
@@ -772,7 +772,7 @@ dependencies = [
 
 [[package]]
 name = "fleetdeck-providers"
-version = "0.0.0"
+version = "2.0.0"
 dependencies = [
  "async-trait",
  "fleetdeck-core",
@@ -792,7 +792,7 @@ dependencies = [
 
 [[package]]
 name = "fleetdeck-station"
-version = "0.0.0"
+version = "2.0.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -819,7 +819,7 @@ dependencies = [
 
 [[package]]
 name = "fleetdeck-testkit"
-version = "0.0.0"
+version = "2.0.0"
 dependencies = [
  "fleetdeck-core",
  "fleetdeck-proto",
@@ -1689,7 +1689,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "s1-claude"
-version = "0.0.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1705,7 +1705,7 @@ dependencies = [
 
 [[package]]
 name = "s2-codex"
-version = "0.0.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1721,7 +1721,7 @@ dependencies = [
 
 [[package]]
 name = "s4-link"
-version = "0.0.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1953,7 +1953,7 @@ dependencies = [
 
 [[package]]
 name = "spike-canon"
-version = "0.0.0"
+version = "2.0.0"
 dependencies = [
  "serde",
  "serde_json",

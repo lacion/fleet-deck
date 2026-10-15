@@ -149,6 +149,10 @@ Run `fleetdeck service install` to start Fleet Deck at boot or login. Use `both`
 - `fleetdeck service start`, `stop` and `status [--json]` control and show the services. `fleetdeck service uninstall` removes them. Your data stays.
 - If another Fleet Deck process runs, the command installs the service but does not start it. Stop that process, then run `fleetdeck service start`.
 
+### 4.2 Versions (DL-192)
+
+A release build reports `2.0.0`. Every other build reports `2.0.0-dev.<YYYYMMDD>+<commit>`: the UTC date and the short commit of the git commit that it was built from. A build without git reports `2.0.0-dev`. To build a release, run `make release-build` (it sets `FLEETDECK_RELEASE=1`). `fleetdeck --version`, the station and deck info and the service directory name show this version.
+
 ## 5. Board access
 
 1. Set the owner password: `fleetdeck deck password` (from a prompt or `--stdin`). A new password ends every login.

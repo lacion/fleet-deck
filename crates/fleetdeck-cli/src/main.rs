@@ -55,10 +55,11 @@ fn main() -> ExitCode {
         Command::BuildInfo => {
             let text = |value: &str| serde_json::Value::from(value).to_string();
             println!(
-                r#"{{"version":{},"commit":{},"commit_time":{}}}"#,
+                r#"{{"version":{},"commit":{},"commit_time":{},"release":{}}}"#,
                 text(fleetdeck_core::build::version()),
                 text(fleetdeck_core::build::COMMIT),
-                fleetdeck_core::build::COMMIT_TIME
+                fleetdeck_core::build::COMMIT_TIME,
+                fleetdeck_core::build::RELEASE
             );
             return ExitCode::SUCCESS;
         }
