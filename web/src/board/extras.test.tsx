@@ -27,42 +27,33 @@ const board = (
     />,
   );
 
-describe('card extras', () => {
-  test('a card with pending mail shows the badge with the count', () => {
+describe('strip extras', () => {
+  test('a strip with pending mail shows the mail icon with the count', () => {
     const html = board([card('m')], [extra('station-a', 'm', { mail_pending: 2 })]);
-    expect(html).toContain('<span class="fd-card-mail" title="Mail waiting for delivery">');
-    expect(html).toMatch(/class="fd-card-mail"[^>]*>[\s\S]*?<\/svg> 2<\/span>/);
+    expect(html).toMatch(
+      /class="fd-strip-ico" data-ico="mail" title="Mail waiting for delivery"><svg[\s\S]*?<\/svg><span>2<\/span>/,
+    );
   });
-  test('no mail badge and no chip line without extras', () => {
+  test('no mail icon and no touched files without extras', () => {
     const html = board([card('n')], [extra('station-a', 'n')]);
-    expect(html).not.toContain('fd-card-mail');
-    expect(html).not.toContain('fd-card-files');
+    expect(html).not.toContain('data-ico="mail"');
+    expect(html).not.toContain('Touched:');
+    expect(html).not.toContain('fd-filechip');
   });
-  test('touched files show as chips with the basename and the path as title', () => {
+  test('touched files are the basenames in the title of the now cell', () => {
     const html = board(
       [card('f')],
       [extra('station-a', 'f', { files: ['src/app/App.tsx', 'README.md'] })],
     );
-    expect(html).toContain('<span class="fd-card-files">');
-    expect(html).toContain('title="src/app/App.tsx">App.tsx</span>');
-    expect(html).toContain('title="README.md">README.md</span>');
-    expect(html).not.toContain('data-hot');
+    expect(html).toContain('class="fd-strip-now" title="Touched: App.tsx, README.md"');
+    expect(html).not.toContain('fd-filechip');
   });
-  test('a contested file is a hot chip', () => {
-    const html = board(
-      [card('h')],
-      [extra('station-a', 'h', { files: ['src/a.ts', 'src/b.ts'] })],
-      new Map([['station-a/h', { with: ['other'], files: ['src/b.ts'] }]]),
-    );
-    expect(html.match(/data-hot="true"/g)).toHaveLength(1);
-    expect(html).toMatch(/title="src\/b\.ts" data-hot="true">b\.ts</);
-  });
-  test('the card shows the sparkline when the board saw events', () => {
+  test('the strip shows no sparkline, also when the board saw events', () => {
     record([card('sp', 'working', 'station-a', { session_seq: 3 })], NOW);
     record([card('sp', 'working', 'station-a', { session_seq: 8 })], NOW);
     const html = board([card('sp')], []);
-    expect(html).toContain('aria-label="Activity: 5 events in the last 20 minutes"');
-    expect(html).not.toContain('Activity: 0 events');
+    expect(html).not.toContain('Activity:');
+    expect(html).not.toContain('fd-spark');
   });
 });
 

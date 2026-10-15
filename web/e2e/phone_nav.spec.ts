@@ -65,7 +65,7 @@ test('More opens the help and the palette', async ({ page }) => {
 test('Back of a session returns to the Fleet page, or home on a deep link', async ({ page }) => {
   await start(page);
   await openFleet(page);
-  await page.locator('a.fd-card').first().click();
+  await page.locator('a.fd-strip').first().click();
   await expect(page).toHaveURL(/#\/s\//);
   await page.getByRole('button', { name: 'Back' }).click();
   await expect(page).toHaveURL(/#\/fleet$/);

@@ -199,7 +199,10 @@ function Groups({
     <>
       {withNeeds && model.needs.length > 0 ? (
         <section className="fd-sgroup" data-group="needs" aria-label="Needs you">
-          <h3 className="fd-sgroup-title fd-label">Needs you · {model.needs.length}</h3>
+          <h3 className="fd-sgroup-title">
+            <span className="fd-sgroup-name fd-label">Needs you</span>
+            <span className="fd-count">{model.needs.length}</span>
+          </h3>
           <Rows cards={model.needs} route={route} now={now} starred={starred} />
         </section>
       ) : null}

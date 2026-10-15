@@ -112,6 +112,8 @@ test('the event feed shows fleet changes newest first, filters them and opens a 
   deck.sessions = [session('s1', 1)];
   await setUp(page, deck);
   await openFleet(page);
+  // the activity panel is closed by default
+  await page.getByRole('tab', { name: 'Activity' }).click();
   const feed = page.getByRole('region', { name: 'Event feed' });
   await expect(feed).toContainText('Quiet so far.');
   deck.sessions = [

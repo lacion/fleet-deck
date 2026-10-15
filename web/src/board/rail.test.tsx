@@ -143,7 +143,7 @@ describe('needs-you rail', () => {
     expect(html).toContain('data-tone="info">Question<');
   });
 
-  test('an empty rail says all clear; the strip variant renders nothing', () => {
+  test('an empty rail keeps only the notification switch on the side, and nothing as a strip', () => {
     const idle = [card('s1')];
     const side = renderToStaticMarkup(
       <NeedsYouRail
@@ -154,8 +154,8 @@ describe('needs-you rail', () => {
         onOpen={() => {}}
       />,
     );
-    expect(side).toContain('All clear');
-    expect(side).toContain('Nothing waits for you.');
+    expect(side).toContain('class="fd-rail-mini"');
+    expect(side).not.toContain('fd-rail-list');
     const strip = renderToStaticMarkup(
       <NeedsYouRail
         sessions={idle}

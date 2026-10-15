@@ -1,5 +1,4 @@
-import { type CSSProperties, useEffect, useRef, useState } from 'react';
-import { firstLine, isStartFailure } from '../app/failures';
+import { useEffect, useRef, useState } from 'react';
 import { formatHash } from '../app/routes';
 import { basename, relativeAge } from '../app/sessions';
 import type {
@@ -16,8 +15,8 @@ import { sessionFlags } from '../session/controller';
 import type { SessionActions } from '../session/commands';
 import { runningSubagents } from '../session/timeline';
 import { useDiffTotal } from '../session/workspace';
-import { batchCountOf, batchCounts, MIN_SIBLINGS } from '../compare/compare';
-import { errorSentence, isRiskyMode, modelFamily, shortModel } from '../ui/format';
+import { batchCountOf, batchCounts } from '../compare/compare';
+import { isRiskyMode, modelFamily, shortModel } from '../ui/format';
 import { digestLine, GeneratedMark } from '../ui/generated';
 import {
   Archive,
@@ -34,7 +33,6 @@ import {
   Workflow,
 } from '../ui/icons';
 import { archived } from '../ui/archive';
-import { isHibernated } from '../views/hibernate';
 import { FocusLine, UnreadMark, unreadOf } from '../views/marks';
 import { priority, sessionRef } from '../ui/localSet';
 import { useProjects } from '../integrations/context';
@@ -45,6 +43,8 @@ import { PrChip } from '../integrations/PrChip';
 import { useNow } from '../ui/useNow';
 import { buckets } from './activity';
 import { type Contested, cardKey, NO_REPO, repoName, stationName, statusGroups } from './fleet';
+import { CardNote, CompareChip } from './cardParts';
+import { FleetStrip } from './FleetStrip';
 import { Sparkline } from './Sparkline';
 import { costText } from './usage';
 
@@ -65,21 +65,6 @@ type Props = {
   /** DL-141: the card extras (mail, touched files), by `sessionRef`. */
   readonly extras?: ReadonlyMap<string, SessionExtras> | undefined;
 };
-
-/** The chip under a batch card (R1.4): a link to the compare page; the card is a link too, so it sits beside it. */
-function CompareChip({ card, count }: { readonly card: DeckSession; readonly count: number }) {
-  const batch = card.summary.batch;
-  if (batch === undefined || count < MIN_SIBLINGS) return null;
-  return (
-    <a
-      className="fd-card-compare"
-      href={formatHash({ name: 'compare', batch: batch.batch_id })}
-      title="Compare the sessions of this batch side by side"
-    >
-      Compare {count}
-    </a>
-  );
-}
 
 /** The five columns of the board; a column holds one or more deck statuses, in this order. */
 export const COLUMNS: readonly {
@@ -132,71 +117,32 @@ export function columnCards(
   return [...cards.filter(star), ...cards.filter((c) => !star(c))];
 }
 
-const STATUS_NOTE: Record<CardStatus, string> = {
-  queued: 'Queued',
-  working: 'Working',
-  verifying: 'Verifying',
-  needs_you: 'Needs you',
-  idle: 'Waiting for a prompt',
-  ended: 'Ended',
-  unreachable: 'Station unreachable',
-  lost: 'Lost',
-};
+/** The status order of a strip lane: what needs the owner first, the ended last. */
+export const STRIP_ORDER: readonly CardStatus[] = [
+  'needs_you',
+  'working',
+  'verifying',
+  'queued',
+  'idle',
+  'unreachable',
+  'lost',
+  'ended',
+];
 
-function CardNote({ card }: { card: DeckSession }) {
-  const s = card.summary;
-  const ask = s.open_requests[0];
-  if (ask !== undefined) {
-    return (
-      <span className="fd-card-note">
-        <span className="fd-card-ask">
-          <Icon of={TriangleAlert} size={12} /> {ask.title}
-        </span>
-      </span>
-    );
-  }
-  const tool = s.running_tools[0];
-  if (tool !== undefined) {
-    return (
-      <span className="fd-card-note">
-        <span className="fd-card-tool">
-          {tool.input_summary === '' ? tool.title : `${tool.title}: ${tool.input_summary}`}
-        </span>
-      </span>
-    );
-  }
-  const error = s.last_error;
-  if (error != null && isStartFailure(card)) {
-    return (
-      <span className="fd-card-note" data-note="start_failed">
-        <span className="fd-card-error">Failed to start: {firstLine(error.message)}</span>
-      </span>
-    );
-  }
-  if (
-    error !== null &&
-    error !== undefined &&
-    (card.status === 'idle' || card.status === 'ended' || card.status === 'lost')
-  ) {
-    return (
-      <span className="fd-card-note">
-        <span className="fd-card-error">{errorSentence(`${error.code}: ${error.message}`)}</span>
-      </span>
-    );
-  }
-  if (isHibernated(card)) {
-    return (
-      <span className="fd-card-note" data-note="hibernated">
-        Hibernated · resumes with your next prompt
-      </span>
-    );
-  }
-  return (
-    <span className="fd-card-note" data-note={card.status}>
-      {STATUS_NOTE[card.status]}
-    </span>
-  );
+/** The strips of one lane: starred first, then by `STRIP_ORDER`, then newest first. */
+export function stripCards(
+  cards: readonly DeckSession[],
+  starred?: ReadonlySet<string>,
+): DeckSession[] {
+  const groups = statusGroups([...cards]);
+  const ordered = columnCards(groups, STRIP_ORDER);
+  if (starred === undefined || starred.size === 0) return ordered;
+  const star = (c: DeckSession) => starred.has(sessionRef(c.station_id, c.summary.session_id));
+  return [...ordered.filter(star), ...ordered.filter((c) => !star(c))];
 }
+
+const isOffline = (c: DeckSession) =>
+  c.status === 'ended' || c.status === 'unreachable' || c.status === 'lost';
 
 /** One session card: the whole card is the link to the session. */
 export function FleetCard({
@@ -383,7 +329,7 @@ const isCleared = (card: DeckSession, refs: ReadonlySet<string>) =>
 /** How long the Resume all result stays on the screen. */
 const RESUMED_MS = 6000;
 
-/** The Offline column's head tools: Resume all, Clear, and Restore all (DL-141). */
+/** The offline tools row at the end of the board: Resume all, Clear, and Restore all (DL-141). */
 export function OfflineTools({
   cards,
   freshness,
@@ -425,7 +371,8 @@ export function OfflineTools({
     timer.current = setTimeout(() => setReport(null), RESUMED_MS);
   };
   return (
-    <span className="fd-colhead-tools">
+    <div className="fd-offline-tools">
+      <span className="fd-label">Offline sessions</span>
       <button
         type="button"
         className="fd-ghost fd-sm"
@@ -436,7 +383,7 @@ export function OfflineTools({
         {running ? 'Resuming…' : `Resume all (${resumable.length})`}
       </button>
       {report === null ? null : (
-        <span className="fd-colhead-report" role="status">
+        <span className="fd-offline-report" role="status">
           {report}
         </span>
       )}
@@ -457,7 +404,7 @@ export function OfflineTools({
           <Icon of={ArchiveRestore} size={12} /> Restore all
         </button>
       )}
-    </span>
+    </div>
   );
 }
 
@@ -505,7 +452,11 @@ function lanesOf(
   });
 }
 
-/** The deck projection owns the column; cards retain the station-scoped identity. */
+/** A lane with only ended or lost sessions goes after the lanes with a live session. */
+const settled = (lane: Lane) =>
+  lane.cards.every((c) => c.status === 'ended' || c.status === 'lost');
+
+/** The board: one lane for each station, repo or project; one strip for each session. */
 export function FleetBoard({
   sessions,
   stations,
@@ -519,32 +470,13 @@ export function FleetBoard({
   const now = useNow(given, 30000);
   const starred = priority.use();
   const projects = useProjects();
-  const groups = statusGroups(sessions);
   const batches = batchCounts(sessions);
-  const counts = COLUMNS.map((column) => columnCards(groups, column.statuses).length);
-  // An empty column stays visible but narrow, so the cards get the width.
-  const cols = counts.map((n) => (n > 0 ? 'minmax(190px, 1fr)' : 'minmax(96px, 0.4fr)'));
-  const minWidth = counts.reduce((sum, n) => sum + (n > 0 ? 190 : 96), 10 * (COLUMNS.length - 1));
-  const style = { '--fd-cols': cols.join(' '), minWidth } as CSSProperties;
+  const all = lanesOf(sessions, stations, group, projects);
+  const lanes = [...all.filter((l) => !settled(l)), ...all.filter(settled)];
+  const offline = sessions.filter(isOffline);
   return (
-    <main className="fd-board" aria-label="Fleet board" style={style}>
-      <div className="fd-colheads">
-        {COLUMNS.map((column, i) => (
-          <span key={column.id} className="fd-colhead" title={column.hint}>
-            <span className="fd-label">{column.label}</span>{' '}
-            <span className="fd-count">{counts[i]}</span>
-            {column.id === 'offline' && counts[i] !== 0 ? (
-              <OfflineTools
-                cards={columnCards(groups, column.statuses)}
-                freshness={freshness}
-                sessionActions={sessionActions}
-              />
-            ) : null}
-          </span>
-        ))}
-      </div>
-      {lanesOf(sessions, stations, group, projects).map((lane) => {
-        const ownGroups = statusGroups([...lane.cards]);
+    <main className="fd-board" aria-label="Fleet board">
+      {lanes.map((lane) => {
         const contestedCount =
           contested === undefined
             ? 0
@@ -554,46 +486,40 @@ export function FleetBoard({
         return (
           <section
             key={lane.id}
-            className="fd-swim"
+            className="fd-lane"
             data-station={group === 'station' ? lane.id : undefined}
             data-repo={group === 'repo' ? lane.id : undefined}
             data-project={group === 'project' ? lane.id : undefined}
             aria-label={lane.label}
           >
-            <h2 className="fd-swim-head">
-              <span className="fd-swim-name">{lane.name}</span>{' '}
-              <span className="fd-count">
-                {lane.cards.length === 1 ? '1 session' : `${lane.cards.length} sessions`}
-              </span>
+            <h2 className="fd-lane-head">
+              <span className="fd-lane-name">{lane.name}</span>{' '}
+              <span className="fd-count">{lane.cards.length}</span>
               {group === 'repo' && contestedCount > 0 ? (
-                <span className="fd-swim-conf">▲ {contestedCount} contested</span>
+                <span className="fd-lane-conf">▲ {contestedCount} contested</span>
               ) : null}
-              <span className="fd-swim-rule" aria-hidden="true" />
             </h2>
-            <div className="fd-swim-grid">
-              {COLUMNS.map((column) => (
-                <ul key={column.id} className="fd-col">
-                  {columnCards(ownGroups, column.statuses, starred).map((card) => (
-                    <FleetCard
-                      key={cardKey(card)}
-                      card={card}
-                      stations={stations}
-                      freshness={freshness}
-                      now={now}
-                      showStation={group !== 'station'}
-                      contested={contested?.get(
-                        sessionRef(card.station_id, card.summary.session_id),
-                      )}
-                      extra={extras?.get(sessionRef(card.station_id, card.summary.session_id))}
-                      batchCount={batchCountOf(card, batches)}
-                    />
-                  ))}
-                </ul>
+            <ul className="fd-strips">
+              {stripCards(lane.cards, starred).map((card) => (
+                <FleetStrip
+                  key={cardKey(card)}
+                  card={card}
+                  stations={stations}
+                  freshness={freshness}
+                  now={now}
+                  showStation={group !== 'station'}
+                  contested={contested?.get(sessionRef(card.station_id, card.summary.session_id))}
+                  extra={extras?.get(sessionRef(card.station_id, card.summary.session_id))}
+                  batchCount={batchCountOf(card, batches)}
+                />
               ))}
-            </div>
+            </ul>
           </section>
         );
       })}
+      {offline.length === 0 ? null : (
+        <OfflineTools cards={offline} freshness={freshness} sessionActions={sessionActions} />
+      )}
     </main>
   );
 }

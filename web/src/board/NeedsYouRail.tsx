@@ -7,7 +7,7 @@ import type { Freshness } from '../runtime/state';
 import type { SessionActions } from '../session/commands';
 import { sessionFlags } from '../session/controller';
 import { questionForm } from '../session/question';
-import { Bell, BellOff, Check, ChevronRight, Icon } from '../ui/icons';
+import { Bell, BellOff, ChevronRight, Icon } from '../ui/icons';
 import { useNow } from '../ui/useNow';
 import { stationName } from './fleet';
 import {
@@ -126,7 +126,15 @@ export function NeedsYouRail({
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, []);
-  if (variant === 'strip' && waiting.length === 0) return null;
+  // No request, no rail: the fleet header says "All clear". The hooks above stay mounted, and
+  // the side variant keeps only the notification switch in the corner.
+  if (waiting.length === 0) {
+    return variant === 'side' ? (
+      <div className="fd-rail-mini">
+        <NotifyToggle on={notify} onChange={setNotify} />
+      </div>
+    ) : null;
+  }
   return (
     <section className="fd-rail" data-variant={variant} aria-label="Needs you rail">
       <div className="fd-rail-top">
@@ -137,89 +145,79 @@ export function NeedsYouRail({
         </h2>
         <NotifyToggle on={notify} onChange={setNotify} />
       </div>
-      {waiting.length === 0 ? (
-        <div className="fd-allclear">
-          <span className="fd-allclear-ring">
-            <Icon of={Check} />
-          </span>
-          <span className="fd-allclear-t1">All clear</span>
-          <span className="fd-allclear-t2">Nothing waits for you.</span>
-        </div>
-      ) : (
-        <div className="fd-rail-list">
-          {waiting.map((w, index) => {
-            const r = w.request;
-            const actions = answerableOf(w);
-            const busy = pending.has(r.request_id);
-            const error = errors[r.request_id];
-            return (
-              <article
-                key={`${w.key.station_id}/${w.key.session_id}/${r.request_id}`}
-                className="fd-q"
-                data-request={r.request_id}
-                data-selected={anyAnswerable && index === selected ? 'true' : undefined}
-              >
-                <div className="fd-q-row">
-                  <a
-                    className="fd-q-session"
-                    href={formatHash({
-                      name: 'session',
-                      station: w.key.station_id,
-                      session: w.key.session_id,
-                      tab: 'chat',
-                    })}
-                  >
-                    {w.title}
-                  </a>
-                  <span
-                    className="fd-badge fd-caps"
-                    data-tone={r.request_kind === 'question' ? 'info' : 'act'}
-                  >
-                    {r.request_kind === 'question' ? 'Question' : 'Permission'}
-                  </span>
-                  <span className="fd-badge">{stationName(w.key.station_id, stations)}</span>
-                  <span className="fd-q-age">{relativeAge(r.requested_at, now)}</span>
+      <div className="fd-rail-list">
+        {waiting.map((w, index) => {
+          const r = w.request;
+          const actions = answerableOf(w);
+          const busy = pending.has(r.request_id);
+          const error = errors[r.request_id];
+          return (
+            <article
+              key={`${w.key.station_id}/${w.key.session_id}/${r.request_id}`}
+              className="fd-q"
+              data-request={r.request_id}
+              data-selected={anyAnswerable && index === selected ? 'true' : undefined}
+            >
+              <div className="fd-q-row">
+                <a
+                  className="fd-q-session"
+                  href={formatHash({
+                    name: 'session',
+                    station: w.key.station_id,
+                    session: w.key.session_id,
+                    tab: 'chat',
+                  })}
+                >
+                  {w.title}
+                </a>
+                <span
+                  className="fd-badge fd-caps"
+                  data-tone={r.request_kind === 'question' ? 'info' : 'act'}
+                >
+                  {r.request_kind === 'question' ? 'Question' : 'Permission'}
+                </span>
+                <span className="fd-badge">{stationName(w.key.station_id, stations)}</span>
+                <span className="fd-q-age">{relativeAge(r.requested_at, now)}</span>
+              </div>
+              <p className="fd-q-title">{r.title}</p>
+              {r.details === '' ? null : <pre className="fd-code fd-q-cmd">{r.details}</pre>}
+              {actions !== null ? (
+                <div className="fd-q-answer">
+                  {r.options.map((o, i) => (
+                    <button
+                      key={o.option_id}
+                      type="button"
+                      className={i === 0 ? 'fd-primary' : undefined}
+                      aria-label={`${o.label}: ${r.title} in ${w.title}`}
+                      disabled={busy}
+                      onClick={() => answer(actions, r, o.option_id)}
+                    >
+                      {o.label}
+                      {hint(i, r.options.length) === null ? null : (
+                        <span className="fd-kbd">{hint(i, r.options.length)}</span>
+                      )}
+                    </button>
+                  ))}
                 </div>
-                <p className="fd-q-title">{r.title}</p>
-                {r.details === '' ? null : <pre className="fd-code fd-q-cmd">{r.details}</pre>}
-                {actions !== null ? (
-                  <div className="fd-q-answer">
-                    {r.options.map((o, i) => (
-                      <button
-                        key={o.option_id}
-                        type="button"
-                        className={i === 0 ? 'fd-primary' : undefined}
-                        aria-label={`${o.label}: ${r.title} in ${w.title}`}
-                        disabled={busy}
-                        onClick={() => answer(actions, r, o.option_id)}
-                      >
-                        {o.label}
-                        {hint(i, r.options.length) === null ? null : (
-                          <span className="fd-kbd">{hint(i, r.options.length)}</span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    className="fd-sm"
-                    aria-label={`Answer ${r.title} in ${w.title}`}
-                    onClick={() => onOpen(w.key)}
-                  >
-                    Open session <Icon of={ChevronRight} size={14} />
-                  </button>
-                )}
-                {error === undefined ? null : (
-                  <p className="fd-q-error" role="alert">
-                    {error}
-                  </p>
-                )}
-              </article>
-            );
-          })}
-        </div>
-      )}
+              ) : (
+                <button
+                  type="button"
+                  className="fd-sm"
+                  aria-label={`Answer ${r.title} in ${w.title}`}
+                  onClick={() => onOpen(w.key)}
+                >
+                  Open session <Icon of={ChevronRight} size={14} />
+                </button>
+              )}
+              {error === undefined ? null : (
+                <p className="fd-q-error" role="alert">
+                  {error}
+                </p>
+              )}
+            </article>
+          );
+        })}
+      </div>
     </section>
   );
 }

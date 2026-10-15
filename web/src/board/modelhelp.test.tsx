@@ -69,12 +69,11 @@ describe('generated titles and digests', () => {
     expect(board(generated({ title: null }))).not.toContain('fd-generated');
   });
 
-  test('the card shows the first digest line, without the list marker', () => {
+  test('the strip title carries the first digest line, without the list marker', () => {
     const html = board(generated({ digest: '- Read the router\n- Fixed the redirect' }));
-    expect(html).toContain('class="fd-card-digest"');
-    expect(html).toContain('>Read the router<');
+    expect(html).toContain('title="Summary: Read the router"');
     expect(html).not.toContain('Fixed the redirect');
-    expect(board(generated())).not.toContain('fd-card-digest');
+    expect(board(generated())).not.toContain('Summary: ');
   });
 
   test('the session header marks a generated title and lists the digest in the details', () => {

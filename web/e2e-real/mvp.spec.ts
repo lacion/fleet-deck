@@ -66,7 +66,7 @@ test.afterAll(async () => {
 const status = (text: string) => page.getByRole('status').filter({ hasText: text });
 const pill = (freshness: 'live' | 'stale') =>
   page.locator(`.fd-wspill[data-freshness="${freshness}"]`);
-const card = (sessionId: string) => page.locator(`.fd-card[data-session="${sessionId}"]`);
+const card = (sessionId: string) => page.locator(`.fd-strip[data-session="${sessionId}"]`);
 const stationCard = (name: string) =>
   page.locator('.fd-station[data-station]').filter({ has: page.getByRole('heading', { name }) });
 
@@ -135,7 +135,7 @@ async function spawn(station: Station, title: string, prompt: string): Promise<s
   // One new session opens at once (DL-141).
   await expect(page).toHaveURL(/#\/s\//);
   await fleet();
-  const title_ = page.locator('.fd-card').filter({ hasText: title });
+  const title_ = page.locator('.fd-strip').filter({ hasText: title });
   await expect(title_).toHaveCount(1);
   const id = await title_.getAttribute('data-session');
   if (id === null) throw new Error(`no card for ${title}`);
@@ -144,7 +144,7 @@ async function spawn(station: Station, title: string, prompt: string): Promise<s
 
 async function open(title: string): Promise<Locator> {
   await fleet();
-  await page.locator('.fd-card').filter({ hasText: title }).click();
+  await page.locator('.fd-strip').filter({ hasText: title }).click();
   return page.getByRole('region', { name: 'Session', exact: true });
 }
 
@@ -213,7 +213,8 @@ test('the board logs in and pairs a dialing and a listening station', async () =
 
 test('a session spawned on alpha asks for an approval that the needs-you rail answers', async () => {
   const id = await spawn(alpha, 'Alpha approval', 'ask echo hi');
-  await expect(card(id)).toContainText(BRANCH);
+  // The place is in the callsign tooltip of the strip (ui-pass wave 1).
+  await expect(card(id).locator('.fd-strip-call')).toHaveAttribute('title', `Branch: ${BRANCH}`);
   const rail = page.getByRole('region', { name: 'Needs you rail' });
   await expect(rail).toContainText('Alpha approval');
   await expect(rail).toContainText('alpha');
@@ -279,7 +280,7 @@ test('the board survives a deck restart without a new login and shows work done 
   await expect(view).not.toContainText('Controls are off');
   await fleet();
   await expect(card(away)).toBeVisible();
-  await expect(page.locator('.fd-card')).toHaveCount(3);
+  await expect(page.locator('.fd-strip')).toHaveCount(3);
   await expect(page.getByLabel('Owner password')).toHaveCount(0);
   // No command ran twice: each station has only the sessions it started.
   expect(stationSessions(alpha)).toHaveLength(2);
@@ -314,7 +315,7 @@ test('the phone drops its network, catches up, and drives a session again', asyn
   await live();
   await fleet();
   await expect(card(offline)).toBeVisible();
-  await expect(page.locator('.fd-card')).toHaveCount(4);
+  await expect(page.locator('.fd-strip')).toHaveCount(4);
   const view = await open('Bravo long run');
   const composer = page.getByRole('form', { name: 'Composer' });
   await composer.getByLabel('Message').fill('one more');
@@ -345,7 +346,7 @@ test('a station link drop shows the station unreachable until it returns', async
   await bravo.start();
   await expect(stationCard('bravo')).toContainText('Link up');
   await fleet();
-  await expect(page.locator('.fd-card')).toHaveCount(4);
+  await expect(page.locator('.fd-strip')).toHaveCount(4);
   // The station restart resent nothing: no new command and no new input.
   expectRouted({
     'session.start': 2,

@@ -112,7 +112,7 @@ describe('fleet projections', () => {
       cards.slice(0, 2),
     );
   });
-  test('stale fleet cards retain their workspace and tools with an explicit Stale badge', () => {
+  test('stale strips retain their workspace and tools with an explicit Stale icon', () => {
     const html = renderToStaticMarkup(
       <FleetBoard
         sessions={[card('a', 'working', 'station-a', { cwd: '/work', background_tasks: ['bg'] })]}
@@ -120,10 +120,10 @@ describe('fleet projections', () => {
         freshness="stale"
       />,
     );
-    expect(html).toContain('<span class="fd-badge" data-tone="muted">Stale</span>');
-    // with no branch the card shows the directory
-    expect(html).toMatch(/fd-card-where">[\s\S]*?<\/svg> work</);
-    expect(html).toMatch(/title="Background tasks">[\s\S]*?<\/svg> 1<\/span>/);
+    expect(html).toContain('data-ico="stale" title="Stale"');
+    // with no branch the place is the directory
+    expect(html).toContain('title="Folder: work"');
+    expect(html).toMatch(/title="Background tasks">[\s\S]*?<\/svg><span>1<\/span>/);
     const live = renderToStaticMarkup(
       <FleetBoard sessions={[card('a')]} stations={[]} freshness="live" />,
     );
@@ -321,7 +321,7 @@ describe('station projections', () => {
       renderToStaticMarkup(<StationsPanel stations={[]} sessions={[]} freshness="live" />),
     ).not.toContain('Add station');
   });
-  test('cards show the reported branch, else the directory, else no place', () => {
+  test('strips name the reported branch, else the directory, else no place', () => {
     const html = renderToStaticMarkup(
       <FleetBoard
         sessions={[
@@ -332,10 +332,14 @@ describe('station projections', () => {
         freshness="live"
       />,
     );
-    expect(html).toMatch(/<\/svg> fd\/feature-1</);
-    expect(html).not.toContain('>deck<');
-    // a card without a branch and a directory has only its model badge in the place line
-    expect(html).toMatch(/data-session="b"[\s\S]*?fd-card-where"><span class="fd-badge"/);
+    expect(html).toContain('title="Branch: fd/feature-1"');
+    expect(html).not.toContain('Folder: deck');
+    // a session with no title shows its place in the title cell
+    expect(html).toContain('<span class="fd-strip-place">fd/feature-1</span>');
+    // a session without a branch and a directory has no place title and an empty title cell
+    expect(html).toMatch(
+      /<span class="fd-strip-title"><span class="fd-strip-text"><\/span><\/span>/,
+    );
   });
   test('an empty panel reports no paired stations', () => {
     expect(
@@ -411,30 +415,34 @@ describe('fleet cards, DL-141', () => {
       <FleetBoard sessions={cards} stations={[station()]} freshness="live" {...extra} />,
     );
 
-  test('every column head carries its hint', () => {
+  test('the board has lanes of strips and no column heads', () => {
     const out = html([card('a')]);
-    for (const c of COLUMNS) expect(out).toContain(`title="${c.hint}"`);
-    expect(out).toContain('title="Accepted by the station, not started yet"');
-    expect(out).toContain('title="Ended, lost, or its station is unreachable"');
+    expect(out).toContain('class="fd-lane"');
+    expect(out).toContain('<ul class="fd-strips">');
+    expect(out).not.toContain('fd-colhead');
+    expect(COLUMNS).toHaveLength(5);
   });
 
   test('a contested card is marked and names the others', () => {
     const contested = new Map([['station-a/a', { with: ['Beta fix', 'Gamma'], files: ['x.rs'] }]]);
     const out = html([card('a'), card('b')], { contested });
     expect(out).toMatch(/data-session="a"[^>]*data-contested="true"/);
-    expect(out).toContain('contested with Beta fix, Gamma</span>');
+    expect(out).toContain(
+      'data-ico="contested" data-tone="hazard" title="Contested with Beta fix, Gamma"',
+    );
     expect(out.match(/data-contested/g)).toHaveLength(1);
   });
 
-  test('the bypass modes show a hazard badge, other modes none', () => {
+  test('the bypass modes show a hazard shield icon, other modes none', () => {
     const out = html([
       card('a', 'working', 'station-a', { mode: 'bypassPermissions' }),
       card('b', 'working', 'station-a', { mode: 'dontAsk' }),
       card('c', 'working', 'station-a', { mode: 'default' }),
     ]);
-    expect(out.match(/data-tone="hazard" title="Permission mode"/g)).toHaveLength(2);
-    expect(out).toContain('>bypassPermissions<');
-    expect(out).not.toContain('Permission mode">default');
+    expect(out.match(/data-ico="risky" data-tone="hazard"/g)).toHaveLength(2);
+    expect(out).toContain('title="Permission mode: bypassPermissions"');
+    expect(out).toContain('title="Permission mode: dontAsk"');
+    expect(out).not.toContain('Permission mode: default');
   });
 
   test('the last error replaces the status text of an idle, ended or lost card only', () => {
@@ -481,11 +489,13 @@ describe('fleet cards, DL-141', () => {
     expect(out.match(/class="fd-card-star"/g)).toHaveLength(1);
   });
 
-  test('an offline column shows Resume all and Clear; a cleared card shows its Archived badge', () => {
+  test('the offline tools row shows Resume all and Clear; a cleared strip shows its Archived icon', () => {
     const ended = card('e', 'ended');
     const none = html([card('a')]);
     expect(none).not.toContain('Resume all');
+    expect(none).not.toContain('Offline sessions');
     const out = html([ended]);
+    expect(out).toContain('<span class="fd-label">Offline sessions</span>');
     expect(out).toContain('Resume all (0)');
     expect(out).toContain('Clear (1)');
     expect(out).not.toContain('Restore all');
@@ -493,7 +503,7 @@ describe('fleet cards, DL-141', () => {
     const shown = html([ended]);
     archived.remove(['station-a/e']);
     expect(shown).toContain('data-archived="true"');
-    expect(shown).toContain('data-tone="muted">Archived<');
+    expect(shown).toContain('data-ico="archived" title="Archived"');
     expect(shown).toContain('Clear (0)');
     expect(shown).toContain('Restore all');
   });
