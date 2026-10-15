@@ -1154,7 +1154,6 @@ body:has(.fd-app[data-layout="tablet"]) {
   cursor: pointer;
 }
 
-.fd-station-details > .fd-facts,
 .fd-station-sec > .fd-station-foot {
   display: flex;
   justify-content: flex-end;
