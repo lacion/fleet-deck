@@ -34,6 +34,7 @@ use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use fleetdeck_link::control::{Control, Inbound};
 use fleetdeck_link::methods::code;
@@ -456,9 +457,14 @@ impl Sync {
     }
 }
 
-/// Asks the station for `station.info` once per link and keeps it for the
-/// board (version, capacity, providers, M2 P4-2). The board name follows the
-/// station's own `name` setting: the deck adopts the reported name.
+/// How often the deck asks a live link for `station.info` again (DL-193).
+const INFO_REFRESH: Duration = Duration::from_secs(60);
+
+/// Asks the station for `station.info` when the link comes up and then every
+/// `INFO_REFRESH` while it is live, and keeps the answer for the board
+/// (version, capacity, providers, resources). The board name follows the
+/// station's own `name` setting: the deck adopts the name of the first
+/// answer only.
 fn fetch_info(ctx: &Arc<DeckLink>, control: &Control, id: &StationId, name: &str) {
     let (ctx, control, id, stored) = (
         Arc::clone(ctx),
@@ -467,16 +473,75 @@ fn fetch_info(ctx: &Arc<DeckLink>, control: &Control, id: &StationId, name: &str
         name.to_owned(),
     );
     tokio::spawn(async move {
-        let Ok(Outcome::Ok(v)) = control.request("station.info", None, json!({})).await else {
-            return;
-        };
-        let Ok(info) = serde_json::from_value::<StationInfo>(v) else {
-            return;
-        };
-        let reported = info.name.clone();
-        ctx.store.set_station_info(&id, info);
-        adopt_name(&ctx.store, id, &stored, &reported).await;
+        let ask = || ask_info(&control);
+        info_loop(
+            &ctx.store,
+            &id,
+            &stored,
+            INFO_REFRESH,
+            ask,
+            control.closed(),
+        )
+        .await;
     });
+}
+
+/// The loop of [`fetch_info`]. It ends when `closed` resolves or `ask`
+/// fails. An answer that is `Ok(None)` is skipped and tried again later.
+async fn info_loop<F, Fut>(
+    store: &DeckStore,
+    id: &StationId,
+    stored: &str,
+    every: Duration,
+    mut ask: F,
+    closed: impl Future,
+) where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<Option<StationInfo>, ()>>,
+{
+    tokio::pin!(closed);
+    match ask().await {
+        Ok(Some(info)) => {
+            let reported = info.name.clone();
+            store.set_station_info(id, info);
+            adopt_name(store, id.clone(), stored, &reported).await;
+        }
+        Ok(None) => {}
+        Err(()) => return,
+    }
+    loop {
+        tokio::select! {
+            _ = &mut closed => return,
+            () = tokio::time::sleep(every) => {}
+        }
+        match ask().await {
+            Ok(Some(info)) => store.set_station_info(id, info),
+            Ok(None) => {}
+            Err(()) => return,
+        }
+    }
+}
+
+/// One `station.info` request. `Err` when the link is gone; `Ok(None)` when
+/// the answer is an error or does not parse.
+async fn ask_info(control: &Control) -> Result<Option<StationInfo>, ()> {
+    match control.request("station.info", None, json!({})).await {
+        Ok(Outcome::Ok(v)) => match serde_json::from_value::<StationInfo>(v) {
+            Ok(info) => Ok(Some(info)),
+            Err(e) => {
+                tracing::debug!(error = %e, "station.info does not parse");
+                Ok(None)
+            }
+        },
+        Ok(other) => {
+            tracing::debug!(outcome = ?other, "station.info refused");
+            Ok(None)
+        }
+        Err(e) => {
+            tracing::debug!(error = %e, "station.info on a link that ended");
+            Err(())
+        }
+    }
 }
 
 /// Gives the station the name that it reports, when the name is new and
@@ -548,5 +613,150 @@ mod tests {
         let id = paired(&store, "old").await;
         adopt_name(&store, id.clone(), "old", "taken").await;
         assert_eq!(name_of(&store, &id).await, "old");
+    }
+
+    /// The interval of the refresh tests (the real one is `INFO_REFRESH`).
+    const TICK: Duration = Duration::from_millis(20);
+
+    fn info(name: &str, head: u64) -> StationInfo {
+        StationInfo {
+            name: name.to_owned(),
+            incarnation: "inc".to_owned().into(),
+            head,
+            live_sessions: 0,
+            version: None,
+            max_sessions: None,
+            allow_shell: None,
+            allow_setup_cmd: None,
+            providers: Vec::new(),
+            assist_tokens_today: None,
+            assist_cap: None,
+            resources: None,
+        }
+    }
+
+    async fn store_with(name: &str) -> (DeckStore, StationId) {
+        let det = Det::new();
+        let store = DeckStore::open_in_memory(det.clock(), det.ids())
+            .await
+            .unwrap();
+        let id = paired(&store, name).await;
+        (store, id)
+    }
+
+    fn head_of(store: &DeckStore, id: &StationId) -> Option<u64> {
+        store.station_info(id).map(|(info, _)| info.head)
+    }
+
+    async fn until_head(store: &DeckStore, id: &StationId, head: u64) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while head_of(store, id) < Some(head) {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "timed out: head {head}"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    type Answer = Result<Option<StationInfo>, ()>;
+
+    /// Answers `head` 1, 2, 3, ... for each request; `Ok(None)` for a call
+    /// in `skip` (an answer that does not parse); `Err` after `last` calls.
+    fn asker(
+        calls: &Arc<AtomicU64>,
+        skip: &'static [u64],
+        last: u64,
+    ) -> impl FnMut() -> std::future::Ready<Answer> + use<> {
+        let calls = Arc::clone(calls);
+        move || {
+            let n = calls.fetch_add(1, Ordering::SeqCst) + 1;
+            std::future::ready(if n > last {
+                Err(())
+            } else if skip.contains(&n) {
+                Ok(None)
+            } else {
+                Ok(Some(info("same", n)))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn the_refresh_loop_stores_a_new_info_every_interval() {
+        let (store, id) = store_with("same").await;
+        let calls = Arc::new(AtomicU64::new(0));
+        let ask = asker(&calls, &[2], u64::MAX);
+        let (close, closed) = tokio::sync::oneshot::channel::<()>();
+        let task = tokio::spawn({
+            let (store, id) = (store.clone(), id.clone());
+            async move { info_loop(&store, &id, "same", TICK, ask, closed).await }
+        });
+        // The second answer is skipped: the loop goes on to the third.
+        until_head(&store, &id, 3).await;
+        // The loop ends when the link closes.
+        drop(close);
+        tokio::time::timeout(Duration::from_secs(10), task)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_refresh_loop_ends_when_a_request_fails() {
+        let (store, id) = store_with("same").await;
+        let calls = Arc::new(AtomicU64::new(0));
+        let ask = asker(&calls, &[], 2);
+        let (_keep, closed) = tokio::sync::oneshot::channel::<()>();
+        let task = tokio::spawn({
+            let (store, id) = (store.clone(), id.clone());
+            async move { info_loop(&store, &id, "same", TICK, ask, closed).await }
+        });
+        tokio::time::timeout(Duration::from_secs(10), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(head_of(&store, &id), Some(2));
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn the_refresh_loop_starts_when_the_first_answer_is_skipped() {
+        let (store, id) = store_with("same").await;
+        let calls = Arc::new(AtomicU64::new(0));
+        let ask = asker(&calls, &[1], u64::MAX);
+        let (_keep, closed) = tokio::sync::oneshot::channel::<()>();
+        let task = tokio::spawn({
+            let (store, id) = (store.clone(), id.clone());
+            async move { info_loop(&store, &id, "same", TICK, ask, closed).await }
+        });
+        until_head(&store, &id, 2).await;
+        task.abort();
+    }
+
+    #[test]
+    fn the_refresh_interval_is_one_minute() {
+        assert_eq!(INFO_REFRESH, Duration::from_secs(60));
+    }
+
+    #[tokio::test]
+    async fn only_the_first_answer_names_the_station() {
+        let (store, id) = store_with("old").await;
+        let calls = Arc::new(AtomicU64::new(0));
+        let ask = {
+            let calls = Arc::clone(&calls);
+            move || {
+                let n = calls.fetch_add(1, Ordering::SeqCst) + 1;
+                let name = if n == 1 { "first" } else { "second" };
+                std::future::ready::<Answer>(Ok(Some(info(name, n))))
+            }
+        };
+        let (_keep, closed) = tokio::sync::oneshot::channel::<()>();
+        let task = tokio::spawn({
+            let (store, id) = (store.clone(), id.clone());
+            async move { info_loop(&store, &id, "old", TICK, ask, closed).await }
+        });
+        until_head(&store, &id, 3).await;
+        task.abort();
+        assert_eq!(name_of(&store, &id).await, "first");
     }
 }

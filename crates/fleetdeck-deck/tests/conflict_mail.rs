@@ -302,6 +302,7 @@ fn info_with_model_help(assist: bool) -> fleetdeck_proto::link::StationInfo {
         providers: Vec::new(),
         assist_tokens_today: assist.then_some(0),
         assist_cap: assist.then_some(200_000),
+        resources: None,
     }
 }
 

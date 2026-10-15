@@ -237,6 +237,8 @@ impl RunningStation {
         let adapters = adapters_from_config(config, &host, Some(station_dir.join("raw")))?;
         let socket = local::socket_path(&station_dir);
         let listener = local::bind(&socket).await?;
+        // The disk report measures the data directory (DL-193).
+        crate::resources::set_data_dir(station_dir.clone());
         let policy = Policy::from_config(config).with_setup_envs(setup_envs_from_config(config)?);
         // The station's own credential and config locations (DL-173): the
         // set loads and scans its inode registry here, before the manager

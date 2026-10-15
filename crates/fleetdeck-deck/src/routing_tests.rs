@@ -49,6 +49,7 @@ fn station(name: &str, reachable: bool, max: Option<u32>, live: u64, auth: &str)
             }],
             assist_tokens_today: None,
             assist_cap: None,
+            resources: None,
         }),
         info_at: None,
     }

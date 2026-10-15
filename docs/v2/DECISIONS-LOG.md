@@ -3012,3 +3012,10 @@ Owner review: pending.
 - Design: `docs/v2/design/subagents-worktrees.md` revision 3 (round 1 FAIL: Git could run repository programs, `worktree list` could leak files, the parser dropped subagent records; round 2 FAIL: no `for-each-ref -z`, the agent id was dropped, the home was lost on resume; round 3 PASS).
 - Decision: (A) the station records the subagent's agent id from its own Claude stream (`ToolCompleted.provider_refs.agent_id`) with the launch home in a binding row, and serves `session.subagent` from one bounded read of that transcript; (B) `session.branches` and `files.branch_diff` list the repository's branches with one hardened `for-each-ref` and diff a listed branch against its merge base. Owner only. Git 2.45 or newer.
 - The adversary PRE-PR review of the code is the next gate.
+
+## DL-193 — Station resources on the board (owner request, 2026-10-15)
+
+- Context: "starting a session on a deck that has no resources is not something we should encourage… the user should know". A station with a full disk or little memory takes a new session without any sign.
+- Decision: `station.info` carries `resources` (the free and total space of the data directory and of each allowed root, the memory total and available, the CPU cores with the load over 1 and 5 minutes). The station gathers it at most every 30 s. The deck asks `station.info` again every 60 s while the link is live and keeps the newest answer for the board.
+- Standard limits: low disk is under 10 GB (decimal) free or under 10 % of the total; low memory is under 1 GB available or under 10 %; busy CPU is a 5-minute load above 1.5 times the cores. The rules and the warning texts live in `fleetdeck-proto` (`StationResources::warnings`).
+- Warnings only: a low resource never blocks or refuses a session start. The board part is a later task.

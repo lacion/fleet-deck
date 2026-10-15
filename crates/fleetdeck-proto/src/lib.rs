@@ -27,6 +27,7 @@ pub mod member_deny;
 pub mod mutation;
 pub mod orchestration;
 pub mod plans;
+pub mod resources;
 pub mod review;
 pub mod session;
 pub mod settings;

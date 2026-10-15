@@ -10,6 +10,7 @@ use ts_rs::TS;
 use crate::capability::Capabilities;
 use crate::event::{EventEnvelope, ProviderKind};
 use crate::ids::{CommandId, IncarnationId, ProviderInstanceId, SessionId};
+use crate::resources::StationResources;
 use crate::session::SessionSummary;
 
 /// The largest control frame in bytes (ADR-004 §2.6).
@@ -275,6 +276,11 @@ pub struct StationInfo {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub assist_cap: Option<u64>,
+    /// The disk, memory and CPU of the station host (DL-193). Absent from an
+    /// older station.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub resources: Option<StationResources>,
 }
 
 /// One configured provider instance of a station (`[[provider_instance]]`,

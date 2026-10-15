@@ -440,6 +440,7 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
                 providers: ctx.manager.providers().await,
                 assist_tokens_today: usage.map(|(tokens, _)| tokens),
                 assist_cap: usage.map(|(_, cap)| cap),
+                resources: crate::resources::current(&policy).await,
             })
         }
         "workspace.list" => workspaces(ctx, req.params).await,
