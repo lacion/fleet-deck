@@ -1,0 +1,25 @@
+# Backlog
+
+Open items that are not designed or scheduled yet. Each item gets a design or a brief before code.
+
+## B1. Changes of subagents and of other worktrees are not visible (owner report, 2026-10-15)
+
+- **Observed:** the imported session "Fleet Deck architect" (Lighting, `v2` worktree) runs subagents that change code. The Changes tab of the session is empty.
+- **Facts:**
+  - The architect session gives code work to subagents. Each subagent works in its own git worktree (for example `../hist2` on branch `feat/session-history-2`), not in the session folder.
+  - The session merges the finished branches into `v2` as commits. After a merge, the working tree of the session is clean again.
+  - The Changes tab shows the turn diffs of the session and the working tree of the session folder against its base. Edits in another worktree and merged commits are in neither.
+  - The timeline shows a subagent as one "Agent" card with "0 entries". The tool calls of the subagent are not shown.
+- **Questions for the design:**
+  - Show the commits that the session made (or merged) since its start, next to the working-tree diff?
+  - Show the worktrees and branches that the session created, with their diffs?
+  - Show the tool calls of a subagent inside its card (Claude subagent transcripts)?
+
+## B2. Background notifications show as "provider turn" (owner screenshot, 2026-10-15)
+
+- **Observed:** in the chat of an imported Claude session, a turn that a background task starts (a task notification, not a prompt of the owner) shows as a user bubble with the text "provider turn".
+- **Wanted:** a muted line that says what started the turn (for example "Background task finished: hist-2"), or no bubble.
+
+## B3. Tailnet card: owner certificate files (DL-190, design §2.6)
+
+- **Missing:** when `board.crt` and `board.key` exist, the Tailnet card does not say "Your own certificate files (`board.crt`) are used for every name; remove them to use the Tailscale certificate." `GET /api/tailnet` does not tell the board that owner files exist.
