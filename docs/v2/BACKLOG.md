@@ -28,3 +28,8 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 
 - **Observed (real-stack e2e):** after `fleetdeck station join`, the dialog says "✓ ad9dca5e76ffca69 joined this deck." instead of the station name ("bravo"). The name arrives a moment later.
 - **Wanted:** the dialog shows the name when it arrives (update the line), or waits a short time for it.
+
+## B5. Build identity for upgrades (Codex review, 2026-10-15)
+
+- **Now:** `fleetdeck service start` decides "newer" or "older" by the file times of the two programs, because every build reports version `0.0.0`. A copy that keeps old file times, or an old binary copied later, can mislead it.
+- **Wanted:** a build id (for example the git commit and the build time) in the binary, shown by `fleetdeck --version`, compared by `service start` and `service status`, and reported by each station to the deck, so the board can show which build a station runs.
