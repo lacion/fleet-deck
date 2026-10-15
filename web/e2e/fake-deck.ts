@@ -608,6 +608,14 @@ export class FakeDeck {
       return r.handler(match, body, url.searchParams);
     }
     const handler = this.handlers.get(path);
+    // DL-189: a session without earlier history, unless a test sets this path with `on`.
+    if (
+      handler === undefined &&
+      method === 'GET' &&
+      /^\/api\/sessions\/[^/]+\/[^/]+\/history$/.test(path)
+    ) {
+      return { status: 200, body: { items: [], before: null, state: { kind: 'empty' } } };
+    }
     if (handler === undefined) return { status: 404, body: { code: 'not_found', message: path } };
     if (method === 'POST' && !csrf) {
       return { status: 403, body: { code: 'csrf', message: 'Missing CSRF token.' } };

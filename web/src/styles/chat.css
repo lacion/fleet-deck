@@ -548,3 +548,57 @@
 .fd-chat-toolfold .fd-badge {
   margin-left: 6px;
 }
+
+/* DL-189: the earlier history of an imported session, above the timeline. */
+.fd-history {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding-bottom: var(--sp-4);
+  margin-bottom: var(--sp-4);
+  border-bottom: 1px solid var(--border);
+  opacity: 0.85;
+}
+.fd-history > * {
+  margin: 0;
+}
+.fd-history-title {
+  color: var(--faint);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: var(--ls-label);
+}
+.fd-history-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  color: var(--dim);
+}
+.fd-history-item[data-kind="user"] {
+  white-space: pre-wrap;
+}
+.fd-history-item[data-kind="tool"] {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  font-family: var(--font-data);
+  font-size: var(--fs-micro);
+}
+.fd-history-item[data-kind="tool"] > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fd-history-failed {
+  color: var(--hazard);
+}
+.fd-history-gap {
+  text-align: center;
+  color: var(--faint);
+}
+.fd-history-more {
+  align-self: center;
+}

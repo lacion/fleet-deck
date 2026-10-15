@@ -5,6 +5,9 @@ import { trapTab, useFocusReturn } from '../app/focus';
 import { useOverlay } from '../app/overlay';
 import { sessionTitle } from '../app/sessions';
 import { stationName } from '../board/fleet';
+import { useSettings } from '../settings/context';
+import type { ElevationAsk } from '../settings/elevation';
+import { useFleetElevation } from '../spawn/useFleetElevation';
 import type {
   DeckSession,
   NewShare,
@@ -42,6 +45,8 @@ export type ShareForm = {
   readonly steering: Steering;
   readonly days: number;
   readonly uses: number;
+  /** DL-189: members may read the earlier history of imported sessions. */
+  readonly history: boolean;
 };
 
 export const defaultForm: ShareForm = {
@@ -49,10 +54,14 @@ export const defaultForm: ShareForm = {
   steering: 'open',
   days: DEFAULT_DAYS,
   uses: DEFAULT_USES,
+  history: false,
 };
 
-/** The body of `POST /api/shares`. Steering is for the roles that steer (collaborator, approver). */
-export function shareBody(request: ShareRequest, form: ShareForm): NewShare {
+/**
+ * The body of `POST /api/shares`. Steering is for the roles that steer (collaborator, approver).
+ * DL-189: `history` and `elevation` are in the body only when the history option is on.
+ */
+export function shareBody(request: ShareRequest, form: ShareForm, elevation?: string): NewShare {
   return {
     kind: request.kind,
     target: request.target,
@@ -60,7 +69,24 @@ export function shareBody(request: ShareRequest, form: ShareForm): NewShare {
     ...(form.role !== 'viewer' ? { steering: form.steering } : {}),
     expires_in_days: form.days,
     uses: form.uses,
+    ...(form.history ? { history: true, ...(elevation === undefined ? {} : { elevation }) } : {}),
   };
+}
+
+/**
+ * DL-189: makes the share. The history option needs the owner's elevation first; `null` when the
+ * owner cancels it (no request is sent then).
+ */
+export async function createShare(
+  calls: Pick<ShareCalls, 'create'>,
+  ask: ElevationAsk,
+  request: ShareRequest,
+  form: ShareForm,
+): Promise<ShareCreated | null> {
+  if (!form.history) return calls.create(shareBody(request, form));
+  const token = await ask(['Share the earlier history']);
+  if (token === null) return null;
+  return calls.create(shareBody(request, form, token));
 }
 
 /** One thing that "New share" can share: the board, a space or a session. */
@@ -224,6 +250,18 @@ export function ShareFields({ request, form, busy, onChange, onSubmit }: FormPro
           ))}
         </select>
       </label>
+      <label className="fd-share-role">
+        <input
+          type="checkbox"
+          checked={form.history}
+          onChange={(e) => onChange({ ...form, history: e.target.checked })}
+        />
+        <span>Members can read the earlier history of imported sessions</span>
+      </label>
+      <p className="fd-note">
+        Members see the full earlier conversation of the shared sessions, including anything that
+        was pasted into it. Tool commands and file names stay hidden.
+      </p>
       <button type="submit" className="fd-primary" disabled={busy}>
         {busy ? 'Making the link…' : 'Make a link'}
       </button>
@@ -269,6 +307,7 @@ export function ShareDialog({
   const [error, setError] = useState<string | null>(initialError ?? null);
   const [made, setMade] = useState(initialLink ?? null);
   const alive = useRef(true);
+  const { ask, node: elevationNode } = useFleetElevation(useSettings());
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -281,8 +320,8 @@ export function ShareDialog({
     setError(null);
     setMade(null);
     try {
-      const link = await calls.create(shareBody(active, form));
-      if (!alive.current) return;
+      const link = await createShare(calls, ask, active, form);
+      if (!alive.current || link === null) return;
       setMade({ link, role: form.role });
       sharesChanged();
     } catch (e) {
@@ -379,6 +418,8 @@ export function ShareDialog({
           <Icon of={X} size={14} /> Close
         </button>
       </div>
+      {/* DL-189: beside the dialog, so that its keys do not reach the keys of the share dialog. */}
+      {elevationNode}
     </div>
   );
 }

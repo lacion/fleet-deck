@@ -46,6 +46,8 @@ export type ShareCalls = {
   shares(): Promise<ShareInfo[]>;
   create(body: NewShare): Promise<ShareCreated>;
   revoke(shareId: string): Promise<ShareInfo>;
+  /** DL-189: members read the earlier history of imported sessions; turning it on needs the elevation. */
+  setHistory(shareId: string, enabled: boolean, elevation?: string): Promise<ShareInfo>;
   spaces(): Promise<SpaceView[]>;
   createSpace(name: string): Promise<SpaceView>;
   addToSpace(spaceId: string, station: string, sessionId: string): Promise<SpaceView>;
@@ -91,6 +93,15 @@ export function shareCalls(get: Get, post: Post): ShareCalls {
     revoke: async (shareId) =>
       one<ShareInfo>(
         await post(`/api/shares/${encodeURIComponent(shareId)}/revoke`, {}),
+        'share_id',
+        'share',
+      ),
+    setHistory: async (shareId, enabled, elevation) =>
+      one<ShareInfo>(
+        await post(`/api/shares/${encodeURIComponent(shareId)}/history`, {
+          enabled,
+          ...(elevation === undefined ? {} : { elevation }),
+        }),
         'share_id',
         'share',
       ),

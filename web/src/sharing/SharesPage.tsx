@@ -4,16 +4,43 @@ import { sessionTitle } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import type { DeckSession, ShareInfo, SpaceView, StationView } from '../gen';
 import { untilText } from '../automations/automations';
+import { useSettings } from '../settings/context';
+import type { ElevationAsk } from '../settings/elevation';
+import { useFleetElevation } from '../spawn/useFleetElevation';
 import { Icon, Plus, Share2 } from '../ui/icons';
 import { EmptyState, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import { canShare, usePeople } from './context';
 import { roleLabel } from './member';
+import type { ShareCalls } from './people';
 import { day, NewShareDialog } from './ShareDialog';
 import { sharesChanged, useSharesVersion } from './shareStore';
 import { type Loaded, useLoad } from './useLoad';
 
 const message = (e: unknown) => (e instanceof Error ? e.message : 'The request failed.');
+
+/** DL-189: the text before the owner turns the history option on. */
+const HISTORY_WARNING =
+  'Members see the full earlier conversation of the shared sessions, including anything that was pasted into it. Tool commands and file names stay hidden.';
+
+/** DL-189: turns the history option on. It needs the elevation first; `null` when the owner cancels. */
+export async function shareHistoryOn(
+  calls: Pick<ShareCalls, 'setHistory'>,
+  ask: ElevationAsk,
+  shareId: string,
+): Promise<ShareInfo | null> {
+  const token = await ask(['Share the earlier history']);
+  if (token === null) return null;
+  return calls.setHistory(shareId, true, token);
+}
+
+/** DL-189: turns the history option off at once (no confirm, no elevation). */
+export function shareHistoryOff(
+  calls: Pick<ShareCalls, 'setHistory'>,
+  shareId: string,
+): Promise<ShareInfo> {
+  return calls.setHistory(shareId, false);
+}
 
 /** The state of a share: `revoked`, `expired` (time or no uses and no members), or `live`. */
 export function shareState(share: ShareInfo, now: number): 'revoked' | 'expired' | 'live' {
@@ -41,9 +68,16 @@ type RowProps = {
   readonly stations: readonly StationView[];
   readonly confirming: boolean;
   readonly busy: boolean;
+  /** DL-189: the confirm of "Share history" is open on this row. */
+  readonly historyConfirming: boolean;
+  /** DL-189: a history change of this row is in progress. */
+  readonly historyBusy: boolean;
   readonly onAsk: () => void;
   readonly onCancel: () => void;
   readonly onRevoke: () => void;
+  readonly onHistoryAsk: () => void;
+  readonly onHistory: () => void;
+  readonly onStopHistory: () => void;
 };
 
 /** The expiry of a share, relative to now: `in 5 days`, `revoked 2026-10-13`, `expired 2026-10-12`. */
@@ -60,9 +94,14 @@ function ShareRow({
   stations,
   confirming,
   busy,
+  historyConfirming,
+  historyBusy,
   onAsk,
   onCancel,
   onRevoke,
+  onHistoryAsk,
+  onHistory,
+  onStopHistory,
 }: RowProps) {
   const state = shareState(share, now);
   const where = targetText(share, sessions, stations);
@@ -84,6 +123,11 @@ function ShareRow({
           {share.role !== 'viewer' ? (
             <span className="fd-badge" data-tone="muted">
               {share.steering === 'mob' ? 'mob' : 'open'}
+            </span>
+          ) : null}
+          {share.history ? (
+            <span className="fd-badge" data-tone="info">
+              History shared
             </span>
           ) : null}
           {state === 'live' ? null : (
@@ -122,15 +166,60 @@ function ShareRow({
               Cancel
             </button>
           </span>
+        ) : historyConfirming ? (
+          <span role="group" aria-label="Share the earlier history">
+            <span>{HISTORY_WARNING}</span>
+            <button
+              type="button"
+              className="fd-sm"
+              disabled={historyBusy}
+              aria-label={`Share history of ${where}`}
+              onClick={onHistory}
+            >
+              Share history
+            </button>
+            <button
+              type="button"
+              className="fd-ghost fd-sm"
+              disabled={historyBusy}
+              aria-label={`Cancel sharing history of ${where}`}
+              onClick={onCancel}
+            >
+              Cancel
+            </button>
+          </span>
         ) : (
-          <button
-            type="button"
-            className="fd-ghost fd-sm fd-danger"
-            aria-label={`Revoke the share of ${where}`}
-            onClick={onAsk}
-          >
-            Revoke
-          </button>
+          <>
+            {share.history ? (
+              <button
+                type="button"
+                className="fd-ghost fd-sm"
+                disabled={historyBusy}
+                aria-label={`Stop sharing history of ${where}`}
+                onClick={onStopHistory}
+              >
+                Stop sharing history
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="fd-ghost fd-sm"
+                disabled={historyBusy}
+                aria-label={`Share history of ${where}`}
+                onClick={onHistoryAsk}
+              >
+                Share history
+              </button>
+            )}
+            <button
+              type="button"
+              className="fd-ghost fd-sm fd-danger"
+              aria-label={`Revoke the share of ${where}`}
+              onClick={onAsk}
+            >
+              Revoke
+            </button>
+          </>
         )}
       </td>
     </tr>
@@ -149,6 +238,12 @@ type ViewProps = {
   readonly onRetry?: () => void;
   readonly onAsk?: (id: string | null) => void;
   readonly onRevoke?: (share: ShareInfo) => void;
+  /** DL-189: the share whose history change is in progress (a share id). */
+  readonly historyBusy?: string | null;
+  /** DL-189: confirmed "Share history" (the page asks for the elevation). */
+  readonly onHistory?: (share: ShareInfo) => void;
+  /** DL-189: "Stop sharing history". */
+  readonly onStopHistory?: (share: ShareInfo) => void;
   /** "New share": opens the dialog with a target select. */
   readonly onNew?: () => void;
 };
@@ -165,6 +260,9 @@ export function SharesView({
   onRetry,
   onAsk,
   onRevoke,
+  historyBusy = null,
+  onHistory,
+  onStopHistory,
   onNew,
 }: ViewProps) {
   const newShare = (
@@ -226,9 +324,14 @@ export function SharesView({
                   stations={stations}
                   confirming={confirming === share.share_id}
                   busy={revoking === share.share_id}
+                  historyConfirming={confirming === `history:${share.share_id}`}
+                  historyBusy={historyBusy === share.share_id}
                   onAsk={() => onAsk?.(share.share_id)}
                   onCancel={() => onAsk?.(null)}
                   onRevoke={() => onRevoke?.(share)}
+                  onHistoryAsk={() => onAsk?.(`history:${share.share_id}`)}
+                  onHistory={() => onHistory?.(share)}
+                  onStopHistory={() => onStopHistory?.(share)}
                 />
               ))}
             </tbody>
@@ -285,6 +388,8 @@ export function SharesPage({ sessions, stations }: Props) {
   const [revoking, setRevoking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [making, setMaking] = useState(false);
+  const [working, setWorking] = useState<string | null>(null);
+  const { ask, node: elevationNode } = useFleetElevation(useSettings());
   useEffect(() => {
     // A new share elsewhere (the dialog) shows here after the next load.
     setConfirming(null);
@@ -310,6 +415,24 @@ export function SharesPage({ sessions, stations }: Props) {
       setRevoking(null);
     }
   };
+  // DL-189: turn the history option on (after the confirm and the elevation) or off.
+  const changeHistory = async (share: ShareInfo, on: boolean) => {
+    setWorking(share.share_id);
+    setError(null);
+    try {
+      const done = on
+        ? await shareHistoryOn(calls, ask, share.share_id)
+        : await shareHistoryOff(calls, share.share_id);
+      if (done !== null) {
+        setConfirming(null);
+        sharesChanged();
+      }
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setWorking(null);
+    }
+  };
   return (
     <>
       <SharesView
@@ -323,6 +446,9 @@ export function SharesPage({ sessions, stations }: Props) {
         onRetry={reload}
         onAsk={setConfirming}
         onRevoke={(share) => void revoke(share)}
+        historyBusy={working}
+        onHistory={(share) => void changeHistory(share, true)}
+        onStopHistory={(share) => void changeHistory(share, false)}
         onNew={() => setMaking(true)}
       />
       {making ? (
@@ -334,6 +460,7 @@ export function SharesPage({ sessions, stations }: Props) {
           onClose={() => setMaking(false)}
         />
       ) : null}
+      {elevationNode}
     </>
   );
 }

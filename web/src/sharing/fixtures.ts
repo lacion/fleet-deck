@@ -31,6 +31,7 @@ export const fakeShareCalls = (extra: Partial<ShareCalls> = {}): ShareCalls => (
   shares: async () => [],
   create: unused,
   revoke: unused,
+  setHistory: unused,
   spaces: async () => [],
   createSpace: unused,
   addToSpace: unused,
