@@ -38,3 +38,10 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 - **Now:** `fleetdeck service start` decides "newer" or "older" by the file times of the two programs, because every build reports version `0.0.0`. A copy that keeps old file times, or an old binary copied later, can mislead it.
 - **Wanted:** a build id (for example the git commit and the build time) in the binary, shown by `fleetdeck --version`, compared by `service start` and `service status`, and reported by each station to the deck, so the board can show which build a station runs.
 - **Done (2026-10-15):** commit and commit time in every binary; `--version`, station info, deck version and `service start/status` use them (be-w4).
+
+## B6. Running subagents and tasks in the chat view (owner request, 2026-10-15)
+
+- **Observed:** the chat view has no list of the subagents and background tasks that a session runs now. The owner cannot see which are running, and cannot open the chat of one of them.
+- **Wanted:** a view of all running subagents and tasks of the session, and a way to switch from agent to agent to see the chat window of each, as in Claude Code.
+- **Related:** DL-191 adds "Show its work" (one read of a finished subagent transcript) and the Branches view. B6 needs live state and a switch between chats.
+- **Status:** later. Needs a design first.
