@@ -45,6 +45,7 @@ import { buckets } from './activity';
 import { type Contested, cardKey, NO_REPO, repoName, stationName, statusGroups } from './fleet';
 import { CardNote, CompareChip } from './cardParts';
 import { FleetStrip } from './FleetStrip';
+import { resourceWarnings } from './resources';
 import { Sparkline } from './Sparkline';
 import { costText } from './usage';
 
@@ -483,6 +484,10 @@ export function FleetBoard({
             : lane.cards.filter((c) =>
                 contested.has(sessionRef(c.station_id, c.summary.session_id)),
               ).length;
+        const warnings =
+          group === 'station'
+            ? resourceWarnings(stations.find((s) => s.station_id === lane.id)?.info?.resources)
+            : [];
         return (
           <section
             key={lane.id}
@@ -495,6 +500,11 @@ export function FleetBoard({
             <h2 className="fd-lane-head">
               <span className="fd-lane-name">{lane.name}</span>{' '}
               <span className="fd-count">{lane.cards.length}</span>
+              {warnings.length > 0 ? (
+                <span className="fd-lane-warn" title={warnings.map((w) => w.text).join('\n')}>
+                  ▲ Low resources
+                </span>
+              ) : null}
               {group === 'repo' && contestedCount > 0 ? (
                 <span className="fd-lane-conf">▲ {contestedCount} contested</span>
               ) : null}
