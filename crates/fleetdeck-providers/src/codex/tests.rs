@@ -166,6 +166,7 @@ pub(super) fn tool_completed(node: &str, status: ToolStatus) -> Event {
         status,
         files: Vec::new(),
         exit_code: None,
+        provider_refs: serde_json::Map::new(),
     }
 }
 

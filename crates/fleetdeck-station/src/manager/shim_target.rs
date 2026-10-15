@@ -42,6 +42,7 @@ use super::super::shim_station::{Durable, Restored};
 use super::super::shims::{self, LaunchError, launch_shim_for, reason};
 use super::super::turns::SessionTurns;
 use super::{Live, REASON_PROCESS_EXIT, SessionTarget, Sessions};
+use crate::history::subagent::LaunchFacts;
 use crate::store::resumes::Purpose;
 use crate::store::{
     Dispatch, Effect, EffectPayload, InputRecord, ProcessIncarnation, ReadResult, RevertStep,
@@ -155,12 +156,15 @@ impl SessionTarget {
                     turns,
                     from,
                     Drain::ToHead,
+                    None,
                 ));
                 continue;
             }
             // `from` is the head before the restoration: the observer sees
             // every event that the driver committed while it replayed.
-            self.insert_durable(&r.session_id, r.process, turns, r.driver, stop, from);
+            // An adopted process writes no subagent rows: its launch
+            // environment is not known (DL-191).
+            self.insert_durable(&r.session_id, r.process, turns, r.driver, stop, from, None);
         }
     }
 
@@ -178,6 +182,9 @@ impl SessionTarget {
         .await
     }
 
+    // The session, the process, the turns, the driver, the stop policy, the
+    // cursor and the launch facts are all that the observer needs.
+    #[allow(clippy::too_many_arguments)]
     fn insert_durable(
         &self,
         session_id: &SessionId,
@@ -186,6 +193,7 @@ impl SessionTarget {
         driver: Durable,
         stop: StopPolicy,
         from: u64,
+        launch: Option<LaunchFacts>,
     ) {
         // The observer is spawned while this lock is held: its removal of
         // the entry at the session's end takes the same lock, so it never
@@ -202,6 +210,7 @@ impl SessionTarget {
             Arc::clone(&turns),
             from,
             Drain::ToTerminal,
+            launch,
         ))
         .abort_handle();
         map.insert(
@@ -433,6 +442,7 @@ impl SessionTarget {
             driver.clone(),
             launch.stop,
             from,
+            self.launch_facts(spec),
         );
         if prompt.is_some() && super::setup_task::cancelled(cancel) {
             // A stop came during the setup: the first input is not sent.
@@ -639,6 +649,7 @@ async fn observe(
     turns: Arc<SessionTurns>,
     from: u64,
     drain: Drain,
+    launch: Option<LaunchFacts>,
 ) {
     let mut head = store.subscribe();
     let mut cursor = from;
@@ -667,6 +678,7 @@ async fn observe(
             .collect();
         let ended = observed.iter().any(Event::is_terminal_for_session);
         crate::artifacts::suggest::observe(&store, &session_id, &observed).await;
+        crate::history::subagent::observe(&store, &session_id, launch.as_ref(), &observed).await;
         if !observed.is_empty() && turns.observe(&observed).await {
             tokio::spawn(Arc::clone(&turns).capture_due());
         }

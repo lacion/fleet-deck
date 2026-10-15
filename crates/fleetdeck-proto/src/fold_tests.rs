@@ -301,6 +301,7 @@ fn tool_done(id: &str) -> Event {
         status: crate::event::ToolStatus::Ok,
         files: Vec::new(),
         exit_code: Some(0),
+        provider_refs: ProviderRefs::new(),
     }
 }
 

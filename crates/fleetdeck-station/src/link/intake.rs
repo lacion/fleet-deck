@@ -329,6 +329,50 @@ async fn history_method(ctx: &StationLink, params: serde_json::Value) -> Outcome
     }
 }
 
+/// `session.subagent` (DL-191): the log of one subagent of a session, from
+/// the transcript that the provider wrote for it. Error codes
+/// `invalid_params`, `unknown_session`, `busy` and `internal`.
+async fn subagent_method(ctx: &StationLink, params: serde_json::Value) -> Outcome {
+    let query: fleetdeck_proto::subagent::SubagentQuery = match serde_json::from_value(params) {
+        Ok(q) => q,
+        Err(e) => return bad_params(e),
+    };
+    let store = ctx.manager.store();
+    let private = ctx.manager.private_paths();
+    match crate::history::subagent::answer(store, store.history(), &private, query).await {
+        Ok(answer) => ok(answer),
+        Err(e) => Outcome::Err(WireError::new(e.code, e.message)),
+    }
+}
+
+/// `session.branches` and `files.branch_diff` (DL-191): the branches of the
+/// repository of a session and the committed diff of one. Error codes
+/// `invalid_params`, `unknown_session`, `git_too_old`, `busy`, `internal`,
+/// and `missing_workspace` and `outside_roots` of the file service.
+async fn branch_method(ctx: &StationLink, method: &str, params: serde_json::Value) -> Outcome {
+    use crate::workspace::branches;
+    let current = ctx.manager.policy();
+    let private = ctx.manager.private_paths();
+    let git = crate::workspace::GitOptions::isolated();
+    let store = ctx.manager.store();
+    let result = if method == "session.branches" {
+        match serde_json::from_value(params) {
+            Ok(q) => branches::run_branches(store, &current, &private, &git, q)
+                .await
+                .map(ok),
+            Err(e) => return bad_params(e),
+        }
+    } else {
+        match serde_json::from_value(params) {
+            Ok(q) => branches::run_branch_diff(store, &current, &private, &git, q)
+                .await
+                .map(ok),
+            Err(e) => return bad_params(e),
+        }
+    };
+    result.unwrap_or_else(|e| Outcome::Err(WireError::new(e.code, e.message)))
+}
+
 /// `coordinator.policy_now` (ADR-008 §6.2): the live fleet-control policy of
 /// this station for the deck: the live setting `allow_fleet_control`, and
 /// whether the caller session still holds a binding of a grant here.
@@ -455,6 +499,10 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
         }
         "coordinator.policy_now" => policy_now(ctx, req.params),
         "session.history" => history_method(ctx, req.params).await,
+        "session.subagent" => subagent_method(ctx, req.params).await,
+        "session.branches" | "files.branch_diff" => {
+            branch_method(ctx, &req.method, req.params).await
+        }
         "files.list"
         | "files.read"
         | "files.search"

@@ -18,6 +18,7 @@ pub mod index;
 pub mod lines;
 pub mod locate;
 pub mod parse;
+pub mod subagent;
 
 #[cfg(test)]
 mod tests;
@@ -27,6 +28,8 @@ mod tests_capture;
 mod tests_locate;
 #[cfg(test)]
 mod tests_page;
+#[cfg(test)]
+mod tests_subagent;
 #[cfg(test)]
 mod tests_support;
 

@@ -325,6 +325,8 @@ pub enum DiffScope {
     /// The session works in a shared folder (no worktree of its own): only
     /// the files that the session changed.
     SessionFiles,
+    /// The committed work of one branch against its merge base (DL-191).
+    Committed,
 }
 
 /// Validates a relative path of a query and returns its segments.

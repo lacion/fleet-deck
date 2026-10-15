@@ -122,13 +122,11 @@ pub fn locate(
     })
 }
 
-/// The trust checks on the open file; returns its size.
-fn check_file(
-    file: &File,
-    kind: ProviderKind,
-    native: &str,
-    trust: &Trust<'_>,
-) -> Result<u64, Fail> {
+/// The metadata checks on the open file; returns its size: a regular file,
+/// the owner's, with one hard link, not private, not too large (`max`). Split
+/// from the transcript scan so that [`locate_subagent`] uses it alone
+/// (DL-191).
+fn check_meta(file: &File, trust: &Trust<'_>, max: u64) -> Result<u64, Fail> {
     let not_trusted = || unavailable(HistoryUnavailable::NotTrusted);
     let meta = file.metadata().map_err(|_| Fail::Io)?;
     if !meta.is_file() || meta.uid() != trust.uid || meta.nlink() != 1 {
@@ -137,12 +135,66 @@ fn check_file(
     if trust.private.is_private_file(&meta) {
         return Err(not_trusted());
     }
-    if meta.len() > trust.limits.file_max {
+    if meta.len() > max {
         return Err(unavailable(HistoryUnavailable::TooLarge));
     }
+    Ok(meta.len())
+}
+
+/// The largest subagent transcript (DL-191).
+pub const SUBAGENT_FILE_MAX: u64 = 64 * 1024 * 1024;
+
+/// Finds the transcript of one subagent below `home` and checks its
+/// metadata only; every record is checked by the reader (DL-191). The path
+/// is `projects/<encoded cwd>/<native>/subagents/agent-<agent id>.jsonl`,
+/// opened one segment at a time without following a link.
+///
+/// # Errors
+/// [`Fail::Unavailable`] with the reason, or the deadline.
+pub fn locate_subagent(
+    home: &Path,
+    cwd: &str,
+    native: &str,
+    agent_id: &str,
+    trust: &Trust<'_>,
+) -> Result<Opened, Fail> {
+    let home =
+        std::fs::canonicalize(home).map_err(|_| unavailable(HistoryUnavailable::NotFound))?;
+    let root = open_root(&home).map_err(open_fail)?;
+    let name = format!("agent-{agent_id}.jsonl");
+    let dirs: Vec<String> = vec![
+        "projects".to_owned(),
+        encode_cwd(cwd),
+        native.to_owned(),
+        "subagents".to_owned(),
+    ];
+    let dir_refs: Vec<&str> = dirs.iter().map(String::as_str).collect();
+    let dir = descend(&root, &dir_refs).map_err(open_fail)?;
+    let fd =
+        rustix::fs::openat(&dir, name.as_str(), file_flags(), Mode::empty()).map_err(open_fail)?;
+    let file = File::from(fd);
+    let size = check_meta(&file, trust, SUBAGENT_FILE_MAX)?;
+    let mut path: PathBuf = dirs.iter().collect();
+    path.push(name);
+    Ok(Opened {
+        file,
+        size,
+        home,
+        path,
+    })
+}
+
+/// The trust checks on the open file; returns its size.
+fn check_file(
+    file: &File,
+    kind: ProviderKind,
+    native: &str,
+    trust: &Trust<'_>,
+) -> Result<u64, Fail> {
+    let not_trusted = || unavailable(HistoryUnavailable::NotTrusted);
+    let size = check_meta(file, trust, trust.limits.file_max)?;
     // The first record that names a session must name this one.
-    let mut lines =
-        Lines::new(file, 0, meta.len(), trust.limits.line_max).with_deadline(trust.deadline);
+    let mut lines = Lines::new(file, 0, size, trust.limits.line_max).with_deadline(trust.deadline);
     for _ in 0..HEAD_RECORDS {
         let next = lines.next_line().map_err(|e| match e {
             super::lines::ReadError::Deadline => Fail::Busy,
@@ -152,7 +204,7 @@ fn check_file(
         let Line::Record(bytes) = line else { continue };
         if let Some(named) = parse::embedded_session(kind, bytes) {
             return if named == native {
-                Ok(meta.len())
+                Ok(size)
             } else {
                 Err(not_trusted())
             };

@@ -37,6 +37,7 @@ pub mod review_anchor_cache;
 pub mod review_routes;
 pub mod schedule_routes;
 pub mod secrets_routes;
+pub mod session_work_routes;
 pub mod settings_routes;
 pub mod share_routes;
 pub mod shell_routes;
@@ -452,6 +453,18 @@ pub fn router(board: Arc<Board>) -> Router {
         .route(
             "/api/sessions/{station}/{session}/history",
             get(history_routes::history),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/subagents/{tool_use_id}",
+            get(session_work_routes::subagent),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/branches",
+            get(session_work_routes::branches),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/branches/{head}/diff",
+            get(session_work_routes::branch_diff),
         )
         .route(
             "/api/spaces",

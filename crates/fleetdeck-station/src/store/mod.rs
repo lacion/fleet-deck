@@ -49,6 +49,7 @@ pub mod shim_driver;
 pub mod shim_gaps;
 pub mod shim_writes;
 pub mod shims;
+pub mod subagent_logs;
 pub mod terminal;
 pub mod transcripts;
 mod turn_checkpoints;

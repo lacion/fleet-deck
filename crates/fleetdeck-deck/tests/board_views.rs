@@ -102,6 +102,7 @@ async fn seed(f: &Fixture) {
                     status: ToolStatus::Ok,
                     files: Vec::new(),
                     exit_code: Some(0),
+                    provider_refs: serde_json::Map::new(),
                 },
             ),
             message(4, "s1", 4_000, "Fixed the login test.\nSecond line."),

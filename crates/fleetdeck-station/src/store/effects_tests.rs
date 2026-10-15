@@ -487,6 +487,7 @@ async fn answers_are_idempotent_per_request_and_confirmed_by_the_tool_node() {
             status: ToolStatus::Ok,
             files: Vec::new(),
             exit_code: Some(0),
+            provider_refs: serde_json::Map::new(),
         },
     )
     .await;

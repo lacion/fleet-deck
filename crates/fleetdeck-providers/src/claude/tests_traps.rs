@@ -473,3 +473,100 @@ fn a_refused_interrupt_reports_its_control_id_and_the_turn_ends_normally() {
         }
     )));
 }
+
+// ---- the agent id of a subagent result (DL-191) ----
+
+fn agent_result(core: &mut ClaudeCore, tool_use_id: &str, structured: serde_json::Value) -> Event {
+    let ev = emits(&feed(
+        core,
+        json!({"type":"user","tool_use_result":structured,"message":{"role":"user","content":[
+            {"type":"tool_result","tool_use_id":tool_use_id,"content":"agentId: zzzzzz (internal)"}]}}),
+    ));
+    ev.into_iter()
+        .find(|e| matches!(e, Event::ToolCompleted { .. }))
+        .unwrap()
+}
+
+fn agent_ref(ev: &Event) -> Option<String> {
+    let Event::ToolCompleted { provider_refs, .. } = ev else {
+        panic!("not tool.completed")
+    };
+    provider_refs
+        .get("agent_id")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned)
+}
+
+#[test]
+fn a_background_agent_result_gives_the_agent_id() {
+    let mut core = running_core();
+    tool_use(&mut core, "toolu_a", "Agent", json!({"prompt":"work"}));
+    let ev = agent_result(
+        &mut core,
+        "toolu_a",
+        json!({"isAsync":true,"status":"async_launched","agentId":"afef5265450389d2c"}),
+    );
+    assert_eq!(agent_ref(&ev).as_deref(), Some("afef5265450389d2c"));
+}
+
+#[test]
+fn a_foreground_task_result_gives_the_agent_id() {
+    let mut core = running_core();
+    tool_use(&mut core, "toolu_t", "Task", json!({"prompt":"work"}));
+    let ev = agent_result(
+        &mut core,
+        "toolu_t",
+        json!({"status":"completed","agentId":"a1b2c3","totalToolUseCount":3,"content":[]}),
+    );
+    assert_eq!(agent_ref(&ev).as_deref(), Some("a1b2c3"));
+}
+
+#[test]
+fn the_camel_case_transcript_key_is_read_too() {
+    let frame = frames::parse_value(json!({"type":"user","toolUseResult":{"agentId":"abc123"},
+        "message":{"role":"user","content":[]}}))
+    .unwrap();
+    let frames::CliFrame::User(msg) = frame else {
+        panic!()
+    };
+    assert_eq!(msg.agent_id.as_deref(), Some("abc123"));
+}
+
+#[test]
+fn a_bad_agent_id_is_ignored() {
+    let long = "a".repeat(65);
+    for bad in [
+        json!("../etc"),
+        json!("A1"),
+        json!("a/b"),
+        json!(""),
+        json!(long),
+        json!(7),
+        json!(null),
+    ] {
+        let mut core = running_core();
+        tool_use(&mut core, "toolu_a", "Agent", json!({"prompt":"work"}));
+        let ev = agent_result(&mut core, "toolu_a", json!({"agentId": bad}));
+        assert_eq!(agent_ref(&ev), None, "{bad}");
+    }
+}
+
+#[test]
+fn the_agent_id_is_never_read_from_the_result_text() {
+    let mut core = running_core();
+    tool_use(&mut core, "toolu_a", "Agent", json!({"prompt":"work"}));
+    let ev = emits(&feed(
+        &mut core,
+        json!({"type":"user","message":{"role":"user","content":[
+            {"type":"tool_result","tool_use_id":"toolu_a","content":"agentId: abc123"}]}}),
+    ));
+    assert_eq!(agent_ref(&ev[0]), None);
+}
+
+#[test]
+fn another_tool_does_not_get_an_agent_id() {
+    let mut core = running_core();
+    tool_use(&mut core, "toolu_b", "Bash", json!({"command":"ls"}));
+    let ev = agent_result(&mut core, "toolu_b", json!({"agentId":"abc123"}));
+    assert_eq!(agent_ref(&ev), None);
+}

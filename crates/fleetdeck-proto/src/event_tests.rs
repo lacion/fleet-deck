@@ -78,6 +78,7 @@ fn samples() -> Vec<Event> {
             status: ToolStatus::Ok,
             files: vec!["a.txt".into()],
             exit_code: Some(0),
+            provider_refs: ProviderRefs::new(),
         },
         Event::FileChanged {
             path: "a.txt".into(),
@@ -501,4 +502,39 @@ fn run_started_carries_an_optional_input_id() {
             .get("input_id")
             .is_none()
     );
+}
+
+#[test]
+fn tool_completed_carries_optional_provider_refs() {
+    // An event of an older station has no `provider_refs`.
+    let old =
+        r#"{"kind":"tool.completed","node_id":"n1","status":"ok","files":[],"exit_code":null}"#;
+    let Event::ToolCompleted { provider_refs, .. } = serde_json::from_str(old).unwrap() else {
+        panic!("not tool.completed");
+    };
+    assert!(provider_refs.is_empty());
+    // An empty map is not written, so an older reader sees the old shape.
+    let without = Event::ToolCompleted {
+        node_id: "n1".into(),
+        status: ToolStatus::Ok,
+        files: Vec::new(),
+        exit_code: None,
+        provider_refs: ProviderRefs::new(),
+    };
+    let json = serde_json::to_value(&without).unwrap();
+    assert!(json.get("provider_refs").is_none());
+    assert_eq!(serde_json::from_value::<Event>(json).unwrap(), without);
+    // A filled map round-trips (DL-191: the agent id of a subagent).
+    let mut refs = ProviderRefs::new();
+    refs.insert("agent_id".into(), json!("afef5265450389d2c"));
+    let with = Event::ToolCompleted {
+        node_id: "n1".into(),
+        status: ToolStatus::Ok,
+        files: Vec::new(),
+        exit_code: None,
+        provider_refs: refs,
+    };
+    let json = serde_json::to_value(&with).unwrap();
+    assert_eq!(json["provider_refs"]["agent_id"], "afef5265450389d2c");
+    assert_eq!(serde_json::from_value::<Event>(json).unwrap(), with);
 }

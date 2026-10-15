@@ -190,6 +190,7 @@ mod tests {
                 status: ToolStatus::Ok,
                 files: vec!["out/a.html".into(), "out/b.html".into(), "x.rs".into()],
                 exit_code: None,
+                provider_refs: serde_json::Map::new(),
             },
         ];
         assert_eq!(paths(&events), ["out/a.html", "out/b.html"]);

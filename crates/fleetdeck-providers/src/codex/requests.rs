@@ -546,6 +546,7 @@ impl CodexCore {
             status: ToolStatus::Ok,
             files: Vec::new(),
             exit_code: None,
+            provider_refs: ProviderRefs::new(),
         })]
     }
 

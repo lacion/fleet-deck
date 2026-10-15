@@ -81,7 +81,11 @@ tool_kind: ToolKind, title: string, input_summary: string, files: Array<string>,
 /**
  * True if the station cut the output to its budget.
  */
-truncated: boolean, } | { "kind": "tool.completed", node_id: NodeId, status: ToolStatus, files: Array<string>, exit_code: number | null, } | { "kind": "file.changed", path: string, change: FileChange, node_id: NodeId | null, } | { "kind": "approval.requested", request_id: RequestId, node_id: NodeId | null, 
+truncated: boolean, } | { "kind": "tool.completed", node_id: NodeId, status: ToolStatus, files: Array<string>, exit_code: number | null, 
+/**
+ * Provider ids of the result, for example `agent_id` of a subagent (DL-191).
+ */
+provider_refs?: { [key in string]: JsonValue }, } | { "kind": "file.changed", path: string, change: FileChange, node_id: NodeId | null, } | { "kind": "approval.requested", request_id: RequestId, node_id: NodeId | null, 
 /**
  * PLAN §6.3 calls this field `kind` (DL-027).
  */
