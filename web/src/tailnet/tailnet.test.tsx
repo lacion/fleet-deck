@@ -357,6 +357,22 @@ describe('the toggle "Trusted certificate from Tailscale" (DL-190)', () => {
     expect(card(cert({ enabled: true, state: 'renewing' }), true)).toContain('disabled=""');
   });
 
+  test('the owner files note shows above the switch, and only when the deck says so', () => {
+    const own = card(cert({ enabled: true, state: 'valid', owner_files: true }));
+    const note =
+      '<p class="fd-note" data-note="owner-files">Your own certificate files (board.crt) are used for every name. Remove them to use the Tailscale certificate.</p>';
+    expect(own).toContain(note);
+    expect(own.indexOf('data-note="owner-files"')).toBeLessThan(
+      own.indexOf('Trusted certificate from Tailscale'),
+    );
+    expect(card(cert({ enabled: true, state: 'valid', owner_files: false }))).not.toContain(
+      'owner-files',
+    );
+    // An older deck sends no field.
+    expect(card(cert({ enabled: true, state: 'valid' }))).not.toContain('owner-files');
+    expect(card(view())).not.toContain('owner-files');
+  });
+
   test('a state line for each state', () => {
     expect(certificateLine(undefined)).toBeNull();
     expect(certificateLine({ enabled: false, state: 'off' })).toBeNull();

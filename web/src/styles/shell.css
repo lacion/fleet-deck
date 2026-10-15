@@ -302,17 +302,31 @@ body:has(.fd-app[data-layout="tablet"]) {
 
 .fd-srow-meta {
   grid-column: 2 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-data);
   font-size: 11px;
   color: var(--faint);
 }
 
-.fd-srow-meta .fd-icon {
-  vertical-align: -2px;
+.fd-srow-model {
+  flex: none;
+}
+
+.fd-srow-place {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fd-srow-place .fd-icon {
+  flex: none;
   margin-right: 3px;
 }
 
@@ -323,6 +337,7 @@ body:has(.fd-app[data-layout="tablet"]) {
 .fd-sended summary {
   display: flex;
   align-items: center;
+  gap: 6px;
   padding: 4px 10px;
   cursor: pointer;
 }
@@ -331,20 +346,15 @@ body:has(.fd-app[data-layout="tablet"]) {
   margin-bottom: var(--sp-1);
 }
 
-.fd-sidebar-bottom {
+.fd-sidebar-links {
   flex: none;
   display: grid;
-  gap: var(--sp-2);
-  padding: var(--sp-2) var(--sp-3) var(--sp-3);
-  border-top: 1px solid var(--border-soft);
-}
-
-.fd-sidebar-links {
-  display: grid;
   gap: 2px;
+  padding: var(--sp-1) var(--sp-3) var(--sp-2);
 }
 
 .fd-sidebar-links a,
+.fd-sidebar-more > summary,
 .fd-more-links a,
 .fd-more-links button,
 .fd-linkbtn {
@@ -373,6 +383,7 @@ body:has(.fd-app[data-layout="tablet"]) {
 }
 
 .fd-sidebar-links a:hover,
+.fd-sidebar-more > summary:hover,
 .fd-linkbtn:hover:not(:disabled) {
   background: var(--raised);
   border-color: transparent;
@@ -384,16 +395,67 @@ body:has(.fd-app[data-layout="tablet"]) {
   background: var(--raised);
 }
 
-.fd-sidebar-bottom > .fd-ghost {
-  justify-self: start;
+/* The "More" fold: a link row with a chevron; the pages inside it are an inline list. */
+.fd-sidebar-more {
+  display: grid;
+  gap: 2px;
 }
 
+.fd-sidebar-more > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.fd-sidebar-more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.fd-sidebar-more > summary .fd-icon {
+  margin-left: auto;
+  transition: transform var(--t-fast);
+}
+
+.fd-sidebar-more[open] > summary .fd-icon {
+  transform: rotate(180deg);
+}
+
+/* The footer: theme and density on the left; Settings and the account menu on the right. */
 .fd-sidebar-foot {
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
   gap: var(--sp-2);
+  height: 40px;
+  padding: 0 var(--sp-3);
+  border-top: 1px solid var(--border-soft);
+}
+
+.fd-sidebar-account {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.fd-sidebar-account a.fd-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--ctl-h);
+  border-radius: var(--r-ctl);
+  text-decoration: none;
+}
+
+.fd-sidebar-account a.fd-iconbtn[aria-current="page"] {
+  background: var(--raised);
+  color: var(--text);
+}
+
+/* The account menu opens upward: the footer is at the bottom of the screen. */
+.fd-sidebar-account .fd-menu-body {
+  top: auto;
+  bottom: calc(100% + 4px);
 }
 
 .fd-sidebar-version {
@@ -446,6 +508,13 @@ body:has(.fd-app[data-layout="tablet"]) {
 .fd-sidebar-archived,
 .fd-sended-clear {
   margin: var(--sp-1) 0 0 var(--sp-2);
+}
+
+/* "Archived" is a quiet link at the end of the list. */
+.fd-sidebar-archived {
+  border: 0;
+  background: transparent;
+  color: var(--dim);
 }
 
 /* Compact density: one line per session. */
@@ -1181,6 +1250,7 @@ body:has(.fd-app[data-layout="tablet"]) {
 
 @media (pointer: coarse) {
   .fd-sidebar-links a,
+  .fd-sidebar-more > summary,
   .fd-linkbtn,
   .fd-srow,
   .fd-sended summary {

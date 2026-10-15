@@ -88,6 +88,12 @@ test('an admin sees the station report and makes an invitation for a dialing sta
   deck.stations = [...deck.stations, stationView('st-new', 'new-box')];
   deck.publish();
   await expect(dialog).toContainText('✓ new-box joined this deck.');
+  // The deck first names the station by its key; the real name arrives later (B4).
+  deck.stations = deck.stations.map((st) =>
+    st.station_id === 'st-new' ? stationView('st-new', 'renamed-box') : st,
+  );
+  deck.publish();
+  await expect(dialog).toContainText('✓ renamed-box joined this deck.');
   await expect(dialog.getByLabel('Invitation (secret, single use)')).toHaveCount(0);
   expect(await page.content()).not.toContain('fdinv1_secret_e2e');
   await dialog.getByRole('button', { name: 'Add another station' }).click();
@@ -341,6 +347,9 @@ test.describe('on a wide screen', () => {
     await logIn(page);
     const sidebar = page.getByRole('complementary', { name: 'Sessions' });
     await expect(sidebar.getByText('deck 0.7.3')).toHaveCount(0);
+    // Log out sits in the Account menu of the footer.
+    await expect(sidebar.getByRole('button', { name: 'Log out' })).toBeHidden();
+    await sidebar.locator('summary[aria-label="Account"]').click();
     await expect(sidebar.getByRole('button', { name: 'Log out' })).toBeVisible();
   });
 });

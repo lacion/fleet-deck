@@ -75,6 +75,7 @@ export type FakeTailnet = {
       name?: string;
       not_after?: number;
       reason_code?: string;
+      owner_files?: boolean;
     };
   };
   windowOpen: boolean;
@@ -652,6 +653,16 @@ export async function fitsWidth(page: Page): Promise<boolean> {
   return page.evaluate(
     () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
   );
+}
+
+/**
+ * Opens the "Add a device" dialog. The sidebar has it in the Account menu; the More page has it
+ * as a button.
+ */
+export async function openAddDevice(page: Page): Promise<void> {
+  const account = page.locator('summary[aria-label="Account"]').first();
+  if (await account.isVisible()) await account.click();
+  await page.getByRole('button', { name: 'Add a device' }).first().click();
 }
 
 /** The phone's bottom bar: the Fleet page. */
