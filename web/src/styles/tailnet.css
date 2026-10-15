@@ -348,3 +348,11 @@
   margin: 0;
   padding-left: var(--sp-5);
 }
+
+/* DL-190: the trust badge and the note of a device link entry. */
+.fd-devlink-trusted {
+  font-weight: 600;
+}
+.fd-devlink-needs {
+  overflow-wrap: anywhere;
+}

@@ -36,6 +36,7 @@ use serde_json::{Map, Value, json};
 use super::Board;
 use super::guard::ApiError;
 use super::settings_routes::{audit, deck_view, is_elevated, owner, save_unreconciled};
+use crate::cert_task::CertState;
 use crate::store::Principal;
 use crate::store::auth::LoginSession;
 use crate::tailnet_auto::{self, TailnetStart, WSL_NAT};
@@ -190,6 +191,34 @@ struct AutoView {
     changed: bool,
 }
 
+/// The state of the trusted certificate from Tailscale (DL-190). It never
+/// holds text of `tailscale`: only a reason code.
+#[derive(Clone, Serialize)]
+struct CertificateView {
+    enabled: bool,
+    /// `off`, `valid`, `renewing`, `failed`, `expired` or `name_mismatch`.
+    state: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    /// The end of the certificate, Unix ms.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    not_after: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason_code: Option<&'static str>,
+}
+
+impl CertificateView {
+    fn of(state: &CertState) -> Self {
+        Self {
+            enabled: state.enabled,
+            state: state.state.as_str(),
+            name: state.name.clone(),
+            not_after: state.not_after_ms,
+            reason_code: state.reason_code,
+        }
+    }
+}
+
 /// The answer of `GET /api/tailnet`.
 #[derive(Serialize)]
 pub struct TailnetView {
@@ -206,6 +235,7 @@ pub struct TailnetView {
     managed: Managed,
     current: Lists,
     auto: AutoView,
+    certificate: CertificateView,
 }
 
 /// `GET /api/tailnet`.
@@ -231,6 +261,8 @@ pub async fn get(
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .clone();
+    let certificate =
+        CertificateView::of(&board.cert.read().unwrap_or_else(PoisonError::into_inner));
     let cli = cli_of(saved.as_ref());
     let status = status_fresh(&cli).await;
     // A program was chosen unless the lookup found nothing to run.
@@ -242,6 +274,7 @@ pub async fn get(
         program,
         &facts,
         &start,
+        certificate,
     )))
 }
 
@@ -251,6 +284,7 @@ fn view_of(
     program: Option<&'static str>,
     facts: &HostFacts,
     start: &TailnetStart,
+    certificate: CertificateView,
 ) -> TailnetView {
     let (listen, link_listen) = saved.map_or((&[][..], &[][..]), |s| {
         (s.listen.as_slice(), s.link_listen.as_slice())
@@ -294,6 +328,7 @@ fn view_of(
             link_listen: texts(link_listen),
         },
         auto,
+        certificate: certificate.clone(),
     };
     let status = match status {
         Ok(s) => s,
@@ -337,6 +372,7 @@ fn view_of(
         managed,
         current,
         auto,
+        certificate,
     }
 }
 

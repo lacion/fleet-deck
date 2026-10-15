@@ -126,6 +126,7 @@ impl Fx {
             clock: Arc::new(self.clock.clone()),
             anchors: Arc::from(self.pki.anchors()),
             intervals: self.intervals,
+            state: Arc::new(RwLock::new(CertState::off())),
         }
     }
 

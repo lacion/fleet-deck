@@ -7,10 +7,11 @@ import type { DeviceLinkEntry } from "./DeviceLinkEntry";
  */
 export type DeviceLink = { links: Array<DeviceLinkEntry>, expires_at: number, 
 /**
- * The SHA-256 of the board certificate, for the browser check.
+ * The SHA-256 of the fallback board certificate (the one for addresses
+ * that get no other), for the browser check.
  */
 certificate_sha256: string, 
 /**
- * The certificate is the deck's self-signed one.
+ * The fallback certificate is the deck's self-signed one.
  */
 self_signed: boolean, };

@@ -10,8 +10,14 @@ export type DeviceLinkResult =
 const record = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
+const TRUSTS: readonly unknown[] = ['trusted', 'self_signed', 'unknown'];
+
 const entry = (v: unknown): v is DeviceLinkEntry =>
-  record(v) && typeof v['label'] === 'string' && typeof v['url'] === 'string';
+  record(v) &&
+  typeof v['label'] === 'string' &&
+  typeof v['url'] === 'string' &&
+  typeof v['certificate_sha256'] === 'string' &&
+  TRUSTS.includes(v['trust']);
 
 /** `POST /api/auth/device-link`: the deck answers with one link for each board address. */
 export function deviceLinkAction(post: Post): () => Promise<DeviceLinkResult> {
@@ -42,10 +48,29 @@ export function fingerprintGroups(sha: string): string {
   return head.match(/.{1,4}/g)?.join(' ') ?? '';
 }
 
-/** The first link whose label is not "This computer" (a phone cannot reach it); else the first. */
+/**
+ * The first link whose certificate browsers trust (DL-190); else the first link whose label is
+ * not "This computer" (a phone cannot reach it); else the first.
+ */
 export function defaultLinkIndex(links: readonly DeviceLinkEntry[]): number {
+  const trusted = links.findIndex((l) => l.trust === 'trusted');
+  if (trusted !== -1) return trusted;
   const i = links.findIndex((l) => l.label !== 'This computer');
   return i === -1 ? 0 : i;
+}
+
+/** The host name of a login link, without port and brackets; empty when the link is no URL. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return '';
+  }
+}
+
+/** A self-signed tailnet name: the trusted certificate from Tailscale would fix it. */
+export function needsTrustedCertificate(entry: DeviceLinkEntry): boolean {
+  return entry.trust === 'self_signed' && hostOf(entry.url).toLowerCase().endsWith('.ts.net');
 }
 
 /** `m:ss` of the time that is left; a negative or an invalid time is `0:00`. */

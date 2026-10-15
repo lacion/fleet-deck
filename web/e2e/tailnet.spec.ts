@@ -150,6 +150,103 @@ function suite() {
     expect(await fitsWidth(page)).toBe(true);
   });
 
+  test('the Trusted certificate section shows the state and saves the toggle', async ({ page }) => {
+    const { state } = await start(page);
+    state.view.certificate = { enabled: false, state: 'off' };
+    await go(page, '#/settings');
+    const card = page.getByRole('region', { name: 'Tailnet' });
+    const toggle = card.getByRole('checkbox', { name: 'Trusted certificate from Tailscale' });
+    await expect(toggle).not.toBeChecked();
+    await expect(card).toContainText(
+      'Browsers trust the board on its tailnet name. The name becomes public in Certificate Transparency logs.',
+    );
+    await expect(card).not.toContainText('Trusted certificate for');
+    // On: the confirmation, then the save. The deck starts getting the certificate.
+    await toggle.click();
+    await confirm(page);
+    await expect(toggle).toBeChecked();
+    await expect(card).toContainText('Getting the certificate…');
+    expect(state.posted).toEqual([
+      {
+        path: '/api/settings/deck',
+        body: { changes: { tailscale_cert: true }, revision: 'rev-e2e', elevation: ELEVATION },
+      },
+    ]);
+    expect(await fitsWidth(page)).toBe(true);
+  });
+
+  test('the card says when the certificate is valid and why it failed', async ({ page }) => {
+    const { state } = await start(page);
+    const end = Date.UTC(2027, 0, 15, 12);
+    state.view.certificate = {
+      enabled: true,
+      state: 'valid',
+      name: 'deck.tail1234.ts.net',
+      not_after: end,
+    };
+    await go(page, '#/settings');
+    const card = page.getByRole('region', { name: 'Tailnet' });
+    const date = await page.evaluate((ms) => new Date(ms).toLocaleDateString(), end);
+    await expect(card).toContainText(
+      `Trusted certificate for deck.tail1234.ts.net, valid until ${date}`,
+    );
+    await expect(
+      card.getByRole('checkbox', { name: 'Trusted certificate from Tailscale' }),
+    ).toBeChecked();
+    expect(await fitsWidth(page)).toBe(true);
+  });
+
+  test('the card shows the failure text of a reason code', async ({ page }) => {
+    const { state } = await start(page);
+    state.view.certificate = { enabled: true, state: 'failed', reason_code: 'https_disabled' };
+    await go(page, '#/settings');
+    await expect(page.getByRole('region', { name: 'Tailnet' })).toContainText(
+      'HTTPS certificates are off for your tailnet. Turn them on in the Tailscale admin console → DNS → HTTPS Certificates.',
+    );
+  });
+
+  test('the Add a device dialog selects the trusted entry first', async ({ page }) => {
+    const { deck } = await start(page);
+    const sha = 'ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12';
+    deck.on('/api/auth/device-link', () => ({
+      status: 200,
+      body: {
+        links: [
+          {
+            label: 'Network 192.168.1.5',
+            url: 'https://192.168.1.5:7420/#login=tok',
+            certificate_sha256: sha,
+            trust: 'self_signed',
+          },
+          {
+            label: 'Tailnet deck.tail1234.ts.net',
+            url: 'https://deck.tail1234.ts.net:7420/#login=tok',
+            certificate_sha256: 'cd'.repeat(32),
+            trust: 'trusted',
+          },
+        ],
+        expires_at: Date.now() + 5 * 60_000,
+        certificate_sha256: sha,
+        self_signed: true,
+      },
+    }));
+    if ((page.viewportSize()?.width ?? 0) < 600) {
+      await page
+        .getByRole('navigation', { name: 'Board' })
+        .getByRole('link', { name: 'More' })
+        .click();
+    }
+    await page.getByRole('button', { name: 'Add a device' }).first().click();
+    const dialog = page.getByRole('dialog', { name: 'Add a device' });
+    await expect(dialog.getByRole('textbox', { name: 'Login link' })).toHaveValue(
+      'https://deck.tail1234.ts.net:7420/#login=tok',
+    );
+    await expect(dialog.getByRole('combobox', { name: 'Board address' })).toHaveValue('1');
+    await expect(dialog).toContainText('Trusted');
+    await expect(dialog).not.toContainText('check that the fingerprint starts with');
+    expect(await fitsWidth(page)).toBe(true);
+  });
+
   test('Add station: start screen, choose a computer, run the command, confirm the code', async ({
     page,
   }) => {

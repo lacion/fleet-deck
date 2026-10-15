@@ -7,9 +7,11 @@ use std::collections::BTreeSet;
 
 use fleetdeck_core::Secret;
 use fleetdeck_core::localsock::InvitationText;
+use fleetdeck_proto::board::CertTrust;
 use fleetdeck_proto::link::Scope;
 use serde::{Deserialize, Serialize};
 
+use crate::http::endpoints::Endpoints;
 use crate::local::DeckResponse;
 use crate::store::auth::LOGIN_LINK_TTL_MS;
 use crate::store::{ApiToken, AuditEntry, AuditResult, DeckStore, NewAudit};
@@ -52,6 +54,10 @@ pub enum AuthResponse {
         certificate_sha256: String,
         /// The certificate is the deck's self-signed one.
         self_signed: bool,
+        /// Browsers trust the certificate of this address (DL-190). An
+        /// older deck sends no value: false.
+        #[serde(default)]
+        trusted: bool,
     },
     PasswordSet,
     /// A new token; its value is shown once.
@@ -115,10 +121,33 @@ pub struct BoardEndpoint {
     pub self_signed: bool,
 }
 
+/// The address of a login link: the first trusted entry of `endpoints`,
+/// else the first board address.
+fn choice(
+    board: &BoardEndpoint,
+    endpoints: &Endpoints,
+    now_ms: i64,
+) -> (String, String, bool, bool) {
+    let trusted = endpoints
+        .entries(now_ms)
+        .into_iter()
+        .find(|e| e.trust == CertTrust::Trusted);
+    match trusted {
+        Some(e) => (e.origin, e.certificate_sha256, false, true),
+        None => (
+            board.url.clone(),
+            board.certificate_sha256.clone(),
+            board.self_signed,
+            false,
+        ),
+    }
+}
+
 /// Handles one auth request.
 pub async fn handle(
     store: &DeckStore,
     board: Option<&BoardEndpoint>,
+    endpoints: &Endpoints,
     request: AuthRequest,
 ) -> Result<AuthResponse, String> {
     match request {
@@ -133,11 +162,14 @@ pub async fn handle(
                 store.create_login_link().await,
             )
             .await?;
+            let now = store.now_ms();
+            let (url, certificate_sha256, self_signed, trusted) = choice(board, endpoints, now);
             Ok(AuthResponse::LoginLink {
-                url: InvitationText(login_url(&board.url, &token).expose().clone()),
-                expires_at: store.now_ms() + LOGIN_LINK_TTL_MS,
-                certificate_sha256: board.certificate_sha256.clone(),
-                self_signed: board.self_signed,
+                url: InvitationText(login_url(&url, &token).expose().clone()),
+                expires_at: now + LOGIN_LINK_TTL_MS,
+                certificate_sha256,
+                self_signed,
+                trusted,
             })
         }
         AuthRequest::SetPassword { password } => {
@@ -190,5 +222,75 @@ pub fn respond(r: Result<AuthResponse, String>) -> DeckResponse {
     match r {
         Ok(auth) => DeckResponse::Auth { auth },
         Err(message) => DeckResponse::Error { message },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use super::*;
+    use crate::http::tls::BoardTls;
+    use crate::http::tls_test_pki::{NAME, Pki, day};
+
+    const FAR: i64 = i64::MAX;
+
+    fn board_endpoint(tls: &BoardTls) -> BoardEndpoint {
+        BoardEndpoint {
+            url: "https://100.64.0.1:7420".to_owned(),
+            certificate_sha256: tls.sha256.clone(),
+            self_signed: tls.self_signed,
+        }
+    }
+
+    fn setup() -> (BoardTls, Endpoints) {
+        let (c, k) = BoardTls::generate(&["100.64.0.1".to_owned(), NAME.to_owned()]).unwrap();
+        let tls = BoardTls::from_pem(&c, &k, true)
+            .unwrap()
+            .with_name(Some(NAME))
+            .unwrap();
+        let origins = vec![
+            "https://100.64.0.1:7420".to_owned(),
+            format!("https://{NAME}:7420"),
+        ];
+        let endpoints = Endpoints::new(origins, Arc::clone(&tls.resolver), true);
+        (tls, endpoints)
+    }
+
+    #[test]
+    fn a_trusted_entry_is_chosen_first() {
+        let (tls, endpoints) = setup();
+        let cert = Pki::new().check(Duration::ZERO).unwrap();
+        tls.resolver
+            .set_tailscale(Some((cert.certified_key().unwrap(), FAR)));
+        let now = day(2026, 10, 15) * 1000;
+        let (url, sha, self_signed, trusted) = choice(&board_endpoint(&tls), &endpoints, now);
+        assert_eq!(url, format!("https://{NAME}:7420"));
+        assert_eq!(sha, cert.sha256);
+        assert!(!self_signed && trusted);
+    }
+
+    #[test]
+    fn without_a_trusted_entry_the_first_board_address_is_chosen() {
+        let (tls, endpoints) = setup();
+        let now = day(2026, 10, 15) * 1000;
+        let (url, sha, self_signed, trusted) = choice(&board_endpoint(&tls), &endpoints, now);
+        assert_eq!(url, "https://100.64.0.1:7420");
+        assert_eq!(sha, tls.sha256);
+        assert!(self_signed && !trusted);
+    }
+
+    #[test]
+    fn an_old_answer_without_trusted_still_parses() {
+        let text = r#"{"status":"login_link","url":"u","expires_at":1,
+            "certificate_sha256":"aa","self_signed":true}"#;
+        let got: AuthResponse = serde_json::from_str(text).unwrap();
+        assert!(matches!(
+            got,
+            AuthResponse::LoginLink { trusted: false, .. }
+        ));
     }
 }

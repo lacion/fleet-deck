@@ -5,6 +5,7 @@ import {
   defaultLinkIndex,
   type DeviceLinkResult,
   fingerprintGroups,
+  needsTrustedCertificate,
 } from '../runtime/deviceLink';
 import { Check, Copy, Icon, X } from '../ui/icons';
 import { qrMatrix, qrSvgPath } from '../ui/qr';
@@ -99,7 +100,8 @@ function CopyLink({ url }: { readonly url: string }) {
 
 function Ready({ link, left }: { readonly link: DeviceLink; readonly left: number }) {
   const [index, setIndex] = useState(() => defaultLinkIndex(link.links));
-  const url = link.links[index]?.url ?? link.links[0]?.url ?? '';
+  const chosen = link.links[index] ?? link.links[0];
+  const url = chosen?.url ?? '';
   return (
     <>
       <p className="fd-note">
@@ -113,7 +115,7 @@ function Ready({ link, left }: { readonly link: DeviceLink; readonly left: numbe
         >
           {link.links.map((l, i) => (
             <option key={l.label} value={i}>
-              {l.label}
+              {l.trust === 'trusted' ? `${l.label} (Trusted)` : l.label}
             </option>
           ))}
         </select>
@@ -123,10 +125,17 @@ function Ready({ link, left }: { readonly link: DeviceLink; readonly left: numbe
       <p className="fd-note fd-devlink-left" role="timer">
         Ends in {countdown(left)}
       </p>
-      {link.self_signed ? (
+      {chosen?.trust === 'trusted' ? <p className="fd-note fd-devlink-trusted">Trusted</p> : null}
+      {chosen !== undefined && needsTrustedCertificate(chosen) ? (
+        <p className="fd-note fd-devlink-needs">
+          Needs a trusted certificate: turn on &apos;Trusted certificate from Tailscale&apos; in
+          Settings → Deck.
+        </p>
+      ) : null}
+      {chosen?.trust === 'self_signed' ? (
         <p className="fd-note">
           The board uses its own certificate. When the new device warns about it, check that the
-          fingerprint starts with {fingerprintGroups(link.certificate_sha256)}.
+          fingerprint starts with {fingerprintGroups(chosen.certificate_sha256)}.
         </p>
       ) : null}
     </>

@@ -23,9 +23,9 @@ use crate::assist::{AssistAnswer, AssistKind, AssistRequest, AssistRoute, Assist
 use crate::automation::{Schedule, ScheduleInput, ScheduleRun, ScheduleRunState, ScheduleView};
 use crate::board::{
     ActivityItem, ActivityKind, ActivityList, AddStationRequest, ArchiveChange, ArchiveItem,
-    ArchiveList, ArchiveRef, BoardClientMessage, BoardServerMessage, CommandRequest, DeckCommand,
-    DeckSession, DeviceLink, DeviceLinkEntry, FleetExtras, PairingInvitation, ReadMark, SessionKey,
-    StationView, WsTicket,
+    ArchiveList, ArchiveRef, BoardClientMessage, BoardServerMessage, CertTrust, CommandRequest,
+    DeckCommand, DeckSession, DeviceLink, DeviceLinkEntry, FleetExtras, PairingInvitation,
+    ReadMark, SessionKey, StationView, WsTicket,
 };
 use crate::capability::{Capabilities, Operation, Unsupported};
 use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
@@ -104,6 +104,7 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         ArchiveItem::export_all(&cfg),
         ArchiveChange::export_all(&cfg),
         DeviceLinkEntry::export_all(&cfg),
+        CertTrust::export_all(&cfg),
         PairingInvitation::export_all(&cfg),
         AddStationRequest::export_all(&cfg),
         ControlFrame::export_all(&cfg),

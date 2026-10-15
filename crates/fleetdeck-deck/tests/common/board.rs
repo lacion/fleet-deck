@@ -178,14 +178,24 @@ async fn serve_with(
         move |bound| {
             let (cert, key) = BoardTls::generate(&["127.0.0.1".to_owned()])?;
             let tls = BoardTls::from_pem(&cert, &key, true)?;
+            let origins = Origins::new(bound, Some("deck.tail1234.ts.net"));
+            let endpoints = Arc::new(fleetdeck_deck::http::endpoints::Endpoints::new(
+                origins.list(),
+                Arc::clone(&tls.resolver),
+                tls.self_signed,
+            ));
             let board = Arc::new(Board {
                 store: s,
                 link,
-                origins: Origins::new(bound, Some("deck.tail1234.ts.net")),
+                origins,
                 limiter: LoginLimits::default(),
                 device_links: fleetdeck_deck::http::DeviceLinkLimiter::default(),
                 certificate_sha256: "00".repeat(32),
                 self_signed: true,
+                endpoints,
+                cert: Arc::new(std::sync::RwLock::new(
+                    fleetdeck_deck::cert_task::CertState::off(),
+                )),
                 tickets: fleetdeck_deck::http::ws::Tickets::default(),
                 ws_recheck: Duration::from_millis(200),
                 pairing: pairing
