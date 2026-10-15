@@ -156,6 +156,16 @@ pub struct Bindings {
     /// The current deck link: the serial of the link and its request path
     /// (`LinkForward` sets it on connect and clears it on disconnect).
     deck: Arc<Mutex<Option<DeckLink>>>,
+    /// The MCP bridge of the shim host, once its socket listens (DL-194).
+    bridge: Arc<Mutex<Option<BridgeEndpoint>>>,
+}
+
+/// What a shim-hosted provider runs for its tools (DL-194 §2.2, §9.3): the
+/// stable program path and the station socket of `fleetdeck mcp-bridge`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeEndpoint {
+    pub program: std::path::PathBuf,
+    pub socket: std::path::PathBuf,
 }
 
 impl std::fmt::Debug for Bindings {
@@ -303,6 +313,23 @@ impl Bindings {
         })
     }
 
+    /// Records the MCP bridge of the shim host (DL-194).
+    pub fn set_bridge(&self, bridge: BridgeEndpoint) {
+        *self
+            .bridge
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(bridge);
+    }
+
+    /// The MCP bridge of the shim host, if its socket listens.
+    #[must_use]
+    pub fn bridge(&self) -> Option<BridgeEndpoint> {
+        self.bridge
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
     /// The loopback URL of the ingress, if it listens.
     #[must_use]
     pub fn endpoint(&self) -> Option<String> {
@@ -391,6 +418,24 @@ impl Bindings {
         let mut map = self.lock();
         map.retain(|_, e| e.binding.binding_id != entry.binding.binding_id);
         map.insert(digest, entry);
+    }
+
+    /// Change the binding of a credential digest (DL-194). Returns false
+    /// for an unknown digest.
+    pub fn update_digest(&self, digest: &str, f: impl FnOnce(&mut Binding)) -> bool {
+        match self.lock().get_mut(digest) {
+            Some(e) => {
+                f(&mut e.binding);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The binding of a credential digest (DL-194).
+    #[must_use]
+    pub fn get_digest(&self, digest: &str) -> Option<Binding> {
+        self.lock().get(digest).map(|e| e.binding.clone())
     }
 
     /// Change a binding. Returns false for an unknown binding id.

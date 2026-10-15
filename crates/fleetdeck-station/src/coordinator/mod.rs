@@ -15,7 +15,9 @@ mod jsonrpc;
 pub mod outbox;
 pub mod tools;
 
-pub use bindings::{Binding, BindingState, Bindings, Caller, ToolClass, digest, mint};
+pub use bindings::{
+    Binding, BindingState, Bindings, BridgeEndpoint, Caller, ToolClass, digest, mint,
+};
 pub use forward::{LinkForward, Transport};
 pub use handoff::{Handoff, HandoffError};
 pub use ingress::{FleetTools, Forward, Ingress, Limits};
