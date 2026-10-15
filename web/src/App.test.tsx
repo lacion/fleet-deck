@@ -4,18 +4,17 @@ import { App } from './App';
 import { card, station } from './testing/fleet';
 
 describe('App', () => {
-  test('an empty fleet shows the five board columns and says how to start a session', () => {
+  test('an empty fleet shows the board without lanes and says how to start a session', () => {
     const html = renderToStaticMarkup(<App initialRoute={{ name: 'fleet' }} />);
     expect(html).toContain('Fleet Deck');
     expect(html).toContain('aria-label="Fleet board"');
-    for (const label of ['Queued', 'Working', 'Verifying', 'Idle', 'Offline']) {
-      expect(html).toContain(`<span class="fd-label">${label}</span>`);
-    }
+    expect(html).not.toContain('fd-colhead');
+    expect(html).not.toContain('class="fd-lane"');
     expect(html).not.toContain('aria-label="Station ');
     expect(html).toContain('No sessions yet. Start one with New session.');
   });
 
-  test('a card is a link to its session with the title, branch, model, current tool and cost', () => {
+  test('a strip is a link to its session with the title, branch, model, current tool and cost', () => {
     const html = renderToStaticMarkup(
       <App
         initialRoute={{ name: 'fleet' }}
@@ -45,12 +44,12 @@ describe('App', () => {
     for (const text of [
       'fix login',
       'aria-label="Station Alpha"',
-      'class="fd-card"',
+      'class="fd-strip"',
       'href="#/s/station-a/s1"',
       'Opus 4.1',
-      'fd/login',
+      'title="Branch: fd/login"',
       'cargo test',
-      '$0.00',
+      'title="Cost $0.00"',
     ])
       expect(html).toContain(text);
     expect(html).not.toContain('Stale');
@@ -153,7 +152,7 @@ describe('App', () => {
     expect(html).toMatch(
       /<a class="fd-needschip" href="#\/s\/station-b\/n1">[\s\S]*?1 needs you<\/a>/,
     );
-    expect(html).not.toContain('Needs you · 1');
+    expect(html).not.toContain('data-group="needs"');
     expect(html).toContain('Ended · 1');
     const alpha = html.indexOf('aria-label="Station Alpha"');
     const beta = html.indexOf('aria-label="Station Beta"');
@@ -175,8 +174,9 @@ describe('App', () => {
         ]}
       />,
     );
-    const needs = html.indexOf('Needs you · 1');
+    const needs = html.indexOf('data-group="needs"');
     expect(needs).toBeGreaterThan(-1);
+    expect(html).toMatch(/Needs you<\/span><span class="fd-count">1<\/span>/);
     expect(needs).toBeLessThan(html.indexOf('aria-label="Station Alpha"'));
     // a needs-you session is listed again in its own station
     expect(html.match(/Needs me/g)?.length).toBeGreaterThanOrEqual(2);

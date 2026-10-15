@@ -357,6 +357,7 @@ test('Start over sends to all current targets with new mail ids', async ({ page 
 });
 
 test('Clear hides an ended session and the Archived chip shows it again', async ({ page }) => {
+  const openFilters = () => page.getByText('Filters', { exact: true }).click();
   const deck = new FakeDeck();
   deck.stations = [stationView(ST, 'Alpha')];
   deck.sessions = [
@@ -369,22 +370,33 @@ test('Clear hides an ended session and the Archived chip shows it again', async 
   await deck.install(page);
   await logIn(page);
   await openFleet(page);
-  const card = page.locator('a.fd-card[data-session="e"]');
+  const card = page.locator('a.fd-strip[data-session="e"]');
   await expect(card).toBeVisible();
   await page.getByRole('button', { name: 'Clear (1)' }).click();
   await expect(card).toHaveCount(0);
-  const chip = page.getByRole('button', { name: 'Archived (1)' });
+  await openFilters();
+  const chip = page.getByRole('group', { name: 'Fleet filters' }).getByRole('button', {
+    name: 'Archived (1)',
+  });
   await chip.click();
   await expect(chip).toHaveAttribute('aria-pressed', 'true');
   await expect(card).toBeVisible();
-  await expect(card).toContainText('Archived');
-  await page.getByRole('button', { name: 'Restore all' }).click();
-  await expect(chip).toHaveCount(0);
+  await expect(card).toHaveAttribute('data-archived', 'true');
+  await expect(card.locator('[data-ico="archived"]')).toHaveAttribute('title', 'Archived');
+  // Escape closes the menu; the active-filter chip clears the filter and hides the session again
+  await page.keyboard.press('Escape');
+  await expect(chip).toBeHidden();
+  await page.getByRole('button', { name: 'Archived shown' }).click();
+  await expect(card).toHaveCount(0);
+  await openFilters();
+  await chip.click();
   await expect(card).toBeVisible();
-  await expect(card).not.toContainText('Archived');
+  await page.getByRole('button', { name: 'Restore all' }).click();
+  await expect(card).toBeVisible();
+  await expect(card).not.toHaveAttribute('data-archived', 'true');
 });
 
-test('the cards show the bypass mode, the last error and the conflict', async ({ page }) => {
+test('the strips show the bypass mode, the last error and the conflict', async ({ page }) => {
   const deck = new FakeDeck();
   deck.stations = [stationView(ST, 'Alpha')];
   deck.sessions = [
@@ -425,15 +437,21 @@ test('the cards show the bypass mode, the last error and the conflict', async ({
   await deck.install(page);
   await logIn(page);
   await openFleet(page);
-  const a = page.locator('a.fd-card[data-session="a"]');
-  await expect(a).toContainText('bypassPermissions');
+  const a = page.locator('a.fd-strip[data-session="a"]');
+  await expect(a.locator('[data-ico="risky"]')).toHaveAttribute(
+    'title',
+    'Permission mode: bypassPermissions',
+  );
   await expect(a).toHaveAttribute('data-contested', 'true');
-  await expect(a).toContainText('contested with Alpha two');
-  await expect(page.locator('a.fd-card[data-session="i"]')).toContainText('Try later.');
+  await expect(a.locator('[data-ico="contested"]')).toHaveAttribute(
+    'title',
+    'Contested with Alpha two',
+  );
+  await expect(page.locator('a.fd-strip[data-session="i"]')).toContainText('Try later.');
   await expect(page.getByText('1 conflict', { exact: true })).toBeVisible();
 });
 
-test('a card shows the mail badge and the touched-file chips from the extras', async ({ page }) => {
+test('a strip shows the mail icon and the touched files from the extras', async ({ page }) => {
   const deck = new FakeDeck();
   deck.stations = [stationView(ST, 'Alpha')];
   deck.sessions = [sessionIn('a', 'Alpha one'), sessionIn('b', 'Alpha two')];
@@ -453,10 +471,10 @@ test('a card shows the mail badge and the touched-file chips from the extras', a
   await deck.install(page);
   await logIn(page);
   await openFleet(page);
-  const a = page.locator('a.fd-card[data-session="a"]');
-  await expect(a.locator('.fd-card-mail')).toHaveText('2');
-  await expect(a.locator('.fd-card-files .fd-filechip')).toHaveText(['main.rs', 'NOTES.md']);
-  await expect(page.locator('a.fd-card[data-session="b"] .fd-card-mail')).toHaveCount(0);
+  const a = page.locator('a.fd-strip[data-session="a"]');
+  await expect(a.locator('[data-ico="mail"]')).toHaveText('2');
+  await expect(a.locator('.fd-strip-now')).toHaveAttribute('title', 'Touched: main.rs, NOTES.md');
+  await expect(page.locator('a.fd-strip[data-session="b"] [data-ico="mail"]')).toHaveCount(0);
 });
 
 test.describe('wide screen', () => {
@@ -482,18 +500,24 @@ test.describe('wide screen', () => {
     const filters = page.getByRole('group', { name: 'Fleet filters' });
     const board = page.getByRole('main', { name: 'Fleet board' });
     await expect(board.getByRole('region', { name: 'Station Alpha' })).toBeVisible();
-    await filters.getByRole('button', { name: 'Repo', exact: true }).last().click();
+    await page.getByLabel('Group by').selectOption('repo');
     await expect(board.getByRole('region', { name: 'Repository org/app' })).toBeVisible();
     await expect(board.getByRole('region', { name: 'Repository lib' })).toBeVisible();
     await expect(board.getByRole('region', { name: 'Repository No repository' })).toBeVisible();
     await expect(board.getByRole('region', { name: 'Station Alpha' })).toHaveCount(0);
-    // the cards show their station in this grouping
-    await expect(page.locator('a.fd-card[data-session="a"]')).toContainText('Alpha');
+    // the strips show their station in this grouping
+    await expect(page.locator('a.fd-strip[data-session="a"]')).toContainText('Alpha');
     await page.reload();
     await expect(board.getByRole('region', { name: 'Repository org/app' })).toBeVisible();
-    // the repo filter
+    // the repo filter, in the Filters menu
+    await page.getByText('Filters', { exact: true }).click();
     await filters.getByRole('button', { name: 'lib', exact: true }).click();
-    await expect(page.locator('a.fd-card')).toHaveCount(1);
-    await expect(filters.getByText('1 of 3')).toBeVisible();
+    await expect(page.locator('a.fd-strip')).toHaveCount(1);
+    await expect(page.getByText('1 of 3')).toBeVisible();
+    await expect(page.getByText('Filters (1)', { exact: true })).toBeVisible();
+    // the active-filter chip clears the repo filter
+    await page.getByRole('button', { name: 'Repo: lib' }).click();
+    await expect(page.locator('a.fd-strip')).toHaveCount(3);
+    await expect(page.getByRole('button', { name: 'Repo: lib' })).toHaveCount(0);
   });
 });

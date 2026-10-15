@@ -143,7 +143,7 @@ describe('needs-you rail', () => {
     expect(html).toContain('data-tone="info">Question<');
   });
 
-  test('an empty rail says all clear; the strip variant renders nothing', () => {
+  test('an empty rail renders nothing, in both variants (the fleet header says all clear)', () => {
     const idle = [card('s1')];
     const side = renderToStaticMarkup(
       <NeedsYouRail
@@ -154,8 +154,7 @@ describe('needs-you rail', () => {
         onOpen={() => {}}
       />,
     );
-    expect(side).toContain('All clear');
-    expect(side).toContain('Nothing waits for you.');
+    expect(side).toBe('');
     const strip = renderToStaticMarkup(
       <NeedsYouRail
         sessions={idle}

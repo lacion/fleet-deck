@@ -459,7 +459,9 @@ describe('session pane (DL-140)', () => {
     expect(rail.indexOf('Run early')).toBeLessThan(rail.indexOf('Run late'));
     expect(rail).toContain('aria-label="Answer Run early in Review"');
     const empty = renderToStaticMarkup(<App sessions={[session()]} freshness="live" />);
-    expect(empty).toContain('Nothing waits for you.');
+    // no request: no rail, and the fleet header says all clear
+    expect(empty).not.toContain('Needs you rail');
+    expect(empty).toContain('All clear');
   });
 });
 
