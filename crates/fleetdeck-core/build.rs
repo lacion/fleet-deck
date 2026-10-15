@@ -41,8 +41,12 @@ fn watch(dir: &Path) {
     if let Some(reference) = git(dir, &["symbolic-ref", "-q", "HEAD"]) {
         match path_of(&reference) {
             Some(file) if file.exists() => watched.push(file),
-            // A packed ref has no file of its own.
-            _ => watched.extend(path_of("packed-refs")),
+            // A packed ref has no file of its own: watch packed-refs, and the
+            // folder where the next commit creates the loose ref.
+            other => {
+                watched.extend(path_of("packed-refs"));
+                watched.extend(other.and_then(|f| f.parent().map(Path::to_path_buf)));
+            }
         }
     }
     // A path that does not exist would rerun the script on every build.
