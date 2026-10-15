@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn v25_creates_one_row_for_each_tool_use() {
         let mut conn = Connection::open_in_memory().unwrap();
-        migrations().to_latest(&mut conn).unwrap();
+        migrations().to_version(&mut conn, 25).unwrap();
         let insert = |session: &str, tool: &str| {
             conn.execute(
                 "INSERT INTO subagent_logs VALUES (?1, ?2, 'a1', 'n1', '/w', '/h/.claude', 5)",
