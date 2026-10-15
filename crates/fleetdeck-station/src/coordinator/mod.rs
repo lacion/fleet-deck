@@ -7,12 +7,14 @@
 //! granted tool classes; the deck decides every operation (§6.2).
 
 pub mod bindings;
+pub mod bridge;
 pub mod fleet_tools;
 pub mod forward;
 pub mod handoff;
 pub mod ingress;
 mod jsonrpc;
 pub mod outbox;
+pub mod socket;
 pub mod tools;
 
 pub use bindings::{
@@ -22,6 +24,7 @@ pub use forward::{LinkForward, Transport};
 pub use handoff::{Handoff, HandoffError};
 pub use ingress::{FleetTools, Forward, Ingress, Limits};
 pub use outbox::CallOutbox;
+pub use socket::BridgeSocket;
 
 #[cfg(test)]
 #[path = "fleet_control_tests.rs"]

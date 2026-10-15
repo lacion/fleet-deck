@@ -57,6 +57,67 @@ pub fn mcp_args(provider: ProviderKind, url: &str) -> Option<Vec<String>> {
     })
 }
 
+/// A TOML basic string of `text`, or `None` for a control character
+/// (DL-194).
+fn toml_string(text: &str) -> Option<String> {
+    if text.chars().any(char::is_control) {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        if c == '\\' || c == '"' {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('"');
+    Some(out)
+}
+
+/// The provider arguments of a shim host (DL-194 §2.2): a stdio MCP server
+/// `<program> mcp-bridge --socket <socket>` that relays to the station
+/// socket. The credential is not in the arguments; the bridge reads
+/// [`TOKEN_ENV`] from its environment. `None` for a path that is not
+/// UTF-8 (or has a control character, for Codex) or another provider.
+pub fn bridge_args(
+    provider: ProviderKind,
+    program: &std::path::Path,
+    socket: &std::path::Path,
+) -> Option<Vec<String>> {
+    let program = program.to_str()?;
+    let socket = socket.to_str()?;
+    Some(match provider {
+        ProviderKind::Claude => {
+            let config = serde_json::json!({"mcpServers": {"fleetdeck": {
+                "type": "stdio",
+                "command": program,
+                "args": ["mcp-bridge", "--socket", socket],
+            }}});
+            vec![
+                "--mcp-config".to_owned(),
+                config.to_string(),
+                "--allowedTools".to_owned(),
+                "mcp__fleetdeck".to_owned(),
+            ]
+        }
+        ProviderKind::Codex => vec![
+            "-c".to_owned(),
+            format!("mcp_servers.fleetdeck.command={}", toml_string(program)?),
+            "-c".to_owned(),
+            format!(
+                "mcp_servers.fleetdeck.args=[\"mcp-bridge\",\"--socket\",{}]",
+                toml_string(socket)?
+            ),
+            "-c".to_owned(),
+            format!("mcp_servers.fleetdeck.env_vars=[\"{TOKEN_ENV}\"]"),
+            "-c".to_owned(),
+            "mcp_servers.fleetdeck.default_tools_approval_mode=\"approve\"".to_owned(),
+        ],
+        _ => return None,
+    })
+}
+
 /// The coordinator additions of one start (ADR-006 §5.4, DL-216): the
 /// provider arguments that name [`TOKEN_ENV`] and the credential, which
 /// goes only into the child environment. `Debug` never shows the value.
@@ -172,6 +233,75 @@ mod tests {
             "http://127.0.0.1:1@evil/mcp",
         ] {
             assert!(mcp_args(ProviderKind::Claude, bad).is_none(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_bridge_arguments_name_the_program_the_socket_and_the_variable_only() {
+        use std::path::Path;
+        let program = Path::new("/home/u/.local/share/fleetdeck/station/bin/current");
+        let socket = Path::new("/run/user/1000/fleetdeck/01INC/mcp.s");
+        let claude = bridge_args(ProviderKind::Claude, program, socket).unwrap();
+        assert_eq!(claude[0], "--mcp-config");
+        assert_eq!(claude[2..], ["--allowedTools", "mcp__fleetdeck"]);
+        let config: serde_json::Value = serde_json::from_str(&claude[1]).unwrap();
+        let server = &config["mcpServers"]["fleetdeck"];
+        assert_eq!(server["type"], "stdio");
+        assert_eq!(server["command"], program.to_str().unwrap());
+        assert_eq!(
+            server["args"],
+            serde_json::json!(["mcp-bridge", "--socket", socket.to_str().unwrap()])
+        );
+        let codex = bridge_args(ProviderKind::Codex, program, socket).unwrap();
+        assert_eq!(
+            codex,
+            [
+                "-c",
+                "mcp_servers.fleetdeck.command=\"/home/u/.local/share/fleetdeck/station/bin/current\"",
+                "-c",
+                "mcp_servers.fleetdeck.args=[\"mcp-bridge\",\"--socket\",\"/run/user/1000/fleetdeck/01INC/mcp.s\"]",
+                "-c",
+                "mcp_servers.fleetdeck.env_vars=[\"FLEETDECK_COORDINATOR_TOKEN\"]",
+                "-c",
+                "mcp_servers.fleetdeck.default_tools_approval_mode=\"approve\"",
+            ]
+        );
+        for args in [&claude, &codex] {
+            assert!(args.iter().all(|a| !a.contains("fdc1_")));
+        }
+        assert!(bridge_args(ProviderKind::Unknown, program, socket).is_none());
+    }
+
+    #[test]
+    fn a_bridge_path_with_a_quote_or_a_backslash_is_escaped_and_a_control_character_is_refused() {
+        use std::path::Path;
+        let program = Path::new("/odd \"dir\\x/current");
+        let socket = Path::new("/run/s.s");
+        let codex = bridge_args(ProviderKind::Codex, program, socket).unwrap();
+        assert_eq!(
+            codex[1],
+            "mcp_servers.fleetdeck.command=\"/odd \\\"dir\\\\x/current\""
+        );
+        let claude = bridge_args(ProviderKind::Claude, program, socket).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&claude[1]).unwrap();
+        assert_eq!(
+            config["mcpServers"]["fleetdeck"]["command"],
+            "/odd \"dir\\x/current"
+        );
+        let newline = Path::new("/odd\ndir/current");
+        assert!(bridge_args(ProviderKind::Codex, newline, socket).is_none());
+        assert!(bridge_args(ProviderKind::Codex, program, newline).is_none());
+    }
+
+    #[test]
+    fn a_bridge_path_that_is_not_utf8_gives_no_arguments() {
+        use std::os::unix::ffi::OsStrExt;
+        use std::path::Path;
+        let bad = Path::new(std::ffi::OsStr::from_bytes(b"/odd\xffdir/current"));
+        let socket = Path::new("/run/s.s");
+        for provider in [ProviderKind::Claude, ProviderKind::Codex] {
+            assert!(bridge_args(provider, bad, socket).is_none());
+            assert!(bridge_args(provider, socket, bad).is_none());
         }
     }
 

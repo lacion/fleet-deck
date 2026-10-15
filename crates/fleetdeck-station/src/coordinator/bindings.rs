@@ -321,6 +321,14 @@ impl Bindings {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(bridge);
     }
 
+    /// Clears the MCP bridge after its socket failed to start (DL-194).
+    pub fn clear_bridge(&self) {
+        *self
+            .bridge
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+
     /// The MCP bridge of the shim host, if its socket listens.
     #[must_use]
     pub fn bridge(&self) -> Option<BridgeEndpoint> {

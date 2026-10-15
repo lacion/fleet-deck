@@ -95,6 +95,13 @@ pub enum Command {
         #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
         program: Vec<std::ffi::OsString>,
     },
+    /// The stdio MCP server of a shim-hosted provider (DL-194): it relays
+    /// each message to the station socket; it is not a user command.
+    #[command(hide = true)]
+    McpBridge {
+        #[arg(long)]
+        socket: PathBuf,
+    },
 }
 
 /// `fleetdeck service` (design service.md §3).
