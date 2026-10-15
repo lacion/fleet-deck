@@ -1,6 +1,6 @@
 # Full session history in the chat (DL-189)
 
-- **Status:** Design, revision 3 (2026-10-15): revision 2 got DESIGN REVIEW round 2 **PASS** for the owner-only scope (open majors M6, M7, M9, M13 answered here, §6); the owner's per-share `history` option (§3.8) is new in revision 3. Needs a round-3 PASS before code. Revision 1 got DESIGN REVIEW FAIL (4 blockers, 9 major; §5); §6 maps them. Needs a PASS before code.
+- **Status:** Design, revision 4 (2026-10-15). Round 3 (the last regular round) got FAIL (2 blockers, M9 open; §8); the owner chose "fix + 1 extra review". Earlier, revision 3: revision 2 got DESIGN REVIEW round 2 **PASS** for the owner-only scope (open majors M6, M7, M9, M13 answered here, §6); the owner's per-share `history` option (§3.8) is new in revision 3. Needs a round-3 PASS before code. Revision 1 got DESIGN REVIEW FAIL (4 blockers, 9 major; §5); §6 maps them. Needs a PASS before code.
 - **Owner request (2026-10-15):** an imported session shows an empty chat: "i think we should work on propperly importing a session and showing all in the chat".
 - **Goal:** the chat of a session shows its whole conversation: the part from the terminal before an import, and every older turn that the deck no longer keeps. Nothing is copied at import; the history is read on demand.
 
@@ -40,10 +40,12 @@
   - Codex: `<home>/sessions/*/*/*/rollout-*-<native id>.jsonl` and `<home>/archived_sessions/rollout-*-<native id>.jsonl`; exactly one match, else `ambiguous` (zero: `not_found`).
 - **Trust checks** on the opened descriptor (directories walked with the `O_NOFOLLOW` descriptor walk of `workspace/files.rs`, file opened `O_NOFOLLOW`): a regular file; owner = the station user; link count 1 (the hard-link rule of `PrivatePaths::is_private_opened`); not a private path (`PrivatePaths::is_private_file`); the first record that names a session must name this native id (Claude `sessionId`, Codex `session_meta.payload.id`), else `not_trusted`. A stored `(dev, ino)` that no longer matches the file at the path: the checks run again and the row is updated; a failure is `not_trusted`.
 
-### 3.3 The boundary
+### 3.3 The boundary: a captured prefix
 
-- `boundary_ms` = the `started_at` of the session's **first** process row (`processes`, station clock). The provider writes its transcript times from the same machine's clock. History items are the transcript conversation records with `at < boundary_ms`. A record without a parseable time takes the time of the previous record (or 0 at the start).
-- A session that was not imported (`session.start`) has its first record at or after `boundary_ms`: `state: empty`.
+- **Capture at import.** The import effect, **before** it starts the resume process, locates and trusts the transcript (§3.2), and records in `session_transcripts` the **prefix**: `prefix_size` (the file size at that moment, cut back to the end of the last complete line) and `prefix_sha256` (SHA-256 of bytes `[0, prefix_size)`), with `capture = import`. The capture runs under the §3.5 budget; when it fails (no file, not trusted, too large, deadline) the import still runs, and the row records `capture = failed` with the reason.
+- **History = exactly the captured prefix.** Items are the conversation records that lie entirely inside `[0, prefix_size)`. No time is used to decide what is history. Every index build first checks the prefix hash; a different hash (the provider rewrote the file) gives `unavailable { reason: changed }`.
+- **Not imported** (`session.start`): no capture, `state: empty`.
+- **Imported before V24** (the owner's two sessions): on the owner's first read, the station captures lazily: `prefix_size` = the end of the last conversation record whose time is before the session's first process start (`processes.started_at`), and stores `capture = lazy`. A `lazy` capture may use inferred times, so it is **owner-only forever**: a member read of a `lazy` (or `failed`) session gets `unavailable { reason: not_captured }`.
 
 ### 3.4 Parsing
 
@@ -56,14 +58,13 @@
 ### 3.5 Index, cache and budgets (major 7, 9)
 
 - The station builds an **index** of a transcript in one scan: per kept item its byte offset, length and `at` (no text). Pages read only their records again with positioned reads. Limits: file at most 256 MiB (`too_large`), at most 200,000 indexed items (older items beyond the cap: `partial`), one scan per request at most 10 s (`busy` on the deadline, nothing cached).
-- **Re-index:** the index key is `(dev, ino, size, mtime)`; any change of the file builds a new index by a full scan (no append shortcut). An evicted index or a station restart also rebuilds it.
-- **Cursor by identity:** `"<file>:<item index>:<item id>"`, where `<file>` = 16 hex chars of SHA-256(dev, ino, native id) and `<item id>` is the id of the oldest item of the page that gave the cursor (§3.1; for an item without a provider id, `line:<byte offset>`). On a page request the station rebuilds or finds the current index and checks that the item at `<item index>` still has `<item id>`. Else: `stale_cursor` (the board starts again from the newest page). A rewrite before the old end, an eviction or a restart can therefore never skip, repeat or mix items.
+- **Immutable history, simple cursor:** the history is the captured prefix (§3.3), so its item list never changes while the prefix hash verifies. The index key is `(dev, ino, prefix_sha256)`; an evicted index or a restart rebuilds the same list. The cursor is `"<first 16 hex of prefix_sha256>:<item index>"`; a cursor whose hash part does not equal the session's captured hash is `stale_cursor`. A changed file is `unavailable { changed }` (§3.3), never a mixed list.
 - **Cache:** at most 4 indexes per station (LRU), at most 32 MiB of index memory in all; single-flight per key (a second request for the same key waits for the first scan).
 - **One budget for the whole request:** one worker permit per station (a semaphore of 1) covers discovery, trust checks, indexing and the page reads of a request, with one deadline of 10 s. Discovery (the Codex glob) visits at most 5,000 directory entries (`busy` beyond). The scan and the page reads use a **captured extent**: the file size at open; bytes written after it wait for the next request. A page reads at most 1 MiB of record bytes. The blocking work runs on the blocking pool; on the deadline the request answers `busy`, but the permit is released only when the worker actually returns (as `manager/files.rs` slots), so timed-out work can never pile up.
 
 ### 3.6 Deck route
 
-- `GET /api/sessions/{station}/{session}/history?before=&limit=`: the owner login, or a member through `access::session_of` (share coverage and role, `MemberAction::Read`) **and** a covering share with `history = true` (§3.8); a member without such a share gets `403 history_not_shared`; a bearer token gets `403 owner_only`. The route is in the member set. Audited on failure and on every member read (actor, share id, session). The deck checks first that the station's link negotiated `history.v1` (the stored link features); without it: `409 history_unsupported` "This station runs an older Fleet Deck. Update it to see the earlier history." No forward then (major 12).
+- `GET /api/sessions/{station}/{session}/history?before=&limit=`: the owner login, or a member through `access::session_of` (share coverage and role, `MemberAction::Read`) **and** the member's **own** share (`grant.share_id`) with `history = true` (§3.8); a member without such a share gets `403 history_not_shared`; a bearer token gets `403 owner_only`. The route is in the member set. Audited on failure and on every member read (actor, share id, session). The deck checks first that the station's link negotiated `history.v1` (the stored link features); without it: `409 history_unsupported` "This station runs an older Fleet Deck. Update it to see the earlier history." No forward then (major 12).
 - Mapping of station errors: `unknown_session` → 404; `invalid_params`, `stale_cursor` → 400 / 409 with the code; `busy` → 503; a timeout → 504; no link → 409 `station_unreachable`; any other → 502 `station_error`. `unavailable`, `empty` and `partial` are a 200 answer with the state.
 - The deck sends `member: true` for a member read. The station then empties every tool `summary` (the tool `name` and `status` stay) **before** the answer leaves the station, on every response, after any cache (§3.5 caches only indexes, never answers).
 - The deck stores nothing and caches nothing.
@@ -78,7 +79,7 @@
 
 - New share field `history: bool` (deck `shares.history INTEGER NOT NULL DEFAULT 0`, deck schema migration; every existing share reads `false`). `NewShare.history: Option<bool>` (absent = `false`); `ShareInfo.history: bool`.
 - Only the owner sets it: in the create-share form, and later with the owner-only, audited route `POST /api/shares/{share_id}/history { "enabled": bool }` (CSRF; turning it on is a danger change that needs the owner's elevation, as the other disclosure settings). Turning it off takes effect at the next request (the deck checks the share on every read).
-- Which shares count: a share that is not revoked, not expired, whose scope covers the session (session, space or board share), any role (viewer and up), with `history = true`. Several shares: one with `history = true` is enough.
+- Which share counts: **only the share of the member's own login** (`ShareGrant.share_id` of the authenticated member session). That share must be live (not revoked, not expired), cover the session now (session, space or board scope), and have `history = true`. Another share that covers the same session never counts, whatever its setting. The session's capture must be `import` (§3.3).
 - Board, share form and share row: a checkbox "Members can read the earlier history of imported sessions" with the text "Members see the full earlier conversation of the shared sessions, including anything that was pasted into it. Tool commands and file names stay hidden." The share row shows "History shared" when on, with a toggle.
 - The session boundary of §3.3 holds for members too: a member never reads a conversation part from after the session's first execution, so a conversation that continued in another (unshared) session is never shown.
 
@@ -86,9 +87,9 @@
 
 - Parser fixtures: kept and skipped shapes of both providers (meta, side chain, thinking, wrappers, developer, reasoning), tool status, cuts, an oversize line skipped without a mid-record parse, `unsupported_format`.
 - Location and trust: the instance home and an `env` override of the home; a session made before V24 whose instance home changed after the import (rediscovery finds the file in the default home, or `ambiguous` when both pass); a symbolic link (file and directory) refused; a hard link refused; another owner refused; a private-path file refused; Codex zero/one/two matches; a first record naming another session → `not_trusted`.
-- Boundary: an imported session returns only records before its first process start; a started session → `empty`; a resumed session that was later imported again (execution reuse) still returns only records before **its own** first process.
+- Boundary: an import captures the prefix before the resume starts; history is exactly the records inside it; records appended later, with or without times (incl. records without a time that a later private session writes), are never returned; a rewritten prefix → `unavailable { changed }`; a started session → `empty`; a failed capture → owner and member `unavailable`; a `lazy` capture → owner page, member `not_captured`.
 - Paging and cursors: pages cover the pre-import items once in order; an append keeps the cursor valid; a rewrite before the old end that keeps the last 4 KiB and then appends → `stale_cursor` (never a skipped or repeated item); after a cache eviction and after a station restart, an old cursor either continues exactly or is `stale_cursor`; the wire budget (a page of items with 8 KiB texts full of characters that JSON escapes stays under 1 MiB serialized); a scan over the deadline → `busy` and the permit stays taken until the worker ends (a second request waits); single-flight; a Codex home with more than 5,000 entries → `busy`; bytes appended during a scan are not read; a page never reads more than 1 MiB.
-- Deck: owner gets the page; a token gets 403 `owner_only`; a member without a `history` share gets 403 `history_not_shared`; a member with one gets the page with empty tool summaries (checked on the wire answer); a revoked or expired share, or `history` turned off, stops the next read; only the owner can set `history` (member, token → 403), turning it on needs elevation; a station without `history.v1` → 409 without a forward; error mapping; the member-read audit row.
+- Deck: two shares cover one session, A with `history = false` (member Alice) and B with `history = true` (member Bob): Alice gets 403 `history_not_shared`, Bob gets the page; owner gets the page; a token gets 403 `owner_only`; a member without a `history` share gets 403 `history_not_shared`; a member with one gets the page with empty tool summaries (checked on the wire answer); a revoked or expired share, or `history` turned off, stops the next read; only the owner can set `history` (member, token → 403), turning it on needs elevation; a station without `history.v1` → 409 without a forward; error mapping; the member-read audit row.
 - Board: the block, the pager, the gap line, the `partial`/`unavailable` lines, no block for `empty`.
 
 ## 5. Review round 1 (2026-10-15, Codex adversary): FAIL — to answer in revision 2
@@ -141,3 +142,12 @@ Architect note for revision 2: a simpler first step that avoids blockers 1, 3 an
 | M9 tail hash does not prove continuity | §3.5 cursor by item identity, checked after every rebuild; no append shortcut |
 | M13 tests | §4 added cases |
 | U formats | §3.4 fixtures from real transcripts with expected items (open until they exist) |
+
+## 8. Review round 3 (2026-10-15): FAIL — owner decision: fix + one extra review (revision 4)
+
+| Finding | Answer in revision 4 |
+| --- | --- |
+| BLOCKER: a member borrows another share's `history` permission | §3.8, §3.6: only the share of the member's own login (`grant.share_id`) counts; test with two shares and opposite settings |
+| BLOCKER: inferred times let later private records into the history (B1 reopened) | §3.3: history is the byte prefix captured at import, hash-checked; no time decides; `lazy` captures (legacy) are owner-only forever |
+| MAJOR M9: one cursor item does not prove continuity | §3.5: the history is immutable (verified prefix); the cursor carries the prefix hash |
+| UNVERIFIED U: fixtures | still open until the build supplies them (§3.4) |
