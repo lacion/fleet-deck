@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { CheckpointSide, DeckSession, DiffSummary, Event, SessionRevert } from '../gen';
 import type { Timeline } from '../runtime/state';
 import { claudeCaps, codexCaps } from '../testing/capabilities';
+import { ownerEnv, PeopleProvider } from '../sharing/context';
 import { station } from '../testing/fleet';
 import { summary } from '../testing/summary';
 import { envelopes } from '../testing/timeline';
@@ -263,7 +264,11 @@ describe('the diff since the session started (R1.2)', () => {
     expect(guessed).toContain('Show the diff');
     expect(guessed).not.toContain('Since the session started');
     const plain = view(codex(), [finalized('t1')]);
-    expect(plain).not.toContain('Changes view');
+    // DL-191: the owner has the Branches view, so the toggle shows without a base.
+    expect(plain).toContain('Changes view');
+    expect(plain).not.toContain('Since spawn');
+    expect(plain).toMatch(/aria-pressed="true"[^>]*>By turn</);
+    expect(plain).toMatch(/aria-pressed="false"[^>]*>Branches</);
     expect(plain).toContain('Show the diff');
   });
 
@@ -411,5 +416,67 @@ describe('workspace actions', () => {
       { op: 'resolve_revert', session_id: 's1', revert_id: 'rv-1', resolution: 'retry_restore' },
       { op: 'resolve_revert', session_id: 's1', revert_id: 'rv-1', resolution: 'reconciled' },
     ]);
+  });
+});
+
+describe('the Branches view and Show its work, owner only (DL-191)', () => {
+  const memberEnv = {
+    ...ownerEnv,
+    member: { role: 'collaborator' as const, name: 'Ann', scope: null },
+  };
+  const agent: Event = {
+    kind: 'tool.started',
+    node_id: 'agent-1',
+    parent_node_id: null,
+    tool_kind: 'subagent',
+    title: 'Agent',
+    input_summary: 'explore',
+    files: [],
+    provider_refs: { tool_use_id: 'toolu_01' } as never,
+  };
+  const render = (options: { member?: boolean; get?: boolean; tab?: PaneTab; events?: Event[] }) =>
+    renderToStaticMarkup(
+      <PeopleProvider value={options.member ? memberEnv : ownerEnv}>
+        <SessionView
+          layout="tablet"
+          session={codex()}
+          stations={[station()]}
+          freshness="live"
+          timeline={timeline(options.events ?? [])}
+          actions={sessionActions(
+            async () => ({}),
+            key,
+            ['read', 'drive', 'approve'],
+            undefined,
+            options.get === false ? null : async () => ({}),
+          )}
+          tab={options.tab ?? 'changes'}
+        />
+      </PeopleProvider>,
+    );
+
+  test('the toggle offers Branches only to the owner with a reader', () => {
+    const owner = render({ events: [finalized('t1')] });
+    expect(owner).toContain('Changes view');
+    expect(owner).toMatch(/aria-pressed="false"[^>]*>Branches</);
+    expect(render({ events: [finalized('t1')], member: true })).not.toContain('Branches');
+    expect(render({ events: [finalized('t1')], get: false })).not.toContain('Branches');
+  });
+
+  test('an owner session with no turn, no base and no revert still reaches Branches', () => {
+    const owner = render({});
+    expect(owner).toContain('Changes view');
+    expect(owner).toContain('No finished turns yet. Changes appear here when a turn ends.');
+    expect(owner).toMatch(/aria-pressed="false"[^>]*>Branches</);
+    const member = render({ member: true });
+    expect(member).toContain('No finished turns yet. Changes appear here when a turn ends.');
+    expect(member).not.toContain('Changes view');
+  });
+
+  test('the subagent card has Show its work for the owner and not for a member', () => {
+    const events = [agent];
+    expect(render({ tab: 'chat', events })).toContain('Show its work');
+    expect(render({ tab: 'chat', events, member: true })).not.toContain('Show its work');
+    expect(render({ tab: 'chat', events, get: false })).not.toContain('Show its work');
   });
 });

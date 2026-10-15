@@ -261,6 +261,29 @@
   font-family: var(--font-ui);
   font-size: var(--fs-data);
 }
+/* DL-191: "Show its work" under a subagent card */
+.fd-subagent-section {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+.fd-subagent-work {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  align-self: stretch;
+  max-height: 480px;
+  overflow-y: auto;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--code);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+.fd-subagent-error {
+  color: var(--hazard);
+}
 .fd-chat-nested {
   display: flex;
   flex-direction: column;

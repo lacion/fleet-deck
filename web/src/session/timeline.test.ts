@@ -486,3 +486,27 @@ describe('the run item and input_id (DL-179)', () => {
     expect(runOf({})).not.toHaveProperty('input_id');
   });
 });
+
+describe('the tool use of a subagent (DL-191)', () => {
+  const started = (node_id: string, provider_refs: Record<string, unknown>): Event => ({
+    kind: 'tool.started',
+    node_id,
+    parent_node_id: null,
+    tool_kind: 'subagent',
+    title: 'Agent',
+    input_summary: 'work',
+    files: [],
+    provider_refs: provider_refs as Extract<Event, { kind: 'tool.started' }>['provider_refs'],
+  });
+
+  test('tool_use_id comes from the provider refs, else it is null', () => {
+    const tree = buildTimeline(
+      envelopes('tu', [
+        started('a', { tool_use_id: 'toolu_01' }),
+        started('b', {}),
+        started('c', { tool_use_id: 7 }),
+      ]),
+    );
+    expect(subs(tree.items).map((s) => s.tool_use_id)).toEqual(['toolu_01', null, null]);
+  });
+});

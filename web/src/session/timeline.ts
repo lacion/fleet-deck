@@ -82,6 +82,8 @@ export type Subagent = {
   input: string;
   status: SubagentStatus;
   task_id: string | null;
+  /** DL-191: the tool use that names the subagent log on the deck; null when the station gave none. */
+  tool_use_id: string | null;
   items: Item[];
 };
 
@@ -226,6 +228,10 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
             input: e.input_summary,
             status: 'running',
             task_id: null,
+            tool_use_id:
+              typeof e.provider_refs['tool_use_id'] === 'string'
+                ? e.provider_refs['tool_use_id']
+                : null,
             items: [],
           };
           nodes.set(e.node_id, sub);

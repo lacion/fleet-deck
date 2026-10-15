@@ -160,6 +160,8 @@ export function SessionView(props: SessionViewProps) {
   const tree = buildTimeline(events);
   const turns = finalizedTurns(events);
   const filesOffered = actions?.files != null;
+  // DL-191: the Branches view of the Changes tab is the owner's.
+  const branchesOffered = guest === null && actions?.branches != null;
   const wakes = isHibernated(session) && flags.canResume && guest === null;
   const wide = useWide();
   const [filesOpen, toggleFiles] = useFilesOpen();
@@ -431,6 +433,7 @@ export function SessionView(props: SessionViewProps) {
                 error={timeline?.error ?? null}
                 onOpenChanges={() => onTab('changes')}
                 history={{ view: historyView, gap: historyGap }}
+                loadSubagent={guest === null ? (actions?.subagent ?? null) : null}
                 review={
                   reviewActions === undefined
                     ? undefined
@@ -520,7 +523,7 @@ export function SessionView(props: SessionViewProps) {
             </>
           ) : null}
           {tab === 'changes' ? (
-            s.revert || turns.length > 0 || s.base ? (
+            s.revert || turns.length > 0 || s.base || branchesOffered ? (
               <>
                 <RevertStatus
                   summary={s}
@@ -540,6 +543,7 @@ export function SessionView(props: SessionViewProps) {
                   busy={busy !== null}
                   act={panelAct}
                   onOpenFile={onOpenFile}
+                  branchesOffered={branchesOffered}
                   station={session.station_id}
                   review={
                     reviewActions === undefined
