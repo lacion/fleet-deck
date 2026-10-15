@@ -41,5 +41,10 @@ include = [
     "packaging/launchd/dev.fleetdeck.deck.plist",
     "packaging/container/Containerfile",
 ]
+# DL-192: a release build sets `FLEETDECK_RELEASE=1`, so that `fleetdeck
+# --version` prints `2.0.0` and not `2.0.0-dev.<date>+<commit>`. This cargo-dist
+# version has no setting for a build environment variable: the release jobs
+# must export `FLEETDECK_RELEASE=1` before `cargo build` (see `make
+# release-build`).
 precise-builds = true
 pr-run-mode = "plan"

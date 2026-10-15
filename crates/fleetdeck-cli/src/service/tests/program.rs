@@ -189,9 +189,10 @@ fn the_dry_run_line_names_the_copy_only_when_one_would_be_made() {
 /// (`None`: it prints nothing, like an older fleetdeck). `note` makes the
 /// bytes differ.
 fn fake_build(path: &Path, secs: Option<i64>, note: &str) {
+    let version = fleetdeck_core::build::version();
     let body = match secs {
         Some(secs) => format!(
-            "printf '%s\\n' '{{\"version\":\"0.0.0+x\",\"commit\":\"c{secs}\",\"commit_time\":{secs}}}'"
+            "printf '%s\\n' '{{\"version\":\"{version}\",\"commit\":\"c{secs}\",\"commit_time\":{secs}}}'"
         ),
         None => "exit 0".to_owned(),
     };

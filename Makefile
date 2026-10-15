@@ -1,7 +1,7 @@
 # Fleet Deck v2 checks. `make check` is the one acceptance command (goal-mode
 # reviewers may run `make check` and `cargo test`, but not other cargo tools).
 # It is offline: see tools/check.sh for the one-time cache fill.
-.PHONY: check check-spikes test test-web test-lint ts-types smoke-live package-check perf codex-schema-diff board-repro
+.PHONY: check check-spikes test test-web test-lint ts-types smoke-live package-check perf codex-schema-diff board-repro release-build
 # Every check of the M2 goal: fmt, clippy, nextest, deny, TS-types drift,
 # web typecheck + lint + test + build, and every recorded replay (G13).
 check:
@@ -53,3 +53,8 @@ codex-schema-diff:
 # R8.7 (DL-162): the board build is reproducible (build twice, compare hashes).
 board-repro:
 	sh tools/board-repro.sh
+
+# A release build (DL-192): `fleetdeck --version` prints `2.0.0`. Any other
+# build prints `2.0.0-dev.<date>+<commit>`.
+release-build:
+	FLEETDECK_RELEASE=1 cargo build --release --locked -p fleetdeck-cli

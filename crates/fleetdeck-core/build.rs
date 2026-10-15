@@ -1,5 +1,6 @@
-//! Records the git commit and its time in the build (backlog B5). A build
-//! without git still works: the commit is `unknown` and the time is 0.
+//! Records the git commit, its time and its UTC date in the build (backlog B5,
+//! DL-192), and whether this is a release build. A build without git still
+//! works: the commit is `unknown`, the time is 0 and the date is `00000000`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -22,6 +23,30 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
 fn preset(name: &str) -> Option<String> {
     println!("cargo:rerun-if-env-changed={name}");
     std::env::var(name).ok().filter(|v| !v.trim().is_empty())
+}
+
+/// The UTC date `YYYYMMDD` of unix seconds (integer math, proleptic Gregorian
+/// calendar); `00000000` for a time that is not positive.
+fn utc_date(secs: i64) -> String {
+    if secs <= 0 {
+        return "00000000".to_owned();
+    }
+    // Days since 1970-01-01 to a civil date (Howard Hinnant's algorithm).
+    let z = secs / 86_400 + 719_468;
+    let era = z / 146_097;
+    let day_of_era = z % 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_part = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_part + 2) / 5 + 1;
+    let month = if month_part < 10 {
+        month_part + 3
+    } else {
+        month_part - 9
+    };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    format!("{year:04}{month:02}{day:02}")
 }
 
 /// Reruns the script when the commit changes.
@@ -68,5 +93,11 @@ fn main() {
         .unwrap_or_else(|| "0".to_owned());
     println!("cargo:rustc-env=FLEETDECK_BUILD_COMMIT={commit}");
     println!("cargo:rustc-env=FLEETDECK_BUILD_TIME={time}");
+    // A bad number gives the unknown time, as `parse_time` does in the crate.
+    let date = utc_date(time.trim().parse::<i64>().unwrap_or(0));
+    println!("cargo:rustc-env=FLEETDECK_BUILD_DATE={date}");
+    // Only the value `1` makes a release build (DL-192).
+    let release = u8::from(preset("FLEETDECK_RELEASE").as_deref() == Some("1"));
+    println!("cargo:rustc-env=FLEETDECK_RELEASE={release}");
     watch(&dir);
 }
