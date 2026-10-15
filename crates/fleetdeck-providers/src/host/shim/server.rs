@@ -38,6 +38,8 @@ use crate::host::STDERR_TAIL_BYTES;
 mod conn;
 #[path = "server_proc.rs"]
 mod process;
+#[path = "server_secrets.rs"]
+mod secrets;
 
 pub use process::exec_provider;
 use process::{bind, group_members, reap_orphans, signal_group, spawn_provider};
@@ -107,10 +109,20 @@ async fn serve(shim_id: &str) -> i32 {
         Ok(None) => return failed(false, "no launch frame"),
         Err(e) => return failed(false, format!("launch frame: {e}")),
     };
-    drop(stdin);
     if spec.shim_id != shim_id {
         return failed(false, "the launch frame is for another shim");
     }
+    // DL-194: with `secrets` the shim proves its executable and reads the
+    // token before it spawns anything; the station closes stdin after it.
+    let token = if spec.secrets {
+        match secrets::exchange(&mut stdin).await {
+            Ok(token) => Some(token),
+            Err(code) => return code,
+        }
+    } else {
+        None
+    };
+    drop(stdin);
     // The shim leaves the station's session; the provider gets its own
     // (shim-exec). Linux: orphaned descendants come back to the shim.
     if let Err(e) = rustix::process::setsid() {
@@ -159,7 +171,10 @@ async fn serve(shim_id: &str) -> i32 {
         drop(std::fs::remove_file(&spec.socket_path));
         return failed(false, format!("journal: {e}"));
     }
-    let mut child = match spawn_provider(&spec) {
+    let spawned = spawn_provider(&spec, token.as_ref());
+    // The token lives in the provider's environment only (DL-194).
+    drop(token);
+    let mut child = match spawned {
         Ok(child) => child,
         Err(e) => {
             drop(std::fs::remove_file(&spec.socket_path));

@@ -6,12 +6,13 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
+use fleetdeck_core::Secret;
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::net::UnixStream;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::process::Child;
 
-use super::launch::{LaunchReply, LaunchSpec};
+use super::launch::{LAUNCH_PROTOCOL, LaunchReply, LaunchSpec, SecretsFrame};
 use super::proof::AttachKey;
 use super::wire::{
     FromShim, PROTOCOL, Refusal, ToShim, WireError, hex, read_frame, unhex, write_frame,
@@ -27,6 +28,9 @@ pub enum ClientError {
     Protocol(String),
     #[error("the shim did not answer in time")]
     Timeout,
+    /// The shim did not prove its executable (DL-194): no token was sent.
+    #[error("the shim could not be verified: {0}")]
+    Untrusted(String),
 }
 
 /// A started shim process. The station waits on it so it leaves no
@@ -45,6 +49,27 @@ pub async fn launch(
     key: &AttachKey,
     wait: Duration,
 ) -> Result<Launched, ClientError> {
+    launch_with(exe, spec, key, wait, None).await
+}
+
+/// [`launch`] with the two-step exchange of DL-194. `secrets` is `Some`
+/// (the expected SHA-256 of the shim executable, the session token) iff
+/// `spec.secrets` is true. The station writes the token only after a `hello`
+/// with the expected hash; in every other case it closes stdin without a
+/// second frame, kills the shim and returns [`ClientError::Untrusted`].
+pub async fn launch_with(
+    exe: &Path,
+    spec: &LaunchSpec,
+    key: &AttachKey,
+    wait: Duration,
+    secrets: Option<(&str, &Secret<String>)>,
+) -> Result<Launched, ClientError> {
+    if secrets.is_some() != spec.secrets {
+        return Err(ClientError::Protocol(
+            "secrets and spec.secrets differ".to_owned(),
+        ));
+    }
+    let deadline = tokio::time::Instant::now() + wait;
     let mut child = tokio::process::Command::new(exe)
         .arg("shim")
         .arg("--id")
@@ -59,11 +84,44 @@ pub async fn launch(
         return Err(ClientError::Protocol("the shim has no pipes".to_owned()));
     };
     write_frame(&mut stdin, spec, key.expose()).await?;
+    let mut stdout = BufReader::new(stdout);
+    if let Some((expected, token)) = secrets {
+        let mut hello = String::new();
+        let first = tokio::time::timeout_at(deadline, stdout.read_line(&mut hello)).await;
+        let reason = match first {
+            Err(_) => Some("timeout"),
+            Ok(Err(_)) => Some("no hello"),
+            Ok(Ok(_)) => match serde_json::from_str::<LaunchReply>(hello.trim_end()) {
+                Ok(LaunchReply::Hello {
+                    exe_sha256,
+                    protocol,
+                }) => {
+                    if protocol != LAUNCH_PROTOCOL {
+                        Some("wrong protocol")
+                    } else if exe_sha256 != expected {
+                        Some("wrong executable")
+                    } else {
+                        None
+                    }
+                }
+                _ => Some("no hello"),
+            },
+        };
+        if let Some(reason) = reason {
+            // No second frame: the token bytes are never written (DL-194).
+            drop(stdin);
+            reap_untrusted(&mut child).await;
+            return Err(ClientError::Untrusted(reason.to_owned()));
+        }
+        let frame = SecretsFrame {
+            token: token.expose().clone(),
+        };
+        write_frame(&mut stdin, &frame, &[]).await?;
+    }
     stdin.shutdown().await?;
     drop(stdin);
     let mut line = String::new();
-    let mut stdout = BufReader::new(stdout);
-    match tokio::time::timeout(wait, stdout.read_line(&mut line)).await {
+    match tokio::time::timeout_at(deadline, stdout.read_line(&mut line)).await {
         Err(_) => return Err(ClientError::Timeout),
         Ok(Err(e)) => return Err(e.into()),
         Ok(Ok(_)) => {}
@@ -71,6 +129,18 @@ pub async fn launch(
     let reply = serde_json::from_str(line.trim_end())
         .map_err(|e| ClientError::Protocol(format!("launch reply {line:?}: {e}")))?;
     Ok(Launched { child, reply })
+}
+
+/// Kills an unverified shim and waits for it, at most 2 seconds (DL-194).
+async fn reap_untrusted(child: &mut Child) {
+    if let Err(e) = child.start_kill() {
+        tracing::warn!(error = %e, "cannot kill the unverified shim");
+    }
+    match tokio::time::timeout(Duration::from_secs(2), child.wait()).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => tracing::warn!(error = %e, "cannot wait for the unverified shim"),
+        Err(_) => tracing::warn!("the unverified shim did not end in time"),
+    }
 }
 
 /// The `hello` of a shim.

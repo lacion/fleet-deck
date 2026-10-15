@@ -20,8 +20,13 @@ pub(super) fn bind(spec: &LaunchSpec) -> std::io::Result<UnixListener> {
     Ok(listener)
 }
 
-pub(super) fn spawn_provider(spec: &LaunchSpec) -> std::io::Result<Child> {
-    let exe = std::env::current_exe()?;
+/// Starts the provider through the shim's own executable object (DL-194),
+/// with the session `token` in its environment when there is one.
+pub(super) fn spawn_provider(
+    spec: &LaunchSpec,
+    token: Option<&fleetdeck_core::Secret<String>>,
+) -> std::io::Result<Child> {
+    let exe = crate::host::shim::exe_hash::own_exe()?;
     let mut command = tokio::process::Command::new(exe);
     command
         .arg("shim-exec")
@@ -32,7 +37,11 @@ pub(super) fn spawn_provider(spec: &LaunchSpec) -> std::io::Result<Child> {
         .args(spec.args())
         .current_dir(spec.cwd())
         .env_clear()
-        .envs(spec.env())
+        .envs(spec.env());
+    if let Some(token) = token {
+        command.env("FLEETDECK_COORDINATOR_TOKEN", token.expose());
+    }
+    command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
