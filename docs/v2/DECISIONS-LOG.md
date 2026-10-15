@@ -3027,3 +3027,9 @@ Owner review: pending.
 - Decision: `station.info` carries `resources` (the free and total space of the data directory and of each allowed root, the memory total and available, the CPU cores with the load over 1 and 5 minutes). The station gathers it at most every 30 s. The deck asks `station.info` again every 60 s while the link is live and keeps the newest answer for the board.
 - Standard limits: low disk is under 10 GB (decimal) free or under 10 % of the total; low memory is under 1 GB available or under 10 %; busy CPU is a 5-minute load above 1.5 times the cores. The rules and the warning texts live in `fleetdeck-proto` (`StationResources::warnings`).
 - Warnings only: a low resource never blocks or refuses a session start. The board part is a later task.
+
+## DL-194 — Session credentials on the shim host (DL-188 step 1, design accepted, 2026-10-15)
+
+- Context: a shim-hosted session has no coordinator token after a station restart, so its Fleet Deck tools stop (DL-188 gap). Design `docs/v2/design/shim-credential.md`, five adversary rounds (rounds 1–4 FAIL; the owner approved rounds 4 and 5; round 5 PASS).
+- Decision: a two-step launch (the shim proves its executable hash, then gets the token); `/proc/self/exe` for the shim and `shim-exec`; the `fleetdeck mcp-bridge` stdio bridge to a station Unix socket; `shim_bindings` digest rows with transitions inside the durable output transaction; `NativeIdentity` signals; a write-ahead invalidation fence for revoke and rotation, where a failed intent fails the operation. Linux only.
+- Owner only. The build is the next step.
