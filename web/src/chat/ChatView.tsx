@@ -1,7 +1,7 @@
 // The chat view of a session: the primary projection of the canonical events
 // (UI-PLAN §2.1). It renders `Item`s from `buildTimeline`; it owns no data.
 import { type ReactNode, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { ProviderKind, ReviewComment, ReviewSummary } from '../gen';
+import type { ProviderKind, ReviewComment, ReviewSummary, SubagentLog } from '../gen';
 import { hasChanges } from '../session/changes';
 import { type Item, type Subagent, type SubagentStatus, subagentLabel } from '../session/timeline';
 import {
@@ -32,6 +32,7 @@ import { FilterBar } from './FilterBar';
 import type { HistoryView } from './history';
 import { HistoryBlock } from './HistoryBlock';
 import { Markdown } from './Markdown';
+import { SubagentWork } from './SubagentWork';
 import { ChipText } from '../review/CommentChip';
 import { ReviewCard } from '../review/ReviewCard';
 
@@ -58,6 +59,8 @@ export type ChatViewProps = {
   readonly review?: ChatReview | undefined;
   /** DL-189: the earlier history of an imported session, above the timeline. */
   readonly history?: { readonly view: HistoryView; readonly gap: boolean } | undefined;
+  /** DL-191: the owner's reader of a subagent log; `null` or absent for a member. */
+  readonly loadSubagent?: ((toolUseId: string) => Promise<SubagentLog>) | null | undefined;
 };
 
 type OpenChanges = ((turnId: string) => void) | undefined;
@@ -111,10 +114,11 @@ type ItemsProps = {
   compact: boolean;
   provider: ProviderKind | null;
   review?: ChatReview | undefined;
+  loadSubagent?: ((toolUseId: string) => Promise<SubagentLog>) | null | undefined;
 };
 
 function Items(props: ItemsProps): ReactNode {
-  const { compact, provider, onOpenChanges, review } = props;
+  const { compact, provider, onOpenChanges, review, loadSubagent } = props;
   return compactRuns(props.items, compact, provider).map((row) =>
     row.kind === 'fold' ? (
       <ToolFold
@@ -122,13 +126,13 @@ function Items(props: ItemsProps): ReactNode {
         items={row.items}
         failed={row.failed}
         summary={row.summary}
-        {...{ onOpenChanges, compact, provider, review }}
+        {...{ onOpenChanges, compact, provider, review, loadSubagent }}
       />
     ) : (
       <ItemView
         key={row.item.key}
         item={row.item}
-        {...{ onOpenChanges, compact, provider, review }}
+        {...{ onOpenChanges, compact, provider, review, loadSubagent }}
       />
     ),
   );
@@ -200,6 +204,8 @@ function ToolView({ tool }: { tool: Tool }) {
 
 function SubagentView(props: Omit<ItemsProps, 'items'> & { item: Subagent }) {
   const { item, ...rest } = props;
+  const { loadSubagent } = rest;
+  const toolUseId = item.tool_use_id;
   const live = item.status === 'running' || item.status === 'background';
   return (
     <div
@@ -224,6 +230,9 @@ function SubagentView(props: Omit<ItemsProps, 'items'> & { item: Subagent }) {
           <Items items={item.items} {...rest} />
         </div>
       </details>
+      {loadSubagent && toolUseId !== null ? (
+        <SubagentWork load={() => loadSubagent(toolUseId)} />
+      ) : null}
     </div>
   );
 }
@@ -464,6 +473,7 @@ export function ChatView(props: ChatViewProps) {
           compact={filter.compact}
           provider={provider}
           review={props.review}
+          loadSubagent={props.loadSubagent}
         />
       );
   }

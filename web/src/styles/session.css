@@ -801,6 +801,71 @@ fieldset:disabled .fd-opt {
   color: var(--hazard);
   font-size: 12.5px;
 }
+/* DL-191: the Branches view of the Changes tab */
+.fd-branches {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+.fd-branches li + li {
+  border-top: 1px solid var(--border-soft);
+}
+.fd-branches .fd-branch {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  width: 100%;
+  height: auto;
+  min-height: var(--ctl-h);
+  padding: var(--sp-1) var(--sp-3);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font-weight: 400;
+  text-align: left;
+}
+.fd-branches .fd-branch:hover:not(:disabled) {
+  background: var(--raised);
+}
+.fd-branch-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-data);
+  font-size: var(--fs-body);
+}
+.fd-branch-count,
+.fd-branch-merged {
+  flex: none;
+  font-family: var(--font-ui);
+  font-size: var(--fs-12);
+  color: var(--dim);
+}
+.fd-branch-merged {
+  color: var(--ok);
+}
+.fd-branch-subject {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dim);
+  font-size: var(--fs-12);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fd-branch-age {
+  flex: none;
+  margin-left: auto;
+  color: var(--faint);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
 .fd-dl-n {
   display: inline-block;
   min-width: 3.5ch;

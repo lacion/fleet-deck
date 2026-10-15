@@ -121,6 +121,7 @@ describe('applyChatFilter', () => {
       input: '',
       status: 'done',
       task_id: null,
+      tool_use_id: null,
       items: [read(1), bash(2)],
     };
     const list = [sub];

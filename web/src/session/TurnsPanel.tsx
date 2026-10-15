@@ -6,6 +6,7 @@ import { ImportPrompt } from '../review/ImportPrompt';
 import { spawnSnapshot, turnSnapshot } from '../review/placement';
 import { ReviewBar } from '../review/ReviewBar';
 import { sessionRef } from '../ui/localSet';
+import { BranchesView } from './BranchesView';
 import type { Outcome, SessionActions } from './commands';
 import { hasChanges } from './changes';
 import {
@@ -32,6 +33,16 @@ type Props = {
   readonly station?: string | undefined;
   /** The review comments of the session (DL-179); absent: the diffs have no comment controls. */
   readonly review?: ReviewProps | undefined;
+  /** DL-191: the login is the owner and the deck can list branches: the "Branches" view is offered. */
+  readonly branchesOffered?: boolean | undefined;
+};
+
+type View = 'spawn' | 'turns' | 'branches';
+
+const VIEW_LABEL: Record<View, string> = {
+  spawn: 'Since spawn',
+  turns: 'By turn',
+  branches: 'Branches',
 };
 
 /** The latest revert, and the owner's resolution of one that needs reconciliation (DL-097). */
@@ -246,9 +257,13 @@ function Bar({ review }: { readonly review: ReviewProps | undefined }) {
 /** The Changes tab: the diff since the session started, or the finalized turns (a diff and a revert each). */
 export function TurnsPanel(props: Props) {
   const { summary, turns, actions, drive, busy, act, onOpenFile, station, review } = props;
+  const branchesRead = actions?.branches ?? null;
+  const branchDiffRead = actions?.branchDiff ?? null;
+  const hasBranches =
+    props.branchesOffered === true && branchesRead !== null && branchDiffRead !== null;
   const [confirm, setConfirm] = useState<string | null>(null);
   const [diffs, setDiffs] = useState<Record<string, LoadedDiff | string>>({});
-  const [chosen, setChosen] = useState<'spawn' | 'turns' | null>(null);
+  const [chosen, setChosen] = useState<View | null>(null);
   const [loads, setLoads] = useState(0);
   const hasBase = Boolean(summary.base);
   const files = actions?.files ?? null;
@@ -319,25 +334,38 @@ export function TurnsPanel(props: Props) {
     // Only a new click (the nonce) moves the view; a reload of the threads does not.
   }, [focusNonce]);
   // A guessed start commit makes the whole-session diff unreliable: open "By turn" (DL-159).
-  const view = hasBase
-    ? (chosen ?? (summary.base?.inferred === true ? 'turns' : 'spawn'))
-    : 'turns';
-  if (turns.length === 0 && !hasBase) return null;
-  const toggle = hasBase ? (
-    <div className="fd-viewtoggle" role="group" aria-label="Changes view">
-      {(['spawn', 'turns'] as const).map((v) => (
-        <button
-          key={v}
-          type="button"
-          className="fd-chip"
-          aria-pressed={view === v}
-          onClick={() => setChosen(v)}
-        >
-          {v === 'spawn' ? 'Since spawn' : 'By turn'}
-        </button>
-      ))}
-    </div>
-  ) : null;
+  const views: readonly View[] = [
+    ...(hasBase ? (['spawn'] as const) : []),
+    'turns',
+    ...(hasBranches ? (['branches'] as const) : []),
+  ];
+  const fallback: View = hasBase && summary.base?.inferred !== true ? 'spawn' : 'turns';
+  const view: View = chosen !== null && views.includes(chosen) ? chosen : fallback;
+  if (turns.length === 0 && !hasBase && !hasBranches) return null;
+  const toggle =
+    views.length >= 2 ? (
+      <div className="fd-viewtoggle" role="group" aria-label="Changes view">
+        {views.map((v) => (
+          <button
+            key={v}
+            type="button"
+            className="fd-chip"
+            aria-pressed={view === v}
+            onClick={() => setChosen(v)}
+          >
+            {VIEW_LABEL[v]}
+          </button>
+        ))}
+      </div>
+    ) : null;
+  if (view === 'branches' && branchesRead !== null && branchDiffRead !== null) {
+    return (
+      <section className="fd-turns" aria-label="Turns">
+        {toggle}
+        <BranchesView load={branchesRead} loadDiff={branchDiffRead} onOpenFile={onOpenFile} />
+      </section>
+    );
+  }
   if (view === 'spawn') {
     return (
       <section className="fd-turns" aria-label="Turns">

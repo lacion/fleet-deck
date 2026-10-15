@@ -88,7 +88,8 @@ export function historyErrorLine(e: unknown): HistoryLine | null {
   return { text: `The earlier history could not be loaded: ${message}`, action: 'retry' };
 }
 
-function lineOf(state: SessionHistory['state']): HistoryLine | null {
+/** The muted line for a `partial` or `unavailable` state; `null` for the others. */
+export function historyStateLine(state: SessionHistory['state']): HistoryLine | null {
   if (state.kind === 'partial') {
     return { text: 'Some lines of the transcript could not be read.', action: null };
   }
@@ -161,7 +162,7 @@ export class HistoryLoader {
           items: reset ? page.items : [...page.items, ...this.snap.items],
           more: page.before !== null,
           loading: false,
-          line: lineOf(page.state),
+          line: historyStateLine(page.state),
         });
       },
       (error: unknown) => {

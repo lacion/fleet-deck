@@ -5,7 +5,8 @@ import { Icon, Wrench } from '../ui/icons';
 import type { HistoryView } from './history';
 import { Markdown } from './Markdown';
 
-function ItemView({ item }: { item: HistoryItem }) {
+/** One history item in the chat shapes (DL-189); the subagent log of DL-191 uses it too. */
+export function HistoryItemView({ item }: { item: HistoryItem }) {
   const title = item.at > 0 ? new Date(item.at).toLocaleString() : undefined;
   if (item.kind === 'tool') {
     return (
@@ -46,7 +47,7 @@ export function HistoryBlock({ view, gap }: { readonly view: HistoryView; readon
           </div>
         ) : null}
         {items.map((item) => (
-          <ItemView key={item.id} item={item} />
+          <HistoryItemView key={item.id} item={item} />
         ))}
         {line === null ? null : (
           <p className="fd-note fd-history-line">

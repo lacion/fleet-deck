@@ -10,9 +10,12 @@ import type {
   ExecutionCheck,
   ImageInput,
   RevertResolution,
+  RepoBranches,
   SessionCommand,
+  SessionDiff,
   SessionHistory,
   SessionKey,
+  SubagentLog,
 } from '../gen';
 import { isSessionHistory } from '../chat/history';
 import { type FleetAnswers, isFleetAnswers } from './fleetAnswers';
@@ -61,6 +64,12 @@ export type SessionActions = {
   readonly files: FileActions | null;
   /** DL-189: a page of the earlier history of an imported session; `null` without a reader. */
   readonly history?: ((before: string | null) => Promise<SessionHistory>) | null;
+  /** DL-191: the own messages and tool calls of one subagent (owner only); `null` without a reader. */
+  readonly subagent?: ((toolUseId: string) => Promise<SubagentLog>) | null;
+  /** DL-191: the other branches of the repository of the session (owner only); `null` without a reader. */
+  readonly branches?: (() => Promise<RepoBranches>) | null;
+  /** DL-191: the committed diff of one branch head (owner only); `null` without a reader. */
+  readonly branchDiff?: ((head: string) => Promise<SessionDiff>) | null;
 };
 
 /** The longest title, in characters (the station refuses a longer one). */
@@ -136,6 +145,20 @@ const isExecutionCheck = (v: unknown): v is ExecutionCheck =>
   Array.isArray(v['session_members']) &&
   Array.isArray(v['escaped']);
 
+const invalidAnswer = (): Error => new Error('The deck sent an invalid answer.');
+
+const isSubagentLog = (v: unknown): v is SubagentLog =>
+  record(v) &&
+  Array.isArray(v['items']) &&
+  record(v['state']) &&
+  typeof v['state']['kind'] === 'string';
+
+const isRepoBranches = (v: unknown): v is RepoBranches =>
+  record(v) && Array.isArray(v['branches']) && typeof v['truncated'] === 'boolean';
+
+const isBranchDiff = (v: unknown): v is SessionDiff =>
+  record(v) && ['summary', 'patch', 'truncated'].every((f) => f in v);
+
 export function sessionActions(
   post: Post,
   key: SessionKey,
@@ -156,6 +179,7 @@ export function sessionActions(
     }
   };
   const session_id = key.session_id;
+  const sessionPath = `/api/sessions/${encodeURIComponent(key.station_id)}/${encodeURIComponent(session_id)}`;
   return {
     canDrive: scopes.includes('drive'),
     canApprove: scopes.includes('approve'),
@@ -221,6 +245,27 @@ export function sessionActions(
             before === null ? base : `${base}?before=${encodeURIComponent(before)}`,
           );
           if (!isSessionHistory(v)) throw new Error('The deck sent an invalid history.');
+          return v;
+        }
+      : null,
+    subagent: get
+      ? async (toolUseId) => {
+          const v = await get(`${sessionPath}/subagents/${encodeURIComponent(toolUseId)}`);
+          if (!isSubagentLog(v)) throw invalidAnswer();
+          return v;
+        }
+      : null,
+    branches: get
+      ? async () => {
+          const v = await get(`${sessionPath}/branches`);
+          if (!isRepoBranches(v)) throw invalidAnswer();
+          return v;
+        }
+      : null,
+    branchDiff: get
+      ? async (head) => {
+          const v = await get(`${sessionPath}/branches/${encodeURIComponent(head)}/diff`);
+          if (!isBranchDiff(v)) throw invalidAnswer();
           return v;
         }
       : null,

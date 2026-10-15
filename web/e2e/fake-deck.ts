@@ -617,6 +617,18 @@ export class FakeDeck {
     ) {
       return { status: 200, body: { items: [], before: null, state: { kind: 'empty' } } };
     }
+    // DL-191: a repository without other branches, and a subagent that wrote nothing, unless a test sets the path with `on`.
+    if (handler === undefined && method === 'GET') {
+      if (/^\/api\/sessions\/[^/]+\/[^/]+\/branches$/.test(path)) {
+        return {
+          status: 200,
+          body: { head: null, branch: 'main', branches: [], truncated: false },
+        };
+      }
+      if (/^\/api\/sessions\/[^/]+\/[^/]+\/subagents\/[^/]+$/.test(path)) {
+        return { status: 200, body: { items: [], state: { kind: 'empty' } } };
+      }
+    }
     if (handler === undefined) return { status: 404, body: { code: 'not_found', message: path } };
     if (method === 'POST' && !csrf) {
       return { status: 403, body: { code: 'csrf', message: 'Missing CSRF token.' } };
