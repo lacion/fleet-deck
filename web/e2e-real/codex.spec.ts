@@ -68,7 +68,11 @@ test('a Codex session on alpha asks for an approval that the needs-you rail answ
   const page = phone.page;
   const id = await phone.spawn(alpha, CODEX_LABEL, 'Codex approval', 'ask echo hi');
   await expect(phone.card(id)).toContainText('gpt-sim-1');
-  await expect(phone.card(id)).toContainText(BRANCH);
+  // The place is in the callsign tooltip of the strip (ui-pass wave 1).
+  await expect(phone.card(id).locator('.fd-strip-call')).toHaveAttribute(
+    'title',
+    `Branch: ${BRANCH}`,
+  );
   const rail = page.getByRole('region', { name: 'Needs you rail' });
   await expect(rail).toContainText('Codex approval');
   await expect(rail).toContainText('alpha');
@@ -135,7 +139,7 @@ test('the board survives a deck restart and shows Codex work done meanwhile', as
   await expect(mode).toBeEnabled();
   await phone.fleet();
   await expect(phone.card(away)).toBeVisible();
-  await expect(phone.page.locator('.fd-card')).toHaveCount(3);
+  await expect(phone.page.locator('.fd-strip')).toHaveCount(3);
   await expect(phone.page.getByLabel('Owner password')).toHaveCount(0);
   expect(stationSessions(alpha)).toHaveLength(2);
   expect(stationSessions(bravo)).toHaveLength(1);
@@ -176,7 +180,7 @@ test('the phone drops its network, catches up, and drives a Codex session again'
   await phone.live();
   await phone.fleet();
   await expect(phone.card(offline)).toBeVisible();
-  await expect(page.locator('.fd-card')).toHaveCount(4);
+  await expect(page.locator('.fd-strip')).toHaveCount(4);
   const view = await phone.open('Codex long run');
   const composer = page.getByRole('form', { name: 'Composer' });
   await composer.getByLabel('Message').fill('one more');
@@ -208,7 +212,7 @@ test('a station link drop shows the station unreachable until it returns', async
   await bravo.start();
   await expect(phone.stationCard('bravo')).toContainText('Link up');
   await phone.fleet();
-  await expect(page.locator('.fd-card')).toHaveCount(4);
+  await expect(page.locator('.fd-strip')).toHaveCount(4);
   phone.expectRouted({
     'session.start': 2,
     'approval.answer': 1,
@@ -229,7 +233,7 @@ test('a Codex background command shows on the card until the station poll sees i
   await expect(phone.status('Done.')).toBeVisible();
   await expect(view).toContainText('started in background');
   await phone.fleet();
-  const card = page.locator('.fd-card').filter({ hasText: 'Codex approval' });
+  const card = page.locator('.fd-strip').filter({ hasText: 'Codex approval' });
   const tasks = card.locator('[title="Background tasks"]');
   await expect(tasks).toHaveText('1');
   // The poll repeats every 5 s while the terminal runs; the fake ends it on

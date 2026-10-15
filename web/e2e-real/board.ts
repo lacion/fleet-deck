@@ -85,7 +85,7 @@ export class Phone {
   }
 
   card(sessionId: string): Locator {
-    return this.page.locator(`.fd-card[data-session="${sessionId}"]`);
+    return this.page.locator(`.fd-strip[data-session="${sessionId}"]`);
   }
 
   stationCard(name: string): Locator {
@@ -174,7 +174,7 @@ export class Phone {
     // One new session opens at once (DL-141).
     await expect(page).toHaveURL(/#\/s\//);
     await this.fleet();
-    const card = page.locator('.fd-card').filter({ hasText: title });
+    const card = page.locator('.fd-strip').filter({ hasText: title });
     await expect(card).toHaveCount(1);
     const id = await card.getAttribute('data-session');
     if (id === null) throw new Error(`no card for ${title}`);
@@ -183,7 +183,7 @@ export class Phone {
 
   async open(title: string): Promise<Locator> {
     await this.fleet();
-    await this.page.locator('.fd-card').filter({ hasText: title }).click();
+    await this.page.locator('.fd-strip').filter({ hasText: title }).click();
     return this.page.getByRole('region', { name: 'Session', exact: true });
   }
 

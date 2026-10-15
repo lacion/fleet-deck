@@ -126,8 +126,15 @@ export function NeedsYouRail({
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, []);
-  // No request, no rail: the fleet header says "All clear". The hooks above stay mounted.
-  if (waiting.length === 0) return null;
+  // No request, no rail: the fleet header says "All clear". The hooks above stay mounted, and
+  // the side variant keeps only the notification switch in the corner.
+  if (waiting.length === 0) {
+    return variant === 'side' ? (
+      <div className="fd-rail-mini">
+        <NotifyToggle on={notify} onChange={setNotify} />
+      </div>
+    ) : null;
+  }
   return (
     <section className="fd-rail" data-variant={variant} aria-label="Needs you rail">
       <div className="fd-rail-top">
