@@ -56,10 +56,8 @@ fn the_first_install_of_both_enables_and_bootstraps() {
          Started.\n\
          Logs: {}\n\
          A user agent starts when you log in and ends when you log out.\n\
-         The service runs a copy of this program. Run `fleetdeck service install` again after \
-         you build or install a new version.\n\
-         The service uses the PATH of this shell. Run `fleetdeck service install` again after \
-         you install a provider CLI in a new directory.\n",
+         Run `fleetdeck service install` again after you install a new Fleet Deck version or a \
+         provider CLI in a new folder.\n",
         plist.display(),
         root.join("current").display(),
         copy.display(),

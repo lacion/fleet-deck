@@ -143,7 +143,7 @@ Run `fleetdeck service install` to start Fleet Deck at boot or login. Use `both`
 - WSL: systemd must be on (`[boot]` and `systemd=true` in `/etc/wsl.conf`). The command also adds a Windows logon task that starts the distro when you sign in to Windows.
 - macOS: a launchd user agent (`dev.fleetdeck.<kind>`). It starts at login and ends at logout. Logs: `~/Library/Logs/fleetdeck/<up|deck|station>.log`.
 - The service runs a copy of the program under `<data>/station/bin/current` (`deck`: `<data>/deck/bin/current`). Run `fleetdeck service install` again after you build or install a new version.
-- The service gets the `PATH` of your shell, without the unsafe entries: an entry stays only when it is an absolute directory that you or root own and that no group or other user can write. The command prints a warning for each entry that it leaves out (DL-187, NV-22). Run the command again after you install a provider CLI in a new directory.
+- The service gets the safe folders of your shell `PATH`: absolute folders that only you or root can change (your own private group may write them). `install` prints one line with the counts; `--verbose` lists the folders that it leaves out. It warns when `claude`, `codex`, `git`, `gh`, `glab` or `curl` is only in a folder that it leaves out.
 - With `host = "direct"` (default), the station ends its agents when the service stops. Set `host = "shim"` in `station.toml` to keep them running.
 - `fleetdeck service install --dry-run` prints the files and the commands and changes nothing.
 - `fleetdeck service start`, `stop` and `status [--json]` control and show the services. `fleetdeck service uninstall` removes them. Your data stays.

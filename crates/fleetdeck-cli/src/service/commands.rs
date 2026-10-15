@@ -6,6 +6,7 @@ use std::path::Path;
 use anyhow::{Context as _, bail};
 use fleetdeck_core::config::HostChoice;
 
+use super::path::lost_programs;
 use super::{
     Context, Deps, Done, Kind, Outcome, Plan, Platform, all_installed, launchd, probe, select,
     systemd, wait_ready, wsl_task,
@@ -60,13 +61,11 @@ pub fn install(
     deps: &dyn Deps,
     kind: Kind,
     dry_run: bool,
+    verbose: bool,
     ulid: &str,
     out: &mut dyn Write,
 ) -> anyhow::Result<()> {
-    // The service leaves these entries out of its PATH (NV-22).
-    for note in &ctx.path_dropped {
-        writeln!(out, "warning: PATH entry {note}; the service leaves it out")?;
-    }
+    path_report(ctx, verbose, out)?;
     if ctx.platform == Platform::Systemd {
         systemd::checks(ctx, deps)?;
     }
@@ -108,6 +107,45 @@ pub fn install(
     summary(&plan, &done, &link, out)?;
     if done.outcome == Outcome::NotReady {
         return Err(no_start(kind, ctx));
+    }
+    Ok(())
+}
+
+/// What the install says about the `PATH`: the lost programs, one summary
+/// line, and with `verbose` each folder that the service leaves out (NV-22).
+fn path_report(ctx: &Context, verbose: bool, out: &mut dyn Write) -> anyhow::Result<()> {
+    if let Some(shell) = &ctx.shell_path {
+        for (name, dir) in lost_programs(shell, ctx.path.as_deref()) {
+            let reason = ctx
+                .path_dropped
+                .iter()
+                .find(|(entry, _)| *entry == dir)
+                .map_or("not on the service PATH", |(_, reason)| reason.as_str());
+            writeln!(
+                out,
+                "warning: the service cannot run `{name}`: it is in {dir}, which the service \
+                 leaves out ({reason})."
+            )?;
+        }
+    }
+    if ctx.path_dropped.is_empty() {
+        return Ok(());
+    }
+    let kept = ctx
+        .path
+        .as_deref()
+        .map_or(0, |p| p.split(':').filter(|e| !e.is_empty()).count());
+    writeln!(
+        out,
+        "PATH: the service keeps {kept} folder{} and leaves out {} that other users can change \
+         or that do not exist. Run `fleetdeck service install --verbose` to list them.",
+        if kept == 1 { "" } else { "s" },
+        ctx.path_dropped.len()
+    )?;
+    if verbose {
+        for (entry, reason) in &ctx.path_dropped {
+            writeln!(out, "  {entry}: {reason}")?;
+        }
     }
     Ok(())
 }
@@ -159,13 +197,8 @@ fn summary(plan: &Plan, done: &Done, link: &Path, out: &mut dyn Write) -> anyhow
     }
     writeln!(
         out,
-        "The service runs a copy of this program. Run `fleetdeck service install` again after \
-         you build or install a new version."
-    )?;
-    writeln!(
-        out,
-        "The service uses the PATH of this shell. Run `fleetdeck service install` again after \
-         you install a provider CLI in a new directory."
+        "Run `fleetdeck service install` again after you install a new Fleet Deck version or a \
+         provider CLI in a new folder."
     )?;
     Ok(())
 }

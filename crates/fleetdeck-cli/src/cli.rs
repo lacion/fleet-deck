@@ -98,6 +98,9 @@ pub enum ServiceCommand {
         /// Print the files and the commands; change nothing.
         #[arg(long)]
         dry_run: bool,
+        /// List the PATH folders that the service leaves out.
+        #[arg(long)]
+        verbose: bool,
     },
     /// Stop and remove the service (default: every installed one).
     Uninstall {
