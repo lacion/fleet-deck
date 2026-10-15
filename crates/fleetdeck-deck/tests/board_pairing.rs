@@ -175,7 +175,7 @@ async fn removing_a_station_answers_500_and_audits_a_failure_when_the_store_writ
         &d.board,
         &h,
         "/api/stations",
-        json!({ "invitation": text.expose(), "name": "alpha-box" }),
+        json!({ "invitation": text.expose(), "name": null }),
     )
     .await;
     assert_eq!(r.status, 200, "{}", r.body);
@@ -189,7 +189,7 @@ async fn removing_a_station_answers_500_and_audits_a_failure_when_the_store_writ
     .unwrap();
 
     // NV-15: the revocation was not stored, so the route is not a success.
-    let r = post(&d.board, &h, "/api/stations/alpha-box/remove", json!({})).await;
+    let r = post(&d.board, &h, "/api/stations/alpha/remove", json!({})).await;
     expect(&r, 500, "revoke_failed");
     assert!(
         r.body["message"]
@@ -266,7 +266,8 @@ async fn the_board_pairs_both_directions_reports_station_info_and_removes() {
     assert_eq!(r.status, 200, "{}", r.body);
     assert_eq!(r.body["name"], "alpha-box");
     assert_eq!(r.body["direction"], "deck_dials");
-    let view = reported(&d.board, &h, "alpha-box").await;
+    // At the link up the deck adopts the station's own name.
+    let view = reported(&d.board, &h, "alpha").await;
     assert_eq!(view["info"]["name"], "alpha", "the station's own name");
     assert_eq!(view["info"]["max_sessions"], 4);
 
@@ -282,7 +283,7 @@ async fn the_board_pairs_both_directions_reports_station_info_and_removes() {
         &d.board,
         &h,
         "/api/stations",
-        json!({ "invitation": again.expose(), "name": "alpha-box" }),
+        json!({ "invitation": again.expose(), "name": "alpha" }),
     )
     .await;
     expect(&r, 409, "name_taken");
@@ -316,9 +317,9 @@ async fn the_board_pairs_both_directions_reports_station_info_and_removes() {
     expect(&r, 400, "invalid_invitation");
 
     // Remove by name; a second remove finds nothing.
-    let r = post(&d.board, &h, "/api/stations/alpha-box/remove", json!({})).await;
+    let r = post(&d.board, &h, "/api/stations/alpha/remove", json!({})).await;
     assert_eq!(r.status, 200, "{}", r.body);
-    assert_eq!(r.body["name"], "alpha-box");
+    assert_eq!(r.body["name"], "alpha");
     let r = d.board.get("/api/stations", &refs(&h)).await;
     let names: Vec<_> = r
         .body
@@ -328,7 +329,7 @@ async fn the_board_pairs_both_directions_reports_station_info_and_removes() {
         .map(|s| s["name"].clone())
         .collect();
     assert_eq!(names, vec![json!("bravo")]);
-    let r = post(&d.board, &h, "/api/stations/alpha-box/remove", json!({})).await;
+    let r = post(&d.board, &h, "/api/stations/alpha/remove", json!({})).await;
     expect(&r, 404, "unknown_station");
 
     // The audit log names each call, never an invitation text.

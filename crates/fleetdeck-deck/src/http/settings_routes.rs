@@ -17,6 +17,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use fleetdeck_core::settings::{DeckHolder, SaveError, SettingsWriter, view_deck};
+use fleetdeck_proto::StationId;
 use fleetdeck_proto::link::{Outcome, WireError};
 use fleetdeck_proto::settings::{
     RestartAnswer, RestartRequest, SettingsChange, SettingsSaved, SettingsSetParams, SettingsView,
@@ -509,14 +510,21 @@ pub async fn station_set(
     let keys = change_keys(&change);
     let elevated = is_elevated(&board, &session, change.elevation.as_deref());
     change.elevation = None;
+    let new_name = trimmed_name(&mut change);
     let params = json!(SettingsSetParams { change, elevated });
     let result = async {
+        if let Some(new_name) = &new_name {
+            refuse_taken_name(&board, &name, new_name).await?;
+        }
         let (rec, outcome) = station_call(&board, &name, "settings.set", params).await?;
         match outcome {
             Outcome::Ok(v) => {
                 // The change may be a new member deny list: the review
                 // caches of the station must not outlive it (NV-33).
                 super::review_anchor_cache::clear_station(&rec.station_id);
+                if let Some(new_name) = new_name {
+                    follow_name(&board, rec.station_id.clone(), new_name).await;
+                }
                 serde_json::from_value::<SettingsSaved>(v).map_err(|_| bad_answer())
             }
             Outcome::Err(e) => Err(station_failure(&e, false)),
@@ -525,6 +533,51 @@ pub async fn station_set(
     .await;
     audit(&board, ACTION, &name, &keys, &result).await;
     result.map(Json)
+}
+
+/// The new station name of a save: the text value of the key `name`, which
+/// is trimmed in the change.
+fn trimmed_name(change: &mut SettingsChange) -> Option<String> {
+    let Some(Value::String(text)) = change.changes.get_mut("name") else {
+        return None;
+    };
+    let trimmed = text.trim().to_owned();
+    text.clone_from(&trimmed);
+    Some(trimmed)
+}
+
+/// Refuses a new station name that another station on this deck has.
+async fn refuse_taken_name(board: &Board, station: &str, new_name: &str) -> Result<(), ApiError> {
+    let Some(rec) = board
+        .store
+        .find_station(station.to_owned())
+        .await
+        .map_err(ApiError::internal)?
+    else {
+        // `station_call` answers the unknown station.
+        return Ok(());
+    };
+    let taken = board
+        .store
+        .station_name_taken(new_name.to_owned(), rec.station_id)
+        .await
+        .map_err(ApiError::internal)?;
+    if taken {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "name_taken",
+            format!("Another station on this deck is named `{new_name}`. Choose another name."),
+        ));
+    }
+    Ok(())
+}
+
+/// Gives the board record the name that the station saved. A failure here
+/// is a race: the sync at the next link up fixes the name.
+async fn follow_name(board: &Board, id: StationId, new_name: String) {
+    if let Err(e) = board.store.rename_station(id.clone(), new_name).await {
+        tracing::warn!(error = %e, station = %id, "the board name of the station was not renamed");
+    }
 }
 
 #[derive(Deserialize)]

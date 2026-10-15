@@ -404,8 +404,14 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
                 Some(assist) => assist.usage().await,
                 None => None,
             };
+            // The name is a live setting: read it from the current policy.
+            let policy = ctx.manager.policy();
+            let name = match policy.name() {
+                "" => ctx.name.clone(),
+                live => live.to_owned(),
+            };
             ok(StationInfo {
-                name: ctx.name.clone(),
+                name,
                 incarnation: store.incarnation().clone(),
                 head: store.head(),
                 live_sessions: ctx.manager.live_sessions() as u64,

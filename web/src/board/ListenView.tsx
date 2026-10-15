@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { type StationActions, requestedName } from './pairing';
+import type { StationActions } from './pairing';
 import { useRun } from './useRun';
 
 type Props = {
@@ -12,7 +12,6 @@ type Props = {
 /** This deck dials the station: paste the invitation that the station printed. */
 export function ListenView({ actions, pasted, setPasted }: Props) {
   const { busy, error, run } = useRun();
-  const [name, setName] = useState('');
   const [added, setAdded] = useState<string | null>(null);
   return (
     <form
@@ -22,9 +21,8 @@ export function ListenView({ actions, pasted, setPasted }: Props) {
         event.preventDefault();
         const text = pasted;
         run(async () => {
-          const station = await actions.add({ invitation: text, name: requestedName(name) });
+          const station = await actions.add({ invitation: text, name: null });
           setPasted('');
-          setName('');
           setAdded(station.name);
         });
       }}
@@ -43,14 +41,6 @@ export function ListenView({ actions, pasted, setPasted }: Props) {
         spellCheck={false}
         value={pasted}
         onChange={(event) => setPasted(event.target.value)}
-      />
-      <label htmlFor="fd-station-name">Name on this deck (optional)</label>
-      <input
-        id="fd-station-name"
-        value={name}
-        maxLength={64}
-        placeholder="The station's own name"
-        onChange={(event) => setName(event.target.value)}
       />
       <div>
         <button type="submit" className="fd-primary" disabled={busy || pasted.trim() === ''}>

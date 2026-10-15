@@ -312,16 +312,13 @@ async fn a_deck_without_a_link_listener_cannot_invite_the_first_sync_is_a_snapsh
         .invite("127.0.0.1:0".parse().unwrap())
         .await
         .unwrap();
-    d.node
-        .add_station(&inv, Some("lab".to_owned()))
-        .await
-        .unwrap();
-    d.synced("lab", head).await;
+    d.node.add_station(&inv, None).await.unwrap();
+    d.synced("alpha", head).await;
     // The deck knew no incarnation: the station answered with a snapshot
     // batch, which stored the incarnation and the watermark.
     let before = d
         .store
-        .find_station("lab".to_owned())
+        .find_station("alpha".to_owned())
         .await
         .unwrap()
         .unwrap();
@@ -393,14 +390,11 @@ async fn a_bound_coordinator_reaches_the_deck_through_the_station_endpoint() {
         .invite("127.0.0.1:0".parse().unwrap())
         .await
         .unwrap();
-    d.node
-        .add_station(&inv, Some("lab".to_owned()))
-        .await
-        .unwrap();
-    d.synced("lab", head).await;
+    d.node.add_station(&inv, None).await.unwrap();
+    d.synced("alpha", head).await;
     let station_id = d
         .store
-        .find_station("lab".to_owned())
+        .find_station("alpha".to_owned())
         .await
         .unwrap()
         .unwrap()

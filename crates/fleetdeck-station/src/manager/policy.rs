@@ -51,6 +51,9 @@ pub type SetupEnvs = BTreeMap<ProviderInstanceId, ChildEnv>;
 /// assist runner and budget, and the shells.
 #[derive(Debug, Clone)]
 pub struct Policy {
+    /// `name` of `station.toml`: the name that the board shows. It is empty
+    /// for a test policy.
+    name: String,
     /// Canonical roots (symlinks resolved, t3code trap 8).
     allowed_roots: Vec<PathBuf>,
     max_sessions: u32,
@@ -97,6 +100,7 @@ impl Policy {
             },
         };
         Self {
+            name: config.name.clone(),
             allowed_roots: config
                 .allowed_roots
                 .iter()
@@ -125,6 +129,13 @@ impl Policy {
             }),
         }
         .with_repo_groups(&config.repo_groups)
+    }
+
+    /// The name that the board shows for this station (empty for a test
+    /// policy).
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// Sets the owner's repo groups (paths are resolved like the roots).
@@ -166,6 +177,7 @@ impl Policy {
         instances: BTreeMap<ProviderInstanceId, ProviderKind>,
     ) -> Self {
         Self {
+            name: String::new(),
             allowed_roots: allowed_roots
                 .into_iter()
                 .map(|r| r.canonicalize().unwrap_or(r))

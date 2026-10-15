@@ -402,6 +402,24 @@ impl DeckStore {
         Ok(())
     }
 
+    /// Whether a station other than `except` has the name `name`.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn station_name_taken(&self, name: String, except: StationId) -> Result<bool> {
+        call(&self.inner.db, move |conn| {
+            let taken: Option<String> = conn
+                .query_row(
+                    "SELECT station_id FROM stations WHERE name = ?1 AND station_id <> ?2",
+                    params![name, except.as_str()],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            Ok(taken.is_some())
+        })
+        .await
+    }
+
     /// Records that the station's link was up now.
     ///
     /// # Errors

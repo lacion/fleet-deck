@@ -20,7 +20,7 @@ Only you may write the file (no group or other write bit). When a `[[provider_in
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `name` | the host name | The station name on the board. |
+| `name` | the host name | The station name on the board. The board shows this name; a change applies at once and the deck renames the station (the name must be free on the deck). |
 | `allowed_roots` | `["~"]` (the home directory) | The directories where sessions, worktrees and clones may run. An explicit list must have at least one entry. |
 | `max_sessions` | `12` | The most sessions with a live process. A start or resume above the limit is refused. |
 | `allow_setup_cmd` | `false` | Allow a session start to run the owner's setup command in its workspace (DL-148). |

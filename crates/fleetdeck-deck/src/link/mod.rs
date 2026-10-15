@@ -35,7 +35,6 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use fleetdeck_core::identity::Fingerprint;
 use fleetdeck_link::control::{Control, Inbound};
 use fleetdeck_link::methods::code;
 use fleetdeck_link::node::NodeConfig;
@@ -178,7 +177,7 @@ pub async fn serve(ctx: Arc<DeckLink>, link: LiveLink) -> Closing {
         tracing::warn!(error = %e, "station last_seen");
     }
     tracing::info!(station = %station.name, "station link up");
-    fetch_info(&ctx, &control, &id, &station.name, &peer.fingerprint());
+    fetch_info(&ctx, &control, &id, &station.name);
     let mut sync = Sync {
         ctx: Arc::clone(&ctx),
         control: control.clone(),
@@ -457,21 +456,16 @@ impl Sync {
     }
 }
 
-/// A station paired without a name (`deck invite`) gets the default name
-/// of its fingerprint; the deck adopts the name of `station.toml` when it
-/// is free.
 /// Asks the station for `station.info` once per link and keeps it for the
-/// board (version, capacity, providers, M2 P4-2). A station paired under its
-/// short fingerprint (it dialed the deck) takes its `station.toml` name.
-fn fetch_info(
-    ctx: &Arc<DeckLink>,
-    control: &Control,
-    id: &StationId,
-    name: &str,
-    fingerprint: &Fingerprint,
-) {
-    let rename = name == fingerprint.short();
-    let (ctx, control, id) = (Arc::clone(ctx), control.clone(), id.clone());
+/// board (version, capacity, providers, M2 P4-2). The board name follows the
+/// station's own `name` setting: the deck adopts the reported name.
+fn fetch_info(ctx: &Arc<DeckLink>, control: &Control, id: &StationId, name: &str) {
+    let (ctx, control, id, stored) = (
+        Arc::clone(ctx),
+        control.clone(),
+        id.clone(),
+        name.to_owned(),
+    );
     tokio::spawn(async move {
         let Ok(Outcome::Ok(v)) = control.request("station.info", None, json!({})).await else {
             return;
@@ -479,14 +473,80 @@ fn fetch_info(
         let Ok(info) = serde_json::from_value::<StationInfo>(v) else {
             return;
         };
-        let station_name = info.name.clone();
+        let reported = info.name.clone();
         ctx.store.set_station_info(&id, info);
-        if !rename {
-            return;
-        }
-        match ctx.store.rename_station(id, station_name.clone()).await {
-            Ok(()) => tracing::info!(name = %station_name, "station named"),
-            Err(e) => tracing::info!(error = %e, "station keeps its default name"),
-        }
+        adopt_name(&ctx.store, id, &stored, &reported).await;
     });
+}
+
+/// Gives the station the name that it reports, when the name is new and
+/// free. A name that another station has leaves the old name.
+async fn adopt_name(store: &DeckStore, id: StationId, stored: &str, reported: &str) {
+    let reported = reported.trim();
+    if reported.is_empty() || reported == stored {
+        return;
+    }
+    match store.rename_station(id.clone(), reported.to_owned()).await {
+        Ok(()) => tracing::info!(station = %id, name = %reported, "station named"),
+        Err(DeckError::NameTaken(_)) => tracing::warn!(
+            station = %id,
+            name = %reported,
+            "another station has this name; the board keeps the old name"
+        ),
+        Err(e) => tracing::warn!(error = %e, station = %id, "station keeps its name"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use fleetdeck_core::identity::Identity;
+    use fleetdeck_proto::link::Scope;
+    use fleetdeck_testkit::Det;
+
+    use super::*;
+    use crate::store::stations::NewStation;
+
+    async fn paired(store: &DeckStore, name: &str) -> StationId {
+        let rec = store
+            .pin_station(NewStation {
+                key: Identity::generate().unwrap().public_key(),
+                name: name.to_owned(),
+                scopes: BTreeSet::from([Scope::Read]),
+                dial_url: None,
+            })
+            .await
+            .unwrap();
+        rec.station_id
+    }
+
+    async fn name_of(store: &DeckStore, id: &StationId) -> String {
+        store.station(id.clone()).await.unwrap().unwrap().name
+    }
+
+    #[tokio::test]
+    async fn a_station_that_reports_a_new_name_is_renamed() {
+        let det = Det::new();
+        let store = DeckStore::open_in_memory(det.clock(), det.ids())
+            .await
+            .unwrap();
+        let id = paired(&store, "old").await;
+        adopt_name(&store, id.clone(), "old", " new ").await;
+        assert_eq!(name_of(&store, &id).await, "new");
+        adopt_name(&store, id.clone(), "new", "").await;
+        assert_eq!(name_of(&store, &id).await, "new");
+    }
+
+    #[tokio::test]
+    async fn a_reported_name_that_another_station_has_leaves_the_old_name() {
+        let det = Det::new();
+        let store = DeckStore::open_in_memory(det.clock(), det.ids())
+            .await
+            .unwrap();
+        paired(&store, "taken").await;
+        let id = paired(&store, "old").await;
+        adopt_name(&store, id.clone(), "old", "taken").await;
+        assert_eq!(name_of(&store, &id).await, "old");
+    }
 }
