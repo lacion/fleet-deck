@@ -203,6 +203,17 @@ pub fn text(result: anyhow::Result<()>) -> String {
     format!("{:#}", result.unwrap_err())
 }
 
+/// Sets the modification time of `path` to `secs` seconds after the epoch.
+pub fn set_mtime(path: &std::path::Path, secs: u64) {
+    let time = std::time::UNIX_EPOCH + Duration::from_secs(secs);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(time)
+        .unwrap();
+}
+
 /// A systemd machine under WSL with a PowerShell that answers `ok`.
 pub fn wsl_rig() -> Rig {
     let mut rig = Rig::systemd();

@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use serde_json::{Map, Value, json};
 
+use super::program::{self, CopyState};
 use super::{
     Context, Deps, Installed, KINDS, Kind, Platform, installed, launchd, systemd, wsl_task,
 };
@@ -17,6 +18,8 @@ struct Row {
     /// The target of the program link; `None` when the link or its target
     /// file is missing.
     target: Option<PathBuf>,
+    /// This program against the copy; `None` when the check failed.
+    update: Option<CopyState>,
     active: bool,
     /// systemd only.
     enabled: Option<bool>,
@@ -30,6 +33,7 @@ fn read(ctx: &Context, deps: &dyn Deps, kind: Kind) -> anyhow::Result<Row> {
         kind,
         info,
         target: None,
+        update: None,
         active: false,
         enabled: None,
         link,
@@ -41,6 +45,7 @@ fn read(ctx: &Context, deps: &dyn Deps, kind: Kind) -> anyhow::Result<Row> {
         .ok()
         .map(|t| root.join(t))
         .filter(|t| std::fs::metadata(t).is_ok());
+    row.update = program::copy_state(&root, &ctx.exe).ok();
     match ctx.platform {
         Platform::Systemd => {
             row.active = systemd::is_active(deps, kind);
@@ -71,6 +76,12 @@ fn text(row: &Row, ctx: &Context) -> String {
         row.link.display(),
         yes(row.active)
     );
+    if row.update == Some(CopyState::Newer) {
+        out.push_str(
+            "  Update: this fleetdeck is newer than the service program. Run \
+             `fleetdeck service start` or `fleetdeck service install`.\n",
+        );
+    }
     if let Some(enabled) = row.enabled {
         out.push_str(&format!("  enabled: {}\n", yes(enabled)));
     }
@@ -78,9 +89,18 @@ fn text(row: &Row, ctx: &Context) -> String {
     out
 }
 
+fn update_word(state: CopyState) -> &'static str {
+    match state {
+        CopyState::Same => "same",
+        CopyState::Newer => "newer",
+        CopyState::Older => "older",
+        CopyState::Missing => "missing",
+    }
+}
+
 fn json_row(row: &Row) -> Value {
     let installed = row.info.is_some();
-    json!({
+    let mut value = json!({
         "kind": row.kind.name(),
         "installed": installed,
         "data_dir": row.info.as_ref().and_then(|i| i.marker.clone()),
@@ -88,7 +108,11 @@ fn json_row(row: &Row) -> Value {
         "program_target": row.target.as_ref().map(|t| t.display().to_string()),
         "active": row.active,
         "enabled": row.enabled,
-    })
+    });
+    if let Some(state) = row.update {
+        value["program_update"] = json!(update_word(state));
+    }
+    value
 }
 
 /// Prints the status of the three kinds.

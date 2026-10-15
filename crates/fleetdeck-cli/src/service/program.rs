@@ -46,6 +46,44 @@ pub fn needs_copy(root: &Path, exe: &Path) -> anyhow::Result<bool> {
     }
 }
 
+/// How this program compares with the copy that the service runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CopyState {
+    Same,
+    Newer,
+    Older,
+    Missing,
+}
+
+/// `Same`: the bytes are equal. `Missing`: no copy. Else `Newer` when the
+/// modification time of `exe` is later than that of the copy, `Older` when it
+/// is not (an older fleetdeck earlier on PATH must never replace the copy).
+/// Reads only.
+pub fn copy_state(root: &Path, exe: &Path) -> anyhow::Result<CopyState> {
+    let Some(target) = current_target(root) else {
+        return Ok(CopyState::Missing);
+    };
+    let copy_meta = match fs::metadata(&target) {
+        Ok(meta) if meta.is_file() => meta,
+        Ok(_) => return Ok(CopyState::Missing),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(CopyState::Missing),
+        Err(e) => return Err(e).with_context(|| format!("cannot read {}", target.display())),
+    };
+    if same_bytes(&target, exe)? {
+        return Ok(CopyState::Same);
+    }
+    let modified = |meta: &fs::Metadata, p: &Path| {
+        meta.modified()
+            .with_context(|| format!("cannot read the time of {}", p.display()))
+    };
+    let exe_meta = fs::metadata(exe).with_context(|| format!("cannot read {}", exe.display()))?;
+    if modified(&exe_meta, exe)? > modified(&copy_meta, &target)? {
+        Ok(CopyState::Newer)
+    } else {
+        Ok(CopyState::Older)
+    }
+}
+
 /// The dry-run line of the program step; `None` when no copy would be made.
 pub fn dry_line(
     root: &Path,
