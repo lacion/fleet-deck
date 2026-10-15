@@ -1,6 +1,6 @@
 # Full session history in the chat (DL-189)
 
-- **Status:** Design, revision 2 + owner sharing decision (2026-10-15). Revision 1 got DESIGN REVIEW FAIL (4 blockers, 9 major; §5); §6 maps them. Needs a PASS before code.
+- **Status:** Design, revision 3 (2026-10-15): revision 2 got DESIGN REVIEW round 2 **PASS** for the owner-only scope (open majors M6, M7, M9, M13 answered here, §6); the owner's per-share `history` option (§3.8) is new in revision 3. Needs a round-3 PASS before code. Revision 1 got DESIGN REVIEW FAIL (4 blockers, 9 major; §5); §6 maps them. Needs a PASS before code.
 - **Owner request (2026-10-15):** an imported session shows an empty chat: "i think we should work on propperly importing a session and showing all in the chat".
 - **Goal:** the chat of a session shows its whole conversation: the part from the terminal before an import, and every older turn that the deck no longer keeps. Nothing is copied at import; the history is read on demand.
 
@@ -34,7 +34,7 @@
 ### 3.2 Finding and trusting the transcript
 
 - Input: only the station's own session row: provider, provider instance, cwd, stored native id (`check_native_session_id` must pass). The caller gives no path and no native id.
-- **Effective home** (major 6): at the first `session.started` with a native id, the station resolves the provider home from the **same environment that launched the process** (`ChildEnv::for_instance` with the instance's `config_home` and `env`; then `CLAUDE_CONFIG_DIR` / `CODEX_HOME`, else `HOME` + `.claude` / `.codex`) and stores it with the located transcript in a new table `session_transcripts (session_id PRIMARY KEY, home TEXT, path TEXT, dev INTEGER, ino INTEGER, located_at INTEGER)` (station schema V24; forward-only, no row rewritten). A session without a row (sessions made before V24, such as the owner's two imports) resolves the home from the current instance environment once and stores it.
+- **Effective home** (major 6): at the first `session.started` with a native id, the station resolves the provider home from the **same environment that launched the process** (`ChildEnv::for_instance` with the instance's `config_home` and `env`; then `CLAUDE_CONFIG_DIR` / `CODEX_HOME`, else `HOME` + `.claude` / `.codex`) and stores it with the located transcript in a new table `session_transcripts (session_id PRIMARY KEY, home TEXT, path TEXT, dev INTEGER, ino INTEGER, located_at INTEGER)` (station schema V24; forward-only, no row rewritten). A session without a row (sessions made before V24, such as the owner's two imports) has **no trusted provenance**: the station tries, in order, the home of the current instance environment and the default home (`~/.claude` / `~/.codex`), and accepts a candidate only when the file there passes every trust check of the next bullet **and** its embedded session id is this native id. More than one passing candidate: `ambiguous`. The accepted candidate is stored with `provenance = rediscovered` (a later instance change cannot redirect it).
 - **Exact location, no newest-by-mtime** (blocker 2):
   - Claude: exactly `<home>/projects/<encoded cwd>/<native id>.jsonl`, where `<encoded cwd>` replaces every character that is not ASCII alphanumeric with `-` (the rule of Claude Code; `claude --resume` itself looks there, so a resumed session's file is at that path). No glob.
   - Codex: `<home>/sessions/*/*/*/rollout-*-<native id>.jsonl` and `<home>/archived_sessions/rollout-*-<native id>.jsonl`; exactly one match, else `ambiguous` (zero: `not_found`).
@@ -51,14 +51,15 @@
 - Codex: `response_item` records: `message` with role `user` (`input_text`) or `assistant` (`output_text`); never `developer`, `reasoning`. `function_call` / `custom_tool_call` give a `tool` item; the matching `*_output` sets `status` from an exit code when present, else `unknown`.
 - Tool `summary`: the command of a shell tool, the path of an edit/read/write, the pattern of a search, else empty. Owner only (§2), so details are shown; tool **output** is never returned.
 - **Oversize lines** (major 8): a new helper `skip_line_bounded` consumes the rest of a `TooLong` line up to its newline (the bytes count against the read budget); the record counts as skipped; parsing restarts at the next line, never inside a record.
-- **Fixtures** (unverified finding): sanitized, version-labelled samples (Claude Code 2.1.300, codex-cli 0.162.1) in `crates/fleetdeck-station/tests/fixtures/transcripts/`; a new provider version that changes the shapes shows `partial` or `unsupported_format`, never a silent empty history.
+- **Fixtures** (unverified finding): sanitized, version-labelled samples (Claude Code 2.1.300, codex-cli 0.162.1) in `crates/fleetdeck-station/tests/fixtures/transcripts/`, made from real local transcripts by a script that keeps every record's structure and replaces the text content with placeholders; each fixture has its expected item list (incl. side chains, meta records, wrappers, a resumed session, a rewound or branched conversation if the provider writes one, and records without a time); a new provider version that changes the shapes shows `partial` or `unsupported_format`, never a silent empty history.
 
 ### 3.5 Index, cache and budgets (major 7, 9)
 
 - The station builds an **index** of a transcript in one scan: per kept item its byte offset, length and `at` (no text). Pages read only their records again with positioned reads. Limits: file at most 256 MiB (`too_large`), at most 200,000 indexed items (older items beyond the cap: `partial`), one scan per request at most 10 s (`busy` on the deadline, nothing cached).
-- **Generation:** the index key is `(dev, ino)`; the index records the size it covered and a SHA-256 of the last 4 KiB it covered. A larger file whose old tail hash still matches is **appended**: the scan continues from the old end, the generation stays. Any other change (smaller, tail changed, new inode) is a **rewrite**: new generation.
-- **Cursor:** `"<generation>:<item index>"` with `generation` = 16 hex chars of SHA-256(dev, ino, native id, rewrite counter). A cursor of another generation: `stale_cursor` (the board starts again from the newest page).
-- **Cache:** at most 4 indexes per station (LRU), at most 32 MiB of index memory in all; one scan at a time per station (a semaphore of 1; a waiting request uses the same deadline) and one per key (single-flight: a second request for the same key waits for the first scan).
+- **Re-index:** the index key is `(dev, ino, size, mtime)`; any change of the file builds a new index by a full scan (no append shortcut). An evicted index or a station restart also rebuilds it.
+- **Cursor by identity:** `"<file>:<item index>:<item id>"`, where `<file>` = 16 hex chars of SHA-256(dev, ino, native id) and `<item id>` is the id of the oldest item of the page that gave the cursor (§3.1; for an item without a provider id, `line:<byte offset>`). On a page request the station rebuilds or finds the current index and checks that the item at `<item index>` still has `<item id>`. Else: `stale_cursor` (the board starts again from the newest page). A rewrite before the old end, an eviction or a restart can therefore never skip, repeat or mix items.
+- **Cache:** at most 4 indexes per station (LRU), at most 32 MiB of index memory in all; single-flight per key (a second request for the same key waits for the first scan).
+- **One budget for the whole request:** one worker permit per station (a semaphore of 1) covers discovery, trust checks, indexing and the page reads of a request, with one deadline of 10 s. Discovery (the Codex glob) visits at most 5,000 directory entries (`busy` beyond). The scan and the page reads use a **captured extent**: the file size at open; bytes written after it wait for the next request. A page reads at most 1 MiB of record bytes. The blocking work runs on the blocking pool; on the deadline the request answers `busy`, but the permit is released only when the worker actually returns (as `manager/files.rs` slots), so timed-out work can never pile up.
 
 ### 3.6 Deck route
 
@@ -84,9 +85,9 @@
 ## 4. Tests
 
 - Parser fixtures: kept and skipped shapes of both providers (meta, side chain, thinking, wrappers, developer, reasoning), tool status, cuts, an oversize line skipped without a mid-record parse, `unsupported_format`.
-- Location and trust: the instance home and an `env` override of the home; a session made before V24; a symbolic link (file and directory) refused; a hard link refused; another owner refused; a private-path file refused; Codex zero/one/two matches; a first record naming another session → `not_trusted`.
+- Location and trust: the instance home and an `env` override of the home; a session made before V24 whose instance home changed after the import (rediscovery finds the file in the default home, or `ambiguous` when both pass); a symbolic link (file and directory) refused; a hard link refused; another owner refused; a private-path file refused; Codex zero/one/two matches; a first record naming another session → `not_trusted`.
 - Boundary: an imported session returns only records before its first process start; a started session → `empty`; a resumed session that was later imported again (execution reuse) still returns only records before **its own** first process.
-- Paging and generations: pages cover the pre-import items once in order; append keeps the cursor valid; a rewrite → `stale_cursor`; the wire budget (a page of items with 8 KiB texts full of characters that JSON escapes stays under 1 MiB serialized); a scan over the deadline → `busy`; single-flight.
+- Paging and cursors: pages cover the pre-import items once in order; an append keeps the cursor valid; a rewrite before the old end that keeps the last 4 KiB and then appends → `stale_cursor` (never a skipped or repeated item); after a cache eviction and after a station restart, an old cursor either continues exactly or is `stale_cursor`; the wire budget (a page of items with 8 KiB texts full of characters that JSON escapes stays under 1 MiB serialized); a scan over the deadline → `busy` and the permit stays taken until the worker ends (a second request waits); single-flight; a Codex home with more than 5,000 entries → `busy`; bytes appended during a scan are not read; a page never reads more than 1 MiB.
 - Deck: owner gets the page; a token gets 403 `owner_only`; a member without a `history` share gets 403 `history_not_shared`; a member with one gets the page with empty tool summaries (checked on the wire answer); a revoked or expired share, or `history` turned off, stops the next read; only the owner can set `history` (member, token → 403), turning it on needs elevation; a station without `history.v1` → 409 without a forward; error mapping; the member-read audit row.
 - Board: the block, the pager, the gap line, the `partial`/`unavailable` lines, no block for `empty`.
 
@@ -130,3 +131,13 @@ Architect note for revision 2: a simpler first step that avoids blockers 1, 3 an
 | M12 older peers | §3.6 feature precheck and the error mapping |
 | M13 tests | §4 |
 | Unverified formats | §3.4 fixtures, `partial`, `unsupported_format` |
+
+## 7. Review round 2 (2026-10-15): PASS — map of the open items (revision 2 → revision 3)
+
+| Open item | Answer |
+| --- | --- |
+| M6 legacy provenance from current config | §3.2 rediscovery: only a candidate that passes every trust check and the embedded id; `ambiguous` when two pass; stored as `rediscovered` |
+| M7 discovery and page reads outside the budget | §3.5 one permit and one deadline over discovery, checks, scan and reads; 5,000 entries; captured extent; 1 MiB per page; permit kept until the worker returns |
+| M9 tail hash does not prove continuity | §3.5 cursor by item identity, checked after every rebuild; no append shortcut |
+| M13 tests | §4 added cases |
+| U formats | §3.4 fixtures from real transcripts with expected items (open until they exist) |
