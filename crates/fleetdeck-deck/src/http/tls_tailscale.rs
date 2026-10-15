@@ -245,20 +245,31 @@ pub fn check(
     let server = ServerName::try_from(name).map_err(|_| CheckError::BadCertificate)?;
     end.verify_is_valid_for_subject_name(&server).map_err(bad)?;
     let later = UnixTime::since_unix_epoch(Duration::from_secs(now.as_secs()) + min_remaining);
-    for at in [now, later] {
-        end.verify_for_usage(
-            webpki::ALL_VERIFICATION_ALGS,
-            anchors,
-            &chain[1..],
-            at,
-            webpki::KeyUsage::server_auth(),
-            None,
-            None,
-        )
-        .map_err(bad)?;
+    // The leaf and the intermediates of the path that was verified now. An
+    // extra certificate of the output that is not on the path does not count.
+    let mut path = vec![leaf.clone()];
+    for (i, at) in [now, later].into_iter().enumerate() {
+        let verified = end
+            .verify_for_usage(
+                webpki::ALL_VERIFICATION_ALGS,
+                anchors,
+                &chain[1..],
+                at,
+                webpki::KeyUsage::server_auth(),
+                None,
+                None,
+            )
+            .map_err(bad)?;
+        if i == 0 {
+            path.extend(
+                verified
+                    .intermediate_certificates()
+                    .map(|c| c.der().into_owned()),
+            );
+        }
     }
     certified(&chain, &key)?;
-    let (not_before_ms, not_after_ms) = validity_ms(&chain)?;
+    let (not_before_ms, not_after_ms) = validity_ms(&path)?;
     Ok(TailscaleCert {
         sha256: fingerprint(leaf),
         chain,

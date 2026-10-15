@@ -405,6 +405,27 @@ fn the_resolver_stops_serving_when_an_intermediate_ends_before_the_leaf() {
 }
 
 #[test]
+fn an_extra_certificate_off_the_path_does_not_change_the_validity() {
+    let other = root("other root");
+    let root = root("test root");
+    let inter = intermediate(&root, "short intermediate", (2026, 12, 1));
+    let leaf = leaf_with(&inter, &leaf_params(NAME, (2027, 1, 1)));
+    // An old cross-sign of another root, expired: not on the verified path.
+    let old = intermediate(&other, "old cross-sign", (2025, 1, 1));
+    let cert = check(
+        vec![leaf.der.clone(), inter.der.clone(), old.der.clone()],
+        leaf.key_der(),
+        NAME,
+        now(),
+        Duration::ZERO,
+        &anchors_of(&root),
+    )
+    .unwrap();
+    assert_eq!(cert.not_after_ms, day(2026, 12, 1) * 1000);
+    assert_eq!(cert.not_before_ms, day(2026, 9, 1) * 1000);
+}
+
+#[test]
 fn the_resolver_does_not_serve_a_pair_before_its_start() {
     let pki = Pki::new();
     let cert = stored(&pki);
