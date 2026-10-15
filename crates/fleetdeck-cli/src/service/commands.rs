@@ -248,7 +248,17 @@ pub fn start(
     out: &mut dyn Write,
 ) -> anyhow::Result<()> {
     for (kind, _) in select(ctx, named)? {
-        match program::copy_state(&kind.root(&ctx.dirs), &ctx.exe)? {
+        // A failed comparison never stops the start: the service keeps its program.
+        let state = program::copy_state(&kind.root(&ctx.dirs), &ctx.exe).unwrap_or_else(|e| {
+            let _ = writeln!(
+                out,
+                "Note: cannot compare this fleetdeck with the program of the {} service ({e:#}). \
+                 The service keeps its program.",
+                kind.name()
+            );
+            CopyState::Same
+        });
+        match state {
             CopyState::Newer => {
                 writeln!(
                     out,
