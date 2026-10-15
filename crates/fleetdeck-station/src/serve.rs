@@ -27,6 +27,16 @@ use crate::manager::{Policy, SessionManager, adapters_from_config, setup_envs_fr
 use crate::store::{Store, StoreConfig};
 use crate::workspace::{PrivateEnv, PrivatePaths};
 
+/// The host that a station runs: `shim` needs Linux for now (shim parity,
+/// step 0), so a macOS station runs the direct host.
+fn effective_host(host: HostChoice, is_macos: bool) -> HostChoice {
+    if is_macos && host == HostChoice::Shim {
+        HostChoice::Direct
+    } else {
+        host
+    }
+}
+
 /// How long the shutdown waits for the pumps to store the last events.
 pub const PUMP_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -237,7 +247,17 @@ impl RunningStation {
         let adapters = adapters_from_config(config, &host, Some(station_dir.join("raw")))?;
         let socket = local::socket_path(&station_dir);
         let listener = local::bind(&socket).await?;
-        let policy = Policy::from_config(config).with_setup_envs(setup_envs_from_config(config)?);
+        // DL-188 step 0: a macOS station with `host = "shim"` runs the
+        // direct host, and its policy does not name the shim host.
+        let host_choice = effective_host(config.host, cfg!(target_os = "macos"));
+        if config.host == HostChoice::Shim && host_choice != HostChoice::Shim {
+            tracing::warn!("the shim host needs Linux for now; this station runs the direct host");
+        }
+        let mut policy =
+            Policy::from_config(config).with_setup_envs(setup_envs_from_config(config)?);
+        if host_choice != config.host {
+            policy = policy.without_shim_host();
+        }
         // The station's own credential and config locations (DL-173): the
         // set loads and scans its inode registry here, before the manager
         // starts (its turn checkpoints and reverts refuse these files,
@@ -249,7 +269,7 @@ impl RunningStation {
             deck.as_ref().map(|(c, d)| (c.as_path(), d.as_path())),
             &PrivateEnv::from_process(),
         ));
-        let manager = Arc::new(match config.host {
+        let manager = Arc::new(match host_choice {
             HostChoice::Direct => {
                 SessionManager::start(store, policy, adapters, ids, Arc::clone(&private)).await?
             }
@@ -429,6 +449,15 @@ fn terminal_instances(
 mod tests {
     use super::*;
     use crate::workspace::private_paths::private_paths_tests::private_of;
+
+    #[test]
+    fn effective_host_runs_the_direct_host_for_shim_on_macos_only() {
+        use HostChoice::{Direct, Shim};
+        assert_eq!(effective_host(Direct, true), Direct);
+        assert_eq!(effective_host(Direct, false), Direct);
+        assert_eq!(effective_host(Shim, true), Direct);
+        assert_eq!(effective_host(Shim, false), Shim);
+    }
 
     #[tokio::test]
     async fn the_rescan_task_registers_new_credentials_and_stops_with_the_station() {

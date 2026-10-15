@@ -533,3 +533,55 @@ fn tailscale_bin_is_a_live_danger_change_in_both_holders() {
     let (_, new, ()) = w.save(&unset, true, ok_prepare).unwrap();
     assert_eq!(new.tailscale_bin, None);
 }
+
+const SHIM_REFUSAL: &str = "The shim host needs Linux for now. Use direct on this station.";
+
+#[test]
+fn macos_refuses_a_change_of_host_to_shim() {
+    let fx = Fixture::new(Some(COMMENTED));
+    let w = fx.writer().with_macos(true);
+    let before = fx.text();
+    let err = w
+        .save(&fx.change(json!({ "host": "shim" })), true, ok_prepare)
+        .unwrap_err();
+    assert_eq!(
+        err,
+        SaveError::CannotApply {
+            key: "host".into(),
+            message: SHIM_REFUSAL.into()
+        }
+    );
+    assert_eq!(fx.text(), before);
+    assert!(fx.leftovers().is_empty());
+}
+
+#[test]
+fn macos_accepts_direct() {
+    let fx = Fixture::new(Some(COMMENTED));
+    let w = fx.writer().with_macos(true);
+    let (_, new, ()) = w
+        .save(&fx.change(json!({ "host": "direct" })), true, ok_prepare)
+        .unwrap();
+    assert_eq!(new.host, crate::config::HostChoice::Direct);
+}
+
+#[test]
+fn linux_accepts_shim() {
+    let fx = Fixture::new(Some(COMMENTED));
+    let w = fx.writer().with_macos(false);
+    let (_, new, ()) = w
+        .save(&fx.change(json!({ "host": "shim" })), true, ok_prepare)
+        .unwrap();
+    assert_eq!(new.host, crate::config::HostChoice::Shim);
+}
+
+#[test]
+fn macos_saves_another_key_when_the_file_already_says_shim() {
+    let fx = Fixture::new(Some("name = \"box\"\nhost = \"shim\"\n"));
+    let w = fx.writer().with_macos(true);
+    let (_, new, ()) = w
+        .save(&fx.change(json!({ "max_sessions": 9 })), false, ok_prepare)
+        .unwrap();
+    assert_eq!(new.max_sessions, 9);
+    assert_eq!(new.host, crate::config::HostChoice::Shim);
+}
