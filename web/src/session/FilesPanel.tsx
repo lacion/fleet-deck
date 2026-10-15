@@ -5,6 +5,7 @@ import { artifactHref, publishable } from '../artifacts/kinds';
 import { Markdown } from '../chat/Markdown';
 import type { ArtifactPublished, FileContent, FileListing, FileSearch } from '../gen';
 import { FileText, Folder, Icon, Paperclip } from '../ui/icons';
+import { type ChangedFiles, loadChanged } from './changedFiles';
 import { CopyButton } from './SessionHeader';
 import { type FileActions, joinPath, parentPath, type SearchModeName } from './workspace';
 
@@ -82,6 +83,36 @@ export function FileView({
   );
 }
 
+/** The files changed since the session started; a click opens the file. */
+export function ChangedFilesList({
+  changed,
+  onOpen,
+}: {
+  readonly changed: ChangedFiles;
+  readonly onOpen: (path: string) => void;
+}) {
+  return (
+    <section className="fd-files-changed" aria-label="Changed files">
+      <h4 className="fd-label">Changed since the session started</h4>
+      <ul>
+        {changed.paths.map((path) => {
+          const dir = parentPath(path);
+          return (
+            <li key={path}>
+              <button type="button" className="fd-files-row" onClick={() => onOpen(path)}>
+                <Icon of={FileText} size={14} />
+                <span className="fd-files-name">{path.split('/').pop()}</span>
+                {dir === '' ? null : <span className="fd-files-dir">{dir}</span>}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {changed.truncated ? <p className="fd-note">More changes than shown.</p> : null}
+    </section>
+  );
+}
+
 const message = (e: unknown) => (e instanceof Error ? e.message : 'The request failed.');
 
 /**
@@ -129,6 +160,18 @@ export function FilesPanel({
       (listing) => setView({ kind: 'listing', listing }),
       (e: unknown) => setView({ kind: 'error', text: message(e) }),
     );
+  }, [has]);
+  const [changed, setChanged] = useState<ChangedFiles | null>(null);
+  useEffect(() => {
+    const current = latest.current;
+    if (!has || !current) return;
+    let live = true;
+    void loadChanged(current).then((found) => {
+      if (live) setChanged(found);
+    });
+    return () => {
+      live = false;
+    };
   }, [has]);
   const seq = request?.seq;
   useEffect(() => {
@@ -197,6 +240,7 @@ export function FilesPanel({
           </button>
         </form>
       </div>
+      {changed === null ? null : <ChangedFilesList changed={changed} onOpen={read} />}
       <nav className="fd-files-crumbs" aria-label="Folder path">
         <button type="button" className="fd-files-crumb" onClick={() => open('')}>
           <Icon of={Folder} size={14} /> root
