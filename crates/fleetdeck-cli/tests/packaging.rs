@@ -327,3 +327,32 @@ fn the_generated_service_units_start_real_commands() {
     assert_real_command(&["station", "serve"], "service station");
     assert_real_command(&["service", "install"], "service");
 }
+
+#[test]
+fn the_mcp_bridge_is_a_real_command_that_the_main_help_does_not_list() {
+    // DL-194: the provider runs it; it is not a user command.
+    assert_real_command(&["mcp-bridge"], "mcp bridge");
+    let out = Command::new(env!("CARGO_BIN_EXE_fleetdeck"))
+        .arg("--help")
+        .env_remove("FLEETDECK_DATA_DIR")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("mcp-bridge"));
+}
+
+#[test]
+fn the_mcp_bridge_without_a_session_token_exits_2() {
+    let out = Command::new(env!("CARGO_BIN_EXE_fleetdeck"))
+        .args(["mcp-bridge", "--socket", "/nonexistent/mcp.s"])
+        .env_remove("FLEETDECK_COORDINATOR_TOKEN")
+        .env_remove("FLEETDECK_DATA_DIR")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(out.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr).trim(),
+        "fleetdeck mcp-bridge: no session token"
+    );
+}

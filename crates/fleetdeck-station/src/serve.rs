@@ -175,6 +175,37 @@ fn shim_settings(
     Ok(ShimSettings::new(Arc::new(ShimHost::new(host))))
 }
 
+/// Names the MCP bridge of the shim host (DL-194 §9.2, §9.3): the stable
+/// service link `<station dir>/bin/current` (or this executable in a
+/// development run) and the station socket. A path that is too long gives
+/// no bridge, so a shim session has no tools.
+fn set_bridge_endpoint(
+    manager: &SessionManager,
+    station_dir: &std::path::Path,
+) -> Result<(), ServeError> {
+    let link = station_dir.join("bin").join("current");
+    let program = if std::fs::symlink_metadata(&link).is_ok() {
+        link
+    } else {
+        std::env::current_exe().map_err(ServeError::ShimExe)?
+    };
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from);
+    let incarnation = manager.store().incarnation().as_str().to_owned();
+    let socket = crate::coordinator::socket::mcp_socket_path(
+        runtime_dir.as_deref(),
+        station_dir,
+        &std::env::temp_dir(),
+        &incarnation,
+    );
+    match socket {
+        Some(socket) => manager
+            .coordinator_bindings()
+            .set_bridge(crate::coordinator::BridgeEndpoint { program, socket }),
+        None => tracing::warn!("socket_path_too_long: a shim session has no coordinator tools"),
+    }
+    Ok(())
+}
+
 /// Runs the station until `stop` completes.
 ///
 /// # Errors
@@ -288,6 +319,9 @@ impl RunningStation {
                 .await?
             }
         });
+        if host_choice == HostChoice::Shim && cfg!(target_os = "linux") {
+            set_bridge_endpoint(&manager, &station_dir)?;
+        }
         // The credential store of the connected accounts (DL-173): mode
         // 0700, durable before the first account is written.
         manager.integrations().accounts().attach(

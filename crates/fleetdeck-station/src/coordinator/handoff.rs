@@ -12,7 +12,7 @@ use fleetdeck_core::{ChildEnv, Secret};
 use fleetdeck_proto::event::ProviderKind;
 pub use fleetdeck_providers::coordinator::{CoordinatorLaunch, TOKEN_ENV};
 
-use super::bindings;
+use super::bindings::{self, BridgeEndpoint};
 
 /// Why a handoff cannot be prepared.
 #[derive(Debug, thiserror::Error)]
@@ -51,6 +51,33 @@ impl Handoff {
         })
     }
 
+    /// Mints a credential for a shim-hosted child of `provider` that
+    /// reaches the station through the MCP bridge (DL-194 §2.2).
+    ///
+    /// # Errors
+    /// [`HandoffError`].
+    pub fn prepare_bridge(
+        provider: ProviderKind,
+        bridge: &BridgeEndpoint,
+    ) -> Result<Self, HandoffError> {
+        // DL-194 §9.10: Codex bridge mode waits for a live smoke of env_vars.
+        if provider == ProviderKind::Codex {
+            return Err(HandoffError::NoArgs);
+        }
+        let args = fleetdeck_providers::coordinator::bridge_args(
+            provider,
+            &bridge.program,
+            &bridge.socket,
+        )
+        .ok_or(HandoffError::NoArgs)?;
+        let (token, digest) = bindings::mint().map_err(|_| HandoffError::Mint)?;
+        Ok(Self {
+            args,
+            digest,
+            token,
+        })
+    }
+
     /// Puts the credential into the child environment, the only place
     /// where the raw value goes.
     ///
@@ -67,5 +94,27 @@ impl Handoff {
             args: self.args,
             token: self.token,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn a_bridge_handoff_is_for_claude_only_until_the_codex_smoke() {
+        let bridge = BridgeEndpoint {
+            program: "/station/bin/current".into(),
+            socket: "/run/mcp.s".into(),
+        };
+        let claude = Handoff::prepare_bridge(ProviderKind::Claude, &bridge).unwrap();
+        assert!(claude.args.iter().any(|a| a.contains("mcp-bridge")));
+        assert!(claude.args.iter().all(|a| !a.contains("fdc1_")));
+        assert!(matches!(
+            Handoff::prepare_bridge(ProviderKind::Codex, &bridge),
+            Err(HandoffError::NoArgs)
+        ));
     }
 }

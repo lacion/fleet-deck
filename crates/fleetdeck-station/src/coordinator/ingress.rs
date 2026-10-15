@@ -19,10 +19,10 @@ use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use serde_json::Value;
 use tokio::net::TcpListener;
-use tokio::sync::{Semaphore, watch};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 use tokio::task::JoinSet;
 
-use super::bindings::{Auth, Bindings, Caller};
+use super::bindings::{Auth, Binding, Bindings, Caller};
 use super::jsonrpc::{self, Answer};
 
 /// The deck side of a tool call: the station forwards an authorized call
@@ -62,13 +62,90 @@ impl Default for Limits {
     }
 }
 
-struct Shared {
+/// What a message path needs: the HTTP listener and the bridge socket
+/// (DL-194) build one each and answer through the same code.
+pub(super) struct Shared {
     port: u16,
-    bindings: Bindings,
+    pub(super) bindings: Bindings,
     forward: Arc<dyn Forward>,
     fleet: Option<Arc<dyn FleetTools>>,
-    unauth: Arc<Semaphore>,
-    limits: Limits,
+    pub(super) unauth: Arc<Semaphore>,
+    pub(super) limits: Limits,
+}
+
+impl Shared {
+    pub(super) fn new(
+        port: u16,
+        bindings: Bindings,
+        forward: Arc<dyn Forward>,
+        fleet: Option<Arc<dyn FleetTools>>,
+        limits: Limits,
+    ) -> Self {
+        Self {
+            port,
+            bindings,
+            forward,
+            fleet,
+            unauth: Arc::new(Semaphore::new(limits.unauthenticated)),
+            limits,
+        }
+    }
+}
+
+/// The result of the shared message path (DL-194): the HTTP listener and
+/// the bridge socket each map it to their own reply.
+pub(super) enum MessageOutcome {
+    /// Missing, malformed, unknown or ended credential.
+    Unauthorized,
+    /// The binding is over its rate or concurrency limit.
+    Limited,
+    /// The body is not JSON.
+    ParseError,
+    /// The body is a JSON-RPC batch, which the endpoint does not take.
+    Batch,
+    /// A notification.
+    Accepted,
+    /// A JSON-RPC response.
+    Json(Value),
+}
+
+/// Checks the credential of a request (`Bearer <token>`). The binding
+/// permit lives as long as the call.
+pub(super) fn authenticate_message(
+    shared: &Shared,
+    auth: Option<&str>,
+) -> Result<(Box<Binding>, OwnedSemaphorePermit), MessageOutcome> {
+    match shared.bindings.authenticate(auth) {
+        Auth::Unauthorized => Err(MessageOutcome::Unauthorized),
+        Auth::Limited => Err(MessageOutcome::Limited),
+        Auth::Ok { binding, permit } => Ok((binding, permit)),
+    }
+}
+
+/// Parses and answers the body of an authenticated request.
+pub(super) async fn answer_message(
+    shared: &Shared,
+    binding: &Binding,
+    body: &[u8],
+) -> MessageOutcome {
+    let Ok(msg) = serde_json::from_slice::<Value>(body) else {
+        return MessageOutcome::ParseError;
+    };
+    if msg.is_array() {
+        return MessageOutcome::Batch;
+    }
+    match jsonrpc::answer(
+        msg,
+        binding,
+        shared.forward.as_ref(),
+        shared.fleet.as_deref(),
+        shared.bindings.fleet_control(),
+    )
+    .await
+    {
+        Answer::Accepted => MessageOutcome::Accepted,
+        Answer::Json(v) => MessageOutcome::Json(v),
+    }
 }
 
 /// A running endpoint.
@@ -97,14 +174,7 @@ impl Ingress {
     ) -> std::io::Result<Self> {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
         let addr = listener.local_addr()?;
-        let shared = Arc::new(Shared {
-            port: addr.port(),
-            bindings,
-            forward,
-            fleet,
-            unauth: Arc::new(Semaphore::new(limits.unauthenticated)),
-            limits,
-        });
+        let shared = Arc::new(Shared::new(addr.port(), bindings, forward, fleet, limits));
         let (stop, rx) = watch::channel(false);
         tokio::spawn(serve(listener, shared, rx));
         Ok(Self { addr, stop })
@@ -251,33 +321,23 @@ async fn handle(req: Request<Incoming>, shared: &Shared) -> Response<String> {
         Ok(Err(status)) => return closing(status),
         Ok(Ok(body)) => body,
     };
-    let (binding, _permit) = match shared.bindings.authenticate(auth.as_deref()) {
-        Auth::Unauthorized => return unauthorized(),
-        Auth::Limited => return plain(StatusCode::TOO_MANY_REQUESTS),
-        Auth::Ok { binding, permit } => (binding, permit),
+    let (binding, _permit) = match authenticate_message(shared, auth.as_deref()) {
+        Ok(ok) => ok,
+        Err(MessageOutcome::Limited) => return plain(StatusCode::TOO_MANY_REQUESTS),
+        Err(_) => return unauthorized(),
     };
     drop(_unauth);
-    let Ok(msg) = serde_json::from_slice::<Value>(&body) else {
-        return json(
+    match answer_message(shared, &binding, &body).await {
+        MessageOutcome::ParseError => json(
             StatusCode::BAD_REQUEST,
             &serde_json::json!({"jsonrpc": "2.0", "id": null,
                 "error": {"code": -32700, "message": "parse error"}}),
-        );
-    };
-    if msg.is_array() {
-        return plain(StatusCode::BAD_REQUEST);
-    }
-    match jsonrpc::answer(
-        msg,
-        &binding,
-        shared.forward.as_ref(),
-        shared.fleet.as_deref(),
-        shared.bindings.fleet_control(),
-    )
-    .await
-    {
-        Answer::Accepted => plain(StatusCode::ACCEPTED),
-        Answer::Json(v) => json(StatusCode::OK, &v),
+        ),
+        MessageOutcome::Batch => plain(StatusCode::BAD_REQUEST),
+        MessageOutcome::Accepted => plain(StatusCode::ACCEPTED),
+        MessageOutcome::Json(v) => json(StatusCode::OK, &v),
+        // The authentication step returns these; the answer step never does.
+        MessageOutcome::Unauthorized | MessageOutcome::Limited => unauthorized(),
     }
 }
 

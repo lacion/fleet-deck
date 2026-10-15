@@ -51,6 +51,10 @@ fn main() -> ExitCode {
                 *parent, program, args,
             ));
         }
+        // Stdout is the MCP channel: no logging set-up, no data directory.
+        Command::McpBridge { socket } => {
+            std::process::exit(fleetdeck_station::coordinator::bridge::run(socket));
+        }
         // It needs no data directory and no logging either.
         Command::BuildInfo => {
             let text = |value: &str| serde_json::Value::from(value).to_string();
@@ -127,6 +131,7 @@ fn run(cli: Cli, restart: &restart::RestartHandle) -> anyhow::Result<ExitCode> {
         Command::Station { .. }
         | Command::Shim { .. }
         | Command::ShimExec { .. }
+        | Command::McpBridge { .. }
         | Command::BuildInfo => {
             anyhow::bail!("internal error: the command was not dispatched")
         }

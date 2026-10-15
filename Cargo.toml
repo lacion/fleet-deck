@@ -52,7 +52,7 @@ futures-util = { version = "0.3.34", default-features = false, features = ["sink
 rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
 toml = "1"
 rustix = { version = "1.1", default-features = false, features = ["std", "system", "process"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs", "net", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs", "net", "signal", "io-std"] }
 tracing = "0.1"
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "matched-path", "query", "tokio", "ws"] }
 argon2 = { version = "0.5", features = ["std"] }

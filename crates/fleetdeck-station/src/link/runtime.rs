@@ -149,6 +149,9 @@ pub struct StationNode {
     /// The loopback coordinator MCP endpoint (ADR-006 §5, DL-211). Its
     /// tool calls go to the current deck link.
     coordinator: crate::coordinator::Ingress,
+    /// The station socket of the MCP bridge of the shim host; it lives as
+    /// long as the endpoint (DL-194).
+    _bridge_socket: Option<crate::coordinator::BridgeSocket>,
     bindings: crate::coordinator::Bindings,
     /// The station data directory; it holds the retry file of a tailnet
     /// join. Set by the local socket, which knows the directory.
@@ -257,16 +260,24 @@ impl StationNode {
         let forward = crate::coordinator::LinkForward::with_outbox(store.clone(), bindings.clone())
             .with_bindings(bindings.clone());
         // The session's own tools are answered by the station (DL-165).
-        let fleet =
-            crate::artifacts::fleet::StationFleet::new(store.clone(), manager.artifacts().cloned());
+        let fleet = Arc::new(crate::artifacts::fleet::StationFleet::new(
+            store.clone(),
+            manager.artifacts().cloned(),
+        ));
         let coordinator = crate::coordinator::Ingress::start_with(
             bindings.clone(),
             Arc::new(forward.clone()),
-            Some(Arc::new(fleet)),
+            Some(fleet.clone()),
             crate::coordinator::Limits::default(),
         )
         .await
         .map_err(NodeError::Coordinator)?;
+        let bridge_socket = crate::coordinator::BridgeSocket::start_for(
+            &bindings,
+            Arc::new(forward.clone()),
+            Some(fleet),
+        )
+        .await;
         // A coordinator start hands this URL to its child (DL-216).
         bindings.set_endpoint(coordinator.url());
         let this = Arc::new(Self {
@@ -284,6 +295,7 @@ impl StationNode {
             tasks: Mutex::default(),
             backoff,
             coordinator,
+            _bridge_socket: bridge_socket,
             bindings,
             data_dir: std::sync::OnceLock::new(),
             join_gate: tokio::sync::Mutex::new(()),
