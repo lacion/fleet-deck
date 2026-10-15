@@ -147,7 +147,7 @@ async fn read(
             return Err(ApiError::new(
                 StatusCode::CONFLICT,
                 "history_unsupported",
-                "This station runs an older Fleet Deck. Update it to see the earlier history.",
+                "This station runs an older Fleet Deck. On that computer, install the new version, then run `fleetdeck service install`.",
             ));
         }
         LinkFeature::Negotiated => {}

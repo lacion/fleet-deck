@@ -76,7 +76,7 @@ export function historyErrorLine(e: unknown): HistoryLine | null {
   if (code === 'history_not_shared' || code === 'owner_only') return null;
   if (code === 'history_unsupported') {
     return {
-      text: 'This station runs an older Fleet Deck. Update it to see the earlier history.',
+      text: 'This station runs an older Fleet Deck. On that computer, install the new version, then run `fleetdeck service install`.',
       action: null,
     };
   }

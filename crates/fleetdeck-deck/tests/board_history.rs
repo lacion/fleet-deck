@@ -304,7 +304,7 @@ async fn a_station_without_history_v1_gets_409_without_a_forward() {
     expect(&r, 409, "history_unsupported");
     assert_eq!(
         r.body["message"],
-        "This station runs an older Fleet Deck. Update it to see the earlier history."
+        "This station runs an older Fleet Deck. On that computer, install the new version, then run `fleetdeck service install`."
     );
     quiet(&mut station).await;
 }

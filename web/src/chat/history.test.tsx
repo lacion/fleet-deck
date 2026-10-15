@@ -49,7 +49,7 @@ describe('the texts of the history (DL-189)', () => {
     expect(historyErrorLine(new ApiError(403, 'x', 'history_not_shared'))).toBeNull();
     expect(historyErrorLine(new ApiError(403, 'x', 'owner_only'))).toBeNull();
     expect(historyErrorLine(new ApiError(409, 'x', 'history_unsupported'))).toEqual({
-      text: 'This station runs an older Fleet Deck. Update it to see the earlier history.',
+      text: 'This station runs an older Fleet Deck. On that computer, install the new version, then run `fleetdeck service install`.',
       action: null,
     });
     expect(historyErrorLine(new ApiError(409, 'x', 'stale_cursor'))).toEqual({
