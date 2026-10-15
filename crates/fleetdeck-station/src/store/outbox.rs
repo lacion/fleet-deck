@@ -20,12 +20,24 @@ impl Store {
         &self,
         f: impl FnOnce(&Connection, i64, &mut Vec<EventEnvelope>) -> Result<R> + Send + 'static,
     ) -> Result<(R, Vec<EventEnvelope>)> {
+        self.write_then(f, |_| {}).await
+    }
+
+    /// [`Self::write`] with a step that runs on the database thread right
+    /// after the commit succeeded, before the next job (DL-194 §9.15). It
+    /// does not run when the transaction fails.
+    pub(super) async fn write_then<R: Send + 'static>(
+        &self,
+        f: impl FnOnce(&Connection, i64, &mut Vec<EventEnvelope>) -> Result<R> + Send + 'static,
+        after_commit: impl FnOnce(&R) + Send + 'static,
+    ) -> Result<(R, Vec<EventEnvelope>)> {
         let now = self.now();
         let (value, events) = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let mut events = Vec::new();
             let value = f(&tx, now, &mut events)?;
             tx.commit()?;
+            after_commit(&value);
             Ok((value, events))
         })
         .await?;

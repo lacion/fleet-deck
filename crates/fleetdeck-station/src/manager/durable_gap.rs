@@ -8,7 +8,7 @@ use std::sync::atomic::Ordering;
 
 use fleetdeck_providers::host::shim::host::Attached;
 
-use super::{DurableCore, DurableDriver};
+use super::{DurableCore, DurableDriver, Steps};
 use crate::store::{RequestTime, StoreError};
 
 impl<C: DurableCore> DurableDriver<C> {
@@ -64,8 +64,14 @@ impl<C: DurableCore> DurableDriver<C> {
         };
         drop(core);
         matches!(
-            self.commit(cursor, Vec::new(), RequestTime::Now, checkpoint, Vec::new())
-                .await,
+            self.commit(
+                cursor,
+                Steps::default(),
+                RequestTime::Now,
+                checkpoint,
+                false
+            )
+            .await,
             Ok(true)
         ) && self.process.ack(cursor).await
     }

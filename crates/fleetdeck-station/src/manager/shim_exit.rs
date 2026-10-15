@@ -41,7 +41,7 @@ fn core_exit<C: DurableCore>(
         }
         drop(core.command(&t.effect));
     }
-    Some(core.exit(code).0)
+    Some(core.exit(code).events)
 }
 
 /// The events that end the session of the `exited` shim `row`.

@@ -497,6 +497,7 @@ async fn an_unsupported_adapter_checkpoint_version_makes_the_session_not_resumab
                 read_at: RequestTime::Now,
                 checkpoint: Some(checkpoint),
                 frames: Vec::new(),
+                ..OutputMeta::default()
             },
         )
     };

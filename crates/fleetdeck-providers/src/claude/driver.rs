@@ -419,6 +419,8 @@ impl Shared {
                     queued = true;
                 }
                 Output::Emit(e) => self.sink.emit_with(e, raw_ref.cloned()).await?,
+                // Only the durable (shim) driver uses the identity (DL-194).
+                Output::NativeIdentity { .. } => {}
             }
         }
         Ok(())

@@ -41,10 +41,12 @@ pub mod requests;
 pub mod resumes;
 pub mod reverts;
 pub mod schema;
+mod schema_v26;
 pub mod session_files;
 pub mod setup_runs;
 mod sharing;
 pub mod shell_effects;
+pub mod shim_bindings;
 pub mod shim_driver;
 pub mod shim_gaps;
 pub mod shim_writes;
@@ -85,6 +87,7 @@ pub use requests::{
 };
 pub use reverts::{NewRevert, RevertRow, RevertStep};
 pub use sharing::overlaps;
+pub use shim_bindings::IdentitySignal;
 pub use shim_driver::{FrameState, ShimFrame, ShimTransition};
 pub use shim_writes::ClaimedWrite;
 pub use shims::{NewShim, OutputCommit, OutputMeta, RunningFacts, ShimRow, ShimState};
@@ -253,6 +256,9 @@ struct Inner {
     /// The budget, the cache and the snapshot directory of the session
     /// history (DL-189).
     history: crate::history::History,
+    /// The memory side of the shim bindings; none until the host sets it
+    /// (DL-194).
+    binding_sink: std::sync::RwLock<Option<Arc<dyn shim_bindings::BindingSink>>>,
 }
 
 /// The station store. Clones share one database thread.
@@ -364,6 +370,7 @@ impl Store {
                 outbox: outbox_tx,
                 recovered: AtomicBool::new(false),
                 history,
+                binding_sink: std::sync::RwLock::new(None),
             }),
         })
     }

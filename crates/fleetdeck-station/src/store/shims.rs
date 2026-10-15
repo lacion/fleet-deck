@@ -23,6 +23,7 @@ use fleetdeck_providers::host::shim::wire::ProviderIdentity;
 use rusqlite::{Connection, OptionalExtension as _, Row, params};
 
 use super::requests::RequestTime;
+use super::shim_bindings::{self, IdentitySignal};
 use super::{NewEvent, Result, Store, StoreError, call, log, to_i64, to_u64};
 
 /// The life of a shim row.
@@ -450,33 +451,64 @@ impl Store {
             .map_err(|e| StoreError::Corrupt(e.to_string()))?;
         let time = meta.read_at;
         let frames = meta.frames;
-        let (result, out) = self
-            .write(move |conn, now, out| {
-                let Some(found) = get(conn, &shim_id)? else {
-                    return Err(StoreError::Corrupt(format!("unknown shim {shim_id}")));
-                };
-                if !found.state.is_open() || found.generation != generation {
-                    return Ok(OutputCommit::StaleGeneration);
-                }
-                if cursor < found.cursor {
-                    return Ok(OutputCommit::CursorBehind {
-                        committed: found.cursor,
-                    });
-                }
-                for event in events {
-                    out.push(log::append_at(conn, &found.session_id, event, now, time)?);
-                }
-                if let Some(text) = &checkpoint {
-                    store_checkpoint(conn, &shim_id, text, now)?;
-                    super::shim_driver::clear_transitions(conn, &shim_id)?;
-                }
-                super::shim_driver::store_frames(conn, &shim_id, &frames, now)?;
-                conn.execute(
-                    "UPDATE shims SET cursor = ?2, updated_at = ?3 WHERE shim_id = ?1",
-                    params![shim_id, to_i64(cursor)?, now],
-                )?;
-                Ok(OutputCommit::Committed(Vec::new()))
-            })
+        let (identities, exited) = (meta.identities, meta.exited);
+        let sink = self.binding_sink();
+        let activate = sink.clone();
+        let ((result, _), out) = self
+            .write_then(
+                move |conn, now, out| {
+                    let Some(found) = get(conn, &shim_id)? else {
+                        return Err(StoreError::Corrupt(format!("unknown shim {shim_id}")));
+                    };
+                    if !found.state.is_open() || found.generation != generation {
+                        return Ok((OutputCommit::StaleGeneration, Vec::new()));
+                    }
+                    if cursor < found.cursor {
+                        return Ok((
+                            OutputCommit::CursorBehind {
+                                committed: found.cursor,
+                            },
+                            Vec::new(),
+                        ));
+                    }
+                    // The binding transitions of the batch (DL-194): the
+                    // invalidation reaches memory before the commit, the
+                    // row changes and lifecycle events join this transaction.
+                    let rows = shim_bindings::rows_of_shim(conn, &shim_id)?;
+                    let ts = shim_bindings::transitions(&rows, &events, &identities, exited);
+                    let (ended, bound): (Vec<_>, Vec<_>) = ts
+                        .iter()
+                        .cloned()
+                        .partition(|t| matches!(t, shim_bindings::Transition::Ended { .. }));
+                    if let (false, Some(sink)) = (ended.is_empty(), &sink) {
+                        sink.invalidate(&ended);
+                    }
+                    for event in events {
+                        out.push(log::append_at(conn, &found.session_id, event, now, time)?);
+                    }
+                    shim_bindings::write_changes(conn, &ts)?;
+                    for event in shim_bindings::lifecycle_events(&rows, &ts) {
+                        out.push(log::append_at(conn, &found.session_id, event, now, time)?);
+                    }
+                    if let Some(text) = &checkpoint {
+                        store_checkpoint(conn, &shim_id, text, now)?;
+                        super::shim_driver::clear_transitions(conn, &shim_id)?;
+                    }
+                    super::shim_driver::store_frames(conn, &shim_id, &frames, now)?;
+                    conn.execute(
+                        "UPDATE shims SET cursor = ?2, updated_at = ?3 WHERE shim_id = ?1",
+                        params![shim_id, to_i64(cursor)?, now],
+                    )?;
+                    Ok((OutputCommit::Committed(Vec::new()), bound))
+                },
+                // Right after the commit, on the database thread, before the
+                // next job (DL-194 §9.15).
+                move |(_, bound): &(OutputCommit, Vec<shim_bindings::Transition>)| {
+                    if let (false, Some(sink)) = (bound.is_empty(), &activate) {
+                        sink.activate(bound);
+                    }
+                },
+            )
             .await?;
         Ok(match result {
             OutputCommit::Committed(_) => OutputCommit::Committed(out),
@@ -596,6 +628,12 @@ pub struct OutputMeta {
     /// Stdin frames that the output generated (JSON lines without their
     /// newline); stored as pending frames (DL-110).
     pub frames: Vec<String>,
+    /// The root native identities that the adapter stated in this batch, in
+    /// order with the events (DL-194).
+    pub identities: Vec<IdentitySignal>,
+    /// The provider process ended: the open bindings end with
+    /// `process_exit` (DL-194).
+    pub exited: bool,
 }
 
 pub(super) fn store_checkpoint(

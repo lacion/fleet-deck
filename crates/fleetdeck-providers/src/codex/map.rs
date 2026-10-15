@@ -10,6 +10,9 @@ use serde_json::{Value, json};
 use super::core::{CodexCore, HostRequest, Output, ToolNode};
 use super::truncate;
 
+#[path = "identity.rs"]
+mod identity;
+
 /// Pages of `model/list` that follow the first one (DL-151).
 const MODEL_LIST_MORE_PAGES: u8 = 4;
 
@@ -17,7 +20,6 @@ const MODEL_LIST_MORE_PAGES: u8 = 4;
 /// unknown method counts as an unknown frame, so a new protocol feature
 /// shows up in replay.
 pub const IGNORED_NOTIFICATIONS: &[&str] = &[
-    "thread/started",
     "thread/status/changed",
     "thread/settings/updated",
     "thread/name/updated",
@@ -56,6 +58,7 @@ pub const IGNORED_NOTIFICATIONS: &[&str] = &[
 /// `on_notification`); a schema test checks both lists against the vendored
 /// app-server schema.
 pub const HANDLED_NOTIFICATIONS: &[&str] = &[
+    "thread/started",
     "turn/started",
     "turn/completed",
     "item/started",
@@ -262,6 +265,12 @@ impl CodexCore {
             .cwd
             .clone()
             .unwrap_or_else(|| self.config.cwd.clone());
+        // The first root identity (DL-194 §9.9); after `session.started`, so
+        // that the event stays the first output of the answer.
+        let identity = self
+            .thread_id
+            .clone()
+            .map(|native_id| Output::NativeIdentity { native_id });
         let started = Output::Emit(Event::SessionStarted {
             provider: ProviderKind::Codex,
             provider_instance: self.config.provider_instance.clone(),
@@ -276,10 +285,12 @@ impl CodexCore {
             branch: None,
             repo: None,
         });
-        if !self.config.request_models {
-            return vec![started];
+        let mut out = vec![started];
+        out.extend(identity);
+        if self.config.request_models {
+            out.push(self.model_list(0, Vec::new(), None));
         }
-        vec![started, self.model_list(0, Vec::new(), None)]
+        out
     }
 
     /// The `model/list` request for the next page (DL-151).
@@ -372,6 +383,11 @@ impl CodexCore {
             "item/reasoning/summaryTextDelta" | "item/reasoning/textDelta" => self.delta(p, true),
             "serverRequest/resolved" => self.on_resolved(p),
             "turn/diff/updated" => self.on_diff(p),
+            // A root thread statement; a sub-agent thread states nothing.
+            "thread/started" => identity::root_thread_id(p)
+                .map(|native_id| Output::NativeIdentity { native_id })
+                .into_iter()
+                .collect(),
             "thread/tokenUsage/updated" if self.own_thread(p) => {
                 let last = p.pointer("/tokenUsage/last").cloned().unwrap_or_default();
                 vec![Output::Emit(Event::UsageUpdated {

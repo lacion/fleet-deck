@@ -624,6 +624,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V23),
         M::up(V24),
         M::up(super::subagent_logs::V25),
+        M::up(super::schema_v26::V26),
     ])
 }
 

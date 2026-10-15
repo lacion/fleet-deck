@@ -23,6 +23,10 @@ pub enum Output {
     Emit(Event),
     /// A JSON-RPC frame for the app-server's stdin.
     Write(Value),
+    /// The native id of a root thread statement. It is not an event: the
+    /// durable driver passes it, in order with the events, to the output
+    /// transaction (DL-194).
+    NativeIdentity { native_id: String },
 }
 
 /// The sans-IO Codex adapter core of one app-server process.
