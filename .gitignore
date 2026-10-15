@@ -7,3 +7,8 @@ ideas/
 /target/
 spikes/**/node_modules/
 /.pi/
+
+# Local agent skills of the owner (not part of the project).
+/.agents/
+/.claude/skills/
+/skills-lock.json
