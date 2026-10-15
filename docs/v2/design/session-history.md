@@ -1,6 +1,6 @@
 # Full session history in the chat (DL-189)
 
-- **Status:** Design, revision 2 (2026-10-15). Revision 1 got DESIGN REVIEW FAIL (4 blockers, 9 major; §5); §6 maps them. Needs a PASS before code.
+- **Status:** Design, revision 2 + owner sharing decision (2026-10-15). Revision 1 got DESIGN REVIEW FAIL (4 blockers, 9 major; §5); §6 maps them. Needs a PASS before code.
 - **Owner request (2026-10-15):** an imported session shows an empty chat: "i think we should work on propperly importing a session and showing all in the chat".
 - **Goal:** the chat of a session shows its whole conversation: the part from the terminal before an import, and every older turn that the deck no longer keeps. Nothing is copied at import; the history is read on demand.
 
@@ -16,7 +16,7 @@
 ## 2. Scope of revision 2
 
 - **Pre-import history only.** The history of a session is the part of its native conversation that happened **before the session's first execution** on this station: for an imported session, the terminal part. Everything from the first execution on is the session's own timeline (unchanged). The station resolves this boundary itself (§3.3); the board never de-duplicates.
-- **Owner only.** Only the owner's board login reads history. A bearer token (any scope) and a member get `403 owner_only`. A share option for members is a later, separate design.
+- **Owner only by default; sharing is the owner's decision (owner, 2026-10-15: "it should be my decission to share an imported session").** The owner's board login always reads history. A member reads it only through a share on which the owner turned on the share option `history` (§3.8); then the member sees prompts and answers, and tool lines with the tool name only. A bearer token (any scope) gets `403 owner_only`.
 - **Not in this revision:** older live turns that the deck no longer keeps (`TIMELINE_CAP`). The board shows a gap line there (§3.7); a later step can page the station event log or raise the cap.
 
 ## 3. Design
@@ -62,8 +62,9 @@
 
 ### 3.6 Deck route
 
-- `GET /api/sessions/{station}/{session}/history?before=&limit=`: owner login only (`owner_only` for tokens and members; the route is not in the member set), audited only on failure. The deck checks first that the station's link negotiated `history.v1` (the stored link features); without it: `409 history_unsupported` "This station runs an older Fleet Deck. Update it to see the earlier history." No forward then (major 12).
+- `GET /api/sessions/{station}/{session}/history?before=&limit=`: the owner login, or a member through `access::session_of` (share coverage and role, `MemberAction::Read`) **and** a covering share with `history = true` (§3.8); a member without such a share gets `403 history_not_shared`; a bearer token gets `403 owner_only`. The route is in the member set. Audited on failure and on every member read (actor, share id, session). The deck checks first that the station's link negotiated `history.v1` (the stored link features); without it: `409 history_unsupported` "This station runs an older Fleet Deck. Update it to see the earlier history." No forward then (major 12).
 - Mapping of station errors: `unknown_session` → 404; `invalid_params`, `stale_cursor` → 400 / 409 with the code; `busy` → 503; a timeout → 504; no link → 409 `station_unreachable`; any other → 502 `station_error`. `unavailable`, `empty` and `partial` are a 200 answer with the state.
+- The deck sends `member: true` for a member read. The station then empties every tool `summary` (the tool `name` and `status` stay) **before** the answer leaves the station, on every response, after any cache (§3.5 caches only indexes, never answers).
 - The deck stores nothing and caches nothing.
 
 ### 3.7 Board
@@ -72,13 +73,21 @@
 - When the deck no longer holds the oldest timeline rows of the session (the timeline starts after `session.started`), a muted line "Older messages of this session are not kept on the deck." sits between the history block and the timeline.
 - Items render like chat messages in a muted style; `tool` items are single compact lines (icon by name, summary, status). No item is editable or answerable.
 
+### 3.8 Sharing the history (owner decision)
+
+- New share field `history: bool` (deck `shares.history INTEGER NOT NULL DEFAULT 0`, deck schema migration; every existing share reads `false`). `NewShare.history: Option<bool>` (absent = `false`); `ShareInfo.history: bool`.
+- Only the owner sets it: in the create-share form, and later with the owner-only, audited route `POST /api/shares/{share_id}/history { "enabled": bool }` (CSRF; turning it on is a danger change that needs the owner's elevation, as the other disclosure settings). Turning it off takes effect at the next request (the deck checks the share on every read).
+- Which shares count: a share that is not revoked, not expired, whose scope covers the session (session, space or board share), any role (viewer and up), with `history = true`. Several shares: one with `history = true` is enough.
+- Board, share form and share row: a checkbox "Members can read the earlier history of imported sessions" with the text "Members see the full earlier conversation of the shared sessions, including anything that was pasted into it. Tool commands and file names stay hidden." The share row shows "History shared" when on, with a toggle.
+- The session boundary of §3.3 holds for members too: a member never reads a conversation part from after the session's first execution, so a conversation that continued in another (unshared) session is never shown.
+
 ## 4. Tests
 
 - Parser fixtures: kept and skipped shapes of both providers (meta, side chain, thinking, wrappers, developer, reasoning), tool status, cuts, an oversize line skipped without a mid-record parse, `unsupported_format`.
 - Location and trust: the instance home and an `env` override of the home; a session made before V24; a symbolic link (file and directory) refused; a hard link refused; another owner refused; a private-path file refused; Codex zero/one/two matches; a first record naming another session → `not_trusted`.
 - Boundary: an imported session returns only records before its first process start; a started session → `empty`; a resumed session that was later imported again (execution reuse) still returns only records before **its own** first process.
 - Paging and generations: pages cover the pre-import items once in order; append keeps the cursor valid; a rewrite → `stale_cursor`; the wire budget (a page of items with 8 KiB texts full of characters that JSON escapes stays under 1 MiB serialized); a scan over the deadline → `busy`; single-flight.
-- Deck: owner gets the page; a token and a member get 403 `owner_only`; a station without `history.v1` → 409 without a forward; error mapping.
+- Deck: owner gets the page; a token gets 403 `owner_only`; a member without a `history` share gets 403 `history_not_shared`; a member with one gets the page with empty tool summaries (checked on the wire answer); a revoked or expired share, or `history` turned off, stops the next read; only the owner can set `history` (member, token → 403), turning it on needs elevation; a station without `history.v1` → 409 without a forward; error mapping; the member-read audit row.
 - Board: the block, the pager, the gap line, the `partial`/`unavailable` lines, no block for `empty`.
 
 ## 5. Review round 1 (2026-10-15, Codex adversary): FAIL — to answer in revision 2
@@ -110,8 +119,8 @@ Architect note for revision 2: a simpler first step that avoids blockers 1, 3 an
 | --- | --- |
 | B1 native conversation is not a session boundary | §2 owner only; §3.3 the boundary is the session's own first execution, so a reused conversation never extends a session's history |
 | B2 provenance | §3.2 exact Claude path, one Codex match or `ambiguous`, descriptor checks, link count 1, private-path check, embedded session id |
-| B3 raw transcript exposure | §2 owner only (tokens and members get 403) |
-| B4 commands and patterns | §2 owner only; tool output never returned |
+| B3 raw transcript exposure | §2 owner only by default; member access only by the owner's per-share `history` option with an explicit warning (§3.8) |
+| B4 commands and patterns | members never get tool summaries (emptied on the station, every response); tool output never returned |
 | M5 frame size | §3.1 512 KiB answer budget and field cuts |
 | M6 effective home | §3.2 resolved from the launch environment, stored in `session_transcripts` |
 | M7 resource bounds | §3.5 file, index, memory, deadline, semaphore, single-flight |
