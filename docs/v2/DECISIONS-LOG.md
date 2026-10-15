@@ -2986,3 +2986,10 @@ Owner review: pending.
 - Choice (high-risk designs): retention, stale snapshots, revocation errors, member mail and the live marker had two adversary design-review rounds (round 1: 5 blockers; round 2: 1 blocker, fixed by a revocation fence).
 - Choice (NV-13): only the owner's elevation gets its own failure window; the anonymous login flows keep the global window.
 - Choice (NV-23): no `--` in the Codex resume argv; the native id rule is checked when stored and again at the handover.
+
+## DL-188 — Shim host parity with the direct host (plan, owner request, 2026-10-15)
+
+- Context: on the Mac station (`host = "shim"`) an import was refused with "resume on the shim host needs Linux". The shim host also has no coordinator sessions, no session tools, no Claude turn revert and no auto-continue, and on macOS no shim session can start.
+- Owner request: parity with the direct host, plus agents that survive restarts and upgrades; "save that to a plan in docs so we can work on that later".
+- Plan: `docs/v2/design/shim-parity.md`. Steps: 0 a macOS guard for `host = "shim"`; 1 credential handoff over the shim socket (coordinator sessions, session tools); 2 Claude turn revert; 3 auto-continue with the DL-182 proof; 4 macOS identity and census; 5 the default host (owner decision).
+- Status: planned, not started. Open owner decision: the macOS process calls (a crate such as `libproc`, or `ps` and `sysctl`).
