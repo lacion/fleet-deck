@@ -180,8 +180,7 @@ test('the board logs in and pairs a dialing and a listening station', async () =
   const invitation = dialog.getByLabel('Invitation (secret, single use)');
   await expect(invitation).not.toHaveValue('');
   bravo.cli(['station', 'join', '--stdin'], await invitation.inputValue());
-  // The name can still be the key fingerprint at this moment (backlog B4).
-  await expect(dialog).toContainText(/✓ .+ joined this deck\./);
+  await expect(dialog).toContainText('✓ bravo joined this deck.');
   await dialog.getByRole('button', { name: 'Close' }).click();
 
   // Alpha listens: it makes an invitation and the deck dials it.

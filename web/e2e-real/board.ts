@@ -133,8 +133,7 @@ export class Phone {
     const invitation = dialog.getByLabel('Invitation (secret, single use)');
     await expect(invitation).not.toHaveValue('');
     dialing.cli(['station', 'join', '--stdin'], await invitation.inputValue());
-    // The name can still be the key fingerprint at this moment (backlog B4).
-    await expect(dialog).toContainText(/✓ .+ joined this deck\./);
+    await expect(dialog).toContainText(`✓ ${dialing.name} joined this deck.`);
     await dialog.getByRole('button', { name: 'Close' }).click();
     // The deck dials the listening station.
     await page.getByRole('button', { name: 'Add station' }).click();
