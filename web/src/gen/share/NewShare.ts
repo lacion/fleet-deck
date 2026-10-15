@@ -23,4 +23,12 @@ expires_in_days?: number,
 /**
  * 1 to [`MAX_INVITE_USES`]; [`DEFAULT_INVITE_USES`] when absent.
  */
-uses?: number, };
+uses?: number, 
+/**
+ * Members can read the earlier history of imported sessions (DL-189). `false` when absent.
+ */
+history?: boolean, 
+/**
+ * The owner's elevation; needed when `history` is true.
+ */
+elevation?: string, };

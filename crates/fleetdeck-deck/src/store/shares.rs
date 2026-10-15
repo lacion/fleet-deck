@@ -37,6 +37,8 @@ pub struct NewShareRow {
     pub steering: Steering,
     pub expires_in_days: Option<u32>,
     pub uses: Option<u32>,
+    /// Members can read the earlier history of imported sessions (DL-189).
+    pub history: bool,
 }
 
 /// A created share and its invite token (shown once).
@@ -50,7 +52,7 @@ pub struct CreatedShare {
 fn share_view(conn: &Connection, share_id: &str, now: i64) -> Result<Option<ShareInfo>> {
     let row = conn
         .query_row(
-            "SELECT kind, target, role, steering, expires_at, revoked_at, created_at
+            "SELECT kind, target, role, steering, expires_at, revoked_at, created_at, history
              FROM shares WHERE share_id = ?1",
             [share_id],
             |r| {
@@ -62,11 +64,13 @@ fn share_view(conn: &Connection, share_id: &str, now: i64) -> Result<Option<Shar
                     r.get::<_, i64>(4)?,
                     r.get::<_, Option<i64>>(5)?,
                     r.get::<_, i64>(6)?,
+                    r.get::<_, i64>(7)?,
                 ))
             },
         )
         .optional()?;
-    let Some((kind, target, role, steering, expires_at, revoked_at, created_at)) = row else {
+    let Some((kind, target, role, steering, expires_at, revoked_at, created_at, history)) = row
+    else {
         return Ok(None);
     };
     let corrupt = |what: &str, v: &str| DeckError::Corrupt(format!("share {what} `{v}`"));
@@ -87,6 +91,7 @@ fn share_view(conn: &Connection, share_id: &str, now: i64) -> Result<Option<Shar
         target,
         role: ShareRole::parse(&role).ok_or_else(|| corrupt("role", &role))?,
         steering: Steering::parse(&steering).ok_or_else(|| corrupt("steering", &steering))?,
+        history: history != 0,
         expires_at,
         revoked_at,
         created_at,
@@ -151,8 +156,8 @@ impl DeckStore {
             let tx = conn.transaction()?;
             tx.execute(
                 "INSERT INTO shares
-                 (share_id, kind, target, role, steering, expires_at, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                 (share_id, kind, target, role, steering, expires_at, created_at, history)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     id,
                     new.kind.as_str(),
@@ -160,7 +165,8 @@ impl DeckStore {
                     new.role.as_str(),
                     new.steering.as_str(),
                     expires_at,
-                    now
+                    now,
+                    i64::from(new.history)
                 ],
             )?;
             tx.execute(
@@ -217,6 +223,29 @@ impl DeckStore {
             tx.execute(
                 "DELETE FROM member_sessions WHERE share_id = ?1",
                 [&share_id],
+            )?;
+            let view = share_view(&tx, &share_id, now)?;
+            tx.commit()?;
+            Ok(view)
+        })
+        .await
+    }
+
+    /// Sets the history option of a share (DL-189). `None` for an unknown share.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn set_share_history(
+        &self,
+        share_id: String,
+        enabled: bool,
+    ) -> Result<Option<ShareInfo>> {
+        let now = self.now_ms();
+        call(&self.inner.db, move |conn| {
+            let tx = conn.transaction()?;
+            tx.execute(
+                "UPDATE shares SET history = ?2 WHERE share_id = ?1",
+                params![share_id, i64::from(enabled)],
             )?;
             let view = share_view(&tx, &share_id, now)?;
             tx.commit()?;

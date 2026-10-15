@@ -10,7 +10,8 @@
 //! library. V7 (M3 6-2, 6-4): mail and tasks. V8 (M3 6-7): file touches.
 //! V13 (R2.1): the `blocked` and `question` task states. V14 (R12): artifacts.
 //! V16 (R5): automations. V17 (R6): read cursors. V20 (ADR-008): fleet
-//! control. V22 (DL-178): pairing completion records.
+//! control. V22 (DL-178): pairing completion records. V23 (DL-189): the
+//! history option of a share.
 
 use rusqlite_migration::{M, Migrations};
 
@@ -698,6 +699,13 @@ CREATE TABLE pairing_completions (
 CREATE INDEX pairing_completions_station ON pairing_completions (station_key);
 ";
 
+/// The history option of a share (DL-189): members of the share can read the
+/// earlier history of imported sessions. Every existing share reads 0 (off).
+/// To reverse the migration, drop the column.
+const V23: &str = "
+ALTER TABLE shares ADD COLUMN history INTEGER NOT NULL DEFAULT 0 CHECK (history IN (0, 1));
+";
+
 /// The `deck.db` migrations.
 #[must_use]
 pub fn migrations() -> Migrations<'static> {
@@ -726,6 +734,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V20),
         M::up(V21),
         M::up(V22),
+        M::up(V23),
     ])
 }
 
@@ -734,5 +743,29 @@ mod tests {
     #[test]
     fn the_migrations_are_valid() {
         super::migrations().validate().unwrap();
+    }
+
+    #[test]
+    fn an_existing_share_reads_history_off_after_v23() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        let migrations = super::migrations();
+        migrations.to_version(&mut conn, 22).unwrap();
+        conn.execute(
+            "INSERT INTO shares (share_id, kind, target, role, steering, expires_at, created_at)
+             VALUES ('sh1', 'board', '', 'viewer', 'open', 2, 1)",
+            [],
+        )
+        .unwrap();
+        migrations.to_latest(&mut conn).unwrap();
+        let history: i64 = conn
+            .query_row(
+                "SELECT history FROM shares WHERE share_id = 'sh1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(history, 0);
+        // The column holds 0 or 1 only.
+        assert!(conn.execute("UPDATE shares SET history = 2", []).is_err());
     }
 }

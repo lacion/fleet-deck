@@ -52,6 +52,7 @@ export const share = (id: string, extra: Partial<ShareInfo> = {}): ShareInfo => 
   target: 'station-a/s1',
   role: 'viewer',
   steering: 'open',
+  history: false,
   expires_at: NOW + 5 * DAY,
   revoked_at: null,
   created_at: NOW - DAY,

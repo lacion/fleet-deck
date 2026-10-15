@@ -23,6 +23,7 @@ pub mod fleet_answers_routes;
 pub mod fleet_routes;
 pub mod grant_routes;
 pub mod guard;
+pub mod history_routes;
 pub mod methods;
 pub mod pairing_routes;
 pub mod paste_routes;
@@ -443,6 +444,14 @@ pub fn router(board: Arc<Board>) -> Router {
         .route(
             "/api/shares/{share_id}/revoke",
             post(share_routes::revoke_share),
+        )
+        .route(
+            "/api/shares/{share_id}/history",
+            post(share_routes::set_history),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/history",
+            get(history_routes::history),
         )
         .route(
             "/api/spaces",

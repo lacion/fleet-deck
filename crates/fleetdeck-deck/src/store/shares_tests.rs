@@ -20,6 +20,7 @@ fn share(kind: ShareKind, target: &str, steering: Steering) -> NewShareRow {
         steering,
         expires_in_days: None,
         uses: None,
+        history: false,
     }
 }
 
@@ -188,4 +189,57 @@ async fn a_request_kind_is_read_from_the_stored_timeline() {
     assert_eq!(kind("q1").await, Some(RequestKind::Question));
     assert_eq!(kind("t1").await, Some(RequestKind::Tool));
     assert_eq!(kind("nope").await, None);
+}
+
+#[tokio::test]
+async fn set_share_history_changes_the_view_and_the_grant() {
+    let det = Det::new();
+    let st = store(&det).await;
+    let created = st
+        .create_share(share(ShareKind::Board, "", Steering::Open))
+        .await
+        .unwrap();
+    let login = st
+        .join(
+            &fleetdeck_core::Secret::new(created.token.expose().clone()),
+            "Ann",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!st.shares().await.unwrap()[0].history);
+    assert!(!login.grant.history);
+
+    let view = st
+        .set_share_history(created.share_id.clone(), true)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(view.history);
+    assert!(st.shares().await.unwrap()[0].history);
+    let grant = st.member_login(&login.cookie).await.unwrap().unwrap();
+    assert!(grant.history);
+
+    let view = st
+        .set_share_history(created.share_id.clone(), false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!view.history);
+    let grant = st.member_login(&login.cookie).await.unwrap().unwrap();
+    assert!(!grant.history);
+
+    assert!(
+        st.set_share_history("nope".to_owned(), true)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    // A share made with the option reads it.
+    let mut on = share(ShareKind::Board, "", Steering::Open);
+    on.history = true;
+    let on = st.create_share(on).await.unwrap();
+    let shares = st.shares().await.unwrap();
+    let found = shares.iter().find(|s| s.share_id == on.share_id).unwrap();
+    assert!(found.history);
 }

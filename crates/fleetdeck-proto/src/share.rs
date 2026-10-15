@@ -162,6 +162,14 @@ pub struct NewShare {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub uses: Option<u32>,
+    /// Members can read the earlier history of imported sessions (DL-189). `false` when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub history: Option<bool>,
+    /// The owner's elevation; needed when `history` is true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub elevation: Option<String>,
 }
 
 /// The answer of `POST /api/shares`. The invite URL holds a secret token: the
@@ -184,6 +192,8 @@ pub struct ShareInfo {
     pub target: String,
     pub role: ShareRole,
     pub steering: Steering,
+    /// Members can read the earlier history of imported sessions (DL-189).
+    pub history: bool,
     pub expires_at: i64,
     pub revoked_at: Option<i64>,
     pub created_at: i64,
@@ -191,6 +201,18 @@ pub struct ShareInfo {
     pub uses_left: u32,
     /// The display names of the members that joined.
     pub members: Vec<String>,
+}
+
+/// `POST /api/shares/{share_id}/history` (owner only, DL-189).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "share/")]
+pub struct ShareHistory {
+    pub enabled: bool,
+    /// The owner's elevation; needed to turn the history on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub elevation: Option<String>,
 }
 
 /// `POST /api/spaces` (owner only).

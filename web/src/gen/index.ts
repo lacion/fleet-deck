@@ -326,6 +326,7 @@ export * from "./share/JoinRequest";
 export * from "./share/NewShare";
 export * from "./share/NewSpace";
 export * from "./share/ShareCreated";
+export * from "./share/ShareHistory";
 export * from "./share/ShareInfo";
 export * from "./share/ShareKind";
 export * from "./share/ShareRole";

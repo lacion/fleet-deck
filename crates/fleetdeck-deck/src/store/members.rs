@@ -56,6 +56,8 @@ pub struct ShareGrant {
     pub target: String,
     pub role: ShareRole,
     pub steering: Steering,
+    /// The share lets its members read the earlier history of imported sessions (DL-189).
+    pub history: bool,
     pub scope: ShareScope,
     /// The SHA-256 of the cookie value.
     pub session_hash: String,
@@ -223,12 +225,14 @@ type GrantRow = (
     String,
     String,
     String,
+    i64,
 );
 
 fn parse_grant(row: GrantRow, hash: &str, conn: &Connection) -> Result<ShareGrant> {
     let (member_id, display_name, csrf, expires_at, share_id, kind, target, role, steering) = (
         row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7, row.8,
     );
+    let history = row.9 != 0;
     let corrupt = |what: &str, v: &str| DeckError::Corrupt(format!("share {what} `{v}`"));
     let kind = ShareKind::parse(&kind).ok_or_else(|| corrupt("kind", &kind))?;
     let scope = scope_of(conn, kind, &target)?;
@@ -240,6 +244,7 @@ fn parse_grant(row: GrantRow, hash: &str, conn: &Connection) -> Result<ShareGran
         target,
         role: ShareRole::parse(&role).ok_or_else(|| corrupt("role", &role))?,
         steering: Steering::parse(&steering).ok_or_else(|| corrupt("steering", &steering))?,
+        history,
         scope,
         session_hash: hash.to_owned(),
         csrf,
@@ -253,7 +258,7 @@ fn load_grant(conn: &Connection, hash: &str, now: i64) -> Result<Option<ShareGra
     let row = conn
         .query_row(
             "SELECT ms.member_id, m.display_name, ms.csrf_token, ms.expires_at,
-                    s.share_id, s.kind, s.target, s.role, s.steering
+                    s.share_id, s.kind, s.target, s.role, s.steering, s.history
              FROM member_sessions ms
              JOIN members m ON m.member_id = ms.member_id
              JOIN shares s ON s.share_id = ms.share_id
@@ -271,6 +276,7 @@ fn load_grant(conn: &Connection, hash: &str, now: i64) -> Result<Option<ShareGra
                     r.get(6)?,
                     r.get(7)?,
                     r.get(8)?,
+                    r.get(9)?,
                 ))
             },
         )

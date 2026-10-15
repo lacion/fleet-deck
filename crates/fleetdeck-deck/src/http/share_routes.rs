@@ -10,12 +10,14 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use fleetdeck_proto::share::{
-    NewShare, NewSpace, ShareCreated, ShareInfo, ShareKind, SpaceSession, SpaceView, Steering,
+    NewShare, NewSpace, ShareCreated, ShareHistory, ShareInfo, ShareKind, SpaceSession, SpaceView,
+    Steering,
 };
 
 use super::Board;
 use super::fleet_routes::audited;
 use super::guard::{ApiError, owner_only};
+use super::settings_routes::is_elevated;
 use crate::store::shares::NewShareRow;
 use crate::store::{DeckError, Principal};
 
@@ -32,6 +34,28 @@ fn deck_error(e: DeckError) -> ApiError {
         DeckError::Invalid(message) => bad("invalid_share", message),
         e => ApiError::internal(e),
     }
+}
+
+/// Sharing the history is a danger change (DL-189): the owner's login must
+/// hold a live elevation.
+fn require_elevation(
+    board: &Board,
+    principal: &Principal,
+    elevation: Option<&str>,
+) -> Result<(), ApiError> {
+    let Principal::Owner(session) = principal else {
+        return owner_only(principal, "shares the history");
+    };
+    if is_elevated(board, session, elevation) {
+        return Ok(());
+    }
+    let mut keys = serde_json::Map::new();
+    keys.insert("keys".to_owned(), serde_json::json!(["history"]));
+    Err(bad(
+        "elevation_required",
+        "a recent sign-in is needed to share the history",
+    )
+    .with_details(keys))
 }
 
 /// The target of a share, checked and written with ids: a session as
@@ -98,7 +122,7 @@ fn board_origin(board: &Board, headers: &HeaderMap) -> Option<String> {
 ///
 /// # Errors
 /// 403 `owner_only`; 400 `invalid_body` / `invalid_target` /
-/// `invalid_share`; 404 `unknown_station` / `unknown_session` /
+/// `invalid_share` / `elevation_required`; 404 `unknown_station` / `unknown_session` /
 /// `unknown_space`.
 pub async fn create_share(
     State(board): State<Arc<Board>>,
@@ -109,6 +133,10 @@ pub async fn create_share(
     let result = async {
         owner_only(&principal, "makes a share")?;
         let Json(new) = body.map_err(|e| bad("invalid_body", e.body_text()))?;
+        let history = new.history.unwrap_or(false);
+        if history {
+            require_elevation(&board, &principal, new.elevation.as_deref())?;
+        }
         let target = checked_target(&board, &new).await?;
         let origin = board_origin(&board, &headers)
             .ok_or_else(|| ApiError::internal("the deck has no board origin"))?;
@@ -121,6 +149,7 @@ pub async fn create_share(
                 steering: new.steering.unwrap_or(Steering::Open),
                 expires_in_days: new.expires_in_days,
                 uses: new.uses,
+                history,
             })
             .await
             .map_err(deck_error)?;
@@ -183,6 +212,44 @@ pub async fn revoke_share(
     }
     .await;
     audited(&board, &principal, "shares.revoke", Some(&share_id), result)
+        .await
+        .map(Json)
+}
+
+/// `POST /api/shares/{share_id}/history`: turns the history option of a
+/// share on or off (DL-189). Turning it on needs the owner's elevation. It
+/// takes effect at the next read: the member grant is loaded on every
+/// request.
+///
+/// # Errors
+/// 403 `owner_only`; 400 `invalid_body` / `elevation_required`; 404
+/// `unknown_share`.
+pub async fn set_history(
+    State(board): State<Arc<Board>>,
+    Extension(principal): Extension<Principal>,
+    Path(share_id): Path<String>,
+    body: Result<Json<ShareHistory>, JsonRejection>,
+) -> Result<Json<ShareInfo>, ApiError> {
+    let action = match &body {
+        Ok(Json(b)) if b.enabled => "shares.history_on",
+        Ok(_) => "shares.history_off",
+        Err(_) => "shares.history",
+    };
+    let result = async {
+        owner_only(&principal, "changes the history option of a share")?;
+        let Json(req) = body.map_err(|e| bad("invalid_body", e.body_text()))?;
+        if req.enabled {
+            require_elevation(&board, &principal, req.elevation.as_deref())?;
+        }
+        board
+            .store
+            .set_share_history(share_id.clone(), req.enabled)
+            .await
+            .map_err(ApiError::internal)?
+            .ok_or_else(|| not_found("unknown_share", "no such share"))
+    }
+    .await;
+    audited(&board, &principal, action, Some(&share_id), result)
         .await
         .map(Json)
 }
