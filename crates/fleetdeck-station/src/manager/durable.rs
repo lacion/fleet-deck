@@ -28,7 +28,6 @@ use std::time::Duration;
 use fleetdeck_providers::adapter::{HostInput, ProviderError};
 use fleetdeck_providers::checkpoint::AdapterCheckpoint;
 use fleetdeck_providers::checkpoint::CheckpointError;
-use fleetdeck_providers::host::ProcessControl as _;
 use fleetdeck_providers::host::shim::host::{Attached, ShimProcess};
 use fleetdeck_providers::host::shim::stdin::WriteOutcome;
 use fleetdeck_providers::host::shim::wire::{StatusAnswer, WriteState};
@@ -36,15 +35,13 @@ use tokio::io::{AsyncBufReadExt as _, BufReader};
 use tokio::sync::{Mutex, MutexGuard, RwLock, RwLockWriteGuard, watch};
 use tokio::task::JoinHandle;
 
-use fleetdeck_proto::Event;
-use fleetdeck_proto::event::OutputGapReason;
 use fleetdeck_providers::host::shim::wire::GapReason;
 
 use super::shim_stdin::{self, Delivery, Gate, frame_count, no_gate};
 use crate::store::shim_gaps::REASON_ADAPTER_STATE_GAP;
 use crate::store::{
-    Dispatch, Effect, EffectPayload, FrameState, InputRecord, NewEvent, OutputCommit, OutputMeta,
-    RequestTime, Store, StoreError,
+    Dispatch, Effect, EffectPayload, FrameState, IdentitySignal, InputRecord, NewEvent,
+    OutputCommit, OutputMeta, RequestTime, Store, StoreError,
 };
 
 /// The `input_blocked` reason of a generated frame whose fate the shim
@@ -98,8 +95,14 @@ impl<C: DurableCore> std::fmt::Debug for DurableDriver<C> {
     }
 }
 
-/// Events and frames of one core step.
-pub type Steps = (Vec<NewEvent>, Vec<String>);
+/// Events, frames and root identities of one core step. The identities are
+/// in order with the events (`IdentitySignal::after`; DL-194).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Steps {
+    pub events: Vec<NewEvent>,
+    pub frames: Vec<String>,
+    pub identities: Vec<IdentitySignal>,
+}
 
 /// A sans-IO adapter core that a [`DurableDriver`] can run.
 pub trait DurableCore: Send + Sync + Sized + 'static {
@@ -279,22 +282,24 @@ impl<C: DurableCore> DurableDriver<C> {
         if let Some(refused) = gate().await {
             return Ok(Some(refused));
         }
-        let (events, frames) = op(&mut core)?;
+        let steps = op(&mut core)?;
         let checkpoint = snapshot(&*core)?;
         let cursor = self.process.acked();
-        self.commit(cursor, events, RequestTime::Now, checkpoint, frames)
+        self.commit(cursor, steps, RequestTime::Now, checkpoint, false)
             .await?;
         self.flush(&core).await?;
         Ok(None)
     }
 
+    /// Commits one output transaction. `exited` marks the commit of the
+    /// provider's exit (DL-194).
     async fn commit(
         &self,
         cursor: u64,
-        events: Vec<NewEvent>,
+        steps: Steps,
         read_at: RequestTime,
         checkpoint: AdapterCheckpoint,
-        frames: Vec<String>,
+        exited: bool,
     ) -> Result<bool, StoreError> {
         let result = self
             .store
@@ -302,13 +307,15 @@ impl<C: DurableCore> DurableDriver<C> {
                 self.shim_id.clone(),
                 self.process.generation(),
                 cursor,
-                events,
+                steps.events,
                 OutputMeta {
                     read_at,
                     // After an adapter state gap no checkpoint is stored:
                     // the state is incomplete (§4.2).
                     checkpoint: (!self.has_adapter_gap()).then_some(checkpoint),
-                    frames,
+                    frames: steps.frames,
+                    identities: steps.identities,
+                    exited,
                 },
             )
             .await?;
@@ -457,7 +464,8 @@ impl<C: DurableCore> DurableDriver<C> {
             return Ok(refused);
         }
         let before = snapshot(&*core)?;
-        let (events, frames) = match core.command(effect) {
+        // A command states no root identity: `identities` stays unused.
+        let Steps { events, frames, .. } = match core.command(effect) {
             Ok(steps) => steps,
             Err(e) => {
                 *core = rebuild(&self.config, &before)?;
@@ -589,7 +597,7 @@ impl<C: DurableCore> DurableDriver<C> {
             let _gate = self.gate.read().await;
             let mut core = self.core.lock().await;
             let text = String::from_utf8_lossy(&line[..line.len() - 1]).into_owned();
-            let (events, frames) = core.line(&text);
+            let steps = core.line(&text);
             let read_at = self
                 .process
                 .read_at(line_start)
@@ -598,10 +606,7 @@ impl<C: DurableCore> DurableDriver<C> {
             let Ok(checkpoint) = snapshot(&*core) else {
                 return;
             };
-            match self
-                .commit(offset, events, read_at, checkpoint, frames)
-                .await
-            {
+            match self.commit(offset, steps, read_at, checkpoint, false).await {
                 Ok(true) => {}
                 // Fenced by a newer owner, or a database error: this
                 // driver stops without touching the provider.
@@ -612,107 +617,6 @@ impl<C: DurableCore> DurableDriver<C> {
             }
         }
         self.commit_exit(offset).await;
-    }
-
-    /// Commits `session.output_gap` for every reported gap and an `error`,
-    /// after the rest of the stream (the shim stops the provider); the
-    /// cursor is the end of the delivered stream. `None` when the commit
-    /// failed or was fenced.
-    async fn commit_gaps(
-        &self,
-        reader: &mut BufReader<tokio::io::DuplexStream>,
-        offset: u64,
-        gaps: &[(u64, u64, GapReason)],
-    ) -> Option<u64> {
-        // The shim stops the provider after an overlong line, so the
-        // stream ends; its bytes are not parsed.
-        let _drained = tokio::io::copy(reader, &mut tokio::io::sink()).await;
-        let gap_end = gaps.iter().map(|(_, to, _)| *to).max().unwrap_or(offset);
-        let cursor = offset.max(gap_end).max(self.process.delivered());
-        // The shim reports each discarded buffer of one overlong line as its
-        // own gap; touching gaps of one reason are one range here.
-        let mut merged: Vec<(u64, u64, GapReason)> = Vec::new();
-        let mut sorted = gaps.to_vec();
-        sorted.sort_by_key(|(from, _, _)| *from);
-        for (from, to, reason) in sorted {
-            match merged.last_mut() {
-                Some(last) if last.2 == reason && from <= last.1 => last.1 = last.1.max(to),
-                _ => merged.push((from, to, reason)),
-            }
-        }
-        let mut events: Vec<NewEvent> = merged
-            .iter()
-            .map(|(from, to, reason)| {
-                Event::OutputGap {
-                    from: *from,
-                    to: *to,
-                    reason: match reason {
-                        GapReason::OutputFrameTooLarge => OutputGapReason::OutputFrameTooLarge,
-                        GapReason::BelowFloor => OutputGapReason::BelowFloor,
-                    },
-                }
-                .into()
-            })
-            .collect();
-        events.push(
-            Event::Error {
-                code: REASON_OUTPUT_FRAME_TOO_LARGE.to_owned(),
-                message: "a provider output line reached the shim buffer size without a \
-                          newline; the shim stopped the provider"
-                    .to_owned(),
-                retry_at: None,
-            }
-            .into(),
-        );
-        self.commit_plain(cursor, events).await
-    }
-
-    /// Commits `session.output_gap { unterminated_line }` for the bytes
-    /// after the last newline at EOF (ADR-005 §4.2).
-    async fn commit_unterminated(&self, from: u64, to: u64) -> Option<u64> {
-        let gap = Event::OutputGap {
-            from,
-            to,
-            reason: OutputGapReason::UnterminatedLine,
-        };
-        self.commit_plain(to, vec![gap.into()]).await
-    }
-
-    async fn commit_plain(&self, cursor: u64, events: Vec<NewEvent>) -> Option<u64> {
-        let core = self.core.lock().await;
-        let checkpoint = snapshot(&*core).ok()?;
-        match self
-            .commit(cursor, events, RequestTime::Now, checkpoint, Vec::new())
-            .await
-        {
-            Ok(true) => self.process.ack(cursor).await.then_some(cursor),
-            Ok(false) | Err(_) => None,
-        }
-    }
-
-    /// After EOF: waits for the shim's exit state and commits the core's
-    /// exit events with the final cursor, then acknowledges the exit.
-    async fn commit_exit(&self, offset: u64) {
-        let known = tokio::time::timeout(EXIT_WAIT, self.process.wait()).await;
-        let Ok(report) = known else {
-            return;
-        };
-        let code = match report.termination {
-            fleetdeck_providers::host::Termination::Unknown => return,
-            fleetdeck_providers::host::Termination::Code(c) => Some(c),
-            _ => None,
-        };
-        let mut core = self.core.lock().await;
-        let (events, _) = core.exit(code);
-        if let Ok(checkpoint) = snapshot(&*core)
-            && matches!(
-                self.commit(offset, events, RequestTime::Now, checkpoint, Vec::new())
-                    .await,
-                Ok(true)
-            )
-        {
-            let _acked = self.process.ack_exit().await;
-        }
     }
 
     /// Stops the pump between two lines until the guard drops (a test hook
@@ -758,3 +662,5 @@ impl<C: DurableCore> DurableDriver<C> {
 
 #[path = "durable_gap.rs"]
 mod gap;
+#[path = "durable_output.rs"]
+mod output;

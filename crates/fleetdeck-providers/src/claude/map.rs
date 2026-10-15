@@ -102,13 +102,20 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
             core.native_session_id = get("session_id");
             core.mode = get("permissionMode");
             core.model = get("model");
+            // Every root `init` states the root identity (DL-194); a child
+            // `init` carries a `parent_tool_use_id`.
+            let identity = matches!(body.get("parent_tool_use_id"), None | Some(Value::Null))
+                .then(|| get("session_id"))
+                .flatten()
+                .map(|native_id| Output::NativeIdentity { native_id });
             if core.started {
                 // Claude sends `init` again for each turn: not a new session.
-                return Vec::new();
+                return identity.into_iter().collect();
             }
             core.started = true;
             let config = &core.config;
-            let mut out = vec![Output::Emit(Event::SessionStarted {
+            let mut out: Vec<Output> = identity.into_iter().collect();
+            out.push(Output::Emit(Event::SessionStarted {
                 provider: core.kind(),
                 provider_instance: config.provider_instance.clone(),
                 provider_version: get("claude_code_version"),
@@ -121,7 +128,7 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
                 title: None,
                 branch: None,
                 repo: None,
-            })];
+            }));
             if has_v1_plugin(body) {
                 out.push(Output::Emit(Event::SessionNotice {
                     code: V1_PLUGIN_NOTICE_CODE.to_owned(),

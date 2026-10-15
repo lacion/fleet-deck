@@ -95,6 +95,7 @@ fn replay(path: &Path) -> Report {
                         // The SDK never asked `get_usage` (R4.5): only the core does.
                         Output::Write(v) if v["request"]["subtype"] == "get_usage" => {}
                         Output::Write(v) => p.spontaneous.push_back(v),
+                        Output::NativeIdentity { .. } => {}
                     }
                 }
             }
@@ -245,6 +246,7 @@ fn take_write(outs: Vec<Output>, report: &mut Report, at: &str) -> Value {
         match o {
             Output::Emit(e) => report.events.push(e),
             Output::Write(v) => writes.push(v),
+            Output::NativeIdentity { .. } => {}
         }
     }
     assert_eq!(

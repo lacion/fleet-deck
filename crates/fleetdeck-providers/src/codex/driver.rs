@@ -437,6 +437,8 @@ impl Shared {
                         self.poll.notify_one();
                     }
                 }
+                // Only the durable (shim) driver uses the identity (DL-194).
+                Output::NativeIdentity { .. } => {}
             }
         }
         Ok(())

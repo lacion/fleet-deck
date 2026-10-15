@@ -171,6 +171,7 @@ fn collect(out: Vec<Output>, report: &mut Report, queue: &mut VecDeque<Value>) {
         match o {
             Output::Emit(e) => report.events.push(e),
             Output::Write(v) => queue.push_back(v),
+            Output::NativeIdentity { .. } => {}
         }
     }
 }

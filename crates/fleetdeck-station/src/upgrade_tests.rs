@@ -268,6 +268,7 @@ async fn a_failed_activation_after_an_output_commit_and_ack_keeps_events_checkpo
                 read_at: RequestTime::Now,
                 checkpoint: Some(checkpoint(12)),
                 frames: Vec::new(),
+                ..OutputMeta::default()
             },
         )
         .await

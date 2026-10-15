@@ -28,6 +28,10 @@ pub enum Output {
     Emit(Event),
     /// A frame to write to the CLI's stdin.
     Write(Value),
+    /// The native session id that a root `system/init` states. It is not an
+    /// event: the durable driver passes it, in order with the events, to
+    /// the output transaction (DL-194).
+    NativeIdentity { native_id: String },
 }
 
 /// What the core needs to know about its session.
@@ -459,14 +463,15 @@ impl ClaudeCore {
             return out;
         }
         if !self.started {
-            let mut writes = Vec::new();
+            // Writes and identities are never held.
+            let mut released = Vec::new();
             for o in out {
                 match o {
                     Output::Emit(e) => self.early.push(e),
-                    w @ Output::Write(_) => writes.push(w),
+                    w @ (Output::Write(_) | Output::NativeIdentity { .. }) => released.push(w),
                 }
             }
-            return writes;
+            return released;
         }
         if self.early.is_empty() {
             return out;

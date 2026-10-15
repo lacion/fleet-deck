@@ -13,21 +13,24 @@ use fleetdeck_providers::host::shim::host::Attached;
 
 pub use super::durable::{DriverError, REASON_FRAME_UNKNOWN};
 use super::durable::{DurableCore, DurableDriver, Steps, host_input, not_a_command};
-use crate::store::{Effect, EffectPayload, NewEvent, Store};
+use crate::store::{Effect, EffectPayload, IdentitySignal, NewEvent, Store};
 
 /// The durable Codex driver of one shim.
 pub type DurableCodex = DurableDriver<CodexCore>;
 
 fn split(out: Vec<Output>) -> Steps {
-    let mut events = Vec::new();
-    let mut frames = Vec::new();
+    let mut steps = Steps::default();
     for o in out {
         match o {
-            Output::Emit(event) => events.push(NewEvent::from(event)),
-            Output::Write(frame) => frames.push(frame.to_string()),
+            Output::Emit(event) => steps.events.push(NewEvent::from(event)),
+            Output::Write(frame) => steps.frames.push(frame.to_string()),
+            Output::NativeIdentity { native_id } => steps.identities.push(IdentitySignal {
+                native_id,
+                after: steps.events.len(),
+            }),
         }
     }
-    (events, frames)
+    steps
 }
 
 impl DurableCore for CodexCore {
@@ -48,7 +51,7 @@ impl DurableCore for CodexCore {
     fn line(&mut self, line: &str) -> Steps {
         match rpc::parse_line(line) {
             Ok(frame) => split(self.on_frame(frame)),
-            Err(_) => (Vec::new(), Vec::new()),
+            Err(_) => Steps::default(),
         }
     }
 

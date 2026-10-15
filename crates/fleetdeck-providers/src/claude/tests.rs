@@ -25,7 +25,7 @@ pub(super) fn emits(out: &[Output]) -> Vec<Event> {
     out.iter()
         .filter_map(|o| match o {
             Output::Emit(e) => Some(e.clone()),
-            Output::Write(_) => None,
+            Output::Write(_) | Output::NativeIdentity { .. } => None,
         })
         .collect()
 }
@@ -34,7 +34,7 @@ pub(super) fn writes(out: &[Output]) -> Vec<Value> {
     out.iter()
         .filter_map(|o| match o {
             Output::Write(v) => Some(v.clone()),
-            Output::Emit(_) => None,
+            Output::Emit(_) | Output::NativeIdentity { .. } => None,
         })
         .collect()
 }

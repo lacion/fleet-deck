@@ -65,6 +65,7 @@ async fn replay(s: &Store, cursor: u64, event: Event, read_at: RequestTime) -> O
             read_at,
             checkpoint: Some(checkpoint(cursor)),
             frames: Vec::new(),
+            ..OutputMeta::default()
         },
     )
     .await
@@ -265,6 +266,7 @@ async fn the_checkpoint_is_stored_only_by_an_accepted_claim_or_output_commit() {
                 read_at: RequestTime::Now,
                 checkpoint: Some(checkpoint(3)),
                 frames: Vec::new(),
+                ..OutputMeta::default()
             },
         )
         .await

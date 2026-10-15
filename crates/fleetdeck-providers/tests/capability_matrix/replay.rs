@@ -78,6 +78,7 @@ pub(crate) fn replay_claude(scenario: &str) -> Replay {
             match o {
                 Output::Emit(e) => events.push(e),
                 Output::Write(w) => writes.push(w),
+                Output::NativeIdentity { .. } => {}
             }
         }
     };
@@ -171,6 +172,7 @@ pub(crate) fn replay_codex(scenario: &str) -> Replay {
             match o {
                 codex::Output::Emit(e) => processes.last_mut().unwrap().push(e),
                 codex::Output::Write(w) => writes.push(w),
+                codex::Output::NativeIdentity { .. } => {}
             }
         }
     }

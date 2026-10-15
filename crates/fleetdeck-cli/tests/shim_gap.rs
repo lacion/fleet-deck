@@ -72,7 +72,10 @@ impl DurableCore for Lines {
             message: text.to_owned(),
             retry_at: None,
         };
-        (vec![event.into()], Vec::new())
+        Steps {
+            events: vec![event.into()],
+            ..Steps::default()
+        }
     }
 
     fn exit(&mut self, code: Option<i32>) -> Steps {
@@ -80,12 +83,18 @@ impl DurableCore for Lines {
             reason: "exited".to_owned(),
             exit_code: code,
         };
-        (vec![event.into()], Vec::new())
+        Steps {
+            events: vec![event.into()],
+            ..Steps::default()
+        }
     }
 
     /// Every command is one stdin line `cmd`.
     fn command(&mut self, _effect: &Effect) -> Result<Steps, ProviderError> {
-        Ok((Vec::new(), vec!["cmd".to_owned()]))
+        Ok(Steps {
+            frames: vec!["cmd".to_owned()],
+            ..Steps::default()
+        })
     }
 
     fn ended(&self) -> bool {
