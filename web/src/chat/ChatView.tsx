@@ -29,6 +29,8 @@ import { clock } from '../sharing/people';
 import { runLabel } from './labels';
 import { applyChatFilter, compactRuns, type Tool, useChatFilter, type ChatFilter } from './filter';
 import { FilterBar } from './FilterBar';
+import type { HistoryView } from './history';
+import { HistoryBlock } from './HistoryBlock';
 import { Markdown } from './Markdown';
 import { ChipText } from '../review/CommentChip';
 import { ReviewCard } from '../review/ReviewCard';
@@ -54,12 +56,15 @@ export type ChatViewProps = {
   /** The filter to start with; the saved filter of this browser when absent (tests). */
   readonly initialFilter?: ChatFilter;
   readonly review?: ChatReview | undefined;
+  /** DL-189: the earlier history of an imported session, above the timeline. */
+  readonly history?: { readonly view: HistoryView; readonly gap: boolean } | undefined;
 };
 
 type OpenChanges = ((turnId: string) => void) | undefined;
 
 const NEAR_BOTTOM_PX = 80;
 const MAX_FILE_CHIPS = 3;
+const HISTORY_TOP_PX = 40;
 
 const KIND_ICON: Record<Tool['tool_kind'], LucideIcon> = {
   shell: SquareTerminal,
@@ -378,6 +383,24 @@ export function ChatView(props: ChatViewProps) {
   };
 
   const seen = useRef<readonly Item[] | null>(null);
+  // DL-189: the scroll position before an older page loads; it keeps the same rows in view.
+  const anchor = useRef<{ readonly height: number; readonly top: number } | null>(null);
+  const history = props.history;
+  const historyCount = history?.view.items.length ?? 0;
+  const loadEarlier = () => {
+    const el = scroller.current;
+    if (el) anchor.current = { height: el.scrollHeight, top: el.scrollTop };
+    history?.view.loadEarlier();
+  };
+
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    const kept = anchor.current;
+    if (kept !== null && el) {
+      el.scrollTop = el.scrollHeight - kept.height + kept.top;
+      anchor.current = null;
+    } else if (stick.current) toBottom(false);
+  }, [historyCount]);
 
   // `stick` is the position before this commit: only a scroll by the user changes it.
   // A change of the filter keeps the bottom when it was at the bottom, and is not new output.
@@ -395,6 +418,9 @@ export function ChatView(props: ChatViewProps) {
     const near = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX;
     stick.current = near;
     if (near) setBehind(false);
+    if (el.scrollTop <= HISTORY_TOP_PX && history?.view.more && !history.view.loading) {
+      loadEarlier();
+    }
   };
 
   const last = shown.at(-1);
@@ -409,7 +435,11 @@ export function ChatView(props: ChatViewProps) {
       </p>
     );
   } else if (items.length === 0) {
-    body = <p className="fd-chat-state">No messages yet. Send a prompt to start.</p>;
+    // DL-189: with earlier history above, the empty text would be wrong.
+    body =
+      historyCount > 0 ? null : (
+        <p className="fd-chat-state">No messages yet. Send a prompt to start.</p>
+      );
   } else {
     body =
       shown.length === 0 ? (
@@ -433,6 +463,21 @@ export function ChatView(props: ChatViewProps) {
       {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a keyboard user scrolls the log */}
       <div className="fd-chat-scroll" role="log" ref={scroller} onScroll={onScroll} tabIndex={0}>
         <div className="fd-chat-column">
+          {history === undefined ? null : (
+            <>
+              {history.view.more ? (
+                <button
+                  type="button"
+                  className="fd-ghost fd-sm fd-history-more"
+                  disabled={history.view.loading}
+                  onClick={loadEarlier}
+                >
+                  {history.view.loading ? 'Loading…' : 'Load earlier messages'}
+                </button>
+              ) : null}
+              <HistoryBlock view={history.view} gap={history.gap} />
+            </>
+          )}
           {body}
           {ready && !error && showWorking ? (
             <p className="fd-chat-working">

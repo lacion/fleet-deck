@@ -11,8 +11,10 @@ import type {
   ImageInput,
   RevertResolution,
   SessionCommand,
+  SessionHistory,
   SessionKey,
 } from '../gen';
+import { isSessionHistory } from '../chat/history';
 import { type FleetAnswers, isFleetAnswers } from './fleetAnswers';
 import type { Reply } from './question';
 import { type FileActions, fileActions } from './workspace';
@@ -57,6 +59,8 @@ export type SessionActions = {
   fleetAnswers(): Promise<FleetAnswers>;
   /** The file service of the session; `null` without a reader (tests). */
   readonly files: FileActions | null;
+  /** DL-189: a page of the earlier history of an imported session; `null` without a reader. */
+  readonly history?: ((before: string | null) => Promise<SessionHistory>) | null;
 };
 
 /** The longest title, in characters (the station refuses a longer one). */
@@ -210,5 +214,15 @@ export function sessionActions(
       return v;
     },
     files: get ? fileActions(get, key) : null,
+    history: get
+      ? async (before) => {
+          const base = `/api/sessions/${encodeURIComponent(key.station_id)}/${encodeURIComponent(session_id)}/history`;
+          const v = await get(
+            before === null ? base : `${base}?before=${encodeURIComponent(before)}`,
+          );
+          if (!isSessionHistory(v)) throw new Error('The deck sent an invalid history.');
+          return v;
+        }
+      : null,
   };
 }

@@ -14,6 +14,7 @@ import {
 import { ArtifactsProvider, useArtifacts } from '../artifacts/context';
 import { SessionArtifacts } from '../artifacts/SessionArtifacts';
 import { ChatView } from '../chat/ChatView';
+import { useSessionHistory } from '../chat/history';
 import type { DeckSession, StationView } from '../gen';
 import type { Freshness, Timeline } from '../runtime/state';
 import { usePeople } from '../sharing/context';
@@ -273,6 +274,17 @@ export function SessionView(props: SessionViewProps) {
       ? async (query: string, maxHits: number) =>
           (await files.search(query, 'name', maxHits)).hits.map((h) => h.path)
       : null;
+  // DL-189: the earlier history of an imported session; the deck decides who may read it.
+  const historyView = useSessionHistory(
+    actions?.history ?? null,
+    `${key.station_id}/${key.session_id}`,
+    tab === 'chat',
+  );
+  const historyGap =
+    historyView.items.length > 0 &&
+    timeline?.ready === true &&
+    events.length > 0 &&
+    events[0]?.event.kind !== 'session.started';
   const [fileRequest, setFileRequest] = useState<{ readonly path: string; readonly seq: number }>();
   const requests = useRef(0);
   const onOpenFile = (path: string) => {
@@ -409,6 +421,7 @@ export function SessionView(props: SessionViewProps) {
                 ready={timeline?.ready === true}
                 error={timeline?.error ?? null}
                 onOpenChanges={() => onTab('changes')}
+                history={{ view: historyView, gap: historyGap }}
                 review={
                   reviewActions === undefined
                     ? undefined

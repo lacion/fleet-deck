@@ -5,6 +5,7 @@ import { canShare, PeopleProvider } from './context';
 import { fakeShareCalls, NOW, DAY, env, share, space } from './fixtures';
 import { sharedSets } from './ownerShares';
 import {
+  createShare,
   defaultForm,
   EXPIRY_DAYS,
   NewShareDialog,
@@ -15,7 +16,14 @@ import {
   shareTargets,
   USES,
 } from './ShareDialog';
-import { SharesPage, SharesView, shareState, targetText } from './SharesPage';
+import {
+  SharesPage,
+  SharesView,
+  shareHistoryOff,
+  shareHistoryOn,
+  shareState,
+  targetText,
+} from './SharesPage';
 import { closeShare, openShare, sharesChanged } from './shareStore';
 import { SpaceCard, SpacesPage, SpacesView } from './SpacesPage';
 
@@ -45,7 +53,13 @@ describe('share dialog (R11.4)', () => {
   test('the defaults and the choices', () => {
     expect(EXPIRY_DAYS).toEqual([1, 7, 30, 90]);
     expect(USES).toEqual([1, 5, 25]);
-    expect(defaultForm).toEqual({ role: 'viewer', steering: 'open', days: 7, uses: 1 });
+    expect(defaultForm).toEqual({
+      role: 'viewer',
+      steering: 'open',
+      days: 7,
+      uses: 1,
+      history: false,
+    });
   });
 
   test('steering shows for a collaborator only', () => {
@@ -75,7 +89,7 @@ describe('share dialog (R11.4)', () => {
     expect(
       shareBody(
         { kind: 'board', target: '', label: '' },
-        { role: 'collaborator', steering: 'mob', days: 30, uses: 5 },
+        { role: 'collaborator', steering: 'mob', days: 30, uses: 5, history: false },
       ),
     ).toEqual({
       kind: 'board',
@@ -86,10 +100,12 @@ describe('share dialog (R11.4)', () => {
       uses: 5,
     });
     expect(
-      shareBody(request, { role: 'approver', steering: 'mob', days: 1, uses: 25 }).steering,
+      shareBody(request, { role: 'approver', steering: 'mob', days: 1, uses: 25, history: false })
+        .steering,
     ).toBe('mob');
     expect(
-      shareBody(request, { role: 'viewer', steering: 'mob', days: 1, uses: 25 }).steering,
+      shareBody(request, { role: 'viewer', steering: 'mob', days: 1, uses: 25, history: false })
+        .steering,
     ).toBe(undefined);
   });
 
@@ -385,5 +401,141 @@ describe('new share (DL-171)', () => {
     expect(html).toContain('>Space Alpha team<');
     expect(html).toContain('<optgroup label="Sessions">');
     expect(html).toContain('>Review (Alpha)<');
+  });
+});
+
+describe('the history option of a share (DL-189)', () => {
+  const warning =
+    'Members see the full earlier conversation of the shared sessions, including anything that was pasted into it. Tool commands and file names stay hidden.';
+  const history = { ...defaultForm, history: true };
+
+  test('the body has history and elevation only when the option is on', () => {
+    expect('history' in shareBody(request, defaultForm)).toBe(false);
+    expect('elevation' in shareBody(request, defaultForm, 'tok')).toBe(false);
+    expect(shareBody(request, history, 'tok')).toMatchObject({ history: true, elevation: 'tok' });
+    expect('elevation' in shareBody(request, history)).toBe(false);
+  });
+
+  test('the checkbox and its text render, off by default', () => {
+    const html = dialog();
+    expect(html).toContain('type="checkbox"');
+    expect(html).not.toMatch(/type="checkbox" checked/);
+    expect(html).toContain('Members can read the earlier history of imported sessions');
+    expect(html).toContain(warning);
+    expect(dialog({ initialForm: history })).toMatch(/type="checkbox" checked/);
+  });
+
+  test('a create with history asks for the elevation and sends it', async () => {
+    const bodies: unknown[] = [];
+    const asked: (readonly string[] | undefined)[] = [];
+    const link = { share_id: 'sh1', url: 'https://d/#join=x', expires_at: NOW };
+    const done = await createShare(
+      {
+        create: async (body) => {
+          bodies.push(body);
+          return link;
+        },
+      },
+      async (labels) => {
+        asked.push(labels);
+        return 'tok';
+      },
+      request,
+      history,
+    );
+    expect(done).toEqual(link);
+    expect(asked).toEqual([['Share the earlier history']]);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toMatchObject({ history: true, elevation: 'tok' });
+  });
+
+  test('a create without history does not ask for the elevation', async () => {
+    let asked = 0;
+    const link = { share_id: 'sh1', url: 'https://d/#join=x', expires_at: NOW };
+    const done = await createShare(
+      { create: async () => link },
+      async () => {
+        asked += 1;
+        return 'tok';
+      },
+      request,
+      defaultForm,
+    );
+    expect(done).toEqual(link);
+    expect(asked).toBe(0);
+  });
+
+  test('a cancelled elevation sends nothing', async () => {
+    let sent = 0;
+    const done = await createShare(
+      {
+        create: async () => {
+          sent += 1;
+          throw new Error('not used');
+        },
+      },
+      async () => null,
+      request,
+      history,
+    );
+    expect(done).toBeNull();
+    expect(sent).toBe(0);
+  });
+
+  const row = (extra: Partial<Parameters<typeof SharesView>[0]> = {}, history = false) =>
+    renderToStaticMarkup(
+      <SharesView
+        state={{ kind: 'ok', value: [share('a', { history })] }}
+        now={NOW}
+        sessions={sessions}
+        stations={stations}
+        {...extra}
+      />,
+    );
+
+  test('the badge shows when the history is shared', () => {
+    expect(row({}, true)).toContain('History shared');
+    expect(row({}, false)).not.toContain('History shared');
+  });
+
+  test('Share history opens the confirm with the warning', () => {
+    const closed = row();
+    expect(closed).toContain('aria-label="Share history of Alpha / Review"');
+    expect(closed).not.toContain(warning);
+    const open = row({ confirming: 'history:a' });
+    expect(open).toContain(warning);
+    expect(open).toContain('aria-label="Cancel sharing history of Alpha / Review"');
+    // The revoke confirm and the history confirm are different groups.
+    expect(open).not.toContain('Revoke this share?');
+  });
+
+  test('Stop sharing history shows when the option is on, with no confirm', () => {
+    const html = row({}, true);
+    expect(html).toContain('aria-label="Stop sharing history of Alpha / Review"');
+    expect(html).not.toContain('aria-label="Share history of');
+  });
+
+  test('turning the history on asks for the elevation first', async () => {
+    const calls: unknown[][] = [];
+    const info = share('a', { history: true });
+    const setHistory = async (...args: unknown[]) => {
+      calls.push(args);
+      return info;
+    };
+    expect(await shareHistoryOn({ setHistory }, async () => 'tok', 'a')).toEqual(info);
+    expect(calls).toEqual([['a', true, 'tok']]);
+    expect(await shareHistoryOn({ setHistory }, async () => null, 'a')).toBeNull();
+    expect(calls).toHaveLength(1);
+  });
+
+  test('turning the history off sends enabled false and no elevation', async () => {
+    const calls: unknown[][] = [];
+    const info = share('a');
+    const setHistory = async (...args: unknown[]) => {
+      calls.push(args);
+      return info;
+    };
+    expect(await shareHistoryOff({ setHistory }, 'a')).toEqual(info);
+    expect(calls).toEqual([['a', false]]);
   });
 });
