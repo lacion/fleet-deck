@@ -20,6 +20,7 @@ import { EmptyState, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import { ShellPanel } from '../shell/ShellPanel';
 import { PairingDialog } from './PairingDialog';
+import { StationResources } from './StationResources';
 import type { Outcome } from '../session/commands';
 import {
   authLabel,
@@ -576,6 +577,7 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                     : `${active} of ${info.max_sessions} sessions`}
                 </span>
               </div>
+              <StationResources resources={info?.resources} />
               {info === null ? (
                 <p className="fd-note">Reported when the station links to this deck.</p>
               ) : info.providers.length === 0 ? (

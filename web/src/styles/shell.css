@@ -1100,6 +1100,33 @@ body:has(.fd-app[data-layout="tablet"]) {
   background: var(--act);
 }
 
+/* The disk, memory and CPU rows of a station card (DL-193). */
+.fd-station-res {
+  display: grid;
+  gap: var(--sp-1);
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fd-station-res li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-12);
+  color: var(--dim);
+}
+
+.fd-station-res li[data-low] > span:last-child {
+  color: var(--act);
+}
+
+.fd-res-warn {
+  margin: var(--sp-1) 0 0;
+  color: var(--act);
+}
+
 .fd-station h4 {
   margin: 0;
   font-family: var(--font-ui);

@@ -7,6 +7,7 @@ import { DECK } from '../settings/actions';
 import { useSettings } from '../settings/context';
 import { FolderPicker } from '../ui/FolderPicker';
 import { useNow } from '../ui/useNow';
+import { resourceWarnings } from '../board/resources';
 import { BranchFields } from './BranchFields';
 import { CloneAccess } from './CloneAccess';
 import { FleetControlFields } from './FleetControlFields';
@@ -96,6 +97,7 @@ export function SpawnForm({
   );
   const station = targets.find((s) => s.station_id === stationId);
   const providers = station?.info?.providers ?? [];
+  const resourceTexts = resourceWarnings(station?.info?.resources).map((w) => w.text);
   const [instance, setInstance] = useState(providers[0]?.instance ?? '');
   const provider = providers.find((p) => p.instance === instance);
   const now = useNow(givenNow, 30000);
@@ -453,6 +455,11 @@ export function SpawnForm({
                 </select>
               </label>
             </div>
+            {resourceTexts.length > 0 ? (
+              <p className="fd-note" role="status" data-resource-warning>
+                {`This station is low on resources: ${resourceTexts.join('; ')}. You can still start the session.`}
+              </p>
+            ) : null}
             <div className="fd-fieldwrap" role="group" aria-label="Directory">
               <span className="fd-fieldlabel">Directory</span>
               <FolderPicker

@@ -200,3 +200,31 @@ describe('spawn form: the setup command (DL-148)', () => {
     );
   });
 });
+
+describe('spawn form: the station resources (DL-193)', () => {
+  const busy = {
+    at: 1,
+    disks: [],
+    memory: null,
+    cpu: { cores: 4, load1_x100: 0, load5_x100: 1250 },
+  };
+  const submit = (html: string) => html.match(/<button type="submit"[^>]*>/)?.[0];
+
+  test('a chosen station with a busy CPU shows the warning and does not disable the submit button', () => {
+    const html = form([reported('station-a', { info: info({ resources: busy }) })]);
+    expect(html).toContain('data-resource-warning');
+    expect(html).toContain(
+      'This station is low on resources: Busy CPU: load 12.5 on 4 cores. You can still start the session.',
+    );
+    // the missing directory disables the button on both forms; the warning adds nothing
+    expect(submit(html)).toBe(submit(form([reported()])));
+  });
+
+  test('a station without a warning shows no line', () => {
+    expect(form([reported()])).not.toContain('data-resource-warning');
+    const calm = { ...busy, cpu: { cores: 4, load1_x100: 0, load5_x100: 100 } };
+    expect(form([reported('station-a', { info: info({ resources: calm }) })])).not.toContain(
+      'data-resource-warning',
+    );
+  });
+});
