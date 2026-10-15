@@ -177,8 +177,10 @@ async fn read(
     })?
     .map_err(|_| unreachable_station(station))?;
     match outcome {
-        Outcome::Ok(v) => serde_json::from_value(v).map_err(|e| {
-            tracing::warn!(error = %e, "the station sent a history answer that does not parse");
+        Outcome::Ok(v) => serde_json::from_value(v).map_err(|_| {
+            // The decode error can quote the answer (transcript text): it is
+            // not logged (DL-189).
+            tracing::warn!("the station sent a history answer that does not parse");
             ApiError::new(
                 StatusCode::BAD_GATEWAY,
                 "station_error",
