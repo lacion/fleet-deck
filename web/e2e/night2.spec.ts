@@ -93,8 +93,9 @@ test('a worktree start sends the branch, the base and the setup command', async 
   await expect(form).toContainText('The branch name is not valid.');
   await form.getByRole('textbox', { name: 'Branch', exact: true }).fill('feature/PROJ-123-login');
   await form.getByRole('textbox', { name: 'Base', exact: true }).fill('main');
+  await form.getByText('More options', { exact: true }).click();
   await form.getByLabel('Setup command (optional)').fill('bun install');
-  await form.getByLabel('First prompt (optional)').fill('Fix the login');
+  await form.getByLabel('What should the agent do? (optional)').fill('Fix the login');
   await shot(page, 'spawn-worktree');
   expect(await fitsWidth(page)).toBe(true);
   await form.getByRole('button', { name: 'Start session' }).click();

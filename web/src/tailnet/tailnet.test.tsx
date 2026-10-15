@@ -25,7 +25,7 @@ import {
   windowText,
 } from './model';
 import { saveDeckKey } from './save';
-import { TailnetCardView, WINDOWS_TEXT, certificateLine } from './TailnetCard';
+import { TailnetCardView, WINDOWS_TEXT, certificateLine, tailnetChanges } from './TailnetCard';
 import { RequestCard } from './TailnetPairing';
 
 const noop = () => {};
@@ -222,6 +222,37 @@ describe('TailnetCardView', () => {
     expect(html).toContain('127.0.0.1:7420');
     expect(html).toContain('100.64.0.1:7421');
     expect(html).toContain('>Use tailnet</button>');
+  });
+
+  test('the "With tailnet" row shows only when it differs from the current addresses', () => {
+    const same = view({
+      current: { listen: ['100.64.0.1:7420'], link_listen: ['100.64.0.1:7421'] },
+      managed: { listen: ['100.64.0.1:7420'], link_listen: ['100.64.0.1:7421'] },
+    });
+    const html = card(same);
+    expect(html).toContain('<th scope="row">Listens on</th>');
+    expect(html).not.toContain('With tailnet');
+    expect(html).not.toContain('>Now<');
+    // The same addresses in another order are the same set.
+    const reordered = card(
+      view({
+        current: { listen: ['a:1', 'b:2'], link_listen: [] },
+        managed: { listen: ['b:2', 'a:1'], link_listen: [] },
+      }),
+    );
+    expect(reordered).not.toContain('With tailnet');
+    const differs = card(view());
+    expect(differs).toContain('<th scope="row">Now</th>');
+    expect(differs).toContain('<th scope="row">With tailnet</th>');
+    expect(tailnetChanges(view())).toBe(true);
+    expect(tailnetChanges(same)).toBe(false);
+  });
+
+  test('both booleans are switches with the label after the box', () => {
+    const html = card(view());
+    expect(html.match(/<input type="checkbox" role="switch" class="fd-switch"/g)).toHaveLength(2);
+    expect(html).toMatch(/class="fd-switch"[^>]*\/>Use Tailscale automatically<\/label>/);
+    expect(html).toMatch(/class="fd-switch"[^>]*\/>Trusted certificate from Tailscale<\/label>/);
   });
 
   test('Update when some of the addresses are present', () => {

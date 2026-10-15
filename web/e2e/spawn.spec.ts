@@ -106,11 +106,11 @@ test('a session starts from the form with a picked directory and opens', async (
   await logIn(page);
   await chooseApp(page);
   const form = page.getByRole('region', { name: 'New session' });
-  await expect(form.getByLabel('Provider')).toContainText('personal · claude · 2.1.5');
+  await expect(form.getByLabel('Provider')).toContainText('Claude 2.1.5 (personal)');
   await form.getByLabel('Permission mode').selectOption('plan');
   await form.getByLabel('Model (optional)').fill('sonnet');
   await form.getByLabel('Title (optional)').fill('Fix the login');
-  await form.getByLabel('First prompt (optional)').fill('Find the bug in login.ts');
+  await form.getByLabel('What should the agent do? (optional)').fill('Find the bug in login.ts');
   expect(await fitsWidth(page)).toBe(true);
   await form.getByRole('button', { name: 'Start session' }).click();
   // one successful start opens the new session at once
@@ -198,10 +198,10 @@ test('a refused start shows the station reason and keeps the form', async ({ pag
   await logIn(page);
   await chooseApp(page);
   const form = page.getByRole('region', { name: 'New session' });
-  await form.getByLabel('First prompt (optional)').fill('hello');
+  await form.getByLabel('What should the agent do? (optional)').fill('hello');
   await form.getByRole('button', { name: 'Start session' }).click();
   await expect(page.getByRole('alert')).toContainText('Refused: The station runs 4 of 4 sessions.');
-  await expect(form.getByLabel('First prompt (optional)')).toHaveValue('hello');
+  await expect(form.getByLabel('What should the agent do? (optional)')).toHaveValue('hello');
   await expect(page.getByRole('button', { name: 'Open the new session' })).toHaveCount(0);
 });
 
@@ -244,7 +244,9 @@ test('a batch starts one worktree session per line with Nx (M3 6-1)', async ({ p
   await chooseApp(page);
   const form = page.getByRole('region', { name: 'New session' });
   await form.getByLabel(/Batch: one session/).check();
-  await form.getByLabel('First prompt (optional)').fill('2x fix the tests\nwrite docs');
+  await form
+    .getByLabel('What should the agent do? (optional)')
+    .fill('2x fix the tests\nwrite docs');
   expect(await fitsWidth(page)).toBe(true);
   await form.getByRole('button', { name: 'Start 3 sessions' }).click();
   await expect(
@@ -293,6 +295,27 @@ test('a clone start sends the URL and the new directory (M3 6-1)', async ({ page
   });
 });
 
+test('More options is folded and stays open while an option has a value', async ({ page }) => {
+  const deck = new FakeDeck();
+  deck.stations = [alpha];
+  picker(deck);
+  await deck.install(page);
+  await logIn(page);
+  await page.getByRole('button', { name: 'New session' }).click();
+  const form = page.getByRole('region', { name: 'New session' });
+  const fold = form.locator('details.fd-spawn-options');
+  await expect(fold).not.toHaveAttribute('open', '');
+  await form.getByText('More options', { exact: true }).click();
+  await expect(fold).toHaveAttribute('open', '');
+  await form.getByText('More options', { exact: true }).click();
+  await expect(fold).not.toHaveAttribute('open', '');
+  // An option with a value keeps the fold open.
+  await form.getByText('More options', { exact: true }).click();
+  await form.getByLabel('Import CLI session id (optional)').fill('abc');
+  await form.getByText('More options', { exact: true }).click();
+  await expect(fold).toHaveAttribute('open', '');
+});
+
 test('a terminal CLI session is imported by its id as a driven session (6-12)', async ({
   page,
 }) => {
@@ -310,12 +333,13 @@ test('a terminal CLI session is imported by its id as a driven session (6-12)', 
   await logIn(page);
   await chooseApp(page);
   const form = page.getByRole('region', { name: 'New session' });
+  await form.getByText('More options', { exact: true }).click();
   const id = form.getByLabel('Import CLI session id (optional)');
   await id.fill('--resume');
   await expect(form.getByRole('alert')).toContainText('starts with a letter or a digit');
   await expect(form.getByRole('button', { name: 'Import session' })).toBeDisabled();
   await id.fill('0b6c1d2e-aaaa-4bbb-8ccc-123456789abc');
-  await form.getByLabel('First prompt (optional)').fill('Go on');
+  await form.getByLabel('What should the agent do? (optional)').fill('Go on');
   expect(await fitsWidth(page)).toBe(true);
   await form.getByRole('button', { name: 'Import session' }).click();
   await expect(page).toHaveURL(/#\/s\/st-alpha\/s-imp$/);
@@ -345,10 +369,10 @@ test('a batch lists its prompts and counts the sessions on the button', async ({
   await form.getByLabel(/Batch: one session/).check();
   const preview = form.getByLabel('Sessions to start');
   // one line is one session: no preview and the plain button
-  await form.getByLabel('First prompt (optional)').fill('fix the tests');
+  await form.getByLabel('What should the agent do? (optional)').fill('fix the tests');
   await expect(preview).toHaveCount(0);
   await expect(form.getByRole('button', { name: 'Start session' })).toBeVisible();
-  await form.getByLabel('First prompt (optional)').fill('fix the tests\nwrite docs');
+  await form.getByLabel('What should the agent do? (optional)').fill('fix the tests\nwrite docs');
   await expect(preview).toContainText('2 sessions, each in its own worktree');
   await expect(preview.getByRole('listitem')).toHaveText(['fix the tests', 'write docs']);
   await expect(form.getByRole('button', { name: 'Start 2 sessions' })).toBeEnabled();

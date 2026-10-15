@@ -16,6 +16,25 @@
   min-width: 0;
   padding: var(--sp-4);
 }
+/* Pickers of one panel in one line; on a phone they stack by themselves. */
+.fd-spawn-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+.fd-spawn-row > .fd-note {
+  grid-column: 1 / -1;
+}
+.fd-spawn form > details.fd-spawn-options {
+  display: grid;
+  gap: var(--sp-3);
+  min-width: 0;
+  padding: var(--sp-4);
+}
+.fd-spawn-options > summary {
+  cursor: pointer;
+}
 .fd-spawn .fd-panel > .fd-label {
   margin: 0;
   font-weight: 500;

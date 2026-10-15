@@ -334,9 +334,21 @@ export function knownModels(
   return best?.summary.models ?? null;
 }
 
+/** "More options" is open when the person opened it or when any option holds a value. */
+export function moreOptionsOpen(
+  opened: boolean,
+  values: { readonly setup: string; readonly coordinator: boolean; readonly importId: string },
+): boolean {
+  return (
+    opened || values.setup.trim() !== '' || values.coordinator || values.importId.trim() !== ''
+  );
+}
+
+/** "Claude 2.1.300", plus the instance name in brackets when it is not the provider name. */
 export function providerLabel(p: StationProvider): string {
-  const version = p.version === null ? 'version unknown' : p.version;
-  return `${p.instance} · ${p.provider} · ${version}`;
+  const name = p.provider.charAt(0).toUpperCase() + p.provider.slice(1);
+  const base = `${name} ${p.version ?? 'version unknown'}`;
+  return p.instance === p.provider ? base : `${base} (${p.instance})`;
 }
 
 /**
@@ -350,7 +362,7 @@ export function providerChoiceLabel(
   mostRoom: boolean,
 ): string {
   const suffix = limitSuffix(limit, now);
-  return `${providerLabel(p)}${suffix === '' ? '' : ` · ${suffix}`}${mostRoom ? ' (most room)' : ''}`;
+  return `${providerLabel(p)}${suffix === '' ? '' : `, ${suffix}`}${mostRoom ? ' (most room)' : ''}`;
 }
 
 /** The warning under the provider select for a CLI version that the station

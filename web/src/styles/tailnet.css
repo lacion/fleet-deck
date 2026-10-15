@@ -12,6 +12,11 @@
 .fd-tailnet p {
   margin: 0;
 }
+.fd-tailnet label.fd-tailnet-switch {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
 .fd-tailnet-table {
   border-collapse: collapse;
   max-width: 100%;

@@ -52,10 +52,15 @@ test('an admin sees the station report and makes an invitation for a dialing sta
   await openMore(page, 'Stations');
   const card = page.locator('[data-station="st-alpha"]');
   await expect(card).toContainText('Link up');
-  await expect(card).toContainText('0 / 4');
-  await expect(card.locator('.fd-badge', { hasText: '0.2.0' })).toBeVisible();
-  await expect(card.locator('[data-instance="personal"]')).toHaveText('Claude 2.1.5 · signed in');
-  await expect(card.locator('[data-instance="work"]')).toHaveText('Codex · sign-in unknown');
+  await expect(card).toContainText('0 of 4 sessions');
+  await expect(card.locator('.fd-load-bar')).toBeVisible();
+  // The version, the ids and the key sit in the Details fold.
+  await expect(card.getByText('Station ID')).toBeHidden();
+  await card.getByText('Details', { exact: true }).click();
+  await expect(card.locator('.fd-facts')).toContainText('0.2.0');
+  await expect(card.locator('.fd-facts')).toContainText('st-alpha');
+  await expect(card.locator('[data-instance="personal"]')).toHaveText('Claude 2.1.5signed in');
+  await expect(card.locator('[data-instance="work"]')).toHaveText('Codexsign-in unknown');
   expect(await fitsWidth(page)).toBe(true);
 
   await page.getByRole('button', { name: 'Add station' }).click();
@@ -146,10 +151,14 @@ test('an admin pairs a listening station, sees a refusal, and removes a station'
   await expect(box).toContainText('Reported when the station links to this deck.');
 
   const alpha = page.locator('[data-station="st-alpha"]');
-  await alpha.getByRole('button', { name: 'Remove station' }).click();
+  // Remove sits in the overflow menu; the confirm shows only after it.
+  await expect(alpha.getByRole('button', { name: 'Confirm remove' })).toHaveCount(0);
+  await alpha.getByLabel('Station actions').click();
+  await alpha.getByRole('button', { name: 'Remove station…' }).click();
   await alpha.getByRole('button', { name: 'Cancel' }).click();
   expect(deck.calls.some((c) => c.path.endsWith('/remove'))).toBe(false);
-  await alpha.getByRole('button', { name: 'Remove station' }).click();
+  await alpha.getByLabel('Station actions').click();
+  await alpha.getByRole('button', { name: 'Remove station…' }).click();
   await alpha.getByRole('button', { name: 'Confirm remove' }).click();
   await expect(alpha).toHaveCount(0);
   await page.getByRole('navigation', { name: 'Board' }).getByRole('link', { name: 'More' }).click();
@@ -172,8 +181,8 @@ test('a login without the admin scope sees the report but no pairing controls', 
   await openMore(page, 'Stations');
   await expect(page.getByText('Pairing needs the admin scope.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Add station' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Remove station' })).toHaveCount(0);
-  await expect(page.locator('[data-station="st-alpha"]')).toContainText('0 / 4');
+  await expect(page.getByLabel('Station actions')).toHaveCount(0);
+  await expect(page.locator('[data-station="st-alpha"]')).toContainText('0 of 4 sessions');
 });
 
 const worktree = (extra: Partial<WorktreeInfo>): WorktreeInfo => ({
@@ -299,7 +308,7 @@ test('a login without the admin scope has no worktree section', async ({ page })
   await deck.install(page);
   await logIn(page);
   await openMore(page, 'Stations');
-  await expect(page.locator('[data-station="st-alpha"]')).toContainText('0 / 4');
+  await expect(page.locator('[data-station="st-alpha"]')).toContainText('0 of 4 sessions');
   await expect(page.locator('details.fd-wt')).toHaveCount(0);
 });
 

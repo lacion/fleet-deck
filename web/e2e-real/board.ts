@@ -94,9 +94,9 @@ export class Phone {
       .filter({ has: this.page.getByRole('heading', { name }) });
   }
 
-  /** The badge of a configured provider on a station card. */
+  /** The row of a configured provider on a station card. */
   provider(name: string, instance: string): Locator {
-    return this.stationCard(name).locator(`.fd-providers [data-instance="${instance}"]`);
+    return this.stationCard(name).locator(`.fd-station-providers [data-instance="${instance}"]`);
   }
 
   /** The page fits the phone width: no horizontal scroll. */
@@ -168,7 +168,7 @@ export class Phone {
     await form.getByRole('button', { name: 'Use this folder' }).click();
     await expect(form.getByLabel('Directory path')).toHaveValue(station.workspace);
     await form.getByLabel('Title (optional)').fill(title);
-    await form.getByLabel('First prompt (optional)').fill(prompt);
+    await form.getByLabel('What should the agent do? (optional)').fill(prompt);
     expect(await this.fitsWidth()).toBe(true);
     await form.getByRole('button', { name: 'Start session' }).click();
     // One new session opens at once (DL-141).

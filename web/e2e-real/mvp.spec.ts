@@ -119,7 +119,7 @@ async function spawn(station: Station, title: string, prompt: string): Promise<s
   await form
     .getByRole('combobox', { name: 'Station', exact: true })
     .selectOption({ label: station.name });
-  await expect(form.getByLabel('Provider')).toContainText(`${PROVIDER} · claude · 2.1.999`);
+  await expect(form.getByLabel('Provider')).toContainText(`Claude 2.1.999 (${PROVIDER})`);
   await form.getByRole('button', { name: 'Browse…' }).click();
   // The root list shows the station's absolute allowed roots.
   await form.getByRole('button', { name: `Open ${station.home}/projects` }).click();
@@ -129,7 +129,7 @@ async function spawn(station: Station, title: string, prompt: string): Promise<s
   await form.getByRole('button', { name: 'Use this folder' }).click();
   await expect(form.getByLabel('Directory path')).toHaveValue(station.workspace);
   await form.getByLabel('Title (optional)').fill(title);
-  await form.getByLabel('First prompt (optional)').fill(prompt);
+  await form.getByLabel('What should the agent do? (optional)').fill(prompt);
   expect(await fitsWidth()).toBe(true);
   await form.getByRole('button', { name: 'Start session' }).click();
   // One new session opens at once (DL-141).
@@ -201,8 +201,8 @@ test('the board logs in and pairs a dialing and a listening station', async () =
   for (const name of ['alpha', 'bravo']) {
     const st = stationCard(name);
     await expect(st).toContainText('Link up');
-    await expect(st).toContainText('0 / 4');
-    await expect(st.locator(`.fd-providers [data-instance="${PROVIDER}"]`)).toContainText(
+    await expect(st).toContainText('0 of 4 sessions');
+    await expect(st.locator(`.fd-station-providers [data-instance="${PROVIDER}"]`)).toContainText(
       'Claude 2.1.999',
     );
   }

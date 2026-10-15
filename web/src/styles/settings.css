@@ -75,11 +75,11 @@
     background var(--t-fast);
 }
 .fd-switch:checked {
-  background: var(--act-bg);
-  border-color: var(--act);
+  background: var(--free-bg);
+  border-color: var(--ok);
 }
 .fd-switch:checked::after {
-  background: var(--act);
+  background: var(--ok);
   transform: translateX(14px);
 }
 .fd-switch:focus-visible {

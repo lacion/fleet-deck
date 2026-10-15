@@ -21,7 +21,7 @@ import {
 } from './fleet';
 import { COLUMNS, columnCards, FleetBoard } from './FleetBoard';
 import { removeCommand, stationActions, worktreeLoader } from './pairing';
-import { StationsPanel, WorktreeRow } from './StationsPanel';
+import { loadWidth, StationsPanel, WorktreeRow } from './StationsPanel';
 
 describe('fleet projections', () => {
   test('cards from two stations with the same session ID keep different keys and both appear', () => {
@@ -168,12 +168,75 @@ describe('station projections', () => {
       'fingerprint',
       '1970-01-01T00:00:00.000Z',
       'Unreachable',
-      'Dial-only (no stored address)',
-      '<dt>Last seen</dt><dd>—</dd>',
-      '<dt>Sessions</dt><dd>0</dd>',
+      'Not stored, the station dials this deck',
+      'Last seen —',
+      '0 sessions',
     ])
       expect(html).toContain(text);
+    expect(html).not.toContain('Dial-only');
     expect(html).not.toContain('Not reported');
+  });
+  test('the card head states the link health as a fact with a dot, not a badge', () => {
+    const html = renderToStaticMarkup(
+      <StationsPanel
+        stations={[station('station-a'), station('station-b', { reachable: false })]}
+        sessions={[]}
+        freshness="live"
+      />,
+    );
+    expect(html).toContain(
+      '<span class="fd-station-health fd-health" data-health="up"><span class="fd-dot" data-status="working" aria-hidden="true"></span>Link up</span>',
+    );
+    expect(html).toContain(
+      '<span class="fd-station-health fd-health" data-health="down"><span class="fd-dot" data-status="unreachable" aria-hidden="true"></span>Unreachable</span>',
+    );
+    expect(html).toContain('<h3 class="fd-station-name">Alpha</h3>');
+    expect(html).not.toContain('fd-badge');
+  });
+  test('the Details fold holds the id, the key, the direction and the link address', () => {
+    const html = renderToStaticMarkup(
+      <StationsPanel stations={[station()]} sessions={[]} freshness="live" />,
+    );
+    const details = /<details class="fd-station-details">([\s\S]*?)<\/details>/.exec(html)?.[1];
+    expect(details).toContain('<summary class="fd-label">Details</summary>');
+    for (const text of ['Station ID', 'Key fingerprint', 'Direction', 'Link address'])
+      expect(details).toContain(`<dt>${text}</dt>`);
+    // The ids are not in the head or in the live facts.
+    expect(html.replace(details ?? '', '')).not.toContain('Station ID');
+  });
+  test('the load shows a bar, 90 percent and more in the act color, and caps at 100 percent', () => {
+    expect(loadWidth(0, 4)).toBe('0%');
+    expect(loadWidth(1, 4)).toBe('25%');
+    expect(loadWidth(9, 4)).toBe('100%');
+    expect(loadWidth(3, 0)).toBe('0%');
+    const render = (max: number, count: number) =>
+      renderToStaticMarkup(
+        <StationsPanel
+          stations={[
+            station('station-a', {
+              info: {
+                name: 'alpha-host',
+                incarnation: 'inc',
+                head: 9,
+                live_sessions: 0,
+                version: null,
+                max_sessions: max,
+                allow_shell: null,
+                providers: [],
+              },
+              info_at: 0,
+            }),
+          ]}
+          sessions={Array.from({ length: count }, (_, i) => card(`s${i}`))}
+          freshness="live"
+        />,
+      );
+    const low = render(10, 5);
+    expect(low).toContain('<span style="width:50%"></span>');
+    expect(low).toContain('5 of 10 sessions');
+    expect(low).not.toContain('data-high');
+    const high = render(10, 9);
+    expect(high).toContain('<span style="width:90%" data-high=""></span>');
   });
   test('stale station metadata never labels a cached link as currently up', () => {
     const html = renderToStaticMarkup(
@@ -213,7 +276,7 @@ describe('station projections', () => {
     const html = renderToStaticMarkup(
       <StationsPanel stations={[station()]} sessions={cards} freshness="live" />,
     );
-    expect(html).toContain('<dt>Sessions</dt><dd>3</dd>');
+    expect(html).toContain('3 sessions');
   });
   test('a station report shows version, capacity and configured providers with their sign-in state', () => {
     const html = renderToStaticMarkup(
@@ -255,12 +318,14 @@ describe('station projections', () => {
       />,
     );
     for (const text of [
-      '<dt>Sessions</dt><dd>0 / 4</dd>',
-      '<span class="fd-badge">0.2.0</span>',
-      'data-instance="personal" data-tone="ok" title="personal">Claude 2.1.5 · signed in',
-      'data-instance="work" data-tone="muted" title="work">Codex · sign-in unknown',
+      '0 of 4 sessions',
+      '<dt>Version</dt><dd>0.2.0</dd>',
+      '<li data-instance="personal" title="personal"><span>Claude 2.1.5</span><span class="fd-station-auth" data-auth="ok"><span class="fd-dot" aria-hidden="true"></span>signed in</span></li>',
+      '<li data-instance="work" title="work"><span>Codex</span><span class="fd-station-auth" data-auth="muted"><span class="fd-dot" aria-hidden="true"></span>sign-in unknown</span></li>',
     ])
       expect(html).toContain(text);
+    expect(html).not.toContain(' · ');
+    expect(html).not.toContain('fd-badge');
     expect(html).not.toContain('Reported when the station links');
   });
   test('the key fingerprint is shortened with the full value in a title and a copy button', () => {
@@ -313,7 +378,11 @@ describe('station projections', () => {
         />,
       );
     expect(render(true, 'live')).toContain('Add station');
-    expect(render(true, 'live')).toContain('Remove station');
+    expect(render(true, 'live')).toContain('Remove station…');
+    expect(render(true, 'live')).toContain('aria-label="Station actions"');
+    // The remove button lives in the menu and the confirm shows only after it.
+    expect(render(true, 'live')).toMatch(/fd-menu-body[^>]*><button[^>]*>[\s\S]*?Remove station…/);
+    expect(render(true, 'live')).not.toContain('Confirm remove');
     expect(render(true, 'stale')).toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*?Add station/);
     expect(render(false, 'live')).toContain('Pairing needs the admin scope.');
     expect(render(false, 'live')).not.toContain('Remove station');
