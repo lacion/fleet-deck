@@ -73,6 +73,18 @@ fn a_file_of_a_future_format_is_unsupported_not_empty() {
 }
 
 #[test]
+fn skipped_records_with_no_item_left_are_partial_not_empty() {
+    let idx = super::index::Index {
+        entries: Vec::new(),
+        dropped: 0,
+        skipped: 3,
+        recognized: 2,
+        size: 100,
+    };
+    assert_eq!(state_of(&idx), HistoryState::Partial { skipped: 3 });
+}
+
+#[test]
 fn a_bad_json_line_and_an_unknown_shape_count_as_skipped() {
     let lines = vec![
         claude_user(1, "hello"),

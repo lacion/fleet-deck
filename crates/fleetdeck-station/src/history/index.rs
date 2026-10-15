@@ -266,7 +266,10 @@ pub fn state_of(index: &Index) -> HistoryState {
                 reason: HistoryUnavailable::UnsupportedFormat,
             };
         }
-        return HistoryState::Empty;
+        // Skipped records with no item left are not an empty history.
+        if skipped == 0 {
+            return HistoryState::Empty;
+        }
     }
     if skipped > 0 {
         HistoryState::Partial {

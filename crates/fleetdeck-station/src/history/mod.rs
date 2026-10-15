@@ -154,6 +154,8 @@ pub struct Seams {
 struct Shared {
     limits: Limits,
     budget: Arc<Semaphore>,
+    /// One lazy capture at a time (DL-189): see [`lazy_row`].
+    lazy: tokio::sync::Mutex<()>,
     dir: OnceLock<PathBuf>,
     cache: Mutex<index::Cache>,
     seams: Seams,
@@ -185,6 +187,7 @@ impl History {
             shared: Arc::new(Shared {
                 limits,
                 budget: Arc::new(Semaphore::new(1)),
+                lazy: tokio::sync::Mutex::new(()),
                 dir: OnceLock::new(),
                 cache: Mutex::new(index::Cache::default()),
                 seams: Seams::default(),
@@ -610,6 +613,16 @@ async fn lazy_row(
     let Some(cutoff) = facts.first_process_at.filter(|_| !member) else {
         return answer(not_captured);
     };
+    // The row is checked again under the lock, so a second capture never
+    // replaces the snapshot of a committed row.
+    let _lazy = history.shared.lazy.lock().await;
+    if let Some(row) = store
+        .transcript(session_id.clone())
+        .await
+        .map_err(internal)?
+    {
+        return Ok(Ok(row));
+    }
     let captured = capture_for(
         history,
         Some(policy),

@@ -249,6 +249,35 @@ async fn an_owner_read_of_an_older_import_takes_a_lazy_snapshot_before_the_first
 }
 
 #[tokio::test]
+async fn two_first_owner_reads_take_one_lazy_snapshot_that_later_writes_do_not_change() {
+    let rig = Rig::new(ProviderKind::Claude).await;
+    rig.session("s1", Some(NATIVE)).await;
+    rig.first_effect("s1", "resume", true).await;
+    rig.write(NATIVE, &[claude_user(1, "q1"), claude_assistant(2, "a2")]);
+    let cutoff = super::parse::parse_time_ms("2026-10-14T10:00:10.000Z").unwrap();
+    rig.process("s1", cutoff).await;
+    let (a, b) = tokio::join!(
+        rig.ask("s1", None, None, false),
+        rig.ask("s1", None, None, false)
+    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_eq!(a.items, b.items);
+    assert_eq!(a.state, HistoryState::Complete);
+    let row = rig.store.transcript("s1".into()).await.unwrap().unwrap();
+    // A rewrite of the provider file after the capture changes nothing.
+    rig.write(
+        NATIVE,
+        &[claude_user(1, "other"), claude_assistant(2, "text")],
+    );
+    let later = rig.ask("s1", None, None, false).await.unwrap();
+    assert_eq!(later.items, a.items);
+    assert_eq!(
+        rig.store.transcript("s1".into()).await.unwrap().unwrap(),
+        row
+    );
+}
+
+#[tokio::test]
 async fn a_lazy_capture_needs_a_process_row() {
     let rig = Rig::new(ProviderKind::Claude).await;
     rig.session("s1", Some(NATIVE)).await;
