@@ -223,6 +223,25 @@ impl Rig {
         Station { store, manager }
     }
 
+    /// Drops a station and waits until this process has closed its
+    /// connection to the database file of the rig. The tasks that the
+    /// manager started hold clones of the store, so the connection (and
+    /// with it the WAL files) outlives the `Station` value for a short
+    /// time. A station that starts before the connection is closed meets a
+    /// `database is locked` error at once, without the busy timeout: the
+    /// closing connection checkpoints the WAL under an exclusive lock.
+    /// A test that starts a next station on the same file calls this
+    /// instead of `drop`.
+    pub async fn close(&self, station: Station) {
+        drop(station);
+        let db = self.tmp.path().join("station.db");
+        let deadline = Instant::now() + WAIT;
+        while db_open_here(&db) {
+            assert!(Instant::now() < deadline, "the database stays open");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
     pub async fn submit(&mut self, station: &Station, command: SessionCommand) -> Decided {
         self.next += 1;
         let envelope = CommandEnvelope {
@@ -481,4 +500,19 @@ pub async fn prompt_when_live(rig: &mut Rig, station: &Station, session: &Sessio
         assert!(Instant::now() < deadline, "{:?}", decided.receipt);
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
+}
+
+/// Whether this process holds the database file `db` (or its WAL files)
+/// open: a symlink of `/proc/self/fd` points at it.
+fn db_open_here(db: &Path) -> bool {
+    let name = db.file_name().unwrap().to_string_lossy().into_owned();
+    std::fs::read_dir("/proc/self/fd")
+        .unwrap()
+        .filter_map(|e| std::fs::read_link(e.unwrap().path()).ok())
+        .any(|target| {
+            target.parent() == db.parent()
+                && target
+                    .file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with(&name))
+        })
 }

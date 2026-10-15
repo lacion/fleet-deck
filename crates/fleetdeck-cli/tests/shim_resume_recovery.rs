@@ -46,7 +46,7 @@ async fn lost_under_a_dead_shim(
             .unwrap();
     }
     // The next station of the rig opens the same database: this one closes.
-    drop(st);
+    rig.close(st).await;
     (session, shim_id)
 }
 
@@ -114,7 +114,7 @@ async fn without_a_changed_boot_id_the_session_needs_the_owner_check_and_reconci
     let row = st.store.shim(shim_id.clone()).await.unwrap().unwrap();
     assert_eq!(row.proof, None);
     st.manager.shutdown(StopMode::Graceful).await;
-    drop(st);
+    rig.close(st).await;
     // The same boot id: no proof either.
     rig.set_boot(Boot::Real);
     let st = rig.station().await;
@@ -234,7 +234,9 @@ async fn a_resume_claimed_before_a_crash_settles_as_outcome_unknown_and_is_never
     let claimed = store.claim_next(fence).await.unwrap().unwrap();
     assert!(matches!(claimed.payload, EffectPayload::Resume { .. }));
     assert_eq!(summary.state, SessionState::Exited);
-    drop(st);
+    // The test's own clone of the store closes with the station.
+    drop(store);
+    rig.close(st).await;
 
     let st = rig.station().await;
     let effects = st.store.session_effects(session.clone()).await.unwrap();
