@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::collections::VecDeque;
+use std::fs;
 use std::sync::Mutex as StdMutex;
 use std::sync::atomic::AtomicUsize;
 
@@ -83,6 +84,7 @@ fn live(on: bool) -> DeckLive {
         conflict_mail: true,
         fleet_control: false,
         tailscale_cert: on,
+        tailscale_bin: None,
     }
 }
 
@@ -391,4 +393,58 @@ fn the_production_anchors_are_not_the_test_anchors() {
         &isrg_anchors(),
     );
     assert!(refused.is_err());
+}
+
+#[tokio::test]
+async fn a_new_program_choice_cancels_the_running_issue_and_starts_again() {
+    let fx = Fx::new(true, false);
+    let fake = Fake::new(NAME, vec![Ok(fx.pem())], true);
+    let task = fx.start(&fake);
+    until("the first call", || fake.issued() == 1).await;
+    let mut other = live(true);
+    other.tailscale_bin = Some(PathBuf::from("/opt/other/tailscale"));
+    fx.live.publish(other);
+    // The schedule is 30 s: the second call is the effect of the change.
+    until("the second call", || fake.issued() == 2).await;
+    assert!(!fx.served() && !fx.file());
+    fake.gate.as_ref().unwrap().notify_one();
+    until("valid", || task.state().state == CertStateKind::Valid).await;
+    assert_eq!(fake.issued(), 2);
+    assert!(fx.served() && fx.file());
+}
+
+#[tokio::test]
+async fn a_new_program_choice_while_off_starts_nothing() {
+    let fx = Fx::new(false, false);
+    let fake = Fake::new(NAME, vec![Ok(fx.pem())], false);
+    let task = fx.start(&fake);
+    let mut other = live(false);
+    other.tailscale_bin = Some(PathBuf::from("/opt/other/tailscale"));
+    fx.live.publish(other);
+    settle().await;
+    assert_eq!(fake.issued(), 0);
+    assert_eq!(task.state().state, CertStateKind::Off);
+}
+
+#[tokio::test]
+async fn turning_off_removes_the_staging_file_too() {
+    let fx = Fx::new(true, false);
+    let fake = Fake::new(NAME, vec![Ok(fx.pem())], false);
+    let task = fx.start(&fake);
+    until("valid", || task.state().state == CertStateKind::Valid).await;
+    let staging = fx.dir.path().join("board-tailscale.pem.tmp");
+    fs::write(&staging, "orphan").unwrap();
+    fx.live.publish(live(false));
+    until("off", || task.state().state == CertStateKind::Off).await;
+    assert!(!staging.exists() && !fx.file());
+}
+
+#[tokio::test]
+async fn the_start_removes_an_orphan_staging_file() {
+    let fx = Fx::new(false, false);
+    let staging = fx.dir.path().join("board-tailscale.pem.tmp");
+    fs::write(&staging, "orphan").unwrap();
+    let fake = Fake::new(NAME, vec![], false);
+    let _task = fx.start(&fake);
+    assert!(!staging.exists());
 }

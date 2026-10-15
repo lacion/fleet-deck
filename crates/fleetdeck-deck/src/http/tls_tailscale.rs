@@ -85,6 +85,9 @@ pub struct TailscaleCert {
     pub chain: Vec<CertificateDer<'static>>,
     key: PrivateKeyDer<'static>,
     pub name: String,
+    /// The validity of the whole path (DL-190): the latest start of the chain.
+    pub not_before_ms: i64,
+    /// The validity of the whole path (DL-190): the earliest end of the chain.
     pub not_after_ms: i64,
     /// SHA-256 of the leaf, as [`fingerprint`] writes it.
     pub sha256: String,
@@ -94,13 +97,34 @@ impl fmt::Debug for TailscaleCert {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TailscaleCert")
             .field("name", &self.name)
+            .field("not_before_ms", &self.not_before_ms)
             .field("not_after_ms", &self.not_after_ms)
             .field("sha256", &self.sha256)
             .finish_non_exhaustive()
     }
 }
 
+/// A served Tailscale pair and the validity window of its path (Unix ms).
+#[derive(Clone)]
+pub struct Served {
+    pub key: Arc<CertifiedKey>,
+    pub not_before_ms: i64,
+    pub not_after_ms: i64,
+}
+
 impl TailscaleCert {
+    /// The pair and its validity window, for the resolver.
+    ///
+    /// # Errors
+    /// [`CheckError::BadCertificate`]: the key is not usable or does not match.
+    pub fn served(&self) -> Result<Served, CheckError> {
+        Ok(Served {
+            key: self.certified_key()?,
+            not_before_ms: self.not_before_ms,
+            not_after_ms: self.not_after_ms,
+        })
+    }
+
     /// The pair for a TLS configuration.
     ///
     /// # Errors
@@ -234,20 +258,32 @@ pub fn check(
         .map_err(bad)?;
     }
     certified(&chain, &key)?;
-    let not_after_ms = not_after_ms(leaf)?;
+    let (not_before_ms, not_after_ms) = validity_ms(&chain)?;
     Ok(TailscaleCert {
         sha256: fingerprint(leaf),
         chain,
         key,
         name: name.to_ascii_lowercase(),
+        not_before_ms,
         not_after_ms,
     })
 }
 
-fn not_after_ms(leaf: &CertificateDer<'_>) -> Result<i64, CheckError> {
-    let (_, cert) = x509_parser::parse_x509_certificate(leaf.as_ref())
-        .map_err(|_| CheckError::BadCertificate)?;
-    Ok(cert.validity().not_after.timestamp().saturating_mul(1000))
+/// The validity of the whole path (Unix ms): the latest `not_before` and the
+/// earliest `not_after` of every certificate in `chain`.
+fn validity_ms(chain: &[CertificateDer<'_>]) -> Result<(i64, i64), CheckError> {
+    if chain.is_empty() {
+        return Err(CheckError::BadCertificate);
+    }
+    let (mut start, mut end) = (i64::MIN, i64::MAX);
+    for der in chain {
+        let (_, cert) = x509_parser::parse_x509_certificate(der.as_ref())
+            .map_err(|_| CheckError::BadCertificate)?;
+        let validity = cert.validity();
+        start = start.max(validity.not_before.timestamp().saturating_mul(1000));
+        end = end.min(validity.not_after.timestamp().saturating_mul(1000));
+    }
+    Ok((start, end))
 }
 
 // ------------------------------------------------------------------ storage
@@ -309,7 +345,7 @@ pub fn read_stored(dir: &Path, name: &str, now: UnixTime, anchors: &[TrustAnchor
     let Ok((chain, key)) = parse_pem(text.as_bytes()) else {
         return Stored::Missing;
     };
-    let Some(end_ms) = not_after_ms(&chain[0]).ok() else {
+    let Some(end_ms) = validity_ms(&chain).ok().map(|(_, end)| end) else {
         return Stored::Missing;
     };
     let run = |at, chain: &[CertificateDer<'static>], key: &PrivateKeyDer<'static>| {
@@ -357,23 +393,39 @@ pub fn load_tailscale(
     }
 }
 
-/// Deletes the stored certificate. A missing file is no error.
+/// Deletes the temporary file of a write that did not end (DL-190). A
+/// missing file is no error.
+///
+/// # Errors
+/// An I/O error other than "not found".
+pub fn remove_staging(dir: &Path) -> io::Result<()> {
+    match fs::remove_file(dir.join(format!("{TAILSCALE_PEM}.tmp"))) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
+/// Deletes the temporary file and the stored certificate. A missing file is
+/// no error.
 ///
 /// # Errors
 /// An I/O error other than "not found".
 pub fn remove_tailscale(dir: &Path) -> io::Result<()> {
+    // The stored file goes even when the temporary file stays.
+    let staged = remove_staging(dir);
     match fs::remove_file(dir.join(TAILSCALE_PEM)) {
         Ok(()) => {}
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return staged,
         Err(e) => return Err(e),
     }
-    fs::File::open(dir)?.sync_all()
+    fs::File::open(dir)?.sync_all()?;
+    staged
 }
 
 // ----------------------------------------------------------------- resolver
 
 /// What a new connection gets: the Tailscale certificate when it is for the
-/// SNI name and not past its end, else the fallback.
+/// SNI name and inside the validity of its path, else the fallback.
 pub struct BoardResolver {
     /// The owner's pair, or the self-signed one.
     fallback: Arc<CertifiedKey>,
@@ -381,7 +433,7 @@ pub struct BoardResolver {
     owner: bool,
     /// The certificate name (lower case).
     name: Option<String>,
-    tailscale: RwLock<Option<(Arc<CertifiedKey>, i64)>>,
+    tailscale: RwLock<Option<Served>>,
     clock: SharedClock,
 }
 
@@ -425,9 +477,9 @@ impl BoardResolver {
         self.owner
     }
 
-    /// Swaps the Tailscale pair and its end time (Unix ms). New connections
-    /// see it; open ones keep theirs.
-    pub fn set_tailscale(&self, pair: Option<(Arc<CertifiedKey>, i64)>) {
+    /// Swaps the Tailscale pair and its validity window. New connections see
+    /// it; open ones keep theirs.
+    pub fn set_tailscale(&self, pair: Option<Served>) {
         *self
             .tailscale
             .write()
@@ -440,14 +492,15 @@ impl BoardResolver {
         let wanted = !self.owner
             && matches!((sni, &self.name), (Some(s), Some(n)) if s.eq_ignore_ascii_case(n));
         if wanted
-            && let Some((pair, end)) = self
+            && let Some(served) = self
                 .tailscale
                 .read()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .as_ref()
-            && *end > now_ms
+            && served.not_before_ms <= now_ms
+            && now_ms < served.not_after_ms
         {
-            return Arc::clone(pair);
+            return Arc::clone(&served.key);
         }
         Arc::clone(&self.fallback)
     }

@@ -207,6 +207,7 @@ async fn serve_with(
                     conflict_mail: true,
                     fleet_control: false,
                     tailscale_cert: false,
+                    tailscale_bin: None,
                 }),
                 elevations: Arc::default(),
                 settings: extras.as_mut().and_then(|e| e.settings.take()),

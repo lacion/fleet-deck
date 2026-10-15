@@ -335,13 +335,11 @@ impl RunningDeck {
         let maintenance = crate::maintenance::spawn(store.clone(), rx.clone());
         let cert = crate::cert_task::spawn(
             crate::cert_task::CertDeps {
-                live: cert_live,
+                live: cert_live.clone(),
                 resolver: Arc::clone(&board.tls.resolver),
                 dir: deck_dir.clone(),
                 hostname: config.tailnet_hostname.clone(),
-                issuer: Arc::new(crate::cert_task::TailscaleIssuer::new(
-                    config.tailscale_bin.clone(),
-                )),
+                issuer: Arc::new(crate::cert_task::TailscaleIssuer::new(cert_live)),
                 clock: Arc::new(SystemClock),
                 anchors: crate::http::tls_tailscale::isrg_anchors(),
                 intervals: crate::cert_task::Intervals::PRODUCTION,

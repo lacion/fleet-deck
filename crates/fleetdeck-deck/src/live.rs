@@ -18,6 +18,8 @@ pub struct DeckLive {
     pub fleet_control: bool,
     /// The deck setting `tailscale_cert` (DL-190).
     pub tailscale_cert: bool,
+    /// The deck setting `tailscale_bin` (DL-190): the program of the certificate task.
+    pub tailscale_bin: Option<std::path::PathBuf>,
 }
 
 impl DeckLive {
@@ -29,6 +31,7 @@ impl DeckLive {
             conflict_mail: config.conflict_mail,
             fleet_control: config.fleet_control,
             tailscale_cert: config.tailscale_cert,
+            tailscale_bin: config.tailscale_bin.clone(),
         }
     }
 }
@@ -83,6 +86,7 @@ mod tests {
             conflict_mail: true,
             fleet_control: false,
             tailscale_cert: false,
+            tailscale_bin: None,
         });
         let before = cell.get();
         cell.publish(DeckLive {
@@ -90,6 +94,7 @@ mod tests {
             conflict_mail: false,
             fleet_control: true,
             tailscale_cert: true,
+            tailscale_bin: None,
         });
         assert_eq!(before.name, "a");
         let now = cell.get();
