@@ -122,6 +122,46 @@ fn old_svc_releases_are_removed_and_upd_releases_stay() {
 }
 
 #[test]
+fn copy_state_is_same_newer_older_or_missing() {
+    use crate::service::program::CopyState;
+    let d = dirs();
+    assert_eq!(
+        program::copy_state(&d.root, &d.exe).unwrap(),
+        CopyState::Missing
+    );
+    program::ensure(&d.root, &d.exe, "1.2.3", "01aaa").unwrap();
+    let copy = target(&d.root, "current").unwrap();
+    assert_eq!(
+        program::copy_state(&d.root, &d.exe).unwrap(),
+        CopyState::Same
+    );
+    // The bytes differ: the time decides. Equal times count as older.
+    std::fs::write(&d.exe, b"build-two").unwrap();
+    super::set_mtime(&copy, 1000);
+    super::set_mtime(&d.exe, 2000);
+    assert_eq!(
+        program::copy_state(&d.root, &d.exe).unwrap(),
+        CopyState::Newer
+    );
+    super::set_mtime(&d.exe, 1000);
+    assert_eq!(
+        program::copy_state(&d.root, &d.exe).unwrap(),
+        CopyState::Older
+    );
+    super::set_mtime(&d.exe, 500);
+    assert_eq!(
+        program::copy_state(&d.root, &d.exe).unwrap(),
+        CopyState::Older
+    );
+    // A broken link is a missing copy.
+    std::fs::remove_file(&copy).unwrap();
+    assert_eq!(
+        program::copy_state(&d.root, &d.exe).unwrap(),
+        CopyState::Missing
+    );
+}
+
+#[test]
 fn the_dry_run_line_names_the_copy_only_when_one_would_be_made() {
     let d = dirs();
     let line = program::dry_line(&d.root, &d.exe, "1.2.3", "<ulid>")

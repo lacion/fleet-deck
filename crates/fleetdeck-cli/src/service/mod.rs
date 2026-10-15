@@ -311,7 +311,7 @@ pub fn run(
             verbose,
         } => commands::install(ctx, deps, *kind, *dry_run, *verbose, &new_ulid(), out),
         ServiceCommand::Uninstall { kind } => commands::uninstall(ctx, deps, *kind, out),
-        ServiceCommand::Start { kind } => commands::start(ctx, deps, *kind, out),
+        ServiceCommand::Start { kind } => commands::start(ctx, deps, *kind, &new_ulid(), out),
         ServiceCommand::Stop { kind } => commands::stop(ctx, deps, *kind, out),
         ServiceCommand::Status { json } => status::run(ctx, deps, *json, out),
     }

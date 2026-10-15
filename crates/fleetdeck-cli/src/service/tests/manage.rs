@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use fleetdeck_core::tailscale_wsl::POWERSHELL;
 
-use super::{Rig, text, wsl_rig};
+use super::{BUILD, Rig, set_mtime, text, wsl_rig};
 use crate::cli::ServiceCommand;
 use crate::service::Kind;
 use crate::service::fake::{fail, is_read_only, ok};
@@ -152,6 +152,93 @@ fn start_and_stop() {
     );
 }
 
+/// A station that an install made, then a `fleetdeck` with other bytes whose
+/// modification time is `exe_secs`; the copy has the time 1000.
+fn station_with_other_exe(exe_secs: u64) -> (Rig, PathBuf) {
+    let rig = Rig::systemd();
+    rig.sockets(Kind::Station, &[false, false, true]);
+    rig.install(Kind::Station).0.unwrap();
+    let root = rig.ctx.dirs.station().join("bin");
+    let copy = std::fs::read_link(root.join("current")).unwrap();
+    std::fs::write(&rig.ctx.exe, b"binary-two").unwrap();
+    set_mtime(&copy, 1000);
+    set_mtime(&rig.ctx.exe, exe_secs);
+    (rig, copy)
+}
+
+#[test]
+fn start_installs_a_newer_program_first() {
+    let (rig, old_copy) = station_with_other_exe(2000);
+    // One probe of the start, then the probes of the install.
+    rig.sockets(Kind::Station, &[false, false, false, true]);
+    let before = rig.fake.changes().len();
+    let (result, out) = rig.run(&ServiceCommand::Start {
+        kind: Some(Kind::Station),
+    });
+    result.unwrap();
+    assert!(
+        out.starts_with(
+            "This fleetdeck is newer than the program of the station service. Installing it.\n\
+             Installed the station service: "
+        ),
+        "{out}"
+    );
+    assert!(out.contains("Started.\n"));
+    // No second start after the install.
+    assert!(!out.contains("Started the station service."));
+    let root = rig.ctx.dirs.station().join("bin");
+    let copy = std::fs::read_link(root.join("current")).unwrap();
+    assert_ne!(copy, old_copy);
+    assert_eq!(std::fs::read(&copy).unwrap(), b"binary-two");
+    let changes = rig.fake.changes();
+    assert_eq!(
+        changes[before..].last().unwrap(),
+        "systemctl --user restart fleetdeck-station.service"
+    );
+    assert!(changes[before..].iter().all(|c| !c.contains(" start ")));
+}
+
+#[test]
+fn start_with_a_newer_program_and_another_process_changes_nothing() {
+    let (rig, copy) = station_with_other_exe(2000);
+    rig.sockets(Kind::Station, &[true]);
+    let before = rig.fake.changes().len();
+    let (result, _) = rig.run(&ServiceCommand::Start {
+        kind: Some(Kind::Station),
+    });
+    assert!(result.is_err());
+    let root = rig.ctx.dirs.station().join("bin");
+    assert_eq!(std::fs::read_link(root.join("current")).unwrap(), copy);
+    assert_eq!(rig.fake.changes().len(), before);
+}
+
+#[test]
+fn start_keeps_the_copy_when_this_fleetdeck_is_older() {
+    let (rig, copy) = station_with_other_exe(500);
+    rig.sockets(Kind::Station, &[false, true]);
+    let before = rig.fake.changes().len();
+    let (result, out) = rig.run(&ServiceCommand::Start {
+        kind: Some(Kind::Station),
+    });
+    result.unwrap();
+    assert_eq!(
+        out,
+        format!(
+            "Note: this fleetdeck ({}) is older than the program of the station service. The \
+             service keeps its program. Run `fleetdeck service install` to use this one.\n\
+             Started the station service.\n",
+            rig.ctx.exe.display()
+        )
+    );
+    let root = rig.ctx.dirs.station().join("bin");
+    assert_eq!(std::fs::read_link(root.join("current")).unwrap(), copy);
+    assert_eq!(std::fs::read(&copy).unwrap(), BUILD);
+    assert_eq!(
+        rig.fake.changes()[before..],
+        ["systemctl --user start fleetdeck-station.service"]
+    );
+}
+
 #[test]
 fn start_with_another_process_fails_and_a_silent_service_times_out() {
     let rig = Rig::systemd();
@@ -236,6 +323,34 @@ fn status_text_and_json() {
     assert!(out.contains("  data directory: unknown\n"));
     assert!(out.contains("deck/bin/current -> missing\n"));
     assert!(!out.contains("Windows logon task"));
+}
+
+#[test]
+fn status_says_when_this_fleetdeck_is_newer_than_the_service_program() {
+    let rig = Rig::systemd();
+    rig.put_installed(Kind::Station);
+    let root = rig.ctx.dirs.station().join("bin");
+    program_link(&root);
+    // The copy has the bytes `x`; the build is later.
+    set_mtime(&root.join("releases/x/fleetdeck"), 1000);
+    set_mtime(&rig.ctx.exe, 2000);
+    let (result, out) = rig.run(&ServiceCommand::Status { json: false });
+    result.unwrap();
+    assert!(
+        out.contains(
+            "  running: no\n  Update: this fleetdeck is newer than the service program. Run \
+             `fleetdeck service start` or `fleetdeck service install`.\n"
+        ),
+        "{out}"
+    );
+    assert_eq!(out.matches("Update:").count(), 1);
+    let (result, out) = rig.run(&ServiceCommand::Status { json: true });
+    result.unwrap();
+    let value: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(value["services"][2]["kind"], "station");
+    assert_eq!(value["services"][2]["program_update"], "newer");
+    // A kind that is not installed has no field.
+    assert!(value["services"][1].get("program_update").is_none());
 }
 
 fn program_link(root: &std::path::Path) {

@@ -7,6 +7,7 @@ use anyhow::{Context as _, bail};
 use fleetdeck_core::config::HostChoice;
 
 use super::path::lost_programs;
+use super::program::{self, CopyState};
 use super::{
     Context, Deps, Done, Kind, Outcome, Plan, Platform, all_installed, launchd, probe, select,
     systemd, wait_ready, wsl_task,
@@ -243,12 +244,43 @@ pub fn start(
     ctx: &Context,
     deps: &dyn Deps,
     named: Option<Kind>,
+    ulid: &str,
     out: &mut dyn Write,
 ) -> anyhow::Result<()> {
     for (kind, _) in select(ctx, named)? {
+        // Another Fleet Deck process refuses the start before anything changes.
         let seen = probe(ctx, deps, kind);
         if seen.other {
             bail!("{OTHER}");
+        }
+        // A failed comparison never stops the start: the service keeps its program.
+        let state = program::copy_state(&kind.root(&ctx.dirs), &ctx.exe).unwrap_or_else(|e| {
+            let _ = writeln!(
+                out,
+                "Note: cannot compare this fleetdeck with the program of the {} service ({e:#}). \
+                 The service keeps its program.",
+                kind.name()
+            );
+            CopyState::Same
+        });
+        match state {
+            CopyState::Newer => {
+                writeln!(
+                    out,
+                    "This fleetdeck is newer than the program of the {} service. Installing it.",
+                    kind.name()
+                )?;
+                install(ctx, deps, kind, false, false, ulid, out)?;
+                continue;
+            }
+            CopyState::Older => writeln!(
+                out,
+                "Note: this fleetdeck ({}) is older than the program of the {} service. The \
+                 service keeps its program. Run `fleetdeck service install` to use this one.",
+                ctx.exe.display(),
+                kind.name()
+            )?,
+            CopyState::Same | CopyState::Missing => {}
         }
         match ctx.platform {
             Platform::Systemd => systemd::start(deps, kind)?,
