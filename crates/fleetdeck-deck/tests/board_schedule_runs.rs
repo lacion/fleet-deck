@@ -32,6 +32,7 @@ fn info() -> StationInfo {
         providers: Vec::new(),
         assist_tokens_today: None,
         assist_cap: None,
+        resources: None,
     }
 }
 

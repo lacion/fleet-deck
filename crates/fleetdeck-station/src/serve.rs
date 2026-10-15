@@ -247,6 +247,8 @@ impl RunningStation {
         let adapters = adapters_from_config(config, &host, Some(station_dir.join("raw")))?;
         let socket = local::socket_path(&station_dir);
         let listener = local::bind(&socket).await?;
+        // The disk report measures the data directory (DL-193).
+        crate::resources::set_data_dir(station_dir.clone());
         // DL-188 step 0: a macOS station with `host = "shim"` runs the
         // direct host, and its policy does not name the shim host.
         let host_choice = effective_host(config.host, cfg!(target_os = "macos"));

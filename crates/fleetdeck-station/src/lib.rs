@@ -36,6 +36,9 @@ pub mod local;
 /// The session manager (PLAN §6.4, M2 P2-6).
 pub mod manager;
 
+/// Disk, memory and CPU for `station.info` (DL-193).
+pub mod resources;
+
 /// `fleetdeck station serve` (M2 P2-7).
 pub mod serve;
 /// The settings holder and the station handlers of `settings.*` and

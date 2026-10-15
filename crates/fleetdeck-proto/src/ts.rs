@@ -55,6 +55,9 @@ use crate::orchestration::{
     TaskCompletion, TaskRequest, TaskView, TaskWaitAnswer,
 };
 use crate::plans::{DeckPlan, PlanMarkRequest, PlanStatus};
+use crate::resources::{
+    CpuLoad, DiskSpace, MemoryUse, ResourceKind, ResourceWarning, StationResources,
+};
 use crate::session::{CardStatus, SessionSummary};
 use crate::settings::{
     Apply, Durability, FieldKind, FieldMeta, RestartAnswer, RestartItem, RestartKind,
@@ -117,6 +120,12 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         StreamMode::export_all(&cfg),
         StreamStart::export_all(&cfg),
         StationInfo::export_all(&cfg),
+        StationResources::export_all(&cfg),
+        DiskSpace::export_all(&cfg),
+        MemoryUse::export_all(&cfg),
+        CpuLoad::export_all(&cfg),
+        ResourceKind::export_all(&cfg),
+        ResourceWarning::export_all(&cfg),
         WorkspaceQuery::export_all(&cfg),
         WorkspaceListing::export_all(&cfg),
         WorktreesQuery::export_all(&cfg),

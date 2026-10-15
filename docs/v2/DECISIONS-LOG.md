@@ -3020,3 +3020,10 @@ Owner review: pending.
 - `crates/fleetdeck-core/build.rs` sets `FLEETDECK_BUILD_DATE` and `FLEETDECK_RELEASE`; `fleetdeck_core::build` has `DATE`, `RELEASE` and `version()`. The `build-info` JSON has `"release": bool`.
 - `make release-build` runs `FLEETDECK_RELEASE=1 cargo build --release --locked -p fleetdeck-cli`. cargo-dist 0.30.0 has no build environment setting: release jobs must export `FLEETDECK_RELEASE=1` (a comment in `dist-workspace.toml`).
 - The upgrade check keeps the package version (`2.0.0`); the link protocol versions, `shim_build` and the provider client versions do not change.
+
+## DL-193 — Station resources on the board (owner request, 2026-10-15)
+
+- Context: "starting a session on a deck that has no resources is not something we should encourage… the user should know". A station with a full disk or little memory takes a new session without any sign.
+- Decision: `station.info` carries `resources` (the free and total space of the data directory and of each allowed root, the memory total and available, the CPU cores with the load over 1 and 5 minutes). The station gathers it at most every 30 s. The deck asks `station.info` again every 60 s while the link is live and keeps the newest answer for the board.
+- Standard limits: low disk is under 10 GB (decimal) free or under 10 % of the total; low memory is under 1 GB available or under 10 %; busy CPU is a 5-minute load above 1.5 times the cores. The rules and the warning texts live in `fleetdeck-proto` (`StationResources::warnings`).
+- Warnings only: a low resource never blocks or refuses a session start. The board part is a later task.
