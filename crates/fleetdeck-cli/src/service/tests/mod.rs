@@ -49,6 +49,7 @@ impl Rig {
             user: "luis".to_owned(),
             path: Some("/usr/bin:/home/luis/.local/bin".to_owned()),
             path_dropped: Vec::new(),
+            shell_path: None,
             xdg_config_home: None,
             xdg_data_home: None,
             wsl: false,
@@ -150,6 +151,7 @@ impl Rig {
         self.run(&ServiceCommand::Install {
             kind,
             dry_run: false,
+            verbose: false,
         })
     }
 
@@ -157,6 +159,7 @@ impl Rig {
         self.run(&ServiceCommand::Install {
             kind,
             dry_run: true,
+            verbose: false,
         })
     }
 

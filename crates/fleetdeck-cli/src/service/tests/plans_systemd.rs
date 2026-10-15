@@ -49,10 +49,8 @@ fn the_first_install_of_both_copies_reloads_enables_restarts_and_turns_linger_on
          Linger is on for luis: your user services start at boot, without a login.\n\
          Started.\n\
          Logs: journalctl --user -u fleetdeck-up.service\n\
-         The service runs a copy of this program. Run `fleetdeck service install` again after \
-         you build or install a new version.\n\
-         The service uses the PATH of this shell. Run `fleetdeck service install` again after \
-         you install a provider CLI in a new directory.\n",
+         Run `fleetdeck service install` again after you install a new Fleet Deck version or a \
+         provider CLI in a new folder.\n",
         file.display(),
         root.join("current").display(),
         copy.display(),
