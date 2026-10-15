@@ -319,6 +319,31 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::HISTORY),
         false,
     ),
+    // The log of one subagent of a session, from the provider's transcript of
+    // that subagent (DL-191).
+    m(
+        "session.subagent",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::SUBAGENT),
+        false,
+    ),
+    // The branches of the repository of a session, and the committed diff of
+    // one of them (DL-191).
+    m(
+        "session.branches",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::SESSION_BRANCHES),
+        false,
+    ),
+    m(
+        "files.branch_diff",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::SESSION_BRANCHES),
+        false,
+    ),
     // The diff of a session for a coordinator, with no old-side byte (ADR-008
     // §4.4).
     m(

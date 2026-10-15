@@ -85,10 +85,51 @@ pub fn parse_line(kind: ProviderKind, line: &[u8]) -> Parsed {
         return Parsed::Unknown;
     };
     match kind {
-        ProviderKind::Claude => claude(&value),
+        ProviderKind::Claude => claude(&value, false),
         ProviderKind::Codex => codex(&value),
         ProviderKind::Unknown => Parsed::Ignored,
     }
+}
+
+/// A record of a subagent transcript that names another session or agent
+/// (DL-191).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NotOurs;
+
+/// Parses one line of a subagent transcript (DL-191). A conversation record
+/// must have `isSidechain: true`, `sessionId == native` and
+/// `agentId == agent_id`; the history rules then apply (meta, thinking and
+/// wrappers dropped; tool calls and results paired). A conversation record
+/// with another `sessionId` or `agentId` is [`NotOurs`]. A record without
+/// `sessionId`, `agentId` or the sidechain flag is [`Parsed::Unknown`]
+/// (skipped). Other record types are [`Parsed::Ignored`].
+///
+/// # Errors
+/// [`NotOurs`] for a record of another session or agent.
+pub fn parse_line_subagent(line: &[u8], native: &str, agent_id: &str) -> Result<Parsed, NotOurs> {
+    if line.iter().all(u8::is_ascii_whitespace) {
+        return Ok(Parsed::Ignored);
+    }
+    let Ok(value) = serde_json::from_slice::<Value>(line) else {
+        return Ok(Parsed::Unknown);
+    };
+    if !matches!(
+        value.get("type").and_then(Value::as_str),
+        Some("user" | "assistant")
+    ) {
+        return Ok(Parsed::Ignored);
+    }
+    let named = |key: &str| value.get(key).and_then(Value::as_str);
+    let (Some(session), Some(agent)) = (named("sessionId"), named("agentId")) else {
+        return Ok(Parsed::Unknown);
+    };
+    if session != native || agent != agent_id {
+        return Err(NotOurs);
+    }
+    if value.get("isSidechain").and_then(Value::as_bool) != Some(true) {
+        return Ok(Parsed::Unknown);
+    }
+    Ok(claude(&value, true))
 }
 
 /// The time of a record line, if the line is JSON with a parseable time.
@@ -166,7 +207,9 @@ pub fn parse_time_ms(text: &str) -> Option<i64> {
 
 // ---------------------------------------------------------------- Claude
 
-fn claude(value: &Value) -> Parsed {
+/// `own_sidechain`: the record comes from a subagent transcript, where the
+/// sidechain flag is expected and does not drop the record.
+fn claude(value: &Value, own_sidechain: bool) -> Parsed {
     let role = match value.get("type").and_then(Value::as_str) {
         Some("user") => HistoryKind::User,
         Some("assistant") => HistoryKind::Assistant,
@@ -174,12 +217,14 @@ fn claude(value: &Value) -> Parsed {
     };
     let at = time_of(value);
     let flag = |name: &str| value.get(name).and_then(Value::as_bool).unwrap_or(false);
+    let left_out =
+        |flag: &dyn Fn(&str) -> bool| (flag("isSidechain") && !own_sidechain) || flag("isMeta");
     let content = value.get("message").and_then(|m| m.get("content"));
     let shape_ok = value.get("message").is_some_and(Value::is_object)
         && matches!(content, Some(Value::String(_) | Value::Array(_)));
     if !shape_ok {
         // A side chain or a meta record with a strange body is still left out.
-        return if flag("isSidechain") || flag("isMeta") {
+        return if left_out(&flag) {
             Parsed::Known(Record {
                 at,
                 ..Record::default()
@@ -192,7 +237,7 @@ fn claude(value: &Value) -> Parsed {
         at,
         ..Record::default()
     };
-    if flag("isSidechain") || flag("isMeta") {
+    if left_out(&flag) {
         return Parsed::Known(record);
     }
     let uuid = value.get("uuid").and_then(Value::as_str).map(str::to_owned);

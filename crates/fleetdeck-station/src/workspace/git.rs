@@ -327,6 +327,17 @@ impl Git {
         args: &[&str],
         max_bytes: usize,
     ) -> Result<(i32, Vec<u8>, bool), GitError> {
+        self.bounded_with_env(args, &[], max_bytes).await
+    }
+
+    /// [`Self::bounded`] with extra environment variables (DL-191). A
+    /// variable here replaces one that the runner sets.
+    pub async fn bounded_with_env(
+        &self,
+        args: &[&str],
+        envs: &[(&str, &str)],
+        max_bytes: usize,
+    ) -> Result<(i32, Vec<u8>, bool), GitError> {
         use tokio::io::AsyncReadExt;
         let mut cmd = Command::new(&self.options.program);
         cmd.current_dir(&self.dir)
@@ -346,6 +357,9 @@ impl Git {
         if self.options.isolated {
             cmd.env("GIT_CONFIG_NOSYSTEM", "1")
                 .env("GIT_CONFIG_GLOBAL", "/dev/null");
+        }
+        for (name, value) in envs {
+            cmd.env(name, value);
         }
         let mut child = cmd.spawn().map_err(GitError::Spawn)?;
         self.spawned(&child);
@@ -380,6 +394,34 @@ impl Git {
         self.ended();
         result
     }
+}
+
+/// The options of a hardened call (DL-191): no pager, no external diff, no
+/// file-system monitor. They come before the subcommand.
+const HARDENED: &[&str] = &[
+    "-c",
+    "core.pager=cat",
+    "-c",
+    "diff.external=",
+    "-c",
+    "core.fsmonitor=false",
+];
+
+/// The variables of a hardened call (DL-191): no lazy fetch, no prompt, no
+/// pager. A Git below 2.45 does not know `GIT_NO_LAZY_FETCH`, so the caller
+/// refuses such a Git first.
+pub const HARDENED_ENV: &[(&str, &str)] = &[
+    ("GIT_NO_LAZY_FETCH", "1"),
+    ("GIT_TERMINAL_PROMPT", "0"),
+    ("GIT_PAGER", "cat"),
+];
+
+/// `sub` with the hardened options in front of it (DL-191).
+#[must_use]
+pub fn hardened_args<'a>(sub: &[&'a str]) -> Vec<&'a str> {
+    let mut args: Vec<&'a str> = HARDENED.to_vec();
+    args.extend_from_slice(sub);
+    args
 }
 
 /// Splits NUL-terminated `-z` output into its fields.

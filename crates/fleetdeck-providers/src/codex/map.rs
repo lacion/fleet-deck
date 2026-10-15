@@ -599,6 +599,7 @@ impl CodexCore {
             status,
             files,
             exit_code,
+            provider_refs: ProviderRefs::new(),
         }));
         out
     }
@@ -759,6 +760,7 @@ impl CodexCore {
                     },
                     files: Vec::new(),
                     exit_code: None,
+                    provider_refs: ProviderRefs::new(),
                 })
             })
             .collect()

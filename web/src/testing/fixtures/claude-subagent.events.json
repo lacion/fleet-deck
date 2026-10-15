@@ -432,7 +432,10 @@
       "node_id": "node-2",
       "status": "ok",
       "files": [],
-      "exit_code": null
+      "exit_code": null,
+      "provider_refs": {
+        "agent_id": "aec7cbebd3902b8ce"
+      }
     }
   },
   {

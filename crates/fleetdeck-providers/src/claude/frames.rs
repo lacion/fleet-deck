@@ -79,6 +79,9 @@ pub struct MessageFrame {
     pub is_replay: bool,
     /// The Anthropic message object (`role`, `content`, `id`, `model`, `usage`).
     pub message: Value,
+    /// `tool_use_result.agentId` of a user frame, kept only when it matches
+    /// `[a-z0-9]{1,64}`; the rest of the structured result is dropped (DL-191).
+    pub agent_id: Option<String>,
 }
 
 impl MessageFrame {
@@ -144,6 +147,21 @@ fn opt_str(map: &Map<String, Value>, key: &str) -> Option<String> {
     map.get(key).and_then(Value::as_str).map(str::to_owned)
 }
 
+/// The agent id of the top-level structured tool result (`tool_use_result`,
+/// or `toolUseResult` in a transcript). Only a string of `[a-z0-9]{1,64}`
+/// counts; any other value is dropped (DL-191).
+fn structured_agent_id(map: &Map<String, Value>) -> Option<String> {
+    let result = map
+        .get("tool_use_result")
+        .or_else(|| map.get("toolUseResult"))?;
+    let id = result.get("agentId")?.as_str()?;
+    let valid = (1..=64).contains(&id.len())
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
+    valid.then(|| id.to_owned())
+}
+
 fn str_or_empty(map: &Map<String, Value>, key: &str) -> String {
     opt_str(map, key).unwrap_or_default()
 }
@@ -179,6 +197,7 @@ pub fn parse_value(value: Value) -> Result<CliFrame, ParseError> {
                 uuid: opt_str(&map, "uuid"),
                 is_replay: map.get("isReplay").and_then(Value::as_bool) == Some(true),
                 message: map.get("message").cloned().unwrap_or(Value::Null),
+                agent_id: structured_agent_id(&map),
             };
             if kind == "assistant" {
                 CliFrame::Assistant(msg)

@@ -496,6 +496,28 @@ pub const API_REST: &[ApiMethod] = &[
         false,
     )
     .member(),
+    // The work around a session (DL-191): the owner only, never a member.
+    m(
+        "sessions.subagent",
+        Method::GET,
+        "/api/sessions/{station}/{session}/subagents/{tool_use_id}",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
+        "sessions.branches",
+        Method::GET,
+        "/api/sessions/{station}/{session}/branches",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
+        "sessions.branch_diff",
+        Method::GET,
+        "/api/sessions/{station}/{session}/branches/{head}/diff",
+        Some(Scope::Read),
+        false,
+    ),
     m(
         "spaces.create",
         Method::POST,

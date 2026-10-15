@@ -4,6 +4,7 @@
 
 pub mod base;
 pub mod boundary;
+pub mod branches;
 pub mod checkout;
 pub mod checkpoint;
 pub mod checkpoint_refs;

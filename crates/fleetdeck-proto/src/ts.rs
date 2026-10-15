@@ -27,6 +27,7 @@ use crate::board::{
     DeckCommand, DeckSession, DeviceLink, DeviceLinkEntry, FleetExtras, PairingInvitation,
     ReadMark, SessionKey, StationView, WsTicket,
 };
+use crate::branches::{BranchDiffQuery, BranchesQuery, RepoBranch, RepoBranches};
 use crate::capability::{Capabilities, Operation, Unsupported};
 use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
 use crate::conflicts::FileConflict;
@@ -68,6 +69,7 @@ use crate::share::{
     ChatMessage, ChatPost, DriveGrant, DriverState, JoinRequest, NewShare, NewSpace, ShareCreated,
     ShareHistory, ShareInfo, ShareKind, ShareRole, SharedScope, SpaceSession, SpaceView, Steering,
 };
+use crate::subagent::{SubagentLog, SubagentQuery};
 use crate::version::{Negotiated, VersionOffer};
 
 /// The ts-rs configuration: 64-bit integers are `number` (sequence numbers
@@ -160,6 +162,12 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         HistoryState::export_all(&cfg),
         HistoryTool::export_all(&cfg),
         HistoryUnavailable::export_all(&cfg),
+        SubagentQuery::export_all(&cfg),
+        SubagentLog::export_all(&cfg),
+        BranchesQuery::export_all(&cfg),
+        RepoBranches::export_all(&cfg),
+        RepoBranch::export_all(&cfg),
+        BranchDiffQuery::export_all(&cfg),
         ToolResult::export_all(&cfg),
         SessionSummary::export_all(&cfg),
         ReadMark::export_all(&cfg),

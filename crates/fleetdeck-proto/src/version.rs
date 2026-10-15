@@ -69,6 +69,14 @@ pub mod feature {
     /// station's snapshot of the provider transcript (DL-189).
     pub const HISTORY: &str = "history.v1";
 
+    /// `session.subagent`: the log of one subagent of a session, from the
+    /// provider's own transcript of that subagent (DL-191).
+    pub const SUBAGENT: &str = "subagent.v1";
+
+    /// `session.branches` and `files.branch_diff`: the branches of the
+    /// repository of a session and the committed diff of one (DL-191).
+    pub const SESSION_BRANCHES: &str = "session_branches.v1";
+
     /// `session.execution_check` and `session.reconcile_execution`: the
     /// termination check and the owner's reconciliation for resume on the
     /// shim host (DL-182).
@@ -123,6 +131,8 @@ pub mod feature {
         TRASH,
         SESSION_DIFF,
         HISTORY,
+        SUBAGENT,
+        SESSION_BRANCHES,
         ARTIFACTS,
         PRECHECK,
         INTEGRATIONS,

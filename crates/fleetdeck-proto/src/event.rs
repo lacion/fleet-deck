@@ -431,6 +431,9 @@ pub enum Event {
         #[serde(default)]
         files: Vec<String>,
         exit_code: Option<i32>,
+        /// Provider ids of the result, for example `agent_id` of a subagent (DL-191).
+        #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+        provider_refs: ProviderRefs,
     },
     #[serde(rename = "file.changed")]
     FileChanged {

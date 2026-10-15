@@ -323,11 +323,20 @@ fn on_user(core: &mut ClaudeCore, msg: &MessageFrame) -> Vec<Output> {
             }));
             files.push(path);
         }
+        // The agent id of an `Agent` or `Task` result comes from the structured
+        // result only, never from the result text (DL-191).
+        let mut provider_refs = Map::new();
+        if matches!(node.name.as_str(), "Agent" | "Task")
+            && let Some(agent_id) = &msg.agent_id
+        {
+            provider_refs.insert("agent_id".to_owned(), Value::from(agent_id.as_str()));
+        }
         out.push(Output::Emit(Event::ToolCompleted {
             node_id: node.node_id,
             status,
             files,
             exit_code: None,
+            provider_refs,
         }));
     }
     out
@@ -550,6 +559,7 @@ pub(super) fn close_open_tools(core: &mut ClaudeCore) -> Vec<Output> {
                 status,
                 files: Vec::new(),
                 exit_code: None,
+                provider_refs: Map::new(),
             })
         })
         .collect()

@@ -120,6 +120,7 @@ async fn the_same_file_changed_on_two_stations_is_one_conflict_inside_the_window
                     status: ToolStatus::Ok,
                     files: vec!["lib.rs".to_owned()],
                     exit_code: None,
+                    provider_refs: serde_json::Map::new(),
                 },
             ),
             changed(2, "s3", now - 500, "/srv/other/src/lib.rs"),

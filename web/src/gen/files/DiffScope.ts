@@ -3,4 +3,4 @@
 /**
  * The files that a [`SessionDiff`] covers.
  */
-export type DiffScope = "worktree" | "session_files";
+export type DiffScope = "worktree" | "session_files" | "committed";
