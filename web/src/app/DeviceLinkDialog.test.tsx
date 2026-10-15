@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { DeviceLink } from '../gen';
+import type { DeviceLink, DeviceLinkEntry } from '../gen';
 import type { DeviceLinkResult } from '../runtime/deviceLink';
 import { More } from './More';
 import { Sidebar } from './Sidebar';
@@ -9,8 +9,13 @@ import { DeviceLinkDialog } from './DeviceLinkDialog';
 
 const SHA = 'ab12cd34ef567890aabbccddeeff00112233445566778899aabbccddeeff0011';
 const LOGIN = 'https://192.168.1.5:7420/#login=abcdef0123456789abcdef0123456789';
+const entry = (
+  label: string,
+  url: string,
+  trust: DeviceLinkEntry['trust'] = 'unknown',
+): DeviceLinkEntry => ({ label, url, certificate_sha256: SHA, trust });
 const link = (over: Partial<DeviceLink> = {}): DeviceLink => ({
-  links: [{ label: 'Network 192.168.1.5', url: LOGIN }],
+  links: [entry('Network 192.168.1.5', LOGIN)],
   expires_at: 1_000_000 + 125_000,
   certificate_sha256: SHA,
   self_signed: false,
@@ -70,9 +75,9 @@ describe('DeviceLinkDialog', () => {
       ok(
         link({
           links: [
-            { label: 'This computer', url: 'https://localhost:7420/#login=t' },
-            { label: 'Network 192.168.1.5', url: 'https://192.168.1.5:7420/#login=t' },
-            { label: 'Tailnet deck.tail1.ts.net', url: 'https://deck.tail1.ts.net/#login=t' },
+            entry('This computer', 'https://localhost:7420/#login=t'),
+            entry('Network 192.168.1.5', 'https://192.168.1.5:7420/#login=t'),
+            entry('Tailnet deck.tail1.ts.net', 'https://deck.tail1.ts.net/#login=t'),
           ],
         }),
       ),
@@ -85,10 +90,54 @@ describe('DeviceLinkDialog', () => {
     expect(html).not.toContain('value="https://localhost:7420/#login=t"');
   });
 
-  test('a self-signed board shows the start of the fingerprint', () => {
-    const html = render(ok(link({ self_signed: true })));
+  test('a self-signed entry shows the start of its fingerprint', () => {
+    const own = [entry('Network 192.168.1.5', LOGIN, 'self_signed')];
+    const html = render(ok(link({ links: own, self_signed: true })));
     expect(html).toContain('The board uses its own certificate.');
     expect(html).toContain('check that the fingerprint starts with AB12 CD34 EF56 7890.');
+    expect(html).not.toContain('Needs a trusted certificate');
+  });
+
+  test('the fingerprint is the one of the selected entry', () => {
+    const other = {
+      ...entry('Network 192.168.1.5', LOGIN, 'self_signed'),
+      certificate_sha256: 'ff'.repeat(32),
+    };
+    const html = render(ok(link({ links: [other], self_signed: true })));
+    expect(html).toContain('starts with FFFF FFFF FFFF FFFF.');
+  });
+
+  test('a trusted entry is the default, has the badge and asks for no fingerprint check', () => {
+    const tailnet = 'https://deck.tail1.ts.net:7420/#login=t';
+    const html = render(
+      ok(
+        link({
+          self_signed: true,
+          links: [
+            entry('Network 192.168.1.5', 'https://192.168.1.5:7420/#login=t', 'self_signed'),
+            entry('Tailnet deck.tail1.ts.net', tailnet, 'trusted'),
+          ],
+        }),
+      ),
+    );
+    expect(html).toContain(`value="${tailnet}"`);
+    expect(html).toContain('>Tailnet deck.tail1.ts.net (Trusted)</option>');
+    expect(html).toContain('fd-devlink-trusted');
+    expect(html).not.toContain('fingerprint starts with');
+    expect(html).not.toContain('Needs a trusted certificate');
+  });
+
+  test('a self-signed ts.net entry says how to get a trusted certificate', () => {
+    const url = 'https://deck.tail1.ts.net:7420/#login=t';
+    const tailnet = (trust: DeviceLinkEntry['trust']) =>
+      render(
+        ok(link({ self_signed: true, links: [entry('Tailnet deck.tail1.ts.net', url, trust)] })),
+      );
+    expect(tailnet('self_signed')).toContain(
+      'Needs a trusted certificate: turn on &#x27;Trusted certificate from Tailscale&#x27; in Settings → Deck.',
+    );
+    expect(tailnet('unknown')).not.toContain('Needs a trusted certificate');
+    expect(tailnet('unknown')).not.toContain('fd-devlink-trusted');
   });
 
   test('expired: the link is gone and New link is offered', () => {
@@ -101,9 +150,7 @@ describe('DeviceLinkDialog', () => {
   });
 
   test('a link that is too long for a QR code shows a note and no SVG', () => {
-    const html = render(
-      ok(link({ links: [{ label: 'Network', url: `https://h/#${'x'.repeat(600)}` }] })),
-    );
+    const html = render(ok(link({ links: [entry('Network', `https://h/#${'x'.repeat(600)}`)] })));
     expect(html).toContain('The link is too long for a QR code; copy it instead.');
     expect(html).not.toContain('QR code of the login link');
     expect(html).toContain('Copy link');

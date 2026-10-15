@@ -25,7 +25,7 @@ import {
   windowText,
 } from './model';
 import { saveDeckKey } from './save';
-import { TailnetCardView, WINDOWS_TEXT } from './TailnetCard';
+import { TailnetCardView, WINDOWS_TEXT, certificateLine } from './TailnetCard';
 import { RequestCard } from './TailnetPairing';
 
 const noop = () => {};
@@ -186,7 +186,14 @@ describe('approveError', () => {
 describe('TailnetCardView', () => {
   const card = (v: TailnetView, note: string | null = null) =>
     renderToStaticMarkup(
-      <TailnetCardView view={v} busy={false} note={note} onUse={noop} onAuto={noop} />,
+      <TailnetCardView
+        view={v}
+        busy={false}
+        note={note}
+        onUse={noop}
+        onAuto={noop}
+        onCert={noop}
+      />,
     );
 
   test('Tailscale is not available', () => {
@@ -240,7 +247,14 @@ describe('Tailscale for Windows (design 15.1)', () => {
   const windows = view({ program: 'windows' });
   const card = (v: TailnetView) =>
     renderToStaticMarkup(
-      <TailnetCardView view={v} busy={false} note={null} onUse={noop} onAuto={noop} />,
+      <TailnetCardView
+        view={v}
+        busy={false}
+        note={null}
+        onUse={noop}
+        onAuto={noop}
+        onCert={noop}
+      />,
     );
 
   test('the text, and no "Use this program" button', () => {
@@ -282,10 +296,105 @@ describe('Tailscale for Windows (design 15.1)', () => {
   });
 });
 
+const CERT_SAVED: SettingsSaved = {
+  values: {},
+  applied: [],
+  restart_needed: [],
+  unapplied: [],
+  revision: 'rev-2',
+  durability: 'confirmed',
+};
+
+describe('the toggle "Trusted certificate from Tailscale" (DL-190)', () => {
+  const card = (v: TailnetView, busy = false) =>
+    renderToStaticMarkup(
+      <TailnetCardView view={v} busy={busy} note={null} onUse={noop} onAuto={noop} onCert={noop} />,
+    );
+  const cert = (c: NonNullable<TailnetView['certificate']>) => view({ certificate: c });
+
+  test('the toggle, its help and an older deck without the field', () => {
+    const off = card(cert({ enabled: false, state: 'off' }));
+    expect(off).toContain('Trusted certificate from Tailscale');
+    expect(off).toContain(
+      'Browsers trust the board on its tailnet name. The name becomes public in Certificate Transparency logs.',
+    );
+    expect(off).not.toContain('Trusted certificate for');
+    expect(card(view())).toContain('Trusted certificate from Tailscale');
+    // The automatic toggle is on in VIEW, so two boxes are checked when this one is on.
+    const on = card(cert({ enabled: true, state: 'renewing' }));
+    expect(on.match(/checked=""/g)?.length).toBe(2);
+    expect(card(cert({ enabled: true, state: 'renewing' }), true)).toContain('disabled=""');
+  });
+
+  test('a state line for each state', () => {
+    expect(certificateLine(undefined)).toBeNull();
+    expect(certificateLine({ enabled: false, state: 'off' })).toBeNull();
+    expect(certificateLine({ enabled: true, state: 'renewing' })).toBe('Getting the certificate…');
+    const end = Date.UTC(2027, 0, 15, 12);
+    expect(
+      certificateLine({ enabled: true, state: 'valid', name: 'deck.tail1.ts.net', not_after: end }),
+    ).toBe(
+      `Trusted certificate for deck.tail1.ts.net, valid until ${new Date(end).toLocaleDateString()}`,
+    );
+    expect(certificateLine({ enabled: true, state: 'expired' })).toBe(
+      'The certificate expired. Fleet Deck is renewing it.',
+    );
+    expect(certificateLine({ enabled: true, state: 'name_mismatch' })).toBe(
+      "This machine's tailnet name differs from the board's. Use tailnet again, then restart the deck.",
+    );
+  });
+
+  test('the failure text by reason code', () => {
+    const failed = (reason_code?: string) =>
+      certificateLine({ enabled: true, state: 'failed', ...(reason_code ? { reason_code } : {}) });
+    expect(failed('https_disabled')).toBe(
+      'HTTPS certificates are off for your tailnet. Turn them on in the Tailscale admin console → DNS → HTTPS Certificates.',
+    );
+    expect(failed('not_logged_in')).toBe('Tailscale is not logged in on this machine.');
+    expect(failed('timeout')).toBe('Tailscale did not answer in time.');
+    expect(failed('not_installed')).toBe('Tailscale was not found.');
+    expect(failed('store_failed')).toBe('The certificate could not be saved.');
+    expect(failed('bad_certificate')).toBe('Tailscale could not issue a certificate.');
+    expect(failed()).toBe('Tailscale could not issue a certificate.');
+    expect(card(cert({ enabled: true, state: 'failed', reason_code: 'timeout' }))).toContain(
+      'Tailscale did not answer in time.',
+    );
+  });
+
+  test('turning it on asks first, then saves the deck key through the same flow', async () => {
+    const calls: string[] = [];
+    const sent: unknown[] = [];
+    const settings: SettingsActions = {
+      view: async () => ({ values: {}, fields: [], revision: 'rev-1', overrides: [] }),
+      save: async (_t, change) => {
+        calls.push('save');
+        sent.push(change);
+        return CERT_SAVED;
+      },
+      setSecret: async () => CERT_SAVED,
+      elevate: async () => undefined,
+      elevation: () => 'el-1',
+      forgetElevation: () => undefined,
+      restart: async () => ({ restarting: true, would_stop: [] }),
+    };
+    const ask = async () => {
+      calls.push('ask');
+      return 'el-1';
+    };
+    const labels = ['Tailscale: trusted certificate'];
+    const out = await saveDeckKey(settings, ask, 'tailscale_cert', true, labels, true);
+    expect(out).toEqual({ kind: 'saved' });
+    expect(calls).toEqual(['ask', 'save']);
+    expect(sent).toEqual([
+      { changes: { tailscale_cert: true }, revision: 'rev-1', elevation: 'el-1' },
+    ]);
+  });
+});
+
 describe('the toggle "Use Tailscale automatically" (design 14.4)', () => {
   const card = (v: TailnetView, busy = false) =>
     renderToStaticMarkup(
-      <TailnetCardView view={v} busy={busy} note={null} onUse={noop} onAuto={noop} />,
+      <TailnetCardView view={v} busy={busy} note={null} onUse={noop} onAuto={noop} onCert={noop} />,
     );
 
   test('off and on, with the help text', () => {

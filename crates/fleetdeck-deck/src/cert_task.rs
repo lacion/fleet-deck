@@ -107,7 +107,8 @@ pub struct CertState {
 }
 
 impl CertState {
-    fn off() -> Self {
+    #[must_use]
+    pub fn off() -> Self {
         Self {
             enabled: false,
             state: CertStateKind::Off,
@@ -182,6 +183,8 @@ pub struct CertDeps {
     pub clock: SharedClock,
     pub anchors: Anchors,
     pub intervals: Intervals,
+    /// The state cell: the creator keeps a clone to read it.
+    pub state: Arc<RwLock<CertState>>,
 }
 
 /// The running task and its state.
@@ -219,7 +222,7 @@ impl CertTask {
 pub fn spawn(deps: CertDeps, shutdown: watch::Receiver<bool>) -> CertTask {
     let enabled = deps.live.get().tailscale_cert;
     let core = Arc::new(Core {
-        state: Arc::new(RwLock::new(CertState::off())),
+        state: Arc::clone(&deps.state),
         generation: AtomicU64::new(0),
         served: Mutex::new(None),
         deps,

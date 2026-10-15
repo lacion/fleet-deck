@@ -33,6 +33,9 @@ pub struct LocalDeck {
     pub node: Arc<DeckNode>,
     /// The first board listener (login links), if any.
     pub board: Option<crate::local_auth::BoardEndpoint>,
+    /// The live endpoints of the board: the trusted address comes first in
+    /// a login link (DL-190).
+    pub endpoints: Arc<crate::http::endpoints::Endpoints>,
     /// The elevation codes and elevations that the board checks (DL-172).
     pub elevations: Arc<crate::elevation::Elevations>,
     /// The settings file of the deck (`None`: the settings requests answer
@@ -249,9 +252,9 @@ async fn handle(deck: &LocalDeck, request: DeckRequest) -> DeckResponse {
     let node = &*deck.node;
     let store = &node.link().store;
     match request {
-        DeckRequest::Auth { auth } => {
-            local_auth::respond(local_auth::handle(store, deck.board.as_ref(), auth).await)
-        }
+        DeckRequest::Auth { auth } => local_auth::respond(
+            local_auth::handle(store, deck.board.as_ref(), &deck.endpoints, auth).await,
+        ),
         DeckRequest::SettingsGet => settings_get(deck).await,
         DeckRequest::SettingsSet { change } => settings_set(deck, change).await,
         DeckRequest::ElevateCode => {

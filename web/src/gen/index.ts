@@ -56,6 +56,7 @@ export * from "./board/ArchiveList";
 export * from "./board/ArchiveRef";
 export * from "./board/BoardClientMessage";
 export * from "./board/BoardServerMessage";
+export * from "./board/CertTrust";
 export * from "./board/CommandRequest";
 export * from "./board/DeckCommand";
 export * from "./board/DeckSession";

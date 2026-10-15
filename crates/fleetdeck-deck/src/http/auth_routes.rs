@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Board;
 use super::admission::{Attempt, FlowLimiter, PeerAddr, busy, request_source, too_many_attempts};
-use super::guard::{ApiError, COOKIE, origin_label, owner_only};
+use super::guard::{ApiError, COOKIE, owner_only};
 use crate::local_auth::login_url;
 use crate::store::auth::{LOGIN_LINK_TTL_MS, SESSION_MAX_MS};
 use crate::store::{
@@ -455,12 +455,14 @@ pub async fn device_link(
         .audit_or_log(NewAudit::new(principal.actor(), ACTION, AuditResult::Ok))
         .await;
     let links = board
-        .origins
-        .list()
+        .endpoints
+        .entries(now)
         .into_iter()
-        .map(|origin| DeviceLinkEntry {
-            label: origin_label(&origin),
-            url: login_url(&origin, &token).expose().clone(),
+        .map(|entry| DeviceLinkEntry {
+            label: entry.label,
+            url: login_url(&entry.origin, &token).expose().clone(),
+            certificate_sha256: entry.certificate_sha256,
+            trust: entry.trust,
         })
         .collect();
     Ok(Json(DeviceLink {

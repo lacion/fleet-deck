@@ -68,6 +68,14 @@ export type FakeTailnet = {
       skipped: { address: string; reason: string }[];
       changed: boolean;
     };
+    /** The trusted certificate from Tailscale (DL-190); absent: an older deck. */
+    certificate?: {
+      enabled: boolean;
+      state: 'off' | 'valid' | 'renewing' | 'failed' | 'expired' | 'name_mismatch';
+      name?: string;
+      not_after?: number;
+      reason_code?: string;
+    };
   };
   windowOpen: boolean;
   generation: number;
@@ -297,7 +305,7 @@ export class FakeDeck {
       state.posted.push({ path: '/api/settings/deck', body: raw });
       const b = raw as { changes?: Record<string, unknown>; elevation?: unknown };
       const changes = b.changes ?? {};
-      const needs = changes['tailnet_auto'] === true;
+      const needs = changes['tailnet_auto'] === true || changes['tailscale_cert'] === true;
       if (needs && b.elevation !== ELEVATION) {
         return {
           status: 400,
@@ -306,6 +314,12 @@ export class FakeDeck {
       }
       if (typeof changes['tailnet_auto'] === 'boolean') {
         state.view.auto.enabled = changes['tailnet_auto'];
+      }
+      if (typeof changes['tailscale_cert'] === 'boolean') {
+        // The setting is live: the certificate task starts at once.
+        state.view.certificate = changes['tailscale_cert']
+          ? { enabled: true, state: 'renewing' }
+          : { enabled: false, state: 'off' };
       }
       return {
         status: 200,

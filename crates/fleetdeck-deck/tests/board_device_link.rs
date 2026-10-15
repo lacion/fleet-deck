@@ -54,6 +54,14 @@ async fn the_owner_gets_a_link_whose_token_logs_in_once() {
     // a tailnet address that the board does not serve, so no link offers it.
     let labels: Vec<&str> = links.iter().map(|l| l["label"].as_str().unwrap()).collect();
     assert_eq!(labels, ["This computer", "This computer"]);
+    // Each entry carries the certificate it gets and its trust. The test
+    // board has only its self-signed certificate.
+    let first = links[0]["certificate_sha256"].as_str().unwrap();
+    assert_eq!(first.split(':').count(), 32, "{first}");
+    for l in links {
+        assert_eq!(l["certificate_sha256"], first);
+        assert_eq!(l["trust"], "self_signed");
+    }
     let port = c.addr.port();
     assert!(links.iter().all(|l| {
         !l["url"]

@@ -24,6 +24,8 @@ use fleetdeck_link::reconnect::BackoffPolicy;
 use fleetdeck_proto::StationId;
 use tokio::sync::watch;
 
+use crate::cert_task::CertState;
+use crate::http::endpoints::Endpoints;
 use crate::http::tls::TlsError;
 use crate::http::{Board, BoardServer, BoardTls, LoginLimits, Origins};
 use crate::link::{DeckNode, NodeError, NodeOptions};
@@ -198,6 +200,9 @@ impl RunningDeck {
         let live_cell = crate::live::LiveCell::new(live);
         let board_live = live_cell.clone();
         let tailnet_start: SharedStart = Arc::default();
+        // The state cell of the certificate task: the Board and the task
+        // share it (DL-190).
+        let cert_state = Arc::new(std::sync::RwLock::new(CertState::off()));
         // The board state and its certificate, built from the bound
         // addresses. A new closure per try: the certificate fallback binds
         // again. `kept` is the stored pair for the fallback (design 15.3).
@@ -213,6 +218,7 @@ impl RunningDeck {
             let board_start = Arc::clone(&tailnet_start);
             let restart = restart.clone();
             let local_station = Arc::clone(&local_station);
+            let cert_state = Arc::clone(&cert_state);
             move |bound: &[SocketAddr]| {
                 let tls = match kept.clone() {
                     // The fallback (design 15.3): the stored pair, never made again.
@@ -227,14 +233,22 @@ impl RunningDeck {
                 // The resolver names the host that may get the Tailscale
                 // certificate (DL-190).
                 let tls = tls.with_name(tailnet.as_deref())?;
+                let origins = Origins::new(bound, tailnet.as_deref());
+                let endpoints = Arc::new(Endpoints::new(
+                    origins.list(),
+                    Arc::clone(&tls.resolver),
+                    tls.self_signed,
+                ));
                 let board = Arc::new(Board {
                     store: board_store,
                     link: board_link,
-                    origins: Origins::new(bound, tailnet.as_deref()),
+                    origins,
                     limiter: LoginLimits::default(),
                     device_links: crate::http::DeviceLinkLimiter::default(),
                     certificate_sha256: tls.sha256.clone(),
                     self_signed: tls.self_signed,
+                    endpoints,
+                    cert: cert_state,
                     tickets: crate::http::ws::Tickets::default(),
                     ws_recheck: crate::http::ws::RECHECK,
                     pairing: Some(board_node),
@@ -303,9 +317,16 @@ impl RunningDeck {
             "deck ready"
         );
         let cert_live = live_cell.clone();
+        // The same origins and resolver as the board's endpoints.
+        let local_endpoints = Arc::new(Endpoints::new(
+            Origins::new(&board.addrs, tailnet.as_deref()).list(),
+            Arc::clone(&board.tls.resolver),
+            board.tls.self_signed,
+        ));
         let local = Arc::new(LocalDeck {
             node: Arc::clone(&node),
             board: endpoint.clone(),
+            endpoints: local_endpoints,
             elevations,
             settings: Some(deck_settings),
             live: live_cell,
@@ -324,6 +345,7 @@ impl RunningDeck {
                 clock: Arc::new(SystemClock),
                 anchors: crate::http::tls_tailscale::isrg_anchors(),
                 intervals: crate::cert_task::Intervals::PRODUCTION,
+                state: cert_state,
             },
             rx.clone(),
         );

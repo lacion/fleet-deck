@@ -17,25 +17,36 @@ async fn auth(dirs: &NodeDirs, auth: AuthRequest) -> anyhow::Result<AuthResponse
     }
 }
 
+/// What `fleetdeck open` says about the certificate of the printed address.
+fn certificate_note(trusted: bool, self_signed: bool, sha256: &str) -> String {
+    if trusted {
+        "The certificate of this address is trusted by browsers.".to_owned()
+    } else if self_signed {
+        format!(
+            "the board uses the deck's self-signed certificate; your browser warns once.\n\
+             accept it only if its SHA-256 fingerprint is\n  {sha256}"
+        )
+    } else {
+        format!("board certificate SHA-256: {sha256}")
+    }
+}
+
 /// `fleetdeck open`: prints a one-time login URL of the board.
 pub async fn open(dirs: &NodeDirs) -> anyhow::Result<()> {
     let AuthResponse::LoginLink {
         url,
         certificate_sha256,
         self_signed,
+        trusted,
         ..
     } = auth(dirs, AuthRequest::LoginLink).await?
     else {
         bail!("unexpected answer from the deck");
     };
-    if self_signed {
-        eprintln!(
-            "the board uses the deck's self-signed certificate; your browser warns once.\n\
-             accept it only if its SHA-256 fingerprint is\n  {certificate_sha256}"
-        );
-    } else {
-        eprintln!("board certificate SHA-256: {certificate_sha256}");
-    }
+    eprintln!(
+        "{}",
+        certificate_note(trusted, self_signed, &certificate_sha256)
+    );
     eprintln!("single-use login link, valid for 5 minutes; open it in your browser:");
     println!("{}", url.0);
     Ok(())
@@ -159,4 +170,28 @@ pub async fn audit(dirs: &NodeDirs, limit: u32, json: bool) -> anyhow::Result<()
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::certificate_note;
+
+    #[test]
+    fn a_trusted_address_says_so_and_shows_no_fingerprint_warning() {
+        let note = certificate_note(true, false, "aa:bb");
+        assert_eq!(
+            note,
+            "The certificate of this address is trusted by browsers."
+        );
+    }
+
+    #[test]
+    fn the_other_addresses_keep_the_fingerprint_notes() {
+        let own = certificate_note(false, true, "aa:bb");
+        assert!(own.contains("self-signed") && own.contains("SHA-256 fingerprint is\n  aa:bb"));
+        assert_eq!(
+            certificate_note(false, false, "aa:bb"),
+            "board certificate SHA-256: aa:bb"
+        );
+    }
 }

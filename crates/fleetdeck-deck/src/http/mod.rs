@@ -16,6 +16,7 @@ pub mod assist_routes;
 pub mod auth_routes;
 pub mod body_deadline;
 pub mod command_routes;
+pub mod endpoints;
 pub mod execution_routes;
 pub mod file_routes;
 pub mod fleet_answers_routes;
@@ -87,6 +88,11 @@ pub struct Board {
     pub certificate_sha256: String,
     /// The board certificate is the deck's self-signed one.
     pub self_signed: bool,
+    /// The live endpoints: each board address with the certificate it gets
+    /// now (DL-190).
+    pub endpoints: Arc<endpoints::Endpoints>,
+    /// The state of the Tailscale certificate, for the Tailnet card.
+    pub cert: Arc<std::sync::RwLock<crate::cert_task::CertState>>,
     /// Single-use WebSocket tickets of bearer clients.
     pub tickets: ws::Tickets,
     /// How often an open WebSocket checks its login ([`ws::RECHECK`]).

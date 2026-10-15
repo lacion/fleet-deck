@@ -367,6 +367,23 @@ pub struct DeviceLinkEntry {
     pub label: String,
     /// `<board origin>/#login=<token>`.
     pub url: String,
+    /// The SHA-256 of the certificate that this address presents now.
+    pub certificate_sha256: String,
+    /// How far a browser trusts that certificate.
+    pub trust: CertTrust,
+}
+
+/// How far a browser trusts the certificate of one board address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "board/")]
+pub enum CertTrust {
+    /// The certificate chains to a public root for this address.
+    Trusted,
+    /// The deck's own self-signed certificate: the browser warns.
+    SelfSigned,
+    /// An owner certificate that the deck cannot check.
+    Unknown,
 }
 
 /// `POST /api/auth/device-link` (DL-146): a one-time login link for a new
@@ -376,9 +393,10 @@ pub struct DeviceLinkEntry {
 pub struct DeviceLink {
     pub links: Vec<DeviceLinkEntry>,
     pub expires_at: i64,
-    /// The SHA-256 of the board certificate, for the browser check.
+    /// The SHA-256 of the fallback board certificate (the one for addresses
+    /// that get no other), for the browser check.
     pub certificate_sha256: String,
-    /// The certificate is the deck's self-signed one.
+    /// The fallback certificate is the deck's self-signed one.
     pub self_signed: bool,
 }
 

@@ -17,6 +17,25 @@ export type AutoView = {
 /** The program choice: `tailscale_bin`, `PATH`, the macOS app, or Tailscale for Windows (WSL). */
 export type ProgramKind = 'configured' | 'path' | 'macos_app' | 'windows';
 
+/** The state of the trusted certificate from Tailscale (DL-190). */
+export type CertificateState =
+  | 'off'
+  | 'valid'
+  | 'renewing'
+  | 'failed'
+  | 'expired'
+  | 'name_mismatch';
+
+export type CertificateView = {
+  enabled: boolean;
+  state: CertificateState;
+  name?: string;
+  /** The end of the certificate, Unix ms. */
+  not_after?: number;
+  /** Why the last issue failed (a code, never text of Tailscale). */
+  reason_code?: string;
+};
+
 export type TailnetView = {
   available: boolean;
   /** Why Tailscale is not available, or a text of the deck (the WSL NAT text). */
@@ -30,6 +49,8 @@ export type TailnetView = {
   /** The saved deck.toml values. */
   current: { listen: string[]; link_listen: string[] };
   auto: AutoView;
+  /** Absent when an older deck answers. */
+  certificate?: CertificateView;
 };
 
 export type UseAnswer = {

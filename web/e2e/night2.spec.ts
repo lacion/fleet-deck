@@ -147,8 +147,15 @@ test('Add a device shows a QR code, the link and its end', async ({ page }) => {
         {
           label: 'Tailnet deck.tail1234.ts.net',
           url: 'https://deck.tail1234.ts.net:7420/#login=tok',
+          certificate_sha256: 'ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12',
+          trust: 'self_signed',
         },
-        { label: 'This computer', url: 'https://127.0.0.1:7420/#login=tok' },
+        {
+          label: 'This computer',
+          url: 'https://127.0.0.1:7420/#login=tok',
+          certificate_sha256: 'ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12',
+          trust: 'self_signed',
+        },
       ],
       expires_at: Date.now() + 5 * 60_000,
       certificate_sha256: 'ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12',

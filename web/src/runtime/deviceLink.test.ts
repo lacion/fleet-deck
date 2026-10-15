@@ -1,10 +1,25 @@
 import { describe, expect, test } from 'bun:test';
-import { countdown, defaultLinkIndex, deviceLinkAction, fingerprintGroups } from './deviceLink';
+import type { DeviceLink, DeviceLinkEntry } from '../gen';
+import {
+  countdown,
+  defaultLinkIndex,
+  deviceLinkAction,
+  fingerprintGroups,
+  needsTrustedCertificate,
+} from './deviceLink';
 
-const link = {
+const SHA = 'ab12cd34ef567890aabbccddeeff00112233445566778899aabbccddeeff0011';
+
+const entry = (
+  label: string,
+  url: string,
+  trust: DeviceLinkEntry['trust'] = 'self_signed',
+): DeviceLinkEntry => ({ label, url, certificate_sha256: SHA, trust });
+
+const link: DeviceLink = {
   links: [
-    { label: 'This computer', url: 'https://localhost:7420/#login=t' },
-    { label: 'Network 192.168.1.5', url: 'https://192.168.1.5:7420/#login=t' },
+    entry('This computer', 'https://localhost:7420/#login=t'),
+    entry('Network 192.168.1.5', 'https://192.168.1.5:7420/#login=t'),
   ],
   expires_at: 1_700_000_300_000,
   certificate_sha256: 'ab12cd34ef567890aabbccddeeff00112233445566778899aabbccddeeff0011',
@@ -29,6 +44,8 @@ describe('deviceLinkAction', () => {
       {},
       { ...link, links: [] },
       { ...link, links: [{ label: 'x' }] },
+      { ...link, links: [{ label: 'x', url: 'u', certificate_sha256: SHA, trust: 'maybe' }] },
+      { ...link, links: [{ label: 'x', url: 'u', trust: 'trusted' }] },
       { ...link, links: 'x' },
       { ...link, expires_at: '1' },
       { ...link, certificate_sha256: 1 },
@@ -67,11 +84,36 @@ describe('helpers', () => {
   });
 
   test('defaultLinkIndex skips "This computer" and falls back to the first', () => {
-    const l = (label: string) => ({ label, url: `https://${label}/` });
+    const l = (label: string) => entry(label, `https://${label}/`);
     expect(defaultLinkIndex([l('This computer'), l('Network 1'), l('Tailnet d')])).toBe(1);
     expect(defaultLinkIndex([l('Network 1'), l('This computer')])).toBe(0);
     expect(defaultLinkIndex([l('This computer')])).toBe(0);
     expect(defaultLinkIndex([])).toBe(0);
+  });
+
+  test('defaultLinkIndex prefers the first trusted entry (DL-190)', () => {
+    const l = (label: string, trust: DeviceLinkEntry['trust']) =>
+      entry(label, `https://${label}/`, trust);
+    const links = [
+      l('This computer', 'self_signed'),
+      l('Network 1', 'self_signed'),
+      l('Tailnet d', 'trusted'),
+      l('Tailnet e', 'trusted'),
+    ];
+    expect(defaultLinkIndex(links)).toBe(2);
+    expect(defaultLinkIndex([l('This computer', 'trusted'), l('Network 1', 'unknown')])).toBe(0);
+  });
+
+  test('needsTrustedCertificate: a self-signed ts.net host only', () => {
+    const e = (url: string, trust: DeviceLinkEntry['trust']) => entry('x', url, trust);
+    const tailnet = 'https://Deck.Tail1.ts.net:7420/#login=t';
+    expect(needsTrustedCertificate(e(tailnet, 'self_signed'))).toBe(true);
+    expect(needsTrustedCertificate(e(tailnet, 'trusted'))).toBe(false);
+    expect(needsTrustedCertificate(e(tailnet, 'unknown'))).toBe(false);
+    expect(needsTrustedCertificate(e('https://192.168.1.5:7420/#login=t', 'self_signed'))).toBe(
+      false,
+    );
+    expect(needsTrustedCertificate(e('not a url', 'self_signed'))).toBe(false);
   });
 
   test('countdown is m:ss, rounds up and stops at 0:00', () => {

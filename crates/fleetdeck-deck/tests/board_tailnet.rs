@@ -483,3 +483,50 @@ async fn use_tailnet_with_an_ipv6_only_address_brackets_it() {
     );
     assert_eq!(answer["tailnet_hostname"], "v6.tail1234.ts.net");
 }
+
+#[tokio::test]
+async fn the_status_route_reports_the_certificate_state() {
+    use fleetdeck_deck::cert_task::{CertState, CertStateKind};
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = fake_tailscale(tmp.path(), "tailscale", STATUS);
+    let (_f, c) = deck_board(tmp.path(), &toml_bin(&bin)).await;
+    let h = owner(&c).await;
+    // Off: the default state.
+    let r = get(&c, &h, "/api/tailnet").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(
+        r.body["certificate"],
+        json!({ "enabled": false, "state": "off" })
+    );
+    // Valid, with its name and end.
+    *c.state.cert.write().unwrap() = CertState {
+        enabled: true,
+        state: CertStateKind::Valid,
+        name: Some("deck-box.tail1234.ts.net".to_owned()),
+        not_after_ms: Some(1_800_000_000_000),
+        reason_code: None,
+    };
+    let r = get(&c, &h, "/api/tailnet").await;
+    assert_eq!(
+        r.body["certificate"],
+        json!({
+            "enabled": true,
+            "state": "valid",
+            "name": "deck-box.tail1234.ts.net",
+            "not_after": 1_800_000_000_000_i64,
+        })
+    );
+    // Failed, with a reason code and no text of `tailscale`.
+    *c.state.cert.write().unwrap() = CertState {
+        enabled: true,
+        state: CertStateKind::Failed,
+        name: None,
+        not_after_ms: None,
+        reason_code: Some("https_disabled"),
+    };
+    let r = get(&c, &h, "/api/tailnet").await;
+    assert_eq!(
+        r.body["certificate"],
+        json!({ "enabled": true, "state": "failed", "reason_code": "https_disabled" })
+    );
+}
