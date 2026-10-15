@@ -138,7 +138,6 @@ mod tests {
 
     const TS_ORIGIN: &str = "https://deck.tail1.ts.net:7420";
     const IP_ORIGIN: &str = "https://100.64.0.1:7420";
-    const FAR: i64 = i64::MAX;
 
     fn now_ms() -> i64 {
         day(2026, 10, 15) * 1000
@@ -162,8 +161,7 @@ mod tests {
         let tls = self_signed();
         let pki = Pki::new();
         let cert = pki.check(Duration::ZERO).unwrap();
-        tls.resolver
-            .set_tailscale(Some((cert.certified_key().unwrap(), FAR)));
+        tls.resolver.set_tailscale(Some(cert.served().unwrap()));
         let list = provider(&tls).entries(now_ms());
         assert_eq!(list[0].trust, CertTrust::Trusted);
         assert_eq!(list[0].certificate_sha256, cert.sha256);

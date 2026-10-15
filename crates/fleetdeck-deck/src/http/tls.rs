@@ -253,8 +253,12 @@ pub(super) fn stage(path: &Path, text: &str, mode: u32) -> Result<std::path::Pat
         .create_new(true)
         .mode(mode)
         .open(&tmp)?;
-    f.write_all(text.as_bytes())?;
-    f.sync_all()?;
+    // A failed write leaves no copy of the secret (DL-190).
+    if let Err(e) = f.write_all(text.as_bytes()).and_then(|()| f.sync_all()) {
+        drop(f);
+        let _ = fs::remove_file(&tmp);
+        return Err(e.into());
+    }
     Ok(tmp)
 }
 

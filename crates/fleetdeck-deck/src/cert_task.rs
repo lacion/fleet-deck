@@ -30,7 +30,7 @@ use tokio::task::JoinHandle;
 
 use crate::http::tls_tailscale::{
     ADMISSION_REMAINING, Anchors, BoardResolver, Stored, TailscaleCert, check, parse_pem,
-    read_stored, remove_tailscale, write_tailscale,
+    read_stored, remove_staging, remove_tailscale, write_tailscale,
 };
 use crate::live::LiveCell;
 
@@ -132,18 +132,18 @@ pub trait Issuer: Send + Sync {
 /// The real `tailscale`, chosen like the other calls of the deck.
 #[derive(Debug, Clone)]
 pub struct TailscaleIssuer {
-    configured: Option<PathBuf>,
+    live: LiveCell,
 }
 
 impl TailscaleIssuer {
-    /// `configured` is the deck setting `tailscale_bin`.
+    /// `live` holds the deck setting `tailscale_bin`, read at each call.
     #[must_use]
-    pub fn new(configured: Option<PathBuf>) -> Self {
-        Self { configured }
+    pub fn new(live: LiveCell) -> Self {
+        Self { live }
     }
 
     async fn cli(&self) -> Result<TailscaleCli, CertError> {
-        let configured = self.configured.clone();
+        let configured = self.live.get().tailscale_bin.clone();
         // The lookup reads files: off the async threads.
         tokio::task::spawn_blocking(move || TailscaleCli::locate(configured.as_deref()))
             .await
@@ -221,6 +221,10 @@ impl CertTask {
 /// when `shutdown` turns true.
 pub fn spawn(deps: CertDeps, shutdown: watch::Receiver<bool>) -> CertTask {
     let enabled = deps.live.get().tailscale_cert;
+    // A temporary file from a write that did not end holds a key (DL-190).
+    if let Err(e) = remove_staging(&deps.dir) {
+        tracing::warn!(error = %e, "the temporary Tailscale file was not removed");
+    }
     let core = Arc::new(Core {
         state: Arc::clone(&deps.state),
         generation: AtomicU64::new(0),
@@ -270,6 +274,7 @@ type Attempt = Pin<Box<dyn std::future::Future<Output = Duration> + Send>>;
 async fn run(core: Arc<Core>, enabled: bool, mut shutdown: watch::Receiver<bool>) {
     let notify = core.deps.live.changed();
     let mut enabled = enabled;
+    let mut program = core.deps.live.get().tailscale_bin.clone();
     let mut next: Option<tokio::time::Instant> = enabled.then(tokio::time::Instant::now);
     let mut running: Option<Attempt> = None;
     loop {
@@ -290,8 +295,10 @@ async fn run(core: Arc<Core>, enabled: bool, mut shutdown: watch::Receiver<bool>
                 running = Some(Box::pin(Arc::clone(&core).attempt(generation)));
             }
             () = notify.notified() => {
-                let want = core.deps.live.get().tailscale_cert;
-                if want != enabled {
+                let live = core.deps.live.get();
+                let want = live.tailscale_cert;
+                let changed = want != enabled;
+                if changed {
                     enabled = want;
                     // A run that is going is cancelled; a result that
                     // still arrives is stale by the generation.
@@ -302,6 +309,16 @@ async fn run(core: Arc<Core>, enabled: bool, mut shutdown: watch::Receiver<bool>
                     } else {
                         core.turn_off().await;
                         next = None;
+                    }
+                }
+                // A new program ends the run that uses the old one. The
+                // served certificate stays until the next attempt.
+                if live.tailscale_bin != program {
+                    program.clone_from(&live.tailscale_bin);
+                    if want && !changed {
+                        core.generation.fetch_add(1, Ordering::SeqCst);
+                        running = None;
+                        next = Some(tokio::time::Instant::now());
                     }
                 }
             }
@@ -348,11 +365,9 @@ impl Core {
             return;
         };
         match read_stored(&self.deps.dir, &host, self.now(), &self.deps.anchors) {
-            Stored::Valid(cert) => match cert.certified_key() {
+            Stored::Valid(cert) => match cert.served() {
                 Ok(pair) => {
-                    self.deps
-                        .resolver
-                        .set_tailscale(Some((pair, cert.not_after_ms)));
+                    self.deps.resolver.set_tailscale(Some(pair));
                     *served = Some(cert.not_after_ms);
                     self.set(|s| {
                         s.state = CertStateKind::Valid;
@@ -477,12 +492,10 @@ impl Core {
         if self.stale(generation) {
             return Commit::Stale;
         }
-        let Ok(pair) = cert.certified_key() else {
+        let Ok(pair) = cert.served() else {
             return Commit::StoreFailed;
         };
-        self.deps
-            .resolver
-            .set_tailscale(Some((pair, cert.not_after_ms)));
+        self.deps.resolver.set_tailscale(Some(pair));
         *served = Some(cert.not_after_ms);
         self.set(|s| {
             s.state = CertStateKind::Valid;

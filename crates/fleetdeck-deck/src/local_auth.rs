@@ -236,8 +236,6 @@ mod tests {
     use crate::http::tls::BoardTls;
     use crate::http::tls_test_pki::{NAME, Pki, day};
 
-    const FAR: i64 = i64::MAX;
-
     fn board_endpoint(tls: &BoardTls) -> BoardEndpoint {
         BoardEndpoint {
             url: "https://100.64.0.1:7420".to_owned(),
@@ -264,8 +262,7 @@ mod tests {
     fn a_trusted_entry_is_chosen_first() {
         let (tls, endpoints) = setup();
         let cert = Pki::new().check(Duration::ZERO).unwrap();
-        tls.resolver
-            .set_tailscale(Some((cert.certified_key().unwrap(), FAR)));
+        tls.resolver.set_tailscale(Some(cert.served().unwrap()));
         let now = day(2026, 10, 15) * 1000;
         let (url, sha, self_signed, trusted) = choice(&board_endpoint(&tls), &endpoints, now);
         assert_eq!(url, format!("https://{NAME}:7420"));

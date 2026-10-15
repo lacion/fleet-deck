@@ -15,6 +15,7 @@ fn a_valid_test_chain_is_admitted() {
     let pki = Pki::new();
     let cert = pki.check(ADMISSION_REMAINING).unwrap();
     assert_eq!(cert.name, NAME);
+    assert_eq!(cert.not_before_ms, day(2026, 9, 1) * 1000);
     assert_eq!(cert.not_after_ms, day(2027, 1, 1) * 1000);
     assert_eq!(cert.sha256, fingerprint(&pki.leaf.der));
     assert!(format!("{cert:?}").contains(NAME));
@@ -263,6 +264,22 @@ fn a_write_makes_a_private_file_that_loads_again() {
 }
 
 #[test]
+fn remove_staging_deletes_the_temporary_file_and_a_missing_one_is_no_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let staging = dir.path().join("board-tailscale.pem.tmp");
+    remove_staging(dir.path()).unwrap();
+    fs::write(&staging, "orphan").unwrap();
+    remove_staging(dir.path()).unwrap();
+    assert!(!staging.exists());
+    // The removal of the certificate takes the temporary file too.
+    let pki = Pki::new();
+    write_tailscale(dir.path(), &stored(&pki)).unwrap();
+    fs::write(&staging, "orphan").unwrap();
+    remove_tailscale(dir.path()).unwrap();
+    assert!(!staging.exists() && !dir.path().join(TAILSCALE_PEM).exists());
+}
+
+#[test]
 fn a_failed_rename_keeps_the_old_file() {
     let pki = Pki::new();
     let dir = tempfile::tempdir().unwrap();
@@ -315,6 +332,15 @@ fn an_expired_a_foreign_or_a_loose_file_is_no_certificate() {
 
 const FAR: i64 = i64::MAX / 2;
 
+/// A pair that is served from the start of time up to `end`.
+fn until(key: &Arc<CertifiedKey>, end: i64) -> Served {
+    Served {
+        key: Arc::clone(key),
+        not_before_ms: 0,
+        not_after_ms: end,
+    }
+}
+
 fn board(owner: bool) -> BoardTls {
     let (c, k) = BoardTls::generate(&["127.0.0.1".to_owned()]).unwrap();
     BoardTls::from_pem(&c, &k, !owner)
@@ -334,7 +360,7 @@ fn the_resolver_picks_by_sni_and_time() {
     let ts = stored(&pki).certified_key().unwrap();
     let fallback = tls.resolver.fallback();
     assert!(same(&tls.resolver.pick(Some(NAME), 1), &fallback));
-    tls.resolver.set_tailscale(Some((Arc::clone(&ts), FAR)));
+    tls.resolver.set_tailscale(Some(until(&ts, FAR)));
     let same_as = |sni: Option<&str>, now, want: &Arc<CertifiedKey>| {
         assert!(same(&tls.resolver.pick(sni, now), want), "{sni:?}");
     };
@@ -349,8 +375,68 @@ fn the_resolver_picks_by_sni_and_time() {
     // A swap is seen by the next connection.
     tls.resolver.set_tailscale(None);
     same_as(Some(NAME), 1, &fallback);
-    tls.resolver.set_tailscale(Some((Arc::clone(&ts), 5)));
+    tls.resolver.set_tailscale(Some(until(&ts, 5)));
     same_as(Some(NAME), 6, &fallback);
+}
+
+#[test]
+fn the_resolver_stops_serving_when_an_intermediate_ends_before_the_leaf() {
+    let root = root("test root");
+    let inter = intermediate(&root, "short intermediate", (2026, 12, 1));
+    let leaf = leaf_with(&inter, &leaf_params(NAME, (2027, 1, 1)));
+    let cert = check(
+        vec![leaf.der.clone(), inter.der.clone()],
+        leaf.key_der(),
+        NAME,
+        now(),
+        Duration::ZERO,
+        &anchors_of(&root),
+    )
+    .unwrap();
+    let end = day(2026, 12, 1) * 1000;
+    assert_eq!(cert.not_after_ms, end);
+    let tls = board(false);
+    tls.resolver.set_tailscale(Some(cert.served().unwrap()));
+    let ts = cert.certified_key().unwrap();
+    let fallback = tls.resolver.fallback();
+    assert!(same(&tls.resolver.pick(Some(NAME), end - 1), &ts));
+    assert!(same(&tls.resolver.pick(Some(NAME), end), &fallback));
+    assert!(same(&tls.resolver.pick(Some(NAME), end + 1), &fallback));
+}
+
+#[test]
+fn an_extra_certificate_off_the_path_does_not_change_the_validity() {
+    let other = root("other root");
+    let root = root("test root");
+    let inter = intermediate(&root, "short intermediate", (2026, 12, 1));
+    let leaf = leaf_with(&inter, &leaf_params(NAME, (2027, 1, 1)));
+    // An old cross-sign of another root, expired: not on the verified path.
+    let old = intermediate(&other, "old cross-sign", (2025, 1, 1));
+    let cert = check(
+        vec![leaf.der.clone(), inter.der.clone(), old.der.clone()],
+        leaf.key_der(),
+        NAME,
+        now(),
+        Duration::ZERO,
+        &anchors_of(&root),
+    )
+    .unwrap();
+    assert_eq!(cert.not_after_ms, day(2026, 12, 1) * 1000);
+    assert_eq!(cert.not_before_ms, day(2026, 9, 1) * 1000);
+}
+
+#[test]
+fn the_resolver_does_not_serve_a_pair_before_its_start() {
+    let pki = Pki::new();
+    let cert = stored(&pki);
+    let start = day(2026, 9, 1) * 1000;
+    assert_eq!(cert.not_before_ms, start);
+    let tls = board(false);
+    tls.resolver.set_tailscale(Some(cert.served().unwrap()));
+    let ts = cert.certified_key().unwrap();
+    let fallback = tls.resolver.fallback();
+    assert!(same(&tls.resolver.pick(Some(NAME), start - 1), &fallback));
+    assert!(same(&tls.resolver.pick(Some(NAME), start), &ts));
 }
 
 #[test]
@@ -359,7 +445,7 @@ fn the_owner_pair_wins_for_every_name() {
     let tls = board(true);
     assert!(tls.resolver.owner());
     let ts = stored(&pki).certified_key().unwrap();
-    tls.resolver.set_tailscale(Some((ts, FAR)));
+    tls.resolver.set_tailscale(Some(until(&ts, FAR)));
     let fallback = tls.resolver.fallback();
     assert!(same(&tls.resolver.pick(Some(NAME), 1), &fallback));
     assert!(!tls.self_signed);
@@ -404,8 +490,8 @@ async fn a_real_handshake_gets_the_certificate_of_its_sni() {
     let pki = Pki::new();
     let tls = board(false);
     let cert = stored(&pki);
-    tls.resolver
-        .set_tailscale(Some((cert.certified_key().unwrap(), FAR)));
+    let key = cert.certified_key().unwrap();
+    tls.resolver.set_tailscale(Some(until(&key, FAR)));
     assert!(handshake(&tls, NAME, &pki.leaf.der).await);
     assert!(!handshake(&tls, NAME, &tls.cert).await);
     assert!(handshake(&tls, "localhost", &tls.cert).await);
