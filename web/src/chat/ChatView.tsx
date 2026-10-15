@@ -232,6 +232,19 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item }) {
   const { item } = props;
   switch (item.type) {
     case 'run': {
+      // Backlog B2: a turn the agent or the station started is one muted line, not a bubble.
+      if (item.origin === 'provider')
+        return (
+          <p className="fd-chat-line" data-origin="provider">
+            The agent started a turn on its own.
+          </p>
+        );
+      if (item.origin === 'continuation')
+        return (
+          <p className="fd-chat-line" data-origin="continuation">
+            The station continued the session after a restart.
+          </p>
+        );
       // R11.5: a prompt of a member shows its name after the time; the owner shows nothing extra.
       const name = item.author === undefined ? null : memberName(item.author);
       // DL-179: a run is a Review card only when its input is the follow-up of a review.

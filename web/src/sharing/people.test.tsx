@@ -59,6 +59,14 @@ describe('presence avatars (R11.5)', () => {
     expect(html).not.toContain('title="Ed"');
   });
 
+  test('only you: nothing renders; with another person you are shown too', () => {
+    expect(renderToStaticMarkup(<Avatars who={['owner']} self="owner" />)).toBe('');
+    expect(renderToStaticMarkup(<Avatars who={['owner', 'owner']} self="owner" />)).toBe('');
+    const html = renderToStaticMarkup(<Avatars who={['owner', 'member:Ana']} self="owner" />);
+    expect(html).toContain('title="You"');
+    expect(html).toContain('title="Ana"');
+  });
+
   test('nobody: nothing renders; a person is shown once', () => {
     expect(renderToStaticMarkup(<Avatars who={[]} self="owner" />)).toBe('');
     expect(presentNames(['member:Ana', 'member:Ana'], 'owner')).toEqual(['Ana']);

@@ -269,6 +269,27 @@ describe('composer menus (DL-174)', () => {
       />,
     );
 
+  test('a dead composer with onResume is a Resume bar, with no text box', () => {
+    const bar = composer({ enabled: false, onResume: noop });
+    expect(bar).toContain('<div class="fd-composer-resume">');
+    expect(bar).toContain('<span class="fd-composer-note">The session ended.</span>');
+    expect(bar).toMatch(/<button type="button" class="fd-primary">.*Resume<\/button>/);
+    expect(bar).not.toContain('<textarea');
+    expect(bar).not.toContain('Add image');
+    // the reason of the session replaces the default text
+    expect(composer({ enabled: false, onResume: noop, disabledReason: 'Gone.' })).toContain(
+      '>Gone.</span>',
+    );
+    // without onResume, or while the composer is on, nothing changes
+    expect(composer({ enabled: false })).toContain('<textarea');
+    expect(composer({ enabled: false, onResume: null })).toContain('<textarea');
+    // while a command is pending, the Resume button waits
+    const busy = composer({ enabled: false, onResume: noop, resumeBusy: true });
+    expect(busy).toContain('disabled=""');
+    expect(busy).toContain('Resuming…');
+    expect(composer({ enabled: true, onResume: noop })).toContain('<textarea');
+  });
+
   test('a session without commands says so for a slash word only (DL-174)', () => {
     const draft = (text: string) => {
       const store = { getItem: () => text, setItem: () => {}, removeItem: () => {} };
@@ -417,22 +438,52 @@ describe('session header (DL-140)', () => {
     expect(header(session(), { terminal: null })).not.toContain('Shells are off');
   });
 
-  test('the mode badge shows the mode with its tone, and is absent without a mode', () => {
-    const badge = (mode: string) =>
+  test('the mode fact shows the mode with its tone, and is absent without a mode or for default', () => {
+    const fact = (mode: string) =>
       new RegExp(
-        `<span class="fd-badge"(?: data-tone="([a-z]+)")? title="Permission mode">${mode}</span>`,
+        `<span class="fd-sh-mode"(?: data-tone="([a-z]+)")? title="Permission mode">(<svg[^>]*>.*?</svg>)?${mode}</span>`,
       );
-    const tone = (mode: string) => badge(mode).exec(header(session({ mode })))?.[1];
+    const tone = (mode: string) => fact(mode).exec(header(session({ mode })))?.[1];
     expect(tone('plan')).toBe('plan');
     // DL-171: hazard red only for a mode that skips the approvals; the other modes have no tone.
     for (const risky of ['dontAsk', 'bypassPermissions', 'danger-full-access']) {
       expect(tone(risky)).toBe('hazard');
+      // a risky mode has the shield icon
+      expect(fact(risky).exec(header(session({ mode: risky })))?.[2]).toContain('<svg');
     }
-    for (const calm of ['default', 'acceptEdits', 'auto']) {
-      expect(badge(calm).test(header(session({ mode: calm })))).toBe(true);
+    for (const calm of ['acceptEdits', 'auto', 'plan']) {
+      expect(fact(calm).exec(header(session({ mode: calm })))?.[2]).toBeUndefined();
+    }
+    for (const calm of ['acceptEdits', 'auto']) {
+      expect(fact(calm).test(header(session({ mode: calm })))).toBe(true);
       expect(tone(calm)).toBeUndefined();
     }
     expect(header(session({ mode: null }))).not.toContain('Permission mode');
+    expect(header(session({ mode: 'default' }))).not.toContain('Permission mode');
+  });
+
+  test('the header shows plain facts, not pills, for the status, model and provider', () => {
+    const words: Readonly<Record<string, string>> = {
+      needs_you: 'Needs you',
+      working: 'Working',
+      verifying: 'Verifying',
+      queued: 'Queued',
+      idle: 'Idle',
+      ended: 'Ended',
+      lost: 'Lost',
+      unreachable: 'Unreachable',
+    };
+    for (const [status, word] of Object.entries(words)) {
+      const html = header(session({}, status as DeckSession['status']));
+      expect(html).toContain(`<span class="fd-sh-status" data-status="${status}">`);
+      expect(html).toContain(`${word}</span>`);
+    }
+    const html = header(session({ model: 'claude-sonnet-4-5' }));
+    expect(html).toContain('class="fd-sh-model" data-family="sonnet"');
+    expect(html).toContain('class="fd-sh-provider"');
+    expect(html).not.toMatch(/class="fd-badge"[^>]*data-family/);
+    expect(html).not.toMatch(/class="fd-badge"[^>]*data-provider/);
+    expect(html).not.toContain(' · ');
   });
 
   test('the title falls back to the callsign, the model to "default model"', () => {

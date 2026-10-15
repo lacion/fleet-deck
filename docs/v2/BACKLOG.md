@@ -19,6 +19,7 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 
 - **Observed:** in the chat of an imported Claude session, a turn that a background task starts (a task notification, not a prompt of the owner) shows as a user bubble with the text "provider turn".
 - **Wanted:** a muted line that says what started the turn (for example "Background task finished: hist-2"), or no bubble.
+- **Done (2026-10-15):** a muted line instead of the bubble (ui wave 2).
 
 ## B3. Tailnet card: owner certificate files (DL-190, design §2.6)
 

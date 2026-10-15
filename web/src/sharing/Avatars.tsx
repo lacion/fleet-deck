@@ -7,10 +7,11 @@ export function presentNames(who: readonly string[], self: string): string[] {
   return [...new Set(who)].map((actor) => actorLabel(actor, self));
 }
 
-/** Up to five round initials with the name as the tooltip, and "+n" for the rest. */
+/** Up to five round initials with the name as the tooltip, and "+n" for the rest. Null when only `self` is here. */
 export function Avatars({ who, self }: { readonly who: readonly string[]; readonly self: string }) {
   const names = presentNames(who, self);
-  if (names.length === 0) return null;
+  // Only you are here: no presence to show.
+  if (who.every((actor) => actor === self)) return null;
   const shown = names.slice(0, MAX_AVATARS);
   const more = names.length - shown.length;
   return (

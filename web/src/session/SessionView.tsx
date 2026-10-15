@@ -85,13 +85,22 @@ function useWide(): boolean {
   );
 }
 
-/** The open state of the Files side panel, kept in `localStorage`; unreadable means open. */
+/** The stored open state of the Files side panel: only a stored `1` opens it; unreadable means closed. */
+export function readFilesOpen(storage: Pick<Storage, 'getItem'>): boolean {
+  try {
+    return storage.getItem(PANEL_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/** The open state of the Files side panel, kept in `localStorage`; the default is closed. */
 function useFilesOpen(): readonly [boolean, () => void] {
   const [open, setOpen] = useState(() => {
     try {
-      return localStorage.getItem(PANEL_KEY) !== '0';
+      return readFilesOpen(localStorage);
     } catch {
-      return true;
+      return false;
     }
   });
   const toggle = useCallback(() => {
@@ -478,6 +487,16 @@ export function SessionView(props: SessionViewProps) {
                           ? resumeThenSend(actions, kind, text, images)
                           : actions.send(kind, text, images),
                       )
+                    }
+                    resumeBusy={busy !== null}
+                    onResume={
+                      flags.canResume &&
+                      !wakes &&
+                      guest === null &&
+                      actions !== null &&
+                      actions !== undefined
+                        ? () => controller.act('resume', () => actions.resume())
+                        : null
                     }
                     disabledReason={
                       people.drive?.locked === true

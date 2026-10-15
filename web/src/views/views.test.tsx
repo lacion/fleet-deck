@@ -176,12 +176,15 @@ describe('hibernation (R6.6)', () => {
       capabilities: caps,
     });
     const html = view(sleeping);
-    expect(html).toContain('>hibernated</span>');
+    expect(html).toContain('>Hibernated</span>');
     expect(html).not.toMatch(/<textarea id="fd-composer-text" rows="1" disabled=""/);
     expect(html).not.toContain('The session ended. Resume it to send prompts.');
+    // an ended session that can resume has a Resume bar in place of the composer
     const ended = view(card('e2', 'ended', 'station-a', { state: 'exited', capabilities: caps }));
-    expect(ended).toMatch(/<textarea id="fd-composer-text" rows="1" disabled=""/);
+    expect(ended).not.toContain('<textarea');
+    expect(ended).toContain('class="fd-composer-resume"');
     expect(ended).toContain('The session ended. Resume it to send prompts.');
+    expect(ended).toContain('Resume</button>');
   });
 
   const fakeActions = (sends: Outcome[], resumed: Outcome = { ok: true, text: 'Done.' }) => {
