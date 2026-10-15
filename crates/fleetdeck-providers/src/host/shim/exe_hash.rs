@@ -5,7 +5,7 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 /// The largest executable that is hashed.
-const MAX_EXE_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_EXE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 /// The running program's own executable object: `/proc/self/exe` on Linux
 /// (it names the executed object even after its path was replaced), else
@@ -24,7 +24,7 @@ pub fn own_exe() -> std::io::Result<PathBuf> {
 /// The lower-case hex SHA-256 of the file at `path`, read in 64 KiB chunks.
 ///
 /// # Errors
-/// The file cannot be read, or it is over 512 MiB.
+/// The file cannot be read, or it is over 2 GiB.
 pub fn sha256_file(path: &Path) -> std::io::Result<String> {
     let mut file = std::fs::File::open(path)?;
     let mut context = ring::digest::Context::new(&ring::digest::SHA256);

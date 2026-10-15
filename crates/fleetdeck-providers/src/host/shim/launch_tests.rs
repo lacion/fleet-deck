@@ -81,7 +81,7 @@ fn exe_hash_refuses_a_file_over_the_limit() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("big");
     let file = std::fs::File::create(&path).unwrap();
-    file.set_len(512 * 1024 * 1024 + 1).unwrap();
+    file.set_len(2 * 1024 * 1024 * 1024 + 1).unwrap();
     drop(file);
     let error = sha256_file(&path).unwrap_err();
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
