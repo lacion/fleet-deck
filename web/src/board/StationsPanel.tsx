@@ -461,7 +461,7 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
         <p className="fd-note">Pairing needs the admin scope.</p>
       )}
       {adding && actions !== undefined ? (
-        <PairingDialog actions={actions} onClose={() => setAdding(false)} />
+        <PairingDialog actions={actions} stations={stations} onClose={() => setAdding(false)} />
       ) : null}
       {removeError === null ? null : <p role="alert">{removeError}</p>}
       {stations.length === 0 ? (

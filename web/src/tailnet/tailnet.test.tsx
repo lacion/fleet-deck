@@ -3,12 +3,23 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { SettingsSaved } from '../gen';
 import type { SettingsActions } from '../settings/actions';
 import { DeckError, type DeckIo } from '../settings/http';
-import { type PairRequest, type TailnetView, type WindowView, tailnetActions } from './api';
+import {
+  type Device,
+  type PairRequest,
+  type TailnetView,
+  type WindowView,
+  tailnetActions,
+} from './api';
 import {
   approveError,
   autoNotes,
   clockText,
+  countdownText,
+  groupDevices,
   groupFingerprint,
+  osLabel,
+  requestOf,
+  scopeText,
   useButton,
   usesWindows,
   windowText,
@@ -452,28 +463,29 @@ describe('RequestCard', () => {
   const markup = (r: PairRequest, error: string | null = null) =>
     renderToStaticMarkup(<RequestCard request={r} onApprove={noop} onDeny={noop} error={error} />);
 
-  test('shows the full fingerprint, the identity and both buttons', () => {
+  test('shows the heading, the grouped code, the scope words and both buttons', () => {
     const html = markup(REQUEST);
-    expect(html).toContain('Requested name: lab-box');
-    expect(html).toContain('Link key fingerprint:');
+    expect(html).toContain('lab-box asks to join this deck');
+    expect(html).toContain(
+      'The command on lab-box printed a code. Check that it is the same as this code:',
+    );
     expect(html).toContain(
       '<code class="fd-fingerprint">0123 4567 89ab cdef 0123 4567 89ab cdef 0123 4567 89ab cdef 0123 4567 89ab cdef</code>',
     );
-    expect(html).toContain('Scopes: read, drive');
+    expect(html).toContain('If you add it, this deck can:');
+    expect(html).toContain('<li>See its sessions and files</li>');
+    expect(html).toContain('<li>Start sessions and send prompts</li>');
     expect(html).toContain('From 100.64.0.9');
     expect(html).toContain('Tailscale: lab · ann@example.com · tags tag:lab');
-    expect(html).toContain('Expires ');
-    expect(html).toContain(
-      'Compare this fingerprint with the one that the station printed. Approve only when they are equal.',
-    );
-    expect(html).toContain('>Approve</button>');
-    expect(html).toContain('>Deny</button>');
+    expect(html).toContain('Ends at ');
+    expect(html).toContain('>Yes, the codes match. Add lab-box</button>');
+    expect(html).toContain('>No, refuse</button>');
     expect(html).not.toContain('role="alert"');
   });
 
   test('a hostile requested name renders as text', () => {
     const html = markup({ ...REQUEST, requested_name: '<img src=x onerror=alert(1)>' });
-    expect(html).toContain('Requested name: &lt;img src=x onerror=alert(1)&gt;');
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt; asks to join this deck');
     expect(html).not.toContain('<img');
   });
 
@@ -487,5 +499,112 @@ describe('RequestCard', () => {
     expect(markup(REQUEST, 'This station key is already paired.')).toContain(
       '<p role="alert">This station key is already paired.</p>',
     );
+  });
+});
+
+const device = (host: string, extra: Partial<Device> = {}): Device => ({
+  host_name: host,
+  dns_name: `${host}.tail1234.ts.net`,
+  ips: ['100.64.0.9'],
+  os: 'linux',
+  tags: [],
+  online: true,
+  state: 'none',
+  command: null,
+  ...extra,
+});
+
+describe('groupDevices', () => {
+  test('each group, in input order', () => {
+    const groups = groupDevices([
+      device('a'),
+      device('b', { state: 'paired' }),
+      device('c', { state: 'request waiting' }),
+      device('d', { os: 'iOS' }),
+      device('e', { online: false }),
+      device('f'),
+    ]);
+    expect(groups.addable.map((d) => d.host_name)).toEqual(['a', 'f']);
+    expect(groups.paired.map((d) => d.host_name)).toEqual(['b']);
+    expect(groups.waiting.map((d) => d.host_name)).toEqual(['c']);
+    expect(groups.unsupported.map((d) => d.host_name)).toEqual(['d']);
+    expect(groups.offline.map((d) => d.host_name)).toEqual(['e']);
+  });
+
+  test('the priority is paired, waiting, unsupported, offline', () => {
+    const phone = { os: 'android', online: false } as const;
+    expect(groupDevices([device('x', { ...phone, state: 'paired' })]).paired).toHaveLength(1);
+    expect(
+      groupDevices([device('x', { ...phone, state: 'request waiting' })]).waiting,
+    ).toHaveLength(1);
+    expect(groupDevices([device('x', phone)]).unsupported).toHaveLength(1);
+    expect(groupDevices([device('x', { online: false })]).offline).toHaveLength(1);
+    for (const os of ['ios', 'ipados', 'android', 'tvos']) {
+      expect(groupDevices([device('x', { os })]).unsupported).toHaveLength(1);
+    }
+    expect(groupDevices([])).toEqual({
+      addable: [],
+      waiting: [],
+      paired: [],
+      offline: [],
+      unsupported: [],
+    });
+  });
+});
+
+describe('osLabel', () => {
+  test('known systems, unknown and raw text', () => {
+    expect(osLabel('linux')).toBe('Linux');
+    expect(osLabel('macOS')).toBe('macOS');
+    expect(osLabel('windows')).toBe('Windows');
+    expect(osLabel('iOS')).toBe('iOS');
+    expect(osLabel('ipados')).toBe('iPadOS');
+    expect(osLabel('android')).toBe('Android');
+    expect(osLabel(undefined)).toBe('Unknown system');
+    expect(osLabel('freebsd')).toBe('freebsd');
+  });
+});
+
+describe('requestOf', () => {
+  const request = (source_ip: string, host?: string): PairRequest => ({
+    request_id: `r-${source_ip}`,
+    requested_name: 'x',
+    station_fingerprint: HEX,
+    offered_scopes: [],
+    source_ip,
+    admitted_at: 0,
+    expires_at: 1,
+    digest: 'd'.repeat(64),
+    tailscale: host === undefined ? null : { host_name: host, tags: [] },
+  });
+  const lab = device('Lab-Box', { ips: ['100.64.0.9', 'fd7a::9'] });
+
+  test('by source address', () => {
+    const hit = request('fd7a::9');
+    expect(requestOf(lab, [request('100.64.0.1'), hit])).toBe(hit);
+  });
+  test('by host name, ignoring case', () => {
+    const hit = request('100.64.0.77', 'lab-BOX');
+    expect(requestOf(lab, [request('100.64.0.1', 'other'), hit])).toBe(hit);
+  });
+  test('no match', () => {
+    expect(requestOf(lab, [request('100.64.0.1', 'other'), request('100.64.0.2')])).toBeUndefined();
+    expect(requestOf(lab, [])).toBeUndefined();
+  });
+});
+
+describe('scopeText and countdownText', () => {
+  test('each scope in plain words, an unknown scope as it is', () => {
+    expect(scopeText('read')).toBe('See its sessions and files');
+    expect(scopeText('drive')).toBe('Start sessions and send prompts');
+    expect(scopeText('approve')).toBe('Answer approvals');
+    expect(scopeText('admin')).toBe('Change its settings and manage it');
+    expect(scopeText('teleport')).toBe('teleport');
+  });
+  test('m:ss', () => {
+    expect(countdownText(600_000)).toBe('10:00');
+    expect(countdownText(61_001)).toBe('1:02');
+    expect(countdownText(9_000)).toBe('0:09');
+    expect(countdownText(-5)).toBe('0:00');
   });
 });

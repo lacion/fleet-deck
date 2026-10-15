@@ -1,4 +1,4 @@
-/* DL-178: the Tailnet card of Settings → Deck and the "On your tailnet" tab of Add station. */
+/* DL-178: the Tailnet card of Settings → Deck and the guided Add station dialog. */
 .fd-tailnet {
   display: grid;
   gap: var(--sp-3);
@@ -23,9 +23,6 @@
   vertical-align: top;
   overflow-wrap: anywhere;
 }
-.fd-int-dialog > .fd-pane-tabs {
-  padding: 0;
-}
 .fd-fingerprint {
   font-family: var(--font-data);
   word-break: break-all;
@@ -49,27 +46,305 @@
   flex-wrap: wrap;
   gap: var(--sp-2);
 }
-.fd-tailnet-devices {
-  display: grid;
-  gap: var(--sp-2);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.fd-tailnet-devices > li {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-1) var(--sp-3);
-  min-width: 0;
-  padding: var(--sp-2) 0;
-  border-bottom: 1px solid var(--border-soft);
-  overflow-wrap: anywhere;
-}
-.fd-tailnet-devices code {
-  word-break: break-all;
-}
 @media (max-width: 600px) {
   .fd-pair-actions > button {
     flex: 1 1 100%;
   }
+}
+
+/* ── the guided Add station dialog ──────────────────────────────── */
+.fd-int-dialog > * {
+  min-width: 0;
+}
+.fd-add-flow {
+  display: grid;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+.fd-add-flow > *,
+.fd-add-flow p,
+.fd-add-flow h3,
+.fd-add-flow h4 {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.fd-add-flow > div:not([class]) {
+  display: flex;
+}
+.fd-add-small {
+  font-size: var(--fs-data);
+}
+.fd-add-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2) var(--sp-3);
+}
+.fd-add-text-btn {
+  height: auto;
+  padding: var(--sp-1) 0;
+  background: transparent;
+  border-color: transparent;
+  color: var(--m-comet);
+}
+.fd-add-text-btn:hover:not(:disabled) {
+  border-color: transparent;
+  text-decoration: underline;
+}
+
+/* the start screen */
+.fd-add-choice {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-content: stretch;
+  gap: var(--sp-1);
+  justify-items: start;
+  width: 100%;
+  height: auto;
+  min-height: var(--tap-min);
+  padding: var(--sp-3) var(--sp-4);
+  text-align: left;
+  line-height: 1.35;
+}
+.fd-add-choice-title {
+  font-size: var(--fs-title);
+  font-weight: 600;
+}
+.fd-add-choice-note {
+  color: var(--dim);
+  font-weight: 400;
+}
+.fd-int-dialog > h3 {
+  margin: 0;
+  font-size: var(--fs-title);
+}
+.fd-add-fold {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-add-fold > summary {
+  cursor: pointer;
+  color: var(--dim);
+  font-weight: 500;
+}
+.fd-add-fold[open] > summary {
+  margin-bottom: var(--sp-2);
+}
+.fd-add-fold .fd-add-text-btn {
+  justify-self: start;
+}
+
+/* the steps */
+.fd-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fd-steps-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--faint);
+}
+.fd-steps-item[data-state="current"] {
+  color: var(--text);
+  font-weight: 600;
+}
+.fd-steps-item[data-state="done"] {
+  color: var(--dim);
+}
+.fd-steps-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1.5px solid var(--faint);
+  border-radius: 50%;
+  font-size: var(--fs-data);
+  line-height: 1;
+}
+.fd-steps-item[data-state="current"] .fd-steps-mark {
+  background: var(--act);
+  border-color: var(--act);
+  color: var(--act-ink);
+}
+.fd-steps-item[data-state="done"] .fd-steps-mark {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+/* the window chip */
+.fd-add-chip {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-2);
+  padding: var(--sp-1) var(--sp-3);
+  background: var(--act-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  font-size: var(--fs-data);
+}
+.fd-add-chip .fd-add-text-btn {
+  padding: 0;
+}
+
+/* the devices */
+.fd-add-group {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-add-group h3,
+.fd-add-others h3 {
+  font-size: var(--fs-body);
+  color: var(--dim);
+  font-weight: 600;
+}
+.fd-add-others {
+  display: grid;
+  gap: var(--sp-2);
+}
+.fd-add-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fd-add-device {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+  padding: var(--sp-2) 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.fd-add-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+.fd-add-dot[data-online="true"] {
+  background: var(--ok);
+}
+.fd-add-device-main {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
+  min-width: 0;
+}
+.fd-add-device-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--sp-2);
+}
+.fd-add-device-os {
+  color: var(--dim);
+}
+.fd-add-device-dns {
+  color: var(--faint);
+  font-size: var(--fs-data);
+  overflow-wrap: anywhere;
+}
+.fd-add-small-btn {
+  flex: none;
+  height: var(--ctl-h-sm);
+  padding: 0 var(--sp-3);
+}
+
+/* the command and the secret */
+.fd-add-command {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding: var(--sp-3);
+  background: var(--code);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-ctl);
+}
+.fd-add-command code,
+.fd-add-mask {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: all;
+}
+.fd-add-mask {
+  user-select: none;
+  letter-spacing: 2px;
+}
+.fd-add-command textarea {
+  width: 100%;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  word-break: break-all;
+}
+.fd-add-command-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+/* the wait and the end */
+.fd-add-wait {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--dim);
+}
+.fd-add-spinner {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--act);
+  border-radius: 50%;
+  animation: fd-add-spin 0.9s linear infinite;
+}
+@keyframes fd-add-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fd-add-spinner {
+    animation: none;
+  }
+}
+.fd-add-done {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+/* the code to compare */
+.fd-add-fingerprint {
+  padding: var(--sp-3);
+  background: var(--code);
+  border: 2px solid var(--act);
+  border-radius: var(--r-ctl);
+}
+.fd-add-fingerprint .fd-fingerprint {
+  display: block;
+  font-size: var(--fs-heading);
+  font-weight: 600;
+  line-height: 1.6;
+  letter-spacing: 1px;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+.fd-add-scopes {
+  margin: 0;
+  padding-left: var(--sp-5);
 }

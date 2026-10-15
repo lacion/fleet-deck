@@ -1,5 +1,5 @@
 // DL-178: the pure rules of the tailnet card and the pairing tab.
-import type { AutoView, TailnetView, WindowView } from './api';
+import type { AutoView, Device, PairRequest, TailnetView, WindowView } from './api';
 
 /** Which button the Tailnet card shows: "Use tailnet", "Update", or none. */
 export function useButton(view: TailnetView): 'use' | 'update' | 'none' {
@@ -61,4 +61,83 @@ export function approveError(code: string | null, message: string): string {
     default:
       return message;
   }
+}
+
+export type DeviceGroups = {
+  readonly addable: Device[];
+  readonly waiting: Device[];
+  readonly paired: Device[];
+  readonly offline: Device[];
+  readonly unsupported: Device[];
+};
+
+const UNSUPPORTED_OS = new Set(['ios', 'ipados', 'android', 'tvos']);
+
+/** The groups of the device list, in input order. The first rule that matches wins. */
+export function groupDevices(devices: readonly Device[]): DeviceGroups {
+  const groups: DeviceGroups = {
+    addable: [],
+    waiting: [],
+    paired: [],
+    offline: [],
+    unsupported: [],
+  };
+  for (const d of devices) {
+    if (d.state === 'paired') groups.paired.push(d);
+    else if (d.state === 'request waiting') groups.waiting.push(d);
+    else if (UNSUPPORTED_OS.has((d.os ?? '').toLowerCase())) groups.unsupported.push(d);
+    else if (!d.online) groups.offline.push(d);
+    else groups.addable.push(d);
+  }
+  return groups;
+}
+
+const OS_LABELS: Readonly<Record<string, string>> = {
+  linux: 'Linux',
+  macos: 'macOS',
+  windows: 'Windows',
+  ios: 'iOS',
+  ipados: 'iPadOS',
+  android: 'Android',
+};
+
+/** The name of an operating system for a person. */
+export function osLabel(os?: string): string {
+  if (os === undefined) return 'Unknown system';
+  return OS_LABELS[os.toLowerCase()] ?? os;
+}
+
+/** The first request that comes from the device: by source address, else by host name. */
+export function requestOf(
+  device: Device,
+  requests: readonly PairRequest[],
+): PairRequest | undefined {
+  const name = device.host_name.toLowerCase();
+  return requests.find(
+    (r) =>
+      device.ips.includes(r.source_ip) ||
+      (r.tailscale?.host_name !== undefined && r.tailscale.host_name.toLowerCase() === name),
+  );
+}
+
+/** What a scope lets the deck do on the station, in plain words. */
+export function scopeText(scope: string): string {
+  switch (scope) {
+    case 'read':
+      return 'See its sessions and files';
+    case 'drive':
+      return 'Start sessions and send prompts';
+    case 'approve':
+      return 'Answer approvals';
+    case 'admin':
+      return 'Change its settings and manage it';
+    default:
+      return scope;
+  }
+}
+
+/** `m:ss` for a time left in ms (never below 0:00). */
+export function countdownText(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
