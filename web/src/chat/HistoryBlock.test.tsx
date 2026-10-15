@@ -40,11 +40,16 @@ describe('the history block (DL-189)', () => {
   test('user, assistant and tool items with the title', () => {
     const html = block(view([user, reply, tool('t1', 'ls -la', 'ok')]));
     expect(html).toContain('aria-label="Earlier history"');
-    expect(html).toContain('Earlier history (from the terminal)');
-    expect(html).toContain('data-kind="user"');
+    expect(html).toContain(
+      '<div class="fd-history-divider" role="separator"><span>Earlier, in the terminal</span></div>',
+    );
+    // the same shapes as the live chat: a bubble for you with no label, Markdown for the agent
+    expect(html).toContain(
+      '<div class="fd-chat-run" data-history="true"><div class="fd-chat-bubble">',
+    );
     expect(html).toContain('Fix the bug\nplease');
-    expect(html).toContain('>You<');
-    expect(html).toContain('data-kind="assistant"');
+    expect(html).not.toContain('>You<');
+    expect(html).toContain('<div class="fd-chat-message" data-history="true">');
     expect(html).toContain('<strong>bold</strong>');
     expect(html).toContain('data-kind="tool"');
     expect(html).toContain('<code>Bash</code>');
@@ -57,7 +62,7 @@ describe('the history block (DL-189)', () => {
     expect(failed).toContain('<span class="fd-history-failed">failed</span>');
     const bare = block(view([tool('t2', '', 'unknown')]));
     expect(bare).toContain('<code>Bash</code>');
-    expect(bare).not.toContain('<span>');
+    expect(bare).not.toContain('</code><span>');
     expect(bare).not.toContain('failed');
   });
 
@@ -76,7 +81,7 @@ describe('the history block (DL-189)', () => {
     expect(html).not.toContain('Try again');
     const alone = block(view([], { line }));
     expect(alone).toContain('Some lines of the transcript could not be read.');
-    expect(alone).not.toContain('Earlier history (from the terminal)');
+    expect(alone).not.toContain('Earlier, in the terminal');
   });
 
   test('a retry line has the Try again button', () => {

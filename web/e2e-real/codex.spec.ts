@@ -98,7 +98,7 @@ test('a Codex turn on bravo takes a steer into the running turn, then an interru
   const page = phone.page;
   const id = await phone.spawn(bravo, CODEX_LABEL, 'Codex long run', 'wait for the signal');
   const view = await phone.open('Codex long run');
-  await expect(view).toContainText('working');
+  await expect(view).toContainText('Working');
   const composer = page.getByRole('form', { name: 'Composer' });
   // Codex has no native follow-up queue: the board says that the station
   // holds a follow-up (capability-driven, DL-065).
@@ -113,7 +113,7 @@ test('a Codex turn on bravo takes a steer into the running turn, then an interru
   await composer.getByLabel('Message').fill('wait once more');
   await composer.getByRole('button', { name: 'Send' }).click();
   await expect(phone.status('Done.')).toBeVisible();
-  await expect(view).toContainText('working');
+  await expect(view).toContainText('Working');
   await page.getByRole('button', { name: 'Interrupt' }).click();
   await expect(phone.status('Done.')).toBeVisible();
   await expect(view).toContainText('Turn interrupted');

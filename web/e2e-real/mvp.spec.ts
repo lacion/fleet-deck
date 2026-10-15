@@ -240,7 +240,7 @@ test('a session spawned on alpha asks for an approval that the needs-you rail an
 test('a running turn on bravo takes a steer and an interrupt, then runs the steer', async () => {
   const id = await spawn(bravo, 'Bravo long run', 'wait for the signal');
   const view = await open('Bravo long run');
-  await expect(view).toContainText('working');
+  await expect(view).toContainText('Working');
   const composer = page.getByRole('form', { name: 'Composer' });
   await composer.getByLabel('Message').fill('after the stop');
   await composer.getByRole('button', { name: 'Steer now' }).click();

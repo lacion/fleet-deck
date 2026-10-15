@@ -153,9 +153,14 @@ test('the Files side panel lists the root at once, opens folders, and its toggle
   const pane = page.getByRole('region', { name: 'Session' });
   const toggle = pane.getByRole('button', { name: 'Files' });
   const side = pane.getByRole('complementary', { name: 'Files panel' });
-  // open by default; the Files tab is not in the tab list while the panel is open
+  // closed by default: the Files tab is in the tab list, and the toggle opens the panel
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await expect(side).toHaveCount(0);
+  await expect(pane.getByRole('tab', { name: 'Files' })).toBeVisible();
+  await toggle.click();
   await expect(toggle).toHaveAttribute('aria-pressed', 'true');
   await expect(side).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('fd-files-panel'))).toBe('1');
   await expect(pane.getByRole('tablist', { name: 'Session views' }).getByRole('tab')).toHaveText([
     'Chat',
     'Changes',
@@ -248,6 +253,8 @@ test('a file name of a diff opens the file in the Files side panel, rendered or 
     .click();
   const pane = page.getByRole('region', { name: 'Session' });
   const side = pane.getByRole('complementary', { name: 'Files panel' });
+  // the panel is closed by default: open it
+  await pane.getByRole('button', { name: 'Files' }).click();
   await pane.getByRole('tab', { name: /^Changes/ }).click();
   await pane.getByRole('button', { name: 'Show the diff' }).click();
   await pane.locator('[data-diff="t1"]').getByRole('button', { name: 'docs/guide.md' }).click();

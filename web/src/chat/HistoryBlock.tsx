@@ -17,16 +17,17 @@ function ItemView({ item }: { item: HistoryItem }) {
       </div>
     );
   }
+  // The same shapes as the live chat: a bubble for you, plain Markdown for the agent.
+  if (item.kind === 'user') {
+    return (
+      <div className="fd-chat-run" data-history="true" title={title}>
+        <div className="fd-chat-bubble">{item.text}</div>
+      </div>
+    );
+  }
   return (
-    <div className="fd-history-item" data-kind={item.kind} title={title}>
-      {item.kind === 'user' ? (
-        <>
-          <span className="fd-chat-run-label">You</span>
-          <div>{item.text}</div>
-        </>
-      ) : (
-        <Markdown text={item.text} />
-      )}
+    <div className="fd-chat-message" data-history="true" title={title}>
+      <Markdown text={item.text} />
     </div>
   );
 }
@@ -39,7 +40,10 @@ export function HistoryBlock({ view, gap }: { readonly view: HistoryView; readon
     <>
       <section className="fd-history" aria-label="Earlier history">
         {items.length > 0 ? (
-          <h3 className="fd-history-title">Earlier history (from the terminal)</h3>
+          // biome-ignore lint/a11y/useFocusableInteractive lint/a11y/useAriaPropsForRole: a plain separator, not a slider
+          <div className="fd-history-divider" role="separator">
+            <span>Earlier, in the terminal</span>
+          </div>
         ) : null}
         {items.map((item) => (
           <ItemView key={item.id} item={item} />

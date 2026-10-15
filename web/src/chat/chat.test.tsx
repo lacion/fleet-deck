@@ -81,17 +81,28 @@ describe('ChatView', () => {
     expect(html).toContain('role="log"');
   });
 
-  test('shows the run label', () => {
+  test('shows no label for a board run, and a muted line for a provider or continuation run', () => {
     const items: Item[] = [
       { type: 'run', key: '1', run_id: 'r1', input: 'fix it', origin: 'continuation' },
       { type: 'run', key: '2', run_id: 'r2', input: 'again', origin: 'board' },
+      { type: 'run', key: '3', run_id: 'r3', input: 'provider turn', origin: 'provider' },
     ];
     const html = view({ items });
-    expect(html).toContain('Station continuation');
+    // backlog B2: no bubble and no label for the two background origins
+    expect(html).toContain(
+      '<p class="fd-chat-line" data-origin="continuation">The station continued the session after a restart.</p>',
+    );
+    expect(html).toContain(
+      '<p class="fd-chat-line" data-origin="provider">The agent started a turn on its own.</p>',
+    );
+    expect(html).not.toContain('Provider turn');
+    expect(html).not.toContain('Station continuation');
+    expect(html).not.toContain('fix it');
+    expect(html).not.toContain('provider turn');
     // a board run has no label: the bubble is the owner's own message
     expect(html).not.toContain('>You<');
-    expect(html.match(/fd-chat-run-label/g)?.length).toBe(1);
-    expect(html).toContain('fix it');
+    expect(html).not.toContain('fd-chat-run-label');
+    expect(html.match(/fd-chat-bubble/g)?.length).toBe(1);
     expect(html).toContain('again');
   });
 

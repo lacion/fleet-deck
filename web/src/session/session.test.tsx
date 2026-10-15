@@ -23,7 +23,7 @@ import {
   recordedRequest,
 } from '../testing/timeline';
 import { commandId, outcomeOf, sessionActions } from './commands';
-import { type PaneTab, SessionView } from './SessionView';
+import { type PaneTab, readFilesOpen, SessionView } from './SessionView';
 
 const key = { station_id: 'station-a', session_id: 'nested' };
 
@@ -145,8 +145,20 @@ describe('session pane (DL-140)', () => {
     expect(withFiles).not.toContain('aria-label="Files panel"');
   });
 
-  test('on a desktop the Files side panel replaces the Files tab and has a toggle', () => {
-    const html = view(session(), timeline(), { files: true });
+  test('on a desktop the Files side panel is closed by default and has a toggle', () => {
+    // no stored choice: the panel is closed, the Files tab is offered, the toggle is not pressed
+    const closed = view(session(), timeline(), { files: true });
+    expect(closed).not.toContain('aria-label="Files panel"');
+    expect(closed).toMatch(/<button[^>]*aria-label="Files"[^>]*aria-pressed="false"/);
+    // a stored `1` opens it
+    const store = { getItem: () => '1', setItem: () => {}, removeItem: () => {} };
+    Object.defineProperty(globalThis, 'localStorage', { value: store, configurable: true });
+    let html: string;
+    try {
+      html = view(session(), timeline(), { files: true });
+    } finally {
+      Reflect.deleteProperty(globalThis, 'localStorage');
+    }
     expect(html).toContain('<aside class="fd-pane-side" aria-label="Files panel">');
     expect(html).toMatch(/<button[^>]*aria-label="Files"[^>]*aria-pressed="true"/);
     expect(html).not.toMatch(/role="tab"[^>]*>Files</);
@@ -158,6 +170,20 @@ describe('session pane (DL-140)', () => {
     expect(view(session(), timeline(), { files: true, layout: 'phone' })).not.toContain(
       'aria-label="Files panel"',
     );
+  });
+
+  test('the Files panel reads closed unless a `1` is stored', () => {
+    const store = (value: string | null) => ({ getItem: () => value });
+    expect(readFilesOpen(store(null))).toBe(false);
+    expect(readFilesOpen(store('0'))).toBe(false);
+    expect(readFilesOpen(store('1'))).toBe(true);
+    expect(
+      readFilesOpen({
+        getItem: () => {
+          throw new Error('blocked');
+        },
+      }),
+    ).toBe(false);
   });
 
   test('the Changes tab shows the count of finalized turns', () => {
@@ -291,7 +317,16 @@ describe('session pane (DL-140)', () => {
   test('an ended session says how to send prompts again', () => {
     const html = view(session({ state: 'exited', current_run: null }), timeline());
     expect(html).toContain('The session ended. Resume it to send prompts.');
-    expect(html).toMatch(/<textarea id="fd-composer-text" rows="1" disabled=""/);
+    // Claude can resume: the composer becomes a Resume bar, with no text box
+    expect(html).toContain('class="fd-composer-resume"');
+    expect(html).not.toContain('<textarea');
+    // without the resume capability the composer stays, off, with the same text
+    const stuck = view(
+      session({ state: 'exited', current_run: null, capabilities: minimalCaps() }),
+      timeline(),
+    );
+    expect(stuck).toContain('The session ended. Resume it to send prompts.');
+    expect(stuck).toMatch(/<textarea id="fd-composer-text" rows="1" disabled=""/);
   });
 
   test('a stale board turns the controls off and says why', () => {
@@ -488,7 +523,12 @@ describe('auto-continue (ADR-007, DL-127)', () => {
       at(2, { kind: 'session.auto_continue_skipped', reason: 'newer_owner_work' }),
     ];
     const html = view(session(), timeline(events));
-    expect(html).toContain('<span class="fd-chat-run-label">Station continuation</span>');
+    // backlog B2: a muted line, no bubble and no label
+    expect(html).toContain(
+      '<p class="fd-chat-line" data-origin="continuation">The station continued the session after a restart.</p>',
+    );
+    expect(html).not.toContain('fd-chat-run-label');
+    expect(html).not.toContain('fd-chat-bubble');
     expect(html).toContain('Auto-continue skipped: newer owner work');
   });
 

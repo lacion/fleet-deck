@@ -503,47 +503,61 @@
   border-color: transparent;
 }
 
-/* DL-175: the filter bar. It stays above the scroll area; on a phone it scrolls sideways. */
+/* DL-175: the Show menu, right-aligned above the scroll area. The menu body must not be clipped. */
 .fd-chat-filters {
+  position: relative;
   flex: none;
-  overflow-x: auto;
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 24px;
   border-bottom: 1px solid var(--border-soft);
-  scrollbar-width: none;
 }
-.fd-chat-filters::-webkit-scrollbar {
-  display: none;
+.fd-chat-show .fd-menu-body {
+  min-width: 200px;
 }
-.fd-chat-filters-row {
+.fd-chat-show .fd-chip {
   display: flex;
   align-items: center;
-  gap: 4px;
-  max-width: calc(var(--chat-w) + 48px);
-  margin: 0 auto;
-  padding: 6px 24px;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: var(--r-ctl);
+  color: var(--text);
 }
-[data-layout="phone"] .fd-chat-filters-row {
-  padding: 6px 12px;
-}
-.fd-chat-filters .fd-chip {
+.fd-chat-show .fd-chip::before {
+  content: "";
   flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--dim);
+  border-radius: 3px;
 }
-.fd-chat-filters .fd-chip:focus-visible {
+.fd-chat-show .fd-chip[aria-pressed="true"] {
+  border-color: transparent;
+  background: transparent;
+}
+.fd-chat-show .fd-chip[aria-pressed="true"]::before {
+  background: var(--act);
+  border-color: var(--act);
+}
+.fd-chat-show .fd-chip:focus-visible {
   outline: 2px solid var(--act);
   outline-offset: -2px;
 }
+[data-layout="phone"] .fd-chat-filters {
+  padding: 4px 12px;
+}
+[data-layout="phone"] .fd-chat-show {
+  position: static;
+}
+[data-layout="phone"] .fd-chat-show .fd-menu-body {
+  left: 12px;
+  right: 12px;
+  min-width: 0;
+}
 .fd-chat-filter-count {
+  margin-left: auto;
   color: var(--faint);
   font-variant-numeric: tabular-nums;
-}
-.fd-chat-filter-sep {
-  flex: none;
-  align-self: stretch;
-  width: 1px;
-  margin: 3px 6px;
-  background: var(--border);
 }
 .fd-chat-toolfold .fd-badge {
   margin-left: 6px;
@@ -562,20 +576,29 @@
 .fd-history > * {
   margin: 0;
 }
-.fd-history-title {
-  color: var(--faint);
+.fd-history-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--dim);
   font-family: var(--font-ui);
   font-size: var(--fs-micro);
-  font-weight: 500;
+}
+.fd-history-divider::before,
+.fd-history-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+[data-history="true"] {
+  opacity: 0.82;
 }
 .fd-history-item {
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
   color: var(--dim);
-}
-.fd-history-item[data-kind="user"] {
-  white-space: pre-wrap;
 }
 .fd-history-item[data-kind="tool"] {
   flex-direction: row;
