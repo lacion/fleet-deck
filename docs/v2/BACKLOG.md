@@ -25,6 +25,7 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 ## B3. Tailnet card: owner certificate files (DL-190, design §2.6)
 
 - **Missing:** when `board.crt` and `board.key` exist, the Tailnet card does not say "Your own certificate files (`board.crt`) are used for every name; remove them to use the Tailscale certificate." `GET /api/tailnet` does not tell the board that owner files exist.
+- **Done (2026-10-15):** `certificate.owner_files` in `GET /api/tailnet` (be-w4) and the card note (ui-w4).
 
 ## B4. "Add station": the joined station shows its key fingerprint (2026-10-15)
 
