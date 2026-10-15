@@ -2,8 +2,11 @@
 //! the running binary under the launcher root, never the build directory.
 
 use std::fs;
+use std::io::Read as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use fleetdeck_station::upgrade::{CURRENT, Launcher};
@@ -55,10 +58,98 @@ pub enum CopyState {
     Missing,
 }
 
-/// `Same`: the bytes are equal. `Missing`: no copy. Else `Newer` when the
-/// modification time of `exe` is later than that of the copy, `Older` when it
-/// is not (an older fleetdeck earlier on PATH must never replace the copy).
-/// Reads only.
+/// The time that `build-info` of a program has to answer in.
+const BUILD_INFO_TIMEOUT: Duration = Duration::from_secs(5);
+/// The most that is read from the answer of `build-info`.
+const BUILD_INFO_MAX: u64 = 4096;
+
+/// What `fleetdeck build-info` prints that the comparison needs.
+#[derive(serde::Deserialize)]
+struct Build {
+    commit: String,
+    commit_time: i64,
+}
+
+impl Build {
+    /// A build that knows its commit and the time of it.
+    fn known(self) -> Option<Self> {
+        (self.commit != "unknown" && self.commit_time > 0).then_some(self)
+    }
+}
+
+/// The build of this process.
+fn own_build() -> Build {
+    Build {
+        commit: fleetdeck_core::build::COMMIT.to_owned(),
+        commit_time: fleetdeck_core::build::COMMIT_TIME,
+    }
+}
+
+/// True when `exe` is the executable of this process.
+fn is_current_exe(exe: &Path) -> bool {
+    match (std::env::current_exe(), fs::canonicalize(exe)) {
+        (Ok(current), Ok(exe)) => fs::canonicalize(current).is_ok_and(|current| current == exe),
+        _ => false,
+    }
+}
+
+/// Asks `program build-info` for its build. `None` when it does not answer
+/// in time, fails, or prints something else (an older program).
+fn ask_build(program: &Path) -> Option<Build> {
+    let mut child = Command::new(program)
+        .arg("build-info")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut out = Vec::new();
+        stdout
+            .take(BUILD_INFO_MAX)
+            .read_to_end(&mut out)
+            .map(|_| out)
+    });
+    let deadline = Instant::now() + BUILD_INFO_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            // A timeout or a wait failure: stop the program.
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    };
+    let out = reader.join().ok()?.ok()?;
+    if !status.success() {
+        return None;
+    }
+    serde_json::from_slice::<Build>(&out).ok()
+}
+
+/// The build of the program at `path`; this process answers for itself.
+fn build_of(path: &Path) -> Option<Build> {
+    let build = if is_current_exe(path) {
+        Some(own_build())
+    } else {
+        ask_build(path)
+    };
+    build.and_then(Build::known)
+}
+
+/// `Same`: the bytes are equal. `Missing`: no copy. Else the builds decide
+/// when both know their commit time: `Newer` when the commit of `exe` is
+/// later than that of the copy, `Older` when it is earlier (an older
+/// fleetdeck earlier on PATH must never replace the copy). Without that (an
+/// older copy has no `build-info`, or the commit time is the same, as with
+/// local edits) the modification time decides: `Newer` when that of `exe` is
+/// later, else `Older`. Reads only.
 pub fn copy_state(root: &Path, exe: &Path) -> anyhow::Result<CopyState> {
     let Some(target) = current_target(root) else {
         return Ok(CopyState::Missing);
@@ -71,6 +162,15 @@ pub fn copy_state(root: &Path, exe: &Path) -> anyhow::Result<CopyState> {
     };
     if same_bytes(&target, exe)? {
         return Ok(CopyState::Same);
+    }
+    if let (Some(mine), Some(theirs)) = (build_of(exe), build_of(&target))
+        && mine.commit_time != theirs.commit_time
+    {
+        return Ok(if mine.commit_time > theirs.commit_time {
+            CopyState::Newer
+        } else {
+            CopyState::Older
+        });
     }
     let modified = |meta: &fs::Metadata, p: &Path| {
         meta.modified()

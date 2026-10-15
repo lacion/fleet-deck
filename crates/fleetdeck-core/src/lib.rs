@@ -3,6 +3,7 @@
 //! data and config directories, `station.toml` / `deck.toml`, SQLite on a
 //! dedicated thread with migrations, and logging.
 
+pub mod build;
 pub mod childenv;
 pub mod clock;
 pub mod config;

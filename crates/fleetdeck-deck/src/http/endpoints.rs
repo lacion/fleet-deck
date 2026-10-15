@@ -51,6 +51,12 @@ impl Endpoints {
         }
     }
 
+    /// True when the owner's own certificate files are used for every name.
+    #[must_use]
+    pub fn owner(&self) -> bool {
+        self.resolver.owner()
+    }
+
     /// The same provider with other trust anchors (a test gives its own).
     #[must_use]
     pub fn with_anchors(mut self, anchors: Anchors) -> Self {
@@ -163,6 +169,7 @@ mod tests {
         let cert = pki.check(Duration::ZERO).unwrap();
         tls.resolver.set_tailscale(Some(cert.served().unwrap()));
         let list = provider(&tls).entries(now_ms());
+        assert!(!provider(&tls).owner());
         assert_eq!(list[0].trust, CertTrust::Trusted);
         assert_eq!(list[0].certificate_sha256, cert.sha256);
         assert_eq!(list[0].label, "Tailnet deck.tail1.ts.net");
@@ -183,6 +190,7 @@ mod tests {
             .with_name(Some(NAME))
             .unwrap();
         let anchors: Anchors = Arc::from(pki.anchors());
+        assert!(provider(&owner).owner());
         let list = provider(&owner)
             .with_anchors(Arc::clone(&anchors))
             .entries(now_ms());

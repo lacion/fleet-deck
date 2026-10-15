@@ -97,8 +97,10 @@ pub struct SessionView {
     pub scope: Option<SharedScope>,
 }
 
-/// The version of this deck.
-const DECK_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The version of this deck, with its build commit.
+fn deck_version() -> &'static str {
+    fleetdeck_core::build::version()
+}
 
 fn set_cookie(value: &str, max_age_s: i64) -> HeaderValue {
     let text =
@@ -113,7 +115,7 @@ fn logged_in(login: &NewLogin) -> Response {
         scopes: crate::store::auth::OWNER_SCOPES.to_vec(),
         csrf: Some(login.csrf.clone()),
         expires_at: login.expires_at,
-        deck_version: Some(DECK_VERSION.to_owned()),
+        deck_version: Some(deck_version().to_owned()),
         display_name: None,
         role: None,
         scope: None,
@@ -319,7 +321,7 @@ async fn member_view(board: &Board, grant: &ShareGrant) -> Result<SessionView, A
         scopes: grant.scopes().into_iter().collect(),
         csrf: Some(grant.csrf.clone()),
         expires_at: grant.expires_at,
-        deck_version: Some(DECK_VERSION.to_owned()),
+        deck_version: Some(deck_version().to_owned()),
         display_name: Some(grant.display_name.clone()),
         role: Some(grant.role),
         scope: Some(shared_scope(board, grant).await?),
@@ -623,7 +625,7 @@ pub async fn session(
         scopes: principal.scopes().into_iter().collect(),
         csrf,
         expires_at,
-        deck_version: Some(DECK_VERSION.to_owned()),
+        deck_version: Some(deck_version().to_owned()),
         display_name: None,
         role: None,
         scope: None,

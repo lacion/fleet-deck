@@ -184,3 +184,79 @@ fn the_dry_run_line_names_the_copy_only_when_one_would_be_made() {
         None
     );
 }
+
+/// A fake program that answers `build-info` with the commit time `secs`
+/// (`None`: it prints nothing, like an older fleetdeck). `note` makes the
+/// bytes differ.
+fn fake_build(path: &Path, secs: Option<i64>, note: &str) {
+    let body = match secs {
+        Some(secs) => format!(
+            "printf '%s\\n' '{{\"version\":\"0.0.0+x\",\"commit\":\"c{secs}\",\"commit_time\":{secs}}}'"
+        ),
+        None => "exit 0".to_owned(),
+    };
+    std::fs::write(path, format!("#!/bin/sh\n# {note}\n{body}\n")).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[test]
+fn the_newer_commit_time_wins_even_when_its_file_time_is_older() {
+    use crate::service::program::CopyState;
+    let d = dirs();
+    fake_build(&d.exe, Some(1000), "one");
+    program::ensure(&d.root, &d.exe, "1.2.3", "01aaa").unwrap();
+    let copy = target(&d.root, "current").unwrap();
+    // This program is built from a later commit but its file is older.
+    fake_build(&d.exe, Some(2000), "two");
+    super::set_mtime(&copy, 2000);
+    super::set_mtime(&d.exe, 1000);
+    assert_eq!(
+        program::copy_state(&d.root, &d.exe).unwrap(),
+        CopyState::Newer
+    );
+    // This program is built from an earlier commit but its file is newer.
+    fake_build(&d.exe, Some(500), "three");
+    super::set_mtime(&copy, 1000);
+    super::set_mtime(&d.exe, 2000);
+    assert_eq!(
+        program::copy_state(&d.root, &d.exe).unwrap(),
+        CopyState::Older
+    );
+}
+
+#[test]
+fn the_same_commit_time_or_a_silent_program_falls_back_to_file_times() {
+    use crate::service::program::CopyState;
+    let d = dirs();
+    fake_build(&d.exe, Some(1000), "one");
+    program::ensure(&d.root, &d.exe, "1.2.3", "01aaa").unwrap();
+    let copy = target(&d.root, "current").unwrap();
+    // The same commit time (local edits): the file time decides.
+    fake_build(&d.exe, Some(1000), "local edit");
+    super::set_mtime(&copy, 1000);
+    super::set_mtime(&d.exe, 2000);
+    assert_eq!(
+        program::copy_state(&d.root, &d.exe).unwrap(),
+        CopyState::Newer
+    );
+    super::set_mtime(&d.exe, 500);
+    assert_eq!(
+        program::copy_state(&d.root, &d.exe).unwrap(),
+        CopyState::Older
+    );
+    // A copy that prints nothing: the file time decides, whatever the commit
+    // time of this program.
+    fake_build(&copy, None, "old");
+    fake_build(&d.exe, Some(500), "new");
+    super::set_mtime(&copy, 1000);
+    super::set_mtime(&d.exe, 2000);
+    assert_eq!(
+        program::copy_state(&d.root, &d.exe).unwrap(),
+        CopyState::Newer
+    );
+    super::set_mtime(&d.exe, 500);
+    assert_eq!(
+        program::copy_state(&d.root, &d.exe).unwrap(),
+        CopyState::Older
+    );
+}
