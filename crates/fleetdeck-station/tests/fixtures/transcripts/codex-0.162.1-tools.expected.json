@@ -1,0 +1,55 @@
+{
+  "items": [
+    {
+      "id": "msg_01a13f28-e908-7ef1-a170-9809108f89dd",
+      "kind": "user",
+      "text": "<text 189>",
+      "tool": null
+    },
+    {
+      "id": "msg_04d3d1dc46390f5b016ad0ae5210408191ae0750c9e19b6812",
+      "kind": "assistant",
+      "text": "<text 194>",
+      "tool": null
+    },
+    {
+      "id": "call_ae24ab0f05b84a6988d3b58d2f69cc8a",
+      "kind": "tool",
+      "text": "",
+      "tool": {
+        "name": "exec",
+        "status": "unknown",
+        "summary": ""
+      }
+    },
+    {
+      "id": "msg_04d3d1dc46390f5b016ad0ae58513c8191aa2378843013bb09",
+      "kind": "assistant",
+      "text": "<text 208>",
+      "tool": null
+    },
+    {
+      "id": "call_0288d254e4b744c8b3e51eceb1bda41f",
+      "kind": "tool",
+      "text": "",
+      "tool": {
+        "name": "exec",
+        "status": "failed",
+        "summary": ""
+      }
+    },
+    {
+      "id": "call_d7385103f151418197a351e39e2e6c70",
+      "kind": "tool",
+      "text": "",
+      "tool": {
+        "name": "exec_command",
+        "status": "ok",
+        "summary": "<command 9>"
+      }
+    }
+  ],
+  "state": {
+    "kind": "complete"
+  }
+}

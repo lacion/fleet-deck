@@ -310,6 +310,15 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::SESSION_DIFF),
         false,
     ),
+    // The earlier conversation of a session, from the station's snapshot of
+    // the provider transcript (DL-189).
+    m(
+        "session.history",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::HISTORY),
+        false,
+    ),
     // The diff of a session for a coordinator, with no old-side byte (ADR-008
     // §4.4).
     m(

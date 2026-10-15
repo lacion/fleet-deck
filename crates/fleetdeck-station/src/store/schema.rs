@@ -571,6 +571,29 @@ ALTER TABLE shims ADD COLUMN native_target TEXT;
 CREATE INDEX shims_native_target ON shims(native_target) WHERE native_target IS NOT NULL;
 ";
 
+const V24: &str = "
+-- DL-189: the session history. One row per session whose transcript the
+-- station captured (or tried to). Forward only; no row is rewritten.
+--   capture        import (taken before the import resumed), lazy (taken on the
+--                  first read of an older import) or failed
+--   reason         why a capture failed
+--   prefix_size    bytes of the provider transcript that the snapshot holds
+--   prefix_sha256  SHA-256 of those bytes
+--   snapshot       the path of the station's own copy
+CREATE TABLE session_transcripts (
+    session_id    TEXT PRIMARY KEY REFERENCES sessions(session_id),
+    home          TEXT,
+    path          TEXT,
+    capture       TEXT NOT NULL CHECK (capture IN ('import', 'lazy', 'failed')),
+    reason        TEXT,
+    prefix_size   INTEGER,
+    prefix_sha256 TEXT,
+    snapshot      TEXT,
+    item_count    INTEGER,
+    captured_at   INTEGER NOT NULL
+) STRICT;
+";
+
 /// The `station.db` migrations. V4 is the link epochs table of
 /// `fleetdeck-link` (G1).
 #[must_use]
@@ -599,6 +622,7 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V21),
         M::up(V22),
         M::up(V23),
+        M::up(V24),
     ])
 }
 

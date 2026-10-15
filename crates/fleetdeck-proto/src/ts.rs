@@ -36,6 +36,10 @@ use crate::files::{
     CheckpointRef, FileContent, FileListQuery, FileListing, FileReadQuery, FileSearch,
     FileSearchQuery, SessionDiff, SessionDiffQuery, TurnDiff, TurnDiffQuery,
 };
+use crate::history::{
+    HistoryItem, HistoryKind, HistoryState, HistoryTool, HistoryUnavailable, SessionHistory,
+    SessionHistoryQuery, ToolResult,
+};
 use crate::integrations as it;
 use crate::link::{
     ControlFrame, PasteImage, PastedImage, PrecheckQuery, PrecheckResult, Preflight,
@@ -139,6 +143,14 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         TurnDiff::export_all(&cfg),
         SessionDiffQuery::export_all(&cfg),
         SessionDiff::export_all(&cfg),
+        SessionHistoryQuery::export_all(&cfg),
+        SessionHistory::export_all(&cfg),
+        HistoryItem::export_all(&cfg),
+        HistoryKind::export_all(&cfg),
+        HistoryState::export_all(&cfg),
+        HistoryTool::export_all(&cfg),
+        HistoryUnavailable::export_all(&cfg),
+        ToolResult::export_all(&cfg),
         SessionSummary::export_all(&cfg),
         ReadMark::export_all(&cfg),
         ActivityItem::export_all(&cfg),

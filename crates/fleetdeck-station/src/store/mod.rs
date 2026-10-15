@@ -50,6 +50,7 @@ pub mod shim_gaps;
 pub mod shim_writes;
 pub mod shims;
 pub mod terminal;
+pub mod transcripts;
 mod turn_checkpoints;
 pub mod worktree_ops;
 
@@ -248,6 +249,9 @@ struct Inner {
     /// Wakes the effect worker after a commit that queued effects.
     outbox: watch::Sender<u64>,
     recovered: AtomicBool,
+    /// The budget, the cache and the snapshot directory of the session
+    /// history (DL-189).
+    history: crate::history::History,
 }
 
 /// The station store. Clones share one database thread.
@@ -277,7 +281,12 @@ impl Store {
         config: StoreConfig,
     ) -> Result<Self> {
         let db = Db::open(path, schema::migrations())?;
-        Self::start(db, clock, ids, config).await
+        let store = Self::start(db, clock, ids, config, crate::history::History::default()).await?;
+        // The snapshots of the session history live next to `station.db`.
+        if let Some(dir) = path.parent() {
+            store.inner.history.set_dir(dir.join("history"));
+        }
+        Ok(store)
     }
 
     /// An in-memory store (tests).
@@ -289,8 +298,22 @@ impl Store {
         ids: SharedIds,
         config: StoreConfig,
     ) -> Result<Self> {
+        Self::open_in_memory_with_history(clock, ids, config, crate::history::History::default())
+            .await
+    }
+
+    /// An in-memory store with the given session history state (tests).
+    ///
+    /// # Errors
+    /// See [`Self::open`].
+    pub async fn open_in_memory_with_history(
+        clock: SharedClock,
+        ids: SharedIds,
+        config: StoreConfig,
+        history: crate::history::History,
+    ) -> Result<Self> {
         let db = Db::open_in_memory(schema::migrations())?;
-        Self::start(db, clock, ids, config).await
+        Self::start(db, clock, ids, config, history).await
     }
 
     async fn start(
@@ -298,6 +321,7 @@ impl Store {
         clock: SharedClock,
         ids: SharedIds,
         config: StoreConfig,
+        history: crate::history::History,
     ) -> Result<Self> {
         let fresh: IncarnationId = new_id(ids.as_ref());
         let ids_kept = Arc::clone(&ids);
@@ -338,6 +362,7 @@ impl Store {
                 head: head_tx,
                 outbox: outbox_tx,
                 recovered: AtomicBool::new(false),
+                history,
             }),
         })
     }
@@ -347,6 +372,12 @@ impl Store {
     #[must_use]
     pub fn now_ms(&self) -> i64 {
         now_ms(&self.inner.clock)
+    }
+
+    /// The history state of this station: its budget, cache and directory.
+    #[must_use]
+    pub fn history(&self) -> &crate::history::History {
+        &self.inner.history
     }
 
     #[must_use]

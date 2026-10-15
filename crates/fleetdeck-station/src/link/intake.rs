@@ -311,6 +311,24 @@ async fn file_method(ctx: &StationLink, method: &str, params: serde_json::Value)
     }
 }
 
+/// `session.history` (DL-189): a page of the earlier conversation of a
+/// session, from the station's snapshot of the provider transcript. Error
+/// codes `invalid_params`, `unknown_session`, `stale_cursor`, `busy` and
+/// `internal`.
+async fn history_method(ctx: &StationLink, params: serde_json::Value) -> Outcome {
+    let query: fleetdeck_proto::history::SessionHistoryQuery = match serde_json::from_value(params)
+    {
+        Ok(q) => q,
+        Err(e) => return bad_params(e),
+    };
+    let policy = ctx.manager.policy();
+    let private = ctx.manager.private_paths();
+    match crate::history::answer(ctx.manager.store(), &policy, &private, query).await {
+        Ok(answer) => ok(answer),
+        Err(e) => Outcome::Err(WireError::new(e.code, e.message)),
+    }
+}
+
 /// `coordinator.policy_now` (ADR-008 §6.2): the live fleet-control policy of
 /// this station for the deck: the live setting `allow_fleet_control`, and
 /// whether the caller session still holds a binding of a grant here.
@@ -436,6 +454,7 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
             accounts(ctx, m, req.params).await
         }
         "coordinator.policy_now" => policy_now(ctx, req.params),
+        "session.history" => history_method(ctx, req.params).await,
         "files.list"
         | "files.read"
         | "files.search"

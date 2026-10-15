@@ -622,6 +622,7 @@ impl EffectTarget for SessionTarget {
                 native_session_id,
                 spec,
                 prompt,
+                import,
                 ..
             } => {
                 let policy = self.current_policy();
@@ -629,6 +630,19 @@ impl EffectTarget for SessionTarget {
                     super::auto_continue::recheck(&self.store, policy.as_deref(), effect).await
                 {
                     return Dispatch::NotDispatched(code);
+                }
+                // The transcript is copied before the provider can write to it
+                // again. A failure is recorded and never stops the import
+                // (DL-189).
+                if *import {
+                    crate::history::at_import(
+                        &self.store,
+                        policy.as_deref(),
+                        &self.private,
+                        &effect.session_id,
+                        native_session_id,
+                    )
+                    .await;
                 }
                 // An import or a resume of a session without a base (R1.1).
                 let base = if self.has_base(&effect.session_id).await {

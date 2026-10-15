@@ -21,6 +21,9 @@ pub mod coordinator;
 
 pub mod fault;
 
+/// The session history from the captured transcript (DL-189).
+pub mod history;
+
 /// GitHub, GitLab, Jira and Linear (R3, DL-164).
 pub mod integrations;
 
