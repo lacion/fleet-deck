@@ -455,6 +455,48 @@ async fn a_station_save_is_forwarded_with_the_elevation_decision() {
     }
 }
 
+#[tokio::test]
+async fn a_station_save_of_the_name_renames_the_board_station_unless_the_name_is_taken() {
+    use fleetdeck_core::identity::Identity;
+    use fleetdeck_deck::store::stations::NewStation;
+
+    let mut f = fixture().await;
+    let mut station = f.connect().await;
+    f.store
+        .pin_station(NewStation {
+            key: Identity::generate().unwrap().public_key(),
+            name: "other".to_owned(),
+            scopes: BTreeSet::new(),
+            dial_url: None,
+        })
+        .await
+        .unwrap();
+    let c = board_with_extras(Arc::clone(&f.ctx), Extras::default()).await;
+    let h = owner(&c).await;
+
+    // A name that another station has: 409 and nothing goes to the station.
+    let taken = json!({ "changes": { "name": " other " }, "revision": "r1" });
+    let r = post(&c, &h, "/api/stations/fake/settings", taken).await;
+    expect(&r, 409, "name_taken");
+    assert!(r.text.contains("`other`"), "{}", r.text);
+    no_request(&mut station, Duration::from_millis(300)).await;
+    let rec = c.store.station(f.station.clone()).await.unwrap().unwrap();
+    assert_eq!(rec.name, "fake");
+
+    // A free name: the station gets the trimmed name and the record follows.
+    let free = json!({ "changes": { "name": " mac-m4 " }, "revision": "r1" });
+    let (r, req) = with_station(
+        &mut station,
+        post(&c, &h, "/api/stations/fake/settings", free),
+        Outcome::Ok(saved("r2")),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(req.params["change"]["changes"]["name"], "mac-m4");
+    let rec = c.store.station(f.station.clone()).await.unwrap().unwrap();
+    assert_eq!(rec.name, "mac-m4");
+}
+
 fn name_change(name: &str, revision: &str) -> fleetdeck_proto::settings::SettingsChange {
     serde_json::from_value(json!({ "changes": { "name": name }, "revision": revision })).unwrap()
 }

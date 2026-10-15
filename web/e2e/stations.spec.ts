@@ -114,7 +114,7 @@ test('an admin pairs a listening station, sees a refusal, and removes a station'
     });
     deck.stations = [...deck.stations, added];
     queueMicrotask(() => deck.publish());
-    expect(body).toEqual({ invitation: 'fdinv1_from_station', name: 'alpha-box' });
+    expect(body).toEqual({ invitation: 'fdinv1_from_station', name: null });
     return { status: 200, body: added };
   });
   deck.on('/api/stations/Alpha/remove', () => {
@@ -132,7 +132,6 @@ test('an admin pairs a listening station, sees a refusal, and removes a station'
   const pair = dialog.getByRole('button', { name: 'Add station' });
   await expect(pair).toBeDisabled();
   await dialog.getByLabel('Station invitation').fill('fdinv1_from_station');
-  await dialog.getByLabel('Name on this deck (optional)').fill(' alpha-box ');
   await pair.click();
   await expect(dialog.getByRole('alert')).toHaveText('A station named alpha-box exists.');
   // The input stays for a retry after a refusal.

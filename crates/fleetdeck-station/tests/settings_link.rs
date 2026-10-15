@@ -341,6 +341,21 @@ async fn settings_set_of_max_sessions_changes_the_next_start_decision() {
 }
 
 #[tokio::test]
+async fn settings_set_of_name_changes_the_station_info_without_a_restart() {
+    let mut rig = Rig::new(2).await;
+    let deck = rig.connect().await;
+    let rev = revision(&deck.control).await;
+    ok(call(
+        &deck.control,
+        "settings.set",
+        set_params(&rev, json!({ "name": "mac-m4" }), false),
+    )
+    .await);
+    let info = ok(call(&deck.control, "station.info", json!({})).await);
+    assert_eq!(info["name"], json!("mac-m4"));
+}
+
+#[tokio::test]
 async fn turning_allow_shell_off_refuses_a_new_shell() {
     let mut rig = Rig::new(2).await;
     let deck = rig.connect().await;
