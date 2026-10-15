@@ -6,7 +6,11 @@ import type { Steering } from "./Steering";
 /**
  * One share as `GET /api/shares` lists it.
  */
-export type ShareInfo = { share_id: string, kind: ShareKind, target: string, role: ShareRole, steering: Steering, expires_at: number, revoked_at: number | null, created_at: number, 
+export type ShareInfo = { share_id: string, kind: ShareKind, target: string, role: ShareRole, steering: Steering, 
+/**
+ * Members can read the earlier history of imported sessions (DL-189).
+ */
+history: boolean, expires_at: number, revoked_at: number | null, created_at: number, 
 /**
  * The uses of the invite that are left (0 after revoke or expiry).
  */

@@ -158,6 +158,7 @@ async fn world() -> World {
         steering: Steering::Open,
         expires_in_days: Some(1),
         uses: Some(1),
+        history: false,
     };
     s.create_share(share).await.unwrap();
     World { s, alpha, beta }

@@ -63,7 +63,7 @@ use crate::settings::{
 };
 use crate::share::{
     ChatMessage, ChatPost, DriveGrant, DriverState, JoinRequest, NewShare, NewSpace, ShareCreated,
-    ShareInfo, ShareKind, ShareRole, SharedScope, SpaceSession, SpaceView, Steering,
+    ShareHistory, ShareInfo, ShareKind, ShareRole, SharedScope, SpaceSession, SpaceView, Steering,
 };
 use crate::version::{Negotiated, VersionOffer};
 
@@ -263,6 +263,7 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         NewShare::export_all(&cfg),
         ShareCreated::export_all(&cfg),
         ShareInfo::export_all(&cfg),
+        ShareHistory::export_all(&cfg),
         NewSpace::export_all(&cfg),
         SpaceView::export_all(&cfg),
         SpaceSession::export_all(&cfg),

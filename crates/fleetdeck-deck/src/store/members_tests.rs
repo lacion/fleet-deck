@@ -29,6 +29,7 @@ fn grant(role: ShareRole, scope: ShareScope) -> ShareGrant {
         target: "st/s1".to_owned(),
         role,
         steering: Steering::Open,
+        history: false,
         scope,
         session_hash: "h".to_owned(),
         csrf: "c".to_owned(),
@@ -48,6 +49,7 @@ fn board_share(role: ShareRole) -> NewShareRow {
         steering: Steering::Open,
         expires_in_days: None,
         uses: None,
+        history: false,
     }
 }
 
@@ -338,6 +340,7 @@ async fn a_space_share_covers_the_sessions_of_the_space_now() {
         steering: Steering::Open,
         expires_in_days: None,
         uses: None,
+        history: false,
     };
     let created = st.create_share(row).await.unwrap();
     let login = st

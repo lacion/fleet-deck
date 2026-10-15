@@ -480,6 +480,23 @@ pub const API_REST: &[ApiMethod] = &[
         true,
     ),
     m(
+        "shares.history",
+        Method::POST,
+        "/api/shares/{share_id}/history",
+        Some(Scope::Admin),
+        true,
+    ),
+    // The earlier history of an imported session (DL-189): the owner, and a
+    // member only through a share with the history option.
+    m(
+        "sessions.history",
+        Method::GET,
+        "/api/sessions/{station}/{session}/history",
+        Some(Scope::Read),
+        false,
+    )
+    .member(),
+    m(
         "spaces.create",
         Method::POST,
         "/api/spaces",

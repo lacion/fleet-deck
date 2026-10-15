@@ -73,6 +73,7 @@ fn exactly_these_methods_are_open_to_a_member() {
             "session.interrupt",
             "session.prompt",
             "session.steer",
+            "sessions.history",
             "sessions.list",
             "stations.list",
         ]

@@ -89,6 +89,17 @@ pub enum LinkV2 {
     Negotiated,
 }
 
+/// Whether every live link of a station negotiated a feature.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkFeature {
+    /// No live link.
+    Down,
+    /// Every live link negotiated the feature.
+    Negotiated,
+    /// A live link did not negotiate the feature.
+    Without,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum DeckError {
     #[error(transparent)]
@@ -381,6 +392,21 @@ impl DeckStore {
     pub fn link_v2(&self, station: &StationId) -> LinkV2 {
         let map = self.link_features();
         map.get(station).map_or(LinkV2::Down, v2_state)
+    }
+
+    /// Whether `station` has a live link and whether every live link negotiated
+    /// `feature` (the intersection over its links, fail closed).
+    #[must_use]
+    pub fn link_feature(&self, station: &StationId, feature: &str) -> LinkFeature {
+        let map = self.link_features();
+        let Some(links) = map.get(station).filter(|l| !l.is_empty()) else {
+            return LinkFeature::Down;
+        };
+        if links.values().all(|f| f.contains(feature)) {
+            LinkFeature::Negotiated
+        } else {
+            LinkFeature::Without
+        }
     }
 
     fn link_peers(
