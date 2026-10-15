@@ -1071,9 +1071,6 @@
 .fd-home[data-layout="phone"] .fd-home-head {
   position: relative;
 }
-.fd-home[data-layout="phone"] .fd-filters-menu {
-  position: static;
-}
 .fd-home[data-layout="phone"] .fd-filters-menu .fd-menu-body {
   left: 12px;
   right: 12px;
@@ -1174,4 +1171,34 @@
 }
 .fd-home[data-rail="false"] .fd-home-head {
   padding-right: 56px;
+}
+
+/* The title truncates alone; the marks after it stay visible (Codex review P2). */
+.fd-strip-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.fd-strip-title > :not(.fd-strip-text) {
+  flex: none;
+}
+.fd-strip-title > .fd-strip-text {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The filters menu opens inside the header, also when the toolbar wraps (Codex review P2). */
+.fd-home-head {
+  position: relative;
+}
+.fd-filters-menu {
+  position: static;
+}
+.fd-home:not([data-layout="phone"]) .fd-filters-menu .fd-menu-body {
+  top: calc(100% - 4px);
+  right: 12px;
+  left: auto;
 }

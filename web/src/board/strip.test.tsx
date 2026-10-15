@@ -174,13 +174,17 @@ describe('strip markup', () => {
     const asking = board([card('g', 'working', 'station-a', { ...focus, open_requests: [ask] })]);
     expect(asking).toContain('Run it?');
     expect(asking).not.toContain('fd-focus');
+    // An ended session shows its state, not the last focus of the agent.
+    const ended = board([card('h', 'ended', 'station-a', focus)]);
+    expect(ended).toContain('data-note="ended"');
+    expect(ended).not.toContain('fd-focus');
   });
 
   test('the station name prefixes the title for a repo grouping only', () => {
     const cards = [card('a', 'working', 'station-a', { title: 'T' })];
     expect(board(cards)).not.toContain('fd-strip-station');
     expect(board(cards, { group: 'repo' })).toContain(
-      '<span class="fd-strip-station">Alpha</span>T',
+      '<span class="fd-strip-station">Alpha</span><span class="fd-strip-text">T</span>',
     );
   });
 });
@@ -227,6 +231,9 @@ describe('toolbar filters', () => {
     expect(html).not.toContain(' · ');
     const needs = home([card('n', 'needs_you', 'station-a', { open_requests: [ask] })]);
     expect(needs).toContain('<span class="fd-home-needs">1 needs you</span>');
+    // A request of an unreachable station still waits: no All clear.
+    const away = home([card('u', 'unreachable', 'station-a', { open_requests: [ask] })]);
+    expect(away).toContain('<span class="fd-home-needs">1 needs you</span>');
   });
 });
 

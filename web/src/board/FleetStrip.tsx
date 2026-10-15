@@ -126,11 +126,13 @@ export function FleetStrip({
           {showStation ? (
             <span className="fd-strip-station">{stationName(card.station_id, stations)}</span>
           ) : null}
-          {title !== '' ? (
-            title
-          ) : place === null ? null : (
-            <span className="fd-strip-place">{place.text}</span>
-          )}
+          <span className="fd-strip-text">
+            {title !== '' ? (
+              title
+            ) : place === null ? null : (
+              <span className="fd-strip-place">{place.text}</span>
+            )}
+          </span>
           {s.title !== null && s.title_generated ? <GeneratedMark /> : null}
           {starred ? (
             <span className="fd-card-star" title="Priority">

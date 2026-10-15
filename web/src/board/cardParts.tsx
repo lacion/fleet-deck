@@ -43,6 +43,15 @@ export const STATUS_NOTE: Record<CardStatus, string> = {
  * The one line of what a session does now: an open ask, a running tool, a failure, then (with
  * `focus`, on the strip) the agent focus line, then hibernated, then the status.
  */
+/** The statuses in which a strip shows the agent's focus line instead of the status note. */
+const FOCUS_STATUSES: readonly CardStatus[] = [
+  'working',
+  'verifying',
+  'needs_you',
+  'queued',
+  'idle',
+];
+
 export function CardNote({
   card,
   focus = false,
@@ -90,13 +99,16 @@ export function CardNote({
       </span>
     );
   }
-  if (focus && focusOf(s) !== null) return <FocusLine summary={s} />;
   if (isHibernated(card)) {
     return (
       <span className="fd-card-note" data-note="hibernated">
         Hibernated · resumes with your next prompt
       </span>
     );
+  }
+  // The focus line is the agent's own words: only while the session is live.
+  if (focus && FOCUS_STATUSES.includes(card.status) && focusOf(s) !== null) {
+    return <FocusLine summary={s} />;
   }
   return (
     <span className="fd-card-note" data-note={card.status}>

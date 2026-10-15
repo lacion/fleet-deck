@@ -292,7 +292,10 @@ export function FleetHome({
   const stationIds = [
     ...new Set([...stations.map((s) => s.station_id), ...sessions.map((s) => s.station_id)]),
   ].sort();
-  const needsYou = sessions.filter((s) => s.status === 'needs_you').length;
+  // An open request counts also when its station became unreachable (the rail still shows it).
+  const needsYou = sessions.filter(
+    (s) => s.status === 'needs_you' || s.summary.open_requests.length > 0,
+  ).length;
   const stationCount = stations.length;
   const unknownProvider = sessions.some(
     (s) => s.summary.provider === null || s.summary.provider === 'unknown',
