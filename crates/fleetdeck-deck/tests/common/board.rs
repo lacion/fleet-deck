@@ -196,6 +196,7 @@ async fn serve_with(
                     name: "test deck".to_owned(),
                     conflict_mail: true,
                     fleet_control: false,
+                    tailscale_cert: false,
                 }),
                 elevations: Arc::default(),
                 settings: extras.as_mut().and_then(|e| e.settings.take()),

@@ -30,6 +30,10 @@ use crate::config::valid_dns_name;
 use crate::local_addrs;
 use crate::netscope::{self, AddrClass};
 
+#[path = "tailscale_cert.rs"]
+mod tailscale_cert;
+pub use tailscale_cert::CertError;
+
 /// The longest run of one call.
 pub const TIMEOUT: Duration = Duration::from_secs(3);
 /// The most stdout bytes of one call.

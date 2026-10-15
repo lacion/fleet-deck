@@ -15,6 +15,8 @@ hyper = { workspace = true }
 hyper-util = { workspace = true }
 rcgen = { workspace = true, features = ["pem"] }
 rustls = { workspace = true }
+rustls-webpki = { workspace = true }
+x509-parser = "0.18"
 tokio-rustls = { workspace = true }
 argon2 = { workspace = true }
 fleetdeck-proto = { path = "../fleetdeck-proto" }

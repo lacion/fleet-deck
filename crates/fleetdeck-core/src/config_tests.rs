@@ -244,6 +244,14 @@ fn deck_defaults_and_rules() {
             .fleet_control
     );
     assert!(DeckConfig::parse("fleet_control = 1").is_err());
+    // The Tailscale certificate is off by default (DL-190).
+    assert!(!d.tailscale_cert);
+    assert!(
+        DeckConfig::parse("tailscale_cert = true")
+            .unwrap()
+            .tailscale_cert
+    );
+    assert!(DeckConfig::parse("tailscale_cert = 1").is_err());
     let e = |t: &str| DeckConfig::parse(t).unwrap_err().to_string();
     assert!(e("listen = []").contains("listen"));
     assert!(e("listen = [\"0.0.0.0:7420\"]").contains("refusing to listen"));

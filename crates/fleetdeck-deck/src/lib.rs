@@ -2,6 +2,7 @@
 //! station links, the command router and outbox, auth and audit, and the
 //! board API.
 
+pub mod cert_task;
 pub mod elevation;
 pub mod http;
 pub mod link;

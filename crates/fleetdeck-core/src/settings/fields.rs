@@ -298,6 +298,14 @@ pub fn deck_fields() -> Vec<FieldMeta> {
         )
         .danger(),
         field(
+            "tailscale_cert",
+            "Trusted certificate from Tailscale",
+            K::Bool,
+            Live,
+            "The board gets a certificate for its tailnet name that browsers trust. Tailscale must allow HTTPS certificates (admin console → DNS → HTTPS Certificates). The name `<host>.<tailnet>.ts.net` becomes public in Certificate Transparency logs.",
+        )
+        .danger(),
+        field(
             "clone_host",
             "Default Git host",
             K::Text,
