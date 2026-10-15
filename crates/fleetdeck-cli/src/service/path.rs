@@ -139,18 +139,43 @@ pub fn private_gid(group_text: &str, passwd_text: &str, user: &str, gid: u32) ->
     (!shared).then_some(gid)
 }
 
+/// True when `nsswitch.conf` takes users and groups only from the local
+/// files (and systemd's own accounts). With another source (LDAP, SSSD, NIS)
+/// another user can share a group without a line in `/etc/passwd`.
+pub fn local_accounts_only(nsswitch: &str) -> bool {
+    let sources = |db: &str| {
+        nsswitch.lines().find_map(|line| {
+            let line = line.split('#').next().unwrap_or_default().trim();
+            line.strip_prefix(db)
+                .and_then(|rest| rest.strip_prefix(':'))
+                .map(|rest| {
+                    rest.split_whitespace()
+                        .filter(|word| !word.starts_with('['))
+                        .all(|word| word == "files" || word == "systemd")
+                })
+        })
+    };
+    sources("passwd") == Some(true) && sources("group") == Some(true)
+}
+
 /// Reads `/etc/group` and `/etc/passwd` and gives [`private_gid`]. `None`
-/// when a file cannot be read: the group is then not private.
+/// when a file cannot be read, or when `/etc/nsswitch.conf` names another
+/// account source than the local files: the group is then not private.
 pub fn read_private_gid(user: &str, gid: u32) -> Option<u32> {
+    let nsswitch = std::fs::read_to_string("/etc/nsswitch.conf").ok()?;
+    if !local_accounts_only(&nsswitch) {
+        return None;
+    }
     let group = std::fs::read_to_string("/etc/group").ok()?;
     let passwd = std::fs::read_to_string("/etc/passwd").ok()?;
     private_gid(&group, &passwd, user, gid)
 }
 
-/// The first executable file `<dir>/<name>` in a `PATH` text.
+/// The first executable file `<dir>/<name>` in a `PATH` text. An empty
+/// entry is the current folder, as the shell reads it.
 fn find_program(path: &str, name: &str) -> Option<String> {
     path.split(':')
-        .filter(|dir| !dir.is_empty())
+        .map(|dir| if dir.is_empty() { "." } else { dir })
         .find(|dir| {
             std::fs::metadata(Path::new(dir).join(name))
                 .is_ok_and(|meta| meta.is_file() && meta.mode() & 0o111 != 0)

@@ -6,7 +6,7 @@ use std::path::Path;
 use super::Rig;
 use crate::cli::ServiceCommand;
 use crate::service::Kind;
-use crate::service::path::{lost_programs, private_gid, safe_path};
+use crate::service::path::{local_accounts_only, lost_programs, private_gid, safe_path};
 
 fn dir(parent: &Path, name: &str, mode: u32) -> String {
     let path = parent.join(name);
@@ -433,4 +433,22 @@ fn install_ends_with_the_single_install_again_line() {
         "{out}"
     );
     assert!(!out.contains("uses the PATH of this shell"), "{out}");
+}
+
+#[test]
+fn the_private_group_rule_needs_local_account_sources_only() {
+    let local = "passwd: files systemd\ngroup: files systemd\nhosts: files dns\n";
+    assert!(local_accounts_only(local));
+    assert!(local_accounts_only(
+        "passwd: files\ngroup: files [SUCCESS=merge] systemd\n"
+    ));
+    // Another source can hold a user that shares the group.
+    assert!(!local_accounts_only(
+        "passwd: files sss\ngroup: files sss\n"
+    ));
+    assert!(!local_accounts_only("passwd: files\ngroup: files ldap\n"));
+    assert!(!local_accounts_only("passwd: compat\ngroup: compat\n"));
+    // A missing line is not proof.
+    assert!(!local_accounts_only("passwd: files\n"));
+    assert!(!local_accounts_only("# group: files\npasswd: files\n"));
 }
