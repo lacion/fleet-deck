@@ -155,7 +155,7 @@ pub fn check_branch_choice(branch: Option<&str>, base: Option<&str>) -> Result<(
 /// says whether a canonical directory is inside the allowed roots.
 ///
 /// # Errors
-/// [`Refused`]: `repo` is not the top of a main checkout, the new path is
+/// [`Refused`]: `repo` is not the top of a checkout, the new path is
 /// outside the roots, or it exists.
 pub fn worktree_plan(
     repo: &Path,
@@ -164,7 +164,9 @@ pub fn worktree_plan(
     base: Option<&str>,
     inside: impl Fn(&Path) -> bool,
 ) -> Result<(WorkspacePlan, PathBuf), Refused> {
-    if !std::fs::symlink_metadata(repo.join(".git")).is_ok_and(|m| m.is_dir()) {
+    // A main checkout or a linked worktree whose Git directory is inside
+    // the allowed roots.
+    if !super::checkout::is_checkout_top(repo, &inside) {
         return Err(invalid(format!(
             "`{}` is not the top directory of a Git repository",
             repo.display()
