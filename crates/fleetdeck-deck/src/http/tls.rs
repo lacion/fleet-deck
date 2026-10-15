@@ -379,6 +379,15 @@ mod tests {
         let (c, k) = BoardTls::generate(&names()).unwrap();
         fs::write(dir.path().join(OWNER_CERT), &c).unwrap();
         write_file(&dir.path().join(OWNER_KEY), &k, 0o644).unwrap();
+        // The umask can clear the read bits that the test needs: set them.
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(
+                dir.path().join(OWNER_KEY),
+                fs::Permissions::from_mode(0o644),
+            )
+            .unwrap();
+        }
         let e = BoardTls::load_or_create(dir.path(), &names()).unwrap_err();
         assert!(e.to_string().contains("chmod 600"), "{e}");
         write_file(&dir.path().join(OWNER_KEY), &k, 0o600).unwrap();
