@@ -400,7 +400,7 @@ input[data-mono="true"] {
   font-family: var(--font-data);
   font-size: 28px;
   font-weight: 600;
-  letter-spacing: 4px;
+  letter-spacing: 0;
   color: var(--text);
 }
 .fd-set-ok {

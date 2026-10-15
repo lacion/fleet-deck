@@ -22,12 +22,12 @@ import {
   TriangleAlert,
   Users,
   Workflow,
-  Zap,
 } from '../ui/icons';
 import { useIntegrations, useProjects } from '../integrations/context';
 import { useSettings } from '../settings/context';
 import { FolderGit2 } from '../integrations/icons';
 import { shortModel } from '../ui/format';
+import { Mark } from '../ui/Mark';
 import { GeneratedMark } from '../ui/generated';
 import { archived as archivedSet } from '../ui/archive';
 import { priority, sessionRef } from '../ui/localSet';
@@ -311,8 +311,8 @@ export function Sidebar({
     <aside className="fd-sidebar" aria-label="Sessions" data-variant={variant}>
       <div className="fd-sidebar-top">
         <div className="fd-sidebar-brand">
-          <Icon of={Zap} />
-          <span className="fd-wordmark">FLEET DECK</span>
+          <Mark />
+          <span className="fd-wordmark">Fleet Deck</span>
           {full || guest ? null : (
             <button
               type="button"
@@ -329,7 +329,7 @@ export function Sidebar({
             title={chrome?.label ?? 'Not connected'}
           >
             <span className="fd-wspill-dot" aria-hidden="true" />
-            {chrome === undefined ? 'OFFLINE' : chrome.freshness === 'live' ? 'LIVE' : 'STALE'}
+            {chrome === undefined ? 'Offline' : chrome.freshness === 'live' ? 'Live' : 'Stale'}
             <span className="fd-vh">: {chrome?.label ?? 'Not connected'}</span>
           </span>
         </div>
@@ -497,11 +497,6 @@ export function Sidebar({
           <PrefsRow />
           {chrome === undefined ? null : (
             <div className="fd-sidebar-foot">
-              {chrome.version === undefined ? null : (
-                <span className="fd-sidebar-version" title="Deck version">
-                  deck {chrome.version}
-                </span>
-              )}
               {chrome.addDevice === undefined ? null : (
                 <button
                   type="button"

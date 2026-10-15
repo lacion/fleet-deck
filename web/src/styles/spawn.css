@@ -270,10 +270,8 @@
 .fd-spawn .fd-spawn-fleet > legend {
   padding: 0;
   margin-bottom: var(--sp-2);
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
   font-size: var(--fs-micro);
   font-weight: 500;
-  letter-spacing: var(--ls-label);
-  text-transform: uppercase;
   color: var(--faint);
 }

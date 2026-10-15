@@ -57,7 +57,7 @@ test('two sessions on two stations that change one file show as a conflict', asy
   ];
   deck.publish();
   const item = radar.getByRole('listitem', { name: 'Conflict src/lib.rs' });
-  await expect(item).toContainText('CONFLICT');
+  await expect(item).toContainText('Conflict');
   await expect(item).toContainText('src/lib.rs');
   await expect(item).toContainText('github.com/o/app');
   await expect(item).toContainText('Beta fix × Alpha fix');

@@ -107,7 +107,7 @@
 .fd-wtile-empty,
 .fd-wtile-note {
   color: var(--faint);
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
   font-size: var(--fs-micro);
 }
 

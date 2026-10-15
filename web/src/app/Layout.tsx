@@ -9,8 +9,8 @@ import {
   PanelLeft,
   Plus,
   X,
-  Zap,
 } from '../ui/icons';
+import { Mark } from '../ui/Mark';
 import { usePeople } from '../sharing/context';
 import { MemberBanner } from '../sharing/MemberBanner';
 import type { Notice } from './chrome';
@@ -243,8 +243,8 @@ export function Layout({
           >
             <Icon of={PanelLeft} />
           </button>
-          <Icon of={Zap} />
-          <span className="fd-wordmark">FLEET DECK</span>
+          <Mark />
+          <span className="fd-wordmark">Fleet Deck</span>
         </header>
       ) : null}
       <div className="fd-main">

@@ -6,7 +6,7 @@ import { card, station } from './testing/fleet';
 describe('App', () => {
   test('an empty fleet shows the five board columns and says how to start a session', () => {
     const html = renderToStaticMarkup(<App initialRoute={{ name: 'fleet' }} />);
-    expect(html).toContain('FLEET DECK');
+    expect(html).toContain('Fleet Deck');
     expect(html).toContain('aria-label="Fleet board"');
     for (const label of ['Queued', 'Working', 'Verifying', 'Idle', 'Offline']) {
       expect(html).toContain(`<span class="fd-label">${label}</span>`);

@@ -45,12 +45,9 @@
   background: var(--surface);
   border-bottom: 1px solid var(--border-soft);
 }
-.fd-home-head .fd-wordmark {
-  margin: 0;
-}
 .fd-home-counts {
   margin: 0;
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
   font-size: 12px;
   color: var(--dim);
 }
@@ -67,7 +64,7 @@
   flex: none;
   background: var(--hazard-bg);
   border-bottom: 1px solid var(--hazard);
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
   font-size: 12px;
   color: var(--hazard);
   animation: fd-slide-in 0.3s ease-out 1;
@@ -95,6 +92,9 @@
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.fd-confstrip-file {
+  font-family: var(--font-data);
 }
 .fd-confstrip-repo,
 .fd-confstrip-more,
@@ -190,14 +190,14 @@
   font-weight: 400;
 }
 .fd-swim-name {
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
   font-size: 11.5px;
   font-weight: 600;
   color: var(--dim);
   white-space: nowrap;
 }
 .fd-swim-conf {
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
   font-size: 11px;
   color: var(--hazard);
   white-space: nowrap;
@@ -362,7 +362,7 @@
   color: var(--hazard);
 }
 .fd-card-contested {
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
   font-size: 11px;
   color: var(--hazard);
 }
@@ -400,7 +400,7 @@
   background: var(--act-bg);
   border-radius: var(--r-pill);
   color: var(--act);
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
   font-size: 10px;
   white-space: nowrap;
 }
@@ -481,9 +481,9 @@
   font-weight: 600;
 }
 .fd-rail-title {
-  font-family: var(--font-data);
-  font-size: 11px;
-  letter-spacing: 2px;
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-12);
   color: var(--act);
 }
 .fd-rail-keys {
@@ -622,9 +622,9 @@
   color: var(--ok);
 }
 .fd-allclear-t1 {
-  font-family: var(--font-data);
-  font-size: 11px;
-  letter-spacing: 2px;
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-12);
   color: var(--faint);
 }
 .fd-allclear-t2 {
@@ -884,7 +884,7 @@
   color: var(--text);
 }
 .fd-task-state {
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
   font-size: var(--fs-micro);
   color: var(--dim);
 }
