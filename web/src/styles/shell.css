@@ -135,9 +135,8 @@ body:has(.fd-app[data-layout="tablet"]) {
   padding: 2px 8px;
   border: 1px solid var(--border-soft);
   border-radius: var(--r-pill);
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
   font-size: var(--fs-micro);
-  letter-spacing: 1px;
   white-space: nowrap;
   color: var(--hazard);
 }
@@ -196,7 +195,7 @@ body:has(.fd-app[data-layout="tablet"]) {
   border-radius: var(--r-pill);
   background: var(--act-bg);
   color: var(--act);
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
   font-size: 11px;
   font-weight: 600;
   text-decoration: none;
@@ -687,11 +686,9 @@ body:has(.fd-app[data-layout="tablet"]) {
 
 .fd-keys th {
   text-align: left;
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
   font-size: var(--fs-micro);
   font-weight: 500;
-  letter-spacing: var(--ls-label);
-  text-transform: uppercase;
   color: var(--faint);
 }
 
@@ -977,11 +974,9 @@ body:has(.fd-app[data-layout="tablet"]) {
 
 .fd-station h4 {
   margin: 0;
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
   font-size: var(--fs-micro);
   font-weight: 500;
-  letter-spacing: var(--ls-label);
-  text-transform: uppercase;
   color: var(--faint);
 }
 
@@ -1100,9 +1095,8 @@ body:has(.fd-app[data-layout="tablet"]) {
 }
 
 .fd-login h1 {
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
   font-size: var(--fs-heading);
-  letter-spacing: 2px;
 }
 
 .fd-login form {

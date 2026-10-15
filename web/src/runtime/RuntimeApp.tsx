@@ -382,7 +382,7 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
   if (state.login === null) {
     return (
       <main className="fd-login">
-        <h1>FLEET DECK</h1>
+        <h1>Fleet Deck</h1>
         <p>Log in to your deck. Login is required on loopback, LAN, and the tailnet.</p>
         {state.auth === 'checking' ? <p role="status">Connecting to the deck…</p> : null}
         <form

@@ -240,7 +240,7 @@ export function FleetHome({
   const limit = limitChip(rateMeters(sessions, stations));
   const header = (
     <header className="fd-home-head">
-      <h1 className="fd-wordmark">FLEET</h1>
+      <h1 className="fd-page-title">Fleet</h1>
       <p className="fd-home-counts">
         {sessions.length === 1 ? '1 session' : `${sessions.length} sessions`} ·{' '}
         {needsYou === 1 ? '1 needs you' : `${needsYou} need you`} ·{' '}

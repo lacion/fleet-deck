@@ -195,7 +195,7 @@
   flex: 0 0 auto;
   padding: 0 6px 0 10px;
   color: var(--dim);
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
   font-size: 12px;
 }
 .fd-tdock-tabwrap[data-selected="true"] {

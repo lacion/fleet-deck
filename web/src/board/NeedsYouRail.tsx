@@ -131,7 +131,7 @@ export function NeedsYouRail({
     <section className="fd-rail" data-variant={variant} aria-label="Needs you rail">
       <div className="fd-rail-top">
         <h2 className="fd-rail-head">
-          <span className="fd-rail-title">NEEDS YOU</span>{' '}
+          <span className="fd-rail-title">Needs you</span>{' '}
           <span className="fd-rail-count">{waiting.length}</span>
           {anyAnswerable ? <span className="fd-rail-keys">[ ] · a/d</span> : null}
         </h2>
@@ -142,7 +142,7 @@ export function NeedsYouRail({
           <span className="fd-allclear-ring">
             <Icon of={Check} />
           </span>
-          <span className="fd-allclear-t1">ALL CLEAR</span>
+          <span className="fd-allclear-t1">All clear</span>
           <span className="fd-allclear-t2">Nothing waits for you.</span>
         </div>
       ) : (

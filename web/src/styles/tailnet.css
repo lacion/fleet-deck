@@ -282,7 +282,7 @@
 }
 .fd-add-mask {
   user-select: none;
-  letter-spacing: 2px;
+  letter-spacing: 0;
 }
 .fd-add-command textarea {
   width: 100%;
@@ -340,7 +340,7 @@
   font-size: var(--fs-heading);
   font-weight: 600;
   line-height: 1.6;
-  letter-spacing: 1px;
+  letter-spacing: 0;
   word-break: normal;
   overflow-wrap: anywhere;
 }

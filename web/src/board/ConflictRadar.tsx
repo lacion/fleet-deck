@@ -58,7 +58,7 @@ export function ConflictRadar({ list: given, problem, onOpen }: Props) {
             aria-label={`Conflict ${c.file}`}
           >
             <Icon of={TriangleAlert} size={14} />
-            <span className="fd-confstrip-hd">CONFLICT</span>
+            <span className="fd-confstrip-hd">Conflict</span>
             <span className="fd-confstrip-file">{c.file}</span>
             {c.repo !== null ? <span className="fd-confstrip-repo">{c.repo}</span> : null}
             <span>—</span>

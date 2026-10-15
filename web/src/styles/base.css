@@ -105,11 +105,21 @@ body {
   font-family: var(--font-data);
 }
 .fd-wordmark {
-  font-family: var(--font-data);
+  font-family: var(--font-callsign);
   font-weight: 600;
-  font-size: var(--fs-heading);
-  letter-spacing: 2.5px;
+  font-size: var(--fs-15);
+  letter-spacing: 0;
   white-space: nowrap;
+}
+.fd-mark {
+  flex: none;
+  color: var(--text);
+}
+.fd-page-title {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--fs-18);
+  font-weight: 600;
 }
 /* Visually hidden, still read by screen readers. */
 .fd-vh {
@@ -295,9 +305,9 @@ input[type="radio"] {
   border-radius: var(--r-pill);
   background: transparent;
   color: var(--faint);
-  font-family: var(--font-data);
-  font-weight: 400;
-  font-size: 11px;
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-12);
   white-space: nowrap;
 }
 .fd-chip[aria-pressed="true"],
@@ -383,9 +393,9 @@ input[type="radio"] {
   color: var(--p-unknown);
 }
 .fd-caps {
-  text-transform: uppercase;
-  font-size: 10px;
-  letter-spacing: 1px;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 /* ── status dot ─────────────────────────────────────────────────── */
@@ -418,13 +428,13 @@ input[type="radio"] {
   border-color: var(--dim);
 }
 .fd-dot[data-status="idle"] {
-  background: var(--faint);
-  border-color: var(--faint);
+  background: var(--faint-decor);
+  border-color: var(--faint-decor);
 }
 .fd-dot[data-status="ended"],
 .fd-dot[data-status="lost"] {
   background: transparent;
-  border-color: var(--faint);
+  border-color: var(--faint-decor);
 }
 .fd-dot[data-status="unreachable"] {
   background: transparent;
@@ -436,12 +446,12 @@ input[type="radio"] {
 
 /* ── small text ─────────────────────────────────────────────────── */
 .fd-label {
-  font-family: var(--font-data);
-  font-size: var(--fs-micro);
+  font-family: var(--font-ui);
+  font-size: var(--fs-12);
   font-weight: 500;
-  letter-spacing: var(--ls-label);
-  text-transform: uppercase;
-  color: var(--faint);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--dim);
 }
 .fd-note {
   margin: 0;

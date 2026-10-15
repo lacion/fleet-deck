@@ -324,15 +324,14 @@ test('More shows no version for an older deck', async ({ page }) => {
 test.describe('on a wide screen', () => {
   test.use({ viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false });
 
-  test('the sidebar footer shows the deck version next to Log out', async ({ page }) => {
+  test('the sidebar footer shows no deck version, but Log out', async ({ page }) => {
     const deck = new FakeDeck();
     deck.stations = [reported];
     deck.deckVersion = '0.7.3';
     await deck.install(page);
     await logIn(page);
     const sidebar = page.getByRole('complementary', { name: 'Sessions' });
-    const version = sidebar.getByText('deck 0.7.3');
-    await expect(version).toHaveAttribute('title', 'Deck version');
+    await expect(sidebar.getByText('deck 0.7.3')).toHaveCount(0);
     await expect(sidebar.getByRole('button', { name: 'Log out' })).toBeVisible();
   });
 });

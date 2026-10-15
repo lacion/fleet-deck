@@ -53,7 +53,7 @@ const rail = (
 describe('needs-you rail', () => {
   test('an answerable request has one button per option, the first one primary', () => {
     const html = rail(request());
-    expect(html).toContain('<h2 class="fd-rail-head"><span class="fd-rail-title">NEEDS YOU</span>');
+    expect(html).toContain('<h2 class="fd-rail-head"><span class="fd-rail-title">Needs you</span>');
     expect(html).toMatch(
       /<button type="button" class="fd-primary" aria-label="Allow: Run tests in Fix login">Allow<span class="fd-kbd">a<\/span><\/button>/,
     );
@@ -154,7 +154,7 @@ describe('needs-you rail', () => {
         onOpen={() => {}}
       />,
     );
-    expect(side).toContain('ALL CLEAR');
+    expect(side).toContain('All clear');
     expect(side).toContain('Nothing waits for you.');
     const strip = renderToStaticMarkup(
       <NeedsYouRail

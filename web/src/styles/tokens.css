@@ -9,7 +9,8 @@
   --border-soft: #1b2333;
   --text: #e7ecf5;
   --dim: #94a0b8;
-  --faint: #5c6880;
+  --faint: #7d89a1; /* text: at least 4.5:1 on --bg and --surface (ui-pass G5) */
+  --faint-decor: #5c6880; /* decoration only: hollow dots, rules, never text */
   --term-selection: rgba(240, 166, 60, 0.3); /* terminal selection */
   --act: #f0a63c; /* yours-to-act (amber) */
   --act-bg: #2a1f0c;
@@ -41,7 +42,8 @@
   --border-soft: #e2e7ef;
   --text: #1a2230;
   --dim: #57637a;
-  --faint: #8a94a8;
+  --faint: #646e86; /* text: at least 4.5:1 on --bg and --surface (ui-pass G5) */
+  --faint-decor: #8a94a8; /* decoration only: hollow dots, rules, never text */
   --term-selection: rgba(138, 83, 0, 0.22);
   --act: #8a5300;
   --act-bg: #fff3dc;
@@ -67,12 +69,19 @@
 :root {
   --font-ui: "IBM Plex Sans", system-ui, sans-serif; /* prose, titles, buttons */
   --font-data: "IBM Plex Mono", monospace; /* callsigns, paths, cmds, timestamps */
+  --font-callsign:
+    "IBM Plex Sans Condensed", "IBM Plex Sans", system-ui, sans-serif; /* callsigns, strip titles, the wordmark (ui-pass §3) */
   --fs-micro: 10.5px; /* column labels, kbd hints, tags */
   --fs-data: 11.5px; /* mono metadata rows */
   --fs-body: 12.5px; /* card note, buttons */
   --fs-title: 13.5px; /* question titles */
   --fs-heading: 14px; /* header wordmark, drawer task */
-  --ls-label: 1.8px; /* letter-spacing on ALL-CAPS labels */
+  --fs-12: 12px;
+  --fs-13: 13px;
+  --fs-15: 15px;
+  --fs-18: 18px;
+  --fs-24: 24px;
+  --ls-label: 0; /* labels are in sentence case: no tracking */
 }
 
 /* space & shape */

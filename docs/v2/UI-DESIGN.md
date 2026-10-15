@@ -20,7 +20,7 @@ The DL-140 board works, but it does not look or feel like Fleet Deck:
 ## 1. Principles (from the v1 "1a Console" design)
 
 1. **Amber (`--act`) means "yours to act".** Only needs-you items, the primary action of a decision, the focus ring and the selected tab use amber. A model or provider badge is never amber.
-2. **Mono for data, sans for prose.** Titles, prose, buttons: IBM Plex Sans. Callsigns, paths, branches, models, times, counts, commands, labels in capitals: IBM Plex Mono.
+2. **Mono for data, sans for prose.** Titles, prose, buttons: IBM Plex Sans. Callsigns, paths, branches, models, times, counts, commands: IBM Plex Mono. Labels in sentence case (§8).
 3. **Dense on a desktop, roomy on touch.** Controls are 30 px high (24 px small) with a fine pointer; 44 px only with `(pointer: coarse)`.
 4. **Show what is known, hide what is unknown.** No "unknown" or "not reported" text on cards and rows. A missing value is an absent element.
 5. **One place for each thing.** A needs-you request has one control surface per screen.
@@ -326,3 +326,15 @@ The fleet screen: header (wordmark + fleet line), filters as one horizontal scro
 ## 7. Out of scope
 
 No new routes, no behavior change of the session controller, no protocol change, no new keyboard shortcuts. Tests are updated once, after the visual work (wave 2).
+
+## 8. Design pass 2026-10 (ui-pass.md)
+
+Wave 0 of the board design "Flight strips" (`design/ui-pass.md`). These rules replace the older rules in §1 and §2 where they differ.
+
+- No tracked capitals and no `text-transform: uppercase`. Write labels and headings in sentence case. Capitals stay only for acronyms (MCP, URL, ID, PR).
+- Mono only for data: paths, ids, callsigns in tables, models, times, costs, commands, code, diffs, `.fd-badge`, `.fd-kbd`, `.fd-code`. Headings, group and station headers, tabs, chips, empty states and sentences use Plex Sans.
+- `--faint` is text-safe (at least 4.5:1 on `--bg` and `--surface`). `--faint-decor` is for decoration only (hollow dots, rules), never text.
+- `--font-callsign` (IBM Plex Sans Condensed 500 and 600) is for callsigns, strip titles and the wordmark.
+- The mark is `ui/Mark.tsx`: a flight strip with an amber state edge. The wordmark is "Fleet Deck" in `--font-callsign`.
+- Labels (`.fd-label`): sentence case, Plex Sans 500, 12 px, `--dim`.
+- Type scale tokens: `--fs-12`, `--fs-13`, `--fs-15`, `--fs-18`, `--fs-24`. `--ls-label` is 0.

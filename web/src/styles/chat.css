@@ -53,7 +53,7 @@
 }
 .fd-chat-run-label {
   color: var(--faint);
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
   font-size: var(--fs-micro);
 }
 .fd-chat-bubble {
@@ -104,7 +104,7 @@
   align-items: center;
   gap: 4px;
   color: var(--faint);
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
   font-size: var(--fs-data);
 }
 .fd-chat-reasoning-text {
@@ -204,7 +204,7 @@
   align-items: center;
   gap: 4px;
   color: var(--dim);
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
   font-size: var(--fs-data);
 }
 .fd-chat-toolgroup-body {
@@ -258,7 +258,7 @@
   align-items: center;
   gap: 4px;
   color: var(--faint);
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
   font-size: var(--fs-data);
 }
 .fd-chat-nested {
@@ -280,7 +280,7 @@
   align-items: center;
   gap: 6px;
   color: var(--faint);
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
   font-size: 12px;
 }
 .fd-chat-ask {
@@ -564,10 +564,9 @@
 }
 .fd-history-title {
   color: var(--faint);
+  font-family: var(--font-ui);
   font-size: var(--fs-micro);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: var(--ls-label);
 }
 .fd-history-item {
   display: flex;

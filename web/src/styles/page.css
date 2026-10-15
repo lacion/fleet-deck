@@ -261,11 +261,9 @@
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   text-align: left;
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
   font-size: var(--fs-micro);
   font-weight: 500;
-  letter-spacing: var(--ls-label);
-  text-transform: uppercase;
   color: var(--faint);
   white-space: nowrap;
 }
@@ -340,10 +338,9 @@
   .fd-table td[data-label]::before {
     content: attr(data-label);
     display: block;
-    font-family: var(--font-data);
+    font-family: var(--font-ui);
     font-size: var(--fs-micro);
-    letter-spacing: var(--ls-label);
-    text-transform: uppercase;
+    font-weight: 500;
     color: var(--faint);
   }
   .fd-table .fd-cell-actions {

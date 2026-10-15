@@ -63,7 +63,7 @@ describe('deck version (DL-142)', () => {
         onOpenTerminals={() => {}}
       />,
     );
-    expect(sidebar).toContain('title="Deck version">deck 0.9.1<');
+    expect(sidebar).not.toContain('Deck version');
     const more = renderToStaticMarkup(<More stationCount={0} terminalCount={0} chrome={chrome} />);
     expect(more).toContain('title="Deck version">deck 0.9.1<');
     const none = { ...chrome, version: undefined };

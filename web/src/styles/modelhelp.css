@@ -9,8 +9,6 @@
   color: var(--faint);
   font-size: 10px;
   line-height: 1.5;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
 }
 .fd-sh-line > .fd-generated {
   align-self: center;
