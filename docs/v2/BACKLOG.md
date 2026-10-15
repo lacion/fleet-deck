@@ -23,3 +23,8 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 ## B3. Tailnet card: owner certificate files (DL-190, design §2.6)
 
 - **Missing:** when `board.crt` and `board.key` exist, the Tailnet card does not say "Your own certificate files (`board.crt`) are used for every name; remove them to use the Tailscale certificate." `GET /api/tailnet` does not tell the board that owner files exist.
+
+## B4. "Add station": the joined station shows its key fingerprint (2026-10-15)
+
+- **Observed (real-stack e2e):** after `fleetdeck station join`, the dialog says "✓ ad9dca5e76ffca69 joined this deck." instead of the station name ("bravo"). The name arrives a moment later.
+- **Wanted:** the dialog shows the name when it arrives (update the line), or waits a short time for it.

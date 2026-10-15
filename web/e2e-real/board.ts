@@ -124,18 +124,27 @@ export class Phone {
     await page.goto(this.deck.loginLink());
     await this.live();
     await this.stations(0);
+    // The dialing station joins with a one-time invitation.
     await page.getByRole('button', { name: 'Add station' }).click();
     const dialog = page.getByRole('dialog', { name: 'Add station' });
+    await dialog.getByRole('button', { name: /Any computer, with a one-time invitation/ }).click();
     await dialog.getByRole('button', { name: 'Create invitation' }).click();
+    await dialog.getByRole('button', { name: 'Show' }).click();
     const invitation = dialog.getByLabel('Invitation (secret, single use)');
     await expect(invitation).not.toHaveValue('');
     dialing.cli(['station', 'join', '--stdin'], await invitation.inputValue());
-    await dialog.getByLabel('This deck dials the station').check();
+    // The name can still be the key fingerprint at this moment (backlog B4).
+    await expect(dialog).toContainText(/✓ .+ joined this deck\./);
+    await dialog.getByRole('button', { name: 'Close' }).click();
+    // The deck dials the listening station.
+    await page.getByRole('button', { name: 'Add station' }).click();
+    await dialog.getByText('Other ways').click();
+    await dialog.getByRole('button', { name: 'Connect to a station that listens' }).click();
     await dialog
       .getByLabel('Station invitation')
       .fill(listening.cli(['station', 'invite', '--listen', '127.0.0.1:0']));
-    await dialog.getByRole('button', { name: 'Pair station' }).click();
-    await expect(dialog.getByRole('status')).toHaveText(`Paired station ${listening.name}.`);
+    await dialog.getByRole('button', { name: 'Add station' }).click();
+    await expect(dialog.getByRole('status')).toHaveText(`✓ ${listening.name} is added.`);
     await dialog.getByRole('button', { name: 'Close' }).click();
     await expect(
       page.getByRole('region', { name: 'Stations' }).getByRole('heading', { level: 3 }),
