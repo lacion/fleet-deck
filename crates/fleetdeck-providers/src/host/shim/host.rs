@@ -607,6 +607,15 @@ impl ShimProcess {
         self.shared.status_end.get()
     }
 
+    /// Asks the shim for a `status` frame; its answer sets
+    /// [`Self::status_end`]. `false` when the connection is gone.
+    pub async fn request_status(&self) -> bool {
+        let frame = ToShim::Status {
+            generation: self.generation,
+        };
+        self.send(frame, Vec::new()).await
+    }
+
     /// The stdout offset that the reader received up to.
     #[must_use]
     pub fn delivered(&self) -> u64 {

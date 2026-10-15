@@ -30,6 +30,7 @@ const IN_FLIGHT: usize = 8;
 const DRAIN: Duration = Duration::from_secs(5);
 
 const RESTARTING: &str = "Fleet Deck is restarting; try again in a moment.";
+const STARTING: &str = "Fleet Deck is starting; try again in a moment.";
 const UNAUTHORIZED: &str = "The session token is not valid.";
 const LIMITED: &str = "Too many calls; try again in a moment.";
 const INVALID: &str = "Invalid request.";
@@ -144,6 +145,7 @@ async fn answer_for(socket: &Path, token: &str, line: &[u8], msg: &Value) -> Opt
     match code {
         b"unauthorized" => error_answer(msg, -32001, UNAUTHORIZED),
         b"limited" => error_answer(msg, -32002, LIMITED),
+        b"starting" => error_answer(msg, -32000, STARTING),
         // `bad_request` and any later code: a message that is not an
         // object (a batch) gets an answer with a null id.
         _ if msg.is_object() => error_answer(msg, -32600, INVALID),

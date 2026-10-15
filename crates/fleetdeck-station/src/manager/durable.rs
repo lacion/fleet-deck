@@ -85,6 +85,13 @@ pub struct DurableDriver<C: DurableCore> {
     /// Set after a committed `below_floor` gap: the adapter state cannot
     /// follow the provider any more (ADR-005 §4.2; DL-122).
     adapter_gap: std::sync::atomic::AtomicBool,
+    /// The offset after the last committed output (DL-194 §9.7).
+    committed: std::sync::atomic::AtomicU64,
+    /// Set after the commit of the provider's exit.
+    exit_committed: std::sync::atomic::AtomicBool,
+    /// The held bindings of this shim, released when the driver caught up
+    /// ([`Self::set_release`]).
+    release: StdMutex<Option<release::Held>>,
 }
 
 impl<C: DurableCore> std::fmt::Debug for DurableDriver<C> {
@@ -177,6 +184,11 @@ impl<C: DurableCore> DurableDriver<C> {
             changed: watch::channel(0).0,
             pump: StdMutex::new(None),
             adapter_gap: std::sync::atomic::AtomicBool::new(false),
+            committed: std::sync::atomic::AtomicU64::new(
+                attached.record.cursor.max(attached.floor),
+            ),
+            exit_committed: std::sync::atomic::AtomicBool::new(false),
+            release: StdMutex::new(None),
         })
     }
 
@@ -320,7 +332,11 @@ impl<C: DurableCore> DurableDriver<C> {
             )
             .await?;
         self.changed.send_modify(|n| *n += 1);
-        Ok(matches!(result, OutputCommit::Committed(_)))
+        let committed = matches!(result, OutputCommit::Committed(_));
+        if committed {
+            self.note_committed(cursor, exited);
+        }
+        Ok(committed)
     }
 
     /// Sends the pending generated frames in order (the caller holds the
@@ -664,3 +680,5 @@ impl<C: DurableCore> DurableDriver<C> {
 mod gap;
 #[path = "durable_output.rs"]
 mod output;
+#[path = "durable_release.rs"]
+mod release;

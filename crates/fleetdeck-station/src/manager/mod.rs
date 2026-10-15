@@ -10,6 +10,8 @@
 //!    evidence in those events confirms the effects.
 
 pub mod auto_continue;
+pub(crate) mod binding_rotate;
+pub mod binding_start;
 pub mod coordinator_command;
 mod coordinator_start;
 pub mod decide;
@@ -269,6 +271,19 @@ impl SessionManager {
         } else {
             policy
         };
+        let Holders {
+            coordinator,
+            integrations,
+        } = holders;
+        // The fence and the binding rows come before the shim recovery, and
+        // the binding sink before any driver restores (DL-194 §9.8).
+        let held = match &shims {
+            Some(settings) => {
+                let run_dir = settings.host.config().station_dir.join("run");
+                Some(binding_start::prepare(&store, &coordinator, run_dir).await?)
+            }
+            None => None,
+        };
         let restored = match &shims {
             None => {
                 store.recover(Vec::new()).await?;
@@ -286,6 +301,13 @@ impl SessionManager {
                 if !start.ended.is_empty() {
                     tracing::warn!(ended = ?start.ended, "shim rows ended at the station start");
                 }
+                binding_start::finish(
+                    &store,
+                    &coordinator,
+                    &start.restored,
+                    held.unwrap_or_default(),
+                )
+                .await?;
                 start.restored
             }
         };
@@ -322,10 +344,6 @@ impl SessionManager {
             tracing::info!(requeued, "resumed interrupted worktree operations");
         }
         let shells = target::ShellsSlot::default();
-        let Holders {
-            coordinator,
-            integrations,
-        } = holders;
         let integrations = integrations
             .unwrap_or_else(|| crate::integrations::Integrations::new(policy.trackers().to_vec()));
         let hub = Arc::new(PolicyHub::new(policy).with_fleet_control(coordinator.clone()));
@@ -555,7 +573,8 @@ impl SessionManager {
         // writer transaction; the decision rechecks only the row state
         // (DL-182 §4.2).
         let check = self.reconcile_check(&command).await;
-        self.store
+        let decided = self
+            .store
             .decide(envelope, caller, move |d| {
                 guard?;
                 match command {
@@ -574,7 +593,13 @@ impl SessionManager {
                     }
                 }
             })
-            .await
+            .await;
+        // A revoke wrote a fence entry; after the commit it is removed
+        // (DL-194 §2.3 step 4). A failure leaves it, which is harmless.
+        if let Some(fence) = self.coordinator.fence() {
+            fence.settle(&self.store).await;
+        }
+        decided
     }
 
     /// Stops the worker and the ticker, then every live session. Commands
@@ -707,3 +732,7 @@ mod shim_resume_tests;
 #[cfg(test)]
 #[path = "shim_resume_check_tests.rs"]
 mod shim_resume_check_tests;
+
+#[cfg(test)]
+#[path = "binding_revoke_tests.rs"]
+mod binding_revoke_tests;

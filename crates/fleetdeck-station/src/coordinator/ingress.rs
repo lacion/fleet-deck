@@ -99,6 +99,9 @@ pub(super) enum MessageOutcome {
     Unauthorized,
     /// The binding is over its rate or concurrency limit.
     Limited,
+    /// The binding is held until the replay of its shim finished (DL-194
+    /// §9.7).
+    Starting,
     /// The body is not JSON.
     ParseError,
     /// The body is a JSON-RPC batch, which the endpoint does not take.
@@ -118,6 +121,7 @@ pub(super) fn authenticate_message(
     match shared.bindings.authenticate(auth) {
         Auth::Unauthorized => Err(MessageOutcome::Unauthorized),
         Auth::Limited => Err(MessageOutcome::Limited),
+        Auth::Starting => Err(MessageOutcome::Starting),
         Auth::Ok { binding, permit } => Ok((binding, permit)),
     }
 }
@@ -249,6 +253,16 @@ fn json(status: StatusCode, body: &Value) -> Response<String> {
     r
 }
 
+/// The answer while a reattached shim replays its buffered output (DL-194
+/// §9.7).
+fn starting() -> Response<String> {
+    json(
+        StatusCode::SERVICE_UNAVAILABLE,
+        &serde_json::json!({"jsonrpc": "2.0", "id": null,
+            "error": {"code": -32000, "message": "Fleet Deck is starting; try again in a moment."}}),
+    )
+}
+
 fn unauthorized() -> Response<String> {
     let mut r = json(
         StatusCode::UNAUTHORIZED,
@@ -324,6 +338,7 @@ async fn handle(req: Request<Incoming>, shared: &Shared) -> Response<String> {
     let (binding, _permit) = match authenticate_message(shared, auth.as_deref()) {
         Ok(ok) => ok,
         Err(MessageOutcome::Limited) => return plain(StatusCode::TOO_MANY_REQUESTS),
+        Err(MessageOutcome::Starting) => return starting(),
         Err(_) => return unauthorized(),
     };
     drop(_unauth);
@@ -337,7 +352,9 @@ async fn handle(req: Request<Incoming>, shared: &Shared) -> Response<String> {
         MessageOutcome::Accepted => plain(StatusCode::ACCEPTED),
         MessageOutcome::Json(v) => json(StatusCode::OK, &v),
         // The authentication step returns these; the answer step never does.
-        MessageOutcome::Unauthorized | MessageOutcome::Limited => unauthorized(),
+        MessageOutcome::Unauthorized | MessageOutcome::Limited | MessageOutcome::Starting => {
+            unauthorized()
+        }
     }
 }
 

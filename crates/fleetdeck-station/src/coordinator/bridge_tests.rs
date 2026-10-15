@@ -107,3 +107,18 @@ async fn bad_input_lines_get_a_parse_error_or_are_skipped() {
     assert_eq!(out[1]["id"], 5);
     assert!(out[1]["result"].is_object());
 }
+
+#[tokio::test]
+async fn a_held_token_gets_the_starting_error_with_its_id() {
+    let r = rig().await;
+    r.bindings.hold([crate::coordinator::digest(&r.token)]);
+    let input = "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/list\"}\n";
+    let out = run_relay(&r.path, &r.token, input).await;
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0]["id"], 9);
+    assert_eq!(out[0]["error"]["code"], -32000);
+    assert_eq!(
+        out[0]["error"]["message"],
+        "Fleet Deck is starting; try again in a moment."
+    );
+}

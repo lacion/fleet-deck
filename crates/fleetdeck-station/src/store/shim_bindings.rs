@@ -24,7 +24,8 @@ pub const REASON_PROCESS_EXIT: &str = "process_exit";
 /// The reason of `coordinator.ended` when the root native identity changed.
 pub const REASON_NATIVE_REPLACED: &str = "native_replaced";
 
-const COLUMNS: &str = "digest, shim_id, session_id, binding_id, grant_id, provider_instance,
+pub(super) const COLUMNS: &str =
+    "digest, shim_id, session_id, binding_id, grant_id, provider_instance,
     native_id, generation, classes, scope, state, control_skill, expires_at, created_at";
 
 /// The state of a stored binding.
@@ -313,7 +314,7 @@ impl BindingSink for MemorySink {
     }
 }
 
-fn row(r: &Row<'_>) -> rusqlite::Result<RawRow> {
+pub(super) fn row(r: &Row<'_>) -> rusqlite::Result<RawRow> {
     Ok(RawRow {
         digest: r.get(0)?,
         shim_id: r.get(1)?,
@@ -332,7 +333,7 @@ fn row(r: &Row<'_>) -> rusqlite::Result<RawRow> {
     })
 }
 
-struct RawRow {
+pub(super) struct RawRow {
     digest: String,
     shim_id: String,
     session_id: String,
@@ -350,7 +351,7 @@ struct RawRow {
 }
 
 impl RawRow {
-    fn decode(self) -> Result<BindingRow> {
+    pub(super) fn decode(self) -> Result<BindingRow> {
         Ok(BindingRow {
             digest: self.digest,
             shim_id: self.shim_id,
