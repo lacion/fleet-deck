@@ -102,7 +102,7 @@ function suite() {
     await start(page);
     await go(page, '#/settings');
     const card = page.getByRole('region', { name: 'Tailnet' });
-    await expect(card.getByRole('checkbox', { name: 'Use Tailscale automatically' })).toBeChecked();
+    await expect(card.getByRole('switch', { name: 'Use Tailscale automatically' })).toBeChecked();
     await expect(card).not.toContainText('Using Tailscale for Windows');
   });
 
@@ -116,7 +116,7 @@ function suite() {
     };
     await go(page, '#/settings');
     const card = page.getByRole('region', { name: 'Tailnet' });
-    const toggle = card.getByRole('checkbox', { name: 'Use Tailscale automatically' });
+    const toggle = card.getByRole('switch', { name: 'Use Tailscale automatically' });
     await expect(toggle).not.toBeChecked();
     await expect(card).toContainText(
       'Keeps the tailnet addresses current at each start. Applies after a restart.',
@@ -155,7 +155,7 @@ function suite() {
     state.view.certificate = { enabled: false, state: 'off' };
     await go(page, '#/settings');
     const card = page.getByRole('region', { name: 'Tailnet' });
-    const toggle = card.getByRole('checkbox', { name: 'Trusted certificate from Tailscale' });
+    const toggle = card.getByRole('switch', { name: 'Trusted certificate from Tailscale' });
     await expect(toggle).not.toBeChecked();
     await expect(card).toContainText(
       'Browsers trust the board on its tailnet name. The name becomes public in Certificate Transparency logs.',
@@ -191,7 +191,7 @@ function suite() {
       `Trusted certificate for deck.tail1234.ts.net, valid until ${date}`,
     );
     await expect(
-      card.getByRole('checkbox', { name: 'Trusted certificate from Tailscale' }),
+      card.getByRole('switch', { name: 'Trusted certificate from Tailscale' }),
     ).toBeChecked();
     expect(await fitsWidth(page)).toBe(true);
   });

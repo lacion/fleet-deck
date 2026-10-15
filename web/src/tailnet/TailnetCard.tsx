@@ -10,6 +10,17 @@ import { saveDeckKey } from './save';
 
 const list = (items: readonly string[]) => items.join(', ');
 
+const sameSet = (a: readonly string[], b: readonly string[]) => {
+  const left = new Set(a);
+  const right = new Set(b);
+  return left.size === right.size && [...left].every((item) => right.has(item));
+};
+
+/** True when "Use tailnet" would change a listen address: the "With tailnet" row then shows. */
+export const tailnetChanges = (view: TailnetView): boolean =>
+  !sameSet(view.current.listen, view.managed.listen) ||
+  !sameSet(view.current.link_listen, view.managed.link_listen);
+
 /** The text of the card when the deck uses Tailscale for Windows from WSL (design 15.1). */
 export const WINDOWS_TEXT =
   'Using Tailscale for Windows. It runs as your Windows user, with your Windows environment, the same as in a Windows terminal.';
@@ -27,13 +38,16 @@ function AutoSection({
   const notes = autoNotes(view.auto);
   return (
     <div className="fd-tailnet-auto">
-      <label>
+      <label className="fd-tailnet-switch">
         <input
           type="checkbox"
+          role="switch"
+          className="fd-switch"
+          aria-checked={view.auto.enabled}
           checked={view.auto.enabled}
           disabled={busy}
           onChange={(e) => onAuto(e.target.checked)}
-        />{' '}
+        />
         Use Tailscale automatically
       </label>
       <p className="fd-note">
@@ -95,13 +109,16 @@ function CertificateSection({
   return (
     <div className="fd-tailnet-cert">
       <h3>Trusted certificate</h3>
-      <label>
+      <label className="fd-tailnet-switch">
         <input
           type="checkbox"
+          role="switch"
+          className="fd-switch"
+          aria-checked={cert?.enabled ?? false}
           checked={cert?.enabled ?? false}
           disabled={busy}
           onChange={(e) => onCert(e.target.checked)}
-        />{' '}
+        />
         Trusted certificate from Tailscale
       </label>
       <p className="fd-note">
@@ -123,6 +140,7 @@ function CardBody({
   readonly onUse: () => void;
 }) {
   const button = useButton(view);
+  const changes = tailnetChanges(view);
   if (!view.available) {
     return (
       <p className="fd-note">
@@ -155,15 +173,17 @@ function CardBody({
         </thead>
         <tbody>
           <tr>
-            <th scope="row">Now</th>
+            <th scope="row">{changes ? 'Now' : 'Listens on'}</th>
             <td>{list(view.current.listen)}</td>
             <td>{list(view.current.link_listen)}</td>
           </tr>
-          <tr>
-            <th scope="row">With tailnet</th>
-            <td>{list(view.managed.listen)}</td>
-            <td>{list(view.managed.link_listen)}</td>
-          </tr>
+          {changes ? (
+            <tr>
+              <th scope="row">With tailnet</th>
+              <td>{list(view.managed.listen)}</td>
+              <td>{list(view.managed.link_listen)}</td>
+            </tr>
+          ) : null}
         </tbody>
       </table>
       {button === 'none' ? (

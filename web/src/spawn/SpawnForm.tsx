@@ -29,6 +29,7 @@ import {
   importIdProblem,
   knownModels,
   MAX_BATCH_REF,
+  moreOptionsOpen,
   providerChoiceLabel,
   type PreflightResult,
   readSetupCmds,
@@ -66,6 +67,10 @@ type Props = {
   /** Unix ms of now for the reset times of the limits (tests). */
   readonly now?: number | undefined;
 };
+
+/** True on a phone or a tablet, where the first field must not open the keyboard by itself. */
+const coarsePointer = (): boolean =>
+  typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches === true;
 
 /** PLAN §11 spawn form for M2: station, provider, directory picker, mode,
  * model, title and first prompt. One button press sends one command. */
@@ -135,6 +140,8 @@ export function SpawnForm({
   // True once the user types in the setup field; a change of station or
   // directory then keeps the typed text instead of the remembered one.
   const setupEdited = useRef(false);
+  // "More options" opens by itself when an option has a value; the person can open it too.
+  const [optionsUser, setOptionsUser] = useState(false);
 
   // The deck settings are read once. A login that is not the owner's, or a failed read, keeps the
   // built-in defaults: the form then asks for owner/name or a URL.
@@ -182,6 +189,11 @@ export function SpawnForm({
   const setupShown = station?.info?.allow_setup_cmd === true && !importing;
   const setupBad = setupShown && setupProblem(setupCmd) !== null;
   const importProblem = importId.trim() === '' ? null : importIdProblem(importId.trim());
+  const optionsOpen = moreOptionsOpen(optionsUser, {
+    setup: setupShown ? setupCmd : '',
+    coordinator,
+    importId,
+  });
   const branchName = branch.trim();
   const branchFields = place === 'worktree' && !batch;
   const refProblem =
@@ -363,25 +375,84 @@ export function SpawnForm({
           }}
         >
           <div className="fd-panel">
-            <h3 className="fd-label">Where</h3>
+            <h3 className="fd-label">Task</h3>
             <label>
-              Station
-              <select
-                value={stationId}
-                onChange={(event) => {
-                  setStationId(event.target.value);
-                  setCwd(null);
-                  setMode('');
-                  setModel('');
-                }}
-              >
-                {targets.map((s) => (
-                  <option key={s.station_id} value={s.station_id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
+              What should the agent do? (optional)
+              <textarea
+                rows={5}
+                // A phone keeps its keyboard closed until the person taps the field.
+                autoFocus={!coarsePointer()}
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+              />
             </label>
+            <label>
+              Title (optional)
+              <input value={title} onChange={(event) => setTitle(event.target.value)} />
+            </label>
+            {place === 'clone' ? null : (
+              <label className="fd-spawn-opt">
+                <input
+                  type="checkbox"
+                  checked={batch}
+                  onChange={(event) => setBatch(event.target.checked)}
+                />
+                Batch: one session in its own worktree for each line (3x task starts three)
+              </label>
+            )}
+            {previewing ? (
+              <div className="fd-batch-preview" aria-label="Sessions to start">
+                <p className="fd-label">{batchLines.length} sessions, each in its own worktree</p>
+                <ol>
+                  {batchLines.map((line, i) => (
+                    <li key={i} title={line}>
+                      {line}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            ) : null}
+          </div>
+          <div className="fd-panel">
+            <h3 className="fd-label">Where</h3>
+            <div className="fd-spawn-row">
+              <label>
+                Station
+                <select
+                  value={stationId}
+                  onChange={(event) => {
+                    setStationId(event.target.value);
+                    setCwd(null);
+                    setMode('');
+                    setModel('');
+                  }}
+                >
+                  {targets.map((s) => (
+                    <option key={s.station_id} value={s.station_id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Workspace
+                <select
+                  value={place}
+                  onChange={(event) => {
+                    const next = event.target.value as 'here' | 'worktree' | 'clone';
+                    setPlace(next);
+                    if (next !== 'clone') {
+                      setNameTouched(false);
+                      setNameText('');
+                    }
+                  }}
+                >
+                  <option value="here">Work in this directory</option>
+                  <option value="worktree">A new worktree on its own branch</option>
+                  <option value="clone">Clone a repository into a new directory here</option>
+                </select>
+              </label>
+            </div>
             <div className="fd-fieldwrap" role="group" aria-label="Directory">
               <span className="fd-fieldlabel">Directory</span>
               <FolderPicker
@@ -396,24 +467,6 @@ export function SpawnForm({
                 initialListing={initialListing}
               />
             </div>
-            <label>
-              Workspace
-              <select
-                value={place}
-                onChange={(event) => {
-                  const next = event.target.value as 'here' | 'worktree' | 'clone';
-                  setPlace(next);
-                  if (next !== 'clone') {
-                    setNameTouched(false);
-                    setNameText('');
-                  }
-                }}
-              >
-                <option value="here">Work in this directory</option>
-                <option value="worktree">A new worktree on its own branch</option>
-                <option value="clone">Clone a repository into a new directory here</option>
-              </select>
-            </label>
             {branchFields ? (
               <BranchFields branch={branch} base={base} onBranch={setBranch} onBase={setBase} />
             ) : null}
@@ -456,90 +509,63 @@ export function SpawnForm({
           </div>
           <div className="fd-panel">
             <h3 className="fd-label">Agent</h3>
-            <label>
-              Provider
-              <select
-                value={instance}
-                onChange={(event) => {
-                  setInstance(event.target.value);
-                  setMode('');
-                  setModel('');
-                }}
-              >
-                {providers.map((p) => (
-                  <option key={p.instance} value={p.instance}>
-                    {providerChoiceLabel(
-                      p,
-                      limits.get(p.instance) ?? null,
-                      now,
-                      p.instance === roomiest,
-                    )}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <div className="fd-spawn-row">
+              <label>
+                Provider
+                <select
+                  value={instance}
+                  onChange={(event) => {
+                    setInstance(event.target.value);
+                    setMode('');
+                    setModel('');
+                  }}
+                >
+                  {providers.map((p) => (
+                    <option key={p.instance} value={p.instance}>
+                      {providerChoiceLabel(
+                        p,
+                        limits.get(p.instance) ?? null,
+                        now,
+                        p.instance === roomiest,
+                      )}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Permission mode
+                <select value={mode} onChange={(event) => setMode(event.target.value)}>
+                  <option value="">Station default</option>
+                  {modes.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <ModelField
+                key={`${stationId}/${instance}`}
+                value={model}
+                models={knownModels(sessions, stationId, instance)}
+                onChange={setModel}
+              />
+            </div>
             {versionWarning(provider) === null ? null : (
               <p className="fd-note" role="status" data-version-warning>
                 {versionWarning(provider)}
               </p>
             )}
-            <label>
-              Permission mode
-              <select value={mode} onChange={(event) => setMode(event.target.value)}>
-                <option value="">Station default</option>
-                {modes.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <ModelField
-              key={`${stationId}/${instance}`}
-              value={model}
-              models={knownModels(sessions, stationId, instance)}
-              onChange={setModel}
-            />
           </div>
-          <div className="fd-panel">
-            <h3 className="fd-label">Task</h3>
-            <label>
-              Title (optional)
-              <input value={title} onChange={(event) => setTitle(event.target.value)} />
-            </label>
-            <label>
-              First prompt (optional)
-              <textarea
-                rows={6}
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-              />
-            </label>
-            {place === 'clone' ? null : (
-              <label className="fd-spawn-opt">
-                <input
-                  type="checkbox"
-                  checked={batch}
-                  onChange={(event) => setBatch(event.target.checked)}
-                />
-                Batch: one session in its own worktree for each line (3x task starts three)
-              </label>
-            )}
-            {previewing ? (
-              <div className="fd-batch-preview" aria-label="Sessions to start">
-                <p className="fd-label">{batchLines.length} sessions, each in its own worktree</p>
-                <ol>
-                  {batchLines.map((line, i) => (
-                    <li key={i} title={line}>
-                      {line}
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            ) : null}
-          </div>
-          <div className="fd-panel">
-            <h3 className="fd-label">Options</h3>
+          <details className="fd-panel fd-spawn-options" open={optionsOpen}>
+            <summary
+              className="fd-label"
+              onClick={(event) => {
+                event.preventDefault();
+                setOptionsUser(!optionsOpen);
+              }}
+            >
+              More options
+            </summary>
             {setupShown ? (
               <SetupField
                 value={setupCmd}
@@ -579,7 +605,7 @@ export function SpawnForm({
               choices.
             </p>
             {importProblem === null ? null : <p role="alert">{importProblem}</p>}
-          </div>
+          </details>
           <div className="fd-spawn-submit">
             <div className="fd-spawn-status">
               {busy || missing.length === 0 ? null : (

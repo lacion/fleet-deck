@@ -5,8 +5,9 @@
 import { expect, type Page, test } from '@playwright/test';
 import type { Event } from '../src/gen';
 import { envelopes } from '../src/testing/timeline';
-import { logIn, quietShells } from './fake-deck';
-import { ALPHA, bashRequest, threeSessionDeck } from './scenes';
+import { claudeCaps, codexCaps } from '../src/testing/capabilities';
+import { FakeDeck, logIn, quietShells, stationView } from './fake-deck';
+import { ALPHA, BETA, bashRequest, threeSessionDeck, threeSessions } from './scenes';
 
 test.skip(
   process.env['FD_SCREENS'] === undefined || process.env['FD_SCREENS'] === '',
@@ -160,7 +161,7 @@ test('home with three sessions on two stations, one needs you', async ({ page })
   await setUp(page);
   // The phone and the desktop list the sessions; the tablet shows the Fleet board.
   if (test.info().project.name === 'tablet') {
-    await expect(page.getByText('3 sessions · 1 needs you')).toBeVisible();
+    await expect(page.locator('.fd-home-counts')).toContainText('3 sessions');
   } else {
     await expect(page.locator('a.fd-srow').first()).toBeVisible();
   }
@@ -204,4 +205,104 @@ test('the terminal dock with one shell tab', async ({ page }) => {
   );
   await expect(dock.getByRole('button', { name: 'Hide terminals' })).toBeVisible();
   await shot(page, 'terminal-dock');
+});
+
+// Wave 3: the Stations page, Settings with the Tailnet card, New session and the Add station
+// dialog, each in the dark and the light theme (phone and desktop projects).
+const stationInfo = (name: string, sessions: number) => ({
+  name,
+  incarnation: 'inc-1',
+  head: 3,
+  live_sessions: sessions,
+  version: '0.2.0',
+  max_sessions: 10,
+  allow_shell: true,
+  allow_setup_cmd: true,
+  providers: [
+    {
+      instance: 'claude',
+      provider: 'claude' as const,
+      version: '2.1.300',
+      auth: 'signed_in',
+      version_status: 'unknown' as const,
+      capabilities: claudeCaps(),
+    },
+    {
+      instance: 'work',
+      provider: 'codex' as const,
+      version: '0.160.0',
+      auth: 'signed_out',
+      version_status: 'unknown' as const,
+      capabilities: codexCaps(),
+    },
+  ],
+});
+
+async function wave3Deck(page: Page) {
+  const deck = new FakeDeck();
+  deck.stations = [
+    stationView(ALPHA, 'Alpha', { info: stationInfo('alpha', 3), info_at: Date.now() }),
+    stationView(BETA, 'Beta', {
+      reachable: false,
+      info: stationInfo('beta', 9),
+      info_at: Date.now(),
+    }),
+  ];
+  deck.sessions = threeSessions();
+  deck.tailnet();
+  deck.shells(ALPHA);
+  await quietShells(page);
+  await deck.install(page);
+  await logIn(page);
+  return deck;
+}
+
+/** One shot in each theme. */
+async function themed(page: Page, name: string) {
+  for (const theme of ['dark', 'light']) {
+    await page.evaluate((t) => {
+      document.documentElement.dataset['theme'] = t;
+    }, theme);
+    await shot(page, `${name}-${theme}`);
+  }
+}
+
+async function goTo(page: Page, hash: string) {
+  await page.evaluate((h) => {
+    window.location.hash = h;
+  }, hash);
+}
+
+test('stations page', async ({ page }) => {
+  test.skip(test.info().project.name === 'tablet', 'phone and desktop only');
+  await wave3Deck(page);
+  await goTo(page, '#/stations');
+  await expect(page.locator('.fd-station').first()).toBeVisible();
+  await themed(page, 'stations');
+});
+
+test('settings deck with the tailnet card', async ({ page }) => {
+  test.skip(test.info().project.name === 'tablet', 'phone and desktop only');
+  await wave3Deck(page);
+  await goTo(page, '#/settings');
+  await expect(page.getByRole('region', { name: 'Tailnet' })).toBeVisible();
+  await expect(page.getByRole('switch', { name: 'Use Tailscale automatically' })).toBeVisible();
+  await themed(page, 'settings-deck');
+});
+
+test('new session form', async ({ page }) => {
+  test.skip(test.info().project.name === 'tablet', 'phone and desktop only');
+  await wave3Deck(page);
+  await goTo(page, '#/new');
+  await expect(page.getByRole('region', { name: 'New session' })).toBeVisible();
+  await themed(page, 'new-session');
+});
+
+test('add station dialog', async ({ page }) => {
+  test.skip(test.info().project.name === 'tablet', 'phone and desktop only');
+  await wave3Deck(page);
+  await goTo(page, '#/stations');
+  await page.getByRole('button', { name: 'Add station' }).click();
+  await expect(page.getByRole('dialog', { name: 'Add station' })).toBeVisible();
+  await themed(page, 'add-station');
 });

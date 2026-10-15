@@ -4,7 +4,18 @@ import { basename, relativeAge } from '../app/sessions';
 import type { DeckSession, StationView, WorktreeInfo, WorktreeVerdict } from '../gen';
 import { ApiError } from '../runtime/api';
 import type { Freshness } from '../runtime/state';
-import { ArchiveRestore, Check, Copy, Icon, Plus, RotateCcw, Server, Trash2 } from '../ui/icons';
+import {
+  ArchiveRestore,
+  Check,
+  Copy,
+  Ellipsis,
+  Icon,
+  Plus,
+  RotateCcw,
+  Server,
+  Trash2,
+} from '../ui/icons';
+import { Menu } from '../ui/Menu';
 import { EmptyState, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import { ShellPanel } from '../shell/ShellPanel';
@@ -28,6 +39,10 @@ type Props = {
 const NONE = '—';
 
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+/** The fill of the load bar: the share of the session slots in use, 0 to 100 %. */
+export const loadWidth = (active: number, max: number): string =>
+  `${max > 0 ? Math.min(100, (active / max) * 100) : 0}%`;
 
 /** The shortened key fingerprint with a button that copies the whole value. */
 function Fingerprint({ value }: { readonly value: string }) {
@@ -486,44 +501,53 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
               data-station={station.station_id}
             >
               <div className="fd-station-head">
-                <h3>{station.name}</h3>
+                <h3 className="fd-station-name">{station.name}</h3>
                 <span
-                  className="fd-badge fd-health"
-                  data-tone={up ? 'ok' : 'hazard'}
+                  className="fd-station-health fd-health"
                   data-health={freshness === 'stale' ? 'stale' : station.reachable ? 'up' : 'down'}
                 >
+                  <span
+                    className="fd-dot"
+                    data-status={up ? 'working' : 'unreachable'}
+                    aria-hidden="true"
+                  />
                   {freshness === 'stale'
                     ? 'Stale link status'
                     : station.reachable
                       ? 'Link up'
                       : 'Unreachable'}
                 </span>
-                {info?.version == null ? null : <span className="fd-badge">{info.version}</span>}
+                {actions?.canAdmin === true ? (
+                  <div className="fd-station-menu">
+                    <Menu
+                      summary={<Icon of={Ellipsis} />}
+                      summaryClass="fd-iconbtn"
+                      label="Station actions"
+                    >
+                      {(close) => (
+                        <button
+                          type="button"
+                          className="fd-danger"
+                          disabled={!canPair}
+                          onClick={() => {
+                            close();
+                            setConfirm(station.name);
+                          }}
+                        >
+                          Remove station…
+                        </button>
+                      )}
+                    </Menu>
+                  </div>
+                ) : null}
               </div>
               {freshness === 'stale' ? (
                 <p className="fd-note">
                   Last reported: {station.reachable ? 'link up' : 'unreachable'}.
                 </p>
               ) : null}
-              <dl className="fd-facts">
-                <dt>Station ID</dt>
-                <dd>{station.station_id}</dd>
-                <dt>Key fingerprint</dt>
-                <dd>
-                  <Fingerprint value={station.key} />
-                </dd>
-                <dt>Direction</dt>
-                <dd>
-                  {station.direction === 'deck_dials'
-                    ? 'Deck dials station'
-                    : station.direction === 'station_dials'
-                      ? 'Station dials deck'
-                      : NONE}
-                </dd>
-                <dt>Link address</dt>
-                <dd>{station.dial_url ?? 'Dial-only (no stored address)'}</dd>
-                <dt>Last seen</dt>
-                <dd
+              <div className="fd-station-live">
+                <span
                   title={
                     station.last_seen === null ||
                     Number.isNaN(new Date(station.last_seen).getTime())
@@ -531,49 +555,100 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                       : new Date(station.last_seen).toISOString()
                   }
                 >
+                  Last seen{' '}
                   {station.last_seen === null ? NONE : relativeAge(station.last_seen, now)}
-                </dd>
-                <dt>Sessions</dt>
-                <dd>{info?.max_sessions == null ? active : `${active} / ${info.max_sessions}`}</dd>
-              </dl>
-              <h4>Configured providers</h4>
+                </span>
+                <span className="fd-station-load">
+                  {info?.max_sessions == null ? null : (
+                    <span className="fd-load-bar" aria-hidden="true">
+                      <span
+                        style={{ width: loadWidth(active, info.max_sessions) }}
+                        data-high={
+                          info.max_sessions > 0 && active / info.max_sessions >= 0.9
+                            ? ''
+                            : undefined
+                        }
+                      />
+                    </span>
+                  )}
+                  {info?.max_sessions == null
+                    ? `${active} sessions`
+                    : `${active} of ${info.max_sessions} sessions`}
+                </span>
+              </div>
               {info === null ? (
                 <p className="fd-note">Reported when the station links to this deck.</p>
               ) : info.providers.length === 0 ? (
                 <p className="fd-note">No provider configured.</p>
               ) : (
-                <ul className="fd-providers">
+                <ul className="fd-station-providers" aria-label="Configured providers">
                   {info.providers.map((p) => (
-                    <li
-                      key={p.instance}
-                      className="fd-badge"
-                      data-instance={p.instance}
-                      data-tone={
-                        p.auth === 'signed_in' ? 'ok' : p.auth === 'signed_out' ? 'hazard' : 'muted'
-                      }
-                      title={p.instance}
-                    >
-                      {capitalize(p.provider)}
-                      {p.version === null ? '' : ` ${p.version}`} · {authLabel(p.auth)}
+                    <li key={p.instance} data-instance={p.instance} title={p.instance}>
+                      <span>
+                        {capitalize(p.provider)}
+                        {p.version === null ? '' : ` ${p.version}`}
+                      </span>
+                      <span
+                        className="fd-station-auth"
+                        data-auth={
+                          p.auth === 'signed_in'
+                            ? 'ok'
+                            : p.auth === 'signed_out'
+                              ? 'hazard'
+                              : 'muted'
+                        }
+                      >
+                        <span className="fd-dot" aria-hidden="true" />
+                        {authLabel(p.auth)}
+                      </span>
                     </li>
                   ))}
                 </ul>
               )}
+              <details className="fd-station-details">
+                <summary className="fd-label">Details</summary>
+                <dl className="fd-facts">
+                  <dt>Station ID</dt>
+                  <dd>{station.station_id}</dd>
+                  <dt>Key fingerprint</dt>
+                  <dd>
+                    <Fingerprint value={station.key} />
+                  </dd>
+                  <dt>Direction</dt>
+                  <dd>
+                    {station.direction === 'deck_dials'
+                      ? 'Deck dials station'
+                      : station.direction === 'station_dials'
+                        ? 'Station dials deck'
+                        : NONE}
+                  </dd>
+                  <dt>Link address</dt>
+                  <dd>{station.dial_url ?? 'Not stored, the station dials this deck'}</dd>
+                  {info?.version == null ? null : (
+                    <>
+                      <dt>Version</dt>
+                      <dd>{info.version}</dd>
+                    </>
+                  )}
+                </dl>
+              </details>
               {actions?.canAdmin === true && actions.shells !== undefined ? (
-                info?.allow_shell === false ? (
-                  <section className="fd-shells" aria-label={`Shells on ${station.name}`}>
-                    <h4>Shells</h4>
-                    <p className="fd-note">
-                      Shells are off on this station. Set allow_shell = true in station.toml.
-                    </p>
-                  </section>
-                ) : (
-                  <ShellPanel
-                    station={station.name}
-                    actions={actions.shells}
-                    disabled={!canPair || !station.reachable}
-                  />
-                )
+                <details className="fd-station-sec">
+                  <summary className="fd-label">Shells</summary>
+                  {info?.allow_shell === false ? (
+                    <section className="fd-shells" aria-label={`Shells on ${station.name}`}>
+                      <p className="fd-note">
+                        Shells are off on this station. Set allow_shell = true in station.toml.
+                      </p>
+                    </section>
+                  ) : (
+                    <ShellPanel
+                      station={station.name}
+                      actions={actions.shells}
+                      disabled={!canPair || !station.reachable}
+                    />
+                  )}
+                </details>
               ) : null}
               {actions?.worktrees === undefined ? null : (
                 <Worktrees
@@ -584,39 +659,28 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                   now={now}
                 />
               )}
-              {actions?.canAdmin === true ? (
+              {actions?.canAdmin === true && confirm === station.name ? (
                 <div className="fd-station-foot">
-                  {confirm === station.name ? (
-                    <p>
-                      Remove {station.name}? Its link closes and its cards leave the board.{' '}
-                      <button
-                        type="button"
-                        className="fd-danger fd-sm"
-                        disabled={!canPair}
-                        onClick={() => {
-                          setConfirm(null);
-                          setRemoveError(null);
-                          void actions.remove(station.name).catch((e: unknown) => {
-                            setRemoveError(e instanceof Error ? e.message : 'Remove failed');
-                          });
-                        }}
-                      >
-                        Confirm remove
-                      </button>{' '}
-                      <button type="button" className="fd-sm" onClick={() => setConfirm(null)}>
-                        Cancel
-                      </button>
-                    </p>
-                  ) : (
+                  <p>
+                    Remove {station.name}? Its link closes and its cards leave the board.{' '}
                     <button
                       type="button"
                       className="fd-danger fd-sm"
                       disabled={!canPair}
-                      onClick={() => setConfirm(station.name)}
+                      onClick={() => {
+                        setConfirm(null);
+                        setRemoveError(null);
+                        void actions.remove(station.name).catch((e: unknown) => {
+                          setRemoveError(e instanceof Error ? e.message : 'Remove failed');
+                        });
+                      }}
                     >
-                      Remove station
+                      Confirm remove
+                    </button>{' '}
+                    <button type="button" className="fd-sm" onClick={() => setConfirm(null)}>
+                      Cancel
                     </button>
-                  )}
+                  </p>
                 </div>
               ) : null}
             </li>

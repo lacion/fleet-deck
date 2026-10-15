@@ -625,8 +625,9 @@ body:has(.fd-app[data-layout="tablet"]) {
 }
 
 .fd-dialog h2 {
-  margin: 0;
-  font-size: var(--fs-heading);
+  margin: 0 0 12px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-18);
   font-weight: 600;
 }
 
@@ -963,13 +964,70 @@ body:has(.fd-app[data-layout="tablet"]) {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  gap: var(--sp-2) var(--sp-3);
+}
+
+.fd-station h3.fd-station-name {
+  margin: 0;
+  font-family: var(--font-callsign);
+  font-size: var(--fs-18);
+  font-weight: 600;
+}
+
+.fd-station-health {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-body);
+  color: var(--ok);
+}
+
+.fd-station-health[data-health="down"] {
+  color: var(--hazard);
+}
+
+.fd-station-health[data-health="stale"] {
+  color: var(--dim);
+}
+
+.fd-station-menu {
+  margin-left: auto;
+}
+
+/* The live facts: one line, 16 px apart. */
+.fd-station-live {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-4);
+  font-size: var(--fs-body);
+  color: var(--dim);
+}
+
+.fd-station-load {
+  display: inline-flex;
+  align-items: center;
   gap: var(--sp-2);
 }
 
-.fd-station h3 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
+.fd-load-bar {
+  display: inline-block;
+  flex: none;
+  width: 56px;
+  height: 4px;
+  overflow: hidden;
+  background: var(--border);
+  border-radius: var(--r-pill);
+}
+
+.fd-load-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--ok);
+}
+
+.fd-load-bar > span[data-high] {
+  background: var(--act);
 }
 
 .fd-station h4 {
@@ -1012,13 +1070,51 @@ body:has(.fd-app[data-layout="tablet"]) {
   flex: none;
 }
 
-.fd-providers {
-  display: flex;
-  flex-wrap: wrap;
+.fd-station-providers {
+  display: grid;
   gap: var(--sp-1);
   margin: 0;
   padding: 0;
   list-style: none;
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+
+.fd-station-providers > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-1) var(--sp-3);
+}
+
+.fd-station-auth {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--dim);
+}
+
+.fd-station-auth[data-auth="ok"] {
+  color: var(--ok);
+}
+
+.fd-station-auth[data-auth="hazard"] {
+  color: var(--hazard);
+}
+
+.fd-station-auth .fd-dot {
+  background: currentColor;
+  border-color: currentColor;
+}
+
+.fd-shells {
+  margin-top: var(--sp-2);
+}
+
+/* The summary names the fold; the section keeps its label for the region. */
+.fd-station-sec .fd-shells > h4 {
+  display: none;
 }
 
 .fd-shells {
@@ -1052,7 +1148,13 @@ body:has(.fd-app[data-layout="tablet"]) {
   min-width: 0;
 }
 
-.fd-station-foot {
+/* Details and Shells: folds with a summary like the Worktrees one. */
+.fd-station-details > summary,
+.fd-station-sec > summary {
+  cursor: pointer;
+}
+
+.fd-station-sec > .fd-station-foot {
   display: flex;
   justify-content: flex-end;
 }

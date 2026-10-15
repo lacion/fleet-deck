@@ -58,6 +58,7 @@ test('an admin opens a station shell, types into it, reattaches, and closes it',
   await deck.install(page);
   await logIn(page);
   await openMore(page, 'Stations');
+  await page.locator('details.fd-station-sec > summary').click();
   const panel = page.getByRole('region', { name: 'Shells on alpha' });
   await expect(panel).toContainText('No open shells.');
 
@@ -108,6 +109,7 @@ test('an unreachable station cannot open a shell', async ({ page }) => {
   await deck.install(page);
   await logIn(page);
   await openMore(page, 'Stations');
+  await page.locator('details.fd-station-sec > summary').click();
   const panel = page.getByRole('region', { name: 'Shells on alpha' });
   await panel.getByLabel('Directory').fill('/work/repo');
   await expect(panel.getByRole('button', { name: 'Open shell' })).toBeDisabled();

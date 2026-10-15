@@ -91,7 +91,7 @@ test('a captured plan is read, archived, restored and starts a session', async (
 
   await p1.getByRole('button', { name: 'Start a session with this plan' }).click();
   const form = page.getByRole('region', { name: 'New session' });
-  await expect(form.getByLabel('First prompt (optional)')).toHaveValue(
+  await expect(form.getByLabel('What should the agent do? (optional)')).toHaveValue(
     '# Cache plan p1\n\n1. Read store.rs\n2. Add an LRU cache',
   );
 });

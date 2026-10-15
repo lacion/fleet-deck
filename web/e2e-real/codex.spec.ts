@@ -19,7 +19,7 @@ import { BRANCH, CODEX, Deck, PROVIDER, Station } from './fleet';
 test.describe.configure({ mode: 'serial' });
 
 /** The spawn form's label of the Codex instance (`fake-codex --version`). */
-const CODEX_LABEL = `${CODEX} · codex · 0.160.999`;
+const CODEX_LABEL = `Codex 0.160.999 (${CODEX})`;
 
 let deck: Deck;
 let alpha: Station;

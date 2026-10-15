@@ -5,6 +5,7 @@ import { BranchFields } from './BranchFields';
 import { CloneAccess } from './CloneAccess';
 import { SpawnForm } from './SpawnForm';
 import type { StationInfo, StationView, WorkspaceListing } from '../gen';
+import type { RateMeter } from '../board/usage';
 import { claudeCaps, codexCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
 import {
@@ -15,6 +16,8 @@ import {
   knownModels,
   lastParts,
   listingView,
+  moreOptionsOpen,
+  providerChoiceLabel,
   providerLabel,
   recentDirs,
   spawnActions,
@@ -105,7 +108,45 @@ describe('spawn form (P4-4)', () => {
         version_status: 'unknown',
         capabilities: null,
       }),
-    ).toBe('codex · codex · version unknown');
+    ).toBe('Codex version unknown');
+  });
+
+  test('the provider label is the capitalized provider and version; the instance shows when it differs', () => {
+    const base = {
+      provider: 'claude' as const,
+      auth: 'signed_in',
+      version_status: 'unknown' as const,
+      capabilities: null,
+    };
+    expect(providerLabel({ ...base, instance: 'claude', version: '2.1.300' })).toBe(
+      'Claude 2.1.300',
+    );
+    expect(providerLabel({ ...base, instance: 'work', version: '2.1.300' })).toBe(
+      'Claude 2.1.300 (work)',
+    );
+    expect(providerLabel({ ...base, instance: 'work', version: null })).toBe(
+      'Claude version unknown (work)',
+    );
+    const limit: RateMeter = {
+      key: 'k',
+      stationId: 'station-a',
+      instance: 'claude',
+      label: 'Claude',
+      scope: 'five_hour',
+      usedPercent: 42,
+      resetsAt: null,
+    };
+    const choice = providerChoiceLabel(
+      { ...base, instance: 'claude', version: '2.1' },
+      limit,
+      0,
+      true,
+    );
+    expect(choice).toBe('Claude 2.1, 42% of five_hour (most room)');
+    expect(
+      providerChoiceLabel({ ...base, instance: 'claude', version: '2.1' }, null, 0, false),
+    ).toBe('Claude 2.1');
+    expect(choice).not.toContain(' · ');
   });
 
   test('an older CLI shows a warning under the provider select; an ok one shows none (R8.2)', () => {
@@ -126,7 +167,7 @@ describe('spawn form (P4-4)', () => {
     const html = form([reported()]);
     expect(html).toContain('<h2>New session</h2>');
     expect(html).toContain('<option value="station-a" selected="">Alpha</option>');
-    expect(html).toContain('claude · claude · 2.1.999');
+    expect(html).toContain('Claude 2.1.999');
     expect(html).toContain('Browse…');
     expect(html).toContain('<option value="" selected="">Station default</option>');
     expect(html).toContain('<option value="plan">plan</option>');
@@ -382,10 +423,28 @@ describe('spawn form (P4-4)', () => {
 
   test('the form is a column of panels with a head each and a primary submit button (DL-141)', () => {
     const html = form([reported()]);
-    for (const head of ['Where', 'Agent', 'Task', 'Options']) {
+    for (const head of ['Where', 'Agent', 'Task']) {
       expect(html).toContain(`<h3 class="fd-label">${head}</h3>`);
     }
-    expect(html).toContain('<textarea rows="6">');
+    // The task comes first: the prompt, then the title, then the batch option.
+    const order = [
+      '>Task<',
+      'What should the agent do? (optional)',
+      'Title (optional)',
+      'Batch:',
+      '>Where<',
+      '>Agent<',
+      'More options',
+    ].map((t) => html.indexOf(t));
+    expect(order.every((at) => at >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(html).toContain('<textarea rows="5"');
+    expect(html).not.toContain('First prompt');
+    // Where and Agent pickers sit in one row each; the options are folded and closed.
+    expect(html.match(/class="fd-spawn-row"/g)).toHaveLength(2);
+    expect(html).toContain(
+      '<details class="fd-panel fd-spawn-options"><summary class="fd-label">More options</summary>',
+    );
     expect(html).toContain('<label class="fd-spawn-opt"><input type="checkbox"/>Batch:');
     expect(html).not.toContain('fd-batch-preview');
     expect(html).not.toContain('fd-recent');
@@ -498,12 +557,18 @@ describe('spawn form (P4-4)', () => {
         now={1_000_000}
       />,
     );
-    expect(html).toContain(
-      'claude · claude · 2.1.999 · 42% of five_hour, resets in 1 h (most room)',
-    );
-    expect(html).toContain(
-      'codex · codex · version unknown · 90% of five_hour, resets in 1 h</option>',
-    );
+    expect(html).toContain('Claude 2.1.999, 42% of five_hour, resets in 1 h (most room)');
+    expect(html).toContain('Codex version unknown, 90% of five_hour, resets in 1 h</option>');
+  });
+
+  test('More options is open when the person opened it or an option has a value', () => {
+    const none = { setup: '', coordinator: false, importId: '' };
+    expect(moreOptionsOpen(false, none)).toBe(false);
+    expect(moreOptionsOpen(true, none)).toBe(true);
+    expect(moreOptionsOpen(false, { ...none, setup: 'bun install' })).toBe(true);
+    expect(moreOptionsOpen(false, { ...none, setup: '  ' })).toBe(false);
+    expect(moreOptionsOpen(false, { ...none, coordinator: true })).toBe(true);
+    expect(moreOptionsOpen(false, { ...none, importId: 'abc' })).toBe(true);
   });
 
   describe('the model field (DL-151)', () => {
