@@ -45,3 +45,9 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 - **Wanted:** a view of all running subagents and tasks of the session, and a way to switch from agent to agent to see the chat window of each, as in Claude Code.
 - **Related:** DL-191 adds "Show its work" (one read of a finished subagent transcript) and the Branches view. B6 needs live state and a switch between chats.
 - **Status:** later. Needs a design first.
+
+## B7. Browse the sessions of a station, with a preview, before an import (owner request, 2026-10-15)
+
+- **Wanted:** for each station, a list of all the provider sessions that are on it (Claude and Codex conversations, imported or not). The owner opens a preview of the conversation of one, and then decides to continue it (import it and resume) or to leave it.
+- **Related:** the import flow and the earlier history (DL-189) already read native transcripts. B7 needs a station-wide list and a preview that does not import.
+- **Status:** later. Needs a design first.
