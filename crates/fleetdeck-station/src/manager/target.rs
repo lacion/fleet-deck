@@ -644,11 +644,15 @@ impl EffectTarget for SessionTarget {
                     )
                     .await;
                 }
-                // An import or a resume of a session without a base (R1.1).
+                // An import takes the `HEAD` now; a resume of a session
+                // without a base guesses it (R1.1).
+                let cwd = Path::new(&spec.cwd);
                 let base = if self.has_base(&effect.session_id).await {
                     None
+                } else if *import {
+                    crate::workspace::base::at_head(&self.git, cwd).await
                 } else {
-                    crate::workspace::base::inferred(&self.git, Path::new(&spec.cwd)).await
+                    crate::workspace::base::inferred(&self.git, cwd).await
                 };
                 let started = self
                     .start(effect, spec, prompt.as_ref(), Some(native_session_id), None)

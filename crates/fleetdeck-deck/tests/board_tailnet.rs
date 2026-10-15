@@ -496,7 +496,7 @@ async fn the_status_route_reports_the_certificate_state() {
     assert_eq!(r.status, 200, "{}", r.body);
     assert_eq!(
         r.body["certificate"],
-        json!({ "enabled": false, "state": "off" })
+        json!({ "enabled": false, "state": "off", "owner_files": false })
     );
     // Valid, with its name and end.
     *c.state.cert.write().unwrap() = CertState {
@@ -514,6 +514,7 @@ async fn the_status_route_reports_the_certificate_state() {
             "state": "valid",
             "name": "deck-box.tail1234.ts.net",
             "not_after": 1_800_000_000_000_i64,
+            "owner_files": false,
         })
     );
     // Failed, with a reason code and no text of `tailscale`.
@@ -527,6 +528,11 @@ async fn the_status_route_reports_the_certificate_state() {
     let r = get(&c, &h, "/api/tailnet").await;
     assert_eq!(
         r.body["certificate"],
-        json!({ "enabled": true, "state": "failed", "reason_code": "https_disabled" })
+        json!({
+            "enabled": true,
+            "state": "failed",
+            "reason_code": "https_disabled",
+            "owner_files": false,
+        })
     );
 }

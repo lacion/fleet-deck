@@ -14,6 +14,7 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
   - Show the commits that the session made (or merged) since its start, next to the working-tree diff?
   - Show the worktrees and branches that the session created, with their diffs?
   - Show the tool calls of a subagent inside its card (Claude subagent transcripts)?
+- **Done, first part (2026-10-15):** an import takes the `HEAD` at import time as its base, so "Since the session started" shows the work after the import, also merged branches (be-w4). Open: worktrees that a session created, and subagent tool calls.
 
 ## B2. Background notifications show as "provider turn" (owner screenshot, 2026-10-15)
 
@@ -35,3 +36,4 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 
 - **Now:** `fleetdeck service start` decides "newer" or "older" by the file times of the two programs, because every build reports version `0.0.0`. A copy that keeps old file times, or an old binary copied later, can mislead it.
 - **Wanted:** a build id (for example the git commit and the build time) in the binary, shown by `fleetdeck --version`, compared by `service start` and `service status`, and reported by each station to the deck, so the board can show which build a station runs.
+- **Done (2026-10-15):** commit and commit time in every binary; `--version`, station info, deck version and `service start/status` use them (be-w4).

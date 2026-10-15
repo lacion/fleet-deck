@@ -6,8 +6,9 @@
 //!   of the repository, read before the worktree is made.
 //! - A clone: the `HEAD` of the clone.
 //! - A start in place: the `HEAD` of the working directory.
-//! - An import or a resume of a session without a base: the merge base of
-//!   `HEAD` and `origin/HEAD`, else `HEAD`; marked `inferred`.
+//! - An import: the `HEAD` of the working directory at import time.
+//! - A resume of a session without a base: the merge base of `HEAD` and
+//!   `origin/HEAD`, else `HEAD`; marked `inferred`.
 //!
 //! A directory that is not a Git worktree, an unborn `HEAD` or a `git`
 //! failure gives `None`: the session has no base.
@@ -94,7 +95,8 @@ pub async fn planned(
     }
 }
 
-/// The base that is the `HEAD` of `dir` (a clone, or a start in place).
+/// The base that is the `HEAD` of `dir` (a clone, an import, or a start in
+/// place).
 pub async fn at_head(options: &GitOptions, dir: &Path) -> Option<SessionBase> {
     let git = git_in(dir, options);
     let oid = commit_of(&git, "HEAD").await?;

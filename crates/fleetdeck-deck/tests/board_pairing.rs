@@ -241,7 +241,7 @@ async fn the_board_pairs_both_directions_reports_station_info_and_removes() {
     assert_eq!(view["direction"], "station_dials");
     let info = &view["info"];
     assert_eq!(info["name"], "bravo");
-    assert_eq!(info["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(info["version"], fleetdeck_core::build::version());
     assert_eq!(info["max_sessions"], 2);
     assert_eq!(
         info["providers"],

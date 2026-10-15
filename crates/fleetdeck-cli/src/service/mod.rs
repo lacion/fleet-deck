@@ -138,7 +138,7 @@ impl Context {
             distro: text_var("WSL_DISTRO_NAME")?,
             powershell: tailscale_wsl::windows_powershell_ok(),
             exe,
-            version: env!("CARGO_PKG_VERSION").to_owned(),
+            version: fleetdeck_core::build::version().to_owned(),
             host,
             ready_limit: Duration::from_secs(20),
             ready_step: Duration::from_millis(200),

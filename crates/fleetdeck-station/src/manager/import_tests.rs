@@ -65,6 +65,65 @@ async fn an_imported_claude_session_continues_the_given_native_session() {
     st.manager.shutdown(StopMode::Kill).await;
 }
 
+fn git(dir: &Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .current_dir(dir)
+        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+        .args(args)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{args:?}: {out:?}");
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
+#[tokio::test]
+async fn an_import_takes_the_head_at_import_time_as_its_base() {
+    let mut st = Station::new(4).await;
+    let ws = st.workspace();
+    let dir = Path::new(&ws);
+    git(dir, &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    git(dir, &["add", "a.txt"]);
+    git(dir, &["commit", "-qm", "one"]);
+    // `origin/HEAD` stays at the first commit; the `HEAD` is one ahead.
+    let first = git(dir, &["rev-parse", "HEAD"]);
+    git(dir, &["update-ref", "refs/remotes/origin/main", &first]);
+    git(
+        dir,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ],
+    );
+    std::fs::write(dir.join("a.txt"), "two\n").unwrap();
+    git(dir, &["commit", "-qam", "two"]);
+    let head = git(dir, &["rev-parse", "HEAD"]);
+    assert_ne!(head, first);
+    let d = st
+        .accepted(import(&ws, "claude", "cli-session-8", None))
+        .await;
+    let s = d.receipt.result.unwrap().session_id.unwrap();
+    let (git_ref, oid, inferred) = st
+        .wait_for("session.base", |e| match e {
+            Event::SessionBase {
+                git_ref,
+                oid,
+                inferred,
+            } => Some((git_ref.clone(), oid.clone(), *inferred)),
+            _ => None,
+        })
+        .await;
+    assert_eq!(
+        (git_ref.as_deref(), oid.as_str(), inferred),
+        (Some("main"), head.as_str(), false)
+    );
+    st.settled(&s).await;
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
 #[tokio::test]
 async fn an_import_is_refused_for_a_bad_id_a_foreign_workspace_or_a_native_session_in_use() {
     let mut st = Station::new(4).await;

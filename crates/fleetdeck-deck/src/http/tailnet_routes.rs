@@ -205,11 +205,14 @@ struct CertificateView {
     not_after: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason_code: Option<&'static str>,
+    /// The owner's own certificate files (`board.crt`) are in use.
+    owner_files: bool,
 }
 
 impl CertificateView {
-    fn of(state: &CertState) -> Self {
+    fn of(state: &CertState, owner_files: bool) -> Self {
         Self {
+            owner_files,
             enabled: state.enabled,
             state: state.state.as_str(),
             name: state.name.clone(),
@@ -261,8 +264,10 @@ pub async fn get(
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .clone();
-    let certificate =
-        CertificateView::of(&board.cert.read().unwrap_or_else(PoisonError::into_inner));
+    let certificate = CertificateView::of(
+        &board.cert.read().unwrap_or_else(PoisonError::into_inner),
+        board.endpoints.owner(),
+    );
     let cli = cli_of(saved.as_ref());
     let status = status_fresh(&cli).await;
     // A program was chosen unless the lookup found nothing to run.
@@ -754,4 +759,20 @@ fn join_command(this: &Node, hub: &fleetdeck_link::pair_hub::PairRequests) -> Op
         "fleetdeck station join --tailnet {host}:{port} --deck-fingerprint {}",
         hub.deck_key().fingerprint()
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+
+    #[test]
+    fn the_certificate_view_says_when_the_owner_files_are_used() {
+        let state = CertState::off();
+        for owner in [true, false] {
+            let json = serde_json::to_value(CertificateView::of(&state, owner)).unwrap();
+            assert_eq!(json["owner_files"], owner);
+        }
+    }
 }

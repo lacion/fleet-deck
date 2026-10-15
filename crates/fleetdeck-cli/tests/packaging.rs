@@ -314,11 +314,9 @@ fn the_offline_built_binary_reports_its_version() {
         .output()
         .unwrap();
     assert!(out.status.success());
-    let cargo = toml_file("Cargo.toml");
-    let version = cargo["workspace"]["package"]["version"].as_str().unwrap();
     assert_eq!(
         String::from_utf8_lossy(&out.stdout).trim(),
-        format!("fleetdeck {version}")
+        format!("fleetdeck {}", fleetdeck_core::build::version())
     );
 }
 

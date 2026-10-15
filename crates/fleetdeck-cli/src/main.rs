@@ -51,6 +51,17 @@ fn main() -> ExitCode {
                 *parent, program, args,
             ));
         }
+        // It needs no data directory and no logging either.
+        Command::BuildInfo => {
+            let text = |value: &str| serde_json::Value::from(value).to_string();
+            println!(
+                r#"{{"version":{},"commit":{},"commit_time":{}}}"#,
+                text(fleetdeck_core::build::version()),
+                text(fleetdeck_core::build::COMMIT),
+                fleetdeck_core::build::COMMIT_TIME
+            );
+            return ExitCode::SUCCESS;
+        }
         _ => {}
     }
     let handle = restart::RestartHandle::default();
@@ -112,7 +123,10 @@ fn run(cli: Cli, restart: &restart::RestartHandle) -> anyhow::Result<ExitCode> {
             })
             .await?
         })),
-        Command::Station { .. } | Command::Shim { .. } | Command::ShimExec { .. } => {
+        Command::Station { .. }
+        | Command::Shim { .. }
+        | Command::ShimExec { .. }
+        | Command::BuildInfo => {
             anyhow::bail!("internal error: the command was not dispatched")
         }
     }

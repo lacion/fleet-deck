@@ -11,7 +11,12 @@ use clap::{Args, Parser, Subcommand};
 
 /// Fleet Deck v2: one deck drives agent sessions on many stations.
 #[derive(Debug, Parser)]
-#[command(name = "fleetdeck", version, about, propagate_version = true)]
+#[command(
+    name = "fleetdeck",
+    version = fleetdeck_core::build::version(),
+    about,
+    propagate_version = true
+)]
 pub struct Cli {
     /// Data directory (databases, identity key, sockets). Default: the
     /// platform data directory of the current user.
@@ -70,6 +75,10 @@ pub enum Command {
         #[command(subcommand)]
         command: ServiceCommand,
     },
+    /// Print the build identity as one JSON line (the service compares
+    /// builds with it); not a user command.
+    #[command(hide = true)]
+    BuildInfo,
     /// The durable provider shim (ADR-005 §2). The station starts it and
     /// sends the launch frame on its stdin; it is not a user command.
     #[command(hide = true)]
