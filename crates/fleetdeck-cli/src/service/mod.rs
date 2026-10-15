@@ -62,9 +62,6 @@ pub struct Context {
     pub home: PathBuf,
     pub uid: u32,
     pub user: String,
-    /// The primary group of the user. `detect` uses it to find the private group.
-    #[allow(dead_code)]
-    pub gid: u32,
     /// The `PATH` of the service: only the safe entries (see
     /// [`path::safe_path`]).
     pub path: Option<String>,
@@ -130,7 +127,6 @@ impl Context {
             home,
             uid,
             user,
-            gid,
             path,
             path_dropped,
             shell_path,

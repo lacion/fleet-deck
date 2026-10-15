@@ -47,7 +47,6 @@ impl Rig {
             home: root.join("home"),
             uid: 1000,
             user: "luis".to_owned(),
-            gid: 1000,
             path: Some("/usr/bin:/home/luis/.local/bin".to_owned()),
             path_dropped: Vec::new(),
             shell_path: None,
