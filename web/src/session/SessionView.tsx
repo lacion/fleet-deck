@@ -488,6 +488,7 @@ export function SessionView(props: SessionViewProps) {
                           : actions.send(kind, text, images),
                       )
                     }
+                    resumeBusy={busy !== null}
                     onResume={
                       flags.canResume &&
                       !wakes &&

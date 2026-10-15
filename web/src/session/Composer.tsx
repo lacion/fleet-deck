@@ -26,6 +26,8 @@ type Props = {
   readonly disabledReason?: string | null;
   /** With this, a composer that is off becomes a bar with one Resume button. */
   readonly onResume?: (() => void) | null;
+  /** A command of the session is pending: the Resume button waits (no second resume). */
+  readonly resumeBusy?: boolean;
   /** The commands of the provider; `null` or empty: it gave no list. */
   readonly slashCommands?: readonly string[] | null;
   /** The skill names of the provider; a command in this list shows the badge "skill". */
@@ -353,8 +355,13 @@ export function Composer(props: Props) {
     return (
       <div className="fd-composer-resume">
         <span className="fd-composer-note">{props.disabledReason || 'The session ended.'}</span>
-        <button type="button" className="fd-primary" onClick={props.onResume}>
-          <Icon of={Play} size={14} /> Resume
+        <button
+          type="button"
+          className="fd-primary"
+          disabled={props.resumeBusy === true}
+          onClick={props.onResume}
+        >
+          <Icon of={Play} size={14} /> {props.resumeBusy === true ? 'Resuming…' : 'Resume'}
         </button>
       </div>
     );

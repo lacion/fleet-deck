@@ -283,6 +283,10 @@ describe('composer menus (DL-174)', () => {
     // without onResume, or while the composer is on, nothing changes
     expect(composer({ enabled: false })).toContain('<textarea');
     expect(composer({ enabled: false, onResume: null })).toContain('<textarea');
+    // while a command is pending, the Resume button waits
+    const busy = composer({ enabled: false, onResume: noop, resumeBusy: true });
+    expect(busy).toContain('disabled=""');
+    expect(busy).toContain('Resuming…');
     expect(composer({ enabled: true, onResume: noop })).toContain('<textarea');
   });
 
