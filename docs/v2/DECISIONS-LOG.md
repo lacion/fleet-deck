@@ -2999,3 +2999,9 @@ Owner review: pending.
 - Context: a device link with the tailnet name failed on the owner's phone with a certificate error that could not be passed; the IP link worked.
 - Design: `docs/v2/design/tailscale-cert.md` (revision 2, accepted after two adversary rounds). Opt-in deck setting `tailscale_cert` (the name becomes public in Certificate Transparency logs); `tailscale cert` in a secret mode; offline path validation against embedded ISRG Root X1/X2; one 0600 file; one lifecycle task with a generation; certificate per name (SNI); per-entry trust in device links and `fleetdeck open`.
 - Dependencies: `rustls-webpki` and `x509-parser` move into `fleetdeck-deck` (both already in `Cargo.lock`; no new crate).
+
+## DL-189 — Full session history in the chat (owner request, 2026-10-15)
+
+- Context: an imported session showed an empty chat. Owner: "i think we should work on propperly importing a session and showing all in the chat"; "it should be my decission to share an imported session".
+- Design: `docs/v2/design/session-history.md` revision 5 (round 1 FAIL, round 2 PASS for owner-only, round 3 FAIL, extra review FAIL with one blocker; owner choice "apply the fix and build"). The station captures the transcript prefix at import into its own snapshot; link method `session.history` (feature `history.v1`); owner-only by default; a per-share `history` option (owner, elevation) lets that share's own members read prompts and answers (no tool details); bearer tokens never.
+- The adversary PRE-PR review of the code is the next gate.
