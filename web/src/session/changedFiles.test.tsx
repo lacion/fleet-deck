@@ -35,6 +35,19 @@ const actions = (answer: () => Promise<SessionDiff>): FileActions => ({
   sessionDiff: answer,
 });
 
+import { changedPaths as pathsOf } from './changedFiles';
+
+test('a deleted file is not listed', () => {
+  const patch = [
+    'diff --git a/gone.rs b/gone.rs',
+    'deleted file mode 100644',
+    'index 1..0',
+    'diff --git a/kept.rs b/kept.rs',
+    'index 1..2',
+  ].join('\n');
+  expect(pathsOf(patch)).toEqual(['kept.rs']);
+});
+
 describe('changed paths of a patch', () => {
   test('a modified, a new and a renamed file: the b/ path, in patch order', () => {
     expect(changedPaths(patch)).toEqual(['src/a.ts', 'docs/new.md', 'moved/name.rs']);

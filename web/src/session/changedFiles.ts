@@ -36,11 +36,21 @@ function headerPath(line: string): string | null {
 /** The changed paths of a patch: the `b/` path of each header, in patch order, at most `max`. */
 export function changedPaths(patch: string, max = CHANGED_FILES_MAX): string[] {
   const paths: string[] = [];
+  // A deleted file cannot be opened: its block drops the path it added.
+  let current: string | null = null;
   for (const line of patch.split('\n')) {
+    if (line.startsWith('deleted file mode') && current !== null) {
+      paths.splice(paths.indexOf(current), 1);
+      current = null;
+      continue;
+    }
     const path = headerPath(line);
-    if (path === null || paths.includes(path)) continue;
-    paths.push(path);
+    if (path === null) continue;
+    current = null;
+    if (paths.includes(path)) continue;
     if (paths.length >= max) break;
+    paths.push(path);
+    current = path;
   }
   return paths;
 }
