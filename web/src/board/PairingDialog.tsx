@@ -1,43 +1,94 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Dialog } from '../integrations/Dialog';
-import type { PairingInvitation } from '../gen';
-import { useSettings } from '../settings/context';
+import type { PairingInvitation, StationView } from '../gen';
+import { type SettingsEnv, useSettings } from '../settings/context';
+import { groupDevices } from '../tailnet/model';
 import { TailnetPairing } from '../tailnet/TailnetPairing';
-import { expiresText, requestedName, type StationActions } from './pairing';
+import { InviteView } from './InviteView';
+import { ListenView } from './ListenView';
+import type { StationActions } from './pairing';
 
 type Props = {
   readonly actions: StationActions;
+  readonly stations: readonly StationView[];
   readonly onClose: () => void;
 };
 
-type Direction = 'station_dials' | 'deck_dials';
-type Tab = 'invitation' | 'tailnet';
+type View = 'start' | 'tailnet' | 'invite' | 'listen';
+/** The tailnet choice: still loading, not available, or the number of addable computers. */
+type Count = 'loading' | 'unavailable' | number;
 
-const message = (error: unknown) =>
-  error instanceof Error ? error.message : 'The deck did not answer.';
+function countText(count: Count): string {
+  if (count === 'loading') return 'Checking Tailscale…';
+  if (count === 'unavailable') return 'Tailscale is not available on this deck';
+  if (count === 0) return 'No computer can be added now';
+  return count === 1 ? '1 computer can be added' : `${count} computers can be added`;
+}
+
+function Start({
+  env,
+  onPick,
+}: {
+  readonly env: SettingsEnv | undefined;
+  readonly onPick: (view: View) => void;
+}) {
+  const [count, setCount] = useState<Count>('loading');
+  const tailnet = env?.tailnet;
+  // One look at the tailnet, for the number on the card. The tailnet view polls by itself.
+  useEffect(() => {
+    if (tailnet === undefined) return undefined;
+    let alive = true;
+    tailnet
+      .devices()
+      .then(
+        (d) =>
+          alive && setCount(d.available ? groupDevices(d.devices).addable.length : 'unavailable'),
+      )
+      .catch(() => alive && setCount('unavailable'));
+    return () => {
+      alive = false;
+    };
+  }, [tailnet]);
+  return (
+    <>
+      <h3>Where is the new station?</h3>
+      {env === undefined ? null : (
+        <button type="button" className="fd-add-choice" onClick={() => onPick('tailnet')}>
+          <span className="fd-add-choice-title">A computer on my tailnet</span>
+          <span className="fd-add-choice-note">{countText(count)}</span>
+        </button>
+      )}
+      <button type="button" className="fd-add-choice" onClick={() => onPick('invite')}>
+        <span className="fd-add-choice-title">Any computer, with a one-time invitation</span>
+        <span className="fd-add-choice-note">
+          The new station connects to this deck. It works behind a router or a firewall.
+        </span>
+      </button>
+      <details className="fd-add-fold">
+        <summary>Other ways</summary>
+        <button type="button" className="fd-add-text-btn" onClick={() => onPick('listen')}>
+          Connect to a station that listens
+        </button>
+      </details>
+    </>
+  );
+}
 
 /**
- * Pairs a station in either direction. The invitation text is a secret: it
- * stays in this dialog's memory only and is gone when the dialog closes.
+ * Adds a station in one guided flow. The invitation and the pasted text are secrets: they stay in
+ * this dialog's memory only and are gone when the dialog closes or the owner goes back.
  */
-export function PairingDialog({ actions, onClose }: Props) {
-  const [direction, setDirection] = useState<Direction>('station_dials');
+export function PairingDialog({ actions, stations, onClose }: Props) {
+  const [view, setView] = useState<View>('start');
   const [invitation, setInvitation] = useState<PairingInvitation | null>(null);
   const [pasted, setPasted] = useState('');
-  const [name, setName] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [paired, setPaired] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>('invitation');
-  // The tailnet tab is the owner's: the settings context exists for the owner's login only.
+  // The tailnet part is the owner's: the settings context exists for the owner's login only.
   const env = useSettings();
 
-  const run = (work: () => Promise<void>) => {
-    setBusy(true);
-    setError(null);
-    void work()
-      .catch((e: unknown) => setError(message(e)))
-      .finally(() => setBusy(false));
+  const back = () => {
+    setInvitation(null);
+    setPasted('');
+    setView('start');
   };
 
   // Every way out (Close, Escape, an outside click) drops the secrets from memory first.
@@ -49,130 +100,28 @@ export function PairingDialog({ actions, onClose }: Props) {
 
   return (
     <Dialog title="Add station" onClose={close}>
-      {env === undefined ? null : (
-        <div className="fd-pane-tabs" role="tablist" aria-label="How to add a station">
-          {(
-            [
-              ['invitation', 'Invitation'],
-              ['tailnet', 'On your tailnet'],
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              role="tab"
-              aria-selected={tab === id}
-              onClick={() => setTab(id)}
-            >
-              {label}
-            </button>
-          ))}
+      {view === 'start' ? null : (
+        <div>
+          <button type="button" className="fd-add-text-btn" onClick={back}>
+            ← Back
+          </button>
         </div>
       )}
-      {env !== undefined && tab === 'tailnet' ? <TailnetPairing env={env} /> : null}
-      {env !== undefined && tab === 'tailnet' ? null : (
-        <>
-          <fieldset>
-            <legend>Which side dials?</legend>
-            <label>
-              <input
-                type="radio"
-                name="fd-direction"
-                checked={direction === 'station_dials'}
-                onChange={() => setDirection('station_dials')}
-              />
-              The station dials this deck (station behind NAT)
-            </label>
-            <label>
-              <input
-                type="radio"
-                name="fd-direction"
-                checked={direction === 'deck_dials'}
-                onChange={() => setDirection('deck_dials')}
-              />
-              This deck dials the station (station listens)
-            </label>
-          </fieldset>
-          {direction === 'station_dials' ? (
-            <section aria-label="Invite a station">
-              <p>Create a one-time invitation. Then run the join command on the station.</p>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() =>
-                  run(async () => {
-                    setInvitation(await actions.invite());
-                  })
-                }
-              >
-                {invitation === null ? 'Create invitation' : 'Create a new invitation'}
-              </button>
-              {invitation === null ? null : (
-                <div className="fd-invitation">
-                  <label htmlFor="fd-invitation-text">Invitation (secret, single use)</label>
-                  <textarea
-                    id="fd-invitation-text"
-                    readOnly
-                    rows={3}
-                    value={invitation.invitation}
-                    onFocus={(event) => event.currentTarget.select()}
-                  />
-                  <p>
-                    On the station, run <code>{invitation.join_command}</code> and paste the
-                    invitation.
-                  </p>
-                  <p>Expires: {expiresText(invitation.expires_at)}</p>
-                </div>
-              )}
-            </section>
-          ) : (
-            <form
-              aria-label="Pair a listening station"
-              onSubmit={(event) => {
-                event.preventDefault();
-                const text = pasted;
-                run(async () => {
-                  const station = await actions.add({
-                    invitation: text,
-                    name: requestedName(name),
-                  });
-                  setPasted('');
-                  setName('');
-                  setPaired(station.name);
-                });
-              }}
-            >
-              <p>
-                On the station, run <code>fleetdeck station invite</code>. Paste its invitation
-                here.
-              </p>
-              <label htmlFor="fd-station-invitation">Station invitation</label>
-              <textarea
-                id="fd-station-invitation"
-                required
-                rows={3}
-                autoComplete="off"
-                spellCheck={false}
-                value={pasted}
-                onChange={(event) => setPasted(event.target.value)}
-              />
-              <label htmlFor="fd-station-name">Name on this deck (optional)</label>
-              <input
-                id="fd-station-name"
-                value={name}
-                maxLength={64}
-                placeholder="The station's own name"
-                onChange={(event) => setName(event.target.value)}
-              />
-              <button type="submit" disabled={busy || pasted.trim() === ''}>
-                {busy ? 'Pairing…' : 'Pair station'}
-              </button>
-            </form>
-          )}
-          {paired === null ? null : <p role="status">Paired station {paired}.</p>}
-          {error === null ? null : <p role="alert">{error}</p>}
-        </>
-      )}
+      {view === 'start' ? <Start env={env} onPick={setView} /> : null}
+      {view === 'tailnet' && env !== undefined ? (
+        <TailnetPairing env={env} onInvite={() => setView('invite')} />
+      ) : null}
+      {view === 'invite' ? (
+        <InviteView
+          actions={actions}
+          stations={stations}
+          invitation={invitation}
+          setInvitation={setInvitation}
+        />
+      ) : null}
+      {view === 'listen' ? (
+        <ListenView actions={actions} pasted={pasted} setPasted={setPasted} />
+      ) : null}
       <button type="button" onClick={close}>
         Close
       </button>

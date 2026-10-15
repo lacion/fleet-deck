@@ -43,7 +43,7 @@ test('an admin sees the station report and makes an invitation for a dialing sta
     status: 200,
     body: {
       invitation: 'fdinv1_secret_e2e',
-      expires_at: Date.UTC(2026, 9, 11, 12, 15),
+      expires_at: Date.now() + 15 * 60_000,
       join_command: 'fleetdeck station join',
     },
   }));
@@ -60,15 +60,33 @@ test('an admin sees the station report and makes an invitation for a dialing sta
 
   await page.getByRole('button', { name: 'Add station' }).click();
   const dialog = page.getByRole('dialog', { name: 'Add station' });
+  await expect(dialog).toContainText('Where is the new station?');
+  await dialog.getByRole('button', { name: /Any computer, with a one-time invitation/ }).click();
   await dialog.getByRole('button', { name: 'Create invitation' }).click();
+  await expect(dialog).toContainText('1. On the new computer, run:');
+  await expect(dialog.locator('.fd-add-command code')).toHaveText('fleetdeck station join');
+  // The invitation is masked until the owner shows it.
+  await expect(dialog).toContainText('••••••••••••');
+  await expect(dialog.getByLabel('Invitation (secret, single use)')).toHaveCount(0);
+  expect(await page.content()).not.toContain('fdinv1_secret_e2e');
+  await expect(dialog).toContainText('Keep it secret. Anyone with it can add a station until');
+  await expect(dialog.getByRole('status')).toContainText('Waiting for the station to join…');
+  await dialog.getByRole('button', { name: 'Show' }).click();
   await expect(dialog.getByLabel('Invitation (secret, single use)')).toHaveValue(
     'fdinv1_secret_e2e',
   );
-  await expect(dialog).toContainText('fleetdeck station join');
-  await expect(dialog).toContainText('Expires: 2026-10-11 12:15 UTC');
   expect(await fitsWidth(page)).toBe(true);
   const call = deck.calls.find((c) => c.path === '/api/stations/invite');
   expect(call).toEqual({ path: '/api/stations/invite', body: {}, csrf: CSRF });
+
+  // A new station on the board means the invitation was used: the secret is dropped.
+  deck.stations = [...deck.stations, stationView('st-new', 'new-box')];
+  deck.publish();
+  await expect(dialog).toContainText('✓ new-box joined this deck.');
+  await expect(dialog.getByLabel('Invitation (secret, single use)')).toHaveCount(0);
+  expect(await page.content()).not.toContain('fdinv1_secret_e2e');
+  await dialog.getByRole('button', { name: 'Add another station' }).click();
+  await expect(dialog.getByRole('button', { name: 'Create invitation' })).toBeVisible();
 
   // Closing the dialog drops the secret from the page.
   await dialog.getByRole('button', { name: 'Close' }).click();
@@ -109,8 +127,9 @@ test('an admin pairs a listening station, sees a refusal, and removes a station'
   await openMore(page, 'Stations');
   await page.getByRole('button', { name: 'Add station' }).click();
   const dialog = page.getByRole('dialog', { name: 'Add station' });
-  await dialog.getByLabel('This deck dials the station').check();
-  const pair = dialog.getByRole('button', { name: 'Pair station' });
+  await dialog.getByText('Other ways').click();
+  await dialog.getByRole('button', { name: 'Connect to a station that listens' }).click();
+  const pair = dialog.getByRole('button', { name: 'Add station' });
   await expect(pair).toBeDisabled();
   await dialog.getByLabel('Station invitation').fill('fdinv1_from_station');
   await dialog.getByLabel('Name on this deck (optional)').fill(' alpha-box ');
@@ -119,7 +138,7 @@ test('an admin pairs a listening station, sees a refusal, and removes a station'
   // The input stays for a retry after a refusal.
   await expect(dialog.getByLabel('Station invitation')).toHaveValue('fdinv1_from_station');
   await pair.click();
-  await expect(dialog.getByRole('status')).toHaveText('Paired station alpha-box.');
+  await expect(dialog.getByRole('status')).toHaveText('✓ alpha-box is added.');
   await expect(dialog.getByLabel('Station invitation')).toHaveValue('');
   await dialog.getByRole('button', { name: 'Close' }).click();
   const box = page.locator('[data-station="st-box"]');
