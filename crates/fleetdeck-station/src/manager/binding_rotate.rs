@@ -18,7 +18,6 @@ const NOT_SAVED: &str = "The station cannot save the session credentials. Try ag
 /// entries (or the station has none), or the row change failed. The memory
 /// gate stays; a fence entry that was written stays too (the next start
 /// suspends the rows).
-#[allow(dead_code, reason = "T4a calls it from the resume (DL-194)")]
 pub(crate) async fn rotate_out(
     store: &Store,
     bindings: &Bindings,
