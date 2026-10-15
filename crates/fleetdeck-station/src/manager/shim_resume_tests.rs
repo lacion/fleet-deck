@@ -67,10 +67,16 @@ async fn a_resume_import_and_hibernated_input_on_a_platform_without_a_reader_are
     let session = rig.ended("claude").await;
     let (code, message) = rig.refused(resume(&session)).await;
     assert_eq!(code, RejectCode::Unsupported);
-    assert_eq!(message, "resume on the shim host needs Linux");
+    assert_eq!(
+        message,
+        "Import and resume need Linux on a shim host. On this station, set Host to direct in its settings."
+    );
     let (code, message) = rig.refused(import(&rig, "claude", "native-x")).await;
     assert_eq!(code, RejectCode::Unsupported);
-    assert_eq!(message, "resume on the shim host needs Linux");
+    assert_eq!(
+        message,
+        "Import and resume need Linux on a shim host. On this station, set Host to direct in its settings."
+    );
     // The input of a hibernated session resumes it, so it is refused too.
     let live = rig.start("claude").await;
     // Events of the first turn can still move `updated_at` after the start:
@@ -97,7 +103,10 @@ async fn a_resume_import_and_hibernated_input_on_a_platform_without_a_reader_are
         })
         .await;
     assert_eq!(code, RejectCode::Unsupported);
-    assert_eq!(message, "resume on the shim host needs Linux");
+    assert_eq!(
+        message,
+        "Import and resume need Linux on a shim host. On this station, set Host to direct in its settings."
+    );
     rig.manager.shutdown(StopMode::Kill).await;
 }
 

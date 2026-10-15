@@ -37,7 +37,7 @@ pub struct ShimHostPlatform {
 }
 
 /// The refusal of a resume on a shim host that this platform cannot run.
-pub const SHIM_HOST_NEEDS_LINUX: &str = "resume on the shim host needs Linux";
+pub const SHIM_HOST_NEEDS_LINUX: &str = "Import and resume need Linux on a shim host. On this station, set Host to direct in its settings.";
 
 /// The environment of each provider instance, as a provider process gets it:
 /// the environment of its setup command too (DL-148).
@@ -216,6 +216,14 @@ impl Policy {
         self.shim_host.get_or_insert(ShimHostPlatform {
             supported: cfg!(target_os = "linux"),
         });
+        self
+    }
+
+    /// The same policy for a station on the direct host (DL-188 step 0: a
+    /// macOS station with host = shim runs the direct host).
+    #[must_use]
+    pub fn without_shim_host(mut self) -> Self {
+        self.shim_host = None;
         self
     }
 
@@ -414,5 +422,24 @@ impl Policy {
         } else {
             Err(WorkspaceError::Outside(path.to_string_lossy().into_owned()))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manager::policy_hub::test_config;
+
+    #[test]
+    fn without_shim_host_clears_the_refusal_and_survives_reconfigured() {
+        let config = test_config(Path::new("/tmp"), "host = \"shim\"\n");
+        let shim = Policy::from_config(&config).with_shim_host(false);
+        assert_eq!(shim.shim_host_refusal(), Some(SHIM_HOST_NEEDS_LINUX));
+        let direct = shim.without_shim_host();
+        assert_eq!(direct.shim_host_refusal(), None);
+        // A live reload from a file that still says `shim` keeps the host.
+        assert_eq!(direct.reconfigured(&config).shim_host_refusal(), None);
+        // `on_shim_host` is the only way back.
+        assert!(direct.shim_host.is_none());
     }
 }

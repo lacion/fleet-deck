@@ -41,7 +41,23 @@ pub trait Holder: 'static {
     fn instance_ids(_parsed: &Self::Parsed) -> Vec<String> {
         Vec::new()
     }
+    /// A check of the change from `old` to `new` that depends on the
+    /// platform. `is_macos` tells the target OS. `Err((key, message))`
+    /// refuses the save.
+    ///
+    /// # Errors
+    /// The key of the refused field and the text for the owner.
+    fn check_change(
+        _old: &Self::Parsed,
+        _new: &Self::Parsed,
+        _is_macos: bool,
+    ) -> Result<(), (String, String)> {
+        Ok(())
+    }
 }
+
+/// The refusal of `host = "shim"` on macOS (shim parity, step 0).
+const SHIM_NEEDS_LINUX: &str = "The shim host needs Linux for now. Use direct on this station.";
 
 /// `station.toml`.
 #[derive(Debug, Clone, Copy)]
@@ -225,6 +241,17 @@ impl Holder for StationHolder {
             .iter()
             .map(|i| i.id.as_str().to_owned())
             .collect()
+    }
+
+    fn check_change(
+        old: &StationConfig,
+        new: &StationConfig,
+        is_macos: bool,
+    ) -> Result<(), (String, String)> {
+        if is_macos && new.host == HostChoice::Shim && old.host != HostChoice::Shim {
+            return Err(("host".to_owned(), SHIM_NEEDS_LINUX.to_owned()));
+        }
+        Ok(())
     }
 }
 

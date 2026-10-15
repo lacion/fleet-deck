@@ -50,6 +50,8 @@ pub struct SettingsWriter<H: Holder> {
     env: Env,
     fs: Arc<dyn Fs>,
     inner: Mutex<Inner>,
+    /// True on macOS; tests set it with [`Self::with_macos`].
+    is_macos: bool,
     _holder: PhantomData<fn() -> H>,
 }
 
@@ -106,8 +108,16 @@ impl<H: Holder> SettingsWriter<H> {
                 store_ready,
                 unsynced,
             }),
+            is_macos: cfg!(target_os = "macos"),
             _holder: PhantomData,
         }
+    }
+
+    /// The same writer for a station on macOS (`on`) or not (tests).
+    #[must_use]
+    pub fn with_macos(mut self, on: bool) -> Self {
+        self.is_macos = on;
+        self
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
@@ -202,6 +212,8 @@ impl<H: Holder> SettingsWriter<H> {
         let new = self
             .parse(&new_text)
             .map_err(|e| SaveError::invalid(&key_of(&e, first)))?;
+        H::check_change(&old, &new, self.is_macos)
+            .map_err(|(key, message)| SaveError::CannotApply { key, message })?;
         let plan = Plan {
             new_text,
             fresh: Vec::new(),

@@ -28,6 +28,7 @@ Not gaps (kept on purpose): a resume on the shim host needs proof that the earli
 Each step is merged on `v2` on its own, with `make check` green, and reported to the owner.
 
 0. **Guard (small, G6).** A station on macOS refuses `host = "shim"` at the settings save (station and board) with: "The shim host needs Linux. Use `direct` on this station." A station that starts on macOS with `host = "shim"` in `station.toml` logs one warning and runs the direct host. The import and resume refusal says what to do: "Import and resume need Linux on a shim host. On this station, set Host to `direct` in its settings."
+   - **Done (2026-10-15):** the guard (be-shim0).
 1. **Credential handoff (G1, G2).** The station sends the session credential to the shim in the launch message over the shim's owner-only socket. The shim gives it to the agent's environment and never writes it to the launch journal, a log or the database. A reattach needs no credential (the agent already has it). A resume or a relaunch mints a new credential. Then coordinator sessions and session tools work on the shim host. Security surface: a written design, an adversary DESIGN REVIEW before code, a PRE-PR review, and a row in `SECURITY-CHECKLIST.md`.
 2. **Claude turn revert (G3).** Build the Claude revert on the shim host with the durable resume launch of DL-182 (`ProviderAdapter::durable_resume_launch`) at the checkpoint, with the same file restore and proofs as the direct host.
 3. **Auto-continue (G4).** A lost shim session is auto-continued when the station holds the DL-182 proof that its run ended (a clean exit that the shim checked, a launch that never started, a verified reboot). Without proof, the session waits for the owner, as today. The same rechecks as the direct host apply.
@@ -47,4 +48,5 @@ Each step is merged on `v2` on its own, with `make check` green, and reported to
 ## 5. Open owner decisions
 
 - **macOS calls (step 4):** the workspace forbids `unsafe` code. Option A: a small, well-known crate for the process calls (for example `libproc`); correct, but a new dependency (`cargo deny` and the owner's approval). Option B: run `ps` and `sysctl` and parse their output; no new dependency, but fragile. Architect recommendation: A.
+- **Decision (owner, 2026-10-15):** option A, the `libproc` crate.
 - **Default host (step 5):** after parity.
