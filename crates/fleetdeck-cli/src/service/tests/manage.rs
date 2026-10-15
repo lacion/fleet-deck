@@ -169,7 +169,8 @@ fn station_with_other_exe(exe_secs: u64) -> (Rig, PathBuf) {
 #[test]
 fn start_installs_a_newer_program_first() {
     let (rig, old_copy) = station_with_other_exe(2000);
-    rig.sockets(Kind::Station, &[false, false, true]);
+    // One probe of the start, then the probes of the install.
+    rig.sockets(Kind::Station, &[false, false, false, true]);
     let before = rig.fake.changes().len();
     let (result, out) = rig.run(&ServiceCommand::Start {
         kind: Some(Kind::Station),
@@ -195,6 +196,20 @@ fn start_installs_a_newer_program_first() {
         "systemctl --user restart fleetdeck-station.service"
     );
     assert!(changes[before..].iter().all(|c| !c.contains(" start ")));
+}
+
+#[test]
+fn start_with_a_newer_program_and_another_process_changes_nothing() {
+    let (rig, copy) = station_with_other_exe(2000);
+    rig.sockets(Kind::Station, &[true]);
+    let before = rig.fake.changes().len();
+    let (result, _) = rig.run(&ServiceCommand::Start {
+        kind: Some(Kind::Station),
+    });
+    assert!(result.is_err());
+    let root = rig.ctx.dirs.station().join("bin");
+    assert_eq!(std::fs::read_link(root.join("current")).unwrap(), copy);
+    assert_eq!(rig.fake.changes().len(), before);
 }
 
 #[test]

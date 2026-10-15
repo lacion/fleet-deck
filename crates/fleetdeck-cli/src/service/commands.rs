@@ -248,6 +248,11 @@ pub fn start(
     out: &mut dyn Write,
 ) -> anyhow::Result<()> {
     for (kind, _) in select(ctx, named)? {
+        // Another Fleet Deck process refuses the start before anything changes.
+        let seen = probe(ctx, deps, kind);
+        if seen.other {
+            bail!("{OTHER}");
+        }
         // A failed comparison never stops the start: the service keeps its program.
         let state = program::copy_state(&kind.root(&ctx.dirs), &ctx.exe).unwrap_or_else(|e| {
             let _ = writeln!(
@@ -276,10 +281,6 @@ pub fn start(
                 kind.name()
             )?,
             CopyState::Same | CopyState::Missing => {}
-        }
-        let seen = probe(ctx, deps, kind);
-        if seen.other {
-            bail!("{OTHER}");
         }
         match ctx.platform {
             Platform::Systemd => systemd::start(deps, kind)?,
