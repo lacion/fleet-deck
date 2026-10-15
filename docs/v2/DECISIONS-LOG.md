@@ -3005,3 +3005,10 @@ Owner review: pending.
 - Context: an imported session showed an empty chat. Owner: "i think we should work on propperly importing a session and showing all in the chat"; "it should be my decission to share an imported session".
 - Design: `docs/v2/design/session-history.md` revision 5 (round 1 FAIL, round 2 PASS for owner-only, round 3 FAIL, extra review FAIL with one blocker; owner choice "apply the fix and build"). The station captures the transcript prefix at import into its own snapshot; link method `session.history` (feature `history.v1`); owner-only by default; a per-share `history` option (owner, elevation) lets that share's own members read prompts and answers (no tool details); bearer tokens never.
 - The adversary PRE-PR review of the code is the next gate.
+
+## DL-191 — Subagent work and repository branches in a session (owner request, 2026-10-15)
+
+- Context: backlog B1. A session that gives work to subagents in other worktrees showed none of it: a background subagent card had "0 entries", and the Changes tab showed nothing of the merged work. Owner: "lets get this done".
+- Design: `docs/v2/design/subagents-worktrees.md` revision 3 (round 1 FAIL: Git could run repository programs, `worktree list` could leak files, the parser dropped subagent records; round 2 FAIL: no `for-each-ref -z`, the agent id was dropped, the home was lost on resume; round 3 PASS).
+- Decision: (A) the station records the subagent's agent id from its own Claude stream (`ToolCompleted.provider_refs.agent_id`) with the launch home in a binding row, and serves `session.subagent` from one bounded read of that transcript; (B) `session.branches` and `files.branch_diff` list the repository's branches with one hardened `for-each-ref` and diff a listed branch against its merge base. Owner only. Git 2.45 or newer.
+- The adversary PRE-PR review of the code is the next gate.
