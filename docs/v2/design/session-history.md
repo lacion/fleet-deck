@@ -1,6 +1,6 @@
 # Full session history in the chat (DL-189)
 
-- **Status:** Design, revision 1 (2026-10-15). Needs an adversary DESIGN REVIEW PASS before code.
+- **Status:** Design, revision 1 (2026-10-15): DESIGN REVIEW **FAIL** (4 blockers, 9 major; §5). Revision 2 must answer §5 before code.
 - **Owner request (2026-10-15):** an imported session shows an empty chat: "i think we should work on propperly importing a session and showing all in the chat".
 - **Goal:** the chat of a session shows its whole conversation: the part from the terminal before an import, and every older turn that the deck no longer keeps. Nothing is copied at import; the history is read on demand.
 
@@ -67,3 +67,26 @@
 - Paging: three pages cover the file once; a cursor of another file is refused; a changed file starts a new cache entry.
 - Deck: member coverage, `history.v1` not negotiated → 409 with a clear text, deny-list summaries for members.
 - Board: the button, the divider, the de-duplication against the timeline, `unavailable` text.
+
+## 5. Review round 1 (2026-10-15, Codex adversary): FAIL — to answer in revision 2
+
+Blockers:
+1. **A native conversation is not a deck-session boundary.** End shared session A, import its conversation as private session B, keep chatting: A's members would read B's conversation. Bind authorized transcript ranges to deck sessions and executions; freeze A's upper boundary when custody moves; enforce it on the station.
+2. **File name, ownership and newest mtime do not prove provenance.** Duplicates, divergent copies or hard links can return another conversation. Record and verify the transcript identity at launch/resume, check the embedded session metadata, refuse ambiguity, use descriptor checks and the existing hard-link exclusion (`PrivatePaths::is_private_opened`).
+3. **The raw transcript shows members more than the live timeline** (the timeline keeps only a first-line summary of a prompt, `claude/core.rs:625`; pasted secrets and quoted private files would pass). Default imported/raw history to owner access unless the owner grants full-transcript access to a share; do not claim equivalence with the timeline.
+4. **Deny-list matching cannot make commands and search patterns safe** (a secret in a `curl` header or a search pattern names no path). For members return tool categories/names only; show details only with explicit transcript authorization; apply private-path and member rules after the cache, on every response.
+
+Major:
+5. A page must fit the 1 MiB control frame (`link.rs:16`): budget the whole serialized answer and stop early with a cursor.
+6. The effective provider home comes from the launch environment (`ChildEnv::for_instance` then `instance.env` can override `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `HOME`); persist non-secret transcript provenance per session.
+7. Resource bounds: aggregate cache bytes and items, scan/read budgets, deadlines, bounded workers, single-flight per key, a captured bounded extent, append handling.
+8. `read_line_bounded` returns `TooLong` without consuming the line: define incomplete/unavailable or drain to the newline under the budget; never parse mid-record.
+9. Cursors must name a parse generation and a stable record boundary; a rewritten file gives an explicit stale-cursor result.
+10. Timestamps cannot de-duplicate transcript and timeline (station `at` vs provider time): keep native message/input/tool ids and correlate.
+11. The overlap can span many pages: start history at a server-resolved overlap boundary, or reconcile every page and skip empty pages with bounded work.
+12. Older peers: `unknown_method` is checked before feature negotiation (`methods.rs:628`), and the file route maps unknown errors to 502; specify feature prechecks, HTTP mappings and a board capability signal.
+13. Tests must cover execution reuse, ambiguous transcripts, hard links, home overrides, owner/member cache order, inline secrets, rewrites, multi-page overlap, wire size.
+
+Unverified: the persisted transcript formats are provider-internal; add version-labelled sanitized fixtures and distinguish empty, partial, corrupt and unsupported history.
+
+Architect note for revision 2: a simpler first step that avoids blockers 1, 3 and 4 is **owner-only history** (members and tokens get none), bound to the session's own executions, with native-id correlation; member access can follow as a separate, owner-granted share option.
