@@ -2993,3 +2993,9 @@ Owner review: pending.
 - Owner request: parity with the direct host, plus agents that survive restarts and upgrades; "save that to a plan in docs so we can work on that later".
 - Plan: `docs/v2/design/shim-parity.md`. Steps: 0 a macOS guard for `host = "shim"`; 1 credential handoff over the shim socket (coordinator sessions, session tools); 2 Claude turn revert; 3 auto-continue with the DL-182 proof; 4 macOS identity and census; 5 the default host (owner decision).
 - Status: planned, not started. Open owner decision: the macOS process calls (a crate such as `libproc`, or `ps` and `sysctl`).
+
+## DL-190 — A trusted board certificate from Tailscale (owner request, 2026-10-15)
+
+- Context: a device link with the tailnet name failed on the owner's phone with a certificate error that could not be passed; the IP link worked.
+- Design: `docs/v2/design/tailscale-cert.md` (revision 2, accepted after two adversary rounds). Opt-in deck setting `tailscale_cert` (the name becomes public in Certificate Transparency logs); `tailscale cert` in a secret mode; offline path validation against embedded ISRG Root X1/X2; one 0600 file; one lifecycle task with a generation; certificate per name (SNI); per-entry trust in device links and `fleetdeck open`.
+- Dependencies: `rustls-webpki` and `x509-parser` move into `fleetdeck-deck` (both already in `Cargo.lock`; no new crate).

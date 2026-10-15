@@ -1,6 +1,6 @@
 # A trusted board certificate from Tailscale (DL-190)
 
-- **Status:** Design, revision 2 (2026-10-15). Revision 1 got DESIGN REVIEW FAIL (1 blocker, 8 major, 1 minor, 1 unverified; §5); §6 maps them. Needs a PASS before code.
+- **Status:** Accepted design, revision 2 (2026-10-15): DESIGN REVIEW round 2 **PASS** (all 11 round-1 findings fixed, no new blocker). Revision 1 got FAIL (§5, §6).
 - **Owner report (2026-10-15):** a device link opened on the phone (on the tailnet) gives a certificate/domain error; the IP-address link works after accepting the self-signed warning. Owner: "lets do the propper fix".
 - **Goal:** the board answers on its tailnet name (`<host>.<tailnet>.ts.net`) with a certificate that browsers trust, so a phone or another computer opens it with no warning. Nothing changes for the loopback and IP-address entries.
 
