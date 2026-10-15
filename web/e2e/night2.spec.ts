@@ -4,7 +4,7 @@
 import { expect, type Page, test } from '@playwright/test';
 import type { WorkspaceListing } from '../src/gen';
 import { claudeCaps } from '../src/testing/capabilities';
-import { FakeDeck, fitsWidth, logIn, stationView } from './fake-deck';
+import { FakeDeck, fitsWidth, logIn, openAddDevice, stationView } from './fake-deck';
 
 const ROOT = '/home/me/projects';
 const alpha = stationView('st-alpha', 'Alpha', {
@@ -171,7 +171,7 @@ test('Add a device shows a QR code, the link and its end', async ({ page }) => {
       .getByRole('link', { name: 'More' })
       .click();
   }
-  await page.getByRole('button', { name: 'Add a device' }).first().click();
+  await openAddDevice(page);
   const dialog = page.getByRole('dialog', { name: 'Add a device' });
   await expect(dialog.getByRole('img', { name: 'QR code of the login link' })).toBeVisible();
   await expect(dialog.getByRole('textbox', { name: 'Login link' })).toHaveValue(

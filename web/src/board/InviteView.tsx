@@ -10,6 +10,10 @@ import { useRun } from './useRun';
 const STEPS = ['Create', 'Run', 'Done'] as const;
 const MASK = '••••••••••••';
 
+/** The deck names a new station by its key first; the real name arrives a moment later. */
+export const joinedName = (stations: readonly StationView[], id: string): string =>
+  stations.find((s) => s.station_id === id)?.name ?? id;
+
 type Props = {
   readonly actions: StationActions;
   readonly stations: readonly StationView[];
@@ -22,7 +26,7 @@ type Props = {
 export function InviteView({ actions, stations, invitation, setInvitation }: Props) {
   const { busy, error, run } = useRun();
   const [known, setKnown] = useState<readonly string[]>([]);
-  const [joined, setJoined] = useState<string | null>(null);
+  const [joinedId, setJoinedId] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
   const now = useNow(undefined, 1_000);
 
@@ -31,7 +35,7 @@ export function InviteView({ actions, stations, invitation, setInvitation }: Pro
     if (invitation === null) return;
     const fresh = stations.find((s) => !known.includes(s.station_id));
     if (fresh === undefined) return;
-    setJoined(fresh.name);
+    setJoinedId(fresh.station_id);
     setRevealed(false);
     setInvitation(null);
   }, [stations, known, invitation, setInvitation]);
@@ -40,11 +44,12 @@ export function InviteView({ actions, stations, invitation, setInvitation }: Pro
     run(async () => {
       const made = await actions.invite();
       setKnown(stations.map((s) => s.station_id));
-      setJoined(null);
+      setJoinedId(null);
       setRevealed(false);
       setInvitation(made);
     });
 
+  const joined = joinedId === null ? null : joinedName(stations, joinedId);
   const expired = invitation !== null && invitation.expires_at <= now;
   const step = joined !== null ? 2 : invitation !== null ? 1 : 0;
 
@@ -56,7 +61,7 @@ export function InviteView({ actions, stations, invitation, setInvitation }: Pro
           <p className="fd-add-done" role="status">
             ✓ {joined} joined this deck.
           </p>
-          <button type="button" onClick={() => setJoined(null)}>
+          <button type="button" onClick={() => setJoinedId(null)}>
             Add another station
           </button>
         </>

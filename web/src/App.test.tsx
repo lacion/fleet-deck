@@ -153,7 +153,7 @@ describe('App', () => {
       /<a class="fd-needschip" href="#\/s\/station-b\/n1">[\s\S]*?1 needs you<\/a>/,
     );
     expect(html).not.toContain('data-group="needs"');
-    expect(html).toContain('Ended · 1');
+    expect(html).toContain('Ended <span class="fd-count">1</span>');
     const alpha = html.indexOf('aria-label="Station Alpha"');
     const beta = html.indexOf('aria-label="Station Beta"');
     expect(alpha).toBeGreaterThan(-1);

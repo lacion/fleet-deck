@@ -34,6 +34,8 @@ export type CertificateView = {
   not_after?: number;
   /** Why the last issue failed (a code, never text of Tailscale). */
   reason_code?: string;
+  /** True when the owner's own board.crt and board.key are used for every name. Absent: false. */
+  owner_files?: boolean;
 };
 
 export type TailnetView = {

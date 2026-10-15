@@ -29,6 +29,7 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 
 - **Observed (real-stack e2e):** after `fleetdeck station join`, the dialog says "✓ ad9dca5e76ffca69 joined this deck." instead of the station name ("bravo"). The name arrives a moment later.
 - **Wanted:** the dialog shows the name when it arrives (update the line), or waits a short time for it.
+- **Done (2026-10-15):** the dialog renders the current name of the joined station (ui-w4).
 
 ## B5. Build identity for upgrades (Codex review, 2026-10-15)
 

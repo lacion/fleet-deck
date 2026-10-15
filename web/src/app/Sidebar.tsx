@@ -3,6 +3,8 @@ import { STATUS_LANES } from '../board/fleet';
 import type { DeckSession, StationView } from '../gen';
 import {
   Archive,
+  ChevronDown,
+  CircleUser,
   Eye,
   Folder,
   GitBranch,
@@ -28,6 +30,7 @@ import { useSettings } from '../settings/context';
 import { FolderGit2 } from '../integrations/icons';
 import { shortModel } from '../ui/format';
 import { Mark } from '../ui/Mark';
+import { Menu } from '../ui/Menu';
 import { GeneratedMark } from '../ui/generated';
 import { archived as archivedSet } from '../ui/archive';
 import { priority, sessionRef } from '../ui/localSet';
@@ -118,19 +121,17 @@ function Row({
         <span className="fd-srow-age">{relativeAge(s.updated_at, now)}</span>
         <FocusLine summary={s} />
         <span className="fd-srow-meta">
-          {shortModel(s.model)}
+          <span className="fd-srow-model">{shortModel(s.model)}</span>
           {s.branch != null && s.branch !== '' ? (
-            <>
-              {' · '}
+            <span className="fd-srow-place">
               <Icon of={GitBranch} size={12} />
               {s.branch}
-            </>
+            </span>
           ) : s.cwd != null ? (
-            <>
-              {' · '}
+            <span className="fd-srow-place">
               <Icon of={Folder} size={12} />
               {basename(s.cwd)}
-            </>
+            </span>
           ) : null}
         </span>
       </a>
@@ -178,6 +179,38 @@ function writeGroup(group: SidebarGroup) {
     // Storage is blocked: the grouping still works for this visit.
   }
 }
+
+const MORE_KEY = 'fd-sidebar-more';
+
+/** The last state of the "More" fold of the navigation. A browser setting. */
+export function readMore(): boolean {
+  try {
+    return localStorage.getItem(MORE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function writeMore(open: boolean) {
+  try {
+    localStorage.setItem(MORE_KEY, open ? '1' : '0');
+  } catch {
+    // Storage is blocked: the fold still works for this visit.
+  }
+}
+
+/** The routes that the pages inside the "More" fold own. */
+const MORE_ROUTES: ReadonlySet<Route['name']> = new Set([
+  'plans',
+  'automations',
+  'artifacts',
+  'artifact',
+  'projects',
+  'project',
+  'files',
+  'shares',
+  'spaces',
+]);
 
 function Groups({
   model,
@@ -231,7 +264,9 @@ function Groups({
           <Rows cards={group.live} route={route} now={now} starred={starred} />
           {group.ended.length > 0 ? (
             <details className="fd-sended">
-              <summary className="fd-label">Ended · {group.ended.length}</summary>
+              <summary className="fd-label">
+                Ended <span className="fd-count">{group.ended.length}</span>
+              </summary>
               <Rows cards={group.ended} route={route} now={now} starred={starred} />
               <button
                 type="button"
@@ -267,6 +302,133 @@ function Groups({
         </section>
       ) : null}
     </>
+  );
+}
+
+type LinksProps = {
+  readonly route: Route;
+  readonly stations: readonly StationView[];
+  readonly terminalCount: number;
+  readonly guest: boolean;
+  readonly projectsLink: boolean;
+  readonly onOpenTerminals: () => void;
+};
+
+/** The page links of the board: the main ones, then the "More" fold. */
+function BoardLinks({
+  route,
+  stations,
+  terminalCount,
+  guest,
+  projectsLink,
+  onOpenTerminals,
+}: LinksProps) {
+  // R11.4: a guest sees the fleet and the watch page only; the owner sees Shares.
+  const people = usePeople();
+  const shares = canShare(people);
+  const inMore = MORE_ROUTES.has(route.name);
+  const [more, setMore] = useState(() => inMore || readMore());
+  // A page inside the fold opens it. The owner can still close it there.
+  useEffect(() => {
+    if (inMore) setMore(true);
+  }, [inMore]);
+  return (
+    <nav className="fd-sidebar-links" aria-label="Board pages">
+      <a href="#/fleet" aria-current={route.name === 'fleet' ? 'page' : undefined}>
+        <Icon of={LayoutGrid} />
+        Fleet
+      </a>
+      {guest ? null : (
+        <>
+          <a href="#/activity" aria-current={route.name === 'activity' ? 'page' : undefined}>
+            <Icon of={MessagesSquare} />
+            Activity
+          </a>
+          <a href="#/stations" aria-current={route.name === 'stations' ? 'page' : undefined}>
+            <Icon of={Server} />
+            Stations
+            <span className="fd-count">{stations.length}</span>
+          </a>
+        </>
+      )}
+      <a href="#/watch" aria-current={route.name === 'watch' ? 'page' : undefined}>
+        <Icon of={Eye} />
+        Watch
+      </a>
+      {guest && !shares ? null : (
+        <details
+          className="fd-sidebar-more"
+          open={more}
+          onToggle={(event) => {
+            const next = event.currentTarget.open;
+            // The attribute follows the state; only a press of the owner differs from it.
+            if (next === more) return;
+            setMore(next);
+            writeMore(next);
+          }}
+        >
+          <summary>
+            <span>More</span>
+            <Icon of={ChevronDown} size={14} />
+          </summary>
+          {guest ? null : (
+            <>
+              <a href="#/plans" aria-current={route.name === 'plans' ? 'page' : undefined}>
+                <Icon of={FileText} />
+                Plans
+              </a>
+              <a
+                href="#/automations"
+                aria-current={route.name === 'automations' ? 'page' : undefined}
+              >
+                <Icon of={Workflow} />
+                Automations
+              </a>
+              <a
+                href="#/artifacts"
+                aria-current={
+                  route.name === 'artifacts' || route.name === 'artifact' ? 'page' : undefined
+                }
+              >
+                <Icon of={Paperclip} />
+                Artifacts
+              </a>
+              {projectsLink ? (
+                <a
+                  href="#/projects"
+                  aria-current={
+                    route.name === 'projects' || route.name === 'project' ? 'page' : undefined
+                  }
+                >
+                  <Icon of={FolderGit2} />
+                  Projects
+                </a>
+              ) : null}
+              <a href="#/files" aria-current={route.name === 'files' ? 'page' : undefined}>
+                <Icon of={Folder} />
+                Files
+              </a>
+            </>
+          )}
+          {shares ? (
+            <a
+              href="#/shares"
+              aria-current={route.name === 'shares' || route.name === 'spaces' ? 'page' : undefined}
+            >
+              <Icon of={Users} />
+              Shares
+            </a>
+          ) : null}
+          {terminalCount > 0 && !guest ? (
+            <button type="button" className="fd-linkbtn" onClick={onOpenTerminals}>
+              <Icon of={SquareTerminal} />
+              Terminals
+              <span className="fd-count">{terminalCount}</span>
+            </button>
+          ) : null}
+        </details>
+      )}
+    </nav>
   );
 }
 
@@ -307,9 +469,7 @@ export function Sidebar({
   const projectsLink = useIntegrations()?.actions.canAdmin === true;
   // DL-172: the settings are the owner's login only (no token, no member).
   const settingsLink = useSettings() !== undefined;
-  // R11.4: a guest sees the fleet and the watch page only; the owner sees Shares.
-  const people = usePeople();
-  const guest = people.member !== null;
+  const guest = usePeople().member !== null;
   return (
     <aside className="fd-sidebar" aria-label="Sessions" data-variant={variant}>
       <div className="fd-sidebar-top">
@@ -397,6 +557,16 @@ export function Sidebar({
           </div>
         ) : null}
       </div>
+      {full ? (
+        <BoardLinks
+          route={route}
+          stations={stations}
+          terminalCount={terminalCount}
+          guest={guest}
+          projectsLink={projectsLink}
+          onOpenTerminals={onOpenTerminals}
+        />
+      ) : null}
       <div className="fd-sidebar-list">
         {empty ? (
           <p className="fd-empty">No sessions yet.</p>
@@ -414,109 +584,51 @@ export function Sidebar({
         )}
       </div>
       {full ? (
-        <div className="fd-sidebar-bottom">
-          <nav className="fd-sidebar-links" aria-label="Board pages">
-            <a href="#/fleet" aria-current={route.name === 'fleet' ? 'page' : undefined}>
-              <Icon of={LayoutGrid} />
-              Fleet
-            </a>
-            <a href="#/watch" aria-current={route.name === 'watch' ? 'page' : undefined}>
-              <Icon of={Eye} />
-              Watch
-            </a>
-            {guest ? null : (
-              <>
-                <a href="#/activity" aria-current={route.name === 'activity' ? 'page' : undefined}>
-                  <Icon of={MessagesSquare} />
-                  Activity
-                </a>
-                <a href="#/plans" aria-current={route.name === 'plans' ? 'page' : undefined}>
-                  <Icon of={FileText} />
-                  Plans
-                </a>
-                <a
-                  href="#/automations"
-                  aria-current={route.name === 'automations' ? 'page' : undefined}
-                >
-                  <Icon of={Workflow} />
-                  Automations
-                </a>
-                <a
-                  href="#/artifacts"
-                  aria-current={
-                    route.name === 'artifacts' || route.name === 'artifact' ? 'page' : undefined
-                  }
-                >
-                  <Icon of={Paperclip} />
-                  Artifacts
-                </a>
-                {projectsLink ? (
-                  <a
-                    href="#/projects"
-                    aria-current={
-                      route.name === 'projects' || route.name === 'project' ? 'page' : undefined
-                    }
-                  >
-                    <Icon of={FolderGit2} />
-                    Projects
-                  </a>
-                ) : null}
-                <a href="#/files" aria-current={route.name === 'files' ? 'page' : undefined}>
-                  <Icon of={Folder} />
-                  Files
-                </a>
-                <a href="#/stations" aria-current={route.name === 'stations' ? 'page' : undefined}>
-                  <Icon of={Server} />
-                  Stations
-                  <span className="fd-count">{stations.length}</span>
-                </a>
-              </>
-            )}
-            {canShare(people) ? (
-              <a
-                href="#/shares"
-                aria-current={
-                  route.name === 'shares' || route.name === 'spaces' ? 'page' : undefined
-                }
-              >
-                <Icon of={Users} />
-                Shares
-              </a>
-            ) : null}
-            {settingsLink && !guest ? (
-              <a href="#/settings" aria-current={route.name === 'settings' ? 'page' : undefined}>
-                <Icon of={Settings} />
-                Settings
-              </a>
-            ) : null}
-            {terminalCount > 0 && !guest ? (
-              <button type="button" className="fd-linkbtn" onClick={onOpenTerminals}>
-                <Icon of={SquareTerminal} />
-                Terminals
-                <span className="fd-count">{terminalCount}</span>
-              </button>
-            ) : null}
-          </nav>
+        <div className="fd-sidebar-foot">
           <PrefsRow />
-          {chrome === undefined ? null : (
-            <div className="fd-sidebar-foot">
-              {chrome.addDevice === undefined ? null : (
-                <button
-                  type="button"
-                  className="fd-ghost fd-sm"
-                  onClick={() => setAddingDevice(true)}
-                >
-                  <Icon of={Smartphone} size={14} /> Add a device
-                </button>
-              )}
-              <button type="button" className="fd-ghost fd-sm" onClick={chrome.onLogout}>
-                <Icon of={LogOut} size={14} /> Log out
-              </button>
-              {addingDevice && chrome.addDevice !== undefined ? (
-                <DeviceLinkDialog load={chrome.addDevice} onClose={() => setAddingDevice(false)} />
-              ) : null}
-            </div>
-          )}
+          <div className="fd-sidebar-account">
+            {settingsLink && !guest ? (
+              <a
+                href="#/settings"
+                className="fd-iconbtn"
+                aria-label="Settings"
+                aria-current={route.name === 'settings' ? 'page' : undefined}
+              >
+                <Icon of={Settings} />
+              </a>
+            ) : null}
+            {chrome === undefined ? null : (
+              <Menu summary={<Icon of={CircleUser} />} summaryClass="fd-iconbtn" label="Account">
+                {(close) => (
+                  <>
+                    {chrome.addDevice === undefined ? null : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          close();
+                          setAddingDevice(true);
+                        }}
+                      >
+                        <Icon of={Smartphone} size={14} /> Add a device
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        close();
+                        chrome.onLogout();
+                      }}
+                    >
+                      <Icon of={LogOut} size={14} /> Log out
+                    </button>
+                  </>
+                )}
+              </Menu>
+            )}
+          </div>
+          {addingDevice && chrome?.addDevice !== undefined ? (
+            <DeviceLinkDialog load={chrome.addDevice} onClose={() => setAddingDevice(false)} />
+          ) : null}
         </div>
       ) : null}
     </aside>

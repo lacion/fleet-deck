@@ -1,7 +1,15 @@
 // DL-178: the Tailnet card of Settings → Deck and the guided Add station dialog, on a
 // desktop width and on a phone. The fake deck keeps the state in memory (`FakeDeck.tailnet`).
 import { expect, type Page, test } from '@playwright/test';
-import { ELEVATION, FakeDeck, fitsWidth, logIn, PASSWORD, stationView } from './fake-deck';
+import {
+  ELEVATION,
+  FakeDeck,
+  fitsWidth,
+  logIn,
+  openAddDevice,
+  PASSWORD,
+  stationView,
+} from './fake-deck';
 
 const FINGERPRINT = '0123456789abcdef'.repeat(4);
 const GROUPED = Array.from({ length: 4 }, () => '0123 4567 89ab cdef').join(' ');
@@ -205,6 +213,18 @@ function suite() {
     );
   });
 
+  test('the owner certificate files note shows above the switch', async ({ page }) => {
+    const { state } = await start(page);
+    state.view.certificate = { enabled: true, state: 'valid', owner_files: true };
+    await go(page, '#/settings');
+    const card = page.getByRole('region', { name: 'Tailnet' });
+    const note = card.locator('[data-note="owner-files"]');
+    await expect(note).toHaveText(
+      'Your own certificate files (board.crt) are used for every name. Remove them to use the Tailscale certificate.',
+    );
+    expect(await fitsWidth(page)).toBe(true);
+  });
+
   test('the Add a device dialog selects the trusted entry first', async ({ page }) => {
     const { deck } = await start(page);
     const sha = 'ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12';
@@ -236,7 +256,7 @@ function suite() {
         .getByRole('link', { name: 'More' })
         .click();
     }
-    await page.getByRole('button', { name: 'Add a device' }).first().click();
+    await openAddDevice(page);
     const dialog = page.getByRole('dialog', { name: 'Add a device' });
     await expect(dialog.getByRole('textbox', { name: 'Login link' })).toHaveValue(
       'https://deck.tail1234.ts.net:7420/#login=tok',

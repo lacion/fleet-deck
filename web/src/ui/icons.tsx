@@ -16,6 +16,7 @@ export {
   ChevronRight,
   ChevronUp,
   CircleHelp,
+  CircleUser,
   CloudOff,
   Code,
   Copy,

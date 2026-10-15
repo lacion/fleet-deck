@@ -109,6 +109,12 @@ function CertificateSection({
   return (
     <div className="fd-tailnet-cert">
       <h3>Trusted certificate</h3>
+      {cert?.owner_files === true ? (
+        <p className="fd-note" data-note="owner-files">
+          Your own certificate files (board.crt) are used for every name. Remove them to use the
+          Tailscale certificate.
+        </p>
+      ) : null}
       <label className="fd-tailnet-switch">
         <input
           type="checkbox"
