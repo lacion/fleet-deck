@@ -163,7 +163,7 @@ fn shim_settings(
     station_dir: &std::path::Path,
     store: &Store,
 ) -> Result<ShimSettings, ServeError> {
-    let exe = std::env::current_exe().map_err(ServeError::ShimExe)?;
+    let exe = fleetdeck_providers::host::shim::exe_hash::own_exe().map_err(ServeError::ShimExe)?;
     let mut host = ShimHostConfig::new(
         exe,
         station_dir.to_owned(),
