@@ -489,7 +489,11 @@ export function SessionView(props: SessionViewProps) {
                       )
                     }
                     onResume={
-                      flags.canResume && !wakes && actions !== null && actions !== undefined
+                      flags.canResume &&
+                      !wakes &&
+                      guest === null &&
+                      actions !== null &&
+                      actions !== undefined
                         ? () => controller.act('resume', () => actions.resume())
                         : null
                     }

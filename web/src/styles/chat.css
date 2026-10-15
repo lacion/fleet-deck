@@ -535,9 +535,10 @@
   border-color: transparent;
   background: transparent;
 }
+/* A shown kind: a filled neutral box (amber stays "yours to act"). */
 .fd-chat-show .fd-chip[aria-pressed="true"]::before {
-  background: var(--act);
-  border-color: var(--act);
+  background: var(--dim);
+  border-color: var(--dim);
 }
 .fd-chat-show .fd-chip:focus-visible {
   outline: 2px solid var(--act);
@@ -590,9 +591,6 @@
   flex: 1;
   height: 1px;
   background: var(--border);
-}
-[data-history="true"] {
-  opacity: 0.82;
 }
 .fd-history-item {
   display: flex;

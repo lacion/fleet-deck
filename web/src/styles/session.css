@@ -599,6 +599,10 @@ fieldset:disabled .fd-opt {
   border: 1px solid var(--border);
   border-radius: 12px;
 }
+.fd-composer-resume > button {
+  flex: none;
+  white-space: nowrap;
+}
 .fd-composer-resume .fd-composer-note {
   min-width: 0;
   color: var(--dim);
