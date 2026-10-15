@@ -2,16 +2,19 @@
 //! one of them (DL-191, `docs/v2/design/subagents-worktrees.md` 2.4 to 2.5):
 //! the link methods `session.branches` and `files.branch_diff`.
 //!
-//! Git runs in the working directory of the session only, through the
+//! Git runs in the working directory of the session only, through a pinned
+//! directory descriptor (never in the folder by name) and through the
 //! hardened runner ([`hardened_args`], [`HARDENED_ENV`]): no pager, no
 //! external diff, no text conversion, no submodule recursion, no lazy
-//! fetch, no prompt. A Git below 2.45 is refused (`git_too_old`). One
+//! fetch, no prompt. The diff leaves out the hidden names and the private
+//! paths, like the session diff. A Git below 2.45 is refused (`git_too_old`). One
 //! deadline covers a whole request, and one request of this kind runs for a
 //! session at a time. The listing is one `for-each-ref` with NUL-separated
 //! fields and a strict parser.
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::os::fd::OwnedFd;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -22,7 +25,7 @@ use fleetdeck_proto::branches::{
     code as branch_code,
 };
 use fleetdeck_proto::event::DiffSummary;
-use fleetdeck_proto::files::{DiffScope, FileRoot, MAX_DIFF_BYTES, SessionDiff};
+use fleetdeck_proto::files::{DiffScope, FileRoot, HIDDEN_NAMES, MAX_DIFF_BYTES, SessionDiff};
 use fleetdeck_proto::history::code as history_code;
 use tokio::sync::OnceCell;
 
@@ -49,7 +52,7 @@ const MIN_VERSION: (u32, u32) = (2, 45);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BranchError {
     /// `invalid_params`, `unknown_session`, `git_too_old`, `busy`, `internal`,
-    /// or a code of the file service (`missing_workspace`, `outside_roots`).
+    /// `platform_unsupported`, or a code of the file service (`missing_workspace`, `outside_roots`).
     pub code: &'static str,
     pub message: String,
 }
@@ -331,6 +334,25 @@ fn git_for(options: &GitOptions, cwd: &Path) -> Git {
     Git::new(cwd, options)
 }
 
+/// Opens `dir` without following a link and returns the descriptor with a
+/// `Git` that runs in it. The caller keeps the descriptor open while Git
+/// runs, so a rename of the folder or of an ancestor cannot move Git to
+/// another folder (DL-191). Without a pinned path (macOS) it fails closed.
+fn pinned_git(options: &GitOptions, dir: &Path) -> Result<(OwnedFd, Git), BranchError> {
+    let fd = super::files::open_root(dir)
+        .map_err(|_| BranchError::internal("the session folder cannot be opened"))?;
+    match super::files::pinned_dir(&fd) {
+        Some(path) => {
+            let git = git_for(options, &path);
+            Ok((fd, git))
+        }
+        None => Err(BranchError::new(
+            branch_code::PLATFORM_UNSUPPORTED,
+            "the branch view needs Linux for now",
+        )),
+    }
+}
+
 /// The branches of the repository in `cwd`. `version` replaces the Git
 /// version in tests.
 ///
@@ -385,8 +407,39 @@ const DIFF_FLAGS: [&str; 5] = [
     "--no-renames",
 ];
 
+/// `spec` with `top` as the first magic word, so that it is read from the
+/// top of the repository; empty for a spec without magic words.
+fn with_top(spec: &str) -> String {
+    spec.strip_prefix(":(")
+        .map_or_else(String::new, |rest| format!(":(top,{rest}"))
+}
+
+/// The pathspec of a branch diff: the whole repository except the hidden
+/// names at any depth and the private paths, all from the top of the
+/// repository, also when the session folder is a subdirectory (DL-191).
+fn branch_pathspec(top: &Path, private: &PrivatePaths) -> Vec<String> {
+    let mut spec = vec!["--".to_owned(), ":/".to_owned()];
+    for name in HIDDEN_NAMES {
+        spec.push(format!(":(top,exclude,icase,glob)**/{name}"));
+        spec.push(format!(":(top,exclude,icase,glob)**/{name}/**"));
+    }
+    spec.extend(
+        private
+            .excludes_for(top)
+            .iter()
+            .map(|entry| with_top(entry))
+            .filter(|entry| !entry.is_empty()),
+    );
+    spec
+}
+
 /// The commands of `files.branch_diff` (no deadline here).
-async fn diff_of(git: &Git, session: &SessionId, head: &str) -> Result<SessionDiff, BranchError> {
+async fn diff_of(
+    git: &Git,
+    session: &SessionId,
+    head: &str,
+    private: &PrivatePaths,
+) -> Result<SessionDiff, BranchError> {
     let invalid = |why: &str| BranchError::new(history_code::INVALID_PARAMS, why);
     if !is_oid(head) {
         return Err(invalid("head must be a full object id"));
@@ -411,9 +464,18 @@ async fn diff_of(git: &Git, session: &SessionId, head: &str) -> Result<SessionDi
         }
         _ => return Err(BranchError::internal("git merge-base failed")),
     };
+    // The top of the repository is used for the relative excludes only; Git
+    // keeps running in the pinned folder.
+    let (code, out, _) = run(git, &["rev-parse", "--show-toplevel"], 4096).await?;
+    let top = match (code, line_of(&out)) {
+        (0, Some(top)) if !top.is_empty() => top,
+        _ => return Err(BranchError::internal("git rev-parse failed")),
+    };
+    let spec = branch_pathspec(Path::new(&top), private);
     let mut patch_args = vec!["diff", "--no-color"];
     patch_args.extend(DIFF_FLAGS);
-    patch_args.extend([base.as_str(), head.as_str(), "--"]);
+    patch_args.extend([base.as_str(), head.as_str()]);
+    patch_args.extend(spec.iter().map(String::as_str));
     let (code, out, cut) = run(git, &patch_args, MAX_DIFF_BYTES as usize).await?;
     if code != 0 && !cut {
         return Err(BranchError::internal("git diff failed"));
@@ -421,7 +483,8 @@ async fn diff_of(git: &Git, session: &SessionId, head: &str) -> Result<SessionDi
     let patch = String::from_utf8_lossy(&out).into_owned();
     let mut stat_args = vec!["diff", "--numstat"];
     stat_args.extend(DIFF_FLAGS);
-    stat_args.extend([base.as_str(), head.as_str(), "--"]);
+    stat_args.extend([base.as_str(), head.as_str()]);
+    stat_args.extend(spec.iter().map(String::as_str));
     let (code, out, _) = run(git, &stat_args, NUMSTAT_MAX).await?;
     if code != 0 {
         return Err(BranchError::internal("git diff --numstat failed"));
@@ -481,11 +544,12 @@ pub async fn branch_diff_with(
     session: &SessionId,
     head: &str,
     version: Option<(u32, u32)>,
+    private: &PrivatePaths,
 ) -> Result<SessionDiff, BranchError> {
     let git = git_for(options, cwd);
     within(None, async {
         require_git(&git, version).await?;
-        diff_of(&git, session, head).await
+        diff_of(&git, session, head, private).await
     })
     .await
 }
@@ -499,8 +563,9 @@ pub async fn branch_diff(
     cwd: &Path,
     session: &SessionId,
     head: &str,
+    private: &PrivatePaths,
 ) -> Result<SessionDiff, BranchError> {
-    branch_diff_with(options, cwd, session, head, None).await
+    branch_diff_with(options, cwd, session, head, None, private).await
 }
 
 // ------------------------------------------------------ the link methods
@@ -532,7 +597,8 @@ pub async fn run_branches(
     query: BranchesQuery,
 ) -> Result<RepoBranches, BranchError> {
     let dir = session_dir(store, policy, private, &query.session_id).await?;
-    let git = git_for(options, &dir);
+    // The descriptor stays open until the request ends (DL-191).
+    let (_dir, git) = pinned_git(options, &dir)?;
     within(Some(&query.session_id), async {
         require_git(&git, None).await?;
         list(&git).await
@@ -552,14 +618,18 @@ pub async fn run_branch_diff(
     query: BranchDiffQuery,
 ) -> Result<SessionDiff, BranchError> {
     let dir = session_dir(store, policy, private, &query.session_id).await?;
-    let git = git_for(options, &dir);
+    // The descriptor stays open until the request ends (DL-191).
+    let (_dir, git) = pinned_git(options, &dir)?;
     within(Some(&query.session_id), async {
         require_git(&git, None).await?;
-        diff_of(&git, &query.session_id, &query.head).await
+        diff_of(&git, &query.session_id, &query.head, private).await
     })
     .await
 }
 
+#[cfg(test)]
+#[path = "branches_private_tests.rs"]
+mod branches_private_tests;
 #[cfg(test)]
 #[path = "branches_tests.rs"]
 mod branches_tests;

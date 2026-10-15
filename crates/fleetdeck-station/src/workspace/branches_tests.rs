@@ -187,7 +187,7 @@ async fn a_folder_that_is_not_a_repository_answers_not_a_repository() {
     let err = branches(&opts(), tmp.path()).await.unwrap_err();
     assert_eq!(err.code, "not_a_repository");
     let head = "a".repeat(40);
-    let err = branch_diff(&opts(), tmp.path(), &sid(), &head)
+    let err = branch_diff(&opts(), tmp.path(), &sid(), &head, &PrivatePaths::default())
         .await
         .unwrap_err();
     assert_eq!(err.code, "not_a_repository");
@@ -213,9 +213,16 @@ async fn git_below_2_45_is_refused_and_2_45_is_accepted() {
         .await
         .unwrap_err();
     assert_eq!(err.code, "git_too_old");
-    let err = branch_diff_with(&opts(), &r.dir, &sid(), &r.c1, Some((1, 99)))
-        .await
-        .unwrap_err();
+    let err = branch_diff_with(
+        &opts(),
+        &r.dir,
+        &sid(),
+        &r.c1,
+        Some((1, 99)),
+        &PrivatePaths::default(),
+    )
+    .await
+    .unwrap_err();
     assert_eq!(err.code, "git_too_old");
     assert!(branches_with(&opts(), &r.dir, Some((2, 45))).await.is_ok());
     assert!(branches_with(&opts(), &r.dir, Some((3, 0))).await.is_ok());
@@ -344,7 +351,9 @@ async fn it_diffs_a_branch_against_its_merge_base() {
     let r = repo();
     let list = branches(&opts(), &r.dir).await.unwrap();
     let ahead = by_name(&list, "ahead").head.clone();
-    let diff = branch_diff(&opts(), &r.dir, &sid(), &ahead).await.unwrap();
+    let diff = branch_diff(&opts(), &r.dir, &sid(), &ahead, &PrivatePaths::default())
+        .await
+        .unwrap();
     assert_eq!(diff.scope, DiffScope::Committed);
     // The merge base of `main` and `ahead` is the second commit.
     assert_eq!(diff.base_oid, r.c2);
@@ -361,7 +370,9 @@ async fn it_diffs_a_branch_against_its_merge_base() {
     );
     // A branch behind HEAD has an empty diff; the base is its own tip.
     let merged = by_name(&list, "merged").head.clone();
-    let diff = branch_diff(&opts(), &r.dir, &sid(), &merged).await.unwrap();
+    let diff = branch_diff(&opts(), &r.dir, &sid(), &merged, &PrivatePaths::default())
+        .await
+        .unwrap();
     assert_eq!(diff.base_oid, r.c1);
     assert!(diff.patch.is_empty());
 }
@@ -374,14 +385,14 @@ async fn a_head_must_be_the_tip_of_a_listed_branch() {
     let invalid = |err: BranchError| assert_eq!(err.code, "invalid_params", "{err:?}");
     // The tip of the current branch is not listed.
     invalid(
-        branch_diff(&opts(), &r.dir, &sid(), &r.c2)
+        branch_diff(&opts(), &r.dir, &sid(), &r.c2, &PrivatePaths::default())
             .await
             .unwrap_err(),
     );
     // An object that is no branch tip: a parent of `ahead`.
     let parent = git(&r.dir, &["rev-parse", "ahead~1"]);
     invalid(
-        branch_diff(&opts(), &r.dir, &sid(), &parent)
+        branch_diff(&opts(), &r.dir, &sid(), &parent, &PrivatePaths::default())
             .await
             .unwrap_err(),
     );
@@ -395,11 +406,17 @@ async fn a_head_must_be_the_tip_of_a_listed_branch() {
         "abc",
         not_hex.as_str(),
     ] {
-        invalid(branch_diff(&opts(), &r.dir, &sid(), bad).await.unwrap_err());
+        invalid(
+            branch_diff(&opts(), &r.dir, &sid(), bad, &PrivatePaths::default())
+                .await
+                .unwrap_err(),
+        );
     }
     // The case of the hex digits does not matter.
     let upper = ahead.to_ascii_uppercase();
-    let diff = branch_diff(&opts(), &r.dir, &sid(), &upper).await.unwrap();
+    let diff = branch_diff(&opts(), &r.dir, &sid(), &upper, &PrivatePaths::default())
+        .await
+        .unwrap();
     assert!(diff.patch.contains("+bee"));
 }
 
@@ -410,7 +427,7 @@ async fn a_branch_without_common_history_answers_no_common_history() {
     git(&r.dir, &["rm", "-rf", "-q", "."]);
     let island = commit(&r.dir, "z.txt", "zed\n", "orphan", TS + 50);
     git(&r.dir, &["checkout", "-q", "main"]);
-    let err = branch_diff(&opts(), &r.dir, &sid(), &island)
+    let err = branch_diff(&opts(), &r.dir, &sid(), &island, &PrivatePaths::default())
         .await
         .unwrap_err();
     assert_eq!(err.code, "no_common_history");
@@ -426,7 +443,9 @@ async fn a_large_patch_is_cut_to_the_limits_of_the_answer() {
     git(&r.dir, &["checkout", "-q", "main"]);
     let list = branches(&opts(), &r.dir).await.unwrap();
     let head = by_name(&list, "ahead").head.clone();
-    let diff = branch_diff(&opts(), &r.dir, &sid(), &head).await.unwrap();
+    let diff = branch_diff(&opts(), &r.dir, &sid(), &head, &PrivatePaths::default())
+        .await
+        .unwrap();
     assert!(diff.truncated);
     let size = serde_json::to_vec(&diff).unwrap().len();
     assert!(size <= MAX_ANSWER_BYTES, "{size}");
@@ -482,7 +501,9 @@ async fn a_hostile_repository_config_runs_no_program_and_changes_nothing() {
     let list = branches(&opts(), &r.dir).await.unwrap();
     let head = by_name(&list, "ahead").head.clone();
     assert_ne!(head, ahead);
-    let clean = branch_diff(&opts(), &r.dir, &sid(), &head).await.unwrap();
+    let clean = branch_diff(&opts(), &r.dir, &sid(), &head, &PrivatePaths::default())
+        .await
+        .unwrap();
     assert!(clean.patch.contains("Subproject commit"), "{}", clean.patch);
 
     // The hostile configuration, set last: it would run for the helper above.
@@ -527,7 +548,9 @@ async fn a_hostile_repository_config_runs_no_program_and_changes_nothing() {
     );
     std::fs::remove_file(&marker).unwrap();
 
-    let hostile = branch_diff(&opts(), &r.dir, &sid(), &head).await.unwrap();
+    let hostile = branch_diff(&opts(), &r.dir, &sid(), &head, &PrivatePaths::default())
+        .await
+        .unwrap();
     let listed = branches(&opts(), &r.dir).await.unwrap();
     assert!(!marker.exists(), "a program of the repository ran");
     assert_eq!(hostile, clean);

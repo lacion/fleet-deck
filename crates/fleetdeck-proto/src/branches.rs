@@ -26,6 +26,8 @@ pub mod code {
     pub const NOT_A_REPOSITORY: &str = "not_a_repository";
     /// The branch has no commit in common with `HEAD` (`files.branch_diff`).
     pub const NO_COMMON_HISTORY: &str = "no_common_history";
+    /// The station cannot pin the session folder for Git (macOS for now).
+    pub const PLATFORM_UNSUPPORTED: &str = "platform_unsupported";
 }
 
 /// `session.branches` params.

@@ -141,6 +141,11 @@ fn station_error(route: &Route, code_text: &str, station: &str, session: &str) -
             "no_common_history",
             "This branch has no history in common with the session.",
         ),
+        branch_code::PLATFORM_UNSUPPORTED => ApiError::new(
+            StatusCode::CONFLICT,
+            "platform_unsupported",
+            "The branch view needs a Linux station for now.",
+        ),
         code::BUSY => ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "busy",
@@ -295,7 +300,8 @@ pub async fn subagent(
 /// # Errors
 /// 400 `invalid_params`; 403 `owner_only`; 404 `unknown_station`,
 /// `unknown_session`; 409 `station_unreachable`, `branches_unsupported`,
-/// `git_too_old`; 502 `station_error`; 503 `busy`; 504 `timeout`.
+/// `git_too_old`, `platform_unsupported`; 502 `station_error`; 503 `busy`; 504
+/// `timeout`.
 pub async fn branches(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,

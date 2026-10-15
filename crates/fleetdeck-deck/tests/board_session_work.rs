@@ -228,7 +228,7 @@ async fn station_errors_map_to_fixed_codes() {
             "Update Git on this station (2.45 or newer) to see the branches."
         );
     }
-    // `not_a_repository` and `no_common_history` have fixed texts too.
+    // `not_a_repository`, `no_common_history` and `platform_unsupported` have fixed texts too.
     let fixed = [
         (
             "not_a_repository",
@@ -239,6 +239,11 @@ async fn station_errors_map_to_fixed_codes() {
             "no_common_history",
             "This branch has no history in common with the session.",
             vec![diff_path(&st, "s1", HEAD)],
+        ),
+        (
+            "platform_unsupported",
+            "The branch view needs a Linux station for now.",
+            vec![branches_path(&st, "s1"), diff_path(&st, "s1", HEAD)],
         ),
     ];
     for (wire, text, routes) in fixed {
