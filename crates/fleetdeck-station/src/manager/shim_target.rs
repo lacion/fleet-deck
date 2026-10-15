@@ -36,6 +36,8 @@ use fleetdeck_providers::host::shim::host::{AckMode, ShimHost, ShimProcess};
 use fleetdeck_providers::host::{DEFAULT_IDLE_GRACE, ProcessControl as _, StopPolicy};
 use tokio::sync::Mutex;
 
+use super::super::binding_rotate::rotate_out;
+use super::super::coordinator_start::BridgeStart;
 use super::super::shim_claude::DurableClaude;
 use super::super::shim_codex::DurableCodex;
 use super::super::shim_station::{Durable, Restored};
@@ -313,6 +315,7 @@ impl SessionTarget {
         native: &str,
         adapter: &Arc<dyn ProviderAdapter>,
         shims: &ShimSettings,
+        tools: Option<BridgeStart>,
         cancel: Option<&tokio::sync::watch::Receiver<bool>>,
     ) -> Dispatch {
         let session_id = effect.session_id.clone();
@@ -342,8 +345,17 @@ impl SessionTarget {
                 return Dispatch::NotDispatched(format!("start_failed: {e}"));
             }
         };
-        self.start_durable(effect, spec, prompt, shims, launch, Some(native), cancel)
-            .await
+        self.start_durable(
+            effect,
+            spec,
+            prompt,
+            shims,
+            launch,
+            Some(native),
+            tools,
+            cancel,
+        )
+        .await
     }
 
     /// Starts a session under a shim and writes its first input. With
@@ -360,6 +372,7 @@ impl SessionTarget {
         shims: &ShimSettings,
         launch: DurableLaunch,
         native: Option<&str>,
+        tools: Option<BridgeStart>,
         cancel: Option<&tokio::sync::watch::Receiver<bool>>,
     ) -> Dispatch {
         let session_id = effect.session_id.clone();
@@ -371,6 +384,14 @@ impl SessionTarget {
         }
         let turns = self.turns(&session_id, Path::new(&spec.cwd)).await;
         let from = *self.store.subscribe().borrow();
+        if let (Some(t), Some(_)) = (&tools, native)
+            && let Err(text) =
+                rotate_out(&self.store, &self.coordinator, &t.binding.binding_id).await
+        {
+            // The old token must stop first (DL-194 §2.3): no shim starts.
+            self.start_failed(&session_id, &text).await;
+            return Dispatch::NotDispatched("credentials".into());
+        }
         // ADR-008 §6.2: the gate runs inside the launch, after the `starting`
         // row and right before the shim starts.
         let attached = match launch_shim_for(
@@ -381,6 +402,8 @@ impl SessionTarget {
             AckMode::Manual,
             native,
             &|| Box::pin(self.gate_durable(effect)),
+            &self.coordinator,
+            tools,
         )
         .await
         {

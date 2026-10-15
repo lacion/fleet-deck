@@ -124,6 +124,10 @@ impl Rig {
         self.tmp.path().join("claude-launch.log")
     }
 
+    pub fn codex_launch_log(&self) -> PathBuf {
+        self.tmp.path().join("codex-launch.log")
+    }
+
     /// Installs the boot id that the station reads from now on.
     pub fn set_boot(&self, boot: Boot) {
         *self.boot.lock().unwrap() = boot;
@@ -144,6 +148,7 @@ impl Rig {
         let mut env = ChildEnv::from_process();
         env.set(SCENARIO_ENV, "sim").unwrap();
         env.set(STDIN_LOG_ENV, self.stdin_log("codex")).unwrap();
+        env.set(LAUNCH_LOG_ENV, self.codex_launch_log()).unwrap();
         let mut codex =
             CodexAdapterConfig::new("codex".into(), FakeAgent::Codex.locate().unwrap(), env);
         codex.stop = stop;

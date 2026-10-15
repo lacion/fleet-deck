@@ -522,3 +522,214 @@ fn a_codex_session_without_a_grant_gets_the_fleet_tools_too() {
             .is_fleet_only()
     );
 }
+
+/// A spec for the `tools_for` checks; `grant` adds a coordinator grant.
+fn tools_spec(grant: bool) -> SessionSpec {
+    SessionSpec {
+        provider_instance: "claude".into(),
+        cwd: "/w".to_owned(),
+        mode: None,
+        model: None,
+        title: None,
+        coordinator: grant.then(|| Box::new(coordinator_spec())),
+    }
+}
+
+/// Bindings with a verified handoff and a bridge, as the shim host has.
+fn with_bridge() -> Bindings {
+    let bindings = Bindings::default().with_handoff(verified);
+    bindings.set_endpoint(URL.to_owned());
+    bindings.set_bridge(crate::coordinator::BridgeEndpoint {
+        program: "/station/bin/current".into(),
+        socket: "/run/fleetdeck/mcp.s".into(),
+    });
+    bindings
+}
+
+#[derive(Clone, Default)]
+struct Buf(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Buf {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(data);
+        Ok(data.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// DL-194: on the shim host a Claude start gets the bridge arguments and a
+/// token; the binding is built but memory is not changed (the launch
+/// stores the row first).
+#[cfg(target_os = "linux")]
+#[test]
+fn a_fleet_start_on_the_shim_host_gets_a_bridge_start_and_no_memory_entry() {
+    let bindings = with_bridge();
+    let session: SessionId = "s-5".into();
+    let tools = coordinator_start::tools_for(
+        &bindings,
+        ProviderKind::Claude,
+        &session,
+        &tools_spec(false),
+        true,
+        false,
+    )
+    .unwrap();
+    let coordinator_start::Tools::Bridge(start) = tools else {
+        panic!("expected a bridge start");
+    };
+    let config = start
+        .launch
+        .args
+        .iter()
+        .find(|a| a.contains("mcpServers"))
+        .expect("the --mcp-config value");
+    assert!(config.contains("\"type\":\"stdio\"") && config.contains("mcp-bridge"));
+    assert!(start.launch.args.iter().any(|a| a == "--mcp-config"));
+    assert!(start.launch.args.iter().all(|a| !a.contains("fdc1_")));
+    assert_eq!(start.binding.binding_id, "s-5:fleet");
+    assert_eq!(start.binding.state, BindingState::Pending);
+    assert_eq!(start.expires_at, None);
+    assert_eq!(start.digest, digest(start.launch.token.expose()));
+    assert!(bindings.get("s-5:fleet").is_none());
+    assert!(!bindings.has_digest(&start.digest));
+}
+
+/// DL-194 §9.10: Codex on the shim host stays without tools, and the
+/// station logs why.
+#[test]
+fn a_codex_fleet_start_on_the_shim_host_has_no_tools() {
+    let buf = Buf::default();
+    let sub = fleetdeck_core::logging::subscriber(
+        fleetdeck_core::logging::LogFormat::Text,
+        fleetdeck_core::logging::env_filter("info").unwrap(),
+        {
+            let buf = buf.clone();
+            move || buf.clone()
+        },
+        false,
+    );
+    let bindings = with_bridge();
+    let session: SessionId = "s-6".into();
+    tracing::subscriber::with_default(sub, || {
+        let tools = coordinator_start::tools_for(
+            &bindings,
+            ProviderKind::Codex,
+            &session,
+            &tools_spec(false),
+            true,
+            false,
+        )
+        .unwrap();
+        assert!(matches!(tools, coordinator_start::Tools::None));
+    });
+    assert!(bindings.get("s-6:fleet").is_none());
+    let log = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+    assert!(log.contains("no session tools: durable host"), "{log}");
+}
+
+#[test]
+fn a_fleet_start_without_a_bridge_has_no_tools() {
+    let bindings = Bindings::default().with_handoff(verified);
+    bindings.set_endpoint(URL.to_owned());
+    let session: SessionId = "s-7".into();
+    let tools = coordinator_start::tools_for(
+        &bindings,
+        ProviderKind::Claude,
+        &session,
+        &tools_spec(false),
+        true,
+        false,
+    )
+    .unwrap();
+    assert!(matches!(tools, coordinator_start::Tools::None));
+    assert!(bindings.get("s-7:fleet").is_none());
+}
+
+/// The direct host keeps the loopback endpoint and its memory entry.
+#[test]
+fn a_fleet_start_on_the_direct_host_gets_the_direct_tools() {
+    let bindings = with_bridge();
+    let session: SessionId = "s-8".into();
+    let tools = coordinator_start::tools_for(
+        &bindings,
+        ProviderKind::Claude,
+        &session,
+        &tools_spec(false),
+        false,
+        false,
+    )
+    .unwrap();
+    assert!(matches!(tools, coordinator_start::Tools::Direct(_)));
+    assert!(bindings.get("s-8:fleet").is_some());
+}
+
+/// DL-194 §2.4: a grant on the shim host gets a bridge start with the
+/// expiry of the grant for its row.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_grant_on_the_shim_host_gets_a_bridge_start_with_its_expiry() {
+    let bindings = with_bridge();
+    let session: SessionId = "s-9".into();
+    let tools = coordinator_start::tools_for(
+        &bindings,
+        ProviderKind::Claude,
+        &session,
+        &tools_spec(true),
+        true,
+        false,
+    )
+    .unwrap();
+    let coordinator_start::Tools::Bridge(start) = tools else {
+        panic!("expected a bridge start");
+    };
+    assert_eq!(start.binding.binding_id, "s-9:grant-1");
+    assert_eq!(start.binding.grant_id, "grant-1");
+    assert_eq!(start.expires_at, Some(coordinator_spec().expires_at));
+    assert!(
+        start
+            .binding
+            .classes
+            .contains(&crate::coordinator::ToolClass::Own)
+    );
+    assert!(bindings.get("s-9:grant-1").is_none());
+    assert!(!bindings.has_digest(&start.digest));
+}
+
+#[test]
+fn a_grant_on_a_resume_or_with_codex_on_the_shim_host_is_refused() {
+    let bindings = with_bridge();
+    let session: SessionId = "s-10".into();
+    for (shim_host, resumed) in [(false, true), (true, true)] {
+        let err = coordinator_start::tools_for(
+            &bindings,
+            ProviderKind::Claude,
+            &session,
+            &tools_spec(true),
+            shim_host,
+            resumed,
+        )
+        .err()
+        .expect("a refusal");
+        assert_eq!(
+            err,
+            "a coordinator session starts only as a new direct child"
+        );
+    }
+    let err = coordinator_start::tools_for(
+        &bindings,
+        ProviderKind::Codex,
+        &session,
+        &tools_spec(true),
+        true,
+        false,
+    )
+    .err()
+    .expect("a refusal");
+    assert_eq!(
+        err,
+        "a coordinator session on the shim host needs Claude on Linux for now"
+    );
+    assert!(bindings.find(&session, "grant-1").is_none());
+}

@@ -4,18 +4,24 @@
 //! credential, adds a `pending` binding (generation 0) under its digest
 //! and gives the adapter the arguments and the credential. The station
 //! checks the handoff again here: a provider without a verified handoff,
-//! a missing ingress, a resume and a shim-hosted start fail the start
-//! instead of running a coordinator session without its credential. A
-//! session without a grant gets the session's own tools on a start and on
-//! a resume when it can (DL-165).
+//! a missing ingress and a resume fail the start instead of running a
+//! coordinator session without its credential. A session without a grant
+//! gets the session's own tools on a start and on a resume when it can
+//! (DL-165). On the shim host the tools come through the MCP bridge, and
+//! the launch stores the binding row before it adds the binding to memory
+//! (DL-194).
+
+use std::ffi::OsString;
 
 use fleetdeck_proto::command::{CoordinatorSpec, GrantScope, SessionSpec};
 use fleetdeck_proto::event::ProviderKind;
 use fleetdeck_proto::{Event, SessionId};
 use fleetdeck_providers::coordinator::CoordinatorLaunch;
+use fleetdeck_providers::host::shim::start::LaunchSecrets;
 
 use crate::coordinator::{Binding, BindingState, Bindings, Handoff, ToolClass};
-use crate::store::NewEvent;
+use crate::store::shim_bindings::{BindingRow, RowState};
+use crate::store::{NewEvent, Store};
 
 /// The reason of `coordinator.ended` at the end of the process (§5.5).
 pub(super) const REASON_PROCESS_EXIT: &str = "process_exit";
@@ -93,15 +99,31 @@ pub(super) fn prepare(
     session_id: &SessionId,
     spec: &SessionSpec,
     coordinator: &CoordinatorSpec,
-    resumed_or_durable: bool,
+    resumed: bool,
 ) -> Result<CoordinatorLaunch, String> {
-    if resumed_or_durable {
-        return Err("a coordinator session starts only as a new direct child".to_owned());
+    if resumed {
+        return Err(NOT_NEW_CHILD.to_owned());
     }
     bindings.handoff(provider, None).map_err(str::to_owned)?;
     let url = bindings
         .endpoint()
         .ok_or_else(|| "the coordinator endpoint does not listen".to_owned())?;
+    let classes = grant_classes(coordinator)?;
+    let handoff = Handoff::prepare(provider, &url).map_err(|e| e.to_string())?;
+    bindings.insert(
+        handoff.digest.clone(),
+        grant_binding(session_id, spec, coordinator, classes),
+    );
+    Ok(handoff.into_launch())
+}
+
+/// The refusal of a coordinator start that is not a new child.
+const NOT_NEW_CHILD: &str = "a coordinator session starts only as a new direct child";
+
+/// The tool classes of a grant, with the session's own tools (DL-165).
+fn grant_classes(
+    coordinator: &CoordinatorSpec,
+) -> Result<std::collections::BTreeSet<ToolClass>, String> {
     let mut classes: std::collections::BTreeSet<ToolClass> = coordinator
         .classes
         .iter()
@@ -109,23 +131,143 @@ pub(super) fn prepare(
         .collect::<Result<_, _>>()?;
     // A coordinator session has the session's own tools too (DL-165).
     classes.insert(ToolClass::Own);
-    let handoff = Handoff::prepare(provider, &url).map_err(|e| e.to_string())?;
-    bindings.insert(
-        handoff.digest.clone(),
-        Binding {
-            binding_id: format!("{session_id}:{}", coordinator.grant_id),
-            grant_id: coordinator.grant_id.clone(),
-            session_id: session_id.clone(),
-            provider_instance: spec.provider_instance.to_string(),
-            native_id: None,
-            generation: 0,
-            classes,
-            scope: coordinator.scope,
-            state: BindingState::Pending,
-            control_skill: coordinator.control_skill.text.clone(),
-        },
+    Ok(classes)
+}
+
+/// The pending binding of a coordinator grant.
+fn grant_binding(
+    session_id: &SessionId,
+    spec: &SessionSpec,
+    coordinator: &CoordinatorSpec,
+    classes: std::collections::BTreeSet<ToolClass>,
+) -> Binding {
+    Binding {
+        binding_id: format!("{session_id}:{}", coordinator.grant_id),
+        grant_id: coordinator.grant_id.clone(),
+        session_id: session_id.clone(),
+        provider_instance: spec.provider_instance.to_string(),
+        native_id: None,
+        generation: 0,
+        classes,
+        scope: coordinator.scope,
+        state: BindingState::Pending,
+        control_skill: coordinator.control_skill.text.clone(),
+    }
+}
+
+/// The pending binding of a session without a grant (DL-165).
+fn fleet_binding(session_id: &SessionId, spec: &SessionSpec) -> Binding {
+    Binding {
+        binding_id: format!("{session_id}:{FLEET_GRANT}"),
+        grant_id: String::new(),
+        session_id: session_id.clone(),
+        provider_instance: spec.provider_instance.to_string(),
+        native_id: None,
+        generation: 0,
+        classes: std::iter::once(ToolClass::Own).collect(),
+        scope: GrantScope::Lineage,
+        state: BindingState::Pending,
+        control_skill: FLEET_SKILL.to_owned(),
+    }
+}
+
+/// A start on the shim host with its tools through the bridge (DL-194).
+/// Memory holds nothing yet: the launch stores the row first, then adds
+/// the binding.
+pub(crate) struct BridgeStart {
+    /// The bridge arguments and the token.
+    pub launch: CoordinatorLaunch,
+    /// The digest of the token.
+    pub digest: String,
+    /// The `Pending` binding (generation 0).
+    pub binding: Binding,
+    /// The grant expiry for the row; `None` for a fleet-only binding.
+    pub expires_at: Option<i64>,
+    /// The provider, for the log line after the launch.
+    pub provider: ProviderKind,
+}
+
+/// The bridge form of [`prepare`]: it mints the credential and builds the
+/// binding but never changes memory (DL-194 §2.4).
+///
+/// # Errors
+/// The reason that the start fails with.
+pub(super) fn prepare_bridge(
+    bindings: &Bindings,
+    provider: ProviderKind,
+    session_id: &SessionId,
+    spec: &SessionSpec,
+    coordinator: &CoordinatorSpec,
+) -> Result<BridgeStart, String> {
+    bindings.handoff(provider, None).map_err(str::to_owned)?;
+    let bridge = bindings
+        .bridge()
+        .ok_or_else(|| "the coordinator bridge does not listen".to_owned())?;
+    let classes = grant_classes(coordinator)?;
+    let handoff = Handoff::prepare_bridge(provider, &bridge).map_err(|e| e.to_string())?;
+    let digest = handoff.digest.clone();
+    Ok(BridgeStart {
+        launch: handoff.into_launch(),
+        digest,
+        binding: grant_binding(session_id, spec, coordinator, classes),
+        expires_at: Some(coordinator.expires_at),
+        provider,
+    })
+}
+
+/// Stores the binding row of a launch with tools and adds the binding to
+/// memory, in this order (DL-194 §2.3). Returns the launch secrets and the
+/// stored digest with its provider. A row that cannot be stored gives
+/// neither: the session starts without tools.
+pub(super) async fn store_tools(
+    store: &Store,
+    bindings: &Bindings,
+    shim_id: &str,
+    tools: Option<BridgeStart>,
+) -> (
+    Option<(LaunchSecrets, ProviderKind)>,
+    Option<(String, ProviderKind)>,
+) {
+    let Some(t) = tools else {
+        return (None, None);
+    };
+    let row = BindingRow::from_binding(
+        t.digest.clone(),
+        shim_id.to_owned(),
+        &t.binding,
+        t.expires_at,
+        store.now_ms(),
     );
-    Ok(handoff.into_launch())
+    if let Err(error) = store.shim_binding_insert(row).await {
+        tracing::warn!(%error, "the binding row was not stored; the session starts without tools");
+        return (None, None);
+    }
+    bindings.insert(t.digest.clone(), t.binding);
+    let secrets = LaunchSecrets {
+        token: t.launch.token,
+        extra_args: t.launch.args.into_iter().map(OsString::from).collect(),
+    };
+    (Some((secrets, t.provider)), Some((t.digest, t.provider)))
+}
+
+/// Refuses the token of a stored row and ends the row, after a launch
+/// failed (DL-194 §2.3). A failed write is a warning: the row stays open
+/// and the next start loads it with its shim.
+pub(super) async fn revoke_stored(
+    store: &Store,
+    bindings: &Bindings,
+    stored: Option<&(String, ProviderKind)>,
+) {
+    let Some((digest, _)) = stored else {
+        return;
+    };
+    bindings.update_digest(digest, |b| b.state = BindingState::Revoked);
+    if let Err(error) = store
+        .shim_binding_set_state(digest.clone(), RowState::Ended)
+        .await
+    {
+        tracing::warn!(%error, "the binding row of a failed launch was not ended");
+    }
 }
 
 /// Why a session has no session tools (DL-165). The text goes to the
@@ -178,31 +320,105 @@ pub(super) fn prepare_fleet(
         return Err(NoTools::Durable);
     }
     if bindings.handoff(provider, None).is_err() {
-        let versions = bindings.versions(provider);
-        return Err(NoTools::Unverified(if versions.is_empty() {
-            "unknown".to_owned()
-        } else {
-            versions.join(", ")
-        }));
+        return Err(unverified(bindings, provider));
     }
     let url = bindings.endpoint().ok_or(NoTools::NoEndpoint)?;
     let handoff = Handoff::prepare(provider, &url).map_err(|_| NoTools::Refused)?;
-    bindings.insert(
-        handoff.digest.clone(),
-        Binding {
-            binding_id: format!("{session_id}:{FLEET_GRANT}"),
-            grant_id: String::new(),
-            session_id: session_id.clone(),
-            provider_instance: spec.provider_instance.to_string(),
-            native_id: None,
-            generation: 0,
-            classes: std::iter::once(ToolClass::Own).collect(),
-            scope: GrantScope::Lineage,
-            state: BindingState::Pending,
-            control_skill: FLEET_SKILL.to_owned(),
-        },
-    );
+    bindings.insert(handoff.digest.clone(), fleet_binding(session_id, spec));
     Ok(handoff.into_launch())
+}
+
+/// [`NoTools::Unverified`] with the probed versions of `provider`.
+fn unverified(bindings: &Bindings, provider: ProviderKind) -> NoTools {
+    let versions = bindings.versions(provider);
+    NoTools::Unverified(if versions.is_empty() {
+        "unknown".to_owned()
+    } else {
+        versions.join(", ")
+    })
+}
+
+/// The bridge form of [`prepare_fleet`] (DL-194): no memory change.
+///
+/// # Errors
+/// [`NoTools`] when the session cannot have the tools.
+pub(super) fn prepare_bridge_fleet(
+    bindings: &Bindings,
+    provider: ProviderKind,
+    session_id: &SessionId,
+    spec: &SessionSpec,
+) -> Result<BridgeStart, NoTools> {
+    if bindings.handoff(provider, None).is_err() {
+        return Err(unverified(bindings, provider));
+    }
+    let bridge = bindings.bridge().ok_or(NoTools::NoEndpoint)?;
+    let handoff = Handoff::prepare_bridge(provider, &bridge).map_err(|_| NoTools::Refused)?;
+    let digest = handoff.digest.clone();
+    Ok(BridgeStart {
+        launch: handoff.into_launch(),
+        digest,
+        binding: fleet_binding(session_id, spec),
+        expires_at: None,
+        provider,
+    })
+}
+
+/// The tools that one start gets (DL-194).
+#[allow(
+    clippy::large_enum_variant,
+    reason = "one value per start; the shape is fixed by the brief"
+)]
+pub(super) enum Tools {
+    /// No tools; the session starts without them.
+    None,
+    /// The loopback endpoint of the direct host; memory holds the binding.
+    Direct(CoordinatorLaunch),
+    /// The bridge of the shim host; the launch stores the binding.
+    Bridge(BridgeStart),
+}
+
+/// Chooses the tools of one start (DL-165, DL-194). `shim_host` is true
+/// when the session runs under a shim; `resumed` is true for a resume.
+///
+/// # Errors
+/// The reason that a coordinator start fails with. A session without a
+/// grant never fails here: it gets [`Tools::None`] and a log line.
+pub(super) fn tools_for(
+    bindings: &Bindings,
+    provider: ProviderKind,
+    session_id: &SessionId,
+    spec: &SessionSpec,
+    shim_host: bool,
+    resumed: bool,
+) -> Result<Tools, String> {
+    // The bridge mode is for Claude on Linux until the Codex smoke (§9.10).
+    let bridge_ok = cfg!(target_os = "linux") && provider == ProviderKind::Claude;
+    let Some(coordinator) = spec.coordinator.as_deref() else {
+        let chosen = if !shim_host {
+            prepare_fleet(bindings, provider, session_id, spec, false).map(Tools::Direct)
+        } else if bridge_ok {
+            prepare_bridge_fleet(bindings, provider, session_id, spec).map(Tools::Bridge)
+        } else {
+            Err(NoTools::Durable)
+        };
+        return Ok(chosen.unwrap_or_else(|why| {
+            log_no_tools(session_id, provider, &why);
+            Tools::None
+        }));
+    };
+    if resumed {
+        return Err(NOT_NEW_CHILD.to_owned());
+    }
+    if !shim_host {
+        return prepare(bindings, provider, session_id, spec, coordinator, false)
+            .map(Tools::Direct);
+    }
+    if !bridge_ok {
+        return Err(
+            "a coordinator session on the shim host needs Claude on Linux for now".to_owned(),
+        );
+    }
+    prepare_bridge(bindings, provider, session_id, spec, coordinator).map(Tools::Bridge)
 }
 
 /// The info line of a session that got its tools (a start or a resume).

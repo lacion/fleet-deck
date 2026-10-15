@@ -25,6 +25,7 @@ use fleetdeck_providers::host::HostError;
 use fleetdeck_providers::{EventSink, LiveSession, ProviderAdapter, ProviderError};
 use tokio::sync::{Mutex, oneshot, watch};
 
+use super::coordinator_start::{Tools, tools_for};
 use super::durable::host_input;
 pub use super::shells_slot::ShellsSlot;
 use super::turns::SessionTurns;
@@ -337,47 +338,41 @@ impl SessionTarget {
             return Dispatch::NotDispatched("unknown_provider".into());
         };
         let fleet_only = spec.coordinator.is_none();
-        let coordinator = match spec.coordinator.as_deref() {
-            // A session without a grant gets the session's own tools when
-            // its provider can take the handoff (DL-165).
-            None => match super::coordinator_start::prepare_fleet(
-                &self.coordinator,
-                adapter.kind(),
-                &session_id,
-                spec,
-                self.shims.is_some(),
-            ) {
-                Ok(launch) => Some(launch),
-                Err(why) => {
-                    super::coordinator_start::log_no_tools(&session_id, adapter.kind(), &why);
-                    None
-                }
-            },
-            Some(c) => match super::coordinator_start::prepare(
-                &self.coordinator,
-                adapter.kind(),
-                &session_id,
-                spec,
-                c,
-                resume.is_some() || self.shims.is_some(),
-            ) {
-                Ok(launch) => Some(launch),
-                Err(why) => {
-                    self.start_failed(&session_id, &why).await;
-                    return Dispatch::NotDispatched(format!("coordinator: {why}"));
-                }
-            },
+        // The durable launch comes first: it says which host the tools are
+        // for (DL-194).
+        let durable = resume
+            .is_none()
+            .then(|| self.durable_launch(&adapter, spec))
+            .flatten();
+        let shim_host = (resume.is_some() && self.shims.is_some()) || durable.is_some();
+        let (bridge, coordinator) = match tools_for(
+            &self.coordinator,
+            adapter.kind(),
+            &session_id,
+            spec,
+            shim_host,
+            resume.is_some(),
+        ) {
+            Ok(Tools::Direct(launch)) => (None, Some(launch)),
+            Ok(Tools::Bridge(start)) => (Some(start), None),
+            Ok(Tools::None) => (None, None),
+            Err(why) => {
+                self.start_failed(&session_id, &why).await;
+                return Dispatch::NotDispatched(format!("coordinator: {why}"));
+            }
         };
         if let (Some(native), Some(shims)) = (resume, self.shims.clone()) {
             // A resume on the shim host (DL-182): a new shim and a new
             // provider process, never a reattachment.
             return self
-                .resume_durable(effect, spec, prompt, native, &adapter, &shims, cancel)
+                .resume_durable(
+                    effect, spec, prompt, native, &adapter, &shims, bridge, cancel,
+                )
                 .await;
         }
-        if let Some((shims, launch)) = self.durable_launch(&adapter, spec) {
+        if let Some((shims, launch)) = durable {
             return self
-                .start_durable(effect, spec, prompt, &shims, launch, None, cancel)
+                .start_durable(effect, spec, prompt, &shims, launch, None, bridge, cancel)
                 .await;
         }
         let turns = SessionTurns::open(
