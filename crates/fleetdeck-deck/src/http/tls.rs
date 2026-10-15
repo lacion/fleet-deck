@@ -20,7 +20,10 @@ use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, Server
 use rustls::crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature};
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
+use rustls::sign::CertifiedKey;
 use rustls::{ClientConfig, DigitallySignedStruct, ServerConfig, SignatureScheme};
+
+use super::tls_tailscale::BoardResolver;
 
 /// The owner's certificate chain (PEM).
 pub const OWNER_CERT: &str = "board.crt";
@@ -47,6 +50,9 @@ pub enum TlsError {
 #[derive(Debug, Clone)]
 pub struct BoardTls {
     pub config: Arc<ServerConfig>,
+    /// The chooser of the certificate per connection (DL-190). Its fallback
+    /// is the pair that `cert`, `sha256` and `self_signed` describe.
+    pub resolver: Arc<BoardResolver>,
     /// The leaf certificate (DER).
     pub cert: CertificateDer<'static>,
     /// SHA-256 of the leaf certificate, lower-case hex with `:`.
@@ -54,8 +60,17 @@ pub struct BoardTls {
     pub self_signed: bool,
 }
 
-fn provider() -> Arc<CryptoProvider> {
+pub(super) fn provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
+}
+
+fn server_config(resolver: Arc<BoardResolver>) -> Result<ServerConfig, TlsError> {
+    let mut config = ServerConfig::builder_with_provider(provider())
+        .with_safe_default_protocol_versions()?
+        .with_no_client_auth()
+        .with_cert_resolver(resolver);
+    config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    Ok(config)
 }
 
 /// The fingerprint text of a certificate.
@@ -83,16 +98,31 @@ impl BoardTls {
             file: OWNER_CERT.to_owned(),
             reason: "no certificate in the file".to_owned(),
         })?;
-        let mut config = ServerConfig::builder_with_provider(provider())
-            .with_safe_default_protocol_versions()?
-            .with_no_client_auth()
-            .with_single_cert(chain, key)?;
-        config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        let pair = CertifiedKey::from_der(chain, key, &provider())?;
+        // The owner's pair is the one that is not self-signed.
+        let resolver = Arc::new(BoardResolver::new(Arc::new(pair), !self_signed, None));
         Ok(Self {
             sha256: fingerprint(&cert),
-            config: Arc::new(config),
+            config: Arc::new(server_config(Arc::clone(&resolver))?),
+            resolver,
             cert,
             self_signed,
+        })
+    }
+
+    /// The same fallback with a new resolver for the certificate name `name`
+    /// (the deck's tailnet host name). Nothing is served from Tailscale yet.
+    ///
+    /// # Errors
+    /// [`TlsError::Rustls`].
+    pub fn with_name(self, name: Option<&str>) -> Result<Self, TlsError> {
+        let fallback = self.resolver.fallback();
+        let owner = self.resolver.owner();
+        let resolver = Arc::new(BoardResolver::new(fallback, owner, name.map(str::to_owned)));
+        Ok(Self {
+            config: Arc::new(server_config(Arc::clone(&resolver))?),
+            resolver,
+            ..self
         })
     }
 
@@ -191,7 +221,7 @@ impl BoardTls {
 }
 
 /// A key file that other users can read is refused.
-fn read_private(path: &Path) -> Result<String, TlsError> {
+pub(super) fn read_private(path: &Path) -> Result<String, TlsError> {
     use std::os::unix::fs::MetadataExt;
     let meta = fs::metadata(path)?;
     if meta.mode() & 0o077 != 0 {
@@ -213,7 +243,7 @@ fn write_file(path: &Path, text: &str, mode: u32) -> Result<(), TlsError> {
 }
 
 /// Writes `text` to `<path>.tmp` (synced) and returns that path.
-fn stage(path: &Path, text: &str, mode: u32) -> Result<std::path::PathBuf, TlsError> {
+pub(super) fn stage(path: &Path, text: &str, mode: u32) -> Result<std::path::PathBuf, TlsError> {
     let mut name = path.file_name().unwrap_or_default().to_os_string();
     name.push(".tmp");
     let tmp = path.with_file_name(name);

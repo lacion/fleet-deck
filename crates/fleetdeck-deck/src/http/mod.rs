@@ -41,6 +41,9 @@ pub mod shell_routes;
 pub mod station_routes;
 pub mod tailnet_routes;
 pub mod tls;
+pub mod tls_tailscale;
+#[cfg(test)]
+pub(crate) mod tls_test_pki;
 pub mod workspace_routes;
 pub mod worktree_routes;
 pub mod ws;

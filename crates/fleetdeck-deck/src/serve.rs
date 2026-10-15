@@ -110,6 +110,8 @@ pub struct RunningDeck {
     scheduler: tokio::task::JoinHandle<()>,
     /// The audit log prune (NV-11).
     maintenance: tokio::task::JoinHandle<()>,
+    /// The Tailscale certificate of the board (DL-190).
+    cert: crate::cert_task::CertTask,
     shutdown: watch::Sender<bool>,
     socket: PathBuf,
 }
@@ -222,6 +224,9 @@ impl RunningDeck {
                         BoardTls::load_or_create(&tls_dir, &cert_names(bound, tailnet.as_deref()))?
                     }
                 };
+                // The resolver names the host that may get the Tailscale
+                // certificate (DL-190).
+                let tls = tls.with_name(tailnet.as_deref())?;
                 let board = Arc::new(Board {
                     store: board_store,
                     link: board_link,
@@ -297,6 +302,7 @@ impl RunningDeck {
             board_certificate = %board.tls.sha256,
             "deck ready"
         );
+        let cert_live = live_cell.clone();
         let local = Arc::new(LocalDeck {
             node: Arc::clone(&node),
             board: endpoint.clone(),
@@ -306,6 +312,21 @@ impl RunningDeck {
         });
         let server = tokio::spawn(local::serve(listener, local, rx.clone()));
         let maintenance = crate::maintenance::spawn(store.clone(), rx.clone());
+        let cert = crate::cert_task::spawn(
+            crate::cert_task::CertDeps {
+                live: cert_live,
+                resolver: Arc::clone(&board.tls.resolver),
+                dir: deck_dir.clone(),
+                hostname: config.tailnet_hostname.clone(),
+                issuer: Arc::new(crate::cert_task::TailscaleIssuer::new(
+                    config.tailscale_bin.clone(),
+                )),
+                clock: Arc::new(SystemClock),
+                anchors: crate::http::tls_tailscale::isrg_anchors(),
+                intervals: crate::cert_task::Intervals::PRODUCTION,
+            },
+            rx.clone(),
+        );
         let scheduler = crate::scheduler::spawn(store.clone(), Arc::clone(node.link()), rx);
         Ok(Self {
             node,
@@ -317,9 +338,16 @@ impl RunningDeck {
             server,
             scheduler,
             maintenance,
+            cert,
             shutdown,
             socket,
         })
+    }
+
+    /// The Tailscale certificate task: its state is for the Tailnet card.
+    #[must_use]
+    pub fn cert(&self) -> &crate::cert_task::CertTask {
+        &self.cert
     }
 
     /// What the automatic tailnet start did, as the Tailnet card shows it.
@@ -338,6 +366,7 @@ impl RunningDeck {
         let _ = self.server.await;
         let _ = self.scheduler.await;
         let _ = self.maintenance.await;
+        self.cert.join().await;
         self.board.join().await;
         self.node.shutdown();
         if let Err(e) = std::fs::remove_file(&self.socket) {

@@ -37,6 +37,9 @@ pub use model_help_cfg::{
 #[path = "config_clone.rs"]
 mod clone_cfg;
 use clone_cfg::{valid_clone_host, valid_clone_org};
+#[path = "config_deck.rs"]
+mod deck_cfg;
+pub use deck_cfg::CloneTransport;
 #[path = "config_fleet.rs"]
 mod fleet_cfg;
 #[path = "config_tailnet.rs"]
@@ -577,6 +580,8 @@ pub struct DeckConfig {
     pub conflict_mail: bool,
     /// Fleet control (ADR-008 section 3): off by default; off stops it all.
     pub fleet_control: bool,
+    /// `tailscale_cert`: a trusted board certificate from Tailscale (DL-190).
+    pub tailscale_cert: bool,
     /// The Git host of `owner/name` (lower case, `github.com` by default).
     pub clone_host: String,
     /// The owner or group of a repository given by name only (empty by default).
@@ -590,26 +595,6 @@ pub struct DeckConfig {
     pub tailnet_auto_link_listen: Vec<SocketAddr>,
 }
 
-/// How a clone reaches the Git host.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CloneTransport {
-    /// `https://host/path.git`, with the Git credential helper.
-    Https,
-    /// `git@host:path.git`, with the SSH keys.
-    Ssh,
-}
-
-impl CloneTransport {
-    /// The text form, as in `deck.toml`.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Https => "https",
-            Self::Ssh => "ssh",
-        }
-    }
-}
-
 /// The keys of `deck.toml` (`RawDeck`).
 #[cfg(test)]
 pub(crate) const RAW_DECK_KEYS: &[&str] = &[
@@ -619,6 +604,7 @@ pub(crate) const RAW_DECK_KEYS: &[&str] = &[
     "tailnet_hostname",
     "conflict_mail",
     "fleet_control",
+    "tailscale_cert",
     "clone_host",
     "clone_org",
     "clone_transport",
@@ -637,6 +623,7 @@ struct RawDeck {
     tailnet_hostname: Option<String>,
     conflict_mail: Option<bool>,
     fleet_control: Option<bool>,
+    tailscale_cert: Option<bool>,
     clone_host: Option<String>,
     clone_org: Option<String>,
     clone_transport: Option<String>,
@@ -700,6 +687,7 @@ impl DeckConfig {
             tailnet_hostname,
             conflict_mail: raw.conflict_mail.unwrap_or(true),
             fleet_control: raw.fleet_control.unwrap_or(false),
+            tailscale_cert: raw.tailscale_cert.unwrap_or(false),
             clone_host: clone_host.unwrap_or_else(|| "github.com".to_owned()),
             clone_org,
             clone_transport,
