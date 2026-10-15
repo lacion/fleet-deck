@@ -49,8 +49,12 @@ fn sid() -> SessionId {
 
 /// A repository on `main` with the `base` files committed.
 fn repo(base: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
+    repo_named("repo", base)
+}
+
+fn repo_named(name: &str, base: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
-    let dir = tmp.path().canonicalize().unwrap().join("repo");
+    let dir = tmp.path().canonicalize().unwrap().join(name);
     std::fs::create_dir(&dir).unwrap();
     git(&dir, &["init", "-q", "-b", "main"]);
     commit_files(&dir, base, "base");
@@ -110,6 +114,32 @@ async fn a_private_file_is_left_out_of_the_branch_diff() {
     assert_eq!(patch_paths(&diff.patch), ["a.txt"], "{}", diff.patch);
     assert!(!diff.patch.contains("token"));
     assert_eq!(diff.summary.files_changed, 1);
+}
+
+#[tokio::test]
+async fn a_private_file_is_left_out_when_the_repository_name_ends_in_a_space() {
+    let (_tmp, dir) = repo_named("repo ", &[("base.txt", "base\n")]);
+    let tip = branch_with(
+        &dir,
+        "feat",
+        &[("secret.toml", "token = 1\n"), ("a.txt", "aaa\n")],
+    );
+    let mut private = PrivatePaths::default();
+    private.exact.push(dir.join("secret.toml"));
+    let diff = branch_diff(&opts(), &dir, &sid(), &tip, &private)
+        .await
+        .unwrap();
+    assert_eq!(patch_paths(&diff.patch), ["a.txt"], "{}", diff.patch);
+    assert!(!diff.patch.contains("token"));
+    assert_eq!(diff.summary.files_changed, 1);
+}
+
+#[test]
+fn the_top_keeps_its_spaces_and_needs_its_newline() {
+    assert_eq!(top_of(b"/w/repo \n"), Some(PathBuf::from("/w/repo ")));
+    assert_eq!(top_of(b"/w/repo"), None);
+    assert_eq!(top_of(b"\n"), None);
+    assert_eq!(top_of(b"/a\n/b\n"), None);
 }
 
 #[tokio::test]

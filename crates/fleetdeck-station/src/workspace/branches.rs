@@ -192,6 +192,18 @@ fn line_of(out: &[u8]) -> Option<String> {
     Some(std::str::from_utf8(out).ok()?.trim().to_owned())
 }
 
+/// The repository top that `git rev-parse --show-toplevel` printed: the
+/// bytes before its one final newline, kept as they are, because a folder
+/// name can end in a space (DL-191). `None` for a cut or empty answer.
+fn top_of(out: &[u8]) -> Option<std::path::PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = out.strip_suffix(b"\n")?;
+    if path.is_empty() || path.contains(&b'\n') {
+        return None;
+    }
+    Some(std::path::PathBuf::from(std::ffi::OsStr::from_bytes(path)))
+}
+
 /// One record of the `for-each-ref` output, or `None` when it is malformed.
 fn parse_record(record: &[u8]) -> Option<RepoBranch> {
     let mut fields = record.split(|b| *b == 0);
@@ -467,11 +479,11 @@ async fn diff_of(
     // The top of the repository is used for the relative excludes only; Git
     // keeps running in the pinned folder.
     let (code, out, _) = run(git, &["rev-parse", "--show-toplevel"], 4096).await?;
-    let top = match (code, line_of(&out)) {
-        (0, Some(top)) if !top.is_empty() => top,
+    let top = match (code, top_of(&out)) {
+        (0, Some(top)) => top,
         _ => return Err(BranchError::internal("git rev-parse failed")),
     };
-    let spec = branch_pathspec(Path::new(&top), private);
+    let spec = branch_pathspec(&top, private);
     let mut patch_args = vec!["diff", "--no-color"];
     patch_args.extend(DIFF_FLAGS);
     patch_args.extend([base.as_str(), head.as_str()]);
