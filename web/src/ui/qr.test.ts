@@ -71,7 +71,7 @@ describe('qrMatrix', () => {
   });
 
   test('an 80-character login URL gets a larger valid symbol', () => {
-    const url = `https://192.168.100.200:4711/#login=${'a1b2c3d4'.repeat(5)}a1b2`;
+    const url = `https://192.168.100.200:7420/#login=${'a1b2c3d4'.repeat(5)}a1b2`;
     expect(url.length).toBe(80);
     const g = toGrid(url);
     if (!g) throw new Error('the URL must be encodable');
@@ -471,8 +471,8 @@ test('round trip: the matrix decodes back to the exact input bytes', () => {
     'HELLO',
     '', // empty payload still round-trips
     'Grüße, Wörld — ünïcødé ✓', // multi-byte UTF-8
-    'https://192.168.1.5:4711/#login=a1b2c3d4e5f60718293a4b5c6d7e8f90', // a login URL
-    `http://[fd00::1]:4711/?t=${'deadbeef'.repeat(8)}`, // 76 bytes: multi-block (v5)
+    'https://192.168.1.5:7420/#login=a1b2c3d4e5f60718293a4b5c6d7e8f90', // a login URL
+    `http://[fd00::1]:7420/?t=${'deadbeef'.repeat(8)}`, // 76 bytes: multi-block (v5)
   ];
   for (const text of cases) {
     expect(roundTrip(text)).toBe(text);

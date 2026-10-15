@@ -3,8 +3,8 @@ import { countdown, defaultLinkIndex, deviceLinkAction, fingerprintGroups } from
 
 const link = {
   links: [
-    { label: 'This computer', url: 'https://localhost:4711/#login=t' },
-    { label: 'Network 192.168.1.5', url: 'https://192.168.1.5:4711/#login=t' },
+    { label: 'This computer', url: 'https://localhost:7420/#login=t' },
+    { label: 'Network 192.168.1.5', url: 'https://192.168.1.5:7420/#login=t' },
   ],
   expires_at: 1_700_000_300_000,
   certificate_sha256: 'ab12cd34ef567890aabbccddeeff00112233445566778899aabbccddeeff0011',

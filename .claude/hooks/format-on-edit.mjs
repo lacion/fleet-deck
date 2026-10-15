@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// PostToolUse dev hook (project-local, NOT the shipped plugin hooks).
+// PostToolUse dev hook of this repository (Claude Code only; Fleet Deck ships no hooks).
 //
 // After Claude edits a TypeScript file, run Biome (format + safe fixes) on just
-// that file. Scoped to TS extensions so the generated .mjs surface is never
-// touched. Runs the repo-local binary via the current Node — the .bin/biome shim
-// is a node launcher, so no dependency on bun/npx being on PATH. Always exits 0:
-// formatting must NEVER block an edit.
+// that file. Biome comes from the board's dependencies (`web/node_modules`) and
+// uses the root `biome.jsonc`. It runs the .bin/biome shim with the current Node,
+// so bun or npx need not be on PATH. Always exits 0: formatting must never block
+// an edit.
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
@@ -30,7 +30,7 @@ try {
 if (!filePath || !TS_EXT.has(path.extname(filePath))) process.exit(0);
 
 const root = process.env.CLAUDE_PROJECT_DIR || process.cwd();
-const localBin = (name) => path.join(root, 'node_modules', '.bin', name);
+const localBin = (name) => path.join(root, 'web', 'node_modules', '.bin', name);
 
 // `biome check --write` formats and applies safe lint fixes in one pass —
 // the Biome equivalent of the old prettier --write + eslint --fix sequence.

@@ -8,7 +8,7 @@ import type { Chrome } from './chrome';
 import { DeviceLinkDialog } from './DeviceLinkDialog';
 
 const SHA = 'ab12cd34ef567890aabbccddeeff00112233445566778899aabbccddeeff0011';
-const LOGIN = 'https://192.168.1.5:4711/#login=abcdef0123456789abcdef0123456789';
+const LOGIN = 'https://192.168.1.5:7420/#login=abcdef0123456789abcdef0123456789';
 const link = (over: Partial<DeviceLink> = {}): DeviceLink => ({
   links: [{ label: 'Network 192.168.1.5', url: LOGIN }],
   expires_at: 1_000_000 + 125_000,
@@ -70,8 +70,8 @@ describe('DeviceLinkDialog', () => {
       ok(
         link({
           links: [
-            { label: 'This computer', url: 'https://localhost:4711/#login=t' },
-            { label: 'Network 192.168.1.5', url: 'https://192.168.1.5:4711/#login=t' },
+            { label: 'This computer', url: 'https://localhost:7420/#login=t' },
+            { label: 'Network 192.168.1.5', url: 'https://192.168.1.5:7420/#login=t' },
             { label: 'Tailnet deck.tail1.ts.net', url: 'https://deck.tail1.ts.net/#login=t' },
           ],
         }),
@@ -81,8 +81,8 @@ describe('DeviceLinkDialog', () => {
     for (const label of ['This computer', 'Network 192.168.1.5', 'Tailnet deck.tail1.ts.net']) {
       expect(html).toContain(`>${label}</option>`);
     }
-    expect(html).toContain('value="https://192.168.1.5:4711/#login=t"');
-    expect(html).not.toContain('value="https://localhost:4711/#login=t"');
+    expect(html).toContain('value="https://192.168.1.5:7420/#login=t"');
+    expect(html).not.toContain('value="https://localhost:7420/#login=t"');
   });
 
   test('a self-signed board shows the start of the fingerprint', () => {
