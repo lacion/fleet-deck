@@ -139,6 +139,9 @@ pub enum HostError {
     /// The shim connection or attach failed (ADR-005).
     #[error("shim: {0}")]
     Shim(String),
+    /// The shim did not prove its executable, so it got no token (DL-194).
+    #[error("the shim could not be verified: {0}")]
+    Untrusted(String),
 }
 
 /// A started process: its stdout (read by the adapter driver) and its control.

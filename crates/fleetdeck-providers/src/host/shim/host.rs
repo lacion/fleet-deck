@@ -31,6 +31,7 @@ use super::client::{AttachResult, Connection, FrameReader, FrameWriter};
 use super::identity::{IdentityCheck, check_identity};
 use super::journal::ShimFiles;
 use super::server::STDIN_CLOSED;
+use super::status::StatusEnd;
 use super::wire::{
     ExitState, FromShim, GapReason, MAX_PAYLOAD, ProviderIdentity, Refusal, StatusAnswer, ToShim,
     WriteState,
@@ -219,6 +220,7 @@ impl ShimHost {
             gaps: StdMutex::new(Vec::new()),
             reads: StdMutex::new(std::collections::VecDeque::new()),
             exit_state: StdMutex::new(exit.clone()),
+            status_end: StatusEnd::default(),
         });
         let (sink, stdout) = tokio::io::duplex(PIPE_BYTES);
         let start = record.cursor.max(cursor_floor);
@@ -303,6 +305,8 @@ pub(super) struct Shared {
     /// The shim's own exit report (with `descendants_remaining`), once it
     /// arrived (DL-120).
     exit_state: StdMutex<Option<ExitState>>,
+    /// The `end` of the last `status` frame (DL-194 §9.7).
+    status_end: StatusEnd,
 }
 
 impl Shared {
@@ -486,10 +490,8 @@ async fn read_loop(mut r: Reader) {
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(exit.clone());
                 r.exit = Some(exit);
             }
-            FromShim::Hello { .. }
-            | FromShim::Refused { .. }
-            | FromShim::Attached { .. }
-            | FromShim::Status { .. } => {}
+            FromShim::Status { end, .. } => r.shared.status_end.set(end),
+            FromShim::Hello { .. } | FromShim::Refused { .. } | FromShim::Attached { .. } => {}
         }
     }
 }
@@ -595,6 +597,14 @@ impl ShimProcess {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+
+    /// The `end` of the last `status` frame received on this connection
+    /// (the end of the shim's buffered output then); `None` before the
+    /// first (DL-194 §9.7).
+    #[must_use]
+    pub fn status_end(&self) -> Option<u64> {
+        self.shared.status_end.get()
     }
 
     /// The stdout offset that the reader received up to.

@@ -13,12 +13,18 @@
 //! A crash at any point leaves evidence that recovery classifies (§3.2
 //! step 1); a failed [`ShimHost::start`] is settled the same way.
 
+use std::ffi::OsString;
 use std::fmt;
 use std::io;
+use std::os::unix::ffi::OsStrExt as _;
 use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use super::client;
+use fleetdeck_core::Secret;
+
+use super::client::{self, ClientError};
+use super::exe_hash::sha256_file;
 use super::host::{ShimHost, ShimRecord};
 use super::identity::{BootIdReader, real_boot_id_reader};
 use super::journal::{self, ShimFiles, prepare_dir};
@@ -47,6 +53,8 @@ pub struct ShimHostConfig {
     /// How the station reads the boot id (DL-182 §4.1). The real reader
     /// unless a test installs another.
     pub boot_id_reader: BootIdReader,
+    /// The SHA-256 of `exe`, hashed once per config (DL-194).
+    exe_sha256: Arc<OnceLock<String>>,
 }
 
 impl fmt::Debug for ShimHostConfig {
@@ -75,7 +83,21 @@ impl ShimHostConfig {
             buffer_bytes: DEFAULT_CAPACITY,
             wait: Duration::from_secs(10),
             boot_id_reader: real_boot_id_reader(),
+            exe_sha256: Arc::new(OnceLock::new()),
         }
+    }
+
+    /// The SHA-256 of [`Self::exe`], hashed on the first call and cached
+    /// (DL-194: the hash that a `hello` must equal before the token is sent).
+    ///
+    /// # Errors
+    /// The file cannot be read or is too large.
+    pub fn exe_digest(&self) -> io::Result<String> {
+        if let Some(hash) = self.exe_sha256.get() {
+            return Ok(hash.clone());
+        }
+        let hash = sha256_file(&self.exe)?;
+        Ok(self.exe_sha256.get_or_init(|| hash).clone())
     }
 
     /// The boot id as the station reads it now.
@@ -89,6 +111,23 @@ impl ShimHostConfig {
     #[must_use]
     pub fn shims_dir(&self) -> PathBuf {
         self.station_dir.join("shims")
+    }
+}
+
+/// What the station adds to a start that gets the session token (DL-194).
+pub struct LaunchSecrets {
+    /// The session token for the provider's environment.
+    pub token: Secret<String>,
+    /// Arguments appended to the provider's (the tool arguments).
+    pub extra_args: Vec<OsString>,
+}
+
+impl fmt::Debug for LaunchSecrets {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LaunchSecrets")
+            .field("token", &"<redacted>")
+            .field("extra_args", &self.extra_args)
+            .finish()
     }
 }
 
@@ -166,6 +205,7 @@ impl ShimHost {
             args: Vec::new(),
             cwd: Vec::new(),
             env: Vec::new(),
+            secrets: false,
         }
         .provider_from(spec);
         Ok(Prepared {
@@ -193,10 +233,25 @@ impl ShimHost {
     /// The shim did not start or did not report `ready`. The provider may
     /// still have started: the caller settles the row by recovery.
     pub async fn start(&self, prepared: Prepared) -> Result<ShimRecord, HostError> {
+        self.start_with(prepared, None).await
+    }
+
+    /// [`Self::start`] with the session token (DL-194). With `Some`, the
+    /// extra arguments join the provider's, the shim proves its executable
+    /// and gets the token only if its hash is the one of `config().exe`.
+    ///
+    /// # Errors
+    /// As [`Self::start`]; [`HostError::Untrusted`] when the shim could not
+    /// be verified (no token was sent).
+    pub async fn start_with(
+        &self,
+        prepared: Prepared,
+        secrets: Option<LaunchSecrets>,
+    ) -> Result<ShimRecord, HostError> {
         let c = self.config();
         let Prepared {
             mut record,
-            spec,
+            mut spec,
             key,
             program,
             launch_boot_id: _,
@@ -205,9 +260,34 @@ impl ShimHost {
             program: program.clone(),
             source,
         };
-        let launched = client::launch(&c.exe, &spec, &key, c.wait)
+        let launched = if let Some(secrets) = secrets {
+            spec.args
+                .extend(secrets.extra_args.iter().map(|a| a.as_bytes().to_vec()));
+            spec.secrets = true;
+            let config = c.clone();
+            let expected = tokio::task::spawn_blocking(move || config.exe_digest())
+                .await
+                .map_err(io::Error::other)
+                .and_then(|hashed| hashed)
+                .map_err(|e| {
+                    tracing::debug!(error = %e, "the shim executable cannot be hashed");
+                    spawn_error(io::Error::other("the shim executable cannot be hashed"))
+                })?;
+            client::launch_with(
+                &c.exe,
+                &spec,
+                &key,
+                c.wait,
+                Some((&expected, &secrets.token)),
+            )
             .await
-            .map_err(|e| spawn_error(io::Error::other(e.to_string())))?;
+        } else {
+            client::launch(&c.exe, &spec, &key, c.wait).await
+        }
+        .map_err(|e| match e {
+            ClientError::Untrusted(reason) => HostError::Untrusted(reason),
+            other => spawn_error(io::Error::other(other.to_string())),
+        })?;
         let identity = match launched.reply {
             LaunchReply::Ready { provider_identity } => provider_identity,
             other => return Err(spawn_error(io::Error::other(format!("{other:?}")))),

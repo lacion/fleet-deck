@@ -73,6 +73,7 @@ impl Rig {
                 (b"PATH".to_vec(), b"/usr/bin:/bin".to_vec()),
                 (b"REC".to_vec(), rec.as_os_str().as_encoded_bytes().to_vec()),
             ],
+            secrets: false,
         };
         edit(&mut spec);
         Self {

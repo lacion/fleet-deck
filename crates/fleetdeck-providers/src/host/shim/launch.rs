@@ -7,6 +7,14 @@
 //! 0600 key file, or a log. The shim answers one JSON line on its stdout
 //! ([`LaunchReply`]) and never writes there again.
 //!
+//! With [`LaunchSpec::secrets`] (DL-194) the exchange has a second step:
+//! the station writes the spec frame and keeps stdin open; the shim
+//! answers one `hello` line with the SHA-256 of its own executable; the
+//! station writes the [`SecretsFrame`] frame (header only) and closes
+//! stdin; the shim answers `ready` (or `failed`) as above. The station
+//! sends the token only when the hash is the one of the file it launched.
+//! Without `secrets` the one-frame exchange is unchanged.
+//!
 //! The shim starts the provider through `<exe> shim-exec --parent <pid> --
 //! <program> <args>`: the helper makes the provider a session and group
 //! leader, asks the kernel for `SIGKILL` when the shim dies (Linux), checks
@@ -20,6 +28,13 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use super::wire::ProviderIdentity;
+
+/// The launch protocol version of the two-step exchange (DL-194). It is
+/// separate from the attach [`super::wire::PROTOCOL`].
+pub const LAUNCH_PROTOCOL: u32 = 2;
+/// The largest header of the second launch frame (DL-194); its payload is
+/// empty.
+pub const MAX_SECRETS_FRAME: usize = 1024;
 
 /// The default time before an unacknowledged exit is published (7 days).
 pub const EXIT_PUBLISH_AFTER_MS: u64 = 7 * 24 * 60 * 60 * 1000;
@@ -47,6 +62,10 @@ pub struct LaunchSpec {
     pub cwd: Vec<u8>,
     /// The complete provider environment, already scrubbed by the station.
     pub env: Vec<(Vec<u8>, Vec<u8>)>,
+    /// true: the shim proves its executable before it gets the session
+    /// secrets (DL-194).
+    #[serde(default)]
+    pub secrets: bool,
 }
 
 impl LaunchSpec {
@@ -96,6 +115,9 @@ impl LaunchSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reply", rename_all = "snake_case", deny_unknown_fields)]
 pub enum LaunchReply {
+    /// With `secrets` (DL-194): the SHA-256 of the shim's executable, sent
+    /// before anything is spawned.
+    Hello { exe_sha256: String, protocol: u32 },
     /// The socket is bound and the provider runs.
     Ready { provider_identity: ProviderIdentity },
     /// The journal holds `fenced`: no socket, no provider.
@@ -109,3 +131,21 @@ pub enum LaunchReply {
         error: String,
     },
 }
+
+/// The second launch frame (DL-194): the session token for the provider's
+/// environment. It is never logged, journaled or stored.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretsFrame {
+    pub token: String,
+}
+
+impl std::fmt::Debug for SecretsFrame {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SecretsFrame { token: \"<redacted>\" }")
+    }
+}
+
+#[cfg(test)]
+#[path = "launch_tests.rs"]
+mod tests;

@@ -16,6 +16,7 @@
 
 pub mod attach;
 pub mod client;
+pub mod exe_hash;
 pub mod host;
 pub mod identity;
 pub mod inspect;
@@ -26,6 +27,7 @@ pub mod proof;
 pub mod server;
 pub mod settle;
 pub mod start;
+mod status;
 pub mod stdin;
 pub mod wire;
 pub mod writes;
