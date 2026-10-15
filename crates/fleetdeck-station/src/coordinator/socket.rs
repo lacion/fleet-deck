@@ -36,6 +36,7 @@ const MAX_CONNECTIONS: usize = 64;
 const ERR_BAD_REQUEST: &str = "ERR bad_request";
 const ERR_UNAUTHORIZED: &str = "ERR unauthorized";
 const ERR_LIMITED: &str = "ERR limited";
+const ERR_STARTING: &str = "ERR starting";
 
 /// The socket path (DL-194 §9.2): the first candidate that fits `sun_path`
 /// and whose directory is created or accepted as 0700, owned by this user
@@ -260,6 +261,7 @@ async fn intake<R: AsyncBufRead + Unpin>(reader: &mut R, shared: &Shared) -> io:
             Ok(Intake::Ready(binding, permit, body))
         }
         Err(MessageOutcome::Limited) => Ok(Intake::Refuse(ERR_LIMITED)),
+        Err(MessageOutcome::Starting) => Ok(Intake::Refuse(ERR_STARTING)),
         Err(_) => Ok(Intake::Refuse(ERR_UNAUTHORIZED)),
     }
 }
@@ -286,6 +288,7 @@ async fn connection(stream: UnixStream, shared: &Shared) {
                 }
                 MessageOutcome::Unauthorized => Some(ERR_UNAUTHORIZED.to_owned()),
                 MessageOutcome::Limited => Some(ERR_LIMITED.to_owned()),
+                MessageOutcome::Starting => Some(ERR_STARTING.to_owned()),
             }
         }
     };

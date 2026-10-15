@@ -4,7 +4,7 @@
 //! lives in a [`Secret`] until it is put into the provider child's
 //! environment; it is never stored, logged or sent.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -15,6 +15,7 @@ use fleetdeck_proto::event::ProviderKind;
 use ring::rand::{SecureRandom, SystemRandom};
 use tokio::sync::Semaphore;
 
+use super::fence::Fence;
 use super::forward::Transport;
 
 /// The prefix of a coordinator credential.
@@ -158,6 +159,12 @@ pub struct Bindings {
     deck: Arc<Mutex<Option<DeckLink>>>,
     /// The MCP bridge of the shim host, once its socket listens (DL-194).
     bridge: Arc<Mutex<Option<BridgeEndpoint>>>,
+    /// The invalidation fence of the shim host, once the start order
+    /// created it (DL-194 §2.3). The direct host has none.
+    fence: Arc<Mutex<Option<Arc<Fence>>>>,
+    /// The digests of reattached bindings whose replay is not finished: the
+    /// ingress answers "starting" for them (DL-194 §9.7).
+    held: Arc<Mutex<HashSet<String>>>,
 }
 
 /// What a shim-hosted provider runs for its tools (DL-194 §2.2, §9.3): the
@@ -182,6 +189,9 @@ pub(crate) enum Auth {
     Unauthorized,
     /// The binding is over its rate or concurrency limit.
     Limited,
+    /// The binding is held until the replay of its shim finished (DL-194
+    /// §9.7).
+    Starting,
     Ok {
         binding: Box<Binding>,
         permit: tokio::sync::OwnedSemaphorePermit,
@@ -189,6 +199,22 @@ pub(crate) enum Auth {
 }
 
 impl ToolClass {
+    /// The grant class name of a class: the inverse of [`Self::parse`]
+    /// (`own` is no grant class and is never stored).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Mail => "mail",
+            Self::Drive => "drive",
+            Self::Spawn => "spawn",
+            Self::Inspect => "inspect",
+            Self::Manage => "manage",
+            Self::Answer => "answer",
+            Self::Own => "own",
+        }
+    }
+
     /// The class of a grant class name (`read`, `mail`, `drive`, `spawn`,
     /// `inspect`, `manage`, `answer`). Unknown names fail closed.
     #[must_use]
@@ -336,6 +362,58 @@ impl Bindings {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+
+    /// Records the invalidation fence of the shim host (DL-194).
+    pub fn set_fence(&self, fence: Arc<Fence>) {
+        *self
+            .fence
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(fence);
+    }
+
+    /// The invalidation fence, on the shim host only.
+    #[must_use]
+    pub fn fence(&self) -> Option<Arc<Fence>> {
+        self.fence
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    fn held_set(&self) -> std::sync::MutexGuard<'_, HashSet<String>> {
+        self.held
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Holds credentials: the ingress answers "starting" for them (DL-194
+    /// §9.7).
+    pub fn hold(&self, digests: impl IntoIterator<Item = String>) {
+        self.held_set().extend(digests);
+    }
+
+    /// Releases held credentials.
+    pub fn release<'a>(&self, digests: impl IntoIterator<Item = &'a String>) {
+        let mut held = self.held_set();
+        for d in digests {
+            held.remove(d);
+        }
+    }
+
+    /// True while the credential is held.
+    #[must_use]
+    pub fn is_held(&self, digest: &str) -> bool {
+        self.held_set().contains(digest)
+    }
+
+    /// The credential digest of a binding (DL-194).
+    #[must_use]
+    pub fn digest_of(&self, binding_id: &str) -> Option<String> {
+        self.lock()
+            .iter()
+            .find(|(_, e)| e.binding.binding_id == binding_id)
+            .map(|(d, _)| d.clone())
     }
 
     /// The loopback URL of the ingress, if it listens.
@@ -583,10 +661,14 @@ impl Bindings {
             return Auth::Unauthorized;
         }
         let mut map = self.lock();
-        let Some(e) = map.get_mut(&digest(token)) else {
+        let key = digest(token);
+        let Some(e) = map.get_mut(&key) else {
             tracing::info!(case = "unknown", "coordinator credential refused");
             return Auth::Unauthorized;
         };
+        if self.is_held(&key) {
+            return Auth::Starting;
+        }
         if matches!(
             e.binding.state,
             BindingState::Revoked | BindingState::Expired

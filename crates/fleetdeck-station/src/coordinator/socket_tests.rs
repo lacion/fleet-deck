@@ -261,3 +261,23 @@ fn an_open_directory_is_refused_and_the_next_candidate_is_used() {
     let path = mcp_socket_path(Some(runtime.path()), station.path(), tmp.path(), "INC").unwrap();
     assert_eq!(path, station.path().join("run/mcp/mcp.s"));
 }
+
+#[tokio::test]
+async fn a_held_token_gets_err_starting_until_it_is_released() {
+    let r = rig().await;
+    let message = list().to_string();
+    let held = crate::coordinator::digest(&r.token);
+    r.bindings.hold([held.clone()]);
+    assert_eq!(
+        exchange(&r.path, &frame(&r.token, &message)).await,
+        b"ERR starting\n"
+    );
+    let (other, _) = mint().unwrap();
+    assert_eq!(
+        exchange(&r.path, &frame(other.expose(), &message)).await,
+        b"ERR unauthorized\n"
+    );
+    r.bindings.release([&held]);
+    let got = exchange(&r.path, &frame(&r.token, &message)).await;
+    assert!(got.starts_with(b"{"), "{got:?}");
+}

@@ -8,6 +8,7 @@
 
 pub mod bindings;
 pub mod bridge;
+pub mod fence;
 pub mod fleet_tools;
 pub mod forward;
 pub mod handoff;

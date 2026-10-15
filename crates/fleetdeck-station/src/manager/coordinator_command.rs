@@ -17,7 +17,8 @@ use fleetdeck_proto::event::{ProviderKind, RunOrigin};
 use fleetdeck_proto::{Event, RejectCode, SessionId};
 
 use super::decide::{reject, result};
-use crate::coordinator::{BindingState, Bindings};
+use crate::coordinator::{Binding, BindingState, Bindings};
+use crate::store::shim_bindings::RowState;
 use crate::store::{Caller, DecideError, Decision};
 
 fn forbidden() -> DecideError {
@@ -81,6 +82,9 @@ pub fn revoke(
             "the session has no coordinator binding under this grant",
         )
     })?;
+    if let Some(done) = revoke_row(d, bindings, &binding, session_id)? {
+        return Ok(done);
+    }
     if binding.state != BindingState::Revoked {
         bindings.update(&binding.binding_id, |b| b.state = BindingState::Revoked);
         d.append(
@@ -94,6 +98,61 @@ pub fn revoke(
         )?;
     }
     Ok(result(session_id, None))
+}
+
+/// The revoke of a binding with a `shim_bindings` row on the shim host
+/// (DL-194 §2.3, §9.13). The durable row decides, not memory (memory may be
+/// gated already). In order: the memory gate, the fence entry, the row end
+/// and the event. `None`: the binding has no row or the station has no
+/// fence, so the caller takes the direct path.
+fn revoke_row(
+    d: &mut Decision<'_>,
+    bindings: &Bindings,
+    binding: &Binding,
+    session_id: &SessionId,
+) -> Result<Option<CommandResult>, DecideError> {
+    let Some(fence) = bindings.fence() else {
+        return Ok(None);
+    };
+    let Some(digest) = bindings.digest_of(&binding.binding_id) else {
+        return Ok(None);
+    };
+    let Some(row) = d.shim_binding_row(&digest)? else {
+        return Ok(None);
+    };
+    if !matches!(row.state, RowState::Pending | RowState::Active) {
+        // Ended or suspended already: nothing to do, no event.
+        return Ok(Some(result(session_id, None)));
+    }
+    bindings.update(&binding.binding_id, |b| b.state = BindingState::Revoked);
+    let entry = (row.shim_id.clone(), digest.clone());
+    fence
+        .add(std::slice::from_ref(&entry), "revoke")
+        .map_err(|error| {
+            tracing::error!(%error, "the revoke fence entry was not written");
+            reject(
+                RejectCode::InvalidCommand,
+                "The revoke was not saved. The old token is blocked until Fleet Deck restarts. Try again.",
+            )
+        })?;
+    fence.mark_settle(entry);
+    if d.shim_binding_end(&digest, "revoked")?.is_none() {
+        return Ok(Some(result(session_id, None)));
+    }
+    crate::fault::hit(
+        crate::fault::FaultPoint::AfterBindingEnd,
+        "session.coordinator_revoke",
+    );
+    d.append(
+        session_id,
+        Event::CoordinatorEnded {
+            binding_id: binding.binding_id.clone(),
+            generation: binding.generation,
+            reason: "revoked".to_owned(),
+        }
+        .into(),
+    )?;
+    Ok(Some(result(session_id, None)))
 }
 
 /// # Errors

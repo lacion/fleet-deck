@@ -116,6 +116,16 @@ impl Durable {
         }
     }
 
+    /// Gives the driver the held digests of its shim: it releases them when
+    /// it has committed the output that the shim had buffered (DL-194
+    /// §9.7).
+    pub fn set_release(&self, bindings: crate::coordinator::Bindings, digests: Vec<String>) {
+        match self {
+            Self::Claude(d) => d.set_release(bindings, digests),
+            Self::Codex(d) => d.set_release(bindings, digests),
+        }
+    }
+
     /// Stops the driver's output pump without touching the shim (tests and
     /// station shutdown).
     pub async fn abandon(&self) {

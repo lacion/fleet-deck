@@ -47,6 +47,7 @@ pub mod setup_runs;
 mod sharing;
 pub mod shell_effects;
 pub mod shim_bindings;
+mod shim_bindings_start;
 pub mod shim_driver;
 pub mod shim_gaps;
 pub mod shim_writes;

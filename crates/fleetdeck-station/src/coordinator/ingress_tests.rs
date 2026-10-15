@@ -556,3 +556,24 @@ async fn a_fleet_only_binding_sees_its_own_tools_and_the_station_answers_them() 
     assert!(forwarded[0].0.grant_id.is_empty());
     assert_eq!(forwarded[0].2, json!({"question": "which key?"}));
 }
+
+#[tokio::test]
+async fn a_held_credential_gets_503_with_the_starting_error_until_it_is_released() {
+    let r = rig(BindingState::Active, MAIL).await;
+    let held = crate::coordinator::digest(&r.token);
+    r.bindings.hold([held.clone()]);
+    let reply = rpc(&r, Some(&r.token), list()).await;
+    assert_eq!(reply.status, 503);
+    let body: Value = serde_json::from_str(&reply.body).unwrap();
+    assert_eq!(
+        body,
+        json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32000,
+            "message": "Fleet Deck is starting; try again in a moment."}})
+    );
+    assert!(r.forward.calls.lock().unwrap().is_empty());
+    // An unknown token is not "starting".
+    let (unknown, _) = mint().unwrap();
+    assert_eq!(rpc(&r, Some(unknown.expose()), list()).await.status, 401);
+    r.bindings.release([&held]);
+    assert_eq!(rpc(&r, Some(&r.token), list()).await.status, 200);
+}

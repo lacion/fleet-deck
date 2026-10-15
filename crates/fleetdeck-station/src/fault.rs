@@ -13,6 +13,8 @@
 //! | `after_send` | the I/O returned, before the result is stored | effect kind |
 //! | `before_confirm` | provider evidence confirms an effect, inside its uncommitted transaction | effect kind |
 //! | `after_step` | a revert step committed, before the next external step (DL-117) | the new step (`rolled_back`) |
+//! | `after_fence` | the binding fence entry was published, before the row change (DL-194) | the operation (`revoke`, `rotate`) |
+//! | `after_binding_end` | the revoke ended the binding row, before the decision commits (DL-194) | command method (`session.coordinator_revoke`) |
 //!
 //! The hook does something only in a build with the `fault-injection`
 //! feature (the CLI's tests enable it); in a normal build [`hit`] is empty.
@@ -29,16 +31,20 @@ pub enum FaultPoint {
     AfterSend,
     BeforeConfirm,
     AfterStep,
+    AfterFence,
+    AfterBindingEnd,
 }
 
 impl FaultPoint {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 8] = [
         Self::BeforeCommit,
         Self::AfterCommit,
         Self::AfterClaim,
         Self::AfterSend,
         Self::BeforeConfirm,
         Self::AfterStep,
+        Self::AfterFence,
+        Self::AfterBindingEnd,
     ];
 
     #[must_use]
@@ -50,6 +56,8 @@ impl FaultPoint {
             Self::AfterSend => "after_send",
             Self::BeforeConfirm => "before_confirm",
             Self::AfterStep => "after_step",
+            Self::AfterFence => "after_fence",
+            Self::AfterBindingEnd => "after_binding_end",
         }
     }
 }
