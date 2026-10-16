@@ -3040,3 +3040,9 @@ Owner review: pending.
 - Step 3 (G4): auto-continue on the shim host. A lost shim session is continued only with the DL-182 proof that its run ended (in practice a verified reboot); the dispatch checks the reboot proof again like a manual resume; without proof the session waits (`execution_unknown`).
 - DL-194 §9.10: the bridge mode is gated by `BRIDGE_VERIFIED`. The live smoke `live_bridge` passed with Claude 2.1.301 and Codex 0.162.1, both control rounds; the list names Claude 2.1.296 and Codex 0.162.1.
 - Open: step 4 (macOS, `libproc`, owner Mac run) and step 5 (default host, owner decision).
+
+## DL-196 — `!` shell commands with parity to Claude Code and Codex (B8, design accepted, 2026-10-16)
+
+- Context: the owner: "we need full parity with CC and Codex". Design `docs/v2/design/bang-commands.md` revision 10 (ten adversary rounds, owner-extended; round 10 PASS; two majors resolved in §2.0000000 after the PASS).
+- Decision: Codex sessions use the native `thread/shellCommand`; Claude sessions run the command on the station (process group, timeout, session-scoped cancel) and the result reaches the model with the next prompt that names it (`input.shell_results` → `InputRecord.shell_context`, once). Owner only, `allow_shell`; the whole folder is busy while a command may run; a durable per-folder generation orders shell writes against checkpoints; `ReleaseShell` lets the owner release a folder when no proof can exist.
+- High risk (command execution): PRE-PR review before the merge.
