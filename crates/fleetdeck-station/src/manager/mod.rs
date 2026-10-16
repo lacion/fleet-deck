@@ -39,6 +39,7 @@ pub mod shim_station;
 pub mod shim_stdin;
 pub mod shims;
 pub mod target;
+mod task_stop;
 pub mod trash;
 pub mod turns;
 pub mod workspaces;
@@ -663,9 +664,7 @@ impl SessionManager {
             .lock()
             .map(|mut t| t.drain(..).collect())
             .unwrap_or_default();
-        for task in tasks {
-            let _ = task.await;
-        }
+        task_stop::join_or_abort(tasks).await;
         self.target
             .wait_shells_settled(&open, Duration::from_secs(10))
             .await;

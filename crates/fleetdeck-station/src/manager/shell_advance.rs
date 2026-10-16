@@ -165,11 +165,25 @@ pub async fn task(
     mut shutdown: watch::Receiver<bool>,
 ) {
     loop {
+        if *shutdown.borrow() {
+            return;
+        }
         if let Err(e) = settle_proven(&store).await {
             tracing::error!(error = %e, "shell proof check failed");
         }
-        if let Err(e) = advance_pending(&store, &fences).await {
-            tracing::error!(error = %e, "shell advance failed");
+        // A dropped advance is safe: the row keeps `advance_pending = 1` and
+        // `start_up` advances it at the next start.
+        tokio::select! {
+            r = advance_pending(&store, &fences) => {
+                if let Err(e) = r {
+                    tracing::error!(error = %e, "shell advance failed");
+                }
+            }
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    return;
+                }
+            }
         }
         tokio::select! {
             () = notify.notified() => {}
@@ -182,3 +196,7 @@ pub async fn task(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "shell_advance_tests.rs"]
+mod tests;
