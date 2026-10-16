@@ -1,6 +1,6 @@
 # Fleet Deck on Omarchy: the wall, desktop control and the desktop MCP (R13)
 
-- **Status:** Draft, revision 2 (2026-10-16): §5A answers the DESIGN REVIEW round 1 of §4.5, §5 and §6 (`/tmp/adv-r13-p2-design-report.md`) and overrides them where they differ. Not frozen. Each high-risk part needs an adversary DESIGN REVIEW before its code (§13).
+- **Status:** Draft, revision 3 (2026-10-16): §5B answers the round 2 review (`/tmp/adv-r13-p23-r2-report.md`) and overrides §5A where they differ; §5A answers the DESIGN REVIEW round 1 of §4.5, §5 and §6 (`/tmp/adv-r13-p2-design-report.md`) and overrides them where they differ. Not frozen. Each high-risk part needs an adversary DESIGN REVIEW before its code (§13).
 - **Owner request (2026-10-16):** "i have a server thats connected to a ultrawide screen, i use this server to run multiple ai agents as it has 64 cores and 128gb of ram … it would be awesome if i could control omarchy and the screen trough the fleet and maybe also have an mcp … imagine using the screen as a command control center and we could display and control everhting there." Then: "lets create a document for this work so we can implement everything".
 - **Owner answers (DL-198):**
 
@@ -249,7 +249,7 @@ A display can be **bound** to one station and monitor: `binding: { station, moni
 
 ---
 
-## 5A. Revision 2: binding rules after the design review of §4.5, §5 and §6
+## 5A. Revision 2: binding rules after the design review of §4.5, §5 and §6 (round 1)
 
 These rules override §4.5, §5 and §6 where they differ. The numbers name the review findings.
 
@@ -264,6 +264,26 @@ These rules override §4.5, §5 and §6 where they differ. The numbers name the 
 9. **Window ownership (12).** The station records each window it opens as `(Hyprland instance signature, address, pid, class, opener session, opened_at)`. Before `window.close` or `wall.close` it reads `hyprctl clients -j` and closes only when instance, address, pid and class still match; a compositor restart forgets every record.
 10. **Proofs added (13).** Atomic single-use redemption of a link and of a pairing; separate cookie names and token domains (`fd_session`, `fd_display`, `fd_display_pending`) with tests that swap them; CSRF on the pairing and logout routes, and logout clears the display cookie; revocation before the WS ticket is redeemed, before the snapshot and during a slow send; the comment filter of the review pane (drafts inside sent threads); the live gates of `desktop.act` at intake and at dispatch; the wake rule respects `wake_on_needs_you`, the quiet hours and both kill switches; an active kiosk cannot extend the 90-day absolute limit.
 11. **The cost of the kiosk on the server (9).** §12 states it exactly: a same-UID process on the server can read the kiosk's display cookie and so read, until revocation and at most 90 days, the summaries of the stations in the ceiling (not mail, not tool output, not file content unless `show_diffs` is on). The ceiling default is **the stations chosen at creation**, never "all future stations".
+
+## 5B. Revision 3: rules after the design review round 2
+
+These rules override §5A, §4.5, §5 and §6 where they differ.
+
+1. **One display payload policy for every route.** The same reduction applies to the WebSocket, `activity.list`, `sessions.list`, `fleet.extras` and every other row a display can read: a tool appears only as its kind, its safe name (the tool name the provider reports, cut at 40 characters) and its status; never `input_summary`, a command, MCP arguments, an edit input, a file list or approval details; a request appears only as its kind and tool name. The display activity is built from these fields only. Tests send sentinel secrets in a shell command, MCP arguments, an edit input and approval text, and read them through the real HTTP endpoints and the WebSocket of a display: no answer holds a sentinel.
+2. **Pairing limits.** `POST /api/displays/pair`:
+   - budgets: 3 creations per minute per source IP and 20 per minute for the deck; at most 10 pending pairings at a time (the oldest is not evicted: a new request gets 503 "Too many display pairings; try again later");
+   - each pending record is a fixed-size row (id, code, a hash of the pending secret, the source IP, the user agent cut to 120 characters, the creation time) and expires by a timer at 5 minutes;
+   - the 6-digit code is unique among the active pairings: the deck reserves it atomically and retries at most 5 times, then 503;
+   - the kiosk polls its pairing at most once per second (429 above);
+   - the owner's list shows at most the 10 pending records;
+   - the owner approves by the pairing **id** and the code together; the approval consumes the pending secret and the kiosk's next poll gets a **new** display cookie (the pending cookie is cleared);
+   - a code alone, a wrong pending cookie, an expired pairing and a second approval are refused (tests, also concurrent approve and claim).
+3. **Directives, completed.** A `batch_id` is expanded to all its sessions, and every one is checked against the ceiling and the sender's authority; a directive restored after a deck restart is checked again against the current ceiling before the display gets it.
+4. **Patches, completed.** With `show_diffs` on, the member file deny list (secrets, keys, `.env` and the other entries of DL-154) also applies to display patches; `show_diffs` is read live on every request.
+5. **Desktop arguments, completed.** A workspace is only a number 1 to 99 (typed `u8`, no names, no relative values); a monitor is resolved against the live `hyprctl monitors -j` list and must equal one name there exactly; every argv puts the option terminator `--` before a value where the tool supports it.
+6. **Window records, completed.** Records hold `(instance signature, address, pid, class, opener session)`; the station prunes the records that no longer appear in `hyprctl clients -j` at each info refresh and after each action; a close checks the record against a fresh `clients` read right before it closes. The residual race (a window that closes and a new one with the same address, pid and class in the same instant) is accepted and stated.
+7. **The kiosk cost, completed.** §12 item 1 also states that a copied display cookie reads assistant message text and the current directive's artifact of the sessions in the ceiling.
+8. **Proofs, completed.** Owner and display cookies in one browser at the same time (each route sees the right principal); revocation before an unused link is redeemed; the kiosk profile is cleared on `wall.close`; a terminal opened by `terminal.open` follows the shell policy (`allow_shell`, the roots); the pairing tests of item 2.
 
 ## 6. Desktop control on the station: feature `desktop.v1` (HIGH RISK)
 
