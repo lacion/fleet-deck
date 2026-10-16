@@ -229,6 +229,8 @@ async fn a_different_boot_id_proves_every_unresolved_row_and_the_session_becomes
     rig.manager.shutdown(StopMode::Kill).await;
 }
 
+// The shim host is Linux only (DL-188 step 3).
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn auto_continue_picks_a_session_that_a_reboot_proof_made_resumable() {
     use fleetdeck_proto::event::RunOrigin;
