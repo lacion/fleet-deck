@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { instanceLimit, mostRoom, rateMeters } from '../board/usage';
 import { batchRef, newBatchId } from '../compare/compare';
-import type { DeckSession, SessionKey, StationView, WorkspaceListing } from '../gen';
+import type { DeckSession, SessionKey, StationView, TranscriptPin, WorkspaceListing } from '../gen';
 import type { Freshness } from '../runtime/state';
 import { DECK } from '../settings/actions';
 import { useSettings } from '../settings/context';
@@ -9,6 +9,7 @@ import { FolderPicker } from '../ui/FolderPicker';
 import { useNow } from '../ui/useNow';
 import { resourceWarnings } from '../board/resources';
 import { BranchFields } from './BranchFields';
+import { BrowseSessions } from './BrowseSessions';
 import { CloneAccess } from './CloneAccess';
 import { FleetControlFields } from './FleetControlFields';
 import {
@@ -21,6 +22,7 @@ import {
   showFleetFields,
 } from './fleetControl';
 import { ModelField } from './ModelField';
+import type { NativeFill } from './nativeSessions';
 import { type CloneDefaults, cloneDefaultsOf, DEFAULT_CLONE, resolveRepo } from './repoRef';
 import { SetupField } from './SetupField';
 import {
@@ -114,6 +116,10 @@ export function SpawnForm({
   const [title, setTitle] = useState('');
   const [prompt, setPrompt] = useState(initialPrompt);
   const [importId, setImportId] = useState('');
+  // B7: the pin of the entry that "Continue it" chose. The import command does not send it yet;
+  // the import pin task adds it to the command and to the call. Any edit of the fields clears it.
+  const [importPin, setImportPin] = useState<TranscriptPin | null>(null);
+  const [browsing, setBrowsing] = useState(false);
   const [place, setPlace] = useState<'here' | 'worktree' | 'clone'>(initialPlace);
   const [repoText, setRepoText] = useState(initialRepo);
   // The error line of the field is an alert once the owner left the field or pressed Start.
@@ -190,6 +196,20 @@ export function SpawnForm({
   const previewing = batch && place !== 'clone' && !importing && batchLines.length >= 2;
   const setupShown = station?.info?.allow_setup_cmd === true && !importing;
   const setupBad = setupShown && setupProblem(setupCmd) !== null;
+  // B7: browsing is the owner's (the deck answers 403 to every other login).
+  const browse =
+    settingsEnv !== undefined &&
+    station !== undefined &&
+    actions?.nativeList !== undefined &&
+    actions.nativePreview !== undefined
+      ? { list: actions.nativeList, preview: actions.nativePreview }
+      : null;
+  const fillFrom = (fill: NativeFill) => {
+    setInstance(fill.instance);
+    setCwd(fill.cwd);
+    setImportId(fill.importId);
+    setImportPin(fill.pin);
+  };
   const importProblem = importId.trim() === '' ? null : importIdProblem(importId.trim());
   const optionsOpen = moreOptionsOpen(optionsUser, {
     setup: setupShown ? setupCmd : '',
@@ -368,6 +388,7 @@ export function SpawnForm({
               if (last?.ok === true) {
                 setPrompt('');
                 setImportId('');
+                setImportPin(null);
                 // One new session: go to it at once (DL-141). A batch stays on the form.
                 if (prompts.length === 1 && last.sessionId !== null) {
                   onOpen({ station_id: id, session_id: last.sessionId });
@@ -424,6 +445,7 @@ export function SpawnForm({
                   value={stationId}
                   onChange={(event) => {
                     setStationId(event.target.value);
+                    setImportPin(null);
                     setCwd(null);
                     setMode('');
                     setModel('');
@@ -465,7 +487,10 @@ export function SpawnForm({
               <FolderPicker
                 stationId={stationId}
                 value={cwdText ?? ''}
-                onChange={(path) => setCwd(path)}
+                onChange={(path) => {
+                  setImportPin(null);
+                  setCwd(path);
+                }}
                 list={actions?.list}
                 sessions={sessions}
                 label="Directory path"
@@ -523,6 +548,7 @@ export function SpawnForm({
                   value={instance}
                   onChange={(event) => {
                     setInstance(event.target.value);
+                    setImportPin(null);
                     setMode('');
                     setModel('');
                   }}
@@ -603,9 +629,20 @@ export function SpawnForm({
                 value={importId}
                 spellCheck={false}
                 autoCapitalize="off"
-                onChange={(event) => setImportId(event.target.value)}
+                data-native-pin={
+                  importPin === null ? undefined : `${importPin.dev}/${importPin.ino}`
+                }
+                onChange={(event) => {
+                  setImportId(event.target.value);
+                  setImportPin(null);
+                }}
               />
             </label>
+            {browse === null ? null : (
+              <button type="button" className="fd-spawn-browse" onClick={() => setBrowsing(true)}>
+                Browse sessions on this station
+              </button>
+            )}
             <p className="fd-note">
               Continue a Claude or Codex session that you started in a terminal. Close it there
               first. An import runs in the chosen directory and ignores the workspace and batch
@@ -656,6 +693,16 @@ export function SpawnForm({
           </div>
         </form>
       )}
+      {browsing && browse !== null && station !== undefined ? (
+        <BrowseSessions
+          stationId={station.station_id}
+          stationName={station.name}
+          providers={providers}
+          actions={browse}
+          onClose={() => setBrowsing(false)}
+          onContinue={fillFrom}
+        />
+      ) : null}
       {elevationNode}
     </section>
   );

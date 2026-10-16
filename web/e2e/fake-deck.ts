@@ -7,6 +7,8 @@ import type {
   DeckCommand,
   DeckSession,
   EventEnvelope,
+  NativePreview,
+  NativeSessionList,
   ReviewComment,
   ReviewSummary,
   StationView,
@@ -574,6 +576,24 @@ export class FakeDeck {
       events,
     });
     for (const [ws, subs] of this.subscribed) if (subs.has(id)) ws.send(msg);
+  }
+
+  /**
+   * B7: the native-sessions routes of one station. The list is the answer of the GET; the preview
+   * answers every POST. `previews` holds the bodies of the POSTs (the pin included).
+   */
+  nativeSessions(
+    stationId: string,
+    list: NativeSessionList,
+    preview: NativePreview,
+  ): { previews: unknown[] } {
+    const state = { previews: [] as unknown[] };
+    this.on(`/api/stations/${stationId}/native-sessions`, () => ({ status: 200, body: list }));
+    this.on(`/api/stations/${stationId}/native-sessions/preview`, (raw) => {
+      state.previews.push(raw);
+      return { status: 200, body: preview };
+    });
+    return state;
   }
 
   private answer(request: Request): Reply {

@@ -294,3 +294,123 @@
   font-weight: 500;
   color: var(--faint);
 }
+
+/* B7: the dialog that browses the native sessions of a station (design native-sessions.md §2.6). */
+.fd-spawn-browse {
+  justify-self: start;
+}
+.fd-overlay .fd-native {
+  width: min(760px, 94vw);
+  max-height: 100%;
+  min-width: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.fd-native h3.fd-label {
+  margin: 0;
+  font-weight: 500;
+}
+.fd-native-group {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-native-list {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fd-native-row {
+  display: grid;
+  gap: var(--sp-1);
+  min-width: 0;
+  padding: var(--sp-2);
+  background: var(--raised);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-ctl);
+}
+.fd-native-row[data-depth="1"] {
+  margin-left: var(--sp-5);
+}
+.fd-native-open {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: var(--sp-1) var(--sp-3);
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+  background: none;
+  border: 0;
+  color: var(--text);
+}
+.fd-native-title {
+  flex: 1 1 14rem;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+}
+.fd-native-cwd,
+.fd-native-meta {
+  margin: 0;
+  color: var(--dim);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+.fd-native-cwd {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+.fd-native-meta {
+  flex: 1 1 100%;
+}
+.fd-native-line {
+  margin: 0;
+}
+.fd-native-preview {
+  display: grid;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+.fd-native-preview-head {
+  display: grid;
+  gap: var(--sp-1);
+  justify-items: start;
+  min-width: 0;
+}
+.fd-native-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  max-height: 50dvh;
+  min-width: 0;
+  overflow: auto;
+}
+.fd-native-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+/* A phone: the dialog is the whole screen. */
+@media (max-width: 600px) {
+  .fd-overlay:has(> .fd-native) {
+    padding: 0;
+  }
+  .fd-overlay .fd-native {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
+    align-content: start;
+  }
+  .fd-native-items {
+    max-height: none;
+  }
+}

@@ -25,6 +25,7 @@ pub mod grant_routes;
 pub mod guard;
 pub mod history_routes;
 pub mod methods;
+pub mod native_routes;
 pub mod pairing_routes;
 pub mod paste_routes;
 pub mod people_routes;
@@ -465,6 +466,14 @@ pub fn router(board: Arc<Board>) -> Router {
         .route(
             "/api/sessions/{station}/{session}/branches/{head}/diff",
             get(session_work_routes::branch_diff),
+        )
+        .route(
+            "/api/stations/{station}/native-sessions",
+            get(native_routes::list),
+        )
+        .route(
+            "/api/stations/{station}/native-sessions/preview",
+            post(native_routes::preview),
         )
         .route(
             "/api/spaces",
