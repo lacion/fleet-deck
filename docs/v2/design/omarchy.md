@@ -162,7 +162,7 @@ URL state: `#/wall?mode=<mode>&stations=<a,b>&repo=<r>&scale=<n>&shape=<auto|ult
 ### 4.3 Read-only rules
 
 - The wall shows no answer buttons, no composer and no write control. Its principal cannot write anyway (§5).
-- Each needs-you item has a QR code for `<deck origin>/#/session/<station>/<session>?request=<id>`. The owner scans it with the phone, which must have its own owner login. The URL holds no token.
+- Each needs-you item has a QR code for `<deck origin>/#/s/<station>/<session>?request=<id>`. The owner scans it with the phone, which must have its own owner login. The URL holds no token.
 - Keyboard keys on the wall only navigate: `←/→` change the mode, `Tab` moves the focus between tiles, `Enter` focuses a tile, `Esc` returns to Mission. The keys work only when the kiosk window has the keyboard focus.
 
 ### 4.4 Modes
