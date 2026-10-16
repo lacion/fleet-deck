@@ -674,3 +674,88 @@ async fn a_reload_with_an_invalid_url_leaves_the_window_the_record_and_the_profi
     assert!(profile.join("Cookies").exists());
     assert_eq!(rig.desktop.info(&on).await.unwrap().walls.len(), 1);
 }
+
+fn client_reads(rig: &Rig) -> usize {
+    rig.reads()
+        .iter()
+        .filter(|c| c.program == "hyprctl" && c.args == ["-j", "clients"])
+        .count()
+}
+
+#[tokio::test]
+async fn a_wall_close_is_confirmed_by_a_fresh_window_list() {
+    let rig = Rig::new(Opts::default());
+    run(&rig, open_wall("wall-1")).await.unwrap();
+    let profile = rig.data.join("fleetdeck/wall-wall-1");
+    let before = client_reads(&rig);
+    run(
+        &rig,
+        A::WallClose {
+            display_id: "wall-1".into(),
+        },
+    )
+    .await
+    .unwrap();
+    // One read before the close request, one after it.
+    assert_eq!(client_reads(&rig) - before, 2);
+    assert!(!profile.exists(), "a confirmed close removes the profile");
+}
+
+#[tokio::test]
+async fn a_lost_event_stream_during_a_close_keeps_the_profile() {
+    let rig = Rig::new(Opts::default());
+    run(&rig, open_wall("wall-1")).await.unwrap();
+    let profile = rig.data.join("fleetdeck/wall-wall-1");
+    std::fs::write(profile.join("Cookies"), b"x").unwrap();
+    // The window ignores the close request and stays in the window list.
+    rig.flag("ignore_close", true);
+    let desktop = std::sync::Arc::clone(&rig.desktop);
+    let close = tokio::spawn(async move {
+        desktop
+            .act(
+                &on,
+                A::WallClose {
+                    display_id: "wall-1".into(),
+                },
+            )
+            .await
+    });
+    eventually("the close request", || close_requests(&rig) == 1).await;
+    // The event stream ends while the close waits: the records are cleared.
+    rig.flag("drop_events", true);
+    let e = close.await.unwrap().unwrap_err();
+    assert_eq!(
+        act_err(e),
+        (
+            "failed",
+            "The wall window did not close; its profile stays. Try again.".into()
+        )
+    );
+    assert!(profile.join("Cookies").exists(), "the profile stays");
+}
+
+#[tokio::test]
+async fn a_failed_window_list_read_after_the_close_keeps_the_profile() {
+    let rig = Rig::new(Opts::default());
+    run(&rig, open_wall("wall-1")).await.unwrap();
+    let profile = rig.data.join("fleetdeck/wall-wall-1");
+    std::fs::write(profile.join("Cookies"), b"x").unwrap();
+    // The window closes, but the list read after the request fails.
+    rig.flag("fail_clients_late", true);
+    let e = run(
+        &rig,
+        A::WallClose {
+            display_id: "wall-1".into(),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        act_err(e),
+        (
+            "failed",
+            "The wall window did not close; its profile stays. Try again.".into()
+        )
+    );
+    assert!(profile.join("Cookies").exists(), "the profile stays");
+}

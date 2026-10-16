@@ -543,6 +543,24 @@ impl Cx<'_> {
                 "The wall window did not close; its profile stays. Try again.",
             ));
         }
+        // A lost event stream clears the records too: only a fresh window
+        // list confirms that the window is gone.
+        let not_closed = || {
+            Fail::new(
+                code::FAILED,
+                "The wall window did not close; its profile stays. Try again.",
+            )
+        };
+        let listed = info::clients(&self.runner())
+            .await
+            .map_err(|_| not_closed())?;
+        let wall_class = record.class.as_str();
+        if listed
+            .iter()
+            .any(|(address, class)| *address == record.address || class == wall_class)
+        {
+            return Err(not_closed());
+        }
         let parent = self.data_dir()?;
         let name = format!("wall-{display_id}");
         let removed = tokio::task::spawn_blocking(move || profile::remove(&parent, &name))

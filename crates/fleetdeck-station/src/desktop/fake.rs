@@ -113,7 +113,7 @@ impl Rig {
                  case \"$*\" in\n\
                  \"instances -j\") /bin/cat {r}/instances.json;;\n\
                  \"-j monitors\") /bin/cat {r}/monitors.json;;\n\
-                 \"-j clients\") /bin/cat {r}/clients.json;;\n\
+                 \"-j clients\") if [ -f {r}/fail_clients_late ] && [ -s {r}/close.req ]; then exit 1; fi; /bin/cat {r}/clients.json;;\n\
                  \"dispatch closewindow address:\"*) echo \"${{3#address:}}\" >> {r}/close.req; echo ok;;\n\
                  *) echo ok;;\n\
                  esac",
@@ -283,7 +283,7 @@ impl Rig {
     }
 
     /// Sets a state flag file of the fakes (`dnd`, `hyprlock`, `no_hypridle`,
-    /// `hold_close`, `ignore_close`).
+    /// `hold_close`, `ignore_close`, `drop_events`, `fail_clients_late`).
     pub fn flag(&self, name: &str, on: bool) {
         let path = self.dir.path().join(name);
         if on {
@@ -332,6 +332,12 @@ async fn serve_events(
                 None => return,
             },
             _ = tick.tick() => {
+                // `drop_events`: the event connection ends once (a lost stream).
+                if root.join("drop_events").exists() {
+                    let _ = std::fs::remove_file(root.join("drop_events"));
+                    stream = None;
+                    continue;
+                }
                 let Some(s) = stream.as_mut() else { continue };
                 let calls = std::fs::read_to_string(root.join("calls.log")).unwrap_or_default();
                 for class in calls.lines().filter_map(|l| l.strip_prefix("--class=")) {
