@@ -16,6 +16,7 @@
 pub mod browse;
 pub mod browse_preview;
 pub mod capture;
+pub mod import_check;
 pub mod index;
 pub mod lines;
 pub mod locate;
@@ -29,6 +30,8 @@ mod tests;
 mod tests_browse;
 #[cfg(test)]
 mod tests_capture;
+#[cfg(test)]
+mod tests_import_check;
 #[cfg(test)]
 mod tests_locate;
 #[cfg(test)]

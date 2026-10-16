@@ -189,6 +189,33 @@ pub fn copy_prefix(
     Err(Fail::Changed)
 }
 
+/// Captures the prefix of an already opened transcript into
+/// `dir/<name>.jsonl`: the whole file up to its last complete line. The
+/// caller opened and checked `file` (B7: a verified import reads through the
+/// descriptor that it verified).
+///
+/// # Errors
+/// [`Fail::Io`] for a bad `name`, a read or write error; [`Fail::Changed`]
+/// when the file changed during the copy; the deadline.
+pub fn capture_file(
+    file: &File,
+    size: u64,
+    dir: &Path,
+    name: &str,
+    deadline: Instant,
+    after_copy: Option<&(dyn Fn(u32) + Send + Sync)>,
+) -> Result<Snapshot, Fail> {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+    {
+        return Err(Fail::Io);
+    }
+    let prefix = prefix_end(file, size, deadline)?;
+    copy_prefix(file, prefix, dir, name, deadline, after_copy)
+}
+
 fn remove_if_there(path: &Path) -> std::io::Result<()> {
     match std::fs::remove_file(path) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),

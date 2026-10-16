@@ -93,6 +93,7 @@ pub fn decide(
                     issue: issue.map(|i| *i),
                     origin_text,
                     batch: batch.map(|b| *b),
+                    ..StartFacts::default()
                 },
             )
         }
@@ -100,6 +101,7 @@ pub fn decide(
             spec,
             native_session_id,
             prompt,
+            transcript,
         } => {
             fleetdeck_proto::command::check_native_session_id(&native_session_id)
                 .map_err(|why| reject(RejectCode::InvalidCommand, why))?;
@@ -113,7 +115,10 @@ pub fn decide(
                 None,
                 Some(native_session_id),
                 None,
-                StartFacts::default(),
+                StartFacts {
+                    transcript,
+                    ..StartFacts::default()
+                },
             )
         }
         SessionCommand::Resume { session_id } => {
@@ -364,6 +369,7 @@ struct StartFacts {
     origin_text: bool,
     /// The `Nx` batch of the start (R1.4, DL-170).
     batch: Option<BatchRef>,
+    transcript: Option<fleetdeck_proto::native::TranscriptPin>, // B7
 }
 
 /// The modes that a start from third-party text may use, and the mode that
@@ -580,6 +586,7 @@ fn start(
                 continue_by: None,
                 authority: None,
                 import: true,
+                transcript: facts.transcript,
             }
         }
         None => EffectPayload::Start {

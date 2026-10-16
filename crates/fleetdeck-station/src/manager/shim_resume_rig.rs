@@ -480,6 +480,7 @@ pub fn import(rig: &Rig, instance: &str, native: &str) -> SessionCommand {
         spec: rig.spec(instance),
         native_session_id: native.to_owned(),
         prompt: None,
+        transcript: None,
     }
 }
 

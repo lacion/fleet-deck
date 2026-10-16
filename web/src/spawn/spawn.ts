@@ -14,6 +14,7 @@ import type {
   SessionSpec,
   StationProvider,
   StationView,
+  TranscriptPin,
   WorkspaceListing,
   WorkspaceRequest,
 } from '../gen';
@@ -53,6 +54,8 @@ export type SpawnActions = {
     batch?: BatchRef,
     /** ADR-008: the owner's elevation of a fleet-control start; an import never sends it. */
     elevation?: string,
+    /** B7: the pin of a verified entry of the native-session list; only an import sends it. */
+    transcript?: TranscriptPin,
   ): Promise<SpawnOutcome>;
 };
 
@@ -429,6 +432,7 @@ export function spawnActions(
       setupCmd,
       batch,
       elevation,
+      transcript,
     ) => {
       const first = prompt.trim() === '' ? null : { text: prompt };
       const native = importId?.trim() ?? '';
@@ -442,7 +446,13 @@ export function spawnActions(
               ...(setupCmd !== undefined && setupCmd.trim() !== '' ? { setup_cmd: setupCmd } : {}),
               ...(batch === undefined ? {} : { batch }),
             }
-          : { op: 'import', spec, native_session_id: native, prompt: first };
+          : {
+              op: 'import',
+              spec,
+              native_session_id: native,
+              prompt: first,
+              ...(transcript === undefined ? {} : { transcript }),
+            };
       const body = {
         station: stationId,
         command_id: newId(),

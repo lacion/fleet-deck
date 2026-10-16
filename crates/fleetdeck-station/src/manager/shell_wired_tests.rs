@@ -494,6 +494,7 @@ async fn an_unsettled_row_makes_the_whole_root_busy_for_every_session_of_it() {
             spec: spec(&ws, "claude"),
             native_session_id: "native-1".into(),
             prompt: None,
+            transcript: None,
         },
         SessionCommand::Resume {
             session_id: second.clone(),

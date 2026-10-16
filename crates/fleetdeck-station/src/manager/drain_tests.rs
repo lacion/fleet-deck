@@ -92,6 +92,7 @@ fn a_draining_station_refuses_an_import() {
         spec: spec("/w", "claude"),
         native_session_id: "cli-session-7".to_owned(),
         prompt: None,
+        transcript: None,
     };
     assert!(drain::guard(true, &import).is_err());
     assert!(drain::guard(false, &import).is_ok());

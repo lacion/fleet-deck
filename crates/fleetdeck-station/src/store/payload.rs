@@ -92,6 +92,11 @@ pub enum EffectPayload {
         /// `shim-resume.md` §13). An effect stored without it is a resume.
         #[serde(default, skip_serializing_if = "is_false")]
         import: bool,
+        /// The pin of an import from the native-session list (B7): the
+        /// dispatch verifies the transcript before any launch. It travels
+        /// in the effect so that a restart before dispatch keeps it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        transcript: Option<fleetdeck_proto::native::TranscriptPin>,
     },
     Prompt {
         input: InputRecord,
@@ -317,6 +322,7 @@ mod tests {
             continue_by: None,
             authority: None,
             import,
+            transcript: None,
         }
     }
 
@@ -332,5 +338,23 @@ mod tests {
         assert!(!old.contains("import"), "{old}");
         let back: EffectPayload = serde_json::from_str(&old).unwrap();
         assert_eq!(back, resume(false));
+    }
+
+    #[test]
+    fn the_import_pin_is_stored_in_the_effect_and_absent_without_one() {
+        let mut pinned = resume(true);
+        if let EffectPayload::Resume { transcript, .. } = &mut pinned {
+            *transcript = Some(fleetdeck_proto::native::TranscriptPin {
+                home: "/h/.claude".to_owned(),
+                dev: 7,
+                ino: 9,
+            });
+        }
+        let text = serde_json::to_string(&pinned).unwrap();
+        assert!(text.contains("\"transcript\""), "{text}");
+        let back: EffectPayload = serde_json::from_str(&text).unwrap();
+        assert_eq!(back, pinned);
+        let plain = serde_json::to_string(&resume(true)).unwrap();
+        assert!(!plain.contains("transcript"), "{plain}");
     }
 }

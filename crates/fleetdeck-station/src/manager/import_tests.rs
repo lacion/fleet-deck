@@ -32,6 +32,7 @@ fn import(cwd: &str, instance: &str, native: &str, prompt: Option<&str>) -> Sess
         spec: spec(cwd, instance),
         native_session_id: native.to_owned(),
         prompt: prompt.map(text),
+        transcript: None,
     }
 }
 
@@ -333,5 +334,240 @@ async fn an_import_snapshots_the_transcript_before_the_provider_starts_and_the_h
         .map(|i| serde_json::json!({"kind": i.kind, "id": i.id, "text": i.text, "tool": i.tool}))
         .collect();
     assert_eq!(serde_json::Value::Array(got), expected["items"]);
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+// ------------------------------------------------- the import pin (B7)
+
+use crate::history::import_check::{CHANGED, SUBAGENT};
+use crate::store::EffectPayload;
+use fleetdeck_proto::native::TranscriptPin;
+
+fn import_pinned(cwd: &str, instance: &str, native: &str, pin: &TranscriptPin) -> SessionCommand {
+    SessionCommand::Import {
+        spec: spec(cwd, instance),
+        native_session_id: native.to_owned(),
+        prompt: None,
+        transcript: Some(pin.clone()),
+    }
+}
+
+/// A Claude transcript of two records that name `cwd` and `native`.
+fn claude_bytes(native: &str, cwd: &str) -> Vec<u8> {
+    let record = |n: u32| {
+        serde_json::json!({
+            "type": "user", "uuid": format!("u-{n}"), "sessionId": native, "cwd": cwd,
+            "timestamp": format!("2026-10-14T10:00:0{n}.000Z"),
+            "message": {"role": "user", "content": format!("prompt {n}")},
+        })
+        .to_string()
+    };
+    format!("{}\n{}\n", record(1), record(2)).into_bytes()
+}
+
+fn pin_for(home: &Path, transcript: &Path) -> TranscriptPin {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata(transcript).unwrap();
+    TranscriptPin {
+        home: home.to_string_lossy().into_owned(),
+        dev: meta.dev(),
+        ino: meta.ino(),
+    }
+}
+
+/// True when the temp directory is on a filesystem that a verified import
+/// supports; prints why a test skips otherwise.
+fn supported_temp(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let dir = std::fs::File::open(path).unwrap();
+    let dev = dir.metadata().unwrap().dev();
+    let ok = crate::history::trust::supported_fs(&dir)
+        && crate::history::trust::Mounts::load().verifiable(dev, path);
+    if !ok {
+        eprintln!("skipped: the temp directory is not on a supported filesystem and mount");
+    }
+    ok
+}
+
+/// The text of the first `start_failed` error.
+async fn start_failed(st: &Station) -> String {
+    st.wait_for("start_failed", |e| match e {
+        Event::Error { code, message, .. } if code == "start_failed" => Some(message.clone()),
+        _ => None,
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_pinned_import_of_the_right_file_resumes_and_keeps_the_pin_in_its_effect() {
+    let provider_home = tempfile::tempdir().unwrap();
+    let home = provider_home.path().canonicalize().unwrap();
+    let native = "0b6c1d2e-aaaa-4bbb-8ccc-123456789abc";
+    let (mut st, ws, transcript) = station_with_history(&home, native, b"").await;
+    if !supported_temp(st.root.path()) || !supported_temp(&home) {
+        return;
+    }
+    std::fs::write(&transcript, claude_bytes(native, &ws)).unwrap();
+    let pin = pin_for(&home, &transcript);
+    let d = st
+        .accepted(import_pinned(&ws, "claude", native, &pin))
+        .await;
+    let s = d.receipt.result.unwrap().session_id.unwrap();
+    // The pin is stored in the effect, so a restart before dispatch keeps it.
+    let stored = st.manager.store().session_effects(s.clone()).await.unwrap();
+    assert!(matches!(
+        &stored[0].payload,
+        EffectPayload::Resume { transcript: Some(p), import: true, .. } if *p == pin
+    ));
+    let effects = st.settled(&s).await;
+    assert!(
+        effects.contains(&("resume", EffectState::Confirmed)),
+        "{effects:?}"
+    );
+    let row = st.manager.store().transcript(s).await.unwrap().unwrap();
+    assert_eq!(row.capture, crate::store::transcripts::Capture::Import);
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
+async fn a_swapped_file_fails_a_pinned_import_and_launches_nothing() {
+    let provider_home = tempfile::tempdir().unwrap();
+    let home = provider_home.path().canonicalize().unwrap();
+    let native = "0b6c1d2e-aaaa-4bbb-8ccc-123456789abc";
+    let (mut st, ws, transcript) = station_with_history(&home, native, b"").await;
+    if !supported_temp(st.root.path()) || !supported_temp(&home) {
+        return;
+    }
+    let bytes = claude_bytes(native, &ws);
+    std::fs::write(&transcript, &bytes).unwrap();
+    let pin = pin_for(&home, &transcript);
+    // Another file (another inode) takes its place.
+    let copy = transcript.with_extension("copy");
+    std::fs::write(&copy, &bytes).unwrap();
+    std::fs::rename(&copy, &transcript).unwrap();
+    assert_ne!(pin_for(&home, &transcript).ino, pin.ino);
+    let d = st
+        .accepted(import_pinned(&ws, "claude", native, &pin))
+        .await;
+    let s = d.receipt.result.unwrap().session_id.unwrap();
+    assert_eq!(start_failed(&st).await, CHANGED);
+    let effects = st.settled(&s).await;
+    assert_eq!(effects, vec![("resume", EffectState::RetiredNotDispatched)]);
+    assert!(starts(&st, &s).await.is_empty(), "the provider was started");
+    // The provider program appends a line when it starts: it never ran.
+    assert_eq!(std::fs::read(&transcript).unwrap(), bytes);
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
+async fn an_untrusted_cwd_fails_a_pinned_import() {
+    use std::os::unix::fs::PermissionsExt;
+    let provider_home = tempfile::tempdir().unwrap();
+    let home = provider_home.path().canonicalize().unwrap();
+    let native = "0b6c1d2e-aaaa-4bbb-8ccc-123456789abc";
+    let (mut st, ws, transcript) = station_with_history(&home, native, b"").await;
+    if !supported_temp(st.root.path()) || !supported_temp(&home) {
+        return;
+    }
+    std::fs::write(&transcript, claude_bytes(native, &ws)).unwrap();
+    let pin = pin_for(&home, &transcript);
+    // A group-writable parent of the folder.
+    let parent = st.root.path().join("projects");
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o775)).unwrap();
+    let d = st
+        .accepted(import_pinned(&ws, "claude", native, &pin))
+        .await;
+    let s = d.receipt.result.unwrap().session_id.unwrap();
+    assert_eq!(start_failed(&st).await, CHANGED);
+    assert!(starts(&st, &s).await.is_empty());
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+/// A station with one Codex instance whose home is `home`.
+async fn station_with_codex(home: &Path) -> (Station, String) {
+    let det = Det::new();
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("projects/app")).unwrap();
+    let ws = root
+        .path()
+        .join("projects/app")
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let mut env = ChildEnv::from_process();
+    env.set("CODEX_HOME", home).unwrap();
+    let store = Store::open_in_memory(det.clock(), det.ids(), StoreConfig::default())
+        .await
+        .unwrap();
+    let policy = Policy::new(
+        vec![root.path().join("projects")],
+        4,
+        OfflineApprovalPolicy::Wait,
+        BTreeMap::from([("codex".into(), ProviderKind::Codex)]),
+    )
+    .with_setup_envs(BTreeMap::from([("codex".into(), env)]));
+    let manager = SessionManager::start(
+        store,
+        policy,
+        Adapters::from([("codex".into(), codex_adapter())]),
+        det.ids(),
+        Arc::new(crate::workspace::PrivatePaths::default()),
+    )
+    .await
+    .unwrap();
+    let station = Station {
+        det,
+        manager: Arc::new(manager),
+        root,
+        next: 0,
+    };
+    (station, ws)
+}
+
+#[tokio::test]
+async fn a_codex_child_thread_fails_a_pinned_and_an_unpinned_import() {
+    let provider_home = tempfile::tempdir().unwrap();
+    let home = provider_home.path().canonicalize().unwrap();
+    let (mut st, ws) = station_with_codex(&home).await;
+    let child = "01a13f28-e384-7ed1-aee0-423548cce999";
+    let parent = "01a13f28-e384-7ed1-aee0-423548cce681";
+    let dir = home.join("sessions/2026/10/14");
+    std::fs::create_dir_all(&dir).unwrap();
+    let rollout = dir.join(format!("rollout-2026-10-14T10-00-00-{child}.jsonl"));
+    let meta = serde_json::json!({
+        "type": "session_meta", "timestamp": "2026-10-14T10:00:00.000Z",
+        "payload": {"id": child, "cwd": ws, "parent_thread_id": parent},
+    });
+    std::fs::write(&rollout, format!("{meta}\n")).unwrap();
+    let pin = pin_for(&home, &rollout);
+    let plain = st.accepted(import(&ws, "codex", child, None)).await;
+    let s = plain.receipt.result.unwrap().session_id.unwrap();
+    assert_eq!(start_failed(&st).await, SUBAGENT);
+    assert_eq!(
+        st.settled(&s).await,
+        vec![("resume", EffectState::RetiredNotDispatched)]
+    );
+    assert!(starts(&st, &s).await.is_empty());
+    // The same thread with a pin: the same failure.
+    let pinned = st.accepted(import_pinned(&ws, "codex", child, &pin)).await;
+    let s2 = pinned.receipt.result.unwrap().session_id.unwrap();
+    assert_eq!(
+        st.settled(&s2).await,
+        vec![("resume", EffectState::RetiredNotDispatched)]
+    );
+    assert!(starts(&st, &s2).await.is_empty());
+    let errors = st
+        .events()
+        .await
+        .into_iter()
+        .filter_map(|e| match e.event {
+            EventBody::Known(Event::Error { code, message, .. }) if code == "start_failed" => {
+                Some(message)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(errors, vec![SUBAGENT.to_owned(), SUBAGENT.to_owned()]);
     st.manager.shutdown(StopMode::Kill).await;
 }
