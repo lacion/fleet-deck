@@ -13,15 +13,21 @@ export function shapeOf(width: number, height: number, override: 'auto' | WallSh
   return 'portrait';
 }
 
-/** The columns and rows of tiles that fit an area, and how many tiles the wall subscribes. */
+/**
+ * The columns and rows of tiles that fit an area, and how many tiles the wall subscribes. `n` tiles
+ * and `n - 1` gaps fit when `n * tile + (n - 1) * gap <= size`, so `n = floor((size + gap) / (tile + gap))`.
+ */
 export function tileLimit(
   areaWidthPx: number,
   areaHeightPx: number,
   remPx: number,
   scale: number,
+  gapPx: number,
 ): number {
-  const columns = Math.max(1, Math.floor(areaWidthPx / (22 * remPx * scale)));
-  const rows = Math.max(1, Math.floor(areaHeightPx / (11 * remPx * scale)));
+  const tileW = 22 * remPx * scale;
+  const tileH = 11 * remPx * scale;
+  const columns = Math.max(1, Math.floor((areaWidthPx + gapPx) / (tileW + gapPx)));
+  const rows = Math.max(1, Math.floor((areaHeightPx + gapPx) / (tileH + gapPx)));
   return Math.min(MAX_TILES, columns * rows);
 }
 

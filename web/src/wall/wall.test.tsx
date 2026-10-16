@@ -2,13 +2,23 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { wallDefaults, type WallRoute } from '../app/routes';
-import type { DeckSession, Event, OpenRequest } from '../gen';
+import type { ActivityItem, DeckSession, Event, OpenRequest, ReviewComment } from '../gen';
+import type { ReviewState } from '../review/useReview';
 import { sessionActions } from '../session/commands';
 import { claudeCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
 import { envelopes } from '../testing/timeline';
+import { StreamArea } from './Areas';
 import { WallPage } from './WallPage';
-import { ambientCounts, asksOf, needsList, stepMode, wallSessions, withMode } from './model';
+import {
+  ambientCounts,
+  asksOf,
+  needsList,
+  sentOnly,
+  stepMode,
+  wallSessions,
+  withMode,
+} from './model';
 
 const request = (at: number): OpenRequest => ({
   request_id: `r${at}`,
@@ -215,5 +225,103 @@ describe('the pure parts', () => {
       needs: 2,
       done: 1,
     });
+  });
+});
+
+const comment = (id: string, state: 'draft' | 'sent', body: string): ReviewComment => ({
+  comment_id: id,
+  short_id: `c-${id}`,
+  thread_id: 't',
+  snapshot: 'spawn:abc',
+  path: 'src/a.ts',
+  side: 'new',
+  line_start: 1,
+  line_end: 1,
+  anchor_text: 'x',
+  anchor_kind: 'diff',
+  body,
+  author_kind: 'owner',
+  state,
+  resolved: false,
+  created_at: 1,
+  updated_at: 1,
+});
+
+const reviewState = (threads: { thread_id: string; comments: ReviewComment[] }[]): ReviewState => ({
+  data: { threads, reviews: [], rev: 1, more_reviews: false },
+  error: null,
+  reload: () => {},
+  byShort: new Map(),
+  known: new Set(),
+  moreReviews: false,
+  loadOlder: () => {},
+});
+
+describe('the review pane shows sent comments only', () => {
+  test('a sent thread with a draft reply keeps the sent comment and drops the reply', () => {
+    const state = sentOnly(
+      reviewState([
+        {
+          thread_id: 't',
+          comments: [comment('1', 'sent', 'Sent note'), comment('2', 'draft', 'Draft reply')],
+        },
+      ]),
+    );
+    const text = JSON.stringify(state.data?.threads);
+    expect(text).toContain('Sent note');
+    expect(text).not.toContain('Draft reply');
+  });
+
+  test('a thread that starts with a draft is dropped, and so is a resolved one', () => {
+    const resolved = { ...comment('4', 'sent', 'Resolved note'), resolved: true };
+    const state = sentOnly(
+      reviewState([
+        { thread_id: 'a', comments: [comment('3', 'draft', 'Draft top')] },
+        { thread_id: 'b', comments: [resolved] },
+        { thread_id: 'c', comments: [comment('5', 'sent', 'Kept')] },
+      ]),
+    );
+    expect(state.data?.threads.map((t) => t.thread_id)).toEqual(['c']);
+  });
+});
+
+describe('the stream follows the wall filter', () => {
+  const item = (station: string, id: string, text: string): ActivityItem => ({
+    station_id: station,
+    session_id: id,
+    session_title: id,
+    repo: null,
+    kind: 'message',
+    text,
+    at: 1,
+    station_seq: 1,
+  });
+  const items = [
+    item('station-a', 'busy', 'Alpha said hi'),
+    item('station-b', 'on-b', 'Beta said hi'),
+  ];
+  const board = [...sessions, card('on-b', 'working', 'station-b')];
+  const stream = (stations: string[]) =>
+    renderToStaticMarkup(
+      <StreamArea
+        views={undefined}
+        sessions={board}
+        filter={{ stations, repo: '' }}
+        live={false}
+        now={1_000_000}
+        initialItems={items}
+      />,
+    );
+
+  test('a wall with one station shows no activity of another', () => {
+    const html = stream(['station-a']);
+    expect(html).toContain('Alpha said hi');
+    expect(html).not.toContain('Beta said hi');
+  });
+
+  test('a wall without a station filter shows all the activity', () => {
+    const html = stream([]);
+    expect(html).toContain('Alpha said hi');
+    expect(html).toContain('Beta said hi');
   });
 });

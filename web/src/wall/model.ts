@@ -3,6 +3,7 @@
 import { WALL_MODES, type WallMode, type WallRoute } from '../app/routes';
 import { repoName } from '../board/fleet';
 import type { DeckSession, OpenRequest } from '../gen';
+import type { ReviewState } from '../review/useReview';
 import { emptyWatchFilter, refOf, watchSessions } from '../watch/tiles';
 import type { Ask } from './autofocus';
 
@@ -139,4 +140,22 @@ export function fleetSignature(sessions: readonly DeckSession[]): string {
           .join(',')}`,
     )
     .join('\n');
+}
+
+/**
+ * The review state with the comments that were sent and are open: a draft is the owner's note (a
+ * thread that starts with one is dropped, and so is a draft reply), and a resolved thread folds
+ * behind a button that the wall does not have.
+ */
+export function sentOnly(state: ReviewState): ReviewState {
+  if (state.data === null) return state;
+  return {
+    ...state,
+    data: {
+      ...state.data,
+      threads: state.data.threads
+        .filter((t) => t.comments[0]?.state !== 'draft' && t.comments[0]?.resolved !== true)
+        .map((t) => ({ ...t, comments: t.comments.filter((c) => c.state !== 'draft') })),
+    },
+  };
 }

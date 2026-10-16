@@ -103,9 +103,9 @@ function Wall({
       : stations.filter((s) => route.stations.includes(s.station_id));
 
   // The tile count follows the size of the tiles area (decision 6).
-  const area = useSize(tilesArea, mode === 'mission');
+  const area = useSize(tilesArea, mode === 'mission', '.fd-wall-tiles');
   const limit =
-    area === null ? MAX_TILES : tileLimit(area.w, area.h, baseRemPx(size.h), route.scale);
+    area === null ? MAX_TILES : tileLimit(area.w, area.h, baseRemPx(size.h), route.scale, area.gap);
   const tiles = useMemo(() => tileSessions(filtered).slice(0, limit), [filtered, limit]);
   const focusRef = sessionRefOf(route);
   const focusCard = focusRef === null ? undefined : sessions.find((c) => refOf(c) === focusRef);
@@ -231,7 +231,15 @@ function Wall({
             {shape === 'portrait' ? null : (
               <SideArea sessions={filtered} stations={shownStations} now={clock} />
             )}
-            {shape === 'standard' ? null : <StreamArea views={views} live={live} now={clock} />}
+            {shape === 'standard' ? null : (
+              <StreamArea
+                views={views}
+                sessions={sessions}
+                filter={route}
+                live={live}
+                now={clock}
+              />
+            )}
           </div>
         );
       case 'focus':
