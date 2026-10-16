@@ -106,20 +106,23 @@ impl Rig {
         config.delivery_grace = Duration::from_millis(500);
         let adapter: Arc<dyn fleetdeck_providers::ProviderAdapter> =
             Arc::new(ClaudeAdapter::new(config, Arc::new(DirectChildHost::new())));
+        let policy = Policy::new(
+            vec![root.path().join("projects")],
+            4,
+            OfflineApprovalPolicy::Wait,
+            BTreeMap::from([("claude".into(), ProviderKind::Claude)]),
+        );
+        let hub = Arc::new(PolicyHub::new(policy.clone()));
+        let policy = Arc::new(policy);
         let target = Arc::new(
             SessionTarget::new(
                 store.clone(),
                 Adapters::from([("claude".into(), adapter)]),
                 det.ids(),
             )
+            .with_policy(hub)
             .with_private(Arc::new(crate::workspace::PrivatePaths::default())),
         );
-        let policy = Arc::new(Policy::new(
-            vec![root.path().join("projects")],
-            4,
-            OfflineApprovalPolicy::Wait,
-            BTreeMap::from([("claude".into(), ProviderKind::Claude)]),
-        ));
         let gate = Arc::new(Gate {
             inner: Arc::clone(&target),
             mode: AtomicU8::new(hold),

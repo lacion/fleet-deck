@@ -420,6 +420,15 @@ impl SessionCommand {
         }
     }
 
+    /// Clears the station-local fields that an incoming command must never
+    /// carry (B9 §3.4): `spec.launch` of every command that holds a spec.
+    pub fn clear_station_local(&mut self) {
+        match self {
+            Self::Start { spec, .. } | Self::Import { spec, .. } => spec.launch = None,
+            _ => {}
+        }
+    }
+
     /// The session that the command targets, if it exists already.
     #[must_use]
     pub fn session_id(&self) -> Option<&SessionId> {

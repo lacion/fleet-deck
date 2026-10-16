@@ -91,6 +91,9 @@ pub struct SessionTarget {
     /// builds only).
     #[cfg(any(test, feature = "fault-injection"))]
     gate_hook: GateHook,
+    /// Before the launch identity of a start (tests and fault-injection, B9).
+    #[cfg(any(test, feature = "fault-injection"))]
+    launch_hook: GateHook,
     /// The instances whose probed version is on the adapter's deny list
     /// (R8.2, DL-162): their starts are refused.
     broken: Arc<StdMutex<BTreeMap<ProviderInstanceId, &'static str>>>,
@@ -100,43 +103,6 @@ pub struct SessionTarget {
     pub(super) restart: Arc<super::restart_gate::RestartState>,
     /// The running `!` shell tasks of Claude sessions (B8).
     shell: shell_run::ShellRunState,
-}
-
-/// One point where a test holds an effect before its authority gate (tests
-/// and fault-injection builds only).
-#[cfg(any(test, feature = "fault-injection"))]
-#[derive(Default)]
-pub struct GateHook {
-    armed: std::sync::atomic::AtomicBool,
-    /// The held task notifies this when it waits.
-    pub reached: tokio::sync::Notify,
-    /// The test notifies this to let the held task go on.
-    pub release: tokio::sync::Notify,
-}
-
-#[cfg(any(test, feature = "fault-injection"))]
-impl GateHook {
-    /// The next task that reaches the hook waits there.
-    pub fn arm(&self) {
-        self.armed.store(true, std::sync::atomic::Ordering::SeqCst);
-    }
-
-    pub(in crate::manager) async fn hold(&self) {
-        if self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
-            self.reached.notify_one();
-            self.release.notified().await;
-        }
-    }
-}
-
-#[cfg(any(test, feature = "fault-injection"))]
-impl super::SessionManager {
-    /// The point where a test holds an effect right before its authority
-    /// gate (tests and fault-injection builds only).
-    #[must_use]
-    pub fn gate_hook(&self) -> &GateHook {
-        &self.target.gate_hook
-    }
 }
 
 impl std::fmt::Debug for SessionTarget {
@@ -176,6 +142,8 @@ impl SessionTarget {
             resume_dispatch: setup_task::StartHook::default(),
             #[cfg(any(test, feature = "fault-injection"))]
             gate_hook: GateHook::default(),
+            #[cfg(any(test, feature = "fault-injection"))]
+            launch_hook: GateHook::default(),
             shells: ShellsSlot::default(),
             broken: Arc::default(),
             restart: Arc::default(),
@@ -355,6 +323,11 @@ impl SessionTarget {
         cancel: Option<&watch::Receiver<bool>>,
     ) -> Dispatch {
         let session_id = effect.session_id.clone();
+        // No provider launch without an identity (B9).
+        if let Some((code, text)) = launch::launch_refusal(spec) {
+            self.start_failed(&session_id, text).await;
+            return Dispatch::NotDispatched(code.into());
+        }
         if let Some(reason) = self.broken_reason(&spec.provider_instance) {
             self.start_failed(&session_id, &reason).await;
             return Dispatch::NotDispatched("provider_broken".into());
@@ -632,12 +605,24 @@ impl EffectTarget for SessionTarget {
                     self.start_failed(&effect.session_id, why).await;
                     return Dispatch::NotDispatched("policy_changed".into());
                 }
+                // A worktree or a clone takes its identity after the Git work (B9).
+                let mut launch = None;
+                if workspace.is_none() {
+                    match self.take_launch(effect, spec).await {
+                        Ok(l) => launch = Some(l),
+                        Err(refused) => return refused,
+                    }
+                }
+                let spec = launch.as_ref().map_or(spec, |l| &l.spec);
                 // The base commit is read before the worktree is made (R1.1).
                 let wants_base = !self.has_base(&effect.session_id).await;
-                let planned = if wants_base {
-                    crate::workspace::base::planned(&self.git, workspace.as_ref(), &spec.cwd).await
-                } else {
+                let planned = if !wants_base {
                     None
+                } else if let Some(l) = &launch {
+                    let pinned = l.pinned.to_string_lossy();
+                    crate::workspace::base::planned(&self.git, workspace.as_ref(), &pinned).await
+                } else {
+                    crate::workspace::base::planned(&self.git, workspace.as_ref(), &spec.cwd).await
                 };
                 // The Git work of the start (M3 6-1, DL-200) and its setup
                 // command run in a task of their own: the effect worker
@@ -675,6 +660,10 @@ impl EffectTarget for SessionTarget {
                 {
                     return Dispatch::NotDispatched(code);
                 }
+                let launch = match self.take_launch(effect, spec).await {
+                    Ok(l) => l,
+                    Err(refused) => return refused,
+                };
                 // The transcript is copied before the provider can write to it
                 // again. A failure is recorded and never stops the import
                 // (DL-189).
@@ -708,7 +697,7 @@ impl EffectTarget for SessionTarget {
                 }
                 // An import takes the `HEAD` now; a resume of a session
                 // without a base guesses it (R1.1).
-                let cwd = Path::new(&spec.cwd);
+                let (cwd, spec) = (&launch.pinned, &launch.spec);
                 let base = if self.has_base(&effect.session_id).await {
                     None
                 } else if *import {
@@ -780,6 +769,17 @@ mod shell_codex;
 
 #[path = "target_base.rs"]
 mod target_base;
+
+#[cfg(any(test, feature = "fault-injection"))]
+#[path = "target_gate.rs"]
+mod gate;
+#[cfg(any(test, feature = "fault-injection"))]
+pub use gate::GateHook;
+#[path = "target_launch.rs"]
+mod launch;
+#[cfg(test)]
+#[path = "launch_tests.rs"]
+mod launch_tests;
 
 #[path = "target_spawn.rs"]
 mod target_spawn;

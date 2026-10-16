@@ -26,12 +26,12 @@ pub(super) use super::coordinator_spec_tests::coordinator_spec;
 use super::*;
 use crate::store::{EffectState, OfflineApprovalPolicy, ReadResult, StoreConfig};
 
-const WAIT: Duration = Duration::from_secs(10);
+pub(super) const WAIT: Duration = Duration::from_secs(10);
 
-struct Station {
+pub(super) struct Station {
     det: Det,
-    manager: Arc<SessionManager>,
-    root: tempfile::TempDir,
+    pub(super) manager: Arc<SessionManager>,
+    pub(super) root: tempfile::TempDir,
     next: u32,
 }
 
@@ -63,7 +63,7 @@ fn codex_adapter() -> Arc<dyn fleetdeck_providers::ProviderAdapter> {
 }
 
 impl Station {
-    async fn new(max_sessions: u32) -> Self {
+    pub(super) async fn new(max_sessions: u32) -> Self {
         Self::with_program(max_sessions, FakeAgent::Claude.locate().unwrap()).await
     }
 
@@ -105,7 +105,7 @@ impl Station {
         }
     }
 
-    fn workspace(&self) -> String {
+    pub(super) fn workspace(&self) -> String {
         self.root
             .path()
             .join("projects/app")
@@ -129,7 +129,7 @@ impl Station {
             .unwrap()
     }
 
-    async fn accepted(&mut self, command: SessionCommand) -> Decided {
+    pub(super) async fn accepted(&mut self, command: SessionCommand) -> Decided {
         let d = self.send(command).await;
         assert_eq!(d.receipt.state, ReceiptState::Accepted, "{:?}", d.receipt);
         d
@@ -141,7 +141,7 @@ impl Station {
         d.receipt.reject.unwrap().code
     }
 
-    async fn start(&mut self, cwd: &str, prompt: Option<&str>) -> SessionId {
+    pub(super) async fn start(&mut self, cwd: &str, prompt: Option<&str>) -> SessionId {
         self.start_with(spec(cwd, "claude"), prompt).await
     }
 
@@ -160,7 +160,7 @@ impl Station {
         d.receipt.result.unwrap().session_id.unwrap()
     }
 
-    async fn events(&self) -> Vec<EventEnvelope> {
+    pub(super) async fn events(&self) -> Vec<EventEnvelope> {
         match self.manager.store().read_after(0, 100_000).await.unwrap() {
             ReadResult::Events { events, .. } => events,
             ReadResult::SnapshotRequired { .. } => panic!("snapshot required"),
@@ -168,7 +168,7 @@ impl Station {
     }
 
     /// Waits for the first event after `after` that `pick` accepts.
-    async fn wait_for<T>(&self, what: &str, pick: impl Fn(&Event) -> Option<T>) -> T {
+    pub(super) async fn wait_for<T>(&self, what: &str, pick: impl Fn(&Event) -> Option<T>) -> T {
         let deadline = tokio::time::Instant::now() + WAIT;
         loop {
             for e in self.events().await {
@@ -199,7 +199,7 @@ impl Station {
     }
 
     /// Waits until every effect of `session` is settled.
-    async fn settled(&self, session: &SessionId) -> Vec<(&'static str, EffectState)> {
+    pub(super) async fn settled(&self, session: &SessionId) -> Vec<(&'static str, EffectState)> {
         let deadline = tokio::time::Instant::now() + WAIT;
         loop {
             let states = self.effect_states(session).await;
@@ -214,7 +214,7 @@ impl Station {
         }
     }
 
-    async fn state(&self, session: &SessionId) -> SessionState {
+    pub(super) async fn state(&self, session: &SessionId) -> SessionState {
         self.manager
             .store()
             .summary(session.clone())
@@ -225,7 +225,7 @@ impl Station {
     }
 }
 
-fn spec(cwd: &str, instance: &str) -> SessionSpec {
+pub(super) fn spec(cwd: &str, instance: &str) -> SessionSpec {
     SessionSpec {
         provider_instance: instance.into(),
         cwd: cwd.to_owned(),
