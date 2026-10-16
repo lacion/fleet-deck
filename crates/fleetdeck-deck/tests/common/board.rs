@@ -296,7 +296,7 @@ impl BoardClient {
         let mut raw = Vec::new();
         // The server may end the TLS stream without close_notify after
         // `Connection: close`; the bytes read so far are the response.
-        let _ = tokio::time::timeout(Duration::from_secs(10), s.read_to_end(&mut raw))
+        let _ = tokio::time::timeout(Duration::from_secs(30), s.read_to_end(&mut raw))
             .await
             .expect("a response");
         let raw = String::from_utf8(raw).unwrap();

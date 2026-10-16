@@ -25,7 +25,7 @@ use fleetdeck_station::shell::{ShellConfig, Shells};
 use fleetdeck_station::store::{OfflineApprovalPolicy, Store, StoreConfig};
 use serde_json::{Value, json};
 
-const T: Duration = Duration::from_secs(10);
+const T: Duration = Duration::from_secs(30);
 const PATH: &str = "/api/stations/alpha/paste";
 
 fn fast() -> BackoffPolicy {

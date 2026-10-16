@@ -555,33 +555,42 @@ async fn the_child_is_killed_at_the_deadline() {
     );
     let settings = deck_settings(tmp.path(), &head(&bin));
     let config = DeckConfig::load(&settings.path).unwrap();
-    let (_, start) = apply_at_start(
-        &settings,
-        config,
-        &[],
-        &HostFacts::default(),
-        &all_usable,
-        Instant::now() + Duration::from_millis(500),
-    )
-    .await;
+    // The child must start before the deadline: a loaded machine needs time.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let started = async {
+        let until = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            // `echo` writes "<pid>\n": a line end means a complete pid.
+            if let Ok(text) = std::fs::read_to_string(&pid_file)
+                && text.ends_with('\n')
+            {
+                return text.trim().to_owned();
+            }
+            assert!(
+                tokio::time::Instant::now() < until,
+                "the child did not start"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    let facts = HostFacts::default();
+    let ((_, start), pid) = tokio::join!(
+        apply_at_start(&settings, config, &[], &facts, &all_usable, deadline),
+        started
+    );
     assert_eq!(
         start.start_reason.as_deref(),
         Some("Tailscale did not answer within 3 seconds.")
     );
-    let pid = std::fs::read_to_string(&pid_file)
-        .unwrap()
-        .trim()
-        .to_owned();
     let proc = Path::new("/proc").join(&pid);
-    let mut gone = false;
-    for _ in 0..40 {
-        if !proc.exists() {
-            gone = true;
-            break;
-        }
+    let until = tokio::time::Instant::now() + Duration::from_secs(15);
+    while proc.exists() {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the child {pid} is still running"
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    assert!(gone, "the child {pid} is still running");
 }
 
 fn fail_with_automatic_entries(bound: &[SocketAddr]) -> Result<(), TlsError> {

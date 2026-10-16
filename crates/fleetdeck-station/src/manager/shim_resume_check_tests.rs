@@ -85,41 +85,45 @@ async fn a_hibernation_stops_the_running_execution_but_not_behind_an_unresolved_
 
 // --- the owner's check and reconciliation (tests 8, 19, 20) -------------
 
-/// A provider group: the leader is dead, a member lives on in its group.
+/// A provider group: the leader is dead, a member (`sleep`) lives on in it.
 struct Orphan {
-    pgid: u32,
     identity: ProviderIdentity,
+    member: Option<std::process::Child>,
 }
 
 impl Orphan {
     fn start() -> Self {
         use std::os::unix::process::CommandExt as _;
-        let mut leader = Command::new("sh")
-            .args(["-c", "sleep 120 & wait"])
-            .process_group(0)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+        let sleep = |group: i32| {
+            Command::new("sleep")
+                .arg("120")
+                .process_group(group)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap()
+        };
+        let mut leader = sleep(0);
         let pgid = leader.id();
-        // Wait until the member runs, then end the leader.
         let identity = identity_of(pgid).unwrap();
-        for _ in 0..200 {
-            if fleetdeck_providers::host::shim::inspect::group_members(pgid) == Some(1) {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        // `spawn` returns after the exec: the member is `sleep` from here on,
+        // in the leader's group. No fork window, no poll.
+        let member = sleep(i32::try_from(pgid).unwrap());
         leader.kill().unwrap();
         leader.wait().unwrap();
-        Self { pgid, identity }
+        Self {
+            identity,
+            member: Some(member),
+        }
     }
 
-    fn end(&self) {
-        let _ = Command::new("kill")
-            .args(["-KILL", "--", &format!("-{}", self.pgid)])
-            .status();
+    /// Ends the member and reaps it at once, so no zombie stays in the group.
+    fn end(&mut self) {
+        if let Some(mut member) = self.member.take() {
+            let _ = member.kill();
+            let _ = member.wait();
+        }
     }
 }
 
@@ -133,7 +137,7 @@ impl Drop for Orphan {
 async fn the_owner_check_lists_what_still_runs_and_the_reconciliation_waits_for_it_to_end() {
     let mut rig = Rig::direct(None).await;
     let session = rig.ended("claude").await;
-    let orphan = Orphan::start();
+    let mut orphan = Orphan::start();
     let mut identity = orphan.identity.clone();
     identity.boot_id = real_boot();
     rig.row(
@@ -162,21 +166,33 @@ async fn the_owner_check_lists_what_still_runs_and_the_reconciliation_waits_for_
     assert_eq!(rig.rows(&session).await[0].proof, None);
 
     orphan.end();
+    // The member is gone, and the check is complete (a churning machine can
+    // make one census incomplete).
     let deadline = tokio::time::Instant::now() + WAIT;
-    while !rig
-        .manager
-        .execution_check(&session)
-        .await
-        .unwrap()
-        .group_members
-        .is_empty()
-    {
-        assert!(tokio::time::Instant::now() < deadline, "the member lives");
-        tokio::time::sleep(Duration::from_millis(20)).await;
+    loop {
+        let check = rig.manager.execution_check(&session).await.unwrap();
+        if check.complete && check.group_members.is_empty() && check.session_members.is_empty() {
+            break;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "{check:?}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    let d = rig.accepted(reconcile(&session, "gone")).await;
+    // The reconciliation runs its own census: try again while it is incomplete.
+    let d = loop {
+        let d = rig.send(reconcile(&session, "gone")).await;
+        let incomplete = d
+            .receipt
+            .reject
+            .as_ref()
+            .is_some_and(|r| r.message.contains("the process check is incomplete"));
+        if !incomplete {
+            break d;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "{:?}", d.receipt);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    assert_eq!(d.receipt.state, ReceiptState::Accepted, "{:?}", d.receipt);
     // The receipt, the event and the proof; state and reason stay.
-    assert_eq!(d.receipt.state, ReceiptState::Accepted);
     assert!(d.events.iter().any(|e| matches!(
         &e.event,
         EventBody::Known(Event::ExecutionReconciled { shim_id }) if shim_id == "gone"
