@@ -3033,3 +3033,10 @@ Owner review: pending.
 - Context: a shim-hosted session has no coordinator token after a station restart, so its Fleet Deck tools stop (DL-188 gap). Design `docs/v2/design/shim-credential.md`, five adversary rounds (rounds 1–4 FAIL; the owner approved rounds 4 and 5; round 5 PASS).
 - Decision: a two-step launch (the shim proves its executable hash, then gets the token); `/proc/self/exe` for the shim and `shim-exec`; the `fleetdeck mcp-bridge` stdio bridge to a station Unix socket; `shim_bindings` digest rows with transitions inside the durable output transaction; `NativeIdentity` signals; a write-ahead invalidation fence for revoke and rotation, where a failed intent fails the operation. Linux only.
 - Owner only. The build is the next step.
+
+## DL-195 — Shim parity steps 2 and 3, and the Codex bridge (2026-10-16)
+
+- Step 2 (G3) is not a gap: a Claude revert is a stored `unsupported` rejection on both hosts (Claude reports `rollback: false`, DL-087). A test proves the shim host refuses it the same way. A real Claude revert is a separate owner decision.
+- Step 3 (G4): auto-continue on the shim host. A lost shim session is continued only with the DL-182 proof that its run ended (in practice a verified reboot); the dispatch checks the reboot proof again like a manual resume; without proof the session waits (`execution_unknown`).
+- DL-194 §9.10: the bridge mode is gated by `BRIDGE_VERIFIED`. The live smoke `live_bridge` passed with Claude 2.1.301 and Codex 0.162.1, both control rounds; the list names Claude 2.1.296 and Codex 0.162.1.
+- Open: step 4 (macOS, `libproc`, owner Mac run) and step 5 (default host, owner decision).

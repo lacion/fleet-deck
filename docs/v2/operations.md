@@ -320,7 +320,7 @@ Auto-continue is off for each session by default. Turn it on in the session view
 
 Limits of this release (DL-127, follow-ups in `docs/v2/progress/m3-durable.md`):
 
-- Auto-continue works only with `host = "direct"`. With `host = "shim"`, the station skips a lost session with the reason `unsupported`.
+- With `host = "shim"` (Linux), the station continues a lost session only when it holds the DL-182 proof that the old run ended (§10, "Resume on the shim host"). In practice this is a verified reboot. Without the proof, it skips the session with the reason `execution_unknown`, and you resume it yourself. Right before the dispatch, it checks the proof again like a manual resume (DL-188 step 3).
 - The station checks every ADR-007 rule when it stores the continuation. Right before the dispatch, it checks again only these rules: identity, proven end of the old process, newer owner work, requested stop and the time window. It does not check again the preference, the turn state, the capability, the workspace or a free session slot.
 
 ### Resume on the shim host (DL-182)
@@ -333,7 +333,7 @@ With `host = "shim"` a resume starts a new shim and a new agent process. It is n
 - Reconciliation: for a run whose end is not proven, the station method `session.execution_check` lists the processes that still belong to it (the agent, its process group and its session). Stop them on the station. Then the command `session.reconcile_execution` marks the run as ended. The station checks the processes again and refuses while one lives or when the check is incomplete. The board page for this action comes in a later release; the station methods exist now.
 - Detached hooks: the station cannot see a process that left the agent's process group and session (it called `setsid()`). A hook that detaches and keeps a writable descriptor on the transcript can write to it after a resume. The direct host has the same limit. The check lists such processes for information only.
 - Rollback: a launch journal of this release has a `boot_id` field. A station of an earlier release reads that journal as unknown evidence and fails closed: the session stays `lost` there. A shim of this release speaks the shim protocol 2 and the previous version 1 (an unavailable process count is `u32::MAX` on version 1).
-- Auto-continue stays off with `host = "shim"`.
+- Auto-continue on the shim host uses the same proof (DL-188 step 3): a lost session is continued only when its run is proven ended.
 
 ## 11. Troubleshooting
 
@@ -352,7 +352,7 @@ Run `fleetdeck doctor` first. It changes nothing. It prints one line for each ch
 | The board refuses a WebSocket | Set `tailnet_hostname` when you open the board by its tailnet name. |
 | A link call fails with `feature_not_negotiated` | The deck and the station do not share the feature of that method (for example `coordinator.v1` for coordinator sessions). Upgrade the older side; an N−1 peer keeps the shared features. |
 | A coordinator tool call fails `deck_unreachable` | The station has not linked to a deck since it started, so it knows no deck to send to. Check the link (row "The station is not on the board"). After the first link, the station keeps coordinator calls in its durable outbox and sends them when the deck is back, for up to 15 minutes (DL-218). |
-| A coordinator session does not start | The start fails with its reason. `a coordinator session starts only as a new direct child`: start a new session with `host = "direct"`; a resume or a shim-hosted start cannot carry the grant credential. `the coordinator endpoint does not listen`: check the station coordinator MCP ingress. `handoff_unverified`: the provider version has no verified credential handoff. Claude 2.1.296 and later is verified; Codex is not, so a Codex coordinator start fails with this reason (§7.2; DL-215, DL-219). |
+| A coordinator session does not start | The start fails with its reason. `a coordinator session starts only as a new direct child`: a resume cannot carry the grant credential; start a new session. `a coordinator session on the shim host needs a provider version whose bridge is verified`: update the provider (Claude 2.1.296, Codex 0.162.1 or later; DL-194). `the coordinator endpoint does not listen`: check the station coordinator MCP ingress. `handoff_unverified`: the provider version has no verified credential handoff. Claude 2.1.296 and later and Codex 0.160.0 and later are verified for the direct host (§7.2; DL-215, DL-219, DL-220). |
 
 ## 12. Owner steps that this repository cannot test
 
