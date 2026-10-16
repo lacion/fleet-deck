@@ -95,9 +95,9 @@ impl DurableCore for CodexCore {
             | EffectPayload::Stop { .. }
             | EffectPayload::Revert { .. }
             | EffectPayload::Worktree { .. } => Err(not_a_command()),
-            // B8: the execution of `!` commands is a later task.
-            EffectPayload::ShellCommand { .. } => {
-                Err(ProviderError::NotReady("shell_command_not_built"))
+            // B8: a `!` command of a Codex session.
+            EffectPayload::ShellCommand { command, .. } => {
+                self.shell_command(effect.effect_id.as_str(), command)
             }
         }?;
         Ok(split(out))

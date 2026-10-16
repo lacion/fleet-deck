@@ -48,6 +48,7 @@ pub mod session_files;
 pub mod setup_runs;
 mod sharing;
 pub mod shell_effects;
+mod shell_observe;
 pub mod shell_retire;
 pub mod shell_runs;
 pub mod shim_bindings;

@@ -351,6 +351,14 @@ pub trait LiveSession: Send {
         let _ = turns;
         Err(Unsupported::new(Operation::Revert).into())
     }
+    /// A `!` shell command through the provider (B8). The effect id names
+    /// the node `shell-<effect id>` of its events. Refused by default.
+    async fn shell_command(&mut self, effect_id: String, command: String) -> Result<()> {
+        let _ = (effect_id, command);
+        Err(ProviderError::Refused(
+            "shell commands are not supported".into(),
+        ))
+    }
     /// Stops the process within the stop policy. A sink that stays full
     /// cannot hold `stop`: it then returns [`ProviderError::EventsUndelivered`]
     /// after the process is stopped.

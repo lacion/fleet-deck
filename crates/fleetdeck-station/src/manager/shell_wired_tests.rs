@@ -13,6 +13,8 @@ use super::*;
 use crate::store::shell_runs::ShellState;
 use crate::store::{Caller, EffectPayload};
 
+#[path = "shell_codex_tests.rs"]
+mod shell_codex;
 #[path = "shell_revert_tests.rs"]
 mod shell_revert;
 #[path = "shell_work_tests.rs"]

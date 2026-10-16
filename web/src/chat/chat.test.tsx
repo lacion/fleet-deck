@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReviewComment, ReviewSummary } from '../gen';
 import type { Item } from '../session/timeline';
 import { ChatView } from './ChatView';
+import { runLabel } from './labels';
 import { Markdown } from './Markdown';
 
 const md = (text: string) => renderToStaticMarkup(<Markdown text={text} />);
@@ -104,6 +105,15 @@ describe('ChatView', () => {
     expect(html).not.toContain('fd-chat-run-label');
     expect(html.match(/fd-chat-bubble/g)?.length).toBe(1);
     expect(html).toContain('again');
+  });
+
+  test('a shell run has the label Shell command and no line or bubble (B8)', () => {
+    expect(runLabel('shell')).toBe('Shell command');
+    const items: Item[] = [{ type: 'run', key: '1', run_id: 'r1', input: '!pwd', origin: 'shell' }];
+    const html = view({ items });
+    expect(html).not.toContain('!pwd');
+    expect(html).not.toContain('fd-chat-run');
+    expect(html).not.toContain('fd-chat-line');
   });
 
   test('three finished tools in a row form one fold; a running tool stays outside', () => {

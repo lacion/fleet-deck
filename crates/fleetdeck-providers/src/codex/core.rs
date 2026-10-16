@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 
 pub(super) use super::core_types::{HostRequest, InputEntry, Ordinals, ToolNode};
 use super::rpc::{self, Incoming};
+use super::shell::PendingShell;
 use super::{
     COLLABORATION_MODES, CoreConfig, MAX_MODEL_CHARS, Mode, SessionSpec, requests, summary_of,
 };
@@ -87,6 +88,10 @@ pub struct CodexCore {
     pub(super) background: Vec<BackgroundTask>,
     pub(super) requests: requests::Requests,
     pub(super) unknown_frames: usize,
+    /// The `!` shell command that waits for or runs its turn (B8); an older
+    /// checkpoint has none.
+    #[serde(default)]
+    pub(super) pending_shell: Option<PendingShell>,
 }
 
 impl CodexCore {
@@ -127,6 +132,7 @@ impl CodexCore {
             background: Vec::new(),
             requests: requests::Requests::default(),
             unknown_frames: 0,
+            pending_shell: None,
         }
     }
 
@@ -571,6 +577,8 @@ impl CodexCore {
         }
         self.ended = true;
         let mut out = self.expire_open(ExpiredReason::ProcessLost);
+        // B8: a shell command that did not complete ends `unknown`.
+        out.extend(self.shell_exit());
         out.extend(self.close_all_tools());
         // No frame follows an exit: inputs that wait or run end as discarded,
         // so none stays open on the board.
@@ -635,13 +643,17 @@ impl CodexCore {
                 Some(e.id.clone()),
                 e.input_text.take(),
             ),
-            None => (
-                RunOrigin::Provider,
-                "provider turn".to_owned(),
-                None,
-                None,
-                None,
-            ),
+            // B8: the turn of a `!` shell command binds to its pending command.
+            None => match self.bind_shell_turn(native) {
+                Some(summary) => (RunOrigin::Shell, summary, None, None, None),
+                None => (
+                    RunOrigin::Provider,
+                    "provider turn".to_owned(),
+                    None,
+                    None,
+                    None,
+                ),
+            },
         };
         let run_id = self.ids.run();
         self.run = Some(run_id.clone());

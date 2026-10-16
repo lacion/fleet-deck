@@ -187,6 +187,7 @@ pub(super) fn append_at(
     // The request table first: an answer is confirmed through its node.
     super::requests::observe(conn, &envelope, now, time)?;
     super::effects::observe(conn, &envelope, now)?;
+    super::shell_observe::observe(conn, &envelope, now)?;
     Ok(envelope)
 }
 

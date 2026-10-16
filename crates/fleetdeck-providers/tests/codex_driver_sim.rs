@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use fleetdeck_core::ChildEnv;
 use fleetdeck_proto::command::{ApprovalDecision, SessionSpec, StopMode, UserInput};
-use fleetdeck_proto::event::{ResolvedBy, RunOrigin, TurnStatus};
+use fleetdeck_proto::event::{ResolvedBy, RunOrigin, ToolStatus, TurnStatus};
 use fleetdeck_proto::{Event, InputId};
 use fleetdeck_providers::codex::{CodexAdapter, CodexAdapterConfig, CodexSession, Origin};
 use fleetdeck_providers::host::DirectChildHost;
@@ -302,4 +302,115 @@ async fn a_failed_handshake_fails_the_start() {
         matches!(err, fleetdeck_providers::ProviderError::SessionEnded),
         "{err}"
     );
+}
+
+/// The events of a `!` command until its turn completes (B8).
+async fn shell_events(live: &mut Live, command: &str) -> Vec<Event> {
+    live.session
+        .shell_command("eff-1".into(), command.into())
+        .await
+        .unwrap();
+    until(&mut live.rx, turn_completed).await
+}
+
+fn shell_completed(events: &[Event]) -> (ToolStatus, Option<i32>, String) {
+    events
+        .iter()
+        .find_map(|e| match e {
+            Event::ToolCompleted {
+                node_id,
+                status,
+                exit_code,
+                provider_refs,
+                ..
+            } if node_id.as_str() == "shell-eff-1" => Some((
+                *status,
+                *exit_code,
+                provider_refs["shell"].as_str().unwrap().to_owned(),
+            )),
+            _ => None,
+        })
+        .expect("a shell node completion")
+}
+
+#[tokio::test]
+async fn a_shell_command_runs_end_to_end() {
+    let mut live = start(None, Origin::New).await;
+    let events = shell_events(&mut live, "pwd").await;
+    let kinds: Vec<&str> = events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                Event::RunStarted { .. }
+                    | Event::TurnStarted { .. }
+                    | Event::ToolStarted { .. }
+                    | Event::ToolOutput { .. }
+                    | Event::ToolCompleted { .. }
+                    | Event::TurnCompleted { .. }
+                    | Event::RunCompleted { .. }
+            )
+        })
+        .map(Event::kind_name)
+        .collect();
+    let at = kinds.iter().position(|k| *k == "run.started").unwrap();
+    assert_eq!(
+        &kinds[at..],
+        [
+            "run.started",
+            "turn.started",
+            "tool.started",
+            "tool.output",
+            "tool.completed",
+            "turn.completed"
+        ],
+        "{events:#?}"
+    );
+    assert!(events.iter().any(|e| matches!(e, Event::RunStarted { origin: RunOrigin::Shell, input_summary, .. } if input_summary == "!pwd")));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::ToolOutput { chunk, .. } if chunk == "sim: pwd\n"))
+    );
+    assert_eq!(
+        shell_completed(&events),
+        (ToolStatus::Ok, Some(0), "done".to_owned())
+    );
+    // The core is idle again: a prompt runs at once.
+    live.session.prompt(input("in-1", "hello")).await.unwrap();
+    let events = until(&mut live.rx, turn_completed).await;
+    assert_eq!(texts(&events), ["echo: hello"]);
+    live.session.stop(StopMode::Graceful).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_failing_shell_command_reports_its_exit_code() {
+    let mut live = start(None, Origin::New).await;
+    let events = shell_events(&mut live, "fail now").await;
+    assert_eq!(
+        shell_completed(&events),
+        (ToolStatus::Failed, Some(2), "done".to_owned())
+    );
+    live.session.stop(StopMode::Graceful).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_refused_shell_command_fails_its_node() {
+    let mut live = start(None, Origin::New).await;
+    live.session
+        .shell_command("eff-1".into(), "refuse it".into())
+        .await
+        .unwrap();
+    let events = until(&mut live.rx, |e| matches!(e, Event::ToolCompleted { .. })).await;
+    assert_eq!(
+        shell_completed(&events),
+        (ToolStatus::Failed, None, "failed".to_owned())
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::ToolOutput { chunk, .. }
+        if chunk == "Codex refused the command: refused (-32600)"))
+    );
+    live.session.stop(StopMode::Graceful).await.unwrap();
 }

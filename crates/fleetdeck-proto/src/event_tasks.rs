@@ -28,6 +28,8 @@ pub enum RunOrigin {
     /// The station's fixed continuation input after a restart (L19,
     /// ADR-007 §2.3). Older peers decode it as unknown.
     Continuation,
+    /// A `!` shell command turn (B8, DL-196).
+    Shell,
 }
 
 /// The most bytes of `run.started.input_text`, before the `…` (B10).

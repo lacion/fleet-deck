@@ -2,7 +2,7 @@
 //! work that a station restart interrupted, the owner commands after it,
 //! and the dispatch recheck of a stored continuation.
 
-use fleetdeck_proto::event::SessionState;
+use fleetdeck_proto::event::{RunOrigin, SessionState};
 use fleetdeck_proto::{Event, EventBody, SessionId, TurnId};
 use rusqlite::{Connection, OptionalExtension as _, params};
 
@@ -95,9 +95,15 @@ fn lost_work(conn: &Connection, session: &SessionId, after: u64) -> Result<Optio
         }
         w.last_at = at;
         match event {
-            Event::RunStarted { input_summary, .. } => {
+            Event::RunStarted {
+                input_summary,
+                origin,
+                ..
+            } => {
                 w.run_open = true;
-                w.maintenance = input_summary.trim_start().starts_with("/compact");
+                // B8: a `!` shell turn is maintenance work too.
+                w.maintenance = input_summary.trim_start().starts_with("/compact")
+                    || origin == RunOrigin::Shell;
             }
             Event::RunCompleted { .. } => w.run_open = false,
             Event::TurnStarted { turn_id, .. } => {
@@ -188,8 +194,12 @@ fn activity_since(conn: &Connection, session: &SessionId, at: i64) -> Result<Opt
     })?;
     for row in rows {
         match serde_json::from_str::<EventBody>(&row?)? {
-            EventBody::Known(Event::RunStarted { input_summary, .. })
-                if input_summary.trim_start().starts_with("/compact") =>
+            EventBody::Known(Event::RunStarted {
+                input_summary,
+                origin,
+                ..
+            }) if input_summary.trim_start().starts_with("/compact")
+                || origin == RunOrigin::Shell =>
             {
                 return Ok(Some("maintenance_turn"));
             }

@@ -2,5 +2,6 @@
 export function runLabel(origin: string): string {
   if (origin === 'provider') return 'Provider turn';
   if (origin === 'continuation') return 'Station continuation';
+  if (origin === 'shell') return 'Shell command';
   return 'You';
 }

@@ -28,6 +28,12 @@
 //!
 //! `thread/rollback` drops `numTurns` completed turns when no turn runs.
 //!
+//! `thread/shellCommand` (B8) answers `{}`, then runs a turn with one
+//! `userShell` command item (output `sim: <command>`, exit code 0). The
+//! words in the command select: `fail` (exit code 2), `hang` (no end until
+//! `turn/interrupt`), `noack` (no reply and no turn), `refuse` (an error
+//! reply).
+//!
 //! `account/read` answers signed in, except under scenario
 //! `auth:signed-out`. End of stdin ends the process with exit code 0.
 
@@ -212,6 +218,7 @@ impl<W: Write> Sim<W> {
             Some("turn/start") => self.on_turn_start(&id, &params),
             Some("turn/steer") => self.on_steer(&id, &params),
             Some("turn/interrupt") => self.on_interrupt(&id),
+            Some("thread/shellCommand") => self.on_shell(&id, &params),
             Some("thread/backgroundTerminals/list") => self.on_list(&id),
             Some("model/list") => self.reply(
                 &id,
@@ -515,6 +522,41 @@ impl<W: Write> Sim<W> {
         self.reply(id, json!({"turnId": turn}))?;
         self.user_message(&turn, client, &text)?;
         self.answer(&turn, &format!("steered: {text}"), "completed")
+    }
+
+    /// `thread/shellCommand` (B8): see the module documentation.
+    fn on_shell(&mut self, id: &Value, params: &Value) -> std::io::Result<()> {
+        if self.turn.is_some() {
+            return self.error(id, "a turn is already running");
+        }
+        let command = str_of(params, &["command"]).unwrap_or_default().to_owned();
+        if command.contains("refuse") {
+            return self.error(id, "refused");
+        }
+        if command.contains("noack") {
+            return Ok(());
+        }
+        let turn = format!("sim-turn-{}", self.next());
+        let shape = json!({"id": turn, "status": "inProgress", "items": [], "error": null});
+        self.reply(id, json!({}))?;
+        self.notify("turn/started", json!({"turn": shape}))?;
+        let item = format!("shell-sim-{}", self.next());
+        let mut exec = command_item(&item, &command, &self.cwd, "inProgress", None);
+        exec["source"] = json!("userShell");
+        self.item("started", &turn, exec.clone())?;
+        if command.contains("hang") {
+            self.turn = Some(Turn {
+                id: turn,
+                wait: Wait::Host,
+            });
+            return Ok(());
+        }
+        let failed = command.contains("fail");
+        exec["status"] = json!(if failed { "failed" } else { "completed" });
+        exec["aggregatedOutput"] = json!(format!("sim: {command}\n"));
+        exec["exitCode"] = json!(if failed { 2 } else { 0 });
+        self.item("completed", &turn, exec.clone())?;
+        self.complete(&turn, "completed", vec![exec])
     }
 
     fn on_interrupt(&mut self, id: &Value) -> std::io::Result<()> {

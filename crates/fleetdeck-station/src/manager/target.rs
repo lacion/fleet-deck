@@ -532,10 +532,21 @@ impl SessionTarget {
     }
 
     async fn operate(&self, effect: &Effect) -> Dispatch {
-        // B8: a shell command is station work, not a provider command.
-        if matches!(effect.payload, EffectPayload::ShellCommand { .. }) {
-            return self.dispatch_shell(effect);
+        // B8: a Claude shell command is station work; a Codex one goes
+        // through the provider after the station checks of its own.
+        match &effect.payload {
+            EffectPayload::ShellCommand {
+                provider: ProviderKind::Codex,
+                ..
+            } => self.dispatch_codex_shell(effect).await,
+            EffectPayload::ShellCommand { .. } => self.dispatch_shell(effect),
+            _ => self.operate_provider(effect).await,
         }
+    }
+
+    /// One claimed effect against the live provider session: the process
+    /// check, the gate, then the durable or the direct write.
+    pub(super) async fn operate_provider(&self, effect: &Effect) -> Dispatch {
         let Some(live) = self.live(&effect.session_id) else {
             return Dispatch::NotDispatched("no_process".into());
         };
@@ -746,6 +757,9 @@ mod setup_task;
 
 #[path = "shell_run.rs"]
 mod shell_run;
+
+#[path = "shell_codex.rs"]
+mod shell_codex;
 
 #[path = "target_base.rs"]
 mod target_base;

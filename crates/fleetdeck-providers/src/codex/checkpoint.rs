@@ -3,8 +3,9 @@
 //! The checkpoint is the serialized [`CodexCore`] without its
 //! [`CoreConfig`]: thread id, ordinal counters, the JSON-RPC id counter and
 //! every pending host request correlation, inputs, queued follow-ups,
-//! pending mode and model, the running turn, tools, and open and closed
-//! requests. The restoring station passes the config again.
+//! pending mode and model, the running turn, tools, a pending `!` shell
+//! command (B8), and open and closed requests. The restoring station
+//! passes the config again.
 //! [`CodexCore::restore`] writes no frame: the app-server keeps running
 //! under its shim and never sees a second `initialize` or `thread/start`.
 

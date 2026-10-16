@@ -22,6 +22,18 @@ fn claimed(conn: &Connection) -> Result<Vec<ShellRow>> {
     )
 }
 
+/// The Codex rows that the previous station process may have sent: a
+/// `running` row, or a `queued` row whose effect was claimed (or ended as
+/// `outcome_unknown`).
+fn codex_sent(conn: &Connection) -> Result<Vec<ShellRow>> {
+    select(
+        conn,
+        "provider = 'codex' AND (state = 'running' OR (state = 'queued' AND effect_id IN
+           (SELECT effect_id FROM effects WHERE state IN ('claimed', 'outcome_unknown'))))",
+        &[],
+    )
+}
+
 /// Settles a row to the terminal `to`, only while its state is `from`.
 fn settle_from(
     conn: &Connection,
@@ -71,6 +83,14 @@ impl Store {
     /// A database error.
     pub async fn shell_claimed_rows(&self) -> Result<Vec<ShellRow>> {
         call(&self.inner.db, move |conn| claimed(conn)).await
+    }
+
+    /// The Codex rows that the start-up reclassifies (see [`codex_sent`]).
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn shell_codex_sent_rows(&self) -> Result<Vec<ShellRow>> {
+        call(&self.inner.db, move |conn| codex_sent(conn)).await
     }
 
     /// Settles a row to `to` in one guarded transaction: only while its state
