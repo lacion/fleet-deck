@@ -70,6 +70,7 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 - **Gap:** the station checks a session folder against the allowed roots by path, and the provider later resolves the same path; a process of the station user that replaces a folder component with a link in between can move the launch outside the roots. The same holds for the provider's own transcript lookup at a resume.
 - **Wanted:** descriptor custody of the checked folder across the direct and the shim host launch (the process cwd and the provider workspace), or a fail-closed recheck.
 - **Status:** later. Needs a design and an adversary DESIGN REVIEW.
+- **Done (2026-10-17):** design `docs/v2/design/launch-dir.md` rev 4 (DL-200, Landlock for provisioning). Built in four parts (B9a base `bd810721`, identities at the dispatch `8deec2b0`, provisioning under `confine-exec` `dbad0841`, the other launches and the Codex check `40ccb315`); PRE-PR r1 FAIL (checkpoints, provisioning Git and the provisioned identity by path), fixed `7a61460f`, RE-REVIEW r2 PASS. Open: macOS (Seatbelt and `libproc`, with the Mac work); later checkpoint Git by the retained toplevel path (detection only, design §2).
 
 ## B10. The chat shows only the first line of a prompt (owner report, 2026-10-16)
 
@@ -78,4 +79,5 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 - **Wanted:** the user bubble shows the whole prompt (with line breaks), like Claude Code and Codex; long prompts fold with "Show more". The run label elsewhere (cards, lists) may stay the summary.
 - **Notes:** an additive event field (for example `run.started.input_text`, bounded) or an `input.received` event; the same visibility as the summary today (members of a shared session see prompts already). Imported history already shows full user text.
 - **Status:** open.
+- **Done (2026-10-16):** the chat shows the whole prompt, folded when long (`20fc4ce6`).
 - **Done (2026-10-16):** `run.started.input_text` (up to 32 KiB) from both providers; the chat bubble shows the whole prompt, folded after 12 lines with "Show more".
