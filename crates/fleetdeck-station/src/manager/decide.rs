@@ -10,6 +10,7 @@ use fleetdeck_proto::session::BatchRef;
 use fleetdeck_proto::{InputId, Operation, Reject, RejectCode, SessionId, SessionSummary};
 
 use super::policy::{Policy, WorkspaceError};
+use super::shell_decide::ShellInterrupt;
 use crate::coordinator::Bindings;
 use crate::store::{
     AnswerClaim, DecideError, Decision, EffectPayload, InputRecord, NewSession, RequestState,
@@ -175,11 +176,15 @@ pub fn decide(
         }
         SessionCommand::Interrupt { session_id } => {
             // A shell command of the session is cancelled (B8).
-            if let Some(done) = super::shell_decide::interrupt(d, &session_id)? {
+            let shell = super::shell_decide::interrupt(d, &session_id)?;
+            if let ShellInterrupt::Done(done) = shell {
                 return Ok(done);
             }
             let s = live_session(d, &session_id, Operation::Interrupt)?;
-            if s.current_turn.is_none()
+            // A Codex command sent before its turn started: the provider
+            // holds the interrupt (B8).
+            if matches!(shell, ShellInterrupt::None)
+                && s.current_turn.is_none()
                 && s.current_run.is_none()
                 && s.state != SessionState::Starting
             {

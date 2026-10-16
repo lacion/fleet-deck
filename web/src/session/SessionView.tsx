@@ -582,8 +582,8 @@ export function SessionView(props: SessionViewProps) {
                     nativeQueue={caps?.native_follow_up === true}
                     onSend={(kind, text, images) => {
                       if (!actions) return;
-                      // B8: the remaining chips go with the prompt; a sent prompt uses them up.
-                      const results = shellChips.chips.map((c) => c.id);
+                      // B8: the first 64 chips go with the prompt; a sent prompt uses them up.
+                      const results = shellChips.toSend();
                       controller.act('send', async () => {
                         // R6.6: a hibernated session resumes first, then takes the prompt.
                         const outcome = wakes
@@ -597,7 +597,7 @@ export function SessionView(props: SessionViewProps) {
                               images,
                             )
                           : await actions.send(kind, text, images, results);
-                        if (outcome.ok) shellChips.consume();
+                        if (outcome.ok) shellChips.consume(results);
                         return outcome;
                       });
                     }}
