@@ -34,6 +34,7 @@ import type { HistoryView } from './history';
 import { HistoryBlock } from './HistoryBlock';
 import { Markdown } from './Markdown';
 import { SubagentWork } from './SubagentWork';
+import { isShellTool, ShellCard, type ShellEnv, unfoldShells } from './ShellCard';
 import { PromptBubble } from './PromptBubble';
 import { ReviewCard } from '../review/ReviewCard';
 
@@ -72,6 +73,8 @@ export type ChatViewProps = {
   readonly footer?: ReactNode;
   /** B6: the text of an empty list; the main chat keeps its own. */
   readonly emptyText?: string | undefined;
+  /** B8: what a shell card does (Stop, Release); absent: the cards only show. */
+  readonly shell?: ShellEnv | undefined;
 };
 
 type OpenChanges = ((turnId: string) => void) | undefined;
@@ -121,26 +124,29 @@ type ItemsProps = {
   review?: ChatReview | undefined;
   loadSubagent?: ((toolUseId: string) => Promise<SubagentLog>) | null | undefined;
   tasks?: ReadonlyMap<string, TaskState> | undefined;
+  shell?: ShellEnv | undefined;
 };
 
 const NO_TASKS: ReadonlyMap<string, TaskState> = new Map();
 
 function Items(props: ItemsProps): ReactNode {
-  const { compact, provider, onOpenChanges, review, loadSubagent, tasks } = props;
-  return compactRuns(props.items, compact, provider).map((row) =>
+  const { compact, provider, onOpenChanges, review, loadSubagent, tasks, shell } = props;
+  // B8: a shell card is never folded.
+  const rows = unfoldShells(compactRuns(props.items, compact, provider), compact, provider);
+  return rows.map((row) =>
     row.kind === 'fold' ? (
       <ToolFold
         key={row.items[0]?.key}
         items={row.items}
         failed={row.failed}
         summary={row.summary}
-        {...{ onOpenChanges, compact, provider, review, loadSubagent, tasks }}
+        {...{ onOpenChanges, compact, provider, review, loadSubagent, tasks, shell }}
       />
     ) : (
       <ItemView
         key={row.item.key}
         item={row.item}
-        {...{ onOpenChanges, compact, provider, review, loadSubagent, tasks }}
+        {...{ onOpenChanges, compact, provider, review, loadSubagent, tasks, shell }}
       />
     ),
   );
@@ -319,7 +325,11 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item }) {
         </details>
       );
     case 'tool':
-      return <ToolView tool={item} />;
+      return isShellTool(item) ? (
+        <ShellCard tool={item} env={props.shell} />
+      ) : (
+        <ToolView tool={item} />
+      );
     case 'subagent':
       return <SubagentView {...props} item={item} />;
     case 'approval':
@@ -507,6 +517,7 @@ export function ChatView(props: ChatViewProps) {
           review={props.review}
           loadSubagent={props.loadSubagent}
           tasks={props.tasks}
+          shell={props.shell}
         />
       );
   }

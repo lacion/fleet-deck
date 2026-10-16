@@ -19,7 +19,9 @@ import { SubagentWork } from '../chat/SubagentWork';
 import { useSessionHistory } from '../chat/history';
 import type { DeckSession, StationView } from '../gen';
 import type { Freshness, Timeline } from '../runtime/state';
-import { usePeople } from '../sharing/context';
+import { isShared, usePeople } from '../sharing/context';
+import { sessionKey } from '../runtime/state';
+import { useShellChips } from '../chat/ShellChips';
 import { usePresenceHeartbeat, useSessionPeople } from '../sharing/hooks';
 import { roleAccess } from '../sharing/member';
 import { useReviewActions } from '../review/context';
@@ -177,6 +179,8 @@ export function SessionView(props: SessionViewProps) {
   // Only the node id of a subagent selects an agent view; any other value shows the main chat.
   const loadSubagent = guest === null ? (actions?.subagent ?? null) : null;
   const titles = toolTitles(tree.items);
+  // B8: the Claude shell results that the next prompt carries.
+  const shellChips = useShellChips(sessionKey(key), tree.items, s.provider);
   const agentSub =
     props.tab === 'chat' || props.tab === undefined
       ? tree.subagents.find((sub) => sub.node_id === props.agent)
@@ -252,6 +256,12 @@ export function SessionView(props: SessionViewProps) {
         onReturn: () => controller.act('return', flow.back),
       }
     : null;
+  // B8: the owner types `!command` when shells are on and the provider runs them.
+  const bang =
+    guest === null &&
+    actions != null &&
+    !shellsOff &&
+    (s.provider === 'claude' || s.provider === 'codex');
   const hold = s.terminal ?? null;
   const [confirmRelease, setConfirmRelease] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -482,6 +492,17 @@ export function SessionView(props: SessionViewProps) {
                 loadSubagent={loadSubagent}
                 tasks={tasks}
                 highlight={highlight}
+                shell={
+                  guest === null && actions != null
+                    ? {
+                        canStop: flags.drive,
+                        onStop: () => controller.act('interrupt', () => actions.interrupt()),
+                        canRelease: actions.canAdmin,
+                        ended: flags.ended,
+                        onRelease: (effectId) => actions.releaseShell(effectId),
+                      }
+                    : undefined
+                }
                 toolbar={
                   hasAgents(tree.subagents, tasks) ? (
                     <AgentsMenu
@@ -559,15 +580,34 @@ export function SessionView(props: SessionViewProps) {
                     working={s.current_run !== null}
                     steer={caps?.steer === true}
                     nativeQueue={caps?.native_follow_up === true}
-                    onSend={(kind, text, images) =>
-                      actions &&
-                      controller.act('send', () =>
+                    onSend={(kind, text, images) => {
+                      if (!actions) return;
+                      // B8: the remaining chips go with the prompt; a sent prompt uses them up.
+                      const results = shellChips.chips.map((c) => c.id);
+                      controller.act('send', async () => {
                         // R6.6: a hibernated session resumes first, then takes the prompt.
-                        wakes
-                          ? resumeThenSend(actions, kind, text, images)
-                          : actions.send(kind, text, images),
-                      )
+                        const outcome = wakes
+                          ? await resumeThenSend(
+                              {
+                                ...actions,
+                                send: (k, t, i) => actions.send(k, t, i, results),
+                              },
+                              kind,
+                              text,
+                              images,
+                            )
+                          : await actions.send(kind, text, images, results);
+                        if (outcome.ok) shellChips.consume();
+                        return outcome;
+                      });
+                    }}
+                    bang={bang}
+                    shared={isShared(env, sessionKey(key))}
+                    onShell={(command) =>
+                      actions && controller.act('shell', () => actions.shellCommand(command))
                     }
+                    chips={shellChips.chips}
+                    onRemoveChip={shellChips.remove}
                     resumeBusy={busy !== null}
                     onResume={
                       flags.canResume &&

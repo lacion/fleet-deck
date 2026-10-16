@@ -47,6 +47,8 @@ export type Item =
       /** Files of the call: deduplicated, first-seen order. */
       files: string[];
       exit_code: number | null;
+      /** B8: how a `!` shell command ended (`provider_refs.shell` of `tool.completed`); absent until then. */
+      shell?: string;
     }
   | { type: 'reasoning'; key: string; turn_id: string; text: string; done: boolean }
   | { type: 'plan'; key: string; plan_id: string; markdown: string }
@@ -271,6 +273,8 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
         if (node?.type === 'tool') {
           node.status = e.status;
           node.exit_code = e.exit_code;
+          const shell = e.provider_refs?.['shell'];
+          if (typeof shell === 'string') node.shell = shell;
           node.files = [...new Set([...node.files, ...e.files])];
         }
         if (node?.type === 'subagent' && node.status === 'running') {

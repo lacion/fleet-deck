@@ -777,3 +777,23 @@
   outline-offset: 2px;
   border-radius: var(--r-ctl);
 }
+
+/* B8: the card of a `!` shell command */
+.fd-chat-shell-cmd {
+  margin: 0;
+  max-height: 120px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.fd-chat-shell .fd-chat-output {
+  margin: 0;
+}
+.fd-chat-shell-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.fd-chat-shell[data-highlight] {
+  outline: 2px solid var(--act);
+  outline-offset: 2px;
+}

@@ -449,6 +449,10 @@ pub const API_REST: &[ApiMethod] = &[
     // The owner marks the previous run of a session as ended (DL-182); the
     // handler refuses a token (`owner_only`).
     cmd("session.reconcile_execution", Scope::Admin),
+    // The owner runs a `!` shell command in the session folder, and releases
+    // a folder (B8); the handler refuses a token and a member (`owner_only`).
+    cmd("session.shell_command", Scope::Admin),
+    cmd("session.release_shell", Scope::Admin),
     // `session.coordinator_renew` / `_revoke` have no generic route: only
     // the owner-checked grant routes send them (ADR-006 §3, DL-138).
     // A member answers a question as a collaborator and a tool approval as

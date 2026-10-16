@@ -15,6 +15,7 @@ import { IMAGE_TYPES, imageFiles, imagesProblem, readImage, toDataUrl } from './
 import { MAX_AT_OPTIONS, matchAt, MIN_AT_QUERY } from './at';
 import { matchSlash } from './slash';
 import { type CommentOption, hashMenu, pickComment } from '../review/hashMenu';
+import { type ShellChip, ShellChips } from '../chat/ShellChips';
 
 type Props = {
   readonly enabled: boolean;
@@ -38,6 +39,15 @@ type Props = {
   readonly comments?: readonly CommentOption[];
   /** With a key, the text is kept in `sessionStorage` until it is sent. */
   readonly draftKey?: string;
+  /** B8: the owner may type `!command` (shells are on, the provider runs them). */
+  readonly bang?: boolean;
+  /** B8: the session is shared; the `!` mode says that members see the command. */
+  readonly shared?: boolean;
+  /** B8: runs a shell command in the session folder. */
+  readonly onShell?: (command: string) => void;
+  /** B8: the Claude results that the next prompt carries, and the removal of one. */
+  readonly chips?: readonly ShellChip[];
+  readonly onRemoveChip?: (id: string) => void;
 };
 
 /** The most rows the text box grows to. */
@@ -62,6 +72,23 @@ function writeDraft(key: string | undefined, text: string): void {
   } catch {
     // A full or blocked storage only loses the draft.
   }
+}
+
+/**
+ * B8: what the text means. With `bang` on, a text that starts with `!` (after spaces) is a shell
+ * command (an empty one has `command: ''` and sends nothing); `\!` at the start is a prompt that
+ * starts with a literal `!`. Without `bang` the text is always a prompt.
+ */
+export function inputOf(
+  text: string,
+  bang: boolean,
+):
+  | { readonly kind: 'shell'; readonly command: string }
+  | { readonly kind: 'prompt'; readonly text: string } {
+  const value = text.trim();
+  if (bang && value.startsWith('!')) return { kind: 'shell', command: value.slice(1).trim() };
+  if (bang && value.startsWith('\\!')) return { kind: 'prompt', text: value.slice(1) };
+  return { kind: 'prompt', text: value };
 }
 
 /** On a touch screen Enter is a newline; the send button sends. */
@@ -166,14 +193,21 @@ export function Composer(props: Props) {
 
   const problem = readError ?? imagesProblem(images);
   const empty = text.trim() === '';
-  const blocked = !props.enabled || empty || problem !== null;
+  // B8: `!` mode: the text starts with `!` (after spaces). `\!` at the start is a literal prompt.
+  const meaning = inputOf(text, props.bang === true);
+  const bangOn = meaning.kind === 'shell';
+  const blocked =
+    !props.enabled ||
+    empty ||
+    (problem !== null && !bangOn) ||
+    (meaning.kind === 'shell' && (props.working || meaning.command === ''));
   const commands = props.slashCommands ?? [];
   const hasCommands = commands.length > 0;
   const slash = hasCommands ? matchSlash(text, commands, props.skills) : null;
   const canSearch = props.searchFiles != null;
   // Precedence: the `/` menu, then the `#` menu, then the `@` menu.
-  const hash = hashMenu(text, cursor, props.comments ?? [], slash !== null);
-  const at = canSearch && slash === null && hash === null ? matchAt(text, cursor) : null;
+  const hash = bangOn ? null : hashMenu(text, cursor, props.comments ?? [], slash !== null);
+  const at = canSearch && !bangOn && slash === null && hash === null ? matchAt(text, cursor) : null;
   const atQuery = at !== null && at.query.length >= MIN_AT_QUERY ? at.query : null;
   const choices: MenuRow[] =
     slash !== null
@@ -268,14 +302,23 @@ export function Composer(props: Props) {
     writeDraft(draftKey, value);
   };
   const send = (kind: InputKind) => {
-    const value = text.trim();
-    if (value === '' || imagesProblem(images) !== null) return;
+    if (meaning.kind === 'shell') {
+      // A shell command takes no images; an attached image stays for the next prompt.
+      if (props.working || meaning.command === '') return;
+      setText('');
+      setActive(0);
+      setMenuClosed(false);
+      writeDraft(draftKey, '');
+      props.onShell?.(meaning.command);
+      return;
+    }
+    if (meaning.text === '' || imagesProblem(images) !== null) return;
     setText('');
     setImages([]);
     setActive(0);
     setMenuClosed(false);
     writeDraft(draftKey, '');
-    props.onSend(kind, value, images);
+    props.onSend(kind, meaning.text, images);
   };
   const submit = () => {
     if (!blocked) send(props.working ? 'follow_up' : 'prompt');
@@ -349,7 +392,11 @@ export function Composer(props: Props) {
   };
 
   const reason = !props.enabled && props.disabledReason ? props.disabledReason : null;
-  const placeholder = hasCommands ? 'Message the agent… (/ for commands)' : 'Message the agent…';
+  const placeholder = bangOn
+    ? 'Shell command (runs in the session folder)'
+    : hasCommands
+      ? 'Message the agent… (/ for commands)'
+      : 'Message the agent…';
 
   if (!props.enabled && props.onResume) {
     return (
@@ -386,6 +433,17 @@ export function Composer(props: Props) {
           onChoose={choose}
         />
       ) : null}
+      <ShellChips chips={props.chips ?? []} onRemove={(id) => props.onRemoveChip?.(id)} />
+      {bangOn ? (
+        <span
+          className="fd-badge fd-composer-bang"
+          data-tone="act"
+          role="img"
+          aria-label="Shell command"
+        >
+          !
+        </span>
+      ) : null}
       <label htmlFor="fd-composer-text" className="fd-vh">
         Message
       </label>
@@ -404,6 +462,12 @@ export function Composer(props: Props) {
         onKeyDown={onKeyDown}
         onPaste={onPaste}
       />
+      {bangOn && props.working ? (
+        <p className="fd-composer-note">Wait for the turn to end.</p>
+      ) : null}
+      {bangOn && props.shared === true ? (
+        <p className="fd-composer-note">Members of this session see the command and its output.</p>
+      ) : null}
       {!hasCommands && /^\/\S*$/.test(text) ? (
         <p className="fd-composer-note">
           This session reports no commands. The text goes to the agent as a prompt.
@@ -457,7 +521,11 @@ export function Composer(props: Props) {
           </span>
         ) : null}
         <div className="fd-composer-send">
-          {props.working ? (
+          {bangOn ? (
+            <button type="submit" className="fd-primary" disabled={blocked}>
+              <Icon of={ArrowUp} size={14} /> Run
+            </button>
+          ) : props.working ? (
             <>
               {props.steer ? (
                 <button type="button" disabled={blocked} onClick={() => send('steer')}>

@@ -248,6 +248,41 @@ async fn route(
             ),
         ));
     }
+    // A shell command runs code in the session folder (B8): only the owner's
+    // board login sends one or releases a folder, and a station that has
+    // shells off refuses the command itself.
+    if matches!(
+        command,
+        SessionCommand::ShellCommand { .. } | SessionCommand::ReleaseShell { .. }
+    ) && !owner
+    {
+        return Err((
+            station.clone(),
+            id.clone(),
+            ApiError::new(
+                StatusCode::FORBIDDEN,
+                "owner_only",
+                "only the owner's board login runs shell commands".to_owned(),
+            ),
+        ));
+    }
+    if matches!(command, SessionCommand::ShellCommand { .. }) {
+        let shells_on = board
+            .store
+            .station_info(&rec.station_id)
+            .is_some_and(|(info, _)| info.allow_shell == Some(true));
+        if !shells_on {
+            return Err((
+                station.clone(),
+                id.clone(),
+                ApiError::new(
+                    StatusCode::CONFLICT,
+                    "shell_not_allowed",
+                    "Shells are off on this station.".to_owned(),
+                ),
+            ));
+        }
+    }
     let kind = CommandKind::Session { command };
     board
         .link
