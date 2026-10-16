@@ -461,8 +461,14 @@ pub(super) fn tools_for(
     shim_host: bool,
     resumed: bool,
 ) -> Result<Tools, String> {
-    // The bridge mode is for Claude on Linux until the Codex smoke (§9.10).
-    let bridge_ok = cfg!(target_os = "linux") && provider == ProviderKind::Claude;
+    // The bridge mode needs Linux and a probed version list in which every
+    // version passed the live bridge smoke (§9.10).
+    let versions = bindings.versions(provider);
+    let bridge_ok = cfg!(target_os = "linux")
+        && !versions.is_empty()
+        && versions
+            .iter()
+            .all(|v| fleetdeck_providers::coordinator::bridge_handoff(provider, Some(v)).is_ok());
     let Some(coordinator) = spec.coordinator.as_deref() else {
         let chosen = if !shim_host {
             prepare_fleet(bindings, provider, session_id, spec, false).map(Tools::Direct)
@@ -485,7 +491,8 @@ pub(super) fn tools_for(
     }
     if !bridge_ok {
         return Err(
-            "a coordinator session on the shim host needs Claude on Linux for now".to_owned(),
+            "a coordinator session on the shim host needs a provider version whose bridge is verified"
+                .to_owned(),
         );
     }
     prepare_bridge(bindings, provider, session_id, spec, coordinator).map(Tools::Bridge)

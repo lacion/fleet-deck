@@ -60,10 +60,6 @@ impl Handoff {
         provider: ProviderKind,
         bridge: &BridgeEndpoint,
     ) -> Result<Self, HandoffError> {
-        // DL-194 §9.10: Codex bridge mode waits for a live smoke of env_vars.
-        if provider == ProviderKind::Codex {
-            return Err(HandoffError::NoArgs);
-        }
         let args = fleetdeck_providers::coordinator::bridge_args(
             provider,
             &bridge.program,
@@ -104,7 +100,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_bridge_handoff_is_for_claude_only_until_the_codex_smoke() {
+    fn a_bridge_handoff_has_the_arguments_of_the_provider() {
         let bridge = BridgeEndpoint {
             program: "/station/bin/current".into(),
             socket: "/run/mcp.s".into(),
@@ -112,8 +108,11 @@ mod tests {
         let claude = Handoff::prepare_bridge(ProviderKind::Claude, &bridge).unwrap();
         assert!(claude.args.iter().any(|a| a.contains("mcp-bridge")));
         assert!(claude.args.iter().all(|a| !a.contains("fdc1_")));
+        // The version gate is in `tools_for` (DL-194 §9.10).
+        let codex = Handoff::prepare_bridge(ProviderKind::Codex, &bridge).unwrap();
+        assert!(codex.args.iter().any(|a| a.contains("env_vars")));
         assert!(matches!(
-            Handoff::prepare_bridge(ProviderKind::Codex, &bridge),
+            Handoff::prepare_bridge(ProviderKind::Unknown, &bridge),
             Err(HandoffError::NoArgs)
         ));
     }

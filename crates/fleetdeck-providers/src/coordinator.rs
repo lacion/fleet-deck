@@ -175,18 +175,39 @@ fn numeric(version: &str) -> Option<Vec<u64>> {
     (!parts.is_empty()).then_some(parts)
 }
 
-/// Whether the handoff is verified for a provider version (ADR-006 §5.4):
-/// `Ok` for a version at or above the [`VERIFIED`] minimum of its
-/// provider family; `Err` with the capability reason for an unknown
-/// version, a lower one, or a provider without a verified handoff.
-pub fn handoff(provider: ProviderKind, version: Option<&str>) -> Result<(), &'static str> {
-    let min = VERIFIED
+/// The oldest version of each provider whose stdio bridge passed the live
+/// smoke `live_bridge` (DL-194 §9.10). Codex joins after the owner's run.
+pub const BRIDGE_VERIFIED: &[(ProviderKind, &str)] = &[(ProviderKind::Claude, "2.1.296")];
+
+/// `Ok` for a `version` at or above the minimum that `list` names for
+/// `provider`; `Err(UNVERIFIED)` for an unknown version, a lower one or a
+/// provider that `list` does not name.
+fn at_or_above(
+    list: &[(ProviderKind, &str)],
+    provider: ProviderKind,
+    version: Option<&str>,
+) -> Result<(), &'static str> {
+    let min = list
         .iter()
         .find(|(kind, _)| *kind == provider)
         .and_then(|(_, min)| numeric(min))
         .ok_or(UNVERIFIED)?;
     let got = version.and_then(numeric).ok_or(UNVERIFIED)?;
     if got >= min { Ok(()) } else { Err(UNVERIFIED) }
+}
+
+/// Whether the handoff is verified for a provider version (ADR-006 §5.4):
+/// `Ok` for a version at or above the [`VERIFIED`] minimum of its
+/// provider family; `Err` with the capability reason for an unknown
+/// version, a lower one, or a provider without a verified handoff.
+pub fn handoff(provider: ProviderKind, version: Option<&str>) -> Result<(), &'static str> {
+    at_or_above(VERIFIED, provider, version)
+}
+
+/// [`handoff`] for the stdio bridge of a shim host, with the
+/// [`BRIDGE_VERIFIED`] list (DL-194 §9.10).
+pub fn bridge_handoff(provider: ProviderKind, version: Option<&str>) -> Result<(), &'static str> {
+    at_or_above(BRIDGE_VERIFIED, provider, version)
 }
 
 #[cfg(test)]
@@ -329,5 +350,22 @@ mod tests {
         assert_eq!(handoff(ProviderKind::Claude, Some("2.10.0")), Ok(()));
         assert_eq!(handoff(ProviderKind::Codex, Some("0.160.0")), Ok(()));
         assert_eq!(handoff(ProviderKind::Codex, Some("0.161.2")), Ok(()));
+    }
+
+    #[test]
+    fn the_bridge_is_verified_for_claude_2_1_296_and_not_for_codex_yet() {
+        assert_eq!(
+            bridge_handoff(ProviderKind::Claude, Some("2.1.296")),
+            Ok(())
+        );
+        assert_eq!(
+            bridge_handoff(ProviderKind::Claude, Some("2.1.295")),
+            Err(UNVERIFIED)
+        );
+        assert_eq!(bridge_handoff(ProviderKind::Claude, None), Err(UNVERIFIED));
+        assert_eq!(
+            bridge_handoff(ProviderKind::Codex, Some("0.162.1")),
+            Err(UNVERIFIED)
+        );
     }
 }

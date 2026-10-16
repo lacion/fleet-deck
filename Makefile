@@ -33,6 +33,11 @@ ts-types:
 # needs signed-in CLIs and network. See docs/v2/LIVE-SMOKE.md.
 smoke-live:
 	FD_LIVE_SMOKE=1 timeout 900 cargo test -p fleetdeck-providers --test live_smoke -- --ignored --nocapture --test-threads 1
+# Live smoke of the stdio bridge of a shim host (DL-194 §9.10): the real
+# `claude` and `codex` pass `FLEETDECK_COORDINATOR_TOKEN` to `fleetdeck
+# mcp-bridge`, with a control round. A pass sets `BRIDGE_VERIFIED`.
+smoke-live-bridge:
+	FD_LIVE_SMOKE=1 cargo test -p fleetdeck-cli --test live_bridge -- --ignored --nocapture --test-threads=1
 # Packaging (M3 7-5, DL-400): static checks of dist-workspace.toml, the
 # systemd and launchd units and the container file, plus the offline smoke
 # test of the built binary. Also part of `make check` (workspace tests).
