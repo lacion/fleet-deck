@@ -38,7 +38,14 @@ export const initialAuto = (mode: WallMode, session: string | null): AutoState =
   queue: [],
 });
 
-const byAge = (a: Ask, b: Ask) => a.at - b.at || a.requestId.localeCompare(b.requestId);
+/** The identity of a request: `<station>/<session>/<request id>`; an id alone is not unique. */
+export const askKey = (a: { readonly ref: string; readonly requestId: string }): string =>
+  `${a.ref}/${a.requestId}`;
+
+const byAge = (a: Ask, b: Ask) => a.at - b.at || askKey(a).localeCompare(askKey(b));
+
+const sameQueue = (a: readonly Ask[], b: readonly Ask[]): boolean =>
+  a.length === b.length && a.every((ask, i) => askKey(ask) === askKey(b[i] as Ask));
 
 /**
  * The next state. `pin` turns auto-focus off. A request that is in `current` and not in `previous`
@@ -57,17 +64,17 @@ export function nextAutoFocus(
     return state.hold === null && state.queue.length === 0
       ? state
       : { ...state, hold: null, queue: [] };
-  const open = new Set(current.map((a) => a.requestId));
-  const known = new Set(previous.map((a) => a.requestId));
+  const open = new Set(current.map(askKey));
+  const known = new Set(previous.map(askKey));
   let { mode, session, hold, queue } = state;
   if (hold !== null && (mode !== 'focus' || session !== hold.ref)) {
     hold = null;
     queue = [];
   }
-  const waiting = new Set(queue.map((a) => a.requestId));
-  const fresh = current.filter((a) => !known.has(a.requestId) && !waiting.has(a.requestId));
-  queue = [...queue, ...fresh].filter((a) => open.has(a.requestId)).sort(byAge);
-  if (hold !== null && (!open.has(hold.requestId) || now >= hold.until)) {
+  const waiting = new Set(queue.map(askKey));
+  const fresh = current.filter((a) => !known.has(askKey(a)) && !waiting.has(askKey(a)));
+  queue = [...queue, ...fresh].filter((a) => open.has(askKey(a))).sort(byAge);
+  if (hold !== null && (!open.has(askKey(hold)) || now >= hold.until)) {
     mode = hold.back.mode;
     session = hold.back.session;
     hold = null;
@@ -90,7 +97,7 @@ export function nextAutoFocus(
     mode === state.mode &&
     session === state.session &&
     hold === state.hold &&
-    queue.length === state.queue.length
+    sameQueue(queue, state.queue)
   ) {
     return state;
   }

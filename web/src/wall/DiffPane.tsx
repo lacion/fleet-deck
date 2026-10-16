@@ -11,23 +11,7 @@ import type { SessionActions } from '../session/commands';
 import { SinceNotes } from '../session/TurnsPanel';
 import { refOf } from '../watch/tiles';
 import { keyOf, useSessionDiff } from './hooks';
-
-/**
- * The review state with the threads that were sent and are open: a draft is the owner's note, and
- * a resolved thread folds behind a button that the wall does not have.
- */
-function sentOnly(state: ReviewState): ReviewState {
-  if (state.data === null) return state;
-  return {
-    ...state,
-    data: {
-      ...state.data,
-      threads: state.data.threads.filter(
-        (t) => t.comments[0]?.state !== 'draft' && t.comments[0]?.resolved !== true,
-      ),
-    },
-  };
-}
+import { sentOnly } from './model';
 
 export function DiffPane({
   card,

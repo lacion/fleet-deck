@@ -1,6 +1,7 @@
 // R13 P1 (design §4.2): the four areas of the mission mode: needs, tiles, side and stream.
 // Everything here only reads. A part with no data is left out.
-import { type RefObject, useEffect, useState } from 'react';
+import { type RefObject, useEffect, useMemo, useState } from 'react';
+import type { WallRoute } from '../app/routes';
 import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import { gb, usedShare } from '../board/resources';
@@ -14,7 +15,7 @@ import type { ViewsActions } from '../runtime/views';
 import { Tile } from '../watch/WatchPage';
 import { refOf } from '../watch/tiles';
 import { keyOf, timelineOf } from './hooks';
-import { type Need, oneLine } from './model';
+import { type Need, oneLine, wallSessions } from './model';
 import { QrCode } from './QrCode';
 import { answerUrl } from './qr';
 
@@ -89,28 +90,26 @@ export function TilesArea({
 }) {
   return (
     <section className="fd-wall-area" data-area="tiles" aria-label="Sessions" ref={areaRef}>
-      {cards.length === 0 ? (
-        <p className="fd-wall-note">No live session.</p>
-      ) : (
-        <ul className="fd-wall-tiles">
-          {cards.map((card) => {
-            const timeline = timelineOf(timelines, keyOf(card));
-            return (
-              <Tile
-                key={refOf(card)}
-                card={card}
-                stations={stations}
-                timeline={timeline}
-                actions={undefined}
-                freshness={freshness}
-                focused={false}
-                readOnly
-                unavailable={failed.has(refOf(card)) || timeline?.error != null}
-              />
-            );
-          })}
-        </ul>
-      )}
+      {cards.length === 0 ? <p className="fd-wall-note">No live session.</p> : null}
+      {/* Always rendered: the wall reads the grid gap from it to count the tiles that fit. */}
+      <ul className="fd-wall-tiles" style={cards.length === 0 ? { display: 'none' } : undefined}>
+        {cards.map((card) => {
+          const timeline = timelineOf(timelines, keyOf(card));
+          return (
+            <Tile
+              key={refOf(card)}
+              card={card}
+              stations={stations}
+              timeline={timeline}
+              actions={undefined}
+              freshness={freshness}
+              focused={false}
+              readOnly
+              unavailable={failed.has(refOf(card)) || timeline?.error != null}
+            />
+          );
+        })}
+      </ul>
     </section>
   );
 }
@@ -217,17 +216,24 @@ export const STREAM_REFRESH_MS = 10_000;
 
 export function StreamArea({
   views,
+  sessions,
+  filter,
   live,
   now,
   initialItems = null,
 }: {
   readonly views: ViewsActions | undefined;
+  /** The sessions of the board; the stream keeps the items of those that pass `filter`. */
+  readonly sessions: readonly DeckSession[];
+  /** The station and repository filter of the wall route. */
+  readonly filter: Pick<WallRoute, 'stations' | 'repo'>;
   readonly live: boolean;
   readonly now: number;
   readonly initialItems?: readonly ActivityItem[] | null;
 }) {
   const [items, setItems] = useState<readonly ActivityItem[] | null>(initialItems);
   const [error, setError] = useState<string | null>(null);
+  const filterStations = filter.stations.join('\n');
   useEffect(() => {
     if (views === undefined || !live) return undefined;
     let on = true;
@@ -247,9 +253,19 @@ export function StreamArea({
       on = false;
       clearInterval(timer);
     };
-  }, [views, live]);
+    // The key stands for the filter: a new array of the same stations does not reload.
+  }, [views, live, filterStations, filter.repo]);
+  // The same filter as the session areas (`wallSessions`); the stream reads `repo` in another form.
+  const passing = useMemo(
+    () => new Set(wallSessions(sessions, filter).map(refOf)),
+    // `filterStations` stands for `filter.stations`.
+    [sessions, filterStations, filter.repo],
+  );
   // The deck sends the newest first; the wall shows the newest at the bottom.
-  const rows = [...(items ?? [])].slice(0, STREAM_ITEMS).reverse();
+  const rows = (items ?? [])
+    .filter((item) => passing.has(`${item.station_id}/${item.session_id}`))
+    .slice(0, STREAM_ITEMS)
+    .reverse();
   return (
     <section className="fd-wall-area" data-area="stream" aria-label="Activity">
       {error !== null ? <p className="fd-wall-note">{error}</p> : null}

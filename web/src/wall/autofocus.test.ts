@@ -1,6 +1,6 @@
 // R13 P1: auto-focus follows the request order only.
 import { describe, expect, test } from 'bun:test';
-import { type Ask, FOCUS_HOLD_S, initialAuto, nextAutoFocus } from './autofocus';
+import { type Ask, askKey, FOCUS_HOLD_S, initialAuto, nextAutoFocus } from './autofocus';
 
 const ask = (ref: string, at: number): Ask => ({ ref, requestId: `r${at}`, at });
 const A = ask('st/a', 100);
@@ -70,5 +70,43 @@ describe('nextAutoFocus', () => {
     const next = nextAutoFocus([A], [A], 2000, moved, false);
     expect(next.mode).toBe('ambient');
     expect(next.hold).toBeNull();
+  });
+
+  test('the same request id in two sessions is two requests', () => {
+    const one: Ask = { ref: 'st/a', requestId: 'req-1', at: 100 };
+    const two: Ask = { ref: 'st/b', requestId: 'req-1', at: 200 };
+    const held = nextAutoFocus([], [one], 1000, initialAuto('mission', null), false);
+    expect(held.session).toBe('st/a');
+    // the second session opens later with the same id: it queues, then gets its own focus
+    const queued = nextAutoFocus([one], [one, two], 2000, held, false);
+    expect(queued.session).toBe('st/a');
+    expect(queued.queue.map(askKey)).toEqual(['st/b/req-1']);
+    // the first closes: the hold of the second starts
+    const second = nextAutoFocus([one, two], [two], 3000, queued, false);
+    expect(second.mode).toBe('focus');
+    expect(second.session).toBe('st/b');
+    expect(second.hold?.back).toEqual({ mode: 'mission', session: null });
+  });
+
+  test('closing one request does not end the hold of another with the same id', () => {
+    const one: Ask = { ref: 'st/a', requestId: 'req-1', at: 100 };
+    const two: Ask = { ref: 'st/b', requestId: 'req-1', at: 200 };
+    const held = nextAutoFocus([], [one], 1000, initialAuto('mission', null), false);
+    // the request of the other session closes: the hold of `st/a` stays
+    const next = nextAutoFocus([one, two], [one], 2000, held, false);
+    expect(next.mode).toBe('focus');
+    expect(next.session).toBe('st/a');
+    expect(next.hold?.ref).toBe('st/a');
+  });
+
+  test('a queued request closes and another opens in the same update', () => {
+    const C = ask('st/c', 300);
+    const held = nextAutoFocus([], [A, B], 1000, initialAuto('mission', null), false);
+    expect(held.queue.map((q) => q.requestId)).toEqual([B.requestId]);
+    const next = nextAutoFocus([A, B], [A, C], 2000, held, false);
+    expect(next.session).toBe('st/a');
+    expect(next.queue.map(askKey)).toEqual([askKey(C)]);
+    const after = nextAutoFocus([A, C], [C], 3000, next, false);
+    expect(after.session).toBe('st/c');
   });
 });
