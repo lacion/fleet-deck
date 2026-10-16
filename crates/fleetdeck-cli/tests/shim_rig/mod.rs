@@ -74,6 +74,7 @@ impl Rig {
                 (b"REC".to_vec(), rec.as_os_str().as_encoded_bytes().to_vec()),
             ],
             secrets: false,
+            launch: None,
         };
         edit(&mut spec);
         Self {

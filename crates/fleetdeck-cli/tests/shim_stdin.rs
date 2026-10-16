@@ -106,6 +106,7 @@ impl Rig {
                 ("PATH".into(), "/usr/bin:/bin".into()),
                 ("OUT".into(), self.out().into_os_string()),
             ]),
+            launch: None,
         };
         launch_shim(
             &self.store,

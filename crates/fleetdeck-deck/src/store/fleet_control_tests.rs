@@ -585,6 +585,7 @@ async fn modes_above_the_ceiling_or_in_bypass_are_refused_by_every_op() {
             model: None,
             title: None,
             coordinator: None,
+            launch: None,
         },
         prompt: Some(UserInput::new("go")),
     };

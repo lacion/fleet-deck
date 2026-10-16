@@ -207,6 +207,7 @@ impl Rig {
                     model: None,
                     title: None,
                     coordinator: None,
+                    launch: None,
                 },
                 prompt: Some(text(prompt)),
                 workspace: None,

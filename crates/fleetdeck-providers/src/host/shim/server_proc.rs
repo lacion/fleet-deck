@@ -1,6 +1,8 @@
 //! The process side of the shim: socket bind, provider spawn and exec,
 //! process-group signals, descendants and reaping.
 
+use fleetdeck_core::launch_dir::LaunchDir;
+
 use super::*;
 
 pub(super) fn bind(spec: &LaunchSpec) -> std::io::Result<UnixListener> {
@@ -27,6 +29,19 @@ pub(super) fn spawn_provider(
     token: Option<&fleetdeck_core::Secret<String>>,
 ) -> std::io::Result<Child> {
     let exe = crate::host::shim::exe_hash::own_exe()?;
+    // With an identity the provider starts in the checked directory object,
+    // or not at all; `dir` lives until the spawn returned (B9).
+    let dir = spec
+        .launch
+        .as_ref()
+        .map(|id| LaunchDir::reopen(id).map_err(|e| std::io::Error::other(e.to_string())))
+        .transpose()?;
+    let cwd = match &dir {
+        Some(dir) => dir
+            .cwd()
+            .map_err(|e| std::io::Error::other(e.to_string()))?,
+        None => spec.cwd(),
+    };
     let mut command = tokio::process::Command::new(exe);
     command
         .arg("shim-exec")
@@ -35,7 +50,7 @@ pub(super) fn spawn_provider(
         .arg("--")
         .arg(spec.program())
         .args(spec.args())
-        .current_dir(spec.cwd())
+        .current_dir(cwd)
         .env_clear()
         .envs(spec.env());
     if let Some(token) = token {
@@ -46,7 +61,9 @@ pub(super) fn spawn_provider(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(false);
-    command.spawn()
+    let child = command.spawn();
+    drop(dir);
+    child
 }
 
 /// The provider side of `shim-exec`: a new session, the parent-death

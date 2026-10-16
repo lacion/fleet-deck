@@ -44,6 +44,7 @@ fn codex_spec(cwd: &str) -> SessionSpec {
         model: None,
         title: None,
         coordinator: None,
+        launch: None,
     }
 }
 

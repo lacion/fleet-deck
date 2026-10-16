@@ -11,6 +11,7 @@ pub mod db;
 pub mod git;
 pub mod identity;
 pub mod ids;
+pub mod launch_dir;
 pub mod local_addrs;
 pub mod localsock;
 pub mod logging;

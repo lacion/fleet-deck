@@ -95,6 +95,15 @@ pub enum Command {
         #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
         program: Vec<std::ffi::OsString>,
     },
+    /// Confines the writes of a provisioning command to the allowed roots
+    /// with Landlock, then executes it (B9, DL-200).
+    #[command(hide = true)]
+    ConfineExec {
+        #[arg(long = "write-root", required = true)]
+        write_roots: Vec<PathBuf>,
+        #[arg(last = true, required = true)]
+        program: Vec<std::ffi::OsString>,
+    },
     /// The stdio MCP server of a shim-hosted provider (DL-194): it relays
     /// each message to the station socket; it is not a user command.
     #[command(hide = true)]

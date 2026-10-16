@@ -43,6 +43,7 @@ fn spec(cwd: &std::path::Path) -> SessionSpec {
         model: None,
         title: None,
         coordinator: None,
+        launch: None,
     }
 }
 

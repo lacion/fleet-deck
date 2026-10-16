@@ -404,6 +404,7 @@ impl LinkBackend {
                     cron::date_text(due_at, offset)
                 )),
                 coordinator: None,
+                launch: None,
             },
             prompt: Some(input),
             workspace: Some(Box::new(WorkspaceRequest::Worktree {

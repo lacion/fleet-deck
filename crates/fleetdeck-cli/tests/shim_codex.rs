@@ -137,6 +137,7 @@ impl Rig {
             args: vec!["app-server".into()],
             cwd: self.tmp.path().join("w"),
             env: self.env(),
+            launch: None,
         };
         let attached = launch_shim(
             &self.store,

@@ -34,7 +34,9 @@ use crate::adapter::{
     ProviderAdapter, ProviderError, ProviderProbe, Result, canonical_workspace, require,
 };
 use crate::coordinator::CoordinatorLaunch;
-use crate::host::{DEFAULT_IDLE_GRACE, ProcessControl, ProcessSpec, SessionHost, StopPolicy};
+use crate::host::{
+    DEFAULT_IDLE_GRACE, ProcessControl, ProcessSpec, SessionHost, StopPolicy, identity_path,
+};
 
 /// How long a host command waits until its frames are in the stdin pipe.
 /// A process that stops reading stdin fills the pipe; the command then
@@ -145,7 +147,12 @@ impl ClaudeAdapter {
         origin: Origin,
         coordinator: Option<&CoordinatorLaunch>,
     ) -> Result<ClaudeSession> {
-        let cwd = canonical_workspace(Path::new(&spec.cwd))?;
+        // With a launch identity the path is the checked one, never resolved
+        // again by name (B9).
+        let (cwd, pinned) = match &spec.launch {
+            Some(id) => (identity_path(id), Some(id.as_ref().clone())),
+            None => (canonical_workspace(Path::new(&spec.cwd))?, None),
+        };
         let caps = capabilities(self.config.allow_bypass);
         let (resume, fork) = match &origin {
             Origin::New => (None, false),
@@ -186,6 +193,7 @@ impl ClaudeAdapter {
                 args,
                 cwd: cwd.clone(),
                 env: CoordinatorLaunch::env_for(coordinator, &self.config.env, &cwd)?,
+                launch: pinned,
             })
             .await?;
         let mut core = ClaudeCore::new(CoreConfig {

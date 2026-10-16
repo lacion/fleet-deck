@@ -201,6 +201,7 @@ impl Rig {
                     model: None,
                     title: None,
                     coordinator: None,
+                    launch: None,
                 },
                 prompt: Some(UserInput::new("hello")),
                 workspace: None,

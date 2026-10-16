@@ -2,6 +2,7 @@
 
 mod auth;
 mod cli;
+mod confine;
 mod deck;
 mod doctor;
 mod invite;
@@ -51,6 +52,10 @@ fn main() -> ExitCode {
                 *parent, program, args,
             ));
         }
+        Command::ConfineExec {
+            write_roots,
+            program,
+        } => return exit_code(confine::run(write_roots, program)),
         // Stdout is the MCP channel: no logging set-up, no data directory.
         Command::McpBridge { socket } => {
             std::process::exit(fleetdeck_station::coordinator::bridge::run(socket));
@@ -131,6 +136,7 @@ fn run(cli: Cli, restart: &restart::RestartHandle) -> anyhow::Result<ExitCode> {
         Command::Station { .. }
         | Command::Shim { .. }
         | Command::ShimExec { .. }
+        | Command::ConfineExec { .. }
         | Command::McpBridge { .. }
         | Command::BuildInfo => {
             anyhow::bail!("internal error: the command was not dispatched")

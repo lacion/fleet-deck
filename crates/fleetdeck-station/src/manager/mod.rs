@@ -705,6 +705,7 @@ pub fn durable_configs(adapters: &Adapters) -> shim_station::Configs {
             model: summary.model.clone(),
             title: summary.title.clone(),
             coordinator: None,
+            launch: None,
         };
         adapter.durable_launch(&spec).ok().map(|l| l.core)
     }

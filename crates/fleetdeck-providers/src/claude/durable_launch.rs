@@ -11,7 +11,7 @@ use super::super::{Launch, capabilities, cli_args};
 use super::ClaudeAdapter;
 use crate::adapter::{NativeSessionId, Result, canonical_workspace};
 use crate::durable::{DurableConfig, DurableLaunch};
-use crate::host::ProcessSpec;
+use crate::host::{ProcessSpec, identity_path};
 
 impl ClaudeAdapter {
     pub(super) fn launch_durable(&self, spec: &SessionSpec) -> Result<DurableLaunch> {
@@ -26,7 +26,12 @@ impl ClaudeAdapter {
         spec: &SessionSpec,
         resume: Option<&NativeSessionId>,
     ) -> Result<DurableLaunch> {
-        let cwd = canonical_workspace(Path::new(&spec.cwd))?;
+        // With a launch identity the path is the checked one, never resolved
+        // again by name (B9).
+        let (cwd, pinned) = match &spec.launch {
+            Some(id) => (identity_path(id), Some(id.as_ref().clone())),
+            None => (canonical_workspace(Path::new(&spec.cwd))?, None),
+        };
         let caps = capabilities(self.config.allow_bypass);
         let launch = Launch {
             model: spec.model.clone(),
@@ -45,6 +50,7 @@ impl ClaudeAdapter {
                 args,
                 cwd: cwd.clone(),
                 env: self.config.env.clone(),
+                launch: pinned,
             },
             core: DurableConfig::Claude(CoreConfig {
                 provider_instance: spec.provider_instance.clone(),
@@ -84,6 +90,7 @@ mod tests {
             model: None,
             title: None,
             coordinator: None,
+            launch: None,
         }
     }
 
@@ -136,5 +143,30 @@ mod tests {
             panic!("a Claude core");
         };
         assert_eq!(core.resumed, None);
+    }
+
+    #[test]
+    fn a_launch_identity_gives_the_checked_path_and_no_canonical_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        std::fs::create_dir(root.join("real")).unwrap();
+        std::os::unix::fs::symlink(root.join("real"), root.join("link")).unwrap();
+        let id = fleetdeck_proto::launch::LaunchIdentity {
+            root: root.to_string_lossy().into_owned(),
+            rel: "link".to_owned(),
+            dev: 1,
+            ino: 2,
+        };
+        let mut with = spec(&root.join("link"), None);
+        with.launch = Some(Box::new(id.clone()));
+        let launch = adapter().durable_launch(&with).unwrap();
+        assert_eq!(launch.process.cwd, root.join("link"));
+        assert_eq!(launch.process.launch, Some(id));
+        // Without an identity the link is followed (today's behavior).
+        let launch = adapter()
+            .durable_launch(&spec(&root.join("link"), None))
+            .unwrap();
+        assert_eq!(launch.process.cwd, root.join("real"));
+        assert_eq!(launch.process.launch, None);
     }
 }

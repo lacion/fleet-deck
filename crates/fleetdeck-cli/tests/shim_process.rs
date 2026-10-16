@@ -687,3 +687,49 @@ async fn the_provider_runs_in_its_own_session_and_group_with_a_cleared_environme
     drop(a);
     end(&rig, launched, 2).await;
 }
+
+/// A canonical folder `a` below the rig's temp directory and its identity (B9).
+fn pinned_folder(rig: &Rig) -> (std::path::PathBuf, fleetdeck_proto::launch::LaunchIdentity) {
+    let root = std::fs::canonicalize(rig.tmp.path()).unwrap();
+    std::fs::create_dir(root.join("a")).unwrap();
+    let dir =
+        fleetdeck_core::launch_dir::LaunchDir::open(&root, std::path::Path::new("a")).unwrap();
+    (root, dir.identity().clone())
+}
+
+#[tokio::test]
+async fn a_launch_with_an_identity_starts_the_provider_in_the_folder() {
+    let rig = Rig::with("pwd -P > \"$REC\"; sleep 30", |_| {});
+    let (root, id) = pinned_folder(&rig);
+    let mut rig = rig;
+    rig.spec.launch = Some(id);
+    let (launched, _) = rig.ready().await;
+    for _ in 0..100 {
+        if !rig.rec().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(rig.rec(), format!("{}\n", root.join("a").display()));
+    end(&rig, launched, 1).await;
+}
+
+#[tokio::test]
+async fn a_launch_with_an_identity_whose_folder_was_swapped_fails_with_the_text() {
+    let mut rig = Rig::new(ECHO);
+    let (root, id) = pinned_folder(&rig);
+    std::fs::create_dir(root.join("other")).unwrap();
+    std::fs::rename(root.join("a"), root.join("moved")).unwrap();
+    std::os::unix::fs::symlink(root.join("other"), root.join("a")).unwrap();
+    rig.spec.launch = Some(id);
+    let mut launched = rig.launch().await;
+    let LaunchReply::Failed { error, .. } = &launched.reply else {
+        panic!("{:?}", launched.reply);
+    };
+    assert!(
+        error.contains(fleetdeck_core::launch_dir::CHANGED),
+        "{error}"
+    );
+    launched.child.wait().await.unwrap();
+    assert!(!rig.spec.socket_path.exists());
+}

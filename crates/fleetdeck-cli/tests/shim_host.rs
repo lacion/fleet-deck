@@ -57,6 +57,7 @@ impl Rig {
             args: vec!["-c".into(), script.into()],
             cwd: self.tmp.path().to_owned(),
             env,
+            launch: None,
         }
     }
 
@@ -380,6 +381,7 @@ async fn a_claude_session_runs_a_turn_through_the_shim_host() {
         model: Some("haiku".to_owned()),
         title: None,
         coordinator: None,
+        launch: None,
     };
     let (sink, mut rx) = EventSink::channel(256);
     let mut session = adapter

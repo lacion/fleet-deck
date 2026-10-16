@@ -36,7 +36,7 @@ use crate::adapter::{
 };
 use crate::claude::RawLogSettings;
 use crate::coordinator::CoordinatorLaunch;
-use crate::host::{ProcessControl, ProcessSpec, SessionHost, StopPolicy};
+use crate::host::{ProcessControl, ProcessSpec, SessionHost, StopPolicy, identity_path};
 use crate::rawlog::{RawDir, RawFrameLog};
 use crate::stdio::{
     MAX_LINE_BYTES, Write, flush, now_ms, release_write, reserve_write, write_failed,
@@ -170,7 +170,12 @@ impl CodexAdapter {
         origin: Origin,
         coordinator: Option<&CoordinatorLaunch>,
     ) -> Result<CodexSession> {
-        let cwd = canonical_workspace(Path::new(&spec.cwd))?;
+        // With a launch identity the path is the checked one, never resolved
+        // again by name (B9).
+        let (cwd, pinned) = match &spec.launch {
+            Some(id) => (identity_path(id), Some(id.as_ref().clone())),
+            None => (canonical_workspace(Path::new(&spec.cwd))?, None),
+        };
         let caps = capabilities(self.config.allow_full_access);
         // A mode that this instance does not offer fails the start before
         // any process (DL-064); the core's safest-mode fallback stays the
@@ -201,6 +206,7 @@ impl CodexAdapter {
                     .collect(),
                 cwd: cwd.clone(),
                 env: CoordinatorLaunch::env_for(coordinator, &self.config.env, &cwd)?,
+                launch: pinned,
             })
             .await?;
         let cwd_text = cwd.to_string_lossy().into_owned();

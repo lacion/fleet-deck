@@ -476,6 +476,7 @@ fn decide_op(
                 model: None,
                 title: None,
                 coordinator: None,
+                launch: None,
             };
             let prompt = Some(UserInput::new(format!(
                 "{ASSIGNMENT_PREFIX}{}",

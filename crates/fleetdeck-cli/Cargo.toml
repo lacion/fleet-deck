@@ -27,6 +27,10 @@ serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
+# Landlock confinement of worktree and clone provisioning (B9, DL-200); Linux only.
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4"
+
 [dev-dependencies]
 # The crash tests run the `fleetdeck` binary with `FLEETDECK_FAULT` (M2 P2-8).
 fleetdeck-station = { path = "../fleetdeck-station", features = ["fault-injection"] }

@@ -25,6 +25,7 @@ use std::ffi::OsString;
 use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
 use std::path::PathBuf;
 
+use fleetdeck_proto::launch::LaunchIdentity;
 use serde::{Deserialize, Serialize};
 
 use super::wire::ProviderIdentity;
@@ -66,6 +67,10 @@ pub struct LaunchSpec {
     /// secrets (DL-194).
     #[serde(default)]
     pub secrets: bool,
+    /// The checked directory object of the provider's folder (B9): the shim
+    /// reopens it right before the spawn.
+    #[serde(default)]
+    pub launch: Option<LaunchIdentity>,
 }
 
 impl LaunchSpec {
@@ -102,6 +107,7 @@ impl LaunchSpec {
             .map(|a| a.as_os_str().as_bytes().to_vec())
             .collect();
         self.cwd = spec.cwd.as_os_str().as_bytes().to_vec();
+        self.launch = spec.launch.clone();
         self.env = spec
             .env
             .iter()

@@ -151,6 +151,7 @@ impl Rig {
             args: vec!["app-server".into()],
             cwd: self.tmp.path().join("w"),
             env,
+            launch: None,
         };
         let attached = launch_shim(
             &self.store,
@@ -373,6 +374,7 @@ async fn the_line_boundary_of_a_real_shim_stops_before_a_partial_line_at_the_buf
         args: vec!["-c".into(), "printf 'line1\\nline2\\npar'; sleep 30".into()],
         cwd: rig.tmp.path().join("w"),
         env: ChildEnv::scrubbed([("PATH".into(), "/usr/bin:/bin".into())]),
+        launch: None,
     };
     let attached = launch_shim(
         &rig.store,
