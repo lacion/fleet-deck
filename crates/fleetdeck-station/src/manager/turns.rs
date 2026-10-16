@@ -112,7 +112,9 @@ impl SessionTurns {
     /// Opens the checkpoint state of a session in `cwd`. A directory that
     /// is not inside a Git worktree is valid: every side is then
     /// `unavailable {not_a_git_worktree}`. The fence comes from `fences`
-    /// by the worktree root.
+    /// by the worktree root. Without `cwd` the session has no worktree (no
+    /// checkpoints). With `roots` (B9) the worktree root must be below them
+    /// without a link (`Worktree::open_in_roots`).
     #[allow(clippy::too_many_arguments)]
     pub async fn open(
         store: Store,
@@ -121,10 +123,16 @@ impl SessionTurns {
         limits: Limits,
         fences: &Fences,
         session_id: SessionId,
-        cwd: &Path,
+        cwd: Option<&Path>,
+        roots: Option<&[PathBuf]>,
         private: Arc<PrivatePaths>,
     ) -> Arc<Self> {
-        let worktree = Worktree::open(cwd, options.clone()).await.ok();
+        let worktree = match cwd {
+            Some(cwd) => Worktree::open_in_roots(cwd, options.clone(), roots)
+                .await
+                .ok(),
+            None => None,
+        };
         let fence = worktree.as_ref().map_or_else(
             || Arc::new(Mutex::new(())),
             |w| fences.for_worktree(w.root()),

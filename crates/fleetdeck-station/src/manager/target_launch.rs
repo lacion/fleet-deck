@@ -3,6 +3,7 @@
 //! starts in exactly that directory object, or does not start.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use fleetdeck_core::launch_dir::{LaunchDir, LaunchDirError};
 use fleetdeck_proto::SessionId;
@@ -10,6 +11,7 @@ use fleetdeck_proto::command::SessionSpec;
 use fleetdeck_proto::session::SessionBase;
 
 use super::super::SessionManager;
+use super::super::turns::SessionTurns;
 use super::SessionTarget;
 use crate::store::{Dispatch, Effect, WorkspacePlan};
 use crate::workspace::GitOptions;
@@ -95,6 +97,56 @@ impl SessionTarget {
 }
 
 impl SessionTarget {
+    /// The checked folder for the checkpoint start-up of `spec` (B9): the
+    /// identity reopened and its pinned path. `None` on any error or without
+    /// an identity: checkpoints are optional (a failed `SessionTurns::open`
+    /// already means no checkpoints).
+    pub(in crate::manager) fn turns_dir(&self, spec: &SessionSpec) -> Option<(LaunchDir, PathBuf)> {
+        let dir = LaunchDir::reopen(spec.launch.as_deref()?).ok()?;
+        let path = pinned_path(&dir).ok()?;
+        Some((dir, path))
+    }
+
+    /// The checkpoint state of a new session of `spec` (B9). With an identity
+    /// the preparation Git of `SessionTurns::open` runs in the reopened
+    /// folder object, and its toplevel must be below the allowed roots
+    /// without a link; when the folder cannot be reopened the session runs
+    /// without checkpoints. Without an identity (tests) the plain path.
+    pub(in crate::manager) async fn open_turns(
+        &self,
+        session_id: &SessionId,
+        spec: &SessionSpec,
+    ) -> Arc<SessionTurns> {
+        // `dir` lives until the start-up Git returned.
+        let (dir, path, roots) = if spec.launch.is_none() {
+            (None, Some(PathBuf::from(&spec.cwd)), None)
+        } else if let Some((dir, path)) = self.turns_dir(spec) {
+            let roots = self
+                .current_policy()
+                .map(|policy| policy.allowed_roots().to_vec());
+            (Some(dir), Some(path), roots)
+        } else {
+            tracing::warn!(
+                "checkpoints are off for this session: its folder could not be reopened"
+            );
+            (None, None, None)
+        };
+        let turns = SessionTurns::open(
+            self.store.clone(),
+            Arc::clone(&self.ids),
+            self.git.clone(),
+            self.limits,
+            &self.fences,
+            session_id.clone(),
+            path.as_deref(),
+            roots.as_deref(),
+            Arc::clone(&self.private),
+        )
+        .await;
+        drop(dir);
+        turns
+    }
+
     /// The Git options of the provisioning of a start (B9, DL-200): the
     /// station's own, run under `fleetdeck confine-exec` with the current
     /// allowed roots when the station knows its executable and has a policy.
@@ -210,7 +262,7 @@ impl SessionTarget {
 
 /// The path for a Git read in `dir`: `/proc/self/fd/<n>` on Linux, the
 /// folder path elsewhere (design §6).
-fn pinned_path(dir: &LaunchDir) -> Result<PathBuf, LaunchDirError> {
+pub(in crate::manager) fn pinned_path(dir: &LaunchDir) -> Result<PathBuf, LaunchDirError> {
     #[cfg(target_os = "linux")]
     {
         dir.cwd()
@@ -240,6 +292,10 @@ impl std::fmt::Debug for SessionTarget {
 #[cfg(test)]
 #[path = "launch_more_tests.rs"]
 mod more_tests;
+
+#[cfg(test)]
+#[path = "launch_fix_tests.rs"]
+mod fix_tests;
 
 /// The refusal of a launch without an identity (B9 §3.3 item 5), Linux only.
 pub(super) fn launch_refusal(spec: &SessionSpec) -> Option<(&'static str, &'static str)> {

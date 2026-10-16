@@ -13,7 +13,6 @@
 //! checkpoints after each append.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
 use std::sync::{Arc, Mutex as StdMutex, Weak};
 
 use async_trait::async_trait;
@@ -370,17 +369,7 @@ impl SessionTarget {
                 .start_durable(effect, spec, prompt, &shims, launch, None, bridge, cancel)
                 .await;
         }
-        let turns = SessionTurns::open(
-            self.store.clone(),
-            Arc::clone(&self.ids),
-            self.git.clone(),
-            self.limits,
-            &self.fences,
-            session_id.clone(),
-            Path::new(&spec.cwd),
-            Arc::clone(&self.private),
-        )
-        .await;
+        let turns = self.open_turns(&session_id, spec).await;
         let (sink, rx) = EventSink::channel(SINK_CAPACITY);
         let (ready_tx, ready_rx) = oneshot::channel();
         tokio::spawn(pump::pump(

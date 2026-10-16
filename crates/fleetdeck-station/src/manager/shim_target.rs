@@ -142,6 +142,7 @@ impl SessionTarget {
                 .as_ref()
                 .and_then(|s| s.cwd.clone())
                 .unwrap_or_default();
+            // A restore starts no new process: no identity (B9, out of scope).
             let turns = self.turns(&r.session_id, Path::new(&cwd)).await;
             turns.set_process(r.process.clone());
             // A session whose exit a restored driver already committed:
@@ -179,7 +180,8 @@ impl SessionTarget {
             self.limits,
             &self.fences,
             session_id.clone(),
-            cwd,
+            Some(cwd),
+            None,
             Arc::clone(&self.private),
         )
         .await
@@ -383,7 +385,7 @@ impl SessionTarget {
                 .await;
             return Dispatch::NotDispatched(super::REASON_SETUP_STOPPED.into());
         }
-        let turns = self.turns(&session_id, Path::new(&spec.cwd)).await;
+        let turns = self.open_turns(&session_id, spec).await;
         let from = *self.store.subscribe().borrow();
         if let (Some(t), Some(_)) = (&tools, native)
             && let Err(text) =
