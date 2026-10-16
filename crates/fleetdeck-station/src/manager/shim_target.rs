@@ -464,6 +464,17 @@ impl SessionTarget {
                 return Dispatch::NotDispatched(format!("start_failed: {e}"));
             }
         };
+        // A folder change after `session.started` stops Codex (B9 §3.5).
+        if matches!(driver, Durable::Codex(_))
+            && let Err(e) = self.launch_still_checked(spec).await
+        {
+            self.start_failed(&session_id, &e.to_string()).await;
+            let _report = control.kill().await;
+            self.observe_end(&session_id, &process).await;
+            let _ended = tokio::time::timeout(EXIT_REPORT_WAIT, control.wait()).await;
+            end_rows(&self.store, &session_id, control.exit_state().as_ref()).await;
+            return Dispatch::NotDispatched(e.code().into());
+        }
         self.insert_durable(
             &session_id,
             process,

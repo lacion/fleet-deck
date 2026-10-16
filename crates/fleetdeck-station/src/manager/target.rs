@@ -107,14 +107,6 @@ pub struct SessionTarget {
     shell: shell_run::ShellRunState,
 }
 
-impl std::fmt::Debug for SessionTarget {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SessionTarget")
-            .field("adapters", &self.adapters.keys().collect::<Vec<_>>())
-            .finish_non_exhaustive()
-    }
-}
-
 impl SessionTarget {
     /// The workspace fences of the station (B8: the shell advance takes the
     /// fence of a root like a turn does).
@@ -435,6 +427,15 @@ impl SessionTarget {
                 return Dispatch::NotDispatched(format!("start_failed: {e}"));
             }
         };
+        // A folder change after `session.started` stops Codex (B9 §3.5).
+        if adapter.kind() == ProviderKind::Codex
+            && let Err(e) = self.launch_still_checked(spec).await
+        {
+            drop(ready_tx);
+            self.coordinator.revoke_session(&session_id);
+            let _ = session.stop(StopMode::Kill).await;
+            return self.launch_changed(&session_id, e).await;
+        }
         let process: ProcessIncarnation = new_id(self.ids.as_ref());
         if let Err(e) = self
             .store

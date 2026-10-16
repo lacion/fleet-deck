@@ -3,6 +3,7 @@ use std::ffi::OsString;
 use std::time::{Duration, Instant};
 
 use fleetdeck_core::childenv::ChildEnv;
+use fleetdeck_core::launch_dir::LaunchDir;
 use fleetdeck_proto::command::RejectCode;
 use fleetdeck_proto::shell::{ShellChange, ShellState};
 use rustix::process::Signal;
@@ -117,6 +118,28 @@ fn shell_policy_checks_allow_shell_the_roots_and_the_shell_cap() {
         .expect("a slot is free again");
     on.close_all();
     assert!(on.list().is_empty());
+}
+
+/// The shell's real working directory is the checked folder (B9).
+#[cfg(target_os = "linux")]
+#[test]
+fn a_shell_starts_in_the_checked_folder() {
+    let root = tempfile::tempdir().expect("root");
+    let proj = root.path().join("proj");
+    std::fs::create_dir(&proj).expect("proj");
+    let p = policy(root.path());
+    let s = shells();
+    s.apply(&open("real", &proj), &p, 1).expect("open");
+    let (_, mut rx) = s.attach("real").expect("attach");
+    assert!(s.input("real", b"echo \"HERE=$(pwd -P)\"; echo END-OF-$((40+2))\n"));
+    let mut seen = String::new();
+    read_until(&mut seen, &mut rx, "END-OF-42");
+    let canonical = proj.canonicalize().expect("canonical");
+    assert!(
+        seen.contains(&format!("HERE={}", canonical.display())),
+        "{seen}"
+    );
+    s.close_all();
 }
 
 #[test]
@@ -246,9 +269,9 @@ fn closing_an_exited_tui_sends_no_signal() {
         session: Some("s1".into()),
         max_shells: 2,
     };
-    let pid = s
-        .spawn("tui", root.path(), 80, 24, 1, launch)
-        .expect("spawn");
+    let canonical = root.path().canonicalize().expect("canonical");
+    let dir = LaunchDir::open(&canonical, std::path::Path::new("")).expect("the folder opens");
+    let pid = s.spawn("tui", &dir, 80, 24, 1, launch).expect("spawn");
     assert!(pid.is_some());
     let shell = s.get("tui").expect("the shell is listed");
     let t0 = Instant::now();

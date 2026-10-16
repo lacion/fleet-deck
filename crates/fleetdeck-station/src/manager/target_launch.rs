@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use fleetdeck_core::launch_dir::{LaunchDir, LaunchDirError};
+use fleetdeck_proto::SessionId;
 use fleetdeck_proto::command::SessionSpec;
 use fleetdeck_proto::session::SessionBase;
 
@@ -124,6 +125,49 @@ impl SessionTarget {
         LaunchDir::open_in(policy.allowed_roots(), path).map_err(|e| (e.to_string(), e.code()))
     }
 
+    /// The checked folder for a child of the session (B9 §3.3 item 2): the
+    /// identity of `spec` reopened, or `spec.cwd` opened below the roots. The
+    /// path is `/proc/self/fd/<n>` on Linux, the folder path elsewhere; keep
+    /// the `LaunchDir` alive until the spawn returned.
+    pub(in crate::manager) async fn child_dir(
+        &self,
+        spec: &SessionSpec,
+    ) -> Result<(LaunchDir, PathBuf), (String, &'static str)> {
+        #[cfg(any(test, feature = "fault-injection"))]
+        self.launch_hook.hold().await;
+        let dir = match spec.launch.as_deref() {
+            Some(id) => LaunchDir::reopen(id).map_err(|e| (e.to_string(), e.code()))?,
+            None => self.open_checked(Path::new(&spec.cwd)).await?,
+        };
+        let path = pinned_path(&dir).map_err(|e| (e.to_string(), e.code()))?;
+        Ok((dir, path))
+    }
+
+    /// Reopens the identity of `spec` after a Codex `session.started` (B9
+    /// §3.5): a detection that the folder is still the checked object.
+    pub(in crate::manager) async fn launch_still_checked(
+        &self,
+        spec: &SessionSpec,
+    ) -> Result<(), LaunchDirError> {
+        #[cfg(any(test, feature = "fault-injection"))]
+        self.launch_hook.hold().await;
+        match spec.launch.as_deref() {
+            Some(id) => LaunchDir::reopen(id).map(|_| ()),
+            None => Ok(()),
+        }
+    }
+
+    /// Fails the start of `session_id` with the text of `e` (B9 §3.5) and
+    /// returns the dispatch to return.
+    pub(in crate::manager) async fn launch_changed(
+        &self,
+        session_id: &SessionId,
+        e: LaunchDirError,
+    ) -> Dispatch {
+        self.start_failed(session_id, &e.to_string()).await;
+        Dispatch::NotDispatched(e.code().into())
+    }
+
     /// The base commit of a start (R1.1). A worktree plan reads it in the
     /// pinned source repository (B9, DL-200): the `LaunchDir` stays open
     /// until the read returned. A failure fails the start and returns the
@@ -184,6 +228,18 @@ impl SessionManager {
         let _ = self.target.confine_exe.set(exe);
     }
 }
+
+impl std::fmt::Debug for SessionTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionTarget")
+            .field("adapters", &self.adapters.keys().collect::<Vec<_>>())
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+#[path = "launch_more_tests.rs"]
+mod more_tests;
 
 /// The refusal of a launch without an identity (B9 §3.3 item 5), Linux only.
 pub(super) fn launch_refusal(spec: &SessionSpec) -> Option<(&'static str, &'static str)> {

@@ -36,7 +36,7 @@ fn turn_done(e: &Event) -> bool {
     )
 }
 
-fn codex_spec(cwd: &str) -> SessionSpec {
+pub(in crate::manager) fn codex_spec(cwd: &str) -> SessionSpec {
     SessionSpec {
         provider_instance: "codex".into(),
         cwd: cwd.to_owned(),

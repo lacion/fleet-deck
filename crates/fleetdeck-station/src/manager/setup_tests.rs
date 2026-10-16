@@ -10,7 +10,7 @@ use crate::store::{Dispatch, EffectPayload};
 
 /// A station whose policy allows (or refuses) setup commands, with the
 /// environment of the `claude` instance.
-async fn station(allow: bool) -> Station {
+pub(in crate::manager) async fn station(allow: bool) -> Station {
     station_with(allow, None).await
 }
 
@@ -64,7 +64,7 @@ async fn station_with(allow: bool, log: Option<&std::path::Path>) -> Station {
     }
 }
 
-fn start_with_setup(cwd: &str, cmd: &str) -> SessionCommand {
+pub(in crate::manager) fn start_with_setup(cwd: &str, cmd: &str) -> SessionCommand {
     SessionCommand::Start {
         spec: spec(cwd, "claude"),
         prompt: Some(text("hello")),

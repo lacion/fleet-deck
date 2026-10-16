@@ -60,12 +60,16 @@ async fn fixture(shells: ShellConfig) -> Fixture {
 }
 
 async fn fixture_with(shells: ShellConfig, allow_shell: bool) -> Fixture {
+    let policy = Policy::new(Vec::new(), 4, OfflineApprovalPolicy::Wait, BTreeMap::new())
+        .with_shell(allow_shell, 8);
+    fixture_policy(shells, policy).await
+}
+
+async fn fixture_policy(shells: ShellConfig, policy: Policy) -> Fixture {
     let det = Det::new();
     let store = Store::open_in_memory(det.clock(), det.ids(), StoreConfig::default())
         .await
         .unwrap();
-    let policy = Policy::new(Vec::new(), 4, OfflineApprovalPolicy::Wait, BTreeMap::new())
-        .with_shell(allow_shell, 8);
     let manager = SessionManager::start(
         store.clone(),
         policy,
@@ -592,4 +596,35 @@ async fn a_key_rotation_moves_role_and_grants_in_one_transaction_and_the_new_key
     let deck2 = f.connect_as(&new_node).await;
     let info = call(&deck2.control, "station.info", json!({})).await;
     assert!(matches!(info, Outcome::Ok(_)));
+}
+
+/// The precheck runs in the checked folder object (B9 §3.3 item 2): the
+/// real working directory of the command is the folder.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_precheck_runs_in_the_checked_folder() {
+    let root = tempfile::tempdir().unwrap();
+    let proj = root.path().join("projects").join("app");
+    std::fs::create_dir_all(&proj).unwrap();
+    let policy = Policy::new(
+        vec![root.path().join("projects")],
+        4,
+        OfflineApprovalPolicy::Wait,
+        BTreeMap::new(),
+    )
+    .with_allow_setup_cmd(true);
+    let mut f = fixture_policy(ShellConfig::default(), policy).await;
+    let deck = f.connect().await;
+    let answer = ok(call(
+        &deck.control,
+        "workspace.precheck",
+        json!({ "cwd": proj.to_string_lossy(), "cmd": "pwd -P" }),
+    )
+    .await);
+    assert_eq!(answer["exit_code"], 0, "{answer}");
+    let real = proj.canonicalize().unwrap();
+    assert_eq!(
+        answer["output_tail"].as_str().unwrap().trim(),
+        real.to_string_lossy()
+    );
 }

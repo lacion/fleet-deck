@@ -37,6 +37,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use fleetdeck_core::childenv::ChildEnv;
+use fleetdeck_core::launch_dir::LaunchDir;
 use fleetdeck_proto::ProviderInstanceId;
 use fleetdeck_proto::SessionId;
 use fleetdeck_proto::command::{Reject, RejectCode};
@@ -295,7 +296,10 @@ impl Shells {
                     return Err(SHELLS_OFF.to_owned());
                 }
                 let cwd = policy.workspace(cwd).map_err(|e| e.to_string())?;
-                self.open(shell_id, &cwd, *cols, *rows, now, policy.max_shells())
+                // The shell starts in the checked folder object (B9).
+                let dir =
+                    LaunchDir::open_in(policy.allowed_roots(), &cwd).map_err(|e| e.to_string())?;
+                self.open(shell_id, &dir, *cols, *rows, now, policy.max_shells())
                     .map_err(|r| r.message)
             }
             ShellChange::Resize {
@@ -395,7 +399,7 @@ impl Shells {
     fn open(
         &self,
         shell_id: &str,
-        cwd: &std::path::Path,
+        dir: &LaunchDir,
         cols: u16,
         rows: u16,
         now: i64,
@@ -407,7 +411,7 @@ impl Shells {
             session: None,
             max_shells,
         };
-        self.spawn(shell_id, cwd, cols, rows, now, launch)
+        self.spawn(shell_id, dir, cols, rows, now, launch)
             .map(|_| ())
             .map_err(|e| match e {
                 StartError::NotStarted(r) => r,
@@ -427,6 +431,7 @@ impl Shells {
         shell_id: &str,
         session_id: &SessionId,
         launch: &HandoverLaunch,
+        dir: &LaunchDir,
         (cols, rows): (u16, u16),
         now: i64,
         max_shells: u32,
@@ -459,13 +464,13 @@ impl Shells {
             session: Some(session_id.clone()),
             max_shells,
         };
-        self.spawn(shell_id, &launch.cwd, cols, rows, now, launch_env)
+        self.spawn(shell_id, dir, cols, rows, now, launch_env)
     }
 
     fn spawn(
         &self,
         shell_id: &str,
-        cwd: &std::path::Path,
+        dir: &LaunchDir,
         cols: u16,
         rows: u16,
         now: i64,
@@ -528,7 +533,12 @@ impl Shells {
         let (program, args) = &launch.program;
         let mut cmd = CommandBuilder::new(program);
         cmd.args(args);
-        cmd.cwd(cwd);
+        // Linux: the `/proc` path of the checked folder object; `dir` lives
+        // until the child started (B9). Elsewhere the folder path.
+        #[cfg(target_os = "linux")]
+        cmd.cwd(dir.cwd().map_err(|e| failed("the shell folder", &e))?);
+        #[cfg(not(target_os = "linux"))]
+        cmd.cwd(dir.path());
         cmd.env_clear();
         for (k, v) in launch.env.iter() {
             cmd.env(k, v);
@@ -543,7 +553,7 @@ impl Shells {
         let shell = Arc::new(Shell {
             info: Mutex::new(ShellInfo {
                 shell_id: shell_id.to_owned(),
-                cwd: cwd.to_string_lossy().into_owned(),
+                cwd: dir.path().to_string_lossy().into_owned(),
                 state: ShellState::Running,
                 cols,
                 rows,
@@ -566,7 +576,7 @@ impl Shells {
             return Err(Self::stop_unpumped(&shell));
         }
         shells.insert(shell_id.to_owned(), shell);
-        tracing::info!(shell = %shell_id, cwd = %cwd.display(), "shell opened");
+        tracing::info!(shell = %shell_id, cwd = %dir.path().display(), "shell opened");
         Ok(pid)
     }
 

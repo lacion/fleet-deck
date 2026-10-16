@@ -11,6 +11,7 @@
 //! - the response to a mutating request is the `Receipt`.
 
 use fleetdeck_core::identity::PeerKey;
+use fleetdeck_core::launch_dir::LaunchDir;
 use fleetdeck_link::control::{Control, InboundRequest};
 use fleetdeck_link::methods::code;
 use fleetdeck_link::revoke::{RotateError, check_rotation, finish_rotation};
@@ -204,8 +205,23 @@ async fn precheck(ctx: &StationLink, params: serde_json::Value) -> Outcome {
             return Outcome::Err(WireError::new("outside_roots", e.to_string()));
         }
     };
+    // The command runs in the checked folder object (B9 §3.3 item 2); `dir`
+    // lives until `run` returned.
+    let dir = match LaunchDir::open_in(policy.allowed_roots(), &cwd) {
+        Ok(dir) => dir,
+        Err(e) => return Outcome::Err(WireError::new("outside_roots", e.to_string())),
+    };
+    #[cfg(target_os = "linux")]
+    let run_cwd = match dir.cwd() {
+        Ok(path) => path,
+        Err(e) => return Outcome::Err(WireError::new("outside_roots", e.to_string())),
+    };
+    #[cfg(not(target_os = "linux"))]
+    let run_cwd = dir.path();
     let env = fleetdeck_core::ChildEnv::from_process();
-    match precheck::run(&query.cmd, &cwd, &env, precheck::TIMEOUT).await {
+    let ran = precheck::run(&query.cmd, &run_cwd, &env, precheck::TIMEOUT).await;
+    drop(dir);
+    match ran {
         Ok(answer) => ok(answer),
         Err(PrecheckError::Invalid(m)) => Outcome::Err(WireError::new("invalid_params", m)),
         Err(PrecheckError::Run(m)) => internal(m),

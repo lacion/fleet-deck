@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 #[cfg(test)]
 use std::future::Future;
+use std::path::Path;
 #[cfg(test)]
 use std::pin::Pin;
 use std::process::Stdio;
@@ -19,6 +20,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use fleetdeck_core::ChildEnv;
+use fleetdeck_core::launch_dir::{LaunchDir, LaunchDirError};
 use fleetdeck_proto::SessionId;
 use fleetdeck_proto::event::{Event, ProviderKind, ToolKind, ToolStatus};
 use rustix::process::{Pid, Signal, kill_process_group, test_kill_process_group};
@@ -492,7 +494,7 @@ impl SessionTarget {
         id: &str,
         session: &SessionId,
         cancel: &watch::Receiver<bool>,
-    ) -> Result<std::path::PathBuf, Ran> {
+    ) -> Result<(LaunchDir, std::path::PathBuf), Ran> {
         let never = |state, stderr: String| Ran {
             state,
             exit_code: None,
@@ -540,9 +542,14 @@ impl SessionTarget {
         if !policy.allow_shell() {
             return Err(never(ShellState::Cancelled, SHELLS_OFF.to_owned()));
         }
-        policy
-            .workspace(&cwd)
-            .map_err(|e| never(ShellState::Cancelled, e.to_string()))
+        // The command starts in the checked folder object (B9 §3.3 item 2).
+        let refused = |e: LaunchDirError| never(ShellState::Cancelled, e.to_string());
+        let dir = LaunchDir::open_in(policy.allowed_roots(), Path::new(&cwd)).map_err(refused)?;
+        #[cfg(target_os = "linux")]
+        let path = dir.cwd().map_err(refused)?;
+        #[cfg(not(target_os = "linux"))]
+        let path = dir.path();
+        Ok((dir, path))
     }
 
     /// Starts the command and waits for its end.
@@ -569,8 +576,8 @@ impl SessionTarget {
         .await;
         // (B8 PRE-PR r1) The append above was awaited: a cancel or a policy
         // change may have come in. Nothing starts when a gate is closed.
-        let cwd = match self.shell_gates(id, session, cancel).await {
-            Ok(cwd) => cwd,
+        let (dir, cwd) = match self.shell_gates(id, session, cancel).await {
+            Ok(found) => found,
             Err(ran) => return ran,
         };
         let env = ChildEnv::from_process();
@@ -586,6 +593,8 @@ impl SessionTarget {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn();
+        // The child has its folder now (B9).
+        drop(dir);
         let mut child = match spawned {
             Ok(child) => child,
             Err(e) => {
