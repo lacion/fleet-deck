@@ -174,6 +174,14 @@ fn samples() -> Vec<Event> {
                 task_kind: "local_bash".into(),
             }],
         },
+        Event::TaskUpdated {
+            task_id: "t1".into(),
+            node_id: Some("node-2".into()),
+            task_kind: "local_agent".into(),
+            status: "completed".into(),
+            description: Some("Test subagent".into()),
+            summary: Some("sub-ok".into()),
+        },
         Event::Error {
             code: "usage_limit".into(),
             message: "limit".into(),
@@ -537,4 +545,23 @@ fn tool_completed_carries_optional_provider_refs() {
     let json = serde_json::to_value(&with).unwrap();
     assert_eq!(json["provider_refs"]["agent_id"], "afef5265450389d2c");
     assert_eq!(serde_json::from_value::<Event>(json).unwrap(), with);
+}
+
+#[test]
+fn a_task_update_omits_its_empty_optional_fields_and_decodes_without_them() {
+    let bare = Event::TaskUpdated {
+        task_id: "t1".into(),
+        node_id: None,
+        task_kind: "local_bash".into(),
+        status: "running".into(),
+        description: None,
+        summary: None,
+    };
+    let json = serde_json::to_value(&bare).unwrap();
+    assert_eq!(
+        json,
+        json!({"kind": "task.updated", "task_id": "t1", "task_kind": "local_bash",
+               "status": "running"})
+    );
+    assert_eq!(serde_json::from_value::<Event>(json).unwrap(), bare);
 }

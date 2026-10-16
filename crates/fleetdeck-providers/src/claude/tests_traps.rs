@@ -169,7 +169,13 @@ fn trap_5_a_subagent_that_outlives_its_run_starts_no_turn() {
                "content":[{"type":"text","text":"late child text"},
                           {"type":"tool_use","id":"toolu_child","name":"Read","input":{"file_path":"/w/a"}}]}}),
     ));
-    assert_eq!(kinds(&ev), ["tool.started"], "child text needs a turn");
+    // The late child text goes to the turn that launched the subagent (B6).
+    assert_eq!(kinds(&ev), ["message.completed", "tool.started"]);
+    assert!(matches!(
+        &ev[0],
+        Event::MessageCompleted { turn_id, parent_node_id: Some(_), text }
+            if turn_id.as_str() == "turn-1" && text == "late child text"
+    ));
     assert!(core.current_turn().is_none());
     assert!(core.current_run().is_none());
 }

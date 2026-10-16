@@ -72,7 +72,11 @@ fn child_thread_turns_never_replace_the_parent_turn() {
         "turn/started",
         json!({"threadId": "child-1", "turn": {"id": "c1"}}),
     ));
-    assert!(ev.is_empty(), "{ev:?}");
+    // The child turn reports the agent (B6) and starts no turn.
+    assert_eq!(
+        ev.iter().map(Event::kind_name).collect::<Vec<_>>(),
+        ["task.updated"]
+    );
     let turn1 = TurnId::new("turn-1");
     assert_eq!(core.current_turn(), Some(&turn1));
     let ev = emits(&notify(
@@ -88,7 +92,10 @@ fn child_thread_turns_never_replace_the_parent_turn() {
         "turn/completed",
         json!({"threadId": "child-1", "turn": {"id": "c1", "status": "completed"}}),
     ));
-    assert!(ev.is_empty(), "{ev:?}");
+    assert_eq!(
+        ev.iter().map(Event::kind_name).collect::<Vec<_>>(),
+        ["task.updated"]
+    );
     assert_eq!(core.current_turn(), Some(&turn1));
     let ev = emits(&complete(&mut core, "n1", "completed"));
     assert!(ev.iter().any(|e| matches!(

@@ -266,6 +266,8 @@ impl SessionSummary {
             | Event::InterruptResult { .. }
             | Event::InputUpdated { .. }
             | Event::OutputGap { .. }
+            // The board reads the task events; the fold keeps no state (B6).
+            | Event::TaskUpdated { .. }
             // The reconciliation changes no summary field; the board reads the
             // execution check instead (DL-182).
             | Event::ExecutionReconciled { .. }

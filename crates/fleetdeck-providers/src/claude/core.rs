@@ -136,6 +136,24 @@ pub(super) struct ToolNode {
     pub(super) denied: bool,
     /// The tool has a terminal `tool.completed` event.
     pub(super) done: bool,
+    /// The `tool_use_id` of the subagent call that this tool runs under (B6).
+    #[serde(default)]
+    pub(super) parent_tool: Option<String>,
+    /// For an `Agent` or `Task` call: the turn that started it (B6).
+    #[serde(default)]
+    pub(super) launch_turn: Option<TurnId>,
+}
+
+/// What the core knows of one task of `system/task_*` frames (B6).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub(super) struct TaskEntry {
+    /// The `tool_use_id` of the card that started the task.
+    pub(super) tool_use_id: Option<String>,
+    pub(super) task_kind: String,
+    /// From `task_started` until a final status.
+    pub(super) running: bool,
+    /// The `(status, summary)` of the last `task.updated` event of the task.
+    pub(super) last: Option<(String, Option<String>)>,
 }
 
 /// The sans-IO Claude adapter core.
@@ -179,6 +197,9 @@ pub struct ClaudeCore {
     pub(super) early: Vec<Event>,
     /// Background work that the CLI reports as running (traps 4 and 5).
     pub(super) background: Vec<BackgroundTask>,
+    /// The tasks of `system/task_*` frames, by task id (B6).
+    #[serde(default)]
+    pub(super) tasks: BTreeMap<String, TaskEntry>,
     /// When the last `get_usage` request was written (R4.5). Not part of the
     /// checkpoint: a restored core may ask once more.
     #[serde(skip)]
@@ -219,6 +240,7 @@ impl ClaudeCore {
             unknown_frames: 0,
             early: Vec::new(),
             background: Vec::new(),
+            tasks: BTreeMap::new(),
             usage_asked: None,
             usage_stopped: false,
             usage_seq: 0,
