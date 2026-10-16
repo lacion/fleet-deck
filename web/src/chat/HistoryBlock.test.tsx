@@ -66,6 +66,42 @@ describe('the history block (DL-189)', () => {
     expect(bare).not.toContain('failed');
   });
 
+  test('a shell command item shows its line and its output (B8)', () => {
+    const shell: HistoryItem = {
+      id: 's1',
+      at: 0,
+      kind: 'tool',
+      text: 'a\nb',
+      tool: { name: 'Shell command', summary: 'ls', status: 'ok' },
+    };
+    const html = block(view([shell]));
+    expect(html).toContain('<code>Shell command</code>');
+    expect(html).toContain('<span>ls</span>');
+    expect(html).toContain(
+      '<pre class="fd-chat-output" data-history="true" data-kind="shell-output">a\nb</pre>',
+    );
+    const bare = block(view([{ ...shell, text: '' }]));
+    expect(bare).toContain('<code>Shell command</code>');
+    expect(bare).not.toContain('shell-output');
+  });
+
+  test('a shell output item shows only the output, and an empty one nothing (B8)', () => {
+    const out: HistoryItem = {
+      id: 's2',
+      at: 0,
+      kind: 'tool',
+      text: 'done',
+      tool: { name: 'Shell output', summary: '', status: 'unknown' },
+    };
+    const html = block(view([out]));
+    expect(html).toContain('data-kind="shell-output"');
+    expect(html).toContain('>done</pre>');
+    expect(html).not.toContain('data-kind="tool"');
+    const empty = block(view([{ ...out, text: '' }]));
+    expect(empty).not.toContain('shell-output');
+    expect(empty).not.toContain('data-kind="tool"');
+  });
+
   test('the time is a title when the transcript has one', () => {
     const html = block(view([{ ...user, at: Date.UTC(2026, 9, 1, 12) }, reply]));
     expect(html.match(/title="/g)).toHaveLength(1);
