@@ -64,6 +64,7 @@ pub(super) fn input(n: u8, text: &str) -> HostInput {
         id: InputId::new(uuid(n)),
         origin: RunOrigin::Board,
         input: UserInput::new(text.to_owned()),
+        context: Vec::new(),
     }
 }
 

@@ -13,8 +13,16 @@ use std::time::Duration;
 
 use tokio::sync::{Notify, watch};
 
+use fleetdeck_proto::event::{Event, ToolStatus};
+
 use super::turns::Fences;
+use crate::store::shell_runs::ShellState;
 use crate::store::{Result, Store};
+
+/// The environment variable that marks every process of one `!` command (B8).
+pub const MARKER_VAR: &str = "FLEETDECK_SHELL_ID";
+/// The wait for the marked processes of one row at the start-up.
+const MARKED_WAIT: Duration = Duration::from_secs(5);
 
 /// The tick that covers a settlement made inside a store transaction (a
 /// retirement), which has no notify.
@@ -38,9 +46,9 @@ pub async fn advance_pending(store: &Store, fences: &Fences) -> Result<usize> {
 }
 
 /// The station start, before any command is admitted: a row whose effect
-/// was retired or never claimed settles `cancelled`; every pending advance
-/// runs; then the shell admission opens. A row whose effect was claimed
-/// stays as it is (the execution task reclassifies it later).
+/// was retired or never claimed settles `cancelled`; a Claude row that the
+/// last process may have started loses its marked processes and settles
+/// `unknown`; every pending advance runs; then the shell admission opens.
 ///
 /// # Errors
 /// A database error.
@@ -49,8 +57,52 @@ pub async fn start_up(store: &Store, fences: &Fences) -> Result<()> {
     if cancelled > 0 {
         tracing::info!(cancelled, "settled shell commands that never started");
     }
+    settle_claimed(store).await?;
     advance_pending(store, fences).await?;
     store.shell_open_admission().await
+}
+
+/// The Claude rows that the last station process may have started: kills the
+/// processes that carry the marker of the row, then settles it `unknown`
+/// (guarded by the state read) and tells the session (B8).
+async fn settle_claimed(store: &Store) -> Result<()> {
+    for row in store.shell_claimed_rows().await? {
+        let (var, id) = (MARKER_VAR, row.effect_id.clone());
+        let killed = tokio::task::spawn_blocking(move || {
+            crate::workspace::setup_cleanup::kill_marked(var, &id, MARKED_WAIT)
+        })
+        .await;
+        match killed {
+            Ok(Ok(0)) => {}
+            Ok(Ok(left)) => {
+                tracing::error!(effect = %row.effect_id, left, "a shell process may still run");
+            }
+            Ok(Err(e)) => tracing::error!(error = %e, "the shell processes cannot be listed"),
+            Err(e) => tracing::error!(error = %e, "the shell scan stopped"),
+        }
+        let settled = store
+            .shell_settle_from(row.effect_id.clone(), row.state, ShellState::Unknown)
+            .await?;
+        if !settled {
+            continue;
+        }
+        let mut refs = serde_json::Map::new();
+        refs.insert("shell".to_owned(), "unknown".into());
+        let done = Event::ToolCompleted {
+            node_id: format!("shell-{}", row.effect_id).into(),
+            status: ToolStatus::Failed,
+            files: Vec::new(),
+            exit_code: None,
+            provider_refs: refs,
+        };
+        if let Err(e) = store
+            .append(row.session_id.clone(), vec![done.into()])
+            .await
+        {
+            tracing::warn!(error = %e, effect = %row.effect_id, "the shell end was not stored");
+        }
+    }
+    Ok(())
 }
 
 /// The advance task: runs at the start, on each notify and at each tick,

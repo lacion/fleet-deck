@@ -305,7 +305,7 @@ async fn a_shell_command_needs_allow_shell_and_a_text_of_one_to_4096_characters(
 }
 
 #[tokio::test]
-async fn an_accepted_shell_command_stores_its_row_and_effect_and_a_retirement_settles_it() {
+async fn an_accepted_shell_command_stores_its_row_and_effect_and_the_run_settles_it() {
     let mut st = Station::new(4).await;
     let s = st.idle_here().await;
     let deck = st.paired_deck().await;
@@ -330,12 +330,12 @@ async fn an_accepted_shell_command_stores_its_row_and_effect_and_a_retirement_se
     assert_eq!(row.command, "ls -la");
     assert_eq!(row.worktree_root, st.ws_root());
 
-    // The execution is not built: the dispatch refuses, the effect retires
-    // and the same transaction settles the row `cancelled`; the advance
-    // loop then clears the pending marker and counts the generation.
+    // The command runs (B8): the row settles `done`; the advance loop then
+    // clears the pending marker and counts the generation (at the start and
+    // at the settlement).
     let id = effect.effect_id.as_str().to_owned();
     let deadline = tokio::time::Instant::now() + WAIT;
-    while st.shell_row(&id).await.state != ShellState::Cancelled {
+    while st.shell_row(&id).await.state != ShellState::Done {
         assert!(
             tokio::time::Instant::now() < deadline,
             "{:?}",
@@ -352,7 +352,7 @@ async fn an_accepted_shell_command_stores_its_row_and_effect_and_a_retirement_se
             .root_generation(st.ws_root())
             .await
             .unwrap(),
-        1
+        2
     );
     assert!(
         !st.manager

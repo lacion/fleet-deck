@@ -776,6 +776,9 @@ impl Store {
     }
 }
 
+#[path = "shell_runs_ctx.rs"]
+mod ctx;
+
 #[cfg(test)]
 #[path = "shell_runs_tests.rs"]
 mod tests;

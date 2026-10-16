@@ -6,6 +6,7 @@ use fleetdeck_proto::command::{ApprovalDecision, SessionSpec, StopMode, UserInpu
 use fleetdeck_proto::event::{ProviderKind, ResolvedBy, RunOrigin};
 use fleetdeck_proto::mutation::CommandAuthority;
 use fleetdeck_proto::{InputId, RequestId};
+use fleetdeck_providers::ShellContext;
 use serde::{Deserialize, Serialize};
 
 /// `skip_serializing_if` for a flag that is false by default.
@@ -20,6 +21,10 @@ pub struct InputRecord {
     pub input_id: InputId,
     pub origin: RunOrigin,
     pub input: UserInput,
+    /// The `!` shell results that this input carries (B8): resolved at the
+    /// decision, replayed with the input.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shell_context: Vec<ShellContext>,
 }
 
 /// The Git work of a start effect (M3 6-1, DL-200): decided and checked

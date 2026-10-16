@@ -51,6 +51,7 @@ impl ClaudeCore {
                 id: InputId::new(input_id.as_str()),
                 origin: RunOrigin::Board,
                 input: UserInput::new(text.clone()),
+                context: Vec::new(),
             }),
             HostCmd::Answer {
                 request_id,

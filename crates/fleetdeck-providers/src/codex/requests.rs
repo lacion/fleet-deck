@@ -448,6 +448,7 @@ impl CodexCore {
                     id: answer_input_id(&answer.request),
                     origin: RunOrigin::Board,
                     input: UserInput::new(text),
+                    context: Vec::new(),
                 })?
             }
             (ResponseChannel::RpcReply, RequestKind::Question) => {

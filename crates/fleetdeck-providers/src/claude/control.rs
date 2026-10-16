@@ -2,26 +2,32 @@
 //! `--input-format stream-json` mode (host → CLI).
 
 use fleetdeck_proto::command::UserInput;
+
+use crate::adapter::ShellContext;
 use serde_json::{Value, json};
 
 /// A user message (a prompt, a follow-up, or a steer during a turn). The client
 /// `uuid` makes the CLI report the input's fate in `command_lifecycle` frames.
 /// Pasted images go before the text as base64 `image` blocks (DL-304); an
-/// input without images keeps the plain string content.
+/// input without images or shell results keeps the plain string content. The
+/// shell results of `context` come first, as the `bash-*` text blocks that
+/// Claude Code writes for its own `!` line (B8).
 #[must_use]
-pub fn user_message(input: &UserInput, session_id: &str, uuid: &str) -> Value {
-    let content = if input.images.is_empty() {
+pub fn user_message(
+    input: &UserInput,
+    context: &[ShellContext],
+    session_id: &str,
+    uuid: &str,
+) -> Value {
+    let content = if input.images.is_empty() && context.is_empty() {
         Value::String(input.text.clone())
     } else {
-        let mut blocks: Vec<Value> = input
-            .images
-            .iter()
-            .map(|i| {
-                json!({"type": "image", "source": {
-                    "type": "base64", "media_type": i.media_type, "data": i.data,
-                }})
-            })
-            .collect();
+        let mut blocks: Vec<Value> = context.iter().flat_map(shell_blocks).collect();
+        blocks.extend(input.images.iter().map(|i| {
+            json!({"type": "image", "source": {
+                "type": "base64", "media_type": i.media_type, "data": i.data,
+            }})
+        }));
         blocks.push(json!({"type": "text", "text": input.text}));
         Value::Array(blocks)
     };
@@ -32,6 +38,39 @@ pub fn user_message(input: &UserInput, session_id: &str, uuid: &str) -> Value {
         "session_id": session_id,
         "uuid": uuid,
     })
+}
+
+/// The text shown for a command with no stdout.
+const NO_OUTPUT: &str = "(Bash completed with no output)";
+
+/// Escapes the three characters that would close or open a tag.
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// The two text blocks of one shell result (B8): the input, then the output.
+#[must_use]
+pub fn shell_blocks(result: &ShellContext) -> [Value; 2] {
+    let stdout = if result.stdout.is_empty() {
+        NO_OUTPUT.to_owned()
+    } else {
+        escape(&result.stdout)
+    };
+    let mut stderr = escape(&result.stderr);
+    if result.end != "exit 0" {
+        if !stderr.is_empty() {
+            stderr.push('\n');
+        }
+        stderr.push_str(&format!("[{}]", result.end));
+    }
+    [
+        json!({"type": "text", "text": format!("<bash-input>{}</bash-input>", escape(&result.command))}),
+        json!({"type": "text", "text": format!(
+            "<bash-stdout>{stdout}</bash-stdout><bash-stderr>{stderr}</bash-stderr>"
+        )}),
+    ]
 }
 
 /// A host control request (`initialize`, `interrupt`, `set_permission_mode`, `set_model`, ...).
@@ -131,14 +170,14 @@ mod tests {
 
     #[test]
     fn a_claude_prompt_with_images_sends_image_blocks_before_the_text() {
-        let plain = user_message(&UserInput::new("hi"), "s", "u");
+        let plain = user_message(&UserInput::new("hi"), &[], "s", "u");
         assert_eq!(plain["message"]["content"], json!("hi"));
         let mut input = UserInput::new("what is this?");
         input.images.push(ImageInput {
             media_type: "image/png".to_owned(),
             data: "iVBORw0KGgo=".to_owned(),
         });
-        let v = user_message(&input, "s", "u");
+        let v = user_message(&input, &[], "s", "u");
         assert_eq!(
             v["message"]["content"],
             json!([
@@ -146,6 +185,54 @@ mod tests {
                 {"type": "text", "text": "what is this?"},
             ])
         );
+    }
+
+    fn result(command: &str, end: &str, stdout: &str, stderr: &str) -> ShellContext {
+        ShellContext {
+            command: command.to_owned(),
+            end: end.to_owned(),
+            stdout: stdout.to_owned(),
+            stderr: stderr.to_owned(),
+        }
+    }
+
+    #[test]
+    fn shell_results_become_escaped_bash_blocks_before_the_prompt() {
+        let context = [
+            result("echo '<a&b>'", "exit 0", "<a&b>\n", ""),
+            result("false", "exit 1", "", "boom"),
+            result("sleep 9", "cancelled", "", ""),
+        ];
+        let v = user_message(&UserInput::new("go"), &context, "s", "u");
+        assert_eq!(
+            v["message"]["content"],
+            json!([
+                {"type": "text", "text": "<bash-input>echo '&lt;a&amp;b&gt;'</bash-input>"},
+                {"type": "text", "text": "<bash-stdout>&lt;a&amp;b&gt;\n</bash-stdout><bash-stderr></bash-stderr>"},
+                {"type": "text", "text": "<bash-input>false</bash-input>"},
+                {"type": "text", "text": "<bash-stdout>(Bash completed with no output)</bash-stdout><bash-stderr>boom\n[exit 1]</bash-stderr>"},
+                {"type": "text", "text": "<bash-input>sleep 9</bash-input>"},
+                {"type": "text", "text": "<bash-stdout>(Bash completed with no output)</bash-stdout><bash-stderr>[cancelled]</bash-stderr>"},
+                {"type": "text", "text": "go"},
+            ])
+        );
+    }
+
+    #[test]
+    fn shell_results_go_before_the_images() {
+        let mut input = UserInput::new("look");
+        input.images.push(ImageInput {
+            media_type: "image/png".to_owned(),
+            data: "AA==".to_owned(),
+        });
+        let v = user_message(&input, &[result("ls", "exit 0", "x", "")], "s", "u");
+        let kinds: Vec<_> = v["message"]["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| b["type"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(kinds, ["text", "text", "image", "text"]);
     }
 
     #[test]

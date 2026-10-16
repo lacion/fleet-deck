@@ -416,6 +416,7 @@ impl ClaudeCore {
         let session = self.native_session_id.clone().unwrap_or_default();
         Ok(vec![Output::Write(control::user_message(
             &input.input,
+            &input.context,
             &session,
             &uuid,
         ))])
@@ -672,3 +673,7 @@ pub(super) fn truncate(text: &str, max: usize) -> String {
         None => text.to_owned(),
     }
 }
+
+#[cfg(test)]
+#[path = "core_shell_tests.rs"]
+mod shell_tests;

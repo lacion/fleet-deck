@@ -160,6 +160,7 @@ impl Rig {
                             input_id: InputId::from(format!("in-{n}").as_str()),
                             origin: RunOrigin::Board,
                             input: UserInput::new(format!("prompt {n}")),
+                            shell_context: Vec::new(),
                         },
                         authority: None,
                     },

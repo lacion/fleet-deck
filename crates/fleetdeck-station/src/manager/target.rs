@@ -98,6 +98,8 @@ pub struct SessionTarget {
     shells: ShellsSlot,
     /// The restart freeze (PRE-PR r1).
     pub(super) restart: Arc<super::restart_gate::RestartState>,
+    /// The running `!` shell tasks of Claude sessions (B8).
+    shell: shell_run::ShellRunState,
 }
 
 /// One point where a test holds an effect before its authority gate (tests
@@ -177,6 +179,7 @@ impl SessionTarget {
             shells: ShellsSlot::default(),
             broken: Arc::default(),
             restart: Arc::default(),
+            shell: shell_run::ShellRunState::default(),
         }
     }
 
@@ -529,6 +532,10 @@ impl SessionTarget {
     }
 
     async fn operate(&self, effect: &Effect) -> Dispatch {
+        // B8: a shell command is station work, not a provider command.
+        if matches!(effect.payload, EffectPayload::ShellCommand { .. }) {
+            return self.dispatch_shell(effect);
+        }
         let Some(live) = self.live(&effect.session_id) else {
             return Dispatch::NotDispatched("no_process".into());
         };
@@ -736,6 +743,9 @@ mod shim_target;
 
 #[path = "setup_task.rs"]
 mod setup_task;
+
+#[path = "shell_run.rs"]
+mod shell_run;
 
 #[path = "target_base.rs"]
 mod target_base;

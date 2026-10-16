@@ -264,6 +264,7 @@ fn prompt(id: &str, text: &str) -> EffectPayload {
             input_id: InputId::from(id),
             origin: RunOrigin::Board,
             input: UserInput::new(text.to_owned()),
+            shell_context: Vec::new(),
         },
         authority: None,
     }

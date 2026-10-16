@@ -53,6 +53,7 @@ pub(super) fn input(text: &str, id: &str) -> HostInput {
         id: InputId::new(id),
         origin: RunOrigin::Board,
         input: UserInput::new(text),
+        context: Vec::new(),
     }
 }
 

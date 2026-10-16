@@ -51,6 +51,7 @@ fn input(id: &str, text: &str) -> HostInput {
         id: InputId::new(id),
         origin: RunOrigin::Board,
         input: UserInput::new(text.to_owned()),
+        context: Vec::new(),
     }
 }
 
