@@ -287,9 +287,12 @@ impl SessionTarget {
             | EffectPayload::Stop { .. } => {
                 return Dispatch::NotDispatched("not_a_live_operation".into());
             }
-            // B8: the execution of `!` commands is a later task.
-            EffectPayload::ShellCommand { .. } => {
-                return Dispatch::NotDispatched("shell_command_not_built".into());
+            // B8: a Codex `!` command goes to the provider; the station has
+            // checked it already (`dispatch_codex_shell`).
+            EffectPayload::ShellCommand { command, .. } => {
+                session
+                    .shell_command(effect.effect_id.to_string(), command.clone())
+                    .await
             }
         };
         match sent {

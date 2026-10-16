@@ -26,8 +26,9 @@ use fleetdeck_providers::host::ProcessSpec;
 use fleetdeck_providers::host::shim::host::{AckMode, Attached, ShimHost, ShimHostConfig};
 use fleetdeck_station::manager::shim_codex::DurableCodex;
 use fleetdeck_station::manager::shims::{Recovered, launch_shim, recover_shims};
+use fleetdeck_station::store::shell_runs::ShellState;
 use fleetdeck_station::store::{
-    Caller, Dispatch, Effect, EffectPayload, FrameState, InputRecord, NewSession,
+    Caller, Dispatch, Effect, EffectPayload, EffectState, FrameState, InputRecord, NewSession,
     OfflineApprovalPolicy, OutputCommit, OutputMeta, ReadResult, Store, StoreConfig,
 };
 use fleetdeck_testkit::Det;
@@ -206,6 +207,52 @@ impl Rig {
             .await
             .unwrap();
         self.store.claim_next(self.fence).await.unwrap().unwrap()
+    }
+
+    /// A claimed `!` shell effect with its `running` row (B8).
+    async fn claimed_shell(&self, command: &str) -> Effect {
+        let n = self
+            .commands
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let envelope = CommandEnvelope {
+            authority: None,
+            command_id: CommandId::from(format!("cmd-{n}").as_str()),
+            target_incarnation: None,
+            retry_until: i64::try_from(self.det.now_ms()).unwrap() + RETRY_WINDOW_MS,
+            origin: CommandOrigin::Board,
+            command: SessionCommand::Interrupt {
+                session_id: "s1".into(),
+            },
+        };
+        let (command, root) = (command.to_owned(), self.cwd());
+        self.store
+            .decide(envelope, Caller::local(), move |d| {
+                let payload = EffectPayload::ShellCommand {
+                    command: command.clone(),
+                    provider: ProviderKind::Codex,
+                    worktree_root: root.clone(),
+                };
+                let id = d
+                    .enqueue(&"s1".into(), payload)?
+                    .effect_id
+                    .as_str()
+                    .to_owned();
+                d.shell_insert(&id, &"s1".into(), ProviderKind::Codex, &root, &command)?;
+                Ok(CommandResult {
+                    session_id: Some("s1".into()),
+                    input_id: None,
+                })
+            })
+            .await
+            .unwrap();
+        let effect = self.store.claim_next(self.fence).await.unwrap().unwrap();
+        assert!(
+            self.store
+                .shell_set_running(effect.effect_id.as_str().to_owned())
+                .await
+                .unwrap()
+        );
+        effect
     }
 
     async fn events(&self) -> Vec<Event> {
@@ -554,4 +601,29 @@ async fn a_delayed_old_owner_cannot_make_the_new_owner_resend_a_completed_frame(
         "the frame was never resent"
     );
     assert_eq!(rig.method_count("initialize"), 1);
+}
+
+#[tokio::test]
+async fn a_shell_command_of_a_shim_hosted_codex_session_settles_done() {
+    let rig = Rig::new().await;
+    let driver = rig.open().await;
+    let effect = rig.claimed_shell("pwd").await;
+    let id = effect.effect_id.as_str().to_owned();
+    assert_eq!(driver.apply(&effect).await, Dispatch::Sent);
+    rig.wait_event("the shell end", |e| {
+        matches!(e, Event::ToolCompleted { node_id, .. } if node_id.as_str() == format!("shell-{id}"))
+    })
+    .await;
+    let row = rig.store.shell_run(id.clone()).await.unwrap().unwrap();
+    assert_eq!(row.state, ShellState::Done);
+    assert_eq!(row.exit_code, Some(0));
+    assert_eq!(
+        rig.frames()
+            .iter()
+            .find(|f| f["method"] == "thread/shellCommand")
+            .map(|f| f["params"]["command"].clone()),
+        Some(Value::from("pwd"))
+    );
+    let effect = rig.store.effect(effect.effect_id).await.unwrap().unwrap();
+    assert_eq!(effect.state, EffectState::Confirmed);
 }

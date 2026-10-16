@@ -257,6 +257,8 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item }) {
   switch (item.type) {
     case 'run': {
       // Backlog B2: a turn the agent or the station started is one muted line, not a bubble.
+      // B8: a `!` command turn shows only its shell card.
+      if (item.origin === 'shell') return null;
       if (item.origin === 'provider')
         return (
           <p className="fd-chat-line" data-origin="provider">

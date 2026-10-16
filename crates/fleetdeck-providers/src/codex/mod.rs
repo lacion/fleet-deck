@@ -27,6 +27,7 @@ mod probe;
 mod requests;
 mod rollback;
 pub mod rpc;
+mod shell;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -39,6 +40,8 @@ mod tests_options;
 mod tests_review;
 #[cfg(test)]
 mod tests_rollback;
+#[cfg(test)]
+mod tests_shell;
 
 use fleetdeck_proto::capability::{BackgroundReporting, TerminalStatusQuality, UsageReporting};
 use fleetdeck_proto::event::ResponseChannel;
@@ -75,6 +78,7 @@ pub const CLIENT_REQUESTS: &[&str] = &[
     "turn/steer",
     "turn/interrupt",
     "thread/backgroundTerminals/list",
+    "thread/shellCommand",
 ];
 
 /// Codex approval policies (`AskForApproval`) that the app-server enforces,

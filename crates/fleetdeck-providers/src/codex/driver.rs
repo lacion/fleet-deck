@@ -622,6 +622,12 @@ impl LiveSession for CodexSession {
         self.run(move |c| c.steer(&input)).await
     }
 
+    /// `thread/shellCommand` (B8): refused unless the session is idle.
+    async fn shell_command(&mut self, effect_id: String, command: String) -> Result<()> {
+        self.run(move |core| core.shell_command(&effect_id, &command))
+            .await
+    }
+
     /// The core keeps the follow-up and sends it after the running turn
     /// (Codex has no native queue, DL-015).
     async fn follow_up(&mut self, input: HostInput) -> Result<()> {

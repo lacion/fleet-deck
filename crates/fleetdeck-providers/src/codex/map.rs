@@ -15,6 +15,10 @@ mod identity;
 // `task.updated` from the agent states (B6).
 #[path = "agents.rs"]
 mod agents;
+// The kind and the title of a tool item (moved out of this file in B8).
+#[path = "map_tools.rs"]
+mod map_tools;
+use map_tools::{tool_kind, tool_title};
 
 /// Pages of `model/list` that follow the first one (DL-151).
 const MODEL_LIST_MORE_PAGES: u8 = 4;
@@ -89,20 +93,8 @@ pub(super) fn str_at<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
     v.get(key).and_then(Value::as_str)
 }
 
-fn tool_kind(item_type: &str) -> Option<ToolKind> {
-    Some(match item_type {
-        "commandExecution" => ToolKind::Shell,
-        "fileChange" => ToolKind::Edit,
-        "mcpToolCall" => ToolKind::Mcp,
-        "webSearch" => ToolKind::Web,
-        "collabAgentToolCall" | "subAgentActivity" => ToolKind::Subagent,
-        "dynamicToolCall" | "imageView" | "imageGeneration" => ToolKind::Other,
-        _ => return None,
-    })
-}
-
 /// Paths named by a `fileChange` item.
-fn change_paths(item: &Value) -> Vec<String> {
+pub(super) fn change_paths(item: &Value) -> Vec<String> {
     item.get("changes")
         .and_then(Value::as_array)
         .into_iter()
@@ -112,41 +104,10 @@ fn change_paths(item: &Value) -> Vec<String> {
         .collect()
 }
 
-/// Title and input summary of a tool item (DL-063).
 /// The item type of the tool node that the core opens for a
 /// `item/tool/requestUserInput` question; Codex 0.160.0 starts no item for
 /// it (DL-068).
 pub(super) const QUESTION_ITEM: &str = "requestUserInput";
-
-fn tool_title(item: &Value, item_type: &str) -> (String, String) {
-    let text = |k: &str| str_at(item, k).unwrap_or_default().to_owned();
-    let (title, summary) = match item_type {
-        "commandExecution" => ("Shell".to_owned(), text("command")),
-        "fileChange" => ("Edit".to_owned(), change_paths(item).join(", ")),
-        "mcpToolCall" => (
-            format!("{}.{}", text("server"), text("tool")),
-            item.get("arguments")
-                .map(Value::to_string)
-                .unwrap_or_default(),
-        ),
-        "webSearch" => ("Web search".to_owned(), text("query")),
-        "collabAgentToolCall" => (
-            str_at(item, "tool").unwrap_or("Agent").to_owned(),
-            text("prompt"),
-        ),
-        "subAgentActivity" => ("Subagent".to_owned(), text("agentPath")),
-        // The node of a `requestUserInput` question (DL-068).
-        QUESTION_ITEM => ("Question".to_owned(), text("question")),
-        "dynamicToolCall" => (
-            str_at(item, "tool").unwrap_or(item_type).to_owned(),
-            item.get("arguments")
-                .map(Value::to_string)
-                .unwrap_or_default(),
-        ),
-        other => (other.to_owned(), String::new()),
-    };
-    (title, truncate(&summary, SUMMARY_CHARS))
-}
 
 fn change_kind(change: &Value) -> FileChange {
     match change.pointer("/kind/type").and_then(Value::as_str) {
@@ -247,6 +208,10 @@ impl CodexCore {
                 vec![Output::Emit(Event::BackgroundUpdated { tasks })]
             }
             (HostRequest::Rollback, result) => self.on_rollback(result),
+            (HostRequest::ShellCommand { .. }, Ok(_)) => Vec::new(),
+            (HostRequest::ShellCommand { .. }, Err((code, message))) => {
+                self.shell_refused(code, &message)
+            }
             (HostRequest::ModelList { pages, models }, Ok(r)) => {
                 self.on_model_list(pages, models, &r)
             }
@@ -468,6 +433,12 @@ impl CodexCore {
             self.unknown_frames += 1;
             return Vec::new();
         };
+        // B8: the item of a `!` command is the node `shell-<effect id>`.
+        if item_type == "commandExecution"
+            && let Some(out) = self.shell_item(p, &item, item_id, completed)
+        {
+            return out;
+        }
         let own = self.own_thread(p);
         match item_type {
             "userMessage" if !completed && own => match str_at(&item, "clientId") {
@@ -704,7 +675,9 @@ impl CodexCore {
             // Completion of a turn this core never saw start (another client).
             return Vec::new();
         }
-        let mut out = self.expire_open(ExpiredReason::TurnEnded);
+        let interrupted = p.pointer("/turn/status").and_then(Value::as_str) == Some("interrupted");
+        let mut out = self.shell_turn_end(interrupted);
+        out.extend(self.expire_open(ExpiredReason::TurnEnded));
         let status = match p.pointer("/turn/status").and_then(Value::as_str) {
             Some("completed") => TurnStatus::Done,
             Some("interrupted") => TurnStatus::Interrupted,

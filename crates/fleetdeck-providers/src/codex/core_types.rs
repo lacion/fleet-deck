@@ -95,4 +95,8 @@ pub(super) enum HostRequest {
         pages: u8,
         models: Vec<ModelChoice>,
     },
+    /// `thread/shellCommand` of the shell effect `effect_id` (B8).
+    ShellCommand {
+        effect_id: String,
+    },
 }

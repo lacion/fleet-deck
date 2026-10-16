@@ -5,8 +5,8 @@
 //! up to 600 s never stalls the other sessions. The task holds the session
 //! fence while the command runs, advances the folder generation at the start
 //! (the settlement advance follows in `shell_advance`), keeps the tails of
-//! both streams and settles the row and the effect. Codex execution is a
-//! later task: its dispatch still refuses.
+//! both streams and settles the row and the effect. A Codex command runs
+//! through the provider instead (`shell_codex`).
 
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -30,9 +30,11 @@ use crate::store::{Dispatch, Effect, EffectPayload};
 /// The longest run of a command.
 const TIMEOUT: Duration = Duration::from_secs(600);
 /// The wait for the open or due capture of the session.
-const CAPTURE_WAIT: Duration = Duration::from_secs(5);
-const CAPTURE_BUSY: &str = "The session is still saving its last turn; try again.";
-const SHELLS_OFF: &str = "Shells are off on this station (allow_shell = false).";
+pub(super) const CAPTURE_WAIT: Duration = Duration::from_secs(5);
+pub(super) const CAPTURE_BUSY: &str = "The session is still saving its last turn; try again.";
+pub(super) const SHELLS_OFF: &str = "Shells are off on this station (allow_shell = false).";
+/// The wait for the first evidence of a Codex command (B8).
+const CODEX_WATCH: Duration = Duration::from_secs(30);
 /// The wait between TERM and KILL, and for the group to be gone.
 const GRACE: Duration = Duration::from_secs(2);
 const GROUP_POLL: Duration = Duration::from_millis(50);
@@ -56,6 +58,8 @@ pub(super) struct ShellRunState {
     notify: Arc<Notify>,
     /// The run limit in ms (a test shortens it).
     timeout_ms: AtomicU64,
+    /// The wait for the proof of a Codex command in ms (a test shortens it).
+    watch_ms: AtomicU64,
 }
 
 impl Default for ShellRunState {
@@ -64,6 +68,7 @@ impl Default for ShellRunState {
             tasks: StdMutex::default(),
             notify: Arc::new(Notify::new()),
             timeout_ms: AtomicU64::new(u64::try_from(TIMEOUT.as_millis()).unwrap_or(u64::MAX)),
+            watch_ms: AtomicU64::new(u64::try_from(CODEX_WATCH.as_millis()).unwrap_or(u64::MAX)),
         }
     }
 }
@@ -234,15 +239,27 @@ impl SessionTarget {
         self.shell.timeout_ms.store(ms, Ordering::Relaxed);
     }
 
+    /// Shortens the wait for the proof of a Codex command (tests only).
+    #[cfg(test)]
+    pub(in crate::manager) fn set_shell_watch(&self, limit: Duration) {
+        let ms = u64::try_from(limit.as_millis()).unwrap_or(u64::MAX);
+        self.shell.watch_ms.store(ms, Ordering::Relaxed);
+    }
+
+    /// The wait for the proof of a Codex command (B8).
+    pub(super) fn shell_watch(&self) -> Duration {
+        Duration::from_millis(self.shell.watch_ms.load(Ordering::Relaxed))
+    }
+
     /// Dispatches a shell effect (B8): a Claude command runs in a task and
-    /// the effect stays claimed until the task confirms it; Codex execution
-    /// is not built yet.
+    /// the effect stays claimed until the task confirms it. A Codex command
+    /// goes through `dispatch_codex_shell`.
     pub(super) fn dispatch_shell(&self, effect: &Effect) -> Dispatch {
         let EffectPayload::ShellCommand { provider, .. } = &effect.payload else {
             return Dispatch::NotDispatched("not_a_shell_command".into());
         };
         if *provider != ProviderKind::Claude {
-            return Dispatch::NotDispatched("shell_command_not_built".into());
+            return Dispatch::NotDispatched("shell_provider_unsupported".into());
         }
         let (Some(this), Some(fence)) = (self.this.upgrade(), effect.fence_token) else {
             return Dispatch::NotDispatched("shell_no_owner".into());
@@ -421,7 +438,10 @@ impl SessionTarget {
     }
 
     /// The session folder, checked again against the current policy.
-    async fn shell_cwd(&self, session: &SessionId) -> Result<std::path::PathBuf, String> {
+    pub(super) async fn shell_cwd(
+        &self,
+        session: &SessionId,
+    ) -> Result<std::path::PathBuf, String> {
         let policy = self
             .current_policy()
             .ok_or_else(|| "The station policy is not available.".to_owned())?;
