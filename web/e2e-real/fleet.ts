@@ -10,6 +10,7 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -49,6 +50,51 @@ export function freePort(): Promise<number> {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** The numeric names in /proc (Linux only; none on another platform). */
+function procPids(): number[] {
+  if (process.platform !== 'linux') return [];
+  return readdirSync('/proc')
+    .filter((name) => /^\d+$/.test(name))
+    .map(Number);
+}
+
+/** The pid of `fleetdeck shim --id <id>`, from /proc (Linux only). */
+function shimPid(id: string): number | null {
+  const needle = `shim\0--id\0${id}\0`;
+  for (const pid of procPids()) {
+    try {
+      if (readFileSync(`/proc/${pid}/cmdline`, 'latin1').includes(needle)) return pid;
+    } catch {
+      // The process ended.
+    }
+  }
+  return null;
+}
+
+/** The pids of the processes that run with `HOME=<home>` (Linux only). */
+function processesWithHome(home: string): number[] {
+  const entry = `HOME=${home}\0`;
+  const pids: number[] = [];
+  for (const pid of procPids()) {
+    try {
+      const environ = readFileSync(`/proc/${pid}/environ`, 'latin1');
+      if (environ.startsWith(entry) || environ.includes(`\0${entry}`)) pids.push(pid);
+    } catch {
+      // The process ended, or it is not ours.
+    }
+  }
+  return pids;
+}
+
+/** SIGKILL, and no error when the process is gone already. */
+function kill9(pid: number): void {
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+  }
+}
 
 /** One temporary node: `<root>/home` is `~`, `<root>/node` the data dir. */
 export class Node {
@@ -242,6 +288,35 @@ export class Station extends Node {
         '',
       ].join('\n'),
     );
+  }
+
+  /** A shim outlives its station by design (ADR-005): kill the shims of this
+   * station, so that no shim or fake agent outlives the suite. */
+  reapShims(): void {
+    const dir = join(this.data, 'station', 'shims');
+    if (!existsSync(dir)) return;
+    for (const file of readdirSync(dir)) {
+      if (!file.endsWith('.journal')) continue;
+      const pid = shimPid(file.slice(0, -'.journal'.length));
+      if (pid !== null) kill9(pid);
+    }
+  }
+
+  /** Stops the station, kills its shims (before the folder goes: the journals
+   * name them), and fails when a process of the station outlives that. */
+  override async dispose(): Promise<void> {
+    await this.stop();
+    this.reapShims();
+    const deadline = Date.now() + 5_000;
+    let left = processesWithHome(this.home);
+    while (left.length > 0 && Date.now() < deadline) {
+      await sleep(100);
+      left = processesWithHome(this.home);
+    }
+    for (const pid of left) kill9(pid);
+    await super.dispose();
+    if (left.length > 0)
+      throw new Error(`processes of the station outlived the suite: ${left.join(', ')}`);
   }
 
   /** `station run`: a session started on the station itself, without the

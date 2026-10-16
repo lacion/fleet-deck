@@ -7,6 +7,7 @@ export default defineConfig({
   testDir: 'e2e-real',
   outputDir: 'test-results/real',
   globalSetup: './e2e-real/setup.ts',
+  globalTeardown: './e2e-real/teardown.ts',
   fullyParallel: false,
   workers: 1,
   forbidOnly: true,
