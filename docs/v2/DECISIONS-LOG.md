@@ -3071,3 +3071,9 @@ Owner review: pending.
 - Context: the B9 design (`docs/v2/design/launch-dir.md`) reached the round limit of the adversary DESIGN REVIEW with open findings in the provisioning of new worktrees and clones: descriptor-only custody cannot follow Git's own later path resolutions.
 - Decision (owner): option A. On Linux, Git provisioning runs through a helper (`fleetdeck confine-exec`) that confines writes to the allowed roots with Landlock (new dependency: the `landlock` crate). Without Landlock in the kernel, provisioning is checked after Git (detection only) and `doctor` warns. On macOS, the same confinement with Seatbelt (`sandbox-exec`) is built together with the other deferred macOS work (shim parity step 4).
 - Design revision 4 is accepted with this decision; a PRE-PR REVIEW follows the build.
+
+## DL-201 — Omarchy display principal, directives and desktop control: design accepted (R13 P2 and P3, 2026-10-16)
+
+- Context: `docs/v2/design/omarchy.md` §4.5, §5 and §6.1-§6.4/§6.6 went through four adversary DESIGN REVIEW rounds (the owner approved a fourth round after round 3). Round 4: PASS; its two MAJOR findings (the notification helper without `--`, the window match by pid) are fixed in §5C items 4 and 5.
+- Decision: accepted as §5C/§5B/§5A over §4.5, §5, §6: a read-only display principal with one payload policy, pairing by an on-screen code (pending → approved → claimed), a ceiling of station ids, typed directives with live sender authority, the display artifact route, change summaries with an owner switch for patches, typed desktop arguments, windows matched by a unique class and Hyprland events.
+- Next: build P2 and P3; a PRE-PR REVIEW before the merge; the live smoke on the owner's Omarchy machine.
