@@ -539,17 +539,13 @@ impl SessionManager {
     /// integration service. It cannot fail. The caller runs one `prepare`
     /// and `publish` at a time.
     pub fn publish(&self, prepared: Prepared) {
-        let Prepared {
-            policy,
-            integrations,
-        } = prepared;
-        if let Some(service) = integrations {
+        if let Some(service) = prepared.integrations {
             *self
                 .integrations
                 .write()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(service);
         }
-        self.policy.swap(policy);
+        self.policy.swap(prepared.policy);
     }
 
     /// A new id from the station's id source (command ids of the local CLI).
