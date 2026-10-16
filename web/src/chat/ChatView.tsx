@@ -34,7 +34,7 @@ import type { HistoryView } from './history';
 import { HistoryBlock } from './HistoryBlock';
 import { Markdown } from './Markdown';
 import { SubagentWork } from './SubagentWork';
-import { ChipText } from '../review/CommentChip';
+import { PromptBubble } from './PromptBubble';
 import { ReviewCard } from '../review/ReviewCard';
 
 /** The review comments of this session (DL-179): the cards, and the chips of the comment ids. */
@@ -278,22 +278,16 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item }) {
           {sent !== undefined && props.review !== undefined ? (
             <ReviewCard
               review={sent}
-              text={item.input}
+              text={item.text ?? item.input}
               byShort={props.review.byShort}
               onOpen={props.review.onOpen}
             />
           ) : (
-            <div className="fd-chat-bubble">
-              {props.review === undefined ? (
-                item.input
-              ) : (
-                <ChipText
-                  text={item.input}
-                  known={props.review.known}
-                  onOpen={props.review.onOpen}
-                />
-              )}
-            </div>
+            <PromptBubble
+              text={item.text ?? item.input}
+              known={props.review?.known}
+              onOpen={props.review?.onOpen}
+            />
           )}
           {name === null ? null : (
             <span className="fd-chat-run-label fd-chat-author">

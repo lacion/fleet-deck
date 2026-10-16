@@ -510,3 +510,37 @@ describe('the tool use of a subagent (DL-191)', () => {
     expect(subs(tree.items).map((s) => s.tool_use_id)).toEqual(['toolu_01', null, null]);
   });
 });
+
+describe('the whole prompt of a run (backlog B10)', () => {
+  const runs = (items: readonly Item[]) => items.flatMap((i) => (i.type === 'run' ? [i] : []));
+
+  test('a run carries text from input_text, and the summary stays the input', () => {
+    const run = runs(buildTimeline(recorded('subagent')).items)[0];
+    expect(run?.text).toStartWith('Use the Task tool to start a general-purpose subagent');
+    expect(run?.input).toStartWith('Use the Task tool to start a general-purpose subagent');
+  });
+
+  test('a run from an event without input_text has no text', () => {
+    const events = envelopes('old', [
+      { kind: 'run.started', run_id: 'run-1', input_summary: 'go', origin: 'board' },
+    ]);
+    const run = runs(buildTimeline(events).items)[0];
+    expect(run?.input).toBe('go');
+    expect(run).not.toHaveProperty('text');
+  });
+
+  test('input_text and the summary can differ', () => {
+    const events = envelopes('long', [
+      {
+        kind: 'run.started',
+        run_id: 'run-1',
+        input_summary: 'first line…',
+        input_text: 'first line\nsecond line',
+        origin: 'board',
+      },
+    ]);
+    const run = runs(buildTimeline(events).items)[0];
+    expect(run?.input).toBe('first line…');
+    expect(run?.text).toBe('first line\nsecond line');
+  });
+});

@@ -64,6 +64,29 @@
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+.fd-chat-more {
+  display: block;
+  height: auto;
+  margin-top: var(--sp-2);
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--dim);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: var(--fs-micro);
+  text-decoration: underline;
+}
+.fd-chat-more:hover {
+  color: var(--text);
+}
+.fd-chat-cut {
+  margin: var(--sp-1) 0 0;
+  color: var(--faint);
+  font-family: var(--font-ui);
+  font-size: var(--fs-micro);
+  white-space: normal;
+}
 
 /* message: Markdown, no bubble */
 .fd-chat-message {

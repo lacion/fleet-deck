@@ -24,6 +24,8 @@ export type Item =
       key: string;
       run_id: string;
       input: string;
+      /** The whole prompt (`input_text`, at most 32 KiB); absent on an event from before B10. */
+      text?: string;
       origin: string;
       /** `member:<name>` when a member typed the input (R11.5); the owner has none. */
       author?: string;
@@ -188,6 +190,7 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
           key,
           run_id: e.run_id,
           input: e.input_summary,
+          ...(e.input_text === undefined ? {} : { text: e.input_text }),
           origin: e.origin,
           ...(e.author === undefined ? {} : { author: e.author, at: env.at }),
           ...(e.input_id === undefined ? {} : { input_id: e.input_id }),
