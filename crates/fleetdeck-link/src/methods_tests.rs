@@ -1,5 +1,6 @@
 use super::*;
 use fleetdeck_proto::IncarnationId;
+use fleetdeck_proto::link::ControlFrame;
 use fleetdeck_proto::version::PROTO_MAX;
 
 fn negotiated(features: &[&str]) -> Negotiated {
