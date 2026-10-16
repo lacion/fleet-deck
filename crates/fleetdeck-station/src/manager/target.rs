@@ -94,6 +94,8 @@ pub struct SessionTarget {
     /// Before the launch identity of a start (tests and fault-injection, B9).
     #[cfg(any(test, feature = "fault-injection"))]
     launch_hook: GateHook,
+    /// The `fleetdeck` executable that confines provisioning Git (B9).
+    confine_exe: std::sync::OnceLock<std::path::PathBuf>,
     /// The instances whose probed version is on the adapter's deny list
     /// (R8.2, DL-162): their starts are refused.
     broken: Arc<StdMutex<BTreeMap<ProviderInstanceId, &'static str>>>,
@@ -144,6 +146,7 @@ impl SessionTarget {
             gate_hook: GateHook::default(),
             #[cfg(any(test, feature = "fault-injection"))]
             launch_hook: GateHook::default(),
+            confine_exe: std::sync::OnceLock::new(),
             shells: ShellsSlot::default(),
             broken: Arc::default(),
             restart: Arc::default(),
@@ -616,13 +619,10 @@ impl EffectTarget for SessionTarget {
                 let spec = launch.as_ref().map_or(spec, |l| &l.spec);
                 // The base commit is read before the worktree is made (R1.1).
                 let wants_base = !self.has_base(&effect.session_id).await;
-                let planned = if !wants_base {
-                    None
-                } else if let Some(l) = &launch {
-                    let pinned = l.pinned.to_string_lossy();
-                    crate::workspace::base::planned(&self.git, workspace.as_ref(), &pinned).await
-                } else {
-                    crate::workspace::base::planned(&self.git, workspace.as_ref(), &spec.cwd).await
+                let (plan, held) = (workspace.as_ref(), launch.as_ref());
+                let planned = match self.start_base(effect, plan, spec, held, wants_base).await {
+                    Ok(planned) => planned,
+                    Err(refused) => return refused,
                 };
                 // The Git work of the start (M3 6-1, DL-200) and its setup
                 // command run in a task of their own: the effect worker

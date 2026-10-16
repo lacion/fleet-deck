@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use fleetdeck_core::ChildEnv;
+use fleetdeck_core::launch_dir::LaunchDirError;
 use fleetdeck_proto::SessionId;
 use fleetdeck_proto::command::{SessionSpec, StopMode};
 use fleetdeck_proto::session::SessionBase;
@@ -212,6 +213,42 @@ impl SessionTarget {
         Dispatch::Deferred
     }
 
+    /// The checked destination parent, then the confined Git work of `plan`
+    /// (B9, DL-200). The error is the failure text and the settle reason. A
+    /// stopped or failed Git work deletes nothing: a new folder stays and the
+    /// text names it.
+    async fn provision_plan(
+        &self,
+        plan: &WorkspacePlan,
+        cancel: &watch::Receiver<bool>,
+    ) -> Result<(), (String, &'static str)> {
+        use crate::workspace::provision;
+        let (WorkspacePlan::Worktree { path, .. } | WorkspacePlan::Clone { path, .. }) = plan;
+        let Some(parent) = Path::new(path).parent() else {
+            let e = LaunchDirError::Changed;
+            return Err((e.to_string(), e.code()));
+        };
+        let _parent = self.open_checked(parent).await?;
+        let options = self.provision_options();
+        let before = provision::before(plan);
+        #[cfg(test)]
+        self.hooks.provision.hold().await;
+        let (text, reason) =
+            match provision::provision_cancellable(plan, &options, cancel.clone()).await {
+                Ok(()) => return Ok(()),
+                Err(ProvisionError::Failed(e)) => (
+                    format!("the workspace was not created: {e}"),
+                    "workspace_failed",
+                ),
+                Err(ProvisionError::Stopped) => (STOPPED_MESSAGE.to_owned(), "setup_stopped"),
+            };
+        let text = match provision::undo_partial(plan, &before) {
+            Some(note) => format!("{text}\n{note}"),
+            None => text,
+        };
+        Err((text, reason))
+    }
+
     /// The Git work of the workspace plan of a start, with its cancel. `false`:
     /// the start ended here (failed or stopped), the effect is settled, and
     /// the task must return.
@@ -223,22 +260,8 @@ impl SessionTarget {
         cancel: &watch::Receiver<bool>,
     ) -> bool {
         let session_id = &effect.session_id;
-        let program = &self.git.program;
-        let before = crate::workspace::provision::before(plan, program).await;
-        #[cfg(test)]
-        self.hooks.provision.hold().await;
-        let provisioned =
-            crate::workspace::provision::provision_cancellable(plan, program, cancel.clone()).await;
-        let (text, reason) = match provisioned {
-            Ok(()) => return true,
-            Err(ProvisionError::Failed(e)) => (
-                format!("the workspace was not created: {e}"),
-                "workspace_failed",
-            ),
-            Err(ProvisionError::Stopped) => {
-                crate::workspace::provision::undo_partial(plan, program, &before).await;
-                (STOPPED_MESSAGE.to_owned(), "setup_stopped")
-            }
+        let Err((text, reason)) = self.provision_plan(plan, cancel).await else {
+            return true;
         };
         self.start_failed(session_id, &text).await;
         let settled = self

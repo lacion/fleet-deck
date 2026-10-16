@@ -74,6 +74,23 @@ pub enum GitError {
     },
     #[error("git output is not UTF-8: {0}")]
     Utf8(String),
+    /// `fleetdeck confine-exec` failed before it ran Git (B9, DL-200).
+    #[error("the station cannot confine Git (fleetdeck confine-exec failed)")]
+    Confine,
+}
+
+/// The first stderr line of `fleetdeck confine-exec` starts with this.
+const CONFINE_PREFIX: &str = "fleetdeck-confine: ";
+/// The exit code of `fleetdeck confine-exec` when it failed itself.
+const CONFINE_FAILED: i32 = 125;
+/// Logs the missing Landlock once per process.
+static LANDLOCK_WARNED: std::sync::Once = std::sync::Once::new();
+
+/// Run Git under `fleetdeck confine-exec` (B9, DL-200): writes only below `roots`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Confine {
+    pub exe: PathBuf,
+    pub roots: Vec<PathBuf>,
 }
 
 /// How the runner starts `git`.
@@ -85,6 +102,8 @@ pub struct GitOptions {
     pub timeout: Duration,
     /// Do not read the system and user configuration.
     pub isolated: bool,
+    /// Run Git under `fleetdeck confine-exec` (B9).
+    pub confine: Option<Confine>,
 }
 
 impl GitOptions {
@@ -95,6 +114,7 @@ impl GitOptions {
             program: PathBuf::from("git"),
             timeout: Duration::from_secs(60),
             isolated: true,
+            confine: None,
         }
     }
 }
@@ -127,6 +147,49 @@ impl Git {
     pub fn with_group(mut self, slot: Arc<AtomicU32>) -> Self {
         self.group = Some(slot);
         self
+    }
+
+    /// The command that runs Git: the program itself, or `fleetdeck
+    /// confine-exec --write-root <root>... -- <program>` (B9).
+    fn command(&self) -> Command {
+        let Some(confine) = &self.options.confine else {
+            return Command::new(&self.options.program);
+        };
+        let mut cmd = Command::new(&confine.exe);
+        cmd.arg("confine-exec");
+        for root in &confine.roots {
+            cmd.arg("--write-root").arg(root);
+        }
+        cmd.arg("--").arg(&self.options.program);
+        cmd
+    }
+
+    /// The exit code and stderr of a confined call (B9): exit 125 is a
+    /// helper failure; the status line of the helper is dropped from the
+    /// stderr, and `not_enforced` is logged once.
+    fn confined(&self, code: i32, stderr: &[u8]) -> Result<Vec<u8>, GitError> {
+        if self.options.confine.is_none() {
+            return Ok(stderr.to_vec());
+        }
+        if code == CONFINE_FAILED {
+            return Err(GitError::Confine);
+        }
+        let end = stderr
+            .iter()
+            .position(|b| *b == b'\n')
+            .map_or(stderr.len(), |i| i + 1);
+        let first = String::from_utf8_lossy(&stderr[..end]);
+        let Some(status) = first.trim_end().strip_prefix(CONFINE_PREFIX) else {
+            return Ok(stderr.to_vec());
+        };
+        if status == "not_enforced" {
+            LANDLOCK_WARNED.call_once(|| {
+                tracing::warn!(
+                    "Landlock is not available: worktree and clone provisioning is checked after Git, not confined."
+                );
+            });
+        }
+        Ok(stderr[end..].to_vec())
     }
 
     /// Puts the child in its own process group when a slot is set.
@@ -191,7 +254,7 @@ impl Git {
         env: &[(&str, &OsStr)],
         stdin: Option<Vec<u8>>,
     ) -> Result<(i32, Vec<u8>, String), GitError> {
-        let mut cmd = Command::new(&self.options.program);
+        let mut cmd = self.command();
         cmd.current_dir(&self.dir)
             .args(SAFE_CONFIG)
             .args(args)
@@ -236,8 +299,9 @@ impl Git {
             })?
             .map_err(GitError::Spawn)?;
         self.ended();
-        let stderr = shorten_stderr(&output.stderr);
-        Ok((output.status.code().unwrap_or(-1), output.stdout, stderr))
+        let code = output.status.code().unwrap_or(-1);
+        let stderr = shorten_stderr(&self.confined(code, &output.stderr)?);
+        Ok((code, output.stdout, stderr))
     }
 }
 
@@ -267,7 +331,7 @@ impl Git {
         max_stderr: usize,
     ) -> Result<(i32, String), GitError> {
         use tokio::io::AsyncReadExt;
-        let mut cmd = Command::new(&self.options.program);
+        let mut cmd = self.command();
         cmd.current_dir(&self.dir)
             .args(SAFE_CONFIG)
             .args(args)
@@ -294,6 +358,13 @@ impl Git {
         let Some(mut stderr) = child.stderr.take() else {
             return Err(GitError::Spawn(std::io::Error::other("no stderr pipe")));
         };
+        // Room for the status line of the helper (B9).
+        let keep = max_stderr
+            + if self.options.confine.is_some() {
+                128
+            } else {
+                0
+            };
         let work = async {
             let mut kept = Vec::new();
             let mut chunk = [0u8; 8192];
@@ -302,7 +373,7 @@ impl Git {
                 if n == 0 {
                     break;
                 }
-                let room = max_stderr.saturating_sub(kept.len());
+                let room = keep.saturating_sub(kept.len());
                 kept.extend_from_slice(&chunk[..n.min(room)]);
             }
             let status = child.wait().await.map_err(GitError::Spawn)?;
@@ -316,7 +387,9 @@ impl Git {
                 secs,
             })??;
         self.ended();
-        Ok((code, shorten_stderr(&kept)))
+        let mut stderr = self.confined(code, &kept)?;
+        stderr.truncate(max_stderr);
+        Ok((code, shorten_stderr(&stderr)))
     }
 
     /// Runs `git <args>` and keeps at most `max_bytes` of stdout; with more
@@ -339,7 +412,7 @@ impl Git {
         max_bytes: usize,
     ) -> Result<(i32, Vec<u8>, bool), GitError> {
         use tokio::io::AsyncReadExt;
-        let mut cmd = Command::new(&self.options.program);
+        let mut cmd = self.command();
         cmd.current_dir(&self.dir)
             .args(SAFE_CONFIG)
             .args(args)
@@ -439,4 +512,91 @@ pub fn nul_fields(out: &[u8]) -> Vec<&[u8]> {
 pub fn os_path(field: &[u8]) -> OsString {
     use std::os::unix::ffi::OsStrExt;
     OsStr::from_bytes(field).to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
+    use super::*;
+
+    /// A fake `fleetdeck`: writes the arguments before `--` next to itself,
+    /// prints the status line on stderr, may exit with `code`, and else runs
+    /// the program after `--`.
+    fn fake_helper(dir: &Path, status: &str, code: Option<i32>) -> PathBuf {
+        let script = dir.join("fleetdeck");
+        let exit = code.map_or(String::new(), |c| format!("exit {c}\n"));
+        let body = format!(
+            "#!/bin/sh\nargs=\"\"\nfor a in \"$@\"; do [ \"$a\" = \"--\" ] && break; args=\"$args $a\"; done\necho \"$args\" > \"$(dirname \"$0\")/args.txt\"\necho 'fleetdeck-confine: {status}' >&2\n{exit}while [ \"$1\" != \"--\" ]; do shift; done\nshift\nexec \"$@\"\n"
+        );
+        std::fs::write(&script, body).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        script
+    }
+
+    fn confined(dir: &Path, exe: PathBuf, roots: &[&str]) -> Git {
+        let options = GitOptions {
+            confine: Some(Confine {
+                exe,
+                roots: roots.iter().map(PathBuf::from).collect(),
+            }),
+            ..GitOptions::isolated()
+        };
+        Git::new(dir, options)
+    }
+
+    #[tokio::test]
+    async fn a_confined_call_runs_git_through_the_helper_without_its_status_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = fake_helper(dir.path(), "fully_enforced", None);
+        let git = confined(dir.path(), exe, &["/a", "/b"]);
+        let (code, out, stderr) = git.status(&["--version"], &[], None).await.unwrap();
+        assert_eq!(code, 0);
+        assert!(String::from_utf8_lossy(&out).starts_with("git version"));
+        assert_eq!(stderr, "");
+        let args = std::fs::read_to_string(dir.path().join("args.txt")).unwrap();
+        assert_eq!(args.trim(), "confine-exec --write-root /a --write-root /b");
+        // The text of a failing call keeps the stderr of Git only.
+        let (code, stderr) = git
+            .status_stderr(&["cat-file", "-p", "no-such-object"], &[], 4096)
+            .await
+            .unwrap();
+        assert_ne!(code, 0);
+        assert!(stderr.contains("fatal"), "{stderr}");
+        assert!(!stderr.contains("fleetdeck-confine:"), "{stderr}");
+        let err = git
+            .run(&["cat-file", "-p", "no-such-object"])
+            .await
+            .unwrap_err();
+        assert!(!err.to_string().contains("fleetdeck-confine:"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_helper_that_fails_gives_the_confine_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = fake_helper(dir.path(), "cannot enforce", Some(125));
+        let git = confined(dir.path(), exe, &["/a"]);
+        let err = git.run(&["--version"]).await.unwrap_err();
+        assert!(matches!(err, GitError::Confine), "{err}");
+        assert_eq!(
+            err.to_string(),
+            "the station cannot confine Git (fleetdeck confine-exec failed)"
+        );
+        let err = git.status(&["--version"], &[], None).await.unwrap_err();
+        assert!(matches!(err, GitError::Confine));
+        let err = git
+            .status_stderr(&["--version"], &[], 100)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, GitError::Confine));
+    }
+
+    #[tokio::test]
+    async fn a_call_without_confinement_runs_git_directly() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = Git::new(dir.path(), GitOptions::isolated());
+        let out = git.text(&["--version"]).await.unwrap();
+        assert!(out.starts_with("git version"));
+        assert!(!dir.path().join("args.txt").exists());
+    }
 }

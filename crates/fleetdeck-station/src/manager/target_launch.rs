@@ -4,11 +4,16 @@
 
 use std::path::{Path, PathBuf};
 
-use fleetdeck_core::launch_dir::LaunchDir;
+use fleetdeck_core::launch_dir::{LaunchDir, LaunchDirError};
 use fleetdeck_proto::command::SessionSpec;
+use fleetdeck_proto::session::SessionBase;
 
+use super::super::SessionManager;
 use super::SessionTarget;
-use crate::store::{Dispatch, Effect};
+use crate::store::{Dispatch, Effect, WorkspacePlan};
+use crate::workspace::GitOptions;
+use crate::workspace::base;
+use crate::workspace::git::Confine;
 
 /// The text of a launch without an identity.
 pub(super) const LAUNCH_MISSING: &str =
@@ -85,6 +90,98 @@ impl SessionTarget {
                 Err(Dispatch::NotDispatched(e.code().into()))
             }
         }
+    }
+}
+
+impl SessionTarget {
+    /// The Git options of the provisioning of a start (B9, DL-200): the
+    /// station's own, run under `fleetdeck confine-exec` with the current
+    /// allowed roots when the station knows its executable and has a policy.
+    /// Without them (tests, other systems) Git runs as before and the
+    /// identity check after Git detects a swap.
+    pub(in crate::manager) fn provision_options(&self) -> GitOptions {
+        let mut options = self.git.clone();
+        if let (Some(exe), Some(policy)) = (self.confine_exe.get(), self.current_policy()) {
+            options.confine = Some(Confine {
+                exe: exe.clone(),
+                roots: policy.allowed_roots().to_vec(),
+            });
+        }
+        options
+    }
+
+    /// Opens `path` below the current allowed roots without a link (B9
+    /// §3.3). A failure is `(text, code)`; the caller fails the start.
+    pub(in crate::manager) async fn open_checked(
+        &self,
+        path: &Path,
+    ) -> Result<LaunchDir, (String, &'static str)> {
+        #[cfg(any(test, feature = "fault-injection"))]
+        self.launch_hook.hold().await;
+        let Some(policy) = self.current_policy() else {
+            return Err((NO_POLICY.to_owned(), NO_POLICY_CODE));
+        };
+        LaunchDir::open_in(policy.allowed_roots(), path).map_err(|e| (e.to_string(), e.code()))
+    }
+
+    /// The base commit of a start (R1.1). A worktree plan reads it in the
+    /// pinned source repository (B9, DL-200): the `LaunchDir` stays open
+    /// until the read returned. A failure fails the start and returns the
+    /// dispatch to return.
+    pub(in crate::manager) async fn start_base(
+        &self,
+        effect: &Effect,
+        workspace: Option<&WorkspacePlan>,
+        spec: &SessionSpec,
+        launch: Option<&Launch>,
+        wants_base: bool,
+    ) -> Result<Option<SessionBase>, Dispatch> {
+        if !wants_base {
+            return Ok(None);
+        }
+        if let Some(l) = launch {
+            let pinned = l.pinned.to_string_lossy();
+            return Ok(base::planned(&self.git, workspace, &pinned, None).await);
+        }
+        let mut source = None;
+        if let Some(WorkspacePlan::Worktree { repo, .. }) = workspace {
+            let opened = match self.open_checked(Path::new(repo)).await {
+                Ok(dir) => pinned_path(&dir)
+                    .map(|path| (dir, path))
+                    .map_err(|e| (e.to_string(), e.code())),
+                Err(refused) => Err(refused),
+            };
+            match opened {
+                Ok(found) => source = Some(found),
+                Err((text, code)) => {
+                    self.start_failed(&effect.session_id, &text).await;
+                    return Err(Dispatch::NotDispatched(code.into()));
+                }
+            }
+        }
+        let repo_dir = source.as_ref().map(|(_, path)| path.as_path());
+        Ok(base::planned(&self.git, workspace, &spec.cwd, repo_dir).await)
+    }
+}
+
+/// The path for a Git read in `dir`: `/proc/self/fd/<n>` on Linux, the
+/// folder path elsewhere (design §6).
+fn pinned_path(dir: &LaunchDir) -> Result<PathBuf, LaunchDirError> {
+    #[cfg(target_os = "linux")]
+    {
+        dir.cwd()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(dir.path())
+    }
+}
+
+impl SessionManager {
+    /// Sets the `fleetdeck` executable that confines the Git of a worktree
+    /// or a clone (B9, DL-200). A second call is ignored.
+    pub fn set_confine_exe(&self, exe: PathBuf) {
+        let _ = self.target.confine_exe.set(exe);
     }
 }
 

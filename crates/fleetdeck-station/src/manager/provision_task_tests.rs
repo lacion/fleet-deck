@@ -10,6 +10,7 @@ use tokio::sync::watch;
 
 use super::*;
 use crate::store::{EffectPayload, WorkspacePlan};
+use crate::workspace::GitOptions;
 use crate::workspace::provision::{self, ProvisionError};
 use crate::workspace::setup::STOPPED_MESSAGE;
 
@@ -38,6 +39,22 @@ fn init_repo(dir: &Path) {
     std::fs::write(dir.join("a.txt"), "one\n").unwrap();
     git(dir, &["add", "a.txt"]);
     git(dir, &["commit", "-qm", "one"]);
+}
+
+/// The Git options with `program` as the Git executable.
+fn git_with(program: &Path) -> GitOptions {
+    GitOptions {
+        program: program.to_path_buf(),
+        ..GitOptions::isolated()
+    }
+}
+
+/// The text of a new folder that a stopped provisioning leaves (B9).
+fn new_folder_note(path: &Path) -> String {
+    format!(
+        "The new folder stays at {}: remove it after a check.",
+        path.display()
+    )
 }
 
 fn start_cmd(cwd: &str, workspace: WorkspaceRequest) -> SessionCommand {
@@ -186,8 +203,9 @@ async fn a_start_that_prepares_its_workspace_does_not_block_the_other_sessions()
 }
 
 /// Stops the held start of `session`, releases the task, and checks that the
-/// start ended with the stop text and the effect is retired as stopped.
-async fn stop_held(st: &mut Station, session: &SessionId) {
+/// start ended with the stop text (a note of B9 may follow) and the effect is
+/// retired as stopped. Returns the failure text.
+async fn stop_held(st: &mut Station, session: &SessionId) -> String {
     st.accepted(SessionCommand::Stop {
         session_id: session.clone(),
         how: StopMode::Graceful,
@@ -201,7 +219,7 @@ async fn stop_held(st: &mut Station, session: &SessionId) {
             _ => None,
         })
         .await;
-    assert_eq!(message, STOPPED_MESSAGE);
+    assert!(message.starts_with(STOPPED_MESSAGE), "{message}");
     wait_ended(st, session).await;
     st.settled(session).await;
     let effects = st
@@ -216,6 +234,7 @@ async fn stop_held(st: &mut Station, session: &SessionId) {
         .unwrap();
     assert_eq!(start.state, EffectState::RetiredNotDispatched);
     assert_eq!(start.reason.as_deref(), Some("setup_stopped"));
+    message
 }
 
 #[tokio::test]
@@ -346,7 +365,7 @@ fn slow_git(dir: &Path) -> std::path::PathBuf {
 }
 
 #[tokio::test]
-async fn a_cancel_during_the_worktree_add_removes_the_new_worktree_and_branch() {
+async fn a_cancel_during_the_worktree_add_leaves_the_new_worktree_and_names_it() {
     let root = tempfile::tempdir().unwrap();
     let repo = root.path().join("app");
     std::fs::create_dir_all(&repo).unwrap();
@@ -360,9 +379,10 @@ async fn a_cancel_during_the_worktree_add_removes_the_new_worktree_and_branch() 
         base: None,
     };
     let program = slow_git(root.path());
-    let before = provision::before(&plan, &program).await;
+    let before = provision::before(&plan);
+    let options = git_with(&program);
     let (cancel, rx) = watch::channel(false);
-    let run = provision::provision_cancellable(&plan, &program, rx);
+    let run = provision::provision_cancellable(&plan, &options, rx);
     let stopper = async {
         let deadline = tokio::time::Instant::now() + WAIT;
         while !path.exists() {
@@ -373,11 +393,14 @@ async fn a_cancel_during_the_worktree_add_removes_the_new_worktree_and_branch() 
     };
     let (result, ()) = tokio::join!(run, stopper);
     assert_eq!(result, Err(ProvisionError::Stopped));
-    provision::undo_partial(&plan, &program, &before).await;
-    assert!(!path.exists());
-    assert_eq!(git(&repo, &["branch", "--list", "fd/test"]), "");
+    // Nothing is deleted (B9): the worktree and its branch stay, and the
+    // text names the folder.
+    let note = provision::undo_partial(&plan, &before).unwrap();
+    assert_eq!(note, new_folder_note(&path));
+    assert!(path.exists());
+    assert!(git(&repo, &["branch", "--list", "fd/test"]).contains("fd/test"));
     assert!(git(&repo, &["branch", "--list", "keep"]).contains("keep"));
-    assert!(!git(&repo, &["worktree", "list"]).contains("app--fd-test"));
+    assert!(git(&repo, &["worktree", "list"]).contains("app--fd-test"));
 }
 
 #[tokio::test]
@@ -395,9 +418,10 @@ async fn a_cancel_keeps_a_branch_that_existed_before() {
         base: None,
     };
     let program = slow_git(root.path());
-    let before = provision::before(&plan, &program).await;
+    let before = provision::before(&plan);
+    let options = git_with(&program);
     let (cancel, rx) = watch::channel(false);
-    let run = provision::provision_cancellable(&plan, &program, rx);
+    let run = provision::provision_cancellable(&plan, &options, rx);
     let stopper = async {
         let deadline = tokio::time::Instant::now() + WAIT;
         while !path.exists() {
@@ -408,13 +432,15 @@ async fn a_cancel_keeps_a_branch_that_existed_before() {
     };
     let (result, ()) = tokio::join!(run, stopper);
     assert_eq!(result, Err(ProvisionError::Stopped));
-    provision::undo_partial(&plan, &program, &before).await;
-    assert!(!path.exists());
+    // The worktree stays (B9), and so does the branch that existed before.
+    let note = provision::undo_partial(&plan, &before).unwrap();
+    assert_eq!(note, new_folder_note(&path));
+    assert!(path.exists());
     assert!(git(&repo, &["branch", "--list", "old"]).contains("old"));
 }
 
 #[tokio::test]
-async fn a_cancel_during_the_clone_removes_the_new_directory() {
+async fn a_cancel_during_the_clone_leaves_the_new_directory_and_names_it() {
     let root = tempfile::tempdir().unwrap();
     let repo = root.path().join("app");
     std::fs::create_dir_all(&repo).unwrap();
@@ -425,9 +451,10 @@ async fn a_cancel_during_the_clone_removes_the_new_directory() {
         path: path.to_string_lossy().into_owned(),
     };
     let program = slow_git(root.path());
-    let before = provision::before(&plan, &program).await;
+    let before = provision::before(&plan);
+    let options = git_with(&program);
     let (cancel, rx) = watch::channel(false);
-    let run = provision::provision_cancellable(&plan, &program, rx);
+    let run = provision::provision_cancellable(&plan, &options, rx);
     let stopper = async {
         let deadline = tokio::time::Instant::now() + WAIT;
         while !path.join("a.txt").exists() {
@@ -438,8 +465,9 @@ async fn a_cancel_during_the_clone_removes_the_new_directory() {
     };
     let (result, ()) = tokio::join!(run, stopper);
     assert_eq!(result, Err(ProvisionError::Stopped));
-    provision::undo_partial(&plan, &program, &before).await;
-    assert!(!path.exists());
+    let note = provision::undo_partial(&plan, &before).unwrap();
+    assert_eq!(note, new_folder_note(&path));
+    assert!(path.join("a.txt").is_file());
 }
 
 #[tokio::test]
@@ -452,14 +480,14 @@ async fn a_directory_that_existed_before_is_not_removed_after_a_cancel() {
         url: "file:///nonexistent".to_owned(),
         path: path.to_string_lossy().into_owned(),
     };
-    let program = Path::new("git");
-    let before = provision::before(&plan, program).await;
+    let options = GitOptions::isolated();
+    let before = provision::before(&plan);
     let (_cancel, rx) = watch::channel(true);
     assert_eq!(
-        provision::provision_cancellable(&plan, program, rx).await,
+        provision::provision_cancellable(&plan, &options, rx).await,
         Err(ProvisionError::Stopped)
     );
-    provision::undo_partial(&plan, program, &before).await;
+    assert_eq!(provision::undo_partial(&plan, &before), None);
     assert!(path.join("mine.txt").is_file());
 }
 
@@ -526,10 +554,11 @@ async fn a_reuse_of_a_directory_that_a_pending_clone_already_wrote_is_refused() 
         "{message}"
     );
 
-    // The stop of the first start removes the directory, and no other
-    // session works in it.
-    stop_held(&mut st, &first).await;
-    assert!(!target.exists());
+    // The stop of the first start deletes nothing (B9): the directory stays,
+    // and the stop text names it.
+    let message = stop_held(&mut st, &first).await;
+    assert!(target.exists());
+    assert!(message.contains(&new_folder_note(&target)), "{message}");
     st.manager.shutdown(StopMode::Kill).await;
 }
 
@@ -548,7 +577,7 @@ fn group_git(dir: &Path) -> std::path::PathBuf {
 }
 
 #[tokio::test]
-async fn a_cancel_stops_the_git_descendants_before_the_directory_is_removed() {
+async fn a_cancel_stops_the_git_descendants_and_leaves_the_directory() {
     let root = tempfile::tempdir().unwrap();
     let repo = root.path().join("app");
     std::fs::create_dir_all(&repo).unwrap();
@@ -560,9 +589,10 @@ async fn a_cancel_stops_the_git_descendants_before_the_directory_is_removed() {
     };
     let program = group_git(root.path());
     let pid_file = root.path().join("sleep.pid");
-    let before = provision::before(&plan, &program).await;
+    let before = provision::before(&plan);
+    let options = git_with(&program);
     let (cancel, rx) = watch::channel(false);
-    let run = provision::provision_cancellable(&plan, &program, rx);
+    let run = provision::provision_cancellable(&plan, &options, rx);
     let stopper = async {
         let deadline = tokio::time::Instant::now() + WAIT;
         let pid = loop {
@@ -590,8 +620,9 @@ async fn a_cancel_stops_the_git_descendants_before_the_directory_is_removed() {
         ),
         "the git descendant is gone"
     );
-    provision::undo_partial(&plan, &program, &before).await;
-    assert!(!path.exists());
+    let note = provision::undo_partial(&plan, &before).unwrap();
+    assert_eq!(note, new_folder_note(&path));
+    assert!(path.join("a.txt").is_file());
 }
 
 #[tokio::test]
@@ -616,7 +647,7 @@ async fn a_group_that_cannot_be_emptied_keeps_the_workspace() {
                 .to_owned()
         )
     );
-    // No `undo_partial` follows a failure: the directory stays.
+    // A failure deletes nothing: the directory stays.
     assert!(dir.path().join("mine.txt").is_file());
     child.wait().unwrap();
     assert!(provision::stop_group(pgid, wait).await);
@@ -625,4 +656,60 @@ async fn a_group_that_cannot_be_emptied_keeps_the_workspace() {
         ProvisionError::Stopped
     );
     assert!(provision::stop_group(0, wait).await);
+}
+
+/// The destination parent of a worktree is replaced by a link (to a folder
+/// inside the roots) after the decide and the check of the source
+/// repository: the start fails with `launch_dir_changed` and runs no Git
+/// (B9, DL-200).
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_worktree_start_whose_parent_became_a_link_fails_and_runs_no_git() {
+    let mut st = Station::new(4).await;
+    let group = st.root.path().join("projects/group");
+    let repo = group.join("app");
+    std::fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+    st.manager.launch_hook().arm();
+    let session = session_of(&mut st, start_cmd(&repo.to_string_lossy(), worktree())).await;
+    // The source repository is opened first; the destination parent next.
+    tokio::time::timeout(WAIT, st.manager.launch_hook().reached.notified())
+        .await
+        .unwrap();
+    st.manager.launch_hook().arm();
+    st.manager.launch_hook().release.notify_one();
+    tokio::time::timeout(WAIT, st.manager.launch_hook().reached.notified())
+        .await
+        .unwrap();
+    let moved = st.root.path().join("projects/group-real");
+    std::fs::rename(&group, &moved).unwrap();
+    std::os::unix::fs::symlink(&moved, &group).unwrap();
+    st.manager.launch_hook().release.notify_one();
+    let message = st
+        .wait_for("start failure", |e| match e {
+            Event::Error { code, message, .. } if code == "start_failed" => Some(message.clone()),
+            _ => None,
+        })
+        .await;
+    assert_eq!(message, fleetdeck_core::launch_dir::CHANGED);
+    st.settled(&session).await;
+    let effects = st
+        .manager
+        .store()
+        .session_effects(session.clone())
+        .await
+        .unwrap();
+    let start = effects
+        .iter()
+        .find(|e| matches!(e.payload, EffectPayload::Start { .. }))
+        .unwrap();
+    assert_eq!(start.reason.as_deref(), Some("launch_dir_changed"));
+    // No worktree was added, and no branch was made.
+    let made = std::fs::read_dir(&moved)
+        .unwrap()
+        .filter_map(Result::ok)
+        .any(|e| e.file_name().to_string_lossy().contains("--fd-"));
+    assert!(!made, "Git ran");
+    assert_eq!(git(&moved.join("app"), &["branch", "--list", "fd/*"]), "");
+    st.manager.shutdown(StopMode::Kill).await;
 }

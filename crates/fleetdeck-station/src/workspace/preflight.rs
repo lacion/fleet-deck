@@ -47,6 +47,7 @@ pub async fn run(
             program: program.to_path_buf(),
             timeout: PREFLIGHT_TIMEOUT,
             isolated: false,
+            confine: None,
         },
     );
     let result = git
