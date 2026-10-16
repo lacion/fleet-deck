@@ -285,9 +285,9 @@ async fn a_blocked_stdin_write_returns_stdin_closed_after_a_kill() {
     };
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(!writer.is_finished());
-    let report = tokio::time::timeout(Duration::from_secs(3), process.kill())
-        .await
-        .unwrap();
+    // The kill returns after the shim's exit check of /proc, which can use
+    // its whole budget (5 s) on a loaded machine.
+    let report = tokio::time::timeout(WAIT, process.kill()).await.unwrap();
     assert_eq!(report.cause, EndCause::Killed);
     let result = tokio::time::timeout(WAIT, writer).await.unwrap().unwrap();
     assert!(matches!(result, Err(HostError::StdinClosed)), "{result:?}");
