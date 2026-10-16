@@ -424,7 +424,11 @@ export function ChatView(props: ChatViewProps) {
     const root = scroller.current;
     if (highlight === null || !root) return;
     const card = root.querySelector<HTMLElement>(`[data-node="${CSS.escape(highlight.node_id)}"]`);
-    if (!card) return;
+    if (!card) {
+      // The Commands filter hides the card: show commands; the effect runs again with the card.
+      if (!filter.show.commands) setFilter({ ...filter, show: { ...filter.show, commands: true } });
+      return;
+    }
     for (
       let up = card.parentElement?.closest('details');
       up;
@@ -439,7 +443,7 @@ export function ChatView(props: ChatViewProps) {
       clearTimeout(timer);
       card.removeAttribute('data-highlight');
     };
-  }, [highlight?.node_id, highlight?.nonce]);
+  }, [highlight?.node_id, highlight?.nonce, filter.show.commands]);
 
   useLayoutEffect(() => {
     const el = scroller.current;

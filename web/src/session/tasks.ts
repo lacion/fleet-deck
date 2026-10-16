@@ -20,6 +20,17 @@ export const isRunningStatus = (status: string): boolean => status === 'running'
 export function taskStates(events: readonly EventEnvelope[]): Map<string, TaskState> {
   const tasks = new Map<string, TaskState>();
   for (const { event } of events) {
+    // A lost or ended process runs nothing more: its running tasks stop (as the timeline ends its nodes).
+    const state = (event as { state?: unknown }).state;
+    if (
+      event.kind === 'session.ended' ||
+      ((event.kind === 'session.state' || event.kind === 'session.state_changed') &&
+        (state === 'lost' || state === 'exited'))
+    ) {
+      for (const [id, task] of tasks)
+        if (isRunningStatus(task.status)) tasks.set(id, { ...task, status: 'stopped' });
+      continue;
+    }
     if (event.kind !== 'task.updated') continue;
     const e = event as Extract<Event, { kind: 'task.updated' }>;
     const before = tasks.get(e.task_id);

@@ -46,6 +46,7 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 - **Wanted:** a view of all running subagents and tasks of the session, and a way to switch from agent to agent to see the chat window of each, as in Claude Code.
 - **Related:** DL-191 adds "Show its work" (one read of a finished subagent transcript) and the Branches view. B6 needs live state and a switch between chats.
 - **Status:** later. Needs a design first.
+- **Done (2026-10-16):** design `docs/v2/design/agents-view.md`; `task.updated` from Claude and Codex, the late subagent text and open child tools fixed, the Agents switcher with subagent chats and background commands.
 
 ## B7. Browse the sessions of a station, with a preview, before an import (owner request, 2026-10-15)
 
@@ -73,3 +74,4 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 - **Wanted:** the user bubble shows the whole prompt (with line breaks), like Claude Code and Codex; long prompts fold with "Show more". The run label elsewhere (cards, lists) may stay the summary.
 - **Notes:** an additive event field (for example `run.started.input_text`, bounded) or an `input.received` event; the same visibility as the summary today (members of a shared session see prompts already). Imported history already shows full user text.
 - **Status:** open.
+- **Done (2026-10-16):** `run.started.input_text` (up to 32 KiB) from both providers; the chat bubble shows the whole prompt, folded after 12 lines with "Show more".

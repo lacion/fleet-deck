@@ -50,6 +50,22 @@ const state = (extra: Partial<TaskState>): TaskState => ({
 const tasksOf = (events: readonly EventEnvelope[]) => taskStates(events);
 
 describe('taskStates', () => {
+  test('a lost or ended session stops its running tasks and keeps finished ones', () => {
+    const lost = taskStates(
+      envelopes('s', [
+        update('a', 'running'),
+        update('b', 'completed', { summary: 'done' }),
+        { kind: 'session.state', state: 'lost' } as unknown as Event,
+      ]),
+    );
+    expect(lost.get('a')?.status).toBe('stopped');
+    expect(lost.get('b')?.status).toBe('completed');
+    const ended = taskStates(
+      envelopes('s', [update('a', 'running'), { kind: 'session.ended' } as unknown as Event]),
+    );
+    expect(ended.get('a')?.status).toBe('stopped');
+  });
+
   test('the last event wins for the status; the summary and the description are kept', () => {
     const tasks = taskStates(
       envelopes('s', [
