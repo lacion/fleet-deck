@@ -462,9 +462,9 @@ async fn a_failing_row_insert_starts_the_session_without_tools() {
     st.manager.shutdown(StopMode::Graceful).await;
 }
 
-/// (e) A Codex start on the shim host has no token and no bridge
-/// arguments, because Codex is not in `BRIDGE_VERIFIED` until the owner's
-/// `live_bridge` run (DL-194 §9.10), and no binding row.
+/// (e) A Codex start on the shim host with a Codex below the verified
+/// bridge version (`bridge_of` records 0.160.0; `BRIDGE_VERIFIED` names
+/// 0.162.1) has no token, no bridge arguments and no binding row (DL-194).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_codex_start_on_the_shim_host_has_no_token() {
     let mut rig = Rig::new();

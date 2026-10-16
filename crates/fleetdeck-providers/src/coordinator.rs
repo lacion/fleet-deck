@@ -177,7 +177,11 @@ fn numeric(version: &str) -> Option<Vec<u64>> {
 
 /// The oldest version of each provider whose stdio bridge passed the live
 /// smoke `live_bridge` (DL-194 §9.10). Codex joins after the owner's run.
-pub const BRIDGE_VERIFIED: &[(ProviderKind, &str)] = &[(ProviderKind::Claude, "2.1.296")];
+pub const BRIDGE_VERIFIED: &[(ProviderKind, &str)] = &[
+    (ProviderKind::Claude, "2.1.296"),
+    // The live smoke `live_bridge` passed with Codex 0.162.1 (2026-10-16).
+    (ProviderKind::Codex, "0.162.1"),
+];
 
 /// `Ok` for a `version` at or above the minimum that `list` names for
 /// `provider`; `Err(UNVERIFIED)` for an unknown version, a lower one or a
@@ -353,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    fn the_bridge_is_verified_for_claude_2_1_296_and_not_for_codex_yet() {
+    fn the_bridge_is_verified_for_claude_2_1_296_and_codex_0_162_1() {
         assert_eq!(
             bridge_handoff(ProviderKind::Claude, Some("2.1.296")),
             Ok(())
@@ -363,8 +367,9 @@ mod tests {
             Err(UNVERIFIED)
         );
         assert_eq!(bridge_handoff(ProviderKind::Claude, None), Err(UNVERIFIED));
+        assert_eq!(bridge_handoff(ProviderKind::Codex, Some("0.162.1")), Ok(()));
         assert_eq!(
-            bridge_handoff(ProviderKind::Codex, Some("0.162.1")),
+            bridge_handoff(ProviderKind::Codex, Some("0.160.0")),
             Err(UNVERIFIED)
         );
     }
