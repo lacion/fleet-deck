@@ -343,6 +343,7 @@ fn policy_recheck(policy: &Policy, effect: &Effect) -> Option<&'static str> {
 }
 
 // The shim host and its process checks are Linux only (DL-188 step 3).
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
+#[cfg(target_os = "linux")]
 #[path = "auto_continue_shim_tests.rs"]
 mod shim_tests;
