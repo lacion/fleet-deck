@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { formatHash, parseHash, type Route } from './routes';
+import { formatHash, parseHash, type Route, type WallRoute, wallDefaults } from './routes';
 
 const session = (
   station: string,
@@ -192,5 +192,90 @@ describe('routes', () => {
     expect(
       formatHash({ name: 'session', station: 'a', session: 'b', tab: 'files', agent: 'node-2' }),
     ).toBe('#/s/a/b?tab=files');
+  });
+});
+
+describe('the wall route (R13 P1)', () => {
+  test('a bare #/wall has the defaults', () => {
+    expect(parseHash('#/wall')).toEqual(wallDefaults);
+    expect(parseHash('#/wall?')).toEqual(wallDefaults);
+  });
+
+  test('every field round-trips', () => {
+    const full: WallRoute = {
+      name: 'wall',
+      mode: 'race',
+      stations: ['station-a', 'station-b'],
+      repo: 'atlas',
+      scale: 1.5,
+      shape: 'ultra',
+      session: { station: 'station-a', id: 's1' },
+      batch: 'B1',
+      artifact: { station: 'station-b', id: 'art1' },
+      pin: true,
+    };
+    expect(parseHash(formatHash(full))).toEqual(full);
+    for (const mode of ['mission', 'ambient'] as const) {
+      const r: WallRoute = { ...wallDefaults, mode };
+      expect(parseHash(formatHash(r))).toEqual(r);
+    }
+    for (const shape of ['auto', 'ultra', 'wide', 'standard', 'portrait'] as const) {
+      const r: WallRoute = { ...wallDefaults, shape };
+      expect(parseHash(formatHash(r))).toEqual(r);
+    }
+    const focus: WallRoute = { ...wallDefaults, mode: 'focus', session: { station: 'a', id: 'b' } };
+    expect(parseHash(formatHash(focus))).toEqual(focus);
+    const review: WallRoute = {
+      ...wallDefaults,
+      mode: 'review',
+      session: { station: 'a', id: 'b' },
+    };
+    expect(parseHash(formatHash(review))).toEqual(review);
+    const art: WallRoute = {
+      ...wallDefaults,
+      mode: 'artifact',
+      artifact: { station: 'a', id: 'x' },
+    };
+    expect(parseHash(formatHash(art))).toEqual(art);
+  });
+
+  test('the hash has the documented parameters; pin is left out when false', () => {
+    const hash = formatHash({
+      ...wallDefaults,
+      mode: 'focus',
+      stations: ['a', 'b'],
+      repo: 'r',
+      scale: 2,
+      session: { station: 'a', id: 's' },
+    });
+    expect(hash).toBe('#/wall?mode=focus&stations=a%2Cb&repo=r&scale=2&shape=auto&session=a%2Fs');
+    expect(hash).not.toContain('pin');
+    expect(formatHash({ ...wallDefaults, pin: true })).toContain('pin=1');
+  });
+
+  test('scale is clamped to 0.75 to 2', () => {
+    expect((parseHash('#/wall?scale=0.1') as WallRoute).scale).toBe(0.75);
+    expect((parseHash('#/wall?scale=9') as WallRoute).scale).toBe(2);
+    expect((parseHash('#/wall?scale=abc') as WallRoute).scale).toBe(1);
+    expect((parseHash('#/wall?scale=1.25') as WallRoute).scale).toBe(1.25);
+  });
+
+  test('an unknown mode or shape is the default', () => {
+    const r = parseHash('#/wall?mode=party&shape=round') as WallRoute;
+    expect(r.mode).toBe('mission');
+    expect(r.shape).toBe('auto');
+  });
+
+  test('a mode without its target falls back to mission', () => {
+    for (const hash of [
+      '#/wall?mode=focus',
+      '#/wall?mode=review',
+      '#/wall?mode=race',
+      '#/wall?mode=artifact',
+      '#/wall?mode=focus&session=nope',
+    ]) {
+      expect((parseHash(hash) as WallRoute).mode).toBe('mission');
+    }
+    expect((parseHash('#/wall?mode=race&batch=B') as WallRoute).mode).toBe('race');
   });
 });
