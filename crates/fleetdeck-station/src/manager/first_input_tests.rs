@@ -222,6 +222,7 @@ impl Rig {
             model: None,
             title: None,
             coordinator: None,
+            launch: None,
         };
         let d = self
             .accepted(SessionCommand::Start {

@@ -28,6 +28,7 @@ fn sh(script: &str, cwd: &Path) -> ProcessSpec {
         args: vec!["-c".into(), script.into()],
         cwd: cwd.to_path_buf(),
         env: base_env(),
+        launch: None,
     }
 }
 
@@ -40,6 +41,7 @@ fn fake(agent: FakeAgent, scenario: &str, env: ChildEnv, cwd: &Path) -> ProcessS
         args: Vec::new(),
         cwd: cwd.to_path_buf(),
         env,
+        launch: None,
     }
 }
 
@@ -362,4 +364,44 @@ async fn kill_releases_a_blocked_write() {
         .unwrap()
         .unwrap();
     assert!(written.is_err(), "{written:?}");
+}
+
+/// A canonical temp root and the identity of its sub folder `a` (B9).
+#[cfg(target_os = "linux")]
+fn pinned() -> (
+    tempfile::TempDir,
+    PathBuf,
+    fleetdeck_proto::launch::LaunchIdentity,
+) {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(tmp.path()).unwrap();
+    std::fs::create_dir(root.join("a")).unwrap();
+    let dir = fleetdeck_core::launch_dir::LaunchDir::open(&root, Path::new("a")).unwrap();
+    let id = dir.identity().clone();
+    (tmp, root, id)
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_spawn_with_an_identity_runs_in_the_folder() {
+    let (_tmp, root, id) = pinned();
+    let mut spec = sh("pwd -P", &root);
+    spec.launch = Some(id);
+    let (mut out, control) = start(spec).await;
+    assert_eq!(line(&mut out).await, root.join("a").to_str().unwrap());
+    control.wait().await;
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_spawn_with_an_identity_after_a_swap_fails_with_the_text() {
+    let (_tmp, root, id) = pinned();
+    std::fs::create_dir(root.join("other")).unwrap();
+    std::fs::rename(root.join("a"), root.join("moved")).unwrap();
+    std::os::unix::fs::symlink(root.join("other"), root.join("a")).unwrap();
+    let mut spec = sh("pwd -P", &root);
+    spec.launch = Some(id);
+    let err = DirectChildHost::new().spawn(spec).await.unwrap_err();
+    assert!(matches!(err, HostError::LaunchDir(_)), "{err:?}");
+    assert_eq!(err.to_string(), fleetdeck_core::launch_dir::CHANGED);
 }

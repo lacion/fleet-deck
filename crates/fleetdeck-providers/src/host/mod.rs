@@ -27,6 +27,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use fleetdeck_core::ChildEnv;
+use fleetdeck_proto::launch::LaunchIdentity;
 use tokio::io::AsyncRead;
 
 mod direct;
@@ -46,6 +47,18 @@ pub struct ProcessSpec {
     pub cwd: PathBuf,
     /// The complete environment of the child.
     pub env: ChildEnv,
+    /// The checked directory object of the session folder (B9): the host
+    /// reopens it and starts the child in that object. `None`: `cwd` by name.
+    pub launch: Option<LaunchIdentity>,
+}
+
+/// The path of a launch identity: `root` joined with `rel` (B9).
+pub(crate) fn identity_path(id: &LaunchIdentity) -> PathBuf {
+    if id.rel.is_empty() {
+        PathBuf::from(&id.root)
+    } else {
+        std::path::Path::new(&id.root).join(&id.rel)
+    }
 }
 
 /// The kind of host.
@@ -130,6 +143,9 @@ pub enum HostError {
         #[source]
         source: std::io::Error,
     },
+    /// The session folder is not the checked object any more (B9).
+    #[error("{0}")]
+    LaunchDir(String),
     #[error("the process has no stdin pipe")]
     NoPipe,
     #[error("stdin of the process is closed")]

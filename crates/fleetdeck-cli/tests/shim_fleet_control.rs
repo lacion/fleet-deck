@@ -250,6 +250,7 @@ impl Rig {
                 model: None,
                 title: None,
                 coordinator: None,
+                launch: None,
             },
             prompt: Some(UserInput::new(prompt.to_owned())),
             workspace: None,

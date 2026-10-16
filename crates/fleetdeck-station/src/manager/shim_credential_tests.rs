@@ -77,6 +77,7 @@ impl Rig {
             args: Vec::new(),
             cwd: tmp.path().to_owned(),
             env: ChildEnv::scrubbed([("PATH".into(), "/usr/bin:/bin".into())]),
+            launch: None,
         };
         Self {
             _tmp: tmp,
@@ -95,6 +96,7 @@ impl Rig {
             model: None,
             title: None,
             coordinator: None,
+            launch: None,
         };
         prepare_bridge_fleet(&self.bindings, ProviderKind::Claude, &"s1".into(), &spec)
             .unwrap_or_else(|why| panic!("no bridge start: {why}"))

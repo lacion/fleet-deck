@@ -302,6 +302,7 @@ async fn a_launching_command_without_a_launch_mode_is_refused_as_version_skew() 
                     model: None,
                     title: None,
                     coordinator: None,
+                    launch: None,
                 },
                 prompt: Some(UserInput::new("go")),
             },

@@ -322,6 +322,7 @@ mod tests {
                 model: None,
                 title: None,
                 coordinator: None,
+                launch: None,
             },
             prompt: None,
             continue_by: None,

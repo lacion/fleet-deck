@@ -133,6 +133,7 @@ async fn a_start_on_a_broken_version_is_refused_with_the_reason() {
                 model: None,
                 title: None,
                 coordinator: None,
+                launch: None,
             },
             prompt: Some(UserInput::new("hello".to_owned())),
             workspace: None,

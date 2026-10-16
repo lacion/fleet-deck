@@ -206,6 +206,7 @@ impl ShimHost {
             cwd: Vec::new(),
             env: Vec::new(),
             secrets: false,
+            launch: None,
         }
         .provider_from(spec);
         Ok(Prepared {

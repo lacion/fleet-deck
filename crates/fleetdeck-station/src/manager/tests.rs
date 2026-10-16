@@ -233,6 +233,7 @@ fn spec(cwd: &str, instance: &str) -> SessionSpec {
         model: None,
         title: None,
         coordinator: None,
+        launch: None,
     }
 }
 

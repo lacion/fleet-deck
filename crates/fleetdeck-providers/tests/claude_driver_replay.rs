@@ -184,6 +184,7 @@ async fn play(path: &Path, index: usize, records: &[Value], root: &Path) -> Play
         model: launch.model.clone(),
         title: None,
         coordinator: None,
+        launch: None,
     };
     let mut session = adapter.start_session(spec, sink, origin).await.unwrap();
     let raw_dir = session.raw_log_dir().unwrap().to_path_buf();

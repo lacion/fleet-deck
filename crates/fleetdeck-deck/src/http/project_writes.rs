@@ -389,6 +389,7 @@ fn start(
             model: req.model.clone(),
             title: Some(title),
             coordinator: None,
+            launch: None,
         },
         prompt: Some(UserInput::new(prompt)),
         workspace: Some(Box::new(WorkspaceRequest::Worktree {

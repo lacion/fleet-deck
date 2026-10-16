@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use fleetdeck_core::launch_dir::LaunchDir;
 use rustix::process::{Pid, Signal, kill_process_group};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, Command};
@@ -48,9 +49,20 @@ impl SessionHost for DirectChildHost {
     }
 
     async fn spawn(&self, spec: ProcessSpec) -> Result<HostedProcess, HostError> {
+        // With an identity the child starts in the checked directory object,
+        // or not at all; `dir` lives until the spawn returned (B9).
+        let dir = spec
+            .launch
+            .as_ref()
+            .map(|id| LaunchDir::reopen(id).map_err(|e| HostError::LaunchDir(e.to_string())))
+            .transpose()?;
+        let cwd = match &dir {
+            Some(dir) => dir.cwd().map_err(|e| HostError::LaunchDir(e.to_string()))?,
+            None => spec.cwd.clone(),
+        };
         let mut cmd = Command::new(&spec.program);
         cmd.args(&spec.args)
-            .current_dir(&spec.cwd)
+            .current_dir(&cwd)
             .env_clear()
             .envs(spec.env.iter())
             .stdin(Stdio::piped())
@@ -62,6 +74,7 @@ impl SessionHost for DirectChildHost {
             program: spec.program.display().to_string(),
             source,
         })?;
+        drop(dir);
         let pid = child.id().ok_or(HostError::NoPipe)?;
         let stdin = child.stdin.take().ok_or(HostError::NoPipe)?;
         let stdout = child.stdout.take().ok_or(HostError::NoPipe)?;

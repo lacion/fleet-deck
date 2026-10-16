@@ -249,6 +249,7 @@ pub fn admit_resume(
         model: r.summary.model.clone(),
         title: r.summary.title.clone(),
         coordinator: None,
+        launch: None,
     };
     let input_id = prompt.as_ref().map(|p| p.input_id.clone());
     d.enqueue(

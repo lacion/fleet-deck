@@ -134,6 +134,7 @@ impl Rig {
             args: Vec::new(),
             cwd: self.tmp.path().join("w"),
             env: self.env(),
+            launch: None,
         };
         let attached = launch_shim(
             &self.store,

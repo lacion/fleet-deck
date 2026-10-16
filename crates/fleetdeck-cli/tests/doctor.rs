@@ -91,6 +91,21 @@ fn a_minimal_setup_without_deck_or_station_config_is_ok() {
         !text.contains("ok   board") && !text.contains("warn board"),
         "{text}"
     );
+    // The Landlock line (B9) is ok or warn by the kernel of this machine.
+    #[cfg(target_os = "linux")]
+    {
+        assert!(
+            text.contains("ok   landlock: Landlock confines worktree and clone provisioning")
+                || text.contains("warn landlock: Landlock is not available: "),
+            "{text}"
+        );
+        assert!(
+            text.trim_end().ends_with("doctor: 8 ok, 1 warn, 0 fail")
+                || text.trim_end().ends_with("doctor: 7 ok, 2 warn, 0 fail"),
+            "{text}"
+        );
+    }
+    #[cfg(not(target_os = "linux"))]
     assert!(
         text.trim_end().ends_with("doctor: 7 ok, 1 warn, 0 fail"),
         "{text}"

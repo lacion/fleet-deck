@@ -260,6 +260,7 @@ fn spec(kind: ProviderKind, cwd: &Path) -> SessionSpec {
         model: None,
         title: None,
         coordinator: None,
+        launch: None,
     }
 }
 

@@ -81,6 +81,7 @@ mod tests {
             model: None,
             title: None,
             coordinator: None,
+            launch: None,
         };
         let err = Plain
             .durable_resume_launch(&spec, &NativeSessionId("n".to_owned()))

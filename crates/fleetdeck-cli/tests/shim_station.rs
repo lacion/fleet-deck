@@ -142,6 +142,7 @@ impl Rig {
             args: vec!["app-server".into()],
             cwd: self.tmp.path().join("w"),
             env,
+            launch: None,
         };
         let attached = launch_shim(
             &self.store,
@@ -494,6 +495,7 @@ fn start_effect() -> EffectPayload {
             model: None,
             title: None,
             coordinator: None,
+            launch: None,
         },
         prompt: None,
         workspace: None,
@@ -511,6 +513,7 @@ fn codex_spec(rig: &Rig) -> ProcessSpec {
         args: vec!["app-server".into()],
         cwd: rig.tmp.path().join("w"),
         env,
+        launch: None,
     }
 }
 

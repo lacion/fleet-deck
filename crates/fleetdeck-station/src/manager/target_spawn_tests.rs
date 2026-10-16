@@ -152,6 +152,7 @@ fn spec() -> SessionSpec {
         model: None,
         title: None,
         coordinator: None,
+        launch: None,
     }
 }
 

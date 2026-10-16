@@ -68,6 +68,7 @@ pub async fn run(dirs: &NodeDirs, env: &Env) -> ExitCode {
     let station = load_station(&mut report, dirs, env);
     let deck = load_deck(&mut report, dirs);
     check_git(&mut report).await;
+    check_landlock(&mut report).await;
     check_providers_and_shells(&mut report, &station).await;
     if !matches!(deck, Loaded::Absent) {
         check_deck_socket(&mut report, dirs, &deck).await;
@@ -218,6 +219,48 @@ async fn check_git(report: &mut Report) {
         Err(e) => report.fail("git", e),
     }
 }
+
+/// (c2) Landlock (B9, DL-200): a test ruleset is enforced in a child
+/// process, `fleetdeck confine-exec --write-root / -- /bin/true`. Linux only.
+#[cfg(target_os = "linux")]
+async fn check_landlock(report: &mut Report) {
+    const WARN: &str = "Landlock is not available: worktree and clone provisioning is checked after Git, not confined.";
+    let enforced = match std::env::current_exe() {
+        Ok(exe) => {
+            let out = Command::new(exe)
+                .args(["confine-exec", "--write-root", "/", "--", "/bin/true"])
+                .stdin(Stdio::null())
+                .kill_on_drop(true)
+                .output();
+            match tokio::time::timeout(VERSION_TIMEOUT, out).await {
+                Ok(Ok(out)) if out.status.success() => {
+                    let text = String::from_utf8_lossy(&out.stderr);
+                    text.lines().any(|l| {
+                        matches!(
+                            l,
+                            "fleetdeck-confine: fully_enforced"
+                                | "fleetdeck-confine: partially_enforced"
+                        )
+                    })
+                }
+                _ => false,
+            }
+        }
+        Err(_) => false,
+    };
+    if enforced {
+        report.ok(
+            "landlock",
+            "Landlock confines worktree and clone provisioning",
+        );
+    } else {
+        report.warn("landlock", WARN);
+    }
+}
+
+/// Other systems: no Landlock line.
+#[cfg(not(target_os = "linux"))]
+async fn check_landlock(_report: &mut Report) {}
 
 /// (d) and (e).
 async fn check_providers_and_shells(report: &mut Report, station: &Loaded<StationConfig>) {

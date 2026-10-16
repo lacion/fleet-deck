@@ -23,6 +23,7 @@ pub mod history;
 pub mod ids;
 pub mod input;
 pub mod integrations;
+pub mod launch;
 pub mod link;
 pub mod member_deny;
 pub mod mutation;

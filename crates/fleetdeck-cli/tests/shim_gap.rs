@@ -156,6 +156,7 @@ impl Rig {
             args: vec!["-c".into(), script.into()],
             cwd: self.tmp.path().to_owned(),
             env: ChildEnv::scrubbed([("PATH".into(), "/usr/bin:/bin".into())]),
+            launch: None,
         };
         let attached = launch_shim(
             &self.store,

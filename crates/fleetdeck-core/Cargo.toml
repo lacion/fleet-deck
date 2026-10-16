@@ -14,7 +14,7 @@ rcgen = { workspace = true }
 ring = { workspace = true }
 rusqlite = { workspace = true }
 rusqlite_migration = { workspace = true }
-rustix = { workspace = true, features = ["process"] }
+rustix = { workspace = true, features = ["process", "fs"] }
 rustls-pki-types = { workspace = true }
 rustls-webpki = { workspace = true }
 serde = { workspace = true }

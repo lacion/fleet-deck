@@ -98,58 +98,13 @@ pub(crate) fn file_flags() -> OFlags {
     OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC | OFlags::NOCTTY
 }
 
-/// Opens the canonical, absolute `root` as a directory descriptor without
-/// following a symlink at any level: the walk starts at `/` and opens each
-/// component relative to its parent's descriptor with `O_NOFOLLOW`, so an
-/// ancestor of the root swapped for a symlink is refused too (M3 round 13,
-/// DL-092). A root that is not absolute or has `.`/`..` components is
-/// refused; callers pass the canonical root from the allowed-roots policy.
-///
-/// # Errors
-/// The `openat` error of the first component that is missing, not a
-/// directory or a symlink; `EINVAL` for a root that is not canonical.
-pub fn open_root(root: &Path) -> rustix::io::Result<OwnedFd> {
-    use std::path::Component;
-    if !root.is_absolute() {
-        return Err(rustix::io::Errno::INVAL);
-    }
-    let mut dir = rustix::fs::open("/", dir_flags(), Mode::empty())?;
-    for component in root.components() {
-        match component {
-            Component::RootDir => {}
-            Component::Normal(name) => {
-                dir = rustix::fs::openat(&dir, name, dir_flags(), Mode::empty())?;
-            }
-            Component::Prefix(_) | Component::CurDir | Component::ParentDir => {
-                return Err(rustix::io::Errno::INVAL);
-            }
-        }
-    }
-    Ok(dir)
-}
+pub use fleetdeck_core::launch_dir::open_root;
 
 /// A path that names exactly the directory `dir` for a child process's
-/// working directory: `/proc/self/fd/<n>`. The child resolves it before
-/// `exec`, while it still holds the inherited descriptor (close-on-exec
-/// closes it only at `exec`), so a rename of the root or of one of its
-/// ancestors cannot move the child elsewhere. The caller keeps `dir` open
-/// until the child has started. `None` where no such path exists (macOS):
-/// the caller then must not run a child in the directory by name.
+/// working directory (moved to `launch_dir`, B9).
 #[must_use]
 pub fn pinned_dir(dir: &OwnedFd) -> Option<std::path::PathBuf> {
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::fd::AsRawFd;
-        Some(std::path::PathBuf::from(format!(
-            "/proc/self/fd/{}",
-            dir.as_raw_fd()
-        )))
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = dir;
-        None
-    }
+    fleetdeck_core::launch_dir::pinned_dir(dir)
 }
 
 /// Opens the directory `segments` below `base`, one component at a time,
