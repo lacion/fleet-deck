@@ -202,6 +202,85 @@ async fn a_running_codex_shell_blocks_input_and_an_interrupt_cancels_it() {
     st.manager.shutdown(StopMode::Kill).await;
 }
 
+/// The kinds of the effects of `s` (B8).
+async fn effect_kinds(st: &Station, s: &SessionId) -> Vec<&'static str> {
+    st.effect_states(s)
+        .await
+        .into_iter()
+        .map(|(k, _)| k)
+        .collect()
+}
+
+#[tokio::test]
+async fn a_stop_before_the_codex_turn_starts_interrupts_that_turn() {
+    let mut st = Station::new(4).await;
+    let deck = st.paired_deck().await;
+    let s = codex_idle(&mut st).await;
+    // The sim answers `{}`, then waits 1 s before `turn/started`.
+    let id = bang(&mut st, &deck, &s, "latestart").await;
+    row_is(&st, &id, |r| r.state == ShellState::Running).await;
+    let summary = st
+        .manager
+        .store()
+        .summary(s.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(summary.current_run.is_none(), "no run has started yet");
+    // The Stop is accepted (not "no turn runs") and enqueues the effect.
+    let d = st
+        .as_board(
+            &deck,
+            SessionCommand::Interrupt {
+                session_id: s.clone(),
+            },
+        )
+        .await;
+    assert_eq!(d.receipt.state, ReceiptState::Accepted, "{:?}", d.receipt);
+    assert_eq!(d.effects.len(), 1);
+    assert_eq!(d.effects[0].payload.kind(), "interrupt");
+    assert!(effect_kinds(&st, &s).await.contains(&"interrupt"));
+    // The core holds it until `turn/started`; the turn then ends interrupted.
+    let row = row_is(&st, &id, |r| r.state.is_terminal()).await;
+    assert_eq!(row.state, ShellState::Cancelled);
+    assert_eq!(
+        st.wait_for("shell end", node_completed(&id)).await,
+        "cancelled".to_owned()
+    );
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
+async fn a_stop_while_the_codex_row_is_queued_only_stores_the_cancel() {
+    let mut st = Station::new(4).await;
+    let deck = st.paired_deck().await;
+    let s = codex_idle(&mut st).await;
+    // A Codex row that was not sent: no worker touches it.
+    let id = "planted-codex";
+    let root = st.ws_root();
+    st.plant(id, &s, &root, ShellState::Queued).await;
+    st.manager
+        .store()
+        .exec_for_tests(format!(
+            "UPDATE shell_runs SET provider = 'codex' WHERE effect_id = '{id}'"
+        ))
+        .await;
+    let before = effect_kinds(&st, &s).await.len();
+    let d = st
+        .as_board(
+            &deck,
+            SessionCommand::Interrupt {
+                session_id: s.clone(),
+            },
+        )
+        .await;
+    assert_eq!(d.receipt.state, ReceiptState::Accepted, "{:?}", d.receipt);
+    assert!(d.effects.is_empty(), "no interrupt effect");
+    assert_eq!(effect_kinds(&st, &s).await.len(), before);
+    assert!(st.shell_row(id).await.cancel_requested);
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
 #[tokio::test]
 async fn a_codex_command_without_a_reply_awaits_proof_and_the_owner_releases_it() {
     let mut st = Station::new(4).await;

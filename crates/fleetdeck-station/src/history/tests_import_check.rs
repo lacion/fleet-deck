@@ -5,6 +5,7 @@
 use std::io::{Seek, SeekFrom, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
+use std::time::Duration;
 
 use fleetdeck_proto::SessionId;
 use fleetdeck_proto::event::ProviderKind;
@@ -12,7 +13,7 @@ use fleetdeck_proto::native::TranscriptPin;
 
 use super::Limits;
 use super::at_import;
-use super::import_check::{CHANGED, Refusal, SUBAGENT, before_import};
+use super::import_check::{BUSY, CHANGED, Refusal, SUBAGENT, before_import};
 use super::tests_support::*;
 use crate::store::transcripts::Capture;
 use crate::store::{NewSession, OfflineApprovalPolicy};
@@ -388,4 +389,56 @@ async fn a_codex_parent_rollout_over_the_capture_cap_is_not_a_child() {
         check(&b, &pinned, CODEX_ID, Some(&pin)).await,
         Err(Refusal::Unverified)
     );
+}
+
+// ----------------------------------------------- B7: the check fails closed
+
+#[tokio::test]
+async fn an_unpinned_codex_import_is_refused_when_the_history_worker_is_busy() {
+    let limits = Limits {
+        deadline: Duration::from_millis(200),
+        ..Limits::default()
+    };
+    let Some(b) = rig(limits, &[]).await else {
+        return;
+    };
+    b.put_codex(CODEX_ID, &codex_lines(CODEX_ID, &b.cwd, None));
+    let plain = codex_session(&b, "s1", CODEX_ID).await;
+    // Another request holds the only permit past the deadline.
+    let permit = Arc::clone(&b.rig.history.shared.budget)
+        .acquire_owned()
+        .await
+        .unwrap();
+    let refused = check(&b, &plain, CODEX_ID, None).await;
+    assert_eq!(refused, Err(Refusal::Busy));
+    let busy = refused.unwrap_err();
+    assert_eq!(busy.message(), BUSY);
+    assert_eq!(busy.code(), "import_check_busy");
+    drop(permit);
+    // With the permit free the same import goes on.
+    assert_eq!(check(&b, &plain, CODEX_ID, None).await, Ok(()));
+}
+
+#[tokio::test]
+async fn an_unpinned_codex_import_whose_check_hits_the_deadline_is_refused() {
+    let limits = Limits {
+        deadline: Duration::ZERO,
+        ..Limits::default()
+    };
+    let Some(b) = rig(limits, &[]).await else {
+        return;
+    };
+    b.put_codex(CODEX_ID, &codex_lines(CODEX_ID, &b.cwd, None));
+    let plain = codex_session(&b, "s1", CODEX_ID).await;
+    assert_eq!(check(&b, &plain, CODEX_ID, None).await, Err(Refusal::Busy));
+}
+
+#[tokio::test]
+async fn a_missing_transcript_still_lets_an_unpinned_codex_import_go_on() {
+    let Some(b) = rig(Limits::default(), &[]).await else {
+        return;
+    };
+    let gone = "01a13f28-e384-7ed1-aee0-4235480000bb";
+    let missing = codex_session(&b, "s1", gone).await;
+    assert_eq!(check(&b, &missing, gone, None).await, Ok(()));
 }

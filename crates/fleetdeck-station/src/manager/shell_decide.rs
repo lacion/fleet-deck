@@ -294,9 +294,23 @@ fn release(
     Ok(result(session_id, None))
 }
 
+/// What the shell part of an interrupt decided (B8).
+pub(super) enum ShellInterrupt {
+    /// The session has no run: the interrupt is accepted with no effect.
+    Done(CommandResult),
+    /// A Codex command may be with the provider before its turn started: the
+    /// interrupt effect is enqueued without the "no turn runs" check.
+    Provider,
+    /// No shell row, or a run exists: the usual interrupt goes on.
+    None,
+}
+
 /// The interrupt of a session that has a shell command: stores a cancel
-/// request on each of its non-terminal rows. `Some(result)` when the session
-/// has no run, so the interrupt is accepted with no effect; `None` when the
+/// request on each of its non-terminal rows. [`ShellInterrupt::Done`] when
+/// the session has no run, so the interrupt is accepted with no effect;
+/// [`ShellInterrupt::Provider`] when no run exists yet but a Codex row is
+/// `running` (its `thread/shellCommand` was sent, and the Codex core holds
+/// the interrupt until `turn/started`); [`ShellInterrupt::None`] when the
 /// usual interrupt goes on (no shell row, or a run exists).
 ///
 /// # Errors
@@ -304,10 +318,10 @@ fn release(
 pub(super) fn interrupt(
     d: &mut Decision<'_>,
     session_id: &SessionId,
-) -> Result<Option<CommandResult>, DecideError> {
+) -> Result<ShellInterrupt, DecideError> {
     let rows = d.shell_open_rows(session_id)?;
     if rows.is_empty() {
-        return Ok(None);
+        return Ok(ShellInterrupt::None);
     }
     for row in &rows {
         d.shell_request_cancel(&row.effect_id)?;
@@ -315,7 +329,17 @@ pub(super) fn interrupt(
     let run = d
         .summary(session_id)?
         .is_some_and(|s| s.current_run.is_some() || s.current_turn.is_some());
-    Ok((!run).then(|| result(session_id, None)))
+    if run {
+        return Ok(ShellInterrupt::None);
+    }
+    let sent = rows
+        .iter()
+        .any(|r| r.provider == "codex" && r.state == ShellState::Running);
+    Ok(if sent {
+        ShellInterrupt::Provider
+    } else {
+        ShellInterrupt::Done(result(session_id, None))
+    })
 }
 
 /// The revert barrier (B8): refuses while a shell row of `root` is

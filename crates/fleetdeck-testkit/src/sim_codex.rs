@@ -32,7 +32,8 @@
 //! `userShell` command item (output `sim: <command>`, exit code 0). The
 //! words in the command select: `fail` (exit code 2), `hang` (no end until
 //! `turn/interrupt`), `noack` (no reply and no turn), `refuse` (an error
-//! reply), `slowend` (1 s between `item/completed` and `turn/completed`).
+//! reply), `slowend` (1 s between `item/completed` and `turn/completed`),
+//! `latestart` (1 s between the reply and `turn/started`, then as `hang`).
 //!
 //! `account/read` answers signed in, except under scenario
 //! `auth:signed-out`. End of stdin ends the process with exit code 0.
@@ -539,12 +540,16 @@ impl<W: Write> Sim<W> {
         let turn = format!("sim-turn-{}", self.next());
         let shape = json!({"id": turn, "status": "inProgress", "items": [], "error": null});
         self.reply(id, json!({}))?;
+        let late = command.contains("latestart");
+        if late {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
         self.notify("turn/started", json!({"turn": shape}))?;
         let item = format!("shell-sim-{}", self.next());
         let mut exec = command_item(&item, &command, &self.cwd, "inProgress", None);
         exec["source"] = json!("userShell");
         self.item("started", &turn, exec.clone())?;
-        if command.contains("hang") {
+        if late || command.contains("hang") {
             self.turn = Some(Turn {
                 id: turn,
                 wait: Wait::Host,

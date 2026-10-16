@@ -7,6 +7,8 @@ import type { Item } from '../session/timeline';
 export type ShellChip = { readonly id: string; readonly command: string };
 
 const NODE_PREFIX = 'shell-';
+/** The most results that one prompt carries (B8); the rest wait for the next prompt. */
+const MAX_RESULTS = 64;
 
 /** A shell item that has ended (a command that the session left unfinished has no result). */
 const completed = (tool: Extract<Item, { type: 'tool' }>): boolean =>
@@ -34,8 +36,10 @@ export function pendingResults(
 export type ShellChipState = {
   readonly chips: readonly ShellChip[];
   remove(id: string): void;
-  /** The chips went with a prompt: they show no more. */
-  consume(): void;
+  /** The ids of the first 64 chips: the results that the next prompt carries. */
+  toSend(): string[];
+  /** The chips of `ids` went with a prompt: they show no more. */
+  consume(ids: readonly string[]): void;
 };
 
 /** The chips of one session; what the owner removed or sent is kept in memory per session. */
@@ -52,7 +56,8 @@ export function useShellChips(
   return {
     chips,
     remove: (id) => hide([id]),
-    consume: () => hide(chips.map((c) => c.id)),
+    toSend: () => chips.slice(0, MAX_RESULTS).map((c) => c.id),
+    consume: hide,
   };
 }
 

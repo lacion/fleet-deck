@@ -7,6 +7,10 @@
 //!   Any failure fails the start.
 //! - Without a pin the import is as before: the capture stays best effort.
 //! - For every import, a Codex child thread fails the start.
+//! - An unpinned Codex import whose child-thread check could not finish
+//!   (the history worker is busy, or the lookup or the first record hit
+//!   the deadline)
+//!   fails the start too (B7); a missing or unreadable transcript goes on.
 
 use std::fs::File;
 use std::os::unix::fs::MetadataExt as _;
@@ -36,6 +40,8 @@ use crate::workspace::PrivatePaths;
 pub const CHANGED: &str = "The transcript changed or could not be verified. Browse again.";
 /// The text of an import of a Codex child thread.
 pub const SUBAGENT: &str = "This is a subagent thread; continue its parent.";
+/// The text of an import whose child-thread check could not finish (B7).
+pub const BUSY: &str = "The station is busy checking the session. Try again in a moment.";
 
 /// Why an import must not launch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +50,8 @@ pub enum Refusal {
     Unverified,
     /// A Codex child thread.
     Subagent,
+    /// The child-thread check of an unpinned Codex import could not finish.
+    Busy,
 }
 
 impl Refusal {
@@ -53,6 +61,7 @@ impl Refusal {
         match self {
             Self::Unverified => CHANGED,
             Self::Subagent => SUBAGENT,
+            Self::Busy => BUSY,
         }
     }
 
@@ -62,6 +71,7 @@ impl Refusal {
         match self {
             Self::Unverified => "transcript_unverified",
             Self::Subagent => "subagent_thread",
+            Self::Busy => "import_check_busy",
         }
     }
 }
@@ -70,6 +80,8 @@ impl Refusal {
 #[derive(Default)]
 struct Outcome {
     subagent: bool,
+    /// The child-thread check could not finish (B7).
+    busy: bool,
     captured: Option<Captured>,
 }
 
@@ -166,6 +178,11 @@ pub async fn before_import(
         .await;
     let outcome = match worked {
         Ok(outcome) => outcome,
+        // An unpinned Codex import fails closed when the check cannot run (B7).
+        Err(Fail::Busy) if !pinned => {
+            tracing::info!(session = %session_id, "import check: busy");
+            return Err(Refusal::Busy);
+        }
         Err(fail) => {
             tracing::info!(session = %session_id, ?fail, "import check: not verified");
             return doubt;
@@ -173,6 +190,9 @@ pub async fn before_import(
     };
     if outcome.subagent {
         return Err(Refusal::Subagent);
+    }
+    if outcome.busy {
+        return Err(Refusal::Busy);
     }
     if let Some(captured) = &outcome.captured {
         let row = row_of(
@@ -190,21 +210,26 @@ pub async fn before_import(
     Ok(())
 }
 
-/// The first record of a Codex transcript names a parent thread.
-fn names_parent(file: &File, size: u64, limits: &Limits, deadline: Instant) -> bool {
+/// The first record of a Codex transcript names a parent thread. `None`
+/// when the read hit the deadline: the answer is not known (B7).
+fn names_parent(file: &File, size: u64, limits: &Limits, deadline: Instant) -> Option<bool> {
     let mut lines = Lines::new(file, 0, size, limits.line_max).with_deadline(deadline);
-    let Ok(Some((_, Line::Record(bytes)))) = lines.next_line() else {
-        return false;
+    let first = match lines.next_line() {
+        Ok(Some((_, Line::Record(bytes)))) => bytes,
+        Err(ReadError::Deadline) => return None,
+        _ => return Some(false),
     };
-    let Ok(value) = serde_json::from_slice::<Value>(bytes) else {
-        return false;
+    let Ok(value) = serde_json::from_slice::<Value>(first) else {
+        return Some(false);
     };
-    value.get("type").and_then(Value::as_str) == Some("session_meta")
-        && value
-            .get("payload")
-            .and_then(|p| p.get("parent_thread_id"))
-            .and_then(Value::as_str)
-            .is_some_and(|parent| !parent.is_empty())
+    Some(
+        value.get("type").and_then(Value::as_str) == Some("session_meta")
+            && value
+                .get("payload")
+                .and_then(|p| p.get("parent_thread_id"))
+                .and_then(Value::as_str)
+                .is_some_and(|parent| !parent.is_empty()),
+    )
 }
 
 /// An unpinned import: only the child-thread rule, and only when the
@@ -219,13 +244,29 @@ fn unpinned_blocking(job: &Job, limits: &Limits, uid: u32, deadline: Instant) ->
         limits,
         deadline,
     };
-    let Ok(opened) = locate::locate_any_size(&job.home, job.kind, &job.cwd, &job.native, &trust)
-    else {
-        return Outcome::default();
+    let opened = match locate::locate_any_size(&job.home, job.kind, &job.cwd, &job.native, &trust) {
+        Ok(opened) => opened,
+        // The lookup hit the deadline or the entry cap: the check could not
+        // finish (B7).
+        Err(Fail::Busy | Fail::Unavailable(HistoryUnavailable::Busy)) => {
+            return Outcome {
+                busy: true,
+                ..Outcome::default()
+            };
+        }
+        // A missing or unreadable transcript: the import goes on.
+        Err(_) => return Outcome::default(),
     };
-    Outcome {
-        subagent: names_parent(&opened.file, opened.size, limits, deadline),
-        captured: None,
+    match names_parent(&opened.file, opened.size, limits, deadline) {
+        Some(subagent) => Outcome {
+            subagent,
+            ..Outcome::default()
+        },
+        // The check could not finish: the import does not launch (B7).
+        None => Outcome {
+            busy: true,
+            ..Outcome::default()
+        },
     }
 }
 
@@ -266,10 +307,10 @@ fn pinned_blocking(
         // gets the subagent text (B7 PRE-PR r1).
         Err(Fail::Unavailable(HistoryUnavailable::TooLarge)) if job.kind == ProviderKind::Codex => {
             let big = locate::locate_any_size(&home, job.kind, &job.cwd, &job.native, &trust)?;
-            if names_parent(&big.file, big.size, limits, deadline) {
+            if names_parent(&big.file, big.size, limits, deadline) == Some(true) {
                 return Ok(Outcome {
                     subagent: true,
-                    captured: None,
+                    ..Outcome::default()
                 });
             }
             return Err(Fail::Unavailable(HistoryUnavailable::TooLarge));
@@ -277,11 +318,12 @@ fn pinned_blocking(
         Err(e) => return Err(e),
     };
     // The child-thread rule comes first, as for an unpinned import.
-    if job.kind == ProviderKind::Codex && names_parent(&opened.file, opened.size, limits, deadline)
+    if job.kind == ProviderKind::Codex
+        && names_parent(&opened.file, opened.size, limits, deadline) == Some(true)
     {
         return Ok(Outcome {
             subagent: true,
-            captured: None,
+            ..Outcome::default()
         });
     }
     let meta = opened.file.metadata().map_err(|_| Fail::Io)?;
@@ -338,6 +380,7 @@ fn pinned_blocking(
     )?;
     Ok(Outcome {
         subagent: false,
+        busy: false,
         captured: Some(Captured {
             home: opened.home,
             path: opened.path,

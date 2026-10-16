@@ -1,5 +1,6 @@
 // B8: the shell card, its states, the release rules, the pending-result chips.
 import { describe, expect, test } from 'bun:test';
+import { useState } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { Event } from '../gen';
 import { sessionActions } from '../session/commands';
@@ -17,7 +18,7 @@ import {
   shellState,
   unfoldShells,
 } from './ShellCard';
-import { pendingResults, ShellChips } from './ShellChips';
+import { pendingResults, ShellChips, useShellChips } from './ShellChips';
 
 type Tool = Extract<Item, { type: 'tool' }>;
 
@@ -272,6 +273,30 @@ describe('the pending results (Claude)', () => {
 
   test('Codex has no chips', () => {
     expect(ids([started('e1', 'a'), completed('e1', 'done', 0)], 'codex')).toEqual([]);
+  });
+
+  test('a prompt sends the first 64 chips and the other chips stay (B8)', () => {
+    const events: Event[] = [run('board')];
+    for (let n = 0; n < 70; n++) events.push(started(`e${n}`, 'x'), completed(`e${n}`, 'done', 0));
+    const seen: { sent: string[]; left: string[] } = { sent: [], left: [] };
+    // A static render applies a state update made during the render, so the probe
+    // plays one send: `toSend` names the ids, `consume` hides only those.
+    function Probe() {
+      const chips = useShellChips('s', items(events), 'claude');
+      const [done, setDone] = useState(false);
+      if (!done) {
+        setDone(true);
+        seen.sent = chips.toSend();
+        chips.consume(seen.sent);
+      }
+      seen.left = chips.chips.map((c) => c.id);
+      return null;
+    }
+    renderToStaticMarkup(<Probe />);
+    expect(seen.sent).toHaveLength(64);
+    expect(seen.sent[0]).toBe('e0');
+    expect(seen.sent[63]).toBe('e63');
+    expect(seen.left).toEqual(['e64', 'e65', 'e66', 'e67', 'e68', 'e69']);
   });
 
   test('a chip shows its text and a remove button', () => {

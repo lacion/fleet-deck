@@ -740,10 +740,10 @@ async fn the_end_text_names_how_the_command_ended() {
 }
 
 #[tokio::test]
-async fn an_oversize_result_is_cut_and_the_results_over_64_kib_wait() {
+async fn an_oversize_result_is_cut_and_every_named_result_reaches_the_model() {
     let mut rig = Rig::new().await;
     let s = rig.session().await;
-    // 30,000 `<` escape to 120,000 bytes: each result is cut to 32 KiB.
+    // 30,000 `<` escape to 120,000 bytes: each result is cut to its third of 64 KiB (B8).
     let big = "head -c 30000 /dev/zero | tr '\\0' '<'";
     let ids = [
         rig.run(&s, big).await.effect_id,
@@ -752,7 +752,7 @@ async fn an_oversize_result_is_cut_and_the_results_over_64_kib_wait() {
     ];
     let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
     let context = rig.prompt_with(&s, "x", &refs).await;
-    assert_eq!(context.len(), 2, "the third result does not fit 64 KiB");
+    assert_eq!(context.len(), 3, "no named result is deferred");
     for result in &context {
         assert!(result.stdout.starts_with("[… "), "{}", &result.stdout[..40]);
         assert!(result.stdout.contains(" characters omitted]\n"));
@@ -760,9 +760,11 @@ async fn an_oversize_result_is_cut_and_the_results_over_64_kib_wait() {
             serde_json::to_string(&fleetdeck_providers::claude::control::shell_blocks(result))
                 .unwrap()
                 .len();
-        assert!(size <= 32 * 1024, "{size}");
+        assert!(size <= 64 * 1024 / 3, "{size}");
     }
-    assert!(rig.row(&ids[2]).await.included_in.is_none());
+    for id in &ids {
+        assert!(rig.row(id).await.included_in.is_some(), "{id}");
+    }
     rig.manager.shutdown(StopMode::Kill).await;
 }
 
