@@ -60,7 +60,17 @@ test.beforeAll(async ({ browser }) => {
 
 test.afterAll(async () => {
   await context?.close();
-  for (const node of [bravo, alpha, deck]) await node?.dispose();
+  // Dispose every node, also after a failure: a throw ends the loop, and
+  // the nodes after it would keep their processes.
+  const errors: unknown[] = [];
+  for (const node of [bravo, alpha, deck]) {
+    try {
+      await node?.dispose();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length > 0) throw errors[0];
 });
 
 const status = (text: string) => page.getByRole('status').filter({ hasText: text });
