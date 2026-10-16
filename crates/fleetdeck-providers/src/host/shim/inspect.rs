@@ -128,12 +128,13 @@ fn scan_with(root: &Path, after_listing: &mut dyn FnMut()) -> Result<Scan, Strin
 /// The most passes of one census. A busy machine starts and ends processes
 /// all the time; a pass takes milliseconds, so many short tries find a
 /// clean one. The budget ends a census before this count does.
-const PASSES: u32 = 5_000;
+const PASSES: u32 = 200;
 /// The longest census at a provider exit: the exit report waits for it, and
-/// an incomplete census only leaves the exit unverified (fail closed).
-const EXIT_BUDGET: Duration = Duration::from_secs(5);
+/// an incomplete census only leaves the exit unverified (fail closed). It
+/// stays short: a takeover waits for it (5 s blocked one in the tests).
+const EXIT_BUDGET: Duration = Duration::from_secs(1);
 /// The longest census of the owner's check, which runs on demand.
-const CHECK_BUDGET: Duration = Duration::from_secs(10);
+const CHECK_BUDGET: Duration = Duration::from_secs(3);
 /// The pause between two passes.
 const PASS_PAUSE: Duration = Duration::from_millis(10);
 /// The reason of a census that never saw a clean pass.
