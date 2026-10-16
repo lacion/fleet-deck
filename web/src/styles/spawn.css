@@ -335,13 +335,17 @@
   margin-left: var(--sp-5);
 }
 .fd-native-open {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: flex-start;
-  gap: var(--sp-1) var(--sp-3);
+  /* One row per line, so that a wrapped folder pushes the next line down. */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: stretch;
+  align-items: start;
+  gap: 2px;
   width: 100%;
   min-width: 0;
+  /* A row of two or three lines: not the fixed height of a button. */
+  height: auto;
+  line-height: inherit;
   padding: 0;
   text-align: left;
   background: none;
