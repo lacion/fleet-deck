@@ -33,6 +33,9 @@ pub(super) struct PendingShell {
     /// The `item/completed` of the command was mapped.
     #[serde(default)]
     pub(super) completed: bool,
+    /// The exit code of the completed command (B8 PRE-PR r1).
+    #[serde(default)]
+    pub(super) exit_code: Option<i32>,
 }
 
 /// How a shell command ended without its own `item/completed`.
@@ -106,6 +109,7 @@ impl CodexCore {
             turn: None,
             started: false,
             completed: false,
+            exit_code: None,
         });
         // An interrupt before `turn/started` is held by the existing rule.
         self.turn_requested = true;
@@ -192,22 +196,12 @@ impl CodexCore {
             .get("exitCode")
             .and_then(Value::as_i64)
             .and_then(|c| i32::try_from(c).ok());
-        out.push(Output::Emit(Event::ToolCompleted {
-            node_id,
-            status: if exit_code == Some(0) {
-                ToolStatus::Ok
-            } else {
-                ToolStatus::Failed
-            },
-            files: Vec::new(),
-            exit_code,
-            provider_refs: refs(&[("shell", Some("done"))]),
-        }));
-        if let Some(node) = self.tools.get_mut(item_id) {
-            node.done = true;
-        }
+        // (B8 PRE-PR r1) The `tool.completed` waits for the end of the turn:
+        // the station releases the folder from it. The node stays open
+        // until `shell_turn_end` or `shell_exit` closes it.
         if let Some(p) = self.pending_shell.as_mut() {
             p.completed = true;
+            p.exit_code = exit_code;
         }
         Some(out)
     }
@@ -248,6 +242,29 @@ impl CodexCore {
         out
     }
 
+    /// The end of a completed command (B8 PRE-PR r1): its `tool.completed`
+    /// with `done` and the exit code of the item.
+    fn shell_done(&mut self) -> Vec<Output> {
+        let Some(pending) = self.pending_shell.take() else {
+            return Vec::new();
+        };
+        let node_id = node_of(&pending.effect_id);
+        for node in self.tools.values_mut().filter(|n| n.node_id == node_id) {
+            node.done = true;
+        }
+        vec![Output::Emit(Event::ToolCompleted {
+            node_id,
+            status: if pending.exit_code == Some(0) {
+                ToolStatus::Ok
+            } else {
+                ToolStatus::Failed
+            },
+            files: Vec::new(),
+            exit_code: pending.exit_code,
+            provider_refs: refs(&[("shell", Some("done"))]),
+        })]
+    }
+
     /// The bound turn ended (call before the open tools close): a completed
     /// command is done; any other ends `cancelled` (interrupted) or `failed`.
     pub(super) fn shell_turn_end(&mut self, interrupted: bool) -> Vec<Output> {
@@ -258,8 +275,7 @@ impl CodexCore {
             return Vec::new();
         }
         if pending.completed {
-            self.pending_shell = None;
-            return Vec::new();
+            return self.shell_done();
         }
         let end = if interrupted {
             ShellEnd::Cancelled
@@ -272,10 +288,7 @@ impl CodexCore {
     /// The process ended (call before all tools close).
     pub(super) fn shell_exit(&mut self) -> Vec<Output> {
         match self.pending_shell.as_ref() {
-            Some(p) if p.completed => {
-                self.pending_shell = None;
-                Vec::new()
-            }
+            Some(p) if p.completed => self.shell_done(),
             Some(_) => self.shell_end(ShellEnd::Unknown, None, None),
             None => Vec::new(),
         }

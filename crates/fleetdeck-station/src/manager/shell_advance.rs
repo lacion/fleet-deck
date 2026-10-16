@@ -122,19 +122,20 @@ async fn shim_proof(store: &Store, row: &ShellRow) -> Result<Option<bool>> {
 }
 
 /// The Codex rows that the last station process may have sent: a row under
-/// a shim whose end is proven settles `unknown`, one without proof awaits it;
-/// a row of a direct host lost its process with the station and settles
-/// `unknown` (B8).
+/// a shim whose end is proven settles `unknown`; any other row awaits its
+/// proof, a direct host too, because a station crash does not stop the
+/// app-server of a direct host (B8 PRE-PR r1). The row gets a card when it
+/// has none, so the owner can release it.
 async fn settle_codex_sent(store: &Store) -> Result<()> {
     for row in store.shell_codex_sent_rows().await? {
         match shim_proof(store, &row).await? {
-            Some(false) => {
-                store
-                    .shell_set_awaiting_proof(row.effect_id.clone(), row.state)
-                    .await?;
-            }
-            Some(true) | None => {
+            Some(true) => {
                 settle_unknown(store, &row).await?;
+            }
+            Some(false) | None => {
+                store
+                    .shell_await_proof(row.effect_id.clone(), row.state)
+                    .await?;
             }
         }
     }

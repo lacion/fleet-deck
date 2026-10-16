@@ -32,7 +32,7 @@
 //! `userShell` command item (output `sim: <command>`, exit code 0). The
 //! words in the command select: `fail` (exit code 2), `hang` (no end until
 //! `turn/interrupt`), `noack` (no reply and no turn), `refuse` (an error
-//! reply).
+//! reply), `slowend` (1 s between `item/completed` and `turn/completed`).
 //!
 //! `account/read` answers signed in, except under scenario
 //! `auth:signed-out`. End of stdin ends the process with exit code 0.
@@ -556,6 +556,9 @@ impl<W: Write> Sim<W> {
         exec["aggregatedOutput"] = json!(format!("sim: {command}\n"));
         exec["exitCode"] = json!(if failed { 2 } else { 0 });
         self.item("completed", &turn, exec.clone())?;
+        if command.contains("slowend") {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
         self.complete(&turn, "completed", vec![exec])
     }
 

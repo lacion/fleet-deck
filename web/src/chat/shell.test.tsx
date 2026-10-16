@@ -153,11 +153,18 @@ describe('the shell card', () => {
     expect(releaseOffered(running, undefined, true)).toBe(false);
     // Not for a settled command.
     expect(releaseOffered(done, env({ ended: true }), true)).toBe(false);
-    // Not for a Codex item (the effect id is a Claude row).
+    // Not for a node that is not `shell-<id>`.
     const codex = { ...running, node_id: 'item-9' };
     expect(releaseOffered(codex, env({ ended: true }), true)).toBe(false);
     expect(card([started('e1', 'sleep 9')], env({ ended: true }))).toContain('Release the folder');
     expect(card([started('e1', 'sleep 9')])).not.toContain('Release the folder');
+  });
+
+  test('a Codex shell card of an ended session offers the release (B8 PRE-PR r1)', () => {
+    const codex: Event[] = [started('E1', 'make build')];
+    expect(releaseOffered(only(codex), env({ ended: true }), false)).toBe(true);
+    expect(card(codex, env({ ended: true }))).toContain('Release the folder');
+    expect(card(codex)).not.toContain('Release the folder');
   });
 
   test('the dialog asks first, with the command', () => {

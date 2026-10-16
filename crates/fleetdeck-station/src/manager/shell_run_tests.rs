@@ -790,3 +790,6 @@ async fn the_resume_first_path_carries_the_context() {
     assert!(rig.row(&row.effect_id).await.included_in.is_some());
     rig.manager.shutdown(StopMode::Kill).await;
 }
+
+#[path = "shell_run_race_tests.rs"]
+mod race;
