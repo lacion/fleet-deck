@@ -52,3 +52,10 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 - **Wanted:** for each station, a list of all the provider sessions that are on it (Claude and Codex conversations, imported or not). The owner opens a preview of the conversation of one, and then decides to continue it (import it and resume) or to leave it.
 - **Related:** the import flow and the earlier history (DL-189) already read native transcripts. B7 needs a station-wide list and a preview that does not import.
 - **Status:** later. Needs a design first.
+
+## B8. `!` shell commands in a session are sent as chat text (owner report, 2026-10-16)
+
+- **Observed:** a prompt that starts with `!` (the shell-command line of the Claude Code and Codex terminal UIs) goes to the model as a normal message; nothing runs.
+- **Cause:** the `!` line is a feature of the interactive terminal UIs. Fleet Deck drives Claude with `stream-json` (no such input) and Codex with the app-server, which has `thread/shellCommand` (not used yet).
+- **Wanted:** a `!` line runs the command in the session folder, shows the command and its output in the timeline, and gives the result to the model as context, like the terminal UIs.
+- **Status:** design in progress (command execution: adversary DESIGN REVIEW before code).
