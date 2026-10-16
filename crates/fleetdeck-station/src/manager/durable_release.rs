@@ -4,9 +4,13 @@
 //!
 //! The start order gives the driver its held digests ([`DurableDriver::set_release`]).
 //! The driver asks the shim for a `status` frame and releases the digests
-//! when the host reported a `status_end` and the committed offset reached
-//! it. The check runs after each commit and in a small poller. An exit
-//! commit releases at once (its transition already revoked the bindings).
+//! when the host reported a `status_end` and the driver received that far;
+//! it then fixes the replay boundary, the end of the last complete line
+//! (the driver commits whole lines only, so a partial line at the end of
+//! the buffer is not waited for), and releases when the committed offset
+//! reaches the boundary. The check runs after each commit and in a small
+//! poller. An exit commit releases at once (its transition already revoked
+//! the bindings).
 //! There is no timeout: a driver that never catches up keeps its bindings
 //! held and logs once at `warn` after 60 s.
 
@@ -27,6 +31,28 @@ const WARN_AFTER: Duration = Duration::from_secs(60);
 pub(super) struct Held {
     bindings: Bindings,
     digests: Vec<String>,
+    /// The replay boundary, fixed once when the received output reached
+    /// the status end; `None` before (DL-194).
+    boundary: Option<u64>,
+}
+
+/// The replay boundary check (DL-194 §9.7). It fixes `boundary` once,
+/// when the status end is known and the received output reached it, then
+/// is true when `committed` reached the boundary.
+fn caught_up(
+    boundary: &mut Option<u64>,
+    status_end: Option<u64>,
+    delivered: u64,
+    line_end: impl FnOnce() -> u64,
+    committed: u64,
+) -> bool {
+    if boundary.is_none()
+        && let Some(end) = status_end
+        && delivered >= end
+    {
+        *boundary = Some(line_end());
+    }
+    boundary.is_some_and(|b| committed >= b)
 }
 
 impl<C: DurableCore> DurableDriver<C> {
@@ -39,7 +65,11 @@ impl<C: DurableCore> DurableDriver<C> {
         *self
             .release
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Held { bindings, digests });
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Held {
+            bindings,
+            digests,
+            boundary: None,
+        });
         if self.exit_committed.load(Ordering::SeqCst) {
             self.release_now();
             return;
@@ -74,18 +104,32 @@ impl<C: DurableCore> DurableDriver<C> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
-        if let Some(Held { bindings, digests }) = held {
+        if let Some(Held {
+            bindings, digests, ..
+        }) = held
+        {
             bindings.release(&digests);
         }
     }
 
     fn release_if_caught_up(&self) {
-        if self.released() {
-            return;
-        }
-        if let Some(end) = self.process.status_end()
-            && self.committed.load(Ordering::SeqCst) >= end
-        {
+        let due = {
+            let mut guard = self
+                .release
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let Some(held) = guard.as_mut() else {
+                return;
+            };
+            caught_up(
+                &mut held.boundary,
+                self.process.status_end(),
+                self.process.delivered(),
+                || self.process.line_end(),
+                self.committed.load(Ordering::SeqCst),
+            )
+        };
+        if due {
             self.release_now();
         }
     }
@@ -118,5 +162,38 @@ async fn poll<C: DurableCore>(weak: Weak<DurableDriver<C>>) {
             }
         }
         tokio::time::sleep(POLL).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::caught_up;
+
+    #[test]
+    fn nothing_is_released_before_the_status_end_and_the_receipt_of_it() {
+        let mut b = None;
+        assert!(!caught_up(&mut b, None, 100, || 100, 100));
+        assert!(!caught_up(&mut b, Some(30), 20, || 12, 100));
+        assert_eq!(b, None);
+    }
+
+    #[test]
+    fn a_partial_line_at_the_end_of_the_buffer_is_not_waited_for() {
+        // "line1\n" "line2\n" "par": the buffer ends at 15, the last
+        // complete line at 12.
+        let mut b = None;
+        assert!(!caught_up(&mut b, Some(15), 15, || 12, 6));
+        assert_eq!(b, Some(12));
+        assert!(caught_up(&mut b, Some(15), 15, || 12, 12));
+    }
+
+    #[test]
+    fn the_boundary_is_fixed_once() {
+        let mut b = None;
+        assert!(!caught_up(&mut b, Some(15), 15, || 12, 0));
+        // More output arrives later: the boundary does not move.
+        assert!(!caught_up(&mut b, Some(15), 40, || 36, 11));
+        assert_eq!(b, Some(12));
+        assert!(caught_up(&mut b, Some(15), 40, || 36, 12));
     }
 }

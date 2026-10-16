@@ -29,9 +29,11 @@ use fleetdeck_providers::host::shim::identity::BootIdReader;
 use fleetdeck_providers::host::shim::inspect::{self, Inspection, Proc};
 use fleetdeck_providers::host::shim::journal::{Fence, LaunchEvidence, ShimFiles};
 use fleetdeck_providers::host::shim::wire::{ExitState, Refusal};
-use fleetdeck_providers::host::{HostError, ProcessSpec};
+use fleetdeck_providers::host::{HostError, ProcessControl as _, ProcessSpec};
 
-use super::coordinator_start::{BridgeStart, log_attached, revoke_stored, store_tools};
+use super::coordinator_start::{
+    BridgeStart, kill_unless_saved, log_attached, revoke_stored, store_tools,
+};
 use crate::coordinator::Bindings;
 use crate::store::resumes::{describe, effective_reason, proves_end};
 use crate::store::{
@@ -237,10 +239,13 @@ pub(crate) async fn launch_shim_for(
     }
     let (secrets, stored) = store_tools(store, bindings, &shim_id, tools).await;
     // A failure after a stored row ends the row and refuses its token
-    // before the launch is settled (DL-194 §2.3).
+    // before the launch is settled (DL-194 §2.3). The cleanup is durable
+    // (the fence or the row), or the start fails even when the settlement
+    // reattaches (DL-194).
+    let cleanup = async || revoke_stored(store, bindings, &shim_id, stored.as_ref()).await;
     let fail = async |error: String| -> std::result::Result<Attached, LaunchError> {
-        revoke_stored(store, bindings, stored.as_ref()).await;
-        settle(error).await
+        let durable = cleanup().await;
+        kill_unless_saved(durable, settle(error).await).await
     };
     let started = host
         .start_with(prepared, secrets.map(|(secrets, _)| secrets))
@@ -266,7 +271,7 @@ pub(crate) async fn launch_shim_for(
         Ok(true) => {}
         Ok(false) => return fail("the identity did not commit".to_owned()).await,
         Err(e) => {
-            revoke_stored(store, bindings, stored.as_ref()).await;
+            cleanup().await;
             return Err(e.into());
         }
     }
@@ -274,7 +279,7 @@ pub(crate) async fn launch_shim_for(
         Ok(Some(generation)) => generation,
         Ok(None) => return fail("the row ended".to_owned()).await,
         Err(e) => {
-            revoke_stored(store, bindings, stored.as_ref()).await;
+            cleanup().await;
             return Err(e.into());
         }
     };
@@ -284,7 +289,10 @@ pub(crate) async fn launch_shim_for(
                 .shim_picked_protocol(shim_id.clone(), attached.protocol)
                 .await
             {
-                revoke_stored(store, bindings, stored.as_ref()).await;
+                if !cleanup().await {
+                    // No durable cleanup: the shim must not keep the token.
+                    attached.process.kill().await;
+                }
                 return Err(e.into());
             }
             Ok(attached)

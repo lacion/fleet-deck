@@ -19,8 +19,8 @@ use fleetdeck_proto::command::{
 use fleetdeck_proto::event::{ProviderKind, RunOrigin};
 use fleetdeck_proto::{CommandId, Event, EventBody, InputId};
 use fleetdeck_providers::codex::{ClientInfo, CoreConfig, SessionSpec, capabilities};
-use fleetdeck_providers::host::ProcessSpec;
 use fleetdeck_providers::host::shim::host::{AckMode, ShimHost, ShimHostConfig};
+use fleetdeck_providers::host::{ProcessControl as _, ProcessSpec};
 use fleetdeck_station::coordinator::fence::Fence;
 use fleetdeck_station::coordinator::{Binding, BindingState, Bindings, ToolClass, mint};
 use fleetdeck_station::manager::binding_start::{finish, prepare};
@@ -357,4 +357,49 @@ async fn the_bindings_of_a_shim_that_ended_while_the_station_was_down_end_at_the
         })
         .collect();
     assert_eq!(ended, ["process_exit"]);
+}
+
+/// The replay boundary of a real shim (DL-194 §9.7): the buffer ends with a
+/// partial line, `status` reports the raw end, and the last complete line
+/// ends before it. The release logic compares the committed offset with the
+/// line boundary (unit-tested in `durable_release.rs` with fake values: a
+/// fake Codex app-server cannot write a partial line).
+#[tokio::test]
+async fn the_line_boundary_of_a_real_shim_stops_before_a_partial_line_at_the_buffer_end() {
+    let rig = Rig::new().await;
+    let spec = ProcessSpec {
+        program: PathBuf::from("/bin/sh"),
+        args: vec!["-c".into(), "printf 'line1\\nline2\\npar'; sleep 30".into()],
+        cwd: rig.tmp.path().join("w"),
+        env: ChildEnv::scrubbed([("PATH".into(), "/usr/bin:/bin".into())]),
+    };
+    let attached = launch_shim(
+        &rig.store,
+        &rig.host(),
+        &"s1".into(),
+        &spec,
+        AckMode::Manual,
+    )
+    .await
+    .unwrap();
+    let process = attached.process.clone();
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while process.delivered() < 15 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the output was not delivered"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(process.request_status().await);
+    while process.status_end().is_none() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no status frame arrived"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(process.status_end(), Some(15), "the raw end of the buffer");
+    assert_eq!(process.line_end(), 12, "after `line2\\n`, before `par`");
+    process.kill().await;
 }

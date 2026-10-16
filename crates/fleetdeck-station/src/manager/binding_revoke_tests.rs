@@ -146,6 +146,27 @@ impl Rig {
         self.manager.submit(envelope, caller).await.unwrap()
     }
 
+    /// The deck renews the grant `g-1` at `generation`.
+    async fn renew(&mut self, generation: u32) -> Decided {
+        self.next += 1;
+        let envelope = CommandEnvelope {
+            authority: None,
+            command_id: CommandId::from(format!("renew-{}", self.next)),
+            target_incarnation: None,
+            retry_until: i64::try_from(self.det.now_ms()).unwrap() + RETRY_WINDOW_MS,
+            origin: CommandOrigin::Board,
+            command: SessionCommand::CoordinatorRenew {
+                session_id: "s1".into(),
+                grant_id: "g-1".to_owned(),
+                generation,
+            },
+        };
+        self.manager
+            .submit(envelope, self.deck.clone())
+            .await
+            .unwrap()
+    }
+
     async fn row_state(&self) -> RowState {
         self.manager.store().shim_bindings_load().await.unwrap()[0].state
     }
@@ -338,4 +359,92 @@ async fn a_station_without_a_fence_takes_the_direct_path() {
         RowState::Active,
         "the row is untouched"
     );
+}
+
+const ENDED: &str = "the binding has ended";
+
+fn assert_ended(decided: &Decided) {
+    assert_eq!(decided.receipt.state, ReceiptState::Rejected);
+    let reject = decided.receipt.reject.clone().unwrap();
+    assert_eq!(reject.code, RejectCode::InvalidState);
+    assert_eq!(reject.message, ENDED);
+}
+
+#[tokio::test]
+async fn an_expired_grant_never_renews_and_a_later_revoke_keeps_it_refused() {
+    let mut rig = Rig::new().await;
+    // An absolute-expiry row at a station start (DL-194).
+    let (_, digest) = mint().unwrap();
+    let now = rig.manager.store().now_ms();
+    rig.manager
+        .store()
+        .shim_binding_insert(BindingRow::from_binding(
+            digest.clone(),
+            "shim1".to_owned(),
+            &binding(),
+            Some(now),
+            1,
+        ))
+        .await
+        .unwrap();
+    let bindings = rig.manager.coordinator_bindings().clone();
+    crate::manager::binding_start::prepare(
+        rig.manager.store(),
+        &bindings,
+        rig.tmp.path().join("run"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(rig.memory(&digest), BindingState::Revoked);
+    assert_eq!(rig.row_state().await, RowState::Ended);
+    assert_ended(&rig.renew(4).await);
+    assert_eq!(rig.memory(&digest), BindingState::Revoked);
+    let revoked = rig.revoke().await;
+    assert_eq!(revoked.receipt.state, ReceiptState::Accepted);
+    assert_eq!(rig.memory(&digest), BindingState::Revoked);
+    assert_ended(&rig.renew(4).await);
+    // Only the expiry event of the start; the renews and the revoke add none.
+    assert_eq!(rig.reasons().await, ["expired@3"]);
+}
+
+#[tokio::test]
+async fn a_renew_of_an_ended_row_is_rejected_whatever_memory_says() {
+    let mut rig = Rig::new().await;
+    let (digest, _) = rig.bind(RowState::Ended).await;
+    rig.manager
+        .coordinator_bindings()
+        .update_digest(&digest, |b| b.state = BindingState::Expired);
+    assert_ended(&rig.renew(4).await);
+    assert_eq!(rig.memory(&digest), BindingState::Expired);
+    assert_eq!(rig.row_state().await, RowState::Ended);
+}
+
+#[tokio::test]
+async fn a_renew_of_an_active_row_with_an_idle_expired_binding_renews() {
+    let mut rig = Rig::new().await;
+    let (digest, _) = rig.bind(RowState::Active).await;
+    rig.manager
+        .coordinator_bindings()
+        .update_digest(&digest, |b| b.state = BindingState::Expired);
+    let decided = rig.renew(4).await;
+    assert_eq!(decided.receipt.state, ReceiptState::Accepted);
+    let renewed = rig
+        .manager
+        .coordinator_bindings()
+        .get_digest(&digest)
+        .unwrap();
+    assert_eq!(renewed.state, BindingState::Active);
+    assert_eq!(renewed.generation, 4);
+}
+
+#[tokio::test]
+async fn a_revoke_of_an_ended_row_gates_memory() {
+    let mut rig = Rig::new().await;
+    let (digest, _) = rig.bind(RowState::Ended).await;
+    assert_eq!(rig.memory(&digest), BindingState::Active);
+    let decided = rig.revoke().await;
+    assert_eq!(decided.receipt.state, ReceiptState::Accepted);
+    assert_eq!(rig.memory(&digest), BindingState::Revoked);
+    assert_eq!(rig.row_state().await, RowState::Ended);
+    assert!(rig.reasons().await.is_empty());
 }

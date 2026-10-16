@@ -17,6 +17,8 @@ use fleetdeck_proto::command::{CoordinatorSpec, GrantScope, SessionSpec};
 use fleetdeck_proto::event::ProviderKind;
 use fleetdeck_proto::{Event, SessionId};
 use fleetdeck_providers::coordinator::CoordinatorLaunch;
+use fleetdeck_providers::host::ProcessControl as _;
+use fleetdeck_providers::host::shim::host::Attached;
 use fleetdeck_providers::host::shim::start::LaunchSecrets;
 
 use crate::coordinator::{Binding, BindingState, Bindings, Handoff, ToolClass};
@@ -251,23 +253,91 @@ pub(super) async fn store_tools(
 }
 
 /// Refuses the token of a stored row and ends the row, after a launch
-/// failed (DL-194 §2.3). A failed write is a warning: the row stays open
-/// and the next start loads it with its shim.
+/// failed (DL-194 §2.3). In order: the memory gate, a fence entry, the row
+/// end, and the removal of the entry when both writes worked. Returns
+/// `true` when the invalidation is durable (the fence entry or the row end
+/// was written) or when there is nothing to do; `false` when both writes
+/// failed, so a restart could load the still-open row (DL-194).
 pub(super) async fn revoke_stored(
     store: &Store,
     bindings: &Bindings,
+    shim_id: &str,
     stored: Option<&(String, ProviderKind)>,
-) {
+) -> bool {
     let Some((digest, _)) = stored else {
-        return;
+        return true;
     };
     bindings.update_digest(digest, |b| b.state = BindingState::Revoked);
-    if let Err(error) = store
+    let entry = (shim_id.to_owned(), digest.clone());
+    let fence = bindings.fence();
+    let fence_ok = match &fence {
+        Some(f) => match f.add(std::slice::from_ref(&entry), "launch") {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::warn!(%error, "the fence entry of a failed launch was not written");
+                false
+            }
+        },
+        None => false,
+    };
+    let row_ok = match store
         .shim_binding_set_state(digest.clone(), RowState::Ended)
         .await
     {
-        tracing::warn!(%error, "the binding row of a failed launch was not ended");
+        Ok(_) => true,
+        Err(error) => {
+            tracing::warn!(%error, "the binding row of a failed launch was not ended");
+            false
+        }
+    };
+    if let (true, true, Some(f)) = (fence_ok, row_ok, &fence)
+        && let Err(error) = f.remove(std::slice::from_ref(&entry))
+    {
+        tracing::warn!(%error, "the fence entry of a failed launch was not removed");
     }
+    if !fence_ok && !row_ok {
+        tracing::error!(
+            shim = shim_id,
+            "the invalidation of a failed launch is not durable"
+        );
+    }
+    fence_ok || row_ok
+}
+
+/// The settlement of a failed launch when the cleanup of the credential was
+/// not durable: a settlement that reattached must not continue with that
+/// credential, so `kill` stops the provider and the launch fails (DL-194).
+/// `durable` is the result of [`revoke_stored`].
+pub(super) async fn unless_unsaved<A, K, F>(
+    durable: bool,
+    settled: Result<A, super::shims::LaunchError>,
+    kill: K,
+) -> Result<A, super::shims::LaunchError>
+where
+    K: FnOnce(A) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    match settled {
+        Ok(attached) if !durable => {
+            kill(attached).await;
+            Err(super::shims::LaunchError::Settled {
+                error: "the session credentials could not be saved".to_owned(),
+                settled: super::shims::reason::EXECUTION_UNKNOWN,
+            })
+        }
+        other => other,
+    }
+}
+
+/// [`unless_unsaved`] for an attached shim: it kills the provider.
+pub(super) async fn kill_unless_saved(
+    durable: bool,
+    settled: Result<Attached, super::shims::LaunchError>,
+) -> Result<Attached, super::shims::LaunchError> {
+    unless_unsaved(durable, settled, |attached| async move {
+        attached.process.kill().await;
+    })
+    .await
 }
 
 /// Why a session has no session tools (DL-165). The text goes to the

@@ -498,6 +498,7 @@ async fn read_loop(mut r: Reader) {
 
 async fn sink_loop(mut s: Sink) {
     let mut line_end = s.delivered;
+    s.shared.status_end.note_line_end(line_end);
     while let Some(chunk) = s.chunks.recv().await {
         match chunk {
             Chunk::Bytes(start, bytes) => {
@@ -511,6 +512,8 @@ async fn sink_loop(mut s: Sink) {
                 if let Some(i) = bytes.iter().rposition(|b| *b == b'\n') {
                     line_end = start + i as u64 + 1;
                 }
+                // Before `delivered`, so a reader of `delivered` sees it (DL-194).
+                s.shared.status_end.note_line_end(line_end);
                 s.delivered = start + bytes.len() as u64;
                 s.shared.delivered.store(s.delivered, Ordering::SeqCst);
                 if s.mode == AckMode::OnDelivery
@@ -532,6 +535,7 @@ async fn sink_loop(mut s: Sink) {
             Chunk::Skip(to) => {
                 s.delivered = s.delivered.max(to);
                 line_end = line_end.max(to);
+                s.shared.status_end.note_line_end(line_end);
                 s.shared.delivered.store(s.delivered, Ordering::SeqCst);
             }
             Chunk::End { ack_exit } => {
@@ -605,6 +609,13 @@ impl ShimProcess {
     #[must_use]
     pub fn status_end(&self) -> Option<u64> {
         self.shared.status_end.get()
+    }
+
+    /// The offset after the last complete line of the delivered output
+    /// (DL-194 §9.7).
+    #[must_use]
+    pub fn line_end(&self) -> u64 {
+        self.shared.status_end.line_end()
     }
 
     /// Asks the shim for a `status` frame; its answer sets
