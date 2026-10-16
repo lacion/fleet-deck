@@ -11,6 +11,11 @@ export function gb(bytes: number): string {
   return `${(bytes / 1e9).toFixed(1)} GB`;
 }
 
+/** The memory of a session: whole decimal MB under 1 GB (`340 MB`), else `gb` (R13 §10). */
+export function memorySize(bytes: number): string {
+  return bytes < 1e9 ? `${Math.round(bytes / 1e6)} MB` : gb(bytes);
+}
+
 /** `free` is low under `limit`, or under `LOW_PERCENT` of `total`. A `total` of 0 is never low. */
 export function isLow(free: number, total: number, limit: number): boolean {
   return total > 0 && (free < limit || free * 100 < total * LOW_PERCENT);

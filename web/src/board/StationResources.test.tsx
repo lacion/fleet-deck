@@ -122,9 +122,10 @@ describe('station resources (DL-193)', () => {
       expect(out).toContain('>abcdefgh</a>');
     });
 
-    test('a row shows the CPU as a percent, the memory in GB and a dash for none', () => {
+    test('a row shows the CPU as a percent, the memory in GB or MB and a dash for none', () => {
       const out = render(busy);
       expect(out).toContain('<span>340%</span><span>1.2 GB</span>');
+      expect(out).toContain('<span>120%</span><span>500 MB</span>');
       expect(out).toContain('<span>—</span><span>—</span>');
     });
 

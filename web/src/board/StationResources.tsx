@@ -3,6 +3,7 @@ import type { DeckSession, StationResources as Resources } from '../gen';
 import {
   cpuBusy,
   gb,
+  memorySize,
   isLow,
   LOW_DISK_BYTES,
   LOW_MEMORY_BYTES,
@@ -65,7 +66,7 @@ function Busiest({
                 {name}
               </a>
               <span>{load.cpu_pct === null ? '—' : `${load.cpu_pct}%`}</span>
-              <span>{load.rss_bytes === null ? '—' : gb(load.rss_bytes)}</span>
+              <span>{load.rss_bytes === null ? '—' : memorySize(load.rss_bytes)}</span>
             </li>
           );
         })}
