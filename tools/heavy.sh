@@ -6,10 +6,12 @@
 #    commands run at a time, for every worktree and every agent; the others
 #    wait for a free slot (a flock on a slot file).
 # 2. A disk guard: a heavy command does not start while the filesystem of the
-#    current directory has less than FD_HEAVY_MIN_FREE_GB (default 60) free.
-# 3. Fewer disk writes: no incremental cache (CARGO_INCREMENTAL=0) and no
-#    debug info (CARGO_PROFILE_DEV_DEBUG=false, as in Cargo.toml; older
-#    worktrees lack that line), unless the environment sets them.
+#    current directory or of the build output (`target`, CARGO_TARGET_DIR) has
+#    less than FD_HEAVY_MIN_FREE_GB (default 60) free.
+# 3. Fewer disk writes: no incremental cache (CARGO_INCREMENTAL=0) and line
+#    tables only (CARGO_PROFILE_DEV_DEBUG), as in Cargo.toml, also for older
+#    worktrees without those lines, unless the environment sets them. The
+#    dependencies keep `debug = false` from Cargo.toml.
 # 4. CPU and memory, from this machine at every run:
 #      reserved cores  = max(4, 20 % of the cores)
 #      build jobs      = cores - reserved          (CARGO_BUILD_JOBS)
@@ -35,9 +37,12 @@ nested=${FD_HEAVY_ACTIVE:-0}
 
 # 2. The disk guard.
 min_free_gb=${FD_HEAVY_MIN_FREE_GB:-60}
-free_kib=$(df -Pk . | awk 'NR == 2 { print $4 }')
+# The current directory and the build output, which can be on another
+# filesystem (a `target` link or CARGO_TARGET_DIR): the smaller free space.
+free_kib=$(df -Pk . "${CARGO_TARGET_DIR:-target}" 2>/dev/null |
+    awk 'NR > 1 && (min == "" || $4 < min) { min = $4 } END { print min }')
 if [ -n "$free_kib" ] && [ "$free_kib" -lt $((min_free_gb * 1024 * 1024)) ]; then
-    echo "heavy.sh: only $((free_kib / 1024 / 1024)) GB free on this disk; a heavy command needs ${min_free_gb} GB." >&2
+    echo "heavy.sh: only $((free_kib / 1024 / 1024)) GB free for this build; a heavy command needs ${min_free_gb} GB." >&2
     echo "heavy.sh: remove the worktrees of merged branches (git worktree remove ../<name>) and try again." >&2
     exit 75
 fi
@@ -53,7 +58,7 @@ threads=$((cores / 4))
 CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-$jobs}
 NEXTEST_TEST_THREADS=${NEXTEST_TEST_THREADS:-$threads}
 CARGO_INCREMENTAL=${CARGO_INCREMENTAL:-0}
-CARGO_PROFILE_DEV_DEBUG=${CARGO_PROFILE_DEV_DEBUG:-false}
+CARGO_PROFILE_DEV_DEBUG=${CARGO_PROFILE_DEV_DEBUG:-line-tables-only}
 export CARGO_BUILD_JOBS NEXTEST_TEST_THREADS CARGO_INCREMENTAL CARGO_PROFILE_DEV_DEBUG
 
 # The command, inside the slice when there is one.

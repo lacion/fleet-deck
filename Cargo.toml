@@ -69,12 +69,19 @@ unsafe_code = "forbid"
 unwrap_used = "deny"
 expect_used = "warn"
 
-# No debug info in dev and test builds: nothing reads it (a panic keeps its
-# file and line), and it is most of the size of each target directory.
-# Set CARGO_PROFILE_DEV_DEBUG=line-tables-only for one run when a backtrace
-# needs line numbers.
+# Small dev and test builds: line tables only for our crates (a backtrace
+# keeps file:line), no debug info for the dependencies (most of the size of a
+# target directory), no incremental cache (short-lived worktrees rarely
+# rebuild enough for it to pay off, and it multiplies the target size).
 [profile.dev]
+debug = "line-tables-only"
+incremental = false
+[profile.dev.package."*"]
 debug = false
+# Full debug info for a debugger: `cargo build --profile debugging`.
+[profile.debugging]
+inherits = "dev"
+debug = true
 
 # Password hashing is slow without optimization; tests hash several times.
 [profile.dev.package.argon2]
