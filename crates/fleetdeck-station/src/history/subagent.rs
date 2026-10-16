@@ -344,7 +344,7 @@ impl Ring {
                 tool: raw.tool.as_ref().map(|t| HistoryTool {
                     name: parse::cut_chars(&t.name, 64),
                     summary: parse::cut_chars(&t.summary, 200),
-                    status: ToolResult::Unknown,
+                    status: t.status.unwrap_or(ToolResult::Unknown),
                 }),
             });
             if self.items.len() > MAX_ITEMS {

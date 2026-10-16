@@ -1,7 +1,7 @@
 // DL-189: the earlier history of an imported session, above the timeline (design §3.7).
 // Everything here is muted: no item is editable or answerable.
 import type { HistoryItem } from '../gen';
-import { Icon, Wrench } from '../ui/icons';
+import { Icon, SquareTerminal, Wrench } from '../ui/icons';
 import type { HistoryView } from './history';
 import { Markdown } from './Markdown';
 
@@ -9,13 +9,31 @@ import { Markdown } from './Markdown';
 export function HistoryItemView({ item }: { item: HistoryItem }) {
   const title = item.at > 0 ? new Date(item.at).toLocaleString() : undefined;
   if (item.kind === 'tool') {
-    return (
+    // A `!` command of the CLI and its output (B8).
+    const shell = item.tool?.name === 'Shell command';
+    if (item.tool?.name === 'Shell output') {
+      return item.text === '' ? null : (
+        <pre className="fd-chat-output" data-history="true" data-kind="shell-output" title={title}>
+          {item.text}
+        </pre>
+      );
+    }
+    const line = (
       <div className="fd-history-item" data-kind="tool" title={title}>
-        <Icon of={Wrench} size={14} />
+        <Icon of={shell ? SquareTerminal : Wrench} size={14} />
         <code>{item.tool?.name ?? ''}</code>
         {item.tool !== null && item.tool.summary !== '' ? <span>{item.tool.summary}</span> : null}
         {item.tool?.status === 'failed' ? <span className="fd-history-failed">failed</span> : null}
       </div>
+    );
+    if (!shell || item.text === '') return line;
+    return (
+      <>
+        {line}
+        <pre className="fd-chat-output" data-history="true" data-kind="shell-output">
+          {item.text}
+        </pre>
+      </>
     );
   }
   // The same shapes as the live chat: a bubble for you, plain Markdown for the agent.

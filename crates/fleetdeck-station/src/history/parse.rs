@@ -50,6 +50,8 @@ pub struct RawTool {
     pub name: String,
     pub summary: String,
     pub call_id: String,
+    /// A status known in the record itself, e.g. a Codex `!` command (B8).
+    pub status: Option<ToolResult>,
 }
 
 /// What one line holds.
@@ -243,7 +245,9 @@ fn claude(value: &Value, own_sidechain: bool) -> Parsed {
     let uuid = value.get("uuid").and_then(Value::as_str).map(str::to_owned);
     match content {
         Some(Value::String(text)) => {
-            if let Some(text) = claude_text(role, text) {
+            if role == HistoryKind::User && is_shell_text(text) {
+                record.items.extend(shell_item(text, &uuid));
+            } else if let Some(text) = claude_text(role, text) {
                 record.items.push(item(uuid, role, text, None));
             }
         }
@@ -258,9 +262,14 @@ fn claude_blocks(role: HistoryKind, blocks: &[Value], uuid: &Option<String>, out
     for block in blocks {
         match block.get("type").and_then(Value::as_str) {
             Some("text") => {
-                if let Some(text) = block.get("text").and_then(Value::as_str)
-                    && let Some(text) = claude_text(role, text)
-                {
+                let Some(text) = block.get("text").and_then(Value::as_str) else {
+                    continue;
+                };
+                if role == HistoryKind::User && is_shell_text(text) {
+                    // A `!` command keeps its place in the order (B8).
+                    flush_texts(role, &mut texts, uuid, out);
+                    out.items.extend(shell_item(text, uuid));
+                } else if let Some(text) = claude_text(role, text) {
                     texts.push(text);
                 }
             }
@@ -275,6 +284,7 @@ fn claude_blocks(role: HistoryKind, blocks: &[Value], uuid: &Option<String>, out
                     summary: claude_summary(&name, input),
                     name,
                     call_id: str_of(block, "id"),
+                    status: None,
                 };
                 out.items
                     .push(item(uuid.clone(), role, String::new(), Some(tool)));
@@ -356,6 +366,78 @@ fn only_wrappers(text: &str) -> bool {
     true
 }
 
+/// `&lt;`, `&gt;` and `&amp;` back to the characters (B8; in this order).
+fn unescape(text: &str) -> String {
+    text.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+}
+
+/// True when a Claude user text is a `!` command or its output (B8).
+fn is_shell_text(text: &str) -> bool {
+    let head = text.trim_start();
+    ["<bash-input>", "<bash-stdout>", "<bash-stderr>"]
+        .iter()
+        .any(|tag| head.starts_with(tag))
+}
+
+/// The text inside `<tag>…</tag>`; to the end when the close tag is missing;
+/// empty when the open tag is missing.
+fn tag_inner<'a>(text: &'a str, tag: &str) -> &'a str {
+    let open = format!("<{tag}>");
+    let Some(at) = text.find(&open) else {
+        return "";
+    };
+    let rest = &text[at + open.len()..];
+    match rest.find(&format!("</{tag}>")) {
+        Some(end) => &rest[..end],
+        None => rest,
+    }
+}
+
+/// The shell item of a Claude `!` command text; `None` for an output that is
+/// empty (B8).
+fn shell_item(text: &str, uuid: &Option<String>) -> Option<RawItem> {
+    if text.trim_start().starts_with("<bash-input>") {
+        let command = unescape(tag_inner(text, "bash-input")).trim().to_owned();
+        let tool = RawTool {
+            name: "Shell command".to_owned(),
+            summary: command,
+            call_id: String::new(),
+            status: None,
+        };
+        return Some(item(
+            uuid.clone(),
+            HistoryKind::Tool,
+            String::new(),
+            Some(tool),
+        ));
+    }
+    let stdout = unescape(tag_inner(text, "bash-stdout"))
+        .trim_end()
+        .to_owned();
+    let stderr = unescape(tag_inner(text, "bash-stderr"))
+        .trim_end()
+        .to_owned();
+    let output = if stderr.is_empty() {
+        stdout
+    } else if stdout.is_empty() {
+        format!("--- stderr ---\n{stderr}")
+    } else {
+        format!("{stdout}\n--- stderr ---\n{stderr}")
+    };
+    if output.is_empty() {
+        return None;
+    }
+    let tool = RawTool {
+        name: "Shell output".to_owned(),
+        summary: String::new(),
+        call_id: String::new(),
+        status: None,
+    };
+    Some(item(uuid.clone(), HistoryKind::Tool, output, Some(tool)))
+}
+
 fn claude_summary(name: &str, input: &Value) -> String {
     let key = match name {
         "Bash" => "command",
@@ -400,6 +482,7 @@ fn codex(value: &Value) -> Parsed {
                 name,
                 summary,
                 call_id: call_id.clone(),
+                status: None,
             };
             record.items.push(RawItem {
                 id: Some(call_id).filter(|c| !c.is_empty()),
@@ -438,6 +521,12 @@ fn codex_message(payload: &Value, role: HistoryKind, out: &mut Record) {
                     .and_then(Value::as_str)
                     .unwrap_or_default();
                 let head = text.trim_start();
+                if role == HistoryKind::User && head.starts_with("<user_shell_command>") {
+                    // A `!` command keeps its place in the order (B8).
+                    flush_codex_texts(payload, role, &mut texts, out);
+                    out.items.extend(codex_shell_item(head, payload));
+                    continue;
+                }
                 if text.trim().is_empty()
                     || (role == HistoryKind::User
                         && CODEX_INJECTED.iter().any(|p| head.starts_with(p)))
@@ -450,14 +539,68 @@ fn codex_message(payload: &Value, role: HistoryKind, out: &mut Record) {
             _ => out.partial = true,
         }
     }
-    if !texts.is_empty() {
-        out.items.push(RawItem {
-            id: payload.get("id").and_then(Value::as_str).map(str::to_owned),
-            kind: role,
-            text: texts.join("\n\n"),
-            tool: None,
-        });
+    flush_codex_texts(payload, role, &mut texts, out);
+}
+
+/// Pushes the collected Codex texts as one item (joined by a blank line).
+fn flush_codex_texts(
+    payload: &Value,
+    role: HistoryKind,
+    texts: &mut Vec<String>,
+    out: &mut Record,
+) {
+    if texts.is_empty() {
+        return;
     }
+    out.items.push(RawItem {
+        id: payload.get("id").and_then(Value::as_str).map(str::to_owned),
+        kind: role,
+        text: texts.join("\n\n"),
+        tool: None,
+    });
+    texts.clear();
+}
+
+/// The shell item of a Codex `<user_shell_command>` block; `None` without a
+/// `<command>` (B8).
+fn codex_shell_item(text: &str, payload: &Value) -> Option<RawItem> {
+    const COMMAND: &str = "<command>\n";
+    let from = text.find(COMMAND)? + COMMAND.len();
+    let len = text[from..].find("\n</command>")?;
+    let command = text[from..from + len].trim().to_owned();
+    let after = &text[from + len..];
+    let result = after.find("<result>").map_or("", |at| {
+        let inner = &after[at + "<result>".len()..];
+        inner.rfind("</result>").map_or(inner, |end| &inner[..end])
+    });
+    let exit = result
+        .lines()
+        .find_map(|line| line.strip_prefix("Exit code: "))
+        .and_then(|rest| rest.trim().parse::<i64>().ok());
+    let output = result
+        .split_once("Output:\n")
+        .map_or("", |(_, out)| out)
+        .trim_end()
+        .to_owned();
+    let status = exit.map(|code| {
+        if code == 0 {
+            ToolResult::Ok
+        } else {
+            ToolResult::Failed
+        }
+    });
+    let tool = RawTool {
+        name: "Shell command".to_owned(),
+        summary: command,
+        call_id: String::new(),
+        status,
+    };
+    Some(RawItem {
+        id: payload.get("id").and_then(Value::as_str).map(str::to_owned),
+        kind: HistoryKind::Tool,
+        text: output,
+        tool: Some(tool),
+    })
 }
 
 /// The summary of a Codex function call: the shell command, a path or a
@@ -501,6 +644,10 @@ fn codex_status(payload: &Value) -> ToolResult {
         None => ToolResult::Unknown,
     }
 }
+
+#[cfg(test)]
+#[path = "tests_shell.rs"]
+mod tests_shell;
 
 // ------------------------------------------------------------------ Cuts
 

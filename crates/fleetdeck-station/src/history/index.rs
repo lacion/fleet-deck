@@ -152,7 +152,11 @@ pub fn build(
                 at: last_at,
                 kind: item.kind,
                 sub,
-                status: ToolResult::Unknown,
+                status: item
+                    .tool
+                    .as_ref()
+                    .and_then(|t| t.status)
+                    .unwrap_or(ToolResult::Unknown),
             });
             if entries.len() > limits.index_items {
                 entries.pop_front();
@@ -336,7 +340,12 @@ pub fn page(
             id: parse::cut_bytes(&id, 128),
             at: entry.at,
             kind: entry.kind,
-            text: parse::cut_text(&raw.text, 8 * 1024),
+            // A member gets no tool text, as with the summary (B8).
+            text: if query.member && entry.kind == HistoryKind::Tool {
+                String::new()
+            } else {
+                parse::cut_text(&raw.text, 8 * 1024)
+            },
             tool: raw.tool.as_ref().map(|t| HistoryTool {
                 name: parse::cut_chars(&t.name, 64),
                 summary: if query.member {
