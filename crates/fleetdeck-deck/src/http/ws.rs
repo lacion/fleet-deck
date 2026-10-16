@@ -56,7 +56,11 @@ pub const MAX_TICKETS: usize = 256;
 /// How often an open socket checks its login.
 pub const RECHECK: Duration = Duration::from_secs(30);
 /// How often the socket of a display checks its login.
-pub const DISPLAY_RECHECK: Duration = Duration::from_secs(5);
+pub const DISPLAY_RECHECK: Duration = Duration::from_secs(2);
+/// The longest time that one send to a display socket may take.
+pub const DISPLAY_SEND: Duration = Duration::from_secs(2);
+/// The longest time that the close frame of a display socket may take.
+const DISPLAY_CLOSE: Duration = Duration::from_secs(1);
 /// The largest client message.
 pub const MAX_CLIENT_MESSAGE: usize = 16 * 1024;
 /// The close code for an ended login.
@@ -151,6 +155,9 @@ enum WsError {
     Store(#[from] DeckError),
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
+    /// A display did not take a message in time (R13 §5A): the socket ends.
+    #[error("a display socket send timed out")]
+    SendTimeout,
 }
 
 /// One timeline subscription.
@@ -235,8 +242,31 @@ impl Session {
 
     async fn send(&mut self, m: &BoardServerMessage) -> Result<(), WsError> {
         let text = serde_json::to_string(m)?;
-        self.socket.send(Message::Text(text.into())).await?;
+        if matches!(self.principal, Principal::Display(_)) {
+            // A display that does not read must not hold the socket (R13 §5A).
+            tokio::time::timeout(
+                self.board.ws_display_send,
+                self.socket.send(Message::Text(text.into())),
+            )
+            .await
+            .map_err(|_| WsError::SendTimeout)??;
+        } else {
+            self.socket.send(Message::Text(text.into())).await?;
+        }
         Ok(())
+    }
+
+    /// Sends a close frame and ignores a failure. A display gets 1 s.
+    async fn close(&mut self, code: u16, reason: &str) {
+        let frame = Message::Close(Some(CloseFrame {
+            code,
+            reason: reason.to_owned().into(),
+        }));
+        if matches!(self.principal, Principal::Display(_)) {
+            let _ = tokio::time::timeout(DISPLAY_CLOSE, self.socket.send(frame)).await;
+        } else {
+            let _ = self.socket.send(frame).await;
+        }
     }
 
     async fn run(mut self) -> Result<(), WsError> {
@@ -252,13 +282,7 @@ impl Session {
         let version = *board_rx.borrow_and_update();
         if !self.refresh_member().await? && matches!(self.principal, Principal::Display(_)) {
             // The display was revoked after its ticket was made.
-            let _ = self
-                .socket
-                .send(Message::Close(Some(CloseFrame {
-                    code: CLOSE_LOGIN_ENDED,
-                    reason: "login ended".into(),
-                })))
-                .await;
+            self.close(CLOSE_LOGIN_ENDED, "login ended").await;
             return Ok(());
         }
         let (stations, sessions) = view(&self.board.store, &self.principal).await?;
@@ -270,8 +294,8 @@ impl Session {
             sessions,
         })
         .await?;
-        // A display checks its login every 5 s: a revoke closes within 5 s
-        // (R13 §5).
+        // A display checks its login every 2 s and a send takes at most 2 s: a
+        // revoke ends the transport in about 4 s (R13 §5).
         let every = match self.principal {
             Principal::Display(_) => self.board.ws_recheck.min(DISPLAY_RECHECK),
             _ => self.board.ws_recheck,
@@ -289,6 +313,13 @@ impl Session {
                         return Ok(());
                     }
                     let version = *board_rx.borrow_and_update();
+                    // A display takes its new ceiling first (R13 §5).
+                    if matches!(self.principal, Principal::Display(_))
+                        && !self.refresh_member().await?
+                    {
+                        self.close(CLOSE_LOGIN_ENDED, "login ended").await;
+                        return Ok(());
+                    }
                     self.delta(version).await?;
                 }
                 live = live_rx.recv() => match live {
@@ -312,10 +343,7 @@ impl Session {
                 },
                 _ = recheck.tick() => {
                     if !store.principal_alive(&self.principal).await? || !self.refresh_member().await? {
-                        let _ = self.socket.send(Message::Close(Some(CloseFrame {
-                            code: CLOSE_LOGIN_ENDED,
-                            reason: "login ended".into(),
-                        }))).await;
+                        self.close(CLOSE_LOGIN_ENDED, "login ended").await;
                         return Ok(());
                     }
                 }
@@ -335,13 +363,7 @@ impl Session {
     /// the subscriptions of a station with a new incarnation.
     async fn delta(&mut self, version: u64) -> Result<(), WsError> {
         if !self.refresh_member().await? {
-            let _ = self
-                .socket
-                .send(Message::Close(Some(CloseFrame {
-                    code: CLOSE_LOGIN_ENDED,
-                    reason: "login ended".into(),
-                })))
-                .await;
+            self.close(CLOSE_LOGIN_ENDED, "login ended").await;
             return Err(WsError::Send(axum::Error::new("the member login ended")));
         }
         let (stations, sessions) = view(&self.board.store, &self.principal).await?;

@@ -41,7 +41,7 @@ fn secret_card(id: &str) -> fleetdeck_proto::SessionSummary {
         request_id: "r1".into(),
         node_id: Some("n1".into()),
         request_kind: RequestKind::Command,
-        title: format!("Run {}", "x".repeat(80)),
+        title: format!("Run {SECRET} {}", "x".repeat(80)),
         details: format!("rm -rf {SECRET}"),
         input: Some(json!({ "command": SECRET })),
         options: Vec::new(),
@@ -111,12 +111,8 @@ async fn a_display_gets_reduced_cards_and_only_the_stations_of_its_ceiling() {
         "command"
     );
     assert_eq!(
-        cards[0]["summary"]["open_requests"][0]["title"]
-            .as_str()
-            .unwrap()
-            .chars()
-            .count(),
-        40
+        cards[0]["summary"]["open_requests"][0]["title"],
+        "Approve a command"
     );
     assert_eq!(
         cards[0]["summary"]["open_requests"][0]["requested_at"],
@@ -397,4 +393,193 @@ async fn a_display_session_ends_90_days_after_it_started_and_30_days_without_use
     f.det
         .advance(Duration::from_millis(DISPLAY_IDLE_MS as u64 + 1));
     assert!(c.store.display_session(&value).await.unwrap().is_none());
+}
+
+const TOKEN: &str = "sentinel-7f3a";
+
+/// A card with one open request whose title, details and input hold `TOKEN`.
+fn deploy_card() -> fleetdeck_proto::SessionSummary {
+    let mut s = card("s1");
+    s.open_requests = vec![OpenRequest {
+        request_id: "r1".into(),
+        node_id: None,
+        request_kind: RequestKind::Command,
+        title: format!("TOKEN={TOKEN} ./deploy"),
+        details: format!("TOKEN={TOKEN} ./deploy"),
+        input: Some(json!({ "command": format!("TOKEN={TOKEN} ./deploy") })),
+        options: Vec::new(),
+        response: fleetdeck_proto::event::ResponseChannel::RpcReply,
+        requested_at: 1,
+    }];
+    s
+}
+
+#[tokio::test]
+async fn a_request_title_on_a_display_is_a_fixed_label_in_every_projection() {
+    let (f, c, _h, st) = setup_deck().await;
+    f.store
+        .apply_snapshot(f.station.clone(), f.inc.clone(), 0, vec![card("s1")])
+        .await
+        .unwrap();
+    let (_, cookie) = display_login(&c, "Wall", &[&st]).await;
+    let t = c
+        .post("/api/ws/ticket", &[("Cookie", &cookie)], json!({}))
+        .await;
+    let ticket = t.body["ticket"].as_str().unwrap().to_owned();
+    let mut ws = c
+        .ws(&format!("/api/ws?ticket={ticket}"), &[])
+        .await
+        .expect("the display socket opens");
+    assert_eq!(ws.next().await.unwrap()["type"], "hello");
+    let snap = ws.next().await.unwrap();
+    assert_eq!(snap["type"], "snapshot");
+
+    // The request arrives in a delta.
+    f.store
+        .apply_snapshot(f.station.clone(), f.inc.clone(), 1, vec![deploy_card()])
+        .await
+        .unwrap();
+    let delta = ws.next_of("delta").await;
+    assert!(!delta.to_string().contains(TOKEN), "{delta}");
+    assert_eq!(
+        delta["sessions"][0]["summary"]["open_requests"][0]["title"],
+        "Approve a command"
+    );
+
+    // A new socket gets it in the snapshot, the list route in the answer.
+    let t = c
+        .post("/api/ws/ticket", &[("Cookie", &cookie)], json!({}))
+        .await;
+    let ticket = t.body["ticket"].as_str().unwrap().to_owned();
+    let mut ws2 = c
+        .ws(&format!("/api/ws?ticket={ticket}"), &[])
+        .await
+        .unwrap();
+    ws2.next_of("hello").await;
+    let snap = ws2.next_of("snapshot").await;
+    assert!(!snap.to_string().contains(TOKEN), "{snap}");
+    assert_eq!(
+        snap["sessions"][0]["summary"]["open_requests"][0]["title"],
+        "Approve a command"
+    );
+    let r = get_with(&c, "/api/sessions", &cookie).await;
+    assert!(!r.text.contains(TOKEN), "{}", r.text);
+    assert_eq!(
+        r.body[0]["summary"]["open_requests"][0]["title"],
+        "Approve a command"
+    );
+}
+
+#[tokio::test]
+async fn a_ceiling_change_reaches_an_idle_display_socket_at_once() {
+    let (f, c, h, st) = setup_deck().await;
+    f.store
+        .apply_snapshot(f.station.clone(), f.inc.clone(), 0, vec![card("s1")])
+        .await
+        .unwrap();
+    let other = second_station(&c).await;
+    let (display_id, cookie) = display_login(&c, "Wall", &[st.as_str(), other.as_str()]).await;
+    let t = c
+        .post("/api/ws/ticket", &[("Cookie", &cookie)], json!({}))
+        .await;
+    let ticket = t.body["ticket"].as_str().unwrap().to_owned();
+    let mut ws = c
+        .ws(&format!("/api/ws?ticket={ticket}"), &[])
+        .await
+        .unwrap();
+    ws.next_of("hello").await;
+    let snap = ws.next_of("snapshot").await;
+    assert_eq!(snap["sessions"].as_array().unwrap().len(), 2, "{snap}");
+    let path = format!("/api/displays/{display_id}/settings");
+
+    // Narrowing: a delta removes the cards of the other station.
+    let r = post(&c, &h, &path, json!({ "ceiling": [st] })).await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    let delta = tokio::time::timeout(Duration::from_secs(2), ws.next_of("delta"))
+        .await
+        .expect("a delta within 2 s");
+    let removed = delta["removed"].as_array().unwrap();
+    assert_eq!(removed.len(), 1, "{delta}");
+    assert_eq!(removed[0]["station_id"], other.as_str());
+    assert_eq!(delta["stations"].as_array().unwrap().len(), 1, "{delta}");
+
+    // Widening: a delta adds them again.
+    let e = elevate(&c, &h).await;
+    let r = post(
+        &c,
+        &h,
+        &path,
+        json!({ "ceiling": [st, other.as_str()], "elevation": e }),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    let delta = tokio::time::timeout(Duration::from_secs(2), ws.next_of("delta"))
+        .await
+        .expect("a delta within 2 s");
+    let added = delta["sessions"].as_array().unwrap();
+    assert_eq!(added.len(), 1, "{delta}");
+    assert_eq!(added[0]["station_id"], other.as_str());
+}
+
+#[tokio::test]
+async fn a_display_that_never_reads_is_cut_off_after_a_revoke() {
+    use tokio_tungstenite::tungstenite::Message;
+    let (f, c, h, st) = setup_deck().await;
+    f.store
+        .apply_snapshot(f.station.clone(), f.inc.clone(), 0, vec![card("s1")])
+        .await
+        .unwrap();
+    let (display_id, cookie) = display_login(&c, "Wall", &[&st]).await;
+    let t = c
+        .post("/api/ws/ticket", &[("Cookie", &cookie)], json!({}))
+        .await;
+    let ticket = t.body["ticket"].as_str().unwrap().to_owned();
+    let mut ws = c
+        .ws(&format!("/api/ws?ticket={ticket}"), &[])
+        .await
+        .unwrap();
+    ws.next_of("hello").await;
+    ws.next_of("snapshot").await;
+
+    // From here the client reads nothing. Big cards fill the buffers of the
+    // transport, so that a send of the server cannot finish.
+    let big = "x".repeat(8 * 1024 * 1024);
+    for round in 1..=4 {
+        let mut s = card("s1");
+        s.title = Some(format!("{round}{big}"));
+        f.store
+            .apply_snapshot(f.station.clone(), f.inc.clone(), round, vec![s])
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let r = post(
+        &c,
+        &h,
+        &format!("/api/displays/{display_id}/revoke"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status, 204, "{}", r.body);
+
+    // A server that still holds the socket takes the small messages of the
+    // client (its own buffer has room); a server that dropped it does not.
+    let started = std::time::Instant::now();
+    let ping = json!({ "type": "unsubscribe", "station_id": st, "session_id": "s1" });
+    let mut ended = false;
+    {
+        use futures_util::SinkExt;
+        while started.elapsed() < Duration::from_secs(5) {
+            let sent = ws.0.send(Message::Text(ping.to_string().into())).await;
+            if sent.is_err() {
+                ended = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+    assert!(
+        ended,
+        "the server still held the socket 5 s after the revoke"
+    );
 }

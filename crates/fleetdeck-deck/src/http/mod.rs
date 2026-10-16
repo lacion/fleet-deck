@@ -102,6 +102,9 @@ pub struct Board {
     pub tickets: ws::Tickets,
     /// How often an open WebSocket checks its login ([`ws::RECHECK`]).
     pub ws_recheck: std::time::Duration,
+    /// The longest time that one send to a display socket may take
+    /// ([`ws::DISPLAY_SEND`]); a slower send ends the socket (R13 §5A).
+    pub ws_display_send: std::time::Duration,
     /// The link node for the pairing methods (`None`: they answer 503).
     pub pairing: Option<Arc<crate::link::DeckNode>>,
     /// The board web client (P4-4).

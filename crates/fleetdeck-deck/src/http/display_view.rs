@@ -5,10 +5,8 @@
 
 use fleetdeck_proto::StationId;
 use fleetdeck_proto::board::{DeckSession, StationView};
+use fleetdeck_proto::event::RequestKind;
 use fleetdeck_proto::session::{OpenRequest, RepoInfo, SessionSummary};
-
-/// The longest open-request title that a display gets, in characters.
-pub const REQUEST_TITLE_CHARS: usize = 40;
 
 /// The last component of a path on a station (any separator).
 fn last_component(root: &str) -> String {
@@ -19,12 +17,24 @@ fn last_component(root: &str) -> String {
         .to_owned()
 }
 
+/// The title of an open request on a display: a fixed label of its kind. The
+/// provider's own title holds the command, the file change reason or the
+/// question text, and a display never gets that (R13 §5B).
+fn request_label(kind: RequestKind) -> &'static str {
+    match kind {
+        RequestKind::Command => "Approve a command",
+        RequestKind::FileChange => "Approve a file change",
+        RequestKind::Tool => "Approve a tool use",
+        RequestKind::Question => "Answer a question",
+    }
+}
+
 fn display_request(r: &OpenRequest) -> OpenRequest {
     OpenRequest {
         request_id: r.request_id.clone(),
         node_id: None,
         request_kind: r.request_kind,
-        title: r.title.chars().take(REQUEST_TITLE_CHARS).collect(),
+        title: request_label(r.request_kind).to_owned(),
         details: String::new(),
         input: None,
         options: Vec::new(),
@@ -103,6 +113,19 @@ pub fn display_stations(views: &[StationView], ceiling: &[StationId]) -> Vec<Sta
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_request_title_is_a_fixed_label_of_its_kind() {
+        let kinds = [
+            (RequestKind::Command, "Approve a command"),
+            (RequestKind::FileChange, "Approve a file change"),
+            (RequestKind::Tool, "Approve a tool use"),
+            (RequestKind::Question, "Answer a question"),
+        ];
+        for (kind, label) in kinds {
+            assert_eq!(request_label(kind), label);
+        }
+    }
 
     #[test]
     fn a_repo_root_shows_its_last_component_only() {

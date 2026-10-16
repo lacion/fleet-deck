@@ -391,7 +391,7 @@ impl DeckStore {
         if let Some(Some(q)) = &change.quiet_hours {
             check_quiet_hours(q)?;
         }
-        call(&self.inner.db, move |conn| {
+        let record = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let Some(old) = load(&tx, &display_id)? else {
                 return Ok(None);
@@ -418,7 +418,12 @@ impl DeckStore {
             tx.commit()?;
             Ok(record)
         })
-        .await
+        .await?;
+        // The sockets of the wall take the new ceiling at once (R13 §5).
+        if record.is_some() {
+            self.board_changed();
+        }
+        Ok(record)
     }
 
     /// Revokes a display: its sessions, links and approved pairings go, and
