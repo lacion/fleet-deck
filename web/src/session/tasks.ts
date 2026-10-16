@@ -24,7 +24,7 @@ export function taskStates(events: readonly EventEnvelope[]): Map<string, TaskSt
     const state = (event as { state?: unknown }).state;
     if (
       event.kind === 'session.ended' ||
-      ((event.kind === 'session.state' || event.kind === 'session.state_changed') &&
+      ((event.kind === 'session.state' || (event.kind as string) === 'session.state_changed') &&
         (state === 'lost' || state === 'exited'))
     ) {
       for (const [id, task] of tasks)
