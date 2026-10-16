@@ -40,19 +40,26 @@ impl ProcStat {
     }
 }
 
-/// The fields of one stat line. The command name in field 2 can hold
-/// spaces and `)`, so the fields after the last `)` count. `None` for a
-/// malformed line.
+/// The fields of one stat line, as bytes. The command name in field 2 can
+/// hold spaces, `)` and bytes that are not UTF-8, so only the fields after
+/// the last `)` count, and they are numbers. `None` for a malformed line.
 #[must_use]
-pub fn parse_stat(pid: u32, stat: &str) -> Option<ProcStat> {
-    let rest = &stat[stat.rfind(')')? + 1..];
-    let mut fields = rest.split_whitespace();
-    let state = fields.next()?.chars().next()?;
-    let ppid = fields.next()?.parse().ok()?;
-    let pgrp = fields.next()?.parse().ok()?;
-    let session = fields.next()?.parse().ok()?;
+pub fn parse_stat(pid: u32, stat: &[u8]) -> Option<ProcStat> {
+    let rest = &stat[stat.iter().rposition(|&b| b == b')')? + 1..];
+    let fields = || {
+        rest.split(|b| b.is_ascii_whitespace())
+            .filter(|f| !f.is_empty())
+    };
+    fn number<T: std::str::FromStr>(field: &[u8]) -> Option<T> {
+        std::str::from_utf8(field).ok()?.parse().ok()
+    }
+    let mut it = fields();
+    let state = char::from(*it.next()?.first()?);
+    let ppid = number(it.next()?)?;
+    let pgrp = number(it.next()?)?;
+    let session = number(it.next()?)?;
     // After `)`: field 3 (state) is the first; field 22 is the 20th.
-    let start_time = rest.split_whitespace().nth(19)?.parse().ok()?;
+    let start_time = number::<u64>(fields().nth(19)?)?;
     Some(ProcStat {
         pid,
         state,
@@ -103,7 +110,7 @@ fn scan_with(root: &Path, after_listing: &mut dyn FnMut()) -> Result<Scan, Strin
     let mut out = Scan::default();
     for pid in pids {
         let path = root.join(pid.to_string()).join("stat");
-        let text = match std::fs::read_to_string(&path) {
+        let text = match std::fs::read(&path) {
             Ok(text) => text,
             Err(e) if gone(&e) => {
                 out.vanished += 1;
@@ -120,13 +127,13 @@ fn scan_with(root: &Path, after_listing: &mut dyn FnMut()) -> Result<Scan, Strin
 
 /// The most passes of one census. A busy machine starts and ends processes
 /// all the time; a pass takes milliseconds, so many short tries find a
-/// clean one.
-const PASSES: u32 = 200;
+/// clean one. The budget ends a census before this count does.
+const PASSES: u32 = 5_000;
 /// The longest census at a provider exit: the exit report waits for it, and
 /// an incomplete census only leaves the exit unverified (fail closed).
-const EXIT_BUDGET: Duration = Duration::from_secs(1);
+const EXIT_BUDGET: Duration = Duration::from_secs(5);
 /// The longest census of the owner's check, which runs on demand.
-const CHECK_BUDGET: Duration = Duration::from_secs(3);
+const CHECK_BUDGET: Duration = Duration::from_secs(10);
 /// The pause between two passes.
 const PASS_PAUSE: Duration = Duration::from_millis(10);
 /// The reason of a census that never saw a clean pass.
@@ -402,7 +409,7 @@ pub fn identity_alive_in(root: &Path, identity: &ProviderIdentity) -> Option<boo
         return None;
     }
     let path = root.join(identity.pid.to_string()).join("stat");
-    match std::fs::read_to_string(&path) {
+    match std::fs::read(&path) {
         Ok(text) => {
             let stat = parse_stat(identity.pid, &text)?;
             Some(stat.start_time == identity.start_time && !stat.is_zombie())
@@ -434,9 +441,28 @@ mod tests {
 
     #[test]
     fn the_stat_parser_reads_a_name_with_spaces_and_a_bracket() {
-        let s = parse_stat(7, &stat_line(7, 'S', 3, 5, 6, 99)).unwrap();
+        let s = parse_stat(7, stat_line(7, 'S', 3, 5, 6, 99).as_bytes()).unwrap();
         assert_eq!((s.ppid, s.pgrp, s.session, s.start_time), (3, 5, 6, 99));
-        assert!(parse_stat(7, "7 (x) S 1").is_none());
+        assert!(parse_stat(7, b"7 (x) S 1").is_none());
+    }
+
+    #[test]
+    fn the_stat_parser_reads_a_name_that_is_not_utf_8() {
+        // A name cut inside a multibyte character, and a stray byte.
+        let mut line = b"7 (\xe2\x82 \xff)) ".to_vec();
+        line.extend_from_slice(
+            stat_line(7, 'S', 3, 5, 6, 99)
+                .rsplit_once(") ")
+                .unwrap()
+                .1
+                .as_bytes(),
+        );
+        assert!(std::str::from_utf8(&line).is_err());
+        let s = parse_stat(7, &line).unwrap();
+        assert_eq!(
+            (s.state, s.ppid, s.pgrp, s.session, s.start_time),
+            ('S', 3, 5, 6, 99)
+        );
     }
 
     #[cfg(target_os = "linux")]

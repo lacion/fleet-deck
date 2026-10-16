@@ -523,6 +523,10 @@ async fn a_restart_lists_a_running_direct_session_and_stops_it_only_when_told() 
     let deck = rig.connect().await;
     rig.start_session("c1").await.unwrap();
     rig.wait_live(1).await;
+    assert!(
+        rig.manager.settle_starts(T).await,
+        "the start of c1 is still in flight"
+    );
 
     let answer: RestartAnswer = serde_json::from_value(ok(call(
         &deck.control,
@@ -562,6 +566,10 @@ async fn a_refused_restart_unfreezes_and_an_accepted_one_refuses_new_sessions() 
     let deck = rig.connect().await;
     rig.start_session("c1").await.unwrap();
     rig.wait_live(1).await;
+    assert!(
+        rig.manager.settle_starts(T).await,
+        "the start of c1 is still in flight"
+    );
     let ask = |stop: bool| {
         call(
             &deck.control,
@@ -574,6 +582,10 @@ async fn a_refused_restart_unfreezes_and_an_accepted_one_refuses_new_sessions() 
     assert!(!answer.restarting);
     assert!(!rig.manager.restart_state().restarting());
     rig.start_session("c2").await.unwrap();
+    assert!(
+        rig.manager.settle_starts(T).await,
+        "the start of c2 is still in flight"
+    );
     // A start in flight for longer than the wait: `unavailable`, unfrozen.
     let held = rig.manager.restart_state().enter_submit();
     let e = err(ask(true).await);
