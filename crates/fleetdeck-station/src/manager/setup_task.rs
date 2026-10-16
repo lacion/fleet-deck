@@ -339,9 +339,21 @@ impl SessionTarget {
             None => {
                 #[cfg(test)]
                 self.hooks.start.hold().await;
-                let dispatch = self
-                    .start(&effect, &spec, prompt.as_ref(), None, Some(&stop_flag))
-                    .await;
+                // A new workspace takes its identity after the provisioning;
+                // a setup-command start reopens the one of the dispatch (B9).
+                let dispatch = match self.take_launch(&effect, &spec).await {
+                    Ok(launch) => {
+                        self.start(
+                            &effect,
+                            &launch.spec,
+                            prompt.as_ref(),
+                            None,
+                            Some(&stop_flag),
+                        )
+                        .await
+                    }
+                    Err(refused) => refused,
+                };
                 if matches!(dispatch, Dispatch::Confirmed | Dispatch::Deferred) {
                     self.record_base(&session_id, base).await;
                 }

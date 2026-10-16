@@ -102,3 +102,69 @@ fn an_import_carries_a_native_id_that_can_never_read_as_a_flag() {
         assert!(check_native_session_id(bad).is_err(), "{bad}");
     }
 }
+
+fn launched_spec() -> SessionSpec {
+    SessionSpec {
+        provider_instance: "claude".into(),
+        cwd: "/w".into(),
+        mode: None,
+        model: None,
+        title: None,
+        coordinator: None,
+        launch: Some(Box::new(crate::launch::LaunchIdentity {
+            root: "/".into(),
+            rel: String::new(),
+            dev: 1,
+            ino: 2,
+        })),
+    }
+}
+
+#[test]
+fn a_command_never_keeps_a_launch_identity() {
+    let mut start = SessionCommand::Start {
+        spec: launched_spec(),
+        prompt: None,
+        workspace: None,
+        setup_cmd: None,
+        batch: None,
+        issue: None,
+        origin_text: false,
+    };
+    start.clear_station_local();
+    let mut import = SessionCommand::Import {
+        spec: launched_spec(),
+        native_session_id: "thr_01".into(),
+        prompt: None,
+        transcript: None,
+    };
+    import.clear_station_local();
+    for cmd in [&start, &import] {
+        match cmd {
+            SessionCommand::Start { spec, .. } | SessionCommand::Import { spec, .. } => {
+                assert!(spec.launch.is_none());
+            }
+            _ => unreachable!(),
+        }
+    }
+    // A JSON command from the deck deserializes the field, then loses it.
+    let mut wire: SessionCommand = serde_json::from_value(json!({
+        "op": "start",
+        "spec": {
+            "provider_instance": "claude", "cwd": "/w", "mode": null, "model": null,
+            "title": null,
+            "launch": {"root": "/", "rel": "", "dev": 1, "ino": 2},
+        },
+        "prompt": null,
+    }))
+    .unwrap();
+    match &wire {
+        SessionCommand::Start { spec, .. } => assert!(spec.launch.is_some()),
+        _ => unreachable!(),
+    }
+    wire.clear_station_local();
+    match &wire {
+        SessionCommand::Start { spec, .. } => assert!(spec.launch.is_none()),
+        _ => unreachable!(),
+    }
+}

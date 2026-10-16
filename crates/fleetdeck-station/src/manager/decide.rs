@@ -55,8 +55,9 @@ pub fn decide(
     bindings: &Bindings,
     origin: CommandOrigin,
     restarting: bool,
-    command: SessionCommand,
+    mut command: SessionCommand,
 ) -> Result<CommandResult, DecideError> {
+    command.clear_station_local();
     let origin_run = run_origin(origin);
     super::fleet_control::check(d, policy, bindings, &command)?;
     match command {
