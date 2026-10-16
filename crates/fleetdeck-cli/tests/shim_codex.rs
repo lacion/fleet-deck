@@ -25,6 +25,7 @@ use fleetdeck_providers::codex::{ClientInfo, CoreConfig, SessionSpec, capabiliti
 use fleetdeck_providers::host::ProcessSpec;
 use fleetdeck_providers::host::shim::host::{AckMode, Attached, ShimHost, ShimHostConfig};
 use fleetdeck_station::manager::shim_codex::DurableCodex;
+use fleetdeck_station::manager::shim_codex_poll::spawn_background_poll;
 use fleetdeck_station::manager::shims::{Recovered, launch_shim, recover_shims};
 use fleetdeck_station::store::shell_runs::ShellState;
 use fleetdeck_station::store::{
@@ -626,4 +627,70 @@ async fn a_shell_command_of_a_shim_hosted_codex_session_settles_done() {
     );
     let effect = rig.store.effect(effect.effect_id).await.unwrap().unwrap();
     assert_eq!(effect.state, EffectState::Confirmed);
+}
+
+const LIST: &str = "thread/backgroundTerminals/list";
+
+fn background_tasks(e: &Event) -> Option<usize> {
+    match e {
+        Event::BackgroundUpdated { tasks } => Some(tasks.len()),
+        _ => None,
+    }
+}
+
+/// DL-024, DL-199: the shim host polls the background terminals, so a
+/// background command leaves the session when it ends.
+#[tokio::test]
+async fn a_background_command_of_a_shim_hosted_codex_session_is_polled_until_it_ends() {
+    let rig = Rig::new().await;
+    let driver = rig.open().await;
+    spawn_background_poll(&driver, Duration::from_millis(200));
+    let prompt = rig
+        .claimed(EffectPayload::Prompt {
+            input: input("in-1", "bg make build"),
+            authority: None,
+        })
+        .await;
+    assert_eq!(driver.apply(&prompt).await, Dispatch::Sent);
+    // One update with one task, then a later update with no task.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let counts: Vec<usize> = rig
+            .events()
+            .await
+            .iter()
+            .filter_map(background_tasks)
+            .collect();
+        if let Some(first) = counts.iter().position(|n| *n == 1)
+            && counts[first..].contains(&0)
+        {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no end of the background command: {counts:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(rig.method_count(LIST) >= 2, "{:?}", rig.frames());
+}
+
+/// DL-024, DL-199: a restored driver lists the background work at once.
+#[tokio::test]
+async fn a_restored_shim_hosted_codex_session_lists_its_background_work_at_once() {
+    let rig = Rig::new().await;
+    let driver = rig.open().await;
+    // A tick far away: only the list at the start of the poll runs.
+    spawn_background_poll(&driver, Duration::from_secs(3600));
+    rig.wait_frames("the first list", |f| f.iter().any(|f| f["method"] == LIST))
+        .await;
+    let before = rig.method_count(LIST);
+    let driver = rig.crash_and_restore(driver).await;
+    spawn_background_poll(&driver, Duration::from_secs(3600));
+    rig.wait_frames("the list after the restore", |f| {
+        f.iter().filter(|f| f["method"] == LIST).count() == before + 1
+    })
+    .await;
+    assert_eq!(rig.method_count("initialize"), 1);
+    assert_eq!(rig.method_count("thread/start"), 1);
 }

@@ -40,6 +40,7 @@ use super::super::binding_rotate::rotate_out;
 use super::super::coordinator_start::BridgeStart;
 use super::super::shim_claude::DurableClaude;
 use super::super::shim_codex::DurableCodex;
+use super::super::shim_codex_poll::{BACKGROUND_POLL, spawn_background_poll};
 use super::super::shim_station::{Durable, Restored};
 use super::super::shims::{self, LaunchError, launch_shim_for, reason};
 use super::super::turns::SessionTurns;
@@ -442,7 +443,12 @@ impl SessionTarget {
             DurableConfig::Codex { config, thread } => {
                 DurableCodex::open(&self.store, attached, config, &thread)
                     .await
-                    .map(Durable::Codex)
+                    .map(|d| {
+                        // The shim host polls the background work too
+                        // (DL-024, DL-199).
+                        spawn_background_poll(&d, BACKGROUND_POLL);
+                        Durable::Codex(d)
+                    })
             }
         };
         let driver = match driver {

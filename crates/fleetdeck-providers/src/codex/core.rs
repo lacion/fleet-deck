@@ -92,6 +92,11 @@ pub struct CodexCore {
     /// checkpoint has none.
     #[serde(default)]
     pub(super) pending_shell: Option<PendingShell>,
+    /// Turns that ended in this process life; not in the checkpoint, so it
+    /// is 0 after a restore. The shim-host poll lists the background work
+    /// when it changes (DL-024, DL-199).
+    #[serde(skip)]
+    turns_ended: u64,
 }
 
 impl CodexCore {
@@ -133,6 +138,7 @@ impl CodexCore {
             requests: requests::Requests::default(),
             unknown_frames: 0,
             pending_shell: None,
+            turns_ended: 0,
         }
     }
 
@@ -197,6 +203,12 @@ impl CodexCore {
     #[must_use]
     pub fn has_ended(&self) -> bool {
         self.ended
+    }
+
+    /// Turns that ended since this core was created or restored.
+    #[must_use]
+    pub fn turns_ended(&self) -> u64 {
+        self.turns_ended
     }
 
     /// The parent tool node of a sub-agent thread, once a
@@ -688,6 +700,7 @@ impl CodexCore {
         usage: Option<fleetdeck_proto::event::Usage>,
     ) -> Vec<Output> {
         let mut out = Vec::new();
+        self.turns_ended += 1;
         if let Some(turn_id) = self.turn.take() {
             out.push(Output::Emit(Event::TurnCompleted {
                 turn_id,

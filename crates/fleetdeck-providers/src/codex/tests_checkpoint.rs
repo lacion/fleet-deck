@@ -177,3 +177,19 @@ fn a_restored_core_has_the_same_checkpoint_and_keeps_a_held_interrupt() {
     assert_eq!(core.interrupt_pending, Some(None));
     assert_eq!(core.thread().unwrap(), T);
 }
+
+#[test]
+fn turns_ended_counts_the_ended_turns_and_starts_at_zero_after_a_restore() {
+    let mut core = ready_core();
+    assert_eq!(core.turns_ended(), 0);
+    start_turn(&mut core, "in-1", "t1");
+    assert_eq!(core.turns_ended(), 0, "a running turn is not ended");
+    complete(&mut core, "t1", "completed");
+    assert_eq!(core.turns_ended(), 1);
+    start_turn(&mut core, "in-2", "t2");
+    complete(&mut core, "t2", "completed");
+    assert_eq!(core.turns_ended(), 2);
+    // The counter is not in the checkpoint (DL-024, DL-199).
+    let core = crash_and_restore(core);
+    assert_eq!(core.turns_ended(), 0);
+}
