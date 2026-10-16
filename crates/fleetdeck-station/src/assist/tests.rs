@@ -349,6 +349,7 @@ async fn session_with_run(store: &Store, id: &str) -> SessionId {
                     origin: RunOrigin::Board,
                     author: None,
                     input_id: None,
+                    input_text: None,
                 }
                 .into(),
                 Event::MessageCompleted {

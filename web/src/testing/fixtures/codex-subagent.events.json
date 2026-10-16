@@ -68,7 +68,8 @@
       "run_id": "run-1",
       "input_summary": "Spawn exactly one sub-agent with your agent tools. Give it this task: \"Do not use tools. Reply with exactly: sub-ok\". W…",
       "origin": "board",
-      "input_id": "fd-in-1"
+      "input_id": "fd-in-1",
+      "input_text": "Spawn exactly one sub-agent with your agent tools. Give it this task: \"Do not use tools. Reply with exactly: sub-ok\". Wait for it to finish, then reply with its answer only."
     }
   },
   {

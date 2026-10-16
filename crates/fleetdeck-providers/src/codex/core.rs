@@ -6,7 +6,7 @@ use fleetdeck_proto::command::UserInput;
 use fleetdeck_proto::event::{
     BackgroundTask, ExpiredReason, InputState, ProviderKind, RunOrigin, TurnStatus,
 };
-use fleetdeck_proto::{Capabilities, Event, InputId, NodeId, RunId, TurnId};
+use fleetdeck_proto::{Capabilities, Event, InputId, NodeId, RunId, TurnId, input_text_of};
 use serde_json::{Value, json};
 
 pub(super) use super::core_types::{HostRequest, InputEntry, Ordinals, ToolNode};
@@ -337,6 +337,7 @@ impl CodexCore {
             id: input.id.clone(),
             origin: input.origin,
             summary: summary_of(&input.input.text),
+            input_text: input_text_of(&input.input.text),
             author: input.input.author.clone(),
             state: None,
             turn: None,
@@ -621,18 +622,26 @@ impl CodexCore {
             return Vec::new();
         }
         let mut out = Vec::new();
-        let (origin, summary, author, input_id) = match self
+        // The full text leaves the entry once `run.started` has it (B10).
+        let (origin, summary, author, input_id, input_text) = match self
             .turn_input
             .take()
-            .and_then(|id| self.inputs.iter().find(|i| i.id == id))
+            .and_then(|id| self.inputs.iter_mut().find(|i| i.id == id))
         {
             Some(e) => (
                 e.origin,
                 e.summary.clone(),
                 e.author.clone(),
                 Some(e.id.clone()),
+                e.input_text.take(),
             ),
-            None => (RunOrigin::Provider, "provider turn".to_owned(), None, None),
+            None => (
+                RunOrigin::Provider,
+                "provider turn".to_owned(),
+                None,
+                None,
+                None,
+            ),
         };
         let run_id = self.ids.run();
         self.run = Some(run_id.clone());
@@ -642,6 +651,7 @@ impl CodexCore {
             origin,
             author,
             input_id,
+            input_text,
         }));
         let turn_id = TurnId(self.ids.next("turn"));
         self.turn = Some(turn_id.clone());

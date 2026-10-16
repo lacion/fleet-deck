@@ -196,6 +196,7 @@ mod tests {
                 origin: RunOrigin::Board,
                 author: None,
                 input_id: None,
+                input_text: None,
             },
         )
     }

@@ -68,7 +68,8 @@
       "run_id": "run-1",
       "input_summary": "Use the shell tool to run exactly this command: touch fd-approve.txt && echo approve-ok",
       "origin": "board",
-      "input_id": "fd-in-1"
+      "input_id": "fd-in-1",
+      "input_text": "Use the shell tool to run exactly this command: touch fd-approve.txt && echo approve-ok\nThen reply with the command output only."
     }
   },
   {

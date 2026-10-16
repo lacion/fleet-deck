@@ -63,6 +63,7 @@ fn run(id: &str) -> Event {
         run_id: id.into(),
         input_summary: "hi".to_owned(),
         origin: RunOrigin::Board,
+        input_text: None,
     }
 }
 

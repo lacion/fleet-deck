@@ -43,6 +43,7 @@ fn run_started(n: u32) -> NewEvent {
         run_id: format!("run-{n}").into(),
         input_summary: "hi".to_owned(),
         origin: RunOrigin::Board,
+        input_text: None,
     }
     .into()
 }

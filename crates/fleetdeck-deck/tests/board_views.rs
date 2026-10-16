@@ -77,6 +77,7 @@ async fn seed(f: &Fixture) {
                     origin: RunOrigin::Board,
                     author: None,
                     input_id: None,
+                    input_text: None,
                 },
             ),
             env(

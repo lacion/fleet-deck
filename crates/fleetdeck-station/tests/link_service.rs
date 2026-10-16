@@ -163,6 +163,7 @@ impl Fixture {
             run_id: format!("run-{n}").into(),
             input_summary: "hi".to_owned(),
             origin: RunOrigin::Board,
+            input_text: None,
         }
         .into();
         self.store.append(id.into(), vec![e]).await.unwrap()[0].station_seq

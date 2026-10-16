@@ -158,6 +158,7 @@ impl Rig {
                 run_id: "run-1".into(),
                 input_summary: summary.to_owned(),
                 origin: RunOrigin::Board,
+                input_text: None,
             });
             events.push(Event::TurnStarted {
                 run_id: "run-1".into(),
@@ -559,6 +560,7 @@ async fn a_maintenance_turn_after_the_intent_retires_the_undispatched_continuati
         run_id: "run-2".into(),
         input_summary: "/compact".to_owned(),
         origin: RunOrigin::Board,
+        input_text: None,
     };
     rig.store.append(s.clone(), vec![run.into()]).await.unwrap();
     retired(&rig, &rig.policy(), &s, &intent, "maintenance_turn").await;
