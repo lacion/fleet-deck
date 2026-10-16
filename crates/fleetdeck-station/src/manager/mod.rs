@@ -332,8 +332,7 @@ impl SessionManager {
         }
         // Auto-continue intents of the sessions that this start lost, before
         // any command is admitted (ADR-007 §2.2, DL-127).
-        let continued =
-            auto_continue::evaluate(&store, &policy, restore_from, shims.is_some()).await?;
+        let continued = auto_continue::evaluate(&store, &policy, restore_from).await?;
         if continued > 0 {
             tracing::info!(continued, "stored auto-continue intents");
         }

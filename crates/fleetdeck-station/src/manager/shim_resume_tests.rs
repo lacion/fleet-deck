@@ -20,7 +20,8 @@ use super::shim_resume_rig::*;
 use super::*;
 use crate::coordinator::Bindings;
 use crate::store::{
-    Caller, EffectState, NewShim, OfflineApprovalPolicy, RunningFacts, ShimState, StoreConfig,
+    Caller, EffectPayload, EffectState, NewShim, OfflineApprovalPolicy, RunningFacts, ShimState,
+    StoreConfig,
 };
 
 // --- the exit report (design §1a, tests 19 and 21) ---------------------
@@ -229,9 +230,39 @@ async fn a_different_boot_id_proves_every_unresolved_row_and_the_session_becomes
 }
 
 #[tokio::test]
-async fn auto_continue_does_not_pick_a_session_that_a_reboot_proof_made_resumable() {
+async fn auto_continue_picks_a_session_that_a_reboot_proof_made_resumable() {
+    use fleetdeck_proto::event::RunOrigin;
     let mut rig = Rig::direct(None).await;
-    let session = rig.lost("claude").await;
+    let session = rig.ended("claude").await;
+    // The turn that the restart interrupted comes after the owner's stop.
+    rig.det.advance(Duration::from_secs(1));
+    let store = rig.store();
+    let run = Event::RunStarted {
+        author: None,
+        input_id: None,
+        run_id: "run-w".into(),
+        input_summary: "work".to_owned(),
+        origin: RunOrigin::Board,
+    };
+    let turn = Event::TurnStarted {
+        run_id: "run-w".into(),
+        turn_id: "turn-w".into(),
+        provider_refs: serde_json::Map::new(),
+    };
+    let on = Event::AutoContinueChanged { enabled: true };
+    store
+        .append(session.clone(), vec![on.into(), run.into(), turn.into()])
+        .await
+        .unwrap();
+    let head = store.head();
+    let lost = Event::SessionStateChanged {
+        state: SessionState::Lost,
+        detail: Some("test".to_owned()),
+    };
+    store
+        .append(session.clone(), vec![lost.into()])
+        .await
+        .unwrap();
     rig.row(
         &session,
         "row-0",
@@ -245,20 +276,27 @@ async fn auto_continue_does_not_pick_a_session_that_a_reboot_proof_made_resumabl
         shims::prove_reboots(&rig.store(), &rig.host).await.unwrap(),
         1
     );
-    // Auto-continue on a shim station stays off (design §4.1).
-    let (store, policy) = (rig.store(), rig.manager.policy());
+    // A shim station continues it with the proof (DL-188 step 3).
+    let policy = (*rig.manager.policy()).clone().on_shim_host();
     assert_eq!(
-        crate::manager::auto_continue::evaluate(&store, &policy, 0, true)
+        crate::manager::auto_continue::evaluate(&store, &policy, head)
             .await
             .unwrap(),
-        0
+        1
     );
     let effects = store.session_effects(session.clone()).await.unwrap();
-    assert!(
-        effects.iter().all(|e| e.payload.kind() != "resume"),
-        "{effects:?}"
-    );
-    assert_eq!(rig.state(&session).await, SessionState::Lost);
+    let origins: Vec<_> = effects
+        .iter()
+        .filter_map(|e| match &e.payload {
+            EffectPayload::Resume {
+                continue_by: Some(_),
+                prompt: Some(p),
+                ..
+            } => Some(p.origin),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(origins, vec![RunOrigin::Continuation], "{effects:?}");
     rig.manager.shutdown(StopMode::Kill).await;
 }
 

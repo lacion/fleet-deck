@@ -14,42 +14,6 @@ use fleetdeck_station::store::{EffectPayload, EffectState, ShimState};
 mod shim_resume_rig;
 use shim_resume_rig::*;
 
-const OLD_BOOT: &str = "00000000-0000-4000-8000-0000000000aa";
-
-/// A session with one turn under a shim that is then killed with its
-/// provider (a crash of the machine or of the shim): no exit file, no
-/// socket that answers. Returns the session and the old shim id.
-async fn lost_under_a_dead_shim(
-    rig: &mut Rig,
-    rewrite_boot: bool,
-) -> (fleetdeck_proto::SessionId, String) {
-    let st = rig.station().await;
-    let session = rig.start(&st, "claude", "hello").await;
-    wait_turns(&st.store, &session, 1).await;
-    let rows = st.store.shim_rows(session.clone()).await.unwrap();
-    assert_eq!(rows.len(), 1);
-    let shim_id = rows[0].shim_id.clone();
-    // The station and everything it started go away.
-    st.manager.shutdown(StopMode::Graceful).await;
-    shim_reaper::reap(&rig.shims_dir());
-    let pid = rows[0].provider_identity.as_ref().unwrap().pid;
-    let deadline = std::time::Instant::now() + WAIT;
-    while std::path::Path::new(&format!("/proc/{pid}")).exists() {
-        assert!(std::time::Instant::now() < deadline, "the provider lives");
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    if rewrite_boot {
-        // As if the machine had rebooted since.
-        st.store
-            .shim_rewrite_boot(shim_id.clone(), OLD_BOOT.to_owned())
-            .await
-            .unwrap();
-    }
-    // The next station of the rig opens the same database: this one closes.
-    rig.close(st).await;
-    (session, shim_id)
-}
-
 /// Design §7 test 6 (a verified reboot) and 12 (the proof holds at the
 /// dispatch): the row becomes `ended_by_reboot`, the session stays `lost`
 /// and resumes under a new shim.
