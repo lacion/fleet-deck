@@ -3065,3 +3065,9 @@ Owner review: pending.
 - Context: the shim host has parity with the direct host on Linux (DL-194 credentials, DL-195 steps 2 and 3), plus survival across a station restart. The owner runs the shim host on dev1 and on the main machine, and set the goal to build the whole backlog except the macOS port (step 4).
 - Decision: a `station.toml` without `host` runs `shim` on Linux and `direct` on other systems (`HostChoice::for_this_system`). An explicit `host = "direct"` keeps the direct host. A session keeps the host it started with. macOS gets the shim default with step 4, after the owner's Mac run.
 - Tests: the test station config of `fleetdeck-testkit` names `host = "direct"`; the shim tests replace that line.
+
+## DL-200 — B9 provisioning is confined by Landlock; Seatbelt with the macOS work (owner decision, 2026-10-16)
+
+- Context: the B9 design (`docs/v2/design/launch-dir.md`) reached the round limit of the adversary DESIGN REVIEW with open findings in the provisioning of new worktrees and clones: descriptor-only custody cannot follow Git's own later path resolutions.
+- Decision (owner): option A. On Linux, Git provisioning runs through a helper (`fleetdeck confine-exec`) that confines writes to the allowed roots with Landlock (new dependency: the `landlock` crate). Without Landlock in the kernel, provisioning is checked after Git (detection only) and `doctor` warns. On macOS, the same confinement with Seatbelt (`sandbox-exec`) is built together with the other deferred macOS work (shim parity step 4).
+- Design revision 4 is accepted with this decision; a PRE-PR REVIEW follows the build.
