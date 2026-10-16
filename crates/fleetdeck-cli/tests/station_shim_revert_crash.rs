@@ -78,9 +78,10 @@ impl Rig {
         let bins = FakeAgent::bin_dir().unwrap();
         FakeAgent::Codex.locate().unwrap();
         let log = node.root().join("codex-stdin.log");
-        let mut text = format!(
-            "host = \"shim\"\n{}",
-            node.station_toml(&bins, &[FakeAgent::Codex])
+        let mut text = node.station_toml(&bins, &[FakeAgent::Codex]).replacen(
+            "host = \"direct\"",
+            "host = \"shim\"",
+            1,
         );
         text.push_str(&format!(
             "env = {{ FLEETDECK_FAKE_SCENARIO = \"sim\", FLEETDECK_FAKE_STDIN_LOG = {:?} }}\n",

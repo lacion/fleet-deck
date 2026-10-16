@@ -36,6 +36,7 @@ Each step is merged on `v2` on its own, with `make check` green, and reported to
    - **Done (2026-10-16):** `auto_continue.rs` no longer excludes the shim host; the proof chain (`execution_unknown`, `not_resumable`) decides, and the dispatch checks the reboot proof again (`shim_recheck`). In practice a verified reboot is the proof: a clean exit ends the session, it does not leave it `lost`.
 4. **macOS (G5).** Port the identity and the census: start time through `proc_pidinfo(PROC_PIDTBSDINFO)`, the boot identity through the `kern.bootsessionuuid` sysctl, and the process-group and session scan through `proc_listpids`. Owner decisions before this step (§5). The owner runs the macOS acceptance script on a Mac (this build machine cannot run macOS).
 5. **Default host (owner decision).** When steps 1 to 4 are done, the owner decides whether `shim` becomes the default and `direct` the fallback.
+   - **Done for Linux (2026-10-16, DL-199):** a `station.toml` without `host` runs `shim` on Linux; other systems keep `direct` until step 4.
 
 ## 4. Reviews
 

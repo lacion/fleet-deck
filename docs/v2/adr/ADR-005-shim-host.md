@@ -27,7 +27,7 @@ A reattachment has two halves: the **process** half (the shim keeps the provider
   - `write(meta: WriteMeta, bytes)`: metadata-bearing writes (§2.1, §4.3);
   - the control frames of §4.4.
   `DirectChildHost` keeps the M2 interface; nothing in the shim path reuses its drop behavior.
-- **Selection.** The host is a station setting (`host = "direct" | "shim"`, default `direct` until 7-1 passes its tests; then `shim` on Linux and macOS). A session keeps the host it started with.
+- **Selection.** The host is a station setting (`host = "direct" | "shim"`, default `shim` on Linux since DL-199; `direct` elsewhere until the macOS port, shim parity step 4). A session keeps the host it started with.
 
 ### 2.1 Adapter recovery path
 

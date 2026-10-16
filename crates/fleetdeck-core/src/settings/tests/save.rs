@@ -326,7 +326,7 @@ fn the_danger_rules() {
         .is_empty()
     );
     assert!(d("listen = [\"192.168.1.5:1\"]", "listen = [\"127.0.0.1:2\"]").is_empty());
-    assert_eq!(d("", "host = \"shim\""), vec!["host"]);
+    assert_eq!(d("host = \"direct\"", "host = \"shim\""), vec!["host"]);
     let policy = |a: &str, b: &str| {
         d(
             &format!("offline_approval_policy = \"{a}\""),
@@ -538,7 +538,9 @@ const SHIM_REFUSAL: &str = "The shim host needs Linux for now. Use direct on thi
 
 #[test]
 fn macos_refuses_a_change_of_host_to_shim() {
-    let fx = Fixture::new(Some(COMMENTED));
+    // The host is named: on Linux a file without `host` means `shim` (DL-199).
+    let text = format!("host = \"direct\"\n{COMMENTED}");
+    let fx = Fixture::new(Some(&text));
     let w = fx.writer().with_macos(true);
     let before = fx.text();
     let err = w

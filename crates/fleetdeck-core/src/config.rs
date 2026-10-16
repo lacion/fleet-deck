@@ -73,6 +73,18 @@ pub enum HostChoice {
 }
 
 impl HostChoice {
+    /// The host of a `station.toml` without `host`: `shim` on Linux, where
+    /// the shim host has parity with the direct host (shim parity step 5,
+    /// DL-199); `direct` elsewhere until the macOS port (step 4).
+    #[must_use]
+    pub fn for_this_system() -> Self {
+        if cfg!(target_os = "linux") {
+            Self::Shim
+        } else {
+            Self::Direct
+        }
+    }
+
     fn parse(text: &str) -> Result<Self, &'static str> {
         match text {
             "direct" => Ok(Self::Direct),
@@ -234,7 +246,8 @@ pub struct StationConfig {
     pub offline_approval_policy: OfflineApprovalPolicy,
     pub listen: Vec<SocketAddr>,
     pub provider_instances: Vec<ProviderInstance>,
-    /// `host = "direct" | "shim"` (default `direct`, ADR-005 §1).
+    /// `host = "direct" | "shim"` (default `shim` on Linux, `direct`
+    /// elsewhere; ADR-005 §1, DL-199).
     pub host: HostChoice,
     /// `shim_buffer_mib`: the shim output buffer, 1–256 MiB.
     pub shim_buffer_mib: u32,
@@ -412,7 +425,7 @@ impl StationConfig {
         let listen = parse_listen("listen", raw.listen.unwrap_or_default())?;
         let host = match raw.host {
             Some(h) => HostChoice::parse(&h).map_err(|m| invalid("host", m))?,
-            None => HostChoice::Direct,
+            None => HostChoice::for_this_system(),
         };
         let shim_buffer_mib = raw.shim_buffer_mib.unwrap_or(DEFAULT_SHIM_BUFFER_MIB);
         if !(1..=256).contains(&shim_buffer_mib) {

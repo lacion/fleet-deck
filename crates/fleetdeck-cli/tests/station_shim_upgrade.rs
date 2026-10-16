@@ -45,7 +45,7 @@ fn providers_under_shims_survive_a_station_upgrade_and_the_new_release_reattache
     let text = std::fs::read_to_string(&config).unwrap();
     station
         .node
-        .write_station_toml(&format!("host = \"shim\"\n{text}"))
+        .write_station_toml(&text.replacen("host = \"direct\"", "host = \"shim\"", 1))
         .unwrap();
     let _reap = Reap(station.node.dirs().station().join("shims"));
     station.spawn(None);

@@ -3059,3 +3059,9 @@ Owner review: pending.
 - Owner answers: the screen is 3440×1440, and the layout must adapt to other shapes; the wall is read-only, so approvals stay on a logged-in owner device; screenshots and Computer Use are acceptable (DL-197); agents run as the owner's OS user for now; Omarchy also runs on the laptop.
 - Decision (plan): phases P1 to P9 of the design: the `#/wall` route; a read-only display principal; the station feature `desktop.v1` (typed desktop actions, the wake rule); the Omarchy plugin, hooks and installer; capture with a `video` artifact kind; the desktop MCP classes `desktop`, `capture` and `input`; account import and provisioning; per-session load.
 - High risk: the display principal, desktop control, capture, the MCP classes, Computer Use and provisioning each get an adversary DESIGN REVIEW before code (design §13).
+
+## DL-199 — The shim host is the default on Linux (shim parity step 5, 2026-10-16)
+
+- Context: the shim host has parity with the direct host on Linux (DL-194 credentials, DL-195 steps 2 and 3), plus survival across a station restart. The owner runs the shim host on dev1 and on the main machine, and set the goal to build the whole backlog except the macOS port (step 4).
+- Decision: a `station.toml` without `host` runs `shim` on Linux and `direct` on other systems (`HostChoice::for_this_system`). An explicit `host = "direct"` keeps the direct host. A session keeps the host it started with. macOS gets the shim default with step 4, after the owner's Mac run.
+- Tests: the test station config of `fleetdeck-testkit` names `host = "direct"`; the shim tests replace that line.

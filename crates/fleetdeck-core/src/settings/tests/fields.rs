@@ -161,7 +161,13 @@ fn view_of_a_missing_file_shows_the_defaults() {
     let view = view_station(&fx.config, &fx.env, &fx.store, &[]).unwrap();
     assert_eq!(view.revision, revision_of(b""));
     assert_eq!(view.values["max_sessions"], json!(12));
-    assert_eq!(view.values["host"], json!("direct"));
+    // Shim parity step 5 (DL-199): the default host of this system.
+    let host = if cfg!(target_os = "linux") {
+        "shim"
+    } else {
+        "direct"
+    };
+    assert_eq!(view.values["host"], json!(host));
     assert_eq!(view.values["model_help.provider"], json!(null));
     assert_eq!(view.values["offline_approval_policy"], json!("wait"));
     let value_keys: BTreeSet<String> = view.values.keys().cloned().collect();
