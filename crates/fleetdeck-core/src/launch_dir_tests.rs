@@ -143,3 +143,11 @@ fn the_texts_and_codes_are_stable() {
     assert_eq!(LaunchDirError::Unavailable.to_string(), UNAVAILABLE);
     assert_eq!(LaunchDirError::Unsupported.to_string(), UNSUPPORTED);
 }
+
+#[test]
+fn the_path_of_the_root_itself_has_no_trailing_slash() {
+    let (_tmp, root) = root();
+    let dir = LaunchDir::open(&root, Path::new("")).unwrap();
+    assert_eq!(dir.path(), root);
+    assert!(!dir.path().to_string_lossy().ends_with('/'));
+}

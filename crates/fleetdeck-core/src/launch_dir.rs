@@ -225,10 +225,15 @@ impl LaunchDir {
         &self.identity
     }
 
-    /// `root.join(rel)`: for texts and for the provider's `cwd` string.
+    /// `root.join(rel)`: for texts and for the provider's `cwd` string. The
+    /// root itself has no trailing `/` (`join("")` would add one).
     #[must_use]
     pub fn path(&self) -> PathBuf {
-        Path::new(&self.identity.root).join(&self.identity.rel)
+        if self.identity.rel.is_empty() {
+            PathBuf::from(&self.identity.root)
+        } else {
+            Path::new(&self.identity.root).join(&self.identity.rel)
+        }
     }
 
     #[must_use]
