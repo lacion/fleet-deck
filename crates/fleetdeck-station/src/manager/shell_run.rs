@@ -9,6 +9,10 @@
 //! through the provider instead (`shell_codex`).
 
 use std::collections::HashMap;
+#[cfg(test)]
+use std::future::Future;
+#[cfg(test)]
+use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -51,6 +55,12 @@ const EVENT_BYTES: usize = 16 * 1024;
 const EVENT_STDERR_BYTES: usize = 4096;
 const STDERR_SEPARATOR: &str = "\n--- stderr ---\n";
 
+/// A test hook that `shell_spawn` awaits right after the `ToolStarted`
+/// append, with the effect id (B8 PRE-PR r1).
+#[cfg(test)]
+pub(super) type PreSpawnHook =
+    Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+
 /// The shell tasks of a target: the cancel of each running task by effect
 /// id, the wake of the advance loop and the run limit.
 pub(super) struct ShellRunState {
@@ -60,6 +70,9 @@ pub(super) struct ShellRunState {
     timeout_ms: AtomicU64,
     /// The wait for the proof of a Codex command in ms (a test shortens it).
     watch_ms: AtomicU64,
+    /// The hook of the window between the append and the spawn (tests only).
+    #[cfg(test)]
+    pre_spawn: StdMutex<Option<PreSpawnHook>>,
 }
 
 impl Default for ShellRunState {
@@ -69,6 +82,8 @@ impl Default for ShellRunState {
             notify: Arc::new(Notify::new()),
             timeout_ms: AtomicU64::new(u64::try_from(TIMEOUT.as_millis()).unwrap_or(u64::MAX)),
             watch_ms: AtomicU64::new(u64::try_from(CODEX_WATCH.as_millis()).unwrap_or(u64::MAX)),
+            #[cfg(test)]
+            pre_spawn: StdMutex::default(),
         }
     }
 }
@@ -244,6 +259,18 @@ impl SessionTarget {
     pub(in crate::manager) fn set_shell_watch(&self, limit: Duration) {
         let ms = u64::try_from(limit.as_millis()).unwrap_or(u64::MAX);
         self.shell.watch_ms.store(ms, Ordering::Relaxed);
+    }
+
+    /// Sets the hook that runs between the `ToolStarted` append and the
+    /// spawn (tests only).
+    #[cfg(test)]
+    pub(in crate::manager) fn set_shell_pre_spawn<F>(&self, hook: F)
+    where
+        F: Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync + 'static,
+    {
+        if let Ok(mut slot) = self.shell.pre_spawn.lock() {
+            *slot = Some(Arc::new(hook));
+        }
     }
 
     /// The wait for the proof of a Codex command (B8).
@@ -423,15 +450,12 @@ impl SessionTarget {
         if stored_cancel || *cancel.borrow() {
             return self.shell_stop(id, ShellState::Cancelled, None).await;
         }
-        let cwd = match self.shell_cwd(session).await {
-            Ok(cwd) => cwd,
-            Err(text) => {
-                return self
-                    .shell_stop(id, ShellState::Cancelled, Some(&text))
-                    .await;
-            }
-        };
-        let ran = self.shell_spawn(id, session, command, &cwd, cancel).await;
+        if let Err(text) = self.shell_cwd(session).await {
+            return self
+                .shell_stop(id, ShellState::Cancelled, Some(&text))
+                .await;
+        }
+        let ran = self.shell_spawn(id, session, command, cancel).await;
         // The fence is released before the row settles.
         drop(fence);
         self.shell_finish(id, session, ran).await;
@@ -458,13 +482,47 @@ impl SessionTarget {
         policy.workspace(&cwd).map_err(|e| e.to_string())
     }
 
+    /// The gates right before the spawn (B8 PRE-PR r1): the stored cancel,
+    /// the cancel receiver and the policy. `Err` carries the end without a
+    /// process.
+    async fn shell_gates(
+        &self,
+        id: &str,
+        session: &SessionId,
+        cancel: &watch::Receiver<bool>,
+    ) -> Result<std::path::PathBuf, Ran> {
+        let never = |state, stderr: String| Ran {
+            state,
+            exit_code: None,
+            stdout: String::new(),
+            stderr,
+            dropped: false,
+        };
+        match self.store.shell_run(id.to_owned()).await {
+            Ok(row) => {
+                if row.is_none_or(|r| r.cancel_requested) {
+                    return Err(never(ShellState::Cancelled, String::new()));
+                }
+            }
+            Err(e) => {
+                let text = format!("The command row is unreadable: {e}");
+                return Err(never(ShellState::Failed, text));
+            }
+        }
+        if *cancel.borrow() {
+            return Err(never(ShellState::Cancelled, String::new()));
+        }
+        self.shell_cwd(session)
+            .await
+            .map_err(|text| never(ShellState::Cancelled, text))
+    }
+
     /// Starts the command and waits for its end.
     async fn shell_spawn(
         &self,
         id: &str,
         session: &SessionId,
         command: &str,
-        cwd: &std::path::Path,
         cancel: &mut watch::Receiver<bool>,
     ) -> Ran {
         let node = format!("shell-{id}");
@@ -481,10 +539,23 @@ impl SessionTarget {
             },
         )
         .await;
+        #[cfg(test)]
+        {
+            let hook = self.shell.pre_spawn.lock().ok().and_then(|h| h.clone());
+            if let Some(hook) = hook {
+                hook(id.to_owned()).await;
+            }
+        }
+        // (B8 PRE-PR r1) The append above was awaited: a cancel or a policy
+        // change may have come in. Nothing starts when a gate is closed.
+        let cwd = match self.shell_gates(id, session, cancel).await {
+            Ok(cwd) => cwd,
+            Err(ran) => return ran,
+        };
         let env = ChildEnv::from_process();
         let spawned = Command::new(shell_program())
             .args(["-c", command])
-            .current_dir(cwd)
+            .current_dir(&cwd)
             .env_clear()
             .envs(env.iter())
             .env(MARKER_VAR, id)

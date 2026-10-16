@@ -151,16 +151,29 @@ fn a_user_shell_item_is_the_shell_node() {
     assert!(*truncated);
     assert!(chunk.len() <= 16 * 1024 && chunk.len() > 16 * 1024 - 2);
     assert!(chunk.chars().all(|c| c == 'é'));
+    // (B8 PRE-PR r1) The item completion gives the output and no completion.
+    assert_eq!(ev.len(), 1, "{ev:?}");
     assert!(
-        matches!(&ev[1], Event::ToolCompleted { node_id, status: ToolStatus::Ok, exit_code: Some(0), .. }
+        core.pending_shell.is_some(),
+        "the command waits for its turn end"
+    );
+    assert!(core.shell_command("eff-2", "ls").is_err());
+    // The turn ends: the node completes once, `done`, with the exit code.
+    let end = emits(&complete(&mut core, "n1", "completed"));
+    let done: Vec<_> = end
+        .iter()
+        .filter(|e| matches!(e, Event::ToolCompleted { .. }))
+        .collect();
+    assert_eq!(done.len(), 1, "{end:?}");
+    assert!(
+        matches!(done[0], Event::ToolCompleted { node_id, status: ToolStatus::Ok, exit_code: Some(0), .. }
         if node_id.as_str() == NODE)
     );
-    assert_eq!(refs_of(&ev[1]).unwrap()["shell"], "done");
-    // The turn ends: no second close of the node.
-    let end = emits(&complete(&mut core, "n1", "completed"));
+    assert_eq!(refs_of(done[0]).unwrap()["shell"], "done");
+    let pos = |f: fn(&Event) -> bool| end.iter().position(f).unwrap();
     assert!(
-        !end.iter().any(|e| matches!(e, Event::ToolCompleted { .. })),
-        "{end:?}"
+        pos(|e| matches!(e, Event::ToolCompleted { .. }))
+            < pos(|e| matches!(e, Event::TurnCompleted { .. }))
     );
     assert!(core.is_idle(), "the shell turn leaves the core idle");
     assert!(core.shell_command("eff-2", "ls").is_ok());
@@ -176,17 +189,21 @@ fn a_failed_command_and_a_completed_item_without_a_started_one() {
         "item/completed",
         shell_item("completed", "n1", Some(""), Some(2)),
     ));
-    // started first, no output event for an empty text
+    // started first, no output event for an empty text, no completion yet
     assert!(matches!(&ev[0], Event::ToolStarted { .. }), "{ev:?}");
-    assert!(matches!(
-        &ev[1],
-        Event::ToolCompleted {
-            status: ToolStatus::Failed,
-            exit_code: Some(2),
-            ..
-        }
-    ));
-    assert_eq!(ev.len(), 2);
+    assert_eq!(ev.len(), 1, "{ev:?}");
+    let end = emits(&complete(&mut core, "n1", "completed"));
+    assert!(
+        end.iter().any(|e| matches!(
+            e,
+            Event::ToolCompleted {
+                status: ToolStatus::Failed,
+                exit_code: Some(2),
+                ..
+            }
+        )),
+        "{end:?}"
+    );
 }
 
 #[test]
@@ -264,7 +281,7 @@ fn a_failed_turn_without_the_item_completion_fails_the_node() {
 }
 
 #[test]
-fn a_process_exit_ends_the_node_unknown_or_leaves_a_completed_one() {
+fn a_process_exit_ends_the_node_unknown_or_done_when_the_item_completed() {
     let (mut core, _) = sent("pwd");
     let ev = emits(&core.on_exit(Some(1)));
     let done = ev
@@ -282,10 +299,56 @@ fn a_process_exit_ends_the_node_unknown_or_leaves_a_completed_one() {
         shell_item("completed", "n1", Some("x"), Some(0)),
     );
     let ev = emits(&core.on_exit(Some(1)));
-    assert!(
-        !ev.iter().any(|e| matches!(e, Event::ToolCompleted { .. })),
-        "{ev:?}"
+    let done: Vec<_> = ev
+        .iter()
+        .filter(|e| matches!(e, Event::ToolCompleted { .. }))
+        .collect();
+    assert_eq!(done.len(), 1, "{ev:?}");
+    assert_eq!(refs_of(done[0]).unwrap()["shell"], "done");
+}
+
+#[test]
+fn a_nonzero_exit_code_fails_the_node_at_the_turn_end() {
+    let (mut core, out) = sent("pwd");
+    reply(&mut core, &out, json!({}));
+    start_turn(&mut core, "n1");
+    notify(
+        &mut core,
+        "item/completed",
+        shell_item("completed", "n1", Some("x"), Some(2)),
     );
+    let end = emits(&complete(&mut core, "n1", "completed"));
+    let done = end
+        .iter()
+        .find(|e| matches!(e, Event::ToolCompleted { .. }))
+        .unwrap();
+    assert!(matches!(
+        done,
+        Event::ToolCompleted {
+            status: ToolStatus::Failed,
+            exit_code: Some(2),
+            ..
+        }
+    ));
+    assert_eq!(refs_of(done).unwrap()["shell"], "done");
+}
+
+#[test]
+fn a_checkpoint_keeps_the_exit_code_of_a_completed_command() {
+    let (mut core, out) = sent("pwd");
+    reply(&mut core, &out, json!({}));
+    start_turn(&mut core, "n1");
+    notify(
+        &mut core,
+        "item/completed",
+        shell_item("completed", "n1", Some("x"), Some(2)),
+    );
+    let text = core.checkpoint().unwrap().to_json().unwrap();
+    let core =
+        CodexCore::restore(config("/w"), &AdapterCheckpoint::from_json(&text).unwrap()).unwrap();
+    let pending = core.pending_shell.as_ref().unwrap();
+    assert!(pending.completed);
+    assert_eq!(pending.exit_code, Some(2));
 }
 
 #[test]

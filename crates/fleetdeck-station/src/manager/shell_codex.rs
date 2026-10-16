@@ -125,7 +125,7 @@ impl SessionTarget {
             );
             if open && running {
                 let moved = store
-                    .shell_set_awaiting_proof(id.clone(), ShellState::Running)
+                    .shell_await_proof(id.clone(), ShellState::Running)
                     .await;
                 if let Err(e) = moved {
                     tracing::error!(error = %e, effect = %id, "a shell row did not await proof");

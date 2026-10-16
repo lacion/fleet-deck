@@ -69,7 +69,7 @@ export function shellState(tool: Tool): ShellState {
 }
 
 /**
- * "Release the folder" is offered for a Claude command without a completion, to the owner:
+ * "Release the folder" is offered for a command without a completion, to the owner:
  * when the session is not live (or the timeline ended the card with the session), or when the
  * command runs without new output for a while.
  */

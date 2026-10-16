@@ -53,7 +53,15 @@ pub(super) fn observe(conn: &Connection, envelope: &EventEnvelope, now: i64) -> 
         return Ok(());
     };
     match event {
-        Event::ToolStarted { node_id, .. } => {
+        Event::ToolStarted {
+            node_id,
+            provider_refs,
+            ..
+        } => {
+            // (B8 PRE-PR r1) The card of the station is no evidence.
+            if provider_refs.contains_key("station") {
+                return Ok(());
+            }
             if let Some(id) = codex_effect(conn, node_id.as_str())? {
                 confirm(conn, &id, now)?;
             }

@@ -213,6 +213,12 @@ async fn a_codex_command_without_a_reply_awaits_proof_and_the_owner_releases_it(
     let id = bang(&mut st, &deck, &s, "noack").await;
     let row = row_is(&st, &id, |r| r.state == ShellState::AwaitingProof).await;
     assert!(!row.advance_pending);
+    // (B8 PRE-PR r1) The watch gives the command a card for the Release.
+    let cards = cards(&st, &id).await;
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0]["station"], "awaiting_proof");
+    // The card does not confirm the effect.
+    assert_eq!(shell_effect_state(&st, &s).await, EffectState::Claimed);
     let d = st.as_board(&deck, release(&s, &id)).await;
     assert_eq!(d.receipt.state, ReceiptState::Accepted, "{:?}", d.receipt);
     let row = row_is(&st, &id, |r| r.state.is_terminal()).await;
@@ -242,22 +248,106 @@ async fn a_refused_codex_command_fails_with_the_text_of_codex() {
     st.manager.shutdown(StopMode::Kill).await;
 }
 
+/// The `tool.started` events of the node of `id` (B8 PRE-PR r1).
+async fn cards(st: &Station, id: &str) -> Vec<serde_json::Map<String, serde_json::Value>> {
+    match st.manager.store().read_after(0, 100_000).await.unwrap() {
+        ReadResult::Events { events, .. } => events
+            .into_iter()
+            .filter_map(|e| match e.event {
+                EventBody::Known(Event::ToolStarted {
+                    node_id,
+                    provider_refs,
+                    ..
+                }) if node_id.as_str() == format!("shell-{id}") => Some(provider_refs),
+                _ => None,
+            })
+            .collect(),
+        ReadResult::SnapshotRequired { .. } => panic!("snapshot required"),
+    }
+}
+
 #[tokio::test]
-async fn the_start_up_settles_a_running_codex_row_of_a_direct_host_unknown() {
+async fn the_start_up_awaits_the_proof_of_a_direct_host_row_and_gives_it_a_card() {
     let mut st = Station::new(4).await;
     let deck = st.paired_deck().await;
     let s = codex_idle(&mut st).await;
     let id = sent_and_lost(&mut st, &deck, &s).await;
+    assert!(cards(&st, &id).await.is_empty());
     let store = st.manager.store().clone();
     shell_advance::start_up(&store, &Fences::default())
         .await
         .unwrap();
-    assert_eq!(st.shell_row(&id).await.state, ShellState::Unknown);
+    let row = st.shell_row(&id).await;
+    assert_eq!(row.state, ShellState::AwaitingProof);
+    assert!(!row.advance_pending);
+    let cards = cards(&st, &id).await;
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0]["station"], "awaiting_proof");
+    // The station card is no evidence: the effect stays claimed.
+    assert_eq!(shell_effect_state(&st, &s).await, EffectState::Claimed);
+    // The tick leaves a direct-host row alone.
+    tokio::time::sleep(Duration::from_millis(1300)).await;
+    assert_eq!(st.shell_row(&id).await.state, ShellState::AwaitingProof);
+    let d = st.as_board(&deck, release(&s, &id)).await;
+    assert_eq!(d.receipt.state, ReceiptState::Accepted, "{:?}", d.receipt);
+    let row = row_is(&st, &id, |r| r.state.is_terminal()).await;
+    assert_eq!(row.state, ShellState::Unknown);
     assert_eq!(
-        st.wait_for("the unknown end", node_completed(&id)).await,
-        "unknown".to_owned()
+        st.wait_for("the release end", node_completed(&id)).await,
+        "released".to_owned()
     );
-    assert!(store.shell_pending_advances().await.unwrap().is_empty());
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
+async fn the_start_up_adds_no_card_to_a_row_that_has_one() {
+    let mut st = Station::new(4).await;
+    let deck = st.paired_deck().await;
+    let s = codex_idle(&mut st).await;
+    let id = bang(&mut st, &deck, &s, "hang").await;
+    st.wait_for("shell node", |e| match e {
+        Event::ToolStarted { node_id, .. } if node_id.as_str() == format!("shell-{id}") => Some(()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(cards(&st, &id).await.len(), 1);
+    let store = st.manager.store().clone();
+    shell_advance::start_up(&store, &Fences::default())
+        .await
+        .unwrap();
+    assert_eq!(st.shell_row(&id).await.state, ShellState::AwaitingProof);
+    let cards = cards(&st, &id).await;
+    assert_eq!(cards.len(), 1);
+    assert!(!cards[0].contains_key("station"));
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
+async fn a_codex_row_stays_running_until_the_turn_completes() {
+    let mut st = Station::new(4).await;
+    let deck = st.paired_deck().await;
+    let s = codex_idle(&mut st).await;
+    let id = bang(&mut st, &deck, &s, "slowend").await;
+    // The item completed; the turn has not.
+    st.wait_for("shell output", |e| match e {
+        Event::ToolOutput { node_id, .. } if node_id.as_str() == format!("shell-{id}") => Some(()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(st.shell_row(&id).await.state, ShellState::Running);
+    let d = st
+        .send(SessionCommand::Prompt {
+            session_id: s.clone(),
+            input: text("while it ends"),
+        })
+        .await;
+    assert_eq!(refused(&d), pairs(RejectCode::InvalidState, BUSY));
+    let row = row_is(&st, &id, |r| r.state.is_terminal()).await;
+    assert_eq!(row.state, ShellState::Done);
+    assert_eq!(
+        st.wait_for("shell end", node_completed(&id)).await,
+        "done".to_owned()
+    );
     st.manager.shutdown(StopMode::Kill).await;
 }
 
