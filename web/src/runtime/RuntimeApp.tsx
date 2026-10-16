@@ -130,13 +130,18 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       guest
         ? undefined
         : spawnActions(
-            (path) => connection.get(path),
+            // B7: the deck waits up to 15 s for a station's session list or preview.
+            (path) => connection.get(path, path.includes('/native-sessions') ? 20_000 : undefined),
             // The deck waits up to 30 s for a station's Git access check (DL-144).
             (path, body) =>
               connection.post(
                 path,
                 body,
-                path.endsWith('/workspace/preflight') ? 35_000 : undefined,
+                path.endsWith('/workspace/preflight')
+                  ? 35_000
+                  : path.includes('/native-sessions')
+                    ? 20_000
+                    : undefined,
               ),
             scopeText.split(' '),
           ),
