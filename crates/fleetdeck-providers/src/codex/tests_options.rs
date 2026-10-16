@@ -5,7 +5,7 @@ use fleetdeck_proto::event::{ApprovalOption, OptionKind};
 use serde_json::{Value, json};
 
 use super::requests::option_kind;
-use super::tests::{T, emits, feed, ready_core, start_turn};
+use super::tests::{T, emits, feed, input, ready_core, start_turn, writes};
 
 fn options_of(decisions: Option<Value>) -> Vec<ApprovalOption> {
     let mut core = ready_core();
@@ -125,4 +125,24 @@ fn async_question_options_have_no_kind() {
         panic!("no question request");
     };
     assert!(options.iter().all(|o| o.kind.is_none()), "{options:?}");
+}
+
+/// Codex keeps its native context: the `!` results of a host input change
+/// nothing in the request (B8).
+#[test]
+fn a_codex_prompt_ignores_the_shell_results_of_its_input() {
+    let plain = ready_core().prompt(&input("go", "in-1")).unwrap();
+    let mut with = input("go", "in-1");
+    with.context = vec![shell_result()];
+    let carried = ready_core().prompt(&with).unwrap();
+    assert_eq!(writes(&plain), writes(&carried));
+}
+
+fn shell_result() -> crate::adapter::ShellContext {
+    crate::adapter::ShellContext {
+        command: "ls".to_owned(),
+        end: "exit 0".to_owned(),
+        stdout: "a\n".to_owned(),
+        stderr: String::new(),
+    }
 }

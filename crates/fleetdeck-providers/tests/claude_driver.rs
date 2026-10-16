@@ -99,6 +99,7 @@ async fn send_recorded_prompt(session: &mut ClaudeSession, path: &std::path::Pat
             id: InputId::new(cmd["cmd"]["input_id"].as_str().unwrap()),
             origin: RunOrigin::Board,
             input: UserInput::new(cmd["cmd"]["text"].as_str().unwrap().to_owned()),
+            context: Vec::new(),
         })
         .await
         .unwrap();
@@ -335,6 +336,7 @@ async fn send_prompt(session: &mut ClaudeSession, id: &str, text: &str) {
             id: InputId::new(id),
             origin: RunOrigin::Board,
             input: UserInput::new(text.to_owned()),
+            context: Vec::new(),
         })
         .await
         .unwrap();

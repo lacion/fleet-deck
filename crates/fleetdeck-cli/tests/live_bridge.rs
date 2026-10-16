@@ -327,6 +327,7 @@ async fn run_round(
             id: InputId::new("01K70000000000000000000001"),
             origin: RunOrigin::Board,
             input: UserInput::new(PROMPT.to_owned()),
+            context: Vec::new(),
         })
         .await
         .unwrap();

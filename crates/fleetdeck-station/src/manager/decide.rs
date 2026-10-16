@@ -566,6 +566,7 @@ fn start(
         input_id: d.new_id(),
         origin,
         input,
+        shell_context: Vec::new(),
     });
     let input_id = prompt.as_ref().map(|p| p.input_id.clone());
     let payload = match import {
@@ -757,11 +758,7 @@ fn resume_hibernated(
     if !resumes_hibernated(d, session_id, origin)? {
         return Ok(None);
     }
-    let record = InputRecord {
-        input_id: d.new_id(),
-        origin,
-        input: input.clone(),
-    };
+    let record = super::shell_context::record(d, session_id, origin, input.clone())?;
     super::resume::admit_resume(d, policy, session_id, Some(record), None).map(Some)
 }
 
@@ -772,11 +769,7 @@ fn input_effect(
     input: fleetdeck_proto::command::UserInput,
     payload: impl FnOnce(InputRecord) -> EffectPayload,
 ) -> Result<CommandResult, DecideError> {
-    let record = InputRecord {
-        input_id: d.new_id(),
-        origin,
-        input,
-    };
+    let record = super::shell_context::record(d, &s.session_id, origin, input)?;
     let input_id = record.input_id.clone();
     d.enqueue(&s.session_id, payload(record))?;
     Ok(result(&s.session_id, Some(input_id)))

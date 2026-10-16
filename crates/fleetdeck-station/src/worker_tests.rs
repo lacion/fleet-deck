@@ -104,6 +104,7 @@ async fn queue(s: &Store, det: &Det, id: &str) -> Effect {
                         input_id: input.into(),
                         origin: RunOrigin::Board,
                         input: UserInput::new("hi".to_owned()),
+                        shell_context: Vec::new(),
                     },
                     authority: None,
                 },

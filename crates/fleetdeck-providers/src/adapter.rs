@@ -67,6 +67,20 @@ pub struct HostInput {
     pub id: InputId,
     pub origin: RunOrigin,
     pub input: UserInput,
+    /// The `!` shell results that this input carries (B8). Claude writes
+    /// them before the prompt text; Codex ignores them.
+    pub context: Vec<ShellContext>,
+}
+
+/// One `!` shell result that goes to the model with an input (B8, DL-196).
+/// `end` is "exit N", "cancelled", "timed out", "failed" or "outcome
+/// unknown: the station restarted during the command".
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ShellContext {
+    pub command: String,
+    pub end: String,
+    pub stdout: String,
+    pub stderr: String,
 }
 
 /// The answer to a runtime request. `decision.option_id` is a native option id.

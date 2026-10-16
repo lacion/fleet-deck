@@ -149,6 +149,7 @@ fn decide_lost(
         input_id: d.new_id(),
         origin: RunOrigin::Continuation,
         input: UserInput::new(CONTINUATION_TEXT),
+        shell_context: Vec::new(),
     };
     let by = w.last_at.saturating_add(WINDOW_MS);
     match super::resume::admit_resume(d, policy, session_id, Some(prompt), Some(by)) {

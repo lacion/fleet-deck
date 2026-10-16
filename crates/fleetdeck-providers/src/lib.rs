@@ -17,5 +17,5 @@ pub mod version;
 
 pub use adapter::{
     Answer, AuthState, ControlId, Emitted, EventSink, HostInput, LiveSession, ModelId,
-    NativeSessionId, PermissionMode, ProviderAdapter, ProviderError, ProviderProbe,
+    NativeSessionId, PermissionMode, ProviderAdapter, ProviderError, ProviderProbe, ShellContext,
 };

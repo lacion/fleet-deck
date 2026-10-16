@@ -151,6 +151,7 @@ pub fn host_input(record: &InputRecord) -> HostInput {
         id: record.input_id.clone(),
         origin: record.origin,
         input: record.input.clone(),
+        context: record.shell_context.clone(),
     }
 }
 

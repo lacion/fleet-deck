@@ -28,6 +28,7 @@ pub mod resume;
 pub mod revert;
 pub mod revert_run;
 pub mod shell_advance;
+mod shell_context;
 pub mod shell_decide;
 mod shells_slot;
 pub mod shim_claude;
@@ -390,7 +391,7 @@ impl SessionManager {
         tasks.push(tokio::spawn(deny_ticker(store.clone(), rx.clone())));
         // B8: the shell rows of the last process are settled and advanced
         // before the shell admission opens; the advance task follows.
-        let shell_notify = Arc::new(tokio::sync::Notify::new());
+        let shell_notify = target.shell_notify();
         let fences = target.fences().clone();
         shell_advance::start_up(&store, &fences).await?;
         tasks.push(tokio::spawn(shell_advance::task(
@@ -572,6 +573,9 @@ impl SessionManager {
         let origin = envelope.origin;
         let command = envelope.command.clone();
         let is_release = matches!(command, SessionCommand::ReleaseShell { .. });
+        let interrupted = matches!(command, SessionCommand::Interrupt { .. })
+            .then(|| command.session_id().cloned())
+            .flatten();
         // The count comes before the flag is read: the restart admission
         // sets the flag, then waits for the count (restart_gate). An input
         // may resume a hibernated session, so it counts too (NV-27).
@@ -633,6 +637,7 @@ impl SessionManager {
         {
             self.shell_notify.notify_one();
         }
+        self.target.cancel_shells_after(interrupted, &decided).await;
         decided
     }
 
@@ -641,9 +646,15 @@ impl SessionManager {
     /// until the next start (recovery retires them).
     pub async fn shutdown(&self, how: StopMode) {
         // B8: no shell row can be created after the cancel sweep.
-        if let Err(e) = self.store.shell_close_admission_and_cancel_all().await {
-            tracing::error!(error = %e, "shell admission not closed at shutdown");
-        }
+        let open = self
+            .store
+            .shell_close_admission_and_cancel_all()
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!(error = %e, "shell admission not closed at shutdown");
+                Vec::new()
+            });
+        self.target.signal_all_shells();
         let _ = self.shutdown.send(true);
         let tasks: Vec<_> = self
             .tasks
@@ -653,6 +664,9 @@ impl SessionManager {
         for task in tasks {
             let _ = task.await;
         }
+        self.target
+            .wait_shells_settled(&open, Duration::from_secs(10))
+            .await;
         self.target.stop_all(how).await;
         let _ = tokio::task::spawn_blocking(crate::workspace::precheck::kill_all_marked).await;
     }
@@ -774,3 +788,7 @@ mod shim_resume_check_tests;
 #[cfg(test)]
 #[path = "binding_revoke_tests.rs"]
 mod binding_revoke_tests;
+
+#[cfg(test)]
+#[path = "shell_run_tests.rs"]
+mod shell_run_tests;

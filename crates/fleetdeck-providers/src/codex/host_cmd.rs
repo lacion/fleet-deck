@@ -80,6 +80,7 @@ fn board_input(text: &str, input_id: &str) -> HostInput {
         id: InputId::new(input_id),
         origin: RunOrigin::Board,
         input: UserInput::new(text.to_owned()),
+        context: Vec::new(),
     }
 }
 

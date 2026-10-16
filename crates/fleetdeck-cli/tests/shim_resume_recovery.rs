@@ -181,6 +181,7 @@ async fn a_resume_claimed_before_a_crash_settles_as_outcome_unknown_and_is_never
                             input_id: "01J00000000000000000000009".into(),
                             origin: fleetdeck_proto::event::RunOrigin::Board,
                             input: text("never sent twice"),
+                            shell_context: Vec::new(),
                         }),
                         continue_by: None,
                         import: false,

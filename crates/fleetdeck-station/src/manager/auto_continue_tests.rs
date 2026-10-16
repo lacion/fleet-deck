@@ -278,6 +278,7 @@ fn follow_up(text: &str) -> EffectPayload {
             input_id: format!("in-{text}").into(),
             origin: RunOrigin::Board,
             input: UserInput::new(text),
+            shell_context: Vec::new(),
         },
         authority: None,
     }

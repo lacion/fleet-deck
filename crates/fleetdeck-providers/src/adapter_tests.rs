@@ -69,6 +69,7 @@ fn host_input() -> HostInput {
         id: InputId::new("01JZ8Y3K9W4V7T2Q5R6S8N0M1P"),
         origin: RunOrigin::Local,
         input: UserInput::new("x".to_owned()),
+        context: Vec::new(),
     }
 }
 

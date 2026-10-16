@@ -96,6 +96,7 @@ async fn apply(session: &mut ClaudeSession, cmd: HostCmd) {
                     id: InputId::new(input_id.as_str()),
                     origin: RunOrigin::Board,
                     input: UserInput::new(text),
+                    context: Vec::new(),
                 })
                 .await
         }

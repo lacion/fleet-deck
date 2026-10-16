@@ -158,8 +158,62 @@ mod tests {
             id: InputId::from("01J00000000000000000000001"),
             origin: RunOrigin::Board,
             input: UserInput::new("hello".to_owned()),
+            context: Vec::new(),
         })
         .unwrap();
         assert!(!DurableCore::is_idle(&core));
+    }
+
+    /// The durable replay rebuilds the input from the stored effect: the
+    /// `!` results of the record reach the CLI frame as before (B8).
+    #[test]
+    fn the_durable_replay_writes_the_shell_context_of_the_stored_effect() {
+        use fleetdeck_providers::ShellContext;
+
+        use crate::store::{EffectState, InputRecord};
+
+        let mut core = <ClaudeCore as DurableCore>::create(CoreConfig {
+            provider_instance: "claude".into(),
+            cwd: "/w".to_owned(),
+            capabilities: capabilities(false),
+            resumed: None,
+        });
+        let record = InputRecord {
+            input_id: InputId::from("01J00000000000000000000002"),
+            origin: RunOrigin::Board,
+            input: UserInput::new("go".to_owned()),
+            shell_context: vec![ShellContext {
+                command: "ls".to_owned(),
+                end: "exit 0".to_owned(),
+                stdout: "a<b\n".to_owned(),
+                stderr: String::new(),
+            }],
+        };
+        // The stored JSON is what the replay reads.
+        let stored: InputRecord =
+            serde_json::from_str(&serde_json::to_string(&record).unwrap()).unwrap();
+        let effect = Effect {
+            effect_id: "e1".into(),
+            command_id: None,
+            session_id: "s1".into(),
+            process_incarnation: None,
+            payload: EffectPayload::Prompt {
+                input: stored,
+                authority: None,
+            },
+            state: EffectState::Claimed,
+            fence_token: None,
+            reason: None,
+        };
+        let steps = DurableCore::command(&mut core, &effect).unwrap();
+        let frame: serde_json::Value = serde_json::from_str(&steps.frames[0]).unwrap();
+        let blocks = frame["message"]["content"].as_array().unwrap();
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[0]["text"], "<bash-input>ls</bash-input>");
+        assert_eq!(
+            blocks[1]["text"],
+            "<bash-stdout>a&lt;b\n</bash-stdout><bash-stderr></bash-stderr>"
+        );
+        assert_eq!(blocks[2]["text"], "go");
     }
 }
