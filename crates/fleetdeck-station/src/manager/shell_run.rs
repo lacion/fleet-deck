@@ -55,8 +55,8 @@ const EVENT_BYTES: usize = 16 * 1024;
 const EVENT_STDERR_BYTES: usize = 4096;
 const STDERR_SEPARATOR: &str = "\n--- stderr ---\n";
 
-/// A test hook that `shell_spawn` awaits right after the `ToolStarted`
-/// append, with the effect id (B8 PRE-PR r1).
+/// A test hook that the pre-spawn gates await after the session folder read,
+/// with the effect id (B8 PRE-PR r1, r2).
 #[cfg(test)]
 pub(super) type PreSpawnHook =
     Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
@@ -483,8 +483,10 @@ impl SessionTarget {
     }
 
     /// The gates right before the spawn (B8 PRE-PR r1): the stored cancel,
-    /// the cancel receiver and the policy. `Err` carries the end without a
-    /// process.
+    /// the cancel receiver and the policy. The awaited reads come first; the
+    /// receiver and the policy are checked after the last `await`, so nothing
+    /// that arrives during a read is missed (B8 PRE-PR r2). `Err` carries the
+    /// end without a process.
     async fn shell_gates(
         &self,
         id: &str,
@@ -498,6 +500,24 @@ impl SessionTarget {
             stderr,
             dropped: false,
         };
+        let cwd = match self.store.summary(session.clone()).await {
+            Ok(summary) => summary.and_then(|s| s.cwd),
+            Err(e) => {
+                let text = format!("The session is unreadable: {e}");
+                return Err(never(ShellState::Cancelled, text));
+            }
+        };
+        let Some(cwd) = cwd else {
+            let text = "The session has no folder.".to_owned();
+            return Err(never(ShellState::Cancelled, text));
+        };
+        #[cfg(test)]
+        {
+            let hook = self.shell.pre_spawn.lock().ok().and_then(|h| h.clone());
+            if let Some(hook) = hook {
+                hook(id.to_owned()).await;
+            }
+        }
         match self.store.shell_run(id.to_owned()).await {
             Ok(row) => {
                 if row.is_none_or(|r| r.cancel_requested) {
@@ -509,12 +529,20 @@ impl SessionTarget {
                 return Err(never(ShellState::Failed, text));
             }
         }
+        // No `await` from here to the spawn.
         if *cancel.borrow() {
             return Err(never(ShellState::Cancelled, String::new()));
         }
-        self.shell_cwd(session)
-            .await
-            .map_err(|text| never(ShellState::Cancelled, text))
+        let Some(policy) = self.current_policy() else {
+            let text = "The station policy is not available.".to_owned();
+            return Err(never(ShellState::Cancelled, text));
+        };
+        if !policy.allow_shell() {
+            return Err(never(ShellState::Cancelled, SHELLS_OFF.to_owned()));
+        }
+        policy
+            .workspace(&cwd)
+            .map_err(|e| never(ShellState::Cancelled, e.to_string()))
     }
 
     /// Starts the command and waits for its end.
@@ -539,13 +567,6 @@ impl SessionTarget {
             },
         )
         .await;
-        #[cfg(test)]
-        {
-            let hook = self.shell.pre_spawn.lock().ok().and_then(|h| h.clone());
-            if let Some(hook) = hook {
-                hook(id.to_owned()).await;
-            }
-        }
         // (B8 PRE-PR r1) The append above was awaited: a cancel or a policy
         // change may have come in. Nothing starts when a gate is closed.
         let cwd = match self.shell_gates(id, session, cancel).await {
