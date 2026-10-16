@@ -53,6 +53,8 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 - **Wanted:** for each station, a list of all the provider sessions that are on it (Claude and Codex conversations, imported or not). The owner opens a preview of the conversation of one, and then decides to continue it (import it and resume) or to leave it.
 - **Related:** the import flow and the earlier history (DL-189) already read native transcripts. B7 needs a station-wide list and a preview that does not import.
 - **Status:** later. Needs a design first.
+- **Done (2026-10-16):** design `docs/v2/design/native-sessions.md` (revision 6); the station lists and previews the sessions of its provider homes with the trust checks; the board dialog "Browse sessions on this station" with "Continue it"; a verified entry sends an import pin, and the station fails a changed transcript closed (feature `import_pin.v1`). Adversary PRE-PR: PASS in round 2.
+- **Open:** an unpinned import keeps a best-effort Codex child-thread check (a timeout or a busy history worker lets it go on).
 
 ## B8. `!` shell commands in a session are sent as chat text (owner report, 2026-10-16)
 
@@ -60,6 +62,8 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 - **Cause:** the `!` line is a feature of the interactive terminal UIs. Fleet Deck drives Claude with `stream-json` (no such input) and Codex with the app-server, which has `thread/shellCommand` (not used yet).
 - **Wanted:** a `!` line runs the command in the session folder, shows the command and its output in the timeline, and gives the result to the model as context, like the terminal UIs.
 - **Status:** design in progress (command execution: adversary DESIGN REVIEW before code).
+- **Done (2026-10-16):** DL-196, design `docs/v2/design/bang-commands.md` (revision 10). Claude: the station runs the command and gives the result to the model with the next prompt; Codex: native `thread/shellCommand`; the shell card, Stop, "Release the folder", the folder stays busy until the command settles; CLI `!` records show as shell items in the imported history. Adversary PRE-PR: PASS in round 3.
+- **Open:** (1) results that the 64 KiB budget of one prompt defers stay attachable on the station, but the board removes their chips, so they never reach the model; (2) an Interrupt after a Codex `thread/shellCommand` was sent but before its turn started only stores the cancel; the command runs to its end; (3) no recorded live Codex fixture of `!pwd` yet (the tests use the fake app-server).
 
 ## B9. Verified launch directory for every start (hardening, from the B7 review, 2026-10-16)
 
