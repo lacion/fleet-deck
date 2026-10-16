@@ -9,6 +9,7 @@ const lowDisk: StationResources = {
   disks: [{ label: 'Data', path: '/var/data', total_bytes: 500e9, free_bytes: 3_200_000_000 }],
   memory: null,
   cpu: null,
+  sessions: [],
 };
 
 const info = (resources?: StationResources): StationInfo => ({

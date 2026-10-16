@@ -327,6 +327,10 @@ pub trait LiveSession: Send {
     /// The capabilities of this session (L11). They can change after the
     /// provider advertises its settings (trap 1).
     fn capabilities(&self) -> &Capabilities;
+    /// The pid of the provider process, when this session has one (R13 §10).
+    fn pid(&self) -> Option<u32> {
+        None
+    }
     async fn prompt(&mut self, input: HostInput) -> Result<()>;
     /// Unsupported if `!capabilities().steer`.
     async fn steer(&mut self, input: HostInput) -> Result<()>;

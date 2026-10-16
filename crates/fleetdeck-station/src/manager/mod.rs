@@ -563,6 +563,11 @@ impl SessionManager {
         self.target.live_count()
     }
 
+    /// The live sessions and their provider pids (R13 §10).
+    pub fn live_pids(&self) -> Vec<(fleetdeck_proto::SessionId, Option<u32>)> {
+        self.target.live_pids()
+    }
+
     /// Decides one command. The effects run after the commit.
     ///
     /// # Errors

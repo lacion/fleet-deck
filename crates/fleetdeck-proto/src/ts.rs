@@ -61,7 +61,7 @@ use crate::orchestration::{
 };
 use crate::plans::{DeckPlan, PlanMarkRequest, PlanStatus};
 use crate::resources::{
-    CpuLoad, DiskSpace, MemoryUse, ResourceKind, ResourceWarning, StationResources,
+    CpuLoad, DiskSpace, MemoryUse, ResourceKind, ResourceWarning, SessionLoad, StationResources,
 };
 use crate::session::{CardStatus, SessionSummary};
 use crate::settings::{
@@ -130,6 +130,7 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         DiskSpace::export_all(&cfg),
         MemoryUse::export_all(&cfg),
         CpuLoad::export_all(&cfg),
+        SessionLoad::export_all(&cfg),
         ResourceKind::export_all(&cfg),
         ResourceWarning::export_all(&cfg),
         WorkspaceQuery::export_all(&cfg),

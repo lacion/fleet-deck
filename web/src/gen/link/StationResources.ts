@@ -2,6 +2,7 @@
 import type { CpuLoad } from "./CpuLoad";
 import type { DiskSpace } from "./DiskSpace";
 import type { MemoryUse } from "./MemoryUse";
+import type { SessionLoad } from "./SessionLoad";
 
 /**
  * What a station reports about its disk, memory and CPU (DL-193).
@@ -10,4 +11,9 @@ export type StationResources = {
 /**
  * When the station measured it, in Unix ms.
  */
-at: number, disks: Array<DiskSpace>, memory: MemoryUse | null, cpu: CpuLoad | null, };
+at: number, disks: Array<DiskSpace>, memory: MemoryUse | null, cpu: CpuLoad | null, 
+/**
+ * The load of each live session's process tree, busiest first (R13 §10).
+ * Sorted by `cpu_pct` descending, `None` last, then by `session_id`.
+ */
+sessions: Array<SessionLoad>, };

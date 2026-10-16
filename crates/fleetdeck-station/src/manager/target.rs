@@ -284,6 +284,23 @@ impl SessionTarget {
         self.sessions.lock().map(|s| s.len()).unwrap_or(0)
     }
 
+    /// The live sessions with their provider pid (R13 §10). A busy lock or
+    /// a session with no process gives `None`.
+    #[must_use]
+    pub fn live_pids(&self) -> Vec<(SessionId, Option<u32>)> {
+        use fleetdeck_providers::host::ProcessControl as _;
+        let Ok(map) = self.sessions.lock() else {
+            return Vec::new();
+        };
+        let pid = |live: &Live| {
+            let direct = live.session.as_ref().and_then(|s| s.pid());
+            direct.or_else(|| live.durable.as_ref().map(|d| d.driver.process().pid()))
+        };
+        map.iter()
+            .map(|(id, live)| (id.clone(), live.try_lock().ok().and_then(|l| pid(&l))))
+            .collect()
+    }
+
     /// Stops every live session (station shutdown). First it stops the setup
     /// commands that run and waits for their tasks, up to 15 s.
     pub async fn stop_all(&self, how: StopMode) {

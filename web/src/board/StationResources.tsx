@@ -1,4 +1,5 @@
-import type { StationResources as Resources } from '../gen';
+import { formatHash } from '../app/routes';
+import type { DeckSession, StationResources as Resources } from '../gen';
 import {
   cpuBusy,
   gb,
@@ -30,8 +31,61 @@ function Row({
   );
 }
 
+/** The most sessions in the busiest list (R13 §10). */
+const BUSIEST = 5;
+
+/** The busiest sessions of a station, as the station sorted them (R13 §10). */
+function Busiest({
+  resources,
+  station,
+  sessions,
+}: {
+  readonly resources: Resources;
+  readonly station: string;
+  readonly sessions: readonly DeckSession[];
+}) {
+  if (resources.sessions.length === 0) return null;
+  return (
+    <>
+      <p className="fd-note">Busiest sessions</p>
+      <ul className="fd-station-res" aria-label="Busiest sessions">
+        {resources.sessions.slice(0, BUSIEST).map((load) => {
+          const summary = sessions.find((c) => c.summary.session_id === load.session_id)?.summary;
+          const name = summary?.callsign ?? summary?.title ?? load.session_id.slice(0, 8);
+          return (
+            <li key={load.session_id} data-session={load.session_id}>
+              <a
+                href={formatHash({
+                  name: 'session',
+                  station,
+                  session: load.session_id,
+                  tab: 'chat',
+                })}
+              >
+                {name}
+              </a>
+              <span>{load.cpu_pct === null ? '—' : `${load.cpu_pct}%`}</span>
+              <span>{load.rss_bytes === null ? '—' : gb(load.rss_bytes)}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </>
+  );
+}
+
 /** The disk, memory and CPU that a station reports, with a note when one is low (DL-193). */
-export function StationResources({ resources }: { readonly resources: Resources | undefined }) {
+export function StationResources({
+  resources,
+  station = '',
+  sessions = [],
+}: {
+  readonly resources: Resources | undefined;
+  /** The station id, for the links of the busiest sessions. */
+  readonly station?: string | undefined;
+  /** The station's own session cards, for the names of the busiest sessions. */
+  readonly sessions?: readonly DeckSession[] | undefined;
+}) {
   if (resources === undefined) return null;
   const { disks, memory, cpu } = resources;
   const warned = resourceWarnings(resources).length > 0;
@@ -62,6 +116,7 @@ export function StationResources({ resources }: { readonly resources: Resources 
           </Row>
         )}
       </ul>
+      <Busiest resources={resources} station={station} sessions={sessions} />
       {warned ? (
         <p className="fd-note fd-res-warn" role="status">
           Low resources. New sessions can be slow or fail here.

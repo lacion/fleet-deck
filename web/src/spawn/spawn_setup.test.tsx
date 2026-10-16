@@ -207,6 +207,7 @@ describe('spawn form: the station resources (DL-193)', () => {
     disks: [],
     memory: null,
     cpu: { cores: 4, load1_x100: 0, load5_x100: 1250 },
+    sessions: [],
   };
   const submit = (html: string) => html.match(/<button type="submit"[^>]*>/)?.[0];
 
