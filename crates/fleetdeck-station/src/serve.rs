@@ -324,6 +324,16 @@ impl RunningStation {
         if host_choice == HostChoice::Shim && cfg!(target_os = "linux") {
             set_bridge_endpoint(&manager, &station_dir)?;
         }
+        // Worktree and clone provisioning runs Git under `fleetdeck
+        // confine-exec` (B9, DL-200).
+        #[cfg(target_os = "linux")]
+        match fleetdeck_providers::host::shim::exe_hash::own_exe() {
+            Ok(exe) => manager.set_confine_exe(exe),
+            Err(e) => tracing::warn!(
+                error = %e,
+                "the station cannot find its own executable: worktree and clone provisioning is checked after Git, not confined"
+            ),
+        }
         // The credential store of the connected accounts (DL-173): mode
         // 0700, durable before the first account is written.
         manager.integrations().accounts().attach(

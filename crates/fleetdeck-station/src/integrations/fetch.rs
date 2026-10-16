@@ -38,6 +38,7 @@ fn git(cwd: &Path, isolated: bool) -> Git {
             program: "git".into(),
             timeout: FETCH_TIMEOUT,
             isolated,
+            confine: None,
         },
     )
 }

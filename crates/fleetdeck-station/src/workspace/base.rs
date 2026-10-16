@@ -62,11 +62,13 @@ async fn branch_of(git: &Git) -> Option<String> {
 /// The base of a start that does not provision a workspace first: a
 /// worktree plan whose folder does not exist yet (read in the repository),
 /// or a start in place (read in `cwd`). A clone gives `None` here; see
-/// [`at_head`].
+/// [`at_head`]. `repo_dir` is the pinned source repository of a worktree plan
+/// (B9, DL-200); without it the `repo` path of the plan is used.
 pub async fn planned(
     options: &GitOptions,
     plan: Option<&WorkspacePlan>,
     cwd: &str,
+    repo_dir: Option<&Path>,
 ) -> Option<SessionBase> {
     match plan {
         Some(WorkspacePlan::Worktree {
@@ -79,7 +81,7 @@ pub async fn planned(
                 // A repeated effect: the first run recorded the base.
                 return None;
             }
-            let git = git_in(Path::new(repo), options);
+            let git = git_in(repo_dir.unwrap_or(Path::new(repo)), options);
             if let Some(base) = base {
                 let oid = commit_of(&git, base).await?;
                 return Some(found(Some(base.clone()), oid, false));

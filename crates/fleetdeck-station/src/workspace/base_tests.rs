@@ -52,7 +52,9 @@ async fn a_start_in_place_has_the_head_and_its_branch() {
     let (_t, dir, _) = repo();
     let o = GitOptions::isolated();
     let head = git(&dir, &["rev-parse", "HEAD"]);
-    let b = planned(&o, None, &dir.display().to_string()).await.unwrap();
+    let b = planned(&o, None, &dir.display().to_string(), None)
+        .await
+        .unwrap();
     assert_eq!(
         (b.git_ref.as_deref(), b.oid.as_str(), b.inferred),
         (Some("main"), head.as_str(), false)
@@ -70,14 +72,14 @@ async fn a_worktree_start_reads_the_base_the_branch_or_head_before_the_worktree_
     let head = git(&dir, &["rev-parse", "HEAD"]);
     // A base name.
     let p = plan(&dir, "wt-a", "fd/a", Some(&first));
-    let b = planned(&o, Some(&p), "").await.unwrap();
+    let b = planned(&o, Some(&p), "", None).await.unwrap();
     assert_eq!(
         (b.git_ref.as_deref(), b.oid.as_str()),
         (Some(first.as_str()), first.as_str())
     );
     // No base, a new branch: the HEAD of the repository and its branch.
     let p = plan(&dir, "wt-b", "fd/b", None);
-    let b = planned(&o, Some(&p), "").await.unwrap();
+    let b = planned(&o, Some(&p), "", None).await.unwrap();
     assert_eq!(
         (b.git_ref.as_deref(), b.oid.as_str()),
         (Some("main"), head.as_str())
@@ -85,18 +87,18 @@ async fn a_worktree_start_reads_the_base_the_branch_or_head_before_the_worktree_
     // An existing branch: its tip.
     git(&dir, &["branch", "old", &first]);
     let p = plan(&dir, "wt-c", "old", None);
-    let b = planned(&o, Some(&p), "").await.unwrap();
+    let b = planned(&o, Some(&p), "", None).await.unwrap();
     assert_eq!(
         (b.git_ref.as_deref(), b.oid.as_str()),
         (Some("old"), first.as_str())
     );
     // A base that is not a commit gives no base.
     let p = plan(&dir, "wt-d", "fd/d", Some("no-such-ref"));
-    assert_eq!(planned(&o, Some(&p), "").await, None);
+    assert_eq!(planned(&o, Some(&p), "", None).await, None);
     // A folder that exists already (a repeated effect) gives none.
     std::fs::create_dir(dir.with_file_name("wt-e")).unwrap();
     let p = plan(&dir, "wt-e", "fd/e", None);
-    assert_eq!(planned(&o, Some(&p), "").await, None);
+    assert_eq!(planned(&o, Some(&p), "", None).await, None);
 }
 
 #[tokio::test]
