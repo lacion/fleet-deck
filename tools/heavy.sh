@@ -7,9 +7,9 @@
 #    wait for a free slot (a flock on a slot file).
 # 2. A disk guard: a heavy command does not start while the filesystem of the
 #    current directory has less than FD_HEAVY_MIN_FREE_GB (default 60) free.
-# 3. Fewer disk writes: no incremental cache (CARGO_INCREMENTAL=0) and line
-#    tables only as debug info (CARGO_PROFILE_DEV_DEBUG), unless the
-#    environment sets them.
+# 3. Fewer disk writes: no incremental cache (CARGO_INCREMENTAL=0) and no
+#    debug info (CARGO_PROFILE_DEV_DEBUG=false, as in Cargo.toml; older
+#    worktrees lack that line), unless the environment sets them.
 # 4. CPU and memory, from this machine at every run:
 #      reserved cores  = max(4, 20 % of the cores)
 #      build jobs      = cores - reserved          (CARGO_BUILD_JOBS)
@@ -53,7 +53,7 @@ threads=$((cores / 4))
 CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-$jobs}
 NEXTEST_TEST_THREADS=${NEXTEST_TEST_THREADS:-$threads}
 CARGO_INCREMENTAL=${CARGO_INCREMENTAL:-0}
-CARGO_PROFILE_DEV_DEBUG=${CARGO_PROFILE_DEV_DEBUG:-line-tables-only}
+CARGO_PROFILE_DEV_DEBUG=${CARGO_PROFILE_DEV_DEBUG:-false}
 export CARGO_BUILD_JOBS NEXTEST_TEST_THREADS CARGO_INCREMENTAL CARGO_PROFILE_DEV_DEBUG
 
 # The command, inside the slice when there is one.

@@ -69,6 +69,13 @@ unsafe_code = "forbid"
 unwrap_used = "deny"
 expect_used = "warn"
 
+# No debug info in dev and test builds: nothing reads it (a panic keeps its
+# file and line), and it is most of the size of each target directory.
+# Set CARGO_PROFILE_DEV_DEBUG=line-tables-only for one run when a backtrace
+# needs line numbers.
+[profile.dev]
+debug = false
+
 # Password hashing is slow without optimization; tests hash several times.
 [profile.dev.package.argon2]
 opt-level = 3
