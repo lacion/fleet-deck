@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use fleetdeck_core::ChildEnv;
 use fleetdeck_proto::command::{SessionSpec, StopMode, UserInput};
-use fleetdeck_proto::event::{RunOrigin, TurnStatus};
+use fleetdeck_proto::event::{RunOrigin, ToolKind, ToolStatus, TurnStatus};
 use fleetdeck_proto::{Event, InputId};
 use fleetdeck_providers::host::DirectChildHost;
 use fleetdeck_providers::{
@@ -211,6 +211,170 @@ async fn live_codex_smoke() {
     check_turn(&events);
     session.stop(StopMode::Graceful).await.unwrap();
     eprintln!("live_codex_smoke: ok ({} events)", events.len());
+}
+
+/// Reads events until a run completes; returns them all.
+async fn one_run(rx: &mut mpsc::Receiver<Emitted>) -> Vec<Event> {
+    let mut seen = Vec::new();
+    loop {
+        let e = tokio::time::timeout(STEP, rx.recv())
+            .await
+            .unwrap_or_else(|_| panic!("no run.completed within {STEP:?}; saw {seen:#?}"))
+            .expect("the event stream ended before the run completed")
+            .event;
+        let done = matches!(e, Event::RunCompleted { .. });
+        seen.push(e);
+        if done {
+            return seen;
+        }
+    }
+}
+
+/// The index of the first event after `from` that `pred` accepts.
+fn find_from(events: &[Event], from: usize, pred: impl Fn(&Event) -> bool) -> Option<usize> {
+    events
+        .iter()
+        .enumerate()
+        .skip(from)
+        .find(|(_, e)| pred(e))
+        .map(|(i, _)| i)
+}
+
+/// The kind names of `events`, in order, for the run report.
+fn kinds(events: &[Event]) -> Vec<&'static str> {
+    events
+        .iter()
+        .map(|e| match e {
+            Event::SessionStarted { .. } => "session.started",
+            Event::RunStarted { .. } => "run.started",
+            Event::TurnStarted { .. } => "turn.started",
+            Event::MessageDelta { .. } => "message.delta",
+            Event::MessageCompleted { .. } => "message.completed",
+            Event::ToolStarted { .. } => "tool.started",
+            Event::ToolOutput { .. } => "tool.output",
+            Event::ToolCompleted { .. } => "tool.completed",
+            Event::TurnCompleted { .. } => "turn.completed",
+            Event::RunCompleted { .. } => "run.completed",
+            _ => "other",
+        })
+        .collect()
+}
+
+/// B8, DL-196: a `!` command through `thread/shellCommand` on the real
+/// `codex app-server`. No model call: the run has the shell node, no
+/// message. The first command prints its output and ends 0; the second
+/// ends 3.
+#[tokio::test]
+#[ignore = "live: needs FD_LIVE_SMOKE=1, a signed-in `codex`, and network"]
+async fn live_codex_shell_smoke() {
+    if !opted_in("live_codex_shell_smoke") {
+        return;
+    }
+    let mut config = codex::CodexAdapterConfig::new(
+        "codex".into(),
+        program("FD_CODEX_BIN", "codex"),
+        ChildEnv::from_process(),
+    );
+    config.effort = Some("low".to_owned());
+    let adapter = codex::CodexAdapter::new(config, Arc::new(DirectChildHost::new()));
+    let probe = adapter.probe().await.unwrap();
+    eprintln!("codex probe: {probe:?}");
+    assert!(probe.version.is_some(), "codex --version answers");
+    signed_in(&probe.auth);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let canonical = tmp.path().canonicalize().unwrap();
+    let dir_name = tmp
+        .path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let (sink, mut rx) = EventSink::channel(1024);
+    let mut session = tokio::time::timeout(
+        STEP,
+        adapter.start_session(
+            spec("codex", tmp.path(), codex::SAFEST_MODE),
+            sink,
+            codex::Origin::New,
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+
+    // The first command: output and exit 0.
+    session
+        .shell_command("e-live-1".into(), "pwd && echo fd-shell-ok".into())
+        .await
+        .unwrap();
+    let events = one_run(&mut rx).await;
+    eprintln!("shell run 1 events: {:?}", kinds(&events));
+    let node = "shell-e-live-1";
+    let run = find_from(&events, 0, |e| {
+        matches!(e, Event::RunStarted { origin: RunOrigin::Shell, input_summary, .. }
+            if input_summary == "!pwd && echo fd-shell-ok")
+    })
+    .unwrap_or_else(|| panic!("run.started of the shell origin: {events:#?}"));
+    let started = find_from(&events, run + 1, |e| {
+        matches!(e, Event::ToolStarted { node_id, tool_kind: ToolKind::Shell, title, .. }
+            if node_id.0 == node && title == "Shell command")
+    })
+    .unwrap_or_else(|| panic!("tool.started of the shell node: {events:#?}"));
+    let output = find_from(&events, started + 1, |e| {
+        matches!(e, Event::ToolOutput { node_id, chunk, .. }
+            if node_id.0 == node
+                && chunk.contains("fd-shell-ok")
+                && (chunk.contains(canonical.to_string_lossy().as_ref())
+                    || chunk.lines().next().is_some_and(|l| l.trim_end().ends_with(&dir_name))))
+    })
+    .unwrap_or_else(|| panic!("tool.output with the marker and the directory: {events:#?}"));
+    let completed = find_from(&events, output + 1, |e| {
+        matches!(e, Event::ToolCompleted { node_id, status: ToolStatus::Ok, exit_code: Some(0), provider_refs, .. }
+            if node_id.0 == node
+                && provider_refs.get("shell").and_then(|v| v.as_str()) == Some("done"))
+    })
+    .unwrap_or_else(|| {
+        panic!("tool.completed ok, exit 0, shell done, after the output: {events:#?}")
+    });
+    let turn = find_from(&events, completed + 1, |e| {
+        matches!(e, Event::TurnCompleted { .. })
+    })
+    .unwrap_or_else(|| panic!("turn.completed after the tool: {events:#?}"));
+    let end = find_from(&events, turn + 1, |e| {
+        matches!(e, Event::RunCompleted { .. })
+    })
+    .unwrap_or_else(|| panic!("run.completed after the turn: {events:#?}"));
+    assert_eq!(
+        end,
+        events.len() - 1,
+        "run.completed ends the run: {events:#?}"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            Event::MessageDelta { .. } | Event::MessageCompleted { .. }
+        )),
+        "no model call, no assistant message: {events:#?}"
+    );
+
+    // The second command: exit 3.
+    session
+        .shell_command("e-live-2".into(), "exit 3".into())
+        .await
+        .unwrap();
+    let events = one_run(&mut rx).await;
+    eprintln!("shell run 2 events: {:?}", kinds(&events));
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::ToolCompleted { node_id, status: ToolStatus::Failed, exit_code: Some(3), .. }
+                if node_id.0 == "shell-e-live-2"
+        )),
+        "tool.completed failed with exit 3: {events:#?}"
+    );
+    session.stop(StopMode::Graceful).await.unwrap();
+    eprintln!("live_codex_shell_smoke: ok");
 }
 
 // ---- ADR-006 §8.5 test 31: the coordinator credential handoff ----------
