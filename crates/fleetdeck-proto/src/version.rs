@@ -110,6 +110,11 @@ pub mod feature {
     /// and the owner approves on the board (DL-178, ADR-004 §10).
     pub const PAIR_REQUEST: &str = "pair_request.v1";
 
+    /// `session.shell_command` and `session.release_shell`: a `!` shell
+    /// command in a session folder and the owner's release of a folder
+    /// (B8, DL-196).
+    pub const SHELL_COMMAND: &str = "shell_command.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -141,6 +146,7 @@ pub mod feature {
         SETTINGS,
         SHIM_RESUME,
         PAIR_REQUEST,
+        SHELL_COMMAND,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

@@ -95,7 +95,7 @@ fn code_table() -> BTreeMap<String, Row> {
 fn the_code_method_table_equals_the_adr_method_table() {
     let adr = adr_table(&adr());
     let code = code_table();
-    assert_eq!(adr.len(), 89, "{:?}", adr.keys());
+    assert_eq!(adr.len(), 91, "{:?}", adr.keys());
     for (name, row) in &adr {
         assert_eq!(code.get(name), Some(row), "{name}");
     }

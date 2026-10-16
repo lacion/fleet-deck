@@ -214,9 +214,30 @@ impl SessionTurns {
             st.by_input.insert(input.clone(), app_turn.clone());
             st.process.clone()
         };
+        // B8: the folder generation of this start checkpoint, read under the
+        // fence. A failed read makes the start unavailable, so the revert
+        // barrier is never weaker than the stored value.
+        let generation = match self.start_generation().await {
+            Ok(generation) => generation,
+            Err(e) => {
+                tracing::error!(error = %e, "folder generation not read; start unavailable");
+                let mut st = self.lock();
+                st.boundary
+                    .record_start(input, Side::Unavailable(REASON_CAPTURE_FAILED.to_owned()));
+                st.by_input.remove(input);
+                return;
+            }
+        };
         let planned = self
             .store
-            .plan_turn_checkpoint(self.new_row(&app_turn, process, Some(input), None, &start))
+            .plan_turn_checkpoint(self.new_row(
+                &app_turn,
+                process,
+                Some(input),
+                None,
+                &start,
+                generation,
+            ))
             .await;
         if let Err(e) = planned {
             tracing::error!(error = %e, "turn checkpoint row not stored; start unavailable");
@@ -245,6 +266,18 @@ impl SessionTurns {
         );
     }
 
+    /// The generation of the session folder (B8); `None` outside Git.
+    async fn start_generation(&self) -> Result<Option<i64>, StoreError> {
+        match &self.worktree {
+            Some(w) => Ok(Some(
+                self.store
+                    .root_generation(w.root().to_string_lossy().into_owned())
+                    .await?,
+            )),
+            None => Ok(None),
+        }
+    }
+
     fn new_row(
         &self,
         app_turn: &AppTurnId,
@@ -252,6 +285,7 @@ impl SessionTurns {
         input: Option<&InputId>,
         turn: Option<&TurnId>,
         start: &Side,
+        generation: Option<i64>,
     ) -> NewTurnCheckpoint {
         NewTurnCheckpoint {
             app_turn: app_turn.clone(),
@@ -266,6 +300,7 @@ impl SessionTurns {
                 .map(|w| w.root().to_string_lossy().into_owned()),
             scope: SCOPE_TRACKED.to_owned(),
             start: row_side(start),
+            generation,
         }
     }
 
@@ -360,7 +395,7 @@ impl SessionTurns {
             }
             None => {
                 let app_turn: AppTurnId = new_id(self.ids.as_ref());
-                let row = self.new_row(&app_turn, process, None, Some(turn), start);
+                let row = self.new_row(&app_turn, process, None, Some(turn), start, None);
                 if let Err(e) = self.store.plan_turn_checkpoint(row).await {
                     tracing::error!(error = %e, "provider turn checkpoint row not stored");
                     return;

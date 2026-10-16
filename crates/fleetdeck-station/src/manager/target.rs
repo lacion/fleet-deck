@@ -146,6 +146,12 @@ impl std::fmt::Debug for SessionTarget {
 }
 
 impl SessionTarget {
+    /// The workspace fences of the station (B8: the shell advance takes the
+    /// fence of a root like a turn does).
+    pub(super) fn fences(&self) -> &super::turns::Fences {
+        &self.fences
+    }
+
     #[must_use]
     pub fn new(store: Store, adapters: Adapters, ids: SharedIds) -> Self {
         Self {

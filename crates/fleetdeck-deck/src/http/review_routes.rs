@@ -453,6 +453,7 @@ async fn prepare(
             text: String::new(),
             images: Vec::new(),
             author,
+            shell_results: Vec::new(),
         },
     };
     board

@@ -137,6 +137,8 @@ pub fn decide_revert(
             "the worktree is outside the allowed roots",
         ));
     }
+    // B8: no revert across a shell command, and none while one runs.
+    super::shell_decide::revert_barrier(d, &root, target.app_turn.as_str())?;
     // The fence covers the worktree, not only this session (DL-093): no
     // other session in it may be busy, and no other revert may be open.
     if d.open_revert_over(&root)?.is_some() {
@@ -281,6 +283,12 @@ pub fn decide_resolve(
                     "the worktree is outside the allowed roots",
                 ));
             }
+            // B8: the same barrier as the admission.
+            super::shell_decide::revert_barrier(
+                d,
+                &row.revert.worktree_root,
+                row.revert.app_turn.as_str(),
+            )?;
             if let Some(why) = d.worktree_conflict(&row.revert.worktree_root, session_id)? {
                 return Err(reject(RejectCode::InvalidState, why));
             }

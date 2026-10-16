@@ -273,6 +273,21 @@ impl StationSettings {
                 return fixed("internal", "the restart list cannot be built");
             }
         };
+        // B8: a shell command that runs is never stopped by a consent.
+        match manager.shell_work_open().await {
+            Ok(false) => {}
+            Ok(true) => {
+                manager.end_restart();
+                return fixed(
+                    "invalid_state",
+                    "A shell command is running; wait for it to end or release it.",
+                );
+            }
+            Err(_) => {
+                manager.end_restart();
+                return fixed("internal", "the restart list cannot be built");
+            }
+        }
         if !would_stop.is_empty() && !request.stop_direct_sessions {
             manager.end_restart();
             return ok(RestartAnswer {

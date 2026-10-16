@@ -14,4 +14,9 @@ images?: Array<ImageInput>,
  * DL-166). The deck sets it for every command of a member and clears it
  * for every other caller; the station shows it in `run.started`.
  */
-author?: string, };
+author?: string, 
+/**
+ * The effect ids of finished `!` shell commands whose results this
+ * input carries to the model (Claude, B8). Old peers send no field.
+ */
+shell_results?: Array<string>, };

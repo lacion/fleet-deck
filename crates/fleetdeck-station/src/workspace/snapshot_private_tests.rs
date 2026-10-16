@@ -498,6 +498,7 @@ async fn finalized_turn_with(
             worktree_root: Some(wt.root().display().to_string()),
             scope: SCOPE_TRACKED.to_owned(),
             start: RowSide::Capturing,
+            generation: None,
         })
         .await
         .unwrap();

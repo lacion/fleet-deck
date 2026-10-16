@@ -555,6 +555,10 @@ pub(super) fn transition(
          WHERE effect_id = ?1",
         params![effect.effect_id.as_str(), to.as_str(), reason, now],
     )?;
+    // B8: a retired shell effect settles its row in this transaction.
+    if to == EffectState::RetiredNotDispatched {
+        super::shell_retire::on_retired(conn, effect, now)?;
+    }
     for event in transition_events(effect, to, reason.unwrap_or("")) {
         out.push(log::append_one(
             conn,

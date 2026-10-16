@@ -181,6 +181,7 @@ pub fn may_resume(command: &SessionCommand) -> bool {
         SessionCommand::Prompt { .. }
             | SessionCommand::FollowUp { .. }
             | SessionCommand::Steer { .. }
+            | SessionCommand::ShellCommand { .. }
     )
 }
 

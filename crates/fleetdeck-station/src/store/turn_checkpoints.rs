@@ -151,6 +151,9 @@ pub struct NewTurnCheckpoint {
     pub worktree_root: Option<String>,
     pub scope: String,
     pub start: RowSide,
+    /// The folder generation at which the start checkpoint was taken (B8);
+    /// `None` counts as 0.
+    pub generation: Option<i64>,
 }
 
 /// One stored row.
@@ -169,6 +172,9 @@ pub struct TurnCheckpointRow {
     pub state: RowState,
     /// The `station_seq` of `turn.finalized`.
     pub finalized_seq: Option<u64>,
+    /// The folder generation of the start checkpoint (B8); `None` counts
+    /// as 0.
+    pub generation: Option<i64>,
 }
 
 /// The result of [`finalize`].
@@ -180,7 +186,8 @@ pub struct Finalized {
 }
 
 const COLUMNS: &str = "app_turn, session_id, process, input_id, turn_id, worktree_id, \
-     worktree_root, scope, start_state, start_value, end_state, end_value, state, finalized_seq";
+     worktree_root, scope, start_state, start_value, end_state, end_value, state, finalized_seq, \
+     generation";
 
 fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<[Option<String>; 13]> {
     let mut out: [Option<String>; 13] = Default::default();
@@ -190,7 +197,11 @@ fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<[Option<String>; 13]> {
     Ok(out)
 }
 
-fn decode(cols: [Option<String>; 13], seq: Option<i64>) -> Result<TurnCheckpointRow> {
+fn decode(
+    cols: [Option<String>; 13],
+    seq: Option<i64>,
+    generation: Option<i64>,
+) -> Result<TurnCheckpointRow> {
     let [
         app_turn,
         session_id,
@@ -232,6 +243,7 @@ fn decode(cols: [Option<String>; 13], seq: Option<i64>) -> Result<TurnCheckpoint
         end: RowSide::from_columns(&need(end_state, "end")?, end_value)?,
         state,
         finalized_seq: seq.map(to_u64).transpose()?,
+        generation,
     })
 }
 
@@ -244,9 +256,15 @@ pub(super) fn select(
         "SELECT {COLUMNS} FROM turn_checkpoints WHERE {filter} ORDER BY created_at, app_turn"
     ))?;
     let rows = stmt
-        .query_map(args, |r| Ok((row(r)?, r.get::<_, Option<i64>>(13)?)))?
+        .query_map(args, |r| {
+            Ok((
+                row(r)?,
+                r.get::<_, Option<i64>>(13)?,
+                r.get::<_, Option<i64>>(14)?,
+            ))
+        })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    rows.into_iter().map(|(c, s)| decode(c, s)).collect()
+    rows.into_iter().map(|(c, s, g)| decode(c, s, g)).collect()
 }
 
 /// One row.
@@ -286,8 +304,8 @@ pub(super) fn plan(conn: &Connection, new: &NewTurnCheckpoint, now: i64) -> Resu
     conn.execute(
         "INSERT INTO turn_checkpoints (app_turn, session_id, process, input_id, turn_id, \
          worktree_id, worktree_root, scope, start_state, start_value, end_state, end_value, \
-         state, finalized_seq, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'open', NULL, 'open', NULL, ?11, ?11)",
+         state, finalized_seq, created_at, updated_at, generation) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'open', NULL, 'open', NULL, ?11, ?11, ?12)",
         params![
             new.app_turn.as_str(),
             new.session_id.as_str(),
@@ -300,6 +318,7 @@ pub(super) fn plan(conn: &Connection, new: &NewTurnCheckpoint, now: i64) -> Resu
             start_state,
             start_value,
             now,
+            new.generation,
         ],
     )?;
     Ok(new.app_turn.clone())

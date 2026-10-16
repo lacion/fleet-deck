@@ -44,6 +44,7 @@ fn input() -> UserInput {
         text: "hello".to_owned(),
         images: Vec::new(),
         author: None,
+        shell_results: Vec::new(),
     }
 }
 

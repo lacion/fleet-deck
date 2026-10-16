@@ -39,6 +39,7 @@ fn planned(turn: &str, input: Option<&str>) -> NewTurnCheckpoint {
         worktree_root: Some("/w".to_owned()),
         scope: "tracked".to_owned(),
         start: RowSide::Capturing,
+        generation: None,
     }
 }
 

@@ -3,7 +3,7 @@
 //! unchanged).
 
 use fleetdeck_proto::command::{ApprovalDecision, SessionSpec, StopMode, UserInput};
-use fleetdeck_proto::event::{ResolvedBy, RunOrigin};
+use fleetdeck_proto::event::{ProviderKind, ResolvedBy, RunOrigin};
 use fleetdeck_proto::mutation::CommandAuthority;
 use fleetdeck_proto::{InputId, RequestId};
 use serde::{Deserialize, Serialize};
@@ -160,6 +160,14 @@ pub enum EffectPayload {
         op_id: String,
         action: WorktreeAction,
     },
+    /// A `!` shell command in the session folder (B8). The `shell_runs` row
+    /// of the effect holds the state and the result.
+    ShellCommand {
+        command: String,
+        provider: ProviderKind,
+        /// The canonical root of the folder, as the fences name it.
+        worktree_root: String,
+    },
 }
 
 impl EffectPayload {
@@ -178,6 +186,7 @@ impl EffectPayload {
             Self::Stop { .. } => "stop",
             Self::Revert { .. } => "revert",
             Self::Worktree { .. } => "worktree",
+            Self::ShellCommand { .. } => "shell_command",
         }
     }
 
@@ -232,7 +241,10 @@ impl EffectPayload {
             | Self::Answer { authority, .. }
             | Self::SetMode { authority, .. }
             | Self::Stop { authority, .. } => authority.as_ref(),
-            Self::SetModel { .. } | Self::Revert { .. } | Self::Worktree { .. } => None,
+            Self::SetModel { .. }
+            | Self::Revert { .. }
+            | Self::Worktree { .. }
+            | Self::ShellCommand { .. } => None,
         }
     }
 
@@ -250,7 +262,10 @@ impl EffectPayload {
             | Self::Answer { authority, .. }
             | Self::SetMode { authority, .. }
             | Self::Stop { authority, .. } => *authority = value,
-            Self::SetModel { .. } | Self::Revert { .. } | Self::Worktree { .. } => {}
+            Self::SetModel { .. }
+            | Self::Revert { .. }
+            | Self::Worktree { .. }
+            | Self::ShellCommand { .. } => {}
         }
         self
     }
