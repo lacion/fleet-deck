@@ -29,6 +29,7 @@ use fleetdeck_providers::{claude, codex};
 use super::durable::DriverError;
 use super::shim_claude::DurableClaude;
 use super::shim_codex::DurableCodex;
+use super::shim_codex_poll::{BACKGROUND_POLL, spawn_background_poll};
 use super::shims::{Recovered, recover_shims};
 use crate::store::{ProcessIncarnation, RecoveryReport, ShimState, Store, StoreError};
 
@@ -279,7 +280,12 @@ async fn restore_one(
             };
             DurableCodex::restore(store, attached, config, wait)
                 .await
-                .map(Durable::Codex)
+                .map(|d| {
+                    // The poll also reconciles background work after the
+                    // restore (DL-024, DL-199).
+                    spawn_background_poll(&d, BACKGROUND_POLL);
+                    Durable::Codex(d)
+                })
         }
         _ => return Ok(Err(REASON_NO_DRIVER.to_owned())),
     };

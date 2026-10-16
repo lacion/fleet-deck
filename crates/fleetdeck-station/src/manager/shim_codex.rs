@@ -18,7 +18,7 @@ use crate::store::{Effect, EffectPayload, IdentitySignal, NewEvent, Store};
 /// The durable Codex driver of one shim.
 pub type DurableCodex = DurableDriver<CodexCore>;
 
-fn split(out: Vec<Output>) -> Steps {
+pub(super) fn split(out: Vec<Output>) -> Steps {
     let mut steps = Steps::default();
     for o in out {
         match o {
