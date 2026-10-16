@@ -240,8 +240,8 @@ export type NativeFill = {
   readonly instance: string;
   readonly cwd: string;
   readonly importId: string;
-  /** Kept in the form for the import pin task; the import command does not send it yet. */
-  readonly pin: TranscriptPin;
+  /** The pin of a verified entry (the import command sends it); `null` for an unverified one. */
+  readonly pin: TranscriptPin | null;
 };
 
 /** The form fields of an entry; `null` unless it can be imported into a provider of the station. */
@@ -252,7 +252,7 @@ export function continueFill(
   const instance = entryInstance(s, providers);
   if (s.import.state !== 'ok' || s.cwd === null) return null;
   if (!providers.some((p) => p.instance === instance)) return null;
-  return { instance, cwd: s.cwd, importId: s.native_id, pin: s.pin };
+  return { instance, cwd: s.cwd, importId: s.native_id, pin: s.verified ? s.pin : null };
 }
 
 /** The preview request of an entry. */

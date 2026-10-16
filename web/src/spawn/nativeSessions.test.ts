@@ -199,6 +199,10 @@ describe('Continue it (B7)', () => {
     });
   });
 
+  test('an unverified entry continues without a pin', () => {
+    expect(continueFill(native('abc', { verified: false }), PROVIDERS)?.pin).toBeNull();
+  });
+
   test('the instance is the first listed one that the station has', () => {
     const s = native('abc', { instances: ['other', 'codex'] });
     expect(continueFill(s, PROVIDERS)?.instance).toBe('codex');

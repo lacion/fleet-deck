@@ -631,6 +631,7 @@ impl EffectTarget for SessionTarget {
                 spec,
                 prompt,
                 import,
+                transcript,
                 ..
             } => {
                 let (policy, boot) = (self.current_policy(), self.boot_reader());
@@ -643,6 +644,24 @@ impl EffectTarget for SessionTarget {
                 // again. A failure is recorded and never stops the import
                 // (DL-189).
                 if *import {
+                    // Before any launch: a pinned import verifies its
+                    // transcript, and a Codex child thread fails the start
+                    // (B7).
+                    if let Err(refusal) = crate::history::import_check::before_import(
+                        &self.store,
+                        policy.as_deref(),
+                        &self.private,
+                        &effect.session_id,
+                        native_session_id,
+                        &spec.cwd,
+                        transcript.as_ref(),
+                    )
+                    .await
+                    {
+                        self.start_failed(&effect.session_id, refusal.message())
+                            .await;
+                        return Dispatch::NotDispatched(refusal.code().into());
+                    }
                     crate::history::at_import(
                         &self.store,
                         policy.as_deref(),

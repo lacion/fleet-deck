@@ -116,8 +116,8 @@ export function SpawnForm({
   const [title, setTitle] = useState('');
   const [prompt, setPrompt] = useState(initialPrompt);
   const [importId, setImportId] = useState('');
-  // B7: the pin of the entry that "Continue it" chose. The import command does not send it yet;
-  // the import pin task adds it to the command and to the call. Any edit of the fields clears it.
+  // B7: the pin of a verified entry that "Continue it" chose; the import command sends it.
+  // Any edit of the fields clears it.
   const [importPin, setImportPin] = useState<TranscriptPin | null>(null);
   const [browsing, setBrowsing] = useState(false);
   const [place, setPlace] = useState<'here' | 'worktree' | 'clone'>(initialPlace);
@@ -370,6 +370,7 @@ export function SpawnForm({
                   setup,
                   batchId === null ? undefined : batchRef(batchId, i + 1, prompts.length),
                   gate.elevation,
+                  importing && importPin !== null ? importPin : undefined,
                 );
                 if (!last.ok) break;
                 if (started === 0 && setup !== undefined) {

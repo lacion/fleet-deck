@@ -184,6 +184,7 @@ async fn a_resume_claimed_before_a_crash_settles_as_outcome_unknown_and_is_never
                         }),
                         continue_by: None,
                         import: false,
+                        transcript: None,
                         authority: None,
                     },
                 )?;

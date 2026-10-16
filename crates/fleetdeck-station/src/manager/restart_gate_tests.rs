@@ -35,6 +35,7 @@ async fn a_start_submitted_while_restarting_is_refused_and_works_again_after_a_r
             spec: spec(&cwd, "claude"),
             native_session_id: "native-1".into(),
             prompt: None,
+            transcript: None,
         },
         SessionCommand::Resume {
             session_id: "s1".into(),

@@ -16,6 +16,7 @@ use crate::ids::{
 pub use crate::input::{ImageInput, UserInput};
 use crate::integrations::IssueRef;
 use crate::mutation::CommandAuthority;
+use crate::native::TranscriptPin;
 use crate::session::BatchRef;
 
 /// The deck retries a command for at most this long after it accepted it (G3).
@@ -199,6 +200,9 @@ pub enum SessionCommand {
         spec: SessionSpec,
         native_session_id: String,
         prompt: Option<UserInput>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        transcript: Option<TranscriptPin>, // B7: native-sessions.md §2.4
     },
     Prompt {
         session_id: SessionId,

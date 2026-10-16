@@ -260,6 +260,7 @@ pub fn admit_resume(
             continue_by,
             authority: None,
             import: false,
+            transcript: None,
         },
     )?;
     // The session is starting again from this commit: it counts against
