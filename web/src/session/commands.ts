@@ -34,7 +34,16 @@ export type SessionActions = {
   /** The `admin` scope: the owner checks a previous run of the session (DL-182). */
   readonly canAdmin: boolean;
   /** Pasted images go with the text (M3 6-10, DL-304). */
-  send(kind: InputKind, text: string, images?: readonly ImageInput[]): Promise<Outcome>;
+  send(
+    kind: InputKind,
+    text: string,
+    images?: readonly ImageInput[],
+    shellResults?: readonly string[],
+  ): Promise<Outcome>;
+  /** B8: run `command` in the session folder (owner only, `!` in the composer). */
+  shellCommand(command: string): Promise<Outcome>;
+  /** B8: the owner states that the shell command `effectId` no longer runs. */
+  releaseShell(effectId: string): Promise<Outcome>;
   interrupt(): Promise<Outcome>;
   /** End the session process: `graceful` asks it to stop, `kill` ends it at once (DL-140). */
   stop(how: 'graceful' | 'kill'): Promise<Outcome>;
@@ -186,12 +195,18 @@ export function sessionActions(
     canDrive: scopes.includes('drive'),
     canApprove: scopes.includes('approve'),
     canAdmin: scopes.includes('admin'),
-    send: (kind, text, images = []) =>
+    send: (kind, text, images = [], shellResults = []) =>
       run({
         op: kind,
         session_id,
-        input: images.length > 0 ? { text, images: [...images] } : { text },
+        input: {
+          text,
+          ...(images.length > 0 ? { images: [...images] } : {}),
+          ...(shellResults.length > 0 ? { shell_results: [...shellResults] } : {}),
+        },
       }),
+    shellCommand: (command) => run({ op: 'shell_command', session_id, command }),
+    releaseShell: (effect_id) => run({ op: 'release_shell', session_id, effect_id }),
     interrupt: () => run({ op: 'interrupt', session_id }),
     stop: (how) => run({ op: 'stop', session_id, how }),
     resume: () => run({ op: 'resume', session_id }),
