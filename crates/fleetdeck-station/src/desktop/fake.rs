@@ -282,7 +282,8 @@ impl Rig {
         std::fs::write(self.dir.path().join("chromium_fail"), "").unwrap();
     }
 
-    /// Sets a state flag file of the fakes (`dnd`, `hyprlock`, `no_hypridle`).
+    /// Sets a state flag file of the fakes (`dnd`, `hyprlock`, `no_hypridle`,
+    /// `hold_close`, `ignore_close`).
     pub fn flag(&self, name: &str, on: bool) {
         let path = self.dir.path().join(name);
         if on {
@@ -344,9 +345,14 @@ async fn serve_events(
                         .write_all(format!("openwindow>>{address},1,{class},Title, with comma\n").as_bytes())
                         .await;
                 }
+                // `hold_close`: the requests wait; `ignore_close`: they are lost.
+                if root.join("hold_close").exists() {
+                    continue;
+                }
                 let requests = std::fs::read_to_string(root.join("close.req")).unwrap_or_default();
                 let requests: Vec<&str> = requests.lines().collect();
-                for address in requests.iter().skip(closed) {
+                let ignore = root.join("ignore_close").exists();
+                for address in requests.iter().skip(closed).filter(|_| !ignore) {
                     remove_client(&root, address);
                     let bare = address.trim_start_matches("0x");
                     let _ = s.write_all(format!("closewindow>>{bare}\n").as_bytes()).await;

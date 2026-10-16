@@ -2,13 +2,16 @@
 //! runs fixed programs with typed argv. `allow_desktop` is read live right
 //! before every program run (the runner's gate).
 
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use fleetdeck_core::ChildEnv;
 use fleetdeck_proto::SessionId;
 use fleetdeck_proto::desktop::{DesktopAction, DesktopKind, Urgency};
 use ring::rand::{SecureRandom, SystemRandom};
+use tokio::sync::OwnedMutexGuard;
 
 use super::detect::Found;
 use super::events::{Events, Kind, Record, preview_name, preview_parent, remove_preview_profile};
@@ -18,6 +21,11 @@ use super::{Fail, Gate, args, code, profile};
 
 /// How long a close waits for the `closewindow` event.
 const CLOSE_WAIT: Duration = Duration::from_secs(5);
+
+/// One lock per display: a wall action holds it from its first check to the
+/// end of the profile removal or the replacement launch (R13 §5C item 5).
+/// The entries are never removed.
+pub(super) type WallLocks = Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>;
 
 /// The kind of an action for the log: never its arguments.
 pub(super) fn name(action: &DesktopAction) -> &'static str {
@@ -66,6 +74,7 @@ pub(super) struct Cx<'a> {
     pub found: &'a Found,
     pub env: &'a ChildEnv,
     pub events: &'a Events,
+    pub walls: &'a WallLocks,
     pub gate: Gate<'a>,
 }
 
@@ -151,13 +160,7 @@ impl Cx<'_> {
                 self.wall_close(&display_id).await.map(|_| None)
             }
             DesktopAction::WallReload { display_id, url } => {
-                let monitor = self.wall_close(&display_id).await?;
-                let monitor = monitor.ok_or_else(|| {
-                    Fail::new(code::NOT_FOUND, "The wall has no monitor to reopen on.")
-                })?;
-                self.wall_open(&display_id, &monitor, None, &url)
-                    .await
-                    .map(Some)
+                self.wall_reload(&display_id, &url).await.map(Some)
             }
             DesktopAction::WindowClose { address } => {
                 let address = args::address(&address)?;
@@ -410,6 +413,34 @@ impl Cx<'_> {
         Ok(data.join("fleetdeck"))
     }
 
+    /// The lock of `display_id`: one wall action at a time per display.
+    async fn wall_guard(&self, display_id: &str) -> OwnedMutexGuard<()> {
+        let lock = {
+            let mut map = self.walls.lock().unwrap_or_else(PoisonError::into_inner);
+            Arc::clone(map.entry(display_id.to_owned()).or_default())
+        };
+        lock.lock_owned().await
+    }
+
+    /// The checks of a wall open that do not depend on the old window: the
+    /// arguments, the live `allow_desktop` and the monitor.
+    async fn wall_open_check(
+        &self,
+        display_id: &str,
+        monitor: &str,
+        workspace: Option<u8>,
+        url: &str,
+    ) -> Result<(), Fail> {
+        args::display_id(display_id)?;
+        args::url(url)?;
+        workspace.map(args::workspace).transpose()?;
+        if !(self.gate)() {
+            return Err(Fail::forbidden());
+        }
+        self.monitors(Some(monitor)).await?;
+        Ok(())
+    }
+
     async fn wall_open(
         &self,
         display_id: &str,
@@ -418,8 +449,21 @@ impl Cx<'_> {
         url: &str,
     ) -> Result<String, Fail> {
         let display_id = args::display_id(display_id)?;
-        let url = args::url(url)?;
-        let workspace = workspace.map(args::workspace).transpose()?;
+        let _guard = self.wall_guard(display_id).await;
+        self.wall_open_locked(display_id, monitor, workspace, url)
+            .await
+    }
+
+    /// A wall open; the caller holds the lock of `display_id`.
+    async fn wall_open_locked(
+        &self,
+        display_id: &str,
+        monitor: &str,
+        workspace: Option<u8>,
+        url: &str,
+    ) -> Result<String, Fail> {
+        self.wall_open_check(display_id, monitor, workspace, url)
+            .await?;
         if self.events.wall(display_id).is_some() {
             return Err(Fail::new(
                 code::CONFLICT,
@@ -480,13 +524,24 @@ impl Cx<'_> {
     /// the monitor that the wall was on.
     async fn wall_close(&self, display_id: &str) -> Result<Option<String>, Fail> {
         let display_id = args::display_id(display_id)?;
+        let _guard = self.wall_guard(display_id).await;
+        self.wall_close_locked(display_id).await
+    }
+
+    /// A wall close; the caller holds the lock of `display_id`. The profile
+    /// is deleted only after the window is confirmed gone.
+    async fn wall_close_locked(&self, display_id: &str) -> Result<Option<String>, Fail> {
         let record = self
             .events
             .wall(display_id)
             .ok_or_else(|| Fail::new(code::NOT_FOUND, "This display has no wall window."))?;
         self.close_window(&record).await?;
         if !self.events.wait_gone(&record.address, CLOSE_WAIT).await {
-            tracing::debug!("the wall window did not report its close in time");
+            // The record stays: a second close can try again.
+            return Err(Fail::new(
+                code::FAILED,
+                "The wall window did not close; its profile stays. Try again.",
+            ));
         }
         let parent = self.data_dir()?;
         let name = format!("wall-{display_id}");
@@ -501,6 +556,24 @@ impl Cx<'_> {
                 format!("The wall profile was not removed: {}", e.kind()),
             )),
         }
+    }
+
+    /// `wall.reload`: the checks of the new window first, then the close,
+    /// then the open on the same monitor, all under one lock.
+    async fn wall_reload(&self, display_id: &str, url: &str) -> Result<String, Fail> {
+        let display_id = args::display_id(display_id)?;
+        let _guard = self.wall_guard(display_id).await;
+        let record = self
+            .events
+            .wall(display_id)
+            .ok_or_else(|| Fail::new(code::NOT_FOUND, "This display has no wall window."))?;
+        let monitor = record
+            .monitor
+            .ok_or_else(|| Fail::new(code::NOT_FOUND, "The wall has no monitor to reopen on."))?;
+        self.wall_open_check(display_id, &monitor, None, url)
+            .await?;
+        self.wall_close_locked(display_id).await?;
+        self.wall_open_locked(display_id, &monitor, None, url).await
     }
 
     /// Closes the window of `record` after a fresh `clients` check of the

@@ -96,6 +96,7 @@ pub(crate) struct Ctx {
 pub struct Desktop {
     base: ChildEnv,
     events: Events,
+    walls: actions::WallLocks,
     cache: Mutex<Option<Cached>>,
 }
 
@@ -106,6 +107,7 @@ impl Desktop {
         Self {
             base,
             events: Events::new(),
+            walls: actions::WallLocks::default(),
             cache: Mutex::new(None),
         }
     }
@@ -208,6 +210,7 @@ impl Desktop {
             found: &ctx.found,
             env: &ctx.env,
             events: &self.events,
+            walls: &self.walls,
             gate,
         };
         let address = cx.perform(action).await?;

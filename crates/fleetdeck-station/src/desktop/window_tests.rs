@@ -575,3 +575,102 @@ fn the_log_of_an_action_never_holds_the_arguments() {
     );
     let _ = AtomicBool::new(true);
 }
+
+fn open_wall(display_id: &str) -> A {
+    A::WallOpen {
+        display_id: display_id.into(),
+        monitor: "DP-1".into(),
+        workspace: None,
+        url: url(),
+    }
+}
+
+fn close_requests(rig: &Rig) -> usize {
+    rig.calls_of("hyprctl")
+        .iter()
+        .filter(|c| c.args.get(1).is_some_and(|a| a == "closewindow"))
+        .count()
+}
+
+#[tokio::test]
+async fn a_wall_close_that_is_not_confirmed_fails_and_keeps_the_profile_and_the_record() {
+    let rig = Rig::new(Opts::default());
+    run(&rig, open_wall("wall-1")).await.unwrap();
+    let profile = rig.data.join("fleetdeck/wall-wall-1");
+    std::fs::write(profile.join("Cookies"), b"x").unwrap();
+    // The window ignores the close request.
+    rig.flag("ignore_close", true);
+    let e = run(
+        &rig,
+        A::WallClose {
+            display_id: "wall-1".into(),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        act_err(e),
+        (
+            "failed",
+            "The wall window did not close; its profile stays. Try again.".into()
+        )
+    );
+    assert!(profile.join("Cookies").exists(), "the profile stays");
+    let walls = rig.desktop.info(&on).await.unwrap().walls;
+    assert_eq!(walls.len(), 1, "the record stays");
+}
+
+#[tokio::test]
+async fn a_wall_open_waits_for_a_close_and_its_profile_removal_of_the_same_display() {
+    let rig = Rig::new(Opts::default());
+    run(&rig, open_wall("wall-1")).await.unwrap();
+    let profile = rig.data.join("fleetdeck/wall-wall-1");
+    std::fs::write(profile.join("Cookies"), b"x").unwrap();
+    // The close request is held: the close waits for the window.
+    rig.flag("hold_close", true);
+    let desktop = std::sync::Arc::clone(&rig.desktop);
+    let close = tokio::spawn(async move {
+        desktop
+            .act(
+                &on,
+                A::WallClose {
+                    display_id: "wall-1".into(),
+                },
+            )
+            .await
+    });
+    eventually("the close request", || close_requests(&rig) == 1).await;
+    let desktop = std::sync::Arc::clone(&rig.desktop);
+    let open = tokio::spawn(async move { desktop.act(&on, open_wall("wall-1")).await });
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    assert!(!open.is_finished() && !close.is_finished());
+    assert_eq!(rig.calls_of("chromium").len(), 1, "no launch while closing");
+    assert!(profile.join("Cookies").exists());
+    rig.flag("hold_close", false);
+    close.await.unwrap().unwrap();
+    open.await.unwrap().unwrap();
+    assert_eq!(rig.calls_of("chromium").len(), 2);
+    assert!(!profile.join("Cookies").exists(), "the old profile is gone");
+}
+
+#[tokio::test]
+async fn a_reload_with_an_invalid_url_leaves_the_window_the_record_and_the_profile() {
+    let rig = Rig::new(Opts::default());
+    run(&rig, open_wall("wall-1")).await.unwrap();
+    let profile = rig.data.join("fleetdeck/wall-wall-1");
+    std::fs::write(profile.join("Cookies"), b"x").unwrap();
+    let e = run(
+        &rig,
+        A::WallReload {
+            display_id: "wall-1".into(),
+            url: "http://exa mple.test/".into(),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(e.code, "invalid_params");
+    assert_eq!(close_requests(&rig), 0, "no close request");
+    assert_eq!(rig.calls_of("chromium").len(), 1);
+    assert!(profile.join("Cookies").exists());
+    assert_eq!(rig.desktop.info(&on).await.unwrap().walls.len(), 1);
+}
