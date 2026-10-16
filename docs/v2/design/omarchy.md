@@ -1,6 +1,6 @@
 # Fleet Deck on Omarchy: the wall, desktop control and the desktop MCP (R13)
 
-- **Status:** Draft, revision 3 (2026-10-16): §5B answers the round 2 review (`/tmp/adv-r13-p23-r2-report.md`) and overrides §5A where they differ; §5A answers the DESIGN REVIEW round 1 of §4.5, §5 and §6 (`/tmp/adv-r13-p2-design-report.md`) and overrides them where they differ. Not frozen. Each high-risk part needs an adversary DESIGN REVIEW before its code (§13).
+- **Status:** Draft, revision 4 (2026-10-16): §5C answers the round 3 review (`/tmp/adv-r13-p23-r3-report.md`, owner decision: apply the fixes and one more round) and overrides §5B where they differ; §5B answers the round 2 review (`/tmp/adv-r13-p23-r2-report.md`) and overrides §5A where they differ; §5A answers the DESIGN REVIEW round 1 of §4.5, §5 and §6 (`/tmp/adv-r13-p2-design-report.md`) and overrides them where they differ. Not frozen. Each high-risk part needs an adversary DESIGN REVIEW before its code (§13).
 - **Owner request (2026-10-16):** "i have a server thats connected to a ultrawide screen, i use this server to run multiple ai agents as it has 64 cores and 128gb of ram … it would be awesome if i could control omarchy and the screen trough the fleet and maybe also have an mcp … imagine using the screen as a command control center and we could display and control everhting there." Then: "lets create a document for this work so we can implement everything".
 - **Owner answers (DL-198):**
 
@@ -284,6 +284,27 @@ These rules override §5A, §4.5, §5 and §6 where they differ.
 6. **Window records, completed.** Records hold `(instance signature, address, pid, class, opener session)`; the station prunes the records that no longer appear in `hyprctl clients -j` at each info refresh and after each action; a close checks the record against a fresh `clients` read right before it closes. The residual race (a window that closes and a new one with the same address, pid and class in the same instant) is accepted and stated.
 7. **The kiosk cost, completed.** §12 item 1 also states that a copied display cookie reads assistant message text and the current directive's artifact of the sessions in the ceiling.
 8. **Proofs, completed.** Owner and display cookies in one browser at the same time (each route sees the right principal); revocation before an unused link is redeemed; the kiosk profile is cleared on `wall.close`; a terminal opened by `terminal.open` follows the shell policy (`allow_shell`, the roots); the pairing tests of item 2.
+
+## 5C. Revision 4: rules after the design review round 3
+
+These rules override §5B, §5A, §4.5, §5 and §6 where they differ.
+
+1. **Pairing states (R3-1).** A pairing is `pending → approved → claimed`, or `expired`:
+   - `pending`: made by `POST /api/displays/pair`; the deck sets the `fd_display_pending` cookie (a 256-bit random secret) and stores only its hash (the verifier); 5 minutes.
+   - `approved`: the owner approves by pairing id and code (§5B item 2); the deck records the display (name, ceiling, the approving owner session) on the pairing and **keeps the verifier**; the approved state lasts at most 2 minutes, then `expired`.
+   - `claimed`: the kiosk's poll (`GET /api/displays/pair/{id}`) with the pending cookie; in **one transaction** the deck checks the verifier, deletes it, issues a fresh `fd_display` cookie for the new display and clears `fd_display_pending`. A second claim, a claim without the right pending cookie, a claim of a `pending` or `expired` pairing are refused. Expired records are deleted by the timer. Tests: the whole flow; claim before approval; claim with a wrong cookie; two concurrent claims (one wins); approval after expiry.
+2. **Directives, live authority (R1-3).** Before a stored or restored directive is delivered, the deck checks again the sender's **current** authority (the owner; the station binding still in force; the coordinator grant still active with the `desktop` class and the task still owning each referenced session and artifact) and each reference against the current ceiling. A change of a grant, a task membership, a binding or a ceiling deletes the stored directives that it affects (the display returns to `mission`).
+3. **The display patch endpoint (R1-5).** `GET /api/displays/self/sessions/{station}/{session}/changes` returns the change summary; with the display's `show_diffs` on (read live per request), `?patch=1` returns the patch of the current session diff snapshot (the same snapshot as the owner's "Since the session started" view at that moment), with the station's private-path protection **and** the member deny list applied, the ceiling checked, 64 KiB per file and 1 MiB per answer; a path that is denied appears as "hidden" with no content.
+4. **Argument positions per executable (R1-10).**
+   - `hyprctl`: fixed argv `hyprctl dispatch <dispatcher> <arg>` with `<dispatcher>` from a closed list and `<arg>` built only from typed values (a number, an exact monitor name from the live list, `address:0x…`); no free text reaches `hyprctl`.
+   - `notify-send` and `omarchy-notification-send`: the title and body come after `--` (both tools take it); a test sends a title and a body that start with `-`.
+   - `chromium --app=<url>`: the URL is one argument that starts with `--app=` and is checked (`http`/`https`, ≤ 2048 bytes, no whitespace); nothing else from the request reaches its argv.
+   - `grim`, `gpu-screen-recorder` (P5): geometry from typed values only.
+5. **Window lifecycle from Hyprland events (R1-12).** The station reads Hyprland's event socket (`.socket2.sock`): `openwindow>>ADDRESS,WORKSPACE,CLASS,TITLE` matches a launch to its exact window (the class the station set, the pid of the child it started, the first `openwindow` after the spawn), and `closewindow>>ADDRESS` deletes the record. A gap in the event stream (a reconnect, a Hyprland restart, a new instance signature) clears **all** records, so the station owns no window it might confuse. The check right before a close (§5B item 6) stays; the remaining race is only between that check and the close.
+6. **Responses and the terminal (R1-13).**
+   - `GET /api/auth/session` and the logout route are typed per principal: with both cookies in one browser, a board route answers the owner and a display route answers the display; logout of one clears only its cookie. Tests for each combination.
+   - `terminal.open` uses the existing handover path unchanged (`shell/handover.rs`), with its live checks of `allow_shell`, the roots **and** the provider mode and lifecycle rules; the desktop action only chooses where the window opens.
+7. **Owner-facing text (R1-9).** The Displays page shows the §12 cost in one line under "Add a wall display": "A wall can be read by programs that run as you on its machine: it shows the summaries, the assistant messages and the shown artifact of the stations you choose."
 
 ## 6. Desktop control on the station: feature `desktop.v1` (HIGH RISK)
 
