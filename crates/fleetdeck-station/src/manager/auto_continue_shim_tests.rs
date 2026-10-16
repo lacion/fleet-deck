@@ -103,6 +103,7 @@ impl Rig {
             run_id: "run-1".into(),
             input_summary: "build the thing".to_owned(),
             origin: RunOrigin::Board,
+            input_text: None,
         });
         events.push(Event::TurnStarted {
             run_id: "run-1".into(),

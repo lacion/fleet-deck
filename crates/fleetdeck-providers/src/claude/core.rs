@@ -13,6 +13,7 @@ use fleetdeck_proto::event::{
 };
 use fleetdeck_proto::{
     Capabilities, Event, InputId, NodeId, PlanId, ProviderInstanceId, RequestId, RunId, TurnId,
+    input_text_of,
 };
 use serde_json::Value;
 
@@ -80,6 +81,9 @@ pub(super) struct InputEntry {
     pub(super) uuid: String,
     pub(super) origin: RunOrigin,
     pub(super) summary: String,
+    /// The bounded full text, until `run.started` carries it (B10).
+    #[serde(default)]
+    pub(super) input_text: Option<String>,
     /// Who typed the input (R11.5, DL-166); a checkpoint of an older build has none.
     #[serde(default)]
     pub(super) author: Option<String>,
@@ -404,6 +408,7 @@ impl ClaudeCore {
             uuid: uuid.clone(),
             origin: input.origin,
             summary: summary_of(&input.input.text),
+            input_text: input_text_of(&input.input.text),
             author: input.input.author.clone(),
             state: None,
             turn: None,
@@ -570,12 +575,17 @@ impl ClaudeCore {
             None => {
                 let r = self.ids.run();
                 self.run = Some(r.clone());
+                // The full text leaves the entry once `run.started` has it (B10).
+                let input_text = input
+                    .and_then(|i| self.inputs.get_mut(i))
+                    .and_then(|e| e.input_text.take());
                 out.push(Output::Emit(Event::RunStarted {
                     run_id: r.clone(),
                     input_summary: summary,
                     origin,
                     author,
                     input_id,
+                    input_text,
                 }));
                 r
             }

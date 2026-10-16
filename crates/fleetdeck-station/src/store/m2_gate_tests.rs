@@ -270,6 +270,7 @@ async fn a_lost_session_reports_the_loss_before_it_empties_the_background_list()
                 run_id: "run-1".into(),
                 input_summary: "hi".to_owned(),
                 origin: RunOrigin::Board,
+                input_text: None,
             },
         )
         .await;

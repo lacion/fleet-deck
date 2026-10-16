@@ -203,6 +203,35 @@ fn capabilities_offer_full_access_only_when_allowed() {
     assert_eq!(full.modes.len(), safe.modes.len() + APPROVAL_POLICIES.len());
 }
 
+/// The `(input_summary, input_text)` of the `run.started` in `ev` (B10).
+fn run_texts(ev: &[Event]) -> Option<(String, Option<String>)> {
+    ev.iter().find_map(|e| match e {
+        Event::RunStarted {
+            input_summary,
+            input_text,
+            ..
+        } => Some((input_summary.clone(), input_text.clone())),
+        _ => None,
+    })
+}
+
+#[test]
+fn run_started_carries_the_full_input_text_b10() {
+    let mut core = ready_core();
+    let text = "first line\nsecond line\n\nthird paragraph";
+    let out = core.prompt(&input(text, "in-1")).unwrap();
+    let ev = emits(&reply(&mut core, &out, json!({"turn": {"id": "n1"}})));
+    assert_eq!(
+        run_texts(&ev),
+        Some(("first line".into(), Some(text.into())))
+    );
+    // A provider turn has no input behind it.
+    let mut core = ready_core();
+    let params = json!({"threadId": T, "turn": {"id": "n9"}});
+    let ev = emits(&notify(&mut core, "turn/started", params));
+    assert_eq!(run_texts(&ev), Some(("provider turn".into(), None)));
+}
+
 #[test]
 fn a_prompt_is_confirmed_only_by_its_own_user_message() {
     let mut core = ready_core();

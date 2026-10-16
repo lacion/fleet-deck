@@ -69,7 +69,14 @@ author?: string,
  * board matches it with the `input_id` of a review. Absent for a
  * run that a provider started and in events of older peers.
  */
-input_id?: InputId, } | { "kind": "turn.started", run_id: RunId, turn_id: TurnId, provider_refs: { [key in string]: JsonValue }, } | { "kind": "message.delta", turn_id: TurnId, 
+input_id?: InputId, 
+/**
+ * The full text of the input that started the run, at most 32 KiB
+ * (cut at a character boundary, ending with `…`), when the station
+ * started it (B10). Absent for a provider-started run and in events
+ * of older peers.
+ */
+input_text?: string, } | { "kind": "turn.started", run_id: RunId, turn_id: TurnId, provider_refs: { [key in string]: JsonValue }, } | { "kind": "message.delta", turn_id: TurnId, 
 /**
  * The subagent tool call that produced the text, if any (L7).
  */

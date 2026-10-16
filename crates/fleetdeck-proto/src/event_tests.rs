@@ -39,6 +39,7 @@ fn samples() -> Vec<Event> {
             run_id: "run-1".into(),
             input_summary: "hi".into(),
             origin: RunOrigin::Local,
+            input_text: None,
         },
         Event::TurnStarted {
             run_id: "run-1".into(),
@@ -493,6 +494,7 @@ fn run_started_carries_an_optional_input_id() {
         origin: RunOrigin::Board,
         author: None,
         input_id: Some("in-7".into()),
+        input_text: None,
     };
     let json = serde_json::to_value(&with).unwrap();
     assert_eq!(json["input_id"], "in-7");
@@ -503,6 +505,7 @@ fn run_started_carries_an_optional_input_id() {
         origin: RunOrigin::Board,
         author: None,
         input_id: None,
+        input_text: None,
     };
     assert!(
         serde_json::to_value(&without)
@@ -510,6 +513,59 @@ fn run_started_carries_an_optional_input_id() {
             .get("input_id")
             .is_none()
     );
+}
+
+/// `run.started.input_text` (B10) is optional on the wire: an older peer
+/// sends none, and the field is left out when it is absent.
+#[test]
+fn run_started_carries_an_optional_input_text() {
+    let old = r#"{"kind":"run.started","run_id":"r1","input_summary":"hi","origin":"board"}"#;
+    let Event::RunStarted { input_text, .. } = serde_json::from_str(old).unwrap() else {
+        panic!("not run.started");
+    };
+    assert_eq!(input_text, None);
+    let with = Event::RunStarted {
+        run_id: "r1".into(),
+        input_summary: "first".into(),
+        origin: RunOrigin::Board,
+        author: None,
+        input_id: None,
+        input_text: Some("first\nsecond".into()),
+    };
+    let json = serde_json::to_value(&with).unwrap();
+    assert_eq!(json["input_text"], "first\nsecond");
+    assert_eq!(serde_json::from_value::<Event>(json).unwrap(), with);
+    let without = Event::RunStarted {
+        run_id: "r1".into(),
+        input_summary: "hi".into(),
+        origin: RunOrigin::Board,
+        author: None,
+        input_id: None,
+        input_text: None,
+    };
+    assert!(
+        serde_json::to_value(&without)
+            .unwrap()
+            .get("input_text")
+            .is_none()
+    );
+}
+
+#[test]
+fn input_text_of_bounds_the_text() {
+    assert_eq!(input_text_of(""), None);
+    assert_eq!(input_text_of("hi\nthere").as_deref(), Some("hi\nthere"));
+    let exact = "a".repeat(32 * 1024);
+    assert_eq!(input_text_of(&exact).as_deref(), Some(exact.as_str()));
+    // 40 KiB of 3-byte characters: the cut falls inside a character.
+    let long = "€".repeat(40 * 1024 / 3);
+    let cut = input_text_of(&long).unwrap();
+    assert!(cut.ends_with('…'));
+    assert!(cut.len() <= 32 * 1024 + 3);
+    let body = cut.strip_suffix('…').unwrap();
+    assert!(body.len() <= 32 * 1024);
+    assert!(long.starts_with(body));
+    assert_eq!(body.len(), 32 * 1024 - (32 * 1024) % 3);
 }
 
 #[test]

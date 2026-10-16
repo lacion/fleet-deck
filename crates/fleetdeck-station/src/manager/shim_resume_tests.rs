@@ -245,6 +245,7 @@ async fn auto_continue_picks_a_session_that_a_reboot_proof_made_resumable() {
         run_id: "run-w".into(),
         input_summary: "work".to_owned(),
         origin: RunOrigin::Board,
+        input_text: None,
     };
     let turn = Event::TurnStarted {
         run_id: "run-w".into(),

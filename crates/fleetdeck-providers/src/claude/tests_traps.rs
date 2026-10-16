@@ -147,6 +147,7 @@ fn trap_4_provider_work_after_the_turn_is_a_provider_turn() {
         Event::RunStarted {
             origin: RunOrigin::Provider,
             input_id: None,
+            input_text: None,
             ..
         }
     ));
@@ -156,6 +157,26 @@ fn trap_4_provider_work_after_the_turn_is_a_provider_turn() {
     // The provider turn never confirms the waiting host input.
     assert_eq!(core.input_state(&InputId::new(uuid(2))), None);
     assert_eq!(core.pending_inputs(), 1);
+}
+
+/// `run.started` carries the whole prompt, its summary only the first line (B10).
+#[test]
+fn run_started_carries_the_full_input_text() {
+    let mut core = ClaudeCore::new(config(false));
+    init(&mut core);
+    let text = "first line\nsecond line\n\nthird paragraph";
+    core.prompt(&input(1, text)).unwrap();
+    let ev = lifecycle(&mut core, 1, "started");
+    let Some(Event::RunStarted {
+        input_summary,
+        input_text,
+        ..
+    }) = ev.iter().find(|e| matches!(e, Event::RunStarted { .. }))
+    else {
+        panic!("no run.started in {ev:?}");
+    };
+    assert_eq!(input_summary, "first line");
+    assert_eq!(input_text.as_deref(), Some(text));
 }
 
 #[test]

@@ -42,7 +42,7 @@ pub mod version;
 
 pub use capability::{Capabilities, Degradation, Operation, Unsupported};
 pub use command::{CommandEnvelope, Receipt, Reject, RejectCode, SessionCommand};
-pub use event::{Event, EventBody, EventEnvelope};
+pub use event::{Event, EventBody, EventEnvelope, input_text_of};
 pub use ids::*;
 pub use link::{ControlFrame, CoordinatorBindingPhase, CoordinatorBindingState, Scope};
 pub use mutation::Mutation;

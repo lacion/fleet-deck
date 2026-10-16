@@ -47,23 +47,6 @@ pub enum SessionState {
     Lost,
 }
 
-/// Where a run came from. `local` is the station-local CLI; `provider` is a
-/// turn that the provider started without host input (background work, L7).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-#[ts(export_to = "event/")]
-pub enum RunOrigin {
-    Board,
-    Mail,
-    Coordinator,
-    Resume,
-    Local,
-    Provider,
-    /// The station's fixed continuation input after a restart (L19,
-    /// ADR-007 §2.3). Older peers decode it as unknown.
-    Continuation,
-}
-
 /// Kind of a tool call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -373,6 +356,13 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         input_id: Option<InputId>,
+        /// The full text of the input that started the run, at most 32 KiB
+        /// (cut at a character boundary, ending with `…`), when the station
+        /// started it (B10). Absent for a provider-started run and in events
+        /// of older peers.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        input_text: Option<String>,
     },
     #[serde(rename = "turn.started")]
     TurnStarted {
@@ -706,10 +696,11 @@ pub enum Event {
 #[path = "event_kinds.rs"]
 mod kinds;
 
-// `BackgroundTask` moved to its own file for the module size rule (B6).
+// `BackgroundTask`, `RunOrigin` and `input_text_of` moved to their own file
+// for the module size rule (B6, B10).
 #[path = "event_tasks.rs"]
 mod tasks;
-pub use tasks::BackgroundTask;
+pub use tasks::{BackgroundTask, RunOrigin, input_text_of};
 
 /// An event body: a known [`Event`], or an unknown kind kept verbatim (L16).
 #[derive(Debug, Clone, PartialEq)]

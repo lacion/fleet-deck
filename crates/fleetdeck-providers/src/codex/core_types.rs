@@ -51,6 +51,9 @@ pub(super) struct InputEntry {
     pub(super) id: InputId,
     pub(super) origin: RunOrigin,
     pub(super) summary: String,
+    /// The bounded full text, until `run.started` carries it (B10).
+    #[serde(default)]
+    pub(super) input_text: Option<String>,
     /// Who typed the input (R11.5, DL-166); a checkpoint of an older build has none.
     #[serde(default)]
     pub(super) author: Option<String>,

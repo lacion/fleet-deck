@@ -44,6 +44,7 @@ fn run(seq: u64, session: &str) -> EventEnvelope {
             run_id: format!("r{seq}").into(),
             input_summary: "hi".to_owned(),
             origin: RunOrigin::Board,
+            input_text: None,
         },
     )
 }
