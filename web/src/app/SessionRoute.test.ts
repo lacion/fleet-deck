@@ -6,14 +6,20 @@ import type { Layout } from './viewport';
 
 type SessionRouteValue = Extract<Route, { name: 'session' }>;
 
-const route = (tab: SessionRouteValue['tab'] = 'chat'): SessionRouteValue => ({
+const route = (tab: SessionRouteValue['tab'] = 'chat', agent?: string): SessionRouteValue => ({
   name: 'session',
   station: 'station-a',
   session: 's1',
   tab,
+  ...(agent === undefined ? {} : { agent }),
 });
 
-function build(layout: Layout, tab: SessionRouteValue['tab'] = 'chat', opened?: () => void) {
+function build(
+  layout: Layout,
+  tab: SessionRouteValue['tab'] = 'chat',
+  opened?: () => void,
+  agent?: string,
+) {
   const calls: { route: Route; opts?: unknown }[] = [];
   const props = buildPaneProps({
     session: card('s1'),
@@ -25,7 +31,7 @@ function build(layout: Layout, tab: SessionRouteValue['tab'] = 'chat', opened?: 
     terminals: undefined,
     watch: undefined,
     layout,
-    route: route(tab),
+    route: route(tab, agent),
     navigate: (next, opts) => calls.push({ route: next, opts }),
     onTerminalOpened: opened,
   });
@@ -64,5 +70,21 @@ describe('buildPaneProps', () => {
     expect(props.layout).toBe('tablet');
     expect(props.session.summary.session_id).toBe('s1');
     expect(props.freshness).toBe('live');
+  });
+
+  test('the agent comes from the route; onAgent replaces the route, onTab drops the agent (B6)', () => {
+    const none = build('desktop');
+    expect('agent' in none.props).toBe(false);
+    none.props.onAgent?.('node-2');
+    expect(none.calls).toEqual([{ route: route('chat', 'node-2'), opts: { replace: true } }]);
+
+    const chosen = build('desktop', 'chat', undefined, 'node-2');
+    expect(chosen.props.agent).toBe('node-2');
+    chosen.props.onAgent?.(null);
+    chosen.props.onTab('changes');
+    expect(chosen.calls).toEqual([
+      { route: route('chat'), opts: { replace: true } },
+      { route: route('changes'), opts: { replace: true } },
+    ]);
   });
 });

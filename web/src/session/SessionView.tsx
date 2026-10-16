@@ -13,7 +13,9 @@ import {
 } from 'react';
 import { ArtifactsProvider, useArtifacts } from '../artifacts/context';
 import { SessionArtifacts } from '../artifacts/SessionArtifacts';
+import { type AgentChoice, AgentHead, AgentsMenu } from '../chat/AgentsMenu';
 import { ChatView } from '../chat/ChatView';
+import { SubagentWork } from '../chat/SubagentWork';
 import { useSessionHistory } from '../chat/history';
 import type { DeckSession, StationView } from '../gen';
 import type { Freshness, Timeline } from '../runtime/state';
@@ -39,6 +41,7 @@ import { handoverFlow } from './handoverFlow';
 import { ExecutionDialog } from './ExecutionDialog';
 import { FleetControlChip } from './FleetControlChip';
 import { SessionHeader } from './SessionHeader';
+import { hasAgents, isLive, shownStatus, taskStates, toolTitles } from './tasks';
 import { buildTimeline, sessionModels, slashCommands } from './timeline';
 import { RevertStatus, TurnsPanel } from './TurnsPanel';
 import { finalizedTurns } from './workspace';
@@ -59,6 +62,9 @@ export type SessionViewProps = {
   readonly layout?: 'desktop' | 'tablet' | 'phone';
   readonly tab?: PaneTab;
   readonly onTab?: (tab: PaneTab) => void;
+  /** B6: the node id of the subagent that the chat tab shows (`?agent=`); unknown: the main chat. */
+  readonly agent?: string;
+  readonly onAgent?: (nodeId: string | null) => void;
   readonly onBack?: () => void;
   /** The phone shows the terminal screen. */
   readonly onTerminalOpened?: () => void;
@@ -67,6 +73,7 @@ export type SessionViewProps = {
 };
 
 const noop = () => {};
+const HIGHLIGHT_HOLD_MS = 2500;
 
 const WIDE = '(min-width: 1280px)';
 const PANEL_KEY = 'fd-files-panel';
@@ -132,6 +139,7 @@ function disabledReason(
 export function SessionView(props: SessionViewProps) {
   const { session, stations, timeline, freshness, actions, shells, terminals, watch } = props;
   const { layout = 'desktop', onTab = noop, onBack, onTerminalOpened, onNewShell } = props;
+  const onAgent = props.onAgent ?? noop;
   const s = session.summary;
   const caps = s.capabilities;
   const key = useMemo(
@@ -158,6 +166,30 @@ export function SessionView(props: SessionViewProps) {
   };
   const events = timeline?.events ?? [];
   const tree = buildTimeline(events);
+  const tasks = useMemo(() => taskStates(events), [events]);
+  // B6: a chosen background command: its card is scrolled to and marked; the mark is not kept.
+  const [highlight, setHighlight] = useState<{ node_id: string; nonce: number } | null>(null);
+  useEffect(() => {
+    if (highlight === null) return;
+    const timer = setTimeout(() => setHighlight(null), HIGHLIGHT_HOLD_MS);
+    return () => clearTimeout(timer);
+  }, [highlight]);
+  // Only the node id of a subagent selects an agent view; any other value shows the main chat.
+  const loadSubagent = guest === null ? (actions?.subagent ?? null) : null;
+  const titles = toolTitles(tree.items);
+  const agentSub =
+    props.tab === 'chat' || props.tab === undefined
+      ? tree.subagents.find((sub) => sub.node_id === props.agent)
+      : undefined;
+  const chooseAgent = (choice: AgentChoice) => {
+    if (choice.kind === 'task') {
+      onAgent(null);
+      setHighlight({ node_id: choice.node_id, nonce: Date.now() });
+      return;
+    }
+    setHighlight(null);
+    onAgent(choice.kind === 'main' ? null : choice.node_id);
+  };
   const turns = finalizedTurns(events);
   const filesOffered = actions?.files != null;
   // DL-191: the Branches view of the Changes tab is the owner's.
@@ -425,15 +457,55 @@ export function SessionView(props: SessionViewProps) {
         >
           {tab === 'chat' ? (
             <>
+              {agentSub === undefined ? null : (
+                <AgentHead
+                  title={agentSub.title}
+                  status={shownStatus(agentSub, tasks)}
+                  onBack={() => onAgent(null)}
+                />
+              )}
               <ChatView
-                items={tree.items}
+                key={agentSub?.node_id ?? 'main'}
+                items={agentSub === undefined ? tree.items : agentSub.items}
                 provider={s.provider}
-                working={s.current_run !== null}
+                working={
+                  agentSub === undefined
+                    ? s.current_run !== null
+                    : isLive(shownStatus(agentSub, tasks))
+                }
                 ready={timeline?.ready === true}
                 error={timeline?.error ?? null}
                 onOpenChanges={() => onTab('changes')}
-                history={{ view: historyView, gap: historyGap }}
-                loadSubagent={guest === null ? (actions?.subagent ?? null) : null}
+                {...(agentSub === undefined
+                  ? { history: { view: historyView, gap: historyGap } }
+                  : {})}
+                loadSubagent={loadSubagent}
+                tasks={tasks}
+                highlight={highlight}
+                toolbar={
+                  hasAgents(tree.subagents, tasks) ? (
+                    <AgentsMenu
+                      subagents={tree.subagents}
+                      tasks={tasks}
+                      toolTitles={titles}
+                      agent={agentSub?.node_id ?? null}
+                      onChoose={chooseAgent}
+                    />
+                  ) : undefined
+                }
+                emptyText={
+                  agentSub === undefined ? undefined : 'This subagent has no messages yet.'
+                }
+                footer={
+                  agentSub !== undefined &&
+                  loadSubagent !== null &&
+                  agentSub.tool_use_id !== null ? (
+                    <SubagentWork
+                      key={agentSub.node_id}
+                      load={() => loadSubagent(agentSub.tool_use_id ?? '')}
+                    />
+                  ) : undefined
+                }
                 review={
                   reviewActions === undefined
                     ? undefined
@@ -464,7 +536,12 @@ export function SessionView(props: SessionViewProps) {
                     }
                   />
                 ) : null}
-                {people.drive !== null && access.composer ? (
+                {agentSub !== undefined ? (
+                  <p className="fd-agent-note" role="note">
+                    A subagent takes no input. Write in the main chat.
+                  </p>
+                ) : null}
+                {agentSub === undefined && people.drive !== null && access.composer ? (
                   <MobStrip
                     view={people.drive}
                     busy={driveBusy}
@@ -474,7 +551,7 @@ export function SessionView(props: SessionViewProps) {
                     onRelease={() => drive(people.release)}
                   />
                 ) : null}
-                {access.composer ? (
+                {agentSub !== undefined ? null : access.composer ? (
                   <Composer
                     enabled={
                       (flags.drive || wakes) && busy === null && people.drive?.locked !== true
