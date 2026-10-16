@@ -409,11 +409,16 @@ fn durations() {
 #[test]
 fn the_host_setting_and_the_shim_buffer() {
     let c = StationConfig::parse("", &env()).unwrap();
-    assert_eq!(
-        c.host,
-        HostChoice::Direct,
-        "direct until the owner chooses shim"
-    );
+    // Shim parity step 5 (DL-199): shim on Linux, direct elsewhere.
+    assert_eq!(c.host, HostChoice::for_this_system());
+    let expected = if cfg!(target_os = "linux") {
+        HostChoice::Shim
+    } else {
+        HostChoice::Direct
+    };
+    assert_eq!(c.host, expected);
+    let c = StationConfig::parse("host = \"direct\"", &env()).unwrap();
+    assert_eq!(c.host, HostChoice::Direct);
     assert_eq!(c.shim_buffer_mib, DEFAULT_SHIM_BUFFER_MIB);
     let c = StationConfig::parse("host = \"shim\"\nshim_buffer_mib = 64", &env()).unwrap();
     assert_eq!(c.host, HostChoice::Shim);

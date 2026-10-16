@@ -128,8 +128,10 @@ impl TempNode {
     /// in `fake_bin_dir`.
     #[must_use]
     pub fn station_toml(&self, fake_bin_dir: &Path, agents: &[FakeAgent]) -> String {
+        // The tests of the direct host name it: the Linux default is `shim`
+        // (DL-199). A shim test replaces this line.
         let mut text = format!(
-            "name = \"{}\"\nallowed_roots = [\"~/projects\"]\nmax_sessions = 4\nlisten = []\n",
+            "host = \"direct\"\nname = \"{}\"\nallowed_roots = [\"~/projects\"]\nmax_sessions = 4\nlisten = []\n",
             self.name
         );
         for agent in agents {

@@ -46,7 +46,7 @@ fn providers_under_shims_survive_a_station_sigkill_and_the_restarted_station_rea
     // Top-level keys come before the provider tables.
     station
         .node
-        .write_station_toml(&format!("host = \"shim\"\n{text}"))
+        .write_station_toml(&text.replacen("host = \"direct\"", "host = \"shim\"", 1))
         .unwrap();
     let _reap = Reap(station.node.dirs().station().join("shims"));
     station.spawn(None);
