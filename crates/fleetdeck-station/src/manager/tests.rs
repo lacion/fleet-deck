@@ -734,7 +734,7 @@ mod batch;
 #[path = "checkpoint_wired_tests.rs"]
 mod checkpoint_wired;
 #[path = "codex_tests.rs"]
-mod codex;
+pub(in crate::manager) mod codex;
 #[path = "coordinator_command_tests.rs"]
 mod coordinator_command;
 #[path = "drain_tests.rs"]
@@ -762,7 +762,7 @@ mod resume;
 #[path = "revert_wired_tests.rs"]
 mod revert_wired;
 #[path = "setup_tests.rs"]
-mod setup;
+pub(in crate::manager) mod setup;
 #[path = "workspace_tests.rs"]
 mod workspace_provision;
 

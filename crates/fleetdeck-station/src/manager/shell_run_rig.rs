@@ -34,9 +34,9 @@ pub(super) fn unique_det() -> Det {
     Det::at(Det::new().now_ms() + pid * 1_000)
 }
 
-pub(super) struct Rig {
+pub(in crate::manager) struct Rig {
     pub(super) det: Det,
-    pub(super) manager: Arc<SessionManager>,
+    pub(in crate::manager) manager: Arc<SessionManager>,
     pub(super) root: tempfile::TempDir,
     pub(super) deck: Caller,
     pub(super) next: u32,
@@ -54,7 +54,7 @@ pub(super) fn git(dir: &Path, args: &[&str]) {
 }
 
 impl Rig {
-    pub(super) async fn new() -> Self {
+    pub(in crate::manager) async fn new() -> Self {
         let det = unique_det();
         let root = tempfile::tempdir().unwrap();
         let app = root.path().join("projects/app");
@@ -112,11 +112,11 @@ impl Rig {
         }
     }
 
-    pub(super) fn app(&self) -> std::path::PathBuf {
+    pub(in crate::manager) fn app(&self) -> std::path::PathBuf {
         std::fs::canonicalize(self.root.path().join("projects/app")).unwrap()
     }
 
-    pub(super) fn app_root(&self) -> String {
+    pub(in crate::manager) fn app_root(&self) -> String {
         self.app().to_string_lossy().into_owned()
     }
 
@@ -188,7 +188,7 @@ impl Rig {
     }
 
     /// A session in the repo that finished its first run, effects settled.
-    pub(super) async fn session(&mut self) -> SessionId {
+    pub(in crate::manager) async fn session(&mut self) -> SessionId {
         let d = self
             .local(SessionCommand::Start {
                 spec: SessionSpec {
@@ -237,7 +237,7 @@ impl Rig {
     }
 
     /// Submits `!command` as the board; returns the effect id.
-    pub(super) async fn bang(&mut self, s: &SessionId, command: &str) -> String {
+    pub(in crate::manager) async fn bang(&mut self, s: &SessionId, command: &str) -> String {
         let deck = self.deck.clone();
         let d = self
             .submit(
@@ -262,7 +262,11 @@ impl Rig {
             .unwrap()
     }
 
-    pub(super) async fn row_is(&self, id: &str, pick: impl Fn(&ShellRow) -> bool) -> ShellRow {
+    pub(in crate::manager) async fn row_is(
+        &self,
+        id: &str,
+        pick: impl Fn(&ShellRow) -> bool,
+    ) -> ShellRow {
         let deadline = tokio::time::Instant::now() + WAIT;
         loop {
             let row = self.row(id).await;
@@ -275,7 +279,7 @@ impl Rig {
     }
 
     /// The manager's shutdown, at most 30 s: a hang fails the test.
-    pub(super) async fn shutdown(&self) {
+    pub(in crate::manager) async fn shutdown(&self) {
         let ended = tokio::time::timeout(
             Duration::from_secs(30),
             self.manager.shutdown(StopMode::Kill),
@@ -285,7 +289,7 @@ impl Rig {
     }
 
     /// Runs `command` to its end and waits for the advance.
-    pub(super) async fn run(&mut self, s: &SessionId, command: &str) -> ShellRow {
+    pub(in crate::manager) async fn run(&mut self, s: &SessionId, command: &str) -> ShellRow {
         let id = self.bang(s, command).await;
         let row = self
             .row_is(&id, |r| r.state.is_terminal() && !r.advance_pending)

@@ -16,7 +16,7 @@ use crate::store::shell_runs::ShellState;
 use crate::store::{Caller, EffectPayload, OfflineApprovalPolicy, ReadResult, Store, StoreConfig};
 
 #[path = "shell_run_rig.rs"]
-mod rig;
+pub(in crate::manager) mod rig;
 use rig::*;
 
 #[tokio::test]

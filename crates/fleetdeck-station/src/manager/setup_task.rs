@@ -309,19 +309,30 @@ impl SessionTarget {
             (planned, _) => planned,
         };
         let held = match (&cmd, &env) {
-            (Some(cmd), Some(env)) => {
-                crate::workspace::setup::run_held(
-                    &self.store,
-                    effect.effect_id.as_str(),
-                    &session_id,
-                    cmd,
-                    Path::new(&spec.cwd),
-                    env,
-                    crate::workspace::setup::DEFAULT_TIMEOUT,
-                    cancel,
-                )
-                .await
-            }
+            (Some(cmd), Some(env)) => match self.child_dir(&spec).await {
+                // The command runs in the checked folder; `_dir` lives until
+                // it returned (B9).
+                Ok((_dir, cwd)) => {
+                    crate::workspace::setup::run_held(
+                        &self.store,
+                        effect.effect_id.as_str(),
+                        &session_id,
+                        cmd,
+                        &cwd,
+                        env,
+                        crate::workspace::setup::DEFAULT_TIMEOUT,
+                        cancel,
+                    )
+                    .await
+                }
+                Err((text, _code)) => Held {
+                    result: Err(SetupError {
+                        message: text,
+                        output_tail: String::new(),
+                    }),
+                    end_row: false,
+                },
+            },
             (Some(_), None) => Held {
                 result: Err(SetupError {
                     message: "the setup command has no environment for this provider instance"
