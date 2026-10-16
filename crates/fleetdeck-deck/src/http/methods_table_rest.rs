@@ -518,6 +518,22 @@ pub const API_REST: &[ApiMethod] = &[
         Some(Scope::Read),
         false,
     ),
+    // Browse the native sessions of a station (B7): the owner only, never a
+    // member.
+    m(
+        "stations.native_sessions",
+        Method::GET,
+        "/api/stations/{station}/native-sessions",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
+        "stations.native_preview",
+        Method::POST,
+        "/api/stations/{station}/native-sessions/preview",
+        Some(Scope::Read),
+        true,
+    ),
     m(
         "spaces.create",
         Method::POST,

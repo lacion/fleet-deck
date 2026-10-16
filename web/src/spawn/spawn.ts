@@ -19,6 +19,7 @@ import type {
 } from '../gen';
 import { limitSuffix, type RateMeter } from '../board/usage';
 import { commandId, type Outcome, outcomeOf } from '../session/commands';
+import { nativeActions, type NativeActions } from './nativeSessions';
 
 type Get = (path: string) => Promise<unknown>;
 type Post = (path: string, body: unknown) => Promise<unknown>;
@@ -35,6 +36,10 @@ export type SpawnActions = {
   list(stationId: string, path: string | null): Promise<WorkspaceListing>;
   /** Asks the station whether it can read the clone URL with its own Git credentials (DL-144). */
   preflight(stationId: string, url: string): Promise<PreflightResult>;
+  /** B7: the sessions of a station's provider homes (the owner's login only). */
+  readonly nativeList?: NativeActions['list'];
+  /** B7: the preview of one of them. */
+  readonly nativePreview?: NativeActions['preview'];
   /** With `importId`: a `session.import` of that native CLI session (DL-308). */
   start(
     stationId: string,
@@ -385,8 +390,11 @@ export function spawnActions(
   scopes: readonly string[],
   newId: () => string = commandId,
 ): SpawnActions {
+  const native = nativeActions(get, post);
   return {
     canDrive: scopes.includes('drive'),
+    nativeList: native.list,
+    nativePreview: native.preview,
     list: async (stationId, path) => {
       const query = path === null ? '' : `?path=${encodeURIComponent(path)}`;
       return listingView(

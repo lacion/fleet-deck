@@ -226,6 +226,7 @@ describe('overlays block the board hotkeys (R7.4)', () => {
       .map((p) => p.split('/').pop());
     expect(found.sort()).toEqual(
       [
+        'BrowseSessions.tsx',
         'ComparePage.tsx',
         'DeviceLinkDialog.tsx',
         'Dialog.tsx',
