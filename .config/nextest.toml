@@ -1,0 +1,5 @@
+# Each shim and station test starts real processes (shims, fake providers,
+# git). With every core as a test thread, a full run starves the machine and
+# timing tests get flaky. Run on half of the cores (32 cores: 16 threads).
+[profile.default]
+test-threads = -16
