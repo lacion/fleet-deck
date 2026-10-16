@@ -44,6 +44,8 @@ export type Route =
       readonly station: string;
       readonly session: string;
       readonly tab: Tab;
+      /** B6: `?agent=<node id>`: the subagent that the chat tab shows; only on the chat tab. */
+      readonly agent?: string;
     };
 
 const HOME: Route = { name: 'home' };
@@ -147,15 +149,19 @@ export function parseHash(hash: string): Route {
     const station = decodeURIComponent(parts[2] ?? '');
     const session = decodeURIComponent(parts[3] ?? '');
     if (station === '' || session === '') return HOME;
-    const tab = new URLSearchParams(query).get('tab');
+    const q = new URLSearchParams(query);
+    const tab = q.get('tab');
+    const chosen: Tab =
+      tab === 'changes' || tab === 'files' || tab === 'artifacts' || tab === 'people'
+        ? tab
+        : 'chat';
+    const agent = q.get('agent');
     return {
       name: 'session',
       station,
       session,
-      tab:
-        tab === 'changes' || tab === 'files' || tab === 'artifacts' || tab === 'people'
-          ? tab
-          : 'chat',
+      tab: chosen,
+      ...(chosen === 'chat' && agent !== null && agent !== '' ? { agent } : {}),
     };
   } catch {
     return HOME;
@@ -180,7 +186,10 @@ export function formatHash(route: Route): string {
       return '#/';
     case 'session': {
       const base = `#/s/${encodeURIComponent(route.station)}/${encodeURIComponent(route.session)}`;
-      return route.tab === 'chat' ? base : `${base}?tab=${route.tab}`;
+      if (route.tab !== 'chat') return `${base}?tab=${route.tab}`;
+      return route.agent === undefined || route.agent === ''
+        ? base
+        : `${base}?tab=chat&agent=${encodeURIComponent(route.agent)}`;
     }
     case 'compare':
       return `#/compare/${encodeURIComponent(route.batch)}`;

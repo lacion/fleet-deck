@@ -23,6 +23,9 @@ export type PaneProps = {
   readonly layout: Layout;
   readonly tab: Tab;
   readonly onTab: (tab: Tab) => void;
+  /** B6: the subagent of the chat tab (`?agent=`); `onAgent(null)` returns to the main chat. */
+  readonly agent?: string;
+  readonly onAgent?: (nodeId: string | null) => void;
   readonly onBack?: () => void;
   readonly onTerminalOpened?: () => void;
   readonly onNewShell?: () => void;
@@ -56,8 +59,22 @@ export function buildPaneProps(input: BuildInput): PaneProps {
     ...rest,
     layout,
     tab: route.tab,
-    // A tab change replaces the history entry: Back leaves the session.
-    onTab: (tab) => navigate({ ...route, tab }, { replace: true }),
+    // A tab change replaces the history entry: Back leaves the session. It drops `agent`.
+    onTab: (tab) => {
+      const { agent: _agent, ...rest } = route;
+      navigate({ ...rest, tab }, { replace: true });
+    },
+    ...(route.agent === undefined ? {} : { agent: route.agent }),
+    // An agent change replaces the history entry, like a tab change.
+    onAgent: (nodeId) => {
+      const { agent: _agent, ...rest } = route;
+      navigate(
+        nodeId === null ? { ...rest, tab: 'chat' } : { ...rest, tab: 'chat', agent: nodeId },
+        {
+          replace: true,
+        },
+      );
+    },
     ...(layout === 'desktop'
       ? {}
       : {

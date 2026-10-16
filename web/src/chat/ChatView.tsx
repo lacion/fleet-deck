@@ -1,9 +1,10 @@
 // The chat view of a session: the primary projection of the canonical events
 // (UI-PLAN §2.1). It renders `Item`s from `buildTimeline`; it owns no data.
-import { type ReactNode, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ProviderKind, ReviewComment, ReviewSummary, SubagentLog } from '../gen';
 import { hasChanges } from '../session/changes';
-import { type Item, type Subagent, type SubagentStatus, subagentLabel } from '../session/timeline';
+import { shownStatus, type TaskState } from '../session/tasks';
+import type { Item, Subagent } from '../session/timeline';
 import {
   ArrowDown,
   Ban,
@@ -61,6 +62,16 @@ export type ChatViewProps = {
   readonly history?: { readonly view: HistoryView; readonly gap: boolean } | undefined;
   /** DL-191: the owner's reader of a subagent log; `null` or absent for a member. */
   readonly loadSubagent?: ((toolUseId: string) => Promise<SubagentLog>) | null | undefined;
+  /** B6: the tasks of the session; a subagent card shows the status of its task. */
+  readonly tasks?: ReadonlyMap<string, TaskState> | undefined;
+  /** B6: a slot next to the filters (the agents switcher); it shows alone when there are no items. */
+  readonly toolbar?: ReactNode;
+  /** B6: scroll to the tool card of this node and mark it for 2 s; a new `nonce` repeats it. */
+  readonly highlight?: { readonly node_id: string; readonly nonce: number } | null | undefined;
+  /** B6: rendered in the chat column after the items and the working dots. */
+  readonly footer?: ReactNode;
+  /** B6: the text of an empty list; the main chat keeps its own. */
+  readonly emptyText?: string | undefined;
 };
 
 type OpenChanges = ((turnId: string) => void) | undefined;
@@ -68,6 +79,7 @@ type OpenChanges = ((turnId: string) => void) | undefined;
 const NEAR_BOTTOM_PX = 80;
 const MAX_FILE_CHIPS = 3;
 const HISTORY_TOP_PX = 40;
+const HIGHLIGHT_MS = 2000;
 
 const KIND_ICON: Record<Tool['tool_kind'], LucideIcon> = {
   shell: SquareTerminal,
@@ -99,13 +111,6 @@ function StatusMark({ status }: { status: Exclude<Tool['status'], 'running'> }) 
   );
 }
 
-const subagentTone = (status: SubagentStatus): 'ok' | 'info' | 'hazard' | 'muted' => {
-  if (status === 'running') return 'ok';
-  if (status === 'background') return 'info';
-  if (status === 'failed') return 'hazard';
-  return 'muted';
-};
-
 const basename = (path: string): string => path.split('/').filter(Boolean).pop() ?? path;
 
 type ItemsProps = {
@@ -115,10 +120,13 @@ type ItemsProps = {
   provider: ProviderKind | null;
   review?: ChatReview | undefined;
   loadSubagent?: ((toolUseId: string) => Promise<SubagentLog>) | null | undefined;
+  tasks?: ReadonlyMap<string, TaskState> | undefined;
 };
 
+const NO_TASKS: ReadonlyMap<string, TaskState> = new Map();
+
 function Items(props: ItemsProps): ReactNode {
-  const { compact, provider, onOpenChanges, review, loadSubagent } = props;
+  const { compact, provider, onOpenChanges, review, loadSubagent, tasks } = props;
   return compactRuns(props.items, compact, provider).map((row) =>
     row.kind === 'fold' ? (
       <ToolFold
@@ -126,13 +134,13 @@ function Items(props: ItemsProps): ReactNode {
         items={row.items}
         failed={row.failed}
         summary={row.summary}
-        {...{ onOpenChanges, compact, provider, review, loadSubagent }}
+        {...{ onOpenChanges, compact, provider, review, loadSubagent, tasks }}
       />
     ) : (
       <ItemView
         key={row.item.key}
         item={row.item}
-        {...{ onOpenChanges, compact, provider, review, loadSubagent }}
+        {...{ onOpenChanges, compact, provider, review, loadSubagent, tasks }}
       />
     ),
   );
@@ -169,7 +177,7 @@ function ToolView({ tool }: { tool: Tool }) {
   const shown = tool.files.slice(0, MAX_FILE_CHIPS);
   const more = tool.files.length - shown.length;
   return (
-    <details className="fd-chat-tool" data-status={tool.status}>
+    <details className="fd-chat-tool" data-status={tool.status} data-node={tool.node_id}>
       <summary>
         {tool.status === 'running' ? (
           <span className="fd-dot" data-status="working" role="img" aria-label="running" />
@@ -206,6 +214,7 @@ function SubagentView(props: Omit<ItemsProps, 'items'> & { item: Subagent }) {
   const { item, ...rest } = props;
   const { loadSubagent } = rest;
   const toolUseId = item.tool_use_id;
+  const shown = shownStatus(item, rest.tasks ?? NO_TASKS);
   const live = item.status === 'running' || item.status === 'background';
   return (
     <div
@@ -216,8 +225,8 @@ function SubagentView(props: Omit<ItemsProps, 'items'> & { item: Subagent }) {
       <div className="fd-chat-card-head">
         <Icon of={Workflow} size={14} />
         <span className="fd-chat-card-title">{item.title}</span>
-        <span className="fd-badge" data-tone={subagentTone(item.status)}>
-          {subagentLabel(item.status)}
+        <span className="fd-badge" data-tone={shown.tone}>
+          {shown.label}
         </span>
       </div>
       {item.input ? <p className="fd-chat-subagent-task">{item.input}</p> : null}
@@ -415,6 +424,29 @@ export function ChatView(props: ChatViewProps) {
     history?.view.loadEarlier();
   };
 
+  // B6: a chosen background command: open the folds around its card, scroll to it, mark it for 2 s.
+  const highlight = props.highlight ?? null;
+  useEffect(() => {
+    const root = scroller.current;
+    if (highlight === null || !root) return;
+    const card = root.querySelector<HTMLElement>(`[data-node="${CSS.escape(highlight.node_id)}"]`);
+    if (!card) return;
+    for (
+      let up = card.parentElement?.closest('details');
+      up;
+      up = up.parentElement?.closest('details')
+    ) {
+      up.open = true;
+    }
+    card.scrollIntoView({ block: 'center' });
+    card.setAttribute('data-highlight', '');
+    const timer = setTimeout(() => card.removeAttribute('data-highlight'), HIGHLIGHT_MS);
+    return () => {
+      clearTimeout(timer);
+      card.removeAttribute('data-highlight');
+    };
+  }, [highlight?.node_id, highlight?.nonce]);
+
   useLayoutEffect(() => {
     const el = scroller.current;
     const kept = anchor.current;
@@ -460,7 +492,9 @@ export function ChatView(props: ChatViewProps) {
     // DL-189: with earlier history above, the empty text would be wrong.
     body =
       historyCount > 0 ? null : (
-        <p className="fd-chat-state">No messages yet. Send a prompt to start.</p>
+        <p className="fd-chat-state">
+          {props.emptyText ?? 'No messages yet. Send a prompt to start.'}
+        </p>
       );
   } else {
     body =
@@ -474,15 +508,26 @@ export function ChatView(props: ChatViewProps) {
           provider={provider}
           review={props.review}
           loadSubagent={props.loadSubagent}
+          tasks={props.tasks}
         />
       );
   }
 
+  const filterBar =
+    ready && !error && items.length > 0 ? (
+      <FilterBar filter={filter} counts={filtered.counts} onChange={setFilter} />
+    ) : null;
+
   return (
     <section className="fd-chat" aria-label="Conversation">
-      {ready && !error && items.length > 0 ? (
-        <FilterBar filter={filter} counts={filtered.counts} onChange={setFilter} />
-      ) : null}
+      {props.toolbar === undefined || props.toolbar === null ? (
+        filterBar
+      ) : (
+        <div className="fd-chat-bar">
+          <div className="fd-chat-toolbar">{props.toolbar}</div>
+          {filterBar}
+        </div>
+      )}
       {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a keyboard user scrolls the log */}
       <div className="fd-chat-scroll" role="log" ref={scroller} onScroll={onScroll} tabIndex={0}>
         <div className="fd-chat-column">
@@ -512,6 +557,7 @@ export function ChatView(props: ChatViewProps) {
               </span>
             </p>
           ) : null}
+          {props.footer}
         </div>
       </div>
       {behind ? (

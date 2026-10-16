@@ -645,3 +645,112 @@
 .fd-history-more {
   align-self: center;
 }
+
+/* B6: the agents switcher and the agent view. */
+.fd-chat-bar {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 4px 24px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.fd-chat-bar .fd-chat-filters {
+  position: static;
+  margin-left: auto;
+  padding: 0;
+  border-bottom: 0;
+}
+.fd-chat-toolbar {
+  display: flex;
+  margin-right: auto;
+}
+.fd-chat-toolbar .fd-menu > summary .fd-badge {
+  margin-left: var(--sp-1);
+}
+.fd-chat-toolbar .fd-menu-body {
+  right: auto;
+  left: 0;
+  width: min(440px, 90vw);
+}
+[data-layout="phone"] .fd-chat-bar {
+  padding: 4px 12px;
+}
+[data-layout="phone"] .fd-chat-toolbar {
+  flex: 1 1 100%;
+}
+[data-layout="phone"] .fd-chat-toolbar .fd-menu {
+  position: static;
+}
+[data-layout="phone"] .fd-chat-toolbar .fd-menu-body {
+  right: 12px;
+  left: 12px;
+  width: auto;
+}
+.fd-agent-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  height: auto;
+  padding: var(--sp-2);
+  text-align: left;
+}
+.fd-agent-row[aria-current="true"] {
+  background: var(--raised);
+}
+.fd-agent-line {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.fd-agent-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fd-agent-dim {
+  overflow: hidden;
+  color: var(--dim);
+  font-size: var(--fs-data);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fd-agent-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 4px 24px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.fd-agent-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-13);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-layout="phone"] .fd-agent-head {
+  padding: 4px 12px;
+}
+.fd-agent-note {
+  margin: 0;
+  padding: var(--sp-3) 0;
+  color: var(--dim);
+  font-size: var(--fs-body);
+  text-align: center;
+}
+.fd-chat-tool[data-highlight] {
+  outline: 2px solid var(--act);
+  outline-offset: 2px;
+  border-radius: var(--r-ctl);
+}

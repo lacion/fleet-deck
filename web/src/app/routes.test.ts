@@ -162,4 +162,35 @@ describe('routes', () => {
     expect(parseHash(formatHash(back))).toEqual(back);
     expect(parseHash('#/settings/nope')).toEqual({ name: 'home' });
   });
+
+  test('the agent of the chat tab is in the URL and round-trips (B6)', () => {
+    const route: Route = {
+      name: 'session',
+      station: 'a',
+      session: 'b',
+      tab: 'chat',
+      agent: 'node-2',
+    };
+    expect(formatHash(route)).toBe('#/s/a/b?tab=chat&agent=node-2');
+    expect(parseHash('#/s/a/b?tab=chat&agent=node-2')).toEqual(route);
+    expect(parseHash('#/s/a/b?agent=node-2')).toEqual(route);
+    const odd: Route = { name: 'session', station: 'a', session: 'b', tab: 'chat', agent: 'n/1 x' };
+    expect(parseHash(formatHash(odd))).toEqual(odd);
+  });
+
+  test('a session route without an agent has no agent key; an empty agent is none', () => {
+    expect(formatHash(session('a', 'b'))).toBe('#/s/a/b');
+    expect('agent' in parseHash('#/s/a/b')).toBe(false);
+    expect('agent' in parseHash('#/s/a/b?agent=')).toBe(false);
+    expect(
+      formatHash({ name: 'session', station: 'a', session: 'b', tab: 'chat', agent: '' }),
+    ).toBe('#/s/a/b');
+  });
+
+  test('the agent belongs to the chat tab only', () => {
+    expect('agent' in parseHash('#/s/a/b?tab=files&agent=node-2')).toBe(false);
+    expect(
+      formatHash({ name: 'session', station: 'a', session: 'b', tab: 'files', agent: 'node-2' }),
+    ).toBe('#/s/a/b?tab=files');
+  });
 });
