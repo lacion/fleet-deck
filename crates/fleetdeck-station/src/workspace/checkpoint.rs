@@ -209,6 +209,19 @@ pub enum Captured {
 impl Worktree {
     /// Opens the worktree that contains `path`.
     pub async fn open(path: &Path, options: GitOptions) -> Result<Self> {
+        Self::open_in_roots(path, options, None).await
+    }
+
+    /// Opens the worktree that contains `path`. With `roots` (B9), the
+    /// toplevel that Git reports must be a folder below one of them without
+    /// a link in its path, else there is no worktree (checkpoints are off).
+    /// Later checkpoint Git runs by the retained toplevel path: a swap after
+    /// this start is a detection-only case (design launch-dir §2 item 2).
+    pub async fn open_in_roots(
+        path: &Path,
+        options: GitOptions,
+        roots: Option<&[PathBuf]>,
+    ) -> Result<Self> {
         let probe = Git::new(path, options.clone());
         let out = probe
             .text(&[
@@ -226,6 +239,11 @@ impl Worktree {
             return Err(CheckpointError::NotAWorktree(path.to_owned()));
         };
         let root = std::fs::canonicalize(top)?;
+        if let Some(roots) = roots
+            && fleetdeck_core::launch_dir::LaunchDir::open_in(roots, &root).is_err()
+        {
+            return Err(CheckpointError::NotAWorktree(path.to_owned()));
+        }
         let git_dir = std::fs::canonicalize(git_dir)?;
         let common = std::fs::canonicalize(common)?;
         let id = worktree_id(&root, &common);

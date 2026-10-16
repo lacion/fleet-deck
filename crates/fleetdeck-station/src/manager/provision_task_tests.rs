@@ -382,7 +382,7 @@ async fn a_cancel_during_the_worktree_add_leaves_the_new_worktree_and_names_it()
     let before = provision::before(&plan);
     let options = git_with(&program);
     let (cancel, rx) = watch::channel(false);
-    let run = provision::provision_cancellable(&plan, &options, rx);
+    let run = provision::provision_cancellable(&plan, &options, rx, None, None, None);
     let stopper = async {
         let deadline = tokio::time::Instant::now() + WAIT;
         while !path.exists() {
@@ -421,7 +421,7 @@ async fn a_cancel_keeps_a_branch_that_existed_before() {
     let before = provision::before(&plan);
     let options = git_with(&program);
     let (cancel, rx) = watch::channel(false);
-    let run = provision::provision_cancellable(&plan, &options, rx);
+    let run = provision::provision_cancellable(&plan, &options, rx, None, None, None);
     let stopper = async {
         let deadline = tokio::time::Instant::now() + WAIT;
         while !path.exists() {
@@ -454,7 +454,7 @@ async fn a_cancel_during_the_clone_leaves_the_new_directory_and_names_it() {
     let before = provision::before(&plan);
     let options = git_with(&program);
     let (cancel, rx) = watch::channel(false);
-    let run = provision::provision_cancellable(&plan, &options, rx);
+    let run = provision::provision_cancellable(&plan, &options, rx, None, None, None);
     let stopper = async {
         let deadline = tokio::time::Instant::now() + WAIT;
         while !path.join("a.txt").exists() {
@@ -484,7 +484,7 @@ async fn a_directory_that_existed_before_is_not_removed_after_a_cancel() {
     let before = provision::before(&plan);
     let (_cancel, rx) = watch::channel(true);
     assert_eq!(
-        provision::provision_cancellable(&plan, &options, rx).await,
+        provision::provision_cancellable(&plan, &options, rx, None, None, None).await,
         Err(ProvisionError::Stopped)
     );
     assert_eq!(provision::undo_partial(&plan, &before), None);
@@ -592,7 +592,7 @@ async fn a_cancel_stops_the_git_descendants_and_leaves_the_directory() {
     let before = provision::before(&plan);
     let options = git_with(&program);
     let (cancel, rx) = watch::channel(false);
-    let run = provision::provision_cancellable(&plan, &options, rx);
+    let run = provision::provision_cancellable(&plan, &options, rx, None, None, None);
     let stopper = async {
         let deadline = tokio::time::Instant::now() + WAIT;
         let pid = loop {

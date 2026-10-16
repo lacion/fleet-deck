@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use fleetdeck_core::ChildEnv;
-use fleetdeck_core::launch_dir::LaunchDirError;
+use fleetdeck_core::launch_dir::{LaunchDir, LaunchDirError};
 use fleetdeck_proto::SessionId;
 use fleetdeck_proto::command::{SessionSpec, StopMode};
 use fleetdeck_proto::session::SessionBase;
@@ -25,6 +25,7 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use super::SessionTarget;
+use super::launch::pinned_path;
 use crate::store::{Dispatch, Effect, InputRecord, WorkspacePlan};
 use crate::workspace::provision::ProvisionError;
 use crate::workspace::setup::{Held, STOPPED_MESSAGE, SetupError};
@@ -228,20 +229,45 @@ impl SessionTarget {
             let e = LaunchDirError::Changed;
             return Err((e.to_string(), e.code()));
         };
-        let _parent = self.open_checked(parent).await?;
+        // The checked folders stay open until the Git work returned: the
+        // parent, the source repository of a worktree, and an existing
+        // destination (B9, DL-200). Git runs in these objects.
+        let parent = self.open_checked(parent).await?;
+        let repo = match plan {
+            WorkspacePlan::Worktree { repo, .. } => Some(self.open_checked(Path::new(repo)).await?),
+            WorkspacePlan::Clone { .. } => None,
+        };
+        let dest = match plan {
+            WorkspacePlan::Worktree { path, .. } if Path::new(path).is_dir() => {
+                Some(self.open_checked(Path::new(path)).await?)
+            }
+            _ => None,
+        };
+        let pinned = |dir: &LaunchDir| pinned_path(dir).map_err(|e| (e.to_string(), e.code()));
+        let parent_dir = pinned(&parent)?;
+        let repo_dir = repo.as_ref().map(pinned).transpose()?;
+        let dest_dir = dest.as_ref().map(pinned).transpose()?;
         let options = self.provision_options();
         let before = provision::before(plan);
         #[cfg(test)]
         self.hooks.provision.hold().await;
-        let (text, reason) =
-            match provision::provision_cancellable(plan, &options, cancel.clone()).await {
-                Ok(()) => return Ok(()),
-                Err(ProvisionError::Failed(e)) => (
-                    format!("the workspace was not created: {e}"),
-                    "workspace_failed",
-                ),
-                Err(ProvisionError::Stopped) => (STOPPED_MESSAGE.to_owned(), "setup_stopped"),
-            };
+        let (text, reason) = match provision::provision_cancellable(
+            plan,
+            &options,
+            cancel.clone(),
+            repo_dir.as_deref(),
+            Some(&parent_dir),
+            dest_dir.as_deref(),
+        )
+        .await
+        {
+            Ok(()) => return Ok(()),
+            Err(ProvisionError::Failed(e)) => (
+                format!("the workspace was not created: {e}"),
+                "workspace_failed",
+            ),
+            Err(ProvisionError::Stopped) => (STOPPED_MESSAGE.to_owned(), "setup_stopped"),
+        };
         let text = match provision::undo_partial(plan, &before) {
             Some(note) => format!("{text}\n{note}"),
             None => text,
@@ -259,11 +285,18 @@ impl SessionTarget {
         plan: &WorkspacePlan,
         cancel: &watch::Receiver<bool>,
     ) -> bool {
-        let session_id = &effect.session_id;
         let Err((text, reason)) = self.provision_plan(plan, cancel).await else {
             return true;
         };
-        self.start_failed(session_id, &text).await;
+        self.end_prepare(effect, fence, &text, reason).await;
+        false
+    }
+
+    /// Ends a start that failed before its provider start: the failure text,
+    /// the settle as not dispatched with `reason`, and the setup registry.
+    async fn end_prepare(&self, effect: &Effect, fence: u64, text: &str, reason: &str) {
+        let session_id = &effect.session_id;
+        self.start_failed(session_id, text).await;
         let settled = self
             .store
             .settle(
@@ -276,7 +309,6 @@ impl SessionTarget {
             tracing::warn!(error = %e, effect = %effect.effect_id, "the start effect was not settled");
         }
         self.leave_setup(session_id);
-        false
     }
 
     /// The task of a start that prepares its workspace or runs a setup
@@ -287,7 +319,7 @@ impl SessionTarget {
         let SetupRun {
             effect,
             fence,
-            spec,
+            mut spec,
             prompt,
             workspace,
             wants_base,
@@ -302,9 +334,36 @@ impl SessionTarget {
         {
             return;
         }
+        // A new workspace takes its identity right after the Git work, before
+        // the base read and the setup command (B9, DL-200): `child_dir` and
+        // `take_launch` then reopen this object. `dest` stays open until the
+        // provider start returned.
+        let mut dest = None;
+        if workspace.is_some() && spec.launch.is_none() {
+            let opened = match self.open_checked(Path::new(&spec.cwd)).await {
+                Ok(dir) => pinned_path(&dir)
+                    .map(|path| (dir, path))
+                    .map_err(|e| (e.to_string(), e.code())),
+                Err(refused) => Err(refused),
+            };
+            match opened {
+                Ok((dir, path)) => {
+                    #[cfg(target_os = "linux")]
+                    {
+                        spec.launch = Some(Box::new(dir.identity().clone()));
+                    }
+                    dest = Some((dir, path));
+                }
+                Err((text, code)) => {
+                    self.end_prepare(&effect, fence, &text, code).await;
+                    return;
+                }
+            }
+        }
         let base = match (planned, &workspace) {
             (None, Some(WorkspacePlan::Clone { path, .. })) if wants_base => {
-                crate::workspace::base::at_head(&self.git, Path::new(path)).await
+                let at = dest.as_ref().map_or(Path::new(path), |(_, p)| p.as_path());
+                crate::workspace::base::at_head(&self.git, at).await
             }
             (planned, _) => planned,
         };
@@ -388,6 +447,7 @@ impl SessionTarget {
                     }
                     Err(refused) => refused,
                 };
+                drop(dest.take());
                 if matches!(dispatch, Dispatch::Confirmed | Dispatch::Deferred) {
                     self.record_base(&session_id, base).await;
                 }

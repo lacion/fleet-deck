@@ -298,12 +298,22 @@ pub(crate) fn check_url(
 /// call runs in its own process group, and `group` holds the group id of the
 /// call that runs.
 ///
+/// The pinned paths (B9, DL-200) are the checked folder objects of the Git
+/// working directories: `repo_dir` for the worktree Git calls in the source
+/// repository, `parent_dir` for the clone, `dest_dir` for the branch check of
+/// an existing destination. Each one that is `None` falls back to the path.
+/// Path arguments to Git (the destination, the URL) stay: writes are confined
+/// by Landlock.
+///
 /// # Errors
 /// The `git` failure as text.
 pub async fn provision(
     plan: &WorkspacePlan,
     options: &GitOptions,
     group: &Arc<AtomicU32>,
+    repo_dir: Option<&Path>,
+    parent_dir: Option<&Path>,
+    dest_dir: Option<&Path>,
 ) -> Result<(), String> {
     let grouped = |dir: &Path, timeout| {
         Git::new(dir, git_options(options, timeout)).with_group(Arc::clone(group))
@@ -316,7 +326,7 @@ pub async fn provision(
             base,
         } => {
             if Path::new(path).is_dir() {
-                let git = grouped(Path::new(path), WORKTREE_TIMEOUT);
+                let git = grouped(dest_dir.unwrap_or(Path::new(path)), WORKTREE_TIMEOUT);
                 let head = git
                     .text(&["rev-parse", "--abbrev-ref", "HEAD"])
                     .await
@@ -327,7 +337,7 @@ pub async fn provision(
                     Err(format!("`{path}` exists on another branch"))
                 };
             }
-            let git = grouped(Path::new(repo), WORKTREE_TIMEOUT);
+            let git = grouped(repo_dir.unwrap_or(Path::new(repo)), WORKTREE_TIMEOUT);
             let heads_ref = format!("refs/heads/{branch}");
             let exists = git
                 .status(&["show-ref", "--verify", "--quiet", &heads_ref], &[], None)
@@ -379,7 +389,7 @@ pub async fn provision(
         }
         WorkspacePlan::Clone { url, path } => {
             let parent = Path::new(path).parent().unwrap_or(Path::new("/"));
-            grouped(parent, CLONE_TIMEOUT)
+            grouped(parent_dir.unwrap_or(parent), CLONE_TIMEOUT)
                 .run(&[
                     "-c",
                     "protocol.ext.allow=never",
@@ -430,13 +440,16 @@ pub async fn provision_cancellable(
     plan: &WorkspacePlan,
     options: &GitOptions,
     mut cancel: watch::Receiver<bool>,
+    repo_dir: Option<&Path>,
+    parent_dir: Option<&Path>,
+    dest_dir: Option<&Path>,
 ) -> Result<(), ProvisionError> {
     if *cancel.borrow() {
         return Err(ProvisionError::Stopped);
     }
     let group = Arc::new(AtomicU32::new(0));
     let done = tokio::select! {
-        r = provision(plan, options, &group) => Some(r),
+        r = provision(plan, options, &group, repo_dir, parent_dir, dest_dir) => Some(r),
         _ = cancel.wait_for(|c| *c) => None,
     };
     match done {

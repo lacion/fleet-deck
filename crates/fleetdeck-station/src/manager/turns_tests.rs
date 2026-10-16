@@ -75,7 +75,8 @@ pub(crate) async fn setup(det: &Det, cwd: &Path) -> (Store, Arc<SessionTurns>) {
         Limits::default(),
         &super::Fences::default(),
         S1.into(),
-        cwd,
+        Some(cwd),
+        None,
         Arc::new(PrivatePaths::default()),
     )
     .await;
@@ -430,7 +431,8 @@ async fn sessions_in_one_worktree_share_one_fence() {
                 Limits::default(),
                 &fences,
                 id.into(),
-                &cwd,
+                Some(&cwd),
+                None,
                 Arc::new(PrivatePaths::default()),
             )
             .await
