@@ -121,7 +121,9 @@ fn revoke_row(
         return Ok(None);
     };
     if !matches!(row.state, RowState::Pending | RowState::Active) {
-        // Ended or suspended already: nothing to do, no event.
+        // Ended or suspended already: no event, but memory is gated too, so
+        // an ended grant never stays usable (DL-194).
+        bindings.update(&binding.binding_id, |b| b.state = BindingState::Revoked);
         return Ok(Some(result(session_id, None)));
     }
     bindings.update(&binding.binding_id, |b| b.state = BindingState::Revoked);
@@ -174,6 +176,15 @@ pub fn renew(
             "the session has no coordinator binding under this grant",
         )
     })?;
+    // On the shim host the durable row decides: an ended or suspended row
+    // never renews (DL-194).
+    if bindings.fence().is_some()
+        && let Some(digest) = bindings.digest_of(&binding.binding_id)
+        && let Some(row) = d.shim_binding_row(&digest)?
+        && !matches!(row.state, RowState::Pending | RowState::Active)
+    {
+        return Err(reject(RejectCode::InvalidState, "the binding has ended"));
+    }
     let Some(native_id) = binding.native_id.clone() else {
         return Err(reject(
             RejectCode::InvalidState,

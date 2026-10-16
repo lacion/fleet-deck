@@ -304,7 +304,7 @@ async fn a_suspended_row_stays_refused_and_an_ended_row_has_no_entry() {
 }
 
 #[tokio::test]
-async fn an_expired_row_loads_expired_ends_and_appends_one_expired_event() {
+async fn an_expired_row_loads_revoked_ends_and_appends_one_expired_event() {
     let mut rig = Rig::new().await;
     let now = rig.store.now_ms();
     let expired = rig
@@ -324,8 +324,8 @@ async fn an_expired_row_loads_expired_ends_and_appends_one_expired_event() {
         .await;
     rig.write_fence("fleetdeck-fence 1\n");
     let held = rig.prepare().await;
-    assert_eq!(rig.state(&expired), Some(BindingState::Expired));
-    assert_eq!(rig.state(&fleet_only), Some(BindingState::Expired));
+    assert_eq!(rig.state(&expired), Some(BindingState::Revoked));
+    assert_eq!(rig.state(&fleet_only), Some(BindingState::Revoked));
     assert_eq!(rig.auth(&expired), "unauthorized");
     assert!(!rig.bindings.is_held(&expired));
     assert_eq!(held["shim-1"], std::slice::from_ref(&live));

@@ -4,8 +4,9 @@
 //! 1. [`prepare`]: the fence, then the binding rows into memory. A binding
 //!    named by the fence (or any binding, when the fence is unreadable)
 //!    loads `Revoked` and its row becomes `suspended`; a row of an expired
-//!    grant loads `Expired` and ends; every other open row loads with its
-//!    state and is held until its shim replayed its output.
+//!    grant loads `Revoked` (expiry is terminal, DL-194) and ends; every
+//!    other open row loads with its state and is held until its shim
+//!    replayed its output.
 //! 2. The binding sink is registered on the store.
 //! 3. The shim recovery (`recover_station`).
 //! 4. [`finish`]: the rows of shims that were not reattached are deleted,
@@ -117,7 +118,8 @@ async fn load(
             continue;
         };
         if row.expires_at.is_some_and(|t| t <= now_ms) {
-            binding.state = BindingState::Expired;
+            // Expiry is terminal: the grant never renews (DL-194).
+            binding.state = BindingState::Revoked;
             bindings.insert(digest.clone(), binding);
             if let Err(error) = store.shim_binding_expire(digest).await {
                 tracing::warn!(binding = %row.binding_id, %error, "an expired binding row was not ended");
