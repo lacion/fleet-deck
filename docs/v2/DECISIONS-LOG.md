@@ -3077,3 +3077,10 @@ Owner review: pending.
 - Context: `docs/v2/design/omarchy.md` §4.5, §5 and §6.1-§6.4/§6.6 went through four adversary DESIGN REVIEW rounds (the owner approved a fourth round after round 3). Round 4: PASS; its two MAJOR findings (the notification helper without `--`, the window match by pid) are fixed in §5C items 4 and 5.
 - Decision: accepted as §5C/§5B/§5A over §4.5, §5, §6: a read-only display principal with one payload policy, pairing by an on-screen code (pending → approved → claimed), a ceiling of station ids, typed directives with live sender authority, the display artifact route, change summaries with an owner switch for patches, typed desktop arguments, windows matched by a unique class and Hyprland events.
 - Next: build P2 and P3; a PRE-PR REVIEW before the merge; the live smoke on the owner's Omarchy machine.
+
+## DL-221: A wall display shows single-file artifacts only (R13 P2b, owner decision, 2026-10-17)
+
+- Context: the display artifact route of `docs/v2/design/omarchy.md` §5A serves artifacts in a sandboxed frame without `allow-same-origin`. A multi-file artifact (an HTML page with its own CSS, scripts or images) cannot load there: its sub-requests carry no cookie (`Origin: null`). The owner's board uses a `/view` link for this, and §5A forbids a capability URL for a display.
+- Options: (1) single-file artifacts only; (2) a short display-bound signed link (a change of §5A, a new DESIGN REVIEW); (3) no artifacts on the wall in P2b.
+- Decision (owner): option 1. The display route serves only self-contained artifacts: one HTML file, Markdown, images, SVG and PDF. A multi-file artifact shows a card "Open this artifact on your own device". §5A stays as it is; no new token type.
+- Next: the P2b design pass uses this decision.
