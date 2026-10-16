@@ -4,8 +4,3 @@
 # FIFO pairs as a loopback stand-in (the reviewer sandbox forbids sockets).
 # A value already set in the environment wins.
 FD_LINK_TRANSPORT = "auto"
-
-[build]
-# Leave six cores to the deck, the station and the desktop while agents
-# build in parallel; tools/heavy.sh caps all builds together.
-jobs = -6
