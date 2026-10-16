@@ -69,6 +69,7 @@ How to use it: read the row, read the file, run the test, and write "reviewed" a
 | Human shell and TUI handover | `shell/`, `http/shell_routes.rs` | A shell on the station. Owner only. |
 | Coordinator grants and MCP | `coordinator/`, `store/grants.rs` | A model with a deck credential. Scoped, capped, revocable. |
 | Environment scrubbing of the provider child | `fleetdeck-core` `ChildEnv` | A secret in the station environment must not reach a child by accident. |
+| Session credentials on the shim host (DL-194) | `host/shim/{client,server_secrets,exe_hash}.rs`, `coordinator/{socket,bridge,fence}.rs`, `store/shim_bindings*.rs`, `manager/binding_*.rs` | A token that reaches a shim of another build, a file or a log, or comes back after a revoke or a crash. Proof: five design rounds, PRE-PR rounds 1 (FAIL, 3 fixed) and 2 (PASS); `fleetdeck-cli` tests `shim_secrets`, `shim_credential`, `shim_binding_hold`. |
 
 ## Designed but not built (adversary DESIGN REVIEW required before code)
 
