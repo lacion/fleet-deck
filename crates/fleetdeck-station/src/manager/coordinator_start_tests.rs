@@ -535,9 +535,11 @@ fn tools_spec(grant: bool) -> SessionSpec {
     }
 }
 
-/// Bindings with a verified handoff and a bridge, as the shim host has.
+/// Bindings with a verified handoff, a bridge and Claude 2.1.296 (the
+/// bridge-verified version), as the shim host has.
 fn with_bridge() -> Bindings {
     let bindings = Bindings::default().with_handoff(verified);
+    bindings.record_version(ProviderKind::Claude, "2.1.296".to_owned());
     bindings.set_endpoint(URL.to_owned());
     bindings.set_bridge(crate::coordinator::BridgeEndpoint {
         program: "/station/bin/current".into(),
@@ -596,8 +598,8 @@ fn a_fleet_start_on_the_shim_host_gets_a_bridge_start_and_no_memory_entry() {
     assert!(!bindings.has_digest(&start.digest));
 }
 
-/// DL-194 §9.10: Codex on the shim host stays without tools, and the
-/// station logs why.
+/// DL-194 §9.10: Codex is not in `BRIDGE_VERIFIED`: on the shim host it
+/// stays without tools, and the station logs why.
 #[test]
 fn a_codex_fleet_start_on_the_shim_host_has_no_tools() {
     let buf = Buf::default();
@@ -611,6 +613,7 @@ fn a_codex_fleet_start_on_the_shim_host_has_no_tools() {
         false,
     );
     let bindings = with_bridge();
+    bindings.record_version(ProviderKind::Codex, "0.160.0".to_owned());
     let session: SessionId = "s-6".into();
     tracing::subscriber::with_default(sub, || {
         let tools = coordinator_start::tools_for(
@@ -727,9 +730,6 @@ fn a_grant_on_a_resume_or_with_codex_on_the_shim_host_is_refused() {
     )
     .err()
     .expect("a refusal");
-    assert_eq!(
-        err,
-        "a coordinator session on the shim host needs Claude on Linux for now"
-    );
+    assert!(err.ends_with("needs a provider version whose bridge is verified"));
     assert!(bindings.find(&session, "grant-1").is_none());
 }
