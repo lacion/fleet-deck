@@ -240,15 +240,6 @@ pub struct RateLimit {
     pub resets_at: Option<i64>,
 }
 
-/// One unit of provider background work (L7).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[ts(export_to = "event/")]
-pub struct BackgroundTask {
-    pub task_id: String,
-    /// The provider's kind name, for example `local_bash` or `local_agent`.
-    pub task_kind: String,
-}
-
 /// One model that a session can switch to (DL-151).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export_to = "event/")]
@@ -677,6 +668,26 @@ pub enum Event {
     },
     #[serde(rename = "background.updated")]
     BackgroundUpdated { tasks: Vec<BackgroundTask> },
+    /// A task or sub-agent changed state (B6). The fold keeps no state for
+    /// it. Older peers decode this kind as unknown.
+    #[serde(rename = "task.updated")]
+    TaskUpdated {
+        task_id: String,
+        /// The tool node that the task belongs to, if known.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        node_id: Option<String>,
+        /// The provider's kind name: `local_agent`, `local_bash`, `codex_agent`.
+        task_kind: String,
+        /// `running`, `completed`, `failed`, `stopped`, or the provider's text.
+        status: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        description: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        summary: Option<String>,
+    },
     #[serde(rename = "error")]
     Error {
         /// Stable code, for example `usage_limit` or `auth_required`.
@@ -694,6 +705,11 @@ pub enum Event {
 
 #[path = "event_kinds.rs"]
 mod kinds;
+
+// `BackgroundTask` moved to its own file for the module size rule (B6).
+#[path = "event_tasks.rs"]
+mod tasks;
+pub use tasks::BackgroundTask;
 
 /// An event body: a known [`Event`], or an unknown kind kept verbatim (L16).
 #[derive(Debug, Clone, PartialEq)]

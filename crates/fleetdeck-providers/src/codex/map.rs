@@ -12,6 +12,9 @@ use super::truncate;
 
 #[path = "identity.rs"]
 mod identity;
+// `task.updated` from the agent states (B6).
+#[path = "agents.rs"]
+mod agents;
 
 /// Pages of `model/list` that follow the first one (DL-151).
 const MODEL_LIST_MORE_PAGES: u8 = 4;
@@ -370,8 +373,10 @@ impl CodexCore {
     pub(super) fn on_notification(&mut self, method: &str, p: &Value) -> Vec<Output> {
         match method {
             // A sub-agent runs its own turns on a child thread; they never
-            // start, replace or end the session's turn.
-            "turn/started" | "turn/completed" if !self.own_thread(p) => Vec::new(),
+            // start, replace or end the session's turn (B6: they report).
+            "turn/started" | "turn/completed" if !self.own_thread(p) => {
+                self.on_child_turn(method, p)
+            }
             "turn/started" => match p.pointer("/turn/id").and_then(Value::as_str) {
                 Some(native) => self.on_turn_started(native),
                 None => Vec::new(),
@@ -552,15 +557,17 @@ impl CodexCore {
             },
         );
         let (title, input_summary) = tool_title(item, item_type);
-        vec![Output::Emit(Event::ToolStarted {
-            node_id,
+        let mut out = vec![Output::Emit(Event::ToolStarted {
+            node_id: node_id.clone(),
             parent_node_id,
             tool_kind: kind,
             title,
             input_summary,
             files: change_paths(item),
             provider_refs: refs(&[("item_id", Some(item_id)), ("item_type", Some(item_type))]),
-        })]
+        })];
+        out.extend(self.agent_states(item, &node_id));
+        out
     }
 
     fn tool_completed(
@@ -576,6 +583,10 @@ impl CodexCore {
         {
             // A completed item without a started item: start it first.
             out.extend(self.tool_started(p, item, item_id, item_type, kind));
+        }
+        if let Some(node) = self.tools.get(item_id).map(|n| n.node_id.clone()) {
+            // The event of a state comes before the close of the call.
+            out.extend(self.agent_states(item, &node));
         }
         let Some(node) = self.tools.get_mut(item_id) else {
             return out;

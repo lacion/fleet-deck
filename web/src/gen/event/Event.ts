@@ -123,7 +123,19 @@ background_pending: boolean, } | { "kind": "mode.changed", mode: string, } | { "
  * The host's id for the request (the station's effect id); `None`
  * when the host gave no id.
  */
-control_id: string | null, accepted: boolean, message: string | null, } | { "kind": "input.updated", input_id: InputId, turn_id: TurnId | null, state: InputState, } | { "kind": "background.updated", tasks: Array<BackgroundTask>, } | { "kind": "error", 
+control_id: string | null, accepted: boolean, message: string | null, } | { "kind": "input.updated", input_id: InputId, turn_id: TurnId | null, state: InputState, } | { "kind": "background.updated", tasks: Array<BackgroundTask>, } | { "kind": "task.updated", task_id: string, 
+/**
+ * The tool node that the task belongs to, if known.
+ */
+node_id?: string, 
+/**
+ * The provider's kind name: `local_agent`, `local_bash`, `codex_agent`.
+ */
+task_kind: string, 
+/**
+ * `running`, `completed`, `failed`, `stopped`, or the provider's text.
+ */
+status: string, description?: string, summary?: string, } | { "kind": "error", 
 /**
  * Stable code, for example `usage_limit` or `auth_required`.
  */

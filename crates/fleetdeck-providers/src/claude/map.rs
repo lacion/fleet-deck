@@ -1,5 +1,7 @@
 //! Mapping of CLI frames to canonical events (ADR-001 §2.4).
 
+use std::collections::BTreeSet;
+
 use fleetdeck_proto::event::{
     BackgroundTask, ExpiredReason, FileChange, InputState, ModelChoice, RateLimit, ToolKind,
     ToolStatus, TurnStatus, Usage,
@@ -10,6 +12,10 @@ use serde_json::{Map, Value};
 use super::core::{ClaudeCore, HostRequest, Output, ToolNode, truncate};
 use super::frames::{CliFrame, ControlResponse, MessageFrame, RateLimitInfo, ResultFrame};
 use super::{requests, usage};
+
+// The `task_*` frames and the tools under a running task (B6).
+#[path = "tasks.rs"]
+mod tasks;
 
 /// A `provider_refs` map; `None` values are skipped.
 pub(super) fn refs(pairs: &[(&str, Option<&str>)]) -> Map<String, Value> {
@@ -168,6 +174,9 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
                 .unwrap_or_default();
             core.background.clone_from(&tasks);
             vec![Output::Emit(Event::BackgroundUpdated { tasks })]
+        }
+        "task_started" | "task_updated" | "task_notification" => {
+            tasks::on_task_frame(core, subtype, body)
         }
         // `status`, `ui_invalidate`, hook frames, ... never confirm an input:
         // only a frame that names the input's client uuid does (ADR-001).
@@ -373,9 +382,10 @@ fn on_assistant(core: &mut ClaudeCore, msg: &MessageFrame) -> Vec<Output> {
                     .get("text")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                // Child text after the parent turn ended has no turn (trap 5):
-                // only its tool calls are kept.
-                if let (false, Some(turn_id)) = (text.is_empty(), core.turn.clone()) {
+                // Child text after the parent turn ended goes to the turn that
+                // launched its subagent (trap 5, B6); without one it is dropped.
+                let turn = tasks::child_turn(core, msg.parent_tool_use_id.as_deref());
+                if let (false, Some(turn_id)) = (text.is_empty(), turn) {
                     out.push(Output::Emit(Event::MessageCompleted {
                         turn_id,
                         parent_node_id: parent_node.clone(),
@@ -383,14 +393,24 @@ fn on_assistant(core: &mut ClaudeCore, msg: &MessageFrame) -> Vec<Output> {
                     }));
                 }
             }
-            Some("tool_use") => out.extend(on_tool_use(core, &block, parent_node.as_ref())),
+            Some("tool_use") => out.extend(on_tool_use(
+                core,
+                &block,
+                parent_node.as_ref(),
+                msg.parent_tool_use_id.as_deref(),
+            )),
             _ => {}
         }
     }
     out
 }
 
-fn on_tool_use(core: &mut ClaudeCore, block: &Value, parent: Option<&NodeId>) -> Vec<Output> {
+fn on_tool_use(
+    core: &mut ClaudeCore,
+    block: &Value,
+    parent: Option<&NodeId>,
+    parent_tool: Option<&str>,
+) -> Vec<Output> {
     let Some(id) = block.get("id").and_then(Value::as_str) else {
         return Vec::new();
     };
@@ -409,6 +429,11 @@ fn on_tool_use(core: &mut ClaudeCore, block: &Value, parent: Option<&NodeId>) ->
         input: input.clone(),
         denied: false,
         done: false,
+        // Only a known parent counts as a link (B6).
+        parent_tool: parent_tool
+            .filter(|p| core.tools.contains_key(*p))
+            .map(str::to_owned),
+        launch_turn: tasks::launch_turn(core, name, parent_tool),
     };
     let files = edited_file(&node).into_iter().collect();
     core.tools.insert(id.to_owned(), node);
@@ -512,7 +537,9 @@ fn on_result(core: &mut ClaudeCore, res: &ResultFrame) -> Vec<Output> {
     }
     // A finished turn leaves no request open (trap 6).
     out.extend(core.expire_open(ExpiredReason::TurnEnded));
-    out.extend(close_open_tools(core));
+    // Tools under a background subagent that still runs stay open (B6).
+    let closable = tasks::closable_at_result(core);
+    out.extend(close_ids(core, &closable));
     out.push(Output::Emit(Event::UsageUpdated {
         usage: usage.clone(),
         rate_limits: Vec::new(),
@@ -551,7 +578,18 @@ fn on_rate_limit(info: &RateLimitInfo) -> Vec<Output> {
 /// Closes every tool node without a result on a terminal path (turn end or
 /// process exit, trap 6): `denied` if the owner denied it, else `failed`.
 pub(super) fn close_open_tools(core: &mut ClaudeCore) -> Vec<Output> {
-    let mut open: Vec<_> = core.tools.values_mut().filter(|n| !n.done).collect();
+    let all: BTreeSet<String> = core.tools.keys().cloned().collect();
+    close_ids(core, &all)
+}
+
+/// Closes the open tools among `ids` the same way (B6).
+pub(super) fn close_ids(core: &mut ClaudeCore, ids: &BTreeSet<String>) -> Vec<Output> {
+    let mut open: Vec<_> = core
+        .tools
+        .iter_mut()
+        .filter(|(id, n)| !n.done && ids.contains(*id))
+        .map(|(_, n)| n)
+        .collect();
     open.sort_by(|a, b| a.node_id.cmp(&b.node_id));
     open.into_iter()
         .map(|n| {

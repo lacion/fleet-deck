@@ -77,6 +77,10 @@ pub struct CodexCore {
     pub(super) tool_order: u64,
     /// Sub-agent thread id → node id of the tool call that spawned it.
     pub(super) child_threads: HashMap<String, NodeId>,
+    /// Sub-agent thread id → `(status, summary)` of its last `task.updated`
+    /// event (B6).
+    #[serde(default)]
+    pub(super) agent_last: HashMap<String, (String, Option<String>)>,
     pub(super) files_seen: Vec<String>,
     pub(super) turn_diff: Option<String>,
     /// The last polled background terminals.
@@ -117,6 +121,7 @@ impl CodexCore {
             tools: BTreeMap::new(),
             tool_order: 0,
             child_threads: HashMap::new(),
+            agent_last: HashMap::new(),
             files_seen: Vec::new(),
             turn_diff: None,
             background: Vec::new(),
