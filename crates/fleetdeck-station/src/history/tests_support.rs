@@ -1,18 +1,30 @@
 //! Helpers of the history tests: a rig with a store, a provider home, the
 //! snapshot directory and builders for transcript records.
 
-use std::os::unix::fs::OpenOptionsExt;
+use std::collections::BTreeMap;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fleetdeck_core::ChildEnv;
 use fleetdeck_proto::SessionId;
 use fleetdeck_proto::event::ProviderKind;
-use fleetdeck_proto::history::{SessionHistory, SessionHistoryQuery};
+use fleetdeck_proto::history::{
+    HistoryState, HistoryUnavailable, SessionHistory, SessionHistoryQuery,
+};
+use fleetdeck_proto::native::{
+    NativePreview, NativePreviewQuery, NativeSession, NativeSessionList, NativeSessionsQuery,
+    TranscriptPin,
+};
 use fleetdeck_testkit::Det;
 
-use super::{History, Limits, index, locate};
+use super::browse::{Budget, native_sessions};
+use super::browse_preview::native_preview;
+use super::locate::encode_cwd;
+use super::trust::{Mounts, supported_fs};
+use super::{History, HistoryError, Limits, index, locate};
 use crate::manager::Policy;
+use crate::manager::policy::SetupEnvs;
 use crate::store::{NewSession, OfflineApprovalPolicy, Store, StoreConfig};
 use crate::workspace::PrivatePaths;
 
@@ -290,4 +302,216 @@ pub(super) fn items_of(kind: ProviderKind, bytes: &[u8]) -> (SessionHistory, ind
     };
     let page = index::page(&file, &idx, &query, &limits).unwrap();
     (page, idx)
+}
+
+// ----------------------------------------------------- native browser (B7)
+
+pub(super) const ID_A: &str = "aaaaaaaa-1111-2222-3333-444444444444";
+pub(super) const ID_B: &str = "bbbbbbbb-1111-2222-3333-444444444444";
+pub(super) const ID_C: &str = "cccccccc-1111-2222-3333-444444444444";
+pub(super) const CODEX_ID: &str = "01a13f28-e384-7ed1-aee0-423548cce681";
+
+pub(super) struct B {
+    pub rig: Rig,
+    pub policy: Arc<Policy>,
+    pub cwd: String,
+}
+
+pub(super) fn env_of(root: &Path, config: Option<&str>) -> ChildEnv {
+    let mut env = ChildEnv::empty();
+    env.set("HOME", root).unwrap();
+    if let Some(config) = config {
+        env.set("CLAUDE_CONFIG_DIR", config).unwrap();
+    }
+    env
+}
+
+pub(super) fn policy_of(root: &Path, extra: &[(&str, Option<&str>)]) -> Arc<Policy> {
+    let mut envs = SetupEnvs::new();
+    let mut instances = BTreeMap::new();
+    envs.insert("claude".into(), env_of(root, None));
+    envs.insert("codex".into(), env_of(root, None));
+    instances.insert("claude".into(), ProviderKind::Claude);
+    instances.insert("codex".into(), ProviderKind::Codex);
+    for (name, config) in extra {
+        envs.insert((*name).into(), env_of(root, *config));
+        instances.insert((*name).into(), ProviderKind::Claude);
+    }
+    Arc::new(
+        Policy::new(
+            vec![root.join("work")],
+            4,
+            OfflineApprovalPolicy::Wait,
+            instances,
+        )
+        .with_setup_envs(envs),
+    )
+}
+
+/// A rig with a work directory, or `None` (printed) when the temp
+/// directory is not on a supported filesystem and verifiable mount.
+pub(super) async fn rig(limits: Limits, extra: &[(&str, Option<&str>)]) -> Option<B> {
+    let rig = Rig::with_limits(ProviderKind::Claude, limits).await;
+    let dir = std::fs::File::open(&rig.root).unwrap();
+    let dev = dir.metadata().unwrap().dev();
+    if !supported_fs(&dir) || !Mounts::load().verifiable(dev, &rig.root) {
+        eprintln!("skipped: the temp directory is not on a supported filesystem and mount");
+        return None;
+    }
+    let cwd = rig.root.join("work/project");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let policy = policy_of(&rig.root, extra);
+    Some(B {
+        cwd: cwd.to_string_lossy().into_owned(),
+        policy,
+        rig,
+    })
+}
+
+pub(super) fn claude_rec(id: &str, cwd: &str, n: u32, text: &str) -> String {
+    serde_json::json!({
+        "type": "user", "uuid": format!("u-{n}"), "sessionId": id, "cwd": cwd,
+        "timestamp": format!("2026-10-14T10:00:{:02}.000Z", n % 60),
+        "message": {"role": "user", "content": text},
+    })
+    .to_string()
+}
+
+pub(super) fn title_rec(id: &str, title: &str) -> String {
+    serde_json::json!({"type": "ai-title", "aiTitle": title, "sessionId": id}).to_string()
+}
+
+pub(super) fn codex_meta_rec(id: &str, cwd: &str, parent: Option<&str>) -> String {
+    serde_json::json!({
+        "type": "session_meta", "timestamp": "2026-10-14T10:00:00.000Z",
+        "payload": {"id": id, "cwd": cwd, "parent_thread_id": parent},
+    })
+    .to_string()
+}
+
+pub(super) fn turn_rec(cwd: &str) -> String {
+    serde_json::json!({
+        "type": "turn_context", "timestamp": "2026-10-14T10:00:01.000Z",
+        "payload": {"turn_id": "t1", "cwd": cwd},
+    })
+    .to_string()
+}
+
+impl B {
+    pub(super) fn home(&self) -> PathBuf {
+        self.rig.root.join(".claude")
+    }
+
+    pub(super) fn codex_home(&self) -> PathBuf {
+        self.rig.root.join(".codex")
+    }
+
+    pub(super) fn claude_path(&self, cwd: &str, id: &str) -> PathBuf {
+        self.home()
+            .join("projects")
+            .join(encode_cwd(cwd))
+            .join(format!("{id}.jsonl"))
+    }
+
+    pub(super) fn put_claude(&self, id: &str, lines: &[String]) -> PathBuf {
+        let path = self.claude_path(&self.cwd, id);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        write_private(&path, &join(lines));
+        path
+    }
+
+    pub(super) fn codex_path(&self, id: &str) -> PathBuf {
+        self.codex_home()
+            .join("sessions/2026/10/14")
+            .join(format!("rollout-2026-10-14T10-00-00-{id}.jsonl"))
+    }
+
+    pub(super) fn put_codex(&self, id: &str, lines: &[String]) -> PathBuf {
+        let path = self.codex_path(id);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        write_private(&path, &join(lines));
+        path
+    }
+
+    pub(super) fn good_claude(&self, id: &str) -> PathBuf {
+        self.put_claude(
+            id,
+            &[
+                title_rec(id, "A title"),
+                claude_rec(id, &self.cwd, 1, "the first prompt"),
+                claude_rec(id, &self.cwd, 2, "the second prompt"),
+            ],
+        )
+    }
+
+    pub(super) async fn list(&self) -> NativeSessionList {
+        self.list_with(q(), Budget::default()).await.unwrap()
+    }
+
+    pub(super) async fn list_with(
+        &self,
+        query: NativeSessionsQuery,
+        budget: Budget,
+    ) -> Result<NativeSessionList, HistoryError> {
+        native_sessions(
+            &self.rig.store,
+            &self.policy,
+            &self.rig.private,
+            query,
+            budget,
+        )
+        .await
+    }
+}
+
+pub(super) fn entry<'a>(list: &'a NativeSessionList, id: &str) -> &'a NativeSession {
+    list.sessions
+        .iter()
+        .find(|s| s.native_id == id)
+        .unwrap_or_else(|| panic!("{id} is not in the list"))
+}
+
+pub(super) fn pin_of(path: &Path, home: &Path) -> TranscriptPin {
+    let meta = std::fs::metadata(path).unwrap();
+    TranscriptPin {
+        home: home.to_string_lossy().into_owned(),
+        dev: meta.dev(),
+        ino: meta.ino(),
+    }
+}
+
+pub(super) fn q() -> NativeSessionsQuery {
+    NativeSessionsQuery {
+        provider_instance: None,
+        limit: None,
+    }
+}
+
+pub(super) fn query_of(instance: &str, id: &str, pin: TranscriptPin) -> NativePreviewQuery {
+    NativePreviewQuery {
+        provider_instance: instance.into(),
+        native_id: id.to_owned(),
+        pin,
+    }
+}
+
+impl B {
+    pub(super) async fn preview(
+        &self,
+        query: NativePreviewQuery,
+    ) -> Result<NativePreview, HistoryError> {
+        native_preview(
+            &self.rig.store,
+            &self.policy,
+            &self.rig.private,
+            query,
+            Budget::default(),
+        )
+        .await
+    }
+}
+
+pub(super) fn unavailable(p: &NativePreview, reason: HistoryUnavailable) {
+    assert_eq!(p.state, HistoryState::Unavailable { reason }, "{p:?}");
+    assert!(p.items.is_empty());
 }

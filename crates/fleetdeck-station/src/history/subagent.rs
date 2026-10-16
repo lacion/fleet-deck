@@ -291,19 +291,19 @@ fn fail_of(e: ReadError) -> Fail {
 
 /// The newest items of a read, with the counts that the state needs.
 #[derive(Default)]
-struct Ring {
+pub(super) struct Ring {
     items: VecDeque<HistoryItem>,
     /// Items that left the ring (older than the newest `MAX_ITEMS`).
     dropped: u64,
     /// Call id of a tool item → its absolute number.
     pending: HashMap<String, u64>,
-    skipped: u64,
+    pub(super) skipped: u64,
     recognized: u64,
     last_at: i64,
 }
 
 impl Ring {
-    fn record(&mut self, record: parse::Record, offset: u64) {
+    pub(super) fn record(&mut self, record: parse::Record, offset: u64) {
         self.recognized += 1;
         if record.partial {
             self.skipped += 1;
@@ -398,9 +398,25 @@ pub(super) fn read_log(
     Ok(finish(ring, size))
 }
 
-/// The answer of a ring: the serialized size is cut to the cap by dropping
-/// the oldest items.
-fn finish(ring: Ring, size: u64) -> SubagentLog {
+/// The items of a ring after the cut to a size cap, and the counts that the
+/// state needs.
+pub(super) struct Trimmed {
+    pub items: Vec<HistoryItem>,
+    pub dropped: u64,
+    pub skipped: u64,
+    pub recognized: u64,
+}
+
+/// Cuts a ring to `max` serialized bytes by dropping the oldest items.
+/// `envelope` is the room of the answer around the items; `exact` gives the
+/// serialized size of the whole answer for a list of items (B7: the same cut
+/// serves `session.subagent` and the native preview).
+pub(super) fn trim(
+    ring: Ring,
+    max: usize,
+    envelope: usize,
+    exact: impl Fn(&[HistoryItem]) -> usize,
+) -> Trimmed {
     let Ring {
         items,
         mut dropped,
@@ -413,27 +429,48 @@ fn finish(ring: Ring, size: u64) -> SubagentLog {
         .iter()
         .map(|i| serde_json::to_vec(i).map_or(0, |v| v.len()) + 1)
         .collect();
-    let mut total = ENVELOPE_BYTES + sizes.iter().sum::<usize>();
-    while total > MAX_ANSWER_BYTES && items.pop_front().is_some() {
+    let mut total = envelope + sizes.iter().sum::<usize>();
+    while total > max && items.pop_front().is_some() {
         total -= sizes.pop_front().unwrap_or(0);
         dropped += 1;
     }
     // The exact check on the whole answer; normally it drops nothing.
-    let mut log = SubagentLog {
-        items: items.into(),
-        state: HistoryState::Complete,
-    };
-    while serde_json::to_vec(&log).map_or(0, |v| v.len()) > MAX_ANSWER_BYTES
-        && !log.items.is_empty()
-    {
-        log.items.remove(0);
+    let mut items: Vec<HistoryItem> = items.into();
+    while exact(&items) > max && !items.is_empty() {
+        items.remove(0);
         dropped += 1;
     }
-    log.state = state_of(log.items.is_empty(), dropped, skipped, recognized, size);
-    log
+    Trimmed {
+        items,
+        dropped,
+        skipped,
+        recognized,
+    }
 }
 
-fn state_of(empty: bool, dropped: u64, skipped: u64, recognized: u64, size: u64) -> HistoryState {
+/// The answer of a ring: the serialized size is cut to the cap by dropping
+/// the oldest items.
+fn finish(ring: Ring, size: u64) -> SubagentLog {
+    let t = trim(ring, MAX_ANSWER_BYTES, ENVELOPE_BYTES, |items| {
+        let log = SubagentLog {
+            items: items.to_vec(),
+            state: HistoryState::Complete,
+        };
+        serde_json::to_vec(&log).map_or(0, |v| v.len())
+    });
+    SubagentLog {
+        state: state_of(t.items.is_empty(), t.dropped, t.skipped, t.recognized, size),
+        items: t.items,
+    }
+}
+
+pub(super) fn state_of(
+    empty: bool,
+    dropped: u64,
+    skipped: u64,
+    recognized: u64,
+    size: u64,
+) -> HistoryState {
     let skipped_all = skipped.saturating_add(dropped);
     if empty && dropped == 0 {
         if recognized == 0 && size > 0 {

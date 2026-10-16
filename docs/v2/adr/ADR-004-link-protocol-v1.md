@@ -116,6 +116,7 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `files.session_diff.v1` | `files.session_diff` (DL-159; the working tree of a session against its base commit) |
 | `history.v1` | `session.history` (DL-189; the earlier conversation of a session, from the station's snapshot of the provider transcript) |
 | `subagent.v1` | `session.subagent` (DL-191; the log of one subagent of a session, from the provider's own transcript of that subagent) |
+| `native_sessions.v1` | `station.native_sessions`, `station.native_preview` (B7; list the native sessions of the station's provider homes, and preview one native session without importing it) |
 | `session_branches.v1` | `session.branches`, `files.branch_diff` (DL-191; the branches of the repository of a session and the committed diff of one) |
 | `assist.v1` | `assist.generate` (DL-167; model help on the station, R10) |
 | `settings.v1` | `settings.get`, `settings.set`, `settings.secret_set`, `station.restart` (DL-172; the settings of a station, the credential relay for a settings secret, and the restart of the station process) |
@@ -412,6 +413,8 @@ close             { reason, detail }
 | `files.session_diff` | deck → station | read | `files.session_diff.v1` | no |
 | `session.history` | deck → station | read | `history.v1` | no |
 | `session.subagent` | deck → station | read | `subagent.v1` | no |
+| `station.native_sessions` | deck → station | read | `native_sessions.v1` | no |
+| `station.native_preview` | deck → station | read | `native_sessions.v1` | no |
 | `session.branches`, `files.branch_diff` | deck → station | read | `session_branches.v1` | no |
 | `files.coordinator_diff` | deck → station | read | `coordinator.v2` | no |
 | `assist.generate` | deck → station | drive | `assist.v1` | no |

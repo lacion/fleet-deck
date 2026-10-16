@@ -328,6 +328,22 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::SUBAGENT),
         false,
     ),
+    // The native sessions of the station's provider homes, and the preview of
+    // one (B7).
+    m(
+        "station.native_sessions",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::NATIVE_SESSIONS),
+        false,
+    ),
+    m(
+        "station.native_preview",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::NATIVE_SESSIONS),
+        false,
+    ),
     // The branches of the repository of a session, and the committed diff of
     // one of them (DL-191).
     m(

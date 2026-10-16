@@ -26,6 +26,7 @@ pub mod integrations;
 pub mod link;
 pub mod member_deny;
 pub mod mutation;
+pub mod native;
 pub mod orchestration;
 pub mod plans;
 pub mod resources;

@@ -13,15 +13,20 @@
 //!
 //! A history failure never fails an import. No transcript text is logged.
 
+pub mod browse;
+pub mod browse_preview;
 pub mod capture;
 pub mod index;
 pub mod lines;
 pub mod locate;
 pub mod parse;
 pub mod subagent;
+pub mod trust;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_browse;
 #[cfg(test)]
 mod tests_capture;
 #[cfg(test)]
@@ -32,6 +37,8 @@ mod tests_page;
 mod tests_subagent;
 #[cfg(test)]
 mod tests_support;
+#[cfg(test)]
+mod tests_trust;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
