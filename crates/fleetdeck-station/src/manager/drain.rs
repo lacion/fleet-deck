@@ -43,6 +43,7 @@ pub fn creates_work(command: &SessionCommand) -> bool {
             | SessionCommand::FollowUp { .. }
             | SessionCommand::Steer { .. }
             | SessionCommand::Revert { .. }
+            | SessionCommand::ShellCommand { .. }
     )
 }
 
@@ -131,6 +132,13 @@ impl SessionManager {
                 .filter(|s| busy(s))
                 .map(|s| s.session_id.to_string())
                 .collect();
+            // B8: a session with an unsettled shell command is busy.
+            for row in self.store().shell_runs_unsettled().await? {
+                let id = row.session_id.to_string();
+                if !busy.contains(&id) {
+                    busy.push(id);
+                }
+            }
             if (busy.is_empty() && !deciding) || tokio::time::Instant::now() >= deadline {
                 if deciding && busy.is_empty() {
                     busy.push(DECIDING.to_owned());

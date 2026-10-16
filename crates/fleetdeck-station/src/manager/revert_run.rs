@@ -30,6 +30,7 @@ use std::path::Path;
 use fleetdeck_providers::{LiveSession, ProviderError};
 
 use super::turns::SessionTurns;
+use crate::store::shell_runs::Barrier;
 use crate::store::{
     Dispatch, ProcessIncarnation, RevertRow, RevertStep, RowState, Store, StoreError,
 };
@@ -65,6 +66,28 @@ pub mod reason {
     /// restored."
     pub const CHECKPOINT_UNVERIFIED: &str = "checkpoint_unverified";
     pub const STATION_RESTART: &str = "station_restart";
+    /// A shell command ran in the folder after the target turn (B8).
+    pub const SHELL_RAN_AFTER_TURN: &str = "shell_ran_after_turn";
+    /// A shell command of the folder is not settled (B8).
+    pub const SHELL_RUNNING: &str = "shell_running";
+}
+
+/// The reason code of the shell barrier for a revert row (B8), if it holds.
+async fn shell_block(
+    env: RevertEnv<'_>,
+    row: &RevertRow,
+) -> Result<Option<&'static str>, StoreError> {
+    Ok(env
+        .store
+        .shell_barrier(
+            row.revert.worktree_root.clone(),
+            row.revert.app_turn.0.clone(),
+        )
+        .await?
+        .map(|b| match b {
+            Barrier::Running => reason::SHELL_RUNNING,
+            Barrier::RanAfterTurn => reason::SHELL_RAN_AFTER_TURN,
+        }))
 }
 
 /// The conversation rollback of a revert: the direct driver's
@@ -91,6 +114,15 @@ pub async fn run<R: Rollback + ?Sized>(
     process: &ProcessIncarnation,
     revert_id: &str,
 ) -> Dispatch {
+    // B8: the shell barrier is checked before the wait on the fence.
+    match barrier_at_dispatch(env, revert_id).await {
+        Ok(Some(dispatch)) => return dispatch,
+        Ok(None) => {}
+        Err(e) => {
+            tracing::error!(error = %e, revert_id, "revert store failure");
+            return Dispatch::Unknown(format!("store: {e}"));
+        }
+    }
     let _fence = turns.fence().await;
     match execute(env, session, process, revert_id).await {
         Ok(dispatch) => dispatch,
@@ -99,6 +131,31 @@ pub async fn run<R: Rollback + ?Sized>(
             Dispatch::Unknown(format!("store: {e}"))
         }
     }
+}
+
+/// The shell barrier at dispatch (B8): an `admitted` revert fails, a
+/// `rolled_back` one (the owner's retry of the restore) goes back to
+/// `reconciliation_required`; nothing is written to the files.
+async fn barrier_at_dispatch(
+    env: RevertEnv<'_>,
+    revert_id: &str,
+) -> Result<Option<Dispatch>, StoreError> {
+    let Some(row) = env.store.revert(revert_id.to_owned()).await? else {
+        return Ok(None);
+    };
+    let (from, to): (&'static [RevertStep], RevertStep) = match row.step {
+        RevertStep::Admitted => (&[RevertStep::Admitted], RevertStep::Failed),
+        RevertStep::RolledBack => (
+            &[RevertStep::RolledBack],
+            RevertStep::ReconciliationRequired,
+        ),
+        _ => return Ok(None),
+    };
+    let Some(why) = shell_block(env, &row).await? else {
+        return Ok(None);
+    };
+    step(env, revert_id, from, to, Some(why)).await?;
+    Ok(Some(Dispatch::NotDispatched(why.to_owned())))
 }
 
 async fn execute<R: Rollback + ?Sized>(
@@ -223,7 +280,8 @@ async fn retry_restore(
     {
         Some(reason::WORKTREE_BUSY)
     } else {
-        None
+        // B8: every restore retry meets the shell barrier.
+        shell_block(env, row).await?
     };
     if let Some(why) = why {
         step(
@@ -434,6 +492,18 @@ pub async fn recover(env: RevertEnv<'_>) -> Result<usize, StoreError> {
                 .await?;
             }
             RevertStep::RolledBack | RevertStep::Restoring => {
+                // B8: no restore across a shell command, also in recovery.
+                if let Some(why) = shell_block(env, &row).await? {
+                    step(
+                        env,
+                        id,
+                        &[RevertStep::RolledBack, RevertStep::Restoring],
+                        RevertStep::ReconciliationRequired,
+                        Some(why),
+                    )
+                    .await?;
+                    continue;
+                }
                 restore(env, &row).await?;
             }
             RevertStep::Succeeded

@@ -52,6 +52,11 @@ pub struct UserInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub author: Option<String>,
+    /// The effect ids of finished `!` shell commands whose results this
+    /// input carries to the model (Claude, B8). Old peers send no field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<String>>")]
+    pub shell_results: Vec<String>,
 }
 
 impl UserInput {
@@ -62,6 +67,7 @@ impl UserInput {
             text: text.into(),
             images: Vec::new(),
             author: None,
+            shell_results: Vec::new(),
         }
     }
 
@@ -147,6 +153,20 @@ mod tests {
         assert_eq!(json, r#"{"text":"hi"}"#);
         let back: UserInput = serde_json::from_str(r#"{"text":"hi"}"#).unwrap();
         assert_eq!(back, UserInput::new("hi"));
+    }
+
+    #[test]
+    fn shell_results_default_to_none_and_are_skipped_when_empty() {
+        // An old peer sends no field; an input without results keeps the
+        // old wire form (B8).
+        let back: UserInput = serde_json::from_str(r#"{"text":"hi"}"#).unwrap();
+        assert!(back.shell_results.is_empty());
+        let mut input = UserInput::new("hi");
+        input.shell_results = vec!["e1".to_owned(), "e2".to_owned()];
+        let json = serde_json::to_string(&input).unwrap();
+        assert_eq!(json, r#"{"text":"hi","shell_results":["e1","e2"]}"#);
+        let back: UserInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, input);
     }
 
     #[test]

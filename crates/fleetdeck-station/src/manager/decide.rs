@@ -169,6 +169,10 @@ pub fn decide(
             input_effect(d, &s, origin_run, input, EffectPayload::follow_up)
         }
         SessionCommand::Interrupt { session_id } => {
+            // A shell command of the session is cancelled (B8).
+            if let Some(done) = super::shell_decide::interrupt(d, &session_id)? {
+                return Ok(done);
+            }
             let s = live_session(d, &session_id, Operation::Interrupt)?;
             if s.current_turn.is_none()
                 && s.current_run.is_none()
@@ -302,6 +306,10 @@ pub fn decide(
                     authority: None,
                 },
             )
+        }
+        // The session manager decides these with the resolved root (B8).
+        SessionCommand::ShellCommand { .. } | SessionCommand::ReleaseShell { .. } => {
+            Err(super::shell_decide::refuse_direct())
         }
         // The session manager runs the process check first (`submit`); a
         // direct call has none and is refused after the row checks (DL-182).

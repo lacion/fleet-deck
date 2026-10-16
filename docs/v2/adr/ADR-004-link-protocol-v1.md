@@ -123,6 +123,7 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `workspace.trash.v1` | `session.worktree_trash`, `session.worktree_restore`, `session.worktree_purge`, `session.worktree_release` (DL-150; a worktree moved to a trash folder, restored, deleted for good, or released) |
 | `artifacts.v1` | `artifacts.publish`, `artifacts.list`, `artifacts.get`, `artifacts.file` (DL-165; R12 artifacts: versioned files that a session or a person publishes, stored in the station's data directory) |
 | `shim.resume.v1` | `session.execution_check`, `session.reconcile_execution` (DL-182; the termination check and the owner's reconciliation for resume on the shim host) |
+| `shell_command.v1` | `session.shell_command`, `session.release_shell` (B8, DL-196; a `!` shell command in a session folder, and the owner's release of a folder) |
 | `pair_request.v1` | The pair-channel frames `pair_request`, `pair_pending`, `pair_approved` and `pair_resume` (DL-178, §10): a station asks a deck to pair without an invitation and the owner approves on the board |
 
 A method whose feature was not negotiated gets the error `feature_not_negotiated`. Behaviour depends on the negotiated features, not only on the version.
@@ -330,7 +331,7 @@ Per link (these values replace §2.7 "at most 256 open streams"):
 
 | Methods | `params` type | Payload field | Holder |
 | --- | --- | --- | --- |
-| `session.start`, `session.resume`, `session.import`, `session.fork`, `session.prompt`, `session.steer`, `session.follow_up`, `session.interrupt`, `session.set_mode`, `session.set_model`, `session.stop`, `session.revert`, `session.rename`, `session.resolve_revert`, `session.set_auto_continue`, `session.coordinator_renew`, `session.coordinator_revoke`, `session.worktree_trash`, `session.worktree_restore`, `session.worktree_purge`, `session.worktree_release`, `session.reconcile_execution`, `approval.answer` | `CommandEnvelope` | `command` | station |
+| `session.start`, `session.resume`, `session.import`, `session.fork`, `session.prompt`, `session.steer`, `session.follow_up`, `session.interrupt`, `session.set_mode`, `session.set_model`, `session.stop`, `session.revert`, `session.rename`, `session.resolve_revert`, `session.set_auto_continue`, `session.coordinator_renew`, `session.coordinator_revoke`, `session.worktree_trash`, `session.worktree_restore`, `session.worktree_purge`, `session.worktree_release`, `session.reconcile_execution`, `session.shell_command`, `session.release_shell`, `approval.answer` | `CommandEnvelope` | `command` | station |
 | `station.configure` | `StationConfigureEnvelope` | `change` | station |
 | `link.rotate_key` | `KeyRotationEnvelope` | `rotation` | receiver |
 | `shell.open`, `shell.resize`, `shell.close`, `shell.handover`, `shell.release` | `ShellEnvelope` | `change` | station |
@@ -435,6 +436,8 @@ close             { reason, detail }
 | `session.worktree_trash`, `session.worktree_restore`, `session.worktree_purge`, `session.worktree_release` | deck → station | admin | `workspace.trash.v1` | yes |
 | `session.execution_check` | deck → station | read | `shim.resume.v1` | no |
 | `session.reconcile_execution` | deck → station | admin | `shim.resume.v1` | yes |
+| `session.shell_command` | deck → station | admin | `shell_command.v1` | yes |
+| `session.release_shell` | deck → station | admin | `shell_command.v1` | yes |
 | `approval.answer` | deck → station | approve | — | yes |
 | `station.configure` | deck → station | admin | — | yes |
 | `link.rotate_key` | either → either | admin | — | yes |

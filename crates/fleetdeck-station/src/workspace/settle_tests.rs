@@ -86,6 +86,7 @@ fn row(w: &Worktree, turn: &str, input: &str) -> NewTurnCheckpoint {
         worktree_root: Some(w.root().display().to_string()),
         scope: SCOPE_TRACKED.to_owned(),
         start: RowSide::Capturing,
+        generation: None,
     }
 }
 

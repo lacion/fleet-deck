@@ -80,6 +80,10 @@ pub(crate) fn sample(method: &str) -> Value {
                 "reconcile_execution" => {
                     json!({"op": op, "session_id": s, "shim_id": "01J0000000000000000000000H"})
                 }
+                "shell_command" => json!({"op": op, "session_id": s, "command": "ls"}),
+                "release_shell" => {
+                    json!({"op": op, "session_id": s, "effect_id": "01J0000000000000000000000E"})
+                }
                 "worktree_purge" => {
                     json!({"op": op, "session_id": s, "confirm_name": "app--fd-x--01j000000000"})
                 }
@@ -117,7 +121,7 @@ fn every_mutating_method_parses_its_envelope_and_names_its_method() {
             count += 1;
         }
     }
-    assert_eq!(count, 31);
+    assert_eq!(count, 33);
 }
 
 #[test]
@@ -234,4 +238,27 @@ fn every_params_type_name_is_the_rust_type() {
     for (kind, name) in ENVELOPES.iter().zip(names) {
         assert!(name.ends_with(&format!("::{}", kind.params)), "{name}");
     }
+}
+
+#[test]
+fn the_shell_commands_round_trip_with_their_method_and_session() {
+    let s = "01J0000000000000000000000S";
+    for (value, method) in [
+        (
+            json!({"op": "shell_command", "session_id": s, "command": "ls -la"}),
+            "session.shell_command",
+        ),
+        (
+            json!({"op": "release_shell", "session_id": s, "effect_id": "01J0000000000000000000000E"}),
+            "session.release_shell",
+        ),
+    ] {
+        let command: SessionCommand = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(command.method(), method);
+        assert_eq!(command.session_id().map(|id| id.as_str()), Some(s));
+        assert_eq!(serde_json::to_value(&command).unwrap(), value);
+        assert!(SESSION_METHODS.contains(&method));
+    }
+    assert!(crate::version::feature::ALL.contains(&crate::version::feature::SHELL_COMMAND));
+    assert_eq!(crate::version::feature::SHELL_COMMAND, "shell_command.v1");
 }

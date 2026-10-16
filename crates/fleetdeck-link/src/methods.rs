@@ -621,6 +621,22 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::SHIM_RESUME),
         true,
     ),
+    // `!` shell commands (B8, DL-196): the station runs a command with its own
+    // rights, so both methods are owner actions (`admin`).
+    m(
+        "session.shell_command",
+        DeckToStation,
+        Scope::Admin,
+        Some(feature::SHELL_COMMAND),
+        true,
+    ),
+    m(
+        "session.release_shell",
+        DeckToStation,
+        Scope::Admin,
+        Some(feature::SHELL_COMMAND),
+        true,
+    ),
     m("approval.answer", DeckToStation, Scope::Approve, None, true),
     m("station.configure", DeckToStation, Scope::Admin, None, true),
     m("link.rotate_key", Either, Scope::Admin, None, true),

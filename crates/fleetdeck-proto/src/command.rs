@@ -302,6 +302,18 @@ pub enum SessionCommand {
         session_id: SessionId,
         shim_id: String,
     },
+    /// Run `command` in the session folder, as `!` does in the terminal UIs
+    /// (B8). Owner board command; needs `shell_command.v1`.
+    ShellCommand {
+        session_id: SessionId,
+        command: String,
+    },
+    /// The owner states that the shell command `effect_id` no longer runs
+    /// (B8). Needs `shell_command.v1`.
+    ReleaseShell {
+        session_id: SessionId,
+        effect_id: String,
+    },
 }
 
 /// How the owner resolves a revert that needs reconciliation (DL-097).
@@ -394,6 +406,8 @@ impl SessionCommand {
             Self::WorktreePurge { .. } => "session.worktree_purge",
             Self::WorktreeRelease { .. } => "session.worktree_release",
             Self::ReconcileExecution { .. } => "session.reconcile_execution",
+            Self::ShellCommand { .. } => "session.shell_command",
+            Self::ReleaseShell { .. } => "session.release_shell",
         }
     }
 
@@ -422,7 +436,9 @@ impl SessionCommand {
             | Self::WorktreeRestore { session_id }
             | Self::WorktreePurge { session_id, .. }
             | Self::WorktreeRelease { session_id }
-            | Self::ReconcileExecution { session_id, .. } => Some(session_id),
+            | Self::ReconcileExecution { session_id, .. }
+            | Self::ShellCommand { session_id, .. }
+            | Self::ReleaseShell { session_id, .. } => Some(session_id),
         }
     }
 }

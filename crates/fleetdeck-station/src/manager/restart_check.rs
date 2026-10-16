@@ -89,6 +89,15 @@ impl SessionManager {
         Ok(items)
     }
 
+    /// True while a `!` shell command is unsettled (B8): a restart consent is
+    /// refused then, whatever the caller accepts to stop.
+    ///
+    /// # Errors
+    /// A database error.
+    pub(crate) async fn shell_work_open(&self) -> Result<bool> {
+        self.store.shell_any_unsettled().await
+    }
+
     /// Ends every queued start or resume that a restart now discards: the
     /// effect is retired and its session ends as a failed start with
     /// [`QUEUED_START_LOST`], in one transaction. Call it after the consent

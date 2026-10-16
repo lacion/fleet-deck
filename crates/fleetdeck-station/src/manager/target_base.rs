@@ -287,6 +287,10 @@ impl SessionTarget {
             | EffectPayload::Stop { .. } => {
                 return Dispatch::NotDispatched("not_a_live_operation".into());
             }
+            // B8: the execution of `!` commands is a later task.
+            EffectPayload::ShellCommand { .. } => {
+                return Dispatch::NotDispatched("shell_command_not_built".into());
+            }
         };
         match sent {
             Ok(()) => Dispatch::Sent,

@@ -27,6 +27,8 @@ pub mod restart_gate;
 pub mod resume;
 pub mod revert;
 pub mod revert_run;
+pub mod shell_advance;
+pub mod shell_decide;
 mod shells_slot;
 pub mod shim_claude;
 pub mod shim_codex;
@@ -165,6 +167,9 @@ pub struct SessionManager {
     /// The settings holder of the station, once the station process set it
     /// (DL-172). Without it the settings methods answer `unsupported`.
     settings: std::sync::OnceLock<Arc<crate::settings_svc::StationSettings>>,
+    /// Wakes the shell advance task (B8): called after a settlement that the
+    /// manager makes.
+    shell_notify: Arc<tokio::sync::Notify>,
 }
 
 impl std::fmt::Debug for SessionManager {
@@ -382,7 +387,18 @@ impl SessionManager {
             hibernate::TICK,
             rx.clone(),
         )));
-        tasks.push(tokio::spawn(deny_ticker(store.clone(), rx)));
+        tasks.push(tokio::spawn(deny_ticker(store.clone(), rx.clone())));
+        // B8: the shell rows of the last process are settled and advanced
+        // before the shell admission opens; the advance task follows.
+        let shell_notify = Arc::new(tokio::sync::Notify::new());
+        let fences = target.fences().clone();
+        shell_advance::start_up(&store, &fences).await?;
+        tasks.push(tokio::spawn(shell_advance::task(
+            store.clone(),
+            fences,
+            Arc::clone(&shell_notify),
+            rx,
+        )));
         Ok(Self {
             store,
             policy: hub,
@@ -401,6 +417,7 @@ impl SessionManager {
             assist: std::sync::OnceLock::new(),
             private_paths: private,
             settings: std::sync::OnceLock::new(),
+            shell_notify,
         })
     }
 
@@ -554,9 +571,11 @@ impl SessionManager {
         let coordinator = self.coordinator.clone();
         let origin = envelope.origin;
         let command = envelope.command.clone();
+        let is_release = matches!(command, SessionCommand::ReleaseShell { .. });
         // The count comes before the flag is read: the restart admission
         // sets the flag, then waits for the count (restart_gate). An input
         // may resume a hibernated session, so it counts too (NV-27).
+        let root = shell_decide::resolve_root(&self.store, &command).await?;
         let _creating = (restart_gate::creates_session(&command)
             || restart_gate::may_resume(&command))
         .then(|| self.restart.enter_submit());
@@ -566,7 +585,10 @@ impl SessionManager {
         let guard = auto_continue::guard(&command, &caller)
             .and_then(|()| coordinator_command::guard(&command, &caller))
             .and_then(|()| drain::guard(self.draining(), &command))
-            .and_then(|()| restart_gate::guard(restarting, &command));
+            .and_then(|()| restart_gate::guard(restarting, &command))
+            .and_then(|()| {
+                shell_decide::guard(&command, &caller, origin, envelope.authority.is_some())
+            });
         let shells = self.shells.get();
         // The process check of a reconciliation runs here, outside the
         // writer transaction; the decision rechecks only the row state
@@ -587,7 +609,12 @@ impl SessionManager {
                     | SessionCommand::WorktreeRelease { .. }) => {
                         trash::decide(d, &policy, origin, shells.as_deref(), command)
                     }
+                    command @ (SessionCommand::ShellCommand { .. }
+                    | SessionCommand::ReleaseShell { .. }) => {
+                        shell_decide::decide(d, &policy, restarting, root.as_deref(), command)
+                    }
                     command => {
+                        shell_decide::check_root(d, root.as_deref(), &command)?;
                         decide::decide(d, &policy, &coordinator, origin, restarting, command)
                     }
                 }
@@ -598,6 +625,14 @@ impl SessionManager {
         if let Some(fence) = self.coordinator.fence() {
             fence.settle(&self.store).await;
         }
+        // B8: a release settled a row; its advance follows.
+        if is_release
+            && decided
+                .as_ref()
+                .is_ok_and(|d| d.receipt.state == fleetdeck_proto::command::ReceiptState::Accepted)
+        {
+            self.shell_notify.notify_one();
+        }
         decided
     }
 
@@ -605,6 +640,10 @@ impl SessionManager {
     /// that arrive later are still decided, but no worker dispatches them
     /// until the next start (recovery retires them).
     pub async fn shutdown(&self, how: StopMode) {
+        // B8: no shell row can be created after the cancel sweep.
+        if let Err(e) = self.store.shell_close_admission_and_cancel_all().await {
+            tracing::error!(error = %e, "shell admission not closed at shutdown");
+        }
         let _ = self.shutdown.send(true);
         let tasks: Vec<_> = self
             .tasks
