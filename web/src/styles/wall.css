@@ -1,0 +1,474 @@
+/* R13 P1: `#/wall`, the read-only command center (design omarchy.md §4). One root fills the
+   viewport. The base font is clamp(14px, 100dvh / 80, 28px) times --fd-wall-scale; every size
+   below is in `em` of that font or in `--fd-wall-rem` (the base font, not scaled). */
+.fd-wall-root {
+  --fd-wall-scale: 1;
+  --fd-wall-rem: clamp(14px, 100dvh / 80, 28px);
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100dvw;
+  height: 100dvh;
+  overflow: hidden;
+  box-sizing: border-box;
+  display: grid;
+  padding: var(--sp-3);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: calc(var(--fd-wall-rem) * var(--fd-wall-scale));
+  line-height: 1.35;
+}
+
+.fd-wall-root *,
+.fd-wall-root *::before,
+.fd-wall-root *::after {
+  box-sizing: border-box;
+}
+
+.fd-wall-corner {
+  position: absolute;
+  right: var(--sp-3);
+  bottom: var(--sp-1);
+  margin: 0;
+  color: var(--faint);
+  font-size: 0.7em;
+  pointer-events: none;
+}
+
+.fd-wall-corner [data-state="live"] {
+  color: var(--ok);
+}
+
+.fd-wall-corner [data-state="reconnecting"] {
+  color: var(--act);
+}
+
+.fd-wall-denied {
+  align-self: center;
+  justify-self: center;
+  margin: 0;
+  font-size: 1.4em;
+}
+
+.fd-wall-note {
+  margin: 0;
+  color: var(--faint);
+  font-size: 0.8em;
+}
+
+.fd-wall-h {
+  margin: 0 0 var(--sp-2);
+  font-size: 1em;
+  font-weight: 600;
+  color: var(--dim);
+}
+
+.fd-wall-label {
+  margin: var(--sp-2) 0 var(--sp-1);
+  font-size: 0.8em;
+  font-weight: 600;
+  color: var(--faint);
+}
+
+/* mission: the grid of the four areas, one template for each shape */
+.fd-wall-grid {
+  display: grid;
+  gap: var(--sp-3);
+  min-width: 0;
+  min-height: 0;
+}
+
+.fd-wall-grid > [data-area="needs"] {
+  grid-area: needs;
+}
+.fd-wall-grid > [data-area="tiles"] {
+  grid-area: tiles;
+}
+.fd-wall-grid > [data-area="side"] {
+  grid-area: side;
+}
+.fd-wall-grid > [data-area="stream"] {
+  grid-area: stream;
+}
+
+.fd-wall-root[data-shape="ultra"] .fd-wall-grid {
+  grid-template-columns: 20% minmax(0, 1fr) 20%;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 24%);
+  grid-template-areas:
+    "needs tiles side"
+    "needs stream side";
+}
+
+.fd-wall-root[data-shape="wide"] .fd-wall-grid {
+  grid-template-columns: 24% minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) minmax(0, 26%);
+  grid-template-areas:
+    "needs tiles"
+    "side stream";
+}
+
+.fd-wall-root[data-shape="standard"] .fd-wall-grid {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 24%) minmax(0, 1fr) minmax(0, 20%);
+  grid-template-areas:
+    "needs"
+    "tiles"
+    "side";
+}
+
+.fd-wall-root[data-shape="portrait"] .fd-wall-grid {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 26%) minmax(0, 1fr) minmax(0, 20%);
+  grid-template-areas:
+    "needs"
+    "tiles"
+    "stream";
+}
+
+.fd-wall-area {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--sp-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+}
+
+.fd-wall-area[data-area="tiles"] {
+  background: transparent;
+  border-color: transparent;
+  padding: 0;
+}
+
+/* needs */
+.fd-wall-needs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fd-wall-root[data-shape="standard"] .fd-wall-needs,
+.fd-wall-root[data-shape="portrait"] .fd-wall-needs {
+  flex-direction: row;
+}
+
+.fd-wall-need {
+  display: flex;
+  flex: 1 1 0;
+  gap: var(--sp-2);
+  min-width: 0;
+  justify-content: space-between;
+  padding: var(--sp-2);
+  background: var(--act-bg);
+  border: 1px solid var(--act);
+  border-radius: var(--r-card);
+}
+
+.fd-wall-need-text {
+  min-width: 0;
+}
+
+.fd-wall-need p {
+  margin: 0;
+}
+
+.fd-wall-need-what,
+.fd-wall-need-sum {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-wall-need-sum {
+  color: var(--dim);
+  font-size: 0.85em;
+}
+
+.fd-wall-need-qr {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  width: 7em;
+  text-align: center;
+}
+
+.fd-wall-qr {
+  display: block;
+  width: 6em;
+  height: 6em;
+}
+
+/* tiles */
+.fd-wall-tiles {
+  display: grid;
+  grid-template-columns: repeat(
+      auto-fill,
+      minmax(calc(22 * var(--fd-wall-rem) * var(--fd-wall-scale)), 1fr)
+    );
+  grid-auto-rows: calc(11 * var(--fd-wall-rem) * var(--fd-wall-scale));
+  align-content: start;
+  gap: var(--sp-2);
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  list-style: none;
+}
+
+.fd-wall-root .fd-wtile {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.fd-wall-root .fd-wtile:focus-visible {
+  outline: 2px solid var(--act);
+  outline-offset: 2px;
+}
+
+.fd-wall-root .fd-wtile-where,
+.fd-wall-root .fd-wtile-empty,
+.fd-wall-root .fd-wtile-note,
+.fd-wall-root .fd-wtile-line,
+.fd-wall-root .fd-wtile-tool,
+.fd-wall-root .fd-focus {
+  font-size: 0.8em;
+}
+
+.fd-wall-root .fd-wtile-title {
+  font-size: 1em;
+}
+
+/* side */
+.fd-wall-block + .fd-wall-block {
+  margin-top: var(--sp-3);
+}
+
+.fd-wall-block p {
+  margin: 0;
+}
+
+.fd-wall-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fd-wall-station {
+  display: flex;
+  flex-direction: column;
+}
+
+.fd-wall-station[data-reachable="false"] .fd-wall-station-name {
+  color: var(--hazard);
+}
+
+/* stream: the newest at the bottom */
+.fd-wall-area[data-area="stream"] {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.fd-wall-stream {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.85em;
+}
+
+.fd-wall-stream li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-wall-stream time {
+  color: var(--faint);
+  font-family: var(--font-data);
+}
+
+/* focus and review */
+.fd-wall-focus {
+  display: grid;
+  grid-template-columns: minmax(0, 60fr) minmax(0, 40fr);
+  gap: var(--sp-3);
+  min-width: 0;
+  min-height: 0;
+}
+
+.fd-wall-focus-chat,
+.fd-wall-diff,
+.fd-wall-single {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--sp-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+}
+
+.fd-wall-single {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.fd-wall-chat {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.fd-wall-chatlines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.fd-wall-chatline {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.fd-wall-chatline[data-kind="tool"] {
+  color: var(--dim);
+  font-family: var(--font-data);
+  font-size: 0.85em;
+}
+
+.fd-wall-chatline[data-kind="prompt"] {
+  color: var(--faint);
+}
+
+.fd-wall-chatline[data-kind="ask"] {
+  color: var(--act);
+}
+
+.fd-wall-chatline[data-kind="error"] {
+  color: var(--hazard);
+}
+
+.fd-wall-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  font-size: 0.8em;
+}
+
+/* race */
+.fd-wall-cols {
+  display: grid;
+  grid-template-columns: repeat(var(--fd-wall-cols, 4), minmax(0, 1fr));
+  gap: var(--sp-3);
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fd-wall-cols[data-count="1"] {
+  --fd-wall-cols: 1;
+}
+.fd-wall-cols[data-count="2"] {
+  --fd-wall-cols: 2;
+}
+.fd-wall-cols[data-count="3"] {
+  --fd-wall-cols: 3;
+}
+
+.fd-wall-col {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--sp-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+}
+
+.fd-wall-files {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-data);
+  font-size: 0.8em;
+}
+
+.fd-wall-message,
+.fd-wall-digest {
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 10;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* artifact */
+.fd-wall-artifact {
+  min-width: 0;
+  min-height: 0;
+}
+
+.fd-wall-artifact .fd-art-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+
+/* ambient: dark in every theme, low motion */
+.fd-wall-root[data-mode="ambient"] {
+  color-scheme: dark;
+  background: #000;
+  place-items: center;
+}
+
+.fd-wall-ambient {
+  text-align: center;
+}
+
+.fd-wall-counts {
+  display: flex;
+  justify-content: center;
+  gap: 4em;
+  margin: 0 0 1.5em;
+}
+
+.fd-wall-counts div {
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+}
+
+.fd-wall-counts dt {
+  color: var(--dim);
+}
+
+.fd-wall-counts dd {
+  margin: 0;
+  font-size: 4em;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.fd-wall-ambient-line {
+  margin: 0 0 0.5em;
+  color: var(--dim);
+  font-size: 1.2em;
+}

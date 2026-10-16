@@ -45,13 +45,19 @@ type Props = {
 const timelineOf = (timelines: Props['timelines'], key: SessionKey): Timeline | undefined =>
   timelines?.[JSON.stringify([key.station_id, key.session_id])];
 
-function Tile({
+/**
+ * One tile. With `readOnly` (the wall, R13 P1) it has no answer button and no other control: the
+ * tile shows the request as text, and it is a focus target for the keyboard instead of a link.
+ */
+export function Tile({
   card,
   stations,
   timeline,
   actions,
   freshness,
   focused,
+  readOnly = false,
+  unavailable = false,
 }: {
   readonly card: DeckSession;
   readonly stations: readonly StationView[];
@@ -59,6 +65,9 @@ function Tile({
   readonly actions: SessionActions | undefined;
   readonly freshness: Freshness;
   readonly focused: boolean;
+  readonly readOnly?: boolean;
+  /** The timeline subscription of the tile failed (the wall, R13 P1). */
+  readonly unavailable?: boolean;
 }) {
   const s = card.summary;
   const key: SessionKey = { station_id: card.station_id, session_id: s.session_id };
@@ -68,6 +77,7 @@ function Tile({
   const tool = s.running_tools[0];
   const ask = tileRequest(card);
   const answerable =
+    !readOnly &&
     ask?.plain === true &&
     s.capabilities?.approvals === true &&
     actions?.canApprove === true &&
@@ -94,47 +104,60 @@ function Tile({
       },
     );
   };
+  const body = (
+    <>
+      <span className="fd-wtile-head">
+        <span className="fd-dot" data-status={card.status} aria-hidden="true" />
+        <span className="fd-wtile-title">{s.title ?? s.callsign ?? s.session_id}</span>
+        <UnreadMark count={unreadOf(card)} />
+      </span>
+      <span className="fd-wtile-where">
+        {where}
+        {s.branch !== null && s.branch !== ''
+          ? ` · ${s.branch}`
+          : s.cwd != null
+            ? ` · ${basename(s.cwd)}`
+            : ''}
+      </span>
+      <FocusLine summary={s} />
+      {unavailable ? (
+        <span className="fd-wtile-empty">Unavailable</span>
+      ) : lines.length === 0 ? (
+        <span className="fd-wtile-empty">
+          {timeline?.ready === true ? 'No chat yet.' : 'Loading…'}
+        </span>
+      ) : (
+        <span className="fd-wtile-lines">
+          {lines.map((l) => (
+            <span key={l.key} className="fd-wtile-line" data-kind={l.kind}>
+              {l.text}
+            </span>
+          ))}
+        </span>
+      )}
+      {tool === undefined ? null : (
+        <span className="fd-wtile-tool" title="Running now">
+          {tool.input_summary === '' ? tool.title : `${tool.title}: ${tool.input_summary}`}
+        </span>
+      )}
+    </>
+  );
   return (
     <li
       className="fd-wtile"
       data-status={card.status}
       data-focused={focused ? 'true' : undefined}
       data-session={s.session_id}
+      data-ref={readOnly ? `${card.station_id}/${s.session_id}` : undefined}
+      tabIndex={readOnly ? 0 : undefined}
     >
-      <a className="fd-wtile-open" href={href}>
-        <span className="fd-wtile-head">
-          <span className="fd-dot" data-status={card.status} aria-hidden="true" />
-          <span className="fd-wtile-title">{s.title ?? s.callsign ?? s.session_id}</span>
-          <UnreadMark count={unreadOf(card)} />
-        </span>
-        <span className="fd-wtile-where">
-          {where}
-          {s.branch !== null && s.branch !== ''
-            ? ` · ${s.branch}`
-            : s.cwd != null
-              ? ` · ${basename(s.cwd)}`
-              : ''}
-        </span>
-        <FocusLine summary={s} />
-        {lines.length === 0 ? (
-          <span className="fd-wtile-empty">
-            {timeline?.ready === true ? 'No chat yet.' : 'Loading…'}
-          </span>
-        ) : (
-          <span className="fd-wtile-lines">
-            {lines.map((l) => (
-              <span key={l.key} className="fd-wtile-line" data-kind={l.kind}>
-                {l.text}
-              </span>
-            ))}
-          </span>
-        )}
-        {tool === undefined ? null : (
-          <span className="fd-wtile-tool" title="Running now">
-            {tool.input_summary === '' ? tool.title : `${tool.title}: ${tool.input_summary}`}
-          </span>
-        )}
-      </a>
+      {readOnly ? (
+        <div className="fd-wtile-open">{body}</div>
+      ) : (
+        <a className="fd-wtile-open" href={href}>
+          {body}
+        </a>
+      )}
       {ask === null ? null : (
         <div className="fd-wtile-ask" role="group" aria-label={`Needs you: ${ask.request.title}`}>
           <span className="fd-card-ask">
@@ -155,7 +178,7 @@ function Tile({
                 </button>
               ))}
             </span>
-          ) : (
+          ) : readOnly ? null : (
             <span className="fd-wtile-note">Open the session to answer.</span>
           )}
           {note === null ? null : (

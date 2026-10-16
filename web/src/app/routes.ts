@@ -2,6 +2,39 @@ import { useCallback, useEffect, useState } from 'react';
 
 export type Tab = 'chat' | 'changes' | 'files' | 'artifacts' | 'people';
 
+/** R13 P1: the modes of the wall. */
+export type WallMode = 'mission' | 'focus' | 'review' | 'race' | 'artifact' | 'ambient';
+/** R13 P1: the shape classes of the wall. */
+export type WallShape = 'ultra' | 'wide' | 'standard' | 'portrait';
+
+export const WALL_MODES: readonly WallMode[] = [
+  'mission',
+  'focus',
+  'review',
+  'race',
+  'artifact',
+  'ambient',
+];
+export const WALL_SHAPES: readonly WallShape[] = ['ultra', 'wide', 'standard', 'portrait'];
+export const WALL_SCALE_MIN = 0.75;
+export const WALL_SCALE_MAX = 2;
+
+export type WallRoute = {
+  readonly name: 'wall';
+  readonly mode: WallMode;
+  /** Station ids; empty: all stations. */
+  readonly stations: readonly string[];
+  /** A repository name; empty: all repositories. */
+  readonly repo: string;
+  readonly scale: number;
+  readonly shape: 'auto' | WallShape;
+  readonly session?: { readonly station: string; readonly id: string };
+  readonly batch?: string;
+  readonly artifact?: { readonly station: string; readonly id: string };
+  /** `pin=1`: auto-focus is off. */
+  readonly pin: boolean;
+};
+
 export type Route =
   | { readonly name: 'home' }
   | { readonly name: 'fleet' }
@@ -15,6 +48,7 @@ export type Route =
   | { readonly name: 'terminals' }
   | { readonly name: 'more' }
   | { readonly name: 'compare'; readonly batch: string }
+  | WallRoute
   | { readonly name: 'artifacts' }
   | { readonly name: 'projects' }
   | { readonly name: 'project'; readonly id: string }
@@ -111,6 +145,76 @@ function parseSettings(parts: readonly string[], query: string): Route {
   return HOME;
 }
 
+/** `station/id` as a pair; `undefined` for a bad text. */
+function refPair(text: string | null): { station: string; id: string } | undefined {
+  if (text === null) return undefined;
+  const at = text.indexOf('/');
+  if (at <= 0 || at === text.length - 1) return undefined;
+  return { station: text.slice(0, at), id: text.slice(at + 1) };
+}
+
+/** A wall route with its defaults (R13 P1). */
+export const wallDefaults: WallRoute = {
+  name: 'wall',
+  mode: 'mission',
+  stations: [],
+  repo: '',
+  scale: 1,
+  shape: 'auto',
+  pin: false,
+};
+
+/** `#/wall?mode=&stations=&repo=&scale=&shape=&session=&batch=&artifact=&pin=` (R13 P1). */
+function parseWall(query: string): WallRoute {
+  const q = new URLSearchParams(query);
+  const mode = q.get('mode');
+  const shape = q.get('shape');
+  const scaleText = q.get('scale');
+  const scaleNumber = scaleText === null || scaleText === '' ? Number.NaN : Number(scaleText);
+  const scale = Number.isFinite(scaleNumber)
+    ? Math.min(WALL_SCALE_MAX, Math.max(WALL_SCALE_MIN, scaleNumber))
+    : 1;
+  const session = refPair(q.get('session'));
+  const artifact = refPair(q.get('artifact'));
+  const batchText = q.get('batch');
+  const batch = batchText === null || batchText === '' ? undefined : batchText;
+  const wanted = WALL_MODES.find((m) => m === mode) ?? 'mission';
+  const mode2 =
+    ((wanted === 'focus' || wanted === 'review') && session === undefined) ||
+    (wanted === 'race' && batch === undefined) ||
+    (wanted === 'artifact' && artifact === undefined)
+      ? 'mission'
+      : wanted;
+  return {
+    name: 'wall',
+    mode: mode2,
+    stations: (q.get('stations') ?? '').split(',').filter((v) => v !== ''),
+    repo: q.get('repo') ?? '',
+    scale,
+    shape: WALL_SHAPES.find((v) => v === shape) ?? 'auto',
+    ...(session === undefined ? {} : { session }),
+    ...(batch === undefined ? {} : { batch }),
+    ...(artifact === undefined ? {} : { artifact }),
+    pin: q.get('pin') === '1',
+  };
+}
+
+function formatWall(route: WallRoute): string {
+  const q = new URLSearchParams();
+  q.set('mode', route.mode);
+  if (route.stations.length > 0) q.set('stations', route.stations.join(','));
+  if (route.repo !== '') q.set('repo', route.repo);
+  q.set('scale', String(route.scale));
+  q.set('shape', route.shape);
+  if (route.session !== undefined) q.set('session', `${route.session.station}/${route.session.id}`);
+  if (route.batch !== undefined) q.set('batch', route.batch);
+  if (route.artifact !== undefined) {
+    q.set('artifact', `${route.artifact.station}/${route.artifact.id}`);
+  }
+  if (route.pin) q.set('pin', '1');
+  return `#/wall?${q.toString()}`;
+}
+
 /** Hash routes (DL-140): the browser's back button works on a phone. Anything unknown is home. */
 export function parseHash(hash: string): Route {
   const text = hash.startsWith('#') ? hash.slice(1) : hash;
@@ -122,6 +226,7 @@ export function parseHash(hash: string): Route {
     if (text === `/${name}`) return { name };
   }
   const parts = path.split('/');
+  if (path === '/wall') return parseWall(query);
   if (parts[0] === '' && parts[1] === 'settings') return parseSettings(parts, query);
   // R1.4: `#/compare/<batch id>`.
   if (parts.length === 3 && parts[0] === '' && parts[1] === 'compare') {
@@ -191,6 +296,8 @@ export function formatHash(route: Route): string {
         ? base
         : `${base}?tab=chat&agent=${encodeURIComponent(route.agent)}`;
     }
+    case 'wall':
+      return formatWall(route);
     case 'compare':
       return `#/compare/${encodeURIComponent(route.batch)}`;
     case 'project':

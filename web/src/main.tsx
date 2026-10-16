@@ -31,6 +31,7 @@ import './styles/modelhelp.css';
 import './styles/integrations.css';
 import './styles/sharing.css';
 import './styles/settings.css';
+import './styles/wall.css';
 
 initTheme();
 initDensity();

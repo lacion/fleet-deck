@@ -66,6 +66,7 @@ import { SharesPage } from './sharing/SharesPage';
 import { SpacesPage } from './sharing/SpacesPage';
 import { SettingsProvider, type SettingsEnv } from './settings/context';
 import { SettingsPage } from './settings/SettingsPage';
+import { WallPage } from './wall/WallPage';
 import { WatchPage } from './watch/WatchPage';
 
 type Props = {
@@ -193,7 +194,8 @@ export function App({
   const phone = layout === 'phone';
   // 'more' and 'terminals' are phone screens: elsewhere they show the home (see the effect).
   // R11.4: a guest of the owner's deck opens the pages that the deck allows; the others are home.
-  const guest = usePeople().member !== null;
+  const people = usePeople();
+  const guest = people.member !== null;
   const route: Route =
     (!phone && (urlRoute.name === 'more' || urlRoute.name === 'terminals')) ||
     (guest && GUEST_HIDDEN_ROUTES.includes(urlRoute.name))
@@ -554,6 +556,9 @@ export function App({
             sessionActions={sessionActions}
           />
         );
+      case 'wall':
+        // R13 P1: the wall replaces the whole layout (see `layoutNode`).
+        return null;
       case 'activity':
         return (
           <ActivityPage
@@ -680,47 +685,63 @@ export function App({
     }
   })();
 
-  const layoutNode = (
-    <Layout
-      layout={layout}
-      route={route}
-      sidebar={sidebar('full')}
-      drawerOpen={drawerOpen}
-      onDrawer={(next) => setDrawerAt(next ? routeKey : null)}
-      notices={notices}
-      banner={helpNotice.show ? <HelpNotice onDismiss={helpNotice.dismiss} /> : null}
-      failures={failures}
-      onOpenFailure={(f) => open(f.key)}
-      onDismissFailure={(f) => setDismissed((set) => new Set(set).add(f.ref))}
-      dock={dock}
-      onTerminalsBack={() => {
-        if (typeof window !== 'undefined' && window.history.length > 1) window.history.back();
-        else navigate({ name: 'home' });
-      }}
-      overlays={
-        <>
-          <ShareHost />
-          {help ? <HelpOverlay onClose={() => setHelp(false)} /> : null}
-          {palette ? (
-            <Palette
-              sessions={sessions}
-              stations={stations}
-              onOpen={open}
-              onClose={() => setPalette(false)}
-              onStart={(prompt) => {
-                setPlanPrompt(prompt);
-                setPlanId(null);
-                setSpawnStation(null);
-                navigate({ name: 'new' });
-              }}
-            />
-          ) : null}
-        </>
-      }
-    >
-      {content}
-    </Layout>
-  );
+  // R13 P1: the wall is a full-screen route with no sidebar and no top bar.
+  const layoutNode =
+    route.name === 'wall' ? (
+      <WallPage
+        route={route}
+        navigate={navigate}
+        owner={people.member === null && people.self === 'owner'}
+        sessions={sessions}
+        stations={stations}
+        freshness={freshness}
+        timelines={timelines}
+        watch={watch}
+        sessionActions={sessionActions}
+        views={views}
+        artifacts={artifacts}
+      />
+    ) : (
+      <Layout
+        layout={layout}
+        route={route}
+        sidebar={sidebar('full')}
+        drawerOpen={drawerOpen}
+        onDrawer={(next) => setDrawerAt(next ? routeKey : null)}
+        notices={notices}
+        banner={helpNotice.show ? <HelpNotice onDismiss={helpNotice.dismiss} /> : null}
+        failures={failures}
+        onOpenFailure={(f) => open(f.key)}
+        onDismissFailure={(f) => setDismissed((set) => new Set(set).add(f.ref))}
+        dock={dock}
+        onTerminalsBack={() => {
+          if (typeof window !== 'undefined' && window.history.length > 1) window.history.back();
+          else navigate({ name: 'home' });
+        }}
+        overlays={
+          <>
+            <ShareHost />
+            {help ? <HelpOverlay onClose={() => setHelp(false)} /> : null}
+            {palette ? (
+              <Palette
+                sessions={sessions}
+                stations={stations}
+                onOpen={open}
+                onClose={() => setPalette(false)}
+                onStart={(prompt) => {
+                  setPlanPrompt(prompt);
+                  setPlanId(null);
+                  setSpawnStation(null);
+                  navigate({ name: 'new' });
+                }}
+              />
+            ) : null}
+          </>
+        }
+      >
+        {content}
+      </Layout>
+    );
   const framed =
     artifactsEnv === undefined ? (
       layoutNode

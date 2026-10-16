@@ -16,7 +16,7 @@ import {
   tileLines,
   watchSessions,
 } from './tiles';
-import { WatchPage } from './WatchPage';
+import { Tile, WatchPage } from './WatchPage';
 
 const refs = {};
 const started = (id: string, title: string, input: string): Event => ({
@@ -255,5 +255,49 @@ describe('the watch page', () => {
   test('the page counts the live sessions and states an empty board', () => {
     expect(page([card('a', 'working'), card('b', 'idle')])).toContain('2 live');
     expect(page([])).toContain('No sessions yet');
+  });
+});
+
+describe('the read-only tile (R13 P1)', () => {
+  const tile = (over: Partial<Parameters<typeof Tile>[0]> = {}) =>
+    renderToStaticMarkup(
+      <ul>
+        <Tile
+          card={waiting('w1', 10)}
+          stations={[station()]}
+          timeline={undefined}
+          actions={sessionActions(async () => ({}), { station_id: 'station-a', session_id: 'w1' }, [
+            'read',
+            'drive',
+            'approve',
+          ])}
+          freshness="live"
+          focused={false}
+          readOnly
+          {...over}
+        />
+      </ul>,
+    );
+
+  test('it has no button and no link, and the request shows as text', () => {
+    const html = tile();
+    expect(html).not.toContain('<button');
+    expect(html).not.toContain('<a ');
+    expect(html).not.toContain('Open the session to answer.');
+    expect(html).toContain('Run tests');
+    expect(html).toContain('tabindex="0"');
+    expect(html).toContain('data-ref="station-a/w1"');
+  });
+
+  test('the normal tile keeps its buttons and its link', () => {
+    const html = tile({ readOnly: false });
+    expect(html).toContain('<button');
+    expect(html).toContain('href="#/s/station-a/w1"');
+    expect(html).not.toContain('tabindex');
+  });
+
+  test('an unavailable tile says so and the others are not touched', () => {
+    expect(tile({ unavailable: true })).toContain('Unavailable');
+    expect(tile()).not.toContain('Unavailable');
   });
 });
