@@ -15,6 +15,7 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
   - Show the worktrees and branches that the session created, with their diffs?
   - Show the tool calls of a subagent inside its card (Claude subagent transcripts)?
 - **Done, first part (2026-10-15):** an import takes the `HEAD` at import time as its base, so "Since the session started" shows the work after the import, also merged branches (be-w4). Open: worktrees that a session created, and subagent tool calls.
+- **Done (2026-10-16):** DL-191: "Show its work" on a subagent card (the subagent's own messages and tool calls) and the "Branches" view in the Changes tab (the repository's branches and the diff of one against its merge base).
 
 ## B2. Background notifications show as "provider turn" (owner screenshot, 2026-10-15)
 
