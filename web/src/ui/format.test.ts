@@ -7,6 +7,12 @@ describe('shortModel', () => {
     expect(shortModel('claude-opus-4-1-20250805')).toBe('Opus 4.1');
   });
 
+  test('a context suffix keeps the minor version and shows after it', () => {
+    expect(shortModel('claude-opus-5-5[1m]')).toBe('Opus 5.5 1M');
+    expect(shortModel('claude-opus-5-5')).toBe('Opus 5.5');
+    expect(shortModel('opus[1m]')).toBe('Opus 1M');
+  });
+
   test('a date or a leading version does not count as the model version', () => {
     expect(shortModel('claude-3-5-sonnet-20241022')).toBe('Sonnet');
   });

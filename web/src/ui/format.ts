@@ -9,18 +9,25 @@ export function modelFamily(model: string | null): ModelFamily | null {
   return FAMILIES.find((f) => m.includes(f)) ?? null;
 }
 
-/** `claude-sonnet-4-5` → `Sonnet 4.5`; an unknown family stays as is; no model → `default`. */
+/**
+ * `claude-sonnet-4-5` → `Sonnet 4.5`; a context suffix shows after the version
+ * (`claude-opus-5-5[1m]` → `Opus 5.5 1M`); an unknown family stays as is; no model → `default`.
+ */
 export function shortModel(model: string | null): string {
   if (model === null || model === '') return 'default';
   const family = modelFamily(model);
   if (family === null) return model;
-  const rest = model.toLowerCase().split(family)[1] ?? '';
+  // A `[1m]` suffix is not part of the version (it hid the minor version).
+  const suffix = /\[([^\]]+)\]$/.exec(model)?.[1]?.toUpperCase();
+  const base = suffix === undefined ? model : model.slice(0, model.lastIndexOf('['));
+  const rest = base.toLowerCase().split(family)[1] ?? '';
   const version = rest
     .split(/[-_.]/)
     .filter((part) => /^\d{1,2}$/.test(part))
     .slice(0, 2);
   const name = family.charAt(0).toUpperCase() + family.slice(1);
-  return version.length > 0 ? `${name} ${version.join('.')}` : name;
+  const short = version.length > 0 ? `${name} ${version.join('.')}` : name;
+  return suffix === undefined ? short : `${short} ${suffix}`;
 }
 
 /** A line of chat as plain text: no heading marks, emphasis marks, code ticks or link syntax. */
