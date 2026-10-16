@@ -577,7 +577,11 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                     : `${active} of ${info.max_sessions} sessions`}
                 </span>
               </div>
-              <StationResources resources={info?.resources} />
+              <StationResources
+                resources={info?.resources}
+                station={station.station_id}
+                sessions={cards}
+              />
               {info === null ? (
                 <p className="fd-note">Reported when the station links to this deck.</p>
               ) : info.providers.length === 0 ? (

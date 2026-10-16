@@ -611,6 +611,10 @@ impl LiveSession for CodexSession {
         &self.caps
     }
 
+    fn pid(&self) -> Option<u32> {
+        Some(self.control.pid())
+    }
+
     async fn prompt(&mut self, input: HostInput) -> Result<()> {
         require(&self.caps, Operation::Prompt)?;
         self.run(move |c| c.prompt(&input)).await

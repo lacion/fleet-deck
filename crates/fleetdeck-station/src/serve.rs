@@ -239,6 +239,8 @@ pub struct RunningStation {
     rescan: tokio::task::JoinHandle<()>,
     /// The periodic prune of the event log and the history (NV-26).
     prune: tokio::task::JoinHandle<()>,
+    /// The sampler of the per-session load (R13 §10).
+    loads: tokio::task::JoinHandle<()>,
 }
 
 impl RunningStation {
@@ -349,6 +351,11 @@ impl RunningStation {
             PRUNE_EVERY,
             rx.clone(),
         ));
+        let loads = tokio::spawn(crate::resources::resources_sessions::run(
+            Arc::clone(&manager),
+            crate::resources::resources_sessions::SESSION_LOAD_EVERY,
+            rx.clone(),
+        ));
         let assist_task = tokio::spawn(crate::assist::watch::run(
             assist,
             Arc::clone(&manager),
@@ -396,6 +403,7 @@ impl RunningStation {
             assist: assist_task,
             rescan,
             prune,
+            loads,
         })
     }
 
@@ -408,6 +416,7 @@ impl RunningStation {
         let _ = self.assist.await;
         let _ = self.rescan.await;
         let _ = self.prune.await;
+        let _ = self.loads.await;
         self.node.shutdown();
         // The stop waits for the terminal processes (up to the hangup grace).
         let shells = Arc::clone(&self.shells);

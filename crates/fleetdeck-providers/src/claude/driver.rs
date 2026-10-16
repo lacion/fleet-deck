@@ -519,6 +519,10 @@ impl LiveSession for ClaudeSession {
         &self.caps
     }
 
+    fn pid(&self) -> Option<u32> {
+        Some(self.control.pid())
+    }
+
     async fn prompt(&mut self, input: HostInput) -> Result<()> {
         self.input(Operation::Prompt, input).await
     }

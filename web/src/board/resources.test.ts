@@ -15,6 +15,7 @@ const report = (extra: Partial<StationResources> = {}): StationResources => ({
   disks: [],
   memory: null,
   cpu: null,
+  sessions: [],
   ...extra,
 });
 

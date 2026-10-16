@@ -7,6 +7,8 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::SessionId;
+
 /// A disk is low when it has less free space than this (decimal GB).
 pub const LOW_DISK_BYTES: u64 = 10_000_000_000;
 /// The memory is low when less than this is available (decimal GB).
@@ -25,6 +27,23 @@ pub struct StationResources {
     pub disks: Vec<DiskSpace>,
     pub memory: Option<MemoryUse>,
     pub cpu: Option<CpuLoad>,
+    /// The load of each live session's process tree, busiest first (R13 §10).
+    /// Sorted by `cpu_pct` descending, `None` last, then by `session_id`.
+    #[serde(default)]
+    pub sessions: Vec<SessionLoad>,
+}
+
+/// The CPU, memory and process count of one live session's process tree
+/// (R13 §10).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "link/")]
+pub struct SessionLoad {
+    pub session_id: SessionId,
+    /// Percent of one core, rounded; 6400 is a whole 64-core machine.
+    /// `None`: not measured yet or unreadable.
+    pub cpu_pct: Option<u32>,
+    pub rss_bytes: Option<u64>,
+    pub procs: u32,
 }
 
 /// The space of one filesystem.
@@ -147,6 +166,7 @@ mod tests {
             disks,
             memory: None,
             cpu: None,
+            sessions: Vec::new(),
         }
     }
 
@@ -227,6 +247,7 @@ mod tests {
                 load1_x100: 900,
                 load5_x100: 900,
             }),
+            sessions: Vec::new(),
         };
         let kinds: Vec<_> = r.warnings().iter().map(|w| w.kind).collect();
         assert_eq!(
@@ -266,6 +287,12 @@ mod tests {
                 load1_x100: 12,
                 load5_x100: 34,
             }),
+            sessions: vec![SessionLoad {
+                session_id: "s1".into(),
+                cpu_pct: Some(340),
+                rss_bytes: None,
+                procs: 3,
+            }],
         };
         let json = serde_json::json!({
             "name": "n", "incarnation": "i", "head": 3, "live_sessions": 1,
@@ -273,6 +300,13 @@ mod tests {
         });
         let info: crate::link::StationInfo = serde_json::from_value(json).unwrap();
         assert_eq!(info.resources, Some(r));
+    }
+
+    #[test]
+    fn resources_without_sessions_still_parse() {
+        let old = serde_json::json!({"at": 1, "disks": [], "memory": null, "cpu": null});
+        let r: StationResources = serde_json::from_value(old).unwrap();
+        assert!(r.sessions.is_empty());
     }
 
     #[test]

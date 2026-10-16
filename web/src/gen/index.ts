@@ -237,6 +237,7 @@ export * from "./link/ReplayParams";
 export * from "./link/ResourceKind";
 export * from "./link/ResourceWarning";
 export * from "./link/Scope";
+export * from "./link/SessionLoad";
 export * from "./link/SessionSnapshot";
 export * from "./link/StationInfo";
 export * from "./link/StationProvider";

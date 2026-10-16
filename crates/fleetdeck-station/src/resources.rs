@@ -17,6 +17,10 @@ use tokio::sync::Mutex;
 
 use crate::manager::policy::Policy;
 
+/// The load of each live session's process tree (R13 §10).
+#[path = "resources_sessions.rs"]
+pub mod resources_sessions;
+
 /// How long a gather result stays valid.
 const CACHE_TTL: Duration = Duration::from_secs(30);
 /// The time limit of one gather.
@@ -42,7 +46,11 @@ pub fn set_data_dir(dir: PathBuf) {
 pub async fn current(policy: &Policy) -> Option<StationResources> {
     let data = DATA_DIR.get().cloned();
     let roots = policy.allowed_roots().to_vec();
-    CACHE.get(CACHE_TTL, || gather_timed(data, roots)).await
+    let mut found = CACHE.get(CACHE_TTL, || gather_timed(data, roots)).await?;
+    // The session list has its own task, so it is not as old as the cache
+    // (R13 §10).
+    found.sessions = resources_sessions::latest();
+    Some(found)
 }
 
 /// One cached value. The lock stays held during a gather, so a second call
@@ -110,6 +118,7 @@ fn gather(data: Option<&Path>, roots: &[PathBuf]) -> Option<StationResources> {
         disks,
         memory,
         cpu,
+        sessions: Vec::new(),
     })
 }
 
@@ -359,6 +368,7 @@ Pages wired down:                         4000.\n";
             disks: Vec::new(),
             memory: None,
             cpu: None,
+            sessions: Vec::new(),
         }
     }
 
