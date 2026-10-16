@@ -73,6 +73,10 @@ pub mod feature {
     /// provider's own transcript of that subagent (DL-191).
     pub const SUBAGENT: &str = "subagent.v1";
 
+    /// `station.native_sessions` and `station.native_preview`: browse the
+    /// native sessions of a station's provider homes (B7).
+    pub const NATIVE_SESSIONS: &str = "native_sessions.v1";
+
     /// `session.branches` and `files.branch_diff`: the branches of the
     /// repository of a session and the committed diff of one (DL-191).
     pub const SESSION_BRANCHES: &str = "session_branches.v1";
@@ -132,6 +136,7 @@ pub mod feature {
         SESSION_DIFF,
         HISTORY,
         SUBAGENT,
+        NATIVE_SESSIONS,
         SESSION_BRANCHES,
         ARTIFACTS,
         PRECHECK,

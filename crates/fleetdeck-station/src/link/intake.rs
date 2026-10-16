@@ -25,6 +25,11 @@ use fleetdeck_proto::{Receipt, Reject, RejectCode};
 use serde::Serialize;
 
 use super::StationLink;
+
+// B7: the native-session methods have their own file (the module list of
+// `link/mod.rs` is not changed).
+#[path = "intake_native.rs"]
+mod intake_native;
 use crate::store::{Caller, DecideError, StoreError, peers};
 
 /// The error code of a request that this build does not serve yet.
@@ -501,6 +506,8 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
         "coordinator.policy_now" => policy_now(ctx, req.params),
         "session.history" => history_method(ctx, req.params).await,
         "session.subagent" => subagent_method(ctx, req.params).await,
+        "station.native_sessions" => intake_native::sessions(ctx, req.params).await,
+        "station.native_preview" => intake_native::preview(ctx, req.params).await,
         "session.branches" | "files.branch_diff" => {
             branch_method(ctx, &req.method, req.params).await
         }

@@ -126,7 +126,7 @@ pub fn locate(
 /// the owner's, with one hard link, not private, not too large (`max`). Split
 /// from the transcript scan so that [`locate_subagent`] uses it alone
 /// (DL-191).
-fn check_meta(file: &File, trust: &Trust<'_>, max: u64) -> Result<u64, Fail> {
+pub(super) fn check_meta(file: &File, trust: &Trust<'_>, max: u64) -> Result<u64, Fail> {
     let not_trusted = || unavailable(HistoryUnavailable::NotTrusted);
     let meta = file.metadata().map_err(|_| Fail::Io)?;
     if !meta.is_file() || meta.uid() != trust.uid || meta.nlink() != 1 {

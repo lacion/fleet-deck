@@ -51,6 +51,10 @@ use crate::mutation::{
     CoordinatorCallEnvelope, CoordinatorQueryEnvelope, KeyRotationEnvelope,
     StationConfigureEnvelope,
 };
+use crate::native::{
+    HomeState, ImportState, KnownSession, NativeHome, NativePreview, NativePreviewQuery,
+    NativeSession, NativeSessionList, NativeSessionsQuery, TranscriptPin,
+};
 use crate::orchestration::{
     AssignOutcome, AssignRequest, GrantView, GroupMailRequest, MailRequest, MailView,
     TaskCompletion, TaskRequest, TaskView, TaskWaitAnswer,
@@ -164,6 +168,16 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         HistoryUnavailable::export_all(&cfg),
         SubagentQuery::export_all(&cfg),
         SubagentLog::export_all(&cfg),
+        NativeSessionsQuery::export_all(&cfg),
+        NativeSessionList::export_all(&cfg),
+        NativeHome::export_all(&cfg),
+        HomeState::export_all(&cfg),
+        NativeSession::export_all(&cfg),
+        KnownSession::export_all(&cfg),
+        ImportState::export_all(&cfg),
+        TranscriptPin::export_all(&cfg),
+        NativePreviewQuery::export_all(&cfg),
+        NativePreview::export_all(&cfg),
         BranchesQuery::export_all(&cfg),
         RepoBranches::export_all(&cfg),
         RepoBranch::export_all(&cfg),
