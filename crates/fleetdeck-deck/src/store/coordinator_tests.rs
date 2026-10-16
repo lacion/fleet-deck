@@ -76,6 +76,7 @@ fn info(name: &str) -> StationInfo {
         assist_tokens_today: None,
         assist_cap: None,
         resources: None,
+        desktop: None,
     }
 }
 

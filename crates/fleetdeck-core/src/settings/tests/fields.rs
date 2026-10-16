@@ -152,6 +152,10 @@ fn the_tables_are_well_formed() {
     assert!(fleet.danger && fleet.apply == fleetdeck_proto::settings::Apply::Live);
     assert_eq!(fleet.kind, FieldKind::Bool);
     assert_eq!(fleet.label, "Fleet control on this station");
+    let desktop = get("allow_desktop");
+    assert!(desktop.danger && desktop.apply == fleetdeck_proto::settings::Apply::Live);
+    assert_eq!(desktop.kind, FieldKind::Bool);
+    assert_eq!(desktop.label, "Desktop control");
     assert_eq!(get("max_sessions").max, Some(256));
 }
 

@@ -45,6 +45,7 @@ fn info(allow_setup_cmd: Option<bool>) -> StationInfo {
         assist_tokens_today: None,
         assist_cap: None,
         resources: None,
+        desktop: None,
     }
 }
 

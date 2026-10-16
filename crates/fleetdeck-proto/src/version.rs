@@ -123,6 +123,10 @@ pub mod feature {
     /// before any launch (B7).
     pub const IMPORT_PIN: &str = "import_pin.v1";
 
+    /// `desktop.info` and `desktop.act`: desktop control on the station (R13
+    /// §6, DL-201).
+    pub const DESKTOP: &str = "desktop.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -157,6 +161,7 @@ pub mod feature {
         SHIM_RESUME,
         PAIR_REQUEST,
         SHELL_COMMAND,
+        DESKTOP,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

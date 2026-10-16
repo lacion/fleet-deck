@@ -637,6 +637,22 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::SHELL_COMMAND),
         true,
     ),
+    // Desktop control on the station (R13 P3): the board gates it for the
+    // owner; the station checks `allow_desktop` live.
+    m(
+        "desktop.info",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::DESKTOP),
+        false,
+    ),
+    m(
+        "desktop.act",
+        DeckToStation,
+        Scope::Drive,
+        Some(feature::DESKTOP),
+        false,
+    ),
     m("approval.answer", DeckToStation, Scope::Approve, None, true),
     m("station.configure", DeckToStation, Scope::Admin, None, true),
     m("link.rotate_key", Either, Scope::Admin, None, true),
