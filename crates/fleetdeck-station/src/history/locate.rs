@@ -95,6 +95,32 @@ pub fn locate(
     native: &str,
     trust: &Trust<'_>,
 ) -> Result<Opened, Fail> {
+    locate_with(home, kind, cwd, native, trust, trust.limits.file_max)
+}
+
+/// [`locate`] without the size cap: the check of a Codex child thread reads
+/// only the first record (B7 PRE-PR r1).
+///
+/// # Errors
+/// [`Fail::Unavailable`] with the reason, or the deadline.
+pub fn locate_any_size(
+    home: &Path,
+    kind: ProviderKind,
+    cwd: &str,
+    native: &str,
+    trust: &Trust<'_>,
+) -> Result<Opened, Fail> {
+    locate_with(home, kind, cwd, native, trust, u64::MAX)
+}
+
+fn locate_with(
+    home: &Path,
+    kind: ProviderKind,
+    cwd: &str,
+    native: &str,
+    trust: &Trust<'_>,
+    max: u64,
+) -> Result<Opened, Fail> {
     let home =
         std::fs::canonicalize(home).map_err(|_| unavailable(HistoryUnavailable::NotFound))?;
     let root = open_root(&home).map_err(open_fail)?;
@@ -113,7 +139,7 @@ pub fn locate(
     let fd =
         rustix::fs::openat(&dir, name.as_str(), file_flags(), Mode::empty()).map_err(open_fail)?;
     let file = File::from(fd);
-    let size = check_file(&file, kind, native, trust)?;
+    let size = check_file(&file, kind, native, trust, max)?;
     Ok(Opened {
         file,
         size,
@@ -190,9 +216,10 @@ fn check_file(
     kind: ProviderKind,
     native: &str,
     trust: &Trust<'_>,
+    max: u64,
 ) -> Result<u64, Fail> {
     let not_trusted = || unavailable(HistoryUnavailable::NotTrusted);
-    let size = check_meta(file, trust, trust.limits.file_max)?;
+    let size = check_meta(file, trust, max)?;
     // The first record that names a session must name this one.
     let mut lines = Lines::new(file, 0, size, trust.limits.line_max).with_deadline(trust.deadline);
     for _ in 0..HEAD_RECORDS {

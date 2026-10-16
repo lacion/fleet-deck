@@ -26,7 +26,7 @@ use super::lines::{Line, Lines, ReadError};
 use super::locate::{self, Trust, resolve_home};
 use super::parse::{self, Parsed};
 use super::subagent::{Ring, state_of, trim};
-use super::trust::{Identity, Mounts, PathCheck, rollout_id, trusted_path};
+use super::trust::{Identity, Mounts, PathCheck, rollout_id, trusted_home, trusted_path};
 use super::{History, HistoryError, Limits, env_for};
 use crate::manager::Policy;
 use crate::store::Store;
@@ -527,16 +527,28 @@ fn preview_blocking(
     use HistoryUnavailable::{NotFound, NotTrusted, TooLarge};
     let mounts = job.mounts.clone().unwrap_or_else(Mounts::load);
     let pin = &job.query.pin;
-    // `home_not_found`, `not_readable`: the home is gone.
-    let home = std::fs::canonicalize(&job.home).map_err(|_| gone(NotFound))?;
+    // The home resolves through links of the station user or root only
+    // (B7 PRE-PR r1). `home_not_found`, `not_readable`: the home is gone.
+    let (home, checked) = match trusted_home(&job.home, job.uid, &mounts) {
+        Ok(home) => (home, true),
+        Err(PathCheck::Untrusted("missing" | "io")) => return Err(gone(NotFound)),
+        // `home_not_trusted`.
+        Err(PathCheck::Untrusted(_)) => return Err(gone(NotTrusted)),
+        Err(PathCheck::Unverifiable(_)) => (
+            std::fs::canonicalize(&job.home).map_err(|_| gone(NotFound))?,
+            false,
+        ),
+    };
     // `home_changed`.
     if home.to_string_lossy() != pin.home.as_str() {
         return Err(gone(NotFound));
     }
-    match trusted_path(&home, job.uid, &mounts) {
-        Ok(()) | Err(PathCheck::Unverifiable(_)) => {}
-        // `home_not_trusted`.
-        Err(PathCheck::Untrusted(_)) => return Err(gone(NotTrusted)),
+    if !checked {
+        match trusted_path(&home, job.uid, &mounts) {
+            Ok(()) | Err(PathCheck::Unverifiable(_)) => {}
+            // `home_not_trusted`.
+            Err(PathCheck::Untrusted(_)) => return Err(gone(NotTrusted)),
+        }
     }
     let root = open_root(&home).map_err(|_| gone(NotFound))?;
     let mut gauge = Gauge::new(&job.budget, deadline, stop);

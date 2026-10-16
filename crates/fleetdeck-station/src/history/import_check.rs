@@ -16,6 +16,7 @@ use std::time::Instant;
 
 use fleetdeck_proto::SessionId;
 use fleetdeck_proto::event::ProviderKind;
+use fleetdeck_proto::history::HistoryUnavailable;
 use fleetdeck_proto::native::TranscriptPin;
 use serde_json::Value;
 
@@ -24,7 +25,7 @@ use super::browse_preview::scan;
 use super::capture;
 use super::lines::{Line, Lines, ReadError};
 use super::locate::{self, Trust, resolve_home};
-use super::trust::{Identity, Mounts, trusted_path};
+use super::trust::{Identity, Mounts, trusted_home, trusted_path};
 use super::{Captured, Fail, Limits, env_for, row_of};
 use crate::manager::Policy;
 use crate::store::Store;
@@ -218,7 +219,8 @@ fn unpinned_blocking(job: &Job, limits: &Limits, uid: u32, deadline: Instant) ->
         limits,
         deadline,
     };
-    let Ok(opened) = locate::locate(&job.home, job.kind, &job.cwd, &job.native, &trust) else {
+    let Ok(opened) = locate::locate_any_size(&job.home, job.kind, &job.cwd, &job.native, &trust)
+    else {
         return Outcome::default();
     };
     Outcome {
@@ -248,14 +250,32 @@ fn pinned_blocking(
     hook: Option<Arc<dyn Fn(u32) + Send + Sync>>,
 ) -> Result<Outcome, Fail> {
     let pin = job.pin.as_ref().ok_or_else(changed)?;
-    let home = std::fs::canonicalize(&job.home).map_err(|_| changed())?;
+    // Any failure of the home fails a pinned import, also an unverifiable
+    // one (B7 PRE-PR r1).
+    let mounts = Mounts::load();
+    let home = trusted_home(&job.home, uid, &mounts).map_err(|_| changed())?;
     let trust = Trust {
         private: &job.private,
         uid,
         limits,
         deadline,
     };
-    let opened = locate::locate(&home, job.kind, &job.cwd, &job.native, &trust)?;
+    let opened = match locate::locate(&home, job.kind, &job.cwd, &job.native, &trust) {
+        Ok(opened) => opened,
+        // A too-large transcript fails as before, but a child thread of it
+        // gets the subagent text (B7 PRE-PR r1).
+        Err(Fail::Unavailable(HistoryUnavailable::TooLarge)) if job.kind == ProviderKind::Codex => {
+            let big = locate::locate_any_size(&home, job.kind, &job.cwd, &job.native, &trust)?;
+            if names_parent(&big.file, big.size, limits, deadline) {
+                return Ok(Outcome {
+                    subagent: true,
+                    captured: None,
+                });
+            }
+            return Err(Fail::Unavailable(HistoryUnavailable::TooLarge));
+        }
+        Err(e) => return Err(e),
+    };
     // The child-thread rule comes first, as for an unpinned import.
     if job.kind == ProviderKind::Codex && names_parent(&opened.file, opened.size, limits, deadline)
     {
@@ -272,10 +292,8 @@ fn pinned_blocking(
     {
         return Err(changed());
     }
-    let mounts = Mounts::load();
     // An unverifiable path fails too: a pin is sent for a verified entry only.
     let trusted = |path: &Path| trusted_path(path, uid, &mounts).map_err(|_| changed());
-    trusted(&home)?;
     trusted(&home.join(&opened.path))?;
     trusted(Path::new(&job.cwd))?;
     // The per-record identity rules on the head window.

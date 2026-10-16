@@ -273,3 +273,119 @@ async fn a_codex_parent_thread_and_a_missing_transcript_do_not_trigger_the_rule(
         Err(Refusal::Unverified)
     );
 }
+
+// ------------------------------------------- B7 PRE-PR r1: home links, size
+
+/// A session of the instance `linked`, whose Claude home is the link.
+async fn linked_session(b: &B, id: &str, native: &str) -> SessionId {
+    b.rig
+        .store
+        .create_session(NewSession {
+            session_id: id.into(),
+            provider: ProviderKind::Claude,
+            provider_instance: "linked".into(),
+            cwd: b.cwd.clone(),
+            worktree: None,
+            branch: None,
+            mode: None,
+            title: None,
+            offline_approval_policy: OfflineApprovalPolicy::Wait,
+        })
+        .await
+        .unwrap();
+    b.rig
+        .store
+        .exec_for_tests(format!(
+            "UPDATE sessions SET native_session_id = '{native}' WHERE session_id = '{id}'"
+        ))
+        .await;
+    id.into()
+}
+
+/// Gives `b` an instance `linked` whose home is a link in `shared/` (with
+/// the given mode) to the real Claude home.
+fn link_home(b: &mut B, mode: u32) {
+    let shared = b.rig.root.join("shared");
+    std::fs::create_dir_all(&shared).unwrap();
+    std::os::unix::fs::symlink(b.home(), shared.join("link")).unwrap();
+    std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(mode)).unwrap();
+    let config = shared.join("link").to_string_lossy().into_owned();
+    b.policy = policy_of(&b.rig.root, &[("linked", Some(config.as_str()))]);
+}
+
+#[tokio::test]
+async fn a_home_link_in_a_group_writable_dir_fails_a_pinned_import() {
+    let Some(mut b) = rig(Limits::default(), &[]).await else {
+        return;
+    };
+    let path = b.good_claude(ID_A);
+    let pin = pin_of(&path, &b.home());
+    link_home(&mut b, 0o770);
+    let sid = linked_session(&b, "s1", ID_A).await;
+    let refused = check(&b, &sid, ID_A, Some(&pin)).await;
+    assert_eq!(refused, Err(Refusal::Unverified));
+    assert_eq!(refused.unwrap_err().message(), CHANGED);
+    assert!(b.rig.store.transcript(sid).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn a_pinned_import_through_a_trusted_home_link_passes() {
+    let Some(mut b) = rig(Limits::default(), &[]).await else {
+        return;
+    };
+    let path = b.good_claude(ID_A);
+    let pin = pin_of(&path, &b.home());
+    link_home(&mut b, 0o700);
+    let sid = linked_session(&b, "s1", ID_A).await;
+    assert_eq!(check(&b, &sid, ID_A, Some(&pin)).await, Ok(()));
+    let row = b.rig.store.transcript(sid).await.unwrap().unwrap();
+    assert_eq!(row.capture, Capture::Import);
+}
+
+#[tokio::test]
+async fn an_unpinned_codex_child_rollout_over_the_capture_cap_fails_with_the_subagent_text() {
+    let limits = Limits {
+        file_max: 64,
+        ..Limits::default()
+    };
+    let Some(b) = rig(limits, &[]).await else {
+        return;
+    };
+    let path = b.put_codex(
+        CODEX_CHILD,
+        &codex_lines(CODEX_CHILD, &b.cwd, Some(CODEX_ID)),
+    );
+    assert!(std::fs::metadata(&path).unwrap().len() > 64);
+    let plain = codex_session(&b, "s1", CODEX_CHILD).await;
+    let refused = check(&b, &plain, CODEX_CHILD, None).await;
+    assert_eq!(refused, Err(Refusal::Subagent));
+    assert_eq!(refused.unwrap_err().message(), SUBAGENT);
+    // A pinned import of the same file gets the subagent text too.
+    let pin = pin_of(&path, &b.codex_home());
+    let pinned = codex_session(&b, "s2", CODEX_CHILD).await;
+    assert_eq!(
+        check(&b, &pinned, CODEX_CHILD, Some(&pin)).await,
+        Err(Refusal::Subagent)
+    );
+}
+
+#[tokio::test]
+async fn a_codex_parent_rollout_over_the_capture_cap_is_not_a_child() {
+    let limits = Limits {
+        file_max: 64,
+        ..Limits::default()
+    };
+    let Some(b) = rig(limits, &[]).await else {
+        return;
+    };
+    let path = b.put_codex(CODEX_ID, &codex_lines(CODEX_ID, &b.cwd, None));
+    let pin = pin_of(&path, &b.codex_home());
+    // Unpinned: the best-effort rule goes on. Pinned: too large fails as before.
+    let plain = codex_session(&b, "s1", CODEX_ID).await;
+    assert_eq!(check(&b, &plain, CODEX_ID, None).await, Ok(()));
+    let pinned = codex_session(&b, "s2", CODEX_ID).await;
+    assert_eq!(
+        check(&b, &pinned, CODEX_ID, Some(&pin)).await,
+        Err(Refusal::Unverified)
+    );
+}

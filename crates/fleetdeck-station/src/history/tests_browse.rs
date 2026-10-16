@@ -555,3 +555,60 @@ async fn the_preview_runs_under_the_same_permit() {
     .unwrap_err();
     assert_eq!(err.code, "busy");
 }
+
+// ------------------------------------------------ B7 PRE-PR r1: home links
+
+fn link_home(b: &mut B, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    let shared = b.rig.root.join("shared");
+    std::fs::create_dir_all(&shared).unwrap();
+    std::os::unix::fs::symlink(b.home(), shared.join("link")).unwrap();
+    std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(mode)).unwrap();
+    let config = shared.join("link").to_string_lossy().into_owned();
+    b.policy = policy_of(&b.rig.root, &[("linked", Some(config.as_str()))]);
+}
+
+#[tokio::test]
+async fn a_home_link_in_a_group_writable_dir_is_home_not_trusted() {
+    let Some(mut b) = rig(Limits::default(), &[]).await else {
+        return;
+    };
+    b.good_claude(ID_A);
+    link_home(&mut b, 0o770);
+    let list = b.list().await;
+    let linked = list
+        .homes
+        .iter()
+        .find(|h| h.instances.contains(&ProviderInstanceId::from("linked")))
+        .unwrap();
+    assert_eq!(
+        linked.state,
+        HomeState::Unavailable {
+            reason: "home_not_trusted".into()
+        }
+    );
+    // The real home is still listed.
+    assert!(list.sessions.iter().any(|s| s.native_id == ID_A));
+}
+
+#[tokio::test]
+async fn a_home_link_in_a_trusted_dir_lists_the_sessions_of_its_target() {
+    let Some(mut b) = rig(Limits::default(), &[]).await else {
+        return;
+    };
+    b.good_claude(ID_A);
+    link_home(&mut b, 0o700);
+    let list = b.list().await;
+    let linked = list
+        .homes
+        .iter()
+        .find(|h| h.instances.contains(&ProviderInstanceId::from("linked")))
+        .unwrap();
+    assert_eq!(linked.state, HomeState::Ok);
+    // The link and the real home resolve to one home.
+    assert!(
+        entry(&list, ID_A)
+            .instances
+            .contains(&ProviderInstanceId::from("linked"))
+    );
+}

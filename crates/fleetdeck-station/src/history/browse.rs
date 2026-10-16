@@ -32,7 +32,7 @@ use super::browse_preview::{
 use super::lines::{Line, ReadError};
 use super::locate::{self, Trust, resolve_home};
 use super::parse::{self, Parsed, cut_chars};
-use super::trust::{Identity, Mounts, PathCheck, trusted_path};
+use super::trust::{Identity, Mounts, PathCheck, trusted_home, trusted_path};
 use super::{HistoryError, Limits, env_for};
 use crate::manager::Policy;
 use crate::store::Store;
@@ -88,6 +88,8 @@ pub(super) struct Home {
     state: HomeState,
     /// The canonical home (the resolved path when it does not exist).
     canon: Option<PathBuf>,
+    /// False when the home does not exist.
+    exists: bool,
     /// False when the home is on a filesystem or mount that cannot be
     /// verified.
     verified: bool,
@@ -100,8 +102,59 @@ fn unavailable(reason: &str) -> HomeState {
     }
 }
 
-/// Canonicalizes, merges homes with the same canonical path, keeps those of
-/// `only`, checks the trusted path of each and opens it.
+/// One plan, resolved against the filesystem (B7 PRE-PR r1: a home resolves
+/// through links that only the station user or root own).
+struct Resolved {
+    canon: Option<PathBuf>,
+    state: HomeState,
+    exists: bool,
+    verified: bool,
+}
+
+fn resolve_plan(plan: &HomePlan, uid: u32, mounts: &Mounts) -> Resolved {
+    let resolved = |canon: &PathBuf, state, exists, verified| Resolved {
+        canon: Some(canon.clone()),
+        state,
+        exists,
+        verified,
+    };
+    let Some(raw) = &plan.raw else {
+        return Resolved {
+            canon: None,
+            state: unavailable("home_not_absolute"),
+            exists: false,
+            verified: false,
+        };
+    };
+    match trusted_home(raw, uid, mounts) {
+        Ok(path) => resolved(&path, HomeState::Ok, true, true),
+        Err(PathCheck::Untrusted("missing")) => resolved(raw, HomeState::Ok, false, false),
+        Err(PathCheck::Untrusted(_)) => {
+            resolved(raw, unavailable("home_not_trusted"), false, false)
+        }
+        // The station makes no claim about this home: it is resolved as
+        // before and marked not verified.
+        Err(PathCheck::Unverifiable(_)) => match std::fs::canonicalize(raw) {
+            // The later check of today: a canonical path that fails it is
+            // not trusted.
+            Ok(canon) => match trusted_path(&canon, uid, mounts) {
+                Err(PathCheck::Untrusted(_)) => {
+                    resolved(raw, unavailable("home_not_trusted"), false, false)
+                }
+                Ok(()) | Err(PathCheck::Unverifiable(_)) => {
+                    resolved(&canon, HomeState::Ok, true, false)
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                resolved(raw, HomeState::Ok, false, false)
+            }
+            Err(_) => resolved(raw, unavailable("not_readable"), false, false),
+        },
+    }
+}
+
+/// Resolves each home through trusted links, merges homes with the same
+/// canonical path, keeps those of `only`, and opens each one.
 fn open_homes(
     plans: Vec<HomePlan>,
     only: Option<&ProviderInstanceId>,
@@ -110,16 +163,12 @@ fn open_homes(
 ) -> Vec<Home> {
     let mut homes: Vec<Home> = Vec::new();
     for plan in plans {
-        let (canon, state, exists) = match &plan.raw {
-            None => (None, unavailable("home_not_absolute"), false),
-            Some(raw) => match std::fs::canonicalize(raw) {
-                Ok(canon) => (Some(canon), HomeState::Ok, true),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    (Some(raw.clone()), HomeState::Ok, false)
-                }
-                Err(_) => (Some(raw.clone()), unavailable("not_readable"), false),
-            },
-        };
+        let Resolved {
+            canon,
+            state,
+            exists,
+            verified,
+        } = resolve_plan(&plan, uid, mounts);
         let same = homes
             .iter_mut()
             .find(|h| h.kind == plan.kind && h.canon == canon && h.state == state);
@@ -130,7 +179,8 @@ fn open_homes(
                 instances: plan.instances,
                 state,
                 canon,
-                verified: exists,
+                exists,
+                verified,
                 root: None,
             }),
         }
@@ -139,22 +189,11 @@ fn open_homes(
         homes.retain(|h| h.instances.contains(only));
     }
     for home in &mut homes {
-        let (HomeState::Ok, Some(canon)) = (&home.state, &home.canon) else {
+        let (HomeState::Ok, Some(canon), true) = (&home.state, &home.canon, home.exists) else {
+            // No home, a home that is not usable, or one that does not
+            // exist: nothing to walk.
             continue;
         };
-        if !home.verified {
-            // The home does not exist: nothing to walk.
-            continue;
-        }
-        match trusted_path(canon, uid, mounts) {
-            Ok(()) => {}
-            Err(PathCheck::Unverifiable(_)) => home.verified = false,
-            Err(PathCheck::Untrusted(_)) => {
-                home.state = unavailable("home_not_trusted");
-                home.verified = false;
-                continue;
-            }
-        }
         match open_root(canon) {
             Ok(fd) => home.root = Some(fd),
             Err(Errno::NOENT) => {}
