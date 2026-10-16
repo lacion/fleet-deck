@@ -521,3 +521,63 @@ fn db_open_here(db: &Path) -> bool {
                     .is_some_and(|n| n.to_string_lossy().starts_with(&name))
         })
 }
+
+/// A boot id that is not the real one: the id of a run before a reboot.
+pub const OLD_BOOT: &str = "00000000-0000-4000-8000-0000000000aa";
+
+/// A session with one turn under a shim that is then killed with its
+/// provider (a crash of the machine or of the shim): no exit file, no
+/// socket that answers. Returns the session and the old shim id.
+pub async fn lost_under_a_dead_shim(rig: &mut Rig, rewrite_boot: bool) -> (SessionId, String) {
+    lost_under_a_dead_turn(rig, rewrite_boot, "hello", false).await
+}
+
+/// [`lost_under_a_dead_shim`] for any prompt, with auto-continue on or off.
+/// A prompt that starts with `wait` keeps its turn open (the fake Claude
+/// never ends it), so the loss interrupts a turn (DL-188 step 3).
+pub async fn lost_under_a_dead_turn(
+    rig: &mut Rig,
+    rewrite_boot: bool,
+    prompt: &str,
+    auto_continue: bool,
+) -> (SessionId, String) {
+    let st = rig.station().await;
+    let session = rig.start(&st, "claude", prompt).await;
+    if auto_continue {
+        let on = Event::AutoContinueChanged { enabled: true };
+        st.store
+            .append(session.clone(), vec![on.into()])
+            .await
+            .unwrap();
+    }
+    if prompt.starts_with("wait") {
+        wait_for(&st.store, &session, "a started turn", |e| {
+            e.iter().any(|e| matches!(e, Event::TurnStarted { .. }))
+        })
+        .await;
+    } else {
+        wait_turns(&st.store, &session, 1).await;
+    }
+    let rows = st.store.shim_rows(session.clone()).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    let shim_id = rows[0].shim_id.clone();
+    // The station and everything it started go away.
+    st.manager.shutdown(StopMode::Graceful).await;
+    shim_reaper::reap(&rig.shims_dir());
+    let pid = rows[0].provider_identity.as_ref().unwrap().pid;
+    let deadline = Instant::now() + WAIT;
+    while Path::new(&format!("/proc/{pid}")).exists() {
+        assert!(Instant::now() < deadline, "the provider lives");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if rewrite_boot {
+        // As if the machine had rebooted since.
+        st.store
+            .shim_rewrite_boot(shim_id.clone(), OLD_BOOT.to_owned())
+            .await
+            .unwrap();
+    }
+    // The next station of the rig opens the same database: this one closes.
+    rig.close(st).await;
+    (session, shim_id)
+}

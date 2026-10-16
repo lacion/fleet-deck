@@ -209,7 +209,7 @@ impl Rig {
     async fn restart(&self, policy: &Policy) -> usize {
         let head = self.store.head();
         self.store.recover(Vec::new()).await.unwrap();
-        evaluate(&self.store, policy, head, false).await.unwrap()
+        evaluate(&self.store, policy, head).await.unwrap()
     }
 
     async fn events(&self, s: &SessionId) -> Vec<Event> {
@@ -426,19 +426,9 @@ async fn a_second_station_start_finds_the_stored_intent_and_stores_no_second_one
     let s = rig.session("twice", true, Work::Turn).await;
     let head = rig.store.head();
     rig.store.recover(Vec::new()).await.unwrap();
-    assert_eq!(
-        evaluate(&rig.store, &rig.policy(), head, false)
-            .await
-            .unwrap(),
-        1
-    );
+    assert_eq!(evaluate(&rig.store, &rig.policy(), head).await.unwrap(), 1);
     // The same start evaluated again (a crash before the first dispatch).
-    assert_eq!(
-        evaluate(&rig.store, &rig.policy(), head, false)
-            .await
-            .unwrap(),
-        0
-    );
+    assert_eq!(evaluate(&rig.store, &rig.policy(), head).await.unwrap(), 0);
     assert_eq!(rig.resumes(&s).await.len(), 1);
     assert!(rig.skips(&s).await.is_empty());
 }
@@ -458,7 +448,7 @@ async fn an_owner_command_after_the_intent_retires_the_undispatched_continuation
         .unwrap();
     rig.admit(&s, follow_up("new work")).await;
     assert_eq!(
-        recheck(&rig.store, Some(&rig.policy()), &intent)
+        recheck(&rig.store, Some(&rig.policy()), None, &intent)
             .await
             .as_deref(),
         Some("newer_owner_work")
@@ -540,7 +530,9 @@ async fn retired(
     code: &str,
 ) {
     assert_eq!(
-        recheck(&rig.store, Some(policy), intent).await.as_deref(),
+        recheck(&rig.store, Some(policy), None, intent)
+            .await
+            .as_deref(),
         Some(code)
     );
     assert_eq!(rig.state(s).await, SessionState::Lost);
@@ -552,7 +544,7 @@ async fn an_unchanged_intent_passes_the_dispatch_recheck() {
     let rig = Rig::new().await;
     let (_, intent) = stored_intent(&rig, "fine").await;
     assert_eq!(
-        recheck(&rig.store, Some(&rig.policy()), &intent).await,
+        recheck(&rig.store, Some(&rig.policy()), None, &intent).await,
         None
     );
 }

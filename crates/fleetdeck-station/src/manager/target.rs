@@ -25,6 +25,7 @@ use fleetdeck_providers::host::HostError;
 use fleetdeck_providers::{EventSink, LiveSession, ProviderAdapter, ProviderError};
 use tokio::sync::{Mutex, oneshot, watch};
 
+use super::auto_continue::recheck;
 use super::coordinator_start::{Tools, tools_for};
 use super::durable::host_input;
 pub use super::shells_slot::ShellsSlot;
@@ -626,9 +627,9 @@ impl EffectTarget for SessionTarget {
                 import,
                 ..
             } => {
-                let policy = self.current_policy();
+                let (policy, boot) = (self.current_policy(), self.boot_reader());
                 if let Some(code) =
-                    super::auto_continue::recheck(&self.store, policy.as_deref(), effect).await
+                    recheck(&self.store, policy.as_deref(), boot.as_ref(), effect).await
                 {
                     return Dispatch::NotDispatched(code);
                 }

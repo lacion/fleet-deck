@@ -11,18 +11,23 @@
 //!   effect with the stable command id `continue:<session>:<lost turn>`,
 //!   the stored spec and mode, and the fixed continuation as its first
 //!   input (§2.3). An ineligible session stays `lost` with
-//!   `session.auto_continue_skipped { reason }`.
+//!   `session.auto_continue_skipped { reason }`. A shim session is continued
+//!   only with the DL-182 proof that its run ended (the `execution_unknown`
+//!   and `not_resumable` checks of the chain; DL-188 step 3).
 //! - The worker rechecks rules 2, 3, 5, 6 and 9 right before it spawns
-//!   (§2.4). A claimed continuation that a crash interrupts is
+//!   (§2.4), and on a shim host the DL-182 proof again like a manual
+//!   resume. A claimed continuation that a crash interrupts is
 //!   `outcome_unknown` at the next start and is never dispatched again.
 
 use fleetdeck_proto::command::{CommandOrigin, CommandResult, SessionCommand, UserInput};
 use fleetdeck_proto::event::{RunOrigin, SessionState};
 use fleetdeck_proto::{CommandEnvelope, CommandId, Event, EventBody, RejectCode, SessionId};
+use fleetdeck_providers::host::shim::identity::BootIdReader;
 
 use super::decide::{reject, result};
 use super::policy::Policy;
 use crate::store::auto_continue::{COMMAND_PREFIX, CONTINUATION_TEXT, LostWork, WINDOW_MS};
+use crate::store::resumes::Purpose;
 use crate::store::{Caller, DecideError, Decision, Effect, InputRecord, ReadResult, Store};
 
 /// `session.set_auto_continue` in the decision transaction (§2.1). An
@@ -78,7 +83,6 @@ fn ineligible(
     policy: &Policy,
     session_id: &SessionId,
     w: &LostWork,
-    shim_host: bool,
 ) -> Result<Option<&'static str>, DecideError> {
     let Some(s) = d.summary(session_id)? else {
         return Ok(Some("identity_changed"));
@@ -107,8 +111,7 @@ fn ineligible(
         "turn_completed"
     } else if w.lost_at.saturating_sub(w.last_at) > WINDOW_MS {
         "expired"
-    } else if shim_host || !s.capabilities.as_ref().is_some_and(|c| c.resume) {
-        // A shim-host resume is not built (DL-118): never continued there.
+    } else if !s.capabilities.as_ref().is_some_and(|c| c.resume) {
         "unsupported"
     } else if d.unknown_input_since(session_id, w.lost_at)? {
         "input_outcome_unknown"
@@ -125,7 +128,6 @@ fn decide_lost(
     policy: &Policy,
     session_id: &SessionId,
     after: u64,
-    shim_host: bool,
 ) -> Result<CommandResult, DecideError> {
     let Some(w) = d.lost_work(session_id, after)? else {
         return Ok(result(session_id, None));
@@ -140,7 +142,7 @@ fn decide_lost(
         )?;
         Ok(result(session_id, None))
     };
-    if let Some(code) = ineligible(d, policy, session_id, &w, shim_host)? {
+    if let Some(code) = ineligible(d, policy, session_id, &w)? {
         return skip(d, code);
     }
     let prompt = InputRecord {
@@ -187,12 +189,7 @@ async fn lost_after(store: &Store, after: u64) -> crate::store::Result<Vec<Sessi
 ///
 /// # Errors
 /// A database error.
-pub async fn evaluate(
-    store: &Store,
-    policy: &Policy,
-    after: u64,
-    shim_host: bool,
-) -> crate::store::Result<usize> {
+pub async fn evaluate(store: &Store, policy: &Policy, after: u64) -> crate::store::Result<usize> {
     let mut stored = 0;
     for session_id in lost_after(store, after).await? {
         let Some(summary) = store.summary(session_id.clone()).await? else {
@@ -224,7 +221,7 @@ pub async fn evaluate(
         let id = session_id.clone();
         let decided = store
             .decide(envelope, Caller::local(), move |d| {
-                decide_lost(d, &policy, &id, after, shim_host)
+                decide_lost(d, &policy, &id, after)
             })
             .await?;
         if !decided.duplicate && decided.effects.iter().any(|e| e.session_id == session_id) {
@@ -237,15 +234,25 @@ pub async fn evaluate(
 /// The dispatch recheck of a continuation (§2.4, DL-133): the stored
 /// rules of [`Store::continuation_recheck`], and with the station `policy`
 /// the provider instance (rule 2), the allowed workspace roots and the
-/// session limit (rule 10). `Some(code)`: the effect is not dispatched,
-/// the session stays `lost` and gets the skip event.
-pub async fn recheck(store: &Store, policy: Option<&Policy>, effect: &Effect) -> Option<String> {
+/// session limit (rule 10). On a shim host (`boot` is the boot id reader)
+/// the DL-182 proof is checked again like a manual resume (DL-188 step 3).
+/// `Some(code)`: the effect is not dispatched, the session stays `lost`
+/// and gets the skip event.
+pub async fn recheck(
+    store: &Store,
+    policy: Option<&Policy>,
+    boot: Option<&BootIdReader>,
+    effect: &Effect,
+) -> Option<String> {
     let stored = store
         .continuation_recheck(effect.clone(), policy.map(Policy::max_sessions))
         .await;
     let code = match stored {
         Ok(None) => match policy.and_then(|p| policy_recheck(p, effect)) {
-            None => return None,
+            None => match shim_recheck(store, policy, boot, effect).await {
+                None => return None,
+                Some(code) => code.to_owned(),
+            },
             Some(code) => code.to_owned(),
         },
         Ok(Some(code)) => code,
@@ -271,6 +278,54 @@ pub async fn recheck(store: &Store, policy: Option<&Policy>, effect: &Effect) ->
     Some(code)
 }
 
+/// The DL-182 proof of a continuation on a shim host, read again at the
+/// dispatch with the arguments of a manual resume: another execution of the
+/// conversation, or a reboot proof that does not hold any more, is
+/// `execution_unknown` (DL-188 step 3). A store error and a missing
+/// provider kind fail closed too.
+async fn shim_recheck(
+    store: &Store,
+    policy: Option<&Policy>,
+    boot: Option<&BootIdReader>,
+    effect: &Effect,
+) -> Option<&'static str> {
+    let boot = boot?;
+    let crate::store::EffectPayload::Resume {
+        native_session_id,
+        spec,
+        continue_by: Some(_),
+        ..
+    } = &effect.payload
+    else {
+        return None;
+    };
+    let session = &effect.session_id;
+    let Some(kind) = policy.and_then(|p| p.instance(&spec.provider_instance)) else {
+        return Some("execution_unknown");
+    };
+    let found = store
+        .execution_exclusion(
+            Some(session.clone()),
+            kind,
+            Some(native_session_id.clone()),
+            Some(session.clone()),
+            Purpose::Resume,
+        )
+        .await;
+    match found {
+        Ok(found) if found.blocked.is_none() => {
+            let why = super::shims::revalidate(boot, &found.reboot_rows)?;
+            tracing::info!(%why, "a continuation is not dispatched: the reboot proof does not hold");
+            Some("execution_unknown")
+        }
+        Ok(_) => Some("execution_unknown"),
+        Err(e) => {
+            tracing::error!(error = %e, "the shim recheck of a continuation failed");
+            Some("execution_unknown")
+        }
+    }
+}
+
 /// Rules 2 and 10 of a continuation against the current station policy:
 /// the provider instance is still configured, and the workspace is still
 /// inside an allowed root.
@@ -286,3 +341,7 @@ fn policy_recheck(policy: &Policy, effect: &Effect) -> Option<&'static str> {
         None
     }
 }
+
+#[cfg(test)]
+#[path = "auto_continue_shim_tests.rs"]
+mod shim_tests;
