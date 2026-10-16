@@ -30,6 +30,9 @@ use super::StationLink;
 // `link/mod.rs` is not changed).
 #[path = "intake_native.rs"]
 mod intake_native;
+// R13 P3: `desktop.info` and `desktop.act`.
+#[path = "intake_desktop.rs"]
+mod intake_desktop;
 use crate::store::{Caller, DecideError, StoreError, peers};
 
 /// The error code of a request that this build does not serve yet.
@@ -490,6 +493,7 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
                 assist_tokens_today: usage.map(|(tokens, _)| tokens),
                 assist_cap: usage.map(|(_, cap)| cap),
                 resources: crate::resources::current(&policy).await,
+                desktop: intake_desktop::station_info(ctx).await,
             })
         }
         "workspace.list" => workspaces(ctx, req.params).await,
@@ -508,6 +512,8 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
         "session.subagent" => subagent_method(ctx, req.params).await,
         "station.native_sessions" => intake_native::sessions(ctx, req.params).await,
         "station.native_preview" => intake_native::preview(ctx, req.params).await,
+        "desktop.info" => intake_desktop::info(ctx).await,
+        "desktop.act" => intake_desktop::act(ctx, req.params).await,
         "session.branches" | "files.branch_diff" => {
             branch_method(ctx, &req.method, req.params).await
         }

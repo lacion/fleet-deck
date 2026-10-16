@@ -237,11 +237,11 @@ pub struct StationConfig {
     pub max_sessions: u32,
     pub allow_setup_cmd: bool,
     pub allow_shell: bool,
-    /// `allow_bypass_permissions`: offer the mode that skips every permission
-    /// check (Claude `bypassPermissions`, Codex `danger-full-access`).
+    /// `allow_bypass_permissions`: offer the mode that skips every permission check (Claude `bypassPermissions`, Codex `danger-full-access`).
     pub allow_bypass_permissions: bool,
     /// `allow_fleet_control`: coordinators with a fleet-control grant may act here (ADR-008).
     pub allow_fleet_control: bool,
+    pub allow_desktop: bool,
     pub max_shells: u32,
     pub offline_approval_policy: OfflineApprovalPolicy,
     pub listen: Vec<SocketAddr>,
@@ -284,6 +284,7 @@ pub(crate) const RAW_STATION_KEYS: &[&str] = &[
     "allow_shell",
     "allow_bypass_permissions",
     "allow_fleet_control",
+    "allow_desktop",
     "max_shells",
     "offline_approval_policy",
     "listen",
@@ -308,6 +309,7 @@ struct RawStation {
     allow_shell: Option<bool>,
     allow_bypass_permissions: Option<bool>,
     allow_fleet_control: Option<bool>,
+    allow_desktop: Option<bool>,
     max_shells: Option<u32>,
     offline_approval_policy: Option<String>,
     listen: Option<Vec<String>>,
@@ -487,6 +489,7 @@ impl StationConfig {
             allow_shell: raw.allow_shell.unwrap_or(false),
             allow_bypass_permissions: raw.allow_bypass_permissions.unwrap_or(false),
             allow_fleet_control: fleet_cfg::parse(raw.allow_fleet_control),
+            allow_desktop: raw.allow_desktop.unwrap_or(false),
             max_shells,
             offline_approval_policy,
             listen,

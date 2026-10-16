@@ -31,6 +31,7 @@ use crate::branches::{BranchDiffQuery, BranchesQuery, RepoBranch, RepoBranches};
 use crate::capability::{Capabilities, Operation, Unsupported};
 use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
 use crate::conflicts::FileConflict;
+use crate::desktop as dk;
 use crate::display::{
     DisplayBinding, DisplayLinkMade, DisplayList, DisplaySelf, DisplayView, PairingPoll,
     PairingStarted, PairingState, PendingPairing,
@@ -130,6 +131,15 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         StreamMode::export_all(&cfg),
         StreamStart::export_all(&cfg),
         StationInfo::export_all(&cfg),
+        dk::DesktopKind::export_all(&cfg),
+        dk::MonitorInfo::export_all(&cfg),
+        dk::WallWindow::export_all(&cfg),
+        dk::DesktopAllowed::export_all(&cfg),
+        dk::DesktopTools::export_all(&cfg),
+        dk::DesktopInfo::export_all(&cfg),
+        dk::Urgency::export_all(&cfg),
+        dk::DesktopAction::export_all(&cfg),
+        dk::DesktopActResult::export_all(&cfg),
         StationResources::export_all(&cfg),
         DiskSpace::export_all(&cfg),
         MemoryUse::export_all(&cfg),

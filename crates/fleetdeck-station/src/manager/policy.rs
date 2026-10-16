@@ -76,6 +76,8 @@ pub struct Policy {
     allow_bypass_permissions: bool,
     /// `allow_fleet_control` of `station.toml` (ADR-008 §3).
     allow_fleet_control: bool,
+    /// `allow_desktop` of `station.toml` (R13 §6.4).
+    allow_desktop: bool,
     /// `max_shells` of `station.toml`.
     max_shells: u32,
     /// `[model_help]` of `station.toml` (R10, DL-167).
@@ -121,6 +123,7 @@ impl Policy {
             allow_shell: config.allow_shell,
             allow_bypass_permissions: config.allow_bypass_permissions,
             allow_fleet_control: config.allow_fleet_control,
+            allow_desktop: config.allow_desktop,
             max_shells: config.max_shells,
             model_help: config.model_help.clone(),
             member_deny: MemberDeny::new(&config.member_deny),
@@ -193,6 +196,7 @@ impl Policy {
             allow_shell: true,
             allow_bypass_permissions: false,
             allow_fleet_control: false,
+            allow_desktop: false,
             max_shells: DEFAULT_MAX_SHELLS,
             model_help: ModelHelpConfig::default(),
             member_deny: MemberDeny::default(),
@@ -261,6 +265,20 @@ impl Policy {
     #[must_use]
     pub fn allow_fleet_control(&self) -> bool {
         self.allow_fleet_control
+    }
+
+    /// Whether the owner may control this station's desktop (R13 §6.4). Read
+    /// it live: at intake and right before every program run.
+    #[must_use]
+    pub fn allow_desktop(&self) -> bool {
+        self.allow_desktop
+    }
+
+    /// The same policy with desktop control on or off.
+    #[must_use]
+    pub fn with_allow_desktop(mut self, on: bool) -> Self {
+        self.allow_desktop = on;
+        self
     }
 
     /// The same policy with fleet control on or off.

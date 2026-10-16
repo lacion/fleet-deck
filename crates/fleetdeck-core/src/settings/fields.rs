@@ -116,6 +116,14 @@ pub fn station_fields() -> Vec<FieldMeta> {
         )
         .danger(),
         field(
+            "allow_desktop",
+            "Desktop control",
+            K::Bool,
+            Live,
+            "Lets the owner control this machine's desktop through the fleet: screens, the wall, notifications and previews. Off stops new actions at once.",
+        )
+        .danger(),
+        field(
             "max_shells",
             "Most terminals",
             K::Int,

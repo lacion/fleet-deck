@@ -295,6 +295,10 @@ fn the_danger_rules() {
     );
     assert!(d("allow_fleet_control = true", "allow_fleet_control = false").is_empty());
     assert!(d("", "allow_fleet_control = false").is_empty());
+    // Desktop control (R13 §6.4): off to on is a danger change.
+    assert_eq!(d("", "allow_desktop = true"), vec!["allow_desktop"]);
+    assert!(d("allow_desktop = true", "allow_desktop = false").is_empty());
+    assert!(d("", "allow_desktop = false").is_empty());
     assert_eq!(
         d(
             "allowed_roots = [\"/a\"]",

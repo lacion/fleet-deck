@@ -15,6 +15,7 @@ pub mod branches;
 pub mod capability;
 pub mod command;
 pub mod conflicts;
+pub mod desktop;
 pub mod display;
 pub mod event;
 pub mod execution;

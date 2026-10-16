@@ -281,6 +281,11 @@ pub struct StationInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub resources: Option<StationResources>,
+    /// The desktop of the station (R13 §6.2): present when a desktop is
+    /// detected, also with `allow_desktop` off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub desktop: Option<crate::desktop::DesktopInfo>,
 }
 
 /// One configured provider instance of a station (`[[provider_instance]]`,

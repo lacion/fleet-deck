@@ -99,6 +99,7 @@ impl Holder for StationHolder {
             json!(c.allow_bypass_permissions),
         );
         m.insert("allow_fleet_control".into(), json!(c.allow_fleet_control));
+        m.insert("allow_desktop".into(), json!(c.allow_desktop));
         m.insert("max_shells".into(), json!(c.max_shells));
         m.insert(
             "offline_approval_policy".into(),
@@ -215,6 +216,7 @@ impl Holder for StationHolder {
             !old.allow_fleet_control && new.allow_fleet_control,
             "allow_fleet_control",
         );
+        add(!old.allow_desktop && new.allow_desktop, "allow_desktop");
         add(
             new.allowed_roots
                 .iter()

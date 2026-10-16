@@ -124,6 +124,7 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `artifacts.v1` | `artifacts.publish`, `artifacts.list`, `artifacts.get`, `artifacts.file` (DL-165; R12 artifacts: versioned files that a session or a person publishes, stored in the station's data directory) |
 | `shim.resume.v1` | `session.execution_check`, `session.reconcile_execution` (DL-182; the termination check and the owner's reconciliation for resume on the shim host) |
 | `shell_command.v1` | `session.shell_command`, `session.release_shell` (B8, DL-196; a `!` shell command in a session folder, and the owner's release of a folder) |
+| `desktop.v1` | `desktop.info`, `desktop.act` (R13 §6, DL-201; desktop control on the station: Hyprland and Omarchy info, and a closed list of actions with typed argv) |
 | `pair_request.v1` | The pair-channel frames `pair_request`, `pair_pending`, `pair_approved` and `pair_resume` (DL-178, §10): a station asks a deck to pair without an invitation and the owner approves on the board |
 
 A method whose feature was not negotiated gets the error `feature_not_negotiated`. Behaviour depends on the negotiated features, not only on the version.
@@ -438,6 +439,8 @@ close             { reason, detail }
 | `session.reconcile_execution` | deck → station | admin | `shim.resume.v1` | yes |
 | `session.shell_command` | deck → station | admin | `shell_command.v1` | yes |
 | `session.release_shell` | deck → station | admin | `shell_command.v1` | yes |
+| `desktop.info` | deck → station | read | `desktop.v1` | no |
+| `desktop.act` | deck → station | drive | `desktop.v1` | no |
 | `approval.answer` | deck → station | approve | — | yes |
 | `station.configure` | deck → station | admin | — | yes |
 | `link.rotate_key` | either → either | admin | — | yes |

@@ -86,6 +86,10 @@ fn an_empty_file_gives_the_defaults() {
         !c.allow_fleet_control,
         "fleet control is off unless the owner turns it on"
     );
+    assert!(
+        !c.allow_desktop,
+        "desktop control is off unless the owner turns it on"
+    );
     let ids: Vec<&str> = c.provider_instances.iter().map(|i| i.id.as_str()).collect();
     assert_eq!(ids, ["claude", "codex"]);
 }
@@ -674,6 +678,13 @@ fn allow_fleet_control_parses() {
     let c = StationConfig::parse("allow_fleet_control = true\n", &env()).unwrap();
     assert!(c.allow_fleet_control);
     assert!(StationConfig::parse("allow_fleet_control = \"yes\"\n", &env()).is_err());
+}
+
+#[test]
+fn allow_desktop_parses() {
+    let c = StationConfig::parse("allow_desktop = true\n", &env()).unwrap();
+    assert!(c.allow_desktop);
+    assert!(StationConfig::parse("allow_desktop = \"yes\"\n", &env()).is_err());
 }
 
 #[test]
