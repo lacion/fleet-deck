@@ -282,7 +282,7 @@ describe('ChatView and review comments (DL-179)', () => {
     onOpen: () => {},
     ...over,
   });
-  const run = (input: string, input_id?: string): Item => ({
+  const run = (input: string, input_id?: string): Extract<Item, { type: 'run' }> => ({
     type: 'run',
     key: 'r1',
     run_id: 'run-1',
@@ -324,6 +324,46 @@ describe('ChatView and review comments (DL-179)', () => {
       expect(html).not.toContain('fd-review-card');
       expect(html).toContain('class="fd-chat-bubble"');
     }
+  });
+
+  test('a run shows the whole prompt (text) with its line breaks, not the summary', () => {
+    const item: Item = { ...run('first…'), text: 'first paragraph\n\nsecond paragraph\nthird' };
+    const html = view({ items: [item] });
+    expect(html).toContain(
+      '<div class="fd-chat-bubble">first paragraph\n\nsecond paragraph\nthird</div>',
+    );
+    expect(html).not.toContain('first…');
+  });
+
+  test('a 30-line prompt is folded in the chat with Show more', () => {
+    const text = Array.from({ length: 30 }, (_, i) => `row ${i + 1}`).join('\n');
+    const html = view({ items: [{ ...run('row 1…'), text }] });
+    expect(html).toContain('row 12');
+    expect(html).not.toContain('row 13');
+    expect(html).toContain('>Show more</button>');
+  });
+
+  test('an old run without text shows the summary', () => {
+    const html = view({ items: [run('the summary')] });
+    expect(html).toContain('<div class="fd-chat-bubble">the summary</div>');
+    expect(html).not.toContain('Show more');
+  });
+
+  test('the review chip path and the Review card use the whole prompt', () => {
+    const chips = view({
+      items: [{ ...run('short…'), text: 'look at c-abc234\nand c-zzz999' }],
+      review: review(),
+    });
+    expect(chips).toContain('data-comment="c-abc234"');
+    expect(chips).toContain('and c-zzz999');
+    expect(chips).not.toContain('short…');
+    const card = view({
+      items: [
+        { ...run('Review r-xyz789…', 'in-1'), text: 'Review r-xyz789\n- c-abc234 full body' },
+      ],
+      review: review(),
+    });
+    expect(card).toContain('<pre class="fd-review-text">Review r-xyz789\n- c-abc234 full body');
   });
 
   test('a plain run shows a known token as a chip and keeps an unknown one as text', () => {
