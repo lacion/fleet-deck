@@ -106,7 +106,8 @@ Keep these decisions. Reopen them only with a DL entry.
 - **Codex rollout tails, `auth.json` reads and the 20 MB "tail, never slurp" rule:** not needed, because limits and items come from the protocol.
 - **Editing another tool's config (`config.toml`, `hooks.json`):** never done. `fleetdeck doctor` only reads. If v2 ever writes there, it needs a consent step and an uninstall.
 - **Remote control (`/rc`), `/clear` succession, Stop-hook mail:** dropped.
-- **An Electron app, an agent-agnostic core, Computer Use, a hosted relay, "AI picks the winner":** rejected, as v1.0 also decided. Model help (rule 3) may summarize the candidates of a race; the owner picks.
+- **An Electron app, an agent-agnostic core, a hosted relay, "AI picks the winner":** rejected, as v1.0 also decided. Model help (rule 3) may summarize the candidates of a race; the owner picks.
+- **Computer Use:** v1.0 rejected it. The owner reversed this (DL-197): an agent may see the screen and use the keyboard and the pointer, only through the desktop MCP classes `capture` and `input` (R13).
 - **Jira and Linear:** v1 cut them, because a tracker token is a stored credential. The owner reversed this (DL-152): GitHub, GitLab, Jira and Linear are all in scope, with the tracker token held only by the station (rule 5).
 - **LLM-written titles:** now allowed as opt-in model help (rule 3, R10). Callsigns stay deterministic.
 - **The T3 Code "do not adopt" table:** obsolete for v2. v2 now mediates (drive, event sourcing, normalization). Only its "no relay" and "no LLM calls" rows still hold.
@@ -336,6 +337,18 @@ Design sketch (recommended defaults; adversary review before freeze):
 
 Owner answers (DL-156): (e) yes, a public share link may reach people outside the team; (f) no CDN allowlist; (g) no size cap.
 
+### R13. Omarchy: the wall, desktop control and the desktop MCP (owner request DL-198)
+
+Goal: a screen of a station machine becomes a read-only command center for the fleet, the owner controls that desktop through the fleet, and agents can show and check their work on a screen. The design is `docs/v2/design/omarchy.md`. In short:
+
+1. **The wall:** a full-screen board route `#/wall` for 21:9 and other shapes, with modes (mission, focus, review, race, artifact, ambient) and auto-focus on needs-you.
+2. **The display principal:** a read-only browser login for a wall, deny by default, with a station filter.
+3. **Desktop control (`desktop.v1`):** typed actions on a station's Hyprland and Omarchy desktop: screen power, lock, DND, workspaces, the wall window, notifications, previews, terminals, capture.
+4. **The desktop MCP:** classes `desktop`, `capture` and `input` (Computer Use, DL-197).
+5. **Omarchy integration:** a shell plugin (bar widget, panel, notifications), hooks, hotkeys, theme sync, account import, crash diagnosis in a supervised session.
+6. **Provisioning:** Omarchy unattended installs that pair with the deck at first boot.
+7. **Per-session load** for large machines.
+
 ## 7. Proposed sequence
 
 All the work in this table is planned (DL-157). The steps set the order of the work, and the cut line names what moves to a later step if a step runs long.
@@ -352,6 +365,7 @@ All the work in this table is planned (DL-157). The steps set the order of the w
 | **M5.3 Artifacts** | R12.1–R12.5: publish (MCP tool, Files panel, the HTML suggestion), the viewer and sandbox, versions, share links | R12.2 (b) the automatic suggestion |
 | **M5.4 Shared fleet** | R11.1–R11.9: shares, roles, invite URI, local member accounts, attribution, presence, audit, the member file deny list, mob mode with request to drive | Spaces (start with session and board shares) |
 | **M6** | R1.4 compare the winner; R5 automations; R6.1 unread; R6.3 palette row | R5 missed-run grace |
+| **M7 Omarchy (R13)** | P1 wall route; P2 display principal; P3 desktop control; P4 Omarchy integration; P5 capture; P6 desktop MCP; P7 Computer Use; P8 accounts and provisioning; P9 per-session load (`design/omarchy.md` §11) | P7, P8 provisioning |
 | **Later, owner decision** | R3.9 writes (PRs, comments, issue moves); R6.2 terminal wall; R6.5 activity stream; R6.6 hibernation; R4.6 inferred cost; ACP for a third provider | — |
 
 ---
@@ -365,6 +379,7 @@ All the work in this table is planned (DL-157). The steps set the order of the w
 5. **When to release 2.0.0:** the owner says when (DL-158). Until then, all work goes on the `v2` branch.
 6. **Shared fleet (R11):** decided (DL-154, DL-156).
 7. **Artifacts (R12):** decided (DL-155, DL-156).
+8. **Omarchy, the wall and the desktop MCP (R13):** decided (DL-197, DL-198). The phases are in the design.
 
 **About decision 5.** "2.0.0" is the first v2 release that replaces v1 for daily use (`docs/v2/cutover.md`). The owner cuts it when they decide; the owner's security review comes before it (DL-158).
 

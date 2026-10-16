@@ -3046,3 +3046,16 @@ Owner review: pending.
 - Context: the owner: "we need full parity with CC and Codex". Design `docs/v2/design/bang-commands.md` revision 10 (ten adversary rounds, owner-extended; round 10 PASS; two majors resolved in §2.0000000 after the PASS).
 - Decision: Codex sessions use the native `thread/shellCommand`; Claude sessions run the command on the station (process group, timeout, session-scoped cancel) and the result reaches the model with the next prompt that names it (`input.shell_results` → `InputRecord.shell_context`, once). Owner only, `allow_shell`; the whole folder is busy while a command may run; a durable per-folder generation orders shell writes against checkpoints; `ReleaseShell` lets the owner release a folder when no proof can exist.
 - High risk (command execution): PRE-PR review before the merge.
+
+## DL-197 — Computer Use is allowed (owner decision, 2026-10-16)
+
+- Context: v1.0 and v2 rejected Computer Use (FLEETDECK-V2 §4). For the Omarchy wall and the desktop MCP (R13), the owner: "that is acceptable, lets remove the rule for no computer use".
+- Decision: Computer Use is no longer rejected. An agent may see the screen (screenshot, recording) and use the keyboard and the pointer, but only through the desktop MCP classes `capture` and `input` (`docs/v2/design/omarchy.md` §7). Each class is off by default, needs the owner's elevation, and has a deck switch and a station switch. Rule 1 still holds for everything else: the station drives a provider or a desktop through its protocol where one exists (Hyprland IPC, `omarchy-shell` IPC). Input synthesis is the named exception.
+- Limit kept: input is scoped to the windows that the station opened for the session (`own_windows`) unless the owner chooses `any` with elevation, and input on a Fleet Deck board window is refused. An agent that clicks "Approve" in the owner's board would remove supervision (rule 6).
+
+## DL-198 — Fleet Deck on Omarchy: the wall, desktop control and the desktop MCP (R13, owner request, 2026-10-16)
+
+- Context: the owner runs agents on a 64-core server with a 21:9 screen and runs Omarchy on the server and the laptop. They want the screen as a fleet command center, desktop control through the fleet, and an MCP. Design `docs/v2/design/omarchy.md` revision 1 (draft).
+- Owner answers: the screen is 3440×1440, and the layout must adapt to other shapes; the wall is read-only, so approvals stay on a logged-in owner device; screenshots and Computer Use are acceptable (DL-197); agents run as the owner's OS user for now; Omarchy also runs on the laptop.
+- Decision (plan): phases P1 to P9 of the design: the `#/wall` route; a read-only display principal; the station feature `desktop.v1` (typed desktop actions, the wake rule); the Omarchy plugin, hooks and installer; capture with a `video` artifact kind; the desktop MCP classes `desktop`, `capture` and `input`; account import and provisioning; per-session load.
+- High risk: the display principal, desktop control, capture, the MCP classes, Computer Use and provisioning each get an adversary DESIGN REVIEW before code (design §13).
