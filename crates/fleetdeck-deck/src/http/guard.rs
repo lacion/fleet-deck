@@ -42,6 +42,14 @@ use crate::store::{AuditResult, NewAudit, Principal};
 pub const COOKIE: &str = "fd_session";
 /// The CSRF header of mutating requests with a cookie login.
 pub const CSRF_HEADER: &str = "x-csrf-token";
+/// The login cookie of a wall display (R13 §5, DL-201).
+pub const DISPLAY_COOKIE: &str = "fd_display";
+/// The cookie of a pending display pairing (R13 §5C item 1).
+pub const PENDING_COOKIE: &str = "fd_display_pending";
+/// The header of a display's own logout: a custom header blocks a
+/// cross-site form post, and it selects the display login when the browser
+/// also holds the owner's cookie.
+pub const DISPLAY_HEADER: &str = "x-fleetdeck-display";
 
 /// A refused or failed request: `{ "error": code, "message": text }`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -236,40 +244,86 @@ fn bearer(headers: &HeaderMap) -> Option<Secret<String>> {
     Some(Secret::new(token.to_owned()))
 }
 
+fn login_required() -> ApiError {
+    ApiError::new(
+        StatusCode::UNAUTHORIZED,
+        "login_required",
+        "log in first (run `fleetdeck open` for a login link)",
+    )
+}
+
+/// The display login of the `fd_display` cookie, if it is valid.
+async fn display_principal(
+    board: &Board,
+    headers: &HeaderMap,
+) -> Result<Option<Principal>, ApiError> {
+    let Some(value) = cookie(headers, DISPLAY_COOKIE) else {
+        return Ok(None);
+    };
+    match board.store.display_session(&value).await {
+        Ok(found) => Ok(found.map(Principal::Display)),
+        Err(e) => Err(ApiError::internal(e)),
+    }
+}
+
+/// True when the request names the display login (R13 §5C item 6).
+#[must_use]
+pub fn display_header(headers: &HeaderMap) -> bool {
+    headers
+        .get(DISPLAY_HEADER)
+        .is_some_and(|v| v.as_bytes() == b"1")
+}
+
 /// The principal of a request. A bearer header that names no valid token
-/// is refused; it does not fall back to the cookie.
+/// is refused; it does not fall back to the cookie. A valid `fd_session`
+/// (owner or member) wins over `fd_display` (R13 §5C item 6).
 ///
 /// # Errors
 /// [`ApiError`] `login_required` (401) or `internal`.
 pub async fn authenticate(board: &Board, headers: &HeaderMap) -> Result<Principal, ApiError> {
-    let missing = || {
-        ApiError::new(
-            StatusCode::UNAUTHORIZED,
-            "login_required",
-            "log in first (run `fleetdeck open` for a login link)",
-        )
-    };
     if headers.contains_key(header::AUTHORIZATION) {
-        let value = bearer(headers).ok_or_else(missing)?;
+        let value = bearer(headers).ok_or_else(login_required)?;
         return match board.store.token(&value).await {
             Ok(Some(t)) => Ok(Principal::Token(t, secret_hash(value.expose()))),
-            Ok(None) => Err(missing()),
+            Ok(None) => Err(login_required()),
             Err(e) => Err(ApiError::internal(e)),
         };
     }
-    let value = cookie(headers, COOKIE).ok_or_else(missing)?;
-    if value.expose().starts_with(MEMBER_COOKIE_PREFIX) {
-        return match board.store.member_login(&value).await {
-            Ok(Some(g)) => Ok(Principal::Member(g.member_id.clone(), Box::new(g))),
-            Ok(None) => Err(missing()),
-            Err(e) => Err(ApiError::internal(e)),
+    if let Some(value) = cookie(headers, COOKIE) {
+        let found = if value.expose().starts_with(MEMBER_COOKIE_PREFIX) {
+            match board.store.member_login(&value).await {
+                Ok(g) => g.map(|g| Principal::Member(g.member_id.clone(), Box::new(g))),
+                Err(e) => return Err(ApiError::internal(e)),
+            }
+        } else {
+            match board.store.login_session(&value).await {
+                Ok(s) => s.map(Principal::Owner),
+                Err(e) => return Err(ApiError::internal(e)),
+            }
         };
+        if let Some(principal) = found {
+            return Ok(principal);
+        }
     }
-    match board.store.login_session(&value).await {
-        Ok(Some(s)) => Ok(Principal::Owner(s)),
-        Ok(None) => Err(missing()),
-        Err(e) => Err(ApiError::internal(e)),
-    }
+    display_principal(board, headers)
+        .await?
+        .ok_or_else(login_required)
+}
+
+/// The principal of a route that uses the display cookie only: the routes
+/// of the display itself, and the session and logout routes with the
+/// display header (R13 §5C item 6).
+async fn authenticate_display(board: &Board, headers: &HeaderMap) -> Result<Principal, ApiError> {
+    display_principal(board, headers)
+        .await?
+        .ok_or_else(login_required)
+}
+
+/// True for a route that answers the display login even when the browser
+/// also holds the owner's cookie.
+fn display_route(api: &ApiMethod, headers: &HeaderMap) -> bool {
+    api.name == "displays.self"
+        || (matches!(api.name, "auth.logout" | "auth.session") && display_header(headers))
 }
 
 /// Checks steps 2-5 for `api` and returns the principal (`None` for a
@@ -301,6 +355,8 @@ pub async fn check(
     };
     let principal = if methods::is_socket(api.name) {
         ws_principal(board, headers, query).await
+    } else if display_route(api, headers) {
+        authenticate_display(board, headers).await
     } else {
         authenticate(board, headers).await
     }
@@ -313,6 +369,38 @@ pub async fn check(
                     StatusCode::FORBIDDEN,
                     "owner_only",
                     "only the owner's board login does this",
+                ),
+            ));
+        }
+    } else if matches!(principal, Principal::Display(_)) {
+        // Deny by default (R13 §5, DL-201): a row opts in with `.display()`.
+        if !api.display {
+            return Err((
+                Some(principal.actor()),
+                ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "display_read_only",
+                    "A wall display can only read.",
+                ),
+            ));
+        }
+        if api.name == "auth.logout" && !display_header(headers) {
+            return Err((
+                Some(principal.actor()),
+                ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "csrf",
+                    "a display logout needs the X-Fleetdeck-Display header",
+                ),
+            ));
+        }
+        if !principal.has(scope) {
+            return Err((
+                Some(principal.actor()),
+                ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "forbidden",
+                    format!("`{}` needs the {scope:?} scope", api.name).to_lowercase(),
                 ),
             ));
         }
@@ -329,7 +417,7 @@ pub async fn check(
     let csrf = match &principal {
         Principal::Owner(session) => Some(session.csrf.as_str()),
         Principal::Member(_, grant) => Some(grant.csrf.as_str()),
-        Principal::Token(..) => None,
+        Principal::Token(..) | Principal::Display(_) => None,
     };
     if api.mutating
         && let Some(csrf) = csrf
@@ -433,17 +521,15 @@ pub async fn guard(
         Ok(None) => next.run(req).await,
         Err((actor, e)) => {
             if api.mutating {
-                board
-                    .store
-                    .audit_or_log(
-                        NewAudit::new(
-                            actor.unwrap_or_else(|| "anonymous".to_owned()),
-                            api.name,
-                            AuditResult::Refused,
-                        )
-                        .detail(e.code),
-                    )
-                    .await;
+                let actor = actor.unwrap_or_else(|| "anonymous".to_owned());
+                // A refusal of a display is one action with the row as its
+                // target (R13 §5B item 15).
+                let row = if e.code == "display_read_only" {
+                    NewAudit::new(actor, "display.refused", AuditResult::Refused).target(api.name)
+                } else {
+                    NewAudit::new(actor, api.name, AuditResult::Refused)
+                };
+                board.store.audit_or_log(row.detail(e.code)).await;
             }
             e.into_response()
         }

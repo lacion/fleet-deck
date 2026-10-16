@@ -10,7 +10,15 @@ fn names_and_routes_are_unique_and_only_login_is_public() {
         }
         assert_eq!(
             a.scope.is_none(),
-            matches!(a.name, "auth.login" | "auth.link" | "auth.join"),
+            matches!(
+                a.name,
+                "auth.login"
+                    | "auth.link"
+                    | "auth.join"
+                    | "auth.display_link"
+                    | "displays.pair_start"
+                    | "displays.pair_poll"
+            ),
             "{}",
             a.name
         );
@@ -86,6 +94,37 @@ fn exactly_these_methods_are_open_to_a_member() {
         "shells.command",
     ] {
         assert!(!api().find(|a| a.name == name).unwrap().member, "{name}");
+    }
+}
+
+/// The display column (R13 §5, DL-201): exactly these methods are open to a
+/// wall display. A new method is closed to a display until it is added here on
+/// purpose. The whole-table refusal of every other row is tested in
+/// `tests/board_displays.rs`.
+#[test]
+fn exactly_these_methods_are_open_to_a_display() {
+    let mut open: Vec<&str> = api().filter(|a| a.display).map(|a| a.name).collect();
+    open.sort_unstable();
+    assert_eq!(
+        open,
+        [
+            "auth.logout",
+            "auth.session",
+            "board.ws",
+            "board.ws_ticket",
+            "displays.self",
+            "sessions.list",
+            "stations.list",
+        ]
+    );
+    // A display never writes, except the logout of its own login and the
+    // WebSocket ticket (a ticket reads nothing and changes no board state).
+    for a in api().filter(|a| a.display && a.mutating) {
+        assert!(
+            matches!(a.name, "auth.logout" | "board.ws_ticket"),
+            "{}",
+            a.name
+        );
     }
 }
 

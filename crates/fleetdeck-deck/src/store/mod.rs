@@ -29,6 +29,8 @@ pub(crate) mod coordinator_fleet;
 pub(crate) mod coordinator_ops;
 pub mod coordinator_query;
 mod coordinator_query_reads;
+pub mod displays;
+pub mod displays_pairing;
 pub mod extras;
 pub mod fleet;
 pub mod grants;
@@ -68,6 +70,7 @@ pub use audit::{AuditEntry, AuditResult, NewAudit};
 pub use auth::{ApiToken, LoginMethod, LoginSession, NewLogin, Principal};
 pub use commands::{DeckCommand, NewCommand, Settle};
 pub use coordinator_query::{QueryAnswer, ReadShape, StationRead};
+pub use displays::DisplayLogin;
 pub use fleet::{Completed, NewMail, NewTask};
 pub use grants::{Grant, GrantClass, GrantState, NewGrant};
 pub use members::{MemberAction, MemberId, ShareGrant, ShareScope, member_allows};
@@ -140,6 +143,9 @@ pub enum DeckError {
     StaleSnapshot,
     #[error("the link of this snapshot is no longer the current link of the station")]
     Superseded,
+    /// A limit is full (R13 §5B: pairings); the caller tries again later.
+    #[error("{0}")]
+    Busy(String),
 }
 
 impl From<rusqlite::Error> for DeckError {

@@ -251,6 +251,7 @@ impl RunningDeck {
                     cert: cert_state,
                     tickets: crate::http::ws::Tickets::default(),
                     ws_recheck: crate::http::ws::RECHECK,
+                    ws_display_send: crate::http::ws::DISPLAY_SEND,
                     pairing: Some(board_node),
                     assets: crate::http::assets::BoardAssets::Embedded,
                     live: board_live,

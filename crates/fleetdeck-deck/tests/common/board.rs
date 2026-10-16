@@ -198,6 +198,7 @@ async fn serve_with(
                 )),
                 tickets: fleetdeck_deck::http::ws::Tickets::default(),
                 ws_recheck: Duration::from_millis(200),
+                ws_display_send: fleetdeck_deck::http::ws::DISPLAY_SEND,
                 pairing: pairing
                     .clone()
                     .or_else(|| extras.as_mut().and_then(|e| e.pairing.take())),

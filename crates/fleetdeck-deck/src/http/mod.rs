@@ -16,6 +16,8 @@ pub mod assist_routes;
 pub mod auth_routes;
 pub mod body_deadline;
 pub mod command_routes;
+pub mod display_routes;
+pub mod display_view;
 pub mod endpoints;
 pub mod execution_routes;
 pub mod file_routes;
@@ -100,6 +102,9 @@ pub struct Board {
     pub tickets: ws::Tickets,
     /// How often an open WebSocket checks its login ([`ws::RECHECK`]).
     pub ws_recheck: std::time::Duration,
+    /// The longest time that one send to a display socket may take
+    /// ([`ws::DISPLAY_SEND`]); a slower send ends the socket (R13 §5A).
+    pub ws_display_send: std::time::Duration,
     /// The link node for the pairing methods (`None`: they answer 503).
     pub pairing: Option<Arc<crate::link::DeckNode>>,
     /// The board web client (P4-4).
@@ -531,6 +536,7 @@ pub fn router(board: Arc<Board>) -> Router {
             "/api/sessions/{station}/{session}/fleet-answers",
             get(fleet_answers_routes::list),
         )
+        .merge(display_routes::routes())
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&board),
             guard::guard,

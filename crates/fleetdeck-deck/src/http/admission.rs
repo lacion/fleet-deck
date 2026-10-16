@@ -12,7 +12,7 @@
 //! IPv6 address is its /64 prefix ([`source_key`]). Every map of sources has
 //! at most [`MAX_KEYS`] keys.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::pin::Pin;
@@ -387,6 +387,79 @@ impl Attempt {
     }
 }
 
+/// Display pairings that one source may start in a window.
+pub const PAIRINGS_PER_IP: usize = 3;
+/// Display pairings that all sources may start in a window.
+pub const PAIRINGS_GLOBAL: usize = 20;
+/// The shortest time between two polls of one pairing.
+const POLL_GAP_MS: i64 = 1000;
+
+#[derive(Debug, Default)]
+struct PairWindows {
+    global: VecDeque<i64>,
+    per_ip: HashMap<IpAddr, VecDeque<i64>>,
+}
+
+/// The rate limiter of `POST /api/displays/pair` (R13 §5B item 2): every
+/// creation counts, whatever its outcome. Per source at most
+/// [`PAIRINGS_PER_IP`] in a minute, for all sources [`PAIRINGS_GLOBAL`].
+#[derive(Debug, Default)]
+pub struct PairLimiter(Mutex<PairWindows>);
+
+impl PairLimiter {
+    /// Records a creation of `ip` at `now`.
+    ///
+    /// # Errors
+    /// The seconds to wait: a window is full, or the map holds
+    /// [`MAX_KEYS`] other sources.
+    pub fn reserve(&self, ip: IpAddr, now: i64) -> Result<(), i64> {
+        let key = source_key(ip);
+        let mut w = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let live = |q: &mut VecDeque<i64>| {
+            while q.front().is_some_and(|t| *t <= now - WINDOW_MS) {
+                q.pop_front();
+            }
+        };
+        live(&mut w.global);
+        w.per_ip.values_mut().for_each(live);
+        w.per_ip.retain(|_, q| !q.is_empty());
+        let wait = |q: &VecDeque<i64>, max: usize| {
+            (q.len() >= max).then(|| q.front().map_or(1, |t| (t + WINDOW_MS - now) / 1000 + 1))
+        };
+        let waits = [
+            wait(&w.global, PAIRINGS_GLOBAL),
+            w.per_ip.get(&key).and_then(|q| wait(q, PAIRINGS_PER_IP)),
+        ];
+        if let Some(wait) = waits.into_iter().flatten().max() {
+            return Err(wait);
+        }
+        if !w.per_ip.contains_key(&key) && w.per_ip.len() >= MAX_KEYS {
+            return Err(CAP_WAIT_S);
+        }
+        w.global.push_back(now);
+        w.per_ip.entry(key).or_default().push_back(now);
+        Ok(())
+    }
+}
+
+/// The poll limit of `GET /api/displays/pair/{id}`: one poll a second for
+/// each pairing id.
+#[derive(Debug, Default)]
+pub struct PollLimiter(Mutex<HashMap<String, i64>>);
+
+impl PollLimiter {
+    /// True when the pairing `id` may be polled at `now`.
+    pub fn allow(&self, id: &str, now: i64) -> bool {
+        let mut m = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        m.retain(|_, at| *at > now - POLL_GAP_MS);
+        if m.contains_key(id) || m.len() >= MAX_KEYS {
+            return false;
+        }
+        m.insert(id.to_owned(), now);
+        true
+    }
+}
+
 /// The limits of the login flows (FDV2-002). The device link keeps its own
 /// limiter ([`super::DeviceLinkLimiter`]).
 #[derive(Debug)]
@@ -398,6 +471,10 @@ pub struct LoginLimits {
     pub elevate: FlowLimiter,
     pub login_link: FlowLimiter,
     pub member_join: FlowLimiter,
+    /// The creation of display pairings (R13 §5B item 2).
+    pub pair_start: PairLimiter,
+    /// The poll of one display pairing (R13 §5B item 2).
+    pub pair_poll: PollLimiter,
     hashing: Arc<Semaphore>,
     /// Permits taken so far (tests count these, not Argon2 calls).
     #[doc(hidden)]
@@ -414,6 +491,8 @@ impl Default for LoginLimits {
             elevate: FlowLimiter::default(),
             login_link: FlowLimiter::default(),
             member_join: FlowLimiter::default(),
+            pair_start: PairLimiter::default(),
+            pair_poll: PollLimiter::default(),
             hashing: Arc::new(Semaphore::new(HASH_PERMITS)),
             verifications_started: AtomicUsize::new(0),
             verifications_peak: AtomicUsize::new(0),
@@ -452,6 +531,12 @@ pub fn too_many_attempts(wait: i64) -> ApiError {
         "too_many_attempts",
         format!("too many failed logins; try again in {wait} s"),
     )
+}
+
+/// `429 too_many_requests` for a refused pairing start or poll.
+#[must_use]
+pub fn too_many_requests(message: impl Into<String>) -> ApiError {
+    ApiError::new(StatusCode::TOO_MANY_REQUESTS, "too_many_requests", message)
 }
 
 /// `429 busy`: no verification slot was free in time.

@@ -735,6 +735,8 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V21),
         M::up(V22),
         M::up(V23),
+        // V24 (R13, DL-201): the display tables, in `store/displays.rs`.
+        M::up(super::displays::DISPLAYS_SQL),
     ])
 }
 

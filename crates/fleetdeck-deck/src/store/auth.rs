@@ -21,6 +21,7 @@ use ring::rand::{SecureRandom, SystemRandom};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+use super::displays::DisplayLogin;
 use super::members::{MemberId, ShareGrant};
 use super::{DeckError, DeckStore, Result, call};
 
@@ -99,6 +100,8 @@ pub enum Principal {
     /// that joined with an invite. The grant holds the share, the role and
     /// the covered sessions.
     Member(MemberId, Box<ShareGrant>),
+    /// A wall display (R13, DL-201): read-only by construction.
+    Display(DisplayLogin),
 }
 
 impl Principal {
@@ -109,6 +112,7 @@ impl Principal {
             Self::Owner(_) => "owner".to_owned(),
             Self::Token(t, _) => format!("token:{}", t.name),
             Self::Member(_, g) => g.actor(),
+            Self::Display(d) => format!("display:{}", d.name),
         }
     }
 
@@ -118,6 +122,7 @@ impl Principal {
             Self::Owner(_) => OWNER_SCOPES.contains(&scope),
             Self::Token(t, _) => t.scopes.contains(&scope),
             Self::Member(_, g) => g.scopes().contains(&scope),
+            Self::Display(_) => scope == Scope::Read,
         }
     }
 
@@ -127,6 +132,7 @@ impl Principal {
             Self::Owner(_) => OWNER_SCOPES.into_iter().collect(),
             Self::Token(t, _) => t.scopes.clone(),
             Self::Member(_, g) => g.scopes(),
+            Self::Display(_) => BTreeSet::from([Scope::Read]),
         }
     }
 }
@@ -376,6 +382,10 @@ impl DeckStore {
                 // an expiry of the share ends the member at once).
                 Principal::Member(_, g) => {
                     return Ok(super::members::grant_alive(conn, &g.session_hash, now)?);
+                }
+                // The display session and its display must both be alive.
+                Principal::Display(d) => {
+                    return super::displays::session_alive(conn, &d.session_hash, now);
                 }
             };
             Ok(n == 1)

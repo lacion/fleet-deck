@@ -24,6 +24,9 @@ pub struct ApiMethod {
     /// handler then checks the share: the session and the role. `false`: the
     /// guard refuses a member with 403 `owner_only`.
     pub member: bool,
+    /// A wall display may call the method (R13 §5, DL-201). `false`: the
+    /// guard refuses a display with 403 `display_read_only`.
+    pub display: bool,
 }
 
 const fn m(
@@ -40,6 +43,7 @@ const fn m(
         scope,
         mutating,
         member: false,
+        display: false,
     }
 }
 
@@ -47,6 +51,13 @@ impl ApiMethod {
     /// The method that a member of a shared session may call too.
     const fn member(mut self) -> Self {
         self.member = true;
+        self
+    }
+
+    /// The method that a wall display may call too (R13 §5): a read row
+    /// whose handler shows nothing beyond the display projection.
+    const fn display(mut self) -> Self {
+        self.display = true;
         self
     }
 }
@@ -88,6 +99,7 @@ const fn cmd(name: &'static str, scope: Scope) -> ApiMethod {
         scope: Some(scope),
         mutating: true,
         member: false,
+        display: false,
     }
 }
 
