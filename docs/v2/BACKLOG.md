@@ -59,3 +59,17 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 - **Cause:** the `!` line is a feature of the interactive terminal UIs. Fleet Deck drives Claude with `stream-json` (no such input) and Codex with the app-server, which has `thread/shellCommand` (not used yet).
 - **Wanted:** a `!` line runs the command in the session folder, shows the command and its output in the timeline, and gives the result to the model as context, like the terminal UIs.
 - **Status:** design in progress (command execution: adversary DESIGN REVIEW before code).
+
+## B9. Verified launch directory for every start (hardening, from the B7 review, 2026-10-16)
+
+- **Gap:** the station checks a session folder against the allowed roots by path, and the provider later resolves the same path; a process of the station user that replaces a folder component with a link in between can move the launch outside the roots. The same holds for the provider's own transcript lookup at a resume.
+- **Wanted:** descriptor custody of the checked folder across the direct and the shim host launch (the process cwd and the provider workspace), or a fail-closed recheck.
+- **Status:** later. Needs a design and an adversary DESIGN REVIEW.
+
+## B10. The chat shows only the first line of a prompt (owner report, 2026-10-16)
+
+- **Observed:** in session `01M52FVQCYB6K40KARF2NTMC2Q` the user bubble shows "this is an exploration brainstorm session no code changes"; the prompt had several paragraphs.
+- **Cause:** the agent got the full text (the stored input of the start effect holds every paragraph). The board draws the user bubble from `run.started.input_summary`, which is the first line cut to 120 characters (`claude/core.rs` `summary_of`; Codex the same idea). No event carries the full prompt text.
+- **Wanted:** the user bubble shows the whole prompt (with line breaks), like Claude Code and Codex; long prompts fold with "Show more". The run label elsewhere (cards, lists) may stay the summary.
+- **Notes:** an additive event field (for example `run.started.input_text`, bounded) or an `input.received` event; the same visibility as the summary today (members of a shared session see prompts already). Imported history already shows full user text.
+- **Status:** open.
