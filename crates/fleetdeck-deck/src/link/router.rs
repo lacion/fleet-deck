@@ -25,12 +25,13 @@ use fleetdeck_proto::link::Outcome;
 use fleetdeck_proto::mutation::{
     CommandAuthority, PolicyNow, PolicyNowAnswer, StationChange, StationConfigureEnvelope,
 };
+use fleetdeck_proto::version::feature;
 use fleetdeck_proto::{CommandEnvelope, CommandId, Receipt, SessionId, StationId};
 use serde::{Deserialize, Serialize};
 
 use super::DeckLink;
 use crate::store::outbox::{Gate, authority_of};
-use crate::store::{DeckCommand, DeckError, NewCommand, Settle};
+use crate::store::{DeckCommand, DeckError, LinkFeature, NewCommand, Settle};
 
 /// How long the deck waits for the caller station's `coordinator.policy_now`
 /// answer (ADR-008 section 6.2).
@@ -398,6 +399,31 @@ impl DeckLink {
                 }
             }
         }
+        // A pinned import goes only to a station that verifies the pin, at
+        // every send and resend (B7 PRE-PR r1).
+        if pinned_import(&cmd.envelope) {
+            match self
+                .store
+                .link_feature(&cmd.station_id, feature::IMPORT_PIN)
+            {
+                LinkFeature::Negotiated => {}
+                LinkFeature::Down => return,
+                LinkFeature::Without => {
+                    let refused = Settle::Refused {
+                        code: "import_pin_unsupported".to_owned(),
+                        message: "This station cannot verify an import. Update it.".to_owned(),
+                    };
+                    if let Err(e) = self
+                        .store
+                        .settle_command(cmd.command_id.clone(), refused)
+                        .await
+                    {
+                        tracing::warn!(error = %e, "command settle");
+                    }
+                    return;
+                }
+            }
+        }
         // A mail of a member checks its share before every send and resend
         // (NV-17).
         match self.store.gate_member_mail(cmd.command_id.clone()).await {
@@ -478,9 +504,59 @@ impl DeckLink {
     }
 }
 
+/// True for a stored `session.import` envelope that carries a `transcript`
+/// pin (B7 PRE-PR r1).
+#[must_use]
+fn pinned_import(envelope: &serde_json::Value) -> bool {
+    serde_json::from_value::<CommandEnvelope>(envelope.clone()).is_ok_and(|env| {
+        matches!(
+            env.command,
+            SessionCommand::Import {
+                transcript: Some(_),
+                ..
+            }
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn envelope(transcript: Option<&str>) -> serde_json::Value {
+        let pin = transcript.map(|home| serde_json::json!({"home": home, "dev": 1, "ino": 2}));
+        serde_json::json!({
+            "command_id": "c1",
+            "target_incarnation": null,
+            "retry_until": 1,
+            "origin": "board",
+            "command": {
+                "op": "import",
+                "spec": {
+                    "provider_instance": "claude", "cwd": "/w", "mode": null,
+                    "model": null, "title": null,
+                },
+                "native_session_id": "0b6c1d2e-aaaa-4bbb-8ccc-123456789abc",
+                "prompt": null,
+                "transcript": pin,
+            },
+        })
+    }
+
+    #[test]
+    fn only_an_import_with_a_pin_is_a_pinned_import() {
+        assert!(pinned_import(&envelope(Some("/home/u/.claude"))));
+        assert!(!pinned_import(&envelope(None)));
+        let interrupt = serde_json::json!({
+            "command_id": "c2",
+            "target_incarnation": null,
+            "retry_until": 1,
+            "origin": "board",
+            "command": {"op": "interrupt", "session_id": "s1"},
+        });
+        assert!(!pinned_import(&interrupt));
+        assert!(!pinned_import(&serde_json::json!({"nonsense": true})));
+    }
 
     #[tokio::test]
     async fn the_revocation_fence_waits_for_a_send_in_flight() {

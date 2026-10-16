@@ -13,7 +13,9 @@ use super::tests_support::*;
 use crate::workspace::PrivatePaths;
 use std::sync::Arc;
 
-use super::trust::{Identity, Mounts, PathCheck, rollout_id, supported_fs, trusted_path};
+use super::trust::{
+    Identity, Mounts, PathCheck, rollout_id, supported_fs, trusted_home, trusted_path,
+};
 
 fn my_uid() -> u32 {
     rustix::process::getuid().as_raw()
@@ -133,6 +135,116 @@ fn a_missing_component_fails_closed() {
     assert_eq!(
         trusted_path(Path::new("relative"), my_uid(), &mounts),
         untrusted("io")
+    );
+}
+
+// ------------------------------------------------------- trusted_home
+
+#[test]
+fn a_home_link_of_the_station_user_in_a_trusted_dir_resolves_to_its_target() {
+    let Some((dir, mounts)) = temp() else { return };
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir_all(root.join("real/home")).unwrap();
+    std::os::unix::fs::symlink(root.join("real/home"), root.join("link")).unwrap();
+    assert_eq!(
+        trusted_home(&root.join("link"), my_uid(), &mounts),
+        Ok(root.join("real/home"))
+    );
+    // The text has no trailing slash: a pin compares the text.
+    let text = trusted_home(&root.join("link"), my_uid(), &mounts).unwrap();
+    assert_eq!(text.to_str(), root.join("real/home").to_str());
+    // A relative target is joined to the directory of the link.
+    std::os::unix::fs::symlink("real/home", root.join("rel")).unwrap();
+    assert_eq!(
+        trusted_home(&root.join("rel/deeper"), my_uid(), &mounts),
+        Err(PathCheck::Untrusted("missing"))
+    );
+    std::fs::create_dir_all(root.join("real/home/deeper")).unwrap();
+    assert_eq!(
+        trusted_home(&root.join("rel/deeper"), my_uid(), &mounts),
+        Ok(root.join("real/home/deeper"))
+    );
+    // A path without a link is returned as it is.
+    assert_eq!(
+        trusted_home(&root.join("real/home"), my_uid(), &mounts),
+        Ok(root.join("real/home"))
+    );
+}
+
+#[test]
+fn a_home_link_inside_a_group_writable_dir_is_writable() {
+    let Some((dir, mounts)) = temp() else { return };
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir_all(root.join("real/home")).unwrap();
+    std::fs::create_dir_all(root.join("shared")).unwrap();
+    std::os::unix::fs::symlink(root.join("real/home"), root.join("shared/link")).unwrap();
+    std::fs::set_permissions(root.join("shared"), std::fs::Permissions::from_mode(0o770)).unwrap();
+    assert_eq!(
+        trusted_home(&root.join("shared/link"), my_uid(), &mounts),
+        Err(PathCheck::Untrusted("writable"))
+    );
+}
+
+#[test]
+fn a_home_link_of_another_owner_is_untrusted() {
+    if my_uid() != 0 {
+        eprintln!("skipped: needs root to give a link to another user");
+        return;
+    }
+    let Some((dir, mounts)) = temp() else { return };
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir_all(root.join("real")).unwrap();
+    std::os::unix::fs::symlink(root.join("real"), root.join("link")).unwrap();
+    std::os::unix::fs::lchown(root.join("link"), Some(12345), None).unwrap();
+    assert_eq!(
+        trusted_home(&root.join("link"), my_uid(), &mounts),
+        Err(PathCheck::Untrusted("owner"))
+    );
+}
+
+#[test]
+fn a_chain_of_nine_home_links_is_untrusted() {
+    let Some((dir, mounts)) = temp() else { return };
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir_all(root.join("end")).unwrap();
+    let mut target = root.join("end");
+    for n in 0..9 {
+        let link = root.join(format!("l{n}"));
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        target = link;
+    }
+    assert_eq!(
+        trusted_home(&target, my_uid(), &mounts),
+        Err(PathCheck::Untrusted("link"))
+    );
+    // Eight links resolve.
+    assert_eq!(
+        trusted_home(&root.join("l7"), my_uid(), &mounts),
+        Ok(root.join("end"))
+    );
+}
+
+#[test]
+fn a_home_link_with_a_dot_dot_target_is_untrusted() {
+    let Some((dir, mounts)) = temp() else { return };
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir_all(root.join("real")).unwrap();
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    std::os::unix::fs::symlink("../real", root.join("sub/link")).unwrap();
+    assert_eq!(
+        trusted_home(&root.join("sub/link"), my_uid(), &mounts),
+        Err(PathCheck::Untrusted("link"))
+    );
+}
+
+#[test]
+fn a_home_link_to_a_missing_target_is_missing() {
+    let Some((dir, mounts)) = temp() else { return };
+    let root = dir.path().canonicalize().unwrap();
+    std::os::unix::fs::symlink(root.join("nope"), root.join("link")).unwrap();
+    assert_eq!(
+        trusted_home(&root.join("link"), my_uid(), &mounts),
+        Err(PathCheck::Untrusted("missing"))
     );
 }
 

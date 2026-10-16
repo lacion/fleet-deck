@@ -17,14 +17,15 @@ use fleetdeck_proto::StationId;
 use fleetdeck_proto::board::{CommandRequest, valid_command_id};
 use fleetdeck_proto::command::{CommandOrigin, SessionCommand, UserInput, check_native_session_id};
 use fleetdeck_proto::event::RequestKind;
+use fleetdeck_proto::version::feature;
 
 use super::guard::ApiError;
 use super::methods::COMMAND_PREFIX;
 use super::{Board, access};
 use crate::link::CommandKind;
 use crate::store::{
-    AuditResult, DeckCommand, DeckError, MemberAction, NewAudit, Principal, ShareGrant,
-    member_allows,
+    AuditResult, DeckCommand, DeckError, LinkFeature, MemberAction, NewAudit, Principal,
+    ShareGrant, member_allows,
 };
 
 /// How long a command call waits for the station's receipt before it
@@ -155,6 +156,26 @@ async fn route(
         ));
     };
     let station = Some(rec.station_id.0.clone());
+    // A pinned import needs a station that verifies the pin: an older one
+    // would ignore the field and launch an unverified import (B7 PRE-PR r1).
+    // A station that is down is checked again at every send.
+    if matches!(
+        &req.command,
+        SessionCommand::Import {
+            transcript: Some(_),
+            ..
+        }
+    ) && board
+        .store
+        .link_feature(&rec.station_id, feature::IMPORT_PIN)
+        == LinkFeature::Without
+    {
+        return Err(refuse(
+            StatusCode::CONFLICT,
+            "import_pin_unsupported",
+            "This station cannot verify an import. Update it.".to_owned(),
+        ));
+    }
     let mut command = req.command;
     if let Principal::Member(_, grant) = principal {
         member_command(board, grant, &rec.station_id, &mut command)

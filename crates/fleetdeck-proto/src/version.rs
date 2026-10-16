@@ -119,6 +119,10 @@ pub mod feature {
     /// (B8, DL-196).
     pub const SHELL_COMMAND: &str = "shell_command.v1";
 
+    /// `session.import` with a `transcript` pin: the station verifies the pin
+    /// before any launch (B7).
+    pub const IMPORT_PIN: &str = "import_pin.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -142,6 +146,7 @@ pub mod feature {
         HISTORY,
         SUBAGENT,
         NATIVE_SESSIONS,
+        IMPORT_PIN,
         SESSION_BRANCHES,
         ARTIFACTS,
         PRECHECK,

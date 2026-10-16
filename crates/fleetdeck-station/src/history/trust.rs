@@ -191,6 +191,85 @@ pub fn trusted_path(path: &Path, station_uid: u32, mounts: &Mounts) -> Result<()
     }
 }
 
+/// The most links that [`trusted_home`] follows.
+const HOME_LINKS_MAX: usize = 8;
+
+/// Resolves a provider home through trusted links only: the result is a path
+/// that [`trusted_path`] accepts. A link that the station user or root owns,
+/// in a trusted directory, cannot be changed by another user, so following
+/// it keeps the §1b boundary (B7 PRE-PR r1). A link elsewhere fails.
+///
+/// # Errors
+/// [`PathCheck`]: `Untrusted("link")` for more than 8 links or a target with
+/// a `.` or `..` component, `Untrusted("owner")` for a link of another user,
+/// the failure of the directory that holds a link, or any other failure of
+/// [`trusted_path`].
+pub fn trusted_home(path: &Path, station_uid: u32, mounts: &Mounts) -> Result<PathBuf, PathCheck> {
+    use std::os::unix::fs::MetadataExt as _;
+    use std::path::Component;
+
+    let only_normal = |p: &Path| {
+        p.is_absolute()
+            && p.components()
+                .all(|c| matches!(c, Component::RootDir | Component::Normal(_)))
+    };
+    if !only_normal(path) {
+        return Err(PathCheck::Untrusted("io"));
+    }
+    let mut current = path.to_path_buf();
+    for hop in 0..=HOME_LINKS_MAX {
+        match trusted_path(&current, station_uid, mounts) {
+            Ok(()) => return Ok(current),
+            // Another link, and the eight hops are used.
+            Err(PathCheck::Untrusted("link")) if hop == HOME_LINKS_MAX => {
+                return Err(PathCheck::Untrusted("link"));
+            }
+            Err(PathCheck::Untrusted("link")) => {}
+            Err(other) => return Err(other),
+        }
+        // The first prefix that is a link.
+        let mut prefix = PathBuf::new();
+        let mut found: Option<(PathBuf, PathBuf)> = None;
+        let mut comps = current.components();
+        while let Some(component) = comps.next() {
+            prefix.push(component);
+            let is_link = std::fs::symlink_metadata(&prefix)
+                .map_err(|_| PathCheck::Untrusted("io"))?
+                .file_type()
+                .is_symlink();
+            if is_link {
+                found = Some((prefix.clone(), comps.as_path().to_path_buf()));
+                break;
+            }
+        }
+        let Some((link, rest)) = found else {
+            return Err(PathCheck::Untrusted("io"));
+        };
+        let parent = link.parent().ok_or(PathCheck::Untrusted("io"))?;
+        trusted_path(parent, station_uid, mounts)?;
+        let meta = std::fs::symlink_metadata(&link).map_err(|_| PathCheck::Untrusted("io"))?;
+        if meta.uid() != station_uid && meta.uid() != 0 {
+            return Err(PathCheck::Untrusted("owner"));
+        }
+        let target = std::fs::read_link(&link).map_err(|_| PathCheck::Untrusted("io"))?;
+        let target = if target.is_absolute() {
+            target
+        } else {
+            parent.join(target)
+        };
+        if !only_normal(&target) {
+            return Err(PathCheck::Untrusted("link"));
+        }
+        // No empty join: it would add a trailing slash.
+        current = if rest.as_os_str().is_empty() {
+            target
+        } else {
+            target.join(rest)
+        };
+    }
+    Err(PathCheck::Untrusted("link"))
+}
+
 #[cfg(target_os = "linux")]
 mod linux {
     use std::ffi::OsStr;
