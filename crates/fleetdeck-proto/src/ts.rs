@@ -31,6 +31,10 @@ use crate::branches::{BranchDiffQuery, BranchesQuery, RepoBranch, RepoBranches};
 use crate::capability::{Capabilities, Operation, Unsupported};
 use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
 use crate::conflicts::FileConflict;
+use crate::display::{
+    DisplayBinding, DisplayLinkMade, DisplayList, DisplaySelf, DisplayView, PairingPoll,
+    PairingStarted, PairingState, PendingPairing,
+};
 use crate::event::{Event, EventEnvelope};
 use crate::execution::{ExecutionCheck, ExecutionCheckQuery, ProcessInfo};
 use crate::files::{
@@ -220,6 +224,15 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         ArtifactPublishRequest::export_all(&cfg),
         DeckArtifact::export_all(&cfg),
         DeckArtifactDetail::export_all(&cfg),
+        DisplayView::export_all(&cfg),
+        DisplayBinding::export_all(&cfg),
+        PendingPairing::export_all(&cfg),
+        DisplayList::export_all(&cfg),
+        PairingStarted::export_all(&cfg),
+        PairingState::export_all(&cfg),
+        PairingPoll::export_all(&cfg),
+        DisplaySelf::export_all(&cfg),
+        DisplayLinkMade::export_all(&cfg),
         ShareRequest::export_all(&cfg),
         ShareLink::export_all(&cfg),
         ShareView::export_all(&cfg),

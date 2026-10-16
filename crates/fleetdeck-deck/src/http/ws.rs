@@ -42,6 +42,7 @@ use fleetdeck_proto::{EventEnvelope, IncarnationId, StationId};
 use tokio::sync::broadcast::error::RecvError;
 
 use super::Board;
+use super::display_view::{display_cards, display_stations};
 use super::guard::ApiError;
 use super::read_routes::{member_sessions, member_stations};
 use crate::local::station_view;
@@ -54,6 +55,8 @@ pub const TICKET_TTL_MS: i64 = 30_000;
 pub const MAX_TICKETS: usize = 256;
 /// How often an open socket checks its login.
 pub const RECHECK: Duration = Duration::from_secs(30);
+/// How often the socket of a display checks its login.
+pub const DISPLAY_RECHECK: Duration = Duration::from_secs(5);
 /// The largest client message.
 pub const MAX_CLIENT_MESSAGE: usize = 16 * 1024;
 /// The close code for an ended login.
@@ -182,6 +185,14 @@ async fn view(
         .iter()
         .map(|st| station_view(st, store))
         .collect();
+    if let Principal::Display(d) = principal {
+        // Reduced cards and stations of the ceiling only (R13 §5).
+        let sessions = store.sessions().await?;
+        return Ok((
+            display_stations(&stations, &d.ceiling),
+            display_cards(&sessions, &d.ceiling),
+        ));
+    }
     let sessions = store.sessions_for(principal).await?;
     Ok(match principal {
         Principal::Member(_, grant) => {
@@ -239,7 +250,17 @@ impl Session {
         })
         .await?;
         let version = *board_rx.borrow_and_update();
-        self.refresh_member().await?;
+        if !self.refresh_member().await? && matches!(self.principal, Principal::Display(_)) {
+            // The display was revoked after its ticket was made.
+            let _ = self
+                .socket
+                .send(Message::Close(Some(CloseFrame {
+                    code: CLOSE_LOGIN_ENDED,
+                    reason: "login ended".into(),
+                })))
+                .await;
+            return Ok(());
+        }
         let (stations, sessions) = view(&self.board.store, &self.principal).await?;
         self.cards = sessions.iter().map(|c| (key(c), c.clone())).collect();
         self.stations.clone_from(&stations);
@@ -249,7 +270,13 @@ impl Session {
             sessions,
         })
         .await?;
-        let mut recheck = tokio::time::interval(self.board.ws_recheck);
+        // A display checks its login every 5 s: a revoke closes within 5 s
+        // (R13 §5).
+        let every = match self.principal {
+            Principal::Display(_) => self.board.ws_recheck.min(DISPLAY_RECHECK),
+            _ => self.board.ws_recheck,
+        };
+        let mut recheck = tokio::time::interval(every);
         recheck.tick().await;
         let mut sweep = tokio::time::interval(Duration::from_secs(
             fleetdeck_proto::share::PRESENCE_HEARTBEAT_S,
@@ -395,6 +422,16 @@ impl Session {
     /// False when the login or its share ended. A subscription to a session
     /// that the share does not cover any more ends.
     async fn refresh_member(&mut self) -> Result<bool, WsError> {
+        if let Principal::Display(d) = &self.principal {
+            // The ceiling can change and the display can be revoked.
+            return Ok(match self.board.store.display_refresh(d).await? {
+                Some(fresh) => {
+                    self.principal = Principal::Display(fresh);
+                    true
+                }
+                None => false,
+            });
+        }
         let Principal::Member(id, grant) = &self.principal else {
             return Ok(true);
         };
@@ -415,6 +452,8 @@ impl Session {
     fn may_see(&self, k: &SessionKey) -> bool {
         match &self.principal {
             Principal::Member(_, g) => g.scope.covers(k.station_id.as_str(), k.session_id.as_str()),
+            // A display gets no timelines and no people features (part b).
+            Principal::Display(_) => false,
             _ => true,
         }
     }
@@ -472,6 +511,13 @@ impl Session {
                 return self.error("invalid_message", &detail).await;
             }
         };
+        if matches!(self.principal, Principal::Display(_))
+            && !matches!(msg, BoardClientMessage::Unsubscribe { .. })
+        {
+            return self
+                .error("display_read_only", "A wall display can only read.")
+                .await;
+        }
         match msg {
             BoardClientMessage::Subscribe {
                 station_id,

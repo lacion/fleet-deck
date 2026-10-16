@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Board;
 use super::admission::{Attempt, FlowLimiter, PeerAddr, busy, request_source, too_many_attempts};
-use super::guard::{ApiError, COOKIE, owner_only};
+use super::guard::{ApiError, COOKIE, DISPLAY_COOKIE, owner_only};
 use crate::local_auth::login_url;
 use crate::store::auth::{LOGIN_LINK_TTL_MS, SESSION_MAX_MS};
 use crate::store::{
@@ -109,6 +109,14 @@ fn set_cookie(value: &str, max_age_s: i64) -> HeaderValue {
         .unwrap_or_else(|_| HeaderValue::from_static("fd_session=; Max-Age=0"))
 }
 
+/// A cookie of the board (R13 §5): `HttpOnly; Secure; SameSite=Strict`.
+pub(super) fn named_cookie(name: &str, value: &str, max_age_s: i64) -> HeaderValue {
+    let text =
+        format!("{name}={value}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age={max_age_s}");
+    HeaderValue::from_str(&text)
+        .unwrap_or_else(|_| HeaderValue::from_static("fd_display=; Max-Age=0"))
+}
+
 fn logged_in(login: &NewLogin) -> Response {
     let view = SessionView {
         actor: "owner".to_owned(),
@@ -129,7 +137,7 @@ fn logged_in(login: &NewLogin) -> Response {
 }
 
 /// The action and the flow name of an audit row.
-type Audit = (&'static str, &'static str);
+pub(super) type Audit = (&'static str, &'static str);
 
 async fn login(
     board: &Board,
@@ -180,7 +188,12 @@ async fn login(
 }
 
 /// The audit row of a refusal by a limit; returns the error to answer.
-async fn limit_refusal(board: &Board, (action, flow): Audit, actor: &str, e: ApiError) -> ApiError {
+pub(super) async fn limit_refusal(
+    board: &Board,
+    (action, flow): Audit,
+    actor: &str,
+    e: ApiError,
+) -> ApiError {
     board
         .store
         .audit_or_log(
@@ -193,7 +206,7 @@ async fn limit_refusal(board: &Board, (action, flow): Audit, actor: &str, e: Api
 }
 
 /// Starts an attempt in `limiter`, or the refusal (429 `too_many_attempts`).
-async fn start_attempt(
+pub(super) async fn start_attempt(
     board: &Board,
     limiter: &FlowLimiter,
     ip: IpAddr,
@@ -589,6 +602,7 @@ pub async fn logout(
     Extension(principal): Extension<Principal>,
 ) -> Response {
     let actor = principal.actor();
+    let mut display = false;
     let ended = match principal {
         Principal::Owner(session) => {
             board.elevations.end_session(&session.session_hash);
@@ -596,6 +610,10 @@ pub async fn logout(
         }
         Principal::Member(_, grant) => board.store.end_member_login(grant.session_hash).await,
         Principal::Token(..) => Ok(true),
+        Principal::Display(d) => {
+            display = true;
+            board.store.end_display_session(d.session_hash).await
+        }
     };
     if let Err(e) = ended {
         return ApiError::internal(e).into_response();
@@ -604,9 +622,14 @@ pub async fn logout(
         .store
         .audit_or_log(NewAudit::new(actor, "auth.logout", AuditResult::Ok))
         .await;
+    // Each login clears only its own cookie (R13 §5C item 6).
     let mut res = StatusCode::NO_CONTENT.into_response();
-    res.headers_mut()
-        .insert(header::SET_COOKIE, set_cookie("", 0));
+    let cleared = if display {
+        named_cookie(DISPLAY_COOKIE, "", 0)
+    } else {
+        set_cookie("", 0)
+    };
+    res.headers_mut().insert(header::SET_COOKIE, cleared);
     res
 }
 
@@ -619,6 +642,14 @@ pub async fn session(
         Principal::Owner(s) => (Some(s.csrf.clone()), s.expires_at),
         Principal::Token(t, _) => (None, t.expires_at),
         Principal::Member(_, grant) => return member_view(&board, grant).await.map(Json),
+        Principal::Display(d) => {
+            let expires = board
+                .store
+                .display_session_expires(d.session_hash.clone())
+                .await
+                .map_err(ApiError::internal)?;
+            (None, expires.unwrap_or_default())
+        }
     };
     Ok(Json(SessionView {
         actor: principal.actor(),

@@ -29,7 +29,8 @@ fn bad(code: &'static str, message: impl Into<String>) -> ApiError {
 fn person(principal: &Principal) -> Result<(), ApiError> {
     match principal {
         Principal::Owner(_) | Principal::Member(..) => Ok(()),
-        Principal::Token(..) => Err(ApiError::new(
+        // A display is read-only and the guard refuses it first (R13 §5).
+        Principal::Token(..) | Principal::Display(_) => Err(ApiError::new(
             StatusCode::FORBIDDEN,
             "owner_only",
             "only a person (the owner or a member) does this",

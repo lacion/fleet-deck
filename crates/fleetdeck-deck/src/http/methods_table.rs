@@ -18,7 +18,8 @@ pub const API: &[ApiMethod] = &[
         Some(Scope::Read),
         true,
     )
-    .member(),
+    .member()
+    .display(),
     // A device link (DL-146): `admin`, and the handler also requires the
     // owner's board login (DL-138).
     m(
@@ -44,7 +45,8 @@ pub const API: &[ApiMethod] = &[
         Some(Scope::Read),
         false,
     )
-    .member(),
+    .member()
+    .display(),
     // The accounts of a station (DL-173). The owner-only rows are `admin`,
     // and every handler also requires the owner's board login (DL-138), the
     // containers read too (PRE-PR r1). The relay rows
@@ -119,7 +121,8 @@ pub const API: &[ApiMethod] = &[
         Some(Scope::Read),
         false,
     )
-    .member(),
+    .member()
+    .display(),
     m(
         "stations.add",
         Method::POST,
@@ -420,5 +423,6 @@ pub const API: &[ApiMethod] = &[
         Some(Scope::Read),
         false,
     )
-    .member(),
+    .member()
+    .display(),
 ];

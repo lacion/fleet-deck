@@ -9,6 +9,7 @@ use axum::extract::{Extension, State};
 use fleetdeck_proto::board::FleetExtras;
 
 use super::Board;
+use super::display_view::{display_cards, display_stations};
 use super::guard::ApiError;
 use crate::local::{StationView, station_view};
 use crate::store::{AuditEntry, DeckCommand, DeckSession, Principal};
@@ -67,6 +68,8 @@ pub async fn stations(
             );
             member_stations(views, &sessions)
         }
+        // A display sees the stations of its ceiling, reduced (R13 §5).
+        Principal::Display(d) => display_stations(&views, &d.ceiling),
         _ => views,
     }))
 }
@@ -76,6 +79,11 @@ pub async fn sessions(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
 ) -> Result<Json<Vec<DeckSession>>, ApiError> {
+    if let Principal::Display(d) = &principal {
+        // A display has no read cursors and no projects.
+        let all = board.store.sessions().await.map_err(ApiError::internal)?;
+        return Ok(Json(display_cards(&all, &d.ceiling)));
+    }
     let all = board
         .store
         .sessions_for(&principal)

@@ -82,7 +82,8 @@ fn viewer_of(principal: &Principal) -> Viewer {
     match principal {
         Principal::Owner(_) => Viewer::Owner,
         Principal::Member(_, grant) => Viewer::Member(grant.display_name.clone()),
-        Principal::Token(..) => Viewer::Token,
+        // A display never reaches this row; it sees no drafts (R13 §5).
+        Principal::Token(..) | Principal::Display(_) => Viewer::Token,
     }
 }
 

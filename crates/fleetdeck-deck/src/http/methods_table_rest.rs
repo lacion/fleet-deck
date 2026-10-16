@@ -53,7 +53,9 @@ pub const API_REST: &[ApiMethod] = &[
         false,
     )
     .member(),
-    m(WS_METHOD, Method::GET, "/api/ws", Some(Scope::Read), false).member(),
+    m(WS_METHOD, Method::GET, "/api/ws", Some(Scope::Read), false)
+        .member()
+        .display(),
     // The worktree inventory (DL-142): `admin`, and the handler also
     // requires the owner's board login (DL-138).
     m(
@@ -331,7 +333,8 @@ pub const API_REST: &[ApiMethod] = &[
         Some(Scope::Read),
         true,
     )
-    .member(),
+    .member()
+    .display(),
     m(
         "session.assign",
         Method::POST,
@@ -660,4 +663,72 @@ pub const API_REST: &[ApiMethod] = &[
         false,
     )
     .member(),
+    // The display principal (R13 §5, DL-201). The pairing start, the pairing
+    // poll and the display link need no login: the poll uses the pending
+    // cookie and the link is its own proof. The owner rows are `admin` or
+    // `drive`, and every handler also requires the owner's board login.
+    m(
+        "displays.pair_start",
+        Method::POST,
+        "/api/displays/pair",
+        None,
+        true,
+    ),
+    m(
+        "displays.pair_poll",
+        Method::GET,
+        "/api/displays/pair/{id}",
+        None,
+        false,
+    ),
+    m(
+        "auth.display_link",
+        Method::POST,
+        "/api/auth/display-link",
+        None,
+        true,
+    ),
+    m(
+        "displays.list",
+        Method::GET,
+        "/api/displays",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
+        "displays.pair_approve",
+        Method::POST,
+        "/api/displays/pair/{id}/approve",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "displays.link_create",
+        Method::POST,
+        "/api/displays/link",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "displays.settings",
+        Method::POST,
+        "/api/displays/{id}/settings",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "displays.revoke",
+        Method::POST,
+        "/api/displays/{id}/revoke",
+        Some(Scope::Drive),
+        true,
+    ),
+    m(
+        "displays.self",
+        Method::GET,
+        "/api/displays/self",
+        Some(Scope::Read),
+        false,
+    )
+    .display(),
 ];
