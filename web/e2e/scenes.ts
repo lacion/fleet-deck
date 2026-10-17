@@ -63,3 +63,10 @@ export function threeSessionDeck(): FakeDeck {
   deck.sessions = threeSessions();
   return deck;
 }
+
+/** R13 P2c: the same deck as a wall display sees it (display timeline frames). */
+export function displayDeck(): FakeDeck {
+  const deck = threeSessionDeck();
+  deck.displayFrames = true;
+  return deck;
+}

@@ -2,6 +2,7 @@
 // through one context. It is present only for the owner's login.
 import { createContext, type ReactNode, useContext } from 'react';
 import { type AccountActions } from '../accounts/actions';
+import type { DesktopActions, DisplayActions } from '../displays/actions';
 import type { TailnetActions } from '../tailnet/api';
 import type { SettingsActions } from './actions';
 
@@ -9,6 +10,9 @@ export type SettingsEnv = {
   readonly settings: SettingsActions;
   readonly accounts: AccountActions;
   readonly tailnet: TailnetActions;
+  /** The wall displays and the desktop relay (R13 P2c, P3c). */
+  readonly displays: DisplayActions;
+  readonly desktop: DesktopActions;
 };
 
 const Context = createContext<SettingsEnv | undefined>(undefined);

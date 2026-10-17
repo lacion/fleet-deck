@@ -1,0 +1,216 @@
+/* R13 P2c, P3c: the pair page and the wall display card (em of the wall font), the Displays page
+   of the settings and the Desktop panel of a station card (board tokens). */
+
+/* the pair page: a large code, centered at any width */
+.fd-pair {
+  place-items: center;
+  text-align: center;
+}
+
+.fd-pair-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-4);
+  max-width: 100%;
+}
+
+.fd-pair-title {
+  margin: 0;
+  font-size: 1.6em;
+  font-weight: 600;
+}
+
+.fd-pair-code {
+  margin: 0;
+  max-width: 100%;
+  font-family: var(--font-data);
+  font-size: min(8em, 22dvw);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+
+.fd-pair-line {
+  margin: 0;
+  font-size: 1.2em;
+  color: var(--dim);
+}
+
+/* the card of an artifact that a wall cannot show */
+.fd-wall-card {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  margin: 0;
+  font-size: 1.6em;
+  text-align: center;
+}
+
+.fd-wall-artifact .fd-art-image {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  margin: 0 auto;
+  object-fit: contain;
+}
+
+.fd-wall-artifact .fd-art-md {
+  max-height: 100%;
+  overflow: hidden;
+}
+
+/* the Displays page */
+.fd-disp {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.fd-disp-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.fd-disp-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--sp-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (min-width: 900px) {
+  .fd-disp-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.fd-disp-row,
+.fd-disp-pending,
+.fd-disp-add {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.fd-disp-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-2);
+}
+
+.fd-disp-name {
+  margin: 0;
+}
+
+.fd-disp-stations,
+.fd-disp-modes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.fd-disp-check {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.fd-disp-bind {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--sp-2);
+}
+
+.fd-disp-link {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.fd-disp-url {
+  overflow-wrap: anywhere;
+}
+
+.fd-disp-linkactions,
+.fd-disp-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.fd-disp-qr .fd-wall-qr {
+  width: 12rem;
+  height: 12rem;
+}
+
+/* the Desktop panel */
+.fd-desk {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+
+.fd-desk > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.fd-desk-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: var(--sp-2);
+  margin: 0;
+}
+
+.fd-desk-facts dt {
+  color: var(--faint);
+}
+
+.fd-desk-facts dd {
+  margin: 0;
+}
+
+.fd-desk-monitors,
+.fd-desk-walls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fd-desk-monitors li,
+.fd-desk-walls li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.fd-desk-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.fd-desk-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  max-width: 28rem;
+}

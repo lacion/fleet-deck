@@ -1,5 +1,6 @@
 // DL-172, DL-173: `#/settings`: the Deck tab, one tab for each station and the Accounts tab.
 import { AccountsTab } from '../accounts/AccountsTab';
+import { DisplaysTab } from '../displays/DisplaysTab';
 import type { DeckSession, StationView } from '../gen';
 import type { Navigate, Route } from '../app/routes';
 import type { ListWorkspaces } from '../ui/FolderPicker';
@@ -33,6 +34,7 @@ export function tabsOf(stations: readonly StationView[]): TabLink[] {
         route: { name: 'settings', tab: 'station', station: s.station_id },
       }),
     ),
+    { id: 'displays', label: 'Displays', route: { name: 'settings', tab: 'displays' } },
     {
       id: 'accounts',
       label: 'Accounts',
@@ -116,6 +118,8 @@ export function SettingsPage({ route, stations, navigate, live, list, sessions }
           sessions={sessions}
         />
       );
+  } else if (route.tab === 'displays') {
+    panel = <DisplaysTab env={env} stations={stations} live={live} />;
   } else {
     panel = (
       <AccountsTab route={route} stations={stations} navigate={navigate} actions={env.accounts} />

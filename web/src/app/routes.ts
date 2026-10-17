@@ -30,7 +30,12 @@ export type WallRoute = {
   readonly shape: 'auto' | WallShape;
   readonly session?: { readonly station: string; readonly id: string };
   readonly batch?: string;
-  readonly artifact?: { readonly station: string; readonly id: string };
+  /** `version`: a wall display shows one explicit version (a directive); absent: the latest. */
+  readonly artifact?: {
+    readonly station: string;
+    readonly id: string;
+    readonly version?: number;
+  };
   /** `pin=1`: auto-focus is off. */
   readonly pin: boolean;
 };
@@ -55,6 +60,7 @@ export type Route =
   | { readonly name: 'shares' }
   | { readonly name: 'spaces' }
   | { readonly name: 'settings'; readonly tab: 'deck' }
+  | { readonly name: 'settings'; readonly tab: 'displays' }
   | { readonly name: 'settings'; readonly tab: 'station'; readonly station: string }
   | {
       readonly name: 'settings';
@@ -134,6 +140,7 @@ function parseSettings(parts: readonly string[], query: string): Route {
       oauthError: text('oauth_error'),
     };
   }
+  if (parts.length === 3 && parts[2] === 'displays') return { name: 'settings', tab: 'displays' };
   if (parts.length === 4 && parts[2] === 'station') {
     try {
       const station = decodeURIComponent(parts[3] ?? '');
@@ -175,7 +182,14 @@ function parseWall(query: string): WallRoute {
     ? Math.min(WALL_SCALE_MAX, Math.max(WALL_SCALE_MIN, scaleNumber))
     : 1;
   const session = refPair(q.get('session'));
-  const artifact = refPair(q.get('artifact'));
+  const artifactRef = refPair(q.get('artifact'));
+  const versionNumber = Number(q.get('version'));
+  const artifact =
+    artifactRef === undefined
+      ? undefined
+      : Number.isInteger(versionNumber) && versionNumber >= 1
+        ? { ...artifactRef, version: versionNumber }
+        : artifactRef;
   const batchText = q.get('batch');
   const batch = batchText === null || batchText === '' ? undefined : batchText;
   const wanted = WALL_MODES.find((m) => m === mode) ?? 'mission';
@@ -210,6 +224,7 @@ function formatWall(route: WallRoute): string {
   if (route.batch !== undefined) q.set('batch', route.batch);
   if (route.artifact !== undefined) {
     q.set('artifact', `${route.artifact.station}/${route.artifact.id}`);
+    if (route.artifact.version !== undefined) q.set('version', String(route.artifact.version));
   }
   if (route.pin) q.set('pin', '1');
   return `#/wall?${q.toString()}`;
@@ -275,6 +290,7 @@ export function parseHash(hash: string): Route {
 
 function formatSettings(route: Extract<Route, { name: 'settings' }>): string {
   if (route.tab === 'deck') return '#/settings';
+  if (route.tab === 'displays') return '#/settings/displays';
   if (route.tab === 'station') return `#/settings/station/${encodeURIComponent(route.station)}`;
   const q = new URLSearchParams();
   if (route.station !== null) q.set('station', route.station);

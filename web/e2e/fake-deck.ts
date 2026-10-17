@@ -6,6 +6,7 @@ import { expect, type Page, type Request, type WebSocketRoute } from '@playwrigh
 import type {
   DeckCommand,
   DeckSession,
+  DisplayEvent,
   EventEnvelope,
   NativePreview,
   NativeSessionList,
@@ -133,6 +134,11 @@ export class FakeDeck {
   private version = 1;
   private sockets: WebSocketRoute[] = [];
   private signedIn = false;
+  /** R13 P2c: the wall display page signs in with a display cookie, not the owner password. */
+  displayIn = false;
+  /** The wall display page gets `display_timeline_events` frames in place of `timeline_events`. */
+  displayFrames = false;
+  private displayTimelines = new Map<string, DisplayEvent[]>();
   private handlers = new Map<string, Handler>();
   private routes: Route[] = [];
   /** Timeline events by `station/session`; `station_seq` must grow. */
@@ -478,6 +484,21 @@ export class FakeDeck {
             reset: false,
           }),
         );
+        if (this.displayFrames) {
+          const shown = (this.displayTimelines.get(id) ?? []).filter(
+            (e) => e.station_seq > (msg.after ?? 0),
+          );
+          ws.send(
+            JSON.stringify({
+              type: 'display_timeline_events',
+              station_id,
+              session_id,
+              events: shown,
+              high_water: shown.at(-1)?.station_seq ?? msg.after ?? 0,
+            }),
+          );
+          return;
+        }
         const events = (this.timelines.get(id) ?? []).filter(
           (e) => e.station_seq > (msg.after ?? 0),
         );
@@ -578,6 +599,20 @@ export class FakeDeck {
     for (const [ws, subs] of this.subscribed) if (subs.has(id)) ws.send(msg);
   }
 
+  /** R13 P2c: appends display timeline events and sends them to the subscribed sockets. */
+  emitDisplay(stationId: string, sessionId: string, events: DisplayEvent[]): void {
+    const id = `${stationId}/${sessionId}`;
+    this.displayTimelines.set(id, [...(this.displayTimelines.get(id) ?? []), ...events]);
+    const msg = JSON.stringify({
+      type: 'display_timeline_events',
+      station_id: stationId,
+      session_id: sessionId,
+      events,
+      high_water: events.at(-1)?.station_seq ?? 0,
+    });
+    for (const [ws, subs] of this.subscribed) if (subs.has(id)) ws.send(msg);
+  }
+
   /**
    * B7: the native-sessions routes of one station. The list is the answer of the GET; the preview
    * answers every POST. `previews` holds the bodies of the POSTs (the pin included).
@@ -609,6 +644,21 @@ export class FakeDeck {
       expires_at: Date.now() + 3_600_000,
       ...(this.deckVersion === null ? {} : { deck_version: this.deckVersion }),
     };
+    // R13 P2c: the display page names itself with a header; its routes need no CSRF token.
+    const display = request.headers()['x-fleetdeck-display'] === '1';
+    if (display && path === '/api/auth/session') {
+      return this.displayIn
+        ? {
+            status: 200,
+            body: {
+              actor: 'display:Wall',
+              scopes: ['read'],
+              csrf: null,
+              expires_at: Date.now() + 3_600_000,
+            },
+          }
+        : { status: 401, body: { error: 'login_required', message: 'Log in.' } };
+    }
     if (path === '/api/auth/session') {
       return this.signedIn
         ? { status: 200, body: login }
@@ -625,7 +675,9 @@ export class FakeDeck {
     for (const r of this.routes) {
       const match = method === r.method ? r.re.exec(path) : null;
       if (match === null) continue;
-      if (!csrf) return { status: 403, body: { code: 'csrf', message: 'Missing CSRF token.' } };
+      if (!csrf && !display) {
+        return { status: 403, body: { code: 'csrf', message: 'Missing CSRF token.' } };
+      }
       return r.handler(match, body, url.searchParams);
     }
     const handler = this.handlers.get(path);
@@ -650,7 +702,7 @@ export class FakeDeck {
       }
     }
     if (handler === undefined) return { status: 404, body: { code: 'not_found', message: path } };
-    if (method === 'POST' && !csrf) {
+    if (method === 'POST' && !csrf && !display) {
       return { status: 403, body: { code: 'csrf', message: 'Missing CSRF token.' } };
     }
     return handler(body, url.searchParams);

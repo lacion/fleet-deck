@@ -49,6 +49,7 @@ import { OpenPrDialog } from '../integrations/OpenPrDialog';
 import { Badges, Place } from './HeaderBadges';
 import { MoveToProject } from './MoveToProject';
 import { RenameForm } from './RenameForm';
+import { SendToWall } from '../wall/SendToWall';
 import { ModeLadder, ModelPicker } from './SessionSettings';
 
 type TerminalProps = {
@@ -397,6 +398,12 @@ export function SessionHeader({
           <Icon of={FolderGit2} /> Move to project…
         </button>
       ) : null}
+      {guest ? null : (
+        <SendToWall
+          target={{ kind: 'session', station_id: session.station_id, session_id: s.session_id }}
+          onOpen={close}
+        />
+      )}
       {canArchive ? (
         <button type="button" onClick={() => archived.toggle(ref)}>
           <Icon of={isArchived ? ArchiveRestore : Archive} /> {isArchived ? 'Unarchive' : 'Archive'}
