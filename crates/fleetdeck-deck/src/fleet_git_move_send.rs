@@ -413,6 +413,9 @@ impl Run {
             )
             .await
             .fail()?;
+        // The instance for `MoveIn`, checked on the target before any state
+        // advance and before `session.move_prepare` (FG-9).
+        let instance = self.instance(answer.provider_instance.as_ref()).await?;
         let publication = answer.publication.clone();
         let mut patch = MovePatch {
             publication: Some(publication.clone()),
@@ -448,7 +451,46 @@ impl Run {
         };
         // 4. Start (target).
         self.gate().await?;
-        self.move_in(publication, kind).await
+        self.move_in(publication, kind, instance).await
+    }
+
+    /// The provider instance of `MoveIn`: the one of the summary, else the one
+    /// of the export answer. The move aborts (`move_not_ready`) when there is
+    /// none or when the target has no such instance.
+    async fn instance(
+        &self,
+        exported: Option<&ProviderInstanceId>,
+    ) -> Result<ProviderInstanceId, Fail> {
+        let store = &self.ctx.store;
+        let facts = store
+            .move_in_facts(self.id())
+            .await
+            .map_err(|e| Fail::internal(&e))?
+            .ok_or_else(|| {
+                Fail::new("move_not_ready", "This session is not in a synced project.")
+            })?;
+        let instance = facts
+            .instance
+            .map(ProviderInstanceId::from)
+            .or_else(|| exported.cloned())
+            .filter(|i| !i.to_string().is_empty());
+        let Some(instance) = instance else {
+            return Err(Fail::new(
+                "move_not_ready",
+                format!("{} has no provider for this session.", facts.dst_name),
+            ));
+        };
+        let known = store
+            .station_info(&self.dst)
+            .is_some_and(|(info, _)| info.providers.iter().any(|p| p.instance == instance));
+        if known {
+            Ok(instance)
+        } else {
+            Err(Fail::new(
+                "move_not_ready",
+                format!("{} has no provider named {instance}.", facts.dst_name),
+            ))
+        }
     }
 
     /// Step 3: prepare the target and pipe the files.
@@ -483,7 +525,12 @@ impl Run {
     }
 
     /// Step 4: build `MoveIn` and send it.
-    async fn move_in(&self, publication: MovePublication, kind: MoveKind) -> Result<(), Fail> {
+    async fn move_in(
+        &self,
+        publication: MovePublication,
+        kind: MoveKind,
+        instance: ProviderInstanceId,
+    ) -> Result<(), Fail> {
         let store = &self.ctx.store;
         let facts = store
             .move_in_facts(self.id())
@@ -515,7 +562,7 @@ impl Run {
         let command = SessionCommand::MoveIn {
             move_id: self.id(),
             kind,
-            provider_instance: ProviderInstanceId::from(facts.instance),
+            provider_instance: instance,
             title: facts.title,
             callsign_hint: facts.callsign,
             from: MoveFrom {

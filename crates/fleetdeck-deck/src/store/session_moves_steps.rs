@@ -191,7 +191,9 @@ pub struct InFacts {
     pub project_id: String,
     /// The folder of the target home.
     pub home_folder: String,
-    pub instance: String,
+    /// The instance of the summary; `None` for a session that never had
+    /// input (FG-9): the export answer has it then.
+    pub instance: Option<String>,
     pub title: Option<String>,
     pub callsign: Option<String>,
     pub digest: Option<String>,
@@ -527,11 +529,7 @@ impl DeckStore {
             Ok(Some(InFacts {
                 project_id: project.project_id,
                 home_folder: home.folder().unwrap_or_default().to_owned(),
-                instance: summary
-                    .provider_instance
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .unwrap_or_default(),
+                instance: summary.provider_instance.as_ref().map(ToString::to_string),
                 title: summary.title.clone(),
                 callsign: summary.callsign.clone(),
                 digest: summary.digest.clone(),

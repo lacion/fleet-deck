@@ -441,10 +441,13 @@ pub(super) fn authority_local(
 }
 
 /// The part of [`authority_local`] for a move: the station asks about the
-/// `MoveIn` command of a `starting` coordinator move. The command must carry
-/// exactly this authority, and the session must be the new session (or the
-/// row does not know it yet). The target rule of ADR-008 §4.2 gives
-/// `target_excluded` when the source or the target station left the grant.
+/// `MoveIn` command of a `starting` coordinator move, or about the `MoveOut`
+/// command of a move before its commit point (the graceful stop of the
+/// source, FG-9). The command must carry exactly this authority. For
+/// `MoveIn` the session must be the new session (or the row does not know it
+/// yet); for `MoveOut` it must be the source session. The target rule of
+/// ADR-008 §4.2 gives `target_excluded` when the source or the target
+/// station left the grant.
 fn move_authority_local(
     tx: &Connection,
     station: &StationId,
@@ -463,23 +466,56 @@ fn move_authority_local(
         )
         .optional()?
         .transpose()?;
+    // The stop of the source belongs to the `MoveOut` command (FG-9).
+    let out: Option<MoveRow> = if found.is_some() {
+        None
+    } else {
+        tx.query_row(
+            &format!(
+                "SELECT {COLS} FROM session_moves
+                 WHERE out_command_id = ?1 AND src_station = ?2
+                   AND state IN ('holding', 'exporting', 'importing', 'starting')"
+            ),
+            params![check.command_id.as_str(), station.as_str()],
+            |r| Ok(read(r)),
+        )
+        .optional()?
+        .transpose()?
+    };
     let asked = CommandAuthority {
         grant_id: check.grant_id.clone(),
         caller_station: check.caller_station.clone(),
         caller_session: check.caller_session.clone(),
         generation: check.generation,
     };
-    let Some(row) = found.filter(|r| {
+    let row = found.filter(|r| {
         r.authority.as_ref() == Some(&asked)
             && r.dst_session
                 .as_deref()
                 .is_none_or(|s| s == check.target_session.as_str())
-    }) else {
+    });
+    let for_out = row.is_none();
+    let row = row.or_else(|| {
+        out.filter(|r| {
+            r.authority.as_ref() == Some(&asked) && r.src_session == check.target_session.as_str()
+        })
+    });
+    let Some(row) = row else {
         return Ok(Err("unknown_command"));
     };
     let src = StationId::from(row.src_station.clone());
     let session = SessionId::from(row.src_session.clone());
-    let excluded = !grant.stations.contains(station)
+    // `MoveIn`: the asking station is the target. `MoveOut`: the source and
+    // the target must both be in the grant.
+    let outside = if for_out {
+        !grant.stations.contains(&src)
+            || !grant
+                .stations
+                .contains(&StationId::from(row.dst_station.clone()))
+    } else {
+        !grant.stations.contains(station)
+    };
+    let excluded = outside
         || super::coordinator::strict_refusal(tx, grant, (&src, &session), (false, now))?.is_some();
     Ok(Ok(AuthorityLocal {
         target_excluded: excluded,

@@ -642,5 +642,145 @@ async fn a_move_in_event_commits_or_aborts_a_starting_move_and_a_failed_resume_r
     assert_eq!(row.code.as_deref(), Some("move_resume_failed"));
 }
 
+#[tokio::test]
+async fn a_summary_without_an_instance_is_accepted_and_one_with_a_missing_instance_is_refused() {
+    let m = moves().await;
+    let mut none = pushed("s1");
+    none.provider_instance = None;
+    let mut ghost = pushed("s2");
+    ghost.provider_instance = Some("ghost".into());
+    m.show(vec![none, ghost]).await;
+    // The export answer has the instance of a session without one (FG-9).
+    m.started("c1", "s1").await;
+    let (code, text) = refused(m.ask("c2", "s2").await);
+    assert_eq!(code, "move_not_ready");
+    assert_eq!(text, "bravo has no provider named ghost.");
+}
+
+/// A coordinator move of `session` with a new grant over `stations`.
+async fn coordinator_move(
+    m: &Moves,
+    session: &str,
+    stations: &[&StationId],
+) -> (String, CommandAuthority, MoveRow) {
+    let mut grant = crate::store::grants::NewGrant::new(m.w.st.clone(), "coord".into());
+    grant.classes = BTreeSet::from([crate::store::grants::GrantClass::Manage]);
+    grant.stations = stations.iter().map(|s| (*s).clone()).collect();
+    grant.scope = fleetdeck_proto::command::GrantScope::Fleet;
+    let stored = m.w.s.create_grant(grant).await.unwrap();
+    let binding = fleetdeck_proto::mutation::CoordinatorBinding {
+        binding_id: format!("b-{session}"),
+        grant_id: stored.grant_id.clone(),
+        generation: 1,
+        provider_instance: "claude".into(),
+        native_id: format!("n-{session}"),
+    };
+    assert!(m.w.s.bind_grant(binding).await.unwrap());
+    let authority = CommandAuthority {
+        grant_id: stored.grant_id.clone(),
+        caller_station: m.w.st.clone(),
+        caller_session: "coord".into(),
+        generation: 1,
+    };
+    let mut req = m.request(&format!("k-{session}"), session);
+    req.requested_by = format!("coordinator:{}", stored.grant_id);
+    req.authority = Some(authority.clone());
+    let MoveRequested::Started { move_id } =
+        m.w.s.move_request(req, env(&["claude"])).await.unwrap()
+    else {
+        panic!("refused");
+    };
+    let row = m.row(&move_id).await;
+    (move_id, authority, row)
+}
+
+fn out_check(
+    authority: &CommandAuthority,
+    row: &MoveRow,
+    session: &str,
+) -> fleetdeck_proto::mutation::AuthorityCheck {
+    fleetdeck_proto::mutation::AuthorityCheck {
+        grant_id: authority.grant_id.clone(),
+        generation: 1,
+        caller_station: authority.caller_station.clone(),
+        caller_session: "coord".into(),
+        target_session: session.into(),
+        command_id: row.out_command_id.clone().into(),
+        launch: None,
+    }
+}
+
+#[tokio::test]
+async fn the_station_check_finds_the_move_out_command_before_the_commit_point() {
+    let m = moves().await;
+    m.w.s.set_fleet_control(true);
+    m.show(vec![pushed("s1")]).await;
+    let (move_id, authority, row) = coordinator_move(&m, "s1", &[&m.w.st, &m.bravo]).await;
+    let check = |session: &str| out_check(&authority, &row, session);
+    let ask = |c| m.w.s.authority_local(m.w.st.clone(), c);
+    // `holding`: the stop of the source is allowed.
+    assert!(!ask(check("s1")).await.unwrap().unwrap().target_excluded);
+    // The target station, another session and another authority are unknown.
+    assert_eq!(
+        m.w.s
+            .authority_local(m.bravo.clone(), check("s1"))
+            .await
+            .unwrap()
+            .unwrap_err(),
+        "unknown_command"
+    );
+    assert_eq!(
+        ask(check("s2")).await.unwrap().unwrap_err(),
+        "unknown_command"
+    );
+    let mut other = check("s1");
+    other.caller_session = "other".into();
+    // (The grant layer refuses an unbound caller before the move lookup.)
+    assert_eq!(ask(other).await.unwrap().unwrap_err(), "caller_unbound");
+    // Before the commit point the states `exporting` to `starting` pass too.
+    let steps: [(&'static [MoveState], MoveState); 3] = [
+        (&[MoveState::Holding], MoveState::Exporting),
+        (&[MoveState::Exporting], MoveState::Importing),
+        (&[MoveState::Importing], MoveState::Starting),
+    ];
+    for (from, to) in steps {
+        m.w.s
+            .move_advance(move_id.clone(), from, to, MovePatch::default())
+            .await
+            .unwrap();
+        assert!(!ask(check("s1")).await.unwrap().unwrap().target_excluded);
+    }
+    // After the commit point the command is unknown.
+    m.w.s
+        .move_advance(
+            move_id,
+            &[MoveState::Starting],
+            MoveState::Committed,
+            MovePatch::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        ask(check("s1")).await.unwrap().unwrap_err(),
+        "unknown_command"
+    );
+}
+
+#[tokio::test]
+async fn a_move_out_check_excludes_a_target_outside_the_grant() {
+    let m = moves().await;
+    m.w.s.set_fleet_control(true);
+    m.show(vec![pushed("s1")]).await;
+    // The grant covers the source station only.
+    let (_, authority, row) = coordinator_move(&m, "s1", &[&m.w.st]).await;
+    let answer =
+        m.w.s
+            .authority_local(m.w.st.clone(), out_check(&authority, &row, "s1"))
+            .await
+            .unwrap()
+            .unwrap();
+    assert!(answer.target_excluded);
+}
+
 #[path = "session_moves_more_tests.rs"]
 mod more;
