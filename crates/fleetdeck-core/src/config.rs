@@ -23,13 +23,11 @@ use serde::Deserialize;
 use crate::netscope::{self, AddrError};
 use crate::paths::{Env, PathError, expand_path};
 use crate::secret::Secret;
-use crate::settings::refs;
 
 #[path = "config_model_help.rs"]
 mod model_help_cfg;
 #[cfg(test)]
 pub(crate) use model_help_cfg::RAW_MODEL_HELP_KEYS;
-use model_help_cfg::RawModelHelp;
 pub use model_help_cfg::{
     DEFAULT_ASSIST_CLAUDE_MODEL, DEFAULT_ASSIST_CODEX_MODEL, DEFAULT_ASSIST_DAILY_TOKEN_CAP,
     DEFAULT_ASSIST_MAX_OUTPUT_TOKENS, ModelHelpConfig,
@@ -47,13 +45,19 @@ mod tailnet_cfg;
 pub(crate) use tailnet_cfg::valid_dns_name;
 #[path = "config_owner_file.rs"]
 mod owner_file;
+#[path = "config_raw.rs"]
+mod raw_cfg;
+pub(crate) use raw_cfg::RAW_INSTANCE_KEYS;
+#[cfg(test)]
+pub(crate) use raw_cfg::RAW_STATION_KEYS;
+use raw_cfg::{RawEnvValue, RawStation, parse_instances};
 #[path = "config_toml.rs"]
 mod toml_text;
 #[path = "config_trackers.rs"]
 mod trackers_cfg;
 use owner_file::{has_plain_env, read_owner_file};
 use toml_text::toml_error;
-use trackers_cfg::{RawTracker, parse_trackers};
+use trackers_cfg::parse_trackers;
 pub use trackers_cfg::{TokenError, TokenSource, TrackerConfig};
 
 pub const DEFAULT_MAX_SESSIONS: u32 = 12;
@@ -273,85 +277,6 @@ pub struct StationConfig {
     pub tailscale_bin: Option<PathBuf>,
 }
 
-/// The keys of `station.toml` (`RawStation`). `model_help` is a table; its
-/// keys are in [`RAW_MODEL_HELP_KEYS`].
-#[cfg(test)]
-pub(crate) const RAW_STATION_KEYS: &[&str] = &[
-    "name",
-    "allowed_roots",
-    "max_sessions",
-    "allow_setup_cmd",
-    "allow_shell",
-    "allow_bypass_permissions",
-    "allow_fleet_control",
-    "allow_desktop",
-    "max_shells",
-    "offline_approval_policy",
-    "listen",
-    "provider_instance",
-    "host",
-    "shim_buffer_mib",
-    "repo_groups",
-    "hibernate_after_min",
-    "trackers",
-    "member_deny",
-    "model_help",
-    "tailscale_bin",
-];
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawStation {
-    name: Option<String>,
-    allowed_roots: Option<Vec<String>>,
-    max_sessions: Option<u32>,
-    allow_setup_cmd: Option<bool>,
-    allow_shell: Option<bool>,
-    allow_bypass_permissions: Option<bool>,
-    allow_fleet_control: Option<bool>,
-    allow_desktop: Option<bool>,
-    max_shells: Option<u32>,
-    offline_approval_policy: Option<String>,
-    listen: Option<Vec<String>>,
-    provider_instance: Option<Vec<RawInstance>>,
-    host: Option<String>,
-    shim_buffer_mib: Option<u32>,
-    repo_groups: Option<BTreeMap<String, String>>,
-    hibernate_after_min: Option<u32>,
-    trackers: Option<Vec<RawTracker>>,
-    member_deny: Option<Vec<String>>,
-    model_help: Option<RawModelHelp>,
-    tailscale_bin: Option<String>,
-}
-
-/// The keys of one `[[provider_instance]]` (`RawInstance`).
-pub(crate) const RAW_INSTANCE_KEYS: &[&str] = &["id", "driver", "binary", "config_home", "env"];
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawInstance {
-    id: String,
-    driver: Driver,
-    binary: Option<String>,
-    config_home: Option<String>,
-    #[serde(default)]
-    env: BTreeMap<String, RawEnvValue>,
-}
-
-/// An `env` value: the plain text, or a reference to the secret store.
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum RawEnvValue {
-    Plain(String),
-    Reference(RawSecretRef),
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawSecretRef {
-    secret: String,
-}
-
 impl StationConfig {
     /// Reads `path`; a missing file gives the defaults. A secret reference
     /// is an error here: use [`Self::load_with_store`].
@@ -518,67 +443,6 @@ impl StationConfig {
 
 /// The most `member_deny` patterns.
 const MAX_MEMBER_DENY: usize = 200;
-
-fn parse_instances(
-    list: Vec<RawInstance>,
-    home: Option<&Path>,
-    store: Option<&Path>,
-) -> Result<Vec<ProviderInstance>, ConfigError> {
-    let mut out: Vec<ProviderInstance> = Vec::with_capacity(list.len());
-    for (i, raw) in list.into_iter().enumerate() {
-        let field = |k: &str| format!("provider_instance[{i}].{k}");
-        if !valid_instance_id(&raw.id) {
-            return Err(invalid(
-                field("id"),
-                format!(
-                    "`{}`: use 1-32 of a-z, 0-9, `-`, `_`, starting with a letter or digit",
-                    raw.id
-                ),
-            ));
-        }
-        if out.iter().any(|o| o.id.as_str() == raw.id) {
-            return Err(invalid(field("id"), format!("`{}` is used twice", raw.id)));
-        }
-        let binary = match raw.binary.filter(|b| !b.is_empty()) {
-            None => PathBuf::from(raw.driver.default_binary()),
-            Some(b) if !b.contains('/') => PathBuf::from(b),
-            Some(b) => expand_path(&b, home).map_err(|source| ConfigError::Path {
-                field: field("binary"),
-                source,
-            })?,
-        };
-        let config_home = match raw.config_home.filter(|c| !c.is_empty()) {
-            None => None,
-            Some(c) => Some(expand_path(&c, home).map_err(|source| ConfigError::Path {
-                field: field("config_home"),
-                source,
-            })?),
-        };
-        let mut env = BTreeMap::new();
-        for (key, value) in raw.env {
-            let value = match value {
-                RawEnvValue::Plain(text) => text,
-                RawEnvValue::Reference(r) => refs::read_reference(store, &r.secret)
-                    .map_err(|m| invalid(field("env"), format!("`{key}`: {m}")))?,
-            };
-            if !valid_env_key(&key) || value.contains('\0') {
-                return Err(invalid(
-                    field("env"),
-                    format!("`{key}` is not a valid variable"),
-                ));
-            }
-            env.insert(key, Secret::new(value));
-        }
-        out.push(ProviderInstance {
-            id: ProviderInstanceId::new(raw.id),
-            driver: raw.driver,
-            binary,
-            config_home,
-            env,
-        });
-    }
-    Ok(out)
-}
 
 /// The validated `deck.toml`.
 #[derive(Debug, Clone, PartialEq, Eq)]
