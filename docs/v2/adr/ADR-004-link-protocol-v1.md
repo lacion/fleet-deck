@@ -132,6 +132,7 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `fleet_git.move.v1` | `session.move_out`, `session.move_export`, `session.move_prepare`, `session.move_in`, `session.move_finish`, `session.move_release`, `session.move_abort`, `session.move_discard`, `session.move_status`, `session.move_fail`, `session.move_undo`, the stream purposes `move-export:` and `move-import:`, and the events `session.moved`, `session.move_in`, `session.move_undone` (Fleet Git phase 4, ADR-009; move a session to another station) |
 | `desktop_authority.v1` | `desktop.act` with the `authority` param, and `Hello.desktop_epoch` (R13 §5E to §5G, DL-230; the deck authorizes each desktop action and the station checks it before the first side effect) |
 | `display_changes.v1` | `files.display_changes` (R13 §5D item 13, DL-222; protected change statistics and patches for a wall display) |
+| `desktop_shell.v1` | `fleet.summary`, `display.directive`, `station.palette` (R13 P4, `omarchy-p4.md` §3.1; the fleet summary the deck sends to a station, the wall hotkeys and the Omarchy theme palette of the desktop shell) |
 | `pair_request.v1` | The pair-channel frames `pair_request`, `pair_pending`, `pair_approved` and `pair_resume` (DL-178, §10): a station asks a deck to pair without an invitation and the owner approves on the board |
 
 A method whose feature was not negotiated gets the error `feature_not_negotiated`. Behaviour depends on the negotiated features, not only on the version.
@@ -449,6 +450,7 @@ close             { reason, detail }
 | `desktop.info` | deck → station | read | `desktop.v1` | no |
 | `desktop.act` | deck → station | drive | `desktop_authority.v1` | no |
 | `files.display_changes` | deck → station | read | `display_changes.v1` | no |
+| `fleet.summary` | deck → station | read | `desktop_shell.v1` | no |
 | `approval.answer` | deck → station | approve | — | yes |
 | `station.configure` | deck → station | admin | — | yes |
 | `link.rotate_key` | either → either | admin | — | yes |
@@ -483,6 +485,8 @@ close             { reason, detail }
 | `session.move_status` | deck → station | read | `fleet_git.move.v1` | no |
 | `session.move_fail` | deck → station | admin | `fleet_git.move.v1` | no |
 | `session.move_undo` | deck → station | admin | `fleet_git.move.v1` | yes |
+| `display.directive` | station → deck | admin | `desktop_shell.v1` | no |
+| `station.palette` | station → deck | admin | `desktop_shell.v1` | no |
 
 - **`workspace.list` (added in M2 P4-4, DL-061, under the extension rule of §3: "every new method must declare a scope and, if needed, a feature"):** the directory picker of the board's spawn form. It lists the sub-directories of a path inside the station's allowed roots (`WorkspaceQuery` → `WorkspaceListing`). It reads only, but it needs `drive` because only a caller that may start a session needs the station's directory names. Errors: `missing_workspace`, `outside_roots`, `timeout`.
 - **`workspace.worktrees` (DL-142; feature `workspace.worktrees.v1`):** `workspace.worktrees` (DL-142) is read only: it lists the worktrees that the station created for sessions, with what Git reports about each (dirty and ignored entries, commits on no fetched remote ref, registration, last commit). It runs no Git command that writes.

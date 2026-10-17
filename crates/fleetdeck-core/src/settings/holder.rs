@@ -100,6 +100,7 @@ impl Holder for StationHolder {
         );
         m.insert("allow_fleet_control".into(), json!(c.allow_fleet_control));
         m.insert("allow_desktop".into(), json!(c.allow_desktop));
+        m.insert("fleet_summary".into(), json!(c.fleet_summary));
         m.insert("max_shells".into(), json!(c.max_shells));
         m.insert(
             "offline_approval_policy".into(),
@@ -230,6 +231,7 @@ impl Holder for StationHolder {
             "allow_fleet_control",
         );
         add(!old.allow_desktop && new.allow_desktop, "allow_desktop");
+        add(!old.fleet_summary && new.fleet_summary, "fleet_summary");
         add(
             new.allowed_roots
                 .iter()

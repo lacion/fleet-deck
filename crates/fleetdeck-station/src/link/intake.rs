@@ -37,6 +37,9 @@ mod intake_desktop;
 // Fleet Git phase 1: `fleet_git.projects_set` and `fleet_git.push_now`.
 #[path = "intake_fleet_git.rs"]
 mod intake_fleet_git;
+// R13 P4: `fleet.summary` (a stub until task B2).
+#[path = "intake_summary.rs"]
+mod intake_summary;
 use crate::store::{Caller, DecideError, StoreError, peers};
 pub(super) use intake_fleet_git::{PauseGuard, move_export, move_prepare};
 
@@ -534,6 +537,7 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
                 config: ctx.fleet_git.config(),
                 taildrive: ctx.fleet_git.taildrive_report(),
                 fleet_git: Some(intake_fleet_git::info(&ctx.fleet_git, &policy).await),
+                fleet_summary: Some(policy.fleet_summary()),
             })
         }
         "workspace.list" => workspaces(ctx, req.params).await,
@@ -571,6 +575,7 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
         "project.fetch" => intake_fleet_git::fetch(&ctx.manager, &ctx.fleet_git, req.params).await,
         "project.ensure_home" => intake_fleet_git::ensure_home(ctx, req.params).await,
         "project.home_status" => intake_fleet_git::home_status(ctx, req.params).await,
+        "fleet.summary" => intake_summary::fleet_summary(ctx, req.params),
         "session.branches" | "files.branch_diff" => {
             branch_method(ctx, &req.method, req.params).await
         }

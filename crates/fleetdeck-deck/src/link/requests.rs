@@ -45,6 +45,11 @@ pub(crate) async fn answer(
         "fleet_git.artifact_authorize" => {
             super::fleet_git_artifacts::artifact_authorize(ctx, station, &req).await
         }
+        // R13 P4 (`desktop_shell.v1`): stubs until tasks E and F1.
+        "display.directive" => {
+            super::display_directive::display_directive(&station, req.params.clone())
+        }
+        "station.palette" => super::palette::station_palette(&station, req.params.clone()),
         method => Outcome::Err(WireError::new(
             NOT_IMPLEMENTED,
             format!("the deck does not serve `{method}` in this build"),

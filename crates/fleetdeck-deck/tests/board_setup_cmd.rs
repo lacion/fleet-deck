@@ -50,6 +50,7 @@ fn info(allow_setup_cmd: Option<bool>) -> StationInfo {
         config: None,
         taildrive: None,
         fleet_git: None,
+        fleet_summary: None,
     }
 }
 

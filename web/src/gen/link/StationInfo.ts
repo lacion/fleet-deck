@@ -75,4 +75,10 @@ taildrive?: TaildriveReport,
 /**
  * The Fleet Git settings of the station (FG-5).
  */
-fleet_git?: FleetGitInfo, };
+fleet_git?: FleetGitInfo, 
+/**
+ * The live `fleet_summary` setting of the station (R13 P4): the deck
+ * sends the fleet summary only when it is `Some(true)`. Absent from an
+ * older station.
+ */
+fleet_summary?: boolean, };

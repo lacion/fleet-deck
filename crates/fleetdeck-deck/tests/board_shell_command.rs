@@ -38,6 +38,7 @@ fn info(allow_shell: Option<bool>) -> StationInfo {
         config: None,
         taildrive: None,
         fleet_git: None,
+        fleet_summary: None,
     }
 }
 

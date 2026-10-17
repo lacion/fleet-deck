@@ -41,6 +41,7 @@ fn view(name: &str, live: u64) -> StationView {
             config: None,
             taildrive: None,
             fleet_git: None,
+            fleet_summary: None,
         }),
         info_at: None,
         display_resources: None,

@@ -26,10 +26,12 @@
 pub mod coordinator_git_reads;
 mod coordinator_reads;
 pub mod desktop_authority;
+mod display_directive;
 pub mod fleet_git_artifacts;
 pub mod fleet_git_sync;
 mod info;
 mod outbox;
+mod palette;
 mod requests;
 pub mod router;
 pub mod runtime;
@@ -553,6 +555,7 @@ mod tests {
             config: None,
             taildrive: None,
             fleet_git: None,
+            fleet_summary: None,
         }
     }
 

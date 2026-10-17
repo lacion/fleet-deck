@@ -52,6 +52,9 @@ use crate::files::{
     FileSearchQuery, SessionDiff, SessionDiffQuery, TurnDiff, TurnDiffQuery,
 };
 use crate::fleet_git as fg;
+use crate::fleet_summary::{
+    DeckState, FleetSummary, NeedsYouItem, SummaryCounts, SummaryStation, SummaryUsage,
+};
 use crate::history::{
     HistoryItem, HistoryKind, HistoryState, HistoryTool, HistoryUnavailable, SessionHistory,
     SessionHistoryQuery, ToolResult,
@@ -74,6 +77,7 @@ use crate::orchestration::{
     AssignOutcome, AssignRequest, GrantView, GroupMailRequest, MailRequest, MailView,
     TaskCompletion, TaskRequest, TaskView, TaskWaitAnswer,
 };
+use crate::palette::{PaletteColors, PaletteMode, StationPalette};
 use crate::plans::{DeckPlan, PlanMarkRequest, PlanStatus};
 use crate::resources::{
     CpuLoad, DiskSpace, MemoryUse, ResourceKind, ResourceWarning, SessionLoad, StationResources,
@@ -270,6 +274,15 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         PairingState::export_all(&cfg),
         PairingPoll::export_all(&cfg),
         DisplaySelf::export_all(&cfg),
+        DeckState::export_all(&cfg),
+        SummaryCounts::export_all(&cfg),
+        NeedsYouItem::export_all(&cfg),
+        SummaryUsage::export_all(&cfg),
+        SummaryStation::export_all(&cfg),
+        FleetSummary::export_all(&cfg),
+        PaletteMode::export_all(&cfg),
+        PaletteColors::export_all(&cfg),
+        StationPalette::export_all(&cfg),
         DisplayLinkMade::export_all(&cfg),
         ShareRequest::export_all(&cfg),
         ShareLink::export_all(&cfg),

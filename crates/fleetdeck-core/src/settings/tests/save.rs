@@ -299,6 +299,10 @@ fn the_danger_rules() {
     assert_eq!(d("", "allow_desktop = true"), vec!["allow_desktop"]);
     assert!(d("allow_desktop = true", "allow_desktop = false").is_empty());
     assert!(d("", "allow_desktop = false").is_empty());
+    // Fleet summary (R13 P4): off to on is a danger change, on to off is not.
+    assert_eq!(d("", "fleet_summary = true"), vec!["fleet_summary"]);
+    assert!(d("fleet_summary = true", "fleet_summary = false").is_empty());
+    assert!(d("", "fleet_summary = false").is_empty());
     assert_eq!(
         d(
             "allowed_roots = [\"/a\"]",
@@ -395,6 +399,31 @@ fn the_deck_holder_saves_and_checks_its_danger_keys() {
     assert_eq!(saved.restart_needed, vec!["tailnet_hostname"]);
     let text = std::fs::read_to_string(&deck).unwrap();
     assert!(text.contains("name = \"d\""), "{text}");
+}
+
+#[test]
+fn turning_the_fleet_summary_on_needs_elevation_and_off_does_not() {
+    let fx = Fixture::new(Some("name = \"box\"\n"));
+    let w = fx.writer();
+    let view = crate::settings::view_station(&fx.config, &fx.env, &fx.store, &[]).unwrap();
+    assert_eq!(view.values["fleet_summary"], json!(false));
+    let on = change_with(&view.revision, json!({ "fleet_summary": true }));
+    let err = w.save(&on, false, ok_prepare).unwrap_err();
+    assert_eq!(
+        err,
+        SaveError::ElevationRequired {
+            keys: vec!["fleet_summary".into()]
+        }
+    );
+    let (saved, new, ()) = w.save(&on, true, ok_prepare).unwrap();
+    assert!(new.fleet_summary);
+    assert_eq!(saved.applied, vec!["fleet_summary"]);
+    assert!(fx.text().contains("fleet_summary = true"), "{}", fx.text());
+    let view = crate::settings::view_station(&fx.config, &fx.env, &fx.store, &[]).unwrap();
+    let off = change_with(&view.revision, json!({ "fleet_summary": false }));
+    let (saved, new, ()) = w.save(&off, false, ok_prepare).unwrap();
+    assert!(!new.fleet_summary);
+    assert_eq!(saved.applied, vec!["fleet_summary"]);
 }
 
 #[test]
