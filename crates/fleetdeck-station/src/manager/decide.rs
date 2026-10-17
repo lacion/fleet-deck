@@ -19,6 +19,9 @@ use crate::store::{
 use crate::workspace::clone_reuse::{self, CloneTarget};
 use crate::workspace::provision;
 
+#[path = "decide_workspace.rs"]
+mod workspace;
+
 /// The run origin of an input from `origin` (PLAN §6.3).
 #[must_use]
 pub fn run_origin(origin: CommandOrigin) -> RunOrigin {
@@ -71,7 +74,7 @@ pub fn decide(
             origin_text,
         } => {
             if let Some(cmd) = &setup_cmd {
-                check_setup_cmd(policy, origin_run, cmd)?;
+                workspace::check_setup_cmd(policy, origin_run, cmd)?;
             }
             if let Some(why) = batch.as_deref().and_then(BatchRef::problem) {
                 return Err(reject(RejectCode::InvalidCommand, why));
@@ -506,7 +509,7 @@ fn start(
             .as_deref()
             .and_then(provision::ticket_key),
     };
-    let callsign = new_callsign(d, &session_id, active, ticket.as_deref())?;
+    let callsign = workspace::new_callsign(d, &session_id, active, ticket.as_deref())?;
     let mut worktree = None;
     if let Some(WorkspaceRequest::Worktree { branch, base }) = &workspace {
         let (worktree_plan, path) =
@@ -606,48 +609,6 @@ fn start(
     };
     d.enqueue(&session_id, payload)?;
     Ok(result(&session_id, input_id))
-}
-
-/// The longest setup command, in characters (DL-148).
-const MAX_SETUP_CMD_CHARS: usize = 4096;
-
-/// The refusals of a setup command, in this order: the station policy, a
-/// coordinator origin, then the text (DL-148).
-fn check_setup_cmd(policy: &Policy, origin: RunOrigin, cmd: &str) -> Result<(), DecideError> {
-    if !policy.allow_setup_cmd() {
-        return Err(reject(
-            RejectCode::Forbidden,
-            "setup commands are off on this station (allow_setup_cmd = false)",
-        ));
-    }
-    if origin == RunOrigin::Coordinator {
-        return Err(reject(
-            RejectCode::Forbidden,
-            "a coordinator start cannot carry a setup command",
-        ));
-    }
-    if cmd.trim().is_empty() || cmd.chars().count() > MAX_SETUP_CMD_CHARS || cmd.contains('\0') {
-        return Err(reject(
-            RejectCode::InvalidCommand,
-            "the setup command must be 1 to 4096 characters without NUL",
-        ));
-    }
-    Ok(())
-}
-
-/// The first free callsign of the station for a new session (DL-200).
-fn new_callsign(
-    d: &Decision<'_>,
-    session_id: &SessionId,
-    start: u64,
-    ticket: Option<&str>,
-) -> Result<String, DecideError> {
-    for candidate in provision::callsign_candidates(session_id.as_str(), start, ticket) {
-        if !d.callsign_taken(&candidate)? {
-            return Ok(candidate);
-        }
-    }
-    Err(reject(RejectCode::InvalidState, "no free callsign"))
 }
 
 /// The session's projection, if it can take `op` now: it exists, has not
