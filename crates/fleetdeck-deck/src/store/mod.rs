@@ -58,6 +58,7 @@ pub mod project_sessions;
 pub mod projects;
 pub mod projects_git;
 pub(crate) mod projects_legacy;
+pub mod radar;
 pub mod read_cursors;
 pub mod read_model;
 pub mod review;

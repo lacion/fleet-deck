@@ -16,9 +16,11 @@ use fleetdeck_proto::fleet_git::{
     GitHomeState, GitProjectView, GitSnapshot, HomeCheck, RemoteIdentity, SnapshotAck, StationHome,
 };
 use rusqlite::{Connection, OptionalExtension, params};
+use std::collections::BTreeSet;
 
 use super::project_homes::{apply_check, home_on};
 use super::projects_git::clone_url;
+use super::radar::effective_radar_home;
 use super::{DeckStore, Result, call, to_i64, to_u64};
 
 /// The checks that `station` answered last.
@@ -63,7 +65,7 @@ pub(super) fn clear_checks(conn: &Connection, project: &str) -> Result<()> {
 /// with its real generation (a home without a path sends its reserved path);
 /// `projects` lists the sync projects whose home here is `ready` or
 /// `unverified`.
-fn build(conn: &Connection, station: &str) -> Result<GitSnapshot> {
+fn build(conn: &Connection, station: &str, always_on: &BTreeSet<String>) -> Result<GitSnapshot> {
     let mut snapshot = GitSnapshot {
         revision: 0,
         projects: Vec::new(),
@@ -104,11 +106,8 @@ fn build(conn: &Connection, station: &str) -> Result<GitSnapshot> {
             clone_url: clone_url(url, p.remote_ssh_user.as_deref()),
             home_generation: home.generation,
             home_path: home.folder().unwrap_or_default().to_owned(),
-            radar_home: p
-                .git
-                .radar_home
-                .as_ref()
-                .is_some_and(|s| s.as_str() == station),
+            // The effective radar home, the default of §10.1 included (FG-7).
+            radar_home: effective_radar_home(&p, always_on).is_some_and(|s| s.as_str() == station),
         });
     }
     Ok(snapshot)
@@ -137,9 +136,10 @@ impl DeckStore {
     ) -> Result<Option<GitSnapshot>> {
         let station = station.0.clone();
         let now = self.now_ms();
+        let always_on = self.always_on_stations();
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
-            let mut snapshot = build(&tx, &station)?;
+            let mut snapshot = build(&tx, &station, &always_on)?;
             let digest = digest_of(&snapshot)?;
             let row: Option<(i64, String, Option<i64>)> = tx
                 .query_row(

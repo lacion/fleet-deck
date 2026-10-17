@@ -52,6 +52,7 @@ pub async fn sync_station(ctx: &Arc<DeckLink>, station: StationId) {
     }
     ctx.homes_kick.link_started(station.as_str());
     ctx.land_kick.link_started(station.as_str());
+    ctx.radar_kick.link_started(station.as_str());
     send(ctx, &station, true).await;
 }
 

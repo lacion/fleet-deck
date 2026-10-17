@@ -301,7 +301,8 @@ async fn a_new_link_gets_the_snapshot_and_a_verified_check_makes_the_home_ready(
         (view.home_generation, view.home_path.as_str()),
         (1, "/work/app")
     );
-    assert!(!view.radar_home);
+    // The default radar home (FG-7, design §10.1): the one home of the project.
+    assert!(view.radar_home);
     assert_eq!(snapshot.homes.len(), 1);
     assert!(snapshot.homes[0].sync);
 

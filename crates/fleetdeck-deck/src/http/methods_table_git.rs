@@ -90,6 +90,14 @@ pub const API_GIT: &[ApiMethod] = &[
         Some(Scope::Admin),
         true,
     ),
+    // FG-7: the radar groups and notices; `read`, closed to members.
+    m(
+        "radar.list",
+        Method::GET,
+        "/api/radar",
+        Some(Scope::Read),
+        false,
+    ),
     // FG-11: the drift reference station.
     m(
         "fleet_git.prefs",

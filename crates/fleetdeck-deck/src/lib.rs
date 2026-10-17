@@ -8,6 +8,7 @@ pub mod fleet_git_homes;
 pub mod fleet_git_land;
 pub mod fleet_git_land_abandon;
 pub mod fleet_git_land_outbox;
+pub mod fleet_git_radar;
 pub mod http;
 pub mod link;
 pub mod live;
