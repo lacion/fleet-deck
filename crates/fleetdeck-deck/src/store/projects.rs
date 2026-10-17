@@ -2,12 +2,16 @@
 //! its forge and tracker bindings and the prompts for sessions that start
 //! from a ticket or a review. The deck stores bindings only, never a token.
 
+use fleetdeck_proto::fleet_git::GitSettings;
 use fleetdeck_proto::integrations::{ForgeBinding, Project, ProjectInput, TrackerBinding};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use super::{DeckError, DeckStore, Result, call, new_id};
 
-const COLUMNS: &str = "project_id, name, station_id, path, forge, trackers, prompt_template, review_prompt, created_at";
+const COLUMNS: &str = "project_id, name, station_id, path, forge, trackers, prompt_template, review_prompt, created_at, git, git_revision, repo, remote_url, remote_ssh_user, remote_dest";
+
+/// The columns that a new project sets; the Git columns keep their defaults.
+const INSERT_COLUMNS: &str = "project_id, name, station_id, path, forge, trackers, prompt_template, review_prompt, created_at";
 
 struct Raw {
     project_id: String,
@@ -19,6 +23,12 @@ struct Raw {
     prompt_template: Option<String>,
     review_prompt: Option<String>,
     created_at: i64,
+    git: String,
+    git_revision: i64,
+    repo: Option<String>,
+    remote_url: Option<String>,
+    remote_ssh_user: Option<String>,
+    remote_dest: Option<String>,
 }
 
 fn raw(r: &Row<'_>) -> rusqlite::Result<Raw> {
@@ -32,6 +42,12 @@ fn raw(r: &Row<'_>) -> rusqlite::Result<Raw> {
         prompt_template: r.get(6)?,
         review_prompt: r.get(7)?,
         created_at: r.get(8)?,
+        git: r.get(9)?,
+        git_revision: r.get(10)?,
+        repo: r.get(11)?,
+        remote_url: r.get(12)?,
+        remote_ssh_user: r.get(13)?,
+        remote_dest: r.get(14)?,
     })
 }
 
@@ -50,19 +66,50 @@ impl Raw {
             prompt_template: self.prompt_template,
             review_prompt: self.review_prompt,
             created_at: self.created_at,
+            // A malformed stored value is a corrupt store, as for `forge`.
+            git: serde_json::from_str::<GitSettings>(&self.git)?,
+            git_revision: super::to_u64(self.git_revision)?,
+            repo: self.repo,
+            remote_url: self.remote_url,
+            remote_ssh_user: self.remote_ssh_user,
+            remote_dest: self.remote_dest,
+            // Filled by `projects_git::derive` (FG-5, phase 1: one home).
+            homes: Vec::new(),
+            slugs: Vec::new(),
         })
     }
 }
 
-fn find(conn: &Connection, id: &str) -> Result<Option<Project>> {
-    conn.query_row(
-        &format!("SELECT {COLUMNS} FROM projects WHERE project_id = ?1"),
-        [id],
-        raw,
-    )
-    .optional()?
-    .map(Raw::parse)
-    .transpose()
+pub(super) fn find(conn: &Connection, id: &str) -> Result<Option<Project>> {
+    let found = conn
+        .query_row(
+            &format!("SELECT {COLUMNS} FROM projects WHERE project_id = ?1"),
+            [id],
+            raw,
+        )
+        .optional()?
+        .map(Raw::parse)
+        .transpose()?;
+    match found {
+        Some(project) => {
+            let mut one = [project];
+            super::projects_git::derive(conn, &mut one)?;
+            let [project] = one;
+            Ok(Some(project))
+        }
+        None => Ok(None),
+    }
+}
+
+/// The projects whose home is on `station`, oldest first.
+pub(super) fn of_station(conn: &Connection, station: &str) -> Result<Vec<Project>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {COLUMNS} FROM projects WHERE station_id = ?1 ORDER BY created_at, project_id"
+    ))?;
+    let rows = stmt.query_map([station], raw)?;
+    let mut projects = rows.map(|r| r?.parse()).collect::<Result<Vec<_>>>()?;
+    super::projects_git::derive(conn, &mut projects)?;
+    Ok(projects)
 }
 
 /// The text of an optional prompt: trimmed, `None` when empty.
@@ -84,7 +131,9 @@ impl DeckStore {
                 "SELECT {COLUMNS} FROM projects ORDER BY created_at, project_id"
             ))?;
             let rows = stmt.query_map([], raw)?;
-            rows.map(|r| r?.parse()).collect()
+            let mut projects = rows.map(|r| r?.parse()).collect::<Result<Vec<_>>>()?;
+            super::projects_git::derive(conn, &mut projects)?;
+            Ok(projects)
         })
         .await
     }
@@ -108,7 +157,7 @@ impl DeckStore {
         let out = call(&self.inner.db, move |conn| {
             conn.execute(
                 &format!(
-                    "INSERT INTO projects ({COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+                    "INSERT INTO projects ({INSERT_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
                 ),
                 params![
                     id,
@@ -146,9 +195,24 @@ impl DeckStore {
         input: ProjectInput,
     ) -> Result<Option<Project>> {
         let out = call(&self.inner.db, move |conn| {
-            let changed = conn.execute(
+            let tx = conn.transaction()?;
+            let old: Option<(String, String)> = tx
+                .query_row(
+                    "SELECT station_id, path FROM projects WHERE project_id = ?1",
+                    [&id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            let Some((old_station, old_path)) = old else {
+                return Ok(None);
+            };
+            // A new station or folder is a new home: the Git revision grows
+            // and no stored check of the old one applies (FG-5).
+            let moved = old_station != station_id || old_path != input.path;
+            tx.execute(
                 "UPDATE projects SET name = ?2, station_id = ?3, path = ?4, forge = ?5,
-                     trackers = ?6, prompt_template = ?7, review_prompt = ?8
+                     trackers = ?6, prompt_template = ?7, review_prompt = ?8,
+                     git_revision = git_revision + ?9
                  WHERE project_id = ?1",
                 params![
                     id,
@@ -163,12 +227,15 @@ impl DeckStore {
                     serde_json::to_string(&input.trackers)?,
                     prompt(&input.prompt_template),
                     prompt(&input.review_prompt),
+                    i64::from(moved),
                 ],
             )?;
-            if changed == 0 {
-                return Ok(None);
+            if moved {
+                super::git_snapshots::clear_checks(&tx, &id)?;
             }
-            find(conn, &id)
+            let found = find(&tx, &id)?;
+            tx.commit()?;
+            Ok(found)
         })
         .await;
         self.board_changed();
@@ -181,7 +248,11 @@ impl DeckStore {
     /// A database error.
     pub async fn delete_project(&self, id: String) -> Result<bool> {
         let out = call(&self.inner.db, move |conn| {
-            Ok(conn.execute("DELETE FROM projects WHERE project_id = ?1", [id])? > 0)
+            let tx = conn.transaction()?;
+            let deleted = tx.execute("DELETE FROM projects WHERE project_id = ?1", [&id])? > 0;
+            super::git_snapshots::clear_checks(&tx, &id)?;
+            tx.commit()?;
+            Ok(deleted)
         })
         .await;
         self.board_changed();

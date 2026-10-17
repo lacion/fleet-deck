@@ -25,6 +25,7 @@ fn project() -> Project {
         prompt_template: None,
         review_prompt: None,
         created_at: 0,
+        ..Project::default()
     }
 }
 

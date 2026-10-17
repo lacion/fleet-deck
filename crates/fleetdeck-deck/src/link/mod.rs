@@ -24,6 +24,7 @@
 //! DL-053).
 
 mod coordinator_reads;
+pub mod fleet_git_sync;
 mod outbox;
 mod requests;
 pub mod router;
@@ -32,7 +33,7 @@ pub mod streams;
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -473,7 +474,23 @@ fn fetch_info(ctx: &Arc<DeckLink>, control: &Control, id: &StationId, name: &str
         name.to_owned(),
     );
     tokio::spawn(async move {
-        let ask = || ask_info(&control);
+        // The first answer starts the Fleet Git snapshot (design §3.3).
+        let announced = Arc::new(AtomicBool::new(false));
+        let ask = || {
+            let (ctx, control, id, announced) = (
+                Arc::clone(&ctx),
+                control.clone(),
+                id.clone(),
+                Arc::clone(&announced),
+            );
+            async move {
+                let answer = ask_info(&control).await;
+                if matches!(answer, Ok(Some(_))) && !announced.swap(true, Ordering::Relaxed) {
+                    tokio::spawn(async move { fleet_git_sync::sync_station(&ctx, id).await });
+                }
+                answer
+            }
+        };
         info_loop(
             &ctx.store,
             &id,

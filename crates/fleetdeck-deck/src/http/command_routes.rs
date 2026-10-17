@@ -15,8 +15,11 @@ use axum::http::StatusCode;
 use fleetdeck_proto::CommandId;
 use fleetdeck_proto::StationId;
 use fleetdeck_proto::board::{CommandRequest, valid_command_id};
-use fleetdeck_proto::command::{CommandOrigin, SessionCommand, UserInput, check_native_session_id};
+use fleetdeck_proto::command::{
+    CommandOrigin, SessionCommand, UserInput, WorkspaceRequest, check_native_session_id,
+};
 use fleetdeck_proto::event::RequestKind;
+use fleetdeck_proto::fleet_git::StartKind;
 use fleetdeck_proto::version::feature;
 
 use super::guard::ApiError;
@@ -302,6 +305,29 @@ async fn route(
                     "Shells are off on this station.".to_owned(),
                 ),
             ));
+        }
+    }
+    // Fleet Git (FG-1, design §2.1): only the deck says what a start does for
+    // a sync project. A value from the caller is dropped; the deck attaches
+    // its own for a start in the verified home of a sync project.
+    if let SessionCommand::Start {
+        spec,
+        workspace,
+        fleet_git,
+        ..
+    } = &mut command
+    {
+        *fleet_git = None;
+        let git_kind = match workspace.as_deref() {
+            None => Some(StartKind::InPlace),
+            Some(WorkspaceRequest::Worktree { .. }) => Some(StartKind::Worktree),
+            Some(_) => None,
+        };
+        if let Some(git_kind) = git_kind {
+            *fleet_git =
+                super::project_git_routes::attach_start(board, &rec, &spec.cwd, git_kind, None)
+                    .await
+                    .map_err(|e| (station.clone(), id.clone(), e))?;
         }
     }
     let kind = CommandKind::Session { command };
