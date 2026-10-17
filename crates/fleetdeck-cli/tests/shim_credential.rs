@@ -200,6 +200,7 @@ fn start_command(spec: SessionSpec, prompt: Option<&str>) -> SessionCommand {
         batch: None,
         issue: None,
         origin_text: false,
+        fleet_git: None,
     }
 }
 

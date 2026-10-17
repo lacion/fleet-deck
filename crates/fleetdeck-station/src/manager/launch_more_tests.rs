@@ -113,6 +113,7 @@ async fn a_codex_session_whose_folder_changed_after_the_spawn_is_stopped() {
             batch: None,
             issue: None,
             origin_text: false,
+            fleet_git: None,
         })
         .await;
     let s = started.receipt.result.unwrap().session_id.unwrap();

@@ -186,6 +186,7 @@ async fn an_open_revert_holds_the_worktree_against_other_sessions() {
             batch: None,
             issue: None,
             origin_text: false,
+            fleet_git: None,
         },
     )
     .await;

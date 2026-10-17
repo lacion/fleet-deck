@@ -42,6 +42,7 @@ use crate::files::{
     CheckpointRef, FileContent, FileListQuery, FileListing, FileReadQuery, FileSearch,
     FileSearchQuery, SessionDiff, SessionDiffQuery, TurnDiff, TurnDiffQuery,
 };
+use crate::fleet_git as fg;
 use crate::history::{
     HistoryItem, HistoryKind, HistoryState, HistoryTool, HistoryUnavailable, SessionHistory,
     SessionHistoryQuery, ToolResult,
@@ -369,6 +370,26 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         ExecutionCheckQuery::export_all(&cfg),
         ExecutionCheck::export_all(&cfg),
         ProcessInfo::export_all(&cfg),
+        fg::GitSettings::export_all(&cfg),
+        fg::PushMode::export_all(&cfg),
+        fg::CleanupMode::export_all(&cfg),
+        fg::LandMode::export_all(&cfg),
+        fg::StartKind::export_all(&cfg),
+        fg::FleetGitStart::export_all(&cfg),
+        fg::GitSnapshot::export_all(&cfg),
+        fg::GitProjectView::export_all(&cfg),
+        fg::StationHome::export_all(&cfg),
+        fg::SnapshotAck::export_all(&cfg),
+        fg::HomeCheck::export_all(&cfg),
+        fg::HomeCheckState::export_all(&cfg),
+        fg::RemoteIdentity::export_all(&cfg),
+        fg::PushState::export_all(&cfg),
+        fg::CleanupState::export_all(&cfg),
+        fg::PushInfo::export_all(&cfg),
+        fg::CleanupInfo::export_all(&cfg),
+        fg::SkippedFile::export_all(&cfg),
+        fg::PushNowParams::export_all(&cfg),
+        fg::PushNowAnswer::export_all(&cfg),
     ];
     for result in results {
         result.map_err(io::Error::other)?;

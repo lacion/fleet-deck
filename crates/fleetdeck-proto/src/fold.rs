@@ -14,6 +14,7 @@
 //! - An unknown event kind changes only the sequence and the time (L16).
 
 use crate::event::{Event, EventEnvelope, RateLimit, SessionState, Usage};
+use crate::fleet_git::{CleanupInfo, PushInfo};
 use crate::session::{
     Activity, MAX_RUNNING_TOOLS, OpenRequest, RunningTool, SUBAGENT_TASK_KINDS, SessionBase,
     SessionError, SessionRevert, SessionSummary, TerminalHold,
@@ -250,6 +251,36 @@ impl SessionSummary {
                 self.focus = Some(text.clone()).filter(|t| !t.is_empty());
             }
             Event::SessionBatch { batch } => self.batch = Some(batch.clone()),
+            Event::WorkspaceBaseStale { .. } => self.base_stale = true,
+            Event::SessionPush {
+                state,
+                ref_name,
+                oid,
+                desired_oid,
+                stop_code,
+                attempts,
+                next_attempt_at,
+                code,
+                text,
+            } => {
+                self.push = Some(PushInfo {
+                    state: *state,
+                    ref_name: ref_name.clone(),
+                    oid: oid.clone(),
+                    desired_oid: desired_oid.clone(),
+                    stop_code: stop_code.clone(),
+                    attempts: *attempts,
+                    next_attempt_at: *next_attempt_at,
+                    code: code.clone(),
+                    text: text.clone(),
+                });
+            }
+            Event::SessionCleanup { state, reason } => {
+                self.cleanup = Some(CleanupInfo {
+                    state: *state,
+                    reason: reason.clone(),
+                });
+            }
             Event::SessionHibernated { .. } => self.hibernated = true,
             Event::SessionEnded { .. } => {
                 if !matches!(self.state, SessionState::Lost) {
@@ -271,6 +302,8 @@ impl SessionSummary {
             // The reconciliation changes no summary field; the board reads the
             // execution check instead (DL-182).
             | Event::ExecutionReconciled { .. }
+            // The board reads the skipped files from the event (FG-4).
+            | Event::WorkspaceIncludeSkipped { .. }
             // A late checkpoint never changes the activity (L13).
             | Event::TurnFinalized { .. } => {}
         }

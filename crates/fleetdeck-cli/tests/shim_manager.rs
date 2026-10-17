@@ -270,6 +270,7 @@ async fn a_shim_session_keeps_its_turn_checkpoints_and_survives_a_station_restar
                 batch: None,
                 issue: None,
                 origin_text: false,
+                fleet_git: None,
             },
         )
         .await;
@@ -350,6 +351,7 @@ async fn start_session(rig: &mut Rig, station: &Station, prompt: &str) -> Sessio
                 batch: None,
                 issue: None,
                 origin_text: false,
+                fleet_git: None,
             },
         )
         .await;

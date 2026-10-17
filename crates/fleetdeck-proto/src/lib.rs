@@ -20,6 +20,7 @@ pub mod display;
 pub mod event;
 pub mod execution;
 pub mod files;
+pub mod fleet_git;
 pub mod fold;
 pub mod history;
 pub mod ids;

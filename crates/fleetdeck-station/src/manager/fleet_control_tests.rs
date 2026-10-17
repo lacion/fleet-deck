@@ -534,6 +534,7 @@ async fn a_fleet_control_start_is_checked_before_the_spawn() {
         batch: None,
         issue: None,
         origin_text: false,
+        fleet_git: None,
     };
     let command = start(&st);
     let d = st.coord(command).await;

@@ -141,6 +141,7 @@ async fn a_start_on_a_broken_version_is_refused_with_the_reason() {
             batch: None,
             issue: None,
             origin_text: false,
+            fleet_git: None,
         },
     };
     let decided = manager.submit(envelope, Caller::local()).await.unwrap();

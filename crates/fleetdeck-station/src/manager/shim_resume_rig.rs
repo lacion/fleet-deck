@@ -333,6 +333,7 @@ impl Rig {
                 batch: None,
                 issue: None,
                 origin_text: false,
+                fleet_git: None,
             })
             .await;
         let session = d.receipt.result.unwrap().session_id.unwrap();

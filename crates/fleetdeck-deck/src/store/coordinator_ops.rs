@@ -714,6 +714,7 @@ pub(super) fn start(
             batch: None,
             issue: None,
             origin_text: false,
+            fleet_git: None,
         },
         now,
     )?;

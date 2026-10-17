@@ -127,6 +127,10 @@ pub mod feature {
     /// §6, DL-201).
     pub const DESKTOP: &str = "desktop.v1";
 
+    /// `fleet_git.projects_set`, `fleet_git.push_now`, `SessionCommand::Start`
+    /// `fleet_git` and the Fleet Git phase 1 events (ADR-009).
+    pub const FLEET_GIT: &str = "fleet_git.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -162,6 +166,7 @@ pub mod feature {
         PAIR_REQUEST,
         SHELL_COMMAND,
         DESKTOP,
+        FLEET_GIT,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

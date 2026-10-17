@@ -10,6 +10,7 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::capability::Unsupported;
+use crate::fleet_git::FleetGitStart;
 use crate::ids::{
     CommandId, IncarnationId, InputId, ProviderInstanceId, RequestId, SessionId, TurnId,
 };
@@ -194,6 +195,11 @@ pub enum SessionCommand {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         #[ts(optional, as = "Option<bool>")]
         origin_text: bool,
+        /// The Fleet Git snapshot of the project (FG-1, design §3.3). Only a
+        /// deck that negotiated `fleet_git.v1` sends it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        fleet_git: Option<Box<FleetGitStart>>,
     },
     Resume {
         session_id: SessionId,

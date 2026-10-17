@@ -5,6 +5,8 @@ import type { ProviderKind } from "../event/ProviderKind";
 import type { RateLimit } from "../event/RateLimit";
 import type { SessionState } from "../event/SessionState";
 import type { Usage } from "../event/Usage";
+import type { CleanupInfo } from "../fleet_git/CleanupInfo";
+import type { PushInfo } from "../fleet_git/PushInfo";
 import type { ProviderInstanceId } from "../ids/ProviderInstanceId";
 import type { RunId } from "../ids/RunId";
 import type { SessionId } from "../ids/SessionId";
@@ -143,6 +145,19 @@ hibernated: boolean,
  * DL-164). Absent when the session was not started from an issue.
  */
 issue?: IssueRef, 
+/**
+ * The fetch before the start failed and the session started from the
+ * local `HEAD`, from `workspace.base_stale` (FG-1).
+ */
+base_stale?: boolean, 
+/**
+ * The push state of the session branch, from `session.push` (FG-2).
+ */
+push?: PushInfo, 
+/**
+ * The cleanup state of the worktree, from `session.cleanup` (FG-3).
+ */
+cleanup?: CleanupInfo, 
 /**
  * The highest `session_seq` folded into this summary.
  */

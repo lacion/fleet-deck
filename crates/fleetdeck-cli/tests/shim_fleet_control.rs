@@ -258,6 +258,7 @@ impl Rig {
             batch: None,
             issue: None,
             origin_text: false,
+            fleet_git: None,
         }
     }
 

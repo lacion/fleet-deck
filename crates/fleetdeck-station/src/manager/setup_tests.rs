@@ -73,6 +73,7 @@ pub(in crate::manager) fn start_with_setup(cwd: &str, cmd: &str) -> SessionComma
         batch: None,
         issue: None,
         origin_text: false,
+        fleet_git: None,
     }
 }
 
@@ -751,17 +752,7 @@ async fn a_setup_that_ends_during_a_committed_admission_ends_failed_and_never_st
 async fn ending_a_claimed_start_for_a_restart_is_a_no_op_unless_it_is_still_claimed() {
     let mut st = station(false).await;
     let cwd = st.workspace();
-    let d = st
-        .accepted(SessionCommand::Start {
-            spec: spec(&cwd, "claude"),
-            prompt: None,
-            workspace: None,
-            setup_cmd: None,
-            batch: None,
-            issue: None,
-            origin_text: false,
-        })
-        .await;
+    let d = st.accepted(plain_start(spec(&cwd, "claude"), None)).await;
     let session = d.receipt.result.unwrap().session_id.unwrap();
     let store = st.manager.store().clone();
     let deadline = tokio::time::Instant::now() + WAIT;
