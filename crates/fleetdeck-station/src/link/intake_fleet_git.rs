@@ -6,7 +6,8 @@ use std::path::Path;
 
 use fleetdeck_proto::fleet_git::{
     EnsureHomeParams, GitProjectView, GitSnapshot, HomeCheck, HomeCheckState, HomeStatusParams,
-    PushNowAnswer, PushNowParams, RadarParams, ShareVerdictParams, SnapshotAck, code,
+    LandAbandonParams, LandStatusParams, PushNowAnswer, PushNowParams, PushState, RadarParams,
+    ShareVerdictParams, SnapshotAck, code,
 };
 use fleetdeck_proto::link::{Outcome, WireError};
 
@@ -19,7 +20,9 @@ use crate::store::Store;
 use crate::store::git_state::SnapshotResult;
 use crate::store::home_attempts::HomeRefusal;
 use crate::workspace::GitOptions;
-use crate::workspace::fleet_git::{RadarEnv, RadarGuard, check_branches, check_home, run_radar};
+use crate::workspace::fleet_git::{
+    RadarEnv, RadarGuard, check_branches, check_home, is_ancestor, local_tip, run_radar,
+};
 
 /// The text of the code `unknown_session` (design §5.8).
 const UNKNOWN_SESSION: &str = "The station does not know this session.";
@@ -356,6 +359,13 @@ pub(super) async fn push_now(manager: &SessionManager, params: serde_json::Value
         Ok(Some(_)) => return Outcome::Err(WireError::new(code::HELD, HELD)),
         Err(e) => return internal(e),
     }
+    // After a land the row is `stopped` with `land_published`: it is due again
+    // when the local branch contains `R` (design §11.7, decision Q14).
+    match reopen_after_land(store, &query.session_id).await {
+        Ok(Some(state)) => return ok(PushNowAnswer { state }),
+        Ok(None) => {}
+        Err(e) => return internal(e),
+    }
     match store.git_push_now(query.session_id).await {
         Ok(Some(row)) => ok(PushNowAnswer { state: row.state }),
         Ok(None) => Outcome::Err(WireError::new(code::NOT_SYNCED, NOT_SYNCED)),
@@ -363,6 +373,73 @@ pub(super) async fn push_now(manager: &SessionManager, params: serde_json::Value
     }
 }
 
+/// The "Push now" rule of a row that a land stopped (design §11.7): the local
+/// tip must contain the published commit `R` and differ from it.
+async fn reopen_after_land(
+    store: &Store,
+    session_id: &fleetdeck_proto::SessionId,
+) -> Result<Option<PushState>, crate::store::StoreError> {
+    let Some(row) = store.git_push(session_id.clone()).await? else {
+        return Ok(None);
+    };
+    if row.state != PushState::Stopped
+        || row.stop_code.as_deref() != Some(crate::store::land_publish::STOP_LAND_PUBLISHED)
+    {
+        return Ok(None);
+    }
+    let (Some(published), Some(session)) = (
+        row.last_pushed_oid.clone(),
+        store.git_session(session_id.clone()).await?,
+    ) else {
+        return Ok(None);
+    };
+    let Some(branch) = session.branch.as_deref() else {
+        return Ok(None);
+    };
+    let options = GitOptions::isolated();
+    let repo = Path::new(&session.repo_root);
+    let wait = std::time::Duration::from_secs(10);
+    let Some(tip) = local_tip(&options, repo, branch, wait).await else {
+        return Ok(None);
+    };
+    if tip == published || is_ancestor(&options, repo, &published, &tip, wait).await != Some(true) {
+        return Ok(None);
+    }
+    store.land_push_reopen(session_id.clone(), tip).await
+}
+
+/// `fleet_git.land_status` (design §11.2, ADR-009 §4).
+pub(super) async fn land_status(manager: &SessionManager, params: serde_json::Value) -> Outcome {
+    let query: LandStatusParams = match serde_json::from_value(params) {
+        Ok(q) => q,
+        Err(e) => return bad_params(e),
+    };
+    match crate::manager::land_abandon::status(manager.store(), &query.land_id).await {
+        Ok(answer) => ok(answer),
+        Err(e) => internal(e),
+    }
+}
+
+/// `fleet_git.land_abandon` (design §11.2, revision 4, M3): the answer is the
+/// fence acknowledgement, or `busy`.
+pub(super) async fn land_abandon(manager: &SessionManager, params: serde_json::Value) -> Outcome {
+    let query: LandAbandonParams = match serde_json::from_value(params) {
+        Ok(q) => q,
+        Err(e) => return bad_params(e),
+    };
+    let Some(engine) = manager.land() else {
+        return internal("the land engine is not running");
+    };
+    match crate::manager::land_abandon::abandon(engine, &query.land_id).await {
+        Ok(answer) => ok(answer),
+        Err(e) => internal(e),
+    }
+}
+
 #[cfg(test)]
 #[path = "intake_fleet_git_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "intake_land_tests.rs"]
+mod land_tests;

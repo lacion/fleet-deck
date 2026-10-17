@@ -78,6 +78,7 @@ pub async fn json(programs: &Programs, req: &Request) -> Result<Value, HttpFail>
         env: curl_env(),
         stdin: Some(config.into_bytes()),
         max_stdout: MAX_ANSWER,
+        timeout: exec::CALL_TIMEOUT,
     };
     let out = exec::run(spec)
         .await

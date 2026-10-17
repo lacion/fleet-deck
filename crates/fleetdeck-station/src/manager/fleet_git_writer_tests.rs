@@ -416,8 +416,13 @@ fn ended() -> Event {
 
 fn running(rig: &Rig) -> (Vec<tokio::task::JoinHandle<()>>, watch::Sender<bool>) {
     let (stop, rx) = watch::channel(false);
-    let (tasks, _) =
-        fleet_git_push::start(rig.store.clone(), Arc::clone(&rig.hub), rig.options(), rx);
+    let (tasks, _) = fleet_git_push::start(
+        rig.store.clone(),
+        Arc::clone(&rig.hub),
+        rig.options(),
+        Arc::new(|| Arc::new(crate::integrations::Integrations::default())),
+        rx,
+    );
     (tasks, stop)
 }
 

@@ -34,6 +34,7 @@ pub mod git_cleanup;
 pub mod git_state;
 pub mod home_attempts;
 pub mod land_fences;
+pub mod land_publish;
 pub mod land_runs;
 pub mod land_temps;
 mod log;

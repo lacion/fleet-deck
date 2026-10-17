@@ -419,6 +419,7 @@ impl RunningStation {
             manager.store().clone(),
             Arc::clone(manager.policy_hub()),
             fleet_git_options(Arc::clone(manager.policy_hub())),
+            manager.integrations_provider(),
             rx.clone(),
         );
         manager.set_land_engine(land);

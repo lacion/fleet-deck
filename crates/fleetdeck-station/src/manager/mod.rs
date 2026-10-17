@@ -25,6 +25,10 @@ pub mod fleet_git_push;
 pub mod fleet_git_writer;
 pub mod hibernate;
 pub mod land;
+pub mod land_abandon;
+mod land_pr;
+mod land_publish;
+mod land_reconcile;
 mod land_run;
 pub mod land_temp_cleanup;
 pub mod policy;
@@ -492,6 +496,14 @@ impl SessionManager {
                 .read()
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
         )
+    }
+
+    /// The integration service as a provider, for the land tasks (FG-8): each
+    /// call reads the service of that moment.
+    #[must_use]
+    pub fn integrations_provider(self: &Arc<Self>) -> land::IntegrationsProvider {
+        let manager = Arc::clone(self);
+        Arc::new(move || manager.integrations())
     }
 
     /// Step 1 of a live config change (DL-172 §1.4): validates `new` and

@@ -44,12 +44,27 @@ pub fn start(
     store: Store,
     policy: Arc<PolicyHub>,
     options: OptionsProvider,
+    integrations: super::land::IntegrationsProvider,
     shutdown: watch::Receiver<bool>,
 ) -> (Vec<JoinHandle<()>>, super::land::LandEngine) {
-    let (writer, writer_task) =
-        FleetGitWriter::start(store.clone(), Arc::clone(&policy), Arc::clone(&options));
+    let locks = super::fleet_git_writer::LandLocks::new();
+    let timeouts = super::fleet_git_writer::LandTimeouts::default();
+    let (writer, writer_task) = FleetGitWriter::start_with(
+        store.clone(),
+        Arc::clone(&policy),
+        Arc::clone(&options),
+        Arc::clone(&locks),
+        timeouts,
+    );
     let triggers = tokio::spawn(follow(store.clone(), shutdown.clone()));
-    let (land, land_tasks) = super::land::start(store.clone(), policy, options, shutdown.clone());
+    let deps = super::land::Deps {
+        writer: writer.clone(),
+        locks,
+        integrations,
+        timeouts,
+    };
+    let (land, land_tasks) =
+        super::land::start(store.clone(), policy, options, shutdown.clone(), deps);
     let runner = tokio::spawn(run(store, writer, shutdown));
     let mut tasks = vec![writer_task, triggers, runner];
     tasks.extend(land_tasks);

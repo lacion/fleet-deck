@@ -5,8 +5,8 @@
 //! writes nothing, and the task stops.
 //!
 //! The run ends here with `conflict`, `check_failed`, `check_mutated` or
-//! `failed`; after `checked` the task ends and the run stays `running`
-//! (FG-8: T3.2c continues at step 5).
+//! `failed`; after `checked` the publication goes on (`land_publish.rs`,
+//! steps 5 to 7), and attempt 2 starts again at step 1 (FG-8).
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -36,24 +36,41 @@ const TAIL_BYTES: usize = 16 * 1024;
 
 /// How a step ended without a result: the run ended (or was fenced), or the
 /// station is stopping.
-enum Stop {
+pub(super) enum Stop {
     /// The run ended in this step, or the fence stopped it: nothing more.
     Done,
 }
 
-type Step<T> = Result<T, Stop>;
+pub(super) type Step<T> = Result<T, Stop>;
 
-/// Runs steps 1 to 4 of one admitted land.
+/// Runs one admitted land: steps 1 to 4, then the publication (steps 5 to 7).
 pub(super) async fn run(shared: &Shared, row: LandRunRow) {
     let land_id = row.land_id.clone();
     // `Stop::Done` is the only error: the run ended or was stopped.
-    let _ = steps(shared, row).await;
+    if let Ok(row) = steps(shared, row).await {
+        drive_loop(shared, row).await;
+    }
+    shared.locks.release(&land_id);
     tracing::debug!(land = %land_id, "the land task ended");
 }
 
-async fn steps(shared: &Shared, row: LandRunRow) -> Step<()> {
+/// Drives a run from its stored state; attempt 2 runs steps 1 to 4 again
+/// (design §11.5 step 7).
+pub(super) async fn drive_loop(shared: &Shared, row: LandRunRow) {
+    let mut next = super::land_publish::drive(shared, row).await;
+    while let super::land_publish::Next::Again(row) = next {
+        let row = *row;
+        let Ok(row) = steps(shared, row).await else {
+            return;
+        };
+        next = super::land_publish::drive(shared, row).await;
+    }
+}
+
+/// Steps 1 to 4. The row that it returns is in phase `checked`.
+pub(super) async fn steps(shared: &Shared, row: LandRunRow) -> Step<LandRunRow> {
     if !authority(shared, &row).await? {
-        return Ok(());
+        return Err(Stop::Done);
     }
     let (row, home) = home(shared, row).await?;
     let (row, captured) = captured(shared, row, &home).await?;
@@ -122,14 +139,10 @@ async fn reload(shared: &Shared, row: &LandRunRow) -> Step<LandRunRow> {
     }
 }
 
-/// Authority check (a), at the dispatch, before the capture fetch (design
-/// §11.5): the synthetic effect of the run goes through `recheck` (decision
-/// Q3). `false`: the run ended.
-async fn authority(shared: &Shared, row: &LandRunRow) -> Step<bool> {
-    let Some(authority) = row.authority.clone() else {
-        return Ok(true);
-    };
-    let effect = Effect {
+/// The synthetic effect of a run with authority (decision Q3, H3).
+fn effect_of(row: &LandRunRow) -> Option<Effect> {
+    let authority = row.authority.clone()?;
+    Some(Effect {
         effect_id: EffectId::from(format!("land-{}", row.land_id)),
         command_id: Some(CommandId::from(row.command_id.clone())),
         session_id: row.session_id.clone(),
@@ -141,19 +154,36 @@ async fn authority(shared: &Shared, row: &LandRunRow) -> Step<bool> {
         state: EffectState::Claimed,
         fence_token: None,
         reason: None,
+    })
+}
+
+/// The authority check of a run (points (a) to (d) of design §11.5): the
+/// `coordinator.authority_check` round trip, then the station's own live
+/// state. A run without authority passes.
+///
+/// # Errors
+/// The [`Refusal`]: the authority ended, or the deck did not confirm it.
+pub(super) async fn recheck_run(
+    policy: &std::sync::Arc<super::policy_hub::PolicyHub>,
+    row: &LandRunRow,
+) -> Result<(), Refusal> {
+    let Some(effect) = effect_of(row) else {
+        return Ok(());
     };
-    let refusal = match shared.policy.fleet_bindings() {
+    match policy.fleet_bindings() {
         Some(bindings) => {
-            let hub = std::sync::Arc::clone(&shared.policy);
+            let hub = std::sync::Arc::clone(policy);
             let live = move || hub.current().allow_fleet_control();
             fleet_control::recheck(bindings, &live, &effect, None).await
         }
         None => Err(Refusal::Lost),
-    };
-    let Err(refusal) = refusal else {
-        return Ok(true);
-    };
-    let first = match refusal {
+    }
+}
+
+/// The first sentence of an end by a lost or unconfirmed authority (design
+/// §11.10).
+pub(super) fn authority_first(refusal: Refusal) -> String {
+    match refusal {
         Refusal::Lost => format!(
             "The coordinator lost its permission during the land ({}).",
             refusal.message()
@@ -162,8 +192,17 @@ async fn authority(shared: &Shared, row: &LandRunRow) -> Step<bool> {
             "Fleet Deck could not confirm the coordinator's permission, so the land stopped."
                 .to_owned()
         }
+    }
+}
+
+/// Authority check (a) at the dispatch, and (c) before attempt 2 (design
+/// §11.5): the synthetic effect of the run goes through `recheck`. `false`:
+/// the run ended.
+async fn authority(shared: &Shared, row: &LandRunRow) -> Step<bool> {
+    let Err(refusal) = recheck_run(&shared.policy, row).await else {
+        return Ok(true);
     };
-    fail::<()>(shared, row, refusal.code(), &first)
+    fail::<()>(shared, row, refusal.code(), &authority_first(refusal))
         .await
         .map(|()| false)
 }
@@ -495,7 +534,7 @@ fn check_env(base: &ChildEnv, accepted: &std::collections::BTreeMap<String, Stri
 }
 
 /// Step 4: the check (design §11.5). No check command: `checked` at once.
-async fn checked(shared: &Shared, row: LandRunRow, temp: &Path) -> Step<()> {
+async fn checked(shared: &Shared, row: LandRunRow, temp: &Path) -> Step<LandRunRow> {
     let rebased_oid = row.rebased_oid.clone().unwrap_or_default();
     if let Some(cmd) = row.plan.check_cmd.clone() {
         let summary = shared.store.summary(row.session_id.clone()).await;
@@ -582,6 +621,5 @@ async fn checked(shared: &Shared, row: LandRunRow, temp: &Path) -> Step<()> {
         },
     )
     .await?;
-    // (FG-8: T3.2c continues at step 5) The run stays `running` in `checked`.
-    Ok(())
+    reload(shared, &row).await
 }

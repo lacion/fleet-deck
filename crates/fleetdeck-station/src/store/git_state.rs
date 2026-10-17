@@ -227,7 +227,7 @@ fn push_of(r: &Row<'_>) -> rusqlite::Result<PushRow> {
     })
 }
 
-fn push_row(conn: &Connection, session_id: &SessionId) -> Result<Option<PushRow>> {
+pub(crate) fn push_row(conn: &Connection, session_id: &SessionId) -> Result<Option<PushRow>> {
     Ok(conn
         .query_row(
             &format!("SELECT {PUSH_COLUMNS} FROM git_pushes WHERE session_id = ?1"),
@@ -256,7 +256,7 @@ fn push_event(row: &PushRow) -> NewEvent {
 /// Writes the mutable columns of `row` and appends its `session.push` event
 /// (not for `idle`). The attempt columns follow `row`, so a caller that
 /// changes the attempt changes them in `row` first.
-fn save_push(
+pub(crate) fn save_push(
     conn: &Connection,
     row: &PushRow,
     now: i64,

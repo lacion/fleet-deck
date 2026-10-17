@@ -485,7 +485,7 @@ async fn a_coordinator_land_without_a_live_setting_or_an_answer_ends_with_the_au
 }
 
 #[tokio::test]
-async fn the_poll_runs_an_admitted_land_and_skips_the_runs_of_an_earlier_process() {
+async fn the_poll_runs_an_admitted_land_and_recovers_the_runs_of_an_earlier_process() {
     let Some(rig) = Rig::new(false).await else {
         return;
     };
@@ -501,12 +501,13 @@ async fn the_poll_runs_an_admitted_land_and_skips_the_runs_of_an_earlier_process
         Arc::clone(&rig.hub),
         Arc::new(move || options.clone()),
         rx,
+        rig.deps(),
     );
     rig.admit("new", "land-new").await;
     engine.wake();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     loop {
-        if rig.row("land-new").await.phase == LandPhase::Checked {
+        if rig.row("land-new").await.state == LandState::Landed {
             break;
         }
         assert!(
@@ -515,7 +516,11 @@ async fn the_poll_runs_an_admitted_land_and_skips_the_runs_of_an_earlier_process
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    assert_eq!(rig.row("land-old").await.phase, LandPhase::Admitted);
+    // The run of the earlier process is recovered, not run: nothing external
+    // ran in it (design §11.5, the reconciliation table).
+    let old = rig.row("land-old").await;
+    assert_eq!(old.state, LandState::Failed);
+    assert_eq!(old.code.as_deref(), Some("station_restarted"));
     stop.send(true).unwrap();
     for task in tasks {
         let _ = task.await;

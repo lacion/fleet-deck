@@ -18,6 +18,7 @@ mod home;
 mod identity;
 mod include;
 mod land;
+mod land_remote;
 mod land_temp;
 mod push;
 mod push_outcome;
@@ -31,6 +32,10 @@ pub use include::copy_includes;
 pub use land::{
     Captured, Rebased, TempFacts, add_worktree, capture, conflict_files, has_identity, rebase,
     tested_unchanged,
+};
+pub use land_remote::{
+    LandPush, PushEnd, RemoteTip, RunningPush, fetch_default, is_ancestor, local_tip, remote_tip,
+    repo_path,
 };
 pub use land_temp::{TEMP_DIR, ensure_dir, identity as temp_identity, temp_path, temp_root};
 pub use push::{

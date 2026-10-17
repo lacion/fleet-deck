@@ -9,6 +9,9 @@
 //!   phase `admitted` that no task runs yet gets a task (`land_run.rs`, steps
 //!   1 to 4 of §11.5). The `land` effect itself is `Confirmed` at once.
 //! - `land_temp_cleanup.rs` removes the temporary folders (§11.6).
+//! - `land_publish.rs` runs steps 5 to 7 (the writer, the forge), `land_reconcile.rs`
+//!   recovers the runs of an earlier process, `land_abandon.rs` answers
+//!   `fleet_git.land_abandon` and `fleet_git.land_status`.
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -25,10 +28,12 @@ use tokio::task::JoinHandle;
 
 use super::decide::{reject, result};
 use super::fleet_control;
+use super::fleet_git_writer::{FleetGitWriter, LandLocks, LandTimeouts};
 use super::policy::Policy;
 use super::policy_hub::PolicyHub;
 use super::trash::{custody, pending_shell, sharing_refusal, shell_in, shell_refusal};
 use crate::coordinator::Bindings;
+use crate::integrations::Integrations;
 use crate::shell::Shells;
 use crate::store::git_state;
 use crate::store::land_runs::{self, LandRunRow, NewLandRun};
@@ -328,6 +333,19 @@ fn admit(
     Ok(())
 }
 
+/// Gives the integration service of the moment (a publish can replace it).
+pub type IntegrationsProvider = Arc<dyn Fn() -> Arc<Integrations> + Send + Sync>;
+
+/// What the land tasks need besides the store and the policy.
+pub struct Deps {
+    /// The one writer of the station (design §5.5).
+    pub writer: FleetGitWriter,
+    /// The per-land locks that the writer and the abandonment share.
+    pub locks: Arc<LandLocks>,
+    pub integrations: IntegrationsProvider,
+    pub timeouts: LandTimeouts,
+}
+
 /// What the tasks of a station share.
 pub(super) struct Shared {
     pub(super) store: Store,
@@ -337,6 +355,10 @@ pub(super) struct Shared {
     /// Pinged after each phase change: the cleanup of the temporary folders
     /// runs (design §11.6).
     pub(super) cleanup: Arc<Notify>,
+    pub(super) writer: FleetGitWriter,
+    pub(super) locks: Arc<LandLocks>,
+    pub(super) integrations: IntegrationsProvider,
+    pub(super) timeouts: LandTimeouts,
 }
 
 /// The land engine of a station (decision Q2, H3). It runs the admitted
@@ -344,6 +366,9 @@ pub(super) struct Shared {
 #[derive(Clone)]
 pub struct LandEngine {
     wake: Arc<Notify>,
+    pub(super) store: Store,
+    pub(super) locks: Arc<LandLocks>,
+    pub(super) timeouts: LandTimeouts,
 }
 
 impl std::fmt::Debug for LandEngine {
@@ -367,6 +392,7 @@ pub fn start(
     policy: Arc<PolicyHub>,
     options: OptionsProvider,
     shutdown: watch::Receiver<bool>,
+    deps: Deps,
 ) -> (LandEngine, Vec<JoinHandle<()>>) {
     let wake = Arc::new(Notify::new());
     let cleanup = Arc::new(Notify::new());
@@ -377,26 +403,55 @@ pub fn start(
         options: Arc::clone(&options),
         shutdown: shutdown.clone(),
         cleanup: Arc::clone(&cleanup),
+        writer: deps.writer,
+        locks: Arc::clone(&deps.locks),
+        integrations: deps.integrations,
+        timeouts: deps.timeouts,
     });
+    let engine = LandEngine {
+        wake: Arc::clone(&wake),
+        store: store.clone(),
+        locks: deps.locks,
+        timeouts: deps.timeouts,
+    };
     let handles = vec![
-        tokio::spawn(poll(Arc::clone(&shared), Arc::clone(&wake), started_at)),
+        tokio::spawn(poll(Arc::clone(&shared), wake, started_at)),
         tokio::spawn(super::land_temp_cleanup::run(store, cleanup, shutdown)),
     ];
-    (LandEngine { wake }, handles)
+    (engine, handles)
 }
 
-/// The poll: a run in phase `admitted` that is not a run of an earlier
-/// process and has no task gets one. The runs of an earlier process are the
-/// seam of `land_reconcile` (T3.2c); this engine leaves them as they are.
+/// What a task does with a run.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Task {
+    /// Steps 1 to 4, then the publication.
+    Run,
+    /// The recovery of a run of an earlier process, or a run that waits for
+    /// its next reconciliation (design §11.5).
+    Reconcile,
+}
+
+/// The poll. A run in phase `admitted` that this process admitted and that
+/// has no task gets a run task. The runs that an earlier process left are
+/// recovered once at the start, in the first pass (`land_reconcile`); after
+/// that a run with `reconciling = 1` gets a task when its `next_reconcile_at`
+/// has come.
 async fn poll(shared: Arc<Shared>, wake: Arc<Notify>, started_at: i64) {
     let active: Arc<Mutex<HashSet<String>>> = Arc::default();
     let mut shutdown = shared.shutdown.clone();
+    let mut booted = false;
     loop {
         match shared.store.land_runs_running().await {
             Ok(rows) => {
-                for row in rows.into_iter().filter(|r| is_new(r, started_at)) {
-                    spawn_run(&shared, &active, row);
+                let now = shared.store.now_ms();
+                for row in rows {
+                    if is_new(&row, started_at) {
+                        spawn_run(&shared, &active, row, Task::Run);
+                    } else if !booted || reconcile_due(&row, now) {
+                        spawn_run(&shared, &active, row, Task::Reconcile);
+                    }
                 }
+                booted = true;
             }
             Err(e) => tracing::warn!(error = %e, "the land runs are unreadable"),
         }
@@ -413,9 +468,20 @@ fn is_new(row: &LandRunRow, started_at: i64) -> bool {
     row.phase == fleetdeck_proto::fleet_git::LandPhase::Admitted
         && row.state == LandState::Running
         && row.created_at >= started_at
+        && row.attempt == 1
 }
 
-fn spawn_run(shared: &Arc<Shared>, active: &Arc<Mutex<HashSet<String>>>, row: LandRunRow) {
+/// A run that waits for its reconciliation and whose time has come.
+fn reconcile_due(row: &LandRunRow, now: i64) -> bool {
+    row.reconciling && row.next_reconcile_at.is_some_and(|at| at <= now)
+}
+
+fn spawn_run(
+    shared: &Arc<Shared>,
+    active: &Arc<Mutex<HashSet<String>>>,
+    row: LandRunRow,
+    task: Task,
+) {
     let first = active
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
@@ -426,7 +492,11 @@ fn spawn_run(shared: &Arc<Shared>, active: &Arc<Mutex<HashSet<String>>>, row: La
     let (shared, active) = (Arc::clone(shared), Arc::clone(active));
     tokio::spawn(async move {
         let land_id = row.land_id.clone();
-        super::land_run::run(&shared, row).await;
+        match task {
+            Task::Run => super::land_run::run(&shared, row).await,
+            Task::Reconcile => super::land_reconcile::run(&shared, row).await,
+        }
+        shared.locks.release(&land_id);
         active
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -480,3 +550,23 @@ mod tests;
 #[cfg(test)]
 #[path = "land_run_tests.rs"]
 mod run_tests;
+
+#[cfg(test)]
+#[path = "land_rig_stage.rs"]
+mod stage;
+
+#[cfg(test)]
+#[path = "land_publish_tests.rs"]
+mod publish_tests;
+
+#[cfg(test)]
+#[path = "land_reconcile_tests.rs"]
+mod reconcile_tests;
+
+#[cfg(test)]
+#[path = "land_abandon_tests.rs"]
+mod abandon_tests;
+
+#[cfg(test)]
+#[path = "land_gate_tests.rs"]
+mod gate_tests;

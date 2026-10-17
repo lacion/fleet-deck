@@ -150,6 +150,7 @@ pub async fn send(
         env: curl_env(),
         stdin: Some(config(req).into_bytes()),
         max_stdout,
+        timeout: exec::CALL_TIMEOUT,
     };
     let out = exec::run(spec)
         .await

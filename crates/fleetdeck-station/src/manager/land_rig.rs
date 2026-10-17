@@ -24,9 +24,11 @@ use fleetdeck_proto::{CommandId, Event, EventBody, RejectCode};
 use fleetdeck_testkit::Det;
 use tokio::sync::{Notify, watch};
 
-use super::{Shared, decide};
+use super::{Deps, LandEngine, Shared, decide};
 use crate::coordinator::Bindings;
+use crate::integrations::Integrations;
 use crate::manager::Policy;
+use crate::manager::fleet_git_writer::{FleetGitWriter, LandLocks, LandTimeouts};
 use crate::manager::land_run;
 use crate::manager::policy_hub::PolicyHub;
 use crate::shell::{ShellConfig, Shells};
@@ -48,6 +50,11 @@ pub(super) struct Rig {
     pub(super) identity: PathBuf,
     pub(super) url: String,
     pub(super) remote: RemoteIdentity,
+    /// The per-land locks that the writer and the abandonment share.
+    pub(super) locks: Arc<LandLocks>,
+    /// The integration service of the rig (a fake `gh` goes here).
+    pub(super) integrations: std::sync::Mutex<Arc<Integrations>>,
+    pub(super) timeouts: std::sync::Mutex<LandTimeouts>,
 }
 
 pub(super) fn config(text: &str) -> StationConfig {
@@ -109,7 +116,11 @@ impl Rig {
             hub: Arc::new(hub),
             url,
             remote,
+            locks: LandLocks::new(),
+            integrations: std::sync::Mutex::new(Arc::new(Integrations::default())),
+            timeouts: std::sync::Mutex::new(LandTimeouts::default()),
         };
+        fs::create_dir(rig.root.join("fx")).unwrap();
         rig.script(true);
         rig.git(&rig.bare, &["init", "--bare", "-b", "main"]);
         rig.git(&rig.home, &["init", "-b", "main"]);
@@ -148,7 +159,15 @@ impl Rig {
     }
 
     /// The Git program of the station: no user configuration; with or
-    /// without a committer identity.
+    /// without a committer identity. It acts on the files of `fx/`: a file
+    /// `block_<subcommand>` holds that subcommand until the file is removed
+    /// (`entered_<subcommand>` tells that it waits); `pushes` logs each push;
+    /// `reject_push` answers a push with a `!` status line and pushes nothing;
+    /// `hang_after_push` pushes and then does not end; `fail_push_once`, `fail_push` and `fail_push_main` end a push with exit 128 and
+    /// no status line; `fail_ls_remote` ends `ls-remote` the same way;
+    /// `bump` holds a count:
+    /// that many pushes to `main` first make another commit on `main`
+    /// (in the clone `bumper`, a file named in `bump_name`).
     pub(super) fn script(&self, identity: bool) {
         let ident = if identity {
             "export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com \
@@ -156,15 +175,190 @@ impl Rig {
         } else {
             "unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL EMAIL"
         };
+        let fx = self.root.join("fx");
         fs::write(
             &self.program,
             format!(
-                "#!/bin/sh\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1\n{ident}\nexec git \"$@\"\n"
+                r#"#!/bin/sh
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+{ident}
+FX={fx}
+sub=""; skip=0
+for a in "$@"; do
+  if [ "$skip" = 1 ]; then skip=0; continue; fi
+  case "$a" in -c) skip=1;; -*) ;; *) sub="$a"; break;; esac
+done
+if [ -e "$FX/block_$sub" ]; then
+  touch "$FX/entered_$sub"
+  while [ -e "$FX/block_$sub" ]; do sleep 0.05; done
+fi
+if [ "$sub" = ls-remote ] && [ -e "$FX/fail_ls_remote" ]; then
+  echo "fatal: unable to access the remote" >&2
+  exit 128
+fi
+if [ "$sub" = push ]; then
+  echo "$*" >> "$FX/pushes"
+  for last; do :; done
+  case "$last" in *:refs/heads/main)
+    if [ -e "$FX/fail_push_main" ]; then
+      echo "fatal: Could not read from remote repository." >&2
+      exit 128
+    fi;;
+  esac
+  if [ -e "$FX/fail_push_once" ]; then
+    rm -f "$FX/fail_push_once"
+    echo "fatal: Could not read from remote repository." >&2
+    exit 128
+  fi
+  if [ -e "$FX/fail_push" ]; then
+    echo "fatal: Could not read from remote repository." >&2
+    exit 128
+  fi
+  if [ -e "$FX/reject_push" ]; then
+    printf '!	%s:%s	[rejected] (stale info)
+' "${{last%%:*}}" "${{last#*:}}"
+    echo "rejected" >&2
+    exit 1
+  fi
+  case "$last" in *:refs/heads/main)
+    if [ -s "$FX/bump" ]; then
+      n=$(cat "$FX/bump")
+      if [ "$n" -gt 0 ]; then
+        echo $((n-1)) > "$FX/bump"
+        ( cd "$FX/../bumper" && git pull -q --ff-only origin main           && echo "$n" >> "$(cat "$FX/bump_name")" && git add . && git commit -qm bump           && git push -q origin main ) >/dev/null 2>&1
+      fi
+    fi;;
+  esac
+  if [ -e "$FX/hang_after_push" ]; then git "$@"; sleep 30; exit 0; fi
+fi
+exec git "$@"
+"#,
+                fx = fx.display()
             ),
         )
         .unwrap();
         fs::set_permissions(&self.program, fs::Permissions::from_mode(0o755)).unwrap();
         let _ = &self.identity;
+    }
+
+    pub(super) fn fx(&self, name: &str) -> PathBuf {
+        self.root.join("fx").join(name)
+    }
+
+    /// Sets or removes a flag file of `fx/`.
+    pub(super) fn flag(&self, name: &str, on: bool) {
+        if on {
+            fs::write(self.fx(name), "1").unwrap();
+        } else {
+            let _ = fs::remove_file(self.fx(name));
+        }
+    }
+
+    /// The lines that the fake Git or forge wrote to `fx/<name>`.
+    pub(super) fn lines(&self, name: &str) -> Vec<String> {
+        fs::read_to_string(self.fx(name))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// Makes the next `count` pushes to `main` first add a commit to `main`,
+    /// in the file `file`.
+    pub(super) fn bump(&self, count: u32, file: &str) {
+        let bumper = self.root.join("bumper");
+        if !bumper.exists() {
+            self.git(&self.root, &["clone", "-q", &self.url, "bumper"]);
+        }
+        fs::write(self.fx("bump_name"), file).unwrap();
+        fs::write(self.fx("bump"), count.to_string()).unwrap();
+    }
+
+    /// Waits until the fake Git holds `subcommand` (it is blocked).
+    pub(super) async fn entered(&self, subcommand: &str) {
+        let name = format!("entered_{subcommand}");
+        for _ in 0..600 {
+            if self.fx(&name).exists() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        panic!("git {subcommand} was not reached");
+    }
+
+    /// A fake `gh` for the integration service. `fx/prs` is the answer of the
+    /// lookup; `fx/create_mode` is `ok`, `drop`, `bad502`, `r422` or `down` (nothing
+    /// is created and the lookup fails from then on); the
+    /// calls go to `fx/forge_calls` and each create to `fx/creates`;
+    /// `fx/find_fail` makes the lookup fail; `fx/block_forge_get` holds it.
+    pub(super) fn fake_forge(&self) {
+        let fx = self.root.join("fx");
+        let script = fx.join("forge-cli");
+        fs::write(
+            &script,
+            format!(
+                r#"#!/bin/sh
+FX={fx}
+echo "$@" >> "$FX/forge_calls"
+case "$*" in
+  *"-X GET"*)
+    if [ -e "$FX/block_forge_get" ]; then
+      touch "$FX/entered_forge_get"
+      while [ -e "$FX/block_forge_get" ]; do sleep 0.05; done
+    fi
+    if [ -e "$FX/find_fail" ]; then echo "gh: unreachable" >&2; exit 1; fi
+    printf 'HTTP/2.0 200 OK
+
+'
+    if [ -s "$FX/prs" ]; then cat "$FX/prs"; else echo '[]'; fi;;
+  *"-X POST"*)
+    cat > /dev/null
+    echo post >> "$FX/creates"
+    mode=$(cat "$FX/create_mode")
+    made='[{{"number":5,"html_url":"https://forge.example/pull/5"}}]'
+    case "$mode" in
+      ok) echo "$made" > "$FX/prs"
+          printf 'HTTP/2.0 201 Created
+
+{{"number":5,"html_url":"https://forge.example/pull/5"}}';;
+      drop) echo "$made" > "$FX/prs"; echo "gh: connection reset" >&2; exit 1;;
+      bad502) echo "$made" > "$FX/prs"
+          printf 'HTTP/2.0 502 Bad Gateway
+
+bad gateway'; exit 1;;
+      down) touch "$FX/find_fail"; echo "gh: connection refused" >&2; exit 1;;
+      r422) printf 'HTTP/2.0 422 Unprocessable
+
+{{"message":"Validation Failed"}}'; exit 1;;
+    esac;;
+esac
+"#,
+                fx = fx.display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(self.fx("create_mode"), "ok").unwrap();
+        self.set_integrations(Integrations::with_programs(
+            Vec::new(),
+            crate::integrations::exec::Programs {
+                gh: script.clone(),
+                glab: script,
+                curl: "curl".into(),
+            },
+        ));
+    }
+
+    /// The default plan in mode `pr`, with a forge that matches the remote.
+    pub(super) fn pr_plan(&self, id: &str) -> LandPlan {
+        let mut plan = self.plan(id);
+        plan.mode = LandMode::Pr;
+        plan.forge = Some(fleetdeck_proto::integrations::ForgeBinding {
+            kind: fleetdeck_proto::integrations::ForgeKind::Github,
+            host: "localhost".to_owned(),
+            repo: self.remote.repo["localhost/".len()..].to_owned(),
+        });
+        plan
     }
 
     pub(super) fn git(&self, dir: &Path, args: &[&str]) -> String {
@@ -341,24 +535,93 @@ impl Rig {
         decided
     }
 
+    /// The time limits of the next `shared()` and `deps()`.
+    pub(super) fn set_timeouts(&self, timeouts: LandTimeouts) {
+        *self.timeouts.lock().unwrap() = timeouts;
+    }
+
+    /// The integration service of the next `shared()` and `deps()`.
+    pub(super) fn set_integrations(&self, integrations: Integrations) {
+        *self.integrations.lock().unwrap() = Arc::new(integrations);
+    }
+
+    /// The writer and the shared state of the land tasks.
+    pub(super) fn deps(&self) -> Deps {
+        let options = self.options();
+        let timeouts = *self.timeouts.lock().unwrap();
+        let (writer, _task) = FleetGitWriter::start_with(
+            self.store.clone(),
+            Arc::clone(&self.hub),
+            Arc::new(move || options.clone()),
+            Arc::clone(&self.locks),
+            timeouts,
+        );
+        let service = Arc::clone(&self.integrations.lock().unwrap());
+        Deps {
+            writer,
+            locks: Arc::clone(&self.locks),
+            integrations: Arc::new(move || Arc::clone(&service)),
+            timeouts,
+        }
+    }
+
     pub(super) fn shared(&self) -> (Shared, watch::Sender<bool>) {
         let options = self.options();
         let (tx, rx) = watch::channel(false);
+        let deps = self.deps();
         let shared = Shared {
             store: self.store.clone(),
             policy: Arc::clone(&self.hub),
             options: Arc::new(move || options.clone()),
             shutdown: rx,
             cleanup: Arc::new(Notify::new()),
+            writer: deps.writer,
+            locks: deps.locks,
+            integrations: deps.integrations,
+            timeouts: deps.timeouts,
         };
         (shared, tx)
+    }
+
+    /// An engine handle for the abandonment and the status.
+    pub(super) fn engine(&self) -> LandEngine {
+        LandEngine {
+            wake: Arc::new(Notify::new()),
+            store: self.store.clone(),
+            locks: Arc::clone(&self.locks),
+            timeouts: *self.timeouts.lock().unwrap(),
+        }
     }
 
     /// Runs steps 1 to 4 of an admitted land by hand.
     pub(super) async fn run(&self, land_id: &str) -> LandRunRow {
         let (shared, _tx) = self.shared();
         let row = self.row(land_id).await;
+        let _ = land_run::steps(&shared, row).await;
+        self.row(land_id).await
+    }
+
+    /// Runs an admitted land by hand: steps 1 to 4, then the publication.
+    pub(super) async fn run_all(&self, land_id: &str) -> LandRunRow {
+        let (shared, _tx) = self.shared();
+        let row = self.row(land_id).await;
         land_run::run(&shared, row).await;
+        self.row(land_id).await
+    }
+
+    /// Drives a run from its stored state, as a land task or a recovery does.
+    pub(super) async fn drive(&self, land_id: &str) -> LandRunRow {
+        let (shared, _tx) = self.shared();
+        let row = self.row(land_id).await;
+        land_run::drive_loop(&shared, row).await;
+        self.row(land_id).await
+    }
+
+    /// Recovers a run as the engine does at a station start.
+    pub(super) async fn reconcile(&self, land_id: &str) -> LandRunRow {
+        let (shared, _tx) = self.shared();
+        let row = self.row(land_id).await;
+        crate::manager::land_reconcile::run(&shared, row).await;
         self.row(land_id).await
     }
 
@@ -379,6 +642,21 @@ impl Rig {
             .into_iter()
             .filter_map(|e| match e.event {
                 EventBody::Known(Event::SessionLand(info)) => Some((info.state, info.phase)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The attempt of each `session.land` event, in order.
+    pub(super) async fn attempts(&self) -> Vec<u32> {
+        let ReadResult::Events { events, .. } = self.store.read_after(0, 1000).await.unwrap()
+        else {
+            panic!("snapshot required");
+        };
+        events
+            .into_iter()
+            .filter_map(|e| match e.event {
+                EventBody::Known(Event::SessionLand(info)) => Some(info.attempt),
                 _ => None,
             })
             .collect()
