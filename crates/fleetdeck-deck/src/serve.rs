@@ -149,6 +149,8 @@ pub struct RunningDeck {
     scheduler: tokio::task::JoinHandle<()>,
     /// The wake rule of the wall (R13 §6.6).
     wake: tokio::task::JoinHandle<()>,
+    /// The fleet summary sender for the desktop shell (R13 P4).
+    fleet_summary: tokio::task::JoinHandle<()>,
     /// The audit log prune (NV-11).
     maintenance: tokio::task::JoinHandle<()>,
     /// The sender and poller of the home attempts (FG-5).
@@ -380,6 +382,7 @@ impl RunningDeck {
             settings: Some(deck_settings),
             live: live_cell,
         });
+        let summary_endpoints = Arc::clone(&local.endpoints);
         let server = tokio::spawn(local::serve(listener, local, rx.clone()));
         let maintenance = crate::maintenance::spawn(store.clone(), rx.clone());
         let grant_sweep = spawn_grant_sweep(
@@ -454,6 +457,12 @@ impl RunningDeck {
             wake_live,
             rx.clone(),
         );
+        let fleet_summary = crate::fleet_summary::spawn(
+            store.clone(),
+            Arc::clone(node.link()),
+            summary_endpoints,
+            rx.clone(),
+        );
         let scheduler = crate::scheduler::spawn(store.clone(), Arc::clone(node.link()), rx);
         Ok(Self {
             node,
@@ -465,6 +474,7 @@ impl RunningDeck {
             server,
             scheduler,
             wake,
+            fleet_summary,
             maintenance,
             homes,
             land,
@@ -498,6 +508,7 @@ impl RunningDeck {
         let _ = self.server.await;
         let _ = self.scheduler.await;
         let _ = self.wake.await;
+        let _ = self.fleet_summary.await;
         let _ = self.maintenance.await;
         let _ = self.homes.await;
         for task in self.land {
