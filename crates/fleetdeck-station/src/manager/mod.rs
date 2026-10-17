@@ -755,3 +755,7 @@ mod binding_revoke_tests;
 #[cfg(test)]
 #[path = "shell_run_tests.rs"]
 mod shell_run_tests;
+
+#[cfg(test)]
+#[path = "session_holds_wired_tests.rs"]
+mod session_holds_wired_tests;

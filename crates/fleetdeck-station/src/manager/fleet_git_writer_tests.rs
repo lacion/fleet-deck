@@ -514,3 +514,38 @@ async fn a_position_ahead_of_the_log_rescans_every_row() {
         task.await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn a_held_session_is_not_pushed_until_its_hold_ends() {
+    let Some(rig) = Rig::new(PushMode::OnTurn, &["s1"]).await else {
+        return;
+    };
+    let oid = rig.commit("two");
+    rig.move_branch("s1", &oid);
+    rig.store
+        .git_set_push_cursor(rig.store.head())
+        .await
+        .unwrap();
+    rig.store
+        .session_hold_insert("s1".into(), "land", "land-1".to_owned())
+        .await
+        .unwrap();
+    let (tasks, stop) = running(&rig);
+    append(&rig, "s1", turn_completed()).await;
+    // The trigger still updates `desired_oid`; the row waits (design §5.4).
+    let row = wait_for(&rig, "s1", "the trigger", |r| r.desired_oid.is_some()).await;
+    assert_eq!(row.desired_oid.as_deref(), Some(oid.as_str()));
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert_eq!(rig.row("s1").await.state, PushState::Due);
+    assert_eq!(rig.remote_ref("s1"), None);
+    rig.store
+        .session_hold_delete("s1".into(), "land-1".to_owned())
+        .await
+        .unwrap();
+    wait_for(&rig, "s1", "the push", |r| r.state == PushState::Pushed).await;
+    assert_eq!(rig.remote_ref("s1"), Some(oid));
+    stop.send(true).unwrap();
+    for task in tasks {
+        task.await.unwrap();
+    }
+}

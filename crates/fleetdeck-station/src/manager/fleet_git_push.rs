@@ -82,6 +82,15 @@ async fn run(store: Store, writer: FleetGitWriter, mut shutdown: watch::Receiver
             if *shutdown.borrow() {
                 return;
             }
+            // A land or a move holds the session: the row waits (design §5.4).
+            match store.session_hold(row.session_id.clone()).await {
+                Ok(None) => {}
+                Ok(Some(_)) => continue,
+                Err(e) => {
+                    tracing::warn!(error = %e, "a session hold is unreadable");
+                    continue;
+                }
+            }
             let job = WriteJob::BranchPush {
                 session_id: row.session_id,
             };

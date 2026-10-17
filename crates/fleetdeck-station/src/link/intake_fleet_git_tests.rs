@@ -475,3 +475,179 @@ async fn station_info_carries_traits_config_and_the_fleet_git_part() {
     let info = super::info(&runtime, &closed).await;
     assert!(!info.allow_local_remotes && !info.allow_check_cmd);
 }
+
+// ---- the radar and the hold (FG-7, FG-8)
+
+use fleetdeck_proto::fleet_git::RadarResult;
+
+use super::radar;
+
+fn commit(dir: &Path, text: &str) {
+    fs::write(dir.join("a.txt"), format!("{text}\n")).unwrap();
+    git(dir, &["add", "."]);
+    git(
+        dir,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-m",
+            text,
+        ],
+    );
+}
+
+fn runtime() -> FleetGitRuntime {
+    FleetGitRuntime::new(Arc::new(crate::workspace::GitOptions::isolated))
+}
+
+impl Rig {
+    /// A verified home with one commit on `main` that the remote has, and a
+    /// branch `fd/alpha/one` on the remote. `radar_home` as given.
+    async fn radar_home(&self, radar_home: bool) -> PathBuf {
+        let (home, mut project) = self.home("app");
+        commit(&home, "base");
+        git(&home, &["push", "origin", "main"]);
+        git(&home, &["checkout", "-q", "-b", "tmp"]);
+        commit(&home, "one");
+        git(&home, &["push", "origin", "tmp:refs/heads/fd/alpha/one"]);
+        git(&home, &["checkout", "-q", "main"]);
+        project.radar_home = radar_home;
+        assert!(self.set(1, vec![project]).await.stored);
+        home
+    }
+}
+
+fn radar_params(branches: &[&str]) -> serde_json::Value {
+    let list: Vec<_> = branches
+        .iter()
+        .map(|k| serde_json::json!({ "key": k, "ref_name": format!("fd/alpha/{k}") }))
+        .collect();
+    serde_json::json!({ "project_id": "app", "branches": list })
+}
+
+fn refused(outcome: Outcome) -> (String, String) {
+    let Outcome::Err(e) = outcome else {
+        panic!("an error expected");
+    };
+    (e.code, e.message)
+}
+
+#[tokio::test]
+async fn the_radar_runs_on_the_radar_home_only_and_names_its_refusals() {
+    let Some(rig) = Rig::new().await else { return };
+    let runtime = runtime();
+    let call = |params| radar(&rig.manager, &runtime, params);
+    // An unknown project.
+    let (code, _) = refused(call(radar_params(&[])).await);
+    assert_eq!(code, "not_synced");
+    // This station is not the radar home.
+    rig.radar_home(false).await;
+    let (code, text) = refused(call(radar_params(&[])).await);
+    assert_eq!(
+        (code.as_str(), text.as_str()),
+        (
+            "not_synced",
+            "This station is not the radar home of this project."
+        )
+    );
+}
+
+#[tokio::test]
+async fn the_radar_answers_a_result_with_the_pairs_of_the_pushed_branches() {
+    let Some(rig) = Rig::new().await else { return };
+    let runtime = runtime();
+    rig.radar_home(true).await;
+    let Outcome::Ok(value) = radar(&rig.manager, &runtime, radar_params(&["one", "ghost"])).await
+    else {
+        panic!("a result expected");
+    };
+    let result: RadarResult = serde_json::from_value(value).unwrap();
+    assert_eq!(result.code, None, "{:?}", result.text);
+    assert!(result.base_oid.is_some());
+    assert_eq!(result.pairs.len(), 1);
+    assert_eq!(
+        (result.pairs[0].a.as_str(), result.pairs[0].b.as_str()),
+        ("one", "@default")
+    );
+    assert!(!result.pairs[0].conflict);
+}
+
+#[tokio::test]
+async fn a_bad_branch_list_an_unverified_home_and_a_second_run_are_refused() {
+    let Some(rig) = Rig::new().await else { return };
+    let runtime = runtime();
+    let home = rig.radar_home(true).await;
+    let call = |params| radar(&rig.manager, &runtime, params);
+    let bad = serde_json::json!({ "project_id": "app", "branches": [
+        { "key": "k", "ref_name": "main" }] });
+    let (code, text) = refused(call(bad).await);
+    assert_eq!(
+        (code.as_str(), text.as_str()),
+        ("invalid_params", "The branch name is not valid.")
+    );
+    assert!(matches!(
+        call(serde_json::json!({ "project_id": 7 })).await,
+        Outcome::Err(_)
+    ));
+    // A second run of the same home.
+    let guard = crate::workspace::fleet_git::RadarGuard::try_acquire(&home).unwrap();
+    let (code, text) = refused(call(radar_params(&[])).await);
+    assert_eq!(
+        (code.as_str(), text.as_str()),
+        (
+            "radar_busy",
+            "A radar run is already running for this project."
+        )
+    );
+    drop(guard);
+    assert!(matches!(call(radar_params(&[])).await, Outcome::Ok(_)));
+    // The home is not verified any more.
+    fs::remove_dir_all(home.join(".git")).unwrap();
+    let (_, mut project) = (0, rig.radar_view(&home));
+    project.radar_home = true;
+    assert!(rig.set(2, vec![project]).await.stored);
+    let (code, text) = refused(call(radar_params(&[])).await);
+    assert_eq!(
+        (code.as_str(), text.as_str()),
+        (
+            "not_a_home",
+            "This folder is not a verified home of the project."
+        )
+    );
+}
+
+impl Rig {
+    fn radar_view(&self, home: &Path) -> fleetdeck_proto::fleet_git::GitProjectView {
+        let mut project = view("app");
+        project.home_path = home.display().to_string();
+        project
+    }
+}
+
+#[tokio::test]
+async fn push_now_answers_held_while_a_land_holds_the_session() {
+    let Some(rig) = Rig::new().await else { return };
+    let store = rig.manager.store();
+    store.create_session(new_session("s1")).await.unwrap();
+    let push = Some((
+        "origin".to_owned(),
+        crate::store::git_state::tests::DEST.to_owned(),
+    ));
+    store
+        .git_record_session(new_git("s1", "p1"), push)
+        .await
+        .unwrap();
+    store
+        .session_hold_insert("s1".into(), "land", "land-1".to_owned())
+        .await
+        .unwrap();
+    let outcome = push_now(&rig.manager, serde_json::json!({ "session_id": "s1" })).await;
+    let (code, text) = refused(outcome);
+    assert_eq!(
+        (code.as_str(), text.as_str()),
+        ("held", "A land or a move holds this session.")
+    );
+}

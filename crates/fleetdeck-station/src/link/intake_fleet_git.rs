@@ -6,7 +6,7 @@ use std::path::Path;
 
 use fleetdeck_proto::fleet_git::{
     EnsureHomeParams, GitProjectView, GitSnapshot, HomeCheck, HomeCheckState, HomeStatusParams,
-    PushNowAnswer, PushNowParams, ShareVerdictParams, SnapshotAck, code,
+    PushNowAnswer, PushNowParams, RadarParams, ShareVerdictParams, SnapshotAck, code,
 };
 use fleetdeck_proto::link::{Outcome, WireError};
 
@@ -19,12 +19,14 @@ use crate::store::Store;
 use crate::store::git_state::SnapshotResult;
 use crate::store::home_attempts::HomeRefusal;
 use crate::workspace::GitOptions;
-use crate::workspace::fleet_git::check_home;
+use crate::workspace::fleet_git::{RadarEnv, RadarGuard, check_branches, check_home, run_radar};
 
 /// The text of the code `unknown_session` (design §5.8).
 const UNKNOWN_SESSION: &str = "The station does not know this session.";
 /// The text of the code `not_synced`.
 const NOT_SYNCED: &str = "This session is not in a synced project.";
+/// The text of the code `held` (design §5.8).
+const HELD: &str = "A land or a move holds this session.";
 /// The check code of a home folder outside the allowed roots.
 const OUTSIDE_ROOTS: &str = "outside_roots";
 
@@ -287,6 +289,54 @@ pub(super) async fn home_status(ctx: &StationLink, params: serde_json::Value) ->
     }
 }
 
+/// The text of the refusal of a radar run on a station that is not the radar
+/// home of the project.
+const NOT_RADAR_HOME: &str = "This station is not the radar home of this project.";
+/// The text of the refusal of a radar run on a home that is not verified.
+const NOT_A_HOME: &str = "This folder is not a verified home of the project.";
+/// The text of the refusal of a second radar run of one project.
+const RADAR_BUSY: &str = "A radar run is already running for this project.";
+
+/// `project.radar` (design §10.2): the conflict radar of one project on its
+/// radar home. Wire errors: `invalid_params`, `not_synced` (the project is
+/// unknown here or this station is not its radar home), `not_a_home` (the
+/// home is not verified) and `radar_busy`. A failure of the run itself is
+/// the `code` and `text` of the `RadarResult`.
+pub(super) async fn radar(
+    manager: &SessionManager,
+    runtime: &FleetGitRuntime,
+    params: serde_json::Value,
+) -> Outcome {
+    let query: RadarParams = match serde_json::from_value(params) {
+        Ok(q) => q,
+        Err(e) => return bad_params(e),
+    };
+    if let Some(why) = check_branches(&query.branches) {
+        return Outcome::Err(WireError::new(code::INVALID_PARAMS, why));
+    }
+    let store = manager.store();
+    let row = match store.git_project(query.project_id.clone()).await {
+        Ok(Some(row)) if row.view.radar_home => row,
+        Ok(_) => return Outcome::Err(WireError::new(code::NOT_SYNCED, NOT_RADAR_HOME)),
+        Err(e) => return internal(e),
+    };
+    if row.check_state != HomeCheckState::Verified {
+        return Outcome::Err(WireError::new(code::NOT_A_HOME, NOT_A_HOME));
+    }
+    let repo_dir = std::path::PathBuf::from(row.canonical_path.as_ref().unwrap_or(&row.home_path));
+    let Some(_guard) = RadarGuard::try_acquire(&repo_dir) else {
+        return Outcome::Err(WireError::new(code::RADAR_BUSY, RADAR_BUSY));
+    };
+    let options = runtime.provision_options();
+    let env = RadarEnv {
+        options: &options,
+        repo_dir: &repo_dir,
+        view: &row.view,
+        allow_local_remotes: manager.policy().allow_local_remotes(),
+    };
+    ok(run_radar(&env, &query.branches, store.now_ms()).await)
+}
+
 /// `fleet_git.push_now` (design §5.8): a `due` or `failing` row is due at
 /// once. Error codes `unknown_session` and `not_synced`.
 pub(super) async fn push_now(manager: &SessionManager, params: serde_json::Value) -> Outcome {
@@ -298,6 +348,12 @@ pub(super) async fn push_now(manager: &SessionManager, params: serde_json::Value
     match store.summary(query.session_id.clone()).await {
         Ok(Some(_)) => {}
         Ok(None) => return Outcome::Err(WireError::new(code::UNKNOWN_SESSION, UNKNOWN_SESSION)),
+        Err(e) => return internal(e),
+    }
+    // A land or a move holds the session: the row does not become due.
+    match store.session_hold(query.session_id.clone()).await {
+        Ok(None) => {}
+        Ok(Some(_)) => return Outcome::Err(WireError::new(code::HELD, HELD)),
         Err(e) => return internal(e),
     }
     match store.git_push_now(query.session_id).await {

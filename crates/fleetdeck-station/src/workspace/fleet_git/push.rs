@@ -13,6 +13,7 @@ use fleetdeck_proto::fleet_git::code;
 use super::identity::{
     PushDestination, Refusal, VerifiedUrl, effective_push_url, net_git, read, read_git,
 };
+use super::push_outcome::{PushOutcome, push_outcome};
 use super::redact::redact;
 use crate::workspace::GitError;
 use crate::workspace::GitOptions;
@@ -113,42 +114,6 @@ pub fn refspec_for(slug: &str, publish_ref: &str, oid: &str) -> Result<String, R
 pub fn backoff_delay(attempt: u32) -> Duration {
     let exp = attempt.saturating_sub(1).min(10);
     Duration::from_secs(60 * (1u64 << exp).min(BACKOFF_MAX_MINUTES))
-}
-
-/// What a push did to the one ref (design §5.5, M2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PushOutcome {
-    /// Exit 0 and the ref's status line has the flag ` `, `+`, `*` or `=`.
-    Applied,
-    /// The server answered for the ref (flag `!`): the code is
-    /// `push_rejected`. A recovery read still confirms it.
-    Rejected(&'static str),
-    /// Every other case: the server may have taken the pack.
-    Unknown,
-}
-
-/// Classifies a `git push --porcelain` run for `publish_ref` (design §5.5,
-/// M2). `porcelain` is the stdout: one status line `<flag>\t<src>:<dst>\t<summary>`
-/// for each ref. The line `L` is the one whose `<dst>` is
-/// `refs/heads/<publish_ref>`.
-#[must_use]
-pub fn push_outcome(exit: i32, porcelain: &str, timed_out: bool, publish_ref: &str) -> PushOutcome {
-    if timed_out {
-        return PushOutcome::Unknown;
-    }
-    let dst = format!("refs/heads/{publish_ref}");
-    let flag = porcelain.lines().find_map(|line| {
-        let mut chars = line.chars();
-        let flag = chars.next()?;
-        let rest = chars.as_str().strip_prefix('\t')?;
-        let refs = rest.split('\t').next()?;
-        (refs.rsplit_once(':')?.1 == dst).then_some(flag)
-    });
-    match flag {
-        Some('!') => PushOutcome::Rejected(code::PUSH_REJECTED),
-        Some(' ' | '+' | '*' | '=') if exit == 0 => PushOutcome::Applied,
-        _ => PushOutcome::Unknown,
-    }
 }
 
 /// Does the Git text say that the station has no credentials? (the DL-144
