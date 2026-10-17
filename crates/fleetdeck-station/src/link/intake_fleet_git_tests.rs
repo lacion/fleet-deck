@@ -21,7 +21,7 @@ use crate::store::git_state::tests::{new_git, new_session, view};
 use crate::store::{OfflineApprovalPolicy, Store, StoreConfig};
 use crate::workspace::branches::parse_git_version;
 
-fn git(dir: &Path, args: &[&str]) {
+pub(super) fn git(dir: &Path, args: &[&str]) {
     let out = Command::new("git")
         .current_dir(dir)
         .args(args)
@@ -36,14 +36,14 @@ fn git(dir: &Path, args: &[&str]) {
     );
 }
 
-struct Rig {
+pub(super) struct Rig {
     _dir: tempfile::TempDir,
-    root: PathBuf,
-    manager: SessionManager,
+    pub(super) root: PathBuf,
+    pub(super) manager: SessionManager,
 }
 
 impl Rig {
-    async fn new() -> Option<Self> {
+    pub(super) async fn new() -> Option<Self> {
         let out = Command::new("git").arg("--version").output().unwrap();
         if parse_git_version(&String::from_utf8_lossy(&out.stdout)).is_none_or(|v| v < (2, 45)) {
             eprintln!("skipped: Fleet Git needs Git 2.45 or newer");
@@ -79,7 +79,7 @@ impl Rig {
     }
 
     /// A home whose `origin` is a new bare repository; its project view.
-    fn home(&self, name: &str) -> (PathBuf, fleetdeck_proto::fleet_git::GitProjectView) {
+    pub(super) fn home(&self, name: &str) -> (PathBuf, fleetdeck_proto::fleet_git::GitProjectView) {
         let (bare, home) = (self.root.join(format!("{name}.git")), self.root.join(name));
         fs::create_dir(&bare).unwrap();
         fs::create_dir(&home).unwrap();
@@ -94,7 +94,7 @@ impl Rig {
         (home, project)
     }
 
-    async fn set(
+    pub(super) async fn set(
         &self,
         revision: u64,
         projects: Vec<fleetdeck_proto::fleet_git::GitProjectView>,
@@ -482,7 +482,7 @@ use fleetdeck_proto::fleet_git::RadarResult;
 
 use super::radar;
 
-fn commit(dir: &Path, text: &str) {
+pub(super) fn commit(dir: &Path, text: &str) {
     fs::write(dir.join("a.txt"), format!("{text}\n")).unwrap();
     git(dir, &["add", "."]);
     git(
@@ -499,14 +499,14 @@ fn commit(dir: &Path, text: &str) {
     );
 }
 
-fn runtime() -> FleetGitRuntime {
+pub(super) fn runtime() -> FleetGitRuntime {
     FleetGitRuntime::new(Arc::new(crate::workspace::GitOptions::isolated))
 }
 
 impl Rig {
     /// A verified home with one commit on `main` that the remote has, and a
     /// branch `fd/alpha/one` on the remote. `radar_home` as given.
-    async fn radar_home(&self, radar_home: bool) -> PathBuf {
+    pub(super) async fn radar_home(&self, radar_home: bool) -> PathBuf {
         let (home, mut project) = self.home("app");
         commit(&home, "base");
         git(&home, &["push", "origin", "main"]);
@@ -528,7 +528,7 @@ fn radar_params(branches: &[&str]) -> serde_json::Value {
     serde_json::json!({ "project_id": "app", "branches": list })
 }
 
-fn refused(outcome: Outcome) -> (String, String) {
+pub(super) fn refused(outcome: Outcome) -> (String, String) {
     let Outcome::Err(e) = outcome else {
         panic!("an error expected");
     };
@@ -620,7 +620,7 @@ async fn a_bad_branch_list_an_unverified_home_and_a_second_run_are_refused() {
 }
 
 impl Rig {
-    fn radar_view(&self, home: &Path) -> fleetdeck_proto::fleet_git::GitProjectView {
+    pub(super) fn radar_view(&self, home: &Path) -> fleetdeck_proto::fleet_git::GitProjectView {
         let mut project = view("app");
         project.home_path = home.display().to_string();
         project

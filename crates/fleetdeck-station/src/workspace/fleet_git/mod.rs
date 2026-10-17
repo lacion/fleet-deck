@@ -11,6 +11,7 @@
 //! - `radar`: the predictive conflict radar (§10).
 //! - `land`, `land_temp`: the Git work and the temporary folder of a land (§11.5, §11.6).
 //! - `include`: the copy of ignored files into a new worktree (§7.2).
+//! - `remote_branches`: `project.branches` and `project.fetch` (§13.1).
 //! - `home`: `project.ensure_home` and `project.home_status` (§8.4).
 
 mod fetch;
@@ -24,6 +25,7 @@ mod push;
 mod push_outcome;
 mod radar;
 mod redact;
+mod remote_branches;
 
 pub use fetch::{BaseStale, StartPoint, fetch_for_start};
 pub use home::{ensure_home, git_version, home_status};
@@ -45,3 +47,4 @@ pub use push::{
 pub use push_outcome::{PushOutcome, push_outcome};
 pub use radar::{RadarEnv, RadarGuard, branch_name_ok, check_branches, run_radar};
 pub use redact::redact;
+pub use remote_branches::{fetch_project, list_branches, note_fetched};

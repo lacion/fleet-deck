@@ -5,9 +5,9 @@
 use std::path::Path;
 
 use fleetdeck_proto::fleet_git::{
-    EnsureHomeParams, GitProjectView, GitSnapshot, HomeCheck, HomeCheckState, HomeStatusParams,
-    LandAbandonParams, LandStatusParams, PushNowAnswer, PushNowParams, PushState, RadarParams,
-    ShareVerdictParams, SnapshotAck, code,
+    BranchesParams, EnsureHomeParams, FetchParams, GitProjectView, GitSnapshot, HomeCheck,
+    HomeCheckState, HomeStatusParams, LandAbandonParams, LandStatusParams, PushNowAnswer,
+    PushNowParams, PushState, RadarParams, ShareVerdictParams, SnapshotAck, code,
 };
 use fleetdeck_proto::link::{Outcome, WireError};
 
@@ -21,7 +21,8 @@ use crate::store::git_state::SnapshotResult;
 use crate::store::home_attempts::HomeRefusal;
 use crate::workspace::GitOptions;
 use crate::workspace::fleet_git::{
-    RadarEnv, RadarGuard, check_branches, check_home, is_ancestor, local_tip, run_radar,
+    RadarEnv, RadarGuard, check_branches, check_home, fetch_project, is_ancestor, list_branches,
+    local_tip, note_fetched, run_radar,
 };
 
 /// The text of the code `unknown_session` (design §5.8).
@@ -318,15 +319,10 @@ pub(super) async fn radar(
         return Outcome::Err(WireError::new(code::INVALID_PARAMS, why));
     }
     let store = manager.store();
-    let row = match store.git_project(query.project_id.clone()).await {
-        Ok(Some(row)) if row.view.radar_home => row,
-        Ok(_) => return Outcome::Err(WireError::new(code::NOT_SYNCED, NOT_RADAR_HOME)),
-        Err(e) => return internal(e),
+    let (row, repo_dir) = match radar_home_of(manager, &query.project_id).await {
+        Ok(found) => found,
+        Err(outcome) => return outcome,
     };
-    if row.check_state != HomeCheckState::Verified {
-        return Outcome::Err(WireError::new(code::NOT_A_HOME, NOT_A_HOME));
-    }
-    let repo_dir = std::path::PathBuf::from(row.canonical_path.as_ref().unwrap_or(&row.home_path));
     let Some(_guard) = RadarGuard::try_acquire(&repo_dir) else {
         return Outcome::Err(WireError::new(code::RADAR_BUSY, RADAR_BUSY));
     };
@@ -337,7 +333,88 @@ pub(super) async fn radar(
         view: &row.view,
         allow_local_remotes: manager.policy().allow_local_remotes(),
     };
-    ok(run_radar(&env, &query.branches, store.now_ms()).await)
+    let result = run_radar(&env, &query.branches, store.now_ms()).await;
+    // A run that fetched is the newest fetch of the home (FG-10).
+    if result.code.is_none() {
+        note_fetched(&repo_dir, result.checked_at);
+    }
+    ok(result)
+}
+
+/// The radar home row of `project_id` and its repository folder, or the wire
+/// error of the refusal: `not_synced` and `not_a_home` (design §10.2, §13.1).
+async fn radar_home_of(
+    manager: &SessionManager,
+    project_id: &str,
+) -> Result<(crate::store::git_state::GitProjectRow, std::path::PathBuf), Outcome> {
+    let row = match manager.store().git_project(project_id.to_owned()).await {
+        Ok(Some(row)) if row.view.radar_home => row,
+        Ok(_) => {
+            return Err(Outcome::Err(WireError::new(
+                code::NOT_SYNCED,
+                NOT_RADAR_HOME,
+            )));
+        }
+        Err(e) => return Err(internal(e)),
+    };
+    if row.check_state != HomeCheckState::Verified {
+        return Err(Outcome::Err(WireError::new(code::NOT_A_HOME, NOT_A_HOME)));
+    }
+    let repo_dir = std::path::PathBuf::from(row.canonical_path.as_ref().unwrap_or(&row.home_path));
+    Ok((row, repo_dir))
+}
+
+/// `project.branches` (design §13.1): the `fd/*` branches of the radar home.
+/// Wire errors as [`radar`] without `radar_busy`, and `internal`.
+pub(super) async fn branches(
+    manager: &SessionManager,
+    runtime: &FleetGitRuntime,
+    params: serde_json::Value,
+) -> Outcome {
+    let query: BranchesParams = match serde_json::from_value(params) {
+        Ok(q) => q,
+        Err(e) => return bad_params(e),
+    };
+    let (row, repo_dir) = match radar_home_of(manager, &query.project_id).await {
+        Ok(found) => found,
+        Err(outcome) => return outcome,
+    };
+    let options = runtime.provision_options();
+    let env = RadarEnv {
+        options: &options,
+        repo_dir: &repo_dir,
+        view: &row.view,
+        allow_local_remotes: manager.policy().allow_local_remotes(),
+    };
+    match list_branches(&env).await {
+        Ok(answer) => ok(answer),
+        Err(r) => Outcome::Err(WireError::new(r.code, r.text)),
+    }
+}
+
+/// `project.fetch` (design §13.1): a failed fetch is the `code` and `text` of
+/// the answer, not a wire error.
+pub(super) async fn fetch(
+    manager: &SessionManager,
+    runtime: &FleetGitRuntime,
+    params: serde_json::Value,
+) -> Outcome {
+    let query: FetchParams = match serde_json::from_value(params) {
+        Ok(q) => q,
+        Err(e) => return bad_params(e),
+    };
+    let (row, repo_dir) = match radar_home_of(manager, &query.project_id).await {
+        Ok(found) => found,
+        Err(outcome) => return outcome,
+    };
+    let options = runtime.provision_options();
+    let env = RadarEnv {
+        options: &options,
+        repo_dir: &repo_dir,
+        view: &row.view,
+        allow_local_remotes: manager.policy().allow_local_remotes(),
+    };
+    ok(fetch_project(&env, manager.store().now_ms()).await)
 }
 
 /// `fleet_git.push_now` (design §5.8): a `due` or `failing` row is due at
@@ -443,3 +520,7 @@ mod tests;
 #[cfg(test)]
 #[path = "intake_land_tests.rs"]
 mod land_tests;
+
+#[cfg(test)]
+#[path = "intake_branches_tests.rs"]
+mod branches_tests;

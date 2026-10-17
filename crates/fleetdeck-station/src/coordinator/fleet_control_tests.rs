@@ -122,12 +122,15 @@ const INSPECT: &[&str] = &[
     "read_artifact",
     "read_file",
     "search_files",
+    "project_branches",
+    "project_fetch",
 ];
 const MANAGE: &[&str] = &[
     "resume_session",
     "rename_session",
     "set_mode",
     "move_to_project",
+    "land_session",
 ];
 
 #[test]
@@ -437,6 +440,38 @@ fn each_fleet_control_tool_maps_to_its_op_or_query() {
         .unwrap_err()
         .starts_with("invalid_params")
     );
+    // The Fleet Git tools (FG-10): two queries and one op, as thin forwards.
+    assert_eq!(
+        q("project_branches", json!({"project_id": "p1"})).unwrap(),
+        CoordinatorQuery::ProjectBranches {
+            project_id: "p1".to_owned()
+        }
+    );
+    assert_eq!(
+        q("project_fetch", json!({"project_id": "p1"})).unwrap(),
+        CoordinatorQuery::ProjectFetch {
+            project_id: "p1".to_owned()
+        }
+    );
+    assert!(q("project_fetch", json!({"project_id": "p1", "caller": "x"})).is_err());
+    assert!(q("project_branches", json!({})).is_err());
+    assert_eq!(
+        op("land_session", json!({"station": "alpha", "session_id": s})).unwrap(),
+        CoordinatorOp::Land {
+            station: "alpha".into(),
+            session_id: s.into()
+        }
+    );
+    assert!(
+        op(
+            "land_session",
+            json!({"station": "alpha", "session_id": s, "caller": "x"})
+        )
+        .unwrap_err()
+        .starts_with("invalid_params")
+    );
+    // `move_session` is not a tool (FG-9 is not built).
+    assert!(to_op("move_session", &json!({})).is_err());
 }
 
 /// A deck link whose answer to `coordinator.authority_check` is set by the
