@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::event::ProviderKind;
-use crate::ids::{SessionId, StationId};
+use crate::ids::{ProviderInstanceId, SessionId, StationId};
 
 /// The most bytes of the files of one move (design §12.3, O29): 64 MiB.
 pub const MOVE_MAX_BYTES: u64 = 64 * 1024 * 1024;
@@ -149,6 +149,11 @@ pub struct MoveExportAnswer {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub stream_token: Option<String>,
+    /// The provider instance of the source session (FG-9): the deck sends it
+    /// in `MoveIn` when the summary has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub provider_instance: Option<ProviderInstanceId>,
 }
 
 /// Params of `session.move_prepare` (design §12.3 step 3).

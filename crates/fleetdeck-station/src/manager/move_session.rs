@@ -14,7 +14,7 @@ use fleetdeck_proto::command::{CommandOrigin, CommandResult, SessionCommand, Sto
 use fleetdeck_proto::fleet_git::{
     MoveInState, MovePublication, MoveStatusAnswer, MoveStatusState, PushState, TranscriptManifest,
 };
-use fleetdeck_proto::{Event, RejectCode, SessionId};
+use fleetdeck_proto::{Event, ProviderInstanceId, RejectCode, SessionId};
 
 use crate::coordinator::Bindings;
 use crate::manager::SessionManager;
@@ -478,9 +478,10 @@ impl SessionManager {
             .ok_or_else(|| MoveFileError::new("invalid_state", NO_MOVE))
     }
 
-    /// `session.move_export` (design §12.3 step 2): the publication and, for
-    /// a native move, the manifest of the files. The token of the stream is
-    /// the caller's (it needs the data channel of the link).
+    /// `session.move_export` (design §12.3 step 2): the publication, the
+    /// manifest of the files (a native move only) and the provider instance
+    /// of the session (`None` when the store has no facts of it). The token
+    /// of the stream is the caller's (it needs the data channel of the link).
     ///
     /// # Errors
     /// [`MoveFileError`]: `invalid_state` (no move holds the session, the
@@ -489,12 +490,25 @@ impl SessionManager {
     pub async fn move_export_plan(
         &self,
         move_id: &str,
-    ) -> Result<(MovePublication, Option<TranscriptManifest>), MoveFileError> {
+    ) -> Result<
+        (
+            MovePublication,
+            Option<TranscriptManifest>,
+            Option<ProviderInstanceId>,
+        ),
+        MoveFileError,
+    > {
         let row = self.holding_row(move_id).await?;
         self.wait_stopped(&row.session_id).await?;
         self.check_tip(&row.session_id, &row.publication).await?;
         let exported = self.open_files(&row.session_id).await?;
-        Ok((row.publication, exported.map(|e| e.manifest)))
+        let instance = self
+            .store
+            .history_facts(row.session_id.clone())
+            .await
+            .map_err(|e| internal(&e))?
+            .map(|facts| facts.provider_instance);
+        Ok((row.publication, exported.map(|e| e.manifest), instance))
     }
 
     /// The open files of the move for its export stream; `None` for a

@@ -244,6 +244,47 @@ async fn a_large_conversation_arrives_complete_and_in_order() {
     assert_eq!(w.row(&id).await.bytes, Some(bytes.len() as u64));
 }
 
+#[tokio::test]
+async fn a_session_without_an_instance_moves_with_the_instance_of_the_export_answer() {
+    let w = World::new(true).await;
+    let mut s = pushed("s1");
+    s.provider_instance = None;
+    w.show(vec![s]).await;
+    let id = w.start().await;
+    w.wait_state(&id, MoveState::Done).await;
+    let command = &w.b.requests("session.move_in")[0]["command"];
+    assert_eq!(command["provider_instance"], "claude");
+}
+
+#[tokio::test]
+async fn a_missing_instance_after_the_export_aborts_before_the_prepare() {
+    // The summary has no instance, so the request passes (FG-9).
+    for (exported, text) in [
+        (Some("ghost"), "bravo has no provider named ghost."),
+        (None, "bravo has no provider for this session."),
+    ] {
+        let w = World::new(true).await;
+        let mut s = pushed("s1");
+        s.provider_instance = None;
+        w.show(vec![s]).await;
+        w.a.files.lock().unwrap().provider_instance = exported;
+        let id = w.start().await;
+        let row = w.wait_state(&id, MoveState::Failed).await;
+        assert_eq!(row.code.as_deref(), Some("move_not_ready"));
+        assert_eq!(row.message.as_deref(), Some(text));
+        let log = moves(&w);
+        assert!(
+            !log.iter()
+                .any(|m| m.ends_with("move_prepare") || m.ends_with("move_in")),
+            "{log:?}"
+        );
+        assert_eq!(
+            log.last().map(String::as_str),
+            Some("fake:session.move_abort")
+        );
+    }
+}
+
 // ----- the abort -----
 
 #[tokio::test]

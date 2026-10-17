@@ -200,12 +200,36 @@ fn an_export_answer_for_a_branch_only_move_omits_the_manifest_and_the_token() {
         publication: publication(),
         manifest: None,
         stream_token: None,
+        provider_instance: None,
     };
     let value = serde_json::to_value(&answer).unwrap();
     assert_eq!(value, json!({"publication": publication()}));
     assert_eq!(
         serde_json::from_value::<MoveExportAnswer>(value).unwrap(),
         answer
+    );
+}
+
+#[test]
+fn an_export_answer_carries_the_provider_instance_and_an_old_answer_has_none() {
+    let answer = MoveExportAnswer {
+        publication: publication(),
+        manifest: None,
+        stream_token: None,
+        provider_instance: Some(crate::ids::ProviderInstanceId::from("claude-work")),
+    };
+    let value = serde_json::to_value(&answer).unwrap();
+    assert_eq!(value["provider_instance"], "claude-work");
+    assert_eq!(
+        serde_json::from_value::<MoveExportAnswer>(value).unwrap(),
+        answer
+    );
+    let old = json!({"publication": publication()});
+    assert_eq!(
+        serde_json::from_value::<MoveExportAnswer>(old)
+            .unwrap()
+            .provider_instance,
+        None
     );
 }
 
@@ -226,6 +250,7 @@ fn a_transcript_manifest_round_trips_inside_the_export_and_prepare_shapes() {
         publication: publication(),
         manifest: Some(manifest.clone()),
         stream_token: Some("tok".into()),
+        provider_instance: None,
     };
     let value = serde_json::to_value(&answer).unwrap();
     assert_eq!(value["manifest"]["files"][0]["rel"], "cli-1.jsonl");

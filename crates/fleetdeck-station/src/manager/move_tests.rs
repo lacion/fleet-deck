@@ -695,8 +695,12 @@ async fn the_export_plan_waits_for_the_stop_checks_the_tip_and_lists_the_files()
         .process_ended("p1".into(), "test".to_owned())
         .await
         .unwrap();
-    let (publication, manifest) = fx.manager.move_export_plan("m1").await.unwrap();
+    let (publication, manifest, instance) = fx.manager.move_export_plan("m1").await.unwrap();
     assert_eq!(publication.oid, tip);
+    assert_eq!(
+        instance.as_ref().map(ToString::to_string).as_deref(),
+        Some("claude")
+    );
     let manifest = manifest.unwrap();
     assert_eq!(manifest.native_session_id, NATIVE);
     assert_eq!(manifest.files.len(), 1);
@@ -729,9 +733,14 @@ async fn a_session_without_a_native_id_has_a_branch_only_plan_and_a_missing_file
     fx.session("s1", false).await;
     fx.end("s1").await;
     fx.accepted("c1", out("s1", "m1")).await;
-    let (publication, manifest) = fx.manager.move_export_plan("m1").await.unwrap();
+    let (publication, manifest, instance) = fx.manager.move_export_plan("m1").await.unwrap();
     assert_eq!(publication.local_branch, "fd/alpha/s1");
     assert!(manifest.is_none());
+    // A branch-only plan answers the instance too (the summary may have none).
+    assert_eq!(
+        instance.as_ref().map(ToString::to_string).as_deref(),
+        Some("claude")
+    );
     assert!(fx.manager.move_export_open("m1").await.unwrap().is_none());
     // A native session whose transcript is gone.
     fx.session("s2", true).await;
