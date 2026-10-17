@@ -155,20 +155,61 @@ async fn a_lease_that_does_not_hold_is_rejected_with_push_rejected() {
     assert_eq!(run(&push).await.outcome, PushOutcome::Applied);
 }
 
+/// The default push of a land with the captured base as its lease.
+fn default_push(r: &Repos, oid: &str, base: &str) -> LandPush {
+    LandPush::default(&r.options, &r.home, WAIT, &r.url, "main", oid, base).unwrap()
+}
+
 #[tokio::test]
-async fn a_default_push_is_a_fast_forward_without_force() {
+async fn a_default_push_is_a_fast_forward_from_the_captured_base() {
     let Some(r) = Repos::new() else { return };
+    let base = git(&r.home, &["rev-parse", "HEAD"]);
     let oid = commit(&r.home, "b.txt", "two");
-    let push = LandPush::default(&r.options, &r.home, WAIT, &r.url, "main", &oid).unwrap();
+    let push = default_push(&r, &oid, &base);
     assert_eq!(run(&push).await.outcome, PushOutcome::Applied);
     assert_eq!(git(&r.bare, &["rev-parse", "refs/heads/main"]), oid);
-    // A commit that is not a fast forward is refused by the remote.
+    // A commit that is not a fast forward is refused: the remote is no longer
+    // at the base.
     git(&r.home, &["reset", "-q", "--hard", "HEAD~1"]);
     let other = commit(&r.home, "c.txt", "other");
-    let push = LandPush::default(&r.options, &r.home, WAIT, &r.url, "main", &other).unwrap();
-    let end = run(&push).await;
+    let end = run(&default_push(&r, &other, &base)).await;
     assert!(matches!(end.outcome, PushOutcome::Rejected(_)), "{end:?}");
     assert_eq!(git(&r.bare, &["rev-parse", "refs/heads/main"]), oid);
+}
+
+#[tokio::test]
+async fn a_default_push_with_a_base_that_the_remote_left_is_rejected() {
+    let Some(r) = Repos::new() else { return };
+    let first = git(&r.home, &["rev-parse", "HEAD"]);
+    let base = commit(&r.home, "b.txt", "two");
+    git(&r.home, &["push", "origin", "main"]);
+    let oid = commit(&r.home, "c.txt", "three");
+    // Another actor reset the remote branch to an ancestor of the base after
+    // the capture: the ordinary push would be a fast forward from there.
+    git(&r.bare, &["update-ref", "refs/heads/main", &first]);
+    let end = run(&default_push(&r, &oid, &base)).await;
+    assert_eq!(end.outcome, PushOutcome::Rejected(code::PUSH_REJECTED));
+    assert_eq!(end.failure.code, code::PUSH_REJECTED);
+    assert_eq!(git(&r.bare, &["rev-parse", "refs/heads/main"]), first);
+    // The branch deleted after the capture is not made again.
+    git(&r.bare, &["update-ref", "-d", "refs/heads/main"]);
+    let end = run(&default_push(&r, &oid, &base)).await;
+    assert_eq!(end.outcome, PushOutcome::Rejected(code::PUSH_REJECTED));
+    assert_eq!(
+        remote_tip(&r.options, &r.home, &r.url, "main", WAIT).await,
+        RemoteTip::Answered(None)
+    );
+}
+
+#[tokio::test]
+async fn a_default_push_names_the_lease_of_its_base() {
+    let Some(r) = Repos::new() else { return };
+    let base = git(&r.home, &["rev-parse", "HEAD"]);
+    let oid = commit(&r.home, "b.txt", "two");
+    let push = default_push(&r, &oid, &base);
+    let lease = format!("--force-with-lease=refs/heads/main:{base}");
+    assert!(push.args.contains(&lease), "{:?}", push.args);
+    assert!(!push.args.iter().any(|a| a.starts_with('+')));
 }
 
 #[tokio::test]
@@ -191,8 +232,13 @@ async fn a_refused_refspec_builds_no_push() {
         Some(RefspecError::InvalidOid)
     );
     for bad in ["", "-x", "a b", "a..b", "x:y", "a.lock"] {
-        let got = LandPush::default(&r.options, &r.home, WAIT, &r.url, bad, &oid).err();
+        let got = LandPush::default(&r.options, &r.home, WAIT, &r.url, bad, &oid, &oid).err();
         assert_eq!(got, Some(RefspecError::InvalidRef), "{bad}");
+    }
+    // The base is a commit id: an empty or a bad one builds no push.
+    for bad in ["", "zz", "abc"] {
+        let got = LandPush::default(&r.options, &r.home, WAIT, &r.url, "main", &oid, bad).err();
+        assert_eq!(got, Some(RefspecError::InvalidOid), "{bad}");
     }
 }
 

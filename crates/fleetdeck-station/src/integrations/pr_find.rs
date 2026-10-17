@@ -51,8 +51,38 @@ fn http_fail(answer: &HttpAnswer) -> Fail {
     Fail::upstream(format!("HTTP {}: {}", answer.status, body.trim()))
 }
 
+/// The most pages that a lookup reads (100 requests to a page, H16).
+pub const MAX_PAGES: u32 = 10;
+
+/// What [`pr_find`] found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrLookup {
+    /// The open requests of this repository from `head` to `base`, after the
+    /// last page.
+    Found(Vec<PrRef>),
+    /// The forge has more than [`MAX_PAGES`] pages of answers: the caller
+    /// cannot tell that the match is exact.
+    TooManyPages,
+}
+
+/// The numeric id of the bound GitLab project, read once per land; `None`
+/// for GitHub, which needs no such id (H16).
+///
+/// # Errors
+/// A [`Fail`] when the forge cannot be reached or answers with something
+/// that is not a project.
+pub async fn pr_project_id(forge: &Forge<'_>, timeout: Duration) -> Result<Option<u64>, Fail> {
+    match forge.binding.kind {
+        ForgeKind::Github => Ok(None),
+        ForgeKind::Gitlab => gitlab::project_id(forge, timeout).await.map(Some),
+    }
+}
+
 /// The open pull requests from `head` (a branch name) to `base`: an exact
-/// lookup, at most two answers, no cache.
+/// lookup, no cache. A request counts only when its head is a branch of the
+/// bound repository: GitHub `head.repo.full_name`, GitLab `source_project_id`
+/// and `target_project_id` equal to `project` (from [`pr_project_id`]). The
+/// pages are read up to [`MAX_PAGES`].
 ///
 /// # Errors
 /// A [`Fail`] when the forge cannot be reached, answers with a status other
@@ -60,29 +90,53 @@ fn http_fail(answer: &HttpAnswer) -> Fail {
 /// not know the result.
 pub async fn pr_find(
     forge: &Forge<'_>,
+    project: Option<u64>,
     head: &str,
     base: &str,
     timeout: Duration,
-) -> Result<Vec<PrRef>, Fail> {
-    let answer = match forge.binding.kind {
-        ForgeKind::Github => github::pulls_find(forge, head, base, timeout).await?,
-        ForgeKind::Gitlab => gitlab::mrs_find(forge, head, base, timeout).await?,
-    };
-    if answer.status != 200 {
-        return Err(http_fail(&answer));
+) -> Result<PrLookup, Fail> {
+    if forge.binding.kind == ForgeKind::Gitlab && project.is_none() {
+        return Err(Fail::bad_answer("the GitLab project id is not known"));
     }
-    let list: Value = serde_json::from_slice(&answer.body)
-        .map_err(|_| Fail::bad_answer("the forge answer is not JSON"))?;
-    let Some(items) = list.as_array() else {
-        return Err(Fail::bad_answer("the forge answer is not a list"));
-    };
-    items
-        .iter()
-        .map(|item| {
-            pr_of(forge.binding.kind, item)
-                .ok_or_else(|| Fail::bad_answer("the forge gave no pull request URL"))
-        })
-        .collect()
+    let mut found = Vec::new();
+    let mut page = 1;
+    loop {
+        let answer = match forge.binding.kind {
+            ForgeKind::Github => github::pulls_find(forge, head, base, page, timeout).await?,
+            ForgeKind::Gitlab => gitlab::mrs_find(forge, head, base, page, timeout).await?,
+        };
+        if answer.status != 200 {
+            return Err(http_fail(&answer));
+        }
+        let list: Value = serde_json::from_slice(&answer.body)
+            .map_err(|_| Fail::bad_answer("the forge answer is not JSON"))?;
+        let Some(items) = list.as_array() else {
+            return Err(Fail::bad_answer("the forge answer is not a list"));
+        };
+        for item in items {
+            let ours = match (forge.binding.kind, project) {
+                (ForgeKind::Github, _) => github::pull_is_ours(forge, item),
+                (ForgeKind::Gitlab, Some(id)) => gitlab::mr_is_ours(item, id),
+                (ForgeKind::Gitlab, None) => false,
+            };
+            if !ours {
+                continue;
+            }
+            found.push(
+                pr_of(forge.binding.kind, item)
+                    .ok_or_else(|| Fail::bad_answer("the forge gave no pull request URL"))?,
+            );
+        }
+        let next = match forge.binding.kind {
+            ForgeKind::Github => github::next_page(&answer, page),
+            ForgeKind::Gitlab => gitlab::next_page(&answer),
+        };
+        match next {
+            None => return Ok(PrLookup::Found(found)),
+            Some(_) if page >= MAX_PAGES => return Ok(PrLookup::TooManyPages),
+            Some(n) => page = n.max(page + 1),
+        }
+    }
 }
 
 /// Creates the pull request from `head` to `base` and classifies the answer.

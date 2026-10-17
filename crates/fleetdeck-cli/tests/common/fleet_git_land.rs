@@ -46,20 +46,24 @@ esac
 exec "$REAL" "$@"
 "#;
 
-/// The fake forge CLI (`glab` and `gh`): a lookup answers the pull requests of
-/// `fx/prs` (an empty list at first); a create writes `fx/prs` and logs one
-/// line to `fx/creates`. Every call is logged to `fx/forge_calls`.
+/// The fake forge CLI (`glab` and `gh`): the project read answers the id 42; a
+/// lookup answers the merge requests of `fx/prs` (an empty list at first); a
+/// create writes `fx/prs` and logs one line to `fx/creates`. Every merge
+/// request comes from project 42 and goes to it. Every call is logged to
+/// `fx/forge_calls`.
 const FORGE_CLI: &str = r#"#!/bin/sh
 FX={FX}
 echo "$@" >> "$FX/forge_calls"
 case "$*" in
-*"-X GET"*)
+*"-X GET"*"/merge_requests?"*)
   printf 'HTTP/2.0 200 OK\n\n'
   if [ -s "$FX/prs" ]; then cat "$FX/prs"; else echo '[]'; fi;;
+*"-X GET"*)
+  printf 'HTTP/2.0 200 OK\n\n{"id":42}';;
 *"-X POST"*)
   cat > /dev/null
   echo post >> "$FX/creates"
-  echo '[{"iid":5,"web_url":"https://forge.example/mr/5"}]' > "$FX/prs"
+  echo '[{"iid":5,"web_url":"https://forge.example/mr/5","source_project_id":42,"target_project_id":42}]' > "$FX/prs"
   printf 'HTTP/2.0 201 Created\n\n{"iid":5,"web_url":"https://forge.example/mr/5"}';;
 esac
 "#;

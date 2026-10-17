@@ -157,11 +157,12 @@ impl LandPush {
         ))
     }
 
-    /// The push to the default branch: no force and no lease (design §11.5
-    /// step 7).
+    /// The push to the default branch: no `+`, and an explicit
+    /// `--force-with-lease=refs/heads/<default>:<base>` with the captured base
+    /// (design §11.5 step 7, H16). A remote that is not at `base` refuses it.
     ///
     /// # Errors
-    /// [`RefspecError`]: the branch name or the id is not valid.
+    /// [`RefspecError`]: the branch name, the id or the base is not valid.
     pub fn default(
         options: &GitOptions,
         repo: &Path,
@@ -169,11 +170,12 @@ impl LandPush {
         url: &str,
         default_ref: &str,
         oid: &str,
+        base: &str,
     ) -> Result<Self, RefspecError> {
         if !plain_branch(default_ref) {
             return Err(RefspecError::InvalidRef);
         }
-        if !oid_ok(oid) {
+        if !oid_ok(oid) || !oid_ok(base) {
             return Err(RefspecError::InvalidOid);
         }
         let refspec = format!("{oid}:refs/heads/{default_ref}");
@@ -184,7 +186,7 @@ impl LandPush {
             url,
             &refspec,
             default_ref,
-            None,
+            Some(base),
         ))
     }
 

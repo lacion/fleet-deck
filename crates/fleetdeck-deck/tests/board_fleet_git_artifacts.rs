@@ -61,6 +61,10 @@ async fn art() -> Art {
     .await;
     exp.set_taildrive(clear_report("nas1"));
     exp.publish(&s.f.store, &exp_id);
+    // Every paired station has a known machine name (H16): `not_a_station`
+    // needs that.
+    caller.set_taildrive(clear_report("fake1"));
+    caller.publish(&s.f.store, &s.f.station);
     s.f.store
         .apply_snapshot(
             s.f.station.clone(),
@@ -229,6 +233,126 @@ async fn a_machine_that_is_not_a_station_is_not_a_station() {
     assert!(t.exp.requests("fleet_git.share_verdict").is_empty());
 }
 
+/// Pairs a station `name` that has no link and reports nothing.
+async fn pin(t: &Art, name: &str) -> fleetdeck_deck::store::stations::StationRecord {
+    let identity = Identity::generate().unwrap();
+    t.s.f
+        .store
+        .pin_station(NewStation {
+            key: identity.public_key(),
+            name: name.to_owned(),
+            scopes: STATION_SCOPES.into_iter().collect(),
+            dial_url: None,
+        })
+        .await
+        .unwrap()
+}
+
+fn info_of(name: &str, taildrive: Option<Value>) -> fleetdeck_proto::link::StationInfo {
+    let mut info = json!({ "name": name, "incarnation": "i", "head": 0, "live_sessions": 0 });
+    if let Some(report) = taildrive {
+        info["taildrive"] = report;
+    }
+    serde_json::from_value(info).unwrap()
+}
+
+#[tokio::test]
+async fn a_station_without_a_known_machine_name_makes_the_share_unverified() {
+    let t = art().await;
+    assert_eq!(t.save_share("nas9/out").await.status, 200);
+    t.assign().await;
+    // A paired station that never reported a machine: the deck cannot tell
+    // that `nas9` is not this station.
+    pin(&t, "newcomer").await;
+    refused(
+        t.authorize(&t.caller, &t.project(), "s1", "nas9/out").await,
+        "share_unverified",
+        "Fleet Deck does not know the machine name of station newcomer yet.",
+    );
+    assert!(t.exp.requests("fleet_git.share_verdict").is_empty());
+}
+
+#[tokio::test]
+async fn a_stored_machine_name_survives_a_restart_and_a_report_without_one() {
+    let t = art().await;
+    assert_eq!(t.save_share(SHARE).await.status, 200);
+    t.assign().await;
+    let store = &t.s.f.store;
+    // The deck remembers `nas1`; then the cache is empty (a restart) or the
+    // report has no machine (a failed `tailscale status`).
+    store
+        .remember_machine(&t.exp_id, &info_of("nas", Some(clear_report("nas1"))))
+        .await;
+    for taildrive in [
+        None,
+        Some(json!({ "state": "unavailable", "reason": "off",
+        "shares": [], "checked_at": 1 })),
+    ] {
+        store.set_station_info(&t.exp_id, info_of("nas", taildrive.clone()));
+        store
+            .remember_machine(&t.exp_id, &info_of("nas", taildrive))
+            .await;
+        let machines = store.station_machines().await.unwrap();
+        assert_eq!(machines.get(&t.exp_id).map(String::as_str), Some("nas1"));
+        // The share is still the share of that station: it is asked.
+        let before = t.exp.requests("fleet_git.share_verdict").len();
+        assert_eq!(auth(t.ask().await).verdict, ShareVerdict::Ok);
+        assert_eq!(t.exp.requests("fleet_git.share_verdict").len(), before + 1);
+    }
+}
+
+#[tokio::test]
+async fn a_station_with_a_stored_machine_and_no_link_is_unverified_not_a_non_station() {
+    let t = art().await;
+    assert_eq!(t.save_share("away/out").await.status, 200);
+    t.assign().await;
+    let rec = pin(&t, "ghost").await;
+    t.s.f
+        .store
+        .remember_machine(
+            &rec.station_id,
+            &info_of("ghost", Some(clear_report("Away"))),
+        )
+        .await;
+    refused(
+        t.authorize(&t.caller, &t.project(), "s1", "away/out").await,
+        "share_unverified",
+        "The station that exports the share cannot be checked now.",
+    );
+}
+
+#[tokio::test]
+async fn the_stored_machine_is_replaced_by_a_new_one_and_deleted_with_its_station() {
+    let t = art().await;
+    let rec = pin(&t, "mover").await;
+    let store = &t.s.f.store;
+    store
+        .remember_machine(
+            &rec.station_id,
+            &info_of("mover", Some(clear_report("one"))),
+        )
+        .await;
+    store
+        .remember_machine(
+            &rec.station_id,
+            &info_of("mover", Some(clear_report("two"))),
+        )
+        .await;
+    let machines = store.station_machines().await.unwrap();
+    assert_eq!(
+        machines.get(&rec.station_id).map(String::as_str),
+        Some("two")
+    );
+    store.revoke_station(rec.key).await.unwrap().unwrap();
+    assert!(
+        !store
+            .station_machines()
+            .await
+            .unwrap()
+            .contains_key(&rec.station_id)
+    );
+}
+
 #[tokio::test]
 async fn two_stations_with_the_same_machine_are_unverified() {
     let mut t = art().await;
@@ -269,23 +393,8 @@ async fn a_verdict_error_and_a_missing_link_are_unverified() {
     refused(t.ask().await, "share_unverified", text);
     assert_eq!(t.exp.requests("fleet_git.share_verdict").len(), 1);
     // The exporting station is known from its report but has no link.
-    let identity = Identity::generate().unwrap();
-    let rec =
-        t.s.f
-            .store
-            .pin_station(NewStation {
-                key: identity.public_key(),
-                name: "ghost".to_owned(),
-                scopes: STATION_SCOPES.into_iter().collect(),
-                dial_url: None,
-            })
-            .await
-            .unwrap();
-    let info = serde_json::from_value(json!({
-        "name": "ghost", "incarnation": "g", "head": 0, "live_sessions": 0,
-        "taildrive": clear_report("away")
-    }))
-    .unwrap();
+    let rec = pin(&t, "ghost").await;
+    let info = info_of("ghost", Some(clear_report("away")));
     t.s.f.store.set_station_info(&rec.station_id, info);
     assert_eq!(t.save_share("away/out").await.status, 200);
     refused(

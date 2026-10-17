@@ -72,6 +72,7 @@ pub mod schedules;
 pub mod schema;
 pub mod shares;
 pub mod slug_reservations;
+pub mod station_machines;
 pub mod stations;
 
 use std::collections::{BTreeMap, BTreeSet};

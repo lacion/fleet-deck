@@ -290,9 +290,11 @@ exec git "$@"
     /// lookup; `fx/create_mode` is `ok`, `drop`, `bad502`, `r422` or `down` (nothing
     /// is created and the lookup fails from then on); the
     /// calls go to `fx/forge_calls` and each create to `fx/creates`;
-    /// `fx/find_fail` makes the lookup fail; `fx/block_forge_get` holds it.
+    /// `fx/find_fail` makes the lookup fail; `fx/block_forge_get` holds it;
+    /// `fx/link_next` gives every page a next page.
     pub(super) fn fake_forge(&self) {
         let fx = self.root.join("fx");
+        let item = self.pr_item(5, "https://forge.example/pull/5");
         let script = fx.join("forge-cli");
         fs::write(
             &script,
@@ -307,20 +309,27 @@ case "$*" in
       while [ -e "$FX/block_forge_get" ]; do sleep 0.05; done
     fi
     if [ -e "$FX/find_fail" ]; then echo "gh: unreachable" >&2; exit 1; fi
-    printf 'HTTP/2.0 200 OK
+    if [ -e "$FX/link_next" ]; then
+      printf 'HTTP/2.0 200 OK
+Link: <https://api.github.com/x>; rel="next"
 
 '
+    else
+      printf 'HTTP/2.0 200 OK
+
+'
+    fi
     if [ -s "$FX/prs" ]; then cat "$FX/prs"; else echo '[]'; fi;;
   *"-X POST"*)
     cat > /dev/null
     echo post >> "$FX/creates"
     mode=$(cat "$FX/create_mode")
-    made='[{{"number":5,"html_url":"https://forge.example/pull/5"}}]'
+    made='[{item}]'
     case "$mode" in
       ok) echo "$made" > "$FX/prs"
           printf 'HTTP/2.0 201 Created
 
-{{"number":5,"html_url":"https://forge.example/pull/5"}}';;
+{item}';;
       drop) echo "$made" > "$FX/prs"; echo "gh: connection reset" >&2; exit 1;;
       bad502) echo "$made" > "$FX/prs"
           printf 'HTTP/2.0 502 Bad Gateway
@@ -347,6 +356,15 @@ esac
                 curl: "curl".into(),
             },
         ));
+    }
+
+    /// A pull request of the forge of `pr_plan`: its head is a branch of the
+    /// bound repository (H16).
+    pub(super) fn pr_item(&self, number: u64, url: &str) -> String {
+        let repo = &self.remote.repo["localhost/".len()..];
+        format!(
+            r#"{{"number":{number},"html_url":"{url}","head":{{"repo":{{"full_name":"{repo}"}}}}}}"#
+        )
     }
 
     /// The default plan in mode `pr`, with a forge that matches the remote.

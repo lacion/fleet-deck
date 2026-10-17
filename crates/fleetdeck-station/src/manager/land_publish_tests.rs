@@ -50,11 +50,17 @@ async fn a_clean_merge_land_advances_the_remote_default_branch_and_stops_the_pus
             LandPhase::Done,
         ]
     );
-    // The default push has no force and no lease.
+    // The default push has no `+` and the lease of the captured base (H16).
     let pushes = rig.lines("pushes");
     assert_eq!(pushes.len(), 2, "{pushes:?}");
     assert!(pushes[0].contains("--force-with-lease=refs/heads/fd/alpha/s1:"));
-    assert!(!pushes[1].contains("force"), "{}", pushes[1]);
+    let base = row.base_oid.clone().unwrap();
+    assert!(
+        pushes[1].contains(&format!("--force-with-lease=refs/heads/main:{base}")),
+        "{}",
+        pushes[1]
+    );
+    assert!(!pushes[1].contains(":+"), "{}", pushes[1]);
     // The branch push left the push row stopped: the old local tip is never
     // pushed (decision 53).
     let push = rig.store.git_push("s1".into()).await.unwrap().unwrap();
@@ -317,7 +323,7 @@ async fn an_existing_pull_request_is_the_result_and_two_are_ambiguous() {
     rig.fake_forge();
     std::fs::write(
         rig.fx("prs"),
-        r#"[{"number":9,"html_url":"https://forge.example/pull/9"}]"#,
+        format!("[{}]", rig.pr_item(9, "https://forge.example/pull/9")),
     )
     .unwrap();
     rig.session("s1", false).await;
@@ -333,7 +339,7 @@ async fn an_existing_pull_request_is_the_result_and_two_are_ambiguous() {
     rig.fake_forge();
     std::fs::write(
         rig.fx("prs"),
-        r#"[{"number":1,"html_url":"u1"},{"number":2,"html_url":"u2"}]"#,
+        format!("[{},{}]", rig.pr_item(1, "u1"), rig.pr_item(2, "u2")),
     )
     .unwrap();
     rig.session("s1", false).await;
@@ -350,6 +356,47 @@ async fn an_existing_pull_request_is_the_result_and_two_are_ambiguous() {
         "{text}"
     );
     assert!(rig.lines("creates").is_empty());
+}
+
+#[tokio::test]
+async fn a_pull_request_from_a_fork_is_not_the_result_of_the_land() {
+    let Some(rig) = Rig::new(false).await else {
+        return;
+    };
+    rig.fake_forge();
+    // Somebody else's fork has a request with the same head branch name.
+    let fork = rig
+        .pr_item(8, "https://forge.example/pull/8")
+        .replace("\"full_name\":\"", "\"full_name\":\"mallory-");
+    std::fs::write(rig.fx("prs"), format!("[{fork}]")).unwrap();
+    rig.session("s1", false).await;
+    rig.admit_plan("s1", "land-1", rig.pr_plan("s1")).await;
+    let row = rig.run_all("land-1").await;
+    assert_eq!(row.state, LandState::Landed, "{row:?}");
+    // The lookup found no request of ours: the land created its own.
+    assert_eq!(row.pr_url.as_deref(), Some("https://forge.example/pull/5"));
+    assert_eq!(rig.lines("creates").len(), 1);
+}
+
+#[tokio::test]
+async fn a_lookup_with_more_than_ten_pages_ends_pr_ambiguous() {
+    let Some(rig) = Rig::new(false).await else {
+        return;
+    };
+    rig.fake_forge();
+    rig.flag("link_next", true);
+    rig.session("s1", false).await;
+    rig.admit_plan("s1", "land-1", rig.pr_plan("s1")).await;
+    let row = rig.run_all("land-1").await;
+    assert_eq!(row.state, LandState::Failed, "{row:?}");
+    assert_eq!(row.code.as_deref(), Some("pr_ambiguous"));
+    assert!(rig.lines("creates").is_empty());
+    let gets = rig
+        .lines("forge_calls")
+        .iter()
+        .filter(|l| l.contains("-X GET"))
+        .count();
+    assert_eq!(gets, 10);
 }
 
 #[tokio::test]

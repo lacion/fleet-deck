@@ -2,7 +2,8 @@
 //! settings and the remote identity of a project, the per-station snapshot
 //! state, and the reserved Git names. V26 (phase 2): the homes of a project,
 //! their generations and their clone attempts. V27 (phase 3): the radar and
-//! the land queue. A migration only adds
+//! the land queue. V28 (PRE-PR round 1): the last known Taildrive machine name
+//! of each station. A migration only adds
 //! (decision 79). To reverse one, restore the pre-upgrade backup (§3.9);
 //! never drop the tables while the deck runs.
 
@@ -164,6 +165,18 @@ CREATE TABLE land_outbox (
     attempts   INTEGER NOT NULL DEFAULT 0,
     next_at    INTEGER NOT NULL,
     receipt    TEXT,
+    updated_at INTEGER NOT NULL
+) STRICT;
+";
+
+/// V28 (PRE-PR round 1, H16): the last known Taildrive machine name of each
+/// station, so that a deck restart or a failed report does not make a
+/// paired station look like "not a station" (design §15.5). It starts empty
+/// and fills at the next `station.info` of each station.
+pub const STATION_MACHINES_SQL: &str = "
+CREATE TABLE station_machines (
+    station_id TEXT    PRIMARY KEY REFERENCES stations(station_id) ON DELETE CASCADE,
+    machine    TEXT    NOT NULL,
     updated_at INTEGER NOT NULL
 ) STRICT;
 ";

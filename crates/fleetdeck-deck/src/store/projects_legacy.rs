@@ -108,7 +108,8 @@ pub(super) fn create_project(
 
 /// The busy test of a home (design §8.4, decision B7): a clone that runs, or
 /// a live session in the home. `live` holds the `cwd` of the live sessions of
-/// the home's station. The land and move checks come with FG-8 and FG-9.
+/// the home's station, or a land of the project that is queued or running on
+/// that station (H16). The move check comes with FG-9.
 pub(super) fn busy(conn: &Connection, home: &HomeRow, live: &[String]) -> Result<Option<String>> {
     let clone: bool = conn.query_row(
         "SELECT EXISTS (SELECT 1 FROM home_attempts
@@ -119,7 +120,16 @@ pub(super) fn busy(conn: &Connection, home: &HomeRow, live: &[String]) -> Result
     if clone {
         return Ok(Some("A clone runs for this home.".to_owned()));
     }
-    // (FG-8/FG-9 add the land and move checks)
+    let land: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM land_queue
+             WHERE project_id = ?1 AND station_id = ?2 AND state IN ('queued', 'running'))",
+        [&home.project_id, &home.station_id],
+        |r| r.get(0),
+    )?;
+    if land {
+        return Ok(Some("A land of this project uses this station.".to_owned()));
+    }
+    // (FG-9 adds the move check)
     let inside = |cwd: &String| {
         [home.path.as_deref(), home.canonical_path.as_deref()]
             .into_iter()
