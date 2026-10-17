@@ -3084,3 +3084,17 @@ Owner review: pending.
 - Options: (1) single-file artifacts only; (2) a short display-bound signed link (a change of §5A, a new DESIGN REVIEW); (3) no artifacts on the wall in P2b.
 - Decision (owner): option 1. The display route serves only self-contained artifacts: one HTML file, Markdown, images, SVG and PDF. A multi-file artifact shows a card "Open this artifact on your own device". §5A stays as it is; no new token type.
 - Next: the P2b design pass uses this decision.
+
+## DL-222: P2b rules: display payload, directives, change summaries and artifacts (R13 P2b, owner decisions, 2026-10-17)
+
+- Context: P2a built the display principal. The 19 open questions of P2b (payload policy of timelines and activity, senders, delivery and storage of directives, change summaries, the display artifact route, exact rows, subscriptions, documents, web work) needed one answer each. `docs/v2/design/omarchy.md` §5D holds the answers.
+- Options (short): for the mail count, keep a count or show none; for review mode, a reduced comment list or summaries only; for the senders, the owner only now or all three at once.
+- Decision: §5D answers P2b-1 to P2b-19 and lists the risks as binding mitigations. Owner decisions: P2b-1 is DL-221 (single-file artifacts only); P2b-9 (owner): the wall shows no mail, so `mail_pending` is 0 and `files` is empty; P2b-12 (owner): review mode shows change summaries, and patches only when `show_diffs` is on, never review comments or drafts. The owner sender is built now. The station and coordinator senders return `not_granted` until P4 and P6.
+- Next: adversary DESIGN REVIEW of §5D and §6D, then the build plan of §11.
+
+## DL-223: P3b rules: desktop relay, display binding and wake rule (R13 P3b, owner decisions, 2026-10-17)
+
+- Context: P3a built the station side of desktop control. The 13 open questions of P3b (pairing identity of `wall.open`, binding lifecycle, quiet-hours time zone, monitor state, wake trigger, relay API, switch, errors, deadlines, audit, kiosk and TLS, directive deletion, documents) needed one answer each. `docs/v2/design/omarchy.md` §6D holds the answers.
+- Options (short): for the pairing, a `wall.open` that targets an existing display, or one that creates the display; for quiet hours, the station time zone, a time zone of the display, or UTC; for the trigger, a replay of old requests or only new requests.
+- Decision: §6D answers P3b-1 to P3b-13 and lists the risks as binding mitigations. Owner decisions: P3b-1 (owner): `wall.open` targets an existing display, and the elevated approval selects it; P3b-2 (owner): the binding is committed after a successful open with a checked operation revision, kept across missing or stale window reports, and cleared on an explicit close or a revoke; P3b-3 (owner): quiet hours use the local time of the station, with its UTC offset from a fixed `date +%z` call, half-open intervals, midnight wrap, equal endpoints meaning no quiet hours, and no wake when the offset is unknown; P3b-5 (owner): only a newly observed needs-you request (at most 60 s old, 5 s future skew tolerated) wakes, and the requests that exist at deck start are the baseline.
+- Next: adversary DESIGN REVIEW of §5D and §6D, then the build plan of §11.

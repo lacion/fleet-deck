@@ -1,6 +1,6 @@
 # Fleet Deck on Omarchy: the wall, desktop control and the desktop MCP (R13)
 
-- **Status:** §4.5, §5 and §6.1-§6.4/§6.6 **accepted**, revision 5 (2026-10-16, DL-201: design review round 4 PASS; its two MAJOR findings fixed in §5C items 4 and 5); other parts still draft. §5C answers the round 3 review (`/tmp/adv-r13-p23-r3-report.md`, owner decision: apply the fixes and one more round) and overrides §5B where they differ; §5B answers the round 2 review (`/tmp/adv-r13-p23-r2-report.md`) and overrides §5A where they differ; §5A answers the DESIGN REVIEW round 1 of §4.5, §5 and §6 (`/tmp/adv-r13-p2-design-report.md`) and overrides them where they differ. Not frozen. Each high-risk part needs an adversary DESIGN REVIEW before its code (§13).
+- **Status:** §4.5, §5 and §6.1-§6.4/§6.6 **accepted**, revision 5 (2026-10-16, DL-201: design review round 4 PASS; its two MAJOR findings fixed in §5C items 4 and 5); revision 6: §5D (P2b) and §6D (P3b) drafted from the open questions, owner decisions DL-221, DL-222, DL-223; DESIGN REVIEW pending; other parts still draft. §5C answers the round 3 review (`/tmp/adv-r13-p23-r3-report.md`, owner decision: apply the fixes and one more round) and overrides §5B where they differ; §5B answers the round 2 review (`/tmp/adv-r13-p23-r2-report.md`) and overrides §5A where they differ; §5A answers the DESIGN REVIEW round 1 of §4.5, §5 and §6 (`/tmp/adv-r13-p2-design-report.md`) and overrides them where they differ. Not frozen. Each high-risk part needs an adversary DESIGN REVIEW before its code (§13).
 - **Owner request (2026-10-16):** "i have a server thats connected to a ultrawide screen, i use this server to run multiple ai agents as it has 64 cores and 128gb of ram … it would be awesome if i could control omarchy and the screen trough the fleet and maybe also have an mcp … imagine using the screen as a command control center and we could display and control everhting there." Then: "lets create a document for this work so we can implement everything".
 - **Owner answers (DL-198):**
 
@@ -306,6 +306,69 @@ These rules override §5B, §5A, §4.5, §5 and §6 where they differ.
    - `terminal.open` uses the existing handover path unchanged (`shell/handover.rs`), with its live checks of `allow_shell`, the roots **and** the provider mode and lifecycle rules; the desktop action only chooses where the window opens.
 7. **Owner-facing text (R1-9).** The Displays page shows the §12 cost in one line under "Add a wall display": "A wall can be read by programs that run as you on its machine: it shows the summaries, the assistant messages and the shown artifact of the stations you choose."
 
+## 5D. Revision 6: P2b rules (payload policy, directives, changes, artifacts)
+
+These rules answer the 19 open questions of P2b (the fact sheet `r13-p2b-facts.md`, section 8). They override §5C, §5B, §5A, §4.5 and §5 where they differ. The item numbers equal the question numbers (P2b-1 to P2b-19); item 20 lists the risks. The owner decisions are DL-221 (item 1) and DL-222 (items 9 and 12). No item adds a library dependency. The build plan is in §11.
+
+1. **P2b-1 Artifacts (DL-221, owner).** The display artifact route serves a version only when the version holds exactly one self-contained file: one HTML file, Markdown, an image, SVG or PDF. For a multi-file artifact the wall shows the card "Open this artifact on your own device". The route keeps cookie authentication (`fd_display` only), the opaque-origin sandbox and the live directive checks of §5A item 6. The deck makes no capability URL, no share row and no new token type.
+2. **P2b-2 Senders.** P2b builds the owner sender. A directive carries a typed provenance: `Owner`, `Station` or `Coordinator`. The `Station` and `Coordinator` variants return `not_granted` until their authenticated entry points exist (station hotkeys in P4, the `desktop` grant class in P6). This gives one authorization model without a premature grant of authority. The activation of the coordinator sender moves from P2 to P6 (§11).
+3. **P2b-3 Delivery.** A new row `GET /api/displays/self/directive` returns the validated directive and its generation, or `mission`. The wall polls it every 2 seconds. The deck checks the sender authority and every reference again on each delivery. P2b adds no directive WebSocket message.
+4. **P2b-4 Storage.** Migration V25 stores one validated directive for each display: the sender identity, the expanded references and the creation time. A monotonic generation counter continues across a deletion. The deck deletes the directive in one transaction (the display returns to `mission`) when:
+   - a new directive replaces it;
+   - the display is revoked;
+   - the binding or the ceiling of the display changes;
+   - an affected grant or task changes.
+
+   The deck validates a restored row again before it uses the row.
+5. **P2b-5 Body.** `POST /api/displays/{id}/directive` has `deny_unknown_fields` and one variant for each mode:
+   - `focus` and `review` need one session;
+   - `race` needs one batch;
+   - `artifact` needs one artifact with an explicit positive version;
+   - `mission` and `ambient` have no content reference;
+   - a field that does not belong to the mode is refused.
+
+   References are immutable identifiers. The filter has at most 64 stations and a repository basename of at most 255 characters. The body is at most 8 KiB. The deck expands and authorizes **every** member of a batch before it selects the four columns of a race. Errors: `400 invalid_directive`, `404 display_unknown` (owner-facing), `403 outside_ceiling`, `403 not_granted`. The deck writes the audit row `display.directive` with identifiers only.
+6. **P2b-6 Station parameters.** The new display routes accept station ids only, never a station name. A name would add ambiguity to a ceiling that uses ids.
+7. **P2b-7 Timeline policy.** The deck builds a dedicated display event type from scratch. It does not strip fields from the owner event. The display event type holds only these items:
+   - run and turn boundaries, with structural ids and status;
+   - at the run start: the first line of the prompt, at most 120 characters, only for an ordinary prompt origin that is established; the fixed text "Run started" for the origins Shell, Mail and Coordinator and for an ambiguous origin;
+   - the assistant message text;
+   - tool kind, tool name (at most 40 characters) and status;
+   - request kind, the correlated safe tool name and fixed lifecycle labels.
+
+   The display event type has no author, input id, option id, provider reference, file list, exit code, checkpoint or `raw_ref`. The deck drops `session.started`, reasoning, output, plans and **every other event that is not listed or not known**. A dropped event still advances the cursors: the server and the client both advance through an explicit high-water mark, so that a suppressed event is never replayed again. One function serves every send path (snapshot, delta, replay, live event and lag recovery).
+8. **P2b-8 Activity.** A display gets a separate activity projection that holds only:
+   - assistant message excerpts;
+   - the safe tool name and status;
+   - fixed approval and lifecycle labels (no free-form end reason);
+   - no mail rows and no plan rows.
+
+   The deck applies the ceiling and the filter before the pagination. The query `repo=` matches the displayed basename. The query `session=` must be inside the effective scope. The deck never filters or describes owner activity after the fact, because that activity can hold secrets.
+9. **P2b-9 Mail count (DL-222, owner).** The wall shows no mail at all. For a display, `fleet.extras` returns `mail_pending` 0 and an empty `files` list.
+10. **P2b-10 Resources.** A display gets a reduced resource DTO: numeric host metrics and the load of the sessions that the display may see. It has no disk path, no process detail and no unrelated station information. This keeps §5.3 ("station names and resources") without a return to the full `StationInfo`.
+11. **P2b-11 Card fields.** The display card gets back only the validated batch id, index and size, for the grouping of a race. The display card never gets `base` and `review_rev`; the panes are adapted. P2b checks each retained P2a field again against an explicit allowlist. A P2a field is not allowed only because P2a sends it.
+12. **P2b-12 Review (DL-222, owner).** Review mode on a display shows change summaries. It shows patches only when `show_diffs` is on. A display never gets review comments or drafts: there is no review-comment endpoint for a display. `show_diffs` allows code, not the text of a person.
+13. **P2b-13 Change source.** The station gets a negotiated method `files.display_changes` (the foundation task names the feature that carries it). It reuses the session-diff snapshot engine. It returns the per-file statistics, the scope, the truncation flag and, on request, the patches. The station applies the private-path protection and the member deny list **before** it builds the answer. A denied entry is an anonymous `hidden` marker with no path and no content. Binary counts are unknown, not zero. A deck-side default or an owner-mode fetch does not meet this contract.
+14. **P2b-14 Limits.** The deck omits a whole patch section above 64 KiB and marks it `too_large`. The stricter station cap of 256 KiB for a patch stays. The serialized answer is at most 1 MiB. `patch=1` returns `403 diffs_off` when `show_diffs` is off. The deck joins identical computations and allows one outstanding computation for each display. A wall polls at most every 5 seconds. The deck checks the policy again after the station await.
+15. **P2b-15 Exact rows.** The list of display rows after P2b is:
+    - the seven P2a rows;
+    - `.display()` added to `activity.list`, `fleet.extras`, `displays.session_changes`, `displays.self_artifact` and `displays.self_directive`.
+
+    The new owner-only Drive row is `displays.directive`. The ordinary artifact, file, review and compare rows stay closed to a display. Every row `/api/displays/self/...` authenticates with `fd_display` only, also when an owner cookie is present. The test `exactly_these_methods_are_open_to_a_display` lists the new rows.
+16. **P2b-16 Subscriptions.** A display can Subscribe and Unsubscribe, and only for a session that it can see now. The 32-subscription cap stays, and so does the 24-tile limit of the UI. Timeline visibility is separate from social visibility: a display gets no Presence, Chat, Driver or DriveRequest frame. The deck refreshes the authorization before each replay, live and catch-up send. It removes a subscription at once when the scope changes.
+17. **P2b-17 Directive filter.** The deck enforces the filter on the server for cards, activity, extras, timelines, changes, artifacts and wake eligibility. The effective scope is the ceiling, narrowed by the stations of the directive and by the repository match. An artifact without a provable repository association fails a repository filter.
+18. **P2b-18 Documents.** One documentation owner adds the P2a and P2b rows with the four proofs to `PARITY.md` and the new surfaces to `SECURITY-CHECKLIST.md`. A surface that is pending stays listed as pending while the build runs. The statement "every designed surface is built" in the checklist is corrected.
+19. **P2b-19 Web.** The web work stays in explicit P2c tasks: directive polling, display timeline decoding, reduced resources, race grouping, the change and patch routes, and the artifact fallback card. The completion of the P2b backend is not reported as a working wall. P2c stays in the backlog until it is done.
+20. **Risks (binding mitigations).**
+    - Allowed text can hold personal data or repeat a forbidden input: assistant text, prompt excerpts, titles, filenames, patches and artifacts. The policy is a field and provenance policy, not secret detection. Sentinel tests must tell the prohibited fields from the content that is allowed on purpose.
+    - The stricter display types, the station change method and the dispatch handshake add scope and version combinations. An unsupported peer fails closed with an explicit reason. The deck never falls back to an owner payload.
+    - Authorization must survive asynchronous waits, cache hits and streaming. The deck checks the generation and the live authority before each response emission and cancels the remaining artifact streaming after an invalidation. Bytes that were already delivered cannot be recalled.
+    - A remote authority check leaves a check-to-dispatch interval. The DESIGN REVIEW states when an execution counts as started and assesses the interval. The documents do not claim an instant remote cancellation.
+    - A single-file HTML or SVG page can still fetch external resources or send its own content out. The display route sets a display-specific CSP that blocks external networking, frames, forms and popups, and keeps the sandbox isolation.
+    - Basename filters collide, the wake freshness depends on clocks, and the baseline at startup misses some requests on purpose. These are visible behavior choices, not substitutes for authorization.
+    - Re-pairing, binding changes and late desktop replies need generation checks and a serialization for each display. An open that timed out can have succeeded on the station.
+    - The return to `mission` removes the narrowing filter of a directive and returns to the ceiling that the owner set. The ceiling stays the durable privacy boundary.
+
 ## 6. Desktop control on the station: feature `desktop.v1` (HIGH RISK)
 
 ### 6.1 Detection
@@ -411,6 +474,60 @@ Each bound display has `wake_on_needs_you` (default `true`) and optional `quiet_
   - Notification text is plain text.
 - **Version:** a station without `desktop.v1` gets no desktop methods, and the board shows "This station's build has no desktop control". A deck without the feature never sends one.
 - **Live smoke (owner machine, not CI):** `make desktop-smoke` on the Omarchy server runs `desktop.info`, `notify`, `screen.power` off and on, `wall.open` and `wall.close`.
+
+## 6D. Revision 6: P3b rules (desktop relay, binding, wake rule)
+
+These rules answer the 13 open questions of P3b (the fact sheet `r13-p3b-facts.md`, section 7). They override §6 and §5C where they differ. The item numbers equal the question numbers (P3b-1 to P3b-13); item 14 lists the risks. The owner decisions are P3b-1, P3b-2, P3b-3 and P3b-5 (DL-223). No item adds a library dependency. The build plan is in §11.
+
+1. **P3b-1 Pairing (DL-223, owner).** `wall.open` targets an existing live display. The kiosk still pairs with a code (`pending → approved → claimed`, §5C item 1). The elevated approval selects that existing display and does not create a new one. On a successful claim, the deck replaces the earlier sessions of the display in one transaction and invalidates its unused login links. The identity of the kiosk then equals the identity that the station uses for the window, and a forgotten kiosk loses its access.
+2. **P3b-2 Binding (DL-223, owner).** The deck commits the binding (station and monitor) after a successful open, with a checked operation revision. The binding:
+   - stays when a window report is missing or stale;
+   - is cleared by a successful explicit close, or by a revoke;
+   - blocks an open on another station with `409 display_bound` (a move needs an explicit unbind and rebind);
+   - can be edited in the owner settings, with elevation to set or change it, because it gives station authority and the default wake automation.
+
+   A revoke takes effect before the best-effort close of the window.
+3. **P3b-3 Quiet hours (DL-223, owner).** `HH:MM-HH:MM` is in the local time of the station.
+   - The station reports its current UTC offset with its desktop info, together with the sample time. It reads the offset with one fixed call, `date +%z`, in the system time zone. The deck uses no time zone library.
+   - The interval is half-open: the start is inside, the end is outside.
+   - A range with a start later than the end wraps over midnight.
+   - Equal endpoints mean no quiet hours.
+   - When quiet hours are set and the offset is unknown, the deck sends no wake.
+4. **P3b-4 Monitor state.** The wake rule asks for a fresh `desktop.info` and bypasses the station cache of 10 seconds. It wakes only the exact bound monitor, and only when `dpms_on` is `Some(false)`. An unknown value means no wake (§6.6).
+5. **P3b-5 Trigger (DL-223, owner).** The deck compares the `open_requests` of the cards on each `watch_board()` change, snapshots included.
+   - A request that exists when the deck starts is the baseline and never wakes.
+   - Only a newly observed needs-you request wakes: an approval or a question that is at most 60 seconds old. A future skew of 5 seconds is tolerated. A replay does not wake.
+   - The deck checks that the request is still open right before it sends.
+   - Deduplication is by station, incarnation, session and request. The wake is joined for each bound monitor, with a cooldown of 30 seconds.
+   - After a missed notification the deck rescans, and it applies the effective filter of P2b (§5D item 17).
+6. **P3b-6 API.** The relay has two owner-only routes:
+   - `GET /api/stations/{station}/desktop` (scope Read) returns the desktop info;
+   - `POST /api/stations/{station}/desktop/act` (scope Drive, mutating, CSRF protected) runs an action.
+
+   The HTTP action enum has no wall URL. A wall action needs an advertised `endpoint_origin` that is not loopback, and the deck builds `/#/display-pair` on the server. The deck checks that `browser_open.session` belongs to the target station. Bracketed IPv6 addresses are parsed by a typed address parser, and the station grammar (P3a) is changed to accept them. After a successful answer the deck updates only the cached desktop data, in one atomic step.
+7. **P3b-7 Switch and dispatch authority.** The setting `desktop_control` is `DeckLive.desktop_control`, default `false`, with danger and elevation when it turns on. There is no atomic mirror in the store. The label is "Desktop control". The help text is "Allow desktop actions and configured wall wakes. Off blocks actions that have not started." When the switch is off, the route returns `409 desktop_control_off`. The parsing helpers of the deck move from the full `config.rs` into `config_deck.rs`. The dispatch is also extended: a queued station action checks the deck permission again, through a negotiated and action-bound authority check, immediately before dispatch. A check before the send alone does not meet §6.4.
+8. **P3b-8 Errors.** The answers use fixed, redacted messages:
+   - `unsupported` or a feature mismatch: `409 desktop_unsupported`;
+   - `forbidden`: `403 desktop_forbidden`;
+   - invalid parameters: `400`; missing target: `404`; conflict: `409`;
+   - a failed or malformed answer: `502`; overload: `503`; timeout: `504`;
+   - a lost link: `409 station_unreachable`.
+
+   The deck does not claim that an ambiguous `forbidden` means `allow_desktop = false`, because the link scope refusal uses the same code.
+9. **P3b-9 Deadlines.** A wall open, a wall reload and a browser launch get 90 seconds. Every other action and `desktop.info` get 30 seconds. The station enforces explicit total deadlines. The wake runs on at most four workers with a bounded queue. The deck discards an expired candidate. It never retries an action automatically when the outcome of its execution is unknown.
+10. **P3b-10 Audit.** An owner action writes `desktop.<action>` with the actor `owner` and the station id as target. A wake writes the action `desktop.wake` with the actor `wake`, the identifiers of the display, the station and the monitor, and the outcome code. The deck audits every attempted mutation, refusals included. A routine skip (quiet hours, display already on) is a counter, not an audit row. The deck never stores a URL, a notification text or a request content.
+11. **P3b-11 Kiosk and TLS.** P3b proves the relay, the pairing identity and the binding with fake-link tests. A working wall also needs the pair page of P2c and a certificate that the kiosk Chromium trusts. The deck uses trusted HTTPS or an explicitly provisioned trust. It never turns certificate verification off. These Linux integration tasks stay in the backlog until they are done.
+12. **P3b-12 Directive deletion.** A binding change calls the real invalidation helper of P2b in the same transaction (§5D item 4). A helper that does nothing until later is not acceptable in the combined revision.
+13. **P3b-13 Documents.** DL-222 is reserved for P2b and DL-223 for P3b. The same documentation owner as in §5D item 18 backfills the P2a and P3a rows and adds the P2b and P3b rows to `PARITY.md` and `SECURITY-CHECKLIST.md`. The DESIGN REVIEW includes the authority handshake and the station protocol additions. A PRE-PR REVIEW follows.
+14. **Risks (binding mitigations).** The list is the same as §5D item 20, and it applies to this set as a whole:
+    - Allowed text can hold personal data or repeat a forbidden input: assistant text, prompt excerpts, titles, filenames, patches and artifacts. The policy is a field and provenance policy, not secret detection. Sentinel tests must tell the prohibited fields from the content that is allowed on purpose.
+    - The stricter display types, the station change method and the dispatch handshake add scope and version combinations. An unsupported peer fails closed with an explicit reason. The deck never falls back to an owner payload.
+    - Authorization must survive asynchronous waits, cache hits and streaming. The deck checks the generation and the live authority before each response emission and cancels the remaining artifact streaming after an invalidation. Bytes that were already delivered cannot be recalled.
+    - A remote authority check leaves a check-to-dispatch interval. The DESIGN REVIEW states when an execution counts as started and assesses the interval. The documents do not claim an instant remote cancellation.
+    - A single-file HTML or SVG page can still fetch external resources or send its own content out. The display route sets a display-specific CSP that blocks external networking, frames, forms and popups, and keeps the sandbox isolation.
+    - Basename filters collide, the wake freshness depends on clocks, and the baseline at startup misses some requests on purpose. These are visible behavior choices, not substitutes for authorization.
+    - Re-pairing, binding changes and late desktop replies need generation checks and a serialization for each display. An open that timed out can have succeeded on the station.
+    - The return to `mission` removes the narrowing filter of a directive and returns to the ceiling that the owner set. The ceiling stays the durable privacy boundary.
 
 ---
 
@@ -637,6 +754,23 @@ Tests: a fixture `/proc` tree gives the expected sums. A session that ends drops
 | **P9 Per-session load** | §10 | Normal: one Codex review | — (in parallel) |
 
 Each phase starts with a DL entry. Each phase adds its rows to `PARITY.md` (the four proofs) and its new surfaces to `SECURITY-CHECKLIST.md` for the owner's final review (DL-158). P1 and P9 can start now and in parallel, because their files do not overlap.
+
+### P2b/P3b build plan
+
+The order is: a serial foundation task, then the parallel tasks, then the web completion, then the documentation. The foundation owner supplies the shared helper interfaces before the parallel wave and does the final wiring after it. Each worker owns its new tests. No worker edits a shared fixture during the parallel wave. Each changed source module stays below 800 lines. Targeted checks run through the heavy-command queue. The coordinator runs the full `make check`. The coordinator sender moves from P2 to P6 (§5D item 2), so the P2 row above reads "directives (owner sender; the station and coordinator senders return `not_granted` until P4 and P6)".
+
+| Step | Task | Exclusive owned files | Deliverable |
+|---|---|---|---|
+| 1 (serial) | Foundation and integration | Core config, settings and tests; deck `live.rs`, `cert_task_tests.rs`, `tests/common/board.rs`; proto contracts, exports and TS generation; link method tables; deck HTTP module, method tables and guard; store `mod.rs`, `schema.rs`, `displays.rs`, `displays_pairing.rs`; HTTP `display_routes.rs`; station intake routing; deck `lib.rs`, `serve.rs` | Settings, contracts, migrations, binding and pairing transactions, invalidation hooks and the final wiring |
+| 2 (parallel) | P2b payload | Deck `http/{display_view,ws,read_routes,activity_routes}.rs`, new display projection helpers, `store/activity.rs`; new timeline and activity tests | One projection policy across HTTP and every WS path |
+| 2 (parallel) | P2b directives | New deck `store/display_directives*.rs`, `http/display_directive_routes.rs`; new directive tests | Validation, storage, live sender checks and the polling endpoint |
+| 2 (parallel) | P2b changes | Station `workspace/session_diff.rs` and new display-change helpers and tests; new deck `http/display_changes.rs` and tests | Station-produced protected statistics and patches, and a bounded display route |
+| 2 (parallel) | P2b artifacts | Deck `http/{artifact_routes,artifact_stream}.rs`, new shared artifact helpers and `display_artifact.rs`; new artifact tests | The nearly full module is factored; single-file route, CSP and revocation |
+| 2 (parallel) | P3b station dispatch | Station `desktop/**`, `link/intake_desktop.rs`, new station authority helper and tests | Fresh info, local offset, IPv6 grammar, total deadlines and dispatch authority |
+| 2 (parallel) | P3b relay | New deck `desktop_relay.rs`, `http/desktop_routes.rs`, `link/desktop_authority.rs`; new relay tests | Owner relay, action authority, binding orchestration and redacted outcomes |
+| 2 (parallel) | P3b wake | New deck `wake/**`; new wake tests | Request detection, quiet hours, joining and bounded execution |
+| 3 | Web completion (P2c, P3c) | `web/src/**`, without the generated types that step 1 owns | Pairing, display management, wall panes, the Desktop panel and "Send to wall" |
+| 4 | Documentation | Design, decisions log, `PARITY.md` and `SECURITY-CHECKLIST.md` only | The revision, the worker briefs, and a truthful proof and review status |
 
 ---
 
