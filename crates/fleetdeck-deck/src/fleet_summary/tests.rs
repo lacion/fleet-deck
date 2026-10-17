@@ -449,35 +449,47 @@ fn no_free_form_text_reaches_the_summary() {
 
 #[test]
 fn a_summary_over_16_kib_drops_needs_you_items_from_the_end() {
-    let big = |name: &str, at: i64| {
-        card(
-            "st1",
-            &format!("{name}{}", "x".repeat(3000)),
-            CardStatus::NeedsYou,
-            |s| {
-                s.open_requests = vec![request("r", at)];
-            },
-        )
-    };
+    // Valid ids are at most 64 characters, so a built summary stays far below
+    // 16 KiB; `fit` is the safety net and is tested on a stretched summary.
     let cards: Vec<DeckSession> = (0..10)
-        .map(|i| big(&format!("s{i}-"), NOW - 100_000 + i * 1000))
+        .map(|i| {
+            card("st1", &format!("s{i}"), CardStatus::NeedsYou, |s| {
+                s.open_requests = vec![request("r", NOW - 100_000 + i * 1000)];
+            })
+        })
         .collect();
-    let summary = build(&cards, &one_station(), NOW, None);
+    let mut summary = build(&cards, &one_station(), NOW, None);
+    assert_eq!(summary.needs_you.len(), 10);
+    for item in &mut summary.needs_you {
+        item.station = "x".repeat(3000);
+    }
+    super::build::fit(&mut summary);
     let len = serde_json::to_vec(&summary).unwrap().len();
     assert!(len <= MAX_SUMMARY_BYTES, "{len}");
     let kept = summary.needs_you.len();
     assert!((1..10).contains(&kept), "{kept}");
-    // The oldest items stay: `s0-` is the oldest.
-    assert!(summary.needs_you[0].session.starts_with("s0-"));
+    // The oldest items stay: `s0` is the oldest.
     assert!(
         summary
             .needs_you
             .iter()
             .enumerate()
-            .all(|(i, item)| item.session.starts_with(&format!("s{i}-")))
+            .all(|(i, item)| item.session == format!("s{i}"))
     );
-    // The counts do not change.
     assert_eq!(summary.counts.needs_you, 10);
+}
+
+#[test]
+fn an_item_with_an_id_outside_the_grammar_is_left_out() {
+    let long = card("st1", &"x".repeat(65), CardStatus::NeedsYou, |s| {
+        s.open_requests = vec![request("r", NOW - 1000)];
+    });
+    let colon = card("st1", "s:1", CardStatus::NeedsYou, |s| {
+        s.open_requests = vec![request("r", NOW - 1000)];
+    });
+    let summary = build(&[long, colon], &one_station(), NOW, None);
+    assert!(summary.needs_you.is_empty());
+    assert_eq!(summary.counts.needs_you, 2);
 }
 
 #[test]

@@ -114,6 +114,18 @@ fn needs_you(cards: &[DeckSession], stations: &[StationEntry], now_ms: i64) -> V
             .filter(|c| callsign_ok(c))
             .map(str::to_owned);
         for request in &card.summary.open_requests {
+            // The station refuses a whole summary with an id outside the
+            // grammar (P4 §3.3): such an item is left out instead.
+            if ![
+                card.station_id.as_str(),
+                card.summary.session_id.as_str(),
+                request.request_id.as_str(),
+            ]
+            .into_iter()
+            .all(id_ok)
+            {
+                continue;
+            }
             let age_ms = now_ms.saturating_sub(request.requested_at);
             items.push((
                 request.requested_at,
@@ -142,6 +154,14 @@ fn needs_you(cards: &[DeckSession], stations: &[StationEntry], now_ms: i64) -> V
 }
 
 /// `^[a-z0-9-]{1,32}$`.
+/// An id of the summary: `^[A-Za-z0-9_-]{1,64}$`.
+fn id_ok(id: &str) -> bool {
+    (1..=64).contains(&id.len())
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
 fn callsign_ok(callsign: &str) -> bool {
     !callsign.is_empty()
         && callsign.len() <= MAX_CALLSIGN
@@ -162,7 +182,7 @@ fn load_pct(cpu: &CpuLoad) -> Option<u32> {
 
 /// Drops `needs_you` items from the end, then `stations` from the end, until
 /// the JSON fits in [`MAX_SUMMARY_BYTES`].
-fn fit(summary: &mut FleetSummary) {
+pub(super) fn fit(summary: &mut FleetSummary) {
     while json_len(summary) > MAX_SUMMARY_BYTES {
         if summary.needs_you.pop().is_none() && summary.stations.pop().is_none() {
             break;
@@ -240,4 +260,18 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let d = u32::try_from(doy - (153 * mp + 2) / 5 + 1).unwrap_or(1);
     let m = u32::try_from(if mp < 10 { mp + 3 } else { mp - 9 }).unwrap_or(1);
     (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+#[cfg(test)]
+mod id_tests {
+    use super::id_ok;
+
+    #[test]
+    fn an_id_outside_the_station_grammar_is_left_out() {
+        assert!(id_ok("01ARZ3NDEKTSV4RRFFQ69G5FAV"));
+        assert!(id_ok("toolu_01-x"));
+        for bad in ["", "a:b", "a b", "a/b", &"a".repeat(65)] {
+            assert!(!id_ok(bad), "{bad}");
+        }
+    }
 }
