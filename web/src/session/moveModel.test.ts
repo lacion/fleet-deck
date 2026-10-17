@@ -262,6 +262,13 @@ describe('the lines of the banner', () => {
       'Claude could not resume the conversation on Beta: No conversation found. The conversation is still on Alpha, read only. Undo the move to continue there.',
     );
     expect(n?.action).toEqual({ kind: 'undo', move: 'm1' });
+    // The station line ends with a period: the text has one, not two.
+    const dot = summary('s2', 'working', 1, {
+      move_in: { move_id: 'm1', state: 'resume_failed', text: 'the process exited.' },
+    });
+    expect(notice(dot, move('resume_failed'), 'station-b')?.text).toContain(
+      'on Beta: the process exited. The conversation',
+    );
     const bare = notice(arrived('resume_failed'), move('resume_failed'), 'station-b');
     expect(bare?.text).toBe(
       'Claude could not resume the conversation on Beta. The conversation is still on Alpha, read only. Undo the move to continue there.',

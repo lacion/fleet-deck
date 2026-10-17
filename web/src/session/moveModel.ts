@@ -252,7 +252,9 @@ function targetNotice({ station, summary: s, stations }: Where, src: string): No
     case 'resumed':
       return info('arriving', `Arriving from ${src}…`);
     case 'resume_failed': {
-      const line = m.text === undefined || m.text === '' ? '' : `: ${m.text}`;
+      // The station line often ends with a period; the sentence adds its own.
+      const text = (m.text ?? '').trim().replace(/\.+$/, '');
+      const line = text === '' ? '' : `: ${text}`;
       return info(
         'resume_failed',
         `${providerText(s.provider)} could not resume the conversation on ${stationName(station, stations)}${line}. The conversation is still on ${src}, read only. Undo the move to continue there.`,
