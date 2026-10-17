@@ -696,6 +696,14 @@ fn allow_desktop_parses() {
 }
 
 #[test]
+fn fleet_summary_parses_and_defaults_to_off() {
+    assert!(!StationConfig::parse("", &env()).unwrap().fleet_summary);
+    let c = StationConfig::parse("fleet_summary = true\n", &env()).unwrap();
+    assert!(c.fleet_summary);
+    assert!(StationConfig::parse("fleet_summary = \"yes\"\n", &env()).is_err());
+}
+
+#[test]
 fn allow_bypass_permissions_parses() {
     let c = StationConfig::parse("allow_bypass_permissions = true\n", &env()).unwrap();
     assert!(c.allow_bypass_permissions);

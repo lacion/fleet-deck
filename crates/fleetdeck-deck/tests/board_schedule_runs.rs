@@ -34,6 +34,7 @@ fn info() -> StationInfo {
         assist_cap: None,
         resources: None,
         desktop: None,
+        fleet_summary: None,
     }
 }
 

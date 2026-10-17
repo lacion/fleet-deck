@@ -68,6 +68,11 @@ const fn drive(name: &'static str) -> MethodSpec {
     m(name, Callers::DeckToStation, Scope::Drive, None, true)
 }
 
+/// A row of feature `desktop_shell.v1` (R13 P4): never mutating.
+const fn shell_row(name: &'static str, callers: Callers, scope: Scope) -> MethodSpec {
+    m(name, callers, scope, Some(feature::DESKTOP_SHELL), false)
+}
+
 use Callers::{DeckToStation, Either, StationToDeck};
 
 /// Method table v1 (Revision 2).
@@ -663,6 +668,12 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::DISPLAY_CHANGES),
         false,
     ),
+    // The Omarchy desktop shell (R13 P4, D1, D2). The two station-to-deck
+    // rows use `admin`, which every paired station holds; the deck handler
+    // authorizes by the caller's own station identity (revision 12c).
+    shell_row("fleet.summary", DeckToStation, Scope::Read),
+    shell_row("display.directive", StationToDeck, Scope::Admin),
+    shell_row("station.palette", StationToDeck, Scope::Admin),
     m("approval.answer", DeckToStation, Scope::Approve, None, true),
     m("station.configure", DeckToStation, Scope::Admin, None, true),
     m("link.rotate_key", Either, Scope::Admin, None, true),

@@ -459,6 +459,7 @@ async fn a_station_shows_reduced_resources_for_the_visible_sessions_only() {
             ],
         }),
         desktop: None,
+        fleet_summary: None,
     };
     r.f.store.set_station_info(&r.f.station, info);
     // Narrow the display to `alpha`: only `s1` is visible.

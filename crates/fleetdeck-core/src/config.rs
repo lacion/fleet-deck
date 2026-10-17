@@ -243,6 +243,8 @@ pub struct StationConfig {
     /// `allow_fleet_control`: coordinators with a fleet-control grant may act here (ADR-008).
     pub allow_fleet_control: bool,
     pub allow_desktop: bool,
+    /// `fleet_summary`: the deck may send the fleet summary to this station for the desktop shell (R13 P4).
+    pub fleet_summary: bool,
     pub max_shells: u32,
     pub offline_approval_policy: OfflineApprovalPolicy,
     pub listen: Vec<SocketAddr>,
@@ -286,6 +288,7 @@ pub(crate) const RAW_STATION_KEYS: &[&str] = &[
     "allow_bypass_permissions",
     "allow_fleet_control",
     "allow_desktop",
+    "fleet_summary",
     "max_shells",
     "offline_approval_policy",
     "listen",
@@ -311,6 +314,7 @@ struct RawStation {
     allow_bypass_permissions: Option<bool>,
     allow_fleet_control: Option<bool>,
     allow_desktop: Option<bool>,
+    fleet_summary: Option<bool>,
     max_shells: Option<u32>,
     offline_approval_policy: Option<String>,
     listen: Option<Vec<String>>,
@@ -491,6 +495,7 @@ impl StationConfig {
             allow_bypass_permissions: raw.allow_bypass_permissions.unwrap_or(false),
             allow_fleet_control: fleet_cfg::parse(raw.allow_fleet_control),
             allow_desktop: raw.allow_desktop.unwrap_or(false),
+            fleet_summary: raw.fleet_summary.unwrap_or(false),
             max_shells,
             offline_approval_policy,
             listen,

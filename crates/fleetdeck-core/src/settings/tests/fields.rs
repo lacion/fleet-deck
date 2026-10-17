@@ -156,6 +156,15 @@ fn the_tables_are_well_formed() {
     assert!(desktop.danger && desktop.apply == fleetdeck_proto::settings::Apply::Live);
     assert_eq!(desktop.kind, FieldKind::Bool);
     assert_eq!(desktop.label, "Desktop control");
+    let summary = get("fleet_summary");
+    assert!(summary.danger && summary.apply == fleetdeck_proto::settings::Apply::Live);
+    assert_eq!(summary.kind, FieldKind::Bool);
+    assert_eq!(summary.label, "Fleet summary for the desktop shell");
+    assert!(
+        summary
+            .help
+            .starts_with("Send a summary of the whole fleet")
+    );
     assert_eq!(get("max_sessions").max, Some(256));
 }
 

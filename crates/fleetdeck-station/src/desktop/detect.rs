@@ -83,7 +83,8 @@ async fn wayland_socket(env: &fleetdeck_core::ChildEnv, signature: &str) -> Opti
 }
 
 /// The Omarchy folder and its version, when `bin/omarchy` is executable.
-fn omarchy(base: &ChildEnv) -> Option<(PathBuf, Option<String>)> {
+/// The installer and the doctor use it too.
+pub fn omarchy_root(base: &ChildEnv) -> Option<(PathBuf, Option<String>)> {
     let root = base
         .get("OMARCHY_PATH")
         .filter(|p| !p.is_empty())
@@ -114,7 +115,7 @@ pub async fn detect(base: &ChildEnv) -> Option<Found> {
     }
     let probe = probe_env(base, &runtime_dir).ok()?;
     let wayland = wayland_socket(&probe, &signature).await?;
-    let omarchy = omarchy(base);
+    let omarchy = omarchy_root(base);
     Some(Found {
         kind: if omarchy.is_some() {
             DesktopKind::Omarchy

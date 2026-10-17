@@ -42,6 +42,11 @@ pub(crate) async fn answer(
         "coordinator.call" => coordinator_call(ctx, station, &req).await,
         "coordinator.query" => coordinator_query(ctx, station, &req).await,
         "coordinator.authority_check" => authority_check(ctx, station, &req).await,
+        // R13 P4 (`desktop_shell.v1`): stubs until tasks E and F1.
+        "display.directive" => {
+            super::display_directive::display_directive(&station, req.params.clone())
+        }
+        "station.palette" => super::palette::station_palette(&station, req.params.clone()),
         method => Outcome::Err(WireError::new(
             NOT_IMPLEMENTED,
             format!("the deck does not serve `{method}` in this build"),

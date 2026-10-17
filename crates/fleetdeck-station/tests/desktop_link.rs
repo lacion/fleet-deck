@@ -104,12 +104,17 @@ struct Fixture {
 /// A station on a loopback link, and a process that has no desktop: the
 /// adapter gets an empty environment.
 async fn fixture() -> Fixture {
+    let policy = Policy::new(Vec::new(), 4, OfflineApprovalPolicy::Wait, BTreeMap::new());
+    fixture_with(policy).await
+}
+
+/// The same station with a given policy.
+async fn fixture_with(policy: Policy) -> Fixture {
     desktop::install(Arc::new(Desktop::with_env(ChildEnv::empty())));
     let det = Det::new();
     let store = Store::open_in_memory(det.clock(), det.ids(), StoreConfig::default())
         .await
         .unwrap();
-    let policy = Policy::new(Vec::new(), 4, OfflineApprovalPolicy::Wait, BTreeMap::new());
     let manager = SessionManager::start(
         store.clone(),
         policy,
@@ -332,4 +337,61 @@ async fn desktop_info_takes_fresh() {
     assert_eq!(message, "This station has no desktop.");
     let (code, _) = refused(call(&deck, "desktop.info", json!({"other": 1})).await);
     assert_eq!(code, "invalid_params");
+}
+
+#[test]
+fn the_desktop_shell_rows_are_in_the_feature_and_need_the_feature_to_be_called() {
+    assert_eq!(feature::DESKTOP_SHELL, "desktop_shell.v1");
+    assert!(feature::ALL.contains(&feature::DESKTOP_SHELL));
+    assert!(!feature::REQUIRED.contains(&feature::DESKTOP_SHELL));
+    let spec = method("fleet.summary").unwrap();
+    assert_eq!(spec.scope, Scope::Read);
+    assert_eq!(spec.feature, Some(feature::DESKTOP_SHELL));
+    let without = negotiated(&[feature::CONTROL, feature::DESKTOP]);
+    let read: BTreeSet<Scope> = [Scope::Read].into_iter().collect();
+    let refused = authorize(
+        "fleet.summary",
+        Role::Deck,
+        Role::Station,
+        None,
+        &without,
+        Some(&read),
+    );
+    assert_eq!(refused.unwrap_err().code, code::FEATURE_NOT_NEGOTIATED);
+}
+
+#[tokio::test]
+async fn fleet_summary_is_a_stub_that_answers_unsupported() {
+    let _turn = ONE_AT_A_TIME.lock().await;
+    let mut f = fixture().await;
+    let deck = f.connect().await;
+    let (code, message) = refused(call(&deck, "fleet.summary", json!({})).await);
+    assert_eq!(code, "unsupported");
+    assert_eq!(
+        message,
+        "The fleet summary is not served by this station build."
+    );
+}
+
+#[tokio::test]
+async fn station_info_carries_the_live_fleet_summary_setting() {
+    let _turn = ONE_AT_A_TIME.lock().await;
+    let mut f = fixture().await;
+    let deck = f.connect().await;
+    let Outcome::Ok(raw) = call(&deck, "station.info", json!({})).await else {
+        panic!("station.info failed");
+    };
+    assert_eq!(raw["fleet_summary"], json!(false), "{raw}");
+    let info: StationInfo = serde_json::from_value(raw).unwrap();
+    assert_eq!(info.fleet_summary, Some(false));
+
+    let on = Policy::new(Vec::new(), 4, OfflineApprovalPolicy::Wait, BTreeMap::new())
+        .with_fleet_summary(true);
+    let mut f = fixture_with(on).await;
+    let deck = f.connect().await;
+    let Outcome::Ok(raw) = call(&deck, "station.info", json!({})).await else {
+        panic!("station.info failed");
+    };
+    let info: StationInfo = serde_json::from_value(raw).unwrap();
+    assert_eq!(info.fleet_summary, Some(true));
 }

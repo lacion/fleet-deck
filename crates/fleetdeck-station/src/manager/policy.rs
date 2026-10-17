@@ -78,6 +78,8 @@ pub struct Policy {
     allow_fleet_control: bool,
     /// `allow_desktop` of `station.toml` (R13 §6.4).
     allow_desktop: bool,
+    /// `fleet_summary` of `station.toml` (R13 P4): the deck may send the fleet summary.
+    fleet_summary: bool,
     /// `max_shells` of `station.toml`.
     max_shells: u32,
     /// `[model_help]` of `station.toml` (R10, DL-167).
@@ -124,6 +126,7 @@ impl Policy {
             allow_bypass_permissions: config.allow_bypass_permissions,
             allow_fleet_control: config.allow_fleet_control,
             allow_desktop: config.allow_desktop,
+            fleet_summary: config.fleet_summary,
             max_shells: config.max_shells,
             model_help: config.model_help.clone(),
             member_deny: MemberDeny::new(&config.member_deny),
@@ -197,6 +200,7 @@ impl Policy {
             allow_bypass_permissions: false,
             allow_fleet_control: false,
             allow_desktop: false,
+            fleet_summary: false,
             max_shells: DEFAULT_MAX_SHELLS,
             model_help: ModelHelpConfig::default(),
             member_deny: MemberDeny::default(),
@@ -272,6 +276,20 @@ impl Policy {
     #[must_use]
     pub fn allow_desktop(&self) -> bool {
         self.allow_desktop
+    }
+
+    /// Whether the deck may send the fleet summary to this station (R13 P4).
+    /// Read it live: at intake and before every push.
+    #[must_use]
+    pub fn fleet_summary(&self) -> bool {
+        self.fleet_summary
+    }
+
+    /// The same policy with the fleet summary on or off.
+    #[must_use]
+    pub fn with_fleet_summary(mut self, on: bool) -> Self {
+        self.fleet_summary = on;
+        self
     }
 
     /// The same policy with desktop control on or off.

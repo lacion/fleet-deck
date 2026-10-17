@@ -286,6 +286,12 @@ pub struct StationInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub desktop: Option<crate::desktop::DesktopInfo>,
+    /// The live `fleet_summary` setting of the station (R13 P4): the deck
+    /// sends the fleet summary only when it is `Some(true)`. Absent from an
+    /// older station.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub fleet_summary: Option<bool>,
 }
 
 /// One configured provider instance of a station (`[[provider_instance]]`,
@@ -588,6 +594,30 @@ mod tests {
         assert_eq!(&back, frame);
         assert_eq!(v["type"], frame.type_name());
         v
+    }
+
+    #[test]
+    fn station_info_fleet_summary_round_trips_and_is_absent_for_an_old_station() {
+        let old = json!({"name": "n", "incarnation": "i", "head": 3, "live_sessions": 1});
+        let info: StationInfo = serde_json::from_value(old).unwrap();
+        assert_eq!(info.fleet_summary, None);
+        // `None` is not written, so an older deck sees the old shape.
+        assert!(
+            serde_json::to_value(&info)
+                .unwrap()
+                .get("fleet_summary")
+                .is_none()
+        );
+        for on in [true, false] {
+            let sent = StationInfo {
+                fleet_summary: Some(on),
+                ..info.clone()
+            };
+            let v = serde_json::to_value(&sent).unwrap();
+            assert_eq!(v["fleet_summary"], json!(on));
+            let back: StationInfo = serde_json::from_value(v).unwrap();
+            assert_eq!(back, sent);
+        }
     }
 
     #[test]

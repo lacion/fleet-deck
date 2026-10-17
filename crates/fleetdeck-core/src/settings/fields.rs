@@ -124,6 +124,14 @@ pub fn station_fields() -> Vec<FieldMeta> {
         )
         .danger(),
         field(
+            "fleet_summary",
+            "Fleet summary for the desktop shell",
+            K::Bool,
+            Live,
+            "Send a summary of the whole fleet (counts, the callsigns of sessions that need you, usage) to this station, for the Omarchy bar. Programs that run as you on this machine can read it.",
+        )
+        .danger(),
+        field(
             "max_shells",
             "Most terminals",
             K::Int,

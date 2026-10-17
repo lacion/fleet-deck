@@ -34,6 +34,9 @@ mod intake_native;
 // R13 P3: `desktop.info` and `desktop.act`.
 #[path = "intake_desktop.rs"]
 mod intake_desktop;
+// R13 P4: `fleet.summary` (a stub until task B2).
+#[path = "intake_summary.rs"]
+mod intake_summary;
 use crate::store::{Caller, DecideError, StoreError, peers};
 
 /// The error code of a request that this build does not serve yet.
@@ -520,6 +523,7 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
                 assist_cap: usage.map(|(_, cap)| cap),
                 resources: crate::resources::current(&policy).await,
                 desktop: intake_desktop::station_info(ctx).await,
+                fleet_summary: Some(policy.fleet_summary()),
             })
         }
         "workspace.list" => workspaces(ctx, req.params).await,
@@ -540,6 +544,7 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
         "station.native_preview" => intake_native::preview(ctx, req.params).await,
         "desktop.info" => intake_desktop::info(ctx, req.params).await,
         "desktop.act" => intake_desktop::act(ctx, control, req.params).await,
+        "fleet.summary" => intake_summary::fleet_summary(ctx, req.params),
         "session.branches" | "files.branch_diff" => {
             branch_method(ctx, &req.method, req.params).await
         }

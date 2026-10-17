@@ -46,6 +46,7 @@ fn info(allow_setup_cmd: Option<bool>) -> StationInfo {
         assist_cap: None,
         resources: None,
         desktop: None,
+        fleet_summary: None,
     }
 }
 

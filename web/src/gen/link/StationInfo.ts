@@ -54,4 +54,10 @@ resources?: StationResources,
  * The desktop of the station (R13 §6.2): present when a desktop is
  * detected, also with `allow_desktop` off.
  */
-desktop?: DesktopInfo, };
+desktop?: DesktopInfo, 
+/**
+ * The live `fleet_summary` setting of the station (R13 P4): the deck
+ * sends the fleet summary only when it is `Some(true)`. Absent from an
+ * older station.
+ */
+fleet_summary?: boolean, };

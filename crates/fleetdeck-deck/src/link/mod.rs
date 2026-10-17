@@ -25,7 +25,9 @@
 
 mod coordinator_reads;
 pub mod desktop_authority;
+mod display_directive;
 mod outbox;
+mod palette;
 mod requests;
 pub mod router;
 pub mod runtime;
@@ -634,6 +636,7 @@ mod tests {
             assist_cap: None,
             resources: None,
             desktop: None,
+            fleet_summary: None,
         }
     }
 

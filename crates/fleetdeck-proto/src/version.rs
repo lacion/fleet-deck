@@ -136,6 +136,11 @@ pub mod feature {
     /// a wall display (R13 §5D item 13).
     pub const DISPLAY_CHANGES: &str = "display_changes.v1";
 
+    /// `fleet.summary`, `display.directive` and `station.palette`: the fleet
+    /// summary, the wall hotkeys and the theme palette of the Omarchy desktop
+    /// shell (R13 P4, D1).
+    pub const DESKTOP_SHELL: &str = "desktop_shell.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -173,6 +178,7 @@ pub mod feature {
         DESKTOP,
         DESKTOP_AUTHORITY,
         DISPLAY_CHANGES,
+        DESKTOP_SHELL,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

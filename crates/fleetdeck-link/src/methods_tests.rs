@@ -275,3 +275,95 @@ fn a_peer_without_coordinator_v2_gets_feature_not_negotiated_for_the_new_methods
         "ok"
     );
 }
+
+/// R13 P4 task A: the three rows of `desktop_shell.v1` (D1, D2, revision 12c).
+#[test]
+fn the_desktop_shell_rows_are_exactly_these() {
+    let rows = [
+        ("fleet.summary", Callers::DeckToStation, Scope::Read),
+        ("display.directive", Callers::StationToDeck, Scope::Admin),
+        ("station.palette", Callers::StationToDeck, Scope::Admin),
+    ];
+    for (name, callers, scope) in rows {
+        let spec = method(name).expect(name);
+        assert_eq!(spec.callers, callers, "{name}");
+        assert_eq!(spec.scope, scope, "{name}");
+        assert_eq!(spec.feature, Some(feature::DESKTOP_SHELL), "{name}");
+        assert!(!spec.mutating, "{name}");
+    }
+    assert_eq!(feature::DESKTOP_SHELL, "desktop_shell.v1");
+    assert!(feature::ALL.contains(&feature::DESKTOP_SHELL));
+    assert!(!feature::REQUIRED.contains(&feature::DESKTOP_SHELL));
+    let carried = METHODS
+        .iter()
+        .filter(|s| s.feature == Some(feature::DESKTOP_SHELL))
+        .count();
+    assert_eq!(carried, 3);
+}
+
+/// A peer without `desktop_shell.v1` never gets a call. A station call to the
+/// two station-to-deck rows passes the scope check with `admin` (the scope of
+/// every paired station) and with no other scope.
+#[test]
+fn the_desktop_shell_rows_need_the_feature_the_role_and_the_scope() {
+    let (d, s) = (Role::Deck, Role::Station);
+    let without = negotiated(&[
+        feature::CONTROL,
+        feature::DESKTOP,
+        feature::DESKTOP_AUTHORITY,
+    ]);
+    let admin = scopes(&[Scope::Admin]);
+    let read = scopes(&[Scope::Read]);
+    let none = scopes(&[]);
+    for name in ["display.directive", "station.palette"] {
+        assert_eq!(
+            code_of(authorize(name, s, d, None, &all(), Some(&admin))),
+            "ok",
+            "{name}"
+        );
+        assert_eq!(
+            code_of(authorize(name, s, d, None, &without, Some(&admin))),
+            code::FEATURE_NOT_NEGOTIATED,
+            "{name}"
+        );
+        // The caller's own pre-check, which knows no grant, also refuses.
+        assert_eq!(
+            code_of(authorize(name, s, d, None, &without, None)),
+            code::FEATURE_NOT_NEGOTIATED,
+            "{name}"
+        );
+        for refused in [&read, &none] {
+            assert_eq!(
+                code_of(authorize(name, s, d, None, &all(), Some(refused))),
+                code::FORBIDDEN,
+                "{name}"
+            );
+        }
+        assert_eq!(
+            code_of(authorize(name, d, s, None, &all(), Some(&admin))),
+            code::WRONG_ROLE,
+            "{name}"
+        );
+    }
+    let name = "fleet.summary";
+    assert_eq!(
+        code_of(authorize(name, d, s, None, &all(), Some(&read))),
+        "ok"
+    );
+    assert_eq!(
+        code_of(authorize(name, d, s, None, &without, Some(&read))),
+        code::FEATURE_NOT_NEGOTIATED
+    );
+    assert_eq!(
+        code_of(authorize(name, d, s, None, &without, None)),
+        code::FEATURE_NOT_NEGOTIATED
+    );
+    assert_eq!(
+        code_of(authorize(name, s, d, None, &all(), Some(&read))),
+        code::WRONG_ROLE
+    );
+    assert_eq!(
+        code_of(authorize(name, d, s, None, &all(), Some(&none))),
+        code::FORBIDDEN
+    );
+}
