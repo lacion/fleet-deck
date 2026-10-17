@@ -138,7 +138,7 @@ async fn a_display_gets_reduced_cards_and_only_the_stations_of_its_ceiling() {
 }
 
 #[tokio::test]
-async fn the_display_socket_sends_reduced_snapshots_and_deltas_and_refuses_every_client_message() {
+async fn the_display_socket_sends_reduced_snapshots_and_deltas_and_refuses_presence() {
     let (f, c, h, st) = setup_deck().await;
     f.store
         .apply_snapshot(f.station.clone(), f.inc.clone(), 0, vec![secret_card("s1")])
@@ -172,13 +172,8 @@ async fn the_display_socket_sends_reduced_snapshots_and_deltas_and_refuses_every
     assert!(!delta.to_string().contains(SECRET), "{delta}");
     assert_eq!(delta["sessions"][0]["summary"]["title"], "Fix the tests");
 
-    // Subscribe and presence are refused; the socket stays open.
-    ws.send(
-        json!({ "type": "subscribe", "station_id": st, "session_id": "s1",
-                    "incarnation": null, "after": null }),
-    )
-    .await;
-    assert_eq!(ws.next_of("error").await["code"], "display_read_only");
+    // Presence is refused; the socket stays open. (A subscribe is allowed
+    // since P2b: `board_displays_timeline.rs`.)
     ws.send(json!({ "type": "presence", "station_id": st, "session_id": "s1" }))
         .await;
     assert_eq!(ws.next_of("error").await["code"], "display_read_only");

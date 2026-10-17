@@ -433,12 +433,10 @@ async fn a_display_reads_and_logs_out_with_its_header_and_writes_nothing_else() 
             "display_read_only",
         );
     }
-    // These rows are open to a display, but their projections are built by
-    // the P2b payload task: until then a display gets the defined refusal and
-    // never the owner payload (R13 P2b/P3b step 1).
+    // These rows are open to a display, but their projections belong to the
+    // P2b changes and artifacts tasks: until then a display gets the defined
+    // refusal and never the owner payload (R13 P2b/P3b step 1).
     for path in [
-        "/api/fleet/extras",
-        "/api/activity",
         "/api/displays/self/sessions/x/y/changes",
         "/api/displays/self/artifact/x/y/1/index.html",
     ] {

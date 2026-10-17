@@ -12,8 +12,18 @@ use rusqlite::{Connection, params};
 
 use super::{DeckStore, Result, call, to_u64};
 
+#[path = "display_activity.rs"]
+pub mod display_activity;
+#[path = "display_timeline.rs"]
+pub mod display_timeline;
+
 /// The timeline kinds of the stream.
 const KINDS: &str = "('message.completed', 'plan.proposed', 'tool.completed', \
+    'approval.requested', 'approval.resolved', 'approval.expired', \
+    'session.started', 'session.ended', 'session.hibernated')";
+
+/// The timeline kinds of the stream of a display: no plan row (R13 §5D item 8).
+const KINDS_DISPLAY: &str = "('message.completed', 'tool.completed', \
     'approval.requested', 'approval.resolved', 'approval.expired', \
     'session.started', 'session.ended', 'session.hibernated')";
 

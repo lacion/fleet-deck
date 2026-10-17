@@ -6,10 +6,10 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Extension, State};
-use fleetdeck_proto::board::FleetExtras;
+use fleetdeck_proto::board::{FleetExtras, SessionExtras};
 
 use super::Board;
-use super::display_view::{display_cards, display_stations};
+use super::display_view::{display_cards, display_stations, scope_of};
 use super::guard::ApiError;
 use crate::local::{StationView, station_view};
 use crate::store::{AuditEntry, DeckCommand, DeckSession, Principal};
@@ -68,8 +68,14 @@ pub async fn stations(
             );
             member_stations(views, &sessions)
         }
-        // A display sees the stations of its ceiling, reduced (R13 §5).
-        Principal::Display(d) => display_stations(&views, &d.ceiling),
+        // A display sees the stations of its effective scope, reduced (R13
+        // §5, §5D item 17).
+        Principal::Display(d) => {
+            let scope = scope_of(&board, d).await?;
+            let all = board.store.sessions().await.map_err(ApiError::internal)?;
+            let cards = display_cards(&all, &scope);
+            display_stations(&views, &scope, &cards)
+        }
         _ => views,
     }))
 }
@@ -81,8 +87,9 @@ pub async fn sessions(
 ) -> Result<Json<Vec<DeckSession>>, ApiError> {
     if let Principal::Display(d) = &principal {
         // A display has no read cursors and no projects.
+        let scope = scope_of(&board, d).await?;
         let all = board.store.sessions().await.map_err(ApiError::internal)?;
-        return Ok(Json(display_cards(&all, &d.ceiling)));
+        return Ok(Json(display_cards(&all, &scope)));
     }
     let all = board
         .store
@@ -100,10 +107,23 @@ pub async fn fleet_extras(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
 ) -> Result<Json<FleetExtras>, ApiError> {
-    // A display gets its own projection from the P2b payload task (no mail
-    // count, no file list, R13 §5D item 9). Until then it gets nothing.
-    if matches!(principal, Principal::Display(_)) {
-        return Err(super::not_built::not_built());
+    // A display reads no mail count and no file list (R13 §5D item 9, R9
+    // Q9): one zero row for each card that it may see, with no mail or file
+    // query, so a row never tells which session has mail or touches.
+    if let Principal::Display(d) = &principal {
+        let scope = scope_of(&board, d).await?;
+        let all = board.store.sessions().await.map_err(ApiError::internal)?;
+        return Ok(Json(FleetExtras {
+            sessions: display_cards(&all, &scope)
+                .into_iter()
+                .map(|c| SessionExtras {
+                    station_id: c.station_id,
+                    session_id: c.summary.session_id,
+                    mail_pending: 0,
+                    files: Vec::new(),
+                })
+                .collect(),
+        }));
     }
     let mut extras = board
         .store
