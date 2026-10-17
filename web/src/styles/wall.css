@@ -271,6 +271,80 @@
   color: var(--hazard);
 }
 
+/* side: the load of each session (R13 P9). It is the last block and takes the height that is left. */
+.fd-wall-area[data-area="side"] {
+  display: flex;
+  flex-direction: column;
+}
+
+.fd-wall-loadblock {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.fd-wall-load {
+  position: relative;
+  flex: 1 1 auto;
+  align-content: start;
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(4.5rem, 1fr));
+  grid-auto-flow: dense;
+  gap: var(--sp-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fd-wall-load li {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--ok);
+  border-radius: var(--r-chip);
+  background: var(--raised);
+  font-family: var(--font-data);
+  font-size: 0.8em;
+}
+
+.fd-wall-load li[data-size="2"] {
+  grid-column: span 2;
+}
+
+.fd-wall-load li[data-size="3"] {
+  grid-column: span 3;
+}
+
+.fd-wall-load li[data-heat="mid"] {
+  border-color: var(--act);
+  background: var(--act-bg);
+}
+
+.fd-wall-load li[data-heat="high"] {
+  border-color: var(--hazard);
+  background: var(--hazard-bg);
+}
+
+.fd-wall-load li[data-heat="unknown"] {
+  border: 1px dashed var(--faint-decor);
+  background: none;
+}
+
+.fd-wall-load-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-wall-load-value {
+  color: var(--dim);
+}
+
 /* stream: the newest at the bottom */
 .fd-wall-area[data-area="stream"] {
   display: flex;

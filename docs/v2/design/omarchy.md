@@ -1061,7 +1061,7 @@ All rows are built (DL-231, §5H). The worker briefs and the decisions are in th
 19. R15, R16: `DisplayView` has no last directive, so the Displays list cannot show it (§5.2 asks for it).
 20. R15, R16: with the owner cookie and the display cookie in one browser, the owner wins on `/api/ws`. The display page shows "This page is for a wall display. Open the board at /." for an owner answer.
 21. R15: there is no `fleetdeck deck display link` CLI command.
-22. R16: no per-session load on the wall (§10 is not built).
+22. R16: built (P9): the wall `side` area shows the per-session load heatmap (§10).
 23. R16: the CSP and the sandboxed frame are proved only in the real e2e (`web/e2e-real/display.spec.ts`).
 24. R17: the test `station_pairing invite_prints_an_invitation_that_pairs_the_deck_and_the_listener_survives_a_restart` failed once with "Address already in use" on a station restart port (an environment race; fail-fast stopped the lane at 1080 of 3943). The full check on `5a01c9ca` passed.
 25. P8 production acceptance waits for the owner's release task (pinned `fleetdeck-bin` package, trusted manifest, installed hooks).

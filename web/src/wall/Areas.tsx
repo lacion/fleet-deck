@@ -15,6 +15,8 @@ import type { ViewsActions } from '../runtime/views';
 import { Tile } from '../watch/WatchPage';
 import { refOf } from '../watch/tiles';
 import { keyOf, timelineOf } from './hooks';
+import { LoadMap } from './LoadMap';
+import { loadMap } from './loadCells';
 import { type Need, oneLine, wallSessions } from './model';
 import { QrCode } from './QrCode';
 import { answerUrl } from './qr';
@@ -172,6 +174,7 @@ export function SideArea({
   const live = sessions.filter(
     (c) => c.status !== 'ended' && c.status !== 'lost' && c.status !== 'unreachable',
   );
+  const loads = loadMap(sessions, stations);
   const pulls = live
     .map((card) => ({ card, match: prOfSession(prs, projects, card) }))
     .filter((p) => p.match !== undefined);
@@ -214,6 +217,7 @@ export function SideArea({
           </ul>
         </div>
       )}
+      {loads.cells.length === 0 ? null : <LoadMap map={loads} />}
     </section>
   );
 }
