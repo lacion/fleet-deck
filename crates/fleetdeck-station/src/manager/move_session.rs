@@ -195,8 +195,19 @@ pub(in crate::manager) fn decide_out(
         return Err(refuse(NOT_READY, text));
     }
     // A lost session is not proof that its run ended: a shim row without
-    // proof may still run the conversation (FG-9 property 1).
-    if let Some(why) = d.unended_execution(&session_id)? {
+    // proof may still run the conversation (FG-9 property 1). The running
+    // row of a live session is the run that this move stops (the graceful
+    // `Stop` below); every earlier unresolved row still refuses.
+    let live = !matches!(
+        summary.state,
+        fleetdeck_proto::event::SessionState::Exited | fleetdeck_proto::event::SessionState::Lost
+    );
+    let current = if live {
+        d.current_shim(&session_id)?
+    } else {
+        None
+    };
+    if let Some(why) = d.unended_execution_except_current(&session_id, current.as_deref())? {
         return Err(refuse(NOT_READY, &unended_text(&why)));
     }
     let publication = publication_of(d.connection(), &session_id)?;

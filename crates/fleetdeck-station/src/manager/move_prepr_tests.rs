@@ -32,8 +32,8 @@ async fn import_blocked(fx: &Fx) -> Option<String> {
         .blocked
 }
 
-/// A shim row of `session` that was lost and has no proof of its end.
-async fn lost_row(fx: &Fx, session: &str, shim_id: &str) {
+/// A shim row of `session` that runs now (state `running`).
+async fn running_row(fx: &Fx, session: &str, shim_id: &str) {
     let store = &fx.rig.store;
     store
         .shim_starting(NewShim {
@@ -57,7 +57,13 @@ async fn lost_row(fx: &Fx, session: &str, shim_id: &str) {
         )
         .await
         .unwrap();
-    store
+}
+
+/// A shim row of `session` that was lost and has no proof of its end.
+async fn lost_row(fx: &Fx, session: &str, shim_id: &str) {
+    running_row(fx, session, shim_id).await;
+    fx.rig
+        .store
         .shim_end(
             shim_id.to_owned(),
             ShimState::Lost,
@@ -193,6 +199,34 @@ async fn an_unproven_row_after_the_decision_makes_the_export_plan_refuse() {
     assert_eq!(
         (err.code, err.message.as_str()),
         ("invalid_state", WHY_LOST)
+    );
+    fx.manager
+        .shutdown(fleetdeck_proto::command::StopMode::Kill)
+        .await;
+}
+
+// PRE-PR round 3: the running row of a live idle source is the run that the
+// move stops, so it does not refuse the move; an earlier unproven row does.
+#[tokio::test]
+async fn a_live_idle_source_with_its_running_shim_row_is_moved() {
+    let Some(fx) = Fx::new().await else { return };
+    fx.session("s1", true).await;
+    running_row(&fx, "s1", "sh2").await;
+    fx.accepted("c1", out("s1", "m1")).await;
+    fx.manager
+        .shutdown(fleetdeck_proto::command::StopMode::Kill)
+        .await;
+}
+
+#[tokio::test]
+async fn an_earlier_unproven_row_still_refuses_a_live_source() {
+    let Some(fx) = Fx::new().await else { return };
+    fx.session("s1", true).await;
+    lost_row(&fx, "s1", "sh1").await;
+    running_row(&fx, "s1", "sh2").await;
+    assert_eq!(
+        fx.refused("c1", out("s1", "m1")).await,
+        state(&format!("move_not_ready: {WHY_LOST}"))
     );
     fx.manager
         .shutdown(fleetdeck_proto::command::StopMode::Kill)
