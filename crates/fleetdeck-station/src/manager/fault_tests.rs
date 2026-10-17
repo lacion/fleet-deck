@@ -218,6 +218,7 @@ impl Rig {
                 batch: None,
                 issue: None,
                 origin_text: false,
+                fleet_git: None,
             })
             .await;
         d.receipt.result.unwrap().session_id.unwrap()

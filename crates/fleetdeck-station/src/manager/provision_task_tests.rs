@@ -66,6 +66,7 @@ fn start_cmd(cwd: &str, workspace: WorkspaceRequest) -> SessionCommand {
         batch: None,
         issue: None,
         origin_text: false,
+        fleet_git: None,
     }
 }
 

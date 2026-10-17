@@ -491,6 +491,7 @@ async fn an_unsettled_row_makes_the_whole_root_busy_for_every_session_of_it() {
             batch: None,
             issue: None,
             origin_text: false,
+            fleet_git: None,
         },
         SessionCommand::Import {
             spec: spec(&ws, "claude"),

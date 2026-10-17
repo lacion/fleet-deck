@@ -650,5 +650,104 @@ fn slash_commands_set_the_commands_and_the_skills_of_the_summary_and_the_last_li
     assert_eq!(s.skills, Some(names(&["deploy"])));
 }
 
+#[test]
+fn base_stale_sets_the_flag_and_a_replay_changes_nothing() {
+    let mut f = Feed::new();
+    f.push(started());
+    assert!(!f.summary.base_stale);
+    let s = f.push(Event::WorkspaceBaseStale {
+        code: "fetch_failed".to_owned(),
+        text: "Fetch failed".to_owned(),
+    });
+    assert!(s.base_stale);
+    let before = s.clone();
+    f.seq -= 1;
+    assert_eq!(
+        *f.push(Event::SessionCleanup {
+            state: crate::fleet_git::CleanupState::Trashed,
+            reason: None,
+        }),
+        before
+    );
+}
+
+#[test]
+fn push_and_cleanup_events_set_their_summary_fields() {
+    use crate::fleet_git::{CleanupInfo, CleanupState, PushInfo, PushState};
+    let mut f = Feed::new();
+    f.push(started());
+    assert!(f.summary.push.is_none() && f.summary.cleanup.is_none());
+    f.push(Event::SessionPush {
+        state: PushState::Failing,
+        ref_name: "fd/a/b".to_owned(),
+        oid: None,
+        desired_oid: Some("d1".to_owned()),
+        stop_code: None,
+        attempts: 1,
+        next_attempt_at: Some(5),
+        code: Some("push_failed".to_owned()),
+        text: Some("Push failed".to_owned()),
+    });
+    let s = f.push(Event::SessionPush {
+        state: PushState::Pushed,
+        ref_name: "fd/a/b".to_owned(),
+        oid: Some("d1".to_owned()),
+        desired_oid: Some("d1".to_owned()),
+        stop_code: None,
+        attempts: 0,
+        next_attempt_at: None,
+        code: None,
+        text: None,
+    });
+    assert_eq!(
+        s.push,
+        Some(PushInfo {
+            state: PushState::Pushed,
+            ref_name: "fd/a/b".to_owned(),
+            oid: Some("d1".to_owned()),
+            desired_oid: Some("d1".to_owned()),
+            stop_code: None,
+            attempts: 0,
+            next_attempt_at: None,
+            code: None,
+            text: None,
+        })
+    );
+    let s = f.push(Event::SessionCleanup {
+        state: CleanupState::Kept,
+        reason: Some("dirty".to_owned()),
+    });
+    assert_eq!(
+        s.cleanup,
+        Some(CleanupInfo {
+            state: CleanupState::Kept,
+            reason: Some("dirty".to_owned()),
+        })
+    );
+    // The include event changes no summary field.
+    let before = f.summary.clone();
+    let after = f
+        .push(Event::WorkspaceIncludeSkipped { files: Vec::new() })
+        .clone();
+    assert_eq!(
+        (after.push, after.cleanup, after.base_stale),
+        (before.push, before.cleanup, before.base_stale)
+    );
+}
+
+#[test]
+fn a_summary_without_the_fleet_git_fields_decodes_and_hides_them_when_empty() {
+    let v = serde_json::to_value(SessionSummary::new(SessionId::from("s1"))).unwrap();
+    let object = v.as_object().unwrap();
+    for key in ["base_stale", "push", "cleanup"] {
+        assert!(
+            !object.contains_key(key),
+            "{key} is not serialized when empty"
+        );
+    }
+    let s: SessionSummary = serde_json::from_value(v).unwrap();
+    assert!(!s.base_stale && s.push.is_none() && s.cleanup.is_none());
+}
+
 #[path = "fold_tests_more.rs"]
 mod more;

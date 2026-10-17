@@ -253,6 +253,7 @@ async fn live_round(kind: ProviderKind) {
             batch: None,
             issue: None,
             origin_text: false,
+            fleet_git: None,
         },
     )
     .await;

@@ -146,17 +146,7 @@ impl Station {
     }
 
     async fn start_with(&mut self, spec: SessionSpec, prompt: Option<&str>) -> SessionId {
-        let d = self
-            .accepted(SessionCommand::Start {
-                spec,
-                prompt: prompt.map(text),
-                workspace: None,
-                setup_cmd: None,
-                batch: None,
-                issue: None,
-                origin_text: false,
-            })
-            .await;
+        let d = self.accepted(plain_start(spec, prompt.map(text))).await;
         d.receipt.result.unwrap().session_id.unwrap()
     }
 
@@ -234,6 +224,20 @@ pub(super) fn spec(cwd: &str, instance: &str) -> SessionSpec {
         title: None,
         coordinator: None,
         launch: None,
+    }
+}
+
+/// A plain start: only the spec and the first prompt are set.
+fn plain_start(spec: SessionSpec, prompt: Option<UserInput>) -> SessionCommand {
+    SessionCommand::Start {
+        spec,
+        prompt,
+        workspace: None,
+        setup_cmd: None,
+        batch: None,
+        issue: None,
+        origin_text: false,
+        fleet_git: None,
     }
 }
 
@@ -419,49 +423,20 @@ async fn the_station_policy_decides_in_the_command_transaction() {
         ),
     ];
     for (spec, code) in cases {
-        assert_eq!(
-            st.rejected(SessionCommand::Start {
-                spec,
-                prompt: None,
-                workspace: None,
-                setup_cmd: None,
-                batch: None,
-                issue: None,
-                origin_text: false,
-            })
-            .await,
-            code
-        );
+        assert_eq!(st.rejected(plain_start(spec, None)).await, code);
     }
     // A symlink inside a root that points outside it is outside (trap 8).
     let link = st.root.path().join("projects/link");
     std::os::unix::fs::symlink(&outside, &link).unwrap();
     assert_eq!(
-        st.rejected(SessionCommand::Start {
-            spec: spec(&link.to_string_lossy(), "claude"),
-            prompt: None,
-            workspace: None,
-            setup_cmd: None,
-            batch: None,
-            issue: None,
-            origin_text: false,
-        })
-        .await,
+        st.rejected(plain_start(spec(&link.to_string_lossy(), "claude"), None))
+            .await,
         RejectCode::Forbidden
     );
 
     let s = st.start(&ws, Some("hello")).await;
     assert_eq!(
-        st.rejected(SessionCommand::Start {
-            spec: spec(&ws, "claude"),
-            prompt: None,
-            workspace: None,
-            setup_cmd: None,
-            batch: None,
-            issue: None,
-            origin_text: false,
-        })
-        .await,
+        st.rejected(plain_start(spec(&ws, "claude"), None)).await,
         RejectCode::Forbidden,
         "max_sessions = 1"
     );
@@ -775,16 +750,7 @@ async fn a_station_local_start_with_a_coordinator_spec_is_rejected() {
     let mut granted = spec(&ws, "claude");
     granted.coordinator = Some(Box::new(coordinator_spec()));
     assert_eq!(
-        st.rejected(SessionCommand::Start {
-            spec: granted,
-            prompt: None,
-            workspace: None,
-            setup_cmd: None,
-            batch: None,
-            issue: None,
-            origin_text: false,
-        })
-        .await,
+        st.rejected(plain_start(granted, None)).await,
         RejectCode::InvalidCommand
     );
     // The refusal used no session slot: a plain start still fits.

@@ -72,6 +72,7 @@ pub fn decide(
             batch,
             issue,
             origin_text,
+            ..
         } => {
             if let Some(cmd) = &setup_cmd {
                 workspace::check_setup_cmd(policy, origin_run, cmd)?;

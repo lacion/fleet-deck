@@ -130,6 +130,7 @@ fn a_command_never_keeps_a_launch_identity() {
         batch: None,
         issue: None,
         origin_text: false,
+        fleet_git: None,
     };
     start.clear_station_local();
     let mut import = SessionCommand::Import {
@@ -167,4 +168,48 @@ fn a_command_never_keeps_a_launch_identity() {
         SessionCommand::Start { spec, .. } => assert!(spec.launch.is_none()),
         _ => unreachable!(),
     }
+}
+
+#[test]
+fn a_start_carries_fleet_git_only_when_set() {
+    use crate::fleet_git::{FleetGitStart, GitSettings, RemoteIdentity, StartKind};
+    let mut start = SessionCommand::Start {
+        spec: launched_spec(),
+        prompt: None,
+        workspace: None,
+        setup_cmd: None,
+        batch: None,
+        issue: None,
+        origin_text: false,
+        fleet_git: None,
+    };
+    let value = serde_json::to_value(&start).unwrap();
+    assert!(value.get("fleet_git").is_none(), "{value}");
+    // An older command without the field decodes with none.
+    let back: SessionCommand = serde_json::from_value(value).unwrap();
+    assert_eq!(back, start);
+    if let SessionCommand::Start { fleet_git, .. } = &mut start {
+        *fleet_git = Some(Box::new(FleetGitStart {
+            kind: StartKind::Worktree,
+            project_id: "p1".into(),
+            project_name: "app".into(),
+            settings: GitSettings::default(),
+            settings_revision: 1,
+            home_generation: 1,
+            home_path: "/w/app".into(),
+            remote: RemoteIdentity {
+                repo: "h/a".into(),
+                dest: "https://h:443/a".into(),
+            },
+            slug: "alpha".into(),
+            forge: None,
+            clone_url: "https://h/a".into(),
+        }));
+    }
+    let value = serde_json::to_value(&start).unwrap();
+    assert_eq!(value["fleet_git"]["slug"], "alpha");
+    assert_eq!(
+        serde_json::from_value::<SessionCommand>(value).unwrap(),
+        start
+    );
 }

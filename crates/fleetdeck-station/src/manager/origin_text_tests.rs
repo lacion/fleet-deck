@@ -32,6 +32,7 @@ fn from_text(cwd: &str, instance: &str, mode: Option<&str>) -> SessionCommand {
         setup_cmd: None,
         issue: Some(Box::new(issue())),
         origin_text: true,
+        fleet_git: None,
         batch: None,
     }
 }

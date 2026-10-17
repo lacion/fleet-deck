@@ -23,6 +23,7 @@ fn start_in(cwd: &str, batch: Option<BatchRef>) -> SessionCommand {
         batch: batch.map(Box::new),
         issue: None,
         origin_text: false,
+        fleet_git: None,
     }
 }
 

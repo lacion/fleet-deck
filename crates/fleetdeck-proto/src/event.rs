@@ -13,6 +13,7 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::capability::Capabilities;
+use crate::fleet_git::{CleanupState, PushState, SkippedFile};
 use crate::ids::{InputId, NodeId, PlanId, ProviderInstanceId, RequestId, RunId, TurnId};
 use crate::integrations::IssueRef;
 use crate::session::{BatchRef, RepoInfo};
@@ -352,6 +353,49 @@ pub enum Event {
     /// Older peers decode this kind as unknown.
     #[serde(rename = "session.digest")]
     SessionDigest { text: String },
+    /// The fetch before a worktree start failed; the session started from
+    /// the local `HEAD` (FG-1, O8). The fold sets `summary.base_stale`.
+    #[serde(rename = "workspace.base_stale")]
+    WorkspaceBaseStale { code: String, text: String },
+    /// Files of `worktree_include` that the station did not copy (FG-4).
+    /// The fold ignores it.
+    #[serde(rename = "workspace.include_skipped")]
+    WorkspaceIncludeSkipped { files: Vec<SkippedFile> },
+    /// The push state of the session branch changed (FG-2). The fold keeps
+    /// it in `summary.push`.
+    #[serde(rename = "session.push")]
+    SessionPush {
+        state: PushState,
+        ref_name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        oid: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        desired_oid: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        stop_code: Option<String>,
+        attempts: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        next_attempt_at: Option<i64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        code: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        text: Option<String>,
+    },
+    /// The cleanup state of the session worktree changed (FG-3). The fold
+    /// keeps it in `summary.cleanup`.
+    #[serde(rename = "session.cleanup")]
+    SessionCleanup {
+        state: CleanupState,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        reason: Option<String>,
+    },
     #[serde(rename = "run.completed")]
     RunCompleted {
         run_id: RunId,

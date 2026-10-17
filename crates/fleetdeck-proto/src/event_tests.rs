@@ -296,6 +296,31 @@ fn samples() -> Vec<Event> {
         Event::ExecutionReconciled {
             shim_id: "01JABCDEFGHJKMNPQRSTVWXYZ0".into(),
         },
+        Event::WorkspaceBaseStale {
+            code: "fetch_failed".into(),
+            text: "Fetch failed; this session started from the local HEAD: timeout".into(),
+        },
+        Event::WorkspaceIncludeSkipped {
+            files: vec![crate::fleet_git::SkippedFile {
+                path: ".env".into(),
+                reason: "symlink".into(),
+            }],
+        },
+        Event::SessionPush {
+            state: crate::fleet_git::PushState::Failing,
+            ref_name: "fd/alpha/ada".into(),
+            oid: None,
+            desired_oid: Some("abc123".into()),
+            stop_code: None,
+            attempts: 2,
+            next_attempt_at: Some(1_791_000_120_000),
+            code: Some("push_rejected".into()),
+            text: Some("Push was rejected: stale info".into()),
+        },
+        Event::SessionCleanup {
+            state: crate::fleet_git::CleanupState::Kept,
+            reason: Some("not_merged".into()),
+        },
     ]
 }
 
@@ -620,4 +645,42 @@ fn a_task_update_omits_its_empty_optional_fields_and_decodes_without_them() {
                "status": "running"})
     );
     assert_eq!(serde_json::from_value::<Event>(json).unwrap(), bare);
+}
+
+#[test]
+fn the_fleet_git_events_have_their_wire_names_and_optional_fields() {
+    let push = serde_json::to_value(Event::SessionPush {
+        state: crate::fleet_git::PushState::Pushed,
+        ref_name: "fd/a/b".into(),
+        oid: Some("abc".into()),
+        desired_oid: None,
+        stop_code: None,
+        attempts: 0,
+        next_attempt_at: None,
+        code: None,
+        text: None,
+    })
+    .unwrap();
+    assert_eq!(
+        push,
+        json!({"kind": "session.push", "state": "pushed", "ref_name": "fd/a/b", "oid": "abc", "attempts": 0})
+    );
+    // An event of a newer station with an unknown push state still decodes.
+    let newer: EventBody = serde_json::from_value(
+        json!({"kind": "session.push", "state": "paused", "ref_name": "r", "attempts": 1}),
+    )
+    .unwrap();
+    assert!(matches!(
+        newer.known(),
+        Some(Event::SessionPush {
+            state: crate::fleet_git::PushState::Unknown,
+            ..
+        })
+    ));
+    let stale: EventBody = serde_json::from_value(
+        json!({"kind": "workspace.base_stale", "code": "fetch_timeout", "text": "t"}),
+    )
+    .unwrap();
+    assert_eq!(stale.kind_name(), "workspace.base_stale");
+    assert!(stale.known().is_some());
 }

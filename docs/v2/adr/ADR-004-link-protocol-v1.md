@@ -125,6 +125,7 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `shim.resume.v1` | `session.execution_check`, `session.reconcile_execution` (DL-182; the termination check and the owner's reconciliation for resume on the shim host) |
 | `shell_command.v1` | `session.shell_command`, `session.release_shell` (B8, DL-196; a `!` shell command in a session folder, and the owner's release of a folder) |
 | `desktop.v1` | `desktop.info`, `desktop.act` (R13 §6, DL-201; desktop control on the station: Hyprland and Omarchy info, and a closed list of actions with typed argv) |
+| `fleet_git.v1` | `fleet_git.projects_set`, `fleet_git.push_now`, `fleet_git` on `session.start`, and the events `workspace.base_stale`, `workspace.include_skipped`, `session.push`, `session.cleanup` (Fleet Git phase 1, ADR-009; the Git settings of a project, fetch before a start, push, cleanup and worktree bootstrap) |
 | `pair_request.v1` | The pair-channel frames `pair_request`, `pair_pending`, `pair_approved` and `pair_resume` (DL-178, §10): a station asks a deck to pair without an invitation and the owner approves on the board |
 
 A method whose feature was not negotiated gets the error `feature_not_negotiated`. Behaviour depends on the negotiated features, not only on the version.
@@ -452,6 +453,8 @@ close             { reason, detail }
 | `coordinator.call` | station → deck | coordinate | `coordinator.v1` | yes |
 | `coordinator.authority_check` | station → deck | coordinate | `coordinator.v2` | no |
 | `coordinator.policy_now` | deck → station | read | `coordinator.v2` | no |
+| `fleet_git.projects_set` | deck → station | admin | `fleet_git.v1` | no |
+| `fleet_git.push_now` | deck → station | drive | `fleet_git.v1` | no |
 
 - **`workspace.list` (added in M2 P4-4, DL-061, under the extension rule of §3: "every new method must declare a scope and, if needed, a feature"):** the directory picker of the board's spawn form. It lists the sub-directories of a path inside the station's allowed roots (`WorkspaceQuery` → `WorkspaceListing`). It reads only, but it needs `drive` because only a caller that may start a session needs the station's directory names. Errors: `missing_workspace`, `outside_roots`, `timeout`.
 - **`workspace.worktrees` (DL-142; feature `workspace.worktrees.v1`):** `workspace.worktrees` (DL-142) is read only: it lists the worktrees that the station created for sessions, with what Git reports about each (dirty and ignored entries, commits on no fetched remote ref, registration, last commit). It runs no Git command that writes.

@@ -399,6 +399,7 @@ fn start(
         setup_cmd: None,
         issue: issue.map(Box::new),
         origin_text: true,
+        fleet_git: None,
         batch: None,
     }
 }

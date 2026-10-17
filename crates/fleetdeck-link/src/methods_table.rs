@@ -645,4 +645,20 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::COORDINATOR_V2),
         false,
     ),
+    // Fleet Git phase 1 (ADR-009): the versioned full snapshot of the
+    // project settings and homes, and "Push now" for one session.
+    m(
+        "fleet_git.projects_set",
+        DeckToStation,
+        Scope::Admin,
+        Some(feature::FLEET_GIT),
+        false,
+    ),
+    m(
+        "fleet_git.push_now",
+        DeckToStation,
+        Scope::Drive,
+        Some(feature::FLEET_GIT),
+        false,
+    ),
 ];

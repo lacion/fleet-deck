@@ -120,6 +120,7 @@ async fn a_deck_start_with_a_grant_hands_the_credential_to_the_child_environment
             batch: None,
             issue: None,
             origin_text: false,
+            fleet_git: None,
         },
     };
     let command = envelope.command.clone();

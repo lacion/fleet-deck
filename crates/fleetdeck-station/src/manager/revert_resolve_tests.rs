@@ -286,6 +286,7 @@ async fn a_reconciliation_while_the_rollback_has_no_answer_keeps_the_fence_until
             batch: None,
             issue: None,
             origin_text: false,
+            fleet_git: None,
         })
         .await,
         RejectCode::InvalidState
