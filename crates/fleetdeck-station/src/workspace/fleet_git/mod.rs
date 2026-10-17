@@ -13,6 +13,7 @@
 //! - `include`: the copy of ignored files into a new worktree (§7.2).
 //! - `remote_branches`: `project.branches` and `project.fetch` (§13.1).
 //! - `move_export`, `move_layout`, `move_stream`: the files of a session move (§12.3).
+//! - `move_import`, `move_fetch`: the target side of a move, the staging and the Git work (§12.3).
 //! - `home`: `project.ensure_home` and `project.home_status` (§8.4).
 
 mod fetch;
@@ -23,8 +24,11 @@ mod land;
 mod land_remote;
 mod land_temp;
 mod move_export;
+mod move_fetch;
+mod move_import;
 mod move_layout;
 mod move_stream;
+mod move_upload;
 mod push;
 mod push_outcome;
 mod radar;
@@ -45,8 +49,19 @@ pub use land_remote::{
 };
 pub use land_temp::{TEMP_DIR, ensure_dir, identity as temp_identity, temp_path, temp_root};
 pub use move_export::{Exported, MoveFileError, OpenFile};
+pub use move_fetch::{
+    PRIVATE_REF_PREFIX, add_move_worktree, check_publication, check_publication_values,
+    fetch_publication, oid_valid, pick_publish_ref, private_ref,
+};
+pub use move_import::{
+    Folder, Receiver, Removal, check_manifest, delete_cleanup, delete_file_by_identity,
+    delete_folder_by_identity, place_files,
+};
 pub use move_layout::{MoveSupport, export_files, import_files, staged_name, support};
 pub use move_stream::{serve_export, write_export};
+pub use move_upload::{
+    MoveUploads, Settled, UploadEvent, UploadGuard, UploadPort, mark_deleted, serve_upload,
+};
 pub use push::{
     OptionsProvider, PushFailure, PushJob, PushResult, PushWriter, RefspecError, backoff_delay,
     refspec_for,

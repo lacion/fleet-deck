@@ -20,8 +20,9 @@ pub const KIND_MOVE_IN: &str = "move_in";
 pub const HELD: &str = "A land holds this session. Wait until it ends.";
 /// The refusal text of the source of a move (design §12.3 step 1).
 pub const HELD_MOVE: &str = "The session is being moved.";
-/// The refusal text of the target of a move (design §12.3 step 4).
-// (FG-9: T4.2c) The source station is not stored yet; the text names none.
+/// The refusal text of the target of a move when the source station is not
+/// known (design §12.3 step 4). With the source it is "This session is still
+/// arriving from <id>." (T4.2c).
 pub const HELD_MOVE_IN: &str = "This session is still arriving from another station.";
 
 /// One row of `session_holds`.
@@ -69,13 +70,19 @@ pub fn held(conn: &Connection, session_id: &SessionId) -> Result<bool> {
     )?)
 }
 
-/// The refusal text of a hold, by its kind (design §11.4, §12.3).
-fn text_of_hold(hold: &SessionHold) -> String {
-    match hold.kind.as_str() {
+/// The refusal text of a hold, by its kind (design §11.4, §12.3). The text of
+/// a `move_in` hold names the source station of its `move_in_runs` row.
+fn text_of_hold(conn: &Connection, hold: &SessionHold) -> Result<String> {
+    Ok(match hold.kind.as_str() {
         KIND_MOVE => HELD_MOVE.to_owned(),
-        KIND_MOVE_IN => HELD_MOVE_IN.to_owned(),
+        KIND_MOVE_IN => super::move_runs::get_in(conn, &hold.holder_id)?
+            .and_then(|row| row.source_station)
+            .map_or_else(
+                || HELD_MOVE_IN.to_owned(),
+                |source| format!("This session is still arriving from {source}."),
+            ),
         _ => HELD.to_owned(),
-    }
+    })
 }
 
 fn reject(text: impl Into<String>) -> DecideError {
@@ -97,7 +104,7 @@ fn moved_text(conn: &Connection, session_id: &SessionId) -> Result<Option<String
 /// The rejection, or a database error.
 pub fn check_hold(conn: &Connection, session_id: &SessionId) -> Result<(), DecideError> {
     match get(conn, session_id)? {
-        Some(hold) => Err(reject(text_of_hold(&hold))),
+        Some(hold) => Err(reject(text_of_hold(conn, &hold)?)),
         None => Ok(()),
     }
 }

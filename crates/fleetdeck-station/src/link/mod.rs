@@ -191,6 +191,13 @@ async fn request(
                 tracing::debug!(error = %e, "response");
             }
         }
+        // FG-9: the upload token needs the data channel of this link.
+        "session.move_prepare" => {
+            let reply = intake::move_prepare(ctx, data, req.params).await;
+            if let Err(e) = control.respond(req.id, reply).await {
+                tracing::debug!(error = %e, "response");
+            }
+        }
         "events.replay" => match serde_json::from_value::<ReplayParams>(req.params) {
             Ok(p) => {
                 // The deck commits its cursor with the events, so the cursor

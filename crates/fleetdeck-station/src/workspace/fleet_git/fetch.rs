@@ -275,7 +275,7 @@ async fn remote_head(git: &crate::workspace::Git, remote: &str) -> Option<String
 /// The D/F check of design §3.2 item 1: a ref named exactly `fd/<slug>` (local
 /// or remote-tracking) blocks the branch `fd/<slug>/<callsign>`. A ref below
 /// `fd/<slug>/` does not.
-async fn namespace_check(
+pub(super) async fn namespace_check(
     git: &crate::workspace::Git,
     remote: &str,
     slug: &str,

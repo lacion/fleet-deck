@@ -38,7 +38,7 @@ mod intake_desktop;
 #[path = "intake_fleet_git.rs"]
 mod intake_fleet_git;
 use crate::store::{Caller, DecideError, StoreError, peers};
-pub(super) use intake_fleet_git::{PauseGuard, move_export};
+pub(super) use intake_fleet_git::{PauseGuard, move_export, move_prepare};
 
 /// The error code of a request that this build does not serve yet.
 pub const NOT_IMPLEMENTED: &str = "not_implemented";
@@ -551,6 +551,7 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
         "fleet_git.land_abandon" => intake_fleet_git::land_abandon(&ctx.manager, req.params).await,
         "session.move_abort" => intake_fleet_git::move_abort(&ctx.manager, req.params).await,
         "session.move_status" => intake_fleet_git::move_status(&ctx.manager, req.params).await,
+        "session.move_discard" => intake_fleet_git::move_discard(&ctx.manager, req.params).await,
         "project.radar" => intake_fleet_git::radar(&ctx.manager, &ctx.fleet_git, req.params).await,
         "project.branches" => {
             intake_fleet_git::branches(&ctx.manager, &ctx.fleet_git, req.params).await

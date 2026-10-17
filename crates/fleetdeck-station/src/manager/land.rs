@@ -45,6 +45,9 @@ use crate::workspace::fleet_git::OptionsProvider;
 // and `decide.rs` are full.
 #[path = "move_session.rs"]
 pub(super) mod move_session;
+// (FG-9) The target side of a move: the locks, the uploads, prepare, discard.
+#[path = "move_in.rs"]
+pub(super) mod move_in;
 
 /// How often the engine looks for an admitted run when nothing wakes it.
 #[cfg(not(test))]

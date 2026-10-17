@@ -48,6 +48,7 @@ fn new_in(move_id: &str, command_id: &str, session: &str) -> NewMoveIn {
         provider: ProviderKind::Claude,
         native_session_id: Some("native-1".to_owned()),
         authority: None,
+        source_station: Some("alpha".to_owned()),
     }
 }
 

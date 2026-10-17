@@ -52,6 +52,7 @@ pub mod shims;
 pub mod target;
 mod task_stop;
 pub mod trash;
+mod turn_rows;
 pub mod turns;
 pub mod workspaces;
 pub use adapters::{adapters_from_config, setup_envs_from_config};
@@ -59,6 +60,8 @@ pub use adapters::{adapters_from_config, setup_envs_from_config};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+
+use turn_rows::settle_turn_rows;
 
 use fleetdeck_core::SharedIds;
 use fleetdeck_core::config::StationConfig;
@@ -121,6 +124,8 @@ pub struct SessionManager {
     /// The land engine of the station, once the station process set it
     /// (FG-8).
     land: std::sync::OnceLock<land::LandEngine>,
+    /// The target side of a move in memory (FG-9): locks and uploads.
+    moves: std::sync::OnceLock<land::move_in::MoveState>,
     /// The private paths of the station (DL-173), given at the start. Built
     /// once; not part of the live policy snapshot.
     private_paths: Arc<crate::workspace::PrivatePaths>,
@@ -377,6 +382,7 @@ impl SessionManager {
             assist: std::sync::OnceLock::new(),
             fleet_git: std::sync::OnceLock::new(),
             land: std::sync::OnceLock::new(),
+            moves: std::sync::OnceLock::new(),
             private_paths: private,
             settings: std::sync::OnceLock::new(),
             shell_notify,
@@ -669,20 +675,6 @@ impl SessionManager {
         self.target.stop_all(how).await;
         let _ = tokio::task::spawn_blocking(crate::workspace::precheck::kill_all_marked).await;
     }
-}
-
-/// Settles the turn checkpoint rows that a crash left open (DL-082).
-async fn settle_turn_rows(store: &Store) -> Result<()> {
-    let settled =
-        crate::workspace::settle_unsettled(store, crate::workspace::GitOptions::isolated()).await?;
-    if !settled.finalized.is_empty() || !settled.abandoned.is_empty() {
-        tracing::info!(
-            finalized = settled.finalized.len(),
-            abandoned = settled.abandoned.len(),
-            "settled turn checkpoints after restart"
-        );
-    }
-    Ok(())
 }
 
 /// The adapter configs of restored shim sessions: each session's adapter

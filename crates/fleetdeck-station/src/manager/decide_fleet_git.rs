@@ -16,10 +16,10 @@ use crate::manager::policy::Policy;
 use crate::store::git_state::{self, NewSessionGit};
 use crate::store::{DecideError, Decision, SyncPlan, WorkspacePlan};
 
-/// The target side of a move (FG-9): the per-move lock. Attached here so that
-/// `manager/mod.rs` (799 lines) gets no line.
-#[path = "move_in.rs"]
-pub(in crate::manager) mod move_in;
+/// The decision of `MoveIn` (FG-9). Attached here so that `manager/mod.rs`
+/// (799 lines) gets no line.
+#[path = "move_in_decide.rs"]
+pub(in crate::manager) mod move_in_decide;
 
 /// The refusal of a Fleet Git start: `Reject` with `InvalidState` and the
 /// message `<code>: <text>` (design §4.3).

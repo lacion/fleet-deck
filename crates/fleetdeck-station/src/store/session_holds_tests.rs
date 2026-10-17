@@ -121,6 +121,41 @@ async fn the_refusal_text_follows_the_kind_of_the_hold() {
 }
 
 #[tokio::test]
+async fn the_move_in_text_names_the_source_station_of_its_row() {
+    use crate::store::git_state::insert_session_git;
+    use crate::store::git_state::tests::new_git;
+    use crate::store::move_runs::{NewMoveIn, insert_in};
+    let det = Det::new();
+    let store = store(&det).await;
+    store.create_session(new_session("s1")).await.unwrap();
+    let text = call(&store.inner.db, |conn| {
+        let mut git = new_git("s1", "p1");
+        git.publish_ref = None;
+        git.created_branch = false;
+        insert_session_git(conn, &git, 1)?;
+        let new = NewMoveIn {
+            move_id: "m1".to_owned(),
+            command_id: "c1".to_owned(),
+            session_id: "s1".into(),
+            provider: fleetdeck_proto::event::ProviderKind::Claude,
+            native_session_id: None,
+            authority: None,
+            source_station: Some("alpha".to_owned()),
+        };
+        insert_in(conn, &new, 1)?;
+        let s1 = SessionId::from("s1");
+        insert(conn, &s1, KIND_MOVE_IN, "m1", 1)?;
+        Ok(text_of(check_free(conn, &s1)))
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        text.as_deref(),
+        Some("This session is still arriving from alpha.")
+    );
+}
+
+#[tokio::test]
 async fn a_moved_session_is_refused_by_check_free_but_not_by_the_hold_check() {
     let det = Det::new();
     let store = store(&det).await;

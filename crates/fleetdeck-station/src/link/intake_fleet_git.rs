@@ -579,6 +579,56 @@ pub(super) async fn move_status(manager: &SessionManager, params: serde_json::Va
     }
 }
 
+/// `session.move_prepare` (design §12.3 step 3, FG-9): the token of the
+/// upload stream `move-import:<move_id>`. It needs the data channel of the
+/// link (error code `unsupported` without it). Other error codes:
+/// `invalid_params`, `move_discarded`, `move_too_large`, `move_checksum`,
+/// `invalid_state`, `internal`.
+pub(in crate::link) async fn move_prepare(
+    ctx: &StationLink,
+    data: Option<&fleetdeck_link::data::Data>,
+    params: serde_json::Value,
+) -> Outcome {
+    use fleetdeck_proto::fleet_git::{MOVE_IMPORT_PURPOSE, MovePrepareAnswer, MovePrepareParams};
+    let query: MovePrepareParams = match serde_json::from_value(params) {
+        Ok(q) => q,
+        Err(e) => return bad_params(e),
+    };
+    let Some(data) = data else {
+        return Outcome::Err(WireError::new(
+            "unsupported",
+            "this link has no data channel",
+        ));
+    };
+    if let Err(e) = ctx
+        .manager
+        .move_prepare(&query.move_id, query.manifest)
+        .await
+    {
+        return Outcome::Err(WireError::new(e.code, e.message));
+    }
+    match data.issue_token(&format!("{MOVE_IMPORT_PURPOSE}{}", query.move_id)) {
+        Ok(token) => ok(MovePrepareAnswer {
+            stream_token: token.as_str().to_owned(),
+        }),
+        Err(e) => internal(e),
+    }
+}
+
+/// `session.move_discard` (design §12.3, "Abort"): the answer is a
+/// `MoveDiscardAnswer`; an unknown id is ok (it stores a tombstone).
+pub(super) async fn move_discard(manager: &SessionManager, params: serde_json::Value) -> Outcome {
+    use fleetdeck_proto::fleet_git::MoveIdParams;
+    let query: MoveIdParams = match serde_json::from_value(params) {
+        Ok(q) => q,
+        Err(e) => return bad_params(e),
+    };
+    match manager.move_discard(&query.move_id).await {
+        Ok(answer) => ok(answer),
+        Err(e) => internal(e),
+    }
+}
+
 #[cfg(test)]
 #[path = "intake_fleet_git_tests.rs"]
 mod tests;

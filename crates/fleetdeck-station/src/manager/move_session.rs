@@ -68,7 +68,7 @@ pub(in crate::manager) fn refuse_direct() -> DecideError {
     )
 }
 
-fn move_id_ok(id: &str) -> bool {
+pub(in crate::manager) fn move_id_ok(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= MAX_MOVE_ID
         && id
@@ -76,7 +76,7 @@ fn move_id_ok(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
 }
 
-fn check_move_id(id: &str) -> Result<(), DecideError> {
+pub(in crate::manager) fn check_move_id(id: &str) -> Result<(), DecideError> {
     if move_id_ok(id) {
         Ok(())
     } else {
@@ -89,7 +89,7 @@ fn check_move_id(id: &str) -> Result<(), DecideError> {
 
 /// Only the owner's board or a coordinator moves a session (design §12.2
 /// item 4; Q14).
-fn check_origin(origin: CommandOrigin) -> Result<(), DecideError> {
+pub(in crate::manager) fn check_origin(origin: CommandOrigin) -> Result<(), DecideError> {
     if matches!(origin, CommandOrigin::Board | CommandOrigin::Coordinator) {
         Ok(())
     } else {

@@ -117,6 +117,8 @@ pub struct MoveInRow {
     pub message: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+    /// `MoveIn.from.station_id` (T4.2c, V32): the text of the `move_in` hold.
+    pub source_station: Option<String>,
 }
 
 /// The values of a new target row; the state is `staged` (design §12.3
@@ -129,6 +131,7 @@ pub struct NewMoveIn {
     pub provider: ProviderKind,
     pub native_session_id: Option<String>,
     pub authority: Option<CommandAuthority>,
+    pub source_station: Option<String>,
 }
 
 fn json<T: Serialize>(value: &T) -> Result<String> {
@@ -273,7 +276,7 @@ pub fn transition_out(
 
 const IN_COLUMNS: &str = "move_id, command_id, session_id, provider, native_session_id, state,
      staging_path, staging_dev, staging_ino, imported, authority, first_input_at, code, message,
-     created_at, updated_at";
+     created_at, updated_at, source_station";
 
 fn in_of(r: &Row<'_>) -> rusqlite::Result<MoveInRow> {
     let provider: String = r.get(3)?;
@@ -304,6 +307,7 @@ fn in_of(r: &Row<'_>) -> rusqlite::Result<MoveInRow> {
         message: r.get(13)?,
         created_at: r.get(14)?,
         updated_at: r.get(15)?,
+        source_station: r.get(16)?,
     })
 }
 
@@ -319,8 +323,8 @@ pub fn insert_in(conn: &Connection, new: &NewMoveIn, now: i64) -> Result<()> {
     conn.execute(
         "INSERT INTO move_in_runs
            (move_id, command_id, session_id, provider, native_session_id, state, authority,
-            created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, 'staged', ?6, ?7, ?7)",
+            created_at, updated_at, source_station)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'staged', ?6, ?7, ?7, ?8)",
         params![
             new.move_id,
             new.command_id,
@@ -329,6 +333,7 @@ pub fn insert_in(conn: &Connection, new: &NewMoveIn, now: i64) -> Result<()> {
             new.native_session_id,
             authority,
             now,
+            new.source_station,
         ],
     )?;
     Ok(())
