@@ -439,7 +439,6 @@ async fn a_display_reads_and_logs_out_with_its_header_and_writes_nothing_else() 
     for path in [
         "/api/fleet/extras",
         "/api/activity",
-        "/api/displays/self/directive",
         "/api/displays/self/sessions/x/y/changes",
         "/api/displays/self/artifact/x/y/1/index.html",
     ] {

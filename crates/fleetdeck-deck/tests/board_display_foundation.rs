@@ -327,11 +327,6 @@ async fn the_stub_routes_refuse_with_not_built_and_the_self_routes_need_the_disp
     let (_, cookie) = display_login(&c, "Wall", &[&st]).await;
     // The owner rows of the stubs.
     expect(
-        &post(&c, &h, "/api/displays/x/directive", json!({})).await,
-        501,
-        "not_built",
-    );
-    expect(
         &get(&c, &h, &format!("/api/stations/{st}/desktop")).await,
         501,
         "not_built",
@@ -367,7 +362,6 @@ async fn the_stub_routes_refuse_with_not_built_and_the_self_routes_need_the_disp
     // The owner cookie alone does not log in a `self` row; with both
     // cookies the display principal answers.
     for path in [
-        "/api/displays/self/directive",
         "/api/displays/self/sessions/a/b/changes",
         "/api/displays/self/artifact/a/b/1/index.html",
     ] {
@@ -375,4 +369,19 @@ async fn the_stub_routes_refuse_with_not_built_and_the_self_routes_need_the_disp
         let both = format!("{}; {cookie}", h[0].1);
         expect(&c.get(path, &[("Cookie", &both)]).await, 501, "not_built");
     }
+    // The directive row is built (R13 P2b directives): the owner cookie alone
+    // is refused, and with both cookies the display answers.
+    expect(
+        &get(&c, &h, "/api/displays/self/directive").await,
+        401,
+        "login_required",
+    );
+    let both = format!("{}; {cookie}", h[0].1);
+    let r = c
+        .get("/api/displays/self/directive", &[("Cookie", &both)])
+        .await;
+    assert_eq!(
+        (r.status, r.body["directive"]["mode"].as_str()),
+        (200, Some("mission"))
+    );
 }
