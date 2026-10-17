@@ -1,6 +1,6 @@
 # Fleet Deck on Omarchy: the wall, desktop control and the desktop MCP (R13)
 
-- **Status:** §4.5, §5 and §6.1-§6.4/§6.6 **accepted**, revision 5 (2026-10-16, DL-201: design review round 4 PASS; its two MAJOR findings fixed in §5C items 4 and 5); revision 6: §5D (P2b) and §6D (P3b) drafted from the open questions, owner decisions DL-221, DL-222, DL-223; DESIGN REVIEW pending; revision 7: §5E answers the DESIGN REVIEW round 1 of revision 6; revision 8: §5F answers the DESIGN RE-REVIEW round 2; other parts still draft. §5C answers the round 3 review (`/tmp/adv-r13-p23-r3-report.md`, owner decision: apply the fixes and one more round) and overrides §5B where they differ; §5B answers the round 2 review (`/tmp/adv-r13-p23-r2-report.md`) and overrides §5A where they differ; §5A answers the DESIGN REVIEW round 1 of §4.5, §5 and §6 (`/tmp/adv-r13-p2-design-report.md`) and overrides them where they differ. Not frozen. Each high-risk part needs an adversary DESIGN REVIEW before its code (§13).
+- **Status:** §4.5, §5 and §6.1-§6.4/§6.6 **accepted**, revision 5 (2026-10-16, DL-201: design review round 4 PASS; its two MAJOR findings fixed in §5C items 4 and 5); revision 6: §5D (P2b) and §6D (P3b) drafted from the open questions, owner decisions DL-221, DL-222, DL-223; DESIGN REVIEW pending; revision 7: §5E answers the DESIGN REVIEW round 1 of revision 6; revision 8: §5F answers the DESIGN RE-REVIEW round 2; revision 9: §5G proposes answers to the round 3 findings; awaiting the owner (4th review round); other parts still draft. §5C answers the round 3 review (`/tmp/adv-r13-p23-r3-report.md`, owner decision: apply the fixes and one more round) and overrides §5B where they differ; §5B answers the round 2 review (`/tmp/adv-r13-p23-r2-report.md`) and overrides §5A where they differ; §5A answers the DESIGN REVIEW round 1 of §4.5, §5 and §6 (`/tmp/adv-r13-p2-design-report.md`) and overrides them where they differ. Not frozen. Each high-risk part needs an adversary DESIGN REVIEW before its code (§13).
 - **Owner request (2026-10-16):** "i have a server thats connected to a ultrawide screen, i use this server to run multiple ai agents as it has 64 cores and 128gb of ram … it would be awesome if i could control omarchy and the screen trough the fleet and maybe also have an mcp … imagine using the screen as a command control center and we could display and control everhting there." Then: "lets create a document for this work so we can implement everything".
 - **Owner answers (DL-198):**
 
@@ -613,6 +613,35 @@ These rules answer the report `adv-omarchy-r7-design-report.md` (VERDICT: FAIL, 
    - The P3b station dispatch task owns items 1 and 2 on the station.
    - The P3b wake task owns the logic of item 4.
 6. **Status line.** The status line at the top of this document names revision 8.
+
+## 5G. Proposed answers to the DESIGN RE-REVIEW round 3 (revision 9, awaiting the owner)
+
+Round 3 of 3 failed with 2 open blockers (report `adv-omarchy-r8-design-report.md`). These answers are proposed. They become binding only when the owner approves a 4th review round and it passes. P2b and P3b are not built until then.
+
+1. **Single use for the whole connection (round 3 finding 1; replaces the 30 s retention of §5F item 2).**
+   - **Retention.** The station keeps every consumed `action_id` for the whole connection epoch. The set holds at most 4 096 ids for each epoch.
+   - **Full set.** When the set is full, the station refuses new authorities with `failed` and the text "Too many desktop actions on this link; it reconnects." The station then closes the link connection. The next connection has a new epoch and an empty set.
+   - **Connection check.** A queued action checks that its connection is still the current one. It checks right before it consumes an id. It checks again right before the first side effect. When the connection is not current, the action refuses with `forbidden`.
+   - **Handshake field.** The station's `Hello` gets a new optional field: `desktop_epoch: Option<String>`. It is a random 128-bit hex id for each connection. It is distinct from the existing `Hello.link_epoch: u64`.
+   - **Ownership.** The foundation task owns this field. It also owns the propagation of the connection context to the desktop dispatch.
+2. **Commit before wake, no eviction of live keys (round 3 finding 2; replaces the eviction rules of §5F item 4).**
+   - **One operation.** The store has one operation: `wake_reserve(station_id, request_id, now_ms) -> Reserved | Seen | Suppressed | Error`. It runs in one transaction.
+   - **Steps.** The operation does these steps in order:
+     - (a) It checks the suppression state.
+     - (b) It prunes the rows older than 24 h.
+     - (c) It prunes the rows older than 120 s, oldest first, while the table holds 10 000 rows or more.
+     - (d) It runs `INSERT ... ON CONFLICT DO NOTHING`.
+     - (e) It commits.
+   - **Wake rule.** Only `Reserved` (one row inserted and committed) may lead to a wake. `Seen`, `Suppressed`, a write error and an unknown outcome never wake.
+   - **No live eviction.** A row younger than 120 s is never evicted. The 120 s is longer than the 60 s window plus the 5 s skew.
+   - **Saturation.** When the table holds 10 000 rows that are all younger than 120 s, the operation sets a persisted suppression state: `wake_suspended_until = now + 120 s`. It is a deck settings row. The operation returns `Suppressed`. No wake is sent while the state is set, also after a restart.
+   - **Baseline.** Baseline observations use the same operation, because they must block later wakes. They are bounded in the same way.
+   - **Tests.**
+     - A crash after the commit and before the dispatch. After the restart: no wake.
+     - Two concurrent observations of one key. One result is `Reserved`.
+     - A baseline overflow. Suppression starts, then the wake recovers after 120 s.
+3. **Ownership (round 3 note).** The web completion task (P2c) also owns `web/e2e-real/**`. It needs these files for the production-bundle proof of §5F item 3.
+4. **Status line.** The status line at the top of this document adds: "revision 9: §5G proposes answers to the round 3 findings; awaiting the owner (4th review round)".
 
 ---
 
