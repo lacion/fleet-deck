@@ -9,6 +9,7 @@ pub mod clock;
 pub mod config;
 pub mod db;
 mod db_backup;
+pub mod fleet_git_digest;
 pub mod git;
 pub mod identity;
 pub mod ids;
