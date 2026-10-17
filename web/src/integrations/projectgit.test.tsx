@@ -7,7 +7,14 @@ import { IntegrationsProvider } from './context';
 import { fakeActions, project } from './fixtures';
 import { emptyDraft } from './model';
 import { ProjectForm } from './ProjectForm';
-import { buildGitPut, type GitBase, gitDraftOf, ProjectGitSettings } from './ProjectGitSettings';
+import {
+  buildGitPut,
+  foreignMachine,
+  type GitBase,
+  gitDraftOf,
+  ProjectGitSettings,
+  remoteChange,
+} from './ProjectGitSettings';
 
 const base = (): GitBase => ({ settings: project().git, revision: 3 });
 
@@ -42,16 +49,19 @@ describe('the Git sync section', () => {
       'For example .env. Each file at most 1 MiB.',
       'Environment for agents and setup',
       'PATH, HOME, LD_*, DYLD_* and provider keys are not allowed.',
-      'Remote URL (optional)',
+      'Remote URL',
+      'Filled from the origin of the first home. Check it. Fleet Deck compares the exact URL form (user@host:path and ssh://user@host/path are different).',
+      'Artifact share (optional)',
+      'A Taildrive share as &lt;machine&gt;/&lt;share&gt;.',
       'Save Git settings',
     ]) {
       expect(html).toContain(text);
     }
     expect(html).toContain('placeholder="origin"');
-    // The four settings of later phases are not on the form.
+    // The settings of the land and the radar (later phases) are not on the form.
     expect(html).not.toContain('Land as');
     expect(html).not.toContain('Radar station');
-    expect(html).not.toContain('Artifact share');
+    expect(html).toContain('placeholder="nas/artifacts"');
     expect(html).not.toContain('Check command');
   });
 
@@ -112,7 +122,7 @@ describe('the Git sync section', () => {
 });
 
 describe('the save body', () => {
-  test('it sends the nine fields and the four of later phases unchanged', () => {
+  test('it sends the ten fields and the three of later phases unchanged', () => {
     const loaded = {
       ...project().git,
       land: 'merge' as const,
@@ -135,7 +145,6 @@ describe('the save body', () => {
         env: 'RUSTC_WRAPPER = sccache\n\nA=b=c',
       },
       { settings: loaded, revision: 3 },
-      null,
     );
     expect(built).toEqual({
       put: {
@@ -156,41 +165,39 @@ describe('the save body', () => {
     });
   });
 
-  test('the remote URL is sent only when it changed', () => {
+  test('the remote URL goes to its own route, only when it changed', () => {
     const draft = gitDraftOf(project({ remote_url: 'https://h/a.git' }));
-    const same = buildGitPut(draft, base(), 'https://h/a.git');
-    expect('put' in same && 'remote_url' in same.put).toBe(false);
-    const empty = buildGitPut({ ...draft, remoteUrl: '' }, base(), null);
-    expect('put' in empty && 'remote_url' in empty.put).toBe(false);
-    const changed = buildGitPut(
-      { ...draft, remoteUrl: ' https://h/b.git ' },
-      base(),
-      'https://h/a.git',
+    expect(remoteChange(draft, 'https://h/a.git')).toBeNull();
+    expect(remoteChange({ ...draft, remoteUrl: '' }, null)).toBeNull();
+    expect(remoteChange({ ...draft, remoteUrl: ' https://h/b.git ' }, 'https://h/a.git')).toBe(
+      'https://h/b.git',
     );
-    expect('put' in changed && changed.put.remote_url).toBe('https://h/b.git');
+    // The settings PUT never carries the URL: the remote route stores it first.
+    const built = buildGitPut({ ...draft, remoteUrl: 'https://h/b.git' }, base());
+    expect('put' in built && 'remote_url' in built.put).toBe(false);
   });
 
   test('the board refuses the simple rules before it calls the deck', () => {
     const draft = gitDraftOf(project());
-    expect(buildGitPut({ ...draft, push: 'on_turn' }, base(), null)).toEqual({
+    expect(buildGitPut({ ...draft, push: 'on_turn' }, base())).toEqual({
       problems: { push: 'Turn on sync first.' },
     });
-    expect(buildGitPut({ ...draft, cleanup: 'merged' }, base(), null)).toEqual({
+    expect(buildGitPut({ ...draft, cleanup: 'merged' }, base())).toEqual({
       problems: { cleanup: 'Turn on sync first.' },
     });
     const on = { ...draft, sync: true, cleanup: 'merged' as const };
     for (const hours of ['0', '721', '', 'x', '1.5']) {
-      expect(buildGitPut({ ...on, afterHours: hours }, base(), null)).toEqual({
+      expect(buildGitPut({ ...on, afterHours: hours }, base())).toEqual({
         problems: { cleanup_after_hours: 'Clean up after 1 to 720 hours.' },
       });
     }
     for (const hours of ['1', '720']) {
-      expect('put' in buildGitPut({ ...on, afterHours: hours }, base(), null)).toBe(true);
+      expect('put' in buildGitPut({ ...on, afterHours: hours }, base())).toBe(true);
     }
-    expect(buildGitPut({ ...draft, env: 'PATH' }, base(), null)).toEqual({
+    expect(buildGitPut({ ...draft, env: 'PATH' }, base())).toEqual({
       problems: { worktree_env: 'Use NAME=value.' },
     });
-    expect(buildGitPut({ ...draft, env: '=x' }, base(), null)).toEqual({
+    expect(buildGitPut({ ...draft, env: '=x' }, base())).toEqual({
       problems: { worktree_env: 'Use NAME=value.' },
     });
   });
@@ -198,7 +205,7 @@ describe('the save body', () => {
   test('a disabled hours field keeps the loaded value', () => {
     const draft = { ...gitDraftOf(project()), afterHours: 'junk' };
     const loaded = { ...project().git, cleanup_after_hours: 36 };
-    const built = buildGitPut(draft, { settings: loaded, revision: 1 }, null);
+    const built = buildGitPut(draft, { settings: loaded, revision: 1 });
     expect('put' in built && built.put.settings.cleanup_after_hours).toBe(36);
   });
 });
@@ -255,5 +262,25 @@ describe('the save call', () => {
   test('another failure is thrown', async () => {
     const { actions } = rig(new ApiError(403, 'owner only', 'owner_only'));
     await expect(actions.saveGit('p1', body)).rejects.toThrow('owner only');
+  });
+});
+
+describe('the share that no station exports (FG-12)', () => {
+  const exporting = (machine: string) => ({ info: { taildrive: { machine } } }) as never;
+
+  test('the hint shows for a machine that no reporting station has', () => {
+    const stations = [exporting('Alpha'), { info: null } as never];
+    expect(foreignMachine('nas/artifacts', stations)).toBe('nas');
+    expect(foreignMachine('alpha/out', stations)).toBeNull();
+    expect(foreignMachine('ALPHA/out', stations)).toBeNull();
+  });
+
+  test('no hint without a slash, a machine, or a station that reports Taildrive', () => {
+    const stations = [exporting('alpha')];
+    expect(foreignMachine('nas', stations)).toBeNull();
+    expect(foreignMachine('/out', stations)).toBeNull();
+    expect(foreignMachine('', stations)).toBeNull();
+    expect(foreignMachine('nas/out', [{ info: null } as never])).toBeNull();
+    expect(foreignMachine('nas/out', [])).toBeNull();
   });
 });

@@ -1,0 +1,157 @@
+// FG-11 (design §14.3): the config drift report on the Stations page. Each station is compared
+// with the reference station: the two provider versions and the four hashes. Nothing syncs (O34).
+import { useCallback, useEffect, useState } from 'react';
+import type { ConfigDigest, DriftItem, StationView } from '../gen';
+import { useIntegrations } from '../integrations/context';
+import { message } from '../integrations/useLoad';
+import { Menu } from '../ui/Menu';
+
+/** The label of each hash, in the order of the report. */
+const ITEM_LABELS: readonly (readonly [DriftItem, string])[] = [
+  ['claude_md', 'CLAUDE.md'],
+  ['claude_agents', 'agents'],
+  ['claude_skills', 'skills'],
+  ['codex_agents_md', 'AGENTS.md'],
+];
+
+const hashOf = (c: ConfigDigest, name: DriftItem): string | undefined =>
+  c.items.find((i) => i.name === name)?.hash;
+
+/** The labels that differ between a station and the reference: `claude`, `codex`, then the items. */
+export function driftLabels(reference: ConfigDigest, config: ConfigDigest): string[] {
+  const out: string[] = [];
+  if (reference.claude_version !== config.claude_version) out.push('claude');
+  if (reference.codex_version !== config.codex_version) out.push('codex');
+  for (const [name, label] of ITEM_LABELS) {
+    if (hashOf(reference, name) !== hashOf(config, name)) out.push(label);
+  }
+  return out;
+}
+
+/** The text of the line "Config: …" of one station. */
+export function configText(
+  station: Pick<StationView, 'station_id' | 'info'>,
+  reference: Pick<StationView, 'station_id' | 'info'> | undefined,
+): string {
+  if (reference !== undefined && reference.station_id === station.station_id) {
+    return 'Config: Reference';
+  }
+  const config = station.info?.config;
+  const base = reference?.info?.config;
+  if (config === undefined || base === undefined) return 'Config: Unknown';
+  const labels = driftLabels(base, config);
+  return labels.length === 0 ? 'Config: Same' : `Config: Differs: ${labels.join(', ')}`;
+}
+
+/** The config reference of the deck (`GET /api/fleet-git/prefs`), and the call that sets it. */
+export type DriftReference = {
+  /** False until the deck answers; an older deck (no route) keeps it false and hides the report. */
+  readonly offered: boolean;
+  readonly station: string | null;
+  readonly error: string | null;
+  readonly set: (station: string) => Promise<void>;
+};
+
+export function useDriftReference(): DriftReference {
+  const env = useIntegrations();
+  const actions = env?.actions;
+  const [offered, setOffered] = useState(false);
+  const [station, setStation] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (actions === undefined) return undefined;
+    let live = true;
+    actions.fleetGitPrefs().then(
+      (prefs) => {
+        if (!live) return;
+        setStation(prefs.drift_reference);
+        setOffered(true);
+      },
+      () => live && setOffered(false),
+    );
+    return () => {
+      live = false;
+    };
+  }, [actions]);
+  const set = useCallback(
+    async (next: string) => {
+      if (actions === undefined) return;
+      setError(null);
+      try {
+        const prefs = await actions.setDriftReference(next);
+        setStation(prefs.drift_reference);
+      } catch (e) {
+        setError(message(e));
+      }
+    },
+    [actions],
+  );
+  return { offered, station, error, set };
+}
+
+/** The line "Config: …" in a station card. */
+export function StationConfigDrift({
+  station,
+  reference,
+}: {
+  readonly station: StationView;
+  readonly reference: StationView | undefined;
+}) {
+  return <p className="fd-note fd-station-config">{configText(station, reference)}</p>;
+}
+
+/** The header of the page: the reference station and "Change", or the hint to pick one. */
+export function ConfigReferenceHeader({
+  stations,
+  reference,
+  canSet,
+  onSet,
+  error,
+}: {
+  readonly stations: readonly StationView[];
+  readonly reference: StationView | undefined;
+  readonly canSet: boolean;
+  readonly onSet: (station: string) => void;
+  readonly error: string | null;
+}) {
+  return (
+    <div className="fd-pane-row fd-station-reference">
+      {reference === undefined ? (
+        <p className="fd-note">Pick a reference station for the config report.</p>
+      ) : (
+        <>
+          <p className="fd-note">Config reference: {reference.name}</p>
+          {canSet ? (
+            <Menu
+              summary="Change"
+              summaryClass="fd-ghost fd-sm"
+              label="Change the config reference"
+            >
+              {(close) => (
+                <>
+                  {stations.map((s) => (
+                    <button
+                      key={s.station_id}
+                      type="button"
+                      onClick={() => {
+                        close();
+                        onSet(s.station_id);
+                      }}
+                    >
+                      {s.name}
+                    </button>
+                  ))}
+                </>
+              )}
+            </Menu>
+          ) : null}
+        </>
+      )}
+      {error === null ? null : (
+        <p role="alert" className="fd-note">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}

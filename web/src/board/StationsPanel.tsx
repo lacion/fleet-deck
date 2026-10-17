@@ -20,7 +20,10 @@ import { EmptyState, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import { ShellPanel } from '../shell/ShellPanel';
 import { PairingDialog } from './PairingDialog';
+import { ConfigReferenceHeader, StationConfigDrift, useDriftReference } from './StationConfigDrift';
 import { StationResources } from './StationResources';
+import { StationTaildrive } from './StationTaildrive';
+import { StationTraits } from './StationTraits';
 import type { Outcome } from '../session/commands';
 import {
   authLabel,
@@ -455,6 +458,8 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
   const [removeError, setRemoveError] = useState<string | null>(null);
   const now = useNow(undefined, 30000);
   const canPair = actions?.canAdmin === true && freshness === 'live';
+  const drift = useDriftReference();
+  const reference = stations.find((s) => s.station_id === drift.station);
   return (
     <Page
       title="Stations"
@@ -480,6 +485,15 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
         <PairingDialog actions={actions} stations={stations} onClose={() => setAdding(false)} />
       ) : null}
       {removeError === null ? null : <p role="alert">{removeError}</p>}
+      {drift.offered && stations.length > 0 ? (
+        <ConfigReferenceHeader
+          stations={stations}
+          reference={reference}
+          canSet={actions?.canAdmin === true}
+          onSet={(id) => void drift.set(id)}
+          error={drift.error}
+        />
+      ) : null}
       {stations.length === 0 ? (
         <EmptyState
           icon={Server}
@@ -526,17 +540,30 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                       label="Station actions"
                     >
                       {(close) => (
-                        <button
-                          type="button"
-                          className="fd-danger"
-                          disabled={!canPair}
-                          onClick={() => {
-                            close();
-                            setConfirm(station.name);
-                          }}
-                        >
-                          Remove station…
-                        </button>
+                        <>
+                          {drift.offered && reference?.station_id !== station.station_id ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                close();
+                                void drift.set(station.station_id);
+                              }}
+                            >
+                              Use as config reference
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="fd-danger"
+                            disabled={!canPair}
+                            onClick={() => {
+                              close();
+                              setConfirm(station.name);
+                            }}
+                          >
+                            Remove station…
+                          </button>
+                        </>
                       )}
                     </Menu>
                   </div>
@@ -577,6 +604,10 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                     : `${active} of ${info.max_sessions} sessions`}
                 </span>
               </div>
+              <StationTraits traits={info?.traits} />
+              {drift.offered ? (
+                <StationConfigDrift station={station} reference={reference} />
+              ) : null}
               <StationResources
                 resources={info?.resources}
                 station={station.station_id}
@@ -611,6 +642,7 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                   ))}
                 </ul>
               )}
+              <StationTaildrive taildrive={info?.taildrive} />
               <details className="fd-station-details">
                 <summary className="fd-label">Details</summary>
                 <dl className="fd-facts">

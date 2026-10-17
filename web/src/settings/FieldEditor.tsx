@@ -193,12 +193,79 @@ function RepoGroupRows({
   );
 }
 
+/** FG-12: the Taildrive mounts as rows of "Share" and "Mount path"; the value is `{ share: path }`. */
+function ShareMountRows({
+  label,
+  rows,
+  onChange,
+  disabled,
+}: {
+  readonly label: string;
+  readonly rows: readonly (readonly [string, string])[];
+  readonly onChange: (next: [string, string][]) => void;
+  readonly disabled: boolean;
+}) {
+  const edit = (i: number, at: 0 | 1, text: string) =>
+    onChange(
+      rows.map((r, n): [string, string] =>
+        n === i ? (at === 0 ? [text, r[1]] : [r[0], text]) : [r[0], r[1]],
+      ),
+    );
+  return (
+    <div className="fd-set-rows">
+      {rows.map((row, i) => (
+        <div className="fd-set-row fd-set-pair" key={i}>
+          <input
+            aria-label={`Share ${i + 1}`}
+            value={row[0]}
+            disabled={disabled}
+            placeholder="nas/out"
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(e) => edit(i, 0, e.target.value)}
+          />
+          <input
+            aria-label={`Mount path ${i + 1}`}
+            value={row[1]}
+            disabled={disabled}
+            placeholder="/mnt/out"
+            autoComplete="off"
+            spellCheck={false}
+            data-mono="true"
+            onChange={(e) => edit(i, 1, e.target.value)}
+          />
+          <button
+            type="button"
+            className="fd-ghost fd-sm"
+            disabled={disabled}
+            aria-label={`Remove ${label} ${i + 1}`}
+            onClick={() => onChange(rows.filter((_, at) => at !== i).map((r) => [r[0], r[1]]))}
+          >
+            <Icon of={X} size={14} /> Remove
+          </button>
+        </div>
+      ))}
+      <div>
+        <button
+          type="button"
+          className="fd-ghost fd-sm"
+          disabled={disabled}
+          onClick={() => onChange([...rows.map((r): [string, string] => [r[0], r[1]]), ['', '']])}
+        >
+          <Icon of={Plus} size={14} /> Add mount
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** The kinds whose control is made of several parts: its name is a group name, not a `<label>`. */
 export const GROUP_KINDS: readonly FieldMeta['kind'][] = [
   'paths',
   'texts',
   'addresses',
   'repo_groups',
+  'share_mounts',
   'instances',
   'trackers',
 ];
@@ -320,6 +387,15 @@ export function FieldEditor({
     case 'repo_groups':
       return (
         <RepoGroupRows
+          label={meta.label}
+          rows={asPairs(value)}
+          onChange={onChange}
+          disabled={disabled}
+        />
+      );
+    case 'share_mounts':
+      return (
+        <ShareMountRows
           label={meta.label}
           rows={asPairs(value)}
           onChange={onChange}

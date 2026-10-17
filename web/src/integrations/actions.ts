@@ -15,6 +15,8 @@ import type {
   Project,
   ProjectInput,
   ProjectPreflight,
+  Prefer,
+  ProviderKind,
   PushNowAnswer,
   ReviewBody,
   StartedSessions,
@@ -52,6 +54,39 @@ export type GitSaveResult =
   | { readonly kind: 'stale'; readonly message: string }
   /** 409 `rebind_required`: the remote URL cannot change while sync is on. */
   | { readonly kind: 'rebind'; readonly message: string };
+
+/** 202 of the add and retry routes of a home (design §8.4). */
+export type HomeStarted = { readonly generation: number; readonly attempt_id: string };
+
+/** 200 of `PUT /api/projects/{id}/remote` (decision B9). */
+export type RemoteChanged = {
+  readonly remote_url: string;
+  readonly remote_ssh_user: string | null;
+  readonly repo: string;
+  readonly remote_dest: string;
+  readonly git_revision: number;
+};
+
+/** The answer of the save of the remote URL (design §8.4 "Change the remote"). */
+export type RemoteSaveResult =
+  | { readonly kind: 'saved'; readonly answer: RemoteChanged }
+  /** 409 `rebind_needed`: the URL names another repository; the owner must confirm. */
+  | { readonly kind: 'rebind_needed'; readonly message: string }
+  /** 400 `invalid_git_settings` (field `remote_url`). */
+  | { readonly kind: 'invalid'; readonly message: string };
+
+/** The body of `POST /api/placement` (decision D3). */
+export type PlacementBody = {
+  readonly count: number;
+  readonly requires: readonly string[];
+  readonly prefer: readonly Prefer[];
+  readonly spread: boolean;
+  readonly provider?: ProviderKind;
+  readonly project_id?: string;
+};
+
+/** `GET /api/fleet-git/prefs` (decision D6). */
+export type FleetGitPrefs = { readonly drift_reference: string | null };
 
 /** The texts of the push now errors that the design names (§5.8). */
 const PUSH_NOW_TEXT: Readonly<Record<string, string>> = {
@@ -92,7 +127,26 @@ export type IntegrationActions = {
   saveGit(id: string, body: GitSettingsPut): Promise<GitSaveResult>;
   /** FG-2 (§5.8): the push of the session is due at once. */
   pushNow(station: string, session: string): Promise<PushNowAnswer>;
+  /** FG-5 (§8.4): adds a home of the project on a station; the station clones in the background. */
+  addHome(id: string, station: string): Promise<HomeStarted>;
+  /** FG-5 (§8.4): retries the failed home of a station. */
+  retryHome(id: string, station: string): Promise<HomeStarted>;
+  /** FG-5 (§8.4): removes the home of a station; no file is deleted. */
+  removeHome(id: string, station: string): Promise<void>;
+  /** FG-5 (§8.4): changes the remote URL; `rebind` confirms another repository. */
+  setRemote(id: string, remoteUrl: string, rebind: boolean): Promise<RemoteSaveResult>;
+  /** FG-6 (§9.3): the stations for `count` new sessions, best first. */
+  place(body: PlacementBody): Promise<string[]>;
+  /** FG-11 (§14.3): the preferences of Fleet Git (the config reference station). */
+  fleetGitPrefs(): Promise<FleetGitPrefs>;
+  /** FG-11 (§14.3): sets (or with `null` clears) the config reference station. */
+  setDriftReference(station: string | null): Promise<FleetGitPrefs>;
 };
+
+/** A command id of 32 characters from `[0-9a-f]` (the deck accepts `[0-9A-Za-z_-]{1,64}`). */
+function commandId(): string {
+  return globalThis.crypto.randomUUID().replaceAll('-', '');
+}
 
 const record = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -130,6 +184,11 @@ export function assetPath(id: string, source: string | undefined, url: string): 
   if (source) query.set('source', source);
   query.set('url', url);
   return `${projectPath(id)}/assets?${query.toString()}`;
+}
+
+function prefs(v: unknown): FleetGitPrefs {
+  const o = shaped<{ drift_reference: unknown }>(v, ['drift_reference'], 'preferences answer');
+  return { drift_reference: typeof o.drift_reference === 'string' ? o.drift_reference : null };
 }
 
 const PROJECT_FIELDS = ['project_id', 'name', 'station_id', 'path', 'trackers'];
@@ -238,7 +297,11 @@ export function integrationActions(
         return { kind: 'saved', answer };
       } catch (e) {
         if (e instanceof ApiError) {
-          if (e.code === 'invalid_git_settings') {
+          if (
+            e.code === 'invalid_git_settings' ||
+            e.code === 'share_exposed' ||
+            e.code === 'share_unverified'
+          ) {
             return { kind: 'invalid', field: e.field, message: e.message };
           }
           if (e.code === 'stale_revision') return { kind: 'stale', message: e.message };
@@ -247,6 +310,57 @@ export function integrationActions(
         throw e;
       }
     },
+    addHome: async (id, station) =>
+      shaped<HomeStarted>(
+        await io.post(`${projectPath(id)}/homes`, { station, command_id: commandId() }),
+        ['generation', 'attempt_id'],
+        'home answer',
+      ),
+    retryHome: async (id, station) =>
+      shaped<HomeStarted>(
+        await io.post(`${projectPath(id)}/homes/${seg(station)}/retry`, {
+          command_id: commandId(),
+        }),
+        ['generation', 'attempt_id'],
+        'home answer',
+      ),
+    removeHome: async (id, station) => {
+      await io.del(`${projectPath(id)}/homes/${seg(station)}`);
+    },
+    setRemote: async (id, remoteUrl, rebind) => {
+      try {
+        const answer = shaped<RemoteChanged>(
+          await io.put(`${projectPath(id)}/remote`, {
+            remote_url: remoteUrl,
+            rebind,
+            command_id: commandId(),
+          }),
+          ['remote_url', 'repo', 'git_revision'],
+          'remote answer',
+        );
+        return { kind: 'saved', answer };
+      } catch (e) {
+        if (e instanceof ApiError) {
+          if (e.code === 'rebind_needed') return { kind: 'rebind_needed', message: e.message };
+          if (e.code === 'invalid_git_settings') return { kind: 'invalid', message: e.message };
+        }
+        throw e;
+      }
+    },
+    place: async (body) => {
+      const v = shaped<{ stations: unknown }>(
+        await io.post('/api/placement', body),
+        ['stations'],
+        'placement answer',
+      );
+      if (!Array.isArray(v.stations) || v.stations.some((x) => typeof x !== 'string')) {
+        throw new Error('The deck sent an invalid placement answer.');
+      }
+      return v.stations as string[];
+    },
+    fleetGitPrefs: async () => prefs(await io.get('/api/fleet-git/prefs')),
+    setDriftReference: async (station) =>
+      prefs(await io.put('/api/fleet-git/drift-reference', { station })),
     pushNow: async (station, session) => {
       try {
         return shaped<PushNowAnswer>(

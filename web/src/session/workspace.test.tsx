@@ -11,6 +11,7 @@ import { sessionActions } from './commands';
 import { type PaneTab, SessionView } from './SessionView';
 import { SinceNotes } from './TurnsPanel';
 import {
+  artifactFiles,
   fileActions,
   finalizedTurns,
   joinPath,
@@ -478,5 +479,28 @@ describe('the Branches view and Show its work, owner only (DL-191)', () => {
     expect(render({ tab: 'chat', events })).toContain('Show its work');
     expect(render({ tab: 'chat', events, member: true })).not.toContain('Show its work');
     expect(render({ tab: 'chat', events, get: false })).not.toContain('Show its work');
+  });
+});
+
+describe('artifact files (FG-12)', () => {
+  test('the root query names the session in the artifacts part, and there are no turns', async () => {
+    const asked: string[] = [];
+    const files = artifactFiles(
+      async (path) => {
+        asked.push(path);
+        return path.includes('/list')
+          ? { path: '', entries: [], truncated: false }
+          : { path: 'a.txt', size: 1, binary: false, text: 'x', truncated: false };
+      },
+      { station_id: 'station-a', session_id: 's 1/x' },
+    );
+    await files.list('out dir');
+    await files.read('a b.txt');
+    expect(asked).toEqual([
+      '/api/stations/station-a/files/list?artifacts=s%201%2Fx&path=out%20dir',
+      '/api/stations/station-a/files/read?artifacts=s%201%2Fx&path=a%20b.txt',
+    ]);
+    await expect(files.diff('t1')).rejects.toThrow('The artifact folder has no turns.');
+    await expect(files.sessionDiff()).rejects.toThrow('no session diff');
   });
 });

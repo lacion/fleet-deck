@@ -38,6 +38,7 @@ import type { SessionActions } from './commands';
 import { isHibernated, resumeThenSend } from '../views/hibernate';
 import { Composer } from './Composer';
 import { useSessionController } from './controller';
+import { ArtifactsLink } from './ArtifactsLink';
 import { FilesPanel } from './FilesPanel';
 import { handoverFlow } from './handoverFlow';
 import { ExecutionDialog } from './ExecutionDialog';
@@ -385,6 +386,11 @@ export function SessionView(props: SessionViewProps) {
         }
       />
       {guest === null && actions?.canAdmin === true ? <FleetControlChip actions={actions} /> : null}
+      <ArtifactsLink
+        dir={s.artifacts_dir}
+        events={events}
+        files={filesReady ? (actions?.artifacts ?? null) : null}
+      />
       {checking && actions ? (
         <ExecutionDialog actions={actions} onClose={() => setChecking(false)} />
       ) : null}

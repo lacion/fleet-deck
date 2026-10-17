@@ -20,7 +20,7 @@ import type {
 import { isSessionHistory } from '../chat/history';
 import { type FleetAnswers, isFleetAnswers } from './fleetAnswers';
 import type { Reply } from './question';
-import { type FileActions, fileActions } from './workspace';
+import { artifactFiles, type FileActions, fileActions } from './workspace';
 
 type Post = (path: string, body: unknown) => Promise<unknown>;
 type Get = (path: string) => Promise<unknown>;
@@ -71,6 +71,8 @@ export type SessionActions = {
   fleetAnswers(): Promise<FleetAnswers>;
   /** The file service of the session; `null` without a reader (tests). */
   readonly files: FileActions | null;
+  /** FG-12: the file service of the artifact folder of the session; `null` without a reader. */
+  readonly artifacts?: FileActions | null;
   /** DL-189: a page of the earlier history of an imported session; `null` without a reader. */
   readonly history?: ((before: string | null) => Promise<SessionHistory>) | null;
   /** DL-191: the own messages and tool calls of one subagent (owner only); `null` without a reader. */
@@ -255,6 +257,7 @@ export function sessionActions(
       return v;
     },
     files: get ? fileActions(get, key) : null,
+    artifacts: get ? artifactFiles(get, key) : null,
     history: get
       ? async (before) => {
           const base = `/api/sessions/${encodeURIComponent(key.station_id)}/${encodeURIComponent(session_id)}/history`;
