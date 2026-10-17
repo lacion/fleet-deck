@@ -307,6 +307,7 @@ impl DeckStore {
         current: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     ) -> Result<()> {
         let now = self.now_ms();
+        let mark = (station.clone(), incarnation.clone());
         let scopes = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let rec = station_by_id(&tx, &station)?
@@ -368,6 +369,16 @@ impl DeckStore {
         })
         .await?;
         self.note_scope_changes(scopes);
+        // Before the board change: the wake rule reads the mark when it
+        // looks at the new cards.
+        self.note_snapshot(
+            &mark.0,
+            super::SnapshotMark {
+                incarnation: mark.1,
+                watermark,
+                applied_at_ms: now,
+            },
+        );
         self.board_changed();
         Ok(())
     }

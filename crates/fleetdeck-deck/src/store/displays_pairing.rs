@@ -14,7 +14,9 @@ use ring::rand::{SecureRandom, SystemRandom};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::auth::{random_token, secret_hash};
-use super::displays::{DisplayRecord, NewDisplay, check_ceiling, clean_name, insert};
+use super::display_directive_schema::invalidate_directive;
+use super::displays::{DisplayRecord, NewDisplay, check_ceiling, clean_name, insert, load};
+use super::displays_auth::{IssuedSession, issue_fenced, replace_logins};
 use super::{DeckError, DeckStore, Result, call};
 
 /// A pending pairing lasts 5 minutes.
@@ -30,7 +32,17 @@ pub const MAX_USER_AGENT: usize = 120;
 
 const PENDING_PREFIX: &str = "fdpend1_";
 
-/// The answer of [`DeckStore::pairing_approve_new`].
+/// The display that a managed `wall.open` launch expects, with the
+/// operation revision of that launch (R13 §5E item 4). Both values are not
+/// secret: the code and the pending cookie stay the authorization.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpectedLaunch {
+    pub display_id: String,
+    pub operation_revision: i64,
+}
+
+/// The answer of [`DeckStore::pairing_approve_new`] and
+/// [`DeckStore::pairing_approve_existing`].
 #[derive(Debug)]
 pub enum Approval {
     Approved(DisplayRecord),
@@ -39,17 +51,28 @@ pub enum Approval {
     Unknown,
     /// The code does not match.
     Mismatch,
+    /// The existing display is unknown or revoked.
+    DisplayUnknown,
+    /// The pairing expects another display (or an existing one, and the owner
+    /// makes a new display): `409 display_mismatch`.
+    DisplayMismatch,
 }
 
 /// The answer of [`DeckStore::pairing_claim`].
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum Claim {
     /// The pairing waits for the owner.
     Pending,
-    /// The pairing was approved and is consumed: the display id.
-    Claimed(String),
+    /// The pairing was approved and is consumed; the session of the display
+    /// was issued in the same transaction.
+    Claimed(IssuedSession),
     /// No such pairing for this secret.
     Unknown,
+    /// The display was revoked or replaced after the approval: the
+    /// authentication generation moved (`401 login_required`).
+    Stale,
+    /// The operation revision of the launch moved on (`409 superseded`).
+    Superseded,
 }
 
 /// A stored pairing, without its verifier.
@@ -59,6 +82,7 @@ pub struct PairingRecord {
     pub code: String,
     pub approved: bool,
     pub expires_at: i64,
+    pub expected_display_id: Option<String>,
 }
 
 /// Six random digits.
@@ -81,6 +105,66 @@ pub fn random_code() -> Result<String> {
 
 fn prune(conn: &Connection, now: i64) -> Result<usize> {
     Ok(conn.execute("DELETE FROM display_pairings WHERE expires_at <= ?1", [now])?)
+}
+
+struct ClaimRow {
+    verifier: Option<String>,
+    state: String,
+    display_id: Option<String>,
+    generation: i64,
+    expected: Option<String>,
+    revision: Option<i64>,
+}
+
+struct Pending {
+    expected: Option<String>,
+}
+
+/// The pending pairing `pairing_id` when its code matches; else the
+/// approval answer that refuses it.
+fn pending_row(
+    conn: &Connection,
+    pairing_id: &str,
+    code: &str,
+    now: i64,
+) -> Result<std::result::Result<Pending, Approval>> {
+    let found: Option<(String, Option<String>)> = conn
+        .query_row(
+            "SELECT code, expected_display_id FROM display_pairings
+             WHERE pairing_id = ?1 AND state = 'pending' AND expires_at > ?2",
+            params![pairing_id, now],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let Some((stored, expected)) = found else {
+        return Ok(Err(Approval::Unknown));
+    };
+    if !ct_eq(stored.as_bytes(), code.as_bytes()) {
+        return Ok(Err(Approval::Mismatch));
+    }
+    Ok(Ok(Pending { expected }))
+}
+
+/// Moves the pairing to `approved` for `display`, with the generation of the
+/// display now. The caller holds the transaction.
+fn approve_row(
+    conn: &Connection,
+    pairing_id: &str,
+    display: &DisplayRecord,
+    now: i64,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE display_pairings SET state = 'approved', display_id = ?2, expires_at = ?3,
+             auth_generation = ?4
+         WHERE pairing_id = ?1",
+        params![
+            pairing_id,
+            display.display_id,
+            now + PAIRING_APPROVED_MS,
+            display.auth_generation
+        ],
+    )?;
+    Ok(())
 }
 
 impl DeckStore {
@@ -108,6 +192,32 @@ impl DeckStore {
         &self,
         source: String,
         user_agent: String,
+        next_code: impl FnMut() -> Result<String> + Send + 'static,
+    ) -> Result<(String, String, Secret<String>)> {
+        self.pairing_start_with(source, user_agent, None, next_code)
+            .await
+    }
+
+    /// Starts a pairing for a managed launch: the pairing stores the display
+    /// that the launch expects and its operation revision.
+    ///
+    /// # Errors
+    /// As [`Self::pairing_create`].
+    pub async fn pairing_start(
+        &self,
+        source: String,
+        user_agent: String,
+        expected: Option<ExpectedLaunch>,
+    ) -> Result<(String, String, Secret<String>)> {
+        self.pairing_start_with(source, user_agent, expected, random_code)
+            .await
+    }
+
+    async fn pairing_start_with(
+        &self,
+        source: String,
+        user_agent: String,
+        expected: Option<ExpectedLaunch>,
         mut next_code: impl FnMut() -> Result<String> + Send + 'static,
     ) -> Result<(String, String, Secret<String>)> {
         let id: String = fleetdeck_core::ids::new_id(self.inner.ids.as_ref());
@@ -116,6 +226,10 @@ impl DeckStore {
         let user_agent: String = user_agent.chars().take(MAX_USER_AGENT).collect();
         let now = self.now_ms();
         let row_id = id.clone();
+        let (expected_id, expected_rev) = match expected {
+            Some(e) => (Some(e.display_id), Some(e.operation_revision)),
+            None => (None, None),
+        };
         let code = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             prune(&tx, now)?;
@@ -129,8 +243,9 @@ impl DeckStore {
                 let n = tx.execute(
                     "INSERT OR IGNORE INTO display_pairings
                      (pairing_id, code, verifier_hash, state, source, user_agent,
-                      display_id, created_at, expires_at)
-                     VALUES (?1, ?2, ?3, 'pending', ?4, ?5, NULL, ?6, ?7)",
+                      display_id, created_at, expires_at, expected_display_id,
+                      operation_revision)
+                     VALUES (?1, ?2, ?3, 'pending', ?4, ?5, NULL, ?6, ?7, ?8, ?9)",
                     params![
                         row_id,
                         code,
@@ -138,7 +253,9 @@ impl DeckStore {
                         source,
                         user_agent,
                         now,
-                        now + PAIRING_PENDING_MS
+                        now + PAIRING_PENDING_MS,
+                        expected_id,
+                        expected_rev
                     ],
                 )?;
                 if n == 1 {
@@ -161,7 +278,8 @@ impl DeckStore {
         call(&self.inner.db, move |conn| {
             Ok(conn
                 .query_row(
-                    "SELECT pairing_id, code, state, expires_at FROM display_pairings
+                    "SELECT pairing_id, code, state, expires_at, expected_display_id
+                     FROM display_pairings
                      WHERE pairing_id = ?1 AND expires_at > ?2",
                     params![pairing_id, now],
                     |r| {
@@ -170,6 +288,7 @@ impl DeckStore {
                             code: r.get(1)?,
                             approved: r.get::<_, String>(2)? == "approved",
                             expires_at: r.get(3)?,
+                            expected_display_id: r.get(4)?,
                         })
                     },
                 )
@@ -186,7 +305,8 @@ impl DeckStore {
         let now = self.now_ms();
         call(&self.inner.db, move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT pairing_id, code, source, user_agent, created_at, expires_at
+                "SELECT pairing_id, code, source, user_agent, created_at, expires_at,
+                        expected_display_id
                  FROM display_pairings WHERE state = 'pending' AND expires_at > ?1
                  ORDER BY created_at, pairing_id LIMIT ?2",
             )?;
@@ -198,7 +318,7 @@ impl DeckStore {
                     user_agent: r.get(3)?,
                     created_at: r.get(4)?,
                     expires_at: r.get(5)?,
-                    expected_display_id: None,
+                    expected_display_id: r.get(6)?,
                 })
             })?;
             Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -208,7 +328,9 @@ impl DeckStore {
 
     /// The owner approves a pending pairing by id and code: one transaction
     /// makes the display and moves the pairing to `approved` (2 minutes).
-    /// The verifier stays. The name and ceiling are checked first.
+    /// The verifier stays. The name and ceiling are checked first. A pairing
+    /// that expects an existing display (a managed launch) refuses a new
+    /// display: [`Approval::DisplayMismatch`].
     ///
     /// # Errors
     /// [`DeckError::Invalid`] for a bad name or ceiling; a database error.
@@ -227,26 +349,47 @@ impl DeckStore {
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             check_ceiling(&tx, &new.ceiling)?;
-            let found: Option<String> = tx
-                .query_row(
-                    "SELECT code FROM display_pairings
-                     WHERE pairing_id = ?1 AND state = 'pending' AND expires_at > ?2",
-                    params![pairing_id, now],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            let Some(stored) = found else {
-                return Ok(Approval::Unknown);
+            let found = match pending_row(&tx, &pairing_id, &code, now)? {
+                Ok(f) => f,
+                Err(a) => return Ok(a),
             };
-            if !ct_eq(stored.as_bytes(), code.as_bytes()) {
-                return Ok(Approval::Mismatch);
+            if found.expected.is_some() {
+                return Ok(Approval::DisplayMismatch);
             }
             let record = insert(&tx, &display_id, &new, now)?;
-            tx.execute(
-                "UPDATE display_pairings SET state = 'approved', display_id = ?2, expires_at = ?3
-                 WHERE pairing_id = ?1",
-                params![pairing_id, display_id, now + PAIRING_APPROVED_MS],
-            )?;
+            approve_row(&tx, &pairing_id, &record, now)?;
+            tx.commit()?;
+            Ok(Approval::Approved(record))
+        })
+        .await
+    }
+
+    /// The owner approves a pending pairing for an existing display (R13
+    /// §6D item 1). The pairing stores the current authentication generation
+    /// of the display. Refused when the pairing expects another display.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn pairing_approve_existing(
+        &self,
+        pairing_id: String,
+        code: String,
+        display_id: String,
+    ) -> Result<Approval> {
+        let now = self.now_ms();
+        call(&self.inner.db, move |conn| {
+            let tx = conn.transaction()?;
+            let found = match pending_row(&tx, &pairing_id, &code, now)? {
+                Ok(f) => f,
+                Err(a) => return Ok(a),
+            };
+            if found.expected.as_deref().is_some_and(|e| e != display_id) {
+                return Ok(Approval::DisplayMismatch);
+            }
+            let Some(record) = load(&tx, &display_id)? else {
+                return Ok(Approval::DisplayUnknown);
+            };
+            approve_row(&tx, &pairing_id, &record, now)?;
             tx.commit()?;
             Ok(Approval::Approved(record))
         })
@@ -254,7 +397,12 @@ impl DeckStore {
     }
 
     /// The kiosk's poll. In one transaction: an approved pairing with the
-    /// right secret is deleted and its display id returned.
+    /// right secret is checked against the authentication generation of its
+    /// display and, for a managed launch, against the operation revision of
+    /// the binding. It is then consumed: the generation moves up, every
+    /// session, unused link and other pairing of the display is deleted, and
+    /// a new session is issued. A revoked display or an older generation is
+    /// [`Claim::Stale`]; a launch that was replaced is [`Claim::Superseded`].
     ///
     /// # Errors
     /// A database error.
@@ -267,15 +415,33 @@ impl DeckStore {
         let now = self.now_ms();
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
-            let row: Option<(Option<String>, String, Option<String>)> = tx
+            let row: Option<ClaimRow> = tx
                 .query_row(
-                    "SELECT verifier_hash, state, display_id FROM display_pairings
-                     WHERE pairing_id = ?1 AND expires_at > ?2",
+                    "SELECT verifier_hash, state, display_id, auth_generation,
+                            expected_display_id, operation_revision
+                     FROM display_pairings WHERE pairing_id = ?1 AND expires_at > ?2",
                     params![pairing_id, now],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                    |r| {
+                        Ok(ClaimRow {
+                            verifier: r.get(0)?,
+                            state: r.get(1)?,
+                            display_id: r.get(2)?,
+                            generation: r.get(3)?,
+                            expected: r.get(4)?,
+                            revision: r.get(5)?,
+                        })
+                    },
                 )
                 .optional()?;
-            let Some((Some(verifier), state, display_id)) = row else {
+            let Some(ClaimRow {
+                verifier: Some(verifier),
+                state,
+                display_id,
+                generation,
+                expected,
+                revision,
+            }) = row
+            else {
                 return Ok(Claim::Unknown);
             };
             if !ct_eq(verifier.as_bytes(), hash.as_bytes()) {
@@ -284,12 +450,33 @@ impl DeckStore {
             let (true, Some(display_id)) = (state == "approved", display_id) else {
                 return Ok(Claim::Pending);
             };
-            tx.execute(
-                "DELETE FROM display_pairings WHERE pairing_id = ?1",
-                [&pairing_id],
-            )?;
+            // Any refusal from here on consumes the pairing.
+            let refuse = |tx: rusqlite::Transaction<'_>, claim: Claim| -> Result<Claim> {
+                tx.execute(
+                    "DELETE FROM display_pairings WHERE pairing_id = ?1",
+                    [&pairing_id],
+                )?;
+                tx.commit()?;
+                Ok(claim)
+            };
+            let Some(display) = load(&tx, &display_id)? else {
+                return refuse(tx, Claim::Stale);
+            };
+            if display.auth_generation != generation {
+                return refuse(tx, Claim::Stale);
+            }
+            if let Some(expected) = &expected
+                && (*expected != display_id || revision != Some(display.binding_revision))
+            {
+                return refuse(tx, Claim::Superseded);
+            }
+            let new_generation = replace_logins(&tx, &display_id)?;
+            let Some(issued) = issue_fenced(&tx, &display_id, new_generation, now)? else {
+                return refuse(tx, Claim::Stale);
+            };
+            invalidate_directive(&tx, &display_id)?;
             tx.commit()?;
-            Ok(Claim::Claimed(display_id))
+            Ok(Claim::Claimed(issued))
         })
         .await
     }
@@ -400,14 +587,14 @@ mod tests {
             .await
             .unwrap();
         let wrong = Secret::new("fdpend1_nope".to_owned());
-        assert_eq!(
+        assert!(matches!(
             s.pairing_claim(id.clone(), &secret).await.unwrap(),
             Claim::Pending
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             s.pairing_claim(id.clone(), &wrong).await.unwrap(),
             Claim::Unknown
-        );
+        ));
         assert!(matches!(
             s.pairing_approve_new(id.clone(), "000000x".into(), new_display(&station))
                 .await
@@ -428,15 +615,19 @@ mod tests {
                 .unwrap(),
             Approval::Unknown
         ));
-        assert_eq!(
+        assert!(matches!(
             s.pairing_claim(id.clone(), &wrong).await.unwrap(),
             Claim::Unknown
-        );
-        assert_eq!(
-            s.pairing_claim(id.clone(), &secret).await.unwrap(),
-            Claim::Claimed(display.display_id)
-        );
-        assert_eq!(s.pairing_claim(id, &secret).await.unwrap(), Claim::Unknown);
+        ));
+        let Claim::Claimed(issued) = s.pairing_claim(id.clone(), &secret).await.unwrap() else {
+            panic!("claimed");
+        };
+        assert_eq!(issued.display_id, display.display_id);
+        assert!(issued.cookie.expose().starts_with("fdisp1_"));
+        assert!(matches!(
+            s.pairing_claim(id, &secret).await.unwrap(),
+            Claim::Unknown
+        ));
     }
 
     #[tokio::test]
@@ -466,7 +657,10 @@ mod tests {
             .await
             .unwrap();
         det.advance(Duration::from_millis(PAIRING_APPROVED_MS as u64 + 1));
-        assert_eq!(s.pairing_claim(id, &secret).await.unwrap(), Claim::Unknown);
+        assert!(matches!(
+            s.pairing_claim(id, &secret).await.unwrap(),
+            Claim::Unknown
+        ));
         assert_eq!(s.pairing_prune(s.now_ms()).await.unwrap(), 1);
     }
 }

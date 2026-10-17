@@ -64,6 +64,22 @@ fn unknown_display() -> ApiError {
     ApiError::new(StatusCode::NOT_FOUND, "display_unknown", "no such display")
 }
 
+fn superseded() -> ApiError {
+    ApiError::new(
+        StatusCode::CONFLICT,
+        "superseded",
+        "This wall launch was replaced by a newer one.",
+    )
+}
+
+fn display_mismatch() -> ApiError {
+    ApiError::new(
+        StatusCode::CONFLICT,
+        "display_mismatch",
+        "This pairing belongs to another display.",
+    )
+}
+
 fn unknown_pairing() -> ApiError {
     ApiError::new(StatusCode::NOT_FOUND, "pairing_unknown", "no such pairing")
 }
@@ -206,16 +222,31 @@ async fn pair_poll(
         })
         .into_response(),
         Ok(Claim::Unknown) => unknown_pairing().into_response(),
-        Ok(Claim::Claimed(display_id)) => {
-            let session = board.store.create_display_session(display_id.clone()).await;
-            let (cookie_value, _) = match session {
-                Ok(s) => s,
-                Err(e) => return ApiError::internal(e).into_response(),
-            };
+        Ok(Claim::Stale) => {
             board
                 .store
                 .audit_or_log(
-                    NewAudit::new("anonymous", ACTION, AuditResult::Ok).target(display_id),
+                    NewAudit::new("anonymous", ACTION, AuditResult::Refused).detail("stale"),
+                )
+                .await;
+            ApiError::new(StatusCode::UNAUTHORIZED, "login_required", "log in first")
+                .into_response()
+        }
+        Ok(Claim::Superseded) => {
+            board
+                .store
+                .audit_or_log(
+                    NewAudit::new("anonymous", ACTION, AuditResult::Refused).detail("superseded"),
+                )
+                .await;
+            superseded().into_response()
+        }
+        Ok(Claim::Claimed(issued)) => {
+            let cookie_value = issued.cookie;
+            board
+                .store
+                .audit_or_log(
+                    NewAudit::new("anonymous", ACTION, AuditResult::Ok).target(issued.display_id),
                 )
                 .await;
             let mut res = Json(PairingPoll {
@@ -321,6 +352,8 @@ async fn approve_pairing(
             "pairing_mismatch",
             "The code does not match.",
         )),
+        Approval::DisplayUnknown => Err(unknown_display()),
+        Approval::DisplayMismatch => Err(display_mismatch()),
     }
 }
 
@@ -435,8 +468,8 @@ async fn redeem_link(
         .store
         .redeem_display_link(&Secret::new(body.token))
         .await;
-    let id = match found {
-        Ok(Some(id)) => id,
+    let issued = match found {
+        Ok(Some(issued)) => issued,
         Ok(None) => {
             attempt.failed(board.store.now_ms());
             return limit_refusal(
@@ -458,21 +491,22 @@ async fn redeem_link(
         }
     };
     attempt.succeeded();
-    match board.store.create_display_session(id.clone()).await {
-        Ok((value, _)) => {
-            board
-                .store
-                .audit_or_log(NewAudit::new("anonymous", AUDIT.0, AuditResult::Ok).target(id))
-                .await;
-            let mut res = StatusCode::NO_CONTENT.into_response();
-            res.headers_mut().insert(
-                header::SET_COOKIE,
-                named_cookie(DISPLAY_COOKIE, value.expose(), DISPLAY_MAX_MS / 1000),
-            );
-            res
-        }
-        Err(e) => ApiError::internal(e).into_response(),
-    }
+    board
+        .store
+        .audit_or_log(
+            NewAudit::new("anonymous", AUDIT.0, AuditResult::Ok).target(issued.display_id),
+        )
+        .await;
+    let mut res = StatusCode::NO_CONTENT.into_response();
+    res.headers_mut().insert(
+        header::SET_COOKIE,
+        named_cookie(
+            DISPLAY_COOKIE,
+            issued.cookie.expose(),
+            DISPLAY_MAX_MS / 1000,
+        ),
+    );
+    res
 }
 
 /// `Some(None)` for a JSON `null`, `None` for an absent field.
