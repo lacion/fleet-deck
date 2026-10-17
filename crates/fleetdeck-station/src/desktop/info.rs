@@ -9,6 +9,7 @@ use fleetdeck_proto::desktop::{
 use serde_json::Value;
 
 use super::detect::Found;
+use super::quiet;
 use super::run::{CALL_TIMEOUT, Runner, on_path};
 use super::{Fail, code};
 
@@ -153,7 +154,11 @@ pub fn tools(env: &ChildEnv) -> DesktopTools {
 /// # Errors
 /// `failed` when the monitors cannot be read.
 pub async fn collect(env: &ChildEnv, found: &Found) -> Result<DesktopInfo, Fail> {
-    let runner = Runner { env, gate: None };
+    let runner = Runner {
+        env,
+        gate: None,
+        start: None,
+    };
     let monitors = monitors(&runner)
         .await?
         .into_iter()
@@ -165,6 +170,8 @@ pub async fn collect(env: &ChildEnv, found: &Found) -> Result<DesktopInfo, Fail>
     } else {
         None
     };
+    let offset = quiet::read_offset(env).await;
+    let sampled_at = quiet::now_ms();
     Ok(DesktopInfo {
         kind: found.kind,
         omarchy_version: found.omarchy_version.clone(),
@@ -179,8 +186,8 @@ pub async fn collect(env: &ChildEnv, found: &Found) -> Result<DesktopInfo, Fail>
             input: false,
         },
         tools: tools(env),
-        // The station task of P3b reads the offset (`date +%z`).
-        utc_offset_minutes: None,
-        offset_sampled_at: None,
+        // The UTC offset of the station (`date +%z`) and when it was read.
+        utc_offset_minutes: offset,
+        offset_sampled_at: offset.map(|_| sampled_at),
     })
 }
