@@ -194,24 +194,36 @@ pub fn display_stations(
         .collect()
 }
 
-/// The effective scope of a display now. A display that is revoked after
-/// its login was read gets `401 login_required`.
+/// The effective scope of a display now. The login session is checked first
+/// (not expired, not idle, not logged out, the same `auth_generation`): a
+/// route and every chunk of a stream call this, so a session that ended
+/// stops the next answer. A display that is revoked after its login was read
+/// gets `401 login_required`.
 ///
 /// # Errors
 /// 401 `login_required`, or `internal` for a database error.
 pub async fn scope_of(board: &Arc<Board>, d: &DisplayLogin) -> Result<EffectiveScope, ApiError> {
+    let ended = || {
+        ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            "login_required",
+            "the display login ended",
+        )
+    };
+    if !board
+        .store
+        .display_session_alive(d.session_hash.clone())
+        .await
+        .map_err(ApiError::internal)?
+    {
+        return Err(ended());
+    }
     board
         .store
         .display_scope(d.display_id.clone())
         .await
         .map_err(ApiError::internal)?
-        .ok_or_else(|| {
-            ApiError::new(
-                StatusCode::UNAUTHORIZED,
-                "login_required",
-                "the display login ended",
-            )
-        })
+        .ok_or_else(ended)
 }
 
 #[cfg(test)]

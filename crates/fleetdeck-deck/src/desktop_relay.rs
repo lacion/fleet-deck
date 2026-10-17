@@ -7,9 +7,9 @@
 //!   `link/desktop_authority.rs`. The wake uses it ([`Actor::Wake`]).
 //! - [`act_body`] is the owner path. It also runs the three wall actions with
 //!   the binding steps of §6D items 1 and 2: `display_begin_open`, the send,
-//!   then `display_commit_binding` (open and reload) or
-//!   `display_clear_binding` (close). A wall action holds a per-display lock
-//!   (a second one gets [`RelayError::Conflict`] at once).
+//!   then `display_commit_binding` (open, reload) or `display_clear_binding_at`
+//!   (close). A wall action holds a per-display lock (a second gets
+//!   [`RelayError::Conflict`]).
 //! - [`info`] reads the desktop info of a station.
 //!
 //! Every call checks `desktop_control` live first and again right before the
@@ -605,28 +605,24 @@ impl<'a> Wall<'a> {
         Ok(result)
     }
 
-    /// `wall_close`: the binding goes only after a successful close. A
-    /// missing or revoked display is not an error here.
+    /// `wall_close`: after a successful close the binding goes only when it
+    /// is still the one seen at the start. A missing display is no error.
     async fn close(self) -> Result<DesktopActResult, RelayError> {
         let action = DesktopAction::WallClose {
             display_id: self.display_id.to_owned(),
         };
+        // The binding on this station before the send (none: no clear).
+        let store = &self.ctx.store;
+        let seen = (store.display_get(self.display_id.to_owned()).await)
+            .map_err(|e| store_error(&e))?
+            .and_then(|d| Some((d.binding?, d.binding_revision)))
+            .filter(|(b, _)| &b.station_id == self.station);
         let result = run_act(self.ctx, self.station, &action, None).await?;
-        // A close on one station never clears a binding of another station.
-        let display = self
-            .ctx
-            .store
-            .display_get(self.display_id.to_owned())
-            .await
-            .map_err(|e| store_error(&e))?;
-        let other = display
-            .and_then(|d| d.binding)
-            .is_some_and(|b| &b.station_id != self.station);
-        if !other {
-            self.ctx
-                .store
-                .display_clear_binding(self.display_id.to_owned())
-                .await
+        if let Some((_, revision)) = seen {
+            // `false`: the binding changed meanwhile and stays.
+            let id = self.display_id.to_owned();
+            let at = self.station.clone();
+            (store.display_clear_binding_at(id, at, revision).await)
                 .map_err(|e| store_error(&e))?;
         }
         Ok(result)

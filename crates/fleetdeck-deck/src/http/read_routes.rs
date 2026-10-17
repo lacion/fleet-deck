@@ -71,8 +71,9 @@ pub async fn stations(
         // A display sees the stations of its effective scope, reduced (R13
         // §5, §5D item 17).
         Principal::Display(d) => {
-            let scope = scope_of(&board, d).await?;
+            // The scope is read after the data, right before the filter.
             let all = board.store.sessions().await.map_err(ApiError::internal)?;
+            let scope = scope_of(&board, d).await?;
             let cards = display_cards(&all, &scope);
             display_stations(&views, &scope, &cards)
         }
@@ -86,9 +87,10 @@ pub async fn sessions(
     Extension(principal): Extension<Principal>,
 ) -> Result<Json<Vec<DeckSession>>, ApiError> {
     if let Principal::Display(d) = &principal {
-        // A display has no read cursors and no projects.
-        let scope = scope_of(&board, d).await?;
+        // A display has no read cursors and no projects. The scope is read
+        // after the data, right before the filter.
         let all = board.store.sessions().await.map_err(ApiError::internal)?;
+        let scope = scope_of(&board, d).await?;
         return Ok(Json(display_cards(&all, &scope)));
     }
     let all = board
@@ -111,8 +113,8 @@ pub async fn fleet_extras(
     // Q9): one zero row for each card that it may see, with no mail or file
     // query, so a row never tells which session has mail or touches.
     if let Principal::Display(d) = &principal {
-        let scope = scope_of(&board, d).await?;
         let all = board.store.sessions().await.map_err(ApiError::internal)?;
+        let scope = scope_of(&board, d).await?;
         return Ok(Json(FleetExtras {
             sessions: display_cards(&all, &scope)
                 .into_iter()
