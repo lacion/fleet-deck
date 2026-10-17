@@ -125,7 +125,7 @@ pub struct SessionManager {
     /// (FG-8).
     land: std::sync::OnceLock<land::LandEngine>,
     /// The target side of a move in memory (FG-9): locks and uploads.
-    moves: std::sync::OnceLock<land::move_in::MoveState>,
+    moves: Arc<land::move_in::MoveState>,
     /// The private paths of the station (DL-173), given at the start. Built
     /// once; not part of the live policy snapshot.
     private_paths: Arc<crate::workspace::PrivatePaths>,
@@ -317,12 +317,14 @@ impl SessionManager {
             .unwrap_or_else(|| crate::integrations::Integrations::new(policy.trackers().to_vec()));
         let hub = Arc::new(PolicyHub::new(policy).with_fleet_control(coordinator.clone()));
         let restart = Arc::<restart_gate::RestartState>::default();
+        let moves = Arc::<land::move_in::MoveState>::default();
         let mut target = SessionTarget::new(store.clone(), adapters, Arc::clone(&ids))
             .with_restart(Arc::clone(&restart))
             .with_coordinator(coordinator.clone())
             .with_policy(Arc::clone(&hub))
             .with_shells(shells.clone())
-            .with_private(Arc::clone(&private));
+            .with_private(Arc::clone(&private))
+            .with_moves(Arc::clone(&moves));
         if let Some(settings) = shims {
             target = target.with_shims(settings);
         }
@@ -382,7 +384,7 @@ impl SessionManager {
             assist: std::sync::OnceLock::new(),
             fleet_git: std::sync::OnceLock::new(),
             land: std::sync::OnceLock::new(),
-            moves: std::sync::OnceLock::new(),
+            moves,
             private_paths: private,
             settings: std::sync::OnceLock::new(),
             shell_notify,

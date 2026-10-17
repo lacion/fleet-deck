@@ -629,6 +629,36 @@ pub(super) async fn move_discard(manager: &SessionManager, params: serde_json::V
     }
 }
 
+/// `session.move_release` (design §12.3 step 6): the answer is the stored
+/// state, `released` or `confirmed`. Error codes: `invalid_params`,
+/// `invalid_state` (the move is not ready), `internal`.
+pub(super) async fn move_release(manager: &SessionManager, params: serde_json::Value) -> Outcome {
+    use fleetdeck_proto::fleet_git::MoveIdParams;
+    let query: MoveIdParams = match serde_json::from_value(params) {
+        Ok(q) => q,
+        Err(e) => return bad_params(e),
+    };
+    match manager.move_release(&query.move_id).await {
+        Ok(answer) => ok(answer),
+        Err(e) => Outcome::Err(WireError::new(e.code, e.message)),
+    }
+}
+
+/// `session.move_fail` (design §12.4A step U1): the answer is the state of the
+/// target after the call. Error codes: `invalid_params`, `invalid_state` (no
+/// such move), `internal`.
+pub(super) async fn move_fail(manager: &SessionManager, params: serde_json::Value) -> Outcome {
+    use fleetdeck_proto::fleet_git::MoveIdParams;
+    let query: MoveIdParams = match serde_json::from_value(params) {
+        Ok(q) => q,
+        Err(e) => return bad_params(e),
+    };
+    match manager.move_fail(&query.move_id).await {
+        Ok(answer) => ok(answer),
+        Err(e) => Outcome::Err(WireError::new(e.code, e.message)),
+    }
+}
+
 #[cfg(test)]
 #[path = "intake_fleet_git_tests.rs"]
 mod tests;

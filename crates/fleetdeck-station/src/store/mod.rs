@@ -39,6 +39,7 @@ pub mod land_runs;
 pub mod land_temps;
 mod log;
 mod migrations;
+pub mod move_commit;
 pub mod move_discard;
 pub mod move_runs;
 pub mod move_source;

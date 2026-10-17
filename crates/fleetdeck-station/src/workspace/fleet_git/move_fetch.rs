@@ -213,13 +213,16 @@ pub async fn fetch_publication(
 /// item 1 for `B`, a refusal when `B` exists in the home
 /// (`move_branch_exists`), then `git worktree add -b <B> -- <path> <oid>` and
 /// `git update-ref -d <private ref> <oid>`. `remote` is the remote name of the
-/// home (`push_remote`), `station` the name of this station.
+/// home (`push_remote`), `station` the name of this station. `group` receives
+/// the process group of the Git call, so that a cancel can stop it.
 ///
 /// # Errors
 /// `branch_namespace_blocked`, `move_branch_exists`, `invalid_params`, or
 /// `internal` (the redacted Git line).
+#[allow(clippy::too_many_arguments)]
 pub async fn add_move_worktree(
     options: &GitOptions,
+    group: &Arc<AtomicU32>,
     home: &Path,
     path: &Path,
     publication: &MovePublication,
@@ -267,7 +270,7 @@ pub async fn add_move_worktree(
         Err(detail) => return Err(internal(&detail)),
     }
     let path_text = path.to_string_lossy().into_owned();
-    let net = net_git(options, home, WORKTREE_TIMEOUT);
+    let net = net_git(options, home, WORKTREE_TIMEOUT).with_group(Arc::clone(group));
     let args = [
         "worktree",
         "add",
@@ -328,6 +331,7 @@ fn taken(candidate: &str, listed: &[String], used: &HashSet<String>) -> bool {
 /// `invalid_params`.
 pub async fn pick_publish_ref(
     options: &GitOptions,
+    group: &Arc<AtomicU32>,
     home: &Path,
     url: &str,
     slug: &str,
@@ -347,7 +351,7 @@ pub async fn pick_publish_ref(
     }
     require_git(options).await?;
     let pattern = format!("refs/heads/fd/{slug}/*");
-    let git = net_git(options, home, LIST_TIMEOUT);
+    let git = net_git(options, home, LIST_TIMEOUT).with_group(Arc::clone(group));
     let args = [
         "-c",
         "protocol.ext.allow=never",

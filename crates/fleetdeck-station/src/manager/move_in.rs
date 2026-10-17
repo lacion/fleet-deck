@@ -1,7 +1,9 @@
 //! The target side of a move (FG-9, design §12.3): the per-move locks, the
-//! state of the uploads, `session.move_prepare` and `session.move_discard`.
-//! The decision of `MoveIn` is in `move_in_decide.rs`. The launch admission,
-//! the commit, the release and the undo handlers come in T4.2d.
+//! state of the uploads and of the running `MoveIn` effects,
+//! `session.move_prepare` and `session.move_discard`. The decision of `MoveIn`
+//! is in `move_in_decide.rs`. The effect task is in `move_launch.rs`, the
+//! commit, the release and the confirm in `move_commit.rs`, and the held
+//! prompt in `move_prompt.rs`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -13,7 +15,7 @@ use fleetdeck_proto::fleet_git::{
     MoveDiscardAnswer, MoveDiscardEffect, MoveDiscardState, TranscriptManifest, code,
 };
 use fleetdeck_proto::{Event, SessionId};
-use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
+use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard, watch};
 
 use crate::manager::SessionManager;
 use crate::manager::land::move_session::move_id_ok;
@@ -24,6 +26,12 @@ use crate::workspace::fleet_git::{
     MoveFileError, MoveUploads, Settled, check_manifest, delete_cleanup, delete_folder_by_identity,
     mark_deleted,
 };
+
+#[path = "move_commit.rs"]
+mod commit;
+pub(in crate::manager) use commit::check_input;
+#[path = "move_prompt.rs"]
+pub(in crate::manager) mod prompt;
 
 /// The text of a tombstoned move id (design §12.7, `move_discarded`).
 pub const DISCARDED_TEXT: &str = "This move was cancelled; it does not run again.";
@@ -67,28 +75,104 @@ impl MoveLocks {
     /// The lock of `move_id` when it is free now; `None` while a party holds
     /// it.
     #[must_use]
-    // (FG-9: T4.2d uses it)
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn try_lock(&self, move_id: &str) -> Option<OwnedMutexGuard<()>> {
         self.of(move_id).try_lock_owned().ok()
     }
 }
 
-/// What the target keeps for the moves in memory: the locks and the uploads.
-/// One slot on the session manager.
+/// The durations of the commit and the confirm (design §12.3, "The commit
+/// point"). Tests shorten them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MoveTimeouts {
+    /// A Claude process must be alive this long after the spawn.
+    pub liveness: Duration,
+    /// The provider must answer the resume within this time.
+    pub resume: Duration,
+    /// The first prompt after the release must start the conversation within
+    /// this time.
+    pub first_input: Duration,
+}
+
+impl Default for MoveTimeouts {
+    fn default() -> Self {
+        Self {
+            liveness: Duration::from_secs(5),
+            resume: Duration::from_secs(120),
+            first_input: Duration::from_secs(120),
+        }
+    }
+}
+
+/// A running `MoveIn` effect: its cancel flag and its end flag.
+#[derive(Debug)]
+pub struct RunSlot {
+    /// `true` asks the task to stop (a discard).
+    pub cancel: watch::Sender<bool>,
+    /// `true` after the task settled its effect.
+    pub done: watch::Sender<bool>,
+}
+
+/// What the target keeps for the moves in memory: the locks, the uploads and
+/// the running effects. One shared value of the manager and its target.
 #[derive(Debug, Default)]
 pub struct MoveState {
     locks: MoveLocks,
     uploads: MoveUploads,
+    runs: Mutex<HashMap<String, Arc<RunSlot>>>,
+    timeouts: Mutex<MoveTimeouts>,
 }
 
 impl MoveState {
     /// The per-move locks.
     #[must_use]
-    // (FG-9: T4.2d uses it)
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn locks(&self) -> &MoveLocks {
         &self.locks
+    }
+
+    /// Registers the running effect of `move_id`; `None` when one runs.
+    pub fn register(&self, move_id: &str) -> Option<Arc<RunSlot>> {
+        let mut runs = self.runs.lock().unwrap_or_else(PoisonError::into_inner);
+        if runs.contains_key(move_id) {
+            return None;
+        }
+        let slot = Arc::new(RunSlot {
+            cancel: watch::channel(false).0,
+            done: watch::channel(false).0,
+        });
+        runs.insert(move_id.to_owned(), Arc::clone(&slot));
+        Some(slot)
+    }
+
+    /// The running effect of `move_id`, if any.
+    #[must_use]
+    pub fn run_of(&self, move_id: &str) -> Option<Arc<RunSlot>> {
+        let runs = self.runs.lock().unwrap_or_else(PoisonError::into_inner);
+        runs.get(move_id).cloned()
+    }
+
+    /// The effect of `move_id` ended and settled: it leaves the registry and
+    /// the waiters wake.
+    pub fn finish(&self, move_id: &str) {
+        let slot = {
+            let mut runs = self.runs.lock().unwrap_or_else(PoisonError::into_inner);
+            runs.remove(move_id)
+        };
+        if let Some(slot) = slot {
+            slot.done.send_replace(true);
+        }
+    }
+
+    /// The durations of the commit and the confirm.
+    #[must_use]
+    pub fn timeouts(&self) -> MoveTimeouts {
+        *self.timeouts.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Replaces the durations (tests).
+    #[cfg(test)]
+    pub fn set_timeouts(&self, timeouts: MoveTimeouts) {
+        *self.timeouts.lock().unwrap_or_else(PoisonError::into_inner) = timeouts;
     }
 }
 
@@ -149,10 +233,10 @@ async fn clear_uploading(store: &Store) {
 }
 
 impl SessionManager {
-    /// The memory of the target moves, made at its first use.
+    /// The memory of the target moves, shared with the target.
     #[must_use]
     pub fn move_state(&self) -> &MoveState {
-        self.moves.get_or_init(MoveState::default)
+        &self.moves
     }
 
     /// The uploads of the station.
@@ -217,9 +301,43 @@ impl SessionManager {
         }
     }
 
-    /// `session.move_discard` (design §12.3, "Abort", steps 1 to 6), without
-    /// the `MoveIn` effect (T4.2d): the per-move lock, the transaction by
-    /// state, then the settle of an active upload and the deletion by
+    /// The `MoveIn` effect of a discarded move (design §12.3, "Abort", step
+    /// 4): a queued effect is retired (`Cancelled`); a running one is
+    /// signalled, the process of an abandoned copy is ended, and the wait for
+    /// its settle is at most `SETTLE`. `Timeout` carries the slot to wait for.
+    async fn settle_effect(
+        &self,
+        move_id: &str,
+        session: Option<&SessionId>,
+        abandoned: bool,
+    ) -> Result<EffectWait, StoreError> {
+        if let Some(session) = session
+            && self.store.retire_queued_move_in(session.clone()).await?
+        {
+            return Ok(EffectWait::Cancelled);
+        }
+        let slot = self.move_state().run_of(move_id);
+        if let Some(slot) = &slot {
+            slot.cancel.send_replace(true);
+        }
+        if abandoned && let Some(session) = session {
+            self.target.end_process(session).await;
+        }
+        let Some(slot) = slot else {
+            return Ok(EffectWait::None);
+        };
+        let mut done = slot.done.subscribe();
+        let ended = tokio::time::timeout(SETTLE, done.wait_for(|d| *d)).await;
+        Ok(if ended.is_ok() {
+            EffectWait::Settled
+        } else {
+            EffectWait::Timeout(slot)
+        })
+    }
+
+    /// `session.move_discard` (design §12.3, "Abort", steps 1 to 6): the
+    /// per-move lock, the transaction by state, then the settle of the
+    /// `MoveIn` effect and of an active upload, and the deletion by
     /// identity. A settle of more than 20 s answers `settling` and goes on in
     /// the background.
     ///
@@ -241,28 +359,55 @@ impl SessionManager {
         if tx.state == MoveDiscardState::Resumed {
             return Ok(answer(tx.state, MoveDiscardEffect::None));
         }
-        let ended = (tx.state == MoveDiscardState::Abandoned)
+        let abandoned = tx.state == MoveDiscardState::Abandoned;
+        let ended = abandoned
             .then(|| tx.session_id.clone().map(|id| (id, END_ABANDONED)))
             .flatten();
-        let effect = match state.uploads.settle(move_id, SETTLE).await {
-            Settled::NoUpload => MoveDiscardEffect::None,
-            Settled::Ended => MoveDiscardEffect::Settled,
-            Settled::Timeout => {
-                let (store, uploads) = (self.store.clone(), state.uploads.clone());
-                let (id, cleanup) = (move_id.to_owned(), tx.cleanup);
-                tokio::spawn(async move {
-                    uploads.wait_ended(&id).await;
-                    finish_discard(&store, &id, cleanup, ended).await;
-                });
-                return Ok(MoveDiscardAnswer {
-                    state: MoveDiscardState::Settling,
-                    effect: None,
-                });
-            }
+        let first = self
+            .settle_effect(move_id, tx.session_id.as_ref(), abandoned)
+            .await?;
+        let upload = state.uploads.settle(move_id, SETTLE).await;
+        let late = matches!(first, EffectWait::Timeout(_)) || matches!(upload, Settled::Timeout);
+        if !late {
+            let effect = match (first, upload) {
+                (EffectWait::Cancelled, _) => MoveDiscardEffect::Cancelled,
+                (EffectWait::Settled, _) | (_, Settled::Ended) => MoveDiscardEffect::Settled,
+                _ => MoveDiscardEffect::None,
+            };
+            finish_discard(&self.store, move_id, tx.cleanup, ended).await;
+            return Ok(answer(tx.state, effect));
+        }
+        let slow = match first {
+            EffectWait::Timeout(slot) => Some(slot),
+            _ => None,
         };
-        finish_discard(&self.store, move_id, tx.cleanup, ended).await;
-        Ok(answer(tx.state, effect))
+        let (store, uploads) = (self.store.clone(), state.uploads.clone());
+        let (id, cleanup) = (move_id.to_owned(), tx.cleanup);
+        tokio::spawn(async move {
+            if let Some(slot) = slow {
+                let mut done = slot.done.subscribe();
+                let _ = done.wait_for(|d| *d).await;
+            }
+            uploads.wait_ended(&id).await;
+            finish_discard(&store, &id, cleanup, ended).await;
+        });
+        Ok(MoveDiscardAnswer {
+            state: MoveDiscardState::Settling,
+            effect: None,
+        })
     }
+}
+
+/// What the discard found of the `MoveIn` effect of the move.
+enum EffectWait {
+    /// No effect runs.
+    None,
+    /// A queued effect was retired.
+    Cancelled,
+    /// A running effect settled.
+    Settled,
+    /// A running effect did not settle in time.
+    Timeout(Arc<RunSlot>),
 }
 
 #[cfg(test)]

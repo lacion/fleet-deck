@@ -552,6 +552,8 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
         "session.move_abort" => intake_fleet_git::move_abort(&ctx.manager, req.params).await,
         "session.move_status" => intake_fleet_git::move_status(&ctx.manager, req.params).await,
         "session.move_discard" => intake_fleet_git::move_discard(&ctx.manager, req.params).await,
+        "session.move_release" => intake_fleet_git::move_release(&ctx.manager, req.params).await,
+        "session.move_fail" => intake_fleet_git::move_fail(&ctx.manager, req.params).await,
         "project.radar" => intake_fleet_git::radar(&ctx.manager, &ctx.fleet_git, req.params).await,
         "project.branches" => {
             intake_fleet_git::branches(&ctx.manager, &ctx.fleet_git, req.params).await

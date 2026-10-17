@@ -6,4 +6,10 @@ import type { MovePublication } from "./MovePublication";
 /**
  * The source of a move, with its publication (`from` of `MoveIn`).
  */
-export type MoveFrom = { station_id: StationId, session_id: SessionId, publication: MovePublication, };
+export type MoveFrom = { station_id: StationId, session_id: SessionId, publication: MovePublication, 
+/**
+ * The last summary of the source session for the held prompt of a
+ * branch-only move (design §12.6): the digest, else the last assistant
+ * message, cut to 4000 characters by the deck. FG-9.
+ */
+summary?: string, };

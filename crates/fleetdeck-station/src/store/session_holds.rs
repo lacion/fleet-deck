@@ -71,16 +71,35 @@ pub fn held(conn: &Connection, session_id: &SessionId) -> Result<bool> {
 }
 
 /// The refusal text of a hold, by its kind (design §11.4, §12.3). The text of
-/// a `move_in` hold names the source station of its `move_in_runs` row.
+/// a `move_in` hold names the source station of its `move_in_runs` row and
+/// depends on the state of the row: an abandoned copy, a failed resume and an
+/// undone move have their own texts (design §12.3, §12.4A, §12.7).
 fn text_of_hold(conn: &Connection, hold: &SessionHold) -> Result<String> {
+    use fleetdeck_proto::fleet_git::MoveInState;
     Ok(match hold.kind.as_str() {
         KIND_MOVE => HELD_MOVE.to_owned(),
-        KIND_MOVE_IN => super::move_runs::get_in(conn, &hold.holder_id)?
-            .and_then(|row| row.source_station)
-            .map_or_else(
-                || HELD_MOVE_IN.to_owned(),
-                |source| format!("This session is still arriving from {source}."),
-            ),
+        KIND_MOVE_IN => {
+            let row = super::move_runs::get_in(conn, &hold.holder_id)?;
+            let source = row
+                .as_ref()
+                .and_then(|r| r.source_station.clone())
+                .unwrap_or_else(|| "the source station".to_owned());
+            match row.map(|r| r.state) {
+                Some(MoveInState::ResumeFailed) => format!(
+                    "This session could not resume the conversation. Undo the move to continue on {source}."
+                ),
+                Some(MoveInState::Failed) => {
+                    format!("This move was undone. The session continues on {source}.")
+                }
+                Some(MoveInState::Abandoned) => format!(
+                    "This copy of the conversation was not used. The session stays on {source}."
+                ),
+                Some(_) if source != "the source station" => {
+                    format!("This session is still arriving from {source}.")
+                }
+                _ => HELD_MOVE_IN.to_owned(),
+            }
+        }
         _ => HELD.to_owned(),
     })
 }

@@ -4,8 +4,9 @@
 
 use fleetdeck_proto::command::{ApprovalDecision, SessionSpec, StopMode, UserInput};
 use fleetdeck_proto::event::{ProviderKind, ResolvedBy, RunOrigin};
+use fleetdeck_proto::fleet_git::{MoveKind, MovePublication};
 use fleetdeck_proto::mutation::CommandAuthority;
-use fleetdeck_proto::{InputId, RequestId};
+use fleetdeck_proto::{InputId, ProviderInstanceId, RequestId, SessionId};
 use fleetdeck_providers::ShellContext;
 use serde::{Deserialize, Serialize};
 
@@ -205,6 +206,35 @@ pub enum EffectPayload {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         authority: Option<CommandAuthority>,
     },
+    /// The launch of a moved session on the target (FG-9, design §12.3 step
+    /// 4). The decision stores the plan; the effect does not derive it again.
+    MoveIn {
+        move_id: String,
+        /// The move kind (`kind` is the tag of the payload).
+        move_kind: MoveKind,
+        provider_instance: ProviderInstanceId,
+        /// The normalized title of the new session.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        callsign: String,
+        /// The verified home of the project.
+        home: String,
+        /// The path of the new worktree.
+        worktree: String,
+        /// `B = publication.local_branch`, `oid = publication.oid`.
+        publication: MovePublication,
+        /// The source session, for the held prompt of a branch-only move
+        /// (design §12.6).
+        source_session: SessionId,
+        /// The summary of the source session, cut to 4000 characters by the
+        /// station (design §12.6).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
+        fleet_git: Box<fleetdeck_proto::fleet_git::FleetGitStart>,
+        /// The authority of a coordinator move (ADR-008 section 6.1).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authority: Option<CommandAuthority>,
+    },
 }
 
 impl EffectPayload {
@@ -225,6 +255,7 @@ impl EffectPayload {
             Self::Worktree { .. } => "worktree",
             Self::ShellCommand { .. } => "shell_command",
             Self::Land { .. } => "land",
+            Self::MoveIn { .. } => "move_in",
         }
     }
 
@@ -234,7 +265,11 @@ impl EffectPayload {
     pub fn needs_process(&self) -> bool {
         !matches!(
             self,
-            Self::Start { .. } | Self::Resume { .. } | Self::Worktree { .. } | Self::Land { .. }
+            Self::Start { .. }
+                | Self::Resume { .. }
+                | Self::Worktree { .. }
+                | Self::Land { .. }
+                | Self::MoveIn { .. }
         )
     }
 
@@ -279,7 +314,8 @@ impl EffectPayload {
             | Self::Answer { authority, .. }
             | Self::SetMode { authority, .. }
             | Self::Stop { authority, .. }
-            | Self::Land { authority, .. } => authority.as_ref(),
+            | Self::Land { authority, .. }
+            | Self::MoveIn { authority, .. } => authority.as_ref(),
             Self::SetModel { .. }
             | Self::Revert { .. }
             | Self::Worktree { .. }
@@ -301,7 +337,8 @@ impl EffectPayload {
             | Self::Answer { authority, .. }
             | Self::SetMode { authority, .. }
             | Self::Stop { authority, .. }
-            | Self::Land { authority, .. } => *authority = value,
+            | Self::Land { authority, .. }
+            | Self::MoveIn { authority, .. } => *authority = value,
             Self::SetModel { .. }
             | Self::Revert { .. }
             | Self::Worktree { .. }

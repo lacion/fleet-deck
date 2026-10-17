@@ -105,6 +105,8 @@ pub struct SessionTarget {
     pub(super) restart: Arc<super::restart_gate::RestartState>,
     /// The running `!` shell tasks of Claude sessions (B8).
     shell: shell_run::ShellRunState,
+    /// The memory of the target moves (FG-9), shared with the manager.
+    moves: Option<Arc<super::land::move_in::MoveState>>,
 }
 
 impl SessionTarget {
@@ -144,28 +146,8 @@ impl SessionTarget {
             broken: Arc::default(),
             restart: Arc::default(),
             shell: shell_run::ShellRunState::default(),
+            moves: None,
         }
-    }
-
-    /// Refuses the starts of `instance`: its probed version is on the deny
-    /// list of its adapter (R8.2, DL-162).
-    pub fn mark_broken(&self, instance: &ProviderInstanceId, kind: ProviderKind) {
-        let name: &'static str = match kind {
-            ProviderKind::Claude => "claude",
-            ProviderKind::Codex => "codex",
-            ProviderKind::Unknown => "provider",
-        };
-        if let Ok(mut broken) = self.broken.lock() {
-            broken.insert(instance.clone(), name);
-        }
-    }
-
-    /// The refusal text of a start on a broken instance, if it is one.
-    fn broken_reason(&self, instance: &ProviderInstanceId) -> Option<String> {
-        let broken = self.broken.lock().ok()?;
-        broken
-            .get(instance)
-            .map(|name| format!("this {name} version is known to break the protocol"))
     }
 
     /// The points where a test holds a start.
@@ -735,6 +717,8 @@ impl EffectTarget for SessionTarget {
             },
             // (FG-8) The land engine polls the `land_runs` rows itself.
             EffectPayload::Land { .. } => Dispatch::Confirmed,
+            // (FG-9) The launch of a moved session runs in a task.
+            EffectPayload::MoveIn { .. } => self.dispatch_move_in(effect),
             _ => self.operate(effect).await,
         }
     }
@@ -769,6 +753,9 @@ mod shell_codex;
 
 #[path = "target_base.rs"]
 mod target_base;
+
+#[path = "move_launch.rs"]
+mod move_launch;
 
 #[cfg(any(test, feature = "fault-injection"))]
 #[path = "target_gate.rs"]

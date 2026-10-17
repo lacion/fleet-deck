@@ -748,8 +748,8 @@ fn refuse_resume_while_restarting(
     session_id: &SessionId,
     origin: RunOrigin,
 ) -> Result<(), DecideError> {
-    // (FG-8) A land holds its session: no input.
-    crate::store::session_holds::check_free(d.connection(), session_id)?;
+    // (FG-8) A land holds its session: no input. (FG-9) The first input of a moved session.
+    super::land::move_in::check_input(d, session_id)?;
     if restarting && resumes_hibernated(d, session_id, origin)? {
         return Err(reject(
             RejectCode::InvalidState,
