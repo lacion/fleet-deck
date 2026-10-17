@@ -492,6 +492,84 @@ pub fn unknown_land() -> LandRefusal {
 /// The result of an owner action: the row, or a refusal.
 pub type LandOutcome = std::result::Result<LandView, LandRefusal>;
 
+/// The body of [`DeckStore::land_request`] in a transaction of the caller (FG-10,
+/// T4.4a: a coordinator land commits with its receipt). `ids` are the new
+/// land id and command id. A refusal writes nothing.
+pub(super) fn request_in_tx(
+    tx: &Connection,
+    env: &Env,
+    (land_id, command_id): (&str, &str),
+    req: &LandRequest,
+    now: i64,
+) -> Result<LandRequested> {
+    let first: Option<LandRow> = tx
+        .query_row(
+            &format!(
+                "SELECT {COLS} FROM land_queue WHERE requested_by = ?1 AND request_command_id = ?2"
+            ),
+            params![req.requested_by, req.request_command_id],
+            |r| Ok(read(r)),
+        )
+        .optional()?
+        .transpose()?;
+    if let Some(row) = first {
+        if row.station_id != req.station_id || row.session_id != req.session_id {
+            return Ok(LandRequested::Refused(LandRefusal {
+                code: "command_id_reused",
+                message: "This command id was used for another request.".to_owned(),
+            }));
+        }
+        return Ok(LandRequested::Queued {
+            position: position(tx, &row)?,
+            land_id: row.land_id,
+        });
+    }
+    let ready = match check(tx, env, &req.station_id, &req.session_id)? {
+        Ok(ready) => ready,
+        Err(refusal) => return Ok(LandRequested::Refused(refusal)),
+    };
+    let open: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM land_queue
+         WHERE station_id = ?1 AND session_id = ?2 AND state IN ('queued', 'running')",
+        params![req.station_id, req.session_id],
+        |r| r.get(0),
+    )?;
+    if open > 0 {
+        return Ok(LandRequested::Refused(LandRefusal {
+            code: "land_open",
+            message: "This session already has a land in the queue.".to_owned(),
+        }));
+    }
+    let lock_key = ready.project.repo.clone().unwrap_or_default();
+    tx.execute(
+        "INSERT INTO land_queue (land_id, command_id, requested_by, request_command_id,
+             authority, authority_expires_at, project_id, lock_key, station_id, session_id,
+             state, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'queued', ?11)",
+        params![
+            land_id,
+            command_id,
+            req.requested_by,
+            req.request_command_id,
+            req.authority
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()?,
+            req.authority.as_ref().map(|_| now + AUTHORITY_TTL_MS),
+            ready.project.project_id,
+            lock_key,
+            req.station_id,
+            req.session_id,
+            now,
+        ],
+    )?;
+    let row = find(tx, land_id)?.ok_or_else(|| super::DeckError::Corrupt("land row".into()))?;
+    Ok(LandRequested::Queued {
+        position: position(tx, &row)?,
+        land_id: land_id.to_owned(),
+    })
+}
+
 impl DeckStore {
     /// The state of the links for `fleet_git.land.v1`, by station id.
     pub(super) fn land_features(&self) -> std::collections::BTreeMap<String, LinkFeature> {
@@ -547,71 +625,11 @@ impl DeckStore {
         let command_id = format!("landcmd-{}", new_id::<String>(self.inner.ids.as_ref()));
         let out = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
-            let first: Option<LandRow> = tx
-                .query_row(
-                    &format!(
-                        "SELECT {COLS} FROM land_queue WHERE requested_by = ?1 AND request_command_id = ?2"
-                    ),
-                    params![req.requested_by, req.request_command_id],
-                    |r| Ok(read(r)),
-                )
-                .optional()?
-                .transpose()?;
-            if let Some(row) = first {
-                if row.station_id != req.station_id || row.session_id != req.session_id {
-                    return Ok(LandRequested::Refused(LandRefusal {
-                        code: "command_id_reused",
-                        message: "This command id was used for another request.".to_owned(),
-                    }));
-                }
-                return Ok(LandRequested::Queued {
-                    position: position(&tx, &row)?,
-                    land_id: row.land_id,
-                });
+            let out = request_in_tx(&tx, &env, (&land_id, &command_id), &req, now)?;
+            if matches!(out, LandRequested::Queued { .. }) {
+                tx.commit()?;
             }
-            let ready = match check(&tx, &env, &req.station_id, &req.session_id)? {
-                Ok(ready) => ready,
-                Err(refusal) => return Ok(LandRequested::Refused(refusal)),
-            };
-            let open: i64 = tx.query_row(
-                "SELECT COUNT(*) FROM land_queue
-                 WHERE station_id = ?1 AND session_id = ?2 AND state IN ('queued', 'running')",
-                params![req.station_id, req.session_id],
-                |r| r.get(0),
-            )?;
-            if open > 0 {
-                return Ok(LandRequested::Refused(LandRefusal {
-                    code: "land_open",
-                    message: "This session already has a land in the queue.".to_owned(),
-                }));
-            }
-            let lock_key = ready.project.repo.clone().unwrap_or_default();
-            tx.execute(
-                "INSERT INTO land_queue (land_id, command_id, requested_by, request_command_id,
-                     authority, authority_expires_at, project_id, lock_key, station_id, session_id,
-                     state, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'queued', ?11)",
-                params![
-                    land_id,
-                    command_id,
-                    req.requested_by,
-                    req.request_command_id,
-                    req.authority
-                        .as_ref()
-                        .map(serde_json::to_string)
-                        .transpose()?,
-                    req.authority.as_ref().map(|_| now + AUTHORITY_TTL_MS),
-                    ready.project.project_id,
-                    lock_key,
-                    req.station_id,
-                    req.session_id,
-                    now,
-                ],
-            )?;
-            let row = find(&tx, &land_id)?.ok_or_else(|| super::DeckError::Corrupt("land row".into()))?;
-            let position = position(&tx, &row)?;
-            tx.commit()?;
-            Ok(LandRequested::Queued { land_id, position })
+            Ok(out)
         })
         .await?;
         if matches!(out, LandRequested::Queued { .. }) {

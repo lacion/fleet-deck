@@ -100,7 +100,7 @@ impl AuditCall {
                 ..
             } => session(station, session_id),
             CoordinatorOp::ProjectStart { project_id, .. } => Some(project_id.clone()),
-            _ => None,
+            other => super::coordinator_git::audit_target(other),
         };
         Self {
             actor: format!("coordinator:{station}/{}", e.call.caller),
@@ -118,6 +118,8 @@ impl AuditCall {
 pub(crate) struct FleetEnv {
     pub fleet_control: bool,
     pub links: BTreeMap<StationId, LinkV2>,
+    /// The `fleet_git.land.v1` state of each station link (FG-10).
+    pub land: BTreeMap<String, super::LinkFeature>,
 }
 
 impl FleetEnv {
@@ -163,6 +165,7 @@ impl DeckStore {
             outbox_id: new_id(self.inner.ids.as_ref()),
             env: FleetEnv::default(),
             flags: CallFlags::default(),
+            land_ids: super::coordinator_git::land_ids(self, &envelope.call.op),
         };
         let audit_row = AuditCall::new(&station, &envelope);
         let other_deck = envelope.target_incarnation != incarnation;
@@ -436,6 +439,7 @@ fn is_fleet_op(grant: &Grant, op: &CoordinatorOp) -> bool {
                 | CoordinatorOp::ProjectAssign { .. }
                 | CoordinatorOp::ProjectStart { .. }
                 | CoordinatorOp::Answer { .. }
+                | CoordinatorOp::Land { .. }
         )
 }
 
@@ -450,7 +454,8 @@ fn op_station(op: &CoordinatorOp) -> Option<&StationId> {
         | CoordinatorOp::Rename { station, .. }
         | CoordinatorOp::SetMode { station, .. }
         | CoordinatorOp::ProjectAssign { station, .. }
-        | CoordinatorOp::Answer { station, .. } => Some(station),
+        | CoordinatorOp::Answer { station, .. }
+        | CoordinatorOp::Land { station, .. } => Some(station),
         _ => None,
     }
 }

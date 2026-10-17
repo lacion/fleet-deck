@@ -21,11 +21,13 @@ pub mod artifacts;
 mod assist;
 pub mod audit;
 pub mod auth;
+pub mod branch_map;
 pub mod chat;
 pub mod commands;
 pub mod conflicts;
 pub mod coordinator;
 pub(crate) mod coordinator_fleet;
+mod coordinator_git;
 pub(crate) mod coordinator_ops;
 pub mod coordinator_query;
 mod coordinator_query_reads;
@@ -246,6 +248,21 @@ impl Inner {
             links: links
                 .iter()
                 .map(|(s, l)| (s.clone(), v2_state(l)))
+                .collect(),
+            // The land feature of each station (FG-10: a coordinator land).
+            land: links
+                .iter()
+                .map(|(s, l)| {
+                    let all = !l.is_empty()
+                        && l.values()
+                            .all(|f| f.contains(fleetdeck_proto::version::feature::FLEET_GIT_LAND));
+                    let state = if all {
+                        LinkFeature::Negotiated
+                    } else {
+                        LinkFeature::Without
+                    };
+                    (s.as_str().to_owned(), state)
+                })
                 .collect(),
         }
     }

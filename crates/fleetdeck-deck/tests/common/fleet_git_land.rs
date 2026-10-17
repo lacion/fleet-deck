@@ -52,6 +52,24 @@ impl RadarReply {
     }
 }
 
+/// What the fake answers to `project.branches` and `project.fetch` (FG-10).
+#[derive(Debug, Clone)]
+pub enum GitReply {
+    /// The answer as JSON.
+    Answer(Value),
+    /// A link error with this code.
+    Error(&'static str),
+}
+
+impl GitReply {
+    pub fn outcome(&self) -> Outcome {
+        match self {
+            Self::Answer(v) => Outcome::Ok(v.clone()),
+            Self::Error(code) => Outcome::Err(WireError::new(*code, "the fake says no")),
+        }
+    }
+}
+
 /// Runs the radar task of the deck of `f` (FG-7) with `options`.
 /// `stop.send(true)` ends it.
 pub fn spawn_radar(f: &Fixture, options: RadarOptions) -> tokio::sync::watch::Sender<bool> {

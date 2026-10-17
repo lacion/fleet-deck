@@ -90,6 +90,21 @@ pub const API_GIT: &[ApiMethod] = &[
         Some(Scope::Admin),
         true,
     ),
+    // FG-10: the branches of other stations; closed to members.
+    m(
+        "projects.branches",
+        Method::GET,
+        "/api/projects/{project}/branches",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
+        "projects.fetch",
+        Method::POST,
+        "/api/projects/{project}/fetch",
+        Some(Scope::Drive),
+        true,
+    ),
     // FG-7: the radar groups and notices; `read`, closed to members.
     m(
         "radar.list",

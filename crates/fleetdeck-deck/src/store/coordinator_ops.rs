@@ -63,6 +63,8 @@ pub(crate) struct Context {
     pub env: FleetEnv,
     /// What the decision tells the caller of the transaction.
     pub flags: CallFlags,
+    /// The new land id and command id of a `Land` op (FG-10).
+    pub land_ids: Option<(String, String)>,
 }
 
 /// Facts that a decision hands back to [`super::coordinator`]: a change of
@@ -424,11 +426,10 @@ fn decide_op(
             now,
         ),
         CoordinatorOp::Answer { .. } => coordinator_fleet::answer(tx, grant, ctx, op, now),
-        // (FG-10: T4.3/T4.4 replace this)
-        CoordinatorOp::Land { .. } => no(
-            RejectCode::Unsupported,
-            "Land is not available through the coordinator yet.",
-        ),
+        CoordinatorOp::Land {
+            station,
+            session_id,
+        } => super::coordinator_git::land(tx, grant, ctx, (station, session_id), (command_id, now)),
         CoordinatorOp::AssignAuto { task, requirements } => {
             if let Some(d) = check_text(task) {
                 return Ok(d);
