@@ -6,6 +6,7 @@ use ts_rs::TS;
 
 use super::checks::{check_number, plain, valid_command_id};
 use super::*;
+use crate::fleet_git::{GitSettings, ProjectHome, SlugReservation};
 
 /// The longest project name, in characters.
 pub const MAX_PROJECT_NAME_CHARS: usize = 80;
@@ -25,7 +26,7 @@ pub const DEFAULT_REVIEW_PROMPT: &str =
 
 /// A Fleet Deck project: a repository on a station with optional bindings.
 /// The deck stores bindings only; it never holds a token.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export_to = "integrations/")]
 pub struct Project {
     pub project_id: String,
@@ -41,6 +42,31 @@ pub struct Project {
     pub review_prompt: Option<String>,
     /// Unix ms.
     pub created_at: i64,
+    /// The homes of the project (Fleet Git, design §8.1). Phase 1: one,
+    /// derived from `station_id` and `path`.
+    #[serde(default)]
+    pub homes: Vec<ProjectHome>,
+    /// The grouping key of the remote (`host/path`); set with `remote_url`.
+    #[serde(default)]
+    pub repo: Option<String>,
+    /// The remote URL without a login name or a password (O16).
+    #[serde(default)]
+    pub remote_url: Option<String>,
+    /// The SSH login name of the remote URL (design §3.8, B2).
+    #[serde(default)]
+    pub remote_ssh_user: Option<String>,
+    /// The write authority of the remote (design §3.8).
+    #[serde(default)]
+    pub remote_dest: Option<String>,
+    /// The Fleet Git settings; the defaults when the project has none.
+    #[serde(default)]
+    pub git: GitSettings,
+    /// Grows at each save of the Git settings.
+    #[serde(default)]
+    pub git_revision: u64,
+    /// The Git names that stations reserved for the repository.
+    #[serde(default)]
+    pub slugs: Vec<SlugReservation>,
 }
 
 /// The body of `POST /api/projects` and `PUT /api/projects/{id}`.

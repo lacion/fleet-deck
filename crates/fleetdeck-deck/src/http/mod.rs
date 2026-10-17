@@ -32,6 +32,7 @@ pub mod pairing_routes;
 pub mod paste_routes;
 pub mod people_routes;
 pub mod plan_routes;
+pub mod project_git_routes;
 pub mod project_session_routes;
 pub mod project_writes;
 pub mod projects_routes;
@@ -40,6 +41,7 @@ pub mod review_anchor_cache;
 pub mod review_routes;
 pub mod schedule_routes;
 pub mod secrets_routes;
+pub mod session_git_routes;
 pub mod session_work_routes;
 pub mod settings_routes;
 pub mod share_routes;
@@ -376,6 +378,14 @@ pub fn router(board: Arc<Board>) -> Router {
         .route(
             "/api/projects/{project}/prs/{number}/reviews",
             post(project_writes::pr_review),
+        )
+        .route(
+            "/api/projects/{project}/git",
+            axum::routing::put(project_git_routes::put_git),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/push",
+            post(session_git_routes::push_now),
         )
         .route(
             "/api/projects/{project}/sessions/assign",

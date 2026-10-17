@@ -312,6 +312,23 @@ pub const API_REST: &[ApiMethod] = &[
         Some(Scope::Drive),
         true,
     ),
+    // Fleet Git (design §17.1, §5.8): the settings of a project (`admin`, and
+    // the handler requires the owner's board login) and "Push now" (`drive`,
+    // owner and tokens, never a member).
+    m(
+        "projects.git_set",
+        Method::PUT,
+        "/api/projects/{project}/git",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "sessions.push_now",
+        Method::POST,
+        "/api/sessions/{station}/{session}/push",
+        Some(Scope::Drive),
+        true,
+    ),
     m(
         "sessions.project_clear",
         Method::POST,

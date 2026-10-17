@@ -23,6 +23,7 @@ fn project(id: &str, station: &str, path: &str, forge: Option<(&str, &str)>) -> 
         prompt_template: None,
         review_prompt: None,
         created_at: 0,
+        ..Project::default()
     }
 }
 

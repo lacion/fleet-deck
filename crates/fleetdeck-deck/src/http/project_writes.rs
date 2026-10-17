@@ -25,6 +25,7 @@ use fleetdeck_proto::CommandId;
 use fleetdeck_proto::command::{
     CommandOrigin, SessionCommand, SessionSpec, UserInput, WorkspaceRequest,
 };
+use fleetdeck_proto::fleet_git::StartKind;
 use fleetdeck_proto::integrations::{
     Binding, CommentBody, DEFAULT_PROMPT, DEFAULT_REVIEW_PROMPT, IssueCommentWrite, IssueDetail,
     IssueGet, IssueRef, IssueTransition, PrComment, PrCreateBody, PrDetail, PrFetchHead, PrHead,
@@ -573,9 +574,34 @@ pub async fn sessions(
         }
     }
 
+    // Fleet Git (design §8.5, phase 1): every start of the batch is a
+    // worktree start in the home of this project. A sync project that cannot
+    // start now (an unverified home, a taken Git name) fails every start with
+    // the same 409; a sync-off project starts as before (O1).
+    let mut attached = Vec::new();
+    for (n, (key, mut command)) in commands.into_iter().enumerate() {
+        if let SessionCommand::Start { fleet_git, .. } = &mut command {
+            match super::project_git_routes::attach_start(
+                &board,
+                &rec,
+                &project.path,
+                StartKind::Worktree,
+                Some(project.project_id.clone()),
+            )
+            .await
+            {
+                Ok(start) => *fleet_git = start,
+                Err(e) => {
+                    failed.push(failure(&key, &e));
+                    continue;
+                }
+            }
+        }
+        attached.push((n, key, command));
+    }
     // Submit every start first, then wait for the receipts.
     let mut submitted = Vec::new();
-    for (n, (key, command)) in commands.into_iter().enumerate() {
+    for (n, key, command) in attached {
         let command_id = CommandId::from(format!("{}-{}", req.batch_id, n + 1));
         match board
             .link

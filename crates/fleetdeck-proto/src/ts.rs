@@ -390,6 +390,11 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         fg::SkippedFile::export_all(&cfg),
         fg::PushNowParams::export_all(&cfg),
         fg::PushNowAnswer::export_all(&cfg),
+        fg::GitHomeState::export_all(&cfg),
+        fg::ProjectHome::export_all(&cfg),
+        fg::SlugReservation::export_all(&cfg),
+        fg::GitSettingsPut::export_all(&cfg),
+        fg::GitSettingsAnswer::export_all(&cfg),
     ];
     for result in results {
         result.map_err(io::Error::other)?;

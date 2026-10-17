@@ -607,6 +607,68 @@ pub struct PushNowAnswer {
     pub state: PushState,
 }
 
+/// The state of a project home on the board (design §8.1). Phase 1 derives
+/// it from the station's home check: `ready` or `unverified`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "fleet_git/")]
+pub enum GitHomeState {
+    Cloning,
+    Ready,
+    Unverified,
+    Failed,
+    #[serde(other)]
+    Unknown,
+}
+
+/// One home of a project (design §8.1). Phase 1 has exactly one, derived
+/// from `projects.station_id` and `projects.path` (position 0, generation 1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "fleet_git/")]
+pub struct ProjectHome {
+    pub station_id: StationId,
+    pub generation: u64,
+    pub position: u32,
+    pub state: GitHomeState,
+    pub path: Option<String>,
+    pub reserved_path: Option<String>,
+    pub attempt_id: Option<String>,
+    pub sync_owner: bool,
+    pub code: Option<String>,
+    pub message: Option<String>,
+}
+
+/// A reserved Git name: the station that owns `slug` for the repository of
+/// the project (design §3.2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "fleet_git/")]
+pub struct SlugReservation {
+    pub slug: String,
+    pub station_id: StationId,
+}
+
+/// The body of `PUT /api/projects/{id}/git`. `revision` is the
+/// `git_revision` that the client loaded; `remote_url` absent means
+/// unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "fleet_git/")]
+pub struct GitSettingsPut {
+    pub settings: GitSettings,
+    pub revision: u64,
+    #[serde(default)]
+    #[ts(optional)]
+    pub remote_url: Option<String>,
+}
+
+/// The answer of `PUT /api/projects/{id}/git`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "fleet_git/")]
+pub struct GitSettingsAnswer {
+    pub git: GitSettings,
+    pub git_revision: u64,
+}
+
 #[cfg(test)]
 #[path = "fleet_git_identity_tests.rs"]
 mod identity_tests;
