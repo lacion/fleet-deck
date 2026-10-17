@@ -513,6 +513,72 @@ pub(super) async fn land_abandon(manager: &SessionManager, params: serde_json::V
     }
 }
 
+/// `session.move_export` (design §12.3 step 2, FG-9): the publication and,
+/// for a native move, the manifest and the token of the export stream. It
+/// needs the data channel of the link (error code `unsupported` without it).
+/// Other error codes: `invalid_state`, `move_too_large`, `busy`, `internal`.
+pub(in crate::link) async fn move_export(
+    ctx: &StationLink,
+    data: Option<&fleetdeck_link::data::Data>,
+    params: serde_json::Value,
+) -> Outcome {
+    use fleetdeck_proto::fleet_git::{MOVE_EXPORT_PURPOSE, MoveExportAnswer, MoveIdParams};
+    let query: MoveIdParams = match serde_json::from_value(params) {
+        Ok(q) => q,
+        Err(e) => return bad_params(e),
+    };
+    let Some(data) = data else {
+        return Outcome::Err(WireError::new(
+            "unsupported",
+            "this link has no data channel",
+        ));
+    };
+    let (publication, manifest) = match ctx.manager.move_export_plan(&query.move_id).await {
+        Ok(plan) => plan,
+        Err(e) => return Outcome::Err(WireError::new(e.code, e.message)),
+    };
+    let stream_token = if manifest.is_some() {
+        match data.issue_token(&format!("{MOVE_EXPORT_PURPOSE}{}", query.move_id)) {
+            Ok(token) => Some(token.as_str().to_owned()),
+            Err(e) => return internal(e),
+        }
+    } else {
+        None
+    };
+    ok(MoveExportAnswer {
+        publication,
+        manifest,
+        stream_token,
+    })
+}
+
+/// `session.move_abort` (design §12.3, "Abort"): `{}`; an unknown or closed id
+/// is ok.
+pub(super) async fn move_abort(manager: &SessionManager, params: serde_json::Value) -> Outcome {
+    use fleetdeck_proto::fleet_git::{MoveAbortAnswer, MoveIdParams};
+    let query: MoveIdParams = match serde_json::from_value(params) {
+        Ok(q) => q,
+        Err(e) => return bad_params(e),
+    };
+    match manager.move_abort(&query.move_id).await {
+        Ok(()) => ok(MoveAbortAnswer {}),
+        Err(e) => internal(e),
+    }
+}
+
+/// `session.move_status` (design §12.3, "Deck restart").
+pub(super) async fn move_status(manager: &SessionManager, params: serde_json::Value) -> Outcome {
+    use fleetdeck_proto::fleet_git::MoveIdParams;
+    let query: MoveIdParams = match serde_json::from_value(params) {
+        Ok(q) => q,
+        Err(e) => return bad_params(e),
+    };
+    match manager.move_status(&query.move_id).await {
+        Ok(answer) => ok(answer),
+        Err(e) => internal(e),
+    }
+}
+
 #[cfg(test)]
 #[path = "intake_fleet_git_tests.rs"]
 mod tests;

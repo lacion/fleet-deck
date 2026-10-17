@@ -210,8 +210,8 @@ fn trash(
     session_id: &SessionId,
     expect: Option<(String, String)>,
 ) -> Result<(), DecideError> {
-    // (FG-8) A land or a move holds its session.
-    crate::store::session_holds::check_free(d.connection(), session_id)?;
+    // (FG-8) A land or a move holds its session; a moved session can be trashed (FG-9).
+    crate::store::session_holds::check_hold(d.connection(), session_id)?;
     let s = d
         .summary(session_id)?
         .ok_or_else(|| reject(RejectCode::UnknownSession, "no such session"))?;

@@ -40,6 +40,7 @@ pub mod land_temps;
 mod log;
 mod migrations;
 pub mod move_runs;
+pub mod move_source;
 pub mod native_browse;
 mod outbox;
 mod payload;

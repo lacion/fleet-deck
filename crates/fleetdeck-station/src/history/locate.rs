@@ -152,7 +152,7 @@ fn locate_with(
 /// the owner's, with one hard link, not private, not too large (`max`). Split
 /// from the transcript scan so that [`locate_subagent`] uses it alone
 /// (DL-191).
-pub(super) fn check_meta(file: &File, trust: &Trust<'_>, max: u64) -> Result<u64, Fail> {
+pub(crate) fn check_meta(file: &File, trust: &Trust<'_>, max: u64) -> Result<u64, Fail> {
     let not_trusted = || unavailable(HistoryUnavailable::NotTrusted);
     let meta = file.metadata().map_err(|_| Fail::Io)?;
     if !meta.is_file() || meta.uid() != trust.uid || meta.nlink() != 1 {
@@ -308,7 +308,7 @@ fn is_rollout(entry: &(String, FileType), suffix: &str) -> bool {
 
 /// The entries of a directory with their kinds; the count of all entries
 /// visited is limited.
-fn entries(
+pub(crate) fn entries(
     dir: &OwnedFd,
     visited: &mut usize,
     limits: &Limits,

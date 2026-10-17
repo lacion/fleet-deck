@@ -12,6 +12,7 @@
 //! - `land`, `land_temp`: the Git work and the temporary folder of a land (§11.5, §11.6).
 //! - `include`: the copy of ignored files into a new worktree (§7.2).
 //! - `remote_branches`: `project.branches` and `project.fetch` (§13.1).
+//! - `move_export`, `move_layout`, `move_stream`: the files of a session move (§12.3).
 //! - `home`: `project.ensure_home` and `project.home_status` (§8.4).
 
 mod fetch;
@@ -21,6 +22,9 @@ mod include;
 mod land;
 mod land_remote;
 mod land_temp;
+mod move_export;
+mod move_layout;
+mod move_stream;
 mod push;
 mod push_outcome;
 mod radar;
@@ -40,6 +44,9 @@ pub use land_remote::{
     repo_path,
 };
 pub use land_temp::{TEMP_DIR, ensure_dir, identity as temp_identity, temp_path, temp_root};
+pub use move_export::{Exported, MoveFileError, OpenFile};
+pub use move_layout::{MoveSupport, export_files, import_files, staged_name, support};
+pub use move_stream::{serve_export, write_export};
 pub use push::{
     OptionsProvider, PushFailure, PushJob, PushResult, PushWriter, RefspecError, backoff_delay,
     refspec_for,

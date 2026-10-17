@@ -326,11 +326,11 @@ pub fn decide(
         }
         // The session manager decides a land with the shells (FG-8).
         SessionCommand::Land { .. } => Err(super::land::refuse_direct()),
-        // (FG-9: T4.2 replaces this)
-        SessionCommand::MoveOut { .. }
-        | SessionCommand::MoveIn { .. }
-        | SessionCommand::MoveFinish { .. }
-        | SessionCommand::MoveUndo { .. } => Err(reject(RejectCode::Unsupported, MOVE_TEXT)),
+        SessionCommand::MoveOut { .. } => Err(super::land::move_session::refuse_direct()),
+        command @ (SessionCommand::MoveFinish { .. } | SessionCommand::MoveUndo { .. }) => {
+            super::land::move_session::decide_finish_undo(d, policy, bindings, origin, command)
+        }
+        SessionCommand::MoveIn { .. } => Err(reject(RejectCode::Unsupported, MOVE_TEXT)),
         // The session manager decides these with the resolved root (B8).
         SessionCommand::ShellCommand { .. } | SessionCommand::ReleaseShell { .. } => {
             Err(super::shell_decide::refuse_direct())

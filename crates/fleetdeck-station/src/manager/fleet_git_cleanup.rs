@@ -283,6 +283,11 @@ async fn check(
     let Some(summary) = ctx.store.summary(row.session_id.clone()).await? else {
         return Ok(None);
     };
+    // (FG-9) The cleanup skips a moved session: its worktree stays until the
+    // owner trashes it.
+    if summary.moved_to.is_some() {
+        return Ok(None);
+    }
     // 1. ended: at least `cleanup_after_hours` since the latest end.
     let ended = matches!(summary.state, SessionState::Exited | SessionState::Lost);
     let wait = i64::from(view.settings.cleanup_after_hours).saturating_mul(HOUR_MS);

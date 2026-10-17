@@ -607,7 +607,7 @@ impl SessionManager {
                     | SessionCommand::WorktreeRelease { .. }) => {
                         trash::decide(d, &policy, origin, shells.as_deref(), command)
                     }
-                    command @ SessionCommand::Land { .. } => {
+                    command @ (SessionCommand::Land { .. } | SessionCommand::MoveOut { .. }) => {
                         land::decide(d, &policy, &coordinator, origin, shells.as_deref(), command)
                     }
                     command @ (SessionCommand::ShellCommand { .. }
