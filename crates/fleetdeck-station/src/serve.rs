@@ -241,7 +241,7 @@ pub struct RunningStation {
     prune: tokio::task::JoinHandle<()>,
     /// The sampler of the per-session load (R13 §10).
     loads: tokio::task::JoinHandle<()>,
-    /// The Fleet Git writer, push trigger task and push loop (FG-2).
+    /// The Fleet Git writer, push trigger task, push loop (FG-2) and cleanup loop (FG-3).
     fleet_git: Vec<tokio::task::JoinHandle<()>>,
 }
 
@@ -404,7 +404,7 @@ impl RunningStation {
             Arc::clone(&manager),
             rx.clone(),
         ));
-        let fleet_git = crate::manager::fleet_git_push::start(
+        let mut fleet_git = crate::manager::fleet_git_push::start(
             manager.store().clone(),
             Arc::clone(manager.policy_hub()),
             fleet_git_options(Arc::clone(manager.policy_hub())),
@@ -417,6 +417,13 @@ impl RunningStation {
             program: None,
             instances: terminal_instances(config),
         }));
+        fleet_git.extend(crate::manager::fleet_git_cleanup::start(
+            manager.store().clone(),
+            Arc::clone(manager.policy_hub()),
+            Arc::clone(&shells),
+            fleet_git_options(Arc::clone(manager.policy_hub())),
+            rx.clone(),
+        ));
         let node = StationNode::start_with_dirs(
             Arc::clone(&manager),
             Arc::clone(&identity),

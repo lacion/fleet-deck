@@ -29,6 +29,7 @@ pub mod assist;
 pub mod auto_continue;
 pub mod coordinator_outbox;
 pub mod effects;
+pub mod git_cleanup;
 pub mod git_state;
 mod log;
 mod migrations;

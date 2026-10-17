@@ -14,6 +14,10 @@
 
 use std::os::unix::fs::{DirBuilderExt, MetadataExt};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use fleetdeck_proto::SessionId;
+use fleetdeck_proto::fleet_git::{CleanupState, code};
 
 use crate::manager::policy::Policy;
 use crate::manager::trash::{OPENING, TRASH_DIR, cwd_overlaps, shell_in};
@@ -26,6 +30,9 @@ use crate::workspace::checkpoint_refs;
 use crate::workspace::worktrees::scan;
 use crate::workspace::{Git, GitOptions};
 
+/// The time limit of each Git call of the cleanup proof (design §6.3).
+const EXPECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// The reason of an effect whose row moved on.
 pub const SUPERSEDED: &str = "superseded";
 
@@ -35,6 +42,9 @@ enum Step {
     Go,
     /// The row ends `failed` in this phase, with this message.
     Fail(&'static str, String),
+    /// The worktree changed after the cleanup checks (FG-3): the row ends
+    /// `released` with this message and nothing moved.
+    Released(&'static str),
 }
 
 type Res<T> = Result<T, StoreError>;
@@ -66,10 +76,15 @@ pub async fn run(
                 WorktreeAction::Restore => RESTORED,
                 WorktreeAction::Purge => PURGED,
             };
-            store
-                .worktree_op_finish(op_id.to_owned(), from, to)
-                .await
-                .map(|_| ())
+            match store.worktree_op_finish(op_id.to_owned(), from, to).await {
+                // A cleanup trash is done (FG-3, design §6.3).
+                Ok(true) if action == WorktreeAction::Trash && row.expect_branch.is_some() => {
+                    let trashed = (row.session_id.clone(), CleanupState::Trashed, None);
+                    cleanup_state(store, trashed).await
+                }
+                Ok(_) => Ok(()),
+                Err(e) => Err(e),
+            }
         }
         Ok(Step::Fail(phase, message)) => {
             tracing::warn!(op = op_id, phase, %message, "worktree operation failed");
@@ -78,12 +93,94 @@ pub async fn run(
                 .await
                 .map(|_| ())
         }
+        Ok(Step::Released(message)) => released(store, &row, message).await,
         Err(e) => Err(e),
     };
     match settled {
         Ok(()) => Dispatch::Confirmed,
         Err(e) => Dispatch::Unknown(format!("store: {e}")),
     }
+}
+
+/// Writes the cleanup state of a session (FG-3).
+async fn cleanup_state(
+    store: &Store,
+    (session_id, state, reason): (SessionId, CleanupState, Option<String>),
+) -> Result<(), StoreError> {
+    store
+        .git_cleanup_record(session_id, state, reason)
+        .await
+        .map(|_| ())
+}
+
+/// Ends a cleanup trash that found a change: the row is `released` and the
+/// session is kept with the reason `changed` (FG-3, design §6.3).
+async fn released(store: &Store, row: &WorktreeOp, message: &'static str) -> Res<()> {
+    let ended = store
+        .worktree_op_release_changed(row.op_id.clone(), message)
+        .await?;
+    if ended {
+        let kept = (
+            row.session_id.clone(),
+            CleanupState::Kept,
+            Some("changed".to_owned()),
+        );
+        cleanup_state(store, kept).await?;
+    }
+    Ok(())
+}
+
+/// The cleanup proof of a trash row (design §6.3): in the worktree, `HEAD`
+/// is the recorded branch at the recorded tip, and `git status` prints
+/// nothing. `Ok(true)` when every check holds (or the row has no
+/// expectation), `Ok(false)` on any difference.
+async fn expectation_holds(options: &GitOptions, row: &WorktreeOp) -> Result<bool, String> {
+    let (Some(branch), Some(oid)) = (&row.expect_branch, &row.expect_oid) else {
+        return Ok(true);
+    };
+    let git = Git::new(&row.original_path, options.clone());
+    let read = |args: &'static [&'static str]| {
+        let git = git.clone();
+        async move {
+            scan::status(&git, args)
+                .await
+                .map_err(|e| format!("git {}: {e}", args.join(" ")))
+        }
+    };
+    // Exit 1 is the answer "no" of both commands; another code is an error.
+    let (code, out, err) = read(&["symbolic-ref", "--quiet", "HEAD"]).await?;
+    match code {
+        0 if String::from_utf8_lossy(&out).trim() == branch => {}
+        0 | 1 => return Ok(false),
+        other => return Err(format!("git symbolic-ref HEAD failed ({other}): {err}")),
+    }
+    let (code, out, err) = read(&["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]).await?;
+    match code {
+        0 if String::from_utf8_lossy(&out).trim() == oid => {}
+        0 | 1 => return Ok(false),
+        other => return Err(format!("git rev-parse HEAD failed ({other}): {err}")),
+    }
+    let (code, out, err) = read(&[
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=normal",
+        "--ignore-submodules=none",
+    ])
+    .await?;
+    if code != 0 {
+        return Err(format!("git status failed ({code}): {err}"));
+    }
+    Ok(out.is_empty())
+}
+
+/// The change check of the cleanup (design §6.3 item 6): the worktree has no
+/// unmerged path, no index or work tree change, no submodule change and no
+/// untracked file that is not ignored. `Err` when the scan did not finish.
+pub(crate) async fn worktree_is_clean(options: &GitOptions, path: &Path) -> Result<bool, String> {
+    let git = Git::new(path, options.clone());
+    let found = scan::scan(&git, path, 0).await?;
+    Ok(found.changed == 0 && found.untracked == 0)
 }
 
 /// The device and inode of `path` (without following a link); `None` when
@@ -345,6 +442,17 @@ async fn trash(
     // Step 2: reconcile by identity, then move.
     match (orig, moved) {
         (Some(o), None) if o == rec => {
+            // A cleanup trash proves its branch, tip and clean state again
+            // right before the move (FG-3, design §6.3).
+            let expect = GitOptions {
+                timeout: EXPECT_TIMEOUT,
+                ..options.clone()
+            };
+            match expectation_holds(&expect, &row).await {
+                Ok(true) => {}
+                Ok(false) => return Ok(Step::Released(code::WORKTREE_CHANGED)),
+                Err(m) => return Ok(Step::Fail(PHASE_TRASH, m)),
+            }
             // The identity is checked again inside the call that renames.
             let (from, to) = (row.original_path.clone(), row.trash_path.clone());
             match blocking(move || move_checked(&from, &to, rec)).await {

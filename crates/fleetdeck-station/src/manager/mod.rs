@@ -19,6 +19,7 @@ pub mod drain;
 pub mod durable;
 pub mod files;
 pub mod fleet_control;
+pub mod fleet_git_cleanup;
 pub mod fleet_git_push;
 pub mod fleet_git_writer;
 pub mod hibernate;

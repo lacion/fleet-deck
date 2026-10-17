@@ -172,6 +172,7 @@ async fn a_queued_shell_open_fails_when_a_row_holds_its_folder() {
             .to_string(),
         dev: 1,
         ino: 2,
+        expect: None,
     };
     r.store
         .decide(

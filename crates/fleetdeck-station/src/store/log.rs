@@ -148,7 +148,9 @@ pub(super) fn append_at(
             now,
         ],
     )?;
+    let before = summary.state;
     summary.apply(&envelope);
+    note_end(conn, session_id, (before, summary.state), now)?;
     conn.execute(
         "UPDATE sessions SET session_seq = ?2, summary = ?3, state = ?4, mode = ?5,
              updated_at = ?6
@@ -189,6 +191,38 @@ pub(super) fn append_at(
     super::effects::observe(conn, &envelope, now)?;
     super::shell_observe::observe(conn, &envelope, now)?;
     Ok(envelope)
+}
+
+/// Keeps `session_git.ended_at` (FG-3, design §6.3 item 1): a change of the
+/// state to `exited` or `lost` sets it to `now` (each such change, so the
+/// latest end counts); a change from those to a running state clears it. A
+/// session without a `session_git` row is not touched.
+fn note_end(
+    conn: &Connection,
+    session_id: &SessionId,
+    (before, after): (
+        fleetdeck_proto::event::SessionState,
+        fleetdeck_proto::event::SessionState,
+    ),
+    now: i64,
+) -> Result<()> {
+    use fleetdeck_proto::event::SessionState::{Exited, Lost};
+    if before == after {
+        return Ok(());
+    }
+    let ended = |s| matches!(s, Exited | Lost);
+    if ended(after) {
+        conn.execute(
+            "UPDATE session_git SET ended_at = ?2 WHERE session_id = ?1",
+            params![session_id.as_str(), now],
+        )?;
+    } else if ended(before) {
+        conn.execute(
+            "UPDATE session_git SET ended_at = NULL WHERE session_id = ?1",
+            params![session_id.as_str()],
+        )?;
+    }
+    Ok(())
 }
 
 fn envelope_of(
