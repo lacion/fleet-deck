@@ -325,22 +325,23 @@ async fn the_owner_sets_clears_and_checks_the_binding_in_the_settings() {
 async fn the_stub_routes_refuse_with_not_built_and_the_self_routes_need_the_display_cookie() {
     let (_f, c, h, st) = setup_deck().await;
     let (_, cookie) = display_login(&c, "Wall", &[&st]).await;
-    // The owner rows of the stubs.
+    // The owner desktop rows are built (R13 P3b relay): an owner request
+    // reaches the relay (the switch is off here).
     expect(
         &get(&c, &h, &format!("/api/stations/{st}/desktop")).await,
-        501,
-        "not_built",
+        409,
+        "desktop_control_off",
     );
     expect(
         &post(
             &c,
             &h,
             &format!("/api/stations/{st}/desktop/act"),
-            json!({}),
+            json!({ "action": "screen_lock" }),
         )
         .await,
-        501,
-        "not_built",
+        409,
+        "desktop_control_off",
     );
     // A display never reaches an owner row.
     for (method, path) in [
