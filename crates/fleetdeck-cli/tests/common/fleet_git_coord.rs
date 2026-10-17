@@ -320,6 +320,38 @@ pub fn idle_in(rig: &Rig, i: usize, cwd: &Path, project: &str) -> fleetdeck_prot
     })
 }
 
+/// Waits until the deck's cursor of station `i` equals the head of the
+/// station's event log: the deck has applied every event, so a replay after a
+/// deck restart sends nothing.
+pub fn wait_deck_caught_up(rig: &Rig, i: usize) {
+    let open = |db: PathBuf| {
+        rusqlite::Connection::open_with_flags(db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap()
+    };
+    let station = rig.station_id(i);
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let head: Option<i64> = open(rig.stations[i].station.db())
+            .query_row("SELECT MAX(station_seq) FROM events", [], |r| r.get(0))
+            .unwrap();
+        let cursor: i64 = open(rig.deck.node.dirs().deck_db())
+            .query_row(
+                "SELECT cursor FROM stations WHERE station_id = ?1",
+                [&station],
+                |r| r.get(0),
+            )
+            .unwrap();
+        if head.is_some_and(|h| h == cursor) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the deck is not caught up: head {head:?}, cursor {cursor}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 /// Waits until the deck lists every one of `sessions` (a coordinator op
 /// needs the session in the deck's read model).
 pub fn wait_deck_knows(rig: &Rig, sessions: &[&fleetdeck_proto::SessionSummary]) {

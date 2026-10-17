@@ -18,7 +18,8 @@ use std::time::{Duration, Instant};
 use common::WAIT;
 use common::fleet_git::Rig;
 use common::fleet_git_coord::{
-    Coord, fenced_subject, idle_in, options, project_with_homes, pushed_session, wait_deck_knows,
+    Coord, fenced_subject, idle_in, options, project_with_homes, pushed_session,
+    wait_deck_caught_up, wait_deck_knows,
 };
 use common::fleet_git_land::{
     block_push, commit, land, pushes_of, release, unblock, wait_entered, wait_land, wait_state,
@@ -130,6 +131,37 @@ fn coordinator_land_session_lands() {
         common::fleet_git::git(&rig.remote, &["show", "main:feature.txt"]),
         "feature"
     );
+}
+
+// A deck that restarts with its cursor at the head of the station log gets no
+// event on the new link, so it sends no `ack`. The cursor of the replay
+// acknowledges the events, and the coordinator call leaves at once (it does
+// not stay `pending` behind the lifecycle fence).
+#[test]
+fn a_caught_up_deck_restart_does_not_fence_a_coordinator_call() {
+    let (mut rig, _dir, project, folders, coord) = world(json!({}));
+    let s = idle_in(&rig, 1, &folders[1], &project);
+    wait_deck_knows(&rig, &[&s]);
+    commit(&s, "feature.txt", "feature\n");
+    wait_deck_caught_up(&rig, 0);
+    rig.restart_deck_with(|_| {});
+
+    let args = json!({
+        "station": rig.station_id(1),
+        "session_id": id_of(&s),
+        "idempotency_key": "land-after-restart",
+    });
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let answer = loop {
+        let answer = coord.call("land_session", args.clone());
+        eprintln!("land_session answered: {}", answer.text);
+        assert!(!answer.is_error, "{}", answer.text);
+        if !answer.text.contains("\"pending\"") || Instant::now() > deadline {
+            break answer;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    assert_eq!(answer.json()["state"], "accepted", "{}", answer.text);
 }
 
 #[test]

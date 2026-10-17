@@ -134,7 +134,16 @@ pub async fn serve(ctx: Arc<StationLink>, link: LiveLink) -> Closing {
     while let Some(message) = inbound.recv().await {
         match message {
             Inbound::Request(req) => {
-                request(&ctx, &control, &peer, &mut stream, data.as_ref(), req).await;
+                request(
+                    &ctx,
+                    &control,
+                    &peer,
+                    &mut stream,
+                    data.as_ref(),
+                    coordinator,
+                    req,
+                )
+                .await;
             }
             Inbound::Frame(frame) => match *frame {
                 ControlFrame::Ack {
@@ -164,6 +173,7 @@ async fn request(
     peer: &PeerKey,
     stream: &mut Stream,
     data: Option<&fleetdeck_link::data::Data>,
+    coordinator: u64,
     req: InboundRequest,
 ) {
     match req.method.as_str() {
@@ -174,13 +184,25 @@ async fn request(
             }
         }
         "events.replay" => match serde_json::from_value::<ReplayParams>(req.params) {
-            Ok(p) => stream.restart(
-                Start::Replay {
-                    incarnation: p.incarnation,
-                    after: p.after,
-                },
-                req.id,
-            ),
+            Ok(p) => {
+                // The deck commits its cursor with the events, so the cursor
+                // acknowledges the events through `after`. A replay that
+                // sends nothing still lifts the lifecycle fence.
+                let store = ctx.manager.store();
+                if p.incarnation.as_ref() == Some(store.incarnation())
+                    && p.after <= store.head()
+                    && store.ack(key_hex(peer), p.after).await.is_ok()
+                {
+                    ctx.coordinator.acknowledged(coordinator, p.after);
+                }
+                stream.restart(
+                    Start::Replay {
+                        incarnation: p.incarnation,
+                        after: p.after,
+                    },
+                    req.id,
+                );
+            }
             Err(e) => {
                 let err = WireError::new(code::PROTOCOL_ERROR, format!("params: {e}"));
                 if let Err(e) = control.respond(req.id, Outcome::Err(err)).await {
