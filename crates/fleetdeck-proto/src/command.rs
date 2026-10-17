@@ -48,6 +48,11 @@ pub struct SessionSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(skip)]
     pub launch: Option<Box<crate::launch::LaunchIdentity>>,
+    /// Station-local: the project's worktree_env, set by the station at the
+    /// start; cleared on every incoming command (FG-4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(skip)]
+    pub extra_env: Option<Box<std::collections::BTreeMap<String, String>>>,
 }
 
 /// The coordinator grant that a session starts with (ADR-006 §4). It holds
@@ -427,10 +432,14 @@ impl SessionCommand {
     }
 
     /// Clears the station-local fields that an incoming command must never
-    /// carry (B9 §3.4): `spec.launch` of every command that holds a spec.
+    /// carry (B9 §3.4): `spec.launch` and `spec.extra_env` (FG-4) of every
+    /// command that holds a spec.
     pub fn clear_station_local(&mut self) {
         match self {
-            Self::Start { spec, .. } | Self::Import { spec, .. } => spec.launch = None,
+            Self::Start { spec, .. } | Self::Import { spec, .. } => {
+                spec.launch = None;
+                spec.extra_env = None;
+            }
             _ => {}
         }
     }

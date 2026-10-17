@@ -498,6 +498,7 @@ pub(super) fn project_start(
         title: None,
         coordinator: None,
         launch: None,
+        extra_env: None,
     };
     let workspace = worktree.then(|| {
         Box::new(WorkspaceRequest::Worktree {

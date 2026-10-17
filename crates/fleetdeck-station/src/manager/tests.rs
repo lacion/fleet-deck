@@ -67,7 +67,7 @@ impl Station {
         Self::with_program(max_sessions, FakeAgent::Claude.locate().unwrap()).await
     }
 
-    async fn with_program(max_sessions: u32, program: PathBuf) -> Self {
+    pub(super) async fn with_program(max_sessions: u32, program: PathBuf) -> Self {
         let det = Det::new();
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(root.path().join("projects/app")).unwrap();
@@ -224,6 +224,7 @@ pub(super) fn spec(cwd: &str, instance: &str) -> SessionSpec {
         title: None,
         coordinator: None,
         launch: None,
+        extra_env: None,
     }
 }
 

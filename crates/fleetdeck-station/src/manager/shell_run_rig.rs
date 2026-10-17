@@ -199,6 +199,7 @@ impl Rig {
                     title: None,
                     coordinator: None,
                     launch: None,
+                    extra_env: None,
                 },
                 prompt: Some(UserInput::new("hello")),
                 workspace: None,

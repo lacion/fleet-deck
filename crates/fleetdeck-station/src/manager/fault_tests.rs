@@ -211,6 +211,7 @@ impl Rig {
                     title: None,
                     coordinator: None,
                     launch: None,
+                    extra_env: None,
                 },
                 prompt: Some(text(prompt)),
                 workspace: None,

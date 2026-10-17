@@ -45,6 +45,7 @@ pub(in crate::manager) fn codex_spec(cwd: &str) -> SessionSpec {
         title: None,
         coordinator: None,
         launch: None,
+        extra_env: None,
     }
 }
 

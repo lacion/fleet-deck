@@ -150,6 +150,7 @@ pub async fn run(dirs: &NodeDirs, args: &RunArgs) -> anyhow::Result<()> {
                 title: None,
                 coordinator: None,
                 launch: None,
+                extra_env: None,
             },
             prompt: Some(UserInput::new(args.prompt.clone())),
             workspace: None,

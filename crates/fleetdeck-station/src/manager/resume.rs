@@ -250,6 +250,7 @@ pub fn admit_resume(
         title: r.summary.title.clone(),
         coordinator: None,
         launch: None,
+        extra_env: None,
     };
     let input_id = prompt.as_ref().map(|p| p.input_id.clone());
     d.enqueue(

@@ -17,6 +17,8 @@ use fleetdeck_proto::fleet_git::{
     PushState, StartKind, remote_identity,
 };
 use fleetdeck_proto::{CommandEnvelope, CommandId, Event, SessionId, SessionSummary};
+use fleetdeck_testkit::FakeAgent;
+use fleetdeck_testkit::fake::SCENARIO_ENV;
 
 use crate::manager::Policy;
 use crate::manager::policy::SetupEnvs;
@@ -68,12 +70,20 @@ impl Env {
     /// one commit ahead of its local `main`. `None` when Git is older than
     /// 2.45.
     async fn new(setup_cmd: bool) -> Option<Self> {
+        Self::with_program(setup_cmd, None).await
+    }
+
+    /// As [`Self::new`]; `program` is the provider program of the station.
+    async fn with_program(setup_cmd: bool, program: Option<PathBuf>) -> Option<Self> {
         let out = Command::new("git").arg("--version").output().unwrap();
         if parse_git_version(&String::from_utf8_lossy(&out.stdout)).is_none_or(|v| v < (2, 45)) {
             eprintln!("skipped: Fleet Git needs Git 2.45 or newer");
             return None;
         }
-        let st = Station::new(8).await;
+        let st = match program {
+            Some(program) => Station::with_program(8, program).await,
+            None => Station::new(8).await,
+        };
         let root = st.root.path().canonicalize().unwrap();
         let (projects, bare, home) = (
             root.join("projects"),
@@ -579,4 +589,63 @@ async fn the_setup_command_sees_the_project_environment() {
     let out = fs::read_to_string(PathBuf::from(summary.worktree.unwrap()).join("env-out.txt"));
     let home = std::env::var("HOME").unwrap_or_default();
     assert_eq!(out.unwrap(), format!("sccache instance {home}"));
+}
+
+/// A provider program that writes its environment to `provider-env.txt` next
+/// to itself, then runs the fake Claude.
+fn env_dump_program(dir: &Path) -> PathBuf {
+    let fake = FakeAgent::Claude.locate().unwrap();
+    let script = dir.join("provider.sh");
+    fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nenv > \"$(dirname \"$0\")/provider-env.txt\"\nexec '{}' \"$@\"\n",
+            fake.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    script
+}
+
+#[tokio::test]
+async fn the_provider_process_sees_the_project_environment() {
+    let dir = tempfile::tempdir().unwrap();
+    let program = env_dump_program(dir.path());
+    let dump = dir.path().join("provider-env.txt");
+    let Some(mut env) = Env::with_program(false, Some(program)).await else {
+        return;
+    };
+    let mut settings = env.settings();
+    settings.worktree_env = BTreeMap::from([
+        ("FG_TEST_FLAG".to_owned(), "sccache".to_owned()),
+        // The environment of the provider instance wins on a clash.
+        (SCENARIO_ENV.to_owned(), "project".to_owned()),
+        // A refused name is dropped.
+        ("HOME".to_owned(), "/nowhere".to_owned()),
+    ]);
+    env.snapshot(settings.clone(), HomeCheckState::Verified)
+        .await;
+    // A worktree start, then an in-place start (design §7.3).
+    let fg = env.start_of(settings.clone());
+    let cmd = env.start(&env.home, Some(Env::worktree()), Some(fg), None);
+    let session = env.accepted(cmd).await;
+    env.started(&session).await;
+    let seen = fs::read_to_string(&dump).unwrap();
+    fs::remove_file(&dump).unwrap();
+    let mut fg = env.start_of(settings);
+    fg.kind = StartKind::InPlace;
+    let cmd = env.start(&env.home, None, Some(fg), None);
+    let session = env.accepted(cmd).await;
+    env.started(&session).await;
+    let seen_in_place = fs::read_to_string(&dump).unwrap();
+    for seen in [seen, seen_in_place] {
+        let lines: Vec<&str> = seen.lines().collect();
+        assert!(lines.contains(&"FG_TEST_FLAG=sccache"), "{lines:?}");
+        assert!(
+            lines.contains(&format!("{SCENARIO_ENV}=sim").as_str()),
+            "{lines:?}"
+        );
+        assert!(!lines.contains(&"HOME=/nowhere"), "{lines:?}");
+    }
 }

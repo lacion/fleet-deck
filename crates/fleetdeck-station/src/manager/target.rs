@@ -588,8 +588,13 @@ impl EffectTarget for SessionTarget {
                 prompt,
                 workspace,
                 setup_cmd,
+                fleet_git,
                 ..
             } => {
+                // The `worktree_env` of the project reaches the provider
+                // process (FG-4, O15); it is never stored with the effect.
+                let with_env = launch::spec_with_worktree_env(spec, fleet_git.as_deref());
+                let spec = with_env.as_ref().unwrap_or(spec);
                 // The queued start is checked again against the current
                 // policy (DL-172 §1.4).
                 if let Some(why) = self.current_policy().and_then(|p| {

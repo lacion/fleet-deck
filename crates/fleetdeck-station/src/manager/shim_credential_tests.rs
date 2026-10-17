@@ -97,6 +97,7 @@ impl Rig {
             title: None,
             coordinator: None,
             launch: None,
+            extra_env: None,
         };
         prepare_bridge_fleet(&self.bindings, ProviderKind::Claude, &"s1".into(), &spec)
             .unwrap_or_else(|why| panic!("no bridge start: {why}"))

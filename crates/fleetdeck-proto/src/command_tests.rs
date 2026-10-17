@@ -117,6 +117,7 @@ fn launched_spec() -> SessionSpec {
             dev: 1,
             ino: 2,
         })),
+        extra_env: None,
     }
 }
 
@@ -166,6 +167,50 @@ fn a_command_never_keeps_a_launch_identity() {
     wire.clear_station_local();
     match &wire {
         SessionCommand::Start { spec, .. } => assert!(spec.launch.is_none()),
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn a_command_never_keeps_the_station_extra_env() {
+    // Never serialized when None (FG-4).
+    let value = serde_json::to_value(launched_spec()).unwrap();
+    assert!(value.get("extra_env").is_none(), "{value}");
+    // A command from the deck may carry the field; the decide clears it.
+    let mut wire: SessionCommand = serde_json::from_value(json!({
+        "op": "start",
+        "spec": {
+            "provider_instance": "claude", "cwd": "/w", "mode": null, "model": null,
+            "title": null,
+            "extra_env": {"RUSTC_WRAPPER": "sccache"},
+        },
+        "prompt": null,
+    }))
+    .unwrap();
+    match &wire {
+        SessionCommand::Start { spec, .. } => assert!(spec.extra_env.is_some()),
+        _ => unreachable!(),
+    }
+    wire.clear_station_local();
+    match &wire {
+        SessionCommand::Start { spec, .. } => assert!(spec.extra_env.is_none()),
+        _ => unreachable!(),
+    }
+    let mut import = SessionCommand::Import {
+        spec: SessionSpec {
+            extra_env: Some(Box::new(std::collections::BTreeMap::from([(
+                "A".to_owned(),
+                "b".to_owned(),
+            )]))),
+            ..launched_spec()
+        },
+        native_session_id: "thr_01".into(),
+        prompt: None,
+        transcript: None,
+    };
+    import.clear_station_local();
+    match &import {
+        SessionCommand::Import { spec, .. } => assert!(spec.extra_env.is_none()),
         _ => unreachable!(),
     }
 }

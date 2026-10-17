@@ -9,6 +9,7 @@ use fleetdeck_proto::command::SessionSpec;
 use super::super::{CoreConfig, app_server_args, capabilities};
 use super::CodexAdapter;
 use crate::adapter::{NativeSessionId, ProviderError, Result, canonical_workspace};
+use crate::claude::driver::env_with_extra;
 use crate::durable::{DurableConfig, DurableLaunch};
 use crate::host::{ProcessSpec, identity_path};
 
@@ -43,7 +44,7 @@ impl CodexAdapter {
                 program: self.config.program.clone(),
                 args: app_server_args().into_iter().map(OsString::from).collect(),
                 cwd: cwd.clone(),
-                env: self.config.env.clone(),
+                env: env_with_extra(&self.config.env, spec.extra_env.as_deref()),
                 launch: pinned,
             },
             core: DurableConfig::Codex {
@@ -97,6 +98,7 @@ mod tests {
             title: None,
             coordinator: None,
             launch: None,
+            extra_env: None,
         }
     }
 
@@ -134,6 +136,27 @@ mod tests {
         };
         assert_eq!(thread.resume, None);
         assert_eq!(config.resumed, None);
+    }
+
+    #[test]
+    fn an_extra_env_entry_reaches_the_process_and_the_instance_env_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut base = ChildEnv::from_process();
+        base.set("FG_CLASH", "instance").unwrap();
+        let config = CodexAdapterConfig::new("codex".into(), "codex".into(), base);
+        let adapter = CodexAdapter::new(config, Arc::new(DirectChildHost::new()));
+        let mut with = spec(dir.path(), None);
+        with.extra_env = Some(Box::new(std::collections::BTreeMap::from([
+            ("FG_TEST_FLAG".to_owned(), "sccache".to_owned()),
+            ("FG_CLASH".to_owned(), "project".to_owned()),
+        ])));
+        let launch = adapter.durable_launch(&with).unwrap();
+        let env = &launch.process.env;
+        assert_eq!(env.get("FG_TEST_FLAG").unwrap(), "sccache");
+        assert_eq!(env.get("FG_CLASH").unwrap(), "instance");
+        // Without `extra_env` the environment is the instance environment.
+        let launch = adapter.durable_launch(&spec(dir.path(), None)).unwrap();
+        assert!(launch.process.env.get("FG_TEST_FLAG").is_none());
     }
 
     #[test]

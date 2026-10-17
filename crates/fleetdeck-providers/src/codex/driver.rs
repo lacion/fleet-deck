@@ -35,6 +35,7 @@ use crate::adapter::{
     ProviderAdapter, ProviderError, ProviderProbe, Result, canonical_workspace, require,
 };
 use crate::claude::RawLogSettings;
+use crate::claude::driver::env_with_extra;
 use crate::coordinator::CoordinatorLaunch;
 use crate::host::{ProcessControl, ProcessSpec, SessionHost, StopPolicy, identity_path};
 use crate::rawlog::{RawDir, RawFrameLog};
@@ -205,7 +206,11 @@ impl CodexAdapter {
                     .map(OsString::from)
                     .collect(),
                 cwd: cwd.clone(),
-                env: CoordinatorLaunch::env_for(coordinator, &self.config.env, &cwd)?,
+                env: CoordinatorLaunch::env_for(
+                    coordinator,
+                    &env_with_extra(&self.config.env, spec.extra_env.as_deref()),
+                    &cwd,
+                )?,
                 launch: pinned,
             })
             .await?;
