@@ -160,6 +160,13 @@ export function fakeActions(extra: Partial<IntegrationActions> = {}): Integratio
     place: never,
     fleetGitPrefs: never,
     setDriftReference: never,
+    radar: never,
+    projectLands: never,
+    land: never,
+    cancelLand: never,
+    abandonLand: never,
+    forgetLand: never,
+    sendLand: never,
     ...extra,
   };
 }

@@ -5,10 +5,14 @@ import type {
   CheckFailure,
   ChecksFailing,
   CommentBody,
+  FileConflict,
   GitSettingsAnswer,
   GitSettingsPut,
   IssueDetail,
   IssueSummary,
+  LandPhase,
+  LandState,
+  LandWrite,
   PrCreateBody,
   PrDetail,
   PrGroups,
@@ -88,6 +92,82 @@ export type PlacementBody = {
 /** `GET /api/fleet-git/prefs` (decision D6). */
 export type FleetGitPrefs = { readonly drift_reference: string | null };
 
+/** A session in an answer of `GET /api/radar` (decision Q15). */
+export type SessionRef = {
+  readonly station_id: string;
+  readonly session_id: string;
+  readonly callsign?: string;
+  readonly title?: string;
+};
+
+/** Two branches that a merge cannot join; `b` is `"default"` for the default branch (§10.5). */
+export type WillConflict = {
+  readonly a: SessionRef;
+  readonly b: SessionRef | 'default';
+  readonly files: readonly string[];
+  readonly checked_at: number;
+};
+
+/** One group of `GET /api/radar` (§10.5, §8.6). */
+export type RadarGroup = {
+  readonly project_id: string | null;
+  readonly group_key: string;
+  readonly will_conflict: readonly WillConflict[];
+  readonly same_files: readonly FileConflict[];
+};
+
+/** A footer line of a project in the radar panel (§10.6). */
+export type RadarNotice = {
+  readonly project_id: string;
+  readonly code: string;
+  readonly text: string;
+};
+
+/** `GET /api/radar`. */
+export type RadarAnswer = {
+  readonly groups: readonly RadarGroup[];
+  readonly notices: readonly RadarNotice[];
+};
+
+/** One land of the queue or of the recent ends (decision Q9). */
+export type LandRow = {
+  readonly land_id: string;
+  readonly session_id: string;
+  readonly station_id: string;
+  readonly callsign?: string;
+  readonly title?: string;
+  readonly branch?: string;
+  readonly requested_by: string;
+  readonly state: LandState;
+  readonly phase?: LandPhase;
+  readonly reconciling: boolean;
+  readonly abandon_state?: string;
+  readonly abandon_write?: LandWrite;
+  readonly attempt: number;
+  readonly source_oid?: string;
+  readonly base_oid?: string;
+  readonly rebased_oid?: string;
+  readonly branch_published_oid?: string;
+  readonly default_published_oid?: string;
+  readonly pr_url?: string;
+  readonly files: readonly string[];
+  readonly code?: string;
+  readonly message?: string;
+  readonly position?: number;
+  readonly created_at: number;
+  readonly started_at?: number;
+  readonly ended_at?: number;
+};
+
+/** `GET /api/projects/{id}/lands`: the queue and the last 20 ends. */
+export type ProjectLands = {
+  readonly queue: readonly LandRow[];
+  readonly recent: readonly LandRow[];
+};
+
+/** 202 of the land route. */
+export type LandStarted = { readonly land_id: string; readonly position: number };
+
 /** The texts of the push now errors that the design names (§5.8). */
 const PUSH_NOW_TEXT: Readonly<Record<string, string>> = {
   not_synced: 'This session is not in a synced project.',
@@ -141,6 +221,20 @@ export type IntegrationActions = {
   fleetGitPrefs(): Promise<FleetGitPrefs>;
   /** FG-11 (§14.3): sets (or with `null` clears) the config reference station. */
   setDriftReference(station: string | null): Promise<FleetGitPrefs>;
+  /** FG-7 (§10.5): the radar groups; `null` when the deck has no radar route (an older deck). */
+  radar(): Promise<RadarAnswer | null>;
+  /** FG-8 (§11.9): the land queue and the last ends of a project; `null` for an older deck. */
+  projectLands(id: string): Promise<ProjectLands | null>;
+  /** FG-8 (§11.9): queues a land of the session. */
+  land(station: string, session: string): Promise<LandStarted>;
+  /** FG-8: cancels a queued land. */
+  cancelLand(land: string): Promise<void>;
+  /** FG-8 "Stop checking": asks the station to stop an uncertain land. */
+  abandonLand(land: string): Promise<void>;
+  /** FG-8: frees a land of a removed station. */
+  forgetLand(land: string): Promise<void>;
+  /** FG-8 "Send to session": sends the conflict files of a land to its session. */
+  sendLand(land: string): Promise<void>;
 };
 
 /** A command id of 32 characters from `[0-9a-f]` (the deck accepts `[0-9A-Za-z_-]{1,64}`). */
@@ -159,6 +253,11 @@ function shaped<T>(v: unknown, fields: readonly string[], what: string): T {
 }
 
 const seg = encodeURIComponent;
+
+/** A 404 means that the deck is older than the route: the new part of the board stays hidden. */
+const missing = (e: unknown): boolean => e instanceof ApiError && e.status === 404;
+
+const landPath = (land: string): string => `/api/lands/${seg(land)}`;
 
 /** `/api/projects/<id>`: the base of one project's routes. */
 export const projectPath = (id: string): string => `/api/projects/${seg(id)}`;
@@ -361,6 +460,50 @@ export function integrationActions(
     fleetGitPrefs: async () => prefs(await io.get('/api/fleet-git/prefs')),
     setDriftReference: async (station) =>
       prefs(await io.put('/api/fleet-git/drift-reference', { station })),
+    radar: async () => {
+      try {
+        const v = shaped<RadarAnswer>(await io.get('/api/radar'), ['groups'], 'radar answer');
+        if (!Array.isArray(v.groups)) throw new Error('The deck sent an invalid radar answer.');
+        return { groups: v.groups, notices: Array.isArray(v.notices) ? v.notices : [] };
+      } catch (e) {
+        if (missing(e)) return null;
+        throw e;
+      }
+    },
+    projectLands: async (id) => {
+      try {
+        const v = shaped<ProjectLands>(
+          await io.get(`${projectPath(id)}/lands`),
+          ['queue', 'recent'],
+          'land list',
+        );
+        if (!Array.isArray(v.queue) || !Array.isArray(v.recent)) {
+          throw new Error('The deck sent an invalid land list.');
+        }
+        return v;
+      } catch (e) {
+        if (missing(e)) return null;
+        throw e;
+      }
+    },
+    land: async (station, session) =>
+      shaped<LandStarted>(
+        await io.post(`${sessionPath(station, session)}/land`, { command_id: commandId() }),
+        ['land_id', 'position'],
+        'land answer',
+      ),
+    cancelLand: async (land) => {
+      await io.post(`${landPath(land)}/cancel`, {});
+    },
+    abandonLand: async (land) => {
+      await io.post(`${landPath(land)}/abandon`, {});
+    },
+    forgetLand: async (land) => {
+      await io.post(`${landPath(land)}/forget`, {});
+    },
+    sendLand: async (land) => {
+      await io.post(`${landPath(land)}/send`, { command_id: commandId() });
+    },
     pushNow: async (station, session) => {
       try {
         return shaped<PushNowAnswer>(
