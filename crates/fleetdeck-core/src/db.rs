@@ -19,6 +19,7 @@ use std::thread::JoinHandle;
 use rusqlite::Connection;
 use rusqlite_migration::Migrations;
 
+use crate::db_backup::{BackupOptions, backup_before_upgrade};
 use crate::paths::ensure_private_dir;
 
 /// How long a statement waits for a lock held by another process.
@@ -36,6 +37,10 @@ pub enum DbError {
     TooNew { path: PathBuf, found: i64 },
     #[error("cannot create the database directory: {0}")]
     Io(#[from] std::io::Error),
+    #[error(
+        "Fleet Deck cannot write the pre-upgrade backup {path}: {reason}. Free disk space, or start once with FLEETDECK_SKIP_UPGRADE_BACKUP=1 to upgrade without a backup."
+    )]
+    Backup { path: PathBuf, reason: String },
     #[error("the database thread has stopped")]
     Closed,
     #[error("a database job panicked: {0}")]
@@ -201,6 +206,17 @@ fn prepare(
     conn.pragma_update(None, "synchronous", "FULL")?;
     migrations.validate()?;
     let found: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    // No backup, no migration (design §3.9).
+    if let Some(file) = &path {
+        let opts = BackupOptions {
+            skip: std::env::var_os("FLEETDECK_SKIP_UPGRADE_BACKUP").as_deref()
+                == Some(std::ffi::OsStr::new("1")),
+            now_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX)),
+        };
+        backup_before_upgrade(&conn, file, &migrations, &opts)?;
+    }
     match migrations.to_latest(&mut conn) {
         Ok(()) => Ok(conn),
         // A downgrade would run old code on a newer schema.

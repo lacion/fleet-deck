@@ -8,6 +8,7 @@ pub mod childenv;
 pub mod clock;
 pub mod config;
 pub mod db;
+mod db_backup;
 pub mod git;
 pub mod identity;
 pub mod ids;
