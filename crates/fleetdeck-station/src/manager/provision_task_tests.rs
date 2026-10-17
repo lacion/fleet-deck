@@ -378,6 +378,7 @@ async fn a_cancel_during_the_worktree_add_leaves_the_new_worktree_and_names_it()
         path: path.to_string_lossy().into_owned(),
         branch: "fd/test".to_owned(),
         base: None,
+        sync: None,
     };
     let program = slow_git(root.path());
     let before = provision::before(&plan);
@@ -417,6 +418,7 @@ async fn a_cancel_keeps_a_branch_that_existed_before() {
         path: path.to_string_lossy().into_owned(),
         branch: "old".to_owned(),
         base: None,
+        sync: None,
     };
     let program = slow_git(root.path());
     let before = provision::before(&plan);

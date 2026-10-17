@@ -97,6 +97,7 @@ async fn a_queued_start_is_not_claimed_while_held_and_is_claimed_after() {
                 workspace: None,
                 setup_cmd: None,
                 authority: None,
+                fleet_git: None,
             },
         ),
         ("q-interrupt", EffectPayload::Interrupt { authority: None }),

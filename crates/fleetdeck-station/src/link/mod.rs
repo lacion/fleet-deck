@@ -73,6 +73,15 @@ pub async fn serve(ctx: Arc<StationLink>, link: LiveLink) -> Closing {
         handle
     });
     let mut stream = Stream::new(ctx.manager.store().clone(), control.clone());
+    // A deck without `fleet_git.v1` cannot show or stop Fleet Git work: the
+    // loops pause while this link is up (design §3.3).
+    let _pause = intake::PauseGuard::new(
+        ctx.manager.store().fleet_git_paused(),
+        control
+            .params()
+            .negotiated
+            .has(fleetdeck_proto::version::feature::FLEET_GIT),
+    );
     if control
         .params()
         .negotiated

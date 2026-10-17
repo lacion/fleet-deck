@@ -88,6 +88,9 @@ pub struct Policy {
     /// `Some` for a station with `host = "shim"` (DL-182); `None` is the
     /// direct host.
     shim_host: Option<ShimHostPlatform>,
+    /// Fleet Git accepts a local bare repository as a remote (design §3.4).
+    /// Not a `station.toml` key in phase 1; `serve` sets it.
+    allow_local_remotes: bool,
 }
 
 impl Policy {
@@ -130,6 +133,7 @@ impl Policy {
             shim_host: matches!(config.host, HostChoice::Shim).then_some(ShimHostPlatform {
                 supported: cfg!(target_os = "linux"),
             }),
+            allow_local_remotes: false,
         }
         .with_repo_groups(&config.repo_groups)
     }
@@ -201,7 +205,30 @@ impl Policy {
             model_help: ModelHelpConfig::default(),
             member_deny: MemberDeny::default(),
             shim_host: None,
+            allow_local_remotes: false,
         }
+    }
+
+    /// The same policy with another station name (tests).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn with_name(mut self, name: &str) -> Self {
+        self.name = name.to_owned();
+        self
+    }
+
+    /// The same policy with local remotes allowed or not (Fleet Git, design
+    /// §3.4).
+    #[must_use]
+    pub fn with_allow_local_remotes(mut self, on: bool) -> Self {
+        self.allow_local_remotes = on;
+        self
+    }
+
+    /// Whether Fleet Git accepts a local bare repository as a remote.
+    #[must_use]
+    pub fn allow_local_remotes(&self) -> bool {
+        self.allow_local_remotes
     }
 
     /// The same policy for a station on the shim host; `supported` is

@@ -241,6 +241,35 @@ pub struct RunningStation {
     prune: tokio::task::JoinHandle<()>,
     /// The sampler of the per-session load (R13 §10).
     loads: tokio::task::JoinHandle<()>,
+    /// The Fleet Git writer, push trigger task and push loop (FG-2).
+    fleet_git: Vec<tokio::task::JoinHandle<()>>,
+}
+
+/// The longest wait for a Fleet Git task at the station stop.
+const FLEET_GIT_STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The Git options of a Fleet Git write: the program, and under Linux the
+/// confinement with the allowed roots of the current policy (DL-200), read at
+/// each job.
+fn fleet_git_options(
+    hub: Arc<crate::manager::PolicyHub>,
+) -> crate::workspace::fleet_git::OptionsProvider {
+    #[cfg(target_os = "linux")]
+    let exe = fleetdeck_providers::host::shim::exe_hash::own_exe().ok();
+    Arc::new(move || {
+        #[allow(unused_mut)]
+        let mut options = crate::workspace::GitOptions::isolated();
+        #[cfg(target_os = "linux")]
+        if let Some(exe) = &exe {
+            options.confine = Some(crate::workspace::git::Confine {
+                exe: exe.clone(),
+                roots: hub.current().allowed_roots().to_vec(),
+            });
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = &hub;
+        options
+    })
 }
 
 impl RunningStation {
@@ -293,6 +322,10 @@ impl RunningStation {
         if host_choice != config.host {
             policy = policy.without_shim_host();
         }
+        // (FG-5, phase 1: T2.2 replaces this with the station.toml key)
+        policy = policy.with_allow_local_remotes(
+            std::env::var("FLEETDECK_ALLOW_LOCAL_REMOTES").is_ok_and(|v| v == "1"),
+        );
         // The station's own credential and config locations (DL-173): the
         // set loads and scans its inode registry here, before the manager
         // starts (its turn checkpoints and reverts refuse these files,
@@ -371,6 +404,12 @@ impl RunningStation {
             Arc::clone(&manager),
             rx.clone(),
         ));
+        let fleet_git = crate::manager::fleet_git_push::start(
+            manager.store().clone(),
+            Arc::clone(manager.policy_hub()),
+            fleet_git_options(Arc::clone(manager.policy_hub())),
+            rx.clone(),
+        );
         let identity = Arc::new(Identity::load_or_create(&station_dir)?);
         // A station restart ends every shell (PLAN §6.8, A10): the PTYs
         // close with the process.
@@ -414,6 +453,7 @@ impl RunningStation {
             rescan,
             prune,
             loads,
+            fleet_git,
         })
     }
 
@@ -427,6 +467,14 @@ impl RunningStation {
         let _ = self.rescan.await;
         let _ = self.prune.await;
         let _ = self.loads.await;
+        for mut task in self.fleet_git {
+            if tokio::time::timeout(FLEET_GIT_STOP_WAIT, &mut task)
+                .await
+                .is_err()
+            {
+                task.abort();
+            }
+        }
         self.node.shutdown();
         // The stop waits for the terminal processes (up to the hangup grace).
         let shells = Arc::clone(&self.shells);

@@ -76,6 +76,7 @@ pub async fn planned(
             path,
             branch,
             base,
+            ..
         }) => {
             if Path::new(path).exists() {
                 // A repeated effect: the first run recorded the base.

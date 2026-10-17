@@ -27,6 +27,17 @@ pub struct InputRecord {
     pub shell_context: Vec<ShellContext>,
 }
 
+/// The fetch of a synced worktree start (FG-1, design §4.2): which remote to
+/// fetch and which default branch the settings name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncPlan {
+    /// `push_remote` of the project settings.
+    pub remote: String,
+    /// `default_branch` of the project settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_branch: Option<String>,
+}
+
 /// The Git work of a start effect (M3 6-1, DL-200): decided and checked
 /// in the command transaction, done by the effect worker.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,6 +52,10 @@ pub enum WorkspacePlan {
         /// The commit-ish that a new `branch` starts from.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         base: Option<String>,
+        /// Set for a start of a synced project (FG-1): the fetch before the
+        /// worktree. An effect stored without it runs without a fetch.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sync: Option<SyncPlan>,
     },
     /// `git clone <url> <path>`.
     Clone { url: String, path: String },
@@ -73,6 +88,10 @@ pub enum EffectPayload {
         /// effect queued before this field existed has none and gets no check.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         authority: Option<CommandAuthority>,
+        /// The Fleet Git snapshot of a start in a synced project (FG-1, FG-4):
+        /// the settings the start effect uses (design §3.3, §7.3).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fleet_git: Option<Box<fleetdeck_proto::fleet_git::FleetGitStart>>,
     },
     /// A native resume of an ended session (DL-118): a new provider
     /// process continues `native_session_id` with `spec` (the stored

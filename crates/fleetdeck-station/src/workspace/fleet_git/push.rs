@@ -236,21 +236,36 @@ enum Tip {
 ///
 /// [`submit`]: Self::submit
 /// [`recover`]: Self::recover
-#[derive(Debug)]
 pub struct PushWriter {
-    options: GitOptions,
+    options: OptionsProvider,
     lock: tokio::sync::Mutex<()>,
 }
 
+/// Gives the Git options of one job: the program and, for the network
+/// commands, the confinement with the allowed roots of that moment (DL-200).
+pub type OptionsProvider = std::sync::Arc<dyn Fn() -> GitOptions + Send + Sync>;
+
+impl std::fmt::Debug for PushWriter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PushWriter").finish_non_exhaustive()
+    }
+}
+
 impl PushWriter {
-    /// A writer whose Git runs with `options` (the program and, for the
-    /// network commands, the confinement of DL-200).
+    /// A writer whose Git runs with the options that `options` gives at each
+    /// job (the program and the confinement of DL-200 with the current roots).
     #[must_use]
-    pub fn new(options: GitOptions) -> Self {
+    pub fn new(options: OptionsProvider) -> Self {
         Self {
             options,
             lock: tokio::sync::Mutex::new(()),
         }
+    }
+
+    /// A writer whose jobs all run with the same `options`.
+    #[must_use]
+    pub fn fixed(options: GitOptions) -> Self {
+        Self::new(std::sync::Arc::new(move || options.clone()))
     }
 
     /// The destination check of design §3.8 rules 2 and 3 (see
@@ -268,7 +283,7 @@ impl PushWriter {
         allow_local_remotes: bool,
     ) -> Result<VerifiedUrl, Refusal> {
         effective_push_url(
-            &self.options,
+            &(self.options)(),
             repo_dir,
             destination,
             target_dest,
@@ -317,7 +332,7 @@ impl PushWriter {
             &job.url,
             &refspec,
         ];
-        let git = net_git(&self.options, &job.repo_dir, timeout);
+        let git = net_git(&(self.options)(), &job.repo_dir, timeout);
         let (outcome, failed) = match git.status(&args, &[], None).await {
             Ok((exit, stdout, stderr)) => {
                 let kept = &stdout[..stdout.len().min(PUSH_STDOUT_CAP)];
@@ -369,7 +384,7 @@ impl PushWriter {
     /// The read `git ls-remote --refs -- <url> refs/heads/<ref>` (20 s).
     async fn read_tip(&self, job: &PushJob) -> Tip {
         let name = format!("refs/heads/{}", job.publish_ref);
-        let git = read_git(&self.options, &job.repo_dir, LS_REMOTE_TIMEOUT);
+        let git = read_git(&(self.options)(), &job.repo_dir, LS_REMOTE_TIMEOUT);
         let args = [
             "-c",
             "protocol.ext.allow=never",
