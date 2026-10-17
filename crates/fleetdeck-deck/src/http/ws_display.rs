@@ -32,12 +32,10 @@ use crate::store::{DeckStore, LiveEvents, Principal};
 type DisplayView = (Vec<StationView>, Vec<DeckSession>, Option<EffectiveScope>);
 
 /// The view of a display: the reduced stations and cards inside its
-/// effective scope, and that scope. A display that no longer exists gets an
-/// empty view.
+/// effective scope, and that scope. The data is read first and the scope
+/// last, right before the filter, so a scope that narrowed during the reads
+/// is applied. A display that no longer exists gets an empty view.
 pub(super) async fn view(store: &DeckStore, d: &DisplayLogin) -> Result<DisplayView, WsError> {
-    let Some(scope) = store.display_scope(d.display_id.clone()).await? else {
-        return Ok((Vec::new(), Vec::new(), None));
-    };
     let stations: Vec<StationView> = store
         .stations()
         .await?
@@ -45,6 +43,9 @@ pub(super) async fn view(store: &DeckStore, d: &DisplayLogin) -> Result<DisplayV
         .map(|st| station_view(st, store))
         .collect();
     let sessions = store.sessions().await?;
+    let Some(scope) = store.display_scope(d.display_id.clone()).await? else {
+        return Ok((Vec::new(), Vec::new(), None));
+    };
     let cards = display_cards(&sessions, &scope);
     let stations = display_stations(&stations, &scope, &cards);
     Ok((stations, cards, Some(scope)))

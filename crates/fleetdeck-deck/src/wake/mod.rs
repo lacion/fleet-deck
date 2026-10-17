@@ -22,10 +22,12 @@ mod scan;
 #[cfg(test)]
 mod tests;
 
-use std::sync::Arc;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
+use fleetdeck_proto::StationId;
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio::task::{JoinHandle, JoinSet};
 
@@ -131,6 +133,10 @@ pub(crate) struct Shared {
     pub ctx: RelayCtx,
     pub limits: Limits,
     pub counters: Arc<WakeCounters>,
+    /// The deck time (ms) of the last wake attempt of each `(station,
+    /// monitor)`. A worker checks it right before the send, so the cooldown
+    /// counts from the attempt and not from the scan.
+    pub last_wake: StdMutex<HashMap<(StationId, String), i64>>,
 }
 
 /// The last path component of a path on a station (any separator): the
@@ -173,6 +179,7 @@ pub fn spawn_with(
         ctx: RelayCtx { store, link, live },
         limits,
         counters,
+        last_wake: StdMutex::new(HashMap::new()),
     });
     tokio::spawn(run(shared, shutdown))
 }

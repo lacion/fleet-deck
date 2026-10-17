@@ -8,6 +8,8 @@
 //! - `display_commit_binding` commits the binding after a successful open,
 //!   only when the revision is still the one of the launch.
 //! - `display_clear_binding` clears it after a successful explicit close.
+//! - `display_clear_binding_at` clears it only when it is still the binding
+//!   (station and revision) that the close saw at its start.
 //! - `display_set_binding` is the owner's edit in the settings.
 //!
 //! A change of the binding deletes the stored directive in the same
@@ -231,6 +233,42 @@ impl DeckStore {
             self.board_changed();
         }
         Ok(found)
+    }
+
+    /// Clears the binding after a successful explicit close, only when it is
+    /// still on `station` at `revision`: one statement, so an owner edit or
+    /// a new launch in between is kept. The revision moves up and the
+    /// directive goes, as in [`Self::display_clear_binding`], when a row
+    /// changed. False when the binding changed meanwhile (not an error).
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn display_clear_binding_at(
+        &self,
+        display_id: String,
+        station: StationId,
+        revision: i64,
+    ) -> Result<bool> {
+        let changed = call(&self.inner.db, move |conn| {
+            let tx = conn.transaction()?;
+            let rows = tx.execute(
+                "UPDATE displays
+                 SET binding_station = NULL, binding_monitor = NULL,
+                     binding_revision = binding_revision + 1
+                 WHERE display_id = ?1 AND binding_station = ?2 AND binding_revision = ?3",
+                params![display_id, station.as_str(), revision],
+            )?;
+            if rows == 1 {
+                invalidate_directive(&tx, &display_id)?;
+            }
+            tx.commit()?;
+            Ok(rows == 1)
+        })
+        .await?;
+        if changed {
+            self.board_changed();
+        }
+        Ok(changed)
     }
 
     /// The owner's edit of the binding in the settings: `Some` sets or

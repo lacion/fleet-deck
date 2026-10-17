@@ -536,6 +536,20 @@ impl DeckStore {
         call(&self.inner.db, move |conn| login_of(conn, &hash, now)).await
     }
 
+    /// True while the display session is alive (not expired, not idle, the
+    /// display not revoked, the same `auth_generation`). Like a login read, a
+    /// use refreshes `last_seen`.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn display_session_alive(&self, session_hash: String) -> Result<bool> {
+        let now = self.now_ms();
+        call(&self.inner.db, move |conn| {
+            session_alive(conn, &session_hash, now)
+        })
+        .await
+    }
+
     /// The absolute expiry of a display session.
     ///
     /// # Errors

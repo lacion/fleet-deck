@@ -5,6 +5,8 @@
 //! send goes through [`crate::desktop_relay::act`], which writes the audit
 //! row and never retries.
 
+use std::sync::PoisonError;
+
 use fleetdeck_proto::desktop::DesktopAction;
 use fleetdeck_proto::{SessionId, StationId};
 
@@ -151,7 +153,26 @@ pub(super) async fn run(shared: &Shared, job: Job) {
         WakeCounters::bump(&counters.skip_closed);
         return;
     }
-    // 8. The send. The relay audits it. An error or a timeout is final.
+    // 8. The cooldown of the monitor counts from the last wake attempt. The
+    //    check and the record are one step under the lock. A failed or timed
+    //    out send keeps its entry (no retry).
+    {
+        let now = store.now_ms();
+        let key = (job.station.clone(), job.monitor.clone());
+        let mut last = shared
+            .last_wake
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if last
+            .get(&key)
+            .is_some_and(|at| now - *at < shared.limits.cooldown_ms)
+        {
+            WakeCounters::bump(&counters.skip_cooldown);
+            return;
+        }
+        last.insert(key, now);
+    }
+    // 9. The send. The relay audits it. An error or a timeout is final.
     let action = DesktopAction::ScreenPower {
         monitor: Some(job.monitor.clone()),
         on: true,
