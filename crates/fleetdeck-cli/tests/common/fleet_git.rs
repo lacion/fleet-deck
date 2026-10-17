@@ -53,6 +53,12 @@ pub struct StationSetup {
     pub executables: Vec<String>,
     /// `allow_local_remotes = true` in `station.toml` (the rig default).
     pub allow_local_remotes: bool,
+    /// More `station.toml` text at the very end (provider tables, FG-9).
+    /// `{HOME}` and `{ROOT}` are filled as in `toml`.
+    pub tail: String,
+    /// More environment variables of the first provider instance, the fake
+    /// Claude (FG-9: `FLEETDECK_FAKE_RESUME_FAULT`).
+    pub instance_env: Vec<(String, String)>,
 }
 
 impl Default for StationSetup {
@@ -63,6 +69,8 @@ impl Default for StationSetup {
             files: Vec::new(),
             executables: Vec::new(),
             allow_local_remotes: true,
+            tail: String::new(),
+            instance_env: Vec::new(),
         }
     }
 }
@@ -288,12 +296,23 @@ impl Rig {
                 std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
             }
         }
+        if !setup.instance_env.is_empty() {
+            let at = "FLEETDECK_FAKE_SCENARIO = \"sim\", ";
+            assert!(text.contains(at), "the instance env line: {text}");
+            let pairs: String = setup
+                .instance_env
+                .iter()
+                .map(|(k, v)| format!("{k} = {v:?}, "))
+                .collect();
+            text = text.replace(at, &format!("{at}{pairs}"));
+        }
         if let Some(program) = &options.provider {
             let fake = FakeAgent::bin_dir().unwrap().join("fake-claude");
             let old = format!("binary = \"{}\"", fake.display());
             assert!(text.contains(&old), "the provider line: {text}");
             text = text.replace(&old, &format!("binary = \"{}\"", program.display()));
         }
+        text.push_str(&fill(&setup.tail));
         station.node.write_station_toml(&text).unwrap();
         let home = station.node.home().join("projects").join("app");
         git(
@@ -349,7 +368,7 @@ impl Rig {
         self.deck.https(self.board, method, path, &auth, body)
     }
 
-    fn command_id(&self) -> String {
+    pub fn command_id(&self) -> String {
         let n = self.commands.get() + 1;
         self.commands.set(n);
         format!("rig-{n}")
