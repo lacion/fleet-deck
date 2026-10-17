@@ -550,6 +550,10 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
         "fleet_git.land_status" => intake_fleet_git::land_status(&ctx.manager, req.params).await,
         "fleet_git.land_abandon" => intake_fleet_git::land_abandon(&ctx.manager, req.params).await,
         "project.radar" => intake_fleet_git::radar(&ctx.manager, &ctx.fleet_git, req.params).await,
+        "project.branches" => {
+            intake_fleet_git::branches(&ctx.manager, &ctx.fleet_git, req.params).await
+        }
+        "project.fetch" => intake_fleet_git::fetch(&ctx.manager, &ctx.fleet_git, req.params).await,
         "project.ensure_home" => intake_fleet_git::ensure_home(ctx, req.params).await,
         "project.home_status" => intake_fleet_git::home_status(ctx, req.params).await,
         "session.branches" | "files.branch_diff" => {

@@ -235,7 +235,7 @@ pub fn to_op(
         "list_sessions" | "wait_task" | "wait_tasks" => return Ok(None),
         t if super::fleet_tools::is_query(t) => return Ok(None),
         "resume_session" | "rename_session" | "set_mode" | "move_to_project"
-        | "start_in_project" | "answer_request" => {
+        | "start_in_project" | "answer_request" | "land_session" => {
             return super::fleet_tools::op(tool, args).map(Some);
         }
         "send_mail" => {

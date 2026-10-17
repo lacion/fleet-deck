@@ -153,7 +153,7 @@ fn refused(now_ms: i64, refusal: Refusal) -> RadarResult {
 
 /// Fetches the WIP URL into `refs/fleetdeck/wip/fd/*` (design §2.4, §10.2).
 /// The URL is the verified one (§3.8 rule 2).
-async fn fetch_wip(env: &RadarEnv<'_>, url: &str) -> Result<(), Refusal> {
+pub(super) async fn fetch_wip(env: &RadarEnv<'_>, url: &str) -> Result<(), Refusal> {
     let local = if env.allow_local_remotes {
         LocalRemotes::Allow
     } else {
@@ -198,7 +198,7 @@ async fn fetch_wip(env: &RadarEnv<'_>, url: &str) -> Result<(), Refusal> {
 }
 
 /// The commit of `reference`, or `None` when it is not a commit.
-async fn commit_of(git: &crate::workspace::Git, reference: &str) -> Option<String> {
+pub(super) async fn commit_of(git: &crate::workspace::Git, reference: &str) -> Option<String> {
     let probe = format!("{reference}^{{commit}}");
     let args = [
         "rev-parse",
