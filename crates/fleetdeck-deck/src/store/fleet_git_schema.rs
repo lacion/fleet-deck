@@ -1,7 +1,8 @@
 //! The deck migrations of Fleet Git (design §8.2). V25 (phase 1): the Git
 //! settings and the remote identity of a project, the per-station snapshot
 //! state, and the reserved Git names. V26 (phase 2): the homes of a project,
-//! their generations and their clone attempts. A migration only adds
+//! their generations and their clone attempts. V27 (phase 3): the radar and
+//! the land queue. A migration only adds
 //! (decision 79). To reverse one, restore the pre-upgrade backup (§3.9);
 //! never drop the tables while the deck runs.
 
@@ -105,6 +106,66 @@ UPDATE project_homes SET state = 'unverified', code = 'home_owned',
     WHERE sync_owner = 0
       AND project_id IN (SELECT project_id FROM projects WHERE json_extract(git, '$.sync') = 1);
 CREATE TABLE fleet_git_prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
+";
+
+/// V27 (Fleet Git phase 3, FG-7 and FG-8): the radar pairs, the land queue
+/// and the land outbox (design §10.3, §11.2). The three partial unique
+/// indexes make a second `running` land of one project or one lock key
+/// impossible.
+pub const LAND_SQL: &str = "
+CREATE TABLE radar_pairs (
+    project_id TEXT NOT NULL,
+    a_station  TEXT NOT NULL, a_session TEXT NOT NULL,
+    b_station  TEXT NOT NULL, b_session TEXT NOT NULL,
+    conflict   INTEGER NOT NULL,
+    files      TEXT NOT NULL,
+    checked_at INTEGER NOT NULL,
+    PRIMARY KEY (project_id, a_station, a_session, b_station, b_session)
+) STRICT;
+CREATE TABLE land_queue (
+    land_id              TEXT    PRIMARY KEY,
+    command_id           TEXT    NOT NULL UNIQUE,
+    requested_by         TEXT    NOT NULL,
+    request_command_id   TEXT    NOT NULL,
+    authority            TEXT,
+    authority_expires_at INTEGER,
+    project_id           TEXT    NOT NULL,
+    lock_key             TEXT    NOT NULL,
+    station_id           TEXT    NOT NULL,
+    session_id           TEXT    NOT NULL,
+    plan                 TEXT,
+    settings_revision    INTEGER,
+    state                TEXT    NOT NULL,
+    phase                TEXT,
+    reconciling          INTEGER NOT NULL DEFAULT 0,
+    abandon_state        TEXT,
+    abandon_attempts     INTEGER NOT NULL DEFAULT 0,
+    abandon_next_at      INTEGER,
+    abandon_write        TEXT,
+    attempt              INTEGER NOT NULL DEFAULT 0,
+    source_oid           TEXT, base_oid TEXT, rebased_oid TEXT,
+    branch_published_oid TEXT, default_published_oid TEXT,
+    pr_url               TEXT,
+    files                TEXT    NOT NULL DEFAULT '[]',
+    code                 TEXT, message TEXT,
+    created_at           INTEGER NOT NULL, started_at INTEGER, ended_at INTEGER,
+    UNIQUE (requested_by, request_command_id)
+) STRICT;
+CREATE INDEX land_queue_project ON land_queue (project_id, state, created_at);
+CREATE UNIQUE INDEX land_queue_open_session    ON land_queue (station_id, session_id) WHERE state IN ('queued', 'running');
+CREATE UNIQUE INDEX land_queue_running_project ON land_queue (project_id) WHERE state = 'running';
+CREATE UNIQUE INDEX land_queue_running_lock    ON land_queue (lock_key)   WHERE state = 'running';
+CREATE TABLE land_outbox (
+    command_id TEXT    PRIMARY KEY REFERENCES land_queue(command_id),
+    land_id    TEXT    NOT NULL,
+    station_id TEXT    NOT NULL,
+    payload    TEXT    NOT NULL,
+    state      TEXT    NOT NULL,
+    attempts   INTEGER NOT NULL DEFAULT 0,
+    next_at    INTEGER NOT NULL,
+    receipt    TEXT,
+    updated_at INTEGER NOT NULL
+) STRICT;
 ";
 
 #[cfg(test)]

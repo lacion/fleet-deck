@@ -114,6 +114,7 @@ pub struct RunningDeck {
     maintenance: tokio::task::JoinHandle<()>,
     /// The sender and poller of the home attempts (FG-5).
     homes: tokio::task::JoinHandle<()>,
+    land: [tokio::task::JoinHandle<()>; 3],
     /// The Tailscale certificate of the board (DL-190).
     cert: crate::cert_task::CertTask,
     shutdown: watch::Sender<bool>,
@@ -357,6 +358,29 @@ impl RunningDeck {
             rx.clone(),
             crate::fleet_git_homes::HomesRunOptions { send: true },
         ));
+        // The land tasks: admission and status poll, outbox, fence sender (FG-8).
+        let link = node.link();
+        let kick = Arc::clone(&link.land_kick);
+        let land = [
+            tokio::spawn(crate::fleet_git_land::run(
+                store.clone(),
+                Arc::clone(link),
+                Arc::clone(&kick),
+                rx.clone(),
+            )),
+            tokio::spawn(crate::fleet_git_land_outbox::run(
+                store.clone(),
+                Arc::clone(link),
+                Arc::clone(&kick),
+                rx.clone(),
+            )),
+            tokio::spawn(crate::fleet_git_land_abandon::run(
+                store.clone(),
+                Arc::clone(link),
+                kick,
+                rx.clone(),
+            )),
+        ];
         let scheduler = crate::scheduler::spawn(store.clone(), Arc::clone(node.link()), rx);
         Ok(Self {
             node,
@@ -369,6 +393,7 @@ impl RunningDeck {
             scheduler,
             maintenance,
             homes,
+            land,
             cert,
             shutdown,
             socket,
@@ -398,6 +423,9 @@ impl RunningDeck {
         let _ = self.scheduler.await;
         let _ = self.maintenance.await;
         let _ = self.homes.await;
+        for task in self.land {
+            let _ = task.await;
+        }
         self.cert.join().await;
         self.board.join().await;
         self.node.shutdown();

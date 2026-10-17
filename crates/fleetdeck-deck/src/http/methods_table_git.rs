@@ -47,6 +47,49 @@ pub const API_GIT: &[ApiMethod] = &[
         Some(Scope::Drive),
         false,
     ),
+    // FG-8: the land flow. The POST routes are `admin` and owner only.
+    m(
+        "sessions.land",
+        Method::POST,
+        "/api/sessions/{station}/{session}/land",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "projects.lands",
+        Method::GET,
+        "/api/projects/{project}/lands",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
+        "lands.cancel",
+        Method::POST,
+        "/api/lands/{land}/cancel",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "lands.abandon",
+        Method::POST,
+        "/api/lands/{land}/abandon",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "lands.forget",
+        Method::POST,
+        "/api/lands/{land}/forget",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "lands.send",
+        Method::POST,
+        "/api/lands/{land}/send",
+        Some(Scope::Admin),
+        true,
+    ),
     // FG-11: the drift reference station.
     m(
         "fleet_git.prefs",

@@ -76,6 +76,8 @@ pub struct DeckLink {
     inflight: router::Inflight,
     /// Wakes the home attempt sender (FG-5, `fleet_git_homes`).
     pub homes_kick: Arc<crate::fleet_git_homes::HomesKick>,
+    /// Wakes the land tasks (FG-8, `fleet_git_land`).
+    pub land_kick: Arc<crate::fleet_git_land::LandKick>,
 }
 
 impl DeckLink {
@@ -89,6 +91,7 @@ impl DeckLink {
             next_token: AtomicU64::new(0),
             inflight: router::Inflight::default(),
             homes_kick: Arc::default(),
+            land_kick: Arc::default(),
         }
     }
 

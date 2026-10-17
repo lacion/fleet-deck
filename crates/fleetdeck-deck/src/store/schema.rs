@@ -741,6 +741,8 @@ pub fn migrations() -> Migrations<'static> {
         M::up(super::fleet_git_schema::FLEET_GIT_SQL),
         // V26 (Fleet Git phase 2): the homes, `store/fleet_git_schema.rs`.
         M::up(super::fleet_git_schema::HOMES_SQL),
+        // V27 (Fleet Git phase 3): the radar and the land queue.
+        M::up(super::fleet_git_schema::LAND_SQL),
     ])
 }
 

@@ -13,9 +13,25 @@ use super::{
     Board, fleet_git_pref_routes, placement_routes, project_home_routes, project_remote_routes,
 };
 
+// The land routes (FG-8): declared here, `http/mod.rs` has no room for a line.
+#[path = "land_routes.rs"]
+pub mod land_routes;
+
 /// The routes of this part; the caller adds the guard.
 pub fn routes() -> Router<Arc<Board>> {
     Router::new()
+        .route(
+            "/api/sessions/{station}/{session}/land",
+            post(land_routes::land),
+        )
+        .route(
+            "/api/projects/{project}/lands",
+            get(land_routes::project_lands),
+        )
+        .route("/api/lands/{land}/cancel", post(land_routes::cancel))
+        .route("/api/lands/{land}/abandon", post(land_routes::abandon))
+        .route("/api/lands/{land}/forget", post(land_routes::forget))
+        .route("/api/lands/{land}/send", post(land_routes::send))
         .route(
             "/api/projects/{project}/homes",
             post(project_home_routes::add),

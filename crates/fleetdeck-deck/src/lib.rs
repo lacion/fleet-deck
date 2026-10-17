@@ -5,6 +5,9 @@
 pub mod cert_task;
 pub mod elevation;
 pub mod fleet_git_homes;
+pub mod fleet_git_land;
+pub mod fleet_git_land_abandon;
+pub mod fleet_git_land_outbox;
 pub mod http;
 pub mod link;
 pub mod live;
