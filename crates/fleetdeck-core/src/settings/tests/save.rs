@@ -299,6 +299,43 @@ fn the_danger_rules() {
     assert_eq!(d("", "allow_desktop = true"), vec!["allow_desktop"]);
     assert!(d("allow_desktop = true", "allow_desktop = false").is_empty());
     assert!(d("", "allow_desktop = false").is_empty());
+    // Desktop screenshots (R13 P5a): off to on is a danger change.
+    assert_eq!(
+        d("", "allow_desktop_capture = true"),
+        vec!["allow_desktop_capture"]
+    );
+    assert!(
+        d(
+            "allow_desktop_capture = true",
+            "allow_desktop_capture = false"
+        )
+        .is_empty()
+    );
+    assert!(d("", "allow_desktop_capture = false").is_empty());
+    // Screenshot monitors (R13 P5a): only a widening is a danger change.
+    assert!(d("", "capture_monitors = [\"DP-1\"]").is_empty());
+    assert_eq!(
+        d("capture_monitors = [\"DP-1\"]", "capture_monitors = []"),
+        vec!["capture_monitors"]
+    );
+    assert_eq!(
+        d("capture_monitors = [\"DP-1\"]", ""),
+        vec!["capture_monitors"]
+    );
+    assert_eq!(
+        d(
+            "capture_monitors = [\"DP-1\"]",
+            "capture_monitors = [\"DP-1\", \"HDMI-A-1\"]"
+        ),
+        vec!["capture_monitors"]
+    );
+    assert!(
+        d(
+            "capture_monitors = [\"DP-1\", \"HDMI-A-1\"]",
+            "capture_monitors = [\"DP-1\"]"
+        )
+        .is_empty()
+    );
     // Fleet summary (R13 P4): off to on is a danger change, on to off is not.
     assert_eq!(d("", "fleet_summary = true"), vec!["fleet_summary"]);
     assert!(d("fleet_summary = true", "fleet_summary = false").is_empty());
@@ -424,6 +461,66 @@ fn turning_the_fleet_summary_on_needs_elevation_and_off_does_not() {
     let (saved, new, ()) = w.save(&off, false, ok_prepare).unwrap();
     assert!(!new.fleet_summary);
     assert_eq!(saved.applied, vec!["fleet_summary"]);
+}
+
+#[test]
+fn turning_desktop_screenshots_on_needs_elevation_and_off_does_not() {
+    let fx = Fixture::new(Some("name = \"box\"\n"));
+    let w = fx.writer();
+    let view = crate::settings::view_station(&fx.config, &fx.env, &fx.store, &[]).unwrap();
+    assert_eq!(view.values["allow_desktop_capture"], json!(false));
+    assert_eq!(view.values["capture_monitors"], json!([]));
+    let on = change_with(&view.revision, json!({ "allow_desktop_capture": true }));
+    let err = w.save(&on, false, ok_prepare).unwrap_err();
+    assert_eq!(
+        err,
+        SaveError::ElevationRequired {
+            keys: vec!["allow_desktop_capture".into()]
+        }
+    );
+    let (saved, new, ()) = w.save(&on, true, ok_prepare).unwrap();
+    assert!(new.allow_desktop_capture);
+    assert_eq!(saved.applied, vec!["allow_desktop_capture"]);
+    let view = crate::settings::view_station(&fx.config, &fx.env, &fx.store, &[]).unwrap();
+    let off = change_with(&view.revision, json!({ "allow_desktop_capture": false }));
+    let (saved, new, ()) = w.save(&off, false, ok_prepare).unwrap();
+    assert!(!new.allow_desktop_capture);
+    assert_eq!(saved.applied, vec!["allow_desktop_capture"]);
+}
+
+#[test]
+fn widening_the_capture_monitors_needs_elevation_and_narrowing_does_not() {
+    let fx = Fixture::new(Some("name = \"box\"\n"));
+    let w = fx.writer();
+    let set = |w: &SettingsWriter<StationHolder>, list: serde_json::Value, elevated: bool| {
+        let view = crate::settings::view_station(&fx.config, &fx.env, &fx.store, &[]).unwrap();
+        let change = change_with(&view.revision, json!({ "capture_monitors": list }));
+        w.save(&change, elevated, ok_prepare)
+    };
+    // From the empty list (every monitor) to one monitor narrows the policy.
+    let (_, new, ()) = set(&w, json!(["DP-1"]), false).unwrap();
+    assert_eq!(new.capture_monitors, ["DP-1"]);
+    // To the empty list (every monitor) widens it.
+    let err = set(&w, json!([]), false).unwrap_err();
+    assert_eq!(
+        err,
+        SaveError::ElevationRequired {
+            keys: vec!["capture_monitors".into()]
+        }
+    );
+    // A new monitor widens it.
+    let err = set(&w, json!(["DP-1", "HDMI-A-1"]), false).unwrap_err();
+    assert_eq!(
+        err,
+        SaveError::ElevationRequired {
+            keys: vec!["capture_monitors".into()]
+        }
+    );
+    let (_, new, ()) = set(&w, json!(["DP-1", "HDMI-A-1"]), true).unwrap();
+    assert_eq!(new.capture_monitors, ["DP-1", "HDMI-A-1"]);
+    // Dropping one monitor narrows it.
+    let (_, new, ()) = set(&w, json!(["DP-1"]), false).unwrap();
+    assert_eq!(new.capture_monitors, ["DP-1"]);
 }
 
 #[test]

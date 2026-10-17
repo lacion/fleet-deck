@@ -16,7 +16,7 @@ use fleetdeck_link::node::{self, NodeConfig};
 use fleetdeck_link::tls::Role;
 use fleetdeck_link::{Epochs, Grants, LinkListener, LiveLink};
 use fleetdeck_proto::IncarnationId;
-use fleetdeck_proto::desktop::DesktopAction;
+use fleetdeck_proto::desktop::{DesktopAction, DesktopInfo};
 use fleetdeck_proto::desktop_authority::with_authority;
 use fleetdeck_proto::link::{Outcome, Scope, StationInfo};
 use fleetdeck_proto::version::{Negotiated, PROTO_MAX, feature};
@@ -397,4 +397,156 @@ async fn station_info_carries_the_live_fleet_summary_setting() {
     };
     let info: StationInfo = serde_json::from_value(raw).unwrap();
     assert_eq!(info.fleet_summary, Some(true));
+}
+
+const MONITORS: &str = r#"[
+ {"id":0,"name":"DP-1","description":"Ultrawide","width":3440,"height":1440,"refreshRate":143.99800,"scale":1.25,"focused":true,"dpmsStatus":true,"activeWorkspace":{"id":1,"name":"1"}}
+]"#;
+
+/// A small fake Hyprland desktop: a temporary `PATH` with a `hyprctl` that
+/// answers the reads and logs every other call, and a `grim` that logs its
+/// call; both log into `calls.log`. `install` makes it the process desktop.
+struct FakeDesktop {
+    dir: tempfile::TempDir,
+}
+
+impl FakeDesktop {
+    async fn install() -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_owned();
+        let runtime = root.join("run");
+        let bin = root.join("bin");
+        for d in [&runtime, &bin, &root.join("home")] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(root.join("monitors.json"), MONITORS).unwrap();
+        let r = root.display();
+        let script = |name: &str, body: String| {
+            let path = bin.join(name);
+            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        script(
+            "hyprctl",
+            format!(
+                "case \"$*\" in\n\
+                 \"instances -j\") echo '[{{\"instance\":\"sig_t_1\",\"time\":1,\"pid\":1,\"wl_socket\":\"wayland-1\"}}]';;\n\
+                 \"-j monitors\") /bin/cat {r}/monitors.json;;\n\
+                 \"-j clients\") echo '[]';;\n\
+                 *) echo \"hyprctl $*\" >> {r}/calls.log; echo ok;;\n\
+                 esac"
+            ),
+        );
+        script("grim", format!("echo \"grim $*\" >> {r}/calls.log\nexit 0"));
+        let instance = runtime.join("hypr").join("sig_t_1");
+        std::fs::create_dir_all(&instance).unwrap();
+        let live = tokio::net::UnixListener::bind(instance.join(".socket.sock")).unwrap();
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = live.accept().await {
+                drop(stream);
+            }
+        });
+        let events = tokio::net::UnixListener::bind(instance.join(".socket2.sock")).unwrap();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((stream, _)) = events.accept().await {
+                held.push(stream);
+            }
+        });
+        let env = ChildEnv::scrubbed(
+            [
+                ("PATH", bin.as_os_str().to_owned()),
+                ("XDG_RUNTIME_DIR", runtime.as_os_str().to_owned()),
+                ("HOME", root.join("home").into_os_string()),
+                ("OMARCHY_PATH", root.join("no-omarchy").into_os_string()),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.into(), v)),
+        );
+        desktop::install(Arc::new(Desktop::with_env(env)));
+        Self { dir }
+    }
+
+    /// The logged calls that are not reads.
+    fn calls(&self) -> String {
+        std::fs::read_to_string(self.dir.path().join("calls.log")).unwrap_or_default()
+    }
+}
+
+fn capture_policy(desktop: bool, capture: bool, monitors: &[&str]) -> Policy {
+    Policy::new(Vec::new(), 4, OfflineApprovalPolicy::Wait, BTreeMap::new())
+        .with_allow_desktop(desktop)
+        .with_allow_desktop_capture(capture)
+        .with_capture_monitors(monitors.iter().map(|m| (*m).to_owned()).collect())
+}
+
+/// The `desktop` field of `station.info` of a fixture with `policy`.
+async fn desktop_field(policy: Policy) -> DesktopInfo {
+    let mut f = fixture_with(policy).await;
+    let _desktop = FakeDesktop::install().await;
+    let deck = f.connect().await;
+    let Outcome::Ok(raw) = call(&deck, "station.info", json!({})).await else {
+        panic!("station.info failed");
+    };
+    let info: StationInfo = serde_json::from_value(raw).unwrap();
+    info.desktop.expect("the fake desktop is found")
+}
+
+#[tokio::test]
+async fn desktop_allowed_capture_follows_both_live_gates() {
+    let _turn = ONE_AT_A_TIME.lock().await;
+    for (desktop, capture, want) in [
+        (true, false, false),
+        (false, true, false),
+        (false, false, false),
+        (true, true, true),
+    ] {
+        let info = desktop_field(capture_policy(desktop, capture, &[])).await;
+        assert_eq!(info.allowed.desktop, desktop, "{desktop} {capture}");
+        assert_eq!(info.allowed.capture, want, "{desktop} {capture}");
+        assert!(!info.allowed.input);
+        // The station sends no features: the deck fills them.
+        assert!(info.features.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn desktop_allowed_capture_monitors_equal_the_policy_list_on_every_path() {
+    let _turn = ONE_AT_A_TIME.lock().await;
+    let info = desktop_field(capture_policy(true, true, &[])).await;
+    assert!(info.allowed.capture_monitors.is_empty());
+    let policy = capture_policy(true, true, &["DP-1", "HDMI-A-1"]);
+    let info = desktop_field(policy.clone()).await;
+    assert_eq!(info.allowed.capture_monitors, ["DP-1", "HDMI-A-1"]);
+
+    // `desktop.info`, cached and fresh, carries the same live values.
+    let mut f = fixture_with(policy).await;
+    let _desktop = FakeDesktop::install().await;
+    let deck = f.connect().await;
+    for params in [json!({}), json!({"fresh": true}), json!({})] {
+        let Outcome::Ok(raw) = call(&deck, "desktop.info", params.clone()).await else {
+            panic!("desktop.info failed: {params}");
+        };
+        let info: DesktopInfo = serde_json::from_value(raw).unwrap();
+        assert!(info.allowed.capture, "{params}");
+        assert_eq!(info.allowed.capture_monitors, ["DP-1", "HDMI-A-1"]);
+        assert!(info.features.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn a_desktop_screen_capture_act_is_a_stub_that_runs_no_program() {
+    let _turn = ONE_AT_A_TIME.lock().await;
+    let mut f = fixture_with(capture_policy(true, true, &["DP-1"])).await;
+    let fake = FakeDesktop::install().await;
+    let deck = f.connect().await;
+    let action = DesktopAction::ScreenCapture {
+        monitor: "DP-1".to_owned(),
+    };
+    let (code, message) =
+        refused(call(&deck, "desktop.act", authorized(&f, &deck, &action, 1)).await);
+    assert_eq!(code, "unsupported");
+    assert_eq!(message, "This station cannot take screenshots yet.");
+    assert_eq!(fake.calls(), "", "no program ran");
 }

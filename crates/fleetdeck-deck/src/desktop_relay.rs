@@ -444,6 +444,7 @@ async fn plain_action(
             }
         }
         DesktopActBody::WindowClose { address } => DesktopAction::WindowClose { address },
+        DesktopActBody::ScreenCapture { .. } => return Err(RelayError::Unsupported),
         DesktopActBody::WallOpen { .. }
         | DesktopActBody::WallClose { .. }
         | DesktopActBody::WallReload { .. } => return Err(RelayError::Invalid),

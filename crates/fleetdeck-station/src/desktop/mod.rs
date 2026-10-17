@@ -168,6 +168,7 @@ impl Desktop {
         info.allowed = DesktopAllowed {
             desktop: gate(),
             capture: false,
+            capture_monitors: Vec::new(),
             input: false,
         };
         info.walls = self.events.walls();
@@ -264,7 +265,12 @@ impl Desktop {
         };
         let address = cx.perform(action).await?;
         let info = self.fresh_info(&ctx, gate, true).await?;
-        Ok(DesktopActResult { address, info })
+        Ok(DesktopActResult {
+            address,
+            info,
+            capture: None,
+            info_fresh: None,
+        })
     }
 }
 

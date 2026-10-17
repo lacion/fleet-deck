@@ -42,6 +42,7 @@ pub(super) fn name(action: &DesktopAction) -> &'static str {
         DesktopAction::Notify { .. } => "notify",
         DesktopAction::BrowserOpen { .. } => "browser_open",
         DesktopAction::WindowClose { .. } => "window_close",
+        DesktopAction::ScreenCapture { .. } => "screen_capture",
     }
 }
 
@@ -175,6 +176,11 @@ impl Cx<'_> {
                 self.events.wait_gone(address, CLOSE_WAIT).await;
                 Ok(None)
             }
+            // R13 P5a task A: a stub until the capture task (D2); no program runs.
+            DesktopAction::ScreenCapture { .. } => Err(Fail::new(
+                code::UNSUPPORTED,
+                "This station cannot take screenshots yet.",
+            )),
         }
     }
 

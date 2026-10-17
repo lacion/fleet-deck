@@ -17,4 +17,9 @@ utc_offset_minutes?: number | null,
 /**
  * Unix ms at which the station sampled [`Self::utc_offset_minutes`].
  */
-offset_sampled_at?: number | null, };
+offset_sampled_at?: number | null, 
+/**
+ * The P5a features of this station that the deck and the link support.
+ * The station sends `[]`; the deck fills it (task E).
+ */
+features: Array<string>, };

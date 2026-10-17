@@ -464,7 +464,7 @@ describe('the Desktop panel', () => {
     dnd: true,
     idle_inhibited: null,
     walls: [{ display_id: 'D1', monitor: 'DP-1', address: '0xabc' }],
-    allowed: { desktop: true, capture: false, input: false },
+    allowed: { desktop: true, capture: false, capture_monitors: [], input: false },
     tools: {
       wtype: true,
       pointer: false,
@@ -473,6 +473,7 @@ describe('the Desktop panel', () => {
       chromium: true,
       notify_send: true,
     },
+    features: [],
   };
   const env = (acts: Partial<SettingsEnv> = {}) =>
     ({

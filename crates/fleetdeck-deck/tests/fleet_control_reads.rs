@@ -365,6 +365,7 @@ fn artifact_station(
             sha256: String::new(),
             files: files.iter().map(|(p, _)| (*p).to_owned()).collect(),
             created_at: 1,
+            capture: None,
         };
         if method == "artifacts.get" {
             let detail = ArtifactDetail {

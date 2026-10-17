@@ -367,3 +367,23 @@ fn the_desktop_shell_rows_need_the_feature_the_role_and_the_scope() {
         code::FORBIDDEN
     );
 }
+
+/// R13 P5a task A: the two deck-to-station `admin` rows of the screenshot
+/// result lookup and artifact deletion.
+#[test]
+fn the_p5a_rows_are_admin_deck_to_station_and_never_mutating() {
+    for (name, wanted) in [
+        ("desktop.capture_status", feature::DESKTOP_CAPTURE),
+        ("artifacts.delete", feature::ARTIFACTS_DELETE),
+    ] {
+        let spec = method(name).expect(name);
+        assert_eq!(spec.callers, Callers::DeckToStation, "{name}");
+        assert_eq!(spec.scope, Scope::Admin, "{name}");
+        assert_eq!(spec.feature, Some(wanted), "{name}");
+        assert!(!spec.mutating, "{name}");
+        assert!(feature::ALL.contains(&wanted), "{name}");
+        assert!(!feature::REQUIRED.contains(&wanted), "{name}");
+    }
+    assert_eq!(feature::DESKTOP_CAPTURE, "desktop_capture.v1");
+    assert_eq!(feature::ARTIFACTS_DELETE, "artifacts_delete.v1");
+}

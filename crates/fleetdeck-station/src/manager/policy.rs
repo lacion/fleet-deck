@@ -78,6 +78,10 @@ pub struct Policy {
     allow_fleet_control: bool,
     /// `allow_desktop` of `station.toml` (R13 §6.4).
     allow_desktop: bool,
+    /// `allow_desktop_capture` of `station.toml` (R13 P5a).
+    allow_desktop_capture: bool,
+    /// `capture_monitors` of `station.toml` (R13 P5a); empty means every monitor.
+    capture_monitors: Vec<String>,
     /// `fleet_summary` of `station.toml` (R13 P4): the deck may send the fleet summary.
     fleet_summary: bool,
     /// `max_shells` of `station.toml`.
@@ -150,6 +154,8 @@ impl Policy {
             allow_bypass_permissions: config.allow_bypass_permissions,
             allow_fleet_control: config.allow_fleet_control,
             allow_desktop: config.allow_desktop,
+            allow_desktop_capture: config.allow_desktop_capture,
+            capture_monitors: config.capture_monitors.clone(),
             fleet_summary: config.fleet_summary,
             max_shells: config.max_shells,
             model_help: config.model_help.clone(),
@@ -230,6 +236,8 @@ impl Policy {
             allow_bypass_permissions: false,
             allow_fleet_control: false,
             allow_desktop: false,
+            allow_desktop_capture: false,
+            capture_monitors: Vec::new(),
             fleet_summary: false,
             max_shells: DEFAULT_MAX_SHELLS,
             model_help: ModelHelpConfig::default(),
@@ -372,6 +380,20 @@ impl Policy {
         self.allow_desktop
     }
 
+    /// Whether the owner may take screenshots from the board (R13 P5a). Read
+    /// it live, together with [`Self::allow_desktop`].
+    #[must_use]
+    pub fn allow_desktop_capture(&self) -> bool {
+        self.allow_desktop_capture
+    }
+
+    /// The monitors that a screenshot may capture; empty means every monitor
+    /// (R13 P5a). Read it live.
+    #[must_use]
+    pub fn capture_monitors(&self) -> &[String] {
+        &self.capture_monitors
+    }
+
     /// Whether the deck may send the fleet summary to this station (R13 P4).
     /// Read it live: at intake and before every push.
     #[must_use]
@@ -390,6 +412,20 @@ impl Policy {
     #[must_use]
     pub fn with_allow_desktop(mut self, on: bool) -> Self {
         self.allow_desktop = on;
+        self
+    }
+
+    /// The same policy with desktop screenshots on or off (R13 P5a).
+    #[must_use]
+    pub fn with_allow_desktop_capture(mut self, on: bool) -> Self {
+        self.allow_desktop_capture = on;
+        self
+    }
+
+    /// The same policy with another screenshot monitor list (R13 P5a).
+    #[must_use]
+    pub fn with_capture_monitors(mut self, list: Vec<String>) -> Self {
+        self.capture_monitors = list;
         self
     }
 

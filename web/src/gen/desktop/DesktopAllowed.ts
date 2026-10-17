@@ -5,9 +5,14 @@
  */
 export type DesktopAllowed = { desktop: boolean, 
 /**
- * Always `false` until the capture part.
+ * The live `allow_desktop` and `allow_desktop_capture` (R13 P5a).
  */
 capture: boolean, 
+/**
+ * The live `capture_monitors` of the station; empty means every monitor
+ * (R13 P5a).
+ */
+capture_monitors: Array<string>, 
 /**
  * Always `false` until the input part.
  */

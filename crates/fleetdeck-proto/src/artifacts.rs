@@ -20,6 +20,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::capture::CaptureProvenance;
 use crate::ids::SessionId;
 
 /// The longest title in characters; the station cuts a longer one.
@@ -155,6 +156,10 @@ pub struct ArtifactVersion {
     /// Unix ms.
     #[ts(type = "number")]
     pub created_at: i64,
+    /// The screenshot provenance (R13 P5a); never taken from publish params.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub capture: Option<CaptureProvenance>,
 }
 
 /// `artifacts.publish` params.
@@ -185,6 +190,30 @@ pub struct ArtifactPublished {
     pub version: ArtifactVersion,
     /// False when the content equals the latest version: no new version.
     pub created: bool,
+}
+
+/// `artifacts.delete` params (R13 P5a).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "artifacts/")]
+pub struct ArtifactDeleteParams {
+    pub artifact_id: String,
+}
+
+/// The state of a deleted artifact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "artifacts/")]
+pub enum ArtifactDeletedState {
+    Deleted,
+}
+
+/// The answer of `artifacts.delete` (R13 P5a).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "artifacts/")]
+pub struct ArtifactDeleted {
+    pub artifact_id: String,
+    pub state: ArtifactDeletedState,
 }
 
 /// `artifacts.list` params.

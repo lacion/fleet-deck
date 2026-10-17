@@ -169,6 +169,7 @@ impl Rig {
                         sha256: String::new(),
                         files: vec!["page.html".to_owned()],
                         created_at: 1,
+                        capture: None,
                     };
                     Outcome::Ok(json!(ArtifactDetail {
                         artifact: artifact("b1"),

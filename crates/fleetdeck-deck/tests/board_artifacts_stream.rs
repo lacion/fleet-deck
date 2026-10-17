@@ -81,6 +81,7 @@ fn serve(mut station: LiveLink) -> Fake {
                     sha256: String::new(),
                     files: files.iter().map(|(p, _)| (*p).to_owned()).collect(),
                     created_at: 1,
+                    capture: None,
                 };
                 Outcome::Ok(json!(ArtifactDetail {
                     artifact: artifact(&id),

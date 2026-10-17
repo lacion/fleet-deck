@@ -124,6 +124,22 @@ pub fn station_fields() -> Vec<FieldMeta> {
         )
         .danger(),
         field(
+            "allow_desktop_capture",
+            "Desktop screenshots",
+            K::Bool,
+            Live,
+            "Lets the owner take a screenshot of this machine's monitors from the board. Each screenshot is kept as an artifact. Off stops new screenshots at once.",
+        )
+        .danger(),
+        field(
+            "capture_monitors",
+            "Screenshot monitors",
+            K::Texts,
+            Live,
+            "The monitors that a screenshot may capture, for example DP-1. Leave it empty to allow every monitor.",
+        )
+        .danger(),
+        field(
             "fleet_summary",
             "Fleet summary for the desktop shell",
             K::Bool,

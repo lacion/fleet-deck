@@ -696,6 +696,36 @@ fn allow_desktop_parses() {
 }
 
 #[test]
+fn desktop_capture_keys_parse_and_default_to_off_and_empty() {
+    let c = StationConfig::parse("", &env()).unwrap();
+    assert!(!c.allow_desktop_capture);
+    assert!(c.capture_monitors.is_empty());
+    let c = StationConfig::parse(
+        "allow_desktop_capture = true\ncapture_monitors = [\"DP-1\", \"HDMI-A-1\"]\n",
+        &env(),
+    )
+    .unwrap();
+    assert!(c.allow_desktop_capture);
+    assert_eq!(c.capture_monitors, ["DP-1", "HDMI-A-1"]);
+    assert!(StationConfig::parse("allow_desktop_capture = \"yes\"\n", &env()).is_err());
+    assert!(StationConfig::parse("capture_monitors = \"DP-1\"\n", &env()).is_err());
+}
+
+#[test]
+fn capture_monitors_refuses_a_bad_list() {
+    let many: Vec<String> = (0..17).map(|i| format!("\"DP-{i}\"")).collect();
+    let err = |list: &str| {
+        let text = format!("capture_monitors = [{list}]\n");
+        StationConfig::parse(&text, &env()).unwrap_err().to_string()
+    };
+    assert!(err(&many.join(",")).contains("give at most 16 monitors"));
+    let bad = err("\"DP 1\"");
+    assert!(bad.contains("capture_monitors[0]") && bad.contains("use 1-64 letters, digits"));
+    let twice = err("\"DP-1\", \"DP-1\"");
+    assert!(twice.contains("capture_monitors[1]") && twice.contains("Each monitor at most once."));
+}
+
+#[test]
 fn fleet_summary_parses_and_defaults_to_off() {
     assert!(!StationConfig::parse("", &env()).unwrap().fleet_summary);
     let c = StationConfig::parse("fleet_summary = true\n", &env()).unwrap();

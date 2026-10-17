@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::capture::CaptureResult;
 use crate::ids::SessionId;
 
 /// The desktop that the station found.
@@ -49,8 +50,12 @@ pub struct WallWindow {
 #[ts(export_to = "desktop/")]
 pub struct DesktopAllowed {
     pub desktop: bool,
-    /// Always `false` until the capture part.
+    /// The live `allow_desktop` and `allow_desktop_capture` (R13 P5a).
     pub capture: bool,
+    /// The live `capture_monitors` of the station; empty means every monitor
+    /// (R13 P5a).
+    #[serde(default)]
+    pub capture_monitors: Vec<String>,
     /// Always `false` until the input part.
     pub input: bool,
 }
@@ -91,6 +96,10 @@ pub struct DesktopInfo {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub offset_sampled_at: Option<i64>,
+    /// The P5a features of this station that the deck and the link support.
+    /// The station sends `[]`; the deck fills it (task E).
+    #[serde(default)]
+    pub features: Vec<String>,
 }
 
 /// The params of `desktop.info` (R13 §6D item 4). An empty object is
@@ -162,6 +171,10 @@ pub enum DesktopAction {
     WindowClose {
         address: String,
     },
+    /// R13 P5a: one PNG of one monitor (needs `desktop_capture.v1`).
+    ScreenCapture {
+        monitor: String,
+    },
 }
 
 /// The action of the owner's HTTP relay (R13 §6D item 6): the closed list of
@@ -210,6 +223,10 @@ pub enum DesktopActBody {
     WindowClose {
         address: String,
     },
+    /// R13 P5a: one PNG of one monitor (needs `desktop_capture.v1`).
+    ScreenCapture {
+        monitor: String,
+    },
 }
 
 /// The response to `desktop.act`.
@@ -220,6 +237,14 @@ pub struct DesktopActResult {
     pub address: Option<String>,
     /// The fresh info after the action.
     pub info: DesktopInfo,
+    /// The screenshot result; required for a `screen_capture` success.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub capture: Option<CaptureResult>,
+    /// Absent means true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub info_fresh: Option<bool>,
 }
 
 #[cfg(test)]
@@ -238,5 +263,40 @@ mod tests {
                 .is_err()
         );
         assert!(serde_json::from_str::<DesktopAction>(r#"{"action":"exec","cmd":"x"}"#).is_err());
+    }
+
+    #[test]
+    fn screen_capture_parses_into_both_enums_and_serializes_back() {
+        let json = r#"{"action":"screen_capture","monitor":"DP-1"}"#;
+        let a: DesktopAction = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            a,
+            DesktopAction::ScreenCapture {
+                monitor: "DP-1".into()
+            }
+        );
+        assert_eq!(serde_json::to_string(&a).unwrap(), json);
+        let b: DesktopActBody = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            b,
+            DesktopActBody::ScreenCapture {
+                monitor: "DP-1".into()
+            }
+        );
+        assert_eq!(serde_json::to_string(&b).unwrap(), json);
+    }
+
+    #[test]
+    fn an_old_info_without_p5a_fields_parses() {
+        let json = r#"{
+            "kind":"omarchy","omarchy_version":null,"monitors":[],"locked":null,
+            "dnd":null,"idle_inhibited":null,"walls":[],
+            "allowed":{"desktop":true,"capture":false,"input":false},
+            "tools":{"wtype":false,"pointer":false,"recorder":false,"grim":true,
+                     "chromium":false,"notify_send":false}
+        }"#;
+        let info: DesktopInfo = serde_json::from_str(json).unwrap();
+        assert!(info.features.is_empty());
+        assert!(info.allowed.capture_monitors.is_empty());
     }
 }

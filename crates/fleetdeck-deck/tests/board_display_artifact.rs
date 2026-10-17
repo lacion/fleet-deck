@@ -148,6 +148,7 @@ impl Rig {
                     sha256: String::new(),
                     files: files.iter().map(|(p, _)| (*p).to_owned()).collect(),
                     created_at: 1,
+                    capture: None,
                 }],
             )
             .await
@@ -333,6 +334,7 @@ fn serve(mut station: LiveLink, specs: HashMap<String, Spec>, hook: Option<Hook>
                     sha256: String::new(),
                     files: spec.files.iter().map(|(p, _)| (*p).to_owned()).collect(),
                     created_at: 1,
+                    capture: None,
                 };
                 Outcome::Ok(json!(ArtifactDetail {
                     artifact: artifact(&id, Some("s1")),

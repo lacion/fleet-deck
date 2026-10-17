@@ -14,10 +14,10 @@ use ts_rs::{Config, TS};
 
 use crate::accounts as acc;
 use crate::artifacts::{
-    Artifact, ArtifactDetail, ArtifactFile, ArtifactFileQuery, ArtifactGetQuery, ArtifactKind,
-    ArtifactList, ArtifactListQuery, ArtifactPublish, ArtifactPublishRequest, ArtifactPublished,
-    ArtifactVersion, DeckArtifact, DeckArtifactDetail, ShareLink, ShareRequest, ShareView,
-    ViewLink, ViewRequest,
+    Artifact, ArtifactDeleteParams, ArtifactDeleted, ArtifactDeletedState, ArtifactDetail,
+    ArtifactFile, ArtifactFileQuery, ArtifactGetQuery, ArtifactKind, ArtifactList,
+    ArtifactListQuery, ArtifactPublish, ArtifactPublishRequest, ArtifactPublished, ArtifactVersion,
+    DeckArtifact, DeckArtifactDetail, ShareLink, ShareRequest, ShareView, ViewLink, ViewRequest,
 };
 use crate::assist::{AssistAnswer, AssistKind, AssistRequest, AssistRoute, AssistSession};
 use crate::automation::{Schedule, ScheduleInput, ScheduleRun, ScheduleRunState, ScheduleView};
@@ -29,6 +29,9 @@ use crate::board::{
 };
 use crate::branches::{BranchDiffQuery, BranchesQuery, RepoBranch, RepoBranches};
 use crate::capability::{Capabilities, Operation, Unsupported};
+use crate::capture::{
+    CaptureCaller, CaptureKind, CaptureProvenance, CaptureResult, CaptureStatus, CaptureStatusQuery,
+};
 use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
 use crate::conflicts::FileConflict;
 use crate::desktop as dk;
@@ -242,6 +245,15 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         ArtifactVersion::export_all(&cfg),
         ArtifactPublish::export_all(&cfg),
         ArtifactPublished::export_all(&cfg),
+        ArtifactDeleteParams::export_all(&cfg),
+        ArtifactDeletedState::export_all(&cfg),
+        ArtifactDeleted::export_all(&cfg),
+        CaptureResult::export_all(&cfg),
+        CaptureStatus::export_all(&cfg),
+        CaptureStatusQuery::export_all(&cfg),
+        CaptureKind::export_all(&cfg),
+        CaptureCaller::export_all(&cfg),
+        CaptureProvenance::export_all(&cfg),
         ArtifactListQuery::export_all(&cfg),
         ArtifactList::export_all(&cfg),
         ArtifactGetQuery::export_all(&cfg),

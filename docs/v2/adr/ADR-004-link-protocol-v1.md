@@ -132,6 +132,8 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `fleet_git.move.v1` | `session.move_out`, `session.move_export`, `session.move_prepare`, `session.move_in`, `session.move_finish`, `session.move_release`, `session.move_abort`, `session.move_discard`, `session.move_status`, `session.move_fail`, `session.move_undo`, the stream purposes `move-export:` and `move-import:`, and the events `session.moved`, `session.move_in`, `session.move_undone` (Fleet Git phase 4, ADR-009; move a session to another station) |
 | `desktop_authority.v1` | `desktop.act` with the `authority` param, and `Hello.desktop_epoch` (R13 §5E to §5G, DL-230; the deck authorizes each desktop action and the station checks it before the first side effect) |
 | `display_changes.v1` | `files.display_changes` (R13 §5D item 13, DL-222; protected change statistics and patches for a wall display) |
+| `desktop_capture.v1` | `desktop.capture_status`, and `desktop.act` with the `screen_capture` action (R13 P5a, `omarchy-p5a.md` §2; the owner screenshot of a station monitor and its durable result lookup) |
+| `artifacts_delete.v1` | `artifacts.delete` (R13 P5a, `omarchy-p5a.md` §3; station artifact deletion) |
 | `desktop_shell.v1` | `fleet.summary`, `display.directive`, `station.palette` (R13 P4, `omarchy-p4.md` §3.1; the fleet summary the deck sends to a station, the wall hotkeys and the Omarchy theme palette of the desktop shell) |
 | `pair_request.v1` | The pair-channel frames `pair_request`, `pair_pending`, `pair_approved` and `pair_resume` (DL-178, §10): a station asks a deck to pair without an invitation and the owner approves on the board |
 
@@ -449,6 +451,8 @@ close             { reason, detail }
 | `session.release_shell` | deck → station | admin | `shell_command.v1` | yes |
 | `desktop.info` | deck → station | read | `desktop.v1` | no |
 | `desktop.act` | deck → station | drive | `desktop_authority.v1` | no |
+| `desktop.capture_status` | deck → station | admin | `desktop_capture.v1` | no |
+| `artifacts.delete` | deck → station | admin | `artifacts_delete.v1` | no |
 | `files.display_changes` | deck → station | read | `display_changes.v1` | no |
 | `fleet.summary` | deck → station | read | `desktop_shell.v1` | no |
 | `approval.answer` | deck → station | approve | — | yes |
