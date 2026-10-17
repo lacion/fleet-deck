@@ -14,7 +14,8 @@ export const PUSHING_AFTER_MS = 60_000;
 export function failingTitle(push: PushInfo, now: number): string {
   const next =
     push.next_attempt_at === undefined ? '' : ` Next try ${untilText(push.next_attempt_at, now)}.`;
-  return `Push failed ${push.attempts} times: ${push.text ?? ''}.${next}`;
+  const times = push.attempts === 1 ? 'once' : `${push.attempts} times`;
+  return `Push failed ${times}: ${push.text ?? ''}.${next}`;
 }
 
 /**
