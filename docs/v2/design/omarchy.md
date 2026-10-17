@@ -1,6 +1,6 @@
 # Fleet Deck on Omarchy: the wall, desktop control and the desktop MCP (R13)
 
-- **Status:** §4.5, §5 and §6.1-§6.4/§6.6 **accepted**, revision 5 (2026-10-16, DL-201: design review round 4 PASS; its two MAJOR findings fixed in §5C items 4 and 5); revision 6: §5D (P2b) and §6D (P3b) drafted from the open questions, owner decisions DL-221, DL-222, DL-223; DESIGN REVIEW pending; revision 7: §5E answers the DESIGN REVIEW round 1 of revision 6; revision 8: §5F answers the DESIGN RE-REVIEW round 2; revision 9: §5G proposes answers to the round 3 findings; awaiting the owner (4th review round); other parts still draft. §5C answers the round 3 review (`/tmp/adv-r13-p23-r3-report.md`, owner decision: apply the fixes and one more round) and overrides §5B where they differ; §5B answers the round 2 review (`/tmp/adv-r13-p23-r2-report.md`) and overrides §5A where they differ; §5A answers the DESIGN REVIEW round 1 of §4.5, §5 and §6 (`/tmp/adv-r13-p2-design-report.md`) and overrides them where they differ. Not frozen. Each high-risk part needs an adversary DESIGN REVIEW before its code (§13).
+- **Status:** §4.5, §5 and §6.1-§6.4/§6.6 **accepted**, revision 5 (2026-10-16, DL-201: design review round 4 PASS; its two MAJOR findings fixed in §5C items 4 and 5); revision 6: §5D (P2b) and §6D (P3b) drafted from the open questions, owner decisions DL-221, DL-222, DL-223; DESIGN REVIEW pending; revision 7: §5E answers the DESIGN REVIEW round 1 of revision 6; revision 8: §5F answers the DESIGN RE-REVIEW round 2; revision 9: §5G answers the round 3 findings; **§5D/§6D with §5E-§5G accepted by the owner for the P2b/P3b build (DL-230 item 6, 2026-10-18)**; other parts still draft (P5/P8: revision with DL-230 items 1-4 pending). §5C answers the round 3 review (`/tmp/adv-r13-p23-r3-report.md`, owner decision: apply the fixes and one more round) and overrides §5B where they differ; §5B answers the round 2 review (`/tmp/adv-r13-p23-r2-report.md`) and overrides §5A where they differ; §5A answers the DESIGN REVIEW round 1 of §4.5, §5 and §6 (`/tmp/adv-r13-p2-design-report.md`) and overrides them where they differ. Not frozen. Each high-risk part needs an adversary DESIGN REVIEW before its code (§13).
 - **Owner request (2026-10-16):** "i have a server thats connected to a ultrawide screen, i use this server to run multiple ai agents as it has 64 cores and 128gb of ram … it would be awesome if i could control omarchy and the screen trough the fleet and maybe also have an mcp … imagine using the screen as a command control center and we could display and control everhting there." Then: "lets create a document for this work so we can implement everything".
 - **Owner answers (DL-198):**
 
@@ -614,7 +614,7 @@ These rules answer the report `adv-omarchy-r7-design-report.md` (VERDICT: FAIL, 
    - The P3b wake task owns the logic of item 4.
 6. **Status line.** The status line at the top of this document names revision 8.
 
-## 5G. Proposed answers to the DESIGN RE-REVIEW round 3 (revision 9, awaiting the owner)
+## 5G. Answers to the DESIGN RE-REVIEW round 3 (revision 9, accepted by the owner, DL-230)
 
 Round 3 of 3 failed with 2 open blockers (report `adv-omarchy-r8-design-report.md`). These answers are proposed. They become binding only when the owner approves a 4th review round and it passes. P2b and P3b are not built until then.
 
