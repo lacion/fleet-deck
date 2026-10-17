@@ -1,13 +1,16 @@
 // FG-1..FG-4 and FG-5, FG-12 (design §17.1, §8.8): the Git sync section of the project form. It has
 // its own Save button. A changed remote URL goes first to `PUT /api/projects/{id}/remote` (a rebind
-// asks the owner), then the settings go to `PUT /api/projects/{id}/git`. The settings of the land
-// and the radar (later phases) are sent unchanged.
+// asks the owner), then the settings go to `PUT /api/projects/{id}/git`. FG-7, FG-8: the form also
+// shows `land`, `check_cmd` and `radar_home`.
 import { useEffect, useState } from 'react';
+import { stationName } from '../board/fleet';
 import type {
   CleanupMode,
   GitSettings,
   GitSettingsPut,
+  LandMode,
   Project,
+  ProjectHome,
   PushMode,
   StationView,
 } from '../gen';
@@ -27,7 +30,10 @@ export type GitField =
   | 'cleanup_after_hours'
   | 'worktree_include'
   | 'worktree_env'
+  | 'land'
+  | 'check_cmd'
   | 'artifact_share'
+  | 'radar_home'
   | 'remote_url';
 
 export type GitProblems = Partial<Record<GitField, string>>;
@@ -42,9 +48,17 @@ export type GitDraft = {
   afterHours: string;
   include: string;
   env: string;
+  /** `''` = the default (null); else `pr`, `merge` or a value of a newer deck. */
+  land: string;
+  checkCmd: string;
   artifactShare: string;
+  /** `''` = the default (null); else a station id. */
+  radarHome: string;
   remoteUrl: string;
 };
+
+/** The longest check command that the board accepts. */
+export const CHECK_CMD_MAX = 4096;
 
 /** The settings and the revision that the board loaded; the base of a save. */
 export type GitBase = { readonly settings: GitSettings; readonly revision: number };
@@ -59,7 +73,10 @@ const FIELDS: readonly GitField[] = [
   'cleanup_after_hours',
   'worktree_include',
   'worktree_env',
+  'land',
+  'check_cmd',
   'artifact_share',
+  'radar_home',
   'remote_url',
 ];
 
@@ -75,7 +92,10 @@ export const gitDraftOf = (p: Pick<Project, 'git' | 'remote_url'>): GitDraft => 
   env: Object.entries(p.git.worktree_env)
     .map(([name, value]) => `${name}=${value}`)
     .join('\n'),
+  land: p.git.land ?? '',
+  checkCmd: p.git.check_cmd ?? '',
   artifactShare: p.git.artifact_share ?? '',
+  radarHome: p.git.radar_home ?? '',
   remoteUrl: p.remote_url ?? '',
 });
 
@@ -85,6 +105,25 @@ const linesOf = (text: string): string[] =>
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => l !== '');
+
+/** The homes of a project in position order. */
+const homesByPosition = (homes: readonly ProjectHome[]): ProjectHome[] =>
+  [...homes].sort((a, b) => a.position - b.position);
+
+/**
+ * The home of the default radar station (design §10.1): the first home, by position, on a station
+ * that reports the label `always_on`, else the first home. `null` without homes.
+ */
+export function defaultRadarHome(
+  homes: readonly ProjectHome[],
+  stations: readonly StationView[],
+): ProjectHome | null {
+  const ordered = homesByPosition(homes);
+  const always = ordered.find((h) =>
+    stations.find((s) => s.station_id === h.station_id)?.info?.traits?.labels.includes('always_on'),
+  );
+  return always ?? ordered[0] ?? null;
+}
 
 /** The new remote URL of a draft, or `null` when it is empty or equals the loaded one. */
 export function remoteChange(draft: GitDraft, loadedRemote: string | null): string | null {
@@ -136,6 +175,8 @@ export function buildGitPut(
     }
     env[line.slice(0, at).trim()] = line.slice(at + 1).trim();
   }
+  const check = draft.checkCmd.trim();
+  if (Array.from(check).length > CHECK_CMD_MAX) problems.check_cmd = 'At most 4096 characters.';
   if (Object.keys(problems).length > 0) return { problems };
   const settings: GitSettings = {
     ...base.settings,
@@ -148,7 +189,10 @@ export function buildGitPut(
     cleanup_after_hours: hours,
     worktree_include: linesOf(draft.include),
     worktree_env: env,
+    land: draft.land === '' ? null : (draft.land as LandMode),
+    check_cmd: check === '' ? null : check,
     artifact_share: draft.artifactShare.trim() === '' ? null : draft.artifactShare.trim(),
+    radar_home: draft.radarHome === '' ? null : draft.radarHome,
   };
   return { put: { settings, revision: base.revision } };
 }
@@ -275,6 +319,8 @@ export function ProjectGitSettings({
   };
   const other = foreignMachine(draft.artifactShare, stations);
   const off = draft.cleanup === 'off';
+  const homes = homesByPosition(project.homes);
+  const radarDefault = defaultRadarHome(project.homes, stations);
   return (
     <>
       <form
@@ -416,6 +462,28 @@ export function ProjectGitSettings({
                 onChange={(e) => set({ env: e.target.value }, 'worktree_env')}
               />
             </Field>
+            <Field label="Land as" error={problems.land}>
+              <select value={draft.land} onChange={(e) => set({ land: e.target.value }, 'land')}>
+                <option value="">
+                  {project.forge === null ? 'Merge' : 'Pull request'} (default)
+                </option>
+                <option value="pr">Pull request</option>
+                <option value="merge">Merge</option>
+                {draft.land === 'unknown' ? <option value="unknown">Unknown value</option> : null}
+              </select>
+            </Field>
+            <Field
+              label="Check command before landing (optional)"
+              hint="Runs on the station only when allow_check_cmd = true."
+              span={2}
+              error={problems.check_cmd}
+            >
+              <input
+                value={draft.checkCmd}
+                autoComplete="off"
+                onChange={(e) => set({ checkCmd: e.target.value }, 'check_cmd')}
+              />
+            </Field>
             <Field
               label="Artifact share (optional)"
               hint="A Taildrive share as <machine>/<share>."
@@ -434,6 +502,27 @@ export function ProjectGitSettings({
                 Fleet Deck cannot check shares on {other}, because it does not run a Fleet Deck
                 station.
               </p>
+            )}
+            {radarDefault === null ? null : (
+              <Field
+                label="Radar station"
+                hint="This station checks the branches for conflicts every 5 minutes."
+                error={problems.radar_home}
+              >
+                <select
+                  value={draft.radarHome}
+                  onChange={(e) => set({ radarHome: e.target.value }, 'radar_home')}
+                >
+                  <option value="">
+                    {stationName(radarDefault.station_id, stations)} (default)
+                  </option>
+                  {homes.map((h) => (
+                    <option key={h.station_id} value={h.station_id}>
+                      {stationName(h.station_id, stations)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
             )}
           </FormGrid>
           <FormActions>
