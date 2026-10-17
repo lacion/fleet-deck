@@ -24,6 +24,7 @@
 //! DL-053).
 
 mod coordinator_reads;
+pub mod fleet_git_artifacts;
 pub mod fleet_git_sync;
 mod outbox;
 mod requests;

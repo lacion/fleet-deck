@@ -38,7 +38,8 @@ use serde_json::{Value, json};
 use super::Board;
 use super::command_routes::RECEIPT_WAIT;
 use super::guard::{ApiError, owner_only};
-use super::projects_routes::{READ_WAIT, ask, bad_body, forge_of, load, station_of, station_of_id};
+use super::project_targets::{Target, target_for, targets};
+use super::projects_routes::{READ_WAIT, ask, bad_body, forge_of, load, station_of};
 use crate::link::CommandKind;
 use crate::store::{AuditResult, DeckError, NewAudit, Principal};
 
@@ -513,24 +514,18 @@ pub async fn sessions(
     let req = body_of(body)?;
     req.check().map_err(|why| bad("invalid_params", why))?;
     let project = load(&board, &id).await?;
-    // The home of the batch (FG-5, decision B8): absent, the position-0 home;
-    // a station id, the home on that station. Every call of the batch goes
-    // to the station of this home (decision B16).
-    let home = match req.home.as_deref() {
-        Some("auto") => {
-            return Err(bad("invalid_body", "Auto placement is not available yet."));
-        }
-        Some(station) => project
-            .homes
-            .iter()
-            .find(|h| h.station_id.as_str() == station),
-        None => project.homes.iter().find(|h| h.position == 0),
-    }
-    .ok_or_else(|| bad("not_a_home", "This folder is not a home of the project."))?;
-    let (rec, control) = station_of_id(&board, home.station_id.as_str()).await?;
-    let mut commands: Vec<(String, SessionCommand)> = Vec::new();
+    // The targets of the batch (FG-5, decisions B8, B16; FG-6, D4): the chosen
+    // home, or with `home = "auto"` one placed station for each start. The
+    // reads and the review fetch go to the first target.
+    let targets = targets(&board, &project, &req).await?;
+    let Target {
+        rec,
+        control,
+        path: first_path,
+    } = target_for(&targets, 0).clone();
+    let mut commands: Vec<(usize, String, SessionCommand)> = Vec::new();
     let mut failed = Vec::new();
-    let Some(cwd) = home.path.clone() else {
+    let Some(cwd) = first_path else {
         // The home still clones, or failed: every start fails with the
         // refusal of the home.
         let keys = match req.review_of_pr {
@@ -568,7 +563,7 @@ pub async fn sessions(
                 };
                 match ask::<PrHead>(&control, "prs.fetch_head", json!(fetch), READ_WAIT).await {
                     Ok(head) => {
-                        commands.push((key, review_start(&project, &req, &detail, &head)));
+                        commands.push((0, key, review_start(&project, &req, &detail, &head)));
                     }
                     Err(e) => failed.push(StartFailure {
                         key,
@@ -586,7 +581,7 @@ pub async fn sessions(
             Err(e) => failed.push(failure(&key, &e)),
         }
     } else {
-        for key in &req.issues {
+        for (at, key) in req.issues.iter().enumerate() {
             let get = binding_of_key(&project, key).map(|binding| IssueGet {
                 binding,
                 key: key.clone(),
@@ -602,8 +597,13 @@ pub async fn sessions(
             };
             match detail {
                 Ok(detail) => {
-                    for command in issue_starts(&project, &req, &detail) {
-                        commands.push((key.clone(), command));
+                    // The index in the request order, failed reads included.
+                    let first = at * req.count_per_issue as usize;
+                    for (nth, command) in issue_starts(&project, &req, &detail)
+                        .into_iter()
+                        .enumerate()
+                    {
+                        commands.push((first + nth, key.clone(), command));
                     }
                 }
                 Err(e) => failed.push(failure(key, &e)),
@@ -617,7 +617,16 @@ pub async fn sessions(
     // name) fails every start with the same 409; a sync-off project with a
     // ready home starts as before (O1).
     let mut attached = Vec::new();
-    for (n, (key, mut command)) in commands.into_iter().enumerate() {
+    for (n, (at, key, mut command)) in commands.into_iter().enumerate() {
+        // The station of this start (the same for every start without `auto`).
+        let target = target_for(&targets, at);
+        let Some(cwd) = target.path.clone() else {
+            failed.push(failure(
+                &key,
+                &bad("not_a_home", "This folder is not a home of the project."),
+            ));
+            continue;
+        };
         if let SessionCommand::Start {
             spec, fleet_git, ..
         } = &mut command
@@ -625,7 +634,7 @@ pub async fn sessions(
             spec.cwd.clone_from(&cwd);
             match super::project_git_routes::attach_start(
                 &board,
-                &rec,
+                &target.rec,
                 &cwd,
                 StartKind::Worktree,
                 Some(project.project_id.clone()),
@@ -639,16 +648,16 @@ pub async fn sessions(
                 }
             }
         }
-        attached.push((n, key, command));
+        attached.push((n, at, key, command));
     }
     // Submit every start first, then wait for the receipts.
     let mut submitted = Vec::new();
-    for (n, key, command) in attached {
+    for (n, at, key, command) in attached {
         let command_id = CommandId::from(format!("{}-{}", req.batch_id, n + 1));
         match board
             .link
             .submit_as(
-                rec.station_id.clone(),
+                target_for(&targets, at).rec.station_id.clone(),
                 CommandOrigin::Board,
                 CommandKind::Session { command },
                 command_id,

@@ -7,6 +7,7 @@ use ts_rs::TS;
 
 use crate::command::DeckCommandState;
 use crate::event::ProviderKind;
+use crate::fleet_git::Prefer;
 use crate::ids::{CommandId, SessionId, StationId};
 use crate::untrusted::fence;
 
@@ -32,6 +33,15 @@ pub struct AssignRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub provider: Option<ProviderKind>,
+    /// Labels, `os:<os>` or `arch:<arch>` that a station for a new session
+    /// must match (FG-6).
+    #[serde(default)]
+    #[ts(optional, as = "Option<Vec<String>>")]
+    pub requires: Vec<String>,
+    /// Placement preferences for a new session (FG-6).
+    #[serde(default)]
+    #[ts(optional, as = "Option<Vec<Prefer>>")]
+    pub prefer: Vec<Prefer>,
 }
 
 /// A station that can start a new session for an unrouted task.

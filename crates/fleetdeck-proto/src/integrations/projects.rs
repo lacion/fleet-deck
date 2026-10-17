@@ -322,34 +322,42 @@ impl StartSessions {
         {
             return Err("Home is a station id or auto.");
         }
-        if self.requires.len() > 8 {
-            return Err("At most 8 required labels.");
-        }
-        // `^(os:|arch:)?[a-z0-9_-]{1,32}$` (design §9.2 item 2).
-        let label_ok = |l: &str| {
-            let name = l
-                .strip_prefix("os:")
-                .or_else(|| l.strip_prefix("arch:"))
-                .unwrap_or(l);
-            (1..=32).contains(&name.len())
-                && name.bytes().all(|b| {
-                    b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-')
-                })
-        };
-        if !self.requires.iter().all(|l| label_ok(l)) {
-            return Err("A station label is 1 to 32 characters: a-z, 0-9, _ or -.");
-        }
-        if self.prefer.len() > 3
-            || self
-                .prefer
-                .iter()
-                .enumerate()
-                .any(|(i, p)| self.prefer[..i].contains(p))
-        {
-            return Err("Each preference at most once.");
-        }
-        Ok(())
+        check_placement(&self.requires, &self.prefer)
     }
+}
+
+/// The rules of `requires` and `prefer` of a placement (FG-6, design §9.2):
+/// used by `StartSessions::check`, `POST /api/placement` and `assign`.
+///
+/// # Errors
+/// The reason text for a malformed field.
+pub fn check_placement(requires: &[String], prefer: &[Prefer]) -> Result<(), &'static str> {
+    if requires.len() > 8 {
+        return Err("At most 8 required labels.");
+    }
+    // `^(os:|arch:)?[a-z0-9_-]{1,32}$` (design §9.2 item 2).
+    let label_ok = |l: &str| {
+        let name = l
+            .strip_prefix("os:")
+            .or_else(|| l.strip_prefix("arch:"))
+            .unwrap_or(l);
+        (1..=32).contains(&name.len())
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-'))
+    };
+    if !requires.iter().all(|l| label_ok(l)) {
+        return Err("A station label is 1 to 32 characters: a-z, 0-9, _ or -.");
+    }
+    if prefer.len() > 3
+        || prefer
+            .iter()
+            .enumerate()
+            .any(|(i, p)| prefer[..i].contains(p))
+    {
+        return Err("Each preference at most once.");
+    }
+    Ok(())
 }
 
 impl PrCreateBody {

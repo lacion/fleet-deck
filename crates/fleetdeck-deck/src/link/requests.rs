@@ -41,6 +41,9 @@ pub(crate) async fn answer(
         "coordinator.call" => coordinator_call(ctx, station, &req).await,
         "coordinator.query" => coordinator_query(ctx, station, &req).await,
         "coordinator.authority_check" => authority_check(ctx, station, &req).await,
+        "fleet_git.artifact_authorize" => {
+            super::fleet_git_artifacts::artifact_authorize(ctx, station, &req).await
+        }
         method => Outcome::Err(WireError::new(
             NOT_IMPLEMENTED,
             format!("the deck does not serve `{method}` in this build"),
