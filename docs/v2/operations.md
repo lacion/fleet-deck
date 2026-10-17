@@ -370,3 +370,43 @@ Run `fleetdeck doctor` first. It changes nothing. It prints one line for each ch
 - The live smoke tests against the real `claude` and `codex` CLIs: `make smoke-live` (opt-in, network, a small number of tokens; [LIVE-SMOKE.md](./LIVE-SMOKE.md)).
 - A real GitHub Actions run of `.github/workflows/v2.yml` (it runs `make check`; this repository never pushes).
 - The coordinator live smoke of ADR-006 §8.5 for Codex: until it records a verified context handoff, a Codex coordinator start fails with `handoff_unverified` (§7.2). Run it again for each new Claude version.
+
+## 13. Provisioning media custody (P8)
+
+This procedure belongs to the Omarchy provisioning of a new machine (`design/omarchy-p8.md` section 4; `design/omarchy.md` §9A, §9B). It is part of the P8 acceptance. "No Fleet Deck secret" on the medium closes the invitation custody. It does not close the LUKS and Tailscale custody. This section does.
+
+### 13.1 Supported media
+
+- Use an owner-controlled LUKS-encrypted POSIX removable filesystem, or a read-only `cidata` ISO whose host image is held on encrypted storage in a 0700 directory as a 0600 file.
+- Do not require Unix mode preservation inside an ISO.
+- FAT and exFAT media are not accepted for secret-bearing P8 media.
+
+### 13.2 Private copy
+
+- The installer copies only `fleetdeck/provision.toml` into `<config home>/fleetdeck/provision.toml`, and creates the destination privately as 0600.
+- It does not keep source modes. It does not run source-media scripts.
+- It rejects source symlinks, nonregular files and files above 16 KiB.
+- It publishes the destination atomically. It does not replace a different existing file.
+
+### 13.3 Detach
+
+After the installation, detach or eject the medium. Remove the virtual CD attachment.
+
+### 13.4 Retention and disposal
+
+- Keep a source only in the protected encrypted location, with access limited to the owner.
+- Disposal includes ISO copies, templates, snapshots and backups.
+- File unlinking or a flash overwrite alone is not claimed as secure erasure.
+
+### 13.5 Distinct credentials
+
+Each machine gets a distinct Tailscale enrollment key and a distinct disk-encryption credential. Do not clone an initialized Fleet Deck identity, Tailscale state or bootstrap state.
+
+### 13.6 Recovery after an exposure
+
+The recovery depends on the credential. Do these four steps in order:
+
+1. Revoke the exposed Tailscale auth key.
+2. Inspect and remove unauthorized Tailscale nodes. Revoking the auth key does **not** deauthorize nodes that are already enrolled with it ([Tailscale auth-key documentation](https://tailscale.com/docs/features/access-control/auth-keys)).
+3. Replace the exposed LUKS passphrase or keyslot credential. If an attacker also had a disk or header copy, a credential replacement alone does not protect that copy. Require a disk-key replacement or a reinstall.
+4. If a wrong Fleet Deck fingerprint was approved, remove that station from the deck. Removing the medium or revoking a Tailscale auth key does not revoke the Fleet Deck enrollment.

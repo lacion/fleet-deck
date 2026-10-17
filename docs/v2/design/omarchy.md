@@ -1,6 +1,6 @@
 # Fleet Deck on Omarchy: the wall, desktop control and the desktop MCP (R13)
 
-- **Status:** §4.5, §5 and §6.1-§6.4/§6.6 **accepted**, revision 5 (2026-10-16, DL-201: design review round 4 PASS; its two MAJOR findings fixed in §5C items 4 and 5); revision 6: §5D (P2b) and §6D (P3b) drafted from the open questions, owner decisions DL-221, DL-222, DL-223; DESIGN REVIEW pending; revision 7: §5E answers the DESIGN REVIEW round 1 of revision 6; revision 8: §5F answers the DESIGN RE-REVIEW round 2; revision 9: §5G answers the round 3 findings; **§5D/§6D with §5E-§5G accepted by the owner for the P2b/P3b build (DL-230 item 6, 2026-10-18)**; **P2b/P3b (§5D, §6D with §5E-§5G) are built on v2 (`cccaf3d0..5a01c9ca`, DL-231): PRE-PR round 1 FAIL fixed, round 2 PASS (§5H)**; revision 10: §6.5A (P5 capture) and §9A (P8 provisioning) answer the P5/P8 DESIGN REVIEW round 1 with the owner decisions DL-230 items 1-4, DESIGN REVIEW pending; other parts still draft. §5C answers the round 3 review (`/tmp/adv-r13-p23-r3-report.md`, owner decision: apply the fixes and one more round) and overrides §5B where they differ; §5B answers the round 2 review (`/tmp/adv-r13-p23-r2-report.md`) and overrides §5A where they differ; §5A answers the DESIGN REVIEW round 1 of §4.5, §5 and §6 (`/tmp/adv-r13-p2-design-report.md`) and overrides them where they differ. Not frozen. Each high-risk part needs an adversary DESIGN REVIEW before its code (§13).
+- **Status:** §4.5, §5 and §6.1-§6.4/§6.6 **accepted**, revision 5 (2026-10-16, DL-201: design review round 4 PASS; its two MAJOR findings fixed in §5C items 4 and 5); revision 6: §5D (P2b) and §6D (P3b) drafted from the open questions, owner decisions DL-221, DL-222, DL-223; DESIGN REVIEW pending; revision 7: §5E answers the DESIGN REVIEW round 1 of revision 6; revision 8: §5F answers the DESIGN RE-REVIEW round 2; revision 9: §5G answers the round 3 findings; **§5D/§6D with §5E-§5G accepted by the owner for the P2b/P3b build (DL-230 item 6, 2026-10-18)**; **P2b/P3b (§5D, §6D with §5E-§5G) are built on v2 (`cccaf3d0..5a01c9ca`, DL-231): PRE-PR round 1 FAIL fixed, round 2 PASS (§5H)**; revision 10: §6.5A (P5 capture) and §9A (P8 provisioning) answer the P5/P8 DESIGN REVIEW round 1 with the owner decisions DL-230 items 1-4, DESIGN REVIEW pending; revision 11: P5 split into P5a (owner screenshots, artifact deletion; `omarchy-p5a.md`) and P5b (recordings, later); P8 contracts in `omarchy-p8.md`; DESIGN REVIEW round 3 (last) pending; other parts still draft. §5C answers the round 3 review (`/tmp/adv-r13-p23-r3-report.md`, owner decision: apply the fixes and one more round) and overrides §5B where they differ; §5B answers the round 2 review (`/tmp/adv-r13-p23-r2-report.md`) and overrides §5A where they differ; §5A answers the DESIGN REVIEW round 1 of §4.5, §5 and §6 (`/tmp/adv-r13-p2-design-report.md`) and overrides them where they differ. Not frozen. Each high-risk part needs an adversary DESIGN REVIEW before its code (§13).
 - **Owner request (2026-10-16):** "i have a server thats connected to a ultrawide screen, i use this server to run multiple ai agents as it has 64 cores and 128gb of ram … it would be awesome if i could control omarchy and the screen trough the fleet and maybe also have an mcp … imagine using the screen as a command control center and we could display and control everhting there." Then: "lets create a document for this work so we can implement everything".
 - **Owner answers (DL-198):**
 
@@ -423,6 +423,8 @@ The station refreshes it at most every 10 s, and also after each `desktop.act`. 
 | `capture.record { target, seconds ≤ 300 }` | `gpu-screen-recorder`, with no audio. The result is a video artifact (§6.5) | `allow_desktop_capture` | the artifact id |
 | `input.*` | §7.4 | `allow_desktop_input` | ok |
 
+*Inactive (revision 11): P5a uses only `screen_capture` (monitor, owner); P5b and P6 define their own names in their reviews.* The rows `capture.screenshot` and `capture.record` are historical (see [omarchy-p5a.md](./omarchy-p5a.md)).
+
 **`wall.open` and the display login (rule 5):**
 1. The deck makes a one-time display link for the display and sends the token to the station inside the `desktop.act` request, in memory. This is the credential relay pattern, so the token is never stored or logged.
 2. The station opens a one-shot HTTP listener on `127.0.0.1:<random port>` with a random path. It accepts one request, answers `303 See Other` with `Location: <deck>/#display=<token>`, and then closes. If no request comes in 30 s, it closes anyway.
@@ -484,6 +486,15 @@ These rules replace §6.5 where they differ. They answer the findings A1-A11 of 
 10. **Video on the board (A10).** The board document CSP gets `media-src 'self'`. The artifact raw route answers `Range` requests for a `video` file (`206`, `416`, `Accept-Ranges: bytes`, `Content-Length`; the authorization runs for every request). Above the 64 MiB cache limit the stream path serves ranges from the station in 700 KiB chunks. The viewer uses `<video controls preload="metadata">` with no autoplay. The wall keeps DL-221: a video is "Open this artifact on your own device".
 11. **Negotiation (A11).** New features: `desktop_capture.v1` (a station that can capture) and `artifacts_video.v1` (a peer that knows the `video` kind). The MCP lists `desktop_screenshot` and `desktop_record` only for a station that negotiated `desktop_capture.v1` and reports the tools present. A deck sends a `video` artifact to a board or peer without `artifacts_video.v1` as kind `other`. The MCP screenshot answer is an image content block: the PNG scaled down to at most 1568 px on the long edge and at most 1 MiB, plus the artifact id of the full file.
 12. **Tests (four proofs).** Behavior: a screenshot and a recording on the fake desktop (fake `grim`/`wf-recorder` scripts with argv logs). Refusals: each gate off, locked screen, gone monitor, busy, disk full, quota, missing tool, old peer. Exposure: a capture never written outside `captures/`; no capture authority from a display, a binding or the wake. Failure: every stop trigger during a recording; import failure deletes the file; deletion through every read path (cache, raw, view link, share, display, MCP).
+
+### 6.5B Revision 11: P5a and P5b
+
+P5 is split. The detailed contracts of P5a are in the annex [omarchy-p5a.md](./omarchy-p5a.md).
+
+- **P5a** (owner screenshots and artifact deletion): one owner action `screen_capture` for one monitor from the board Desktop panel, and the owner deletion of any artifact. The annex gives the wire contract, the deletion barriers (A4), the budgets (A6), the process and files (A7), the durable import and result (A8), and the names and deadlines (A9).
+- **P5b** (recordings, the `video` kind, `Range` playback, the recording stop): later, with its own DESIGN REVIEW. P6 (MCP tools) depends on P3 and P5a.
+- Deferred to P5b and P6, and **not active rules**: §6.5A item 5 (active recordings), item 6 (the video budget), item 7 (`wf-recorder`), item 9 (the recording duration), items 10 and 11 (video, MCP).
+- The annex wins over §6.5A where they differ.
 
 ### 6.6 The wake rule
 
@@ -733,6 +744,8 @@ These are new `ToolClass` and `GrantClass` values:
 | `capture` | `screenshot`, `record_demo` | `allow_desktop_capture` |
 | `input` | `pointer_move`, `pointer_click`, `key_press`, `type_text`, `scroll` | `allow_desktop_input`, plus `capture` in the same grant (an agent that clicks must be able to see) |
 
+*Inactive (revision 11): P5a uses only `screen_capture` (monitor, owner); P5b and P6 define their own names in their reviews.* The tools `screenshot` and `record_demo` of the `capture` class are historical.
+
 ### 7.2 Gates
 
 - Every session can get these classes, not only a coordinator: the grant of a normal session can hold `desktop` or `capture`. `input` needs a coordinator grant or a session started with "Allow Computer Use" in the spawn form.
@@ -755,6 +768,8 @@ These are new `ToolClass` and `GrantClass` values:
 | `screenshot` | `target: window <address> \| monitor <name>` | `capture.screenshot`. The image goes back to the agent as MCP image content, and it is also kept as an artifact |
 | `record_demo` | `target`, `seconds ≤ 120` | `capture.record`. The tool returns the artifact id |
 | `pointer_* / key_press / type_text / scroll` | §7.4 | `input.*` |
+
+*Inactive (revision 11): P5a uses only `screen_capture` (monitor, owner); P5b and P6 define their own names in their reviews.* The rows `screenshot` and `record_demo` (and the names `desktop_screenshot` and `desktop_record` of §6.5A item 11) are historical.
 
 ### 7.4 Computer Use: scoped input
 
@@ -933,6 +948,15 @@ These rules replace §9 where they differ and answer the findings B1-B6 of the P
 6. **Distribution (B6, owner decision DL-230 item 4).** AUR package `fleetdeck-bin` (the release tarball with its SHA-256 in the PKGBUILD) and a Homebrew tap formula. The hook installs from AUR with the package manager's checks; the service PATH rules of `service install` apply unchanged, and `fleetdeck doctor` checks that the provider binaries run under the installed service environment. The release and package build is a separate task of the owner's release (it needs the owner's release keys); P8 code only uses the installed binary.
 7. **Tests.** A clean home through all steps with a fake deck; each interruption point and a rerun; a second machine with a copied medium gets a different fingerprint and is not approved; `provision-file` refuses an existing file and writes 0600.
 
+## 9B. Revision 11: provisioning contracts
+
+The detailed contracts of P8 are in the annex [omarchy-p8.md](./omarchy-p8.md). **`omarchy-p8.md` overrides §9A where they differ.**
+
+- The annex gives the fingerprint format (B1), the two commands with their local protocol and file rules (B4), the hidden `provision-bootstrap` with its durable state and retry table (B2), the custody procedure (B5), and the package and hook trust (B6).
+- The annex corrects the B3 claim of §9A: a remotely committed, locally uncommitted pairing state does exist, and `pair-pending.json` handles it.
+- The custody procedure is in [operations.md](../operations.md) section 13 "Provisioning media custody (P8)". P8 acceptance requires it.
+- Production P8 acceptance waits for the release task of the owner (§14).
+
 ---
 
 ## 10. Per-session load (the 64-core view)
@@ -955,8 +979,9 @@ Tests: a fixture `/proc` tree gives the expected sums. A session that ends drops
 | **P2 Display principal** | §5: principal, `.display()` rows, cookie, links, the Displays list, the station filter, directives (owner and coordinator) | **High:** adversary DESIGN REVIEW of §5 and §4.5, then PRE-PR | P1 |
 | **P3 Desktop control** | §6.1 to §6.4 and §6.6: detection, `StationInfo.desktop`, `desktop.act` (screen, workspace, wall, notify, browser, terminal, window), settings, the wake rule, the board Desktop panel on the station page, "Send to wall" on a session and on an artifact | **High:** DESIGN REVIEW of §6, then PRE-PR | P2 (`wall.open`) |
 | **P4 Omarchy integration** | §8: `fleet.summary`, `desktop feed`, plugin, installer, hooks, hotkeys, theme sync, screensaver, crash row | Normal: one Codex review | P3 (feature `desktop.v1`) |
-| **P5 Capture** | §6.5 and the capture actions: screenshot, recording, the `video` artifact kind | **High:** DESIGN REVIEW (privacy), then PRE-PR | P3 |
-| **P6 Desktop MCP** | §7.1 to §7.3: classes `desktop` and `capture`, caps, `desktops` | **High:** DESIGN REVIEW, then PRE-PR | P3, P5 |
+| **P5a Screenshots and deletion** | §6.5B and [omarchy-p5a.md](./omarchy-p5a.md): the owner `screen_capture` action, the capture result lookup, the owner deletion of any artifact | **High:** DESIGN REVIEW, then PRE-PR | P3 |
+| **P5b Recordings** | recordings, the `video` artifact kind, `Range` playback, the recording stop (§6.5A items 5, 6, 7, 9, 10, 11 as historical input) | **High:** own DESIGN REVIEW later | P5a |
+| **P6 Desktop MCP** | §7.1 to §7.3: classes `desktop` and `capture`, caps, `desktops` | **High:** DESIGN REVIEW, then PRE-PR | P3, P5a |
 | **P7 Computer Use** | spike: the pointer tool, `wtype` on Omarchy, and how reliable the focus check is. Then §7.4 | **High:** DESIGN REVIEW after the spike, then PRE-PR | P6 |
 | **P8 Accounts and provisioning** | §8.8 and §9 | Normal for §8.8. **High** for §9 (an invitation in a drive): DESIGN REVIEW | P4 |
 | **P9 Per-session load** | §10 | Normal: one Codex review | — (in parallel) |
@@ -1007,6 +1032,7 @@ All rows are built (DL-231, §5H). The worker briefs and the decisions are in th
 | §6.5 capture, §7 MCP classes | adversary DESIGN REVIEW | before P5 and P6 code |
 | §7.4 Computer Use | adversary DESIGN REVIEW after the P7 spike | before P7 code |
 | §9 provisioning | adversary DESIGN REVIEW | before P8 §9 code |
+| P5a, P8 (revision 11) | adversary DESIGN REVIEW round 3 (last) | before P5a and P8 code |
 | P1, P4, P9 | one Codex review of the final branch | before merge |
 | P2b/P3b code | adversary PRE-PR | round 1 FAIL (2 BLOCKER, 2 MAJOR, fixed `5a01c9ca`), round 2 PASS |
 
@@ -1038,3 +1064,4 @@ All rows are built (DL-231, §5H). The worker briefs and the decisions are in th
 22. R16: no per-session load on the wall (§10 is not built).
 23. R16: the CSP and the sandboxed frame are proved only in the real e2e (`web/e2e-real/display.spec.ts`).
 24. R17: the test `station_pairing invite_prints_an_invitation_that_pairs_the_deck_and_the_listener_survives_a_restart` failed once with "Address already in use" on a station restart port (an environment race; fail-fast stopped the lane at 1080 of 3943). The full check on `5a01c9ca` passed.
+25. P8 production acceptance waits for the owner's release task (pinned `fleetdeck-bin` package, trusted manifest, installed hooks).
