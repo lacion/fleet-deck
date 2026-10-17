@@ -357,16 +357,17 @@ impl DeckStore {
         station: &StationId,
         env: &CoordinatorQueryEnvelope,
     ) -> Result<std::result::Result<Grant, Reject>> {
-        let (station, caller, binding, now) = (
+        let (station, caller, binding, clock) = (
             station.clone(),
             env.caller.clone(),
             env.binding.clone(),
-            self.now_ms(),
+            self.inner.clock.clone(),
         );
         let (checked, changed) = call(&self.inner.db, move |conn| {
             // One transaction for the admission and the lazy idle expiry; it
-            // commits also for a refusal.
+            // commits also for a refusal. The clock is read inside it (GS2).
             let tx = conn.transaction()?;
+            let now = super::now_ms(&clock);
             let mut changed = BTreeSet::new();
             let checked = check(&tx, &station, &caller, &binding, (now, &mut changed))?;
             tx.commit()?;

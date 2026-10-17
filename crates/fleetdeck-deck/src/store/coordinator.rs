@@ -190,10 +190,11 @@ impl DeckStore {
             ctx.env = inner.fleet_env();
             let replay = std::cell::Cell::new(false);
             let run = || -> Result<Receipt> {
+                let tx = conn.transaction()?;
+                let now = super::now_ms(&inner.clock);
                 let rejected = |code, message: &str| {
                     Receipt::rejected(command_id.clone(), Reject::new(code, message), now)
                 };
-                let tx = conn.transaction()?;
                 let scopes: Option<String> = tx
                     .query_row(
                         "SELECT scopes FROM stations WHERE station_id = ?1",
@@ -715,8 +716,8 @@ impl DeckStore {
         station: StationId,
         check: AuthorityCheck,
     ) -> Result<std::result::Result<AuthorityLocal, &'static str>> {
-        let now = self.now_ms();
         let on = self.fleet_control();
+        let clock = self.inner.clock.clone();
         call(&self.inner.db, move |conn| {
             let a = CommandAuthority {
                 grant_id: check.grant_id.clone(),
@@ -733,10 +734,14 @@ impl DeckStore {
                     |r| Ok((r.get(0)?, r.get(1)?)),
                 )
                 .optional()?;
+            let now = super::now_ms(&clock);
             let grant = match grant_state(&tx, &a, now)? {
                 Ok(grant) => grant,
                 Err(reason) => return Ok(Err(reason)),
             };
+            if !station_covered(&tx, &station, now)? {
+                return Ok(Err(NOT_COVERED));
+            }
             if !on {
                 return Ok(Err("fleet_control_off"));
             }
