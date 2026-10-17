@@ -104,6 +104,29 @@ pub(super) fn insert(
     Ok(())
 }
 
+/// The newest attempt of one home generation that the station stored: not
+/// `refused` (a link error: no row there), `sent` (never answered) or
+/// `superseded`. A retry names it in `retry_of` (decision G2).
+pub(super) fn newest_stored(
+    conn: &Connection,
+    project: &str,
+    station: &str,
+    generation: u64,
+) -> Result<Option<AttemptRow>> {
+    conn.query_row(
+        &format!(
+            "SELECT {ATTEMPT_COLUMNS} FROM home_attempts
+             WHERE project_id = ?1 AND station_id = ?2 AND generation = ?3
+               AND state NOT IN ('refused', 'sent', 'superseded')
+             ORDER BY created_at DESC, rowid DESC LIMIT 1"
+        ),
+        params![project, station, to_i64(generation)?],
+        |r| Ok(read(r)),
+    )
+    .optional()?
+    .transpose()
+}
+
 /// Does the home row of the attempt still name it with its generation?
 fn names(home: Option<&HomeRow>, attempt: &AttemptRow) -> bool {
     home.is_some_and(|h| {
@@ -481,8 +504,9 @@ impl DeckStore {
         out
     }
 
-    /// A link error that ends the attempt (`fails_attempt`): the attempt and,
-    /// through the fence, its home become `failed` with the code and the text.
+    /// A link error that ends the attempt (`fails_attempt`): the attempt
+    /// becomes `refused` and, through the fence, its home becomes `failed`
+    /// with the code and the text.
     ///
     /// # Errors
     /// A database error.
@@ -502,10 +526,12 @@ impl DeckStore {
             let Some(home) = home.filter(|h| names(Some(h), &attempt)) else {
                 return Ok(Applied::Stale);
             };
+            // A link error means that the station stored no row for the
+            // attempt: it ends `refused` (decision G2); the home fails.
             end_attempt(
                 &tx,
                 &attempt_id,
-                "failed",
+                "refused",
                 (None, Some(&error_code), Some(&message)),
                 now,
             )?;

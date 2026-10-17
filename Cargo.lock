@@ -684,6 +684,8 @@ dependencies = [
  "fleetdeck-station",
  "fleetdeck-testkit",
  "landlock",
+ "rusqlite",
+ "rusqlite_migration",
  "rustix",
  "rustls",
  "serde",

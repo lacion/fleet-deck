@@ -467,8 +467,8 @@ async fn station_info_carries_traits_config_and_the_fleet_git_part() {
             .is_some_and(|v| v.starts_with(|c: char| c.is_ascii_digit()))
     );
 
-    // A policy with the key off and the bridge on reports true too (`serve`
-    // makes the OR); with both off it reports false.
+    // The report follows the policy value, whatever set it; a policy with
+    // the key off reports false.
     let bridged = Arc::new(Policy::from_config(&config("")).with_allow_local_remotes(true));
     assert!(super::info(&runtime, &bridged).await.allow_local_remotes);
     let closed = Arc::new(Policy::from_config(&config("")));

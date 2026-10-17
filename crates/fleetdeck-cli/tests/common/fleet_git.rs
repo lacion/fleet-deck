@@ -1,13 +1,13 @@
 //! The Fleet Git loopback rig (T1.7, design §16.1, owner acceptance A2): one
 //! deck, several stations with separate data directories, and one bare
-//! repository `remote.git` as the remote of every home. The deck and every
-//! station process get `FLEETDECK_ALLOW_LOCAL_REMOTES=1` (phase 1: T1.3 and
-//! T1.5 read it until T2.1 and T2.2 add the station reports and the
-//! station.toml key). The project `remote_url` is `file://<canonical temp
-//! dir>/remote.git`, and the temp dir is an allowed root of every station, so
-//! the confined fetch and push can write there.
+//! repository `remote.git` as the remote of every home. Each station.toml
+//! sets `allow_local_remotes = true` (design §16.1, M13), and the deck learns
+//! it from `station.info`. The project `remote_url` is `file://<canonical
+//! temp dir>/remote.git`, and the temp dir is an allowed root of every
+//! station, so the confined fetch and push can write there.
 
 use std::collections::BTreeMap;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -20,9 +20,6 @@ use serde_json::{Value, json};
 use super::deck::{Deck, Reply};
 use super::{Station, WAIT, fleetdeck, open_store, stored_events};
 
-/// The variable that lets the deck and the stations accept a local remote.
-pub const ALLOW_LOCAL: (&str, &str) = ("FLEETDECK_ALLOW_LOCAL_REMOTES", "1");
-
 /// What a test changes in the rig.
 #[derive(Default)]
 pub struct Options {
@@ -31,6 +28,38 @@ pub struct Options {
     pub provider: Option<PathBuf>,
     /// More environment variables of every station process.
     pub station_env: Vec<(String, String)>,
+    /// The setup of single stations, by station name.
+    pub setup: BTreeMap<String, StationSetup>,
+}
+
+/// What differs for one station of the rig.
+#[derive(Clone)]
+pub struct StationSetup {
+    /// Top-level `station.toml` lines (`traits = [...]`, `tailscale_bin = ...`).
+    /// `{HOME}` and `{ROOT}` stand for the canonical HOME of the station and
+    /// the temp dir of the rig, here and in `files`.
+    pub toml: String,
+    /// More environment variables of this station process.
+    pub env: Vec<(String, String)>,
+    /// Files below the HOME of the station, written before its first start:
+    /// the path relative to HOME and the content.
+    pub files: Vec<(String, Vec<u8>)>,
+    /// The files (relative to HOME) that get mode 0755.
+    pub executables: Vec<String>,
+    /// `allow_local_remotes = true` in `station.toml` (the rig default).
+    pub allow_local_remotes: bool,
+}
+
+impl Default for StationSetup {
+    fn default() -> Self {
+        Self {
+            toml: String::new(),
+            env: Vec::new(),
+            files: Vec::new(),
+            executables: Vec::new(),
+            allow_local_remotes: true,
+        }
+    }
 }
 
 /// One station of the rig, and its home: a clone of `remote.git`.
@@ -49,6 +78,8 @@ pub struct Rig {
     board: std::net::SocketAddr,
     cookie: String,
     csrf: String,
+    /// The station.toml text options of `with`, for `add`.
+    options: Options,
     commands: std::cell::Cell<u32>,
     _tmp: tempfile::TempDir,
 }
@@ -93,6 +124,24 @@ pub fn commit_in(dir: &Path, file: &str, content: &str, message: &str) -> String
     git(dir, &["add", "--", file]);
     git(dir, &["commit", "-q", "-m", message]);
     git(dir, &["rev-parse", "HEAD"])
+}
+
+/// Logs in to the board of `deck`: its address, the cookie and the CSRF token.
+fn login(deck: &Deck) -> (std::net::SocketAddr, String, String) {
+    let (board, token) = deck.board();
+    let login = deck.https(
+        board,
+        "POST",
+        "/api/auth/link",
+        &[],
+        Some(json!({ "token": token })),
+    );
+    assert_eq!(login.status, 200, "{}", login.body);
+    (
+        board,
+        cookie_of(&login.head),
+        login.body["csrf"].as_str().unwrap().to_owned(),
+    )
 }
 
 fn cookie_of(head: &str) -> String {
@@ -144,20 +193,8 @@ impl Rig {
         );
         git(&seed, &["push", "-q", "origin", "main"]);
 
-        let deck = Deck::start_with_env(&[ALLOW_LOCAL]);
-        let (board, token) = deck.board();
-        let login = deck.https(
-            board,
-            "POST",
-            "/api/auth/link",
-            &[],
-            Some(json!({ "token": token })),
-        );
-        assert_eq!(login.status, 200, "{}", login.body);
-        let (cookie, csrf) = (
-            cookie_of(&login.head),
-            login.body["csrf"].as_str().unwrap().to_owned(),
-        );
+        let deck = Deck::start();
+        let (board, cookie, csrf) = login(&deck);
         let mut rig = Self {
             deck,
             root,
@@ -166,16 +203,29 @@ impl Rig {
             board,
             cookie,
             csrf,
+            options: Options::default(),
             commands: std::cell::Cell::new(0),
             _tmp: tmp,
         };
         for name in names {
-            rig.add_station(name, &options);
+            let setup = options.setup.get(*name).cloned().unwrap_or_default();
+            rig.add_with(name, &options, &setup);
         }
+        rig.options = options;
         rig
     }
 
-    fn add_station(&mut self, name: &str, options: &Options) {
+    /// Adds one more station (and its home clone) with `setup`.
+    pub fn add(&mut self, name: &str, setup: &StationSetup) {
+        let options = Options {
+            provider: self.options.provider.clone(),
+            station_env: self.options.station_env.clone(),
+            setup: BTreeMap::new(),
+        };
+        self.add_with(name, &options, setup);
+    }
+
+    fn add_with(&mut self, name: &str, options: &Options, setup: &StationSetup) {
         let mut station = Station::named(name);
         let path = station.node.dirs().station_config();
         let mut text = std::fs::read_to_string(&path).unwrap();
@@ -183,6 +233,28 @@ impl Rig {
             "allowed_roots = [\"~/projects\"]",
             &format!("allowed_roots = [\"~/projects\", {:?}]", self.root),
         );
+        let home_dir = station.node.home().canonicalize().unwrap();
+        let fill = |text: &str| {
+            text.replace("{HOME}", home_dir.to_str().unwrap())
+                .replace("{ROOT}", self.root.to_str().unwrap())
+        };
+        let mut extra = fill(&setup.toml);
+        if setup.allow_local_remotes {
+            extra.push_str("allow_local_remotes = true\n");
+        }
+        assert!(text.contains("listen = []\n"), "the listen line: {text}");
+        text = text.replace("listen = []\n", &format!("listen = []\n{extra}"));
+        for (rel, content) in &setup.files {
+            let file = station.node.home().join(rel);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            match std::str::from_utf8(content) {
+                Ok(text) => std::fs::write(&file, fill(text)).unwrap(),
+                Err(_) => std::fs::write(&file, content).unwrap(),
+            }
+            if setup.executables.contains(rel) {
+                std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
         if let Some(program) = &options.provider {
             let fake = FakeAgent::bin_dir().unwrap().join("fake-claude");
             let old = format!("binary = \"{}\"", fake.display());
@@ -197,8 +269,8 @@ impl Rig {
         );
         let home = home.canonicalize().unwrap();
         let mut cmd = fleetdeck(&station.node);
-        cmd.env(ALLOW_LOCAL.0, ALLOW_LOCAL.1);
         cmd.envs(options.station_env.iter().map(|(k, v)| (k, v)));
+        cmd.envs(setup.env.iter().map(|(k, v)| (k, v)));
         station.spawn_cmd(cmd, None);
         let invitation = self.deck.ok(&["deck", "invite"]);
         station.ok_stdin(&["station", "join", "--stdin"], invitation.trim());
@@ -214,7 +286,12 @@ impl Rig {
         let deadline = Instant::now() + WAIT;
         loop {
             let seen = self.deck.stations();
-            if seen.len() == self.stations.len() && seen.iter().all(|s| s.reachable) {
+            // The deck needs `station.info.fleet_git` (with the local-remote
+            // flag) before a `file://` remote can be saved.
+            let known = seen
+                .iter()
+                .all(|s| s.reachable && s.info.as_ref().is_some_and(|i| i.fleet_git.is_some()));
+            if seen.len() == self.stations.len() && known {
                 return;
             }
             assert!(Instant::now() < deadline, "stations not linked: {seen:?}");
@@ -475,6 +552,136 @@ impl Rig {
         let oid = commit_in(&seed, file, message, message);
         git(&seed, &["push", "-q", "origin", "main"]);
         oid
+    }
+
+    /// The deck's view of station `i`.
+    fn view(&self, i: usize) -> Option<fleetdeck_proto::board::StationView> {
+        let name = &self.stations[i].name;
+        self.deck.stations().into_iter().find(|s| &s.name == name)
+    }
+
+    /// The deck's id of station `i`.
+    pub fn station_id(&self, i: usize) -> String {
+        let view = self.view(i).expect("the deck lists the station");
+        view.station_id.as_str().to_owned()
+    }
+
+    /// The `station.info` that the deck last got from station `i`.
+    pub fn station_info(&self, i: usize) -> fleetdeck_proto::link::StationInfo {
+        self.view(i).and_then(|s| s.info).expect("a station.info")
+    }
+
+    /// Polls until `f` holds for the `station.info` of station `i`.
+    pub fn wait_info(
+        &self,
+        what: &str,
+        i: usize,
+        f: impl Fn(&fleetdeck_proto::link::StationInfo) -> bool,
+    ) -> fleetdeck_proto::link::StationInfo {
+        let deadline = Instant::now() + WAIT;
+        loop {
+            let info = self.view(i).filter(|s| s.reachable).and_then(|s| s.info);
+            if let Some(info) = info.filter(|info| f(info)) {
+                return info;
+            }
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    /// The home of the project on station `i`, as the project lists it.
+    pub fn home_on(&self, project: &str, i: usize) -> Option<Value> {
+        let id = self.station_id(i);
+        self.project_of(project)["homes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|h| h["station_id"] == id)
+            .cloned()
+    }
+
+    /// Waits until the home of the project on station `i` reads `state`.
+    pub fn wait_home_on(&self, project: &str, i: usize, state: &str) -> Value {
+        let deadline = Instant::now() + WAIT;
+        loop {
+            if let Some(h) = self.home_on(project, i).filter(|h| h["state"] == state) {
+                return h;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the home on {i} is not {state}: {}",
+                self.project_of(project)
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    /// `POST /api/projects/{id}/homes` for station `i`.
+    pub fn add_home(&self, project: &str, i: usize) -> Reply {
+        let body = json!({ "station": self.station_id(i), "command_id": self.command_id() });
+        self.board(
+            "POST",
+            &format!("/api/projects/{project}/homes"),
+            Some(body),
+        )
+    }
+
+    /// `POST /api/projects/{id}/homes/{station}/retry` for station `i`.
+    pub fn retry_home(&self, project: &str, i: usize) -> Reply {
+        let path = format!("/api/projects/{project}/homes/{}/retry", self.station_id(i));
+        let body = json!({ "command_id": self.command_id() });
+        self.board("POST", &path, Some(body))
+    }
+
+    /// `DELETE /api/projects/{id}/homes/{station}` for station `i`.
+    pub fn remove_home(&self, project: &str, i: usize) -> Reply {
+        let path = format!("/api/projects/{project}/homes/{}", self.station_id(i));
+        self.board("DELETE", &path, None)
+    }
+
+    /// Stops station `i` (SIGTERM) and starts it again with `env`.
+    pub fn restart_station(&mut self, i: usize, env: &[(&str, &str)]) {
+        self.stations[i].station.stop();
+        self.start_station(i, env);
+    }
+
+    /// SIGKILL for station `i`; it stays down.
+    pub fn kill_station(&mut self, i: usize) {
+        self.stations[i].station.signal("KILL");
+        self.stations[i].station.wait_crash();
+    }
+
+    /// Starts the stopped station `i` with `env` and waits until the deck got
+    /// a `station.info` that is newer than before.
+    pub fn start_station(&mut self, i: usize, env: &[(&str, &str)]) {
+        let before = self.view(i).and_then(|s| s.info_at);
+        let mut cmd = fleetdeck(&self.stations[i].station.node);
+        cmd.envs(self.options.station_env.iter().map(|(k, v)| (k, v)));
+        cmd.envs(env.iter().copied());
+        self.stations[i].station.spawn_cmd(cmd, None);
+        let deadline = Instant::now() + WAIT;
+        loop {
+            if self
+                .view(i)
+                .is_some_and(|s| s.reachable && s.info_at > before)
+            {
+                return;
+            }
+            assert!(Instant::now() < deadline, "station {i} is not linked again");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    /// Stops the deck, lets `swap` replace `deck.db` (the deck is down), and
+    /// starts the deck again. The board login is made again. The stations
+    /// dial the deck again by themselves.
+    pub fn restart_deck_with(&mut self, swap: impl FnOnce(&Path)) {
+        self.deck.stop();
+        swap(&self.deck.node.dirs().deck_db());
+        self.deck.spawn();
+        let (board, cookie, csrf) = login(&self.deck);
+        (self.board, self.cookie, self.csrf) = (board, cookie, csrf);
+        self.wait_reachable();
     }
 
     /// Moves `remote.git` away; the homes still point to the old path.

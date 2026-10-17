@@ -14,26 +14,6 @@ use super::git_snapshots::clear_checks;
 use super::project_homes::{HomeRow, claim, homes_of, set_state, take_ownership};
 use super::{DeckStore, Result, call, to_i64};
 
-/// The environment variable that lets the deck accept local remotes.
-const ALLOW_LOCAL_REMOTES_ENV: &str = "FLEETDECK_ALLOW_LOCAL_REMOTES";
-
-/// `Allow` only for the value exactly `1`, else `Deny`.
-fn local_remotes_for(value: Option<&str>) -> LocalRemotes {
-    if value == Some("1") {
-        LocalRemotes::Allow
-    } else {
-        LocalRemotes::Deny
-    }
-}
-
-/// The phase-1 bridge: the deck's own process environment says that every
-/// home station allows local remotes. (FG-5: T2.5 moves the test rig to
-/// station.toml and removes this bridge)
-#[must_use]
-pub fn env_bridge() -> LocalRemotes {
-    local_remotes_for(std::env::var(ALLOW_LOCAL_REMOTES_ENV).ok().as_deref())
-}
-
 /// The clone URL: `remote_url` with the SSH login name put back after
 /// `ssh://` or before the host of a scp-like URL (design §8.1).
 #[must_use]
@@ -151,8 +131,7 @@ impl DeckStore {
     /// Whether a local remote is allowed for `project` (decision B10): every
     /// home station of the project (any state) reports
     /// `FleetGitInfo.allow_local_remotes = true` in its newest `station.info`
-    /// (a missing `station.info` or `fleet_git` counts false); the
-    /// environment bridge is an OR.
+    /// (a missing `station.info` or `fleet_git` counts false).
     ///
     /// # Errors
     /// A database error.
@@ -170,9 +149,6 @@ impl DeckStore {
     /// [`Self::local_remotes_of`] for a list of stations.
     #[must_use]
     pub fn local_remotes_for_stations(&self, stations: &[String]) -> LocalRemotes {
-        if env_bridge() == LocalRemotes::Allow {
-            return LocalRemotes::Allow;
-        }
         let all = !stations.is_empty()
             && stations.iter().all(|s| {
                 self.station_info(&StationId::from(s.clone()))
@@ -364,21 +340,6 @@ fn sync_off(conn: &Connection, id: &str, homes: &[HomeRow], now: i64) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_deck_allows_local_remotes_only_for_the_value_one() {
-        for (value, want) in [
-            (Some("1"), LocalRemotes::Allow),
-            (None, LocalRemotes::Deny),
-            (Some(""), LocalRemotes::Deny),
-            (Some("0"), LocalRemotes::Deny),
-            (Some("true"), LocalRemotes::Deny),
-            (Some("11"), LocalRemotes::Deny),
-            (Some(" 1"), LocalRemotes::Deny),
-        ] {
-            assert_eq!(local_remotes_for(value), want, "{value:?}");
-        }
-    }
 
     #[test]
     fn the_login_name_is_split_off_and_put_back() {
