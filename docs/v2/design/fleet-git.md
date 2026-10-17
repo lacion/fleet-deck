@@ -1372,7 +1372,7 @@ CREATE TABLE land_temps (
     land_id    TEXT    NOT NULL,
     attempt    INTEGER NOT NULL,
     root       TEXT    NOT NULL,   -- the verified allowed root (canonical)
-    path       TEXT    NOT NULL,   -- <root>/.fleetdeck-land/<first 12 chars of land_id>-<attempt>
+    path       TEXT    NOT NULL,   -- <root>/.fleetdeck-land/<first 16 hex of SHA-256(land_id)>-<attempt> (H16: 12 chars of a ULID collided)
     dev        INTEGER, ino INTEGER,
     admin_dir  TEXT,               -- <common git dir>/worktrees/<name>
     state      TEXT    NOT NULL,   -- reserved, present, removed, kept
@@ -2229,7 +2229,7 @@ Revision 1 listed 85 choices where the owner spec is silent. The architect accep
 45. **Accepted.** `GET /api/radar` is new; `GET /api/conflicts` and the "Conflict" label stay.
 46. **Replaced (advisor, revision 2).** Land is allowed on `exited`, `lost`, or idle with no open request, **and** only when every DL-150 worktree safety check passes; the station admission stores a durable hold (`session_holds`) that blocks turns, resume, revert, move, shells, trash, cleanup and FG-2 pushes of the session until the run ends (§11.4). Reason: an idle check at admission does not stop a later change.
 47. **Accepted.** Land route scope `admin`, owner login only; cancel only a `queued` land.
-48. **Replaced (advisor, revision 2).** The land temporary worktree is at `<allowed root that contains the home>/.fleetdeck-land/<12 chars>-<attempt>`, reserved in the store before `worktree add`; an independent cleanup deletes only the recorded folder (by identity) and its recorded Git admin entry, also for terminal runs, and never runs `git worktree prune` (§11.6). Reason: the parent of a home can be outside the roots; a global prune touches other worktrees.
+48. **Replaced (advisor, revision 2).** The land temporary worktree is at `<allowed root that contains the home>/.fleetdeck-land/<16 hex of SHA-256(land_id)>-<attempt>` (PRE-PR r1, H16), reserved in the store before `worktree add`; an independent cleanup deletes only the recorded folder (by identity) and its recorded Git admin entry, also for terminal runs, and never runs `git worktree prune` (§11.6). Reason: the parent of a home can be outside the roots; a global prune touches other worktrees.
 49. **Replaced (advisor, revision 2).** The rebase options of revision 1 stay (`autoStash=false`, `updateRefs=false`, `core.editor=true`, `--no-autosquash --no-fork-point`; a missing identity gives `land_no_identity`), and the rebase uses the stored `source_oid` and `base_oid` by commit id (§11.5 step 3). Reason: moving refs must not change an admitted attempt.
 50. **Replaced (advisor, revision 2).** `check_cmd` runs with the DL-148 runner (10 minutes, marker, restart cleanup, the last 50 lines, at most 16 KiB); the command and its environment are pinned in the plan; after the check, `HEAD` must still be `R` and the tracked tree must be unchanged (`check_mutated`) (§11.5 step 4). Reason: a successful exit alone does not identify the published result.
 51. **Accepted.** PR title and body: the session title (else the branch) and the digest (else a fixed line); revision 2 pins them in the plan.
