@@ -103,6 +103,7 @@ fn classes_of(op: &CoordinatorOp) -> Vec<GrantClass> {
         | CoordinatorOp::ProjectAssign { .. } => vec![GrantClass::Manage],
         CoordinatorOp::ProjectStart { .. } => vec![GrantClass::Spawn, GrantClass::Manage],
         CoordinatorOp::Answer { .. } => vec![GrantClass::Answer],
+        CoordinatorOp::Land { .. } => vec![GrantClass::Manage],
     }
 }
 
@@ -423,6 +424,11 @@ fn decide_op(
             now,
         ),
         CoordinatorOp::Answer { .. } => coordinator_fleet::answer(tx, grant, ctx, op, now),
+        // (FG-10: T4.3/T4.4 replace this)
+        CoordinatorOp::Land { .. } => no(
+            RejectCode::Unsupported,
+            "Land is not available through the coordinator yet.",
+        ),
         CoordinatorOp::AssignAuto { task, requirements } => {
             if let Some(d) = check_text(task) {
                 return Ok(d);

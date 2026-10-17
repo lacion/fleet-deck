@@ -339,6 +339,12 @@ pub enum CoordinatorOp {
         #[ts(optional)]
         text: Option<String>,
     },
+    /// Land a session (`manage` class, Fleet Git FG-10, design §13.2). Needs
+    /// `fleet_git.land.v1`.
+    Land {
+        station: StationId,
+        session_id: SessionId,
+    },
 }
 
 /// Where `project_assign` moves a session (ADR-008 §4.1).
@@ -529,6 +535,11 @@ pub enum CoordinatorQuery {
         pattern: String,
         mode: String,
     },
+    /// The branches of other stations in a project (`inspect` class, Fleet
+    /// Git FG-10, design §13.2). Needs `fleet_git.branches.v1`.
+    ProjectBranches { project_id: String },
+    /// One fetch on the radar home of a project (`inspect` class, FG-10).
+    ProjectFetch { project_id: String },
 }
 
 /// The `params` of `coordinator.query`. `deadline` ≤ arrival + 30 s, or
