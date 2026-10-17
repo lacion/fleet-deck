@@ -181,3 +181,5 @@ The Codex recorder drives `codex app-server` 0.160.x with `gpt-5.6-luna`, effort
 ```sh
 cargo run -p s2-codex --bin record-codex -- --scenario all      # or a comma list
 ```
+
+- `s-move/`: FG-9 spike, a Claude and a Codex conversation resume by native id on another machine in another folder (ADR-010).
