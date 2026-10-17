@@ -120,8 +120,8 @@ Design: `docs/v2/design/fleet-git.md` (accepted for FG-1..FG-8 and FG-10..FG-12,
 
 - Phase 0 (design, spikes, ADR-009, ADR-010): done; FG-9 waits for the owner (DL-227).
 - Phase 1 (FG-1..FG-4): done; T1.0..T1.7 merged, `make check` passed.
-- Phase 2 (FG-5, FG-6, FG-11, FG-12): in progress.
-- Phase 3 (FG-7, FG-8): not started.
+- Phase 2 (FG-5, FG-6, FG-11, FG-12): done; T2.0..T2.5 merged (T2.2, T2.3 split in a/b; T2.4b start dialog), the full check passed (4159 tests). Decisions: `~/fleetdeck-briefs/fg-t2-decisions.md` (architect record).
+- Phase 3 (FG-7, FG-8): in progress.
 - Phase 4 (FG-9, FG-10): not started; FG-9 needs the owner's decision first.
 - Phase 5 (documents, PRE-PR review): not started.
 
@@ -129,15 +129,16 @@ Design: `docs/v2/design/fleet-git.md` (accepted for FG-1..FG-8 and FG-10..FG-12,
 - [x] FG-2 Push (O9, O10, O11)
 - [x] FG-3 Automatic cleanup (O12, O13)
 - [x] FG-4 Worktree bootstrap (O14, O15)
-- [ ] FG-5 One project on many stations (O16, O17, O18)
-- [ ] FG-6 Placement by station traits (O19, O20)
+- [x] FG-5 One project on many stations (O16, O17, O18)
+- [x] FG-6 Placement by station traits (O19, O20)
 - [ ] FG-7 Predictive conflict radar (O21, O22)
 - [ ] FG-8 Land flow (O23 to O26)
 - [ ] FG-9 Move a session to another station (O27 to O30): waits for the owner (DL-227)
 - [ ] FG-10 The architect across the fleet (O31, O32, B1)
-- [ ] FG-11 Config drift report (O33, O34)
-- [ ] FG-12 Taildrive artifact share (O35 to O39)
+- [x] FG-11 Config drift report (O33, O34)
+- [x] FG-12 Taildrive artifact share (O35 to O39)
 - Phase 1 limit: scheduler, coordinator and fleet starts start plain (no Fleet Git attach); board and batch starts attach.
+- Phase 2: the phase-1 env bridge `FLEETDECK_ALLOW_LOCAL_REMOTES` is removed; local remotes need `allow_local_remotes = true` in `station.toml` on every home station. `fleet_git.artifact_authorize` is scope `admin` (the grant of a paired station).
 
 ## M3 round log
 
