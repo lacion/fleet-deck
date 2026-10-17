@@ -108,11 +108,16 @@ fn exactly_these_methods_are_open_to_a_display() {
     assert_eq!(
         open,
         [
+            "activity.list",
             "auth.logout",
             "auth.session",
             "board.ws",
             "board.ws_ticket",
             "displays.self",
+            "displays.self_artifact",
+            "displays.self_directive",
+            "displays.session_changes",
+            "fleet.extras",
             "sessions.list",
             "stations.list",
         ]

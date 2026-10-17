@@ -426,17 +426,24 @@ async fn a_display_reads_and_logs_out_with_its_header_and_writes_nothing_else() 
         .await;
     assert_eq!(t.status, 200, "{}", t.body);
     // The owner-only reads are closed to it.
-    for path in [
-        "/api/displays",
-        "/api/audit",
-        "/api/fleet/extras",
-        "/api/commands",
-    ] {
+    for path in ["/api/displays", "/api/audit", "/api/commands"] {
         expect(
             &c.get(path, &[("Cookie", &cookie)]).await,
             403,
             "display_read_only",
         );
+    }
+    // These rows are open to a display, but their projections are built by
+    // the P2b payload task: until then a display gets the defined refusal and
+    // never the owner payload (R13 P2b/P3b step 1).
+    for path in [
+        "/api/fleet/extras",
+        "/api/activity",
+        "/api/displays/self/directive",
+        "/api/displays/self/sessions/x/y/changes",
+        "/api/displays/self/artifact/x/y/1/index.html",
+    ] {
+        expect(&c.get(path, &[("Cookie", &cookie)]).await, 501, "not_built");
     }
     // The display cookie does not log in the owner's rows, and the owner's
     // cookie is not a display cookie.

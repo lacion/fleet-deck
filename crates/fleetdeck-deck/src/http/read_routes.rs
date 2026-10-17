@@ -100,6 +100,11 @@ pub async fn fleet_extras(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
 ) -> Result<Json<FleetExtras>, ApiError> {
+    // A display gets its own projection from the P2b payload task (no mail
+    // count, no file list, R13 §5D item 9). Until then it gets nothing.
+    if matches!(principal, Principal::Display(_)) {
+        return Err(super::not_built::not_built());
+    }
     let mut extras = board
         .store
         .fleet_extras()
