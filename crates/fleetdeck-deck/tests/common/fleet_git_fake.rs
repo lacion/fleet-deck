@@ -30,6 +30,7 @@ use fleetdeck_proto::integrations::{ForgeBinding, ForgeKind, Project, ProjectInp
 use fleetdeck_proto::link::Scope;
 
 use super::board::{BoardClient, Http, board};
+use super::fleet_git_land::LandReply;
 use super::{Fixture, T, accepted, fixture};
 
 /// What the fake answers to a snapshot.
@@ -135,6 +136,12 @@ pub struct FakeGit {
     pub attempts: Mutex<std::collections::BTreeMap<String, u64>>,
     /// The answer of `fleet_git.share_verdict`.
     pub share_verdict: Mutex<ShareReply>,
+    /// The answers of `session.land` (FG-8).
+    pub land: Mutex<std::collections::VecDeque<LandReply>>,
+    /// The answer of `fleet_git.land_status`.
+    pub land_status: Mutex<Value>,
+    /// The answer of `fleet_git.land_abandon`.
+    pub land_abandon: Mutex<Value>,
     /// The answer of `files.list`: `Err((code, message))` is a link error.
     pub files: Mutex<Result<Value, (&'static str, &'static str)>>,
     /// The `station.info` answer (the setters change it).
@@ -291,6 +298,9 @@ impl FakeGit {
             status: Mutex::new(Reply::cloning("/srv/projects/App")),
             attempts: Mutex::default(),
             share_verdict: Mutex::new(ShareReply::clear()),
+            land: Mutex::new(std::collections::VecDeque::from([LandReply::Accept])),
+            land_status: Mutex::new(json!({ "state": "unknown" })),
+            land_abandon: Mutex::new(json!({ "state": "busy" })),
             files: Mutex::new(Ok(json!({
                 "root": "/artifacts", "path": "", "entries": [], "truncated": false
             }))),
@@ -322,6 +332,9 @@ impl FakeGit {
                 Err((code, message)) => Outcome::Err(WireError::new(code, message)),
             },
             "fleet_git.projects_set" => self.snapshot(&req.params),
+            "session.land" => self.land_answer(req.command_id.as_ref()),
+            "fleet_git.land_status" => Outcome::Ok(lock(&self.land_status).clone()),
+            "fleet_git.land_abandon" => Outcome::Ok(lock(&self.land_abandon).clone()),
             // One open GitHub issue `#7`, for the batch start.
             "issues.get" => Outcome::Ok(json!({
                 "summary": {
@@ -344,6 +357,34 @@ impl FakeGit {
             },
         };
         let _ = control.respond(req.id, outcome).await;
+    }
+
+    /// The next reply to `session.land` (the last one repeats).
+    fn land_answer(&self, id: Option<&CommandId>) -> Outcome {
+        let Some(id) = id else {
+            return Outcome::Err(WireError::new("not_implemented", "no command id"));
+        };
+        let reply = {
+            let mut replies = lock(&self.land);
+            if replies.len() > 1 {
+                replies.pop_front()
+            } else {
+                replies.front().cloned()
+            }
+        };
+        match reply.unwrap_or(LandReply::Accept) {
+            LandReply::Accept => accepted(id),
+            LandReply::Reject(code, message) => {
+                let code = serde_json::from_value(json!(code)).expect("a reject code");
+                let receipt = fleetdeck_proto::Receipt::rejected(
+                    id.clone(),
+                    fleetdeck_proto::Reject::new(code, message),
+                    0,
+                );
+                Outcome::Ok(json!(receipt))
+            }
+            LandReply::Error(code) => Outcome::Err(WireError::new(code, "the fake says no")),
+        }
     }
 
     /// A reply as the answer for `attempt` of `generation`.

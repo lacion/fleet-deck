@@ -741,7 +741,8 @@ impl DeckStore {
                 return Ok(Err("fleet_control_off"));
             }
             let Some((payload, authority)) = row else {
-                return Ok(Err("unknown_command"));
+                // A land command is in `land_queue` (FG-8, design §11.2).
+                return super::land_outbox::authority_local(&tx, &station, &check, &grant, now);
             };
             let same = authority
                 .and_then(|t| serde_json::from_str::<CommandAuthority>(&t).ok())

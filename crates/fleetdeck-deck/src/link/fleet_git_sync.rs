@@ -51,6 +51,7 @@ pub async fn sync_station(ctx: &Arc<DeckLink>, station: StationId) {
         tracing::warn!(station = %station, error = %e, "fleet git sync: home attempts");
     }
     ctx.homes_kick.link_started(station.as_str());
+    ctx.land_kick.link_started(station.as_str());
     send(ctx, &station, true).await;
 }
 

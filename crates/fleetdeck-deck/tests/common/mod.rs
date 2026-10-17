@@ -30,6 +30,7 @@ use serde_json::json;
 pub mod board;
 pub mod fleet;
 pub mod fleet_git_fake;
+pub mod fleet_git_land;
 
 pub const T: Duration = Duration::from_secs(10);
 
