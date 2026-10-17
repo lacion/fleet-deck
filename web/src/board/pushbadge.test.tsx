@@ -267,7 +267,7 @@ describe('the timeline lines of the Fleet Git events', () => {
     expect(keptText('detached')).toBe('Kept: the worktree is not on a branch (detached HEAD).');
     expect(keptText('branch_changed')).toBe('Kept: the worktree is on another branch.');
     expect(keptText('changed')).toBe('Kept: the worktree changed after the cleanup checks.');
-    expect(keptText('fetch_failed')).toBe('Kept: the fetch failed.');
+    expect(keptText('fetch_failed')).toBe('Kept: the fetch failed; cleanup tries again later.');
     expect(keptText('not_merged')).toBe(
       'Kept: the branch is not merged. A squash merge is not detected; trash the worktree yourself.',
     );
