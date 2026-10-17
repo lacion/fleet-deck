@@ -48,7 +48,7 @@ All are deck → station, except `fleet_git.artifact_authorize` (station → dec
 | `fleet_git.push_now` | drive | `fleet_git.v1` | no | `{ session_id }` → `{ state }` (error `held` while a land or a move holds the session) |
 | `project.ensure_home` | admin | `fleet_git.homes.v1` | no | `{ project_id, project_name, folder, url, remote: RemoteIdentity, remote_name, generation, attempt_id, request_digest, retry_of? }` (the deck resends the stored request unchanged until the first answer) → `HomeStatus { attempt_id, generation, state, path?, reserved_path, code?, message? }` |
 | `project.home_status` | read | `fleet_git.homes.v1` | no | `{ project_id, attempt_id }` → `HomeStatus` |
-| `fleet_git.artifact_authorize` (station → deck) | read | `fleet_git.homes.v1` | no | `{ project_id, session_id, share }` → `ArtifactAuthorization`, or the error `share_unverified` (deadline 10 s) |
+| `fleet_git.artifact_authorize` (station → deck) | admin (a paired station holds only `admin`, DL-050) | `fleet_git.homes.v1` | no | `{ project_id, session_id, share }` → `ArtifactAuthorization`, or the error `share_unverified` (deadline 10 s) |
 | `fleet_git.share_verdict` | read | `fleet_git.homes.v1` | no | `{ share_name }` → `{ inventory_revision, checked_at, path_state, exposure_state, exposed }` from a report at most 60 s old (deadline 5 s) |
 | `project.radar` | read | `fleet_git.land.v1` | no | `{ project_id, branches: [RadarBranch] }` → `RadarResult` |
 | `session.land` | drive | `fleet_git.land.v1` | yes | `SessionCommand::Land { session_id, land_id, plan: LandPlan }` with the deck's stable `command_id` and, for a coordinator land, `CommandEnvelope.authority` → receipt (`land_fenced` for a fenced id) |

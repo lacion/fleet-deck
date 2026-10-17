@@ -680,7 +680,8 @@ pub const METHODS: &[MethodSpec] = &[
     m(
         "fleet_git.artifact_authorize",
         StationToDeck,
-        Scope::Read,
+        // A paired station holds `admin` only (STATION_SCOPES, DL-050).
+        Scope::Admin,
         Some(feature::FLEET_GIT_HOMES),
         false,
     ),

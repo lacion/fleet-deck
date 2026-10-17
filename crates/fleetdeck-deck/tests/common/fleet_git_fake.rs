@@ -636,11 +636,10 @@ pub async fn setup() -> Setup {
     setup_with(fixture().await).await
 }
 
-/// The scopes of a test station: `STATION_SCOPES` and `read`. The table row of
-/// `fleet_git.artifact_authorize` is scope `read`, so a station that sends it
-/// needs that grant (the pairing grants `admin` only, see the T2.3b report).
+/// The scopes of a test station: exactly the pairing grant `STATION_SCOPES`,
+/// which `fleet_git.artifact_authorize` (scope `admin`) needs.
 pub fn station_scopes() -> BTreeSet<Scope> {
-    STATION_SCOPES.into_iter().chain([Scope::Read]).collect()
+    STATION_SCOPES.into_iter().collect()
 }
 
 /// [`setup`] with a first station that holds [`station_scopes`].

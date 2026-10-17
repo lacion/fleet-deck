@@ -108,7 +108,7 @@ fn the_fleet_git_homes_methods_need_their_feature_and_scope() {
     for (name, callers, scope) in [
         ("project.ensure_home", "deck → station", "admin"),
         ("project.home_status", "deck → station", "read"),
-        ("fleet_git.artifact_authorize", "station → deck", "read"),
+        ("fleet_git.artifact_authorize", "station → deck", "admin"),
         ("fleet_git.share_verdict", "deck → station", "read"),
     ] {
         let row = code.get(name).unwrap_or_else(|| panic!("{name} missing"));

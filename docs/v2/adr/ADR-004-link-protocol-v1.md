@@ -458,7 +458,7 @@ close             { reason, detail }
 | `fleet_git.push_now` | deck → station | drive | `fleet_git.v1` | no |
 | `project.ensure_home` | deck → station | admin | `fleet_git.homes.v1` | no |
 | `project.home_status` | deck → station | read | `fleet_git.homes.v1` | no |
-| `fleet_git.artifact_authorize` | station → deck | read | `fleet_git.homes.v1` | no |
+| `fleet_git.artifact_authorize` | station → deck | admin | `fleet_git.homes.v1` | no |
 | `fleet_git.share_verdict` | deck → station | read | `fleet_git.homes.v1` | no |
 
 - **`workspace.list` (added in M2 P4-4, DL-061, under the extension rule of §3: "every new method must declare a scope and, if needed, a feature"):** the directory picker of the board's spawn form. It lists the sub-directories of a path inside the station's allowed roots (`WorkspaceQuery` → `WorkspaceListing`). It reads only, but it needs `drive` because only a caller that may start a session needs the station's directory names. Errors: `missing_workspace`, `outside_roots`, `timeout`.

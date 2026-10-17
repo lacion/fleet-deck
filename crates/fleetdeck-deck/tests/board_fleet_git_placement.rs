@@ -273,6 +273,8 @@ async fn placement_for_a_project_uses_its_ready_homes_only() {
     assert_eq!(t.names(&r), ["alpha"]);
     // A ready home does.
     *t.beta_fake.status.lock().unwrap() = Reply::ready(BETA_PATH);
+    // Poll the cloning home now, not at the next 10 s poll (the wait is 10 s).
+    t.s.f.ctx.homes_kick.link_started(t.beta.as_str());
     let (store, id, beta) = (
         t.s.f.store.clone(),
         t.s.app.project_id.clone(),
