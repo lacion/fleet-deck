@@ -9,13 +9,19 @@
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use fleetdeck_core::identity::Identity;
+use fleetdeck_deck::link::runtime::STATION_SCOPES;
+use fleetdeck_deck::store::stations::NewStation;
 use fleetdeck_link::control::{Control, Inbound};
-use fleetdeck_link::node;
-use fleetdeck_proto::CommandId;
+use fleetdeck_link::hello::LocalHello;
+use fleetdeck_link::node::{self, NodeConfig};
+use fleetdeck_link::tls::Role;
+use fleetdeck_link::{Epochs, Grants};
 use fleetdeck_proto::fleet_git::{
     GitSnapshot, HomeCheck, HomeCheckState, PushNowAnswer, PushState, SnapshotAck,
 };
 use fleetdeck_proto::link::{ControlFrame, Outcome, StreamMode, StreamStart, WireError};
+use fleetdeck_proto::{CommandId, IncarnationId, StationId};
 use serde_json::{Value, json};
 
 use std::collections::BTreeSet;
@@ -40,13 +46,80 @@ pub enum PushAnswer {
     Error(&'static str),
 }
 
+/// What the fake answers to `project.ensure_home` and `project.home_status`.
+#[derive(Debug, Clone)]
+pub enum Reply {
+    /// A `HomeStatus` with this state and these fields.
+    State {
+        state: &'static str,
+        path: Option<String>,
+        reserved: Option<String>,
+        code: Option<&'static str>,
+        message: Option<String>,
+    },
+    /// A link error with this code.
+    Error(&'static str),
+}
+
+impl Reply {
+    pub fn cloning(reserved: &str) -> Self {
+        Self::State {
+            state: "cloning",
+            path: None,
+            reserved: Some(reserved.to_owned()),
+            code: None,
+            message: None,
+        }
+    }
+
+    pub fn ready(path: &str) -> Self {
+        Self::State {
+            state: "ready",
+            path: Some(path.to_owned()),
+            reserved: Some(path.to_owned()),
+            code: None,
+            message: None,
+        }
+    }
+
+    pub fn failed(code: &'static str, message: &str) -> Self {
+        Self::State {
+            state: "failed",
+            path: None,
+            reserved: Some("/srv/projects/App".to_owned()),
+            code: Some(code),
+            message: Some(message.to_owned()),
+        }
+    }
+}
+
+/// What a fake station reports in `station.info`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FakeOptions {
+    /// `fleet_git.allow_local_remotes`; `None`: no `fleet_git` object.
+    pub fleet_git: Option<bool>,
+}
+
 pub struct FakeGit {
     seen: Mutex<Vec<(String, Value)>>,
     pub check: Mutex<Check>,
     /// Answer the next snapshot with `stored: false` and this revision.
     pub stale_once: Mutex<Option<u64>>,
     pub push: Mutex<PushAnswer>,
+    /// The answer of `project.ensure_home`.
+    pub ensure: Mutex<Reply>,
+    /// The answer of `project.home_status`.
+    pub status: Mutex<Reply>,
+    /// The attempts that this station knows, by id, with their generation.
+    pub attempts: Mutex<std::collections::BTreeMap<String, u64>>,
     pub control: Control,
+}
+
+/// The node of a fake station and what the deck knows of it.
+struct Peer {
+    node: NodeConfig,
+    station: StationId,
+    inc: IncarnationId,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -57,9 +130,66 @@ impl FakeGit {
     /// Links a fake station named `name` to the deck of `f`, answers its
     /// first `station.info` and starts the responder.
     pub async fn connect(f: &mut Fixture, name: &str) -> Arc<Self> {
+        Self::connect_with(f, name, FakeOptions::default()).await
+    }
+
+    /// [`Self::connect`] with what the station reports in `station.info`.
+    pub async fn connect_with(f: &mut Fixture, name: &str, options: FakeOptions) -> Arc<Self> {
+        let peer = Peer {
+            node: f.station_node.clone(),
+            station: f.station.clone(),
+            inc: f.inc.clone(),
+        };
+        let fake = Self::link(f, &peer, name, options).await;
+        f.synced = true;
+        fake
+    }
+
+    /// Pins a second station named `name` and links its fake to the deck.
+    pub async fn connect_second(
+        f: &mut Fixture,
+        name: &str,
+        options: FakeOptions,
+    ) -> (StationId, Arc<Self>) {
+        let identity = Arc::new(Identity::generate().unwrap());
+        let rec = f
+            .store
+            .pin_station(NewStation {
+                key: identity.public_key(),
+                name: name.to_owned(),
+                scopes: STATION_SCOPES.into_iter().collect(),
+                dial_url: None,
+            })
+            .await
+            .unwrap();
+        f.ctx.peers.refresh(rec.station_id.clone()).await.unwrap();
+        f.deck_node.pins.pin(identity.public_key(), Role::Station);
+        let inc = IncarnationId::from(format!("{name}-db"));
+        let grants = Grants::new();
+        grants.grant(
+            f.deck_key.fingerprint(),
+            [Scope::Read, Scope::Drive, Scope::Approve, Scope::Admin],
+        );
+        let node = NodeConfig::new(
+            identity,
+            LocalHello::new(Role::Station, inc.clone()),
+            Arc::new(Epochs::in_memory()),
+        )
+        .with_store(grants);
+        node.pins.pin(f.deck_key, Role::Deck);
+        let peer = Peer {
+            node,
+            station: rec.station_id.clone(),
+            inc,
+        };
+        let fake = Self::link(f, &peer, name, options).await;
+        (rec.station_id, fake)
+    }
+
+    async fn link(f: &mut Fixture, peer: &Peer, name: &str, options: FakeOptions) -> Arc<Self> {
         let (d, a) = tokio::time::timeout(T, async {
             tokio::join!(
-                node::dial(&f.station_node, f.listener.local_addr, f.deck_key),
+                node::dial(&peer.node, f.listener.local_addr, f.deck_key),
                 f.listener.next_link()
             )
         })
@@ -67,8 +197,8 @@ impl FakeGit {
         .expect("link setup");
         let at_deck = fleetdeck_link::start(&f.deck_node, a.expect("listener"));
         tokio::spawn(fleetdeck_deck::link::serve(Arc::clone(&f.ctx), at_deck));
-        let mut station = fleetdeck_link::start(&f.station_node, d.unwrap());
-        let info = info(name, &f.inc);
+        let mut station = fleetdeck_link::start(&peer.node, d.unwrap());
+        let info = info(name, &peer.inc, options);
         loop {
             let message = tokio::time::timeout(T, station.inbound.recv())
                 .await
@@ -86,7 +216,7 @@ impl FakeGit {
             } else if req.method == "events.replay" {
                 let start = StreamStart {
                     mode: StreamMode::Snapshot,
-                    incarnation: f.inc.clone(),
+                    incarnation: peer.inc.clone(),
                     from: 0,
                 };
                 station
@@ -96,12 +226,12 @@ impl FakeGit {
                     .unwrap();
                 for frame in [
                     ControlFrame::SnapshotBegin {
-                        incarnation: f.inc.clone(),
+                        incarnation: peer.inc.clone(),
                         watermark: 0,
                         session_count: 0,
                     },
                     ControlFrame::SnapshotEnd {
-                        incarnation: f.inc.clone(),
+                        incarnation: peer.inc.clone(),
                         watermark: 0,
                         coordinator: None,
                     },
@@ -111,8 +241,9 @@ impl FakeGit {
                 break;
             }
         }
+        let id = peer.station.clone();
         f.wait("the snapshot", |f| {
-            let (store, id) = (f.store.clone(), f.station.clone());
+            let (store, id) = (f.store.clone(), id.clone());
             async move {
                 store
                     .station(id)
@@ -124,12 +255,14 @@ impl FakeGit {
             }
         })
         .await;
-        f.synced = true;
         let fake = Arc::new(Self {
             seen: Mutex::default(),
             check: Mutex::new(Check::Verified),
             stale_once: Mutex::new(None),
             push: Mutex::new(PushAnswer::State(PushState::Due)),
+            ensure: Mutex::new(Reply::cloning("/srv/projects/App")),
+            status: Mutex::new(Reply::cloning("/srv/projects/App")),
+            attempts: Mutex::default(),
             control: station.control.clone(),
         });
         let me = Arc::clone(&fake);
@@ -163,6 +296,8 @@ impl FakeGit {
                 "body_markdown": "body", "estimate": null, "comments": [],
                 "linked_prs": [], "images": []
             })),
+            "project.ensure_home" => self.ensure_home(&req.params),
+            "project.home_status" => self.home_status(&req.params),
             "fleet_git.push_now" => match *lock(&self.push) {
                 PushAnswer::State(state) => Outcome::Ok(json!(PushNowAnswer { state })),
                 PushAnswer::Error(code) => Outcome::Err(WireError::new(code, "the fake says no")),
@@ -173,6 +308,50 @@ impl FakeGit {
             },
         };
         let _ = control.respond(req.id, outcome).await;
+    }
+
+    /// A reply as the answer for `attempt` of `generation`.
+    fn reply(reply: &Reply, attempt: &str, generation: u64) -> Outcome {
+        match reply {
+            Reply::Error(code) => Outcome::Err(WireError::new(*code, "the fake says no")),
+            Reply::State {
+                state,
+                path,
+                reserved,
+                code,
+                message,
+            } => {
+                let mut status = json!({
+                    "attempt_id": attempt, "generation": generation, "state": state
+                });
+                for (key, value) in [
+                    ("path", path.clone()),
+                    ("reserved_path", reserved.clone()),
+                    ("code", code.map(str::to_owned)),
+                    ("message", message.clone()),
+                ] {
+                    if let Some(value) = value {
+                        status[key] = json!(value);
+                    }
+                }
+                Outcome::Ok(status)
+            }
+        }
+    }
+
+    fn ensure_home(&self, params: &Value) -> Outcome {
+        let attempt = params["attempt_id"].as_str().unwrap_or_default().to_owned();
+        let generation = params["generation"].as_u64().unwrap_or_default();
+        lock(&self.attempts).insert(attempt.clone(), generation);
+        Self::reply(&lock(&self.ensure), &attempt, generation)
+    }
+
+    fn home_status(&self, params: &Value) -> Outcome {
+        let attempt = params["attempt_id"].as_str().unwrap_or_default().to_owned();
+        let Some(generation) = lock(&self.attempts).get(&attempt).copied() else {
+            return Outcome::Err(WireError::new("unknown_attempt", "no such attempt"));
+        };
+        Self::reply(&lock(&self.status), &attempt, generation)
     }
 
     fn snapshot(&self, params: &Value) -> Outcome {
@@ -249,13 +428,21 @@ impl FakeGit {
     }
 }
 
-fn info(name: &str, inc: &fleetdeck_proto::IncarnationId) -> Value {
-    json!({
+fn info(name: &str, inc: &fleetdeck_proto::IncarnationId, options: FakeOptions) -> Value {
+    let mut info = json!({
         "name": name,
         "incarnation": inc,
         "head": 0,
         "live_sessions": 0,
-    })
+    });
+    if let Some(local) = options.fleet_git {
+        info["fleet_git"] = json!({
+            "clone_root": "/srv/projects",
+            "allow_check_cmd": false,
+            "allow_local_remotes": local,
+        });
+    }
+    info
 }
 
 /// A command id of a test.
@@ -370,7 +557,15 @@ pub fn body(settings: Value, revision: u64, remote: Option<&str>) -> Value {
 }
 
 pub async fn setup() -> Setup {
-    let f = fixture().await;
+    setup_with(fixture().await).await
+}
+
+/// [`setup`] on a deck store that is a file of `dir`.
+pub async fn setup_in(dir: &std::path::Path) -> Setup {
+    setup_with(super::fixture_file(dir).await).await
+}
+
+async fn setup_with(f: Fixture) -> Setup {
     let app = f
         .store
         .create_project(f.station.0.clone(), input("App", "/work/app"))
@@ -418,4 +613,24 @@ pub async fn bearer(c: &BoardClient, name: &str, scopes: &[Scope]) -> (String, S
         .await
         .unwrap();
     ("Authorization".to_owned(), format!("Bearer {}", t.expose()))
+}
+
+/// Runs the home attempt sender of the deck of `f` (the fixture does not
+/// start it). `stop.send(true)` ends it.
+pub fn spawn_sender(
+    f: &Fixture,
+    send: bool,
+) -> (
+    tokio::sync::watch::Sender<bool>,
+    tokio::task::JoinHandle<()>,
+) {
+    let (stop, rx) = tokio::sync::watch::channel(false);
+    let handle = tokio::spawn(fleetdeck_deck::fleet_git_homes::run(
+        f.store.clone(),
+        Arc::clone(&f.ctx),
+        Arc::clone(&f.ctx.homes_kick),
+        rx,
+        fleetdeck_deck::fleet_git_homes::HomesRunOptions { send },
+    ));
+    (stop, handle)
 }

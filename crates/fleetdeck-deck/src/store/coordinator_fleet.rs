@@ -431,13 +431,20 @@ pub(super) fn project_assign(
     }
     match target {
         ProjectTarget::Project { id } => {
-            let Some((project_station, _)) = project_row(tx, id)? else {
+            if project_row(tx, id)?.is_none() {
                 return no(RejectCode::InvalidCommand, "unknown project");
-            };
-            if &project_station != station {
+            }
+            // The project needs a home on the station of the session (FG-5,
+            // design §8.3).
+            let home: bool = tx.query_row(
+                "SELECT EXISTS (SELECT 1 FROM project_homes WHERE project_id = ?1 AND station_id = ?2)",
+                rusqlite::params![id, station.as_str()],
+                |r| r.get(0),
+            )?;
+            if !home {
                 return no(
                     RejectCode::InvalidCommand,
-                    "wrong_station: the session and the project are on different stations",
+                    "wrong_station: This project has no home on that station.",
                 );
             }
             super::project_sessions::set_project_tx(tx, station, session, Some(id), now)?;

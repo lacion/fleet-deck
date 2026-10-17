@@ -4,14 +4,11 @@
 
 use fleetdeck_proto::fleet_git::GitSettings;
 use fleetdeck_proto::integrations::{ForgeBinding, Project, ProjectInput, TrackerBinding};
-use rusqlite::{Connection, OptionalExtension, Row, params};
+use rusqlite::{Connection, OptionalExtension, Row};
 
-use super::{DeckError, DeckStore, Result, call, new_id};
+use super::{DeckStore, Result, call, new_id};
 
 const COLUMNS: &str = "project_id, name, station_id, path, forge, trackers, prompt_template, review_prompt, created_at, git, git_revision, repo, remote_url, remote_ssh_user, remote_dest";
-
-/// The columns that a new project sets; the Git columns keep their defaults.
-const INSERT_COLUMNS: &str = "project_id, name, station_id, path, forge, trackers, prompt_template, review_prompt, created_at";
 
 struct Raw {
     project_id: String,
@@ -73,7 +70,7 @@ impl Raw {
             remote_url: self.remote_url,
             remote_ssh_user: self.remote_ssh_user,
             remote_dest: self.remote_dest,
-            // Filled by `projects_git::derive` (FG-5, phase 1: one home).
+            // Filled by `project_homes::fill_homes` (FG-5).
             homes: Vec::new(),
             slugs: Vec::new(),
         })
@@ -93,7 +90,7 @@ pub(super) fn find(conn: &Connection, id: &str) -> Result<Option<Project>> {
     match found {
         Some(project) => {
             let mut one = [project];
-            super::projects_git::derive(conn, &mut one)?;
+            super::project_homes::fill_homes(conn, &mut one)?;
             let [project] = one;
             Ok(Some(project))
         }
@@ -101,19 +98,21 @@ pub(super) fn find(conn: &Connection, id: &str) -> Result<Option<Project>> {
     }
 }
 
-/// The projects whose home is on `station`, oldest first.
+/// The projects that have a home on `station`, oldest first.
 pub(super) fn of_station(conn: &Connection, station: &str) -> Result<Vec<Project>> {
     let mut stmt = conn.prepare(&format!(
-        "SELECT {COLUMNS} FROM projects WHERE station_id = ?1 ORDER BY created_at, project_id"
+        "SELECT {COLUMNS} FROM projects
+         WHERE project_id IN (SELECT project_id FROM project_homes WHERE station_id = ?1)
+         ORDER BY created_at, project_id"
     ))?;
     let rows = stmt.query_map([station], raw)?;
     let mut projects = rows.map(|r| r?.parse()).collect::<Result<Vec<_>>>()?;
-    super::projects_git::derive(conn, &mut projects)?;
+    super::project_homes::fill_homes(conn, &mut projects)?;
     Ok(projects)
 }
 
 /// The text of an optional prompt: trimmed, `None` when empty.
-fn prompt(text: &Option<String>) -> Option<String> {
+pub(super) fn prompt(text: &Option<String>) -> Option<String> {
     text.as_deref()
         .map(str::trim)
         .filter(|t| !t.is_empty())
@@ -132,7 +131,7 @@ impl DeckStore {
             ))?;
             let rows = stmt.query_map([], raw)?;
             let mut projects = rows.map(|r| r?.parse()).collect::<Result<Vec<_>>>()?;
-            super::projects_git::derive(conn, &mut projects)?;
+            super::project_homes::fill_homes(conn, &mut projects)?;
             Ok(projects)
         })
         .await
@@ -147,7 +146,8 @@ impl DeckStore {
     }
 
     /// Stores a new project of `station_id` (the station that `input.station`
-    /// named, resolved by the caller). The caller checked `input`.
+    /// named, resolved by the caller) with its first home. The caller checked
+    /// `input`.
     ///
     /// # Errors
     /// A database error.
@@ -155,27 +155,7 @@ impl DeckStore {
         let id: String = new_id(self.inner.ids.as_ref());
         let now = self.now_ms();
         let out = call(&self.inner.db, move |conn| {
-            conn.execute(
-                &format!(
-                    "INSERT INTO projects ({INSERT_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
-                ),
-                params![
-                    id,
-                    input.name.trim(),
-                    station_id,
-                    input.path,
-                    input
-                        .forge
-                        .as_ref()
-                        .map(serde_json::to_string)
-                        .transpose()?,
-                    serde_json::to_string(&input.trackers)?,
-                    prompt(&input.prompt_template),
-                    prompt(&input.review_prompt),
-                    now,
-                ],
-            )?;
-            find(conn, &id)?.ok_or_else(|| DeckError::Corrupt("a new project is missing".into()))
+            super::projects_legacy::create_project(conn, &id, &station_id, &input, now)
         })
         .await;
         // A card's automatic project depends on the projects (DL-176).
@@ -184,58 +164,27 @@ impl DeckStore {
     }
 
     /// Replaces every field of a project but its id and creation time.
-    /// `None` when no project has `id`.
+    /// `None` when no project has `id`. A new station or folder replaces the
+    /// home of a one-home project (design §8.2).
     ///
     /// # Errors
-    /// A database error.
+    /// A database error; [`super::DeckError::HomeRefused`] with `use_homes`
+    /// for a project with more than one home and `home_busy` for a busy home.
     pub async fn update_project(
         &self,
         id: String,
         station_id: String,
         input: ProjectInput,
     ) -> Result<Option<Project>> {
-        let out = call(&self.inner.db, move |conn| {
-            let tx = conn.transaction()?;
-            let old: Option<(String, String)> = tx
-                .query_row(
-                    "SELECT station_id, path FROM projects WHERE project_id = ?1",
-                    [&id],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .optional()?;
-            let Some((old_station, old_path)) = old else {
-                return Ok(None);
-            };
-            // A new station or folder is a new home: the Git revision grows
-            // and no stored check of the old one applies (FG-5).
-            let moved = old_station != station_id || old_path != input.path;
-            tx.execute(
-                "UPDATE projects SET name = ?2, station_id = ?3, path = ?4, forge = ?5,
-                     trackers = ?6, prompt_template = ?7, review_prompt = ?8,
-                     git_revision = git_revision + ?9
-                 WHERE project_id = ?1",
-                params![
-                    id,
-                    input.name.trim(),
-                    station_id,
-                    input.path,
-                    input
-                        .forge
-                        .as_ref()
-                        .map(serde_json::to_string)
-                        .transpose()?,
-                    serde_json::to_string(&input.trackers)?,
-                    prompt(&input.prompt_template),
-                    prompt(&input.review_prompt),
-                    i64::from(moved),
-                ],
-            )?;
-            if moved {
-                super::git_snapshots::clear_checks(&tx, &id)?;
+        let now = self.now_ms();
+        let live = match self.project(id.clone()).await? {
+            Some(p) if p.station_id != station_id || p.path != input.path => {
+                self.live_cwds(&p.station_id).await?
             }
-            let found = find(&tx, &id)?;
-            tx.commit()?;
-            Ok(found)
+            _ => Vec::new(),
+        };
+        let out = call(&self.inner.db, move |conn| {
+            super::projects_legacy::update_project(conn, &id, &station_id, &input, &live, now)
         })
         .await;
         self.board_changed();
@@ -248,11 +197,7 @@ impl DeckStore {
     /// A database error.
     pub async fn delete_project(&self, id: String) -> Result<bool> {
         let out = call(&self.inner.db, move |conn| {
-            let tx = conn.transaction()?;
-            let deleted = tx.execute("DELETE FROM projects WHERE project_id = ?1", [&id])? > 0;
-            super::git_snapshots::clear_checks(&tx, &id)?;
-            tx.commit()?;
-            Ok(deleted)
+            super::projects_legacy::delete_project(conn, &id)
         })
         .await;
         self.board_changed();

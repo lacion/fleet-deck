@@ -34,16 +34,21 @@ pub mod displays_pairing;
 pub mod extras;
 pub mod fleet;
 pub mod fleet_git_schema;
+pub mod fleet_git_start;
 pub mod git_snapshots;
 pub mod grants;
+pub mod home_attempts;
 pub mod members;
 pub mod outbox;
 pub mod pairing;
 pub mod plans;
 pub mod presence;
+pub mod project_home_ops;
+pub mod project_homes;
 pub mod project_sessions;
 pub mod projects;
 pub mod projects_git;
+pub(crate) mod projects_legacy;
 pub mod read_cursors;
 pub mod read_model;
 pub mod review;
@@ -150,6 +155,10 @@ pub enum DeckError {
     /// A limit is full (R13 §5B: pairings); the caller tries again later.
     #[error("{0}")]
     Busy(String),
+    /// A rule of the homes of a project refuses a write (FG-5): `use_homes`,
+    /// `home_busy`.
+    #[error("{}", .0.message)]
+    HomeRefused(project_homes::HomeRefusal),
 }
 
 impl From<rusqlite::Error> for DeckError {
@@ -267,6 +276,9 @@ impl DeckStore {
     }
 
     async fn start(db: Db, clock: SharedClock, ids: SharedIds) -> Result<Self> {
+        // The copy of the position-0 home is made again when it differs
+        // (design §3.9 item 6).
+        call(&db, |conn| projects_legacy::repair(conn).map(|_| ())).await?;
         let fresh: IncarnationId = new_id(ids.as_ref());
         let owner: String = new_id(ids.as_ref());
         let now = now_ms(&clock);

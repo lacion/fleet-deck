@@ -38,8 +38,19 @@ fn lock_of(station: &StationId) -> Arc<tokio::sync::Mutex<()>> {
 }
 
 /// The link of `station` came up (the first `station.info` answered): sends
-/// the snapshot, also when the station acknowledged this state before.
+/// the snapshot, also when the station acknowledged this state before. The
+/// home attempts of the station are due at once, and its `cloning` homes are
+/// polled once (FG-5, decision B6a).
 pub async fn sync_station(ctx: &Arc<DeckLink>, station: StationId) {
+    let now = ctx.store.now_ms();
+    if let Err(e) = ctx
+        .store
+        .home_attempts_link_start(station.0.clone(), now)
+        .await
+    {
+        tracing::warn!(station = %station, error = %e, "fleet git sync: home attempts");
+    }
+    ctx.homes_kick.link_started(station.as_str());
     send(ctx, &station, true).await;
 }
 
@@ -49,13 +60,27 @@ pub async fn sync_changed(ctx: &Arc<DeckLink>, station: StationId) {
     send(ctx, &station, false).await;
 }
 
-/// A project changed: sends the snapshot of the station of its home.
+/// A project changed: sends the snapshot to every station that has a home of
+/// it.
 pub async fn sync_project(ctx: &Arc<DeckLink>, project_id: String) {
     match ctx.store.project(project_id).await {
-        Ok(Some(project)) => sync_changed(ctx, StationId::from(project.station_id)).await,
+        Ok(Some(project)) => {
+            for station in home_stations(&project) {
+                sync_changed(ctx, station).await;
+            }
+        }
         Ok(None) => {}
         Err(e) => tracing::warn!(error = %e, "fleet git sync: project"),
     }
+}
+
+/// The stations that have a home of `project`; its copy when it has none.
+#[must_use]
+pub fn home_stations(project: &fleetdeck_proto::integrations::Project) -> Vec<StationId> {
+    if project.homes.is_empty() {
+        return vec![StationId::from(project.station_id.clone())];
+    }
+    project.homes.iter().map(|h| h.station_id.clone()).collect()
 }
 
 /// Runs [`sync_changed`] on its own task (a route does not wait for the

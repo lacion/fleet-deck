@@ -35,7 +35,7 @@ use serde_json::{Value, json};
 use super::Board;
 use super::guard::{ApiError, owner_only};
 use crate::link::fleet_git_sync;
-use crate::store::{AuditResult, NewAudit, Principal, StationRecord};
+use crate::store::{AuditResult, DeckError, NewAudit, Principal, StationRecord};
 
 /// The longest the board waits for the station's answer to a read. The
 /// station limits each of its calls to 20 s and a view makes up to three.
@@ -71,9 +71,18 @@ pub(super) async fn station_of(
     board: &Board,
     project: &Project,
 ) -> Result<(StationRecord, Control), ApiError> {
+    station_of_id(board, &project.station_id).await
+}
+
+/// The station `station_id`, with a live control channel to it (the station
+/// of the chosen home of a batch start, decision B16).
+pub(super) async fn station_of_id(
+    board: &Board,
+    station_id: &str,
+) -> Result<(StationRecord, Control), ApiError> {
     let rec = board
         .store
-        .find_station(project.station_id.clone())
+        .find_station(station_id.to_owned())
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| {
@@ -300,7 +309,11 @@ pub async fn update(
         .store
         .update_project(id.clone(), station_id, input)
         .await
-        .map_err(ApiError::internal)?
+        .map_err(|e| match e {
+            // A busy home, or a project with more than one home (design §8.2).
+            DeckError::HomeRefused(r) => super::project_home_routes::refusal(r),
+            e => ApiError::internal(e),
+        })?
         .ok_or_else(|| {
             ApiError::new(
                 StatusCode::NOT_FOUND,
@@ -348,7 +361,10 @@ pub async fn delete(
         ));
     }
     if let Some(old) = before {
-        fleet_git_sync::spawn_changed(&board.link, StationId::from(old.station_id));
+        // Every station with a home of the project drops it from its state.
+        for station in fleet_git_sync::home_stations(&old) {
+            fleet_git_sync::spawn_changed(&board.link, station);
+        }
     }
     audited(&board, &principal, "projects.delete", &id, "").await;
     Ok(StatusCode::NO_CONTENT)

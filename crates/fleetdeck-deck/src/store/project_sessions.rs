@@ -59,16 +59,50 @@ fn forge_origin(project: &Project) -> Option<String> {
     Some(format!("{}/{}", forge.host, forge.repo).to_lowercase())
 }
 
+/// Does `project` have a home on `station`? A project without homes (a list
+/// from an older deck) counts through its copy (decision B5c).
+fn on_station(project: &Project, station: &str) -> bool {
+    if project.homes.is_empty() {
+        project.station_id == station
+    } else {
+        project
+            .homes
+            .iter()
+            .any(|h| h.station_id.as_str() == station)
+    }
+}
+
+/// The folders of the homes of `project` on `station`; the copy when the
+/// project has no homes.
+fn folders_on<'a>(project: &'a Project, station: &str) -> Vec<&'a str> {
+    if project.homes.is_empty() {
+        return if project.station_id == station {
+            vec![project.path.as_str()]
+        } else {
+            Vec::new()
+        };
+    }
+    project
+        .homes
+        .iter()
+        .filter(|h| h.station_id.as_str() == station)
+        .filter_map(|h| h.path.as_deref())
+        .collect()
+}
+
 /// The project of a card.
 ///
 /// - A manual row decides: a project, or none.
-/// - Else the longest `path` of a project of the same station that is the
-///   `cwd`, a parent of it, the main checkout of the session worktree, or a
-///   parent of that. The main checkout is the last component of
+/// - Else the longest home folder of a project on the same station that is
+///   the `cwd`, a parent of it, the main checkout of the session worktree, or
+///   a parent of that. The main checkout is the last component of
 ///   `summary.worktree` (or of `cwd`) without `--fd-<callsign>` of the
 ///   session.
-/// - Else the project of the same station whose forge binding equals
-///   `summary.repo.origin`. Several such projects give none.
+/// - Else the project with a home on the same station whose forge binding
+///   equals `summary.repo.origin`. Several such projects give none.
+/// - Else the project whose `repo` equals `summary.repo.origin`, on any
+///   station, without case (a display fallback only, design §8.3, decision
+///   B17). Several such projects give none.
 #[must_use]
 pub fn project_of(
     projects: &[Project],
@@ -81,27 +115,43 @@ pub fn project_of(
     if let Some(manual) = assignments.get(&key) {
         return manual.clone();
     }
-    let mine = || projects.iter().filter(|p| p.station_id == station);
+    let mine = || projects.iter().filter(|p| on_station(p, station));
     let mut candidates: Vec<String> = summary.cwd.iter().cloned().collect();
     if let Some(callsign) = summary.callsign.as_deref() {
         let source = summary.worktree.as_deref().or(summary.cwd.as_deref());
         candidates.extend(source.and_then(|p| main_path(p, callsign)));
     }
-    let by_path = mine()
-        .filter(|p| candidates.iter().any(|c| within(&p.path, c)))
-        .reduce(|best, p| {
-            if trimmed(&p.path).len() > trimmed(&best.path).len() {
-                p
-            } else {
-                best
-            }
-        });
-    if let Some(project) = by_path {
+    // The longest home folder that holds a candidate; the first project wins
+    // a tie.
+    let mut best: Option<(usize, &Project)> = None;
+    for p in mine() {
+        let longest = folders_on(p, station)
+            .into_iter()
+            .filter(|f| candidates.iter().any(|c| within(f, c)))
+            .map(|f| trimmed(f).len())
+            .max();
+        if let Some(len) = longest
+            && best.is_none_or(|(l, _)| len > l)
+        {
+            best = Some((len, p));
+        }
+    }
+    if let Some((_, project)) = best {
         return Some(project.project_id.clone());
     }
     let origin = summary.repo.as_ref()?.origin.as_deref()?.to_lowercase();
     let mut same = mine().filter(|p| forge_origin(p).as_deref() == Some(origin.as_str()));
     match (same.next(), same.next()) {
+        (Some(only), None) => return Some(only.project_id.clone()),
+        (Some(_), Some(_)) => return None,
+        _ => {}
+    }
+    let mut by_repo = projects.iter().filter(|p| {
+        p.repo
+            .as_deref()
+            .is_some_and(|r| r.eq_ignore_ascii_case(&origin))
+    });
+    match (by_repo.next(), by_repo.next()) {
         (Some(only), None) => Some(only.project_id.clone()),
         _ => None,
     }

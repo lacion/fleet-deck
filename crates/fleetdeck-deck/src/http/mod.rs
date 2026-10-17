@@ -22,6 +22,7 @@ pub mod endpoints;
 pub mod execution_routes;
 pub mod file_routes;
 pub mod fleet_answers_routes;
+pub mod fleet_git_routes;
 pub mod fleet_routes;
 pub mod grant_routes;
 pub mod guard;
@@ -33,6 +34,8 @@ pub mod paste_routes;
 pub mod people_routes;
 pub mod plan_routes;
 pub mod project_git_routes;
+pub mod project_home_routes;
+pub mod project_remote_routes;
 pub mod project_session_routes;
 pub mod project_writes;
 pub mod projects_routes;
@@ -547,6 +550,7 @@ pub fn router(board: Arc<Board>) -> Router {
             get(fleet_answers_routes::list),
         )
         .merge(display_routes::routes())
+        .merge(fleet_git_routes::routes())
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&board),
             guard::guard,
