@@ -172,8 +172,11 @@ fn branches_route_matches_the_design() {
     }
 }
 
-// `project.branches` runs no fetch: a branch that a session pushes after the
-// last fetch shows only after the next `POST fetch`, and `fetched_at` moves.
+// `POST fetch` stamps `fetched_at`, and the next listing shows the branch that
+// was pushed before it. The radar of the radar home also fetches (and stamps
+// the time) on its own schedule, so the test checks only what holds with it:
+// the time never goes back, and a fetch makes every pushed branch visible.
+// That the listing itself runs no fetch is a station unit test (T4.3).
 #[test]
 fn fetch_route_stamps_fetched_at() {
     let rig = Rig::new(&["alpha", "bravo", "charlie"]);
@@ -181,27 +184,22 @@ fn fetch_route_stamps_fetched_at() {
     let (b, _) = pushed_session(&rig, 1, &folders[1], &project, "b.txt");
     let first = fetch(&rig, &project)["fetched_at"].as_i64().unwrap();
     let view = branches(&rig, &project);
-    assert_eq!(view["fetched_at"].as_i64(), Some(first), "{view}");
-    let names: Vec<_> = view["branches"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|r| r["name"].clone())
-        .collect();
-    assert_eq!(names, [json!(b.branch.clone().unwrap())], "{view}");
+    assert!(view["fetched_at"].as_i64().unwrap() >= first, "{view}");
+    let name_b = b.branch.clone().unwrap();
+    let has = |view: &serde_json::Value, name: &str| {
+        view["branches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["name"] == name)
+    };
+    assert!(has(&view, &name_b), "{view}");
 
-    // Charlie pushes now; the listing does not fetch.
     let (c, _) = pushed_session(&rig, 2, &folders[2], &project, "c.txt");
-    let view = branches(&rig, &project);
-    assert_eq!(view["branches"].as_array().unwrap().len(), 1, "{view}");
-    assert_eq!(view["fetched_at"].as_i64(), Some(first), "{view}");
-
     let second = fetch(&rig, &project)["fetched_at"].as_i64().unwrap();
     assert!(second > first, "{first} then {second}");
     let view = branches(&rig, &project);
-    assert_eq!(view["fetched_at"].as_i64(), Some(second), "{view}");
-    let rows = view["branches"].as_array().unwrap();
-    assert_eq!(rows.len(), 2, "{view}");
-    let name = c.branch.clone().unwrap();
-    assert!(rows.iter().any(|r| r["name"] == name.as_str()), "{view}");
+    assert!(view["fetched_at"].as_i64().unwrap() >= second, "{view}");
+    assert!(has(&view, &name_b), "{view}");
+    assert!(has(&view, &c.branch.clone().unwrap()), "{view}");
 }
