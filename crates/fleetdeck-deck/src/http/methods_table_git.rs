@@ -105,6 +105,28 @@ pub const API_GIT: &[ApiMethod] = &[
         Some(Scope::Drive),
         true,
     ),
+    // FG-9: the session move. The POST routes are `admin` and owner only.
+    m(
+        "sessions.move",
+        Method::POST,
+        "/api/sessions/{station}/{session}/move",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "sessions.move_get",
+        Method::GET,
+        "/api/sessions/{station}/{session}/move",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
+        "moves.undo",
+        Method::POST,
+        "/api/moves/{move}/undo",
+        Some(Scope::Admin),
+        true,
+    ),
     // FG-7: the radar groups and notices; `read`, closed to members.
     m(
         "radar.list",

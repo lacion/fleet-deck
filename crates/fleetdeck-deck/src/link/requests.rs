@@ -73,11 +73,16 @@ async fn coordinator_call(ctx: &DeckLink, station: StationId, req: &InboundReque
         }
     };
     let lands = matches!(envelope.call.op, CoordinatorOp::Land { .. });
+    let moves = matches!(envelope.call.op, CoordinatorOp::Move { .. });
     match ctx.store.decide_coordinator(station, envelope).await {
         Ok(r) => {
             // A queued coordinator land wakes admission (FG-10).
             if lands && r.reject.is_none() {
                 ctx.land_kick.kick();
+            }
+            // A started coordinator move wakes the move task (FG-9).
+            if moves && r.reject.is_none() {
+                ctx.move_kick.kick();
             }
             receipt(&r)
         }

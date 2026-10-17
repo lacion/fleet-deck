@@ -430,10 +430,16 @@ fn decide_op(
             station,
             session_id,
         } => super::coordinator_git::land(tx, grant, ctx, (station, session_id), (command_id, now)),
-        // (FG-9: T4.4 replaces this)
-        CoordinatorOp::Move { .. } => no(
-            RejectCode::Unsupported,
-            "Move is not available through the coordinator yet.",
+        CoordinatorOp::Move {
+            station,
+            session_id,
+            to_station,
+        } => super::coordinator_git::move_to(
+            tx,
+            grant,
+            ctx,
+            (station, session_id, to_station),
+            (command_id, now),
         ),
         CoordinatorOp::AssignAuto { task, requirements } => {
             if let Some(d) = check_text(task) {

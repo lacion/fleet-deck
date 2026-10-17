@@ -26,6 +26,9 @@ use super::coordinator_query::{QueryAnswer, ReadShape, StationRead};
 use super::grants::Grant;
 use super::land_queue::{LandRefusal, LandRequest, LandRequested, request_in_tx};
 use super::land_ready::Env;
+use super::session_moves::{
+    MoveEnv, MoveRefusal, MoveRequest, MoveRequested, request_in_tx as move_request_in_tx,
+};
 use super::{DeckError, DeckStore, LinkFeature, LinkV2, Result, new_id};
 
 /// The result of one read query.
@@ -38,17 +41,25 @@ pub(super) fn audit_target(op: &CoordinatorOp) -> Option<String> {
             station,
             session_id,
         } => Some(format!("{station}/{session_id}")),
+        CoordinatorOp::Move {
+            station,
+            session_id,
+            to_station,
+        } => Some(format!("{station}/{session_id} -> {to_station}")),
         _ => None,
     }
 }
 
-/// The new land id and command id of a `Land` op; none for another op, so the
-/// id sequence of other calls does not change.
+/// The new ids of a `Land` op (the land id and the command id) or of a `Move`
+/// op (the move id and the unique part of its command ids); none for another
+/// op, so the id sequence of other calls does not change.
 pub(super) fn land_ids(store: &DeckStore, op: &CoordinatorOp) -> Option<(String, String)> {
-    matches!(op, CoordinatorOp::Land { .. }).then(|| {
-        let id = || new_id::<String>(store.inner.ids.as_ref());
-        (format!("land-{}", id()), format!("landcmd-{}", id()))
-    })
+    let id = || new_id::<String>(store.inner.ids.as_ref());
+    match op {
+        CoordinatorOp::Land { .. } => Some((format!("land-{}", id()), format!("landcmd-{}", id()))),
+        CoordinatorOp::Move { .. } => Some((format!("move-{}", id()), id())),
+        _ => None,
+    }
 }
 
 /// The rejection for a refusal of the land request (decision Q2).
@@ -107,6 +118,74 @@ pub(super) fn land(
         }
         LandRequested::Refused(r) => Ok(refused(r)),
     }
+}
+
+/// `move_session` (design §13.2): the target rules of ADR-008 §4.2 for the
+/// source session, the grant must cover the target station too
+/// (`target_excluded`), then the move request with the authority of the grant
+/// (FG-9, T4.4b Q20).
+pub(super) fn move_to(
+    tx: &Connection,
+    grant: &Grant,
+    ctx: &Context,
+    (station, session, to): (&StationId, &SessionId, &StationId),
+    (command_id, now): (&str, i64),
+) -> Result<Decision> {
+    if let Some(d) = strict_target(tx, grant, (station, session), (true, now))? {
+        return Ok(d);
+    }
+    if !grant.stations.contains(to) {
+        return Ok(Decision::Rejected(
+            RejectCode::Forbidden,
+            "target_excluded: The target station is outside the grant.".to_owned(),
+        ));
+    }
+    let Some((move_id, part)) = &ctx.land_ids else {
+        return Err(DeckError::Corrupt("move ids".to_owned()));
+    };
+    let feature = |s: &StationId| {
+        ctx.env
+            .moves
+            .get(s.as_str())
+            .copied()
+            .unwrap_or(LinkFeature::Down)
+    };
+    let env = MoveEnv {
+        src: feature(station),
+        dst: feature(to),
+        dst_instances: ctx
+            .infos
+            .get(to)
+            .map(|i| i.providers.iter().map(|p| p.instance.to_string()).collect()),
+    };
+    let req = MoveRequest {
+        requested_by: format!("coordinator:{}", grant.grant_id),
+        request_command_id: command_id.to_owned(),
+        src_station: station.as_str().to_owned(),
+        src_session: session.as_str().to_owned(),
+        dst_station: to.as_str().to_owned(),
+        authority: grant.authority(),
+    };
+    match move_request_in_tx(tx, &env, (move_id, part), &req, now)? {
+        MoveRequested::Started { .. } => {
+            ctx.flags
+                .board
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(Decision::Accepted(Some(session.clone())))
+        }
+        MoveRequested::Refused(r) => Ok(refused_move(&r)),
+    }
+}
+
+/// The rejection for a refusal of the move request.
+fn refused_move(r: &MoveRefusal) -> Decision {
+    let code = match r.code {
+        "unknown_session" | "unknown_station" => RejectCode::UnknownSession,
+        "fleet_git_unsupported" => RejectCode::Unsupported,
+        "command_id_reused" => RejectCode::CommandIdReused,
+        _ => RejectCode::InvalidState,
+    };
+    Decision::Rejected(code, format!("{}: {}", r.code, r.message))
 }
 
 fn no(code: RejectCode, message: impl Into<String>) -> Result<Read> {

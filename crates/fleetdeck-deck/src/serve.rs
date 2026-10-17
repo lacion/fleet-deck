@@ -116,6 +116,8 @@ pub struct RunningDeck {
     homes: tokio::task::JoinHandle<()>,
     /// The land tasks and the radar task (FG-7, FG-8).
     land: [tokio::task::JoinHandle<()>; 4],
+    /// The move task (FG-9).
+    moves: tokio::task::JoinHandle<()>,
     /// The Tailscale certificate of the board (DL-190).
     cert: crate::cert_task::CertTask,
     shutdown: watch::Sender<bool>,
@@ -390,6 +392,14 @@ impl RunningDeck {
                 crate::fleet_git_radar::RadarOptions::PRODUCTION,
             )),
         ];
+        // The move task: the steps of each session move (FG-9).
+        let moves = tokio::spawn(crate::fleet_git_move::run(
+            store.clone(),
+            Arc::clone(link),
+            Arc::clone(&link.move_kick),
+            crate::fleet_git_move::MoveOptions::PRODUCTION,
+            rx.clone(),
+        ));
         let scheduler = crate::scheduler::spawn(store.clone(), Arc::clone(node.link()), rx);
         Ok(Self {
             node,
@@ -403,6 +413,7 @@ impl RunningDeck {
             maintenance,
             homes,
             land,
+            moves,
             cert,
             shutdown,
             socket,
@@ -435,6 +446,7 @@ impl RunningDeck {
         for task in self.land {
             let _ = task.await;
         }
+        let _ = self.moves.await;
         self.cert.join().await;
         self.board.join().await;
         self.node.shutdown();

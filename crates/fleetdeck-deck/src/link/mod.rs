@@ -79,6 +79,7 @@ pub struct DeckLink {
     pub homes_kick: Arc<crate::fleet_git_homes::HomesKick>,
     /// Wakes the land tasks (FG-8, `fleet_git_land`).
     pub land_kick: Arc<crate::fleet_git_land::LandKick>,
+    pub move_kick: Arc<crate::fleet_git_move::MoveKick>,
     /// The radar notices and the radar wake (FG-7, `fleet_git_radar`).
     pub radar_state: Arc<crate::fleet_git_radar::RadarState>,
     pub radar_kick: Arc<crate::fleet_git_radar::RadarKick>,
@@ -96,6 +97,7 @@ impl DeckLink {
             inflight: router::Inflight::default(),
             homes_kick: Arc::default(),
             land_kick: Arc::default(),
+            move_kick: Arc::default(),
             radar_state: Arc::default(),
             radar_kick: Arc::default(),
         }

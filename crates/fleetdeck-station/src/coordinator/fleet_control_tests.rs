@@ -131,6 +131,7 @@ const MANAGE: &[&str] = &[
     "set_mode",
     "move_to_project",
     "land_session",
+    "move_session",
 ];
 
 #[test]
@@ -470,8 +471,28 @@ fn each_fleet_control_tool_maps_to_its_op_or_query() {
         .unwrap_err()
         .starts_with("invalid_params")
     );
-    // `move_session` is not a tool (FG-9 is not built).
-    assert!(to_op("move_session", &json!({})).is_err());
+    // `move_session` (FG-9) is a thin forward of the op `move`.
+    assert_eq!(
+        op(
+            "move_session",
+            json!({"station": "alpha", "session_id": s, "to_station": "bravo"})
+        )
+        .unwrap(),
+        CoordinatorOp::Move {
+            station: "alpha".into(),
+            session_id: s.into(),
+            to_station: "bravo".into()
+        }
+    );
+    assert!(
+        op(
+            "move_session",
+            json!({"station": "alpha", "session_id": s, "to_station": "bravo", "caller": "x"})
+        )
+        .unwrap_err()
+        .starts_with("invalid_params")
+    );
+    assert!(op("move_session", json!({"station": "alpha", "session_id": s})).is_err());
 }
 
 /// A deck link whose answer to `coordinator.authority_check` is set by the
