@@ -30,6 +30,11 @@ pub struct Options {
     pub station_env: Vec<(String, String)>,
     /// The setup of single stations, by station name.
     pub setup: BTreeMap<String, StationSetup>,
+    /// Programs for the PATH of every station process (T3.5): the name and
+    /// the text of a script. `{FX}` stands for the folder `fx` below the
+    /// temp dir of the rig (an allowed root, so a confined `git` can write
+    /// there). The folder `fx/bin` goes first on the PATH.
+    pub scripts: Vec<(String, String)>,
 }
 
 /// What differs for one station of the rig.
@@ -80,6 +85,8 @@ pub struct Rig {
     csrf: String,
     /// The station.toml text options of `with`, for `add`.
     options: Options,
+    /// `<root>/fx/bin` when `Options.scripts` is not empty.
+    fx_bin: Option<PathBuf>,
     commands: std::cell::Cell<u32>,
     _tmp: tempfile::TempDir,
 }
@@ -204,9 +211,13 @@ impl Rig {
             cookie,
             csrf,
             options: Options::default(),
+            fx_bin: None,
             commands: std::cell::Cell::new(0),
             _tmp: tmp,
         };
+        if !options.scripts.is_empty() {
+            rig.fx_bin = Some(rig.write_scripts(&options.scripts));
+        }
         for name in names {
             let setup = options.setup.get(*name).cloned().unwrap_or_default();
             rig.add_with(name, &options, &setup);
@@ -221,8 +232,30 @@ impl Rig {
             provider: self.options.provider.clone(),
             station_env: self.options.station_env.clone(),
             setup: BTreeMap::new(),
+            scripts: Vec::new(),
         };
         self.add_with(name, &options, setup);
+    }
+
+    /// Writes the scripts of `Options.scripts` to `<root>/fx/bin`; returns it.
+    fn write_scripts(&self, scripts: &[(String, String)]) -> PathBuf {
+        let fx = self.root.join("fx");
+        let bin = fx.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        for (name, text) in scripts {
+            let file = bin.join(name);
+            std::fs::write(&file, text.replace("{FX}", fx.to_str().unwrap())).unwrap();
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        bin
+    }
+
+    /// `<fx_bin>:$PATH`, when the rig has scripts.
+    fn path_with_scripts(&self) -> Option<String> {
+        self.fx_bin.as_ref().map(|bin| {
+            let old = std::env::var("PATH").unwrap_or_default();
+            format!("{}:{old}", bin.display())
+        })
     }
 
     fn add_with(&mut self, name: &str, options: &Options, setup: &StationSetup) {
@@ -269,6 +302,9 @@ impl Rig {
         );
         let home = home.canonicalize().unwrap();
         let mut cmd = fleetdeck(&station.node);
+        if let Some(path) = self.path_with_scripts() {
+            cmd.env("PATH", path);
+        }
         cmd.envs(options.station_env.iter().map(|(k, v)| (k, v)));
         cmd.envs(setup.env.iter().map(|(k, v)| (k, v)));
         station.spawn_cmd(cmd, None);
@@ -323,7 +359,12 @@ impl Rig {
     /// `sync = true` and the rig remote, and waits until the station verified
     /// the home. Returns the project id.
     pub fn project(&self, i: usize, name: &str, settings: Value) -> String {
-        let id = self.create_project(i, name);
+        self.project_with(i, name, settings, Value::Null)
+    }
+
+    /// [`Self::project`] with the forge binding `forge` (`null`: none).
+    pub fn project_with(&self, i: usize, name: &str, settings: Value, forge: Value) -> String {
+        let id = self.create_project_with(i, name, forge);
         let mut settings = settings;
         settings["sync"] = json!(true);
         let r = self.save_git(&id, settings);
@@ -334,11 +375,19 @@ impl Rig {
 
     /// `POST /api/projects` for the home of station `i`, with no Git settings.
     pub fn create_project(&self, i: usize, name: &str) -> String {
+        self.create_project_with(i, name, Value::Null)
+    }
+
+    /// [`Self::create_project`] with the forge binding `forge`.
+    pub fn create_project_with(&self, i: usize, name: &str, forge: Value) -> String {
         let s = &self.stations[i];
-        let body = json!({
+        let mut body = json!({
             "name": name, "station": s.name, "path": s.home,
             "trackers": []
         });
+        if !forge.is_null() {
+            body["forge"] = forge;
+        }
         let deadline = Instant::now() + WAIT;
         loop {
             let r = self.board("POST", "/api/projects", Some(body.clone()));
@@ -656,6 +705,9 @@ impl Rig {
     pub fn start_station(&mut self, i: usize, env: &[(&str, &str)]) {
         let before = self.view(i).and_then(|s| s.info_at);
         let mut cmd = fleetdeck(&self.stations[i].station.node);
+        if let Some(path) = self.path_with_scripts() {
+            cmd.env("PATH", path);
+        }
         cmd.envs(self.options.station_env.iter().map(|(k, v)| (k, v)));
         cmd.envs(env.iter().copied());
         self.stations[i].station.spawn_cmd(cmd, None);
