@@ -1,6 +1,7 @@
 # ADR-009 — Fleet Git: link protocol additions
 
-- **Status:** Proposed (2026-10-17, draft revision 1). Needs the adversary DESIGN REVIEW together with `docs/v2/design/fleet-git.md` and ADR-010 before the status changes.
+- **Status:** Proposed (2026-10-17, revision 2: the advisor changes of DL-224). Needs the adversary DESIGN REVIEW together with `docs/v2/design/fleet-git.md` and ADR-010 before the status changes.
+- **Revision 2 changes:** versioned full snapshots (`GitSnapshot.revision`, home generations, `HomeCheck`); `FleetGitStart` gets `kind`, `settings_revision`, `home_generation`, `home_path`, `remote`, `slug`, `forge: Option<ForgeBinding>` (was `bool`) and `artifact_share_state`; `project.ensure_home` is idempotent by `attempt_id` and `request_digest`, with `generation` and `retry_of`; `session.land` carries a pinned `LandPlan` and a stable deck `command_id` (outbox); new method `fleet_git.land_abandon`; `session.land` and `session.push` events carry the attempt evidence; push leases are scoped to `(target_dest, ref)` by `RemoteIdentity.dest`; new error codes; unknown enum values fail closed.
 - **Deciders:** owner (O5 of `/home/luismorales/fleetdeck-briefs/fleet-git-owner-spec.md`: "All link protocol changes are additive. An older peer ignores the new fields and methods. Record them in a new ADR-009."), architect.
 - **Extends:** ADR-004 (link protocol v1, §2.7 data channel, §9.2 stream tokens, §9.3 command envelopes, §9.6 method table, L16 feature flags), ADR-006 and ADR-008 (coordinator queries and ops). Every rule of those ADRs stays in force.
 - **Design:** `docs/v2/design/fleet-git.md` (FG-1 to FG-12). Section numbers below with "design §" point there.
@@ -29,7 +30,7 @@ Added to `fleetdeck-proto/src/version.rs` (`feature::ALL`). None is in `REQUIRED
 | --- | --- | --- |
 | `fleet_git.v1` | 1 | `fleet_git.projects_set`, `fleet_git.push_now`, `SessionCommand::Start.fleet_git`, `WorkspacePlan` sync field (station internal), the events of §6 rows 1 to 4 |
 | `fleet_git.homes.v1` | 2 | `project.ensure_home`, `project.home_status`, `FileRoot::Artifacts`, the artifact events |
-| `fleet_git.land.v1` | 3 | `project.radar`, `session.land`, `fleet_git.land_status`, the `session.land` event |
+| `fleet_git.land.v1` | 3 | `project.radar`, `session.land`, `fleet_git.land_status`, `fleet_git.land_abandon`, the `session.land` event |
 | `fleet_git.move.v1` | 4 | `session.move_out`, `session.move_export`, `session.move_prepare`, `session.move_in`, `session.move_finish`, `session.move_abort`, `session.move_discard`, `session.move_status`, the stream purposes, the `session.moved` event |
 | `fleet_git.branches.v1` | 4 | `project.branches`, `project.fetch` |
 
@@ -41,13 +42,14 @@ All are deck → station. The rows are added to "Method table v1 (Revision 2)" i
 
 | Method | Scope | Feature | Mutating | Params → answer |
 | --- | --- | --- | --- | --- |
-| `fleet_git.projects_set` | admin | `fleet_git.v1` | no | `{ projects: [GitProjectView] }` → `{ stored }` |
-| `fleet_git.push_now` | drive | `fleet_git.v1` | no | `{ session_id }` → `{ state }` |
-| `project.ensure_home` | admin | `fleet_git.homes.v1` | no | `{ project_id, project_name, url, repo }` → `HomeStatus { state, path, code?, message? }` |
-| `project.home_status` | read | `fleet_git.homes.v1` | no | `{ project_id }` → `HomeStatus` |
+| `fleet_git.projects_set` | admin | `fleet_git.v1` | no | `GitSnapshot { revision, projects: [GitProjectView], homes: [StationHome] }` → `SnapshotAck { stored, revision, checks: [HomeCheck] }` |
+| `fleet_git.push_now` | drive | `fleet_git.v1` | no | `{ session_id }` → `{ state }` (error `held` while a land or a move holds the session) |
+| `project.ensure_home` | admin | `fleet_git.homes.v1` | no | `{ project_id, project_name, folder, url, remote: RemoteIdentity, generation, attempt_id, request_digest, retry_of? }` → `HomeStatus { attempt_id, generation, state, path?, reserved_path, code?, message? }` |
+| `project.home_status` | read | `fleet_git.homes.v1` | no | `{ project_id, attempt_id }` → `HomeStatus` |
 | `project.radar` | read | `fleet_git.land.v1` | no | `{ project_id, branches: [RadarBranch] }` → `RadarResult` |
-| `session.land` | drive | `fleet_git.land.v1` | yes | `SessionCommand::Land { session_id, land_id, mode, target_branch? }` → receipt |
-| `fleet_git.land_status` | read | `fleet_git.land.v1` | no | `{ land_id }` → `{ state, step?, code?, text? }` (`unknown` for an unknown id) |
+| `session.land` | drive | `fleet_git.land.v1` | yes | `SessionCommand::Land { session_id, land_id, plan: LandPlan }` with the deck's stable `command_id` → receipt |
+| `fleet_git.land_status` | read | `fleet_git.land.v1` | no | `{ land_id }` → `LandStatus { state, phase, attempt, source_oid?, base_oid?, rebased_oid?, branch_published_oid?, default_published_oid?, pr_url?, files, code?, text? }`, or `{ state: "unknown" }` for an unknown id |
+| `fleet_git.land_abandon` | drive | `fleet_git.land.v1` | no | `{ land_id }` → `{ state }` (only for a run in phase `reconciling`; ends it `unresolved` and releases the hold; idempotent) |
 | `session.move_out` | admin | `fleet_git.move.v1` | yes | `SessionCommand::MoveOut { session_id, move_id, to_station }` → receipt |
 | `session.move_export` | admin | `fleet_git.move.v1` | no | `{ move_id }` → `{ manifest: TranscriptManifest, stream_token }` |
 | `session.move_prepare` | admin | `fleet_git.move.v1` | no | `{ move_id, manifest, source }` → `{ stream_token }` |
@@ -61,9 +63,13 @@ All are deck → station. The rows are added to "Method table v1 (Revision 2)" i
 
 Why the scopes: `admin` for the methods that run Git network commands that create folders or write the station's project table, or that carry transcripts; `drive` for a session action (land, push now); `read` for reads and for status calls. `project.fetch` changes only remote-tracking refs and is `read`, as the spec gives it the `inspect` class (O32).
 
-Why mutating or not: the four `SessionCommand` methods change session state that a retry must not repeat, so they have a `command_id`, an envelope and a receipt (ADR-004 §9.3). Every other method is a read, a whole-table replace (`projects_set`), or an idempotent call keyed by an id that the deck chose (`project_id`, `move_id`, `land_id`), so a retry repeats nothing.
+Why mutating or not: the four `SessionCommand` methods change session state that a retry must not repeat, so they have a `command_id`, an envelope and a receipt (ADR-004 §9.3). For `session.land` the deck stores the `command_id` and the payload in its outbox at admission and resends the same pair, so a lost answer never makes a second land (design §11.2). Every other method is a read, a versioned whole-state replace (`projects_set`), or an idempotent call keyed by an id that the deck chose:
 
-Error codes (new wire strings in `fleetdeck_proto::fleet_git::code`): `not_synced`, `branch_namespace_blocked`, `git_too_old`, `fetch_failed`, `fetch_timeout`, `push_failed`, `push_rejected`, `push_auth`, `push_timeout`, `home_conflict`, `clone_failed`, `clone_root_missing`, `clone_interrupted`, `land_not_ready`, `land_open`, `check_disabled`, `move_not_ready`, `move_too_large`, `move_checksum`, `move_branch_moved`, `move_resume_failed`, plus the existing `invalid_params`, `unknown_session`, `invalid_state`, `forbidden`, `busy`, `internal`.
+- `fleet_git.projects_set`: the station keeps the newest `revision`. A lower revision, or an equal revision with another digest, is refused with `stored: false` and changes nothing; the same revision and digest answers `stored: true`. The deck computes `revision = max(previous + 1, now_ms)` per station, so it grows also after a restore of a deck backup.
+- `project.ensure_home`: keyed by `attempt_id`; the same `request_digest` returns the stored result (also a failure); another digest gives `attempt_reused`. A new attempt for the same `(project_id, generation)` needs `retry_of`. A lower `generation` than the station knows gives `stale_generation`. The deck applies a `HomeStatus` only when `(attempt_id, generation)` equal its home row.
+- `fleet_git.land_abandon`, `session.move_abort`, `session.move_discard`: an unknown or closed id is ok.
+
+Error codes (new wire strings in `fleetdeck_proto::fleet_git::code`): `not_synced`, `held`, `branch_namespace_blocked`, `git_too_old`, `slug_mismatch`, `stale_settings`, `stale_generation`, `not_a_home`, `unsupported_mode`, `fetch_failed`, `fetch_timeout`, `push_failed`, `push_rejected`, `push_auth`, `push_timeout`, `remote_mismatch`, `remote_rewritten`, `remote_ambiguous`, `home_conflict`, `clone_failed`, `clone_root_missing`, `clone_interrupted`, `incomplete_folder`, `destination_reserved`, `attempt_reused`, `retry_refused`, `land_not_ready`, `land_open`, `land_pr_needs_forge_branch`, `nothing_to_land`, `check_disabled`, `check_mutated`, `branch_moved`, `pr_failed`, `pr_ambiguous`, `land_no_identity`, `land_temp_unsafe`, `station_restarted`, `share_exposed`, `share_unverified`, `move_not_ready`, `move_too_large`, `move_checksum`, `move_branch_moved`, `move_resume_failed`, plus the existing `invalid_params`, `unknown_session`, `invalid_state`, `forbidden`, `busy`, `internal`.
 
 **How an older peer behaves:**
 
@@ -74,20 +80,20 @@ Error codes (new wire strings in `fleetdeck_proto::fleet_git::code`): `not_synce
 
 | Type | Field | Shape | Older peer |
 | --- | --- | --- | --- |
-| `SessionCommand::Start` | `fleet_git` | `Option<FleetGitStart>`, default none, skipped when none | The deck sends it only with `fleet_git.v1`. `SessionCommand` does not refuse unknown fields, so an old station would ignore it and start without sync; rule 7 prevents that case. |
+| `SessionCommand::Start` | `fleet_git` | `Option<FleetGitStart { kind, project_id, project_name, settings, settings_revision, home_generation, home_path, remote: RemoteIdentity { repo, dest }, slug, forge: Option<ForgeBinding>, artifact_share_state: Option<ShareState> }>`, default none, skipped when none | The deck sends it only with `fleet_git.v1`. `SessionCommand` does not refuse unknown fields, so an old station would ignore it and start without sync; rule 7 prevents that case. An unknown `kind` is refused (`unsupported_mode`). |
 | `StartSessions` (deck HTTP body) | `home`, `requires`, `prefer`, `spread` | optional | Board → deck only; not a link type. |
 | `StationInfo` | `traits` | `Option<StationTraits { os, arch, on_battery: Option<bool>, labels }>` | An old deck ignores it (rule 2); a new deck treats a missing value as "no traits" (no requirement matches, no preference counts). |
 | `StationInfo` | `config` | `Option<ConfigDigest>` | Missing: the board shows "Config: Unknown". |
 | `StationInfo` | `taildrive` | `Option<TaildriveReport>` | Missing: the board shows no Taildrive section. |
 | `StationInfo` | `fleet_git` | `Option<FleetGitInfo { clone_root, allow_check_cmd, git_version }>` | Missing: the board hides the land check line and "Add home" for that station. |
 | `SessionSummary` | `base_stale` | `bool`, default false, skipped when false | An old deck has no field; its fold ignores the new event. |
-| `SessionSummary` | `push` | `Option<PushInfo { state, ref_name, oid, attempts, next_attempt_at, code, text }>` | As above. |
+| `SessionSummary` | `push` | `Option<PushInfo { state, ref_name, oid, desired_oid, stop_code, attempts, next_attempt_at, code, text }>` | As above. |
 | `SessionSummary` | `cleanup` | `Option<CleanupInfo { state, reason }>` | As above. |
-| `SessionSummary` | `land` | `Option<LandInfo>` | As above. |
+| `SessionSummary` | `land` | `Option<LandInfo { land_id, attempt, state, phase, code, text, files, source_oid, base_oid, rebased_oid, branch_published_oid, default_published_oid, pr_url }>` | As above. |
 | `SessionSummary` | `moved_to` | `Option<MovedTo { move_id, station_id, session_id }>` | An old deck sees an `exited` session (§8). |
 | `SessionSummary` | `artifacts_dir` | `Option<ArtifactsDir { path?, url? }>` | As above. |
 | `FileRoot` (files.v1 queries) | new variant `Artifacts { session_id }` | an enum variant | Sent only with `fleet_git.homes.v1`. An old station refuses the unknown root (`invalid_query`), so it fails closed. |
-| `Project` (deck HTTP, board) | `homes`, `repo`, `remote_url`, `git`, `git_revision` | defaults | Not a link type. `station_id` and `path` stay (a copy of the first home), so an old board reads a project as before. |
+| `Project` (deck HTTP, board) | `homes` (with `generation`, `position`, `state`, `path?`, `reserved_path?`, `attempt_id?`, `sync_owner`), `repo`, `remote_url`, `remote_dest`, `git`, `git_revision`, `slugs` | defaults | Not a link type. `station_id` and `path` stay (a copy of the position-0 home, written by one adapter), so an old board reads a project as before. |
 | `Status` (`tailscale status --json`, parsed) | `CurrentTailnet.Name` | optional | Not a link type. |
 
 `StationInfo` and `SessionSummary` are the only existing link types that get fields. Both already use optional fields for the same purpose (`resources`, `desktop`, `issue`, `batch`).
@@ -100,14 +106,23 @@ All are made by the station (not by a provider). Each has a new `kind`. An old d
 | --- | --- | --- |
 | `workspace.base_stale` | `{ code, text }` | `summary.base_stale = true` |
 | `workspace.include_skipped` | `{ files: [{ path, reason }] }` (≤ 50) | none |
-| `session.push` | `{ state, ref_name, oid?, attempts, next_attempt_at?, code?, text? }` | `summary.push` |
+| `session.push` | `{ state, ref_name, oid?, desired_oid?, stop_code?, attempts, next_attempt_at?, code?, text? }` | `summary.push` |
 | `session.cleanup` | `{ state, reason? }` | `summary.cleanup` |
 | `artifacts.ready` | `{ path?, url? }` | `summary.artifacts_dir` |
 | `artifacts.unavailable` | `{ code, text }` | none |
-| `session.land` | `{ land_id, state, step?, code?, text?, files, oid?, pr_url? }` | `summary.land`; the deck also updates `land_queue` |
+| `session.land` | `{ land_id, attempt, state, phase, code?, text?, files, source_oid?, base_oid?, rebased_oid?, branch_published_oid?, default_published_oid?, pr_url? }` | `summary.land`; the deck also updates `land_queue` |
 | `session.moved` | `{ move_id, to_station, to_session }` | `summary.moved_to` |
 
-The enums inside them (`PushState`, `CleanupState`, `LandState`, `LandStep`) each have `#[serde(other)] Unknown`.
+The enums inside them (`PushState`, `CleanupState`, `LandState`, `LandPhase`, `StartKind`, `HomeState`, `HomeCheckState`, `ShareState`, and the settings enums `PushMode`, `CleanupMode`, `LandMode`) each have `#[serde(other)] Unknown`. **Unknown fails closed:** an unknown push or cleanup mode does nothing, an unknown land mode or start kind is refused (`unsupported_mode`), and an unknown `LandState` keeps the deck's land `running` and its queue occupied (design §3.1, §11.2).
+
+## 6A. Shapes that carry authority (revision 2)
+
+These shapes travel inside the methods above. They are listed here because a peer must not read them loosely.
+
+- `RemoteIdentity { repo: String, dest: String }`: `repo` is the O16 `host/path` (grouping, slug and land-lock key); `dest` is `<scheme>://<host>:<port>/<path>` with the port kept (the push lease key). Rules: design §3.8.
+- `GitProjectView { project_id, project_name, settings_revision, settings, remote, forge, home_generation, home_path, radar_home }` and `StationHome { project_id, generation, path, sync }`. A project absent from `projects` is removed on the station; a home absent from `homes`, or with a lower generation, is invalidated (no file is deleted).
+- `HomeCheck { project_id, generation, state, canonical_path?, seen?: RemoteIdentity, code? }`: the station's verification of a home (design §3.8). Only `verified` gives write authority.
+- `LandPlan { project_id, settings_revision, home_generation, mode, fetch_remote, remote, default_branch?, branch_ref, branch_target: PushTarget { target, dest }, forge?, check_cmd?, check_env, pr_title, pr_body }`: pinned by the deck at admission. The station refuses a plan whose `branch_ref` is not `fd/<stored slug>/…` of the session, whose generation is not its own, whose mode is unknown, or whose `pr` mode has a branch target that is not the forge repository. The station adds the commits (`source_oid`, `base_oid`) in its first phase and never changes them.
 
 `event.rs` is at 788 lines; the build first moves `EventBody` into `event_body.rs` (design §19, T1.0). This is a code move with no wire change.
 
@@ -139,11 +154,11 @@ The budgets of ADR-004 §9.2 apply unchanged (64 streams, 256 KiB window, 4 MiB 
 
 Owner login only unless noted; CSRF on every POST, PUT and DELETE; closed to members unless noted; each mutating route is audited.
 
-- `PUT /api/projects/{id}/git` (`project.git_settings`), `POST /api/projects/{id}/homes` (`project.home_add`), `DELETE /api/projects/{id}/homes/{station}` (`project.home_remove`).
+- `PUT /api/projects/{id}/git` (`project.git_settings`), `PUT /api/projects/{id}/remote` (`project.remote`, with `rebind`), `POST /api/projects/{id}/homes` (`project.home_add`), `POST /api/projects/{id}/homes/{station}/retry` (`project.home_retry`), `DELETE /api/projects/{id}/homes/{station}` (`project.home_remove`).
 - `POST /api/sessions/{station}/{session}/push` (scope `drive`, a `drive` token allowed; `session.push_now`).
 - `POST /api/placement` (scope `drive`; no audit).
 - `GET /api/radar` (scope `read`).
-- `POST /api/sessions/{station}/{session}/land` (`session.land`), `GET /api/projects/{id}/lands` (`read`), `POST /api/lands/{land_id}/cancel` (`land.cancel`), `POST /api/lands/{land_id}/send` (`land.send_to_session`).
+- `POST /api/sessions/{station}/{session}/land` (`session.land`), `GET /api/projects/{id}/lands` (`read`), `POST /api/lands/{land_id}/cancel` (`land.cancel`), `POST /api/lands/{land_id}/abandon` (`land.abandon`), `POST /api/lands/{land_id}/send` (`land.send_to_session`).
 - `POST /api/sessions/{station}/{session}/move` (`session.move`).
 - `GET /api/projects/{id}/branches` (`read`), `POST /api/projects/{id}/fetch` (`drive`).
 - `GET /api/fleet-git/prefs` (`read`), `PUT /api/fleet-git/drift-reference` (`drift.reference`).
@@ -158,7 +173,8 @@ Owner login only unless noted; CSRF on every POST, PUT and DELETE; closed to mem
 
 ## 12. Risks
 
-- **A deck that loses the feature mid-flow** (a station downgrade during a land or a move): the deck marks the land `land_lost` or the move `failed` when the station answers `feature_not_negotiated`; the station of the old build has no state to clean.
+- **A peer that loses the feature mid-flow.** A station downgrade during a land: the old build has no land state, so the deck cannot learn the outcome. The land stays `running` in phase `lost` and keeps the queue until the owner presses "Stop checking" (design §11.2). A move is aborted (`failed`) as before. A deck downgrade: the station sees a link without `fleet_git.v1` and pauses its push and cleanup loops until a deck with the feature sends a snapshot (design §3.3).
+- **A delayed or replayed frame.** `projects_set` is fenced by `revision`, `ensure_home` and `home_status` by `(attempt_id, generation)`, and a start by `settings_revision` and `home_generation`; an old frame changes nothing.
 - **Event volume:** `session.push` and `session.cleanup` are sent only on a state change; `session.land` once per step.
 - **Two decks:** a station pairs with one deck (DL-150 context), so the move rule "the same deck" holds by construction.
 
@@ -168,3 +184,4 @@ Owner login only unless noted; CSRF on every POST, PUT and DELETE; closed to mem
 - `fleetdeck-proto`: round trips of every new type; an old-shape `StationInfo` and `SessionSummary` (without the fields) decode; a new-shape one decodes with the fields dropped into a struct of the old shape (a copy of the old struct in the test); each new enum decodes an unknown value as `Unknown`; each new event kind decodes as `EventBody::Unknown` in a fold that does not know it (`event_tests.rs`, `fold_tests.rs`).
 - `fleetdeck-link`: each new method is refused with `feature_not_negotiated` on a link without its feature, and with `forbidden` without its scope.
 - Deck: a station without `fleet_git.v1` gets no `fleet_git` field on a start, and the board gets 409 `fleet_git_unsupported` for a sync start (`tests/board_fleet_git_settings.rs`).
+- Station (revision 2): a lower `projects_set` revision and an equal revision with another digest answer `stored: false` and change nothing; `ensure_home` with a known `attempt_id` and the same digest returns the stored result, with another digest `attempt_reused`; a resent `session.land` with the same `command_id` returns the stored receipt and starts no second run; `fleet_git.land_abandon` outside phase `reconciling` changes nothing; an unknown `PushMode`, `LandMode` and `StartKind` fail closed.
