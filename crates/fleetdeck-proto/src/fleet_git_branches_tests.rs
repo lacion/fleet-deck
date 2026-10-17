@@ -122,6 +122,7 @@ fn the_coordinator_variants_have_their_wire_names_and_refuse_unknown_fields() {
         serde_json::to_value(&op).unwrap(),
         json!({"op": "land", "station": "alpha", "session_id": s})
     );
-    let moved = json!({"op": "move", "station": "alpha", "session_id": s, "to_station": "b"});
-    assert!(serde_json::from_value::<CoordinatorOp>(moved).is_err());
+    // `move` became an op in T4.1b (FG-9); an unknown op is still refused.
+    let unknown = json!({"op": "teleport", "station": "alpha", "session_id": s});
+    assert!(serde_json::from_value::<CoordinatorOp>(unknown).is_err());
 }

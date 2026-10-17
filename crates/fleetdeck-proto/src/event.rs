@@ -13,8 +13,10 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::capability::Capabilities;
-use crate::fleet_git::{CleanupState, LandInfo, PushState, SkippedFile};
-use crate::ids::{InputId, NodeId, PlanId, ProviderInstanceId, RequestId, RunId, TurnId};
+use crate::fleet_git::{CleanupState, LandInfo, MoveInInfo, PushState, SkippedFile};
+use crate::ids::{
+    InputId, NodeId, PlanId, ProviderInstanceId, RequestId, RunId, SessionId, StationId, TurnId,
+};
 use crate::integrations::IssueRef;
 use crate::session::{BatchRef, RepoInfo};
 
@@ -420,6 +422,22 @@ pub enum Event {
     /// `large_enum_variant`). The fold keeps it in `summary.land`.
     #[serde(rename = "session.land")]
     SessionLand(Box<LandInfo>),
+    /// The move state of the target session (FG-9, design §12.3). The fold
+    /// keeps it in `summary.move_in`.
+    #[serde(rename = "session.move_in")]
+    SessionMoveIn(MoveInInfo),
+    /// The source session moved to another station (FG-9, design §12.3 step
+    /// 5). The fold sets `summary.moved_to`.
+    #[serde(rename = "session.moved")]
+    SessionMoved {
+        move_id: String,
+        to_station: StationId,
+        to_session: SessionId,
+    },
+    /// A move was undone (FG-9, design §12.4A). The fold clears
+    /// `summary.moved_to` when `move_id` matches.
+    #[serde(rename = "session.move_undone")]
+    SessionMoveUndone { move_id: String },
     #[serde(rename = "run.completed")]
     RunCompleted {
         run_id: RunId,

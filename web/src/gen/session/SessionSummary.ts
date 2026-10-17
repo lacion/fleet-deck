@@ -8,6 +8,8 @@ import type { Usage } from "../event/Usage";
 import type { ArtifactsDir } from "../fleet_git/ArtifactsDir";
 import type { CleanupInfo } from "../fleet_git/CleanupInfo";
 import type { LandInfo } from "../fleet_git/LandInfo";
+import type { MoveInInfo } from "../fleet_git/MoveInInfo";
+import type { MovedTo } from "../fleet_git/MovedTo";
 import type { PushInfo } from "../fleet_git/PushInfo";
 import type { ProviderInstanceId } from "../ids/ProviderInstanceId";
 import type { RunId } from "../ids/RunId";
@@ -164,6 +166,16 @@ cleanup?: CleanupInfo,
  * The newest step of a land of the session, from `session.land` (FG-8).
  */
 land?: LandInfo, 
+/**
+ * Where the session moved to, from `session.moved` (FG-9). The session
+ * stays `exited`; the station refuses its input.
+ */
+moved_to?: MovedTo, 
+/**
+ * The move state of a session that arrived by a move, from
+ * `session.move_in` (FG-9).
+ */
+move_in?: MoveInInfo, 
 /**
  * The artifact folder of the session, from `artifacts.ready` and
  * `artifacts.revoked` (FG-12).

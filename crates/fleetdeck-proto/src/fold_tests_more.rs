@@ -304,3 +304,75 @@ fn a_session_land_with_a_newer_state_still_folds_as_known() {
     assert_eq!(land.phase, crate::fleet_git::LandPhase::Unknown);
     assert!(land.files.is_empty());
 }
+
+#[test]
+fn session_moved_sets_moved_to_and_leaves_the_state_alone() {
+    use crate::fleet_git::MovedTo;
+    use crate::ids::StationId;
+    let mut f = Feed::new();
+    f.push(started());
+    let state = f.summary.state;
+    assert!(f.summary.moved_to.is_none());
+    let s = f.push(Event::SessionMoved {
+        move_id: "mv-1".to_owned(),
+        to_station: StationId::from("bravo"),
+        to_session: SessionId::from("s2"),
+    });
+    assert_eq!(
+        s.moved_to,
+        Some(MovedTo {
+            move_id: "mv-1".to_owned(),
+            station_id: StationId::from("bravo"),
+            session_id: SessionId::from("s2"),
+        })
+    );
+    assert_eq!(s.state, state);
+}
+
+#[test]
+fn session_move_undone_clears_moved_to_only_for_the_same_move() {
+    use crate::ids::StationId;
+    let mut f = Feed::new();
+    f.push(started());
+    f.push(Event::SessionMoved {
+        move_id: "mv-1".to_owned(),
+        to_station: StationId::from("bravo"),
+        to_session: SessionId::from("s2"),
+    });
+    let s = f.push(Event::SessionMoveUndone {
+        move_id: "mv-other".to_owned(),
+    });
+    assert!(s.moved_to.is_some());
+    let s = f.push(Event::SessionMoveUndone {
+        move_id: "mv-1".to_owned(),
+    });
+    assert!(s.moved_to.is_none());
+}
+
+#[test]
+fn session_move_in_sets_and_replaces_the_move_state_of_the_summary() {
+    use crate::fleet_git::{MoveInInfo, MoveInState};
+    let info = |state| MoveInInfo {
+        move_id: "mv-1".to_owned(),
+        state,
+        code: None,
+        text: None,
+    };
+    let mut f = Feed::new();
+    f.push(started());
+    assert!(f.summary.move_in.is_none());
+    let s = f.push(Event::SessionMoveIn(info(MoveInState::Resumed)));
+    assert_eq!(s.move_in, Some(info(MoveInState::Resumed)));
+    let s = f.push(Event::SessionMoveIn(info(MoveInState::Confirmed)));
+    assert_eq!(s.move_in, Some(info(MoveInState::Confirmed)));
+}
+
+#[test]
+fn a_summary_without_the_move_fields_serializes_and_decodes_as_before() {
+    let bare = serde_json::to_value(SessionSummary::new(SessionId::from("s2"))).unwrap();
+    let object = bare.as_object().unwrap();
+    assert!(!object.contains_key("moved_to"));
+    assert!(!object.contains_key("move_in"));
+    let back: SessionSummary = serde_json::from_value(bare).unwrap();
+    assert!(back.moved_to.is_none() && back.move_in.is_none());
+}

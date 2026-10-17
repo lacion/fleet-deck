@@ -105,7 +105,7 @@ fn classes_of(op: &CoordinatorOp) -> Vec<GrantClass> {
         | CoordinatorOp::ProjectAssign { .. } => vec![GrantClass::Manage],
         CoordinatorOp::ProjectStart { .. } => vec![GrantClass::Spawn, GrantClass::Manage],
         CoordinatorOp::Answer { .. } => vec![GrantClass::Answer],
-        CoordinatorOp::Land { .. } => vec![GrantClass::Manage],
+        CoordinatorOp::Land { .. } | CoordinatorOp::Move { .. } => vec![GrantClass::Manage],
     }
 }
 
@@ -430,6 +430,11 @@ fn decide_op(
             station,
             session_id,
         } => super::coordinator_git::land(tx, grant, ctx, (station, session_id), (command_id, now)),
+        // (FG-9: T4.4 replaces this)
+        CoordinatorOp::Move { .. } => no(
+            RejectCode::Unsupported,
+            "Move is not available through the coordinator yet.",
+        ),
         CoordinatorOp::AssignAuto { task, requirements } => {
             if let Some(d) = check_text(task) {
                 return Ok(d);

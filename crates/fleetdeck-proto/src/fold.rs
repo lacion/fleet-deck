@@ -14,7 +14,7 @@
 //! - An unknown event kind changes only the sequence and the time (L16).
 
 use crate::event::{Event, EventEnvelope, RateLimit, SessionState, Usage};
-use crate::fleet_git::{ArtifactsDir, CleanupInfo, PushInfo};
+use crate::fleet_git::{ArtifactsDir, CleanupInfo, MovedTo, PushInfo};
 use crate::session::{
     Activity, MAX_RUNNING_TOOLS, OpenRequest, RunningTool, SUBAGENT_TASK_KINDS, SessionBase,
     SessionError, SessionRevert, SessionSummary, TerminalHold,
@@ -282,6 +282,23 @@ impl SessionSummary {
                 });
             }
             Event::SessionLand(info) => self.land = Some(info.as_ref().clone()),
+            Event::SessionMoveIn(info) => self.move_in = Some(info.clone()),
+            Event::SessionMoved {
+                move_id,
+                to_station,
+                to_session,
+            } => {
+                self.moved_to = Some(MovedTo {
+                    move_id: move_id.clone(),
+                    station_id: to_station.clone(),
+                    session_id: to_session.clone(),
+                });
+            }
+            Event::SessionMoveUndone { move_id } => {
+                if self.moved_to.as_ref().is_some_and(|m| &m.move_id == move_id) {
+                    self.moved_to = None;
+                }
+            }
             Event::ArtifactsReady { path, url } => {
                 self.artifacts_dir = Some(ArtifactsDir {
                     path: path.clone(),

@@ -120,6 +120,10 @@ fn commands() -> Vec<SessionCommand> {
             "branch_ref": "fd/o-r/a", "publish_ref": "fd/o-r/a",
             "branch_target": {"target": "origin", "dest": "https://github.com:443/o/r"},
             "check_env": {}, "pr_title": "t", "pr_body": "b"}}),
+        json!({"op": "move_out", "session_id": s, "move_id": "mv-1", "to_station": "bravo"}),
+        json!({"op": "move_finish", "session_id": s, "move_id": "mv-1",
+            "to_station": "bravo", "to_session": "01J0000000000000000000000T"}),
+        json!({"op": "move_undo", "session_id": s, "move_id": "mv-1"}),
     ];
     let commands: Vec<SessionCommand> = samples
         .into_iter()
@@ -152,7 +156,11 @@ fn commands() -> Vec<SessionCommand> {
             | SessionCommand::ReconcileExecution { .. }
             | SessionCommand::ShellCommand { .. }
             | SessionCommand::ReleaseShell { .. }
-            | SessionCommand::Land { .. } => {}
+            | SessionCommand::Land { .. }
+            | SessionCommand::MoveOut { .. }
+            | SessionCommand::MoveIn { .. }
+            | SessionCommand::MoveFinish { .. }
+            | SessionCommand::MoveUndo { .. } => {}
         }
     }
     commands
@@ -162,7 +170,7 @@ fn commands() -> Vec<SessionCommand> {
 fn every_session_command_is_a_mutating_deck_to_station_method_of_the_adr_table() {
     let table = method_table();
     let commands = commands();
-    assert_eq!(commands.len(), 24);
+    assert_eq!(commands.len(), 27);
     for c in &commands {
         let r = row(&table, c.method());
         assert!(r.mutating, "`{}` must be mutating", c.method());
@@ -173,6 +181,7 @@ fn every_session_command_is_a_mutating_deck_to_station_method_of_the_adr_table()
             || c.method() == "session.reconcile_execution"
             || c.method() == "session.shell_command"
             || c.method() == "session.release_shell"
+            || c.method().starts_with("session.move_")
         {
             "admin"
         } else {

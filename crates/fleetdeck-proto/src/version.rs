@@ -145,6 +145,14 @@ pub mod feature {
     /// `project.branches` and `project.fetch` (Fleet Git phase 4, ADR-009).
     pub const FLEET_GIT_BRANCHES: &str = "fleet_git.branches.v1";
 
+    /// `session.move_out`, `session.move_export`, `session.move_prepare`,
+    /// `session.move_in`, `session.move_finish`, `session.move_release`,
+    /// `session.move_abort`, `session.move_discard`, `session.move_status`,
+    /// `session.move_fail`, `session.move_undo`, the stream purposes and the
+    /// events `session.moved`, `session.move_in`, `session.move_undone` (Fleet
+    /// Git phase 4, ADR-009).
+    pub const FLEET_GIT_MOVE: &str = "fleet_git.move.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -184,6 +192,7 @@ pub mod feature {
         FLEET_GIT_HOMES,
         FLEET_GIT_LAND,
         FLEET_GIT_BRANCHES,
+        FLEET_GIT_MOVE,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

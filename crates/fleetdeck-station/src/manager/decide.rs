@@ -21,6 +21,7 @@ use crate::workspace::provision;
 
 #[path = "decide_workspace.rs"]
 mod workspace;
+const MOVE_TEXT: &str = "Moving a session is not available on this station yet.";
 
 /// The run origin of an input from `origin` (PLAN §6.3).
 #[must_use]
@@ -325,6 +326,11 @@ pub fn decide(
         }
         // The session manager decides a land with the shells (FG-8).
         SessionCommand::Land { .. } => Err(super::land::refuse_direct()),
+        // (FG-9: T4.2 replaces this)
+        SessionCommand::MoveOut { .. }
+        | SessionCommand::MoveIn { .. }
+        | SessionCommand::MoveFinish { .. }
+        | SessionCommand::MoveUndo { .. } => Err(reject(RejectCode::Unsupported, MOVE_TEXT)),
         // The session manager decides these with the resolved root (B8).
         SessionCommand::ShellCommand { .. } | SessionCommand::ReleaseShell { .. } => {
             Err(super::shell_decide::refuse_direct())

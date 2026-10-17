@@ -32,6 +32,9 @@ pub use land::*;
 #[path = "fleet_git_branches.rs"]
 mod branches;
 pub use branches::*;
+#[path = "fleet_git_move.rs"]
+mod moves;
+pub use moves::*;
 
 /// Wire strings of the Fleet Git error codes (ADR-009 §4). A code is never
 /// reused for another meaning.
@@ -723,6 +726,9 @@ mod identity_tests;
 #[cfg(test)]
 #[path = "fleet_git_land_tests.rs"]
 mod land_tests;
+#[cfg(test)]
+#[path = "fleet_git_move_tests.rs"]
+mod moves_tests;
 #[cfg(test)]
 #[path = "fleet_git_tests.rs"]
 mod tests;

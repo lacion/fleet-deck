@@ -95,7 +95,7 @@ fn code_table() -> BTreeMap<String, Row> {
 fn the_code_method_table_equals_the_adr_method_table() {
     let adr = adr_table(&adr());
     let code = code_table();
-    assert_eq!(adr.len(), 107, "{:?}", adr.keys());
+    assert_eq!(adr.len(), 118, "{:?}", adr.keys());
     for (name, row) in &adr {
         assert_eq!(code.get(name), Some(row), "{name}");
     }
@@ -149,6 +149,30 @@ fn the_fleet_git_branches_methods_need_their_feature_and_scope() {
             "{name}"
         );
         assert!(!row.mutating, "{name}");
+    }
+}
+
+#[test]
+fn the_fleet_git_move_methods_need_their_feature_and_scope() {
+    let code = code_table();
+    for (name, scope, mutating) in [
+        ("session.move_out", "admin", true),
+        ("session.move_export", "admin", false),
+        ("session.move_prepare", "admin", false),
+        ("session.move_in", "admin", true),
+        ("session.move_finish", "admin", true),
+        ("session.move_release", "admin", false),
+        ("session.move_abort", "admin", false),
+        ("session.move_discard", "admin", false),
+        ("session.move_status", "read", false),
+        ("session.move_fail", "admin", false),
+        ("session.move_undo", "admin", true),
+    ] {
+        let row = code.get(name).unwrap_or_else(|| panic!("{name} missing"));
+        assert_eq!(row.callers, "deck → station", "{name}");
+        assert_eq!(row.scope, scope, "{name}");
+        assert_eq!(row.feature.as_deref(), Some("fleet_git.move.v1"), "{name}");
+        assert_eq!(row.mutating, mutating, "{name}");
     }
 }
 
