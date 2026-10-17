@@ -1,0 +1,16 @@
+[package]
+name = "spike-canon"
+description = "Phase 0 spike: minimal canonical event vocabulary (PLAN §6.3) shared by the S1 and S2 adapter spikes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

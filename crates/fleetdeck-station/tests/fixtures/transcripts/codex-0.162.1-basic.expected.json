@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "id": "msg_01a13779-e2b0-7093-87e8-b4a528f90ca9",
+      "kind": "user",
+      "text": "<text 78>\n\n<text 79>\n\n<text 80>\n\n<text 81>\n\n<text 82>\n\n<text 83>\n\n<text 84>\n\n<text 85>\n\n<text 86>\n\n<text 87>\n\n<text 88>\n\n<text 89>\n\n<text 90>\n\n<text 91>\n\n<text 92>\n\n<text 93>\n\n<text 94>\n\n<text 95>\n\n<text 96>\n\n<text 97>\n\n<text 98>\n\n<text 99>\n\n<text 100>\n\n<text 101>\n\n<text 102>\n\n<text 103>\n\n<text 104>\n\n<text 105>\n\n<text 106>\n\n<text 107>\n\n<text 108>\n\n<text 109>\n\n<text 110>\n\n<text 111>\n\n<text 112>\n\n<text 113>\n\n<text 114>\n\n<text 115>\n\n<text 116>\n\n<text 117>\n\n<text 118>\n\n<text 119>\n\n<text 120>\n\n<text 121>\n\n<text 122>\n\n<text 123>\n\n<text 124>\n\n<text 125>\n\n<text 126>\n\n<text 127>\n\n<text 128>",
+      "tool": null
+    },
+    {
+      "id": "msg_0ab180e67d028093016aceb6c2c19881919c134db427875e3c",
+      "kind": "assistant",
+      "text": "<text 189>",
+      "tool": null
+    }
+  ],
+  "state": {
+    "kind": "complete"
+  }
+}

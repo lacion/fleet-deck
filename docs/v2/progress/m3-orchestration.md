@@ -1,0 +1,344 @@
+LANE COMPLETE
+
+# M3 lane B (orchestration): progress log
+
+Worktree `fleet-deck-worktrees/m3-orchestration`, branch `m3/orchestration`.
+Items, in order: 6-1 Workspaces, 6-3 Assign auto, 6-4 Tasks, 6-2 Mail,
+6-5 Coordinator. Decisions: [decisions/m3-orchestration.md](../decisions/m3-orchestration.md)
+(DL-200 to DL-299). The checklist lines are in [PROGRESS.md](../PROGRESS.md).
+
+## Round log
+
+### Round 1 (2026-10-12, 14:22 to 14:58 CEST)
+
+- Start: tree clean; `git merge --no-edit v2` (up to date);
+  `bun install --cwd web --frozen-lockfile --offline` (web/node_modules was
+  missing).
+- 6-1 Workspaces: done (DL-200, DL-201, DL-202). `session.start` takes a
+  `workspace` request (worktree or clone); the decision plans it, the start
+  effect runs it (`crates/fleetdeck-station/src/workspace/provision.rs`);
+  callsigns from the v0 rotation recorded by the new `session.named` event;
+  repo catalog with scrubbed origin, default branch and group
+  (`[repo_groups]` in the station config); board workspace choice, batch and
+  `Nx`.
+- 6-3 Assign auto: done (DL-204). `POST /api/assign`, pure ranking in
+  `crates/fleetdeck-deck/src/routing.rs`, `AssignBar` on the board.
+- 6-4 Tasks and 6-2 Mail: done together (DL-205, DL-206). Schema V6
+  (`mail`, `tasks`), `crates/fleetdeck-deck/src/store/fleet.rs`,
+  `crates/fleetdeck-deck/src/http/fleet_routes.rs`, `web/src/fleet/`.
+- Commands and results:
+  - `make ts-types` -> regenerated `web/src/gen` (orchestration types,
+    `WorkspaceRequest`, `SessionSummary.callsign/worktree`, `session.named`).
+  - `cargo nextest run -p fleetdeck-station -E 'test(workspace)'` -> 9 passed.
+  - `cargo nextest run -p fleetdeck-core -E 'test(explicit_repo_groups)'` -> 1 passed.
+  - `cargo nextest run -p fleetdeck-deck -E 'test(routing)'` -> 3 passed.
+  - `cargo nextest run -p fleetdeck-deck --test board_assign` -> 2 passed.
+  - `cargo nextest run -p fleetdeck-deck -E 'test(store::fleet) | test(migrations)'` -> 3 passed.
+  - `cargo nextest run -p fleetdeck-deck --test board_fleet` -> 3 passed.
+  - `bun test` (spawn, assign, fleet) -> pass; `bun run --cwd web typecheck` -> clean.
+  - Playwright specs written, not run (normal round): `web/e2e/spawn.spec.ts`
+    (2 new), `web/e2e/assign.spec.ts` (2), `web/e2e/fleet.spec.ts` (2).
+  - End of round: `cargo fmt --all --check`, `cargo clippy --workspace
+    --all-targets -- -D warnings`, `bun run --cwd web lint` (results in the
+    round summary).
+- Lessons: new optional fields on `SessionStarted` trip clippy
+  `large_enum_variant` in the event and provider-core enums, so the callsign
+  has its own `session.named` event; `#[ts(optional)]` needs an `Option`
+  field; the fake claude emits no event without a prompt.
+- Next: 6-5 Coordinator (ADR-006 revision 4, §8 tests).
+
+### Round 2 (2026-10-12, from 15:01 CEST)
+
+- Start: committed round 1 (d6a663e); `git merge --no-edit v2` had
+  conflicts with lane C (plans) and lane A (auto-continue): deck schema
+  renumbered in merge order (plans V6, mail/tasks V7), both event kinds
+  kept (`KINDS` = 32), both proto modules and TS exports kept,
+  `RuntimeApp.tsx`/`SpawnForm.tsx` keep both sides; `make ts-types`, fmt,
+  clippy, web lint/typecheck, proto + fleet tests and `bun test src` pass;
+  merge commit d8626e7.
+- Review findings of round 1 recorded in the follow-up list below.
+
+- 6-5 Coordinator (partial, DL-207–DL-209):
+  - Proto: `CoordinatorCall { caller, binding, idempotency_key, op }`,
+    ops `spawn`/`send`/`interrupt`/`stop`/`assign`/`assign_auto`/
+    `complete_task`, `CoordinatorQueryEnvelope`/`CoordinatorQuery`,
+    `RejectCode::BindingStale` (not stored) and `SpawnCapReached` (stored),
+    `GrantView`; `make ts-types` rerun.
+  - Deck: schema V8 (`tokens`, `coordinator_lineage`), grants store,
+    decision order §6.2, matrix §6.3, cap §6.4, intents through the outbox,
+    `coordinator.query` over the link, owner grant list/revoke routes and
+    board list.
+  - Station: loopback MCP ingress (`crates/fleetdeck-station/src/coordinator/`):
+    limits before authentication, one 401, fixed catalog, `not_bound` for a
+    pending binding, `Forward` trait for the deck side, tool → op mapping.
+- Commands (new tests only):
+  - `cargo nextest run -p fleetdeck-deck -E 'test(store::coordinator) | binary(coordinator) | test(migrations)'` -> 23 passed (19 unit incl. lifecycle 25c/25d, 3 link, migrations).
+  - `cargo nextest run -p fleetdeck-providers -E 'test(coordinator::)'` -> 2 passed (handoff arguments, capability off).
+  - `cargo nextest run -p fleetdeck-proto` -> 63 passed (new event kinds `coordinator.bound`/`coordinator.ended`).
+  - `cargo nextest run -p fleetdeck-station -E 'test(coordinator::)'` -> 14 passed.
+  - `cargo nextest run -p fleetdeck-deck --test board_fleet -E 'test(grant)'` -> 1 passed.
+  - `cargo nextest run -p fleetdeck-deck -p fleetdeck-proto -E 'test(method) | test(route) | package(fleetdeck-proto)'` -> 70 passed.
+  - `bun test src/fleet` -> 5 passed; `bun run --cwd web typecheck` -> clean.
+  - Playwright `web/e2e/fleet.spec.ts` grant test written, not run (normal round).
+- Open in 6-5 (stays unchecked): see DL-209.
+- Lessons: the deck test module of a `#[path]` file needs `crate::store::...`
+  imports, not `super::...`; a `deny_unknown_fields` op makes a tool
+  argument that names another caller an `invalid_params` refusal.
+
+### Round 3
+
+- Committed round 2 (0a647eb); merged v2 (e7956cd): lane C's
+  `file_touches` keeps schema V8, the coordinator grants moved to V9;
+  `read_model.rs` runs both `record_lifecycle` and `record_touches`; proto
+  `mutation.rs`/`ts.rs` keep the shell types and the coordinator query;
+  `UserInput` gained `images` (now built with `UserInput::new`). Ran
+  `bun install --cwd web --frozen-lockfile --offline` (lane D added two
+  packages), `make ts-types`.
+- Recorded the round-2 review findings below.
+- 6-5 (still partial): the station forwards coordinator tool calls over
+  its deck link (DL-210). `fleetdeck-link` keeps the peer's `hello`
+  incarnation on `OpenLink`/`LiveLink` (`peer_incarnation`);
+  `crates/fleetdeck-station/src/coordinator/forward.rs` `LinkForward`;
+  `StationLink.coordinator` follows the current link.
+- Commands (new tests only):
+  - `cargo nextest run -p fleetdeck-station -p fleetdeck-link -E 'test(coordinator::forward) | binary(link_service) | (package(fleetdeck-link) & test(hello))'` -> 18 passed.
+  - `cargo nextest run -p fleetdeck-deck --test coordinator` -> 4 passed.
+  - `cargo nextest run -p fleetdeck-deck -p fleetdeck-proto -E 'test(store::coordinator) | binary(coordinator) | test(migrations) | package(fleetdeck-proto)'` -> 91 passed (after the merge).
+
+- 6-5 (still partial, DL-211): `StationNode` starts the coordinator
+  endpoint; `DeckNode::create_grant` adds `coordinate` to the caller's
+  station and refreshes the link grant cache; lineage rows match the
+  session id of the start receipt.
+  - `cargo nextest run -p fleetdeck-deck --test deck_link -E 'test(a_bound_coordinator)'` -> 1 passed.
+  - `cargo nextest run -p fleetdeck-deck -E 'test(a_spawned_session_joins_the_lineage) | test(store::coordinator)'` -> 20 passed.
+
+- 6-5: ADR-006 §8.3 tests 25 and 25a added to
+  `crates/fleetdeck-deck/src/store/coordinator_lifecycle_tests.rs` (a ping
+  and a tool discovery stay at the station ingress and never reach the
+  deck, so they cannot refresh the idle time).
+  - `cargo nextest run -p fleetdeck-deck -E 'test(queries_return_only_targets_inside_the_grant) | test(a_successful_query_and_an_accepted_mutation)'` -> 2 passed.
+- Checks at 15:53: `cargo fmt --all --check` -> ok;
+  `cargo clippy --workspace --all-targets -- -D warnings` -> clean.
+
+- 6-5 (DL-212): `session.coordinator_renew` / `session.coordinator_revoke`
+  (feature `coordinator.v1`), station decision
+  (`manager/coordinator_command.rs`), the owner's revoke queues the
+  station command; web `METHODS` map extended; `make ts-types` rerun.
+  - `cargo nextest run -p fleetdeck-station -E 'test(coordinator_command)'` -> 3 passed.
+  - `cargo nextest run -p fleetdeck-link -p fleetdeck-proto -p fleetdeck-deck -E 'test(coordinator_renew_and_revoke) | binary(adr_revision2) | binary(method_table) | test(methods) | package(fleetdeck-proto)'` -> 77 passed.
+  - `cargo nextest run -p fleetdeck-deck -p fleetdeck-station -E 'binary(board_fleet) | binary(coordinator) | test(a_bound_coordinator) | binary(link_service) | test(coordinator::)'` -> all passed after the order fix in `a_grant_removed_in_the_store_refuses_a_call_in_the_decision_transaction` (the grant is created before the scope is removed, DL-211).
+  - `bun run --cwd web typecheck`, `lint` -> clean; `bun test src` -> 137 pass.
+
+### Round 4 (2026-10-12, from 16:01 CEST, time box end 16:20)
+
+- Committed round 3 (dc8cc02); `git merge --no-edit v2` merged cleanly
+  (69833de; lane D shell effects, lane A/C docs; no proto change, so no
+  `make ts-types`).
+- No review feedback on round 3 was available at the round start.
+- 6-5 (still partial, DL-213): test 25b. Deck schema V10
+  `tokens.renew_generation`; `DeckStore::renew_grant`; `record_lifecycle`
+  and `bind_grant` accept a higher generation only when it equals the
+  pending renewal (closes the round-2 follow-up "unsolicited generation
+  increase"); `POST /api/coordinator/grants/{grant_id}/renew` queues
+  `session.coordinator_renew`; board "Renew" button.
+  - `cargo nextest run -p fleetdeck-deck -E 'test(renewal_needs_an_idle) | test(store::coordinator) | test(migrations) | binary(coordinator) | binary(deck_link)'` -> 31 passed.
+  - `cargo nextest run -p fleetdeck-deck -E 'binary(board_fleet) | test(methods) | test(renewal_needs)'` -> 8 passed (first run failed on the error key: the API body uses `error`, not `code`; test fixed).
+  - `bun test src/fleet` -> 6 pass; `bun run --cwd web typecheck` -> clean; `bun run --cwd web lint` -> clean (after `biome format` of the test).
+- Status at the time box:
+  - Done: 6-1 Workspaces, 6-3 Assign auto, 6-4 Tasks, 6-2 Mail.
+  - Open: 6-5 Coordinator. Remaining work (DL-209): handoff start-path
+    wiring and the §8.2 secrecy tests, the durable station coordinator
+    outbox (§6.5, §8.4), snapshot projection (25e),
+    the M2-peer test (26), grant creation at an owner start with the
+    control skill, live smoke §8.5 (gates the capability).
+- Checks after the merge: `cargo fmt --all --check`,
+  `cargo clippy --workspace --all-targets -- -D warnings` (results in the
+  round summary).
+
+### Round 5 (2026-10-12, from 16:09 CEST, time box end 16:20)
+
+- Committed round 4 (fc2c198); `git merge --no-edit v2` merged cleanly
+  (ee38ccd; lane A docs and log; no proto change, so no `make ts-types`).
+- Recorded the round-4 review findings below. The reviewer reported that
+  its format and lint commands were blocked in its environment; the
+  executor's checks of this round are in the round summary.
+- 6-5 (still partial, DL-214): test 26. `coordinator.call` and
+  `coordinator.query` now need `coordinator.v1` in
+  `crates/fleetdeck-link/src/methods.rs` and in the ADR-004 §9.6 table
+  (both builds offer the feature, so M3 peers are unchanged).
+  - `cargo nextest run -p fleetdeck-link -p fleetdeck-proto -p fleetdeck-deck -p fleetdeck-station -E 'package(fleetdeck-link) & test(methods) | binary(method_table) | binary(adr_revision2) | binary(coordinator) | test(a_bound_coordinator) | test(coordinator::forward) | binary(link_service) | test(a_peer_without_the_coordinator)'` -> 26 passed (first run: 2 failures, the ADR row literal in `method_table.rs` and an ADR-order case that used a link without the feature; both tests updated).
+- Status at the time box:
+  - Done: 6-1 Workspaces, 6-3 Assign auto, 6-4 Tasks, 6-2 Mail.
+  - Open: 6-5 Coordinator. Remaining: handoff start-path wiring and the
+    §8.2 secrecy tests, the durable station coordinator outbox (§6.5,
+    §8.4), snapshot projection (25e), grant creation at an owner start
+    with the control skill, live smoke §8.5, and the round-4 follow-ups.
+
+### Round 6 (2026-10-12, from 16:13 CEST, time box end 16:20)
+
+- Committed round 5 (a3ead68); `git merge --no-edit v2` merged cleanly
+  (6dcf602; lane A docs and log; no proto change, so no `make ts-types`).
+- Review of round 5 (test 26): no new findings. The reviewer again
+  reported that its format and lint commands were blocked in its
+  environment.
+- 6-5 stays open. The next slice (the coordinator spec on `session.start`,
+  test 13 `a_station_local_start_with_a_coordinator_spec_is_rejected`, and
+  the §8.2 handoff wiring) changes the proto command, the station decision
+  and the provider start path; it does not fit in the 7 minutes before
+  the time box, so this round starts no partial code.
+- Status at the time box (16:20):
+  - Done: 6-1 Workspaces, 6-3 Assign auto, 6-4 Tasks, 6-2 Mail.
+  - Open: 6-5 Coordinator. Remaining: the coordinator spec on
+    `session.start` and the handoff wiring with the §8.2 secrecy tests
+    (10–13), the durable station coordinator outbox (§6.5, §8.4), snapshot
+    projection (25e), grant creation at an owner start with the control
+    skill, live smoke §8.5, and the review follow-ups.
+
+### Round 7 (2026-10-12, from 16:14 CEST)
+
+- Committed round 6 (42b27a9); `git merge --no-edit v2`: already up to date.
+- Review of round 6: "continue: 6-5" with no findings on code.
+- 6-5 slice (DL-215): `SessionSpec.coordinator` (`CoordinatorSpec`,
+  `ControlSkill`) in crates/fleetdeck-proto/src/command.rs, `make ts-types`
+  (web/src/gen/command/{CoordinatorSpec,ControlSkill,SessionSpec}.ts);
+  every `SessionSpec` literal gets `coordinator: None`. Station start
+  checks in crates/fleetdeck-station/src/manager/coordinator_command.rs
+  (`guard` for the local socket, `check_spec` from
+  crates/fleetdeck-station/src/manager/decide.rs `start`). Credential
+  handoff value in crates/fleetdeck-station/src/coordinator/handoff.rs
+  (`Handoff::prepare`, `Handoff::apply`).
+- Tests (all passed):
+  `cargo nextest run -p fleetdeck-station -E 'test(coordinator_spec) | test(a_station_local_start_with_a_coordinator_spec_is_rejected)'` -> 3 passed;
+  `cargo nextest run -p fleetdeck-cli --test coordinator_secret` -> 2 passed.
+- 6-5 still open: start effect wiring of `Handoff` (binding insert,
+  env, args) and the deck owner start with a grant and the control skill
+  (§7.1), the durable station coordinator outbox (§6.5, §8.4), snapshot
+  projection 25e, live smoke §8.5.
+
+### Round 8 (2026-10-12, from 16:25 CEST)
+
+- Committed round 7 (8771bf4); `git merge --no-edit v2` -> 0cc328f (lane A
+  docs only; no proto change, no `make ts-types`).
+- Review of round 7: "wire Handoff into session start" and two coverage
+  findings (test 10 storage and log scans on station and deck; test 12
+  deck-side rejection); recorded in the follow-up table.
+- 6-5 slice (DL-216): the start effect hands the coordinator credential to
+  the child. `ProviderAdapter::start_coordinated` and `CoordinatorLaunch`
+  (crates/fleetdeck-providers/src/adapter.rs, coordinator.rs), Claude
+  implementation (crates/fleetdeck-providers/src/claude/driver.rs),
+  `Bindings` endpoint and handoff check
+  (crates/fleetdeck-station/src/coordinator/bindings.rs), link runtime sets
+  the endpoint (crates/fleetdeck-station/src/link/runtime.rs),
+  crates/fleetdeck-station/src/manager/coordinator_start.rs and its call
+  in crates/fleetdeck-station/src/manager/target.rs; fake agent launch log
+  `FLEETDECK_FAKE_LAUNCH_LOG` (crates/fleetdeck-testkit/src/fake.rs).
+- Tests: `cargo nextest run -p fleetdeck-station -E 'test(coordinator_start) | test(coordinator_spec) | test(a_station_local_start_with_a_coordinator)'` -> 5 passed.
+- 6-5 still open: deck owner start with a grant and the control skill
+  (§7.1, board toggle), binding activation from the native identity and
+  revocation at process exit, the durable station coordinator outbox
+  (§6.5, §8.4), snapshot projection 25e, live smoke §8.5.
+
+### Round 9 (2026-10-12, from 16:32 CEST)
+
+- Start: committed round 8 as 046dea1; `git merge --no-edit v2` → f895574 (lane A docs only, no proto change, no `make ts-types`).
+- Review of round 8: "continue: implement deck owner grant/control-skill start and binding lifecycle; record that target.rs does not revoke the pending binding when process_started fails." Recorded below; the lifecycle work of this round revokes the bindings there too.
+- 6-5 slice (DL-217): owner coordinator start on the deck (schema V11 `tokens.start_command_id`, `http::grant_routes::owner_start`, `CONTROL_SKILL` in `crates/fleetdeck-deck/src/control_skill.md`, `record_lifecycle` claim by start receipt), station binding lifecycle (`Bindings::session_native`, `Bindings::end_session`, `manager::coordinator_start::{bound_events, ended_events}`, pump wiring in `manager/target.rs`), spawn form toggle "Coordinator" (`web/src/spawn/SpawnForm.tsx`).
+- Tests run: `cargo nextest run -p fleetdeck-station -E 'test(coordinator_start) | test(coordinator_command)'` → 5 passed; `cargo nextest run -p fleetdeck-deck -E 'test(an_owner_coordinator_start) | test(the_migrations_are_valid) | test(lifecycle)'` → 8 passed; `bun test src/spawn/spawn.test.tsx` → 11 pass.
+- Checks: see the round summary.
+
+### Round 10 (2026-10-12, from 16:46 CEST)
+
+- Committed round 9 as `d3ac028`; merged `v2` (`6232db8`: lane A module-size test and shim tests; no proto change, no `make ts-types`).
+- Review of round 9 recorded as follow-ups (below): `bound_events` misses native replacements; `owner_start` lacks the owner check, atomic grant/start persistence and validation of a replay with a changed grant.
+- 6-5: durable station coordinator outbox (DL-218). Station schema V17 `coordinator_outbox`; `crates/fleetdeck-station/src/store/coordinator_outbox.rs` (intake, `mark_sent`, `settle`, `expire`, `fence`, start recovery); `crates/fleetdeck-station/src/coordinator/outbox.rs` (intake with `idempotency_key`, fence, transmission, `flush`, `run`); `LinkForward` gained `Transport`, `with_outbox`, `connect_transport`; `link/runtime.rs` uses the outbox and runs the flush loop.
+- Tests: `cargo nextest run -p fleetdeck-station -E 'test(outbox_tests) | test(forward::tests)'` → 10 passed (8 new §8.4 tests); `cargo nextest run -p fleetdeck-station -p fleetdeck-deck -E 'test(migration) | (package(fleetdeck-deck) & binary(coordinator))'` → 6 passed.
+- Checks: see the round summary.
+- Open in 6-5: snapshot projection (25e), live smoke §8.5, follow-ups.
+
+### Round 11 (2026-10-12, from 16:56 CEST)
+
+- Committed round 10 as `2d661f1`; merged `v2` (`560032c`: lane A docs only; no proto change from the merge).
+- Review of round 10 recorded as follow-ups (below).
+- 6-5: coordinator snapshot projection (ADR-006 §6.1, test 25e, DL-219). Proto `ControlFrame::SnapshotEnd.coordinator` with `CoordinatorBindingState`/`CoordinatorBindingPhase` (`make ts-types`: `web/src/gen/link/CoordinatorBinding{State,Phase}.ts`). Station `Bindings::projection`, `Stream::with_coordinator` on a `coordinator.v1` link. Deck `DeckStore::apply_snapshot_with`, `grants::apply_projection` (event rules shared through `apply_bound`/`apply_ended`).
+- 6-5: opt-in live handoff smoke (ADR-006 §8.5, test 31) in `crates/fleetdeck-providers/tests/live_smoke.rs`; ran once: passed for Claude 2.1.296. `fleetdeck_providers::coordinator::VERIFIED` enables the Claude handoff from that version; the station records probed versions (`Bindings::record_version`) and probes once at start. Codex stays unverified. `docs/v2/LIVE-SMOKE.md` rows added.
+- Tests: `cargo nextest run -p fleetdeck-deck -E 'test(a_snapshot_recovery_with_an_unapplied)'` → 1 passed; `cargo nextest run -p fleetdeck-station -p fleetdeck-deck -p fleetdeck-link -p fleetdeck-proto -E 'binary(link_service) | binary(snapshot_bounds) | binary(control_link) | test(snapshot) | test(frame)'` → passed after the `link_service` expectation update (a `coordinator.v1` link sends `Some([])`); `cargo nextest run -p fleetdeck-providers -p fleetdeck-station -p fleetdeck-cli -E '…coordinator…'` → 18 passed; `test(the_handoff_check_needs)` → 1 passed; `FD_LIVE_SMOKE=1 cargo test -p fleetdeck-providers --test live_smoke -- --ignored --nocapture claude_and_codex` → 1 passed (34 s).
+- 6-5 checked. Lane B items all checked: LANE COMPLETE.
+
+### Round 12 (2026-10-12, from 17:14 CEST)
+
+- Committed round 11 as `82458f7`; merged `v2` (`4faee98`: lane A docs only; no proto change).
+- Review of round 11 (not a pass): asked for test 31 for both providers through the station binding and the station 25e fence. Its three findings are in the follow-up table.
+- 6-5 (DL-220): Codex `start_coordinated`; live test 31 through the real station path for Claude and Codex (`crates/fleetdeck-station/src/manager/coordinator_live_tests.rs`); the provider half runs both providers and asserts exactly one tool call; ingress accepts MCP `2025-11-25`; handoff arguments approve the `fleetdeck` tools; `VERIFIED` adds Codex 0.160.0; station lifecycle fence (`LinkForward::fenced`, `acknowledged`, `Store::coordinator_lifecycle_seq`).
+- Tests: `FD_LIVE_SMOKE=1 cargo test -p fleetdeck-station --lib -- --ignored --nocapture --test-threads 1 coordinator_live_tests` → 2 passed (Claude 2.1.296, Codex 0.160.0; 46 s); `FD_LIVE_SMOKE=1 cargo test -p fleetdeck-providers --test live_smoke -- --ignored --nocapture claude_and_codex` → 1 passed (both providers, 49 s); `cargo nextest run -p fleetdeck-station -E 'test(coordinator) | test(outbox) | binary(link_service)'` → 41 passed before the gate-test update; then `cargo nextest run -p fleetdeck-station -p fleetdeck-providers -E 'test(handoff) | test(capability_stays) | test(provider_arguments) | test(reconnect_holds) | binary(codex_driver_sim) | test(pending_binding_discovers)'` → 13 passed.
+- 6-5 stays checked; lane B items all checked: LANE COMPLETE.
+
+## Review follow-ups (after M3)
+
+Review of round 1 (items 6-1, 6-3, 6-4, 6-2), recorded in round 2:
+
+| Item | Finding | File |
+|---|---|---|
+| 6-1 | Clone URLs that carry credentials need a stricter check (also in query strings and other URL forms). | `crates/fleetdeck-station/src/workspace/provision.rs` |
+| 6-1 | The start effect does not recheck the worktree/clone path (allowed root, symlinks, absence) at dispatch time, only in the decision. | `crates/fleetdeck-station/src/workspace/provision.rs` |
+| 6-3 | A reused `command_id` with a different body returns the stored command instead of a conflict. | `crates/fleetdeck-deck/src/http/assign_routes.rs` |
+| 6-2/6-4 | A reused `mail_id`/`task_id` with a different body returns the stored row instead of a conflict. | `crates/fleetdeck-deck/src/store/fleet.rs` |
+| 6-3 | The existing-session pick does not check station capacity or provider availability (only the spawn hint does). | `crates/fleetdeck-deck/src/routing.rs` |
+| 6-3 | "Spawn on <station>" opens the spawn form but drops the chosen station. | `web/src/App.tsx` |
+| 6-3 | An assignment whose command was rejected shows as success. | `web/src/assign/assign.ts` |
+| 6-2 | Mail targets only one session: no repo-group, station or broadcast targets. | `web/src/fleet/FleetPanel.tsx` |
+
+Review of round 2 (item 6-5, partial), recorded in round 3:
+
+| Item | Finding | File |
+|---|---|---|
+| 6-5 | `bind_grant`/`record_lifecycle` accept any higher generation that the station reports, without a matching renew request (unsolicited generation increase). | `crates/fleetdeck-deck/src/store/grants.rs` |
+| 6-5 | `wait_task` filters tasks by station, not by the grant that created them or the assignee; `command_status` filters by caller, not by grant. | `crates/fleetdeck-deck/src/store/coordinator_query.rs` |
+| 6-5 | Coordinator decisions write no audit rows; the routing context (sessions, infos, buried mail) is read before, not inside, the decision transaction. | `crates/fleetdeck-deck/src/store/coordinator.rs` |
+| 6-5 | The lineage row of a spawn never gets the started session id, so `interrupt`/`stop` of a spawned child cannot match. | `crates/fleetdeck-deck/src/store/coordinator_ops.rs` |
+| 6-5 | The grant-bearing spawn test asserts acceptance (the `grant` key is dropped at decode) instead of a rejection. | `crates/fleetdeck-deck/src/store/coordinator_tests.rs` |
+| 6-5 | The tool catalog misses ADR-006 tools and renames some (`send_mail` vs `send`, etc.). | `crates/fleetdeck-station/src/coordinator/tools.rs` |
+| 6-5 | Ingress tests set binding expiry by hand and never open more connections than the configured limit. | `crates/fleetdeck-station/src/coordinator/ingress_tests.rs` |
+
+Review of round 4 (item 6-5, renewal 25b), recorded in round 5:
+
+| Item | Finding | File |
+|---|---|---|
+| 6-5 | The renewal (`renew_grant`) and its `session.coordinator_renew` outbox item are written in two transactions, as for revoke; a crash between them leaves a pending renewal that the station never receives. Write both in one transaction (A5). | `crates/fleetdeck-deck/src/http/grant_routes.rs`, `crates/fleetdeck-deck/src/store/grants.rs` |
+| 6-5 | No test covers the successful path from `POST /api/coordinator/grants/{id}/renew` through the link to the station and back to an active grant (`coordinator.bound` of the renewal generation); the HTTP test checks only 403, 409 and 404. | `crates/fleetdeck-deck/tests/board_fleet.rs` |
+| 6-5 | The deck does not refuse a coordinator spec itself from the station capability; the station decision refuses it (`unsupported`, `handoff_unverified`) and the deck relays the stored receipt (DL-215). Add the deck-side capability check for an earlier board message. | `crates/fleetdeck-deck/src/http/` |
+| 6-5 | §8.2 test 10 covers the station store bytes (DL-216) but not the deck store, the deck audit log or the station and deck log output (tracing) for the credential. Add a scan of the deck database and of captured logs. | `crates/fleetdeck-station/src/manager/coordinator_start_tests.rs`, `crates/fleetdeck-deck/tests/` |
+| 6-5 | §8.2 test 12 asks the deck to refuse a coordinator spec `unsupported`; only the station decision refuses it (DL-215). Add the deck-side check and its test. | `crates/fleetdeck-deck/src/http/` |
+| 6-5 | The Codex adapter has no `start_coordinated`; a Codex coordinator start fails `handoff_unverified` even after a live smoke (DL-216). | `crates/fleetdeck-providers/src/codex/` Done in round 12 (DL-220). |
+| 6-5 | Nothing calls `Bindings::native_identity` or revokes a binding at process exit yet; a coordinator binding stays `pending` (ADR-006 §5.5, §5.6). Done in round 9 (DL-217). | `crates/fleetdeck-station/src/manager/target.rs` |
+| 6-5 | `target.rs` did not revoke the pending binding when `process_started` failed (round 8 review). Round 9 revokes it there (DL-217); no test injects that store failure. | `crates/fleetdeck-station/src/manager/target.rs` |
+| 6-5 | A grant of an owner start whose start command is rejected or fails stays `active` with an empty session until it expires; revoke it when the receipt is a rejection. | `crates/fleetdeck-deck/src/store/grants.rs` |
+| 6-5 | The first `coordinator.bound` can name the session of an owner-start grant before the deck has the start receipt (DL-217); the station is trusted for that window. | `crates/fleetdeck-deck/src/store/grants.rs` |
+| 6-5 | The spawn form toggle has fixed classes (read, mail, drive) and deck defaults; no inputs for classes, target stations, spawn cap, mode ceilings or expiry (ADR-006 §4). | `web/src/spawn/SpawnForm.tsx` |
+| 6-5 | A pending binding that never bound sends `coordinator.ended` at generation 0, which the deck ignores; its grant stays `active` until expiry. | `crates/fleetdeck-station/src/manager/coordinator_start.rs` |
+| 6-5 | `bound_events` reads only the first `session.started` native id; a later native replacement inside the same process (for example a provider-side session switch) is not detected, so the binding is not revoked (ADR-006 §5.6). | `crates/fleetdeck-station/src/manager/coordinator_start.rs` |
+| 6-5 | `owner_start` does not check that the caller is the owner principal (any board session that can start a session can create a grant). | `crates/fleetdeck-deck/src/http/grant_routes.rs` |
+| 6-5 | `owner_start` creates the grant in its own transaction before the start command is submitted; a failed or rejected submit leaves an active grant without a session (no atomic grant/start persistence). | `crates/fleetdeck-deck/src/http/command_routes.rs` |
+| 6-5 | A replay of the same `command_id` with other grant fields (classes, expiry) returns the first grant without checking that the fields match. | `crates/fleetdeck-deck/src/store/grants.rs` |
+| 6-5 | The outbox enforces the §6.1 lifecycle watermark only through the local fence; it does not wait for the deck acknowledgment of `coordinator.ended` before sending (DL-218). | `crates/fleetdeck-station/src/coordinator/outbox.rs` |
+| 6-5 | A coordinator tool call returns after the first transmission instead of waiting up to 30 s for the receipt; there is no `command_status` tool yet (§6.5). | `crates/fleetdeck-station/src/coordinator/outbox.rs` |
+| 6-5 | An intake before the first deck link of a station process fails `deck_unreachable` (no target incarnation is known; it is not persisted). | `crates/fleetdeck-station/src/coordinator/outbox.rs` |
+| 6-5 | Terminal outbox rows are never pruned. | `crates/fleetdeck-station/src/store/coordinator_outbox.rs` |
+| 6-5 | Review r10: `CallOutbox::flush` sends rows one by one without a bound or timeout; a slow deck request blocks the flush loop. | `crates/fleetdeck-station/src/coordinator/outbox.rs` |
+| 6-5 | Review r10: an `in_flight` claim leaks when the sending future is cancelled (no drop guard). | `crates/fleetdeck-station/src/coordinator/outbox.rs` |
+| 6-5 | Review r10: revocation and send race: the fence check and `mark_sent` are not one step with the binding state. | `crates/fleetdeck-station/src/coordinator/outbox.rs` |
+| 6-5 | Review r10: a stored `forbidden` receipt of the deck is classified as nondefinitive (`failed`/`ambiguous`) instead of a definitive answer. | `crates/fleetdeck-station/src/store/coordinator_outbox.rs` |
+| 6-5 | Review r10: the outbox tests use a fake transport; they show neither the deck deduplication of a resend nor a lifecycle acknowledgment. | `crates/fleetdeck-station/src/coordinator/outbox_tests.rs` |
+| 6-5 | Codex has no `start_coordinated`; its live handoff half of test 31 does not run, so the Codex coordinator capability stays off. | `crates/fleetdeck-providers/src/codex/`, `crates/fleetdeck-providers/tests/live_smoke.rs` Done in round 12 (DL-220). |
+| 6-5 | Test 31 runs the station half (pending discovery, then the native binding) offline only; a live run through the station ingress is open. | `crates/fleetdeck-providers/tests/live_smoke.rs` Done in round 12 (DL-220). |
+| 6-5 | The board shows the "Coordinator" toggle for every provider; it does not hide it when the station reports `handoff_unverified`. | `web/src/spawn/SpawnForm.tsx` |
+| 6-5 | The station binding projection is read after the snapshot summaries, not at the exact watermark. | `crates/fleetdeck-station/src/link/stream.rs` |
+| 6-5 | The station does not hold coordinator traffic until the deck acknowledges a coordinator-capable snapshot or the `coordinator.ended` event (station side of the 25e/30a fence). | `crates/fleetdeck-station/src/coordinator/outbox.rs` Done in round 12 (DL-220). |
+| 6-5 | `docs/v2/operations.md` §7.2 (lane A) still says every coordinator start fails with `handoff_unverified`; Claude ≥ 2.1.296 now passes (DL-219). | `docs/v2/operations.md` |
+| 6-5 | Review r11: a snapshot projection may establish an initial generation other than 1 for a grant that awaits its first binding (the initial-binding admission is not restricted to generation 1 in `apply_projection`). | `crates/fleetdeck-deck/src/store/grants.rs` |
+| 6-5 | Review r11: the handoff check counts only probed versions; an instance whose probe failed or did not run yet does not block a start of its family (unknown-instance bypass). | `crates/fleetdeck-station/src/coordinator/bindings.rs`, `crates/fleetdeck-station/src/manager/mod.rs` |
+| 6-5 | Review r11: test 31 did not assert a single tool execution. Done in round 12 (both halves assert exactly one call). | `crates/fleetdeck-providers/tests/live_smoke.rs`, `crates/fleetdeck-station/src/manager/coordinator_live_tests.rs` |
+| 6-5 | The lifecycle fence reads `MAX(station_seq)` of the lifecycle events for each call, query and flushed row; no index on `events.kind`. | `crates/fleetdeck-station/src/store/coordinator_outbox.rs` |
+| 6-5 | A fenced query answers `deck_syncing` at once; it does not wait for the acknowledgment. | `crates/fleetdeck-station/src/coordinator/forward.rs` |
+| 6-5 | ADR-006 §5.1 still lists two MCP protocol versions; the code accepts `2025-11-25` too (DL-220, owner review). | `docs/v2/adr/ADR-006-coordinator-mcp.md` |
+| 6-5 | The live station test uses a recording forward, not a deck; no live run covers the deck half of a call. | `crates/fleetdeck-station/src/manager/coordinator_live_tests.rs` |
+| 6-5 | `docs/v2/operations.md` and `docs/v2/internals.md` (lane A) do not name the Codex handoff, the approved `fleetdeck` tools or the station lifecycle fence (DL-220). | `docs/v2/operations.md`, `docs/v2/internals.md` |

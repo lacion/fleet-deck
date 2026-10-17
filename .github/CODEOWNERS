@@ -1,26 +1,16 @@
-# 0.16.0 — release-surface ownership. Every path below is either code that
-# executes on users' machines outside normal review (the committed artifacts,
-# the hook scripts that run at every SessionStart), the pipeline that ships it,
-# or the dependency manifests that decide what the toolchain runs. Changes here
-# require the owner's review before merge.
+# Release-surface ownership (v2). Every path below is either the release
+# pipeline, the packaging that runs on users' machines, or a dependency
+# manifest that decides what the toolchain runs. Changes here require the
+# owner's review before merge.
 
-# Committed build artifacts (unreviewable diffs by nature)
-src/daemon/fleetd.bundle.mjs          @lacion
-src/daemon/board-dist/                @lacion
-
-# Hook execution path (runs at every user's SessionStart; marketplace installs
-# track main ungated)
-hooks/                                    @lacion
-scripts/fleet-hook.mjs                    @lacion
-scripts/fleet-sessionstart.mjs            @lacion
-scripts/fleet-watch.mjs                   @lacion
-src/daemon/config.mjs                 @lacion
-src/daemon/takeover.mjs               @lacion
-src/daemon/env-scrub.mjs              @lacion
-
-# The release pipeline itself
+# The release and CI pipeline
 .github/workflows/                        @lacion
+.github/build-setup.yml                   @lacion
+dist-workspace.toml                       @lacion
 
-# Dependency manifests (the build toolchain is the artifact pipeline)
-package-lock.json                         @lacion
-board/package-lock.json                   @lacion
+# Service units and the container file
+packaging/                                @lacion
+
+# Dependency manifests
+Cargo.lock                                @lacion
+web/bun.lock                              @lacion

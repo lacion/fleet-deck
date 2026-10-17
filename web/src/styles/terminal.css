@@ -1,0 +1,290 @@
+/* The terminal layer (DL-141, UI-DESIGN §6): xterm view, touch key bar, terminal dock. */
+
+/* terminal */
+.fd-term {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--code);
+}
+.fd-term-host {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.fd-term-screen {
+  position: absolute;
+  inset: 8px 4px 8px 10px;
+}
+.fd-term-screen .xterm {
+  height: 100%;
+}
+/* The strip under the last whole row takes xterm's default black; the board's terminal color covers it. */
+.fd-term-screen .xterm,
+.fd-term-screen .xterm-viewport,
+.fd-term-screen .xterm-scrollable-element {
+  background-color: var(--code);
+}
+.fd-term-screen .xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: var(--faint) transparent;
+}
+.fd-term-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  background: var(--code);
+  color: var(--dim);
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+}
+.fd-term-overlay p {
+  margin: 0;
+}
+.fd-term-note {
+  position: absolute;
+  top: var(--sp-2);
+  right: var(--sp-2);
+  max-width: calc(100% - 2 * var(--sp-2));
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  background: var(--surface);
+  color: var(--dim);
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  pointer-events: none;
+  z-index: 1;
+}
+.fd-term-note[data-tone="error"] {
+  border-color: var(--hazard);
+  background: var(--hazard-bg);
+  color: var(--hazard);
+}
+.fd-term-actions {
+  display: flex;
+  gap: var(--sp-2);
+}
+/* The ask bar over the terminal: a program asks to copy text (NV-06). */
+.fd-term-copy {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-2);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--dim);
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+}
+.fd-term-copy p {
+  margin: 0;
+}
+.fd-term-copy-preview {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* key bar */
+.fd-keybar {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border-soft);
+  background: var(--surface);
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+.fd-keybar-key {
+  flex: 1 0 auto;
+  min-width: 40px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 var(--sp-3);
+  font-family: var(--font-data);
+  font-size: 12px;
+}
+.fd-keybar-key[aria-pressed="true"] {
+  border-color: var(--text);
+  background: var(--border);
+}
+
+/* dock */
+.fd-tdock {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  /* Under the route in a column: the route shrinks, never the dock bar. */
+  flex: 0 0 auto;
+  min-height: 0;
+  background: var(--code);
+  color: var(--text);
+}
+.fd-tdock[data-layout="full"] {
+  height: 100%;
+}
+.fd-tdock [hidden] {
+  display: none;
+}
+
+/* resize handle: a 6 px hit area, a 2 px amber line on hover and focus */
+.fd-tdock-handle {
+  position: absolute;
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: row-resize;
+  touch-action: none;
+  z-index: 2;
+  outline: none;
+}
+.fd-tdock-handle::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 2px;
+  height: 2px;
+  background: var(--act);
+  opacity: 0;
+  transition: opacity var(--t-fast);
+}
+.fd-tdock-handle:hover::after,
+.fd-tdock-handle:focus-visible::after {
+  opacity: 1;
+}
+
+/* bar */
+.fd-tdock-bar {
+  display: flex;
+  align-items: stretch;
+  height: 34px;
+  background: var(--surface);
+  border-top: 1px solid var(--border-soft);
+}
+.fd-tdock[data-layout="full"] .fd-tdock-bar {
+  height: var(--tap-min);
+  border-top: 0;
+}
+.fd-tdock-tabs {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.fd-tdock-tabs::-webkit-scrollbar {
+  display: none;
+}
+.fd-tdock-tabwrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 0 6px 0 10px;
+  color: var(--dim);
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+.fd-tdock-tabwrap[data-selected="true"] {
+  background: var(--code);
+  color: var(--text);
+  box-shadow: inset 0 2px 0 var(--act);
+}
+.fd-tdock-tab {
+  align-self: stretch;
+  max-width: 220px;
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  gap: var(--sp-2);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 400;
+}
+.fd-tdock-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fd-tdock-station {
+  color: var(--faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.fd-tdock-detach {
+  margin-left: 4px;
+  opacity: 0;
+}
+.fd-tdock-tabwrap:hover .fd-tdock-detach,
+.fd-tdock-tabwrap[data-selected="true"] .fd-tdock-detach,
+.fd-tdock-detach:focus-visible {
+  opacity: 1;
+}
+@media (pointer: coarse) {
+  .fd-tdock-detach {
+    opacity: 1;
+  }
+  .fd-tdock-bar {
+    height: var(--tap-min);
+  }
+}
+
+/* tools */
+.fd-tdock-tools {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 0 6px;
+}
+/* The bar sits at the bottom of the window, so the menu opens upward. */
+.fd-tdock[data-layout="dock"] .fd-menu-body {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+/* error strip */
+.fd-tdock-error {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  margin: 0;
+  padding: 0 var(--sp-3);
+  background: var(--hazard-bg);
+  color: var(--hazard);
+  font-size: 12px;
+}
+
+/* body */
+.fd-tdock-body {
+  flex: 1;
+  min-height: 0;
+  background: var(--code);
+}
+.fd-tdock-pane {
+  height: 100%;
+  min-height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fd-tdock-handle::after {
+    transition: none;
+  }
+}

@@ -1,0 +1,1427 @@
+/* The page frame (DL-141, UI-DESIGN §3): sidebar, top bar, bottom bar, drawer, notices, dialogs,
+   screens, plans, stations, login. The visual primitives come from base.css. */
+
+/* ---------- Frame ---------- */
+
+/* Desktop and tablet: the page does not scroll; the route and the sidebar list do. */
+body:has(.fd-app[data-layout="desktop"]),
+body:has(.fd-app[data-layout="tablet"]) {
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.fd-app {
+  min-height: 100dvh;
+}
+
+.fd-app[data-layout="desktop"],
+.fd-app[data-layout="tablet"] {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.fd-app[data-layout="desktop"] {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+}
+
+.fd-app[data-layout="tablet"] {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Phone: the page scrolls, except on the session and terminals screens. */
+.fd-app[data-layout="phone"][data-route="session"],
+.fd-app[data-layout="phone"][data-route="terminals"] {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.fd-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Phone: one column, so that the bottom bar sits at the bottom of a short page. */
+.fd-app[data-layout="phone"] {
+  display: flex;
+  flex-direction: column;
+}
+
+.fd-app[data-layout="phone"] > .fd-main {
+  flex: 1 1 auto;
+}
+
+.fd-app[data-layout="desktop"] .fd-main,
+.fd-app[data-layout="tablet"] .fd-main {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.fd-route {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.fd-app[data-layout="desktop"] .fd-route,
+.fd-app[data-layout="tablet"] .fd-route,
+.fd-app[data-layout="phone"][data-route="session"] .fd-route,
+.fd-app[data-layout="phone"][data-route="terminals"] .fd-route {
+  overflow: auto;
+}
+
+/* The session pane fills the route and scrolls inside. */
+.fd-app[data-route="session"] .fd-route {
+  display: flex;
+  flex-direction: column;
+}
+
+/* The Add station button does not stretch. */
+.fd-stations > button {
+  justify-self: start;
+}
+
+/* ---------- Sidebar ---------- */
+
+.fd-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border-soft);
+}
+
+.fd-app[data-layout="desktop"] .fd-sidebar {
+  height: 100dvh;
+}
+
+.fd-sidebar[data-variant="list"] {
+  border-right: 0;
+  background: transparent;
+}
+
+/* The brand block and the footer stay; the list scrolls. */
+.fd-sidebar-top {
+  flex: none;
+  display: grid;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-3) var(--sp-3);
+}
+
+.fd-sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 48px;
+}
+
+.fd-sidebar-brand > .fd-icon,
+.fd-topbar > .fd-icon {
+  color: var(--act);
+}
+
+/* The connection pill. Color is never the only signal: the text says LIVE, STALE or OFFLINE. */
+.fd-wspill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 2px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-pill);
+  font-family: var(--font-ui);
+  font-size: var(--fs-micro);
+  white-space: nowrap;
+  color: var(--hazard);
+}
+
+.fd-sidebar-brand > .fd-iconbtn {
+  margin-left: auto;
+}
+
+.fd-sidebar-brand > .fd-iconbtn + .fd-wspill {
+  margin-left: 0;
+}
+
+.fd-wspill[data-freshness="live"] {
+  color: var(--ok);
+}
+
+.fd-wspill[data-freshness="stale"] {
+  color: var(--act);
+}
+
+.fd-wspill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: currentColor;
+}
+
+.fd-wspill[data-freshness="live"] .fd-wspill-dot {
+  animation: fd-pulse var(--pulse-working) ease-in-out infinite;
+}
+
+/* The sidebar's "New session" is a quiet raised button, not an amber one: amber is for decisions. */
+.fd-newbtn {
+  width: 100%;
+  justify-content: flex-start;
+  background: var(--raised);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.fd-newbtn:hover:not(:disabled) {
+  border-color: var(--dim);
+}
+
+.fd-newbtn .fd-kbd {
+  margin-left: auto;
+}
+
+.fd-needschip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  padding: 3px 10px;
+  border: 1px solid var(--act);
+  border-radius: var(--r-pill);
+  background: var(--act-bg);
+  color: var(--act);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.fd-sidebar-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-2) var(--sp-2) var(--sp-3);
+  border-top: 1px solid var(--border-soft);
+}
+
+.fd-sidebar-list > .fd-empty {
+  padding: var(--sp-2);
+}
+
+.fd-sgroup {
+  margin-bottom: var(--sp-2);
+}
+
+.fd-sgroup-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 10px 4px;
+}
+
+.fd-sgroup[data-group="needs"] .fd-sgroup-title {
+  color: var(--act);
+}
+
+.fd-sgroup-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-sgroup-title .fd-count {
+  margin-left: auto;
+}
+
+/* Reachability dot: 6 px, with a hidden text next to it. */
+.fd-rdot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--hazard);
+}
+
+.fd-rdot[data-reachable="true"] {
+  background: var(--ok);
+}
+
+.fd-srows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* Row: dot | title | age on line 1; the meta sits under the title. */
+.fd-srow {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  column-gap: var(--sp-2);
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 7px;
+  color: var(--text);
+  text-decoration: none;
+  transition: background var(--t-fast);
+}
+
+.fd-srow:hover {
+  background: var(--raised);
+}
+
+.fd-srow[aria-current="page"] {
+  background: var(--raised);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.fd-srow-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-ui);
+  font-weight: 500;
+}
+
+.fd-srow-title .fd-badge {
+  margin-left: 6px;
+}
+
+.fd-srow-age {
+  font-family: var(--font-data);
+  font-size: var(--fs-micro);
+  color: var(--faint);
+}
+
+.fd-srow-meta {
+  grid-column: 2 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--font-data);
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.fd-srow-model {
+  flex: none;
+}
+
+.fd-srow-place {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fd-srow-place .fd-icon {
+  flex: none;
+  margin-right: 3px;
+}
+
+.fd-sended {
+  margin-top: var(--sp-1);
+}
+
+.fd-sended summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.fd-sended[open] summary {
+  margin-bottom: var(--sp-1);
+}
+
+.fd-sidebar-links {
+  flex: none;
+  display: grid;
+  gap: 2px;
+  padding: var(--sp-1) var(--sp-3) var(--sp-2);
+}
+
+.fd-sidebar-links a,
+.fd-sidebar-more > summary,
+.fd-more-links a,
+.fd-more-links button,
+.fd-linkbtn {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: var(--ctl-h);
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-ctl);
+  color: var(--dim);
+  font-size: var(--fs-ui);
+  text-decoration: none;
+}
+
+.fd-sidebar-links .fd-count,
+.fd-more-links .fd-count {
+  margin-left: auto;
+}
+
+.fd-linkbtn {
+  width: 100%;
+  justify-content: flex-start;
+  border-color: transparent;
+  background: transparent;
+  font-weight: 400;
+}
+
+.fd-sidebar-links a:hover,
+.fd-sidebar-more > summary:hover,
+.fd-linkbtn:hover:not(:disabled) {
+  background: var(--raised);
+  border-color: transparent;
+  color: var(--text);
+}
+
+.fd-sidebar-links a[aria-current="page"] {
+  color: var(--text);
+  background: var(--raised);
+}
+
+/* The "More" fold: a link row with a chevron; the pages inside it are an inline list. */
+.fd-sidebar-more {
+  display: grid;
+  gap: 2px;
+}
+
+.fd-sidebar-more > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.fd-sidebar-more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.fd-sidebar-more > summary .fd-icon {
+  margin-left: auto;
+  transition: transform var(--t-fast);
+}
+
+.fd-sidebar-more[open] > summary .fd-icon {
+  transform: rotate(180deg);
+}
+
+/* The footer: theme and density on the left; Settings and the account menu on the right. */
+.fd-sidebar-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-2);
+  min-height: 40px;
+  padding: var(--sp-1) var(--sp-3);
+  border-top: 1px solid var(--border-soft);
+}
+
+.fd-sidebar-account {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.fd-sidebar-account a.fd-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--ctl-h);
+  border-radius: var(--r-ctl);
+  text-decoration: none;
+}
+
+.fd-sidebar-account a.fd-iconbtn[aria-current="page"] {
+  background: var(--raised);
+  color: var(--text);
+}
+
+/* The account menu opens upward: the footer is at the bottom of the screen. */
+.fd-sidebar-account .fd-menu-body {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+.fd-sidebar-version {
+  margin: 0;
+  font-family: var(--font-data);
+  font-size: var(--fs-micro);
+  color: var(--faint);
+}
+
+.fd-more .fd-sidebar-version {
+  margin-top: var(--sp-3);
+}
+
+/* Theme choice and compact cards, above Log out. */
+.fd-sidebar-prefs {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.fd-segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+}
+
+.fd-sidebar-prefs .fd-iconbtn[aria-pressed="true"] {
+  background: var(--border-soft);
+  color: var(--text);
+}
+
+.fd-more .fd-sidebar-prefs {
+  margin-bottom: var(--sp-3);
+}
+
+/* A starred row shows a filled star after its title. */
+.fd-srow-star {
+  display: inline-flex;
+  margin-left: 6px;
+  vertical-align: -1px;
+  color: var(--act);
+}
+
+.fd-srow-star .fd-icon {
+  fill: currentColor;
+}
+
+.fd-sidebar-archived,
+.fd-sended-clear {
+  margin: var(--sp-1) 0 0 var(--sp-2);
+}
+
+/* "Archived" is a quiet link at the end of the list. */
+.fd-sidebar-archived {
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+}
+
+/* Compact density: one line per session. */
+:root[data-density="compact"] .fd-srow {
+  padding: 4px 10px;
+}
+
+:root[data-density="compact"] .fd-srow-meta {
+  display: none;
+}
+
+/* ---------- Top bar (tablet; phone terminals) ---------- */
+
+.fd-topbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 48px;
+  padding: 0 var(--sp-3);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.fd-topbar-title {
+  margin: 0;
+  font-size: var(--fs-heading);
+  font-weight: 600;
+}
+
+/* ---------- Notices ---------- */
+
+.fd-notices {
+  display: grid;
+}
+
+.fd-notice {
+  margin: 0;
+  padding: 6px var(--sp-4);
+  background: var(--raised);
+  color: var(--dim);
+  font-size: var(--fs-body);
+}
+
+.fd-notice[data-tone="error"] {
+  color: var(--hazard);
+  background: var(--hazard-bg);
+  border-bottom: 1px solid var(--hazard);
+}
+
+.fd-notice-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.fd-notice-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Bottom bar (phone) ---------- */
+
+.fd-bottombar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  height: calc(56px + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--surface);
+  border-top: 1px solid var(--border-soft);
+}
+
+.fd-bottombar a {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  color: var(--faint);
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.fd-bottombar a[aria-current="page"] {
+  color: var(--act);
+}
+
+/* ---------- Drawer (tablet) ---------- */
+
+.fd-drawer-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+
+.fd-app .fd-drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: auto;
+  max-width: none;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.fd-drawer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  width: min(300px, 85vw);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  box-shadow: var(--shadow-pop);
+}
+
+.fd-drawer .fd-sidebar {
+  flex: 1 1 auto;
+  height: 100%;
+  border-right: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .fd-drawer {
+    animation: fd-drawer-left var(--t-drawer);
+  }
+}
+
+@keyframes fd-drawer-left {
+  from {
+    transform: translateX(-24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+/* ---------- Dialogs: shortcuts and the session palette ---------- */
+
+.fd-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12dvh var(--sp-3) var(--sp-3);
+  background: rgba(0, 0, 0, 0.5);
+}
+
+/* The pairing dialog also uses .fd-dialog, inline; the modal look is for the overlay only. */
+.fd-dialog {
+  display: grid;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+}
+
+.fd-overlay .fd-dialog {
+  width: min(560px, 92vw);
+  max-height: 100%;
+  overflow: auto;
+  border-radius: 12px;
+  box-shadow: var(--shadow-pop);
+}
+
+.fd-dialog h2 {
+  margin: 0 0 12px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-18);
+  font-weight: 600;
+}
+
+.fd-overlay .fd-dialog > button {
+  justify-self: end;
+}
+
+/* Add a device (DL-146): the QR code is black on white in every theme. */
+.fd-devlink {
+  justify-items: start;
+}
+
+.fd-overlay .fd-devlink > button {
+  justify-self: start;
+}
+
+.fd-overlay .fd-devlink > .fd-devlink-close {
+  justify-self: end;
+}
+
+.fd-devlink-qr {
+  display: block;
+  width: 240px;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  border-radius: var(--r-ctl);
+}
+
+.fd-devlink-url {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+}
+
+.fd-devlink-url input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+
+.fd-devlink-error {
+  color: var(--hazard);
+}
+
+.fd-devlink-left {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+}
+
+.fd-keys {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.fd-keys th {
+  text-align: left;
+  font-family: var(--font-ui);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  color: var(--faint);
+}
+
+.fd-keys th,
+.fd-keys td {
+  height: 34px;
+  padding: 0 var(--sp-2);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.fd-keys tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.fd-keys .fd-kbd {
+  font-size: var(--fs-micro);
+  padding: 1px 6px;
+  color: var(--dim);
+  background: var(--raised);
+}
+
+.fd-help h3,
+.fd-help h4 {
+  margin: var(--sp-3) 0 var(--sp-1);
+}
+
+.fd-help section > h3:first-child {
+  margin-top: 0;
+}
+
+.fd-help-terms {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+}
+
+.fd-help-terms dt {
+  font-weight: 600;
+  font-size: var(--fs-body);
+}
+
+.fd-help-terms dd {
+  margin: 0;
+  color: var(--dim);
+  font-size: var(--fs-body);
+}
+
+.fd-overlay .fd-palette {
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.fd-palette > input {
+  height: 40px;
+  padding: 0 var(--sp-4);
+  border: 0;
+  border-bottom: 1px solid var(--border-soft);
+  border-radius: 0;
+  background: transparent;
+  font-size: 15px;
+}
+
+.fd-palette > input:focus {
+  border-bottom-color: var(--act);
+}
+
+.fd-palette [role="listbox"] {
+  max-height: 50dvh;
+  overflow-y: auto;
+  padding: var(--sp-1);
+}
+
+.fd-palette [role="listbox"]:empty {
+  display: none;
+}
+
+.fd-palette [role="option"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  height: 34px;
+  padding: 0 10px;
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+
+.fd-palette [role="option"][aria-selected="true"] {
+  background: var(--raised);
+}
+
+.fd-palette-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-palette-meta {
+  flex: none;
+  font-family: var(--font-data);
+  font-size: var(--fs-micro);
+  color: var(--faint);
+}
+
+.fd-palette > .fd-empty {
+  padding: var(--sp-3) var(--sp-4);
+}
+
+/* ---------- Screens: New session, Plans, Stations, More ---------- */
+
+.fd-screen {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: var(--sp-5) var(--sp-5) 48px;
+}
+
+.fd-screen-title,
+.fd-spawn > h2,
+.fd-plans > h2,
+.fd-stations > h2 {
+  margin: 0 0 var(--sp-1);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text);
+}
+
+.fd-more-links {
+  list-style: none;
+  margin: var(--sp-3) 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.fd-more-links a,
+.fd-more-links button {
+  height: 44px;
+  padding: 0 var(--sp-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.fd-more-links button {
+  width: 100%;
+  justify-content: flex-start;
+  font-weight: 400;
+}
+
+/* ---------- Plans ---------- */
+
+.fd-plans {
+  display: grid;
+  gap: var(--sp-3);
+}
+
+.fd-plan-tools,
+.fd-plan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  align-items: center;
+}
+
+.fd-plan-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--sp-3);
+}
+
+.fd-plan-list article {
+  display: grid;
+  gap: var(--sp-3);
+  min-width: 0;
+  padding: var(--sp-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+}
+
+.fd-plan-list h3 {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.fd-plan-meta {
+  margin: 0;
+  color: var(--dim);
+  font-size: var(--fs-body);
+  overflow-wrap: anywhere;
+}
+
+.fd-plan-meta .fd-link {
+  display: inline;
+  height: auto;
+  line-height: inherit;
+  color: var(--text);
+}
+
+.fd-plan-list summary {
+  cursor: pointer;
+  color: var(--dim);
+}
+
+.fd-plan-assign {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.fd-plan-assign label {
+  display: grid;
+  gap: var(--sp-1);
+  font-size: var(--fs-body);
+  color: var(--dim);
+}
+
+.fd-plan-assign p {
+  margin: 0;
+}
+
+.fd-plan-text {
+  margin: var(--sp-2) 0 0;
+  padding: 8px 10px;
+  background: var(--code);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 50vh;
+  overflow: auto;
+}
+
+/* ---------- Stations ---------- */
+
+.fd-stations {
+  display: grid;
+  gap: var(--sp-3);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.fd-station-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+  gap: var(--sp-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fd-station {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-3);
+  align-content: start;
+  min-width: 0;
+  padding: var(--sp-4);
+  overflow-wrap: anywhere;
+}
+
+.fd-station-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
+}
+
+.fd-station h3.fd-station-name {
+  margin: 0;
+  font-family: var(--font-callsign);
+  font-size: var(--fs-18);
+  font-weight: 600;
+}
+
+.fd-station-health {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-body);
+  color: var(--ok);
+}
+
+.fd-station-health[data-health="down"] {
+  color: var(--hazard);
+}
+
+.fd-station-health[data-health="stale"] {
+  color: var(--dim);
+}
+
+.fd-station-menu {
+  margin-left: auto;
+}
+
+/* The live facts: one line, 16 px apart. */
+.fd-station-live {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-4);
+  font-size: var(--fs-body);
+  color: var(--dim);
+}
+
+.fd-station-load {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.fd-load-bar {
+  display: inline-block;
+  flex: none;
+  width: 56px;
+  height: 4px;
+  overflow: hidden;
+  background: var(--border);
+  border-radius: var(--r-pill);
+}
+
+.fd-load-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--ok);
+}
+
+.fd-load-bar > span[data-high] {
+  background: var(--act);
+}
+
+/* The disk, memory and CPU rows of a station card (DL-193). */
+.fd-station-res {
+  display: grid;
+  gap: var(--sp-1);
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fd-station-res li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-12);
+  color: var(--dim);
+}
+
+.fd-station-res li[data-low] > span:last-child {
+  color: var(--act);
+}
+
+.fd-res-warn {
+  margin: var(--sp-1) 0 0;
+  color: var(--act);
+}
+
+.fd-station h4 {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  color: var(--faint);
+}
+
+.fd-station p {
+  margin: 0;
+}
+
+/* Facts: a compact two-column grid; a label is faint, a value is mono. */
+.fd-station .fd-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--sp-1) var(--sp-3);
+  margin: 0;
+}
+
+.fd-station .fd-facts dt {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  color: var(--faint);
+}
+
+.fd-station .fd-facts dd {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-width: 0;
+  margin: 0;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+
+.fd-station .fd-facts dd .fd-iconbtn {
+  flex: none;
+}
+
+.fd-station-providers {
+  display: grid;
+  gap: var(--sp-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+
+.fd-station-providers > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-1) var(--sp-3);
+}
+
+.fd-station-auth {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--dim);
+}
+
+.fd-station-auth[data-auth="ok"] {
+  color: var(--ok);
+}
+
+.fd-station-auth[data-auth="hazard"] {
+  color: var(--hazard);
+}
+
+.fd-station-auth .fd-dot {
+  background: currentColor;
+  border-color: currentColor;
+}
+
+.fd-shells {
+  margin-top: var(--sp-2);
+}
+
+/* The summary names the fold; the section keeps its label for the region. */
+.fd-station-sec .fd-shells > h4 {
+  display: none;
+}
+
+.fd-shells {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-2);
+}
+
+.fd-shells p {
+  margin: 0;
+}
+
+.fd-shells form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.fd-shells form label {
+  display: flex;
+  white-space: nowrap;
+  flex: 1 1 14rem;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.fd-shells form input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Details and Shells: folds with a summary like the Worktrees one. */
+.fd-station-details > summary,
+.fd-station-sec > summary {
+  cursor: pointer;
+}
+
+.fd-station-sec > .fd-station-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.fd-station-foot p {
+  text-align: right;
+}
+
+/* The human shell (PLAN §6.8): a terminal that fits a phone width. */
+.fd-shells .fd-terminal {
+  width: 100%;
+  height: 22rem;
+  margin-top: 0.5rem;
+}
+
+/* ---------- Focus and touch ---------- */
+
+.fd-app a:focus-visible,
+.fd-app summary:focus-visible,
+.fd-app [role="option"]:focus-visible {
+  outline: 2px solid var(--act);
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  .fd-sidebar-links a,
+  .fd-sidebar-more > summary,
+  .fd-linkbtn,
+  .fd-srow,
+  .fd-sended summary {
+    min-height: var(--tap-min);
+  }
+}
+
+/* ---------- Owner login ---------- */
+
+.fd-login {
+  max-width: 440px;
+  margin: 8vh auto;
+  padding: var(--sp-4);
+}
+
+.fd-login h1 {
+  font-family: var(--font-ui);
+  font-size: var(--fs-heading);
+}
+
+.fd-login form {
+  display: grid;
+  gap: var(--sp-2);
+  margin: var(--sp-4) 0;
+}
+
+.fd-login button:disabled {
+  cursor: wait;
+}
+
+/* The read-only worktree inventory of a station (DL-142). */
+.fd-wt-body {
+  display: grid;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+
+.fd-wt-body p {
+  margin: 0;
+}
+
+.fd-wt-refresh {
+  justify-self: start;
+}
+
+.fd-wt-list {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fd-wt-row {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px var(--sp-3);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--faint);
+  border-radius: var(--r-card);
+}
+
+.fd-wt-row[data-verdict="clean"] {
+  border-left-color: var(--ok);
+}
+
+.fd-wt-row[data-verdict="has_work"] {
+  border-left-color: var(--act);
+}
+
+.fd-wt-row[data-verdict="live"] {
+  border-left-color: var(--m-comet);
+}
+
+.fd-wt-row .fd-ghost {
+  justify-self: start;
+}
+
+.fd-wt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.fd-wt-confirm {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.fd-wt-body .fd-wt-path {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  color: var(--faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-wt-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.fd-wt-name {
+  font-family: var(--font-data);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.fd-wt-session {
+  margin-left: auto;
+  font-size: var(--fs-data);
+  color: var(--m-comet);
+  text-decoration: none;
+}
+
+.fd-wt-session:hover {
+  text-decoration: underline;
+}
+
+.fd-wt-body .fd-wt-evidence {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  color: var(--dim);
+}
+
+.fd-wt-body .fd-wt-note {
+  font-size: var(--fs-data);
+  color: var(--faint);
+}
+
+.fd-wt-body .fd-wt-note[data-tone="act"] {
+  color: var(--act);
+}
+
+.fd-wt summary {
+  cursor: pointer;
+}

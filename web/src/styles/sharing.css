@@ -1,0 +1,198 @@
+/* R11 (DL-166): the shared fleet: the share dialog, the Shares and Spaces pages, the join page,
+   the member banner, the avatars, the mob strip and the side chat. */
+
+/* ---------- the share dialog ---------- */
+
+.fd-share-roles {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-ctl);
+}
+.fd-share-roles legend {
+  padding: 0 var(--sp-1);
+  color: var(--dim);
+  font-size: 12px;
+}
+.fd-share-form .fd-share-role {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  color: var(--text);
+  font-size: var(--fs-body);
+}
+.fd-share-form .fd-share-role input {
+  flex: none;
+  width: auto;
+}
+
+/* "New share": the select of what to share sits over the fields. */
+.fd-share-target {
+  display: grid;
+  gap: 6px;
+  color: var(--dim);
+  font-size: 12px;
+  font-weight: 500;
+}
+.fd-share-target select {
+  width: 100%;
+}
+
+/* ---------- Shares and Spaces (tables of the page frame, DL-171) ---------- */
+
+.fd-mob-requests,
+.fd-space-sessions {
+  display: grid;
+  gap: var(--sp-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fd-space-sessions {
+  color: var(--dim);
+  font-size: var(--fs-body);
+}
+.fd-space-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.fd-space-add label {
+  display: block;
+}
+
+/* ---------- the member banner and the viewer note ---------- */
+
+.fd-member-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 4px var(--sp-4);
+  background: var(--act-bg);
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text);
+  font-size: var(--fs-data);
+}
+.fd-member-banner-text {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.fd-viewer-note {
+  margin: 0;
+  color: var(--dim);
+  font-size: var(--fs-body);
+}
+
+/* ---------- presence ---------- */
+
+.fd-avatars {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fd-avatar,
+.fd-avatar-more {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-left: -6px;
+  background: var(--raised);
+  border: 2px solid var(--surface);
+  border-radius: var(--r-pill);
+  color: var(--text);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+}
+.fd-avatars > :first-child {
+  margin-left: 0;
+}
+.fd-avatar-more {
+  color: var(--dim);
+}
+
+/* ---------- mob steering ---------- */
+
+.fd-mob {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-ctl);
+  font-size: var(--fs-body);
+}
+.fd-mob[data-driving="true"] {
+  border-color: var(--ok);
+}
+.fd-mob-line,
+.fd-mob-requests li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.fd-mob-text {
+  flex: 1 1 140px;
+  min-width: 0;
+  font-weight: 500;
+}
+
+/* ---------- the side chat ---------- */
+
+.fd-sidechat {
+  display: grid;
+  gap: var(--sp-3);
+  min-width: 0;
+  padding: var(--sp-3) var(--sp-4);
+}
+.fd-sidechat-log {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fd-sidechat-msg {
+  display: grid;
+  gap: 2px;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-ctl);
+}
+.fd-sidechat-msg[data-own="true"] {
+  background: var(--raised);
+}
+.fd-sidechat-meta {
+  color: var(--faint);
+  font-family: var(--font-data);
+  font-size: var(--fs-micro);
+}
+.fd-sidechat-meta strong {
+  color: var(--dim);
+}
+.fd-sidechat-text {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.fd-sidechat-form {
+  display: grid;
+  gap: var(--sp-2);
+}
+.fd-sidechat-form textarea {
+  width: 100%;
+  resize: vertical;
+}
+.fd-sidechat-form button {
+  justify-self: end;
+}

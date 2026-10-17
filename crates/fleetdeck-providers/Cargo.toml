@@ -1,0 +1,29 @@
+[package]
+name = "fleetdeck-providers"
+description = "Fleet Deck v2 provider adapters: traits plus the Claude and Codex adapters (PLAN §6.2, ADR-001, ADR-002)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fleetdeck-proto = { path = "../fleetdeck-proto" }
+fleetdeck-core = { path = "../fleetdeck-core" }
+async-trait = { workspace = true }
+ring = { workspace = true }
+rustix = { workspace = true, features = ["process", "fs"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["io-std"] }
+tracing = { workspace = true }
+ulid = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+fleetdeck-testkit = { path = "../fleetdeck-testkit" }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

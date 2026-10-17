@@ -1,0 +1,223 @@
+---
+source: spikes/s1-claude/tests/event_snapshots.rs
+expression: events
+---
+[
+  {
+    "kind": "session.started",
+    "provider": "claude",
+    "provider_version": "2.1.289",
+    "model": "claude-haiku-4-5-20251001",
+    "mode": "default",
+    "provider_refs": {
+      "session_id": "c1ecfa36-c00a-46e1-80c7-5ba471dfd75a"
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0002-4e6a-8000-54ad28bd0bc4",
+    "turn_id": null,
+    "state": "received"
+  },
+  {
+    "kind": "turn.started",
+    "turn_id": "turn-1",
+    "provider_refs": {
+      "command_uuid": "00000000-0002-4e6a-8000-54ad28bd0bc4"
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0002-4e6a-8000-54ad28bd0bc4",
+    "turn_id": "turn-1",
+    "state": "started"
+  },
+  {
+    "kind": "tool.started",
+    "node_id": "node-2",
+    "parent_node_id": null,
+    "tool_kind": "shell",
+    "title": "Bash",
+    "provider_refs": {
+      "tool_use_id": "toolu_01GKXFghYmWKCaxeYHC3ZSnJ"
+    }
+  },
+  {
+    "kind": "approval.requested",
+    "request_id": "req-3",
+    "node_id": "node-2",
+    "request_kind": "command",
+    "title": "Bash",
+    "options": [
+      {
+        "option_id": "allow",
+        "label": "Allow once"
+      },
+      {
+        "option_id": "allow_always",
+        "label": "Allow always (this session)"
+      },
+      {
+        "option_id": "deny",
+        "label": "Deny"
+      }
+    ],
+    "response": "rpc_reply",
+    "provider_refs": {
+      "control_request_id": "7c46ba8d-4720-4405-a733-aea588534b50",
+      "tool_use_id": "toolu_01GKXFghYmWKCaxeYHC3ZSnJ"
+    }
+  },
+  {
+    "kind": "approval.resolved",
+    "request_id": "req-3",
+    "option_id": "allow"
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000001-0002-4e6a-8001-54adc543d26c",
+    "turn_id": null,
+    "state": "received"
+  },
+  {
+    "kind": "tool.completed",
+    "node_id": "node-2",
+    "status": "ok"
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000001-0002-4e6a-8001-54adc543d26c",
+    "turn_id": "turn-1",
+    "state": "started"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": "The"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": " command completed"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": " successfully."
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": " Here"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": "'s the output:\n\n```"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": "\nstep-one"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": "\n```\n\nThe"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": " file `fd-steer"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": ".txt` was created,"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": " the"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": " script"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": " sl"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": "ept for 6 seconds"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": ", and then"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": " printed"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": " `"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": "step-one` to stdout"
+  },
+  {
+    "kind": "message.delta",
+    "turn_id": "turn-1",
+    "text": ".\n\nbanana"
+  },
+  {
+    "kind": "message.completed",
+    "turn_id": "turn-1",
+    "text": "The command completed successfully. Here's the output:\n\n```\nstep-one\n```\n\nThe file `fd-steer.txt` was created, the script slept for 6 seconds, and then printed `step-one` to stdout.\n\nbanana"
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000001-0002-4e6a-8001-54adc543d26c",
+    "turn_id": "turn-1",
+    "state": "completed"
+  },
+  {
+    "kind": "usage.updated",
+    "usage": {
+      "input_tokens": 18,
+      "output_tokens": 349,
+      "cost_usd": 0.01686125
+    }
+  },
+  {
+    "kind": "turn.completed",
+    "turn_id": "turn-1",
+    "status": "done",
+    "usage": {
+      "input_tokens": 18,
+      "output_tokens": 349,
+      "cost_usd": 0.01686125
+    }
+  },
+  {
+    "kind": "input.updated",
+    "input_id": "00000000-0002-4e6a-8000-54ad28bd0bc4",
+    "turn_id": "turn-1",
+    "state": "completed"
+  },
+  {
+    "kind": "session.ended",
+    "reason": "process_exit",
+    "exit_code": 0
+  }
+]

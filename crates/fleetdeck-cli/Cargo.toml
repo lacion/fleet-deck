@@ -1,0 +1,49 @@
+[package]
+name = "fleetdeck-cli"
+description = "Fleet Deck v2 command-line binary `fleetdeck` (PLAN §1)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "fleetdeck"
+path = "src/main.rs"
+
+[dependencies]
+fleetdeck-proto = { path = "../fleetdeck-proto" }
+fleetdeck-core = { path = "../fleetdeck-core" }
+fleetdeck-station = { path = "../fleetdeck-station" }
+fleetdeck-deck = { path = "../fleetdeck-deck" }
+fleetdeck-link = { path = "../fleetdeck-link" }
+fleetdeck-providers = { path = "../fleetdeck-providers" }
+anyhow.workspace = true
+clap.workspace = true
+# Non-echoing invitation prompt (G12).
+rustix = { workspace = true, features = ["termios"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+# Landlock confinement of worktree and clone provisioning (B9, DL-200); Linux only.
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4"
+
+[dev-dependencies]
+# The crash tests run the `fleetdeck` binary with `FLEETDECK_FAULT` (M2 P2-8).
+fleetdeck-station = { path = "../fleetdeck-station", features = ["fault-injection"] }
+fleetdeck-testkit = { path = "../fleetdeck-testkit" }
+fleetdeck-link = { path = "../fleetdeck-link" }
+rustls.workspace = true
+tempfile.workspace = true
+# The packaging checks parse dist-workspace.toml and Cargo.toml (7-5).
+toml.workspace = true
+
+[lints]
+workspace = true
+
+# cargo-dist builds and releases this binary (dist-workspace.toml, DL-400).
+[package.metadata.dist]
+dist = true

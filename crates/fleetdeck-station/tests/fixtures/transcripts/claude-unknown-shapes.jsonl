@@ -1,0 +1,4 @@
+{"schema":"future/1","seq":1,"actor":"human","body":{"parts":[{"kind":"words","value":"<text 1>"}]},"at":"2031-01-01T10:00:00Z","sessionId":"unknown-shapes-session"}
+{"schema":"future/1","seq":2,"actor":"model","body":{"parts":[{"kind":"words","value":"<text 2>"}]},"at":"2031-01-01T10:00:05Z","sessionId":"unknown-shapes-session"}
+{"schema":"future/1","seq":3,"actor":"tool","body":{"call":{"name":"Shell","args":{"line":"<command 1>"}}},"at":"2031-01-01T10:00:06Z","sessionId":"unknown-shapes-session"}
+{"schema":"future/1","seq":4,"actor":"tool","body":{"result":{"code":0}},"at":"2031-01-01T10:00:07Z","sessionId":"unknown-shapes-session"}

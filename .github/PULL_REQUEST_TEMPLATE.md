@@ -4,10 +4,9 @@
 
 ---
 
-- [ ] `bun run ci`, `bun run typecheck`, and `bun run test` pass locally (run the full test suites serially)
-- [ ] Changed `src/daemon/`? Ran `bun run bundle` and committed `src/daemon/fleetd.bundle.mjs`
-- [ ] Changed `bin/`? Ran `bun run bundle:bin` and committed `bin/fleetdeck.mjs`
-- [ ] Changed hook sources in `scripts/`? Ran `bun run bundle:hooks` and committed the generated `scripts/fleet-*.mjs`
-- [ ] Changed `board/`? Ran `bun run build:board` and committed `src/daemon/board-dist/`
-- [ ] No new production dependencies (`dependencies` stays empty; Bun provides the runtime APIs)
-- [ ] Docs/README updated if behavior changed
+- [ ] `make check` passes locally (fmt, clippy, every test, the web checks and the replays)
+- [ ] A new security surface has a row in `docs/v2/SECURITY-CHECKLIST.md`
+- [ ] A product or design decision has an entry in `docs/v2/DECISIONS-LOG.md`
+- [ ] Changed `fleetdeck-proto` types? Ran `make ts-types` and committed `web/src/gen`
+- [ ] No new dependency without a discussion (`cargo deny check` passes)
+- [ ] Docs updated if behavior changed (`docs/v2/operations.md`, README)
