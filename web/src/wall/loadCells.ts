@@ -41,6 +41,11 @@ export function heatOf(cpu: number | null, cores: number | null): Heat {
   return share >= 0.25 ? 'mid' : 'low';
 }
 
+/** The heading of the block. It counts the cells that are not shown, so it is never clipped. */
+export function loadHeading(notShown: number): string {
+  return notShown > 0 ? `Session load (+${notShown} more)` : 'Session load';
+}
+
 /** The tooltip text. A value that is `None` is "unknown". */
 export function cellLabel(
   name: string,

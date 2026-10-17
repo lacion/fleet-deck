@@ -201,12 +201,6 @@ export function SideArea({
           </ul>
         </div>
       )}
-      {loads.cells.length === 0 ? null : (
-        <div className="fd-wall-block" data-part="load">
-          <h2 className="fd-wall-h">Session load</h2>
-          <LoadMap map={loads} />
-        </div>
-      )}
       {pulls.length === 0 ? null : (
         <div className="fd-wall-block" data-part="prs">
           <h2 className="fd-wall-h">Pull requests</h2>
@@ -223,6 +217,7 @@ export function SideArea({
           </ul>
         </div>
       )}
+      {loads.cells.length === 0 ? null : <LoadMap map={loads} />}
     </section>
   );
 }

@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { StationResources, StationView } from '../gen';
 import { card, station } from '../testing/fleet';
 import { SideArea } from './Areas';
-import { heatOf, loadMap, MAX_CELLS, sizeOf } from './loadCells';
+import { heatOf, loadHeading, loadMap, MAX_CELLS, sizeOf } from './loadCells';
 
 const load = (id: string, cpu: number | null, rss: number | null = 340e6) => ({
   session_id: id,
@@ -135,6 +135,22 @@ describe('the load block of the side area', () => {
     expect(html).toContain('>—<');
   });
 
+  test('the heading counts the cells that are not shown', () => {
+    expect(loadHeading(0)).toBe('Session load');
+    expect(loadHeading(1)).toBe('Session load (+1 more)');
+    expect(loadHeading(7)).toBe('Session load (+7 more)');
+  });
+
+  test('the load block is the last block and has no separate count line', () => {
+    const html = render([owner('station-a', [load('a', 10)])]);
+    expect(html.lastIndexOf('data-part="load"')).toBeGreaterThan(
+      html.lastIndexOf('data-part="stations"'),
+    );
+    expect(html.lastIndexOf('data-part=')).toBe(html.lastIndexOf('data-part="load"'));
+    expect(html).toContain('<h2 class="fd-wall-h">Session load</h2>');
+    expect(html).not.toContain('more');
+  });
+
   test('the memory under 1 GB is whole MB', () => {
     const html = render([owner('station-a', [load('a', 10, 340e6)])]);
     expect(html).toContain('memory 340 MB');
@@ -169,6 +185,7 @@ describe('the load block of the side area', () => {
       ],
       ids.map((id) => card(id)),
     );
-    expect(html).toContain('+2 more');
+    expect(html).toContain('<h2 class="fd-wall-h">Session load (+2 more)</h2>');
+    expect(html).not.toContain('</p>');
   });
 });
