@@ -204,6 +204,10 @@ async fn the_routes_refuse_a_wrong_station_an_unknown_target_and_a_bad_body() {
         )
         .await;
     expect(&r, 400, "wrong_station");
+    assert_eq!(
+        r.body["message"],
+        "This project has no home on that station."
+    );
     let r = c
         .post(
             "/api/projects/nope/sessions/assign",

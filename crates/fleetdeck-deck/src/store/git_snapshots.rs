@@ -13,17 +13,13 @@
 
 use fleetdeck_proto::StationId;
 use fleetdeck_proto::fleet_git::{
-    GitProjectView, GitSnapshot, HomeCheck, HomeCheckState, RemoteIdentity, SnapshotAck,
-    StationHome,
+    GitHomeState, GitProjectView, GitSnapshot, HomeCheck, RemoteIdentity, SnapshotAck, StationHome,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
+use super::project_homes::{apply_check, home_on};
 use super::projects_git::clone_url;
 use super::{DeckStore, Result, call, to_i64, to_u64};
-
-/// The generation of every home in phase 1 (design §8.2: the homes table and
-/// its generations come in phase 2).
-pub const PHASE1_GENERATION: u64 = 1;
 
 /// The checks that `station` answered last.
 pub(super) fn checks_of(conn: &Connection, station: &str) -> Result<Vec<HomeCheck>> {
@@ -38,15 +34,6 @@ pub(super) fn checks_of(conn: &Connection, station: &str) -> Result<Vec<HomeChec
         || Ok(Vec::new()),
         |json| Ok(serde_json::from_str::<Vec<HomeCheck>>(&json)?),
     )
-}
-
-/// The verified check of the home of `project` on `station`, if any.
-pub(super) fn verified<'a>(checks: &'a [HomeCheck], project: &str) -> Option<&'a HomeCheck> {
-    checks.iter().find(|c| {
-        c.project_id == project
-            && c.generation == PHASE1_GENERATION
-            && c.state == HomeCheckState::Verified
-    })
 }
 
 /// Drops the stored check of `project` from every station: its settings,
@@ -71,24 +58,32 @@ pub(super) fn clear_checks(conn: &Connection, project: &str) -> Result<()> {
     Ok(())
 }
 
-/// The snapshot of `station` with `revision` 0: every project whose home is
-/// on it (`homes`), and the sync projects with their settings (`projects`).
+/// The snapshot of `station` with `revision` 0 (design §3.3, decision B13):
+/// `homes` lists every home of the station, sync on or off, in every state,
+/// with its real generation (a home without a path sends its reserved path);
+/// `projects` lists the sync projects whose home here is `ready` or
+/// `unverified`.
 fn build(conn: &Connection, station: &str) -> Result<GitSnapshot> {
-    let projects = super::projects::of_station(conn, station)?;
-    let checks = checks_of(conn, station)?;
     let mut snapshot = GitSnapshot {
         revision: 0,
         projects: Vec::new(),
         homes: Vec::new(),
     };
-    for p in projects {
+    for p in super::projects::of_station(conn, station)? {
+        let Some(home) = home_on(conn, &p.project_id, station)? else {
+            continue;
+        };
         snapshot.homes.push(StationHome {
             project_id: p.project_id.clone(),
-            generation: PHASE1_GENERATION,
-            path: p.path.clone(),
+            generation: home.generation,
+            path: home
+                .path
+                .clone()
+                .or_else(|| home.reserved_path.clone())
+                .unwrap_or_default(),
             sync: p.git.sync,
         });
-        if !p.git.sync {
+        if !p.git.sync || !matches!(home.state, GitHomeState::Ready | GitHomeState::Unverified) {
             continue;
         }
         let (Some(repo), Some(dest), Some(url)) = (&p.repo, &p.remote_dest, &p.remote_url) else {
@@ -96,9 +91,6 @@ fn build(conn: &Connection, station: &str) -> Result<GitSnapshot> {
             // like it is left out rather than sent half-made.
             continue;
         };
-        let home_path = verified(&checks, &p.project_id)
-            .and_then(|c| c.canonical_path.clone())
-            .unwrap_or_else(|| p.path.clone());
         snapshot.projects.push(GitProjectView {
             project_id: p.project_id.clone(),
             project_name: p.name.clone(),
@@ -110,8 +102,8 @@ fn build(conn: &Connection, station: &str) -> Result<GitSnapshot> {
             },
             forge: p.forge.clone(),
             clone_url: clone_url(url, p.remote_ssh_user.as_deref()),
-            home_generation: PHASE1_GENERATION,
-            home_path,
+            home_generation: home.generation,
+            home_path: home.folder().unwrap_or_default().to_owned(),
             radar_home: p
                 .git
                 .radar_home
@@ -215,19 +207,22 @@ impl DeckStore {
                 else {
                     continue;
                 };
-                let current: Option<(i64, String)> = tx
+                let current: Option<i64> = tx
                     .query_row(
-                        "SELECT git_revision, station_id FROM projects WHERE project_id = ?1",
+                        "SELECT git_revision FROM projects WHERE project_id = ?1",
                         [&check.project_id],
-                        |r| Ok((r.get(0)?, r.get(1)?)),
+                        |r| r.get(0),
                     )
                     .optional()?;
-                let same = current.is_some_and(|(revision, home)| {
-                    home == station
-                        && u64::try_from(revision) == Ok(view.settings_revision)
-                        && check.generation == view.home_generation
-                });
+                let home = home_on(&tx, &check.project_id, &station)?;
+                let same = current
+                    .is_some_and(|revision| u64::try_from(revision) == Ok(view.settings_revision))
+                    && home.is_some_and(|h| {
+                        h.generation == view.home_generation
+                            && check.generation == view.home_generation
+                    });
                 if same {
+                    apply_check(&tx, &station, &check, now)?;
                     kept.push(check);
                 }
             }
@@ -304,7 +299,7 @@ impl DeckStore {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use fleetdeck_proto::fleet_git::{GitSettings, GitSettingsPut};
+    use fleetdeck_proto::fleet_git::{GitSettings, GitSettingsPut, HomeCheckState};
     use fleetdeck_proto::integrations::ProjectInput;
     use fleetdeck_testkit::Det;
 

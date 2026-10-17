@@ -1,20 +1,18 @@
-//! The Fleet Git side of a project (design §3.1, §3.8, §8; phase 1): the
-//! derived home and Git names of the project list, the remote URL parts, the
-//! save of the settings, and the `FleetGitStart` of a start in a sync home.
+//! The Fleet Git side of a project (design §3.1, §3.8, §8; phases 1 and 2):
+//! the remote URL parts, the local-remote rule, and the save of the settings
+//! with the sync transitions of the homes (decision B4b). The start in a
+//! home is in [`super::fleet_git_start`].
 
 use fleetdeck_proto::StationId;
 use fleetdeck_proto::fleet_git::{
-    FleetGitStart, GitHomeState, GitSettingsAnswer, GitSettingsPut, HomeCheck, IdentityError,
-    LocalRemotes, ProjectHome, RemoteIdentity, SettingsError, SlugReservation, StartKind,
-    check_settings, remote_identity,
+    GitHomeState, GitSettingsAnswer, GitSettingsPut, IdentityError, LocalRemotes, RemoteIdentity,
+    SettingsError, check_settings, remote_identity,
 };
-use fleetdeck_proto::integrations::Project;
-use rusqlite::{Connection, OptionalExtension, params};
-use std::collections::BTreeMap;
-use std::path::Path;
+use rusqlite::{Connection, params};
 
-use super::git_snapshots::{PHASE1_GENERATION, checks_of, clear_checks, verified};
-use super::{DeckStore, LinkFeature, Result, call, slug_reservations, to_i64};
+use super::git_snapshots::clear_checks;
+use super::project_homes::{HomeRow, claim, homes_of, set_state, take_ownership};
+use super::{DeckStore, Result, call, to_i64};
 
 /// The environment variable that lets the deck accept local remotes.
 const ALLOW_LOCAL_REMOTES_ENV: &str = "FLEETDECK_ALLOW_LOCAL_REMOTES";
@@ -28,72 +26,12 @@ fn local_remotes_for(value: Option<&str>) -> LocalRemotes {
     }
 }
 
-/// The local-remote rule of the deck rules: the deck's own process
-/// environment decides. (FG-5 phase 1: T2.1 replaces this with the stations'
-/// FleetGitInfo)
-fn local_remotes() -> LocalRemotes {
+/// The phase-1 bridge: the deck's own process environment says that every
+/// home station allows local remotes. (FG-5: T2.5 moves the test rig to
+/// station.toml and removes this bridge)
+#[must_use]
+pub fn env_bridge() -> LocalRemotes {
     local_remotes_for(std::env::var(ALLOW_LOCAL_REMOTES_ENV).ok().as_deref())
-}
-
-/// The wire name of a check state, for the code of an unverified home.
-fn state_name(check: &HomeCheck) -> String {
-    serde_json::to_value(check.state)
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "unknown".to_owned())
-}
-
-/// Fills `homes` and `slugs` of `projects` (design §8.1). Phase 1: one home
-/// at position 0 from `station_id` and `path`, generation 1. A sync-off
-/// project is `ready` as today; a sync project is `ready` only after the
-/// station's home check said `verified`.
-pub(super) fn derive(conn: &Connection, projects: &mut [Project]) -> Result<()> {
-    let mut checks: BTreeMap<String, Vec<HomeCheck>> = BTreeMap::new();
-    for p in projects.iter_mut() {
-        if !checks.contains_key(&p.station_id) {
-            checks.insert(p.station_id.clone(), checks_of(conn, &p.station_id)?);
-        }
-        let own = &checks[&p.station_id];
-        let (state, code) = if !p.git.sync || verified(own, &p.project_id).is_some() {
-            (GitHomeState::Ready, None)
-        } else {
-            let seen = own
-                .iter()
-                .find(|c| c.project_id == p.project_id && c.generation == PHASE1_GENERATION);
-            (
-                GitHomeState::Unverified,
-                seen.map(|c| c.code.clone().unwrap_or_else(|| state_name(c))),
-            )
-        };
-        p.homes = vec![ProjectHome {
-            station_id: StationId::from(p.station_id.clone()),
-            generation: PHASE1_GENERATION,
-            position: 0,
-            state,
-            path: Some(p.path.clone()),
-            reserved_path: None,
-            attempt_id: None,
-            sync_owner: p.git.sync,
-            code,
-            message: None,
-        }];
-        p.slugs = match &p.repo {
-            Some(repo) => {
-                let mut stmt = conn.prepare(
-                    "SELECT slug, station_id FROM slug_reservations WHERE repo = ?1 ORDER BY slug",
-                )?;
-                stmt.query_map([repo], |r| {
-                    Ok(SlugReservation {
-                        slug: r.get(0)?,
-                        station_id: StationId::from(r.get::<_, String>(1)?),
-                    })
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?
-            }
-            None => Vec::new(),
-        };
-    }
-    Ok(())
 }
 
 /// The clone URL: `remote_url` with the SSH login name put back after
@@ -160,21 +98,24 @@ pub enum GitWrite {
     UnknownProject,
 }
 
-fn refuse(field: &str, message: impl Into<String>) -> SettingsError {
+pub(super) fn refuse(field: &str, message: impl Into<String>) -> SettingsError {
     SettingsError {
         field: field.to_owned(),
         message: message.into(),
     }
 }
 
-/// Checks a remote URL and splits it (design §3.1, §3.8; phase 1: a local
-/// remote only with `FLEETDECK_ALLOW_LOCAL_REMOTES=1` in the deck process).
+/// Checks a remote URL and splits it (design §3.1, §3.8). `local` says
+/// whether a local remote is allowed ([`DeckStore::local_remotes_of`]).
 ///
 /// # Errors
 /// A [`SettingsError`] for field `remote_url`.
-pub fn remote_write(url: &str) -> std::result::Result<RemoteWrite, SettingsError> {
+pub fn remote_write(
+    url: &str,
+    local: LocalRemotes,
+) -> std::result::Result<RemoteWrite, SettingsError> {
     let url = url.trim();
-    let identity = remote_identity(url, local_remotes()).map_err(|e| {
+    let identity = remote_identity(url, local).map_err(|e| {
         refuse(
             "remote_url",
             match e {
@@ -206,54 +147,57 @@ pub fn remote_write(url: &str) -> std::result::Result<RemoteWrite, SettingsError
     })
 }
 
-/// How a start relates to the sync projects of its station.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StartOutcome {
-    /// No sync home holds the folder: the start is plain (O1).
-    Plain,
-    Attach(Box<FleetGitStart>),
-    /// The station did not negotiate `fleet_git.v1`.
-    Unsupported,
-    /// The deck has no `station.info` of the station, so no slug.
-    StationInfoMissing,
-    /// The home holds the folder, but its check is not `verified`.
-    Unverified {
-        path: String,
-        repo: String,
-    },
-    /// `(repo, slug)` is reserved for the station `other` (its name).
-    SlugTaken {
-        repo: String,
-        slug: String,
-        other: String,
-    },
-}
-
-/// What a start asks (design §8.5, phase 1).
-#[derive(Debug, Clone)]
-pub struct StartQuery {
-    pub station: String,
-    pub cwd: String,
-    pub kind: StartKind,
-    /// The slug of the station name, when the deck knows the name.
-    pub slug: Option<String>,
-    pub feature: LinkFeature,
-    /// A start that names its project (the batch start): only this project
-    /// competes, whatever the folder.
-    pub project: Option<String>,
-}
-
 impl DeckStore {
+    /// Whether a local remote is allowed for `project` (decision B10): every
+    /// home station of the project (any state) reports
+    /// `FleetGitInfo.allow_local_remotes = true` in its newest `station.info`
+    /// (a missing `station.info` or `fleet_git` counts false); the
+    /// environment bridge is an OR.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn local_remotes_of(&self, project: String) -> Result<LocalRemotes> {
+        let stations: Vec<String> = call(&self.inner.db, move |conn| {
+            Ok(homes_of(conn, &project)?
+                .into_iter()
+                .map(|h| h.station_id)
+                .collect())
+        })
+        .await?;
+        Ok(self.local_remotes_for_stations(&stations))
+    }
+
+    /// [`Self::local_remotes_of`] for a list of stations.
+    #[must_use]
+    pub fn local_remotes_for_stations(&self, stations: &[String]) -> LocalRemotes {
+        if env_bridge() == LocalRemotes::Allow {
+            return LocalRemotes::Allow;
+        }
+        let all = !stations.is_empty()
+            && stations.iter().all(|s| {
+                self.station_info(&StationId::from(s.clone()))
+                    .and_then(|(info, _)| info.fleet_git)
+                    .is_some_and(|g| g.allow_local_remotes)
+            });
+        if all {
+            LocalRemotes::Allow
+        } else {
+            LocalRemotes::Deny
+        }
+    }
+
     /// Saves the Git settings of a project (design §3.1, §17.1). In one
     /// transaction, in this order: the revision must be the stored one
     /// (`Stale`); a change of the remote URL needs sync off (`RebindRequired`);
     /// the rules (`Invalid`); then the write bumps `git_revision`, stores the
-    /// remote when given, and forgets the stored checks of the project (the
-    /// home is unverified until the station answers the next snapshot).
+    /// remote when given, applies the sync transition to the homes (decision
+    /// B4b), and forgets the stored checks of the project.
     ///
     /// # Errors
     /// A database or stored-JSON error.
     pub async fn set_project_git(&self, id: String, put: GitSettingsPut) -> Result<GitWrite> {
+        let local = self.local_remotes_of(id.clone()).await?;
+        let now = self.now_ms();
         let out = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let Some(p) = super::projects::find(&tx, &id)? else {
@@ -278,7 +222,7 @@ impl DeckStore {
                 return Ok(GitWrite::Invalid(e));
             }
             let remote = match new_url {
-                Some(url) => match remote_write(url) {
+                Some(url) => match remote_write(url, local) {
                     Ok(r) => Some(r),
                     Err(e) => return Ok(GitWrite::Invalid(e)),
                 },
@@ -290,34 +234,22 @@ impl DeckStore {
                     "Set the remote URL first.",
                 )));
             }
-            if settings.sync {
-                let other: Option<String> = tx
-                    .query_row(
-                        "SELECT name FROM projects
-                         WHERE station_id = ?1 AND path = ?2 AND project_id <> ?3
-                           AND COALESCE(json_extract(git, '$.sync') = 1, 0) = 1
-                         LIMIT 1",
-                        params![p.station_id, p.path, id],
-                        |r| r.get(0),
-                    )
-                    .optional()?;
-                if other.is_some() {
-                    return Ok(GitWrite::Invalid(refuse(
-                        "sync",
-                        "Another synced project uses this folder on this station.",
-                    )));
-                }
+            let homes = homes_of(&tx, &id)?;
+            let turning_on = settings.sync && !p.git.sync;
+            if turning_on && let Some(e) = ownership_refusal(&tx, &id, &homes)? {
+                return Ok(GitWrite::Invalid(e));
             }
             if let Some(url) = &settings.wip_remote
-                && let Err(e @ IdentityError::RemoteLocalRefused) =
-                    remote_identity(url, local_remotes())
+                && let Err(e @ IdentityError::RemoteLocalRefused) = remote_identity(url, local)
             {
                 return Ok(GitWrite::Invalid(refuse("wip_remote", e.to_string())));
             }
+            // The radar home is a station with a home of the project, in any
+            // state (decision B22).
             if settings
                 .radar_home
                 .as_ref()
-                .is_some_and(|s| s.as_str() != p.station_id)
+                .is_some_and(|s| !homes.iter().any(|h| h.station_id == s.as_str()))
             {
                 return Ok(GitWrite::Invalid(refuse(
                     "radar_home",
@@ -346,6 +278,11 @@ impl DeckStore {
                     params![id, json, to_i64(next)?],
                 )?,
             };
+            if turning_on {
+                sync_on(&tx, &id, &homes, now)?;
+            } else if !settings.sync && p.git.sync {
+                sync_off(&tx, &id, &homes, now)?;
+            }
             clear_checks(&tx, &id)?;
             tx.commit()?;
             Ok(GitWrite::Saved(Box::new(GitSettingsAnswer {
@@ -357,92 +294,71 @@ impl DeckStore {
         self.board_changed();
         out
     }
+}
 
-    /// The `FleetGitStart` for a start on `query.station` in `query.cwd`
-    /// (design §2.1, §8.5; phase 1). The sync projects of the station whose
-    /// home holds the folder compete: the longest path, then the oldest
-    /// project. The home must be verified; then the slug is reserved for the
-    /// station in the same transaction.
-    ///
-    /// # Errors
-    /// A database or stored-JSON error.
-    pub async fn git_start(&self, query: StartQuery) -> Result<StartOutcome> {
-        let now = self.now_ms();
-        call(&self.inner.db, move |conn| {
-            let tx = conn.transaction()?;
-            let mut holders: Vec<Project> = super::projects::of_station(&tx, &query.station)?
-                .into_iter()
-                .filter(|p| {
-                    p.git.sync
-                        && match &query.project {
-                            Some(id) => *id == p.project_id,
-                            None => Path::new(&query.cwd).starts_with(&p.path),
-                        }
-                })
-                .collect();
-            // The longest path first, then the oldest project.
-            holders.sort_by(|a, b| {
-                b.path
-                    .len()
-                    .cmp(&a.path.len())
-                    .then(a.created_at.cmp(&b.created_at))
-                    .then(a.project_id.cmp(&b.project_id))
-            });
-            let Some(p) = holders.into_iter().next() else {
-                return Ok(StartOutcome::Plain);
+/// The refusal of a save that turns sync on: another sync project owns, holds
+/// a folder above, or holds a folder below a home with a path (decisions B4b,
+/// B5a, B14). The text for the same folder is the phase-1 text.
+fn ownership_refusal(
+    conn: &Connection,
+    project: &str,
+    homes: &[HomeRow],
+) -> Result<Option<SettingsError>> {
+    for home in homes {
+        let Some(folder) = home.folder() else {
+            continue;
+        };
+        let found = claim(conn, project, &home.station_id, folder)?;
+        if let Some((code, text)) = found.refusal() {
+            let message = if code == "home_owned" {
+                "Another synced project uses this folder on this station.".to_owned()
+            } else {
+                text
             };
-            if query.feature == LinkFeature::Without {
-                return Ok(StartOutcome::Unsupported);
-            }
-            let Some(slug) = query.slug.clone() else {
-                return Ok(StartOutcome::StationInfoMissing);
-            };
-            let (Some(repo), Some(dest), Some(url)) = (&p.repo, &p.remote_dest, &p.remote_url)
-            else {
-                return Ok(StartOutcome::Unverified {
-                    path: p.path.clone(),
-                    repo: p.repo.clone().unwrap_or_default(),
-                });
-            };
-            let checks = checks_of(&tx, &query.station)?;
-            let Some(check) = verified(&checks, &p.project_id) else {
-                return Ok(StartOutcome::Unverified {
-                    path: p.path.clone(),
-                    repo: repo.clone(),
-                });
-            };
-            if let Some(other) = slug_reservations::reserve(&tx, repo, &slug, &query.station, now)?
-            {
-                return Ok(StartOutcome::SlugTaken {
-                    repo: repo.clone(),
-                    slug: slug.clone(),
-                    other: slug_reservations::station_name(&tx, &other)?,
-                });
-            }
-            let start = FleetGitStart {
-                kind: query.kind,
-                project_id: p.project_id.clone(),
-                project_name: p.name.clone(),
-                settings: p.git.clone(),
-                settings_revision: p.git_revision,
-                home_generation: PHASE1_GENERATION,
-                home_path: check
-                    .canonical_path
-                    .clone()
-                    .unwrap_or_else(|| p.path.clone()),
-                remote: RemoteIdentity {
-                    repo: repo.clone(),
-                    dest: dest.clone(),
-                },
-                slug,
-                forge: p.forge.clone(),
-                clone_url: clone_url(url, p.remote_ssh_user.as_deref()),
-            };
-            tx.commit()?;
-            Ok(StartOutcome::Attach(Box::new(start)))
-        })
-        .await
+            return Ok(Some(refuse("sync", message)));
+        }
     }
+    Ok(None)
+}
+
+/// Sync turns on: every home with a path is `unverified` (no code) and owns
+/// its folder (decision B4b).
+fn sync_on(conn: &Connection, id: &str, homes: &[HomeRow], now: i64) -> Result<()> {
+    for home in homes {
+        let Some(folder) = home.folder() else {
+            continue;
+        };
+        take_ownership(conn, id, &home.station_id, folder, now)?;
+        set_state(
+            conn,
+            (id, &home.station_id),
+            GitHomeState::Unverified,
+            None,
+            None,
+            now,
+        )?;
+    }
+    Ok(())
+}
+
+/// Sync turns off: every home with a path is `ready` and owns nothing; a
+/// `cloning` or `failed` home keeps its state (decision B4b).
+fn sync_off(conn: &Connection, id: &str, homes: &[HomeRow], now: i64) -> Result<()> {
+    for home in homes.iter().filter(|h| h.path.is_some()) {
+        conn.execute(
+            "UPDATE project_homes SET sync_owner = 0 WHERE project_id = ?1 AND station_id = ?2",
+            [id, home.station_id.as_str()],
+        )?;
+        set_state(
+            conn,
+            (id, &home.station_id),
+            GitHomeState::Ready,
+            None,
+            None,
+            now,
+        )?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -23,7 +23,8 @@ use super::Board;
 use super::guard::{ApiError, owner_only};
 use super::projects_routes::bad_body;
 use crate::link::fleet_git_sync;
-use crate::store::projects_git::{GitWrite, StartOutcome, StartQuery};
+use crate::store::fleet_git_start::{StartOutcome, StartQuery};
+use crate::store::projects_git::GitWrite;
 use crate::store::{AuditResult, NewAudit, Principal, StationRecord};
 
 const ACTION: &str = "project.git_set";
@@ -101,13 +102,13 @@ pub async fn put_git(
     Ok(Json(answer))
 }
 
-/// The `FleetGitStart` of a start on `rec` in `cwd` (design §2.1, §8.5;
-/// phase 1), or `None` for a plain start (O1). `project` names the project of
-/// a batch start. `Err` is the 409 of a sync home that cannot start now.
+/// The `FleetGitStart` of a start on `rec` in `cwd` (design §2.1, §8.5), or
+/// `None` for a plain start (O1). `project` names the project of a batch
+/// start. `Err` is the 409 of a home that cannot start now.
 ///
 /// # Errors
 /// 409 `fleet_git_unsupported` / `station_info_missing` / `home_unverified` /
-/// `slug_taken`.
+/// `home_not_ready` / `slug_taken`.
 pub(super) async fn attach_start(
     board: &Board,
     rec: &StationRecord,
@@ -151,6 +152,7 @@ pub(super) async fn attach_start(
                 rec.name
             ),
         )),
+        StartOutcome::NotReady(text) => Err(conflict(code::HOME_NOT_READY, text)),
         StartOutcome::SlugTaken { repo, slug, other } => Err(conflict(
             "slug_taken",
             format!(

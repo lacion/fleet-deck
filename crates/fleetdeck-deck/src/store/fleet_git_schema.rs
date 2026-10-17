@@ -1,8 +1,9 @@
-//! The deck migration of Fleet Git phase 1 (design §8.2): the Git settings
-//! and the remote identity of a project, the per-station snapshot state, and
-//! the reserved Git names. The migration only adds (decision 79). To reverse
-//! it, restore the pre-upgrade backup (§3.9); never drop the tables while
-//! the deck runs.
+//! The deck migrations of Fleet Git (design §8.2). V25 (phase 1): the Git
+//! settings and the remote identity of a project, the per-station snapshot
+//! state, and the reserved Git names. V26 (phase 2): the homes of a project,
+//! their generations and their clone attempts. A migration only adds
+//! (decision 79). To reverse one, restore the pre-upgrade backup (§3.9);
+//! never drop the tables while the deck runs.
 
 /// V25 (Fleet Git phase 1, FG-5 identity columns, FG-1 to FG-4 settings).
 pub const FLEET_GIT_SQL: &str = "
@@ -27,6 +28,83 @@ CREATE TABLE slug_reservations (
     first_used_at INTEGER NOT NULL,
     PRIMARY KEY (repo, slug)
 ) STRICT;
+";
+
+/// V26 (Fleet Git phase 2, FG-5): the homes of a project. Each existing
+/// project gets one home at position 0 with generation 1 (O16). With sync on,
+/// only the oldest project of a station and folder owns it; the others are
+/// `unverified` with `home_owned` (the migration never fails on duplicates).
+pub const HOMES_SQL: &str = "
+CREATE TABLE project_homes (
+    project_id     TEXT    NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+    station_id     TEXT    NOT NULL,
+    generation     INTEGER NOT NULL,
+    position       INTEGER NOT NULL CHECK (position >= 0),
+    state          TEXT    NOT NULL,
+    path           TEXT,
+    canonical_path TEXT,
+    reserved_path  TEXT,
+    attempt_id     TEXT,
+    sync_owner     INTEGER NOT NULL DEFAULT 0 CHECK (sync_owner IN (0, 1)),
+    code           TEXT,
+    message        TEXT,
+    created_at     INTEGER NOT NULL,
+    updated_at     INTEGER NOT NULL,
+    PRIMARY KEY (project_id, station_id),
+    UNIQUE (project_id, position),
+    CHECK (state NOT IN ('ready', 'unverified') OR path IS NOT NULL)
+) STRICT;
+CREATE INDEX project_homes_station ON project_homes (station_id);
+CREATE UNIQUE INDEX project_homes_sync_owner
+    ON project_homes (station_id, canonical_path) WHERE sync_owner = 1;
+CREATE TABLE home_generations (
+    project_id      TEXT    NOT NULL,
+    station_id      TEXT    NOT NULL,
+    last_generation INTEGER NOT NULL,
+    PRIMARY KEY (project_id, station_id)
+) STRICT;
+CREATE TABLE home_attempts (
+    attempt_id         TEXT PRIMARY KEY,
+    request_command_id TEXT    NOT NULL UNIQUE,
+    project_id         TEXT    NOT NULL,
+    station_id         TEXT    NOT NULL,
+    generation         INTEGER NOT NULL,
+    request_digest     TEXT    NOT NULL,
+    request            TEXT    NOT NULL,
+    retry_of           TEXT,
+    state              TEXT    NOT NULL,
+    path               TEXT,
+    code               TEXT,
+    message            TEXT,
+    send_attempts      INTEGER NOT NULL DEFAULT 0,
+    next_send_at       INTEGER,
+    created_at         INTEGER NOT NULL,
+    ended_at           INTEGER
+) STRICT;
+CREATE INDEX home_attempts_home ON home_attempts (project_id, station_id, generation);
+CREATE INDEX home_attempts_unsent ON home_attempts (next_send_at) WHERE state = 'sent';
+INSERT INTO home_generations (project_id, station_id, last_generation)
+    SELECT project_id, station_id, 1 FROM projects;
+INSERT INTO project_homes (project_id, station_id, generation, position, state, path, canonical_path,
+                           sync_owner, created_at, updated_at)
+    SELECT p.project_id, p.station_id, 1, 0, 'ready', p.path, p.path,
+           CASE WHEN json_extract(p.git, '$.sync') = 1
+                 AND ROW_NUMBER() OVER (PARTITION BY p.station_id, p.path,
+                                        json_extract(p.git, '$.sync') = 1
+                                        ORDER BY p.created_at, p.project_id) = 1
+                THEN 1 ELSE 0 END,
+           p.created_at, p.created_at
+    FROM projects p;
+UPDATE project_homes SET state = 'unverified', code = 'home_owned',
+        message = 'This folder is already the home of project ' || (
+            SELECT p2.name FROM project_homes h2
+            JOIN projects p2 ON p2.project_id = h2.project_id
+            WHERE h2.station_id = project_homes.station_id
+              AND h2.canonical_path = project_homes.canonical_path AND h2.sync_owner = 1
+            LIMIT 1) || ' with sync on.'
+    WHERE sync_owner = 0
+      AND project_id IN (SELECT project_id FROM projects WHERE json_extract(git, '$.sync') = 1);
+CREATE TABLE fleet_git_prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
 ";
 
 #[cfg(test)]

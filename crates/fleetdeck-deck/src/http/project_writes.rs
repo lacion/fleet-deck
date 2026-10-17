@@ -38,7 +38,7 @@ use serde_json::{Value, json};
 use super::Board;
 use super::command_routes::RECEIPT_WAIT;
 use super::guard::{ApiError, owner_only};
-use super::projects_routes::{READ_WAIT, ask, bad_body, forge_of, load, station_of};
+use super::projects_routes::{READ_WAIT, ask, bad_body, forge_of, load, station_of, station_of_id};
 use crate::link::CommandKind;
 use crate::store::{AuditResult, DeckError, NewAudit, Principal};
 
@@ -513,10 +513,46 @@ pub async fn sessions(
     let req = body_of(body)?;
     req.check().map_err(|why| bad("invalid_params", why))?;
     let project = load(&board, &id).await?;
-    let (rec, control) = station_of(&board, &project).await?;
-
+    // The home of the batch (FG-5, decision B8): absent, the position-0 home;
+    // a station id, the home on that station. Every call of the batch goes
+    // to the station of this home (decision B16).
+    let home = match req.home.as_deref() {
+        Some("auto") => {
+            return Err(bad("invalid_body", "Auto placement is not available yet."));
+        }
+        Some(station) => project
+            .homes
+            .iter()
+            .find(|h| h.station_id.as_str() == station),
+        None => project.homes.iter().find(|h| h.position == 0),
+    }
+    .ok_or_else(|| bad("not_a_home", "This folder is not a home of the project."))?;
+    let (rec, control) = station_of_id(&board, home.station_id.as_str()).await?;
     let mut commands: Vec<(String, SessionCommand)> = Vec::new();
     let mut failed = Vec::new();
+    let Some(cwd) = home.path.clone() else {
+        // The home still clones, or failed: every start fails with the
+        // refusal of the home.
+        let keys = match req.review_of_pr {
+            Some(number) => vec![format!("#{number}")],
+            None => req.issues.clone(),
+        };
+        let refusal = super::project_git_routes::attach_start(
+            &board,
+            &rec,
+            "",
+            StartKind::Worktree,
+            Some(project.project_id.clone()),
+        )
+        .await
+        .err()
+        .unwrap_or_else(|| bad("not_a_home", "This folder is not a home of the project."));
+        let failed = keys.iter().map(|key| failure(key, &refusal)).collect();
+        return Ok(Json(StartedSessions {
+            started: Vec::new(),
+            failed,
+        }));
+    };
     if let Some(number) = req.review_of_pr {
         let key = format!("#{number}");
         let pr = PrRef {
@@ -528,7 +564,7 @@ pub async fn sessions(
                 let fetch = PrFetchHead {
                     forge: pr.forge.clone(),
                     number,
-                    path: project.path.clone(),
+                    path: cwd.clone(),
                 };
                 match ask::<PrHead>(&control, "prs.fetch_head", json!(fetch), READ_WAIT).await {
                     Ok(head) => {
@@ -575,17 +611,22 @@ pub async fn sessions(
         }
     }
 
-    // Fleet Git (design §8.5, phase 1): every start of the batch is a
-    // worktree start in the home of this project. A sync project that cannot
-    // start now (an unverified home, a taken Git name) fails every start with
-    // the same 409; a sync-off project starts as before (O1).
+    // Fleet Git (design §8.5): every start of the batch is a worktree start in
+    // the chosen home of this project, and its `cwd` is the path of that
+    // home. A home that cannot start now (an unverified home, a taken Git
+    // name) fails every start with the same 409; a sync-off project with a
+    // ready home starts as before (O1).
     let mut attached = Vec::new();
     for (n, (key, mut command)) in commands.into_iter().enumerate() {
-        if let SessionCommand::Start { fleet_git, .. } = &mut command {
+        if let SessionCommand::Start {
+            spec, fleet_git, ..
+        } = &mut command
+        {
+            spec.cwd.clone_from(&cwd);
             match super::project_git_routes::attach_start(
                 &board,
                 &rec,
-                &project.path,
+                &cwd,
                 StartKind::Worktree,
                 Some(project.project_id.clone()),
             )

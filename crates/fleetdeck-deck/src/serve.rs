@@ -112,6 +112,8 @@ pub struct RunningDeck {
     scheduler: tokio::task::JoinHandle<()>,
     /// The audit log prune (NV-11).
     maintenance: tokio::task::JoinHandle<()>,
+    /// The sender and poller of the home attempts (FG-5).
+    homes: tokio::task::JoinHandle<()>,
     /// The Tailscale certificate of the board (DL-190).
     cert: crate::cert_task::CertTask,
     shutdown: watch::Sender<bool>,
@@ -348,6 +350,13 @@ impl RunningDeck {
             },
             rx.clone(),
         );
+        let homes = tokio::spawn(crate::fleet_git_homes::run(
+            store.clone(),
+            Arc::clone(node.link()),
+            Arc::clone(&node.link().homes_kick),
+            rx.clone(),
+            crate::fleet_git_homes::HomesRunOptions { send: true },
+        ));
         let scheduler = crate::scheduler::spawn(store.clone(), Arc::clone(node.link()), rx);
         Ok(Self {
             node,
@@ -359,6 +368,7 @@ impl RunningDeck {
             server,
             scheduler,
             maintenance,
+            homes,
             cert,
             shutdown,
             socket,
@@ -387,6 +397,7 @@ impl RunningDeck {
         let _ = self.server.await;
         let _ = self.scheduler.await;
         let _ = self.maintenance.await;
+        let _ = self.homes.await;
         self.cert.join().await;
         self.board.join().await;
         self.node.shutdown();

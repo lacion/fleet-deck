@@ -73,6 +73,8 @@ pub struct DeckLink {
     live: Mutex<HashMap<StationId, Vec<LiveEntry>>>,
     next_token: AtomicU64,
     inflight: router::Inflight,
+    /// Wakes the home attempt sender (FG-5, `fleet_git_homes`).
+    pub homes_kick: Arc<crate::fleet_git_homes::HomesKick>,
 }
 
 impl DeckLink {
@@ -85,6 +87,7 @@ impl DeckLink {
             live: Mutex::default(),
             next_token: AtomicU64::new(0),
             inflight: router::Inflight::default(),
+            homes_kick: Arc::default(),
         }
     }
 
