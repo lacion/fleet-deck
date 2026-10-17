@@ -2,6 +2,7 @@
 // "Push now", the "Stale base" chip and the timeline lines of the Fleet Git events, at the phone
 // viewport. The board talks to a scripted deck.
 import { expect, type Page, test } from '@playwright/test';
+import type { DeckSession } from '../src/gen';
 import {
   FakeDeck,
   fitsWidth,
@@ -19,6 +20,7 @@ import {
   gitStation,
   installFleetGit,
   installFleetGitHomes,
+  installFleetGitLands,
   installFleetGitPlacement,
 } from './fake-deck-git';
 
@@ -568,4 +570,173 @@ test('a refusal of the placement shows in the form and starts nothing', async ({
   await form.getByRole('button', { name: 'Start session' }).click();
   await expect(form.getByText('No station matches: gpu.')).toBeVisible();
   expect(deck.calls.some((c) => c.path === '/api/commands/session.start')).toBe(false);
+});
+
+// Phase 3 (T3.4): the radar groups, the land panel and the land queue.
+
+const syncedProject = () =>
+  gitProject({ git: { ...gitProject().git, sync: true, default_branch: 'main' } });
+
+const landSession = (id: string, extra: Partial<DeckSession['summary']> = {}): DeckSession => ({
+  ...gitSession(id, 'Fix the build', undefined, { worktree: '/work/atlas-wt', ...extra }),
+  project_id: 'p1',
+});
+
+test('the radar groups the rows by project with a Will conflict row and a footer notice', async ({
+  page,
+}) => {
+  const deck = new FakeDeck();
+  await setUp(page, deck);
+  deck.on('/api/conflicts', () => ({ status: 200, body: [] }));
+  await deck.install(page);
+  await installFleetGit(page, deck, [syncedProject()]);
+  installFleetGitLands(deck, 'p1', {
+    radar: {
+      groups: [
+        {
+          project_id: 'p1',
+          group_key: 'origin:github.com/o/atlas',
+          will_conflict: [
+            {
+              a: { station_id: ST, session_id: 'g1', callsign: 'ada' },
+              b: 'default',
+              files: ['src/a.rs', 'src/b.rs', 'src/c.rs', 'src/d.rs'],
+              checked_at: Date.now() - 4 * 60_000,
+            },
+          ],
+          same_files: [],
+        },
+      ],
+      notices: [{ project_id: 'p1', code: 'station_offline', text: 'Radar: Alpha is offline.' }],
+    },
+  });
+  await logIn(page);
+  await openFleet(page);
+  const radar = page.getByRole('region', { name: 'Conflict radar' });
+  await expect(radar.getByText('Atlas', { exact: true })).toBeVisible();
+  await expect(radar.getByText('Will conflict')).toBeVisible();
+  await expect(radar.getByText('src/a.rs, src/b.rs, src/c.rs')).toBeVisible();
+  await expect(radar.getByText('+1', { exact: true })).toBeVisible();
+  await expect(radar.getByText('4 min ago')).toBeVisible();
+  await expect(radar.getByText('Radar: Alpha is offline.')).toBeVisible();
+  expect(await fitsWidth(page)).toBe(true);
+});
+
+test('the radar of an older deck leaves the panel as it was', async ({ page }) => {
+  const deck = new FakeDeck();
+  await setUp(page, deck);
+  deck.on('/api/conflicts', () => ({ status: 200, body: [] }));
+  await deck.install(page);
+  await installFleetGit(page, deck, [syncedProject()]);
+  installFleetGitLands(deck, 'p1');
+  await logIn(page);
+  await openFleet(page);
+  await expect(page.getByRole('region', { name: 'Fleet panel' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Conflict radar' })).toHaveCount(0);
+});
+
+test('Land asks, queues the land, shows its position, and cancels it', async ({ page }) => {
+  const deck = new FakeDeck();
+  await setUp(page, deck);
+  deck.sessions = [landSession('g1')];
+  await deck.install(page);
+  await installFleetGit(page, deck, [syncedProject()]);
+  const lands = installFleetGitLands(deck, 'p1');
+  await logIn(page);
+  await openSession(page, 'Fix the build');
+  const panel = page.getByRole('region', { name: 'Land', exact: true });
+  await panel.getByRole('button', { name: 'Land', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Land fd/alpha/ada?' });
+  await expect(dialog).toContainText(
+    'Fleet Deck rebases the branch onto origin/main in a separate folder, runs the check command, pushes the branch, then pushes the result to origin/main.',
+  );
+  expect(await fitsWidth(page)).toBe(true);
+  lands.refuse = {
+    status: 409,
+    body: { error: 'land_not_ready', message: 'This session has no Fleet Git branch.' },
+  };
+  await dialog.getByRole('button', { name: 'Land', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toHaveText('This session has no Fleet Git branch.');
+  await dialog.getByRole('button', { name: 'Land', exact: true }).click();
+  await expect(panel.getByText('Queued (0 ahead)')).toBeVisible();
+  expect(lands.calls.map((c) => c.call)).toEqual([
+    'POST /api/sessions/st-alpha/g1/land',
+    'POST /api/sessions/st-alpha/g1/land',
+  ]);
+  await panel.getByRole('button', { name: 'Cancel land' }).click();
+  await expect(panel.getByText('Cancelled.')).toBeVisible();
+  expect(lands.calls.at(-1)?.call).toBe('POST /api/lands/land-1/cancel');
+});
+
+test('an uncertain land has Stop checking; a conflict has Send to session; the project lists the lands', async ({
+  page,
+}) => {
+  const deck = new FakeDeck();
+  await setUp(page, deck);
+  deck.sessions = [landSession('g1')];
+  await deck.install(page);
+  await installFleetGit(page, deck, [syncedProject()]);
+  const lands = installFleetGitLands(deck, 'p1', {
+    lands: {
+      p1: {
+        queue: [
+          {
+            land_id: 'land-7',
+            session_id: 'g1',
+            station_id: ST,
+            branch: 'fd/alpha/ada',
+            requested_by: 'owner',
+            state: 'running',
+            phase: 'lost',
+            reconciling: false,
+            attempt: 1,
+            files: [],
+            created_at: 20,
+          },
+        ],
+        recent: [
+          {
+            land_id: 'land-3',
+            session_id: 'g1',
+            station_id: ST,
+            branch: 'fd/alpha/ada',
+            requested_by: 'owner',
+            state: 'conflict',
+            reconciling: false,
+            attempt: 1,
+            files: ['src/a.rs', 'src/b.rs'],
+            base_oid: 'abc1234def',
+            message: 'Conflict in 2 files with origin/main (abc1234).',
+            created_at: 10,
+            ended_at: 11,
+          },
+        ],
+      },
+    },
+  });
+  await logIn(page);
+  await openSession(page, 'Fix the build');
+  const panel = page.getByRole('region', { name: 'Land', exact: true });
+  await expect(
+    panel.getByText(
+      'The station has no record of this land. Check the remote, then press Stop checking.',
+    ),
+  ).toBeVisible();
+  await panel.getByRole('button', { name: 'Stop checking' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Stop checking this land?' });
+  await expect(dialog).toContainText(
+    'Fleet Deck frees the queue after Alpha confirms that it stopped. Fleet Deck does not know if the land changed the remote.',
+  );
+  await dialog.getByRole('button', { name: 'Stop checking', exact: true }).click();
+  await expect(panel.getByText('Stopping… waiting for Alpha to confirm.')).toBeVisible();
+  expect(lands.calls.at(-1)?.call).toBe('POST /api/lands/land-7/abandon');
+
+  // The project page lists the queue and the recent ends; the conflict has Send to session there.
+  await goto(page, '#/project/p1');
+  const list = page.getByRole('region', { name: 'Lands' });
+  await expect(list.getByText('Stopping… waiting for Alpha to confirm.')).toBeVisible();
+  await expect(list.getByText('Conflict in 2 files with origin/main (abc1234).')).toBeVisible();
+  expect(await fitsWidth(page)).toBe(true);
+  await list.getByRole('button', { name: 'Send to session' }).click();
+  await expect.poll(() => lands.calls.at(-1)?.call).toBe('POST /api/lands/land-3/send');
 });

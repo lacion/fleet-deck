@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FileConflict, SessionKey, StationView } from '../gen';
+import type { RadarAnswer } from '../integrations/actions';
+import { useIntegrations, useProjects } from '../integrations/context';
 import { Icon, TriangleAlert } from '../ui/icons';
 import { agoText, type ConflictLoader } from './conflicts';
+import { hasProjectGroups, RadarGroups, radarHasRows } from './RadarGroups';
 
 type Props = {
   readonly list: readonly FileConflict[] | null;
@@ -34,9 +37,45 @@ export function useConflicts(
   return { list, problem };
 }
 
+/**
+ * FG-7 (§10.5): the radar groups of the deck. It reads again when `version` changes (the conflict
+ * list was read again). `null`: no answer yet, an older deck (404), or a failed read (the previous
+ * answer stays).
+ */
+export function useRadar(version: unknown): RadarAnswer | null {
+  const load = useIntegrations()?.actions.radar;
+  const [radar, setRadar] = useState<RadarAnswer | null>(null);
+  useEffect(() => {
+    if (load === undefined) return undefined;
+    let live = true;
+    load().then(
+      (next) => live && setRadar(next),
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [load, version]);
+  return radar;
+}
+
 /** Files that sessions on any station changed at the same time (DL-306). */
 export function ConflictRadar({ list: given, problem, onOpen }: Props) {
   const now = Date.now();
+  const radar = useRadar(given);
+  const projects = useProjects();
+  if (hasProjectGroups(radar) && radarHasRows(radar)) {
+    return (
+      <section className="fd-confstrip" aria-label="Conflict radar">
+        {problem !== null ? (
+          <p className="fd-confstrip-line" title={problem}>
+            Conflict radar unavailable
+          </p>
+        ) : null}
+        <RadarGroups radar={radar} projects={projects} onOpen={onOpen} now={now} />
+      </section>
+    );
+  }
   const list = given ?? [];
   if (problem === null && list.length === 0) return null;
   return (

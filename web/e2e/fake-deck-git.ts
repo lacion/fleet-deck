@@ -12,6 +12,7 @@ import type {
   StationInfo,
   StationView,
 } from '../src/gen';
+import type { LandRow as Row, RadarAnswer } from '../src/integrations/actions';
 import { project } from '../src/integrations/fixtures';
 import { summary } from '../src/testing/summary';
 import { claudeCaps } from '../src/testing/capabilities';
@@ -336,6 +337,106 @@ export async function installFleetGitPlacement(
     state.references.push(body);
     state.reference = body.station;
     return route.fulfill(json(200, { drift_reference: state.reference }));
+  });
+  return state;
+}
+
+/** One land row that the fake deck may change. */
+type LandRow = { -readonly [K in keyof Row]: Row[K] };
+
+/** The lands of a project, as the fake deck keeps them. */
+type ProjectLands = { queue: LandRow[]; recent: LandRow[] };
+
+/** What the scripted deck saw and answers on the radar and the land routes (FG-7, FG-8). */
+export type FakeLands = {
+  /** `GET /api/radar` answers this; `null` answers 404 (an older deck). */
+  radar: RadarAnswer | null;
+  /** The lands of each project; the routes below change them. `null`: 404 (an older deck). */
+  lands: Record<string, ProjectLands | null>;
+  /** `METHOD path` of each POST, with its body. */
+  calls: { call: string; body: unknown }[];
+  /** The next POST answers this (status, JSON body) instead of acting; cleared after use. */
+  refuse: { status: number; body: unknown } | null;
+};
+
+/**
+ * The routes of the radar and of the lands of `projectId`. A land POST adds a queued row; cancel
+ * moves a queued row to the recent ends; abandon marks the row; send and forget only answer.
+ */
+export function installFleetGitLands(
+  deck: FakeDeck,
+  projectId: string,
+  initial: Partial<FakeLands> = {},
+): FakeLands {
+  const state: FakeLands = {
+    radar: null,
+    lands: { [projectId]: { queue: [], recent: [] } },
+    calls: [],
+    refuse: null,
+    ...initial,
+  };
+  const take = () => {
+    const refused = state.refuse;
+    state.refuse = null;
+    return refused;
+  };
+  const rowOf = (id: string): LandRow | undefined =>
+    [...(state.lands[projectId]?.queue ?? []), ...(state.lands[projectId]?.recent ?? [])].find(
+      (r) => r.land_id === id,
+    );
+  deck.on('/api/radar', () =>
+    state.radar === null
+      ? { status: 404, body: { error: 'not_found', message: 'No such route.' } }
+      : { status: 200, body: state.radar },
+  );
+  deck.on(`/api/projects/${projectId}/lands`, () => {
+    const lands = state.lands[projectId];
+    return lands === null || lands === undefined
+      ? { status: 404, body: { error: 'not_found', message: 'No such route.' } }
+      : { status: 200, body: lands };
+  });
+  deck.route('POST', /^\/api\/sessions\/([^/]+)\/([^/]+)\/land$/, (m, raw) => {
+    state.calls.push({ call: `POST ${m[0]}`, body: raw });
+    const refused = take();
+    if (refused !== null) return refused;
+    const lands = state.lands[projectId];
+    if (lands === null || lands === undefined) return { status: 404, body: { error: 'x' } };
+    lands.queue.push({
+      land_id: `land-${lands.queue.length + lands.recent.length + 1}`,
+      session_id: decodeURIComponent(m[2] ?? ''),
+      station_id: decodeURIComponent(m[1] ?? ''),
+      branch: 'fd/alpha/ada',
+      requested_by: 'owner',
+      state: 'queued',
+      reconciling: false,
+      attempt: 0,
+      files: [],
+      position: 0,
+      created_at: Date.now(),
+    });
+    return { status: 202, body: { land_id: `land-${lands.queue.length}`, position: 0 } };
+  });
+  deck.route('POST', /^\/api\/lands\/([^/]+)\/(cancel|abandon|forget|send)$/, (m, raw) => {
+    state.calls.push({ call: `POST ${m[0]}`, body: raw });
+    const refused = take();
+    if (refused !== null) return refused;
+    const id = decodeURIComponent(m[1] ?? '');
+    const lands = state.lands[projectId];
+    const found = rowOf(id);
+    if (lands === null || lands === undefined || found === undefined) {
+      return { status: 404, body: { error: 'unknown_land', message: 'Unknown land.' } };
+    }
+    if (m[2] === 'cancel') {
+      lands.queue = lands.queue.filter((r) => r.land_id !== id);
+      lands.recent.unshift({ ...found, state: 'cancelled', ended_at: Date.now() });
+      return { status: 200, body: { state: 'cancelled' } };
+    }
+    if (m[2] === 'abandon') {
+      const index = lands.queue.findIndex((r) => r.land_id === id);
+      if (index >= 0) lands.queue[index] = { ...found, abandon_state: 'requested' };
+      return { status: 202, body: { abandon_state: 'requested' } };
+    }
+    return { status: 200, body: { command_id: 'cmd-e2e', state: 'done' } };
   });
   return state;
 }

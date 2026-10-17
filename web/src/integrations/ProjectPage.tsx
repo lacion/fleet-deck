@@ -9,6 +9,7 @@ import { useIntegrations } from './context';
 import { IssuesTab } from './IssuesTab';
 import { ProjectChips } from './ProjectsPage';
 import { ProjectHomes } from './ProjectHomes';
+import { ProjectLands } from './ProjectLands';
 import { PrsTab } from './PrsTab';
 import { ProjectSessions } from './ProjectSessions';
 import type { Freshness } from '../runtime/state';
@@ -86,6 +87,7 @@ export function ProjectPage({
       </p>
       <ProjectChips project={project} />
       <ProjectHomes project={project} stations={stations} />
+      <ProjectLands project={project} stations={stations} sessions={sessions} />
       <div className="fd-pane-tabs" role="tablist" aria-label="Project views">
         <button
           type="button"

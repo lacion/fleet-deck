@@ -43,6 +43,7 @@ import { FilesPanel } from './FilesPanel';
 import { handoverFlow } from './handoverFlow';
 import { ExecutionDialog } from './ExecutionDialog';
 import { FleetControlChip } from './FleetControlChip';
+import { LandPanel } from './LandPanel';
 import { SessionHeader } from './SessionHeader';
 import { hasAgents, isLive, shownStatus, taskStates, toolTitles } from './tasks';
 import { buildTimeline, sessionModels, slashCommands } from './timeline';
@@ -391,6 +392,7 @@ export function SessionView(props: SessionViewProps) {
         events={events}
         files={filesReady ? (actions?.artifacts ?? null) : null}
       />
+      {guest === null ? <LandPanel session={session} stations={stations} /> : null}
       {checking && actions ? (
         <ExecutionDialog actions={actions} onClose={() => setChecking(false)} />
       ) : null}
