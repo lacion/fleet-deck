@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use fleetdeck_proto::desktop::{DesktopAction as A, DesktopKind, Urgency};
 
+use super::authority::Admitted;
 use super::fake::{Opts, Rig, call};
 use super::{Fail, Gate};
 
@@ -20,7 +21,10 @@ pub(super) fn act_err(e: Fail) -> (&'static str, String) {
 }
 
 pub(super) async fn run(rig: &Rig, action: A) -> Result<Option<String>, Fail> {
-    rig.desktop.act(&on, action).await.map(|r| r.address)
+    rig.desktop
+        .act(&on, action, Admitted::open())
+        .await
+        .map(|r| r.address)
 }
 
 pub(super) async fn eventually(what: &str, mut check: impl FnMut() -> bool) {
@@ -355,7 +359,11 @@ async fn a_failed_program_gives_a_redacted_message() {
 async fn allow_desktop_off_refuses_before_any_program_runs() {
     let rig = Rig::new(Opts::default());
     let off = || false;
-    let e = rig.desktop.act(&off, A::ScreenLock).await.unwrap_err();
+    let e = rig
+        .desktop
+        .act(&off, A::ScreenLock, Admitted::open())
+        .await
+        .unwrap_err();
     assert_eq!(
         act_err(e),
         (
@@ -383,6 +391,7 @@ async fn the_policy_is_read_again_before_every_program_run() {
                 monitor: "DP-1".into(),
                 workspace: 2,
             },
+            Admitted::open(),
         )
         .await
         .unwrap_err();

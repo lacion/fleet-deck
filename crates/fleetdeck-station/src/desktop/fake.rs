@@ -144,6 +144,16 @@ impl Rig {
                 log = note("calls.log"),
             ),
         );
+        // `date +%z`: the content of the `offset` file, else `+0200`; the flag
+        // `fail_date` makes it exit with 2.
+        script(
+            "date",
+            format!(
+                "{reads}\n[ -f {r}/fail_date ] && exit 2\n\
+                 if [ -f {r}/offset ]; then /bin/cat {r}/offset; else echo +0200; fi",
+                reads = note("reads.log"),
+            ),
+        );
         script(
             "pgrep",
             format!(
@@ -283,7 +293,7 @@ impl Rig {
     }
 
     /// Sets a state flag file of the fakes (`dnd`, `hyprlock`, `no_hypridle`,
-    /// `hold_close`, `ignore_close`, `drop_events`, `fail_clients_late`).
+    /// `hold_close`, `ignore_close`, `drop_events`, `fail_clients_late`, `fail_date`).
     pub fn flag(&self, name: &str, on: bool) {
         let path = self.dir.path().join(name);
         if on {
@@ -291,6 +301,11 @@ impl Rig {
         } else {
             let _ = std::fs::remove_file(path);
         }
+    }
+
+    /// Sets what the fake `date +%z` prints (no line feed is added).
+    pub fn set_offset(&self, text: &str) {
+        std::fs::write(self.dir.path().join("offset"), text).unwrap();
     }
 
     /// Removes a window from the fake `clients` list.

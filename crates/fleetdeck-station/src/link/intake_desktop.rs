@@ -35,14 +35,14 @@ pub(super) async fn info(ctx: &StationLink, params: serde_json::Value) -> Outcom
             ));
         }
     };
-    if query.fresh {
-        // Step 1 stub: the P3b station task reads the info again.
-        return failed(Fail::new(
-            desktop::code::UNSUPPORTED,
-            "Fresh desktop info is not built yet.",
-        ));
-    }
     let allowed = gate(ctx);
+    if query.fresh {
+        // The station reads everything again and ignores its 10 s cache.
+        return match desktop::service().info_fresh(&allowed).await {
+            Ok(info) => ok(info),
+            Err(e) => failed(e),
+        };
+    }
     match desktop::service().info(&allowed).await {
         Ok(info) => ok(info),
         Err(e) => failed(e),
@@ -64,13 +64,15 @@ pub(super) async fn act(
         Ok(a) => a,
         Err(e) => return invalid(format!("params: {e}")),
     };
-    // Step 1: the authority check refuses every action until the P3b station
-    // task builds it.
-    if let Err(e) = authority::admit(control, given, &action) {
-        return failed(e);
-    }
+    // The authority check comes before anything reads the desktop. It consumes
+    // the `action_id`; the start check runs before the first program.
+    let station_node = ctx.node.identity.fingerprint();
+    let admitted = match authority::admit(control, &station_node, given, &action) {
+        Ok(admitted) => admitted,
+        Err(e) => return failed(e),
+    };
     let allowed = gate(ctx);
-    match desktop::service().act(&allowed, action).await {
+    match desktop::service().act(&allowed, action, admitted).await {
         Ok(result) => ok(result),
         Err(e) => failed(e),
     }

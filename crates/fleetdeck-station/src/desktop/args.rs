@@ -176,8 +176,33 @@ pub fn body(text: &str) -> String {
     plain_text(text, BODY_MAX)
 }
 
+/// Splits `host[:port]` or `[ipv6][:port]`. The bool tells whether the host
+/// is valid: a name of `[A-Za-z0-9.-]`, or an IPv6 address in brackets that
+/// `Ipv6Addr` parses (no zone id). `None` for a bracket that is not closed or
+/// for text after the closing bracket that is not `:port`.
+fn host_and_port(authority: &str) -> Option<(bool, Option<&str>)> {
+    if let Some(rest) = authority.strip_prefix('[') {
+        let (address, tail) = rest.split_once(']')?;
+        let port = match tail {
+            "" => None,
+            t => Some(t.strip_prefix(':')?),
+        };
+        return Some((address.parse::<std::net::Ipv6Addr>().is_ok(), port));
+    }
+    let (host, port) = match authority.split_once(':') {
+        Some((h, p)) => (h, Some(p)),
+        None => (authority, None),
+    };
+    let host_ok = !host.is_empty()
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-');
+    Some((host_ok, port))
+}
+
 /// A URL for the browser: `http` or `https`, at most 2048 bytes, printable
-/// non-space ASCII only, a host of `[A-Za-z0-9.-]` with an optional port.
+/// non-space ASCII only, a host of `[A-Za-z0-9.-]` or a bracketed IPv6
+/// address (R13 §6D item 6), with an optional port.
 ///
 /// # Errors
 /// `invalid_params` for any other text.
@@ -195,15 +220,7 @@ pub fn url(text: &str) -> Result<&str, Fail> {
         .map(|s| &text[s.len()..])
         .ok_or_else(bad)?;
     let end = after.find(['/', '?', '#']).unwrap_or(after.len());
-    let authority = &after[..end];
-    let (host, port) = match authority.split_once(':') {
-        Some((h, p)) => (h, Some(p)),
-        None => (authority, None),
-    };
-    let host_ok = !host.is_empty()
-        && host
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-');
+    let (host_ok, port) = host_and_port(&after[..end]).ok_or_else(bad)?;
     let port_ok = port.is_none_or(|p| {
         (1..=5).contains(&p.len())
             && p.bytes().all(|b| b.is_ascii_digit())

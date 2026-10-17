@@ -13,6 +13,7 @@ use fleetdeck_core::ChildEnv;
 use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
 
+use super::authority::Start;
 use super::{Fail, Gate, code};
 
 /// The time limit of one program.
@@ -63,9 +64,12 @@ fn not_installed(name: &str) -> Fail {
 
 /// Runs programs with one environment. A gated runner reads the live policy
 /// right before every program run and refuses when `allow_desktop` is off.
+/// A runner with a `start` check runs it before every program: the first
+/// call checks the authority of the action (R13 §5E item 1).
 pub struct Runner<'a> {
     pub env: &'a ChildEnv,
     pub gate: Option<Gate<'a>>,
+    pub start: Option<&'a Start>,
 }
 
 impl Runner<'_> {
@@ -76,8 +80,11 @@ impl Runner<'_> {
         }
     }
 
-    fn command(&self, program: &str, args: &[String]) -> Result<Command, Fail> {
+    async fn command(&self, program: &str, args: &[String]) -> Result<Command, Fail> {
         self.check()?;
+        if let Some(start) = self.start {
+            start.begin(self.env).await?;
+        }
         let path = resolve(self.env, program).ok_or_else(|| not_installed(program))?;
         let mut cmd = Command::new(path);
         cmd.args(args)
@@ -93,7 +100,7 @@ impl Runner<'_> {
     /// `forbidden`, `unsupported` (not installed), or `failed` (cannot start,
     /// time limit, too much output).
     pub async fn run(&self, program: &str, args: &[String], limit: Duration) -> Result<Out, Fail> {
-        let mut cmd = self.command(program, args)?;
+        let mut cmd = self.command(program, args).await?;
         cmd.stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
@@ -152,8 +159,8 @@ impl Runner<'_> {
     ///
     /// # Errors
     /// `forbidden`, `unsupported` (not installed), or `failed`.
-    pub fn spawn(&self, program: &str, args: &[String]) -> Result<Child, Fail> {
-        let mut cmd = self.command(program, args)?;
+    pub async fn spawn(&self, program: &str, args: &[String]) -> Result<Child, Fail> {
+        let mut cmd = self.command(program, args).await?;
         cmd.stdout(Stdio::null())
             .stderr(Stdio::null())
             .kill_on_drop(false);

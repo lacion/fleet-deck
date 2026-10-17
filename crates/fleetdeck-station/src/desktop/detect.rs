@@ -65,7 +65,11 @@ async fn live_instances(runtime_dir: &Path) -> Vec<String> {
 
 /// The `wl_socket` of the instance `signature` from `hyprctl instances -j`.
 async fn wayland_socket(env: &fleetdeck_core::ChildEnv, signature: &str) -> Option<String> {
-    let runner = Runner { env, gate: None };
+    let runner = Runner {
+        env,
+        gate: None,
+        start: None,
+    };
     let args = ["instances".to_owned(), "-j".to_owned()];
     let out = runner.run_ok("hyprctl", &args, CALL_TIMEOUT).await.ok()?;
     let list: serde_json::Value = serde_json::from_str(&out.stdout).ok()?;
