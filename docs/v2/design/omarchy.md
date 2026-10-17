@@ -643,6 +643,8 @@ Round 3 of 3 failed with 2 open blockers (report `adv-omarchy-r8-design-report.m
 3. **Ownership (round 3 note).** The web completion task (P2c) also owns `web/e2e-real/**`. It needs these files for the production-bundle proof of §5F item 3.
 4. **Status line.** The status line at the top of this document adds: "revision 9: §5G proposes answers to the round 3 findings; awaiting the owner (4th review round)".
 
+5. **Names.** The authority field that §5F item 2 calls `link_epoch: String` is `desktop_epoch: String` (the value of the station's `Hello.desktop_epoch`); `Hello.link_epoch: u64` is unrelated. When §5G is approved, §11 adds: the foundation row owns `Hello.desktop_epoch` and the `wake_reserve` store operation with the `wake_suspended_until` settings row; the P3b wake row owns its use; the web completion row owns `web/e2e-real/**`.
+
 ---
 
 ## 7. The desktop MCP for agents (HIGH RISK)
