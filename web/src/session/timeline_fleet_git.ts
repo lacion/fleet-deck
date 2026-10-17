@@ -1,5 +1,6 @@
 // FG-1..FG-4 (design §4.4, §5.7, §6.4, §7.4): the timeline lines of the Fleet Git events
 // `workspace.base_stale`, `workspace.include_skipped`, `session.push` and `session.cleanup`.
+// FG-12 (§15.7): `artifacts.unavailable` and `artifacts.revoked` show the text of the station.
 import type { Event, PushInfo, PushState } from '../gen';
 import type { Item } from './timeline';
 
@@ -131,6 +132,14 @@ export function fleetGitNotice(
       if (text === memory.cleanup) return null;
       memory.cleanup = text;
       return line(text, 'info');
+    }
+    case 'artifacts.unavailable': {
+      const e = event as Extract<Event, { kind: 'artifacts.unavailable' }>;
+      return line(e.text, 'info');
+    }
+    case 'artifacts.revoked': {
+      const e = event as Extract<Event, { kind: 'artifacts.revoked' }>;
+      return line(e.text, 'error');
     }
     default:
       return null;

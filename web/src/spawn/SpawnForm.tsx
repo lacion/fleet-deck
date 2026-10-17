@@ -1,7 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { instanceLimit, mostRoom, rateMeters } from '../board/usage';
 import { batchRef, newBatchId } from '../compare/compare';
-import type { DeckSession, SessionKey, StationView, TranscriptPin, WorkspaceListing } from '../gen';
+import type {
+  DeckSession,
+  Prefer,
+  ProviderKind,
+  SessionKey,
+  StationView,
+  TranscriptPin,
+  WorkspaceListing,
+} from '../gen';
+import { useProjects } from '../integrations/context';
 import type { Freshness } from '../runtime/state';
 import { DECK } from '../settings/actions';
 import { useSettings } from '../settings/context';
@@ -22,10 +31,13 @@ import {
   showFleetFields,
 } from './fleetControl';
 import { ModelField } from './ModelField';
+import { KindChoice, PlacementFields, StationChoice, TypedDirectory } from './PlacementFields';
 import type { NativeFill } from './nativeSessions';
 import { type CloneDefaults, cloneDefaultsOf, DEFAULT_CLONE, resolveRepo } from './repoRef';
 import { SetupField } from './SetupField';
 import {
+  AUTO,
+  autoOffered,
   baseProblem,
   batchPrompts,
   branchProblem,
@@ -33,13 +45,18 @@ import {
   knownModels,
   MAX_BATCH_REF,
   moreOptionsOpen,
+  type PlacedStart,
+  placeStarts,
+  projectOfStart,
   providerChoiceLabel,
+  providerKinds,
   type PreflightResult,
   readSetupCmds,
   rememberSetupCmd,
   setupKey,
   setupProblem,
   type SpawnActions,
+  startHomes,
   type SpawnOutcome,
   spawnModes,
   spawnTargets,
@@ -92,13 +109,25 @@ export function SpawnForm({
   now: givenNow,
 }: Props) {
   const targets = spawnTargets(stations);
+  // FG-5 (§8.5): the form that "New session in this project" opened picks a home, not a station.
+  const projects = useProjects();
+  const [project] = useState(() => projectOfStart(projects, initialStation, initialCwd));
+  const homes = project === undefined ? [] : startHomes(project, targets);
+  const placeable = autoOffered(targets) && actions?.place !== undefined;
   const [stationId, setStationId] = useState(
     targets.some((s) => s.station_id === initialStation)
       ? (initialStation ?? '')
-      : (targets[0]?.station_id ?? ''),
+      : (homes[0]?.station_id ?? targets[0]?.station_id ?? ''),
   );
+  const auto = stationId === AUTO;
   const station = targets.find((s) => s.station_id === stationId);
   const providers = station?.info?.providers ?? [];
+  // FG-6 (§9.3): the placement choices under "Auto (best station)".
+  const kinds = providerKinds(targets);
+  const [kind, setKind] = useState<ProviderKind>(kinds[0] ?? 'claude');
+  const [needs, setNeeds] = useState('');
+  const [prefer, setPrefer] = useState<Prefer[]>([]);
+  const [spread, setSpread] = useState(false);
   const resourceTexts = resourceWarnings(station?.info?.resources).map((w) => w.text);
   const [instance, setInstance] = useState(providers[0]?.instance ?? '');
   const provider = providers.find((p) => p.instance === instance);
@@ -110,6 +139,8 @@ export function SpawnForm({
   const roomiest = mostRoom(limits);
   // The directory as typed or picked; `cwd` is the trimmed text, or `null` when it is empty.
   const [cwdText, setCwd] = useState<string | null>(initialCwd ?? null);
+  const byHome = project !== undefined && homes.length > 0;
+  const homeCwd = byHome && auto;
   const cwd = cwdText === null || cwdText.trim() === '' ? null : cwdText.trim();
   const [mode, setMode] = useState('');
   const [model, setModel] = useState('');
@@ -171,8 +202,10 @@ export function SpawnForm({
   // A station that goes away (or the first one that appears) resets the
   // choice; a directory belongs to its station.
   useEffect(() => {
-    if (station === undefined && targets[0] !== undefined) setStationId(targets[0].station_id);
-  }, [station, targets[0]?.station_id]);
+    if (!auto && station === undefined && targets[0] !== undefined) {
+      setStationId(targets[0].station_id);
+    }
+  }, [auto, station, targets[0]?.station_id]);
   useEffect(() => {
     if (provider === undefined && providers[0] !== undefined) setInstance(providers[0].instance);
   }, [provider, providers[0]?.instance]);
@@ -195,6 +228,7 @@ export function SpawnForm({
   // A clone is one session and an import ignores the batch (DL-308): no preview then.
   const previewing = batch && place !== 'clone' && !importing && batchLines.length >= 2;
   const setupShown = station?.info?.allow_setup_cmd === true && !importing;
+  const placing = auto && placeable;
   const setupBad = setupShown && setupProblem(setupCmd) !== null;
   // B7: browsing is the owner's (the deck answers 403 to every other login).
   const browse =
@@ -248,13 +282,16 @@ export function SpawnForm({
   const fleetBad = coordinator && fleetOn(fleet) && answerCapProblem(fleet) !== null;
   const cloneReady =
     place !== 'clone' || importId.trim() !== '' || (cloneUrl !== '' && cloneName.trim() !== '');
+  const hasTarget = auto
+    ? placing && kinds.includes(kind)
+    : station !== undefined && provider !== undefined;
+  const cwdOk = homeCwd || cwd?.startsWith('/') === true;
   const ready =
     live &&
     canDrive &&
     !busy &&
-    station !== undefined &&
-    provider !== undefined &&
-    cwd?.startsWith('/') === true &&
+    hasTarget &&
+    cwdOk &&
     cloneReady &&
     !setupBad &&
     !refProblem &&
@@ -264,11 +301,9 @@ export function SpawnForm({
   const missing = [
     live ? null : 'the board must be live',
     canDrive ? null : 'your login needs the drive scope',
-    station === undefined ? 'choose a station' : null,
-    provider === undefined ? 'choose a provider' : null,
-    cwd?.startsWith('/') === true
-      ? null
-      : 'choose a directory (type an absolute path, or Browse… and Use this folder)',
+    auto || station !== undefined ? null : 'choose a station',
+    hasTarget || (!auto && station === undefined) ? null : 'choose a provider',
+    cwdOk ? null : 'choose a directory (type an absolute path, or Browse… and Use this folder)',
     cloneReady
       ? null
       : repoError !== null
@@ -301,10 +336,8 @@ export function SpawnForm({
             if (
               !ready ||
               actions === undefined ||
-              station === undefined ||
-              provider === undefined ||
-              cwd === null ||
-              importProblem !== null
+              importProblem !== null ||
+              (auto ? false : station === undefined || provider === undefined || cwd === null)
             ) {
               return;
             }
@@ -312,13 +345,14 @@ export function SpawnForm({
             setOutcome(null);
             const target =
               place === 'clone' && importId.trim() === '' ? `${cwd}/${cloneName.trim()}` : cwd;
+            const openStation = station?.station_id ?? '';
             // An import continues a native session in this directory: it
             // ignores the workspace and batch choices (DL-308). A batch
             // forces a worktree per session (v0); a clone is one session.
             const native = importId.trim();
             const spec = {
-              provider_instance: provider.instance,
-              cwd: target,
+              provider_instance: provider?.instance ?? '',
+              cwd: target ?? '',
               mode: modes.includes(mode) ? mode : null,
               model: model.trim() === '' ? null : model.trim(),
               title: title.trim() === '' ? null : title.trim(),
@@ -340,9 +374,9 @@ export function SpawnForm({
               ? null
               : workspaceRequest(place, batch, cloneUrl, branch, base);
             const prompts = batch && place !== 'clone' && !importing ? batchLines : [prompt];
-            const id = station.station_id;
+            const id = openStation;
             const setup = setupShown ? setupCmd : undefined;
-            const key = setupKey(id, cwd);
+            const key = setupKey(id, cwd ?? '');
             // R1.4: one batch id for each press; the compare page groups the sessions by it.
             const batchId =
               prompts.length >= 2 && prompts.length <= MAX_BATCH_REF && !importing
@@ -358,12 +392,38 @@ export function SpawnForm({
                 });
                 return;
               }
+              // FG-6: under Auto, the deck chooses a station for each start (§9.3); the starts then
+              // go out as today, one for each station.
+              let plan: PlacedStart<typeof spec>[] = prompts.map(() => ({ station: id, spec }));
+              if (auto) {
+                const result = await placeStarts({
+                  place: actions.place,
+                  count: prompts.length,
+                  needs,
+                  prefer,
+                  spread,
+                  kind,
+                  project,
+                  targets,
+                  cwd,
+                  clone: place === 'clone' && importId.trim() === '' ? cloneName.trim() : null,
+                  spec,
+                });
+                if (!result.ok) {
+                  setOutcome({ ok: false, text: result.text, sessionId: null });
+                  return;
+                }
+                plan = result.starts;
+              }
               let last: SpawnOutcome | null = null;
               let started = 0;
+              let lastStation = id;
               for (const [i, p] of prompts.entries()) {
+                const at = plan[i] ?? { station: id, spec };
+                lastStation = at.station;
                 last = await actions.start(
-                  id,
-                  spec,
+                  at.station,
+                  at.spec,
                   p,
                   workspace,
                   importing ? native : undefined,
@@ -392,7 +452,7 @@ export function SpawnForm({
                 setImportPin(null);
                 // One new session: go to it at once (DL-141). A batch stays on the form.
                 if (prompts.length === 1 && last.sessionId !== null) {
-                  onOpen({ station_id: id, session_id: last.sessionId });
+                  onOpen({ station_id: lastStation, session_id: last.sessionId });
                 }
               }
             })().finally(() => setBusy(false));
@@ -440,25 +500,19 @@ export function SpawnForm({
           <div className="fd-panel">
             <h3 className="fd-label">Where</h3>
             <div className="fd-spawn-row">
-              <label>
-                Station
-                <select
-                  value={stationId}
-                  onChange={(event) => {
-                    setStationId(event.target.value);
-                    setImportPin(null);
-                    setCwd(null);
-                    setMode('');
-                    setModel('');
-                  }}
-                >
-                  {targets.map((s) => (
-                    <option key={s.station_id} value={s.station_id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <StationChoice
+                homes={byHome ? homes : null}
+                targets={targets}
+                value={stationId}
+                auto={placeable}
+                onChange={(id) => {
+                  setStationId(id);
+                  setImportPin(null);
+                  setCwd(homes.find((h) => h.station_id === id)?.path ?? null);
+                  setMode('');
+                  setModel('');
+                }}
+              />
               <label>
                 Workspace
                 <select
@@ -483,23 +537,38 @@ export function SpawnForm({
                 {`This station is low on resources: ${resourceTexts.join('; ')}. You can still start the session.`}
               </p>
             ) : null}
-            <div className="fd-fieldwrap" role="group" aria-label="Directory">
-              <span className="fd-fieldlabel">Directory</span>
-              <FolderPicker
-                stationId={stationId}
-                value={cwdText ?? ''}
-                onChange={(path) => {
-                  setImportPin(null);
-                  setCwd(path);
-                }}
-                list={actions?.list}
-                sessions={sessions}
-                label="Directory path"
-                browseDisabled={!live || !canDrive}
-                initialOpen={initialListing !== null}
-                initialListing={initialListing}
+            {byHome ? null : auto ? (
+              <TypedDirectory value={cwdText ?? ''} onChange={setCwd} />
+            ) : (
+              <div className="fd-fieldwrap" role="group" aria-label="Directory">
+                <span className="fd-fieldlabel">Directory</span>
+                <FolderPicker
+                  stationId={stationId}
+                  value={cwdText ?? ''}
+                  onChange={(path) => {
+                    setImportPin(null);
+                    setCwd(path);
+                  }}
+                  list={actions?.list}
+                  sessions={sessions}
+                  label="Directory path"
+                  browseDisabled={!live || !canDrive}
+                  initialOpen={initialListing !== null}
+                  initialListing={initialListing}
+                />
+              </div>
+            )}
+            {placing ? (
+              <PlacementFields
+                needs={needs}
+                onNeeds={setNeeds}
+                prefer={prefer}
+                onPrefer={setPrefer}
+                batch={previewing}
+                spread={spread}
+                onSpread={setSpread}
               />
-            </div>
+            ) : null}
             {branchFields ? (
               <BranchFields branch={branch} base={base} onBranch={setBranch} onBase={setBase} />
             ) : null}
@@ -543,46 +612,52 @@ export function SpawnForm({
           <div className="fd-panel">
             <h3 className="fd-label">Agent</h3>
             <div className="fd-spawn-row">
-              <label>
-                Provider
-                <select
-                  value={instance}
-                  onChange={(event) => {
-                    setInstance(event.target.value);
-                    setImportPin(null);
-                    setMode('');
-                    setModel('');
-                  }}
-                >
-                  {providers.map((p) => (
-                    <option key={p.instance} value={p.instance}>
-                      {providerChoiceLabel(
-                        p,
-                        limits.get(p.instance) ?? null,
-                        now,
-                        p.instance === roomiest,
-                      )}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Permission mode
-                <select value={mode} onChange={(event) => setMode(event.target.value)}>
-                  <option value="">Station default</option>
-                  {modes.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <ModelField
-                key={`${stationId}/${instance}`}
-                value={model}
-                models={knownModels(sessions, stationId, instance)}
-                onChange={setModel}
-              />
+              {auto ? (
+                <KindChoice kinds={kinds} value={kind} onChange={setKind} />
+              ) : (
+                <>
+                  <label>
+                    Provider
+                    <select
+                      value={instance}
+                      onChange={(event) => {
+                        setInstance(event.target.value);
+                        setImportPin(null);
+                        setMode('');
+                        setModel('');
+                      }}
+                    >
+                      {providers.map((p) => (
+                        <option key={p.instance} value={p.instance}>
+                          {providerChoiceLabel(
+                            p,
+                            limits.get(p.instance) ?? null,
+                            now,
+                            p.instance === roomiest,
+                          )}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Permission mode
+                    <select value={mode} onChange={(event) => setMode(event.target.value)}>
+                      <option value="">Station default</option>
+                      {modes.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <ModelField
+                    key={`${stationId}/${instance}`}
+                    value={model}
+                    models={knownModels(sessions, stationId, instance)}
+                    onChange={setModel}
+                  />
+                </>
+              )}
             </div>
             {versionWarning(provider) === null ? null : (
               <p className="fd-note" role="status" data-version-warning>

@@ -442,7 +442,9 @@ export function ProjectForm({
           </button>
         </FormActions>
       </form>
-      {editing && projectId !== undefined ? <ProjectGitSettings projectId={projectId} /> : null}
+      {editing && projectId !== undefined ? (
+        <ProjectGitSettings projectId={projectId} stations={stations} />
+      ) : null}
     </div>
   );
 }

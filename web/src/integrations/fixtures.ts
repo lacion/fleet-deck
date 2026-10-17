@@ -153,6 +153,13 @@ export function fakeActions(extra: Partial<IntegrationActions> = {}): Integratio
     autoSessionProject: never,
     saveGit: never,
     pushNow: never,
+    addHome: never,
+    retryHome: never,
+    removeHome: never,
+    setRemote: never,
+    place: never,
+    fleetGitPrefs: never,
+    setDriftReference: never,
     ...extra,
   };
 }
