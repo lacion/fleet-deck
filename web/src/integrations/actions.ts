@@ -5,6 +5,8 @@ import type {
   CheckFailure,
   ChecksFailing,
   CommentBody,
+  GitSettingsAnswer,
+  GitSettingsPut,
   IssueDetail,
   IssueSummary,
   PrCreateBody,
@@ -13,12 +15,14 @@ import type {
   Project,
   ProjectInput,
   ProjectPreflight,
+  PushNowAnswer,
   ReviewBody,
   StartedSessions,
   StartSessions,
   TransitionBody,
   WriteResult,
 } from '../gen';
+import { ApiError } from '../runtime/api';
 import type { IntegrationHttp } from './http';
 
 type Get = (path: string) => Promise<unknown>;
@@ -34,6 +38,26 @@ export type IssueQuery = {
   readonly query?: string | undefined;
   readonly mine?: boolean | undefined;
   readonly status?: string | undefined;
+};
+
+/**
+ * The answer of the save of the Git settings (design §17.1): the saved settings, or the refusal
+ * of the deck. Another failure (network, 403, 404) throws.
+ */
+export type GitSaveResult =
+  | { readonly kind: 'saved'; readonly answer: GitSettingsAnswer }
+  /** 400 `invalid_git_settings`: `field` is the struct field that the deck names. */
+  | { readonly kind: 'invalid'; readonly field: string | null; readonly message: string }
+  /** 409 `stale_revision`: the settings changed since the board loaded them. */
+  | { readonly kind: 'stale'; readonly message: string }
+  /** 409 `rebind_required`: the remote URL cannot change while sync is on. */
+  | { readonly kind: 'rebind'; readonly message: string };
+
+/** The texts of the push now errors that the design names (§5.8). */
+const PUSH_NOW_TEXT: Readonly<Record<string, string>> = {
+  not_synced: 'This session is not in a synced project.',
+  held: 'A land or a move holds this session.',
+  unknown_session: 'The station does not know this session.',
 };
 
 export type IntegrationActions = {
@@ -64,6 +88,10 @@ export type IntegrationActions = {
   clearSessionProject(station: string, session: string): Promise<void>;
   /** DL-176: back to the automatic match by folder. */
   autoSessionProject(station: string, session: string): Promise<void>;
+  /** FG-2 (§17.1): saves the Git settings (and the remote URL when it is given). */
+  saveGit(id: string, body: GitSettingsPut): Promise<GitSaveResult>;
+  /** FG-2 (§5.8): the push of the session is due at once. */
+  pushNow(station: string, session: string): Promise<PushNowAnswer>;
 };
 
 const record = (v: unknown): v is Record<string, unknown> =>
@@ -199,6 +227,38 @@ export function integrationActions(
     },
     autoSessionProject: async (station, session) => {
       await io.post(`${sessionPath(station, session)}/project/auto`, {});
+    },
+    saveGit: async (id, body) => {
+      try {
+        const answer = shaped<GitSettingsAnswer>(
+          await io.put(`${projectPath(id)}/git`, body),
+          ['git', 'git_revision'],
+          'Git settings answer',
+        );
+        return { kind: 'saved', answer };
+      } catch (e) {
+        if (e instanceof ApiError) {
+          if (e.code === 'invalid_git_settings') {
+            return { kind: 'invalid', field: e.field, message: e.message };
+          }
+          if (e.code === 'stale_revision') return { kind: 'stale', message: e.message };
+          if (e.code === 'rebind_required') return { kind: 'rebind', message: e.message };
+        }
+        throw e;
+      }
+    },
+    pushNow: async (station, session) => {
+      try {
+        return shaped<PushNowAnswer>(
+          await io.post(`${sessionPath(station, session)}/push`, {}),
+          ['state'],
+          'push answer',
+        );
+      } catch (e) {
+        const text = e instanceof ApiError && e.code !== null ? PUSH_NOW_TEXT[e.code] : undefined;
+        if (text !== undefined) throw new Error(text);
+        throw e;
+      }
     },
   };
 }
