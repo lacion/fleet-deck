@@ -55,11 +55,21 @@ impl Node {
 fn private_base() -> Option<tempfile::TempDir> {
     let tmp = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::create_dir_all(tmp).unwrap();
-    let tmp = tmp.canonicalize().unwrap();
+    // `target` can be a link to a shared disk whose folders fail the rule:
+    // the home directory is the second place.
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    [Some(tmp.to_path_buf()), home]
+        .into_iter()
+        .flatten()
+        .find_map(|place| private_in(&place))
+}
+
+fn private_in(place: &Path) -> Option<tempfile::TempDir> {
+    let place = place.canonicalize().ok()?;
     let dir = tempfile::Builder::new()
         .prefix("provision-file-")
-        .tempdir_in(&tmp)
-        .unwrap();
+        .tempdir_in(&place)
+        .ok()?;
     chmod(dir.path(), 0o700);
     let me = fs::metadata(dir.path()).unwrap().uid();
     for ancestor in dir.path().ancestors().skip(1) {

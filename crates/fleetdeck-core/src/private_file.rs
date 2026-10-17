@@ -89,9 +89,14 @@ fn check_new_below(root: &Path, path: &Path) -> Result<(), PrivateWriteError> {
     }
 }
 
-/// The parent of an absolute path with a normal last component.
+/// The parent of an absolute path whose components after the root are all
+/// normal names (no `.` or `..`: the ancestor walk is lexical).
 fn parent_of(path: &Path) -> Option<&Path> {
-    if !path.is_absolute() || !matches!(path.components().next_back(), Some(Component::Normal(_))) {
+    let mut parts = path.components();
+    if parts.next() != Some(Component::RootDir)
+        || parts.clone().next().is_none()
+        || !parts.all(|c| matches!(c, Component::Normal(_)))
+    {
         return None;
     }
     path.parent()
@@ -331,7 +336,7 @@ mod tests {
 
     #[test]
     fn a_relative_path_and_a_path_without_a_name_are_unsafe() {
-        for path in ["out.toml", "/", "/tmp/.."] {
+        for path in ["out.toml", "/", "/tmp/..", "/home/../etc/out.toml"] {
             let r = check_new_private(Path::new(path));
             assert!(matches!(r, Err(PrivateWriteError::Unsafe)), "{path}: {r:?}");
         }
