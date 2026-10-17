@@ -158,6 +158,7 @@ export function ProjectsPage({
           draft={form.draft}
           onChange={(draft) => setForm({ id: form.id, draft })}
           editing={form.id !== null}
+          projectId={form.id ?? undefined}
           saving={saving}
           error={saveError}
           accounts={accounts?.station === form.draft.station ? accounts.list : null}

@@ -151,6 +151,8 @@ export function fakeActions(extra: Partial<IntegrationActions> = {}): Integratio
     assignSession: never,
     clearSessionProject: never,
     autoSessionProject: never,
+    saveGit: never,
+    pushNow: never,
     ...extra,
   };
 }

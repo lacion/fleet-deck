@@ -6,6 +6,8 @@ export class ApiError extends Error {
     message: string,
     /** The `error` code of the deck's answer (`not_driver`, `invalid_invite`), when it has one. */
     readonly code: string | null = null,
+    /** The `field` of a 400 that names the refused field (`invalid_git_settings`), when it has one. */
+    readonly field: string | null = null,
   ) {
     super(message);
   }
