@@ -22,7 +22,8 @@ pub const API_REST: &[ApiMethod] = &[
         "/api/activity",
         Some(Scope::Read),
         false,
-    ),
+    )
+    .display(),
     m(
         "fleet.extras",
         Method::GET,
@@ -30,7 +31,8 @@ pub const API_REST: &[ApiMethod] = &[
         Some(Scope::Read),
         false,
     )
-    .member(),
+    .member()
+    .display(),
     m(
         "commands.list",
         Method::GET,

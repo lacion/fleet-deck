@@ -13,7 +13,6 @@ use std::collections::BTreeSet;
 
 use common::*;
 use fleetdeck_deck::store::NewGrant;
-use fleetdeck_deck::store::stations::NewStation;
 use fleetdeck_link::control::Control;
 use fleetdeck_link::methods::code;
 use fleetdeck_proto::command::{RETRY_WINDOW_MS, ReceiptState};
@@ -33,6 +32,8 @@ async fn bound(f: &Fixture) -> CoordinatorBinding {
         .create_grant(NewGrant::new(f.station.clone(), "coord-1".into()))
         .await
         .unwrap();
+    // The link cache follows the grant (the route does it in production).
+    f.ctx.peers.refresh_changed().await.unwrap();
     let binding = CoordinatorBinding {
         binding_id: "b-1".to_owned(),
         grant_id: grant.grant_id,
@@ -180,13 +181,19 @@ async fn a_grant_removed_in_the_store_refuses_a_call_in_the_decision_transaction
     // DL-211). Then the stored station loses `coordinate` while the link
     // layer's cache still has it: the decision transaction refuses the call.
     let b = bound(&f).await;
-    let rec = f.store.station(f.station.clone()).await.unwrap().unwrap();
+    // The row loses `coordinate` behind the store's back (a pairing write
+    // keeps it while a grant is in effect, so the test writes the row).
+    let admin = serde_json::to_string(&BTreeSet::from([Scope::Admin])).unwrap();
+    let id = f.station.clone();
     f.store
-        .pin_station(NewStation {
-            key: rec.key,
-            name: rec.name,
-            scopes: BTreeSet::from([Scope::Admin]),
-            dial_url: rec.dial_url,
+        .db()
+        .call(move |conn| {
+            conn.execute(
+                "UPDATE stations SET scopes = ?2 WHERE station_id = ?1",
+                rusqlite::params![id.as_str(), admin],
+            )
+            .map(drop)
+            .map_err(Into::into)
         })
         .await
         .unwrap();

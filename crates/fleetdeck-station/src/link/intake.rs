@@ -332,6 +332,16 @@ async fn file_method(ctx: &StationLink, method: &str, params: serde_json::Value)
             ),
             Err(e) => bad_params(e),
         },
+        // The deny list always applies; the member flag is already removed.
+        "files.display_changes" => match serde_json::from_value(params) {
+            Ok(q) => done(
+                crate::workspace::session_diff::display_changes::run(
+                    store, policy, private, &git, q,
+                )
+                .await,
+            ),
+            Err(e) => bad_params(e),
+        },
         "files.coordinator_diff" => match serde_json::from_value(params) {
             Ok(q) => {
                 done(crate::workspace::coordinator_diff::run(store, policy, private, &git, q).await)
@@ -489,10 +499,10 @@ async fn answer(
     if req.spec.mutating {
         return mutate(ctx, control, peer, req).await;
     }
-    Some(read(ctx, req).await)
+    Some(read(ctx, control, req).await)
 }
 
-async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
+async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outcome {
     let store = ctx.manager.store();
     match req.method.as_str() {
         "station.info" => {
@@ -542,8 +552,8 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
         "session.subagent" => subagent_method(ctx, req.params).await,
         "station.native_sessions" => intake_native::sessions(ctx, req.params).await,
         "station.native_preview" => intake_native::preview(ctx, req.params).await,
-        "desktop.info" => intake_desktop::info(ctx).await,
-        "desktop.act" => intake_desktop::act(ctx, req.params).await,
+        "desktop.info" => intake_desktop::info(ctx, req.params).await,
+        "desktop.act" => intake_desktop::act(ctx, control, req.params).await,
         "fleet_git.projects_set" => intake_fleet_git::snapshot(ctx, req.params).await,
         "fleet_git.share_verdict" => intake_fleet_git::share_verdict(ctx, req.params).await,
         "fleet_git.push_now" => intake_fleet_git::push_now(&ctx.manager, req.params).await,
@@ -569,6 +579,7 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
         | "files.search"
         | "files.diff"
         | "files.session_diff"
+        | "files.display_changes"
         | "files.coordinator_diff" => file_method(ctx, &req.method, req.params).await,
         "artifacts.publish" | "artifacts.list" | "artifacts.get" | "artifacts.file" => {
             artifact_method(ctx, &req.method, req.params).await

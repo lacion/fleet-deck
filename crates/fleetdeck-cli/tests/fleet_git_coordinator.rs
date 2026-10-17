@@ -30,13 +30,12 @@ use serde_json::{Value, json};
 /// coordinator on alpha whose grant (`inspect`, `manage`) covers all three.
 fn world(settings: Value) -> (Rig, tempfile::TempDir, String, Vec<PathBuf>, Coord) {
     let dir = tempfile::tempdir().unwrap();
-    let mut rig = Rig::with(
+    let rig = Rig::with(
         &["alpha", "bravo", "charlie"],
         options(dir.path(), &["alpha", "bravo", "charlie"]),
     );
     let (project, folders) = project_with_homes(&rig, 3, settings);
-    let coord = Coord::start(&rig, dir.path(), 0, &["inspect", "manage"]);
-    coord.widen(&mut rig, &[0, 1, 2]);
+    let coord = Coord::start(&rig, dir.path(), 0, &["inspect", "manage"], &[0, 1, 2]);
     (rig, dir, project, folders, coord)
 }
 
@@ -195,7 +194,7 @@ fn authority_loss_before_admission_of_a_queued_land() {
     let first = land(&rig, 1, id_of(&s1));
     wait_entered(&rig);
 
-    // A call can stay `pending` while the link of the widened grant comes
+    // A call can stay `pending` while the link of the multi-station grant comes
     // back; the same idempotency key reads the row again without a new send.
     let args = json!({
         "station": rig.station_id(1),

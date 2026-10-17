@@ -729,6 +729,8 @@ describe('the Settings link (DL-172)', () => {
       approve: () => Promise.reject(new Error('not in this test')),
       deny: () => Promise.reject(new Error('not in this test')),
     },
+    displays: {} as never,
+    desktop: {} as never,
   };
 
   test('the sidebar and More show it for the owner login only', () => {

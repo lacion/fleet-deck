@@ -8,4 +8,13 @@ import type { WallWindow } from "./WallWindow";
 /**
  * The response to `desktop.info` and the `info` of `StationInfo.desktop`.
  */
-export type DesktopInfo = { kind: DesktopKind, omarchy_version: string | null, monitors: Array<MonitorInfo>, locked: boolean | null, dnd: boolean | null, idle_inhibited: boolean | null, walls: Array<WallWindow>, allowed: DesktopAllowed, tools: DesktopTools, };
+export type DesktopInfo = { kind: DesktopKind, omarchy_version: string | null, monitors: Array<MonitorInfo>, locked: boolean | null, dnd: boolean | null, idle_inhibited: boolean | null, walls: Array<WallWindow>, allowed: DesktopAllowed, tools: DesktopTools, 
+/**
+ * The UTC offset of the station in minutes east of UTC, from one fixed
+ * `date +%z` call (R13 §6D item 3). `None` when the call failed.
+ */
+utc_offset_minutes?: number | null, 
+/**
+ * Unix ms at which the station sampled [`Self::utc_offset_minutes`].
+ */
+offset_sampled_at?: number | null, };

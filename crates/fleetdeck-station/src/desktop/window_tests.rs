@@ -8,6 +8,7 @@ use std::sync::atomic::AtomicBool;
 use fleetdeck_proto::SessionId;
 use fleetdeck_proto::desktop::{DesktopAction as A, Urgency};
 
+use super::authority::Admitted;
 use super::fake::{Opts, Rig, SIGNATURE, call};
 use super::tests::{act_err, eventually, on, run, url};
 
@@ -636,12 +637,17 @@ async fn a_wall_open_waits_for_a_close_and_its_profile_removal_of_the_same_displ
                 A::WallClose {
                     display_id: "wall-1".into(),
                 },
+                Admitted::open(),
             )
             .await
     });
     eventually("the close request", || close_requests(&rig) == 1).await;
     let desktop = std::sync::Arc::clone(&rig.desktop);
-    let open = tokio::spawn(async move { desktop.act(&on, open_wall("wall-1")).await });
+    let open = tokio::spawn(async move {
+        desktop
+            .act(&on, open_wall("wall-1"), Admitted::open())
+            .await
+    });
     tokio::time::sleep(std::time::Duration::from_millis(400)).await;
     assert!(!open.is_finished() && !close.is_finished());
     assert_eq!(rig.calls_of("chromium").len(), 1, "no launch while closing");
@@ -717,6 +723,7 @@ async fn a_lost_event_stream_during_a_close_keeps_the_profile() {
                 A::WallClose {
                     display_id: "wall-1".into(),
                 },
+                Admitted::open(),
             )
             .await
     });

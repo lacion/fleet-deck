@@ -34,6 +34,10 @@ pub struct DeckPeers {
     store: DeckStore,
     cache: Arc<Grants>,
     expected: Mutex<HashMap<Fingerprint, Expected>>,
+    /// Held across the database read and the publish of one refresh, and
+    /// across the drain and the publish of one batch of `refresh_changed`, so
+    /// two refreshes never publish out of order (grant stations design §2.4).
+    refresh_lock: tokio::sync::Mutex<()>,
 }
 
 impl DeckPeers {
@@ -46,11 +50,30 @@ impl DeckPeers {
         for st in store.stations().await? {
             cache.grant(st.key.fingerprint(), st.scopes.iter().copied());
         }
-        Ok(Arc::new(Self {
+        let peers = Arc::new(Self {
             store,
             cache,
             expected: Mutex::default(),
-        }))
+            refresh_lock: tokio::sync::Mutex::new(()),
+        });
+        peers.follow_scope_changes();
+        Ok(peers)
+    }
+
+    /// Starts the task that refreshes the cache after each note of changed
+    /// scopes of the store (a lifecycle event, a lazy expiry, a snapshot,
+    /// the sweep). It ends with the store or with the last `Arc` of `self`.
+    fn follow_scope_changes(self: &Arc<Self>) {
+        let weak = Arc::downgrade(self);
+        let mut changes = self.store.subscribe_scope_changes();
+        tokio::spawn(async move {
+            while changes.changed().await.is_ok() {
+                let Some(peers) = weak.upgrade() else { return };
+                if let Err(e) = peers.refresh_changed().await {
+                    tracing::warn!(error = %e, "refresh of the link scopes");
+                }
+            }
+        });
     }
 
     #[must_use]
@@ -83,9 +106,36 @@ impl DeckPeers {
     /// # Errors
     /// A database error.
     pub async fn refresh(&self, id: fleetdeck_proto::StationId) -> Result<()> {
+        let _turn = self.refresh_lock.lock().await;
+        self.refresh_one(id).await
+    }
+
+    /// One refresh; the caller holds `refresh_lock`.
+    async fn refresh_one(&self, id: fleetdeck_proto::StationId) -> Result<()> {
         if let Some(st) = self.store.station(id).await? {
             self.cache
                 .grant(st.key.fingerprint(), st.scopes.iter().copied());
+        }
+        Ok(())
+    }
+
+    /// Refreshes every station that the store noted as changed. The store is
+    /// the truth: each refresh reads the current stored scopes. The drain of
+    /// the noted set and the publish of the whole batch run under one lock,
+    /// and a call with nothing noted takes it too: the call returns only
+    /// after every earlier batch is published (grant stations PRE-PR r1).
+    ///
+    /// # Errors
+    /// A database error (the stations stay noted for the next refresh).
+    pub async fn refresh_changed(&self) -> Result<()> {
+        let _turn = self.refresh_lock.lock().await;
+        let changed = self.store.take_scope_changes();
+        for id in &changed {
+            if let Err(e) = self.refresh_one(id.clone()).await {
+                // Retried by the next refresh (the sweep runs every 30 s).
+                self.store.restore_scope_changes(changed);
+                return Err(e);
+            }
         }
         Ok(())
     }
@@ -130,9 +180,12 @@ impl GrantSource for DeckPeers {
 #[async_trait::async_trait]
 impl PairingSink for DeckPeers {
     async fn paired(&self, peer: &PairedPeer) -> std::result::Result<(), String> {
-        self.store_pairing(peer).await.map_err(|e| e.to_string())?;
-        self.cache
-            .grant(peer.key.fingerprint(), peer.scopes.iter().copied());
+        let st = self.store_pairing(peer).await.map_err(|e| e.to_string())?;
+        // The stored scopes are the truth: `coordinate` follows the grants in
+        // effect, not the pairing scopes (design §2.3 item 6, §2.4).
+        self.refresh(st.station_id)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 

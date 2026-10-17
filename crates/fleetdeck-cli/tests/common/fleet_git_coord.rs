@@ -119,9 +119,24 @@ impl Coord {
     /// Turns the deck setting `fleet_control` on, starts a coordinator session
     /// on station `i` (a fleet grant with `classes`, the station home as its
     /// folder), and waits until the deck bound the grant. `dir` is the
-    /// folder of [`provider_program`].
-    pub fn start(rig: &Rig, dir: &Path, i: usize, classes: &[&str]) -> Self {
+    /// folder of [`provider_program`]. `stations` are the stations of the rig
+    /// that the grant also covers: they go in `CoordinatorSpec.stations` of
+    /// the start request (grant target stations design §2.1); an empty list
+    /// sends no field.
+    pub fn start(rig: &Rig, dir: &Path, i: usize, classes: &[&str], stations: &[usize]) -> Self {
         let elevation = elevation(rig);
+        let mut coordinator = json!({
+            "grant_id": "",
+            "classes": classes,
+            "scope": "fleet",
+            "idle_ttl_ms": 0,
+            "expires_at": 0,
+            "control_skill": { "version": "", "text": "" },
+        });
+        if !stations.is_empty() {
+            let ids: Vec<String> = stations.iter().map(|k| rig.station_id(*k)).collect();
+            coordinator["stations"] = json!(ids);
+        }
         // The deck switch of fleet control (a live setting).
         let view = rig.board("GET", "/api/settings/deck", None);
         assert_eq!(view.status, 200, "{}", view.body);
@@ -150,14 +165,7 @@ impl Coord {
                     "spec": {
                         "provider_instance": FakeAgent::Claude.instance_id(),
                         "cwd": s.home,
-                        "coordinator": {
-                            "grant_id": "",
-                            "classes": classes,
-                            "scope": "fleet",
-                            "idle_ttl_ms": 0,
-                            "expires_at": 0,
-                            "control_skill": { "version": "", "text": "" },
-                        },
+                        "coordinator": coordinator,
                     },
                 },
             })),
@@ -207,45 +215,6 @@ impl Coord {
             session_id: grant["session_id"].as_str().unwrap().to_owned(),
             next: std::cell::Cell::new(0),
         }
-    }
-
-    /// Sets the stations of the grant to the stations `which` of the rig. The
-    /// product has no route for it (a known gap): the test stops the deck,
-    /// edits `deck.db`, and starts the deck again. The edit has two parts: the
-    /// `stations` of the grant, and the link scope `coordinate` of each of
-    /// those stations (a target station asks `coordinator.authority_check`
-    /// with it; the deck gives it only to the station of the coordinator).
-    pub fn widen(&self, rig: &mut Rig, which: &[usize]) {
-        let ids: Vec<String> = which.iter().map(|i| rig.station_id(*i)).collect();
-        let grant = self.grant_id.clone();
-        rig.restart_deck_with(|db| {
-            let conn = rusqlite::Connection::open(db).unwrap();
-            let changed = conn
-                .execute(
-                    "UPDATE tokens SET stations = ?1 WHERE grant_id = ?2",
-                    rusqlite::params![serde_json::to_string(&ids).unwrap(), grant],
-                )
-                .unwrap();
-            assert_eq!(changed, 1, "one grant row");
-            for id in &ids {
-                let text: String = conn
-                    .query_row(
-                        "SELECT scopes FROM stations WHERE station_id = ?1",
-                        [id],
-                        |r| r.get(0),
-                    )
-                    .unwrap();
-                let mut scopes: Vec<String> = serde_json::from_str(&text).unwrap();
-                if !scopes.iter().any(|s| s == "coordinate") {
-                    scopes.push("coordinate".to_owned());
-                }
-                conn.execute(
-                    "UPDATE stations SET scopes = ?2 WHERE station_id = ?1",
-                    rusqlite::params![id, serde_json::to_string(&scopes).unwrap()],
-                )
-                .unwrap();
-            }
-        });
     }
 
     /// One JSON-RPC message to the endpoint over plain HTTP; returns the

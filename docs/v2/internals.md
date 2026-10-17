@@ -284,7 +284,7 @@ stateDiagram-v2
 
 The real tables, from the migrations (`store/schema.rs` of each crate). `PLAN.md` §10 is reconciled with this list (DL-162).
 
-The rows for V21 to V27 of station.db and for V13 to V24 of deck.db are not in these tables yet. The Fleet Git rows below are complete for their migrations. Fleet Git migrations only add (design §3.9); before a pending migration runs, the process writes a backup (operations §13.6).
+The rows for V21 to V27 of station.db and for V13 to V24 of deck.db are not in these tables yet. The deck list has v2's V25 (the display migration) first; the Fleet Git deck migrations are V26 to V30 (DL-232). The Fleet Git rows below are complete for their migrations. Fleet Git migrations only add (design §3.9); before a pending migration runs, the process writes a backup (operations §13.6).
 
 **station.db** (30 migrations; V4 is `fleetdeck_link::LINK_EPOCHS_SQL`)
 
@@ -320,8 +320,9 @@ The rows for V21 to V27 of station.db and for V13 to V24 of deck.db are not in t
 | V8 | `file_touches` |
 | V9 to V11 | `tokens`, `coordinator_lineage`; `tokens.renew_generation`, `tokens.start_command_id` |
 | V12 | `archived_sessions`, `archive_mutations` (DL-149) |
-| V25 (Fleet Git, `store/fleet_git_schema.rs`) | `git_snapshots` (the snapshot state of each station), `slug_reservations` (the Git name of a station in a repository); columns `projects.git`, `projects.git_revision`, `projects.repo`, `projects.remote_url`, `projects.remote_ssh_user`, `projects.remote_dest` |
-| V26 (Fleet Git) | `project_homes` (the homes of a project, the authority for station and path), `home_generations` (the last generation of each home), `home_attempts` (the deck copy of each home attempt and its outbox state), `fleet_git_prefs` (the drift reference station) |
-| V27 (Fleet Git) | `radar_pairs` (the conflict predictions of a project), `land_queue` (the land queue with partial unique indexes that allow one running land for each project and repository), `land_outbox` (the durable send of `session.land`) |
+| V25 (R13 P2b/P3b, `store/display_v25.rs`) | `display_directives`, `wake_seen`, `wake_state`; columns `displays.auth_generation`, `displays.binding_revision`, `displays.directive_generation`, `auth_generation` of `display_links`, `display_sessions` and `display_pairings`, `display_pairings.expected_display_id`, `display_pairings.operation_revision` |
+| V26 (Fleet Git, `store/fleet_git_schema.rs`) | `git_snapshots` (the snapshot state of each station), `slug_reservations` (the Git name of a station in a repository); columns `projects.git`, `projects.git_revision`, `projects.repo`, `projects.remote_url`, `projects.remote_ssh_user`, `projects.remote_dest` |
+| V27 (Fleet Git) | `project_homes` (the homes of a project, the authority for station and path), `home_generations` (the last generation of each home), `home_attempts` (the deck copy of each home attempt and its outbox state), `fleet_git_prefs` (the drift reference station) |
+| V28 (Fleet Git) | `radar_pairs` (the conflict predictions of a project), `land_queue` (the land queue with partial unique indexes that allow one running land for each project and repository), `land_outbox` (the durable send of `session.land`) |
 
 The grants and the revocation generation of the sketch are columns (`pairing.role`, `pairing.scopes`, `meta.revocation_generation`) and the `tokens` table, not separate `links` and `grants` tables. Raw provider frames are not a table (bounded log files per session, L12).

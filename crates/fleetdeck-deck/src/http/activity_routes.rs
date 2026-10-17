@@ -14,10 +14,12 @@ use fleetdeck_proto::board::{ACTIVITY_DEFAULT_LIMIT, ACTIVITY_MAX_LIMIT, Activit
 use serde::Deserialize;
 
 use super::Board;
+use super::display_view::scope_of;
 use super::guard::ApiError;
-use crate::store::Principal;
 use crate::store::activity::ActivityQuery;
+use crate::store::activity::display_activity::DisplayActivityQuery;
 use crate::store::read_cursors::principal_key;
+use crate::store::{DisplayLogin, Principal};
 
 /// `POST /api/sessions/{station}/{session}/read`: the answer is the stored
 /// cursor body (`{ "seq": n }`, never lower than an earlier one is kept).
@@ -88,6 +90,7 @@ pub struct ActivityParams {
 /// 400 `invalid_query` for a `limit` of 0 or above [`ACTIVITY_MAX_LIMIT`].
 pub async fn activity(
     State(board): State<Arc<Board>>,
+    Extension(principal): Extension<Principal>,
     Query(params): Query<ActivityParams>,
 ) -> Result<Json<ActivityList>, ApiError> {
     let limit = params.limit.unwrap_or(ACTIVITY_DEFAULT_LIMIT);
@@ -97,6 +100,9 @@ pub async fn activity(
             "invalid_query",
             format!("limit must be 1 to {ACTIVITY_MAX_LIMIT}"),
         ));
+    }
+    if let Principal::Display(d) = &principal {
+        return display_activity(&board, d, &params, limit).await.map(Json);
     }
     Ok(Json(
         board
@@ -109,5 +115,43 @@ pub async fn activity(
             })
             .await
             .map_err(ApiError::internal)?,
+    ))
+}
+
+/// How many times a display activity read starts again when the scope of the
+/// display changes while it runs.
+const SCOPE_ATTEMPTS: usize = 3;
+
+/// The activity of a display (R13 §5D item 8). The scope is read before and
+/// after the query. The answer is valid only when both reads are equal;
+/// else the read starts again, and after [`SCOPE_ATTEMPTS`] tries it fails
+/// closed with `409 scope_changed` (R9 Q1).
+async fn display_activity(
+    board: &Arc<Board>,
+    d: &DisplayLogin,
+    params: &ActivityParams,
+    limit: u32,
+) -> Result<ActivityList, ApiError> {
+    for _ in 0..SCOPE_ATTEMPTS {
+        let before = scope_of(board, d).await?;
+        let list = board
+            .store
+            .display_activity(DisplayActivityQuery {
+                scope: before.clone(),
+                since: params.since,
+                repo: params.repo.clone().filter(|r| !r.is_empty()),
+                session: params.session.clone().filter(|s| !s.is_empty()),
+                limit,
+            })
+            .await
+            .map_err(ApiError::internal)?;
+        if scope_of(board, d).await? == before {
+            return Ok(list);
+        }
+    }
+    Err(ApiError::new(
+        StatusCode::CONFLICT,
+        "scope_changed",
+        "The display scope changed; try again.",
     ))
 }

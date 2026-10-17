@@ -138,7 +138,6 @@ fn a_url_is_strict_http_or_https() {
         "http://example.com:0/",
         "http://example.com:99999/",
         "http://example.com:80a/",
-        "http://[::1]/",
         "http://exa_mple.com/",
         "http://example.com/é",
         "http://example.com/\u{7f}",
@@ -157,6 +156,44 @@ fn a_url_is_strict_http_or_https() {
         url("http://example.com/;$(id)").is_ok(),
         "a path is one argv element"
     );
+}
+
+#[test]
+fn a_url_takes_a_bracketed_ipv6_host() {
+    for ok in [
+        "http://[::1]/",
+        "https://[::1]:7420",
+        "https://[::1]:7420/#/display-pair",
+        "https://[2001:db8::1]/x?q=1",
+        "http://[::ffff:192.0.2.1]:8080/",
+        "HTTP://[FE80::1]",
+    ] {
+        assert_eq!(url(ok).unwrap(), ok);
+    }
+    for bad in [
+        // Not an address.
+        "http://[::g]/",
+        "http://[]/",
+        "http://[1.2.3.4]/",
+        "http://[example.com]/",
+        // A zone id is refused.
+        "http://[fe80::1%eth0]/",
+        // The bracket is not closed, or text follows it.
+        "http://[::1/",
+        "http://[::1]x/",
+        "http://[::1]:/",
+        "http://[::1]:0/",
+        "http://[::1]:99999/",
+        "http://[::1]:80a/",
+        "http://[::1]::80/",
+        // A bare IPv6 address has no brackets.
+        "http://::1/",
+        "http://2001:db8::1/",
+        // No user info.
+        "http://user@[::1]/",
+    ] {
+        assert_eq!(url(bad).unwrap_err().code, "invalid_params", "{bad}");
+    }
 }
 
 #[test]

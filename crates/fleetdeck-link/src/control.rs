@@ -110,6 +110,12 @@ pub struct ChannelParams {
     pub peer_role: Role,
     pub peer: Fingerprint,
     pub negotiated: Negotiated,
+    /// The `desktop_epoch` that this node sent in its `Hello` of this
+    /// connection (a station; R13 §5G item 1).
+    pub local_desktop_epoch: Option<String>,
+    /// The `desktop_epoch` that the peer sent in its `Hello` of this
+    /// connection. A deck puts it into the authority of a desktop action.
+    pub peer_desktop_epoch: Option<String>,
     pub grants: Arc<dyn GrantSource>,
     pub config: ControlConfig,
 }

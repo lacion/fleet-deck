@@ -61,6 +61,8 @@ fn side(ws: Raw, local: Role, features: &[&str], config: ControlConfig) -> Side 
         peer_role: other(local),
         peer,
         negotiated: negotiated(features),
+        local_desktop_epoch: None,
+        peer_desktop_epoch: None,
         grants: Arc::clone(&grants) as Arc<dyn GrantSource>,
         config,
     };

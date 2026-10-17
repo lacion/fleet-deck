@@ -41,6 +41,20 @@ pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; 
     img-src 'self' data:; font-src 'self'; frame-src 'self'; connect-src 'self'; manifest-src 'self'; \
     base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
+/// The content security policy of the display document (R13 §5E item 3a, §5F
+/// item 3): the board policy, with a `frame-src` that allows only the display
+/// artifact path. CSP has no path-only source, so the path follows the
+/// origin of the request. `frame_origin` is `https://host[:port]` and must
+/// come from an allowed board origin; `None` gives `frame-src 'none'`.
+#[must_use]
+pub fn display_csp(frame_origin: Option<&str>) -> String {
+    let frame = match frame_origin {
+        Some(origin) => format!("frame-src {origin}/api/displays/self/artifact/"),
+        None => "frame-src 'none'".to_owned(),
+    };
+    CSP.replace("frame-src 'self'", &frame)
+}
+
 /// The text of a 404 when the deck has no board files.
 pub const NOT_BUILT: &str = "This deck has no board files. Build the board with \
     `bun run --cwd web build`, then build the deck again.";
@@ -61,6 +75,38 @@ impl BoardAssets {
     }
 }
 
+impl BoardAssets {
+    /// The board `index.html` with the content security policy `csp` (the
+    /// display document). A deck without board files answers the plain 404.
+    pub fn index_with_csp(&self, csp: &str) -> Response {
+        let Ok(csp) = HeaderValue::from_str(csp) else {
+            return with_headers(
+                StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                "no-store",
+            );
+        };
+        match self.get("index.html") {
+            Some(data) => {
+                let response = (
+                    [(header::CONTENT_TYPE, content_type("index.html"))],
+                    Body::from(data),
+                )
+                    .into_response();
+                with_policy(response, "no-cache", csp)
+            }
+            None => with_headers(
+                (
+                    StatusCode::NOT_FOUND,
+                    [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                    NOT_BUILT,
+                )
+                    .into_response(),
+                "no-store",
+            ),
+        }
+    }
+}
+
 fn content_type(path: &str) -> &'static str {
     match path.rsplit_once('.').map(|(_, ext)| ext) {
         Some("html") => "text/html; charset=utf-8",
@@ -77,12 +123,13 @@ fn content_type(path: &str) -> &'static str {
     }
 }
 
-fn with_headers(mut response: Response, cache: &'static str) -> Response {
+fn with_headers(response: Response, cache: &'static str) -> Response {
+    with_policy(response, cache, HeaderValue::from_static(CSP))
+}
+
+fn with_policy(mut response: Response, cache: &'static str, csp: HeaderValue) -> Response {
     let h = response.headers_mut();
-    h.insert(
-        header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(CSP),
-    );
+    h.insert(header::CONTENT_SECURITY_POLICY, csp);
     h.insert(
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
@@ -163,6 +210,21 @@ mod tests {
         assert!(a.get("/etc/passwd").is_none());
         assert!(a.get("./index.html").is_none());
         assert!(BoardAssets::None.get("index.html").is_none());
+    }
+
+    #[test]
+    fn the_display_policy_changes_only_the_frame_source() {
+        let own = display_csp(Some("https://deck.example:7420"));
+        assert!(own.contains("frame-src https://deck.example:7420/api/displays/self/artifact/;"));
+        assert!(!own.contains("frame-src 'self'"));
+        let none = display_csp(None);
+        assert!(none.contains("frame-src 'none';"));
+        // Everything else is the board policy.
+        for policy in [&own, &none] {
+            assert!(policy.contains("script-src 'self'; style-src 'self';"));
+            assert!(policy.contains("frame-ancestors 'none'"));
+            assert!(policy.contains("connect-src 'self'"));
+        }
     }
 
     #[test]

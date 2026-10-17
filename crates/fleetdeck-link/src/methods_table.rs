@@ -615,11 +615,21 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::DESKTOP),
         false,
     ),
+    // The deck authorizes each action: the row needs `desktop_authority.v1`
+    // (R13 §5E item 1).
     m(
         "desktop.act",
         DeckToStation,
         Scope::Drive,
-        Some(feature::DESKTOP),
+        Some(feature::DESKTOP_AUTHORITY),
+        false,
+    ),
+    // Protected change statistics and patches for a wall display (R13 §5D).
+    m(
+        "files.display_changes",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::DISPLAY_CHANGES),
         false,
     ),
     m("approval.answer", DeckToStation, Scope::Approve, None, true),

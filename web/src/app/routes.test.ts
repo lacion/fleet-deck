@@ -124,6 +124,22 @@ describe('routes', () => {
     expect(parseHash('/s/a/b')).toEqual(session('a', 'b'));
   });
 
+  test('the Displays tab and the wall artifact version parse and format back (R13 P2c)', () => {
+    const tab: Route = { name: 'settings', tab: 'displays' };
+    expect(formatHash(tab)).toBe('#/settings/displays');
+    expect(parseHash('#/settings/displays')).toEqual(tab);
+    const wall = parseHash('#/wall?mode=artifact&artifact=st/ar&version=3');
+    expect(wall).toMatchObject({
+      mode: 'artifact',
+      artifact: { station: 'st', id: 'ar', version: 3 },
+    });
+    expect(formatHash(wall)).toContain('version=3');
+    expect(parseHash('#/wall?mode=artifact&artifact=st/ar&version=0')).toMatchObject({
+      artifact: { station: 'st', id: 'ar' },
+    });
+    expect(parseHash('#/wall?mode=artifact&artifact=st/ar')).not.toHaveProperty('artifact.version');
+  });
+
   test('the settings routes parse and format back (DL-172, DL-173)', () => {
     expect(parseHash('#/settings')).toEqual({ name: 'settings', tab: 'deck' });
     expect(formatHash({ name: 'settings', tab: 'deck' })).toBe('#/settings');

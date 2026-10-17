@@ -9,12 +9,15 @@ use std::time::Duration;
 
 use fleetdeck_core::ChildEnv;
 use fleetdeck_core::identity::Identity;
+use fleetdeck_link::desktop_authority::issue;
 use fleetdeck_link::hello::LocalHello;
 use fleetdeck_link::methods::{authorize, code, method};
 use fleetdeck_link::node::{self, NodeConfig};
 use fleetdeck_link::tls::Role;
 use fleetdeck_link::{Epochs, Grants, LinkListener, LiveLink};
 use fleetdeck_proto::IncarnationId;
+use fleetdeck_proto::desktop::DesktopAction;
+use fleetdeck_proto::desktop_authority::with_authority;
 use fleetdeck_proto::link::{Outcome, Scope, StationInfo};
 use fleetdeck_proto::version::{Negotiated, PROTO_MAX, feature};
 use fleetdeck_station::desktop::{self, Desktop};
@@ -43,16 +46,23 @@ fn the_method_rows_are_deck_to_station_rows_of_the_desktop_feature() {
     assert!(!info.mutating);
     let act = method("desktop.act").unwrap();
     assert_eq!(act.scope, Scope::Drive);
-    assert_eq!(act.feature, Some(feature::DESKTOP));
+    // The deck authorizes each action (R13 §5E item 1).
+    assert_eq!(act.feature, Some(feature::DESKTOP_AUTHORITY));
     assert!(!act.mutating);
     assert_eq!(feature::DESKTOP, "desktop.v1");
+    assert_eq!(feature::DESKTOP_AUTHORITY, "desktop_authority.v1");
     assert!(feature::ALL.contains(&feature::DESKTOP));
+    assert!(feature::ALL.contains(&feature::DESKTOP_AUTHORITY));
 }
 
 #[test]
 fn the_methods_need_the_feature_and_the_scope() {
     let without = negotiated(&[feature::CONTROL]);
-    let with = negotiated(&[feature::CONTROL, feature::DESKTOP]);
+    let with = negotiated(&[
+        feature::CONTROL,
+        feature::DESKTOP,
+        feature::DESKTOP_AUTHORITY,
+    ]);
     let read: BTreeSet<Scope> = [Scope::Read].into_iter().collect();
     let drive: BTreeSet<Scope> = [Scope::Read, Scope::Drive].into_iter().collect();
     let call = |name: &str, n: &Negotiated, scopes: &BTreeSet<Scope>| {
@@ -200,8 +210,12 @@ async fn a_station_without_a_desktop_refuses_the_methods_and_has_no_desktop_fiel
     let (code, message) = refused(call(&deck, "desktop.info", json!({})).await);
     assert_eq!(code, "unsupported");
     assert_eq!(message, "This station has no desktop.");
-    let (code, _) = refused(call(&deck, "desktop.act", json!({"action": "screen_lock"})).await);
-    assert_eq!(code, "unsupported");
+    // A `desktop.act` without a valid authority is refused first, also on a
+    // station without a desktop (R13 §5E item 1, DL-230).
+    let (code, message) =
+        refused(call(&deck, "desktop.act", json!({"action": "screen_lock"})).await);
+    assert_eq!(code, "forbidden");
+    assert_eq!(message, "The deck did not authorize this desktop action.");
     // `station.info` carries no `desktop` field.
     let Outcome::Ok(raw) = call(&deck, "station.info", json!({})).await else {
         panic!("station.info failed");
@@ -225,4 +239,100 @@ async fn a_bad_action_is_invalid_params() {
         let (code, _) = refused(call(&deck, "desktop.act", params.clone()).await);
         assert_eq!(code, "invalid_params", "{params}");
     }
+}
+
+/// What the deck sends for `action` on `deck`: the authority of this link.
+fn authorized(f: &Fixture, deck: &LiveLink, action: &DesktopAction, n: u64) -> Value {
+    let node = f.ctx.node.identity.fingerprint().to_string();
+    let epoch = deck
+        .control
+        .params()
+        .peer_desktop_epoch
+        .clone()
+        .expect("the station sent a desktop epoch");
+    let now = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap();
+    let authority = issue(action, &node, format!("{n:026}"), epoch, now, None);
+    with_authority(action, &authority)
+}
+
+#[tokio::test]
+async fn an_action_needs_the_authority_of_this_connection() {
+    let _turn = ONE_AT_A_TIME.lock().await;
+    let mut f = fixture().await;
+    let deck = f.connect().await;
+    let action = DesktopAction::ScreenLock;
+    // A valid authority is admitted; this station has no desktop, so the
+    // action itself stops there.
+    let (code, message) =
+        refused(call(&deck, "desktop.act", authorized(&f, &deck, &action, 1)).await);
+    assert_eq!(code, "unsupported");
+    assert_eq!(message, "This station has no desktop.");
+    // The same id is refused: one use for the connection epoch.
+    let (code, message) =
+        refused(call(&deck, "desktop.act", authorized(&f, &deck, &action, 1)).await);
+    assert_eq!(code, "forbidden");
+    assert_eq!(message, "The deck did not authorize this desktop action.");
+    // An authority of another epoch, of another station, or for another
+    // action is refused.
+    let mut wrong_epoch = authorized(&f, &deck, &action, 2);
+    wrong_epoch["authority"]["desktop_epoch"] = json!("ee".repeat(16));
+    let mut wrong_station = authorized(&f, &deck, &action, 3);
+    wrong_station["authority"]["action_hash"] = json!(
+        fleetdeck_link::desktop_authority::action_hash(&action, "other-station")
+    );
+    let mut wrong_action = authorized(&f, &deck, &DesktopAction::ScreenDnd { on: true }, 4);
+    wrong_action["action"] = json!("screen_lock");
+    wrong_action.as_object_mut().unwrap().remove("on");
+    for params in [wrong_epoch, wrong_station, wrong_action] {
+        let (code, message) = refused(call(&deck, "desktop.act", params.clone()).await);
+        assert_eq!(code, "forbidden", "{params}");
+        assert_eq!(message, "The deck did not authorize this desktop action.");
+    }
+    // A clock far from the station clock is refused with its own text.
+    let mut skewed = authorized(&f, &deck, &action, 5);
+    skewed["authority"]["deck_now_ms"] = json!(1);
+    let (code, message) = refused(call(&deck, "desktop.act", skewed).await);
+    assert_eq!(code, "forbidden");
+    assert_eq!(
+        message,
+        "The station and the deck clocks differ too much for a desktop action."
+    );
+    // A malformed authority is a parse error, not an authorization.
+    let (code, _) = refused(
+        call(
+            &deck,
+            "desktop.act",
+            json!({"action": "screen_lock", "authority": {"action_id": 1}}),
+        )
+        .await,
+    );
+    assert_eq!(code, "invalid_params");
+    // A new connection has a new epoch: the old authority does not work.
+    let old = authorized(&f, &deck, &action, 6);
+    let again = f.connect().await;
+    assert_ne!(
+        again.control.params().peer_desktop_epoch,
+        deck.control.params().peer_desktop_epoch
+    );
+    let (code, _) = refused(call(&again, "desktop.act", old).await);
+    assert_eq!(code, "forbidden");
+}
+
+#[tokio::test]
+async fn desktop_info_takes_fresh() {
+    let _turn = ONE_AT_A_TIME.lock().await;
+    let mut f = fixture().await;
+    let deck = f.connect().await;
+    // Without a desktop, a fresh read is `unsupported` like the cached one.
+    let (code, message) = refused(call(&deck, "desktop.info", json!({"fresh": true})).await);
+    assert_eq!(code, "unsupported");
+    assert_eq!(message, "This station has no desktop.");
+    let (code, _) = refused(call(&deck, "desktop.info", json!({"other": 1})).await);
+    assert_eq!(code, "invalid_params");
 }

@@ -43,6 +43,7 @@ fn view(name: &str, live: u64) -> StationView {
             fleet_git: None,
         }),
         info_at: None,
+        display_resources: None,
     }
 }
 

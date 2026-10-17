@@ -17,6 +17,7 @@ use fleetdeck_proto::display::{DisplayBinding, DisplayView};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::auth::{random_token, secret_hash};
+use super::display_directive_schema::invalidate_directive;
 use super::{DeckError, DeckStore, Result, call};
 
 /// A display session ends after 30 idle days.
@@ -30,7 +31,7 @@ pub const MAX_DISPLAY_NAME: usize = 63;
 /// The most stations in a ceiling.
 pub const MAX_CEILING: usize = 64;
 
-const SESSION_PREFIX: &str = "fdisp1_";
+pub(super) const SESSION_PREFIX: &str = "fdisp1_";
 const LINK_PREFIX: &str = "fddlink1_";
 
 /// The V24 migration (R13 §5): the display tables. To reverse it, drop the
@@ -101,6 +102,12 @@ pub struct DisplayRecord {
     pub binding: Option<DisplayBinding>,
     pub created_at: i64,
     pub last_seen: Option<i64>,
+    /// Fences link redemption, pairing approval, pairing claim and session
+    /// issue (R13 §5E item 2). A replacement and a revoke move it up.
+    pub auth_generation: i64,
+    /// The checked operation revision of a `wall.open` launch and of the
+    /// binding (R13 §6D items 1 and 2).
+    pub binding_revision: i64,
 }
 
 impl DisplayRecord {
@@ -137,6 +144,18 @@ pub struct DisplayChange {
     pub show_diffs: Option<bool>,
     pub wake_on_needs_you: Option<bool>,
     pub quiet_hours: Option<Option<String>>,
+}
+
+/// Deletes every session, every unused link and every pairing of a display.
+/// The caller holds the transaction.
+pub(super) fn delete_logins(conn: &Connection, display_id: &str) -> Result<()> {
+    for table in ["display_sessions", "display_links", "display_pairings"] {
+        conn.execute(
+            &format!("DELETE FROM {table} WHERE display_id = ?1"),
+            [display_id],
+        )?;
+    }
+    Ok(())
 }
 
 fn invalid(message: &str) -> DeckError {
@@ -223,13 +242,15 @@ fn row_record(r: &rusqlite::Row<'_>) -> rusqlite::Result<(DisplayRecord, String)
             binding,
             created_at: r.get(8)?,
             last_seen: r.get(9)?,
+            auth_generation: r.get(10)?,
+            binding_revision: r.get(11)?,
         },
         ceiling,
     ))
 }
 
 const COLUMNS: &str = "display_id, name, ceiling, show_diffs, wake_on_needs_you, quiet_hours,
-    binding_station, binding_monitor, created_at, last_seen";
+    binding_station, binding_monitor, created_at, last_seen, auth_generation, binding_revision";
 
 fn parse_ceiling(text: &str) -> Result<Vec<StationId>> {
     let ids: Vec<String> = serde_json::from_str(text)?;
@@ -279,6 +300,8 @@ fn touch_session(conn: &Connection, session_hash: &str, now: i64) -> Result<Opti
             "UPDATE display_sessions SET last_seen = ?2
              WHERE session_hash = ?1 AND expires_at > ?2 AND last_seen > ?3
                AND display_id IN (SELECT display_id FROM displays WHERE revoked_at IS NULL)
+               AND auth_generation = (SELECT auth_generation FROM displays
+                                      WHERE displays.display_id = display_sessions.display_id)
              RETURNING display_id",
             params![session_hash, now, now - DISPLAY_IDLE_MS],
             |r| r.get(0),
@@ -414,6 +437,11 @@ impl DeckStore {
                     quiet,
                 ],
             )?;
+            // A ceiling change deletes the stored directive: the display
+            // returns to `mission` (R13 §5C item 2).
+            if change.ceiling.as_ref().is_some_and(|c| *c != old.ceiling) {
+                invalidate_directive(&tx, &display_id)?;
+            }
             let record = load(&tx, &display_id)?;
             tx.commit()?;
             Ok(record)
@@ -437,16 +465,16 @@ impl DeckStore {
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let n = tx.execute(
-                "UPDATE displays SET revoked_at = ?2 WHERE display_id = ?1 AND revoked_at IS NULL",
+                "UPDATE displays SET revoked_at = ?2, auth_generation = auth_generation + 1,
+                     binding_revision = binding_revision + 1,
+                     binding_station = NULL, binding_monitor = NULL
+                 WHERE display_id = ?1 AND revoked_at IS NULL",
                 params![display_id, now],
             )?;
             if n == 1 {
-                for table in ["display_sessions", "display_links", "display_pairings"] {
-                    tx.execute(
-                        &format!("DELETE FROM {table} WHERE display_id = ?1"),
-                        [&display_id],
-                    )?;
-                }
+                // A revoke does what a replacement does (R13 §5E item 2).
+                delete_logins(&tx, &display_id)?;
+                invalidate_directive(&tx, &display_id)?;
             }
             tx.commit()?;
             Ok(n == 1)
@@ -486,64 +514,6 @@ impl DeckStore {
         Ok((record, Secret::new(token), expires_at))
     }
 
-    /// Uses a display link: the display id once for a valid link, `None`
-    /// after that (or for a display that is revoked).
-    ///
-    /// # Errors
-    /// A database error.
-    pub async fn redeem_display_link(&self, token: &Secret<String>) -> Result<Option<String>> {
-        let hash = secret_hash(token.expose());
-        let now = self.now_ms();
-        call(&self.inner.db, move |conn| {
-            let tx = conn.transaction()?;
-            let id: Option<String> = tx
-                .query_row(
-                    "DELETE FROM display_links WHERE token_hash = ?1 AND expires_at > ?2
-                     RETURNING display_id",
-                    params![hash, now],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            let live = match &id {
-                Some(id) => load(&tx, id)?.is_some(),
-                None => false,
-            };
-            tx.commit()?;
-            Ok(id.filter(|_| live))
-        })
-        .await
-    }
-
-    /// Starts a display session for a display. Returns the cookie value
-    /// (`fdisp1_…`, once) and the absolute expiry.
-    ///
-    /// # Errors
-    /// A database error.
-    pub async fn create_display_session(
-        &self,
-        display_id: String,
-    ) -> Result<(Secret<String>, i64)> {
-        let cookie = format!("{SESSION_PREFIX}{}", random_token()?);
-        let hash = secret_hash(&cookie);
-        let now = self.now_ms();
-        let expires_at = now + DISPLAY_MAX_MS;
-        call(&self.inner.db, move |conn| {
-            conn.execute(
-                "DELETE FROM display_sessions WHERE expires_at <= ?1 OR last_seen <= ?2",
-                params![now, now - DISPLAY_IDLE_MS],
-            )?;
-            conn.execute(
-                "INSERT INTO display_sessions
-                 (session_hash, display_id, created_at, last_seen, expires_at)
-                 VALUES (?1, ?2, ?3, ?3, ?4)",
-                params![hash, display_id, now, expires_at],
-            )?;
-            Ok(())
-        })
-        .await?;
-        Ok((Secret::new(cookie), expires_at))
-    }
-
     /// The display login of a cookie value; refreshes the idle time of the
     /// session and the last use of the display.
     ///
@@ -564,6 +534,20 @@ impl DeckStore {
         let hash = login.session_hash.clone();
         let now = self.now_ms();
         call(&self.inner.db, move |conn| login_of(conn, &hash, now)).await
+    }
+
+    /// True while the display session is alive (not expired, not idle, the
+    /// display not revoked, the same `auth_generation`). Like a login read, a
+    /// use refreshes `last_seen`.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn display_session_alive(&self, session_hash: String) -> Result<bool> {
+        let now = self.now_ms();
+        call(&self.inner.db, move |conn| {
+            session_alive(conn, &session_hash, now)
+        })
+        .await
     }
 
     /// The absolute expiry of a display session.

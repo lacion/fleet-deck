@@ -345,19 +345,28 @@ fn settled(coord: &Coord, key: &str, args: &Value) -> common::fleet_git_coord::T
     }
 }
 
-// A coordinator on alpha moves a session of bravo to charlie with `manage`. A
-// grant over alpha and bravo only refuses charlie (`target_excluded`) and
-// starts no move.
-#[test]
-fn a_coordinator_moves_a_session_inside_its_grant_only() {
+/// A rig with alpha, bravo and charlie, a coordinator on alpha whose grant
+/// (`inspect`, `manage`) covers the stations `targets`, and a pushed session
+/// on bravo that has a native transcript. The start request names the
+/// target stations (grant target stations design §2.1). Returns the session,
+/// its id and the arguments of `move_session` to charlie.
+fn coord_move_world(
+    targets: &[usize],
+) -> (
+    Rig,
+    tempfile::TempDir,
+    Coord,
+    fleetdeck_proto::SessionSummary,
+    String,
+    Value,
+) {
     let dir = tempfile::tempdir().unwrap();
     let names = ["alpha", "bravo", "charlie"];
-    let mut rig = Rig::with(&names, coord_options(dir.path(), &names));
+    let rig = Rig::with(&names, coord_options(dir.path(), &names));
     let (project, folders) = project_with_homes(&rig, 3, json!({ "push": "on_turn" }));
     // The coordinator starts before any other session: every session of the
     // rig writes its own credential to the same file.
-    let coord = Coord::start(&rig, dir.path(), 0, &["inspect", "manage"]);
-    coord.widen(&mut rig, &[0, 1]);
+    let coord = Coord::start(&rig, dir.path(), 0, &["inspect", "manage"], targets);
     let (s, _oid) = pushed_session(&rig, 1, &folders[1], &project, "b.txt");
     wait_deck_knows(&rig, &[&s]);
     let id = id_of(&s).to_owned();
@@ -368,7 +377,14 @@ fn a_coordinator_moves_a_session_inside_its_grant_only() {
         "session_id": id,
         "to_station": rig.station_id(2),
     });
+    (rig, dir, coord, s, id, args)
+}
 
+// A grant over alpha and bravo only refuses charlie (`target_excluded`) and
+// starts no move.
+#[test]
+fn a_coordinator_refuses_a_target_outside_its_grant() {
+    let (rig, _dir, coord, _s, id, args) = coord_move_world(&[0, 1]);
     let refused = settled(&coord, "move-outside", &args);
     assert!(refused.is_error, "{}", refused.text);
     // The tool text keeps the reject class only; the deck test of the move
@@ -376,8 +392,13 @@ fn a_coordinator_moves_a_session_inside_its_grant_only() {
     assert!(refused.text.starts_with("forbidden:"), "{}", refused.text);
     assert!(move_view(&rig, 1, &id).is_none(), "no move was started");
     assert!(rig.summary(1, &id).moved_to.is_none());
+}
 
-    coord.widen(&mut rig, &[0, 1, 2]);
+// A coordinator on alpha moves a session of bravo to charlie with `manage`:
+// the grant covers all three stations.
+#[test]
+fn a_coordinator_moves_a_session_inside_its_grant() {
+    let (rig, _dir, coord, s, id, args) = coord_move_world(&[0, 1, 2]);
     let accepted = settled(&coord, "move-inside", &args);
     assert!(!accepted.is_error, "{}", accepted.text);
     let done = common::fleet_git_move::wait_move(&rig, 1, &id, "done", |m| m["state"] == "done");

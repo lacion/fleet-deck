@@ -152,6 +152,14 @@ pub mod feature {
     /// events `session.moved`, `session.move_in`, `session.move_undone` (Fleet
     /// Git phase 4, ADR-009).
     pub const FLEET_GIT_MOVE: &str = "fleet_git.move.v1";
+    /// `desktop.act` with an `authority` param: the deck authorizes each
+    /// desktop action, the station checks it right before the first side
+    /// effect (R13 §5E item 1, §5F, §5G).
+    pub const DESKTOP_AUTHORITY: &str = "desktop_authority.v1";
+
+    /// `files.display_changes`: protected change statistics and patches for
+    /// a wall display (R13 §5D item 13).
+    pub const DISPLAY_CHANGES: &str = "display_changes.v1";
 
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
@@ -193,6 +201,8 @@ pub mod feature {
         FLEET_GIT_LAND,
         FLEET_GIT_BRANCHES,
         FLEET_GIT_MOVE,
+        DESKTOP_AUTHORITY,
+        DISPLAY_CHANGES,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

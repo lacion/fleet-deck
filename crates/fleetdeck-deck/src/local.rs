@@ -121,6 +121,7 @@ pub fn station_view(st: &StationRecord, store: &DeckStore) -> StationView {
         cursor: st.cursor,
         info_at: info.as_ref().map(|(_, at)| *at),
         info: info.map(|(i, _)| i),
+        display_resources: None,
     }
 }
 

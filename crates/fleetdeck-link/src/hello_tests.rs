@@ -286,3 +286,62 @@ fn a_stale_epoch_close_names_the_lowest_accepted_epoch() {
         }
     ));
 }
+
+#[test]
+fn only_a_station_control_hello_carries_a_well_formed_desktop_epoch() {
+    let t = two();
+    let (dl, dh, sl, mut sh) = hellos(&t);
+    assert!(sl.sends_desktop_epoch(Channel::Control));
+    assert!(!sl.sends_desktop_epoch(Channel::Data));
+    assert!(!dl.sends_desktop_epoch(Channel::Control));
+    let key = t.station.public_key();
+    // Absent: fine (an older station).
+    assert!(at_deck(&dl, &dh, &sh, &key, Channel::Control).is_ok());
+    sh.desktop_epoch = Some("ab".repeat(16));
+    assert!(at_deck(&dl, &dh, &sh, &key, Channel::Control).is_ok());
+    for bad in [
+        "",
+        "ab",
+        &"AB".repeat(16),
+        &"zz".repeat(16),
+        &"ab".repeat(17),
+    ] {
+        sh.desktop_epoch = Some(bad.to_owned());
+        assert!(
+            matches!(
+                at_deck(&dl, &dh, &sh, &key, Channel::Control),
+                Err(HandshakeError::BadHello(_))
+            ),
+            "{bad}"
+        );
+    }
+    // A deck never sends one.
+    let mut dh2 = dh.clone();
+    dh2.desktop_epoch = Some("ab".repeat(16));
+    let r = negotiate(
+        &sl,
+        &sh_without_epoch(&sh),
+        &dh2,
+        &t.deck.public_key(),
+        Channel::Control,
+        Side::Dialer,
+    );
+    assert!(matches!(r, Err(HandshakeError::BadHello(_))));
+}
+
+fn sh_without_epoch(h: &Hello) -> Hello {
+    Hello {
+        desktop_epoch: None,
+        ..h.clone()
+    }
+}
+
+#[test]
+fn a_hello_without_a_desktop_epoch_parses_and_omits_the_field() {
+    let t = two();
+    let (_, _, _, sh) = hellos(&t);
+    let text = serde_json::to_string(&sh).unwrap();
+    assert!(!text.contains("desktop_epoch"));
+    let back: Hello = serde_json::from_str(&text).unwrap();
+    assert_eq!(back.desktop_epoch, None);
+}

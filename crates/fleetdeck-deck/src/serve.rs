@@ -55,6 +55,43 @@ pub enum ServeError {
     Board(crate::http::BindError<TlsError>),
 }
 
+/// The time between two sweeps of the coordinator grants.
+pub const GRANT_SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Starts the task that ends every grant past its lifetime or idle and
+/// rebuilds the derived `coordinate` scopes (grant stations design §2.3 item
+/// 7). The link cache follows for each station that changed. It stops when
+/// `shutdown` turns true.
+pub fn spawn_grant_sweep(
+    store: DeckStore,
+    peers: Arc<crate::peers::DeckPeers>,
+    every: std::time::Duration,
+    mut shutdown: watch::Receiver<bool>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                _ = tick.tick() => {
+                    match store.sweep_grants().await {
+                        Ok(changed) => tracing::debug!(stations = changed.len(), "the grant sweep ran"),
+                        Err(e) => tracing::warn!(error = %e, "the grant sweep failed"),
+                    }
+                    if let Err(e) = peers.refresh_changed().await {
+                        tracing::warn!(error = %e, "refresh of the link scopes");
+                    }
+                }
+                changed = shutdown.changed() => {
+                    if changed.is_err() || *shutdown.borrow() {
+                        return;
+                    }
+                }
+            }
+        }
+    })
+}
+
 /// A test hook of the board certificate (see [`StartOptions::certificate_check`]).
 pub type CertificateCheck = fn(&[SocketAddr]) -> Result<(), TlsError>;
 
@@ -110,6 +147,8 @@ pub struct RunningDeck {
     server: tokio::task::JoinHandle<()>,
     /// The automations scheduler (R5, DL-168).
     scheduler: tokio::task::JoinHandle<()>,
+    /// The wake rule of the wall (R13 §6.6).
+    wake: tokio::task::JoinHandle<()>,
     /// The audit log prune (NV-11).
     maintenance: tokio::task::JoinHandle<()>,
     /// The sender and poller of the home attempts (FG-5).
@@ -118,6 +157,8 @@ pub struct RunningDeck {
     land: [tokio::task::JoinHandle<()>; 4],
     /// The move task (FG-9).
     moves: tokio::task::JoinHandle<()>,
+    /// The sweep of the grants that ended (grant stations design §2.3).
+    grant_sweep: tokio::task::JoinHandle<()>,
     /// The Tailscale certificate of the board (DL-190).
     cert: crate::cert_task::CertTask,
     shutdown: watch::Sender<bool>,
@@ -324,6 +365,7 @@ impl RunningDeck {
             "deck ready"
         );
         let cert_live = live_cell.clone();
+        let wake_live = live_cell.clone();
         // The same origins and resolver as the board's endpoints.
         let local_endpoints = Arc::new(Endpoints::new(
             Origins::new(&board.addrs, tailnet.as_deref()).list(),
@@ -340,6 +382,12 @@ impl RunningDeck {
         });
         let server = tokio::spawn(local::serve(listener, local, rx.clone()));
         let maintenance = crate::maintenance::spawn(store.clone(), rx.clone());
+        let grant_sweep = spawn_grant_sweep(
+            store.clone(),
+            Arc::clone(&node.link().peers),
+            GRANT_SWEEP_EVERY,
+            rx.clone(),
+        );
         let cert = crate::cert_task::spawn(
             crate::cert_task::CertDeps {
                 live: cert_live.clone(),
@@ -400,6 +448,12 @@ impl RunningDeck {
             crate::fleet_git_move::MoveOptions::PRODUCTION,
             rx.clone(),
         ));
+        let wake = crate::wake::spawn(
+            store.clone(),
+            Arc::clone(node.link()),
+            wake_live,
+            rx.clone(),
+        );
         let scheduler = crate::scheduler::spawn(store.clone(), Arc::clone(node.link()), rx);
         Ok(Self {
             node,
@@ -410,10 +464,12 @@ impl RunningDeck {
             tailnet_start,
             server,
             scheduler,
+            wake,
             maintenance,
             homes,
             land,
             moves,
+            grant_sweep,
             cert,
             shutdown,
             socket,
@@ -441,12 +497,14 @@ impl RunningDeck {
         let _ = self.shutdown.send(true);
         let _ = self.server.await;
         let _ = self.scheduler.await;
+        let _ = self.wake.await;
         let _ = self.maintenance.await;
         let _ = self.homes.await;
         for task in self.land {
             let _ = task.await;
         }
         let _ = self.moves.await;
+        let _ = self.grant_sweep.await;
         self.cert.join().await;
         self.board.join().await;
         self.node.shutdown();

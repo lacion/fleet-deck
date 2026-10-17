@@ -32,9 +32,18 @@ use crate::capability::{Capabilities, Operation, Unsupported};
 use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
 use crate::conflicts::FileConflict;
 use crate::desktop as dk;
+use crate::desktop_authority::DesktopAuthority;
 use crate::display::{
     DisplayBinding, DisplayLinkMade, DisplayList, DisplaySelf, DisplayView, PairingPoll,
     PairingStarted, PairingState, PendingPairing,
+};
+use crate::display_changes::{DisplayChanges, DisplayChangesQuery, DisplayFileChange};
+use crate::display_directive::{
+    ArtifactRef, DirectiveBody, DirectiveFilter, DirectiveMode, DirectiveView, SessionRef,
+};
+use crate::display_event::{
+    DisplayDisk, DisplayEvent, DisplayItem, DisplayRequestState, DisplayResources,
+    DisplaySessionLoad,
 };
 use crate::event::{Event, EventEnvelope};
 use crate::execution::{ExecutionCheck, ExecutionCheckQuery, ProcessInfo};
@@ -141,6 +150,9 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         dk::Urgency::export_all(&cfg),
         dk::DesktopAction::export_all(&cfg),
         dk::DesktopActResult::export_all(&cfg),
+        dk::DesktopActBody::export_all(&cfg),
+        dk::DesktopInfoQuery::export_all(&cfg),
+        DesktopAuthority::export_all(&cfg),
         StationResources::export_all(&cfg),
         DiskSpace::export_all(&cfg),
         MemoryUse::export_all(&cfg),
@@ -237,6 +249,21 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         DeckArtifactDetail::export_all(&cfg),
         DisplayView::export_all(&cfg),
         DisplayBinding::export_all(&cfg),
+        SessionRef::export_all(&cfg),
+        ArtifactRef::export_all(&cfg),
+        DirectiveFilter::export_all(&cfg),
+        DirectiveMode::export_all(&cfg),
+        DirectiveBody::export_all(&cfg),
+        DirectiveView::export_all(&cfg),
+        DisplayChangesQuery::export_all(&cfg),
+        DisplayFileChange::export_all(&cfg),
+        DisplayChanges::export_all(&cfg),
+        DisplayRequestState::export_all(&cfg),
+        DisplayItem::export_all(&cfg),
+        DisplayEvent::export_all(&cfg),
+        DisplayDisk::export_all(&cfg),
+        DisplaySessionLoad::export_all(&cfg),
+        DisplayResources::export_all(&cfg),
         PendingPairing::export_all(&cfg),
         DisplayList::export_all(&cfg),
         PairingStarted::export_all(&cfg),

@@ -391,6 +391,8 @@ async fn a_worker_without_a_grant_asks_the_coordinator_that_assigned_its_task() 
 #[tokio::test]
 async fn a_worker_without_a_task_of_a_coordinator_gets_no_coordinator() {
     let w = world().await;
+    // A grant in effect covers the station (design §2.3a).
+    grant(&w, &[GrantClass::Mail], 0, &[]).await;
     let r = decide(&w, from_worker(&w, &plain_worker(), "q0", ask_op("hi?"))).await;
     assert_eq!(code(&r), Some(RejectCode::InvalidState));
     assert_eq!(
@@ -458,6 +460,12 @@ async fn the_eleventh_question_of_a_session_in_one_hour_is_rate_limited() {
     let r = decide(&w, from_worker(&w, &plain_worker(), "q10", ask_op("hi?"))).await;
     assert!(reason(&r).starts_with("rate_limited"), "{r:?}");
     assert_eq!(w.s.mails(20).await.unwrap().len(), 10);
+    // A grant that stays in effect through the window covers the station.
+    grant_with(&w, &[GrantClass::Mail], 0, &[], |g| {
+        g.session_id = "coord-2".into();
+        g.idle_ttl_ms = crate::store::grants::MAX_IDLE_TTL_MS;
+    })
+    .await;
     // Another session has its own count.
     let mut other = from_worker(&w, &plain_worker(), "q-other", ask_op("hi?"));
     other.call.caller = "coord-1".into();

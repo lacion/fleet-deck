@@ -21,6 +21,7 @@ import { BranchFields } from './BranchFields';
 import { BrowseSessions } from './BrowseSessions';
 import { CloneAccess } from './CloneAccess';
 import { FleetControlFields } from './FleetControlFields';
+import { TargetStations } from './TargetStations';
 import {
   answerCapProblem,
   type FleetControl,
@@ -171,6 +172,8 @@ export function SpawnForm({
   const [batch, setBatch] = useState(false);
   const [coordinator, setCoordinator] = useState(false);
   const [fleet, setFleet] = useState<FleetControl>(NO_FLEET);
+  // The target stations of the coordinator grant, besides the session's own station.
+  const [pickedTargets, setPickedTargets] = useState<readonly string[]>([]);
   const { ask, node: elevationNode } = useFleetElevation(settingsEnv);
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<SpawnOutcome | null>(null);
@@ -279,6 +282,9 @@ export function SpawnForm({
       .finally(() => setChecking(false));
   };
   const fleetShown = showFleetFields(settingsEnv !== undefined, coordinator, importing);
+  const targetIds = pickedTargets.filter(
+    (id) => id !== stationId && stations.some((s) => s.station_id === id),
+  );
   const fleetBad = coordinator && fleetOn(fleet) && answerCapProblem(fleet) !== null;
   const cloneReady =
     place !== 'clone' || importId.trim() !== '' || (cloneUrl !== '' && cloneName.trim() !== '');
@@ -362,7 +368,7 @@ export function SpawnForm({
                 ? {
                     coordinator: {
                       grant_id: '',
-                      ...grantFields(fleet),
+                      ...grantFields(fleet, fleetShown ? targetIds : []),
                       idle_ttl_ms: 0,
                       expires_at: 0,
                       control_skill: { version: '', text: '' },
@@ -383,7 +389,10 @@ export function SpawnForm({
                 ? newBatchId()
                 : null;
             void (async () => {
-              const gate = await fleetElevation({ coordinator, importing, fleet }, ask);
+              const gate = await fleetElevation(
+                { coordinator, importing, fleet, targets: fleetShown ? targetIds : [] },
+                ask,
+              );
               if (!gate.ok) {
                 setOutcome({
                   ok: false,
@@ -692,13 +701,24 @@ export function SpawnForm({
                 checked={coordinator}
                 onChange={(event) => {
                   setCoordinator(event.target.checked);
-                  if (!event.target.checked) setFleet(NO_FLEET);
+                  if (!event.target.checked) {
+                    setFleet(NO_FLEET);
+                    setPickedTargets([]);
+                  }
                 }}
               />
               Coordinator: this session may read the fleet, send mail and drive the sessions it
               starts
             </label>
             {fleetShown ? <FleetControlFields fleet={fleet} onChange={setFleet} /> : null}
+            {fleetShown ? (
+              <TargetStations
+                stations={stations}
+                ownId={stationId}
+                picked={targetIds}
+                onChange={setPickedTargets}
+              />
+            ) : null}
             <label>
               Import CLI session id (optional)
               <input

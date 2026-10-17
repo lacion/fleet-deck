@@ -130,6 +130,8 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `fleet_git.land.v1` | `project.radar`, `session.land`, `fleet_git.land_status`, `fleet_git.land_abandon` and the event `session.land` (Fleet Git phase 3, ADR-009; the predictive conflict radar and the land flow) |
 | `fleet_git.branches.v1` | `project.branches`, `project.fetch` (Fleet Git phase 4, ADR-009; the branches of other stations in a project) |
 | `fleet_git.move.v1` | `session.move_out`, `session.move_export`, `session.move_prepare`, `session.move_in`, `session.move_finish`, `session.move_release`, `session.move_abort`, `session.move_discard`, `session.move_status`, `session.move_fail`, `session.move_undo`, the stream purposes `move-export:` and `move-import:`, and the events `session.moved`, `session.move_in`, `session.move_undone` (Fleet Git phase 4, ADR-009; move a session to another station) |
+| `desktop_authority.v1` | `desktop.act` with the `authority` param, and `Hello.desktop_epoch` (R13 §5E to §5G, DL-230; the deck authorizes each desktop action and the station checks it before the first side effect) |
+| `display_changes.v1` | `files.display_changes` (R13 §5D item 13, DL-222; protected change statistics and patches for a wall display) |
 | `pair_request.v1` | The pair-channel frames `pair_request`, `pair_pending`, `pair_approved` and `pair_resume` (DL-178, §10): a station asks a deck to pair without an invitation and the owner approves on the board |
 
 A method whose feature was not negotiated gets the error `feature_not_negotiated`. Behaviour depends on the negotiated features, not only on the version.
@@ -445,7 +447,8 @@ close             { reason, detail }
 | `session.shell_command` | deck → station | admin | `shell_command.v1` | yes |
 | `session.release_shell` | deck → station | admin | `shell_command.v1` | yes |
 | `desktop.info` | deck → station | read | `desktop.v1` | no |
-| `desktop.act` | deck → station | drive | `desktop.v1` | no |
+| `desktop.act` | deck → station | drive | `desktop_authority.v1` | no |
+| `files.display_changes` | deck → station | read | `display_changes.v1` | no |
 | `approval.answer` | deck → station | approve | — | yes |
 | `station.configure` | deck → station | admin | — | yes |
 | `link.rotate_key` | either → either | admin | — | yes |

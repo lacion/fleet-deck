@@ -247,8 +247,14 @@ async fn a_revoked_or_expired_grant_is_forbidden_in_the_decision_transaction_and
     .await;
     assert_eq!(code(&r), Some(RejectCode::Forbidden));
 
-    // Idle past its TTL: forbidden, and the grant is `expired` (renewable).
+    // Idle past its TTL: forbidden. Another grant in effect keeps the
+    // station covered, so the call itself expires the grant (renewable).
     let b = grant_with(&w, &mail_class, 0, &[], |g| g.idle_ttl_ms = 1000).await;
+    grant_with(&w, &mail_class, 0, &[], |g| {
+        g.session_id = "coord-2".into();
+        g.idle_ttl_ms = crate::store::grants::MAX_IDLE_TTL_MS;
+    })
+    .await;
     w.det.advance(Duration::from_secs(2));
     let r = decide(
         &w,
@@ -256,6 +262,10 @@ async fn a_revoked_or_expired_grant_is_forbidden_in_the_decision_transaction_and
     )
     .await;
     assert_eq!(code(&r), Some(RejectCode::Forbidden));
+    assert_eq!(
+        r.reject.unwrap().message,
+        "the coordinator grant expired after its idle time"
+    );
     let g = w.s.grant(b.grant_id.clone()).await.unwrap().unwrap();
     assert_eq!(g.state, GrantState::Expired);
     assert_eq!(w.s.coordinator_receipts().await.unwrap(), 0);

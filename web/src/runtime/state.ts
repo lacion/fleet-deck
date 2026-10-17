@@ -2,6 +2,7 @@ import type {
   BoardServerMessage,
   ChatMessage,
   DeckSession,
+  DisplayEvent,
   EventEnvelope,
   SessionKey,
   ShareRole,
@@ -31,6 +32,8 @@ export type Timeline = {
   incarnation: string | null;
   cursor: number;
   events: readonly EventEnvelope[];
+  /** The events of a wall display timeline (R13 §5D item 7); absent or empty for an owner. */
+  display?: readonly DisplayEvent[];
   freshness: Freshness;
   error: string | null;
   ready: boolean;
@@ -220,6 +223,31 @@ export function reduceMessage(state: RuntimeState, msg: BoardServerMessage): Run
             ...t,
             cursor,
             events: [...t.events, ...added].slice(-1000),
+          },
+        },
+      };
+    }
+    // Only a wall display gets this message (R13 §5D item 7). The cursor follows the
+    // `high_water` mark, so an event that the deck dropped is never asked for again.
+    case 'display_timeline_events': {
+      const key = sessionKey(msg);
+      const t = state.timelines[key];
+      if (!t?.ready) return state;
+      const added: DisplayEvent[] = [];
+      for (const event of msg.events) {
+        if (!Number.isSafeInteger(event.station_seq)) throw new Error('Invalid timeline envelope');
+        if (event.station_seq <= t.cursor) continue;
+        added.push(event);
+      }
+      if (!Number.isSafeInteger(msg.high_water)) throw new Error('Invalid timeline envelope');
+      return {
+        ...state,
+        timelines: {
+          ...state.timelines,
+          [key]: {
+            ...t,
+            cursor: Math.max(t.cursor, msg.high_water),
+            display: [...(t.display ?? []), ...added].slice(-1000),
           },
         },
       };

@@ -380,6 +380,7 @@ async fn a_coordinator_start_on_the_shim_host_binds_after_session_started() {
         },
         scope: GrantScope::Lineage,
         answer_cap: None,
+        stations: Vec::new(),
     }));
     rig.next += 1;
     let envelope = CommandEnvelope {

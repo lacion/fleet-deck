@@ -30,7 +30,7 @@ struct Legacy {
 
 /// Replaces `db` (the deck is down) by a V24 database: the tables of the
 /// current database that V24 has are copied (the pairing of the stations, the
-/// cards), and the legacy projects are added. The migrations V25 and V26 run
+/// cards), and the legacy projects are added. The migrations V26 and V27 run
 /// at the next deck start.
 fn write_v24(db: &Path, legacy: &[Legacy]) {
     let fresh = db.with_extension("v24");

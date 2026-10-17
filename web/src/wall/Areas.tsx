@@ -15,6 +15,8 @@ import type { ViewsActions } from '../runtime/views';
 import { Tile } from '../watch/WatchPage';
 import { refOf } from '../watch/tiles';
 import { keyOf, timelineOf } from './hooks';
+import { LoadMap } from './LoadMap';
+import { loadMap } from './loadCells';
 import { type Need, oneLine, wallSessions } from './model';
 import { QrCode } from './QrCode';
 import { answerUrl } from './qr';
@@ -114,9 +116,17 @@ export function TilesArea({
   );
 }
 
+type DiskLike = {
+  readonly total_bytes: number;
+  readonly free_bytes: number;
+  readonly label?: string;
+};
+
 function StationRow({ station }: { readonly station: StationView }) {
-  const r = station.info?.resources;
-  const fullest = r?.disks.reduce<(typeof r.disks)[number] | null>(
+  // A wall display gets `display_resources` (no disk label, no path) in place of `info`.
+  const r = station.info?.resources ?? station.display_resources;
+  const disks: readonly DiskLike[] = r?.disks ?? [];
+  const fullest = disks.reduce<DiskLike | null>(
     (best, d) =>
       best === null ||
       usedShare(d.total_bytes - d.free_bytes, d.total_bytes) >
@@ -141,7 +151,8 @@ function StationRow({ station }: { readonly station: StationView }) {
       )}
       {fullest == null ? null : (
         <span className="fd-wall-note">
-          Disk {fullest.label}: {gb(fullest.free_bytes)} free of {gb(fullest.total_bytes)}
+          Disk{fullest.label === undefined ? '' : ` ${fullest.label}`}: {gb(fullest.free_bytes)}{' '}
+          free of {gb(fullest.total_bytes)}
         </span>
       )}
     </li>
@@ -163,6 +174,7 @@ export function SideArea({
   const live = sessions.filter(
     (c) => c.status !== 'ended' && c.status !== 'lost' && c.status !== 'unreachable',
   );
+  const loads = loadMap(sessions, stations);
   const pulls = live
     .map((card) => ({ card, match: prOfSession(prs, projects, card) }))
     .filter((p) => p.match !== undefined);
@@ -205,6 +217,7 @@ export function SideArea({
           </ul>
         </div>
       )}
+      {loads.cells.length === 0 ? null : <LoadMap map={loads} />}
     </section>
   );
 }

@@ -18,6 +18,8 @@ import { ArtifactPane } from './ArtifactPane';
 import { NeedsArea, SideArea, StreamArea, TilesArea } from './Areas';
 import { type AutoState, initialAuto, nextAutoFocus } from './autofocus';
 import { ChatPane } from './ChatPane';
+import { DisplayArtifactPane } from './DisplayArtifactPane';
+import { DisplayChangesPane, type DisplayEnv } from './displayChanges';
 import { DiffPane } from './DiffPane';
 import { keyOf, timelineOf, useSize, useTimelines } from './hooks';
 import { asksOf, fleetSignature, needsList, stepMode, tileSessions, wallSessions } from './model';
@@ -30,6 +32,11 @@ type Props = {
   readonly navigate: Navigate;
   /** `people.member === null && people.self === 'owner'`. */
   readonly owner: boolean;
+  /**
+   * The calls of a wall display login (R13 P2c). With it the wall reads the display routes and
+   * never an owner route; without it and without `owner` the wall is denied.
+   */
+  readonly display?: DisplayEnv | undefined;
   readonly sessions: readonly DeckSession[];
   readonly stations: readonly StationView[];
   readonly freshness: Freshness;
@@ -64,7 +71,7 @@ export function WallDenied() {
 }
 
 export function WallPage(props: Props) {
-  if (!props.owner) return <WallDenied />;
+  if (!props.owner && props.display === undefined) return <WallDenied />;
   return <Wall {...props} />;
 }
 
@@ -79,6 +86,7 @@ function Wall({
   sessionActions,
   views,
   artifacts,
+  display,
   initialSize,
   now: givenNow,
   origin,
@@ -249,10 +257,20 @@ function Wall({
         }
         const actions = sessionActions?.(keyOf(focusCard));
         if (mode === 'review') {
+          // A display never gets review comments: it shows the change summary only.
           return (
             <div className="fd-wall-single">
               <h2 className="fd-wall-h">{sessionTitle(focusCard)}</h2>
-              <ReviewPane card={focusCard} actions={actions} live={live} />
+              {display === undefined ? (
+                <ReviewPane card={focusCard} actions={actions} live={live} />
+              ) : (
+                <DisplayChangesPane
+                  env={display}
+                  station={focusCard.station_id}
+                  session={focusCard.summary.session_id}
+                  title="Review"
+                />
+              )}
             </div>
           );
         }
@@ -263,11 +281,21 @@ function Wall({
               <h2 className="fd-wall-h">{sessionTitle(focusCard)}</h2>
               <ChatPane
                 events={timeline?.events ?? []}
+                display={timeline?.display}
                 ready={timeline?.ready === true}
                 unavailable={failed.has(refOf(focusCard)) || timeline?.error != null}
               />
             </div>
-            <DiffPane card={focusCard} actions={actions} title="Changes" />
+            {display === undefined ? (
+              <DiffPane card={focusCard} actions={actions} title="Changes" />
+            ) : (
+              <DisplayChangesPane
+                env={display}
+                station={focusCard.station_id}
+                session={focusCard.summary.session_id}
+                title="Changes"
+              />
+            )}
           </div>
         );
       }
@@ -280,10 +308,26 @@ function Wall({
             timelines={timelines}
             watch={watch}
             sessionActions={sessionActions}
+            display={display}
           />
         );
       case 'artifact':
-        return route.artifact === undefined ? null : (
+        if (route.artifact === undefined) return null;
+        if (display !== undefined) {
+          return route.artifact.version === undefined ? (
+            <p className="fd-wall-note">This artifact is not available.</p>
+          ) : (
+            <DisplayArtifactPane
+              // A new directive loads the file again.
+              key={`${route.artifact.station}/${route.artifact.id}/${route.artifact.version}/${display.generation ?? 0}`}
+              station={route.artifact.station}
+              id={route.artifact.id}
+              version={route.artifact.version}
+              env={display}
+            />
+          );
+        }
+        return (
           <ArtifactPane
             station={route.artifact.station}
             id={route.artifact.id}

@@ -24,6 +24,7 @@ use fleetdeck_proto::{CommandId, Receipt, StationId};
 
 use super::{DeckLink, NOT_IMPLEMENTED};
 use crate::store::coordinator::AuthorityLocal;
+use crate::store::grant_scopes::NOT_COVERED;
 use crate::store::{LinkV2, QueryAnswer};
 
 /// The whole round trip of `coordinator.authority_check` (ADR-008 section
@@ -121,6 +122,18 @@ fn invalid(reason: &str) -> AuthorityAnswer {
 /// still holds. The deck answers from its own state and from the live policy
 /// of the caller station (`coordinator.policy_now`), and fails closed.
 async fn authority_check(ctx: &DeckLink, station: StationId, req: &InboundRequest) -> Outcome {
+    // The exact rule of every `coordinate` admission (grant stations design
+    // §2.3a): a grant in effect names the asking station; nothing else runs.
+    match ctx.store.station_covered_now(&station).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return Outcome::Err(WireError::new(code::FORBIDDEN, NOT_COVERED));
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "authority check");
+            return Outcome::Err(WireError::new(code::PROTOCOL_ERROR, "deck store error"));
+        }
+    }
     let check = match serde_json::from_value::<AuthorityCheck>(req.params.clone()) {
         Ok(check) => check,
         Err(e) => return Outcome::Err(WireError::new(code::PROTOCOL_ERROR, e.to_string())),
@@ -131,10 +144,7 @@ async fn authority_check(ctx: &DeckLink, station: StationId, req: &InboundReques
     )
     .await;
     match answer {
-        Ok(Ok(answer)) => match serde_json::to_value(&answer) {
-            Ok(v) => Outcome::Ok(v),
-            Err(e) => Outcome::Err(WireError::new(code::PROTOCOL_ERROR, e.to_string())),
-        },
+        Ok(Ok(outcome)) => outcome,
         Ok(Err(e)) => {
             tracing::warn!(error = %e, "authority check");
             Outcome::Err(WireError::new(code::PROTOCOL_ERROR, "deck store error"))
@@ -172,41 +182,59 @@ async fn local_pass(
     Ok(Ok(local))
 }
 
+/// The outcome of an authority check that is not valid. A pass that finds no
+/// grant in effect for the asking station is the wire error `forbidden`
+/// (grant stations design §2.3a); every other reason is an answer.
+fn refused(reason: &'static str) -> Outcome {
+    if reason == NOT_COVERED {
+        return Outcome::Err(WireError::new(code::FORBIDDEN, NOT_COVERED));
+    }
+    answered(&invalid(reason))
+}
+
+fn answered(answer: &AuthorityAnswer) -> Outcome {
+    match serde_json::to_value(answer) {
+        Ok(v) => Outcome::Ok(v),
+        Err(e) => Outcome::Err(WireError::new(code::PROTOCOL_ERROR, e.to_string())),
+    }
+}
+
 async fn authority_answer(
     ctx: &DeckLink,
     station: &StationId,
     check: AuthorityCheck,
-) -> Result<AuthorityAnswer, crate::store::DeckError> {
+) -> Result<Outcome, crate::store::DeckError> {
     // The first pass saves the `policy_now` round trip for an authority that
     // is invalid already.
     if let Err(reason) = local_pass(ctx, station, &check).await? {
-        return Ok(invalid(reason));
+        return Ok(refused(reason));
     }
     let Some(policy) = ctx
         .policy_now(&check.caller_station, &check.caller_session)
         .await
     else {
-        return Ok(invalid("caller_unreachable"));
+        return Ok(refused("caller_unreachable"));
     };
-    // `policy_now` can wait up to 3 s: the grant, the deck setting and the
-    // links can change meanwhile, so the deck checks them again.
+    // `policy_now` can wait up to 3 s: the grant, the deck setting, the
+    // coverage of the station and the links can change meanwhile, so the deck
+    // checks them again (each pass reads the clock in its own transaction).
     let local = match local_pass(ctx, station, &check).await? {
         Ok(local) => local,
-        Err(reason) => return Ok(invalid(reason)),
+        Err(reason) => return Ok(refused(reason)),
     };
     if !policy.bound {
-        return Ok(invalid("caller_unbound"));
+        return Ok(refused("caller_unbound"));
     }
     if !policy.fleet_control {
-        return Ok(invalid("caller_policy_off"));
+        return Ok(refused("caller_policy_off"));
     }
     if local.target_excluded {
-        return Ok(invalid("target_excluded"));
+        return Ok(refused("target_excluded"));
     }
-    Ok(AuthorityAnswer {
+    Ok(answered(&AuthorityAnswer {
         valid: true,
         reason: None,
-    })
+    }))
 }
 
 fn receipt(r: &Receipt) -> Outcome {

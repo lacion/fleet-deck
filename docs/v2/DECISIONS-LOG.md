@@ -3135,3 +3135,51 @@ Owner review: pending.
 - Context: the workers' question rounds of Phases 2-4 found points that the accepted design does not settle or that the code cannot do as written. The full records are in the architect's brief folder (`fg-t2-decisions.md`, `fg-t3-decisions.md` and the verbatim `fg-*-round1-questions.md`).
 - Decision (the ones that change a design text): the `ensure_home` request digest has no station id and no destination (one shared function in core); a rebind of a project without sync keeps its homes `ready`; `fleet_git.artifact_authorize` is scope `admin` (a paired station holds only `admin`, DL-050); `fleet_git.land_status` answers the stored run also for a fenced land (ADR-009 aligned); the deck computes the default radar home and sends it in the snapshot; forge requests use 30 s (`exec::Spec.timeout`); the station answers `project.branches` within 18 s (the deck waits 20 s); `RemoteBranch.at` and `fetched_at` are Unix milliseconds; the coordinator land commits with its receipt in one transaction.
 - Next: the adversary PRE-PR review of `fleet-git` against `v2`.
+## DL-230: Owner answers for R13 P5 (desktop capture) and P8 (provisioning), FG-9 go, grant target stations (owner, 2026-10-18)
+
+- Context: the adversary DESIGN REVIEW of Omarchy §5/§9 (P5 capture, P8 provisioning) found blockers that need owner decisions; Fleet Git FG-9 waited for the owner (DL-227); the FG-10 tests found that a coordinator grant covers only its own station although ADR-006 says the owner picks the target stations.
+- Decision (owner):
+  1. P5 capture consent: an agent whose grant has the `capture` class captures without a prompt for each capture (no per-capture approval). The station setting `allow_desktop_capture` and the grant class stay the gates.
+  2. P5 capture audience and retention: a capture is an ordinary artifact (the R12 artifact rules: read access, share links, kept until deleted).
+  3. P8 enrollment: a new machine shows its station key fingerprint at first login, and the owner approves that fingerprint on the board before the station joins; a copied invitation file alone cannot enroll a station.
+  4. P8 distribution: AUR and Homebrew packages.
+  5. FG-9 (move a session): build it on the corrected design §12 (DL-227).
+  6. R13 P2b/P3b: keep going on the §5G proposed answers.
+  7. Coordinator grants: make the target stations of a grant work (ADR-006 §"Creation").
+- Next: the architect revises the Omarchy design §5 and §9 with 1-4, builds FG-9, P2b/P3b and the grant target stations, each with its review.
+
+## DL-231: R13 P2b/P3b built (wall displays: directives, payload, change summaries, artifacts; desktop: station dispatch authority, relay, wake; web completion) (architect, 2026-10-18)
+
+- Context: the owner accepted `docs/v2/design/omarchy.md` §5D/§6D with §5E-§5G for the build (DL-230 item 6). The build plan of §11 ran in four steps: a serial foundation, eight parallel tasks, the web completion and the documentation. The merges are on v2 in the range `cccaf3d0..5a01c9ca`.
+- Decision: the architect accepted the worker proposals as written, with the choices below. Each line is one record; the full text is in `r13-p23b-decisions.md` and the `r13-*-round1-questions.md` files of the architect's brief folder.
+  - R1 (foundation): `Hello.desktop_epoch` (not `link_epoch`); the action hash binds the node fingerprint of the station; `quiet_hours` in `DesktopAuthority`; the feature `desktop_authority.v1`; the `/display` route and its `frame-src` rule; unbuilt stubs answer `501 not_built`; deck V25 keeps its position when v2 merges into `fleet-git`.
+  - R2 (directives): the `{"directive", "refs"}` body; a pure read (a failed live re-check reads `mission` and deletes nothing); one transaction and a `directive_generation` bump; identifier-only audit rows.
+  - R3 (station dispatch): `admit(...)` and `Admitted`; one registry of consumed `action_id` values for each connection epoch (4 096 at most); a strict `date +%z` parse; §6D item 3 wins on quiet hours.
+  - R4 (dispatch, reported choices): the start check order (hash, quiet hours, then connection, wall deadline and 10 s limit in one step); the info timeout text; `Runner::command` and `spawn` are async.
+  - R5 (relay): the owner path `act_body`; the pair page URL `{origin}/display#/display-pair?expect=<id>&op=<rev>`; `409 desktop_no_endpoint`; one `try_lock` for each display; `DeckStore::update_station_desktop` (Q11 B).
+  - R6 (relay, reported choices): `update_station_desktop` needs cached info; one process-global wall lock; the refused `desktop.act` audit rows; fix `bae32a2d` (a wall close keeps a binding of another station).
+  - R7 (wake): a serial card scan with a baseline mode when the snapshot mark changes; the age window (-5 000 to 60 000 ms); one job for each `(station, monitor)`; 4 workers, queue 32; fail closed.
+  - R8 (wake, reported choices): `spawn_with` takes `counters`; `skip_raced` drops a job when the snapshot mark moved; a queue-full drop starts no cooldown.
+  - R9 (payload): the scope check around the activity query (3 tries, then `409 scope_changed`); one projection for every path; frames and deltas as the directive filter narrows them; fixed activity labels; extras all zeros; a resources allowlist.
+  - R10 (payload, reported choices): `DisplayBatch.high_water` is an `Option`; hard cuts without an ellipsis; a revoked display gets an empty view until the 4401 close.
+  - R11 (changes): the station builds the statistics and patches and always applies the member deny list; one anonymous marker for each hidden section; the deck re-applies 64 KiB and enforces 1 MiB; `403 diffs_off`, one `404 unknown_session`; a join map and `429 busy`.
+  - R12 (changes, reported choices): a section without a readable path is a hidden marker; the `[diff truncated]` mark is removed before the parse; the busy map counts joined waiters.
+  - R13 (artifacts): `http/artifact_common.rs`; the check order and one `404 unknown_artifact`; the exact inert CSP; a check before every streamed chunk; no audit row, no busy map and no cache for a display read.
+  - R14 (artifacts, reported choices): the gate of a chunk runs after the station read and before the chunk leaves; `Cache` and `ensure_cached` are `pub(crate)`; the hung-station 504 has a unit test only.
+  - R15 (web): `_` names the one file of an artifact version (`2903d206`); HTML in `<iframe sandbox="">`, SVG and images in `<img>`, Markdown as text, the card for PDF and other kinds; the pending row never shows the code; Send to wall pins by default.
+  - R16 (web, reported choices): `WallPage` takes an optional `display?: DisplayEnv`; the display page shows a notice for an owner answer; fix `04a61495` (the Displays page keeps the "Approved" text).
+  - R17 (PRE-PR round 1 fixes): `scope_of` checks the display session first; every projection reads the scope after its data reads; a wall close clears only the binding it saw (`display_clear_binding_at`); the 30 s wake cooldown is enforced at the send.
+- Proof:
+  - `make check` on `5a01c9ca`: PASS (3 953 Rust tests, 11 skipped; 1 660 web tests).
+  - Real e2e `web/e2e-real/display.spec.ts`: 4 of 4 after `04a61495` (the first run: 2 passed, the pairing case failed on the missing "Approved" text). Mock e2e `web/e2e/display.spec.ts` 5 of 5; `web/e2e/wall.spec.ts` 6 of 6.
+  - Adversary PRE-PR round 1: FAIL (2 BLOCKER, 2 MAJOR), all fixed in `5a01c9ca` (R17). RE-REVIEW round 2: PASS, no finding.
+  - The first full `make check` on `04a61495` failed in an environment race (see open item 24 of the design §14); the run on `5a01c9ca` passed.
+  - The live smoke on the owner's Omarchy machine: result not recorded.
+- Open items: items 7 to 24 of `docs/v2/design/omarchy.md` §14 (from R6, R8, R10, R12, R14, R15, R16 and R17). The main ones: `GET /api/displays` returns the pairing code to the owner (item 18); `DisplayView` has no last directive (item 19); the owner cookie wins on `/api/ws` in a mixed browser (item 20); there is no `fleetdeck deck display link` command (item 21).
+- Next: the owner's security review reads the new rows of `SECURITY-CHECKLIST.md` (DL-158); the live smoke on Omarchy; P5 and P8 revisions with DL-230 items 1-4.
+
+## DL-232: v2 merged into Fleet Git; migration order (architect, 2026-10-18)
+
+- Context: a deck database of the owner is already at version 25, because the owner runs v2 builds (v2's V25 is the display migration, `store/display_v25.rs`). No shipped build has Fleet Git migrations. The merge base is `3d1c0cd3` (deck list at V24). v2 added deck V25. Fleet Git added deck V25 to V29 and station V28 to V32. v2 added no station migration.
+- Decision: v2's migrations keep their list positions. The Fleet Git deck migrations move after them (append-only renumbering on the Fleet Git side): deck V25 = `display_v25::V25_SQL`, then Fleet Git V26 (`FLEET_GIT_SQL`), V27 (`HOMES_SQL`), V28 (`LAND_SQL`), V29 (`STATION_MACHINES_SQL`), V30 (`MOVES_SQL`). The station list is unchanged at 32 entries. A deck database at version 25 migrates to 30; a station database at version 27 migrates to 32; `crates/fleetdeck-deck/tests/merged_migrations.rs` tests both and compares a migrated schema with a fresh one. The tests that name a deck version (`project_homes_tests.rs`) use the new numbers. The grant target stations follow-up of `docs/v2/design/grant-stations.md` §4 is done: the T4.6 tests (`fleet_git_coordinator.rs`, `fleet_git_move.rs`) ask for the target stations in the start request (`CoordinatorSpec.stations`) and no longer edit `deck.db`; `Coord::widen` is gone, and the move test with a refused target is split into a refusal test (stations 0 and 1) and a move test (stations 0, 1 and 2). The method table moved to `methods_table.rs` carries v2's two edits (`desktop.act` needs `desktop_authority.v1`; the row `files.display_changes`), so the ADR-004 table has 119 rows.
+- Next: the owner's review of the merge branch `merge/v2-into-fleet-git`.

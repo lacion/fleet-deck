@@ -192,6 +192,8 @@ describe('spawn form (P4-4)', () => {
     const html = form([reported()]);
     expect(html).toContain('Coordinator: this session may read the fleet');
     expect(html).not.toMatch(/<input type="checkbox" checked=""\/>Coordinator/);
+    // The target stations show only for the owner with Coordinator checked.
+    expect(html).not.toContain('Target stations');
   });
 
   test('the modes come from the capabilities that the station reports (P5-3)', () => {

@@ -50,3 +50,18 @@ test('the people messages of a shared session pass the check (R11, DL-166)', () 
     expect(() => boardMessage(JSON.stringify(v))).toThrow('Invalid board message');
   }
 });
+
+test('a display timeline frame is read, and a broken one is refused (R13 P2c)', () => {
+  const item = { item: 'message', turn_id: 't', text: 'hi' };
+  const event = { station_seq: 4, session_seq: 2, at: 9, item };
+  const v = { type: 'display_timeline_events', ...key, events: [event], high_water: 6 };
+  expect(JSON.stringify(boardMessage(JSON.stringify(v)))).toBe(JSON.stringify(v));
+  for (const bad of [
+    { ...v, high_water: -1 },
+    { ...v, events: [{ ...event, station_seq: 1.5 }] },
+    { ...v, events: [{ ...event, item: null }] },
+    { type: 'display_timeline_events', events: [], high_water: 1 },
+  ]) {
+    expect(() => boardMessage(JSON.stringify(bad))).toThrow('Invalid board message');
+  }
+});

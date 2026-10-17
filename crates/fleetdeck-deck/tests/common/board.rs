@@ -207,6 +207,7 @@ async fn serve_with(
                     name: "test deck".to_owned(),
                     conflict_mail: true,
                     fleet_control: false,
+                    desktop_control: false,
                     tailscale_cert: false,
                     tailscale_bin: None,
                 }),

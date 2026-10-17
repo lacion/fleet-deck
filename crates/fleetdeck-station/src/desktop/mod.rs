@@ -9,17 +9,23 @@
 //! - [`args`]: the grammar of every argument.
 //! - [`info`]: `DesktopInfo`.
 //! - [`events`]: the window records from the Hyprland event socket.
+//! - [`authority`]: the dispatch authority of `desktop.act`.
+//! - [`deadline`]: the total deadlines.
+//! - [`quiet`]: the local UTC offset and the quiet hours.
 //!
 //! The state of the adapter is process-global ([`service`]); a test replaces
 //! it with [`install`].
 
 mod actions;
 pub mod args;
+pub mod authority;
+pub mod deadline;
 pub mod detect;
 pub mod env;
 pub mod events;
 pub mod info;
 pub mod profile;
+pub mod quiet;
 pub mod run;
 
 use std::sync::{Arc, Mutex, PoisonError};
@@ -98,6 +104,7 @@ pub struct Desktop {
     events: Events,
     walls: actions::WallLocks,
     cache: Mutex<Option<Cached>>,
+    limits: Mutex<deadline::Limits>,
 }
 
 impl Desktop {
@@ -109,6 +116,7 @@ impl Desktop {
             events: Events::new(),
             walls: actions::WallLocks::default(),
             cache: Mutex::new(None),
+            limits: Mutex::new(deadline::Limits::default()),
         }
     }
 
@@ -166,18 +174,50 @@ impl Desktop {
         Ok(info)
     }
 
+    fn limits(&self) -> deadline::Limits {
+        *self.limits.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Replaces the total deadlines (tests make them short).
+    #[cfg(test)]
+    pub(crate) fn set_limits(&self, limits: deadline::Limits) {
+        *self.limits.lock().unwrap_or_else(PoisonError::into_inner) = limits;
+    }
+
+    async fn info_within(&self, gate: Gate<'_>, refresh: bool) -> Result<DesktopInfo, Fail> {
+        let call = async {
+            let ctx = self.context().await?;
+            self.fresh_info(&ctx, gate, refresh).await
+        };
+        match tokio::time::timeout(self.limits().short, call).await {
+            Ok(result) => result,
+            Err(_) => Err(Fail::new(code::FAILED, deadline::INFO_TIMEOUT)),
+        }
+    }
+
     /// `desktop.info`: the cached info, at most 10 s old.
     ///
     /// # Errors
     /// `unsupported` without a desktop; `failed` when the monitors cannot be
-    /// read.
+    /// read or the 30 s deadline passes.
     pub async fn info(&self, gate: Gate<'_>) -> Result<DesktopInfo, Fail> {
-        let ctx = self.context().await?;
-        self.fresh_info(&ctx, gate, false).await
+        self.info_within(gate, false).await
     }
 
-    /// `desktop.act`: one action, then the fresh info. The caller checks
-    /// `allow_desktop` at intake; every program run checks it again.
+    /// `desktop.info` with `fresh`: the station reads everything again and
+    /// ignores the cache of 10 s (R13 §6D item 4).
+    ///
+    /// # Errors
+    /// As [`Desktop::info`].
+    pub async fn info_fresh(&self, gate: Gate<'_>) -> Result<DesktopInfo, Fail> {
+        self.info_within(gate, true).await
+    }
+
+    /// `desktop.act`: one action that the deck authorized, then the fresh
+    /// info. The caller checks `allow_desktop` at intake; every program run
+    /// checks it again, and the start check of `admitted` runs before the
+    /// first program. The whole call has a total deadline (90 s for a wall
+    /// open, a wall reload and a browser launch, else 30 s).
     ///
     /// # Errors
     /// `unsupported`, `forbidden`, `invalid_params`, `not_found`, `conflict`
@@ -186,9 +226,15 @@ impl Desktop {
         &self,
         gate: Gate<'_>,
         action: DesktopAction,
+        admitted: authority::Admitted,
     ) -> Result<DesktopActResult, Fail> {
         let name = actions::name(&action);
-        let result = self.act_inner(gate, action).await;
+        let limit = self.limits().of(&action);
+        let result = match tokio::time::timeout(limit, self.act_inner(gate, action, admitted)).await
+        {
+            Ok(result) => result,
+            Err(_) => Err(Fail::new(code::FAILED, deadline::ACT_TIMEOUT)),
+        };
         match &result {
             Ok(_) => tracing::info!(action = name, result = "ok", "desktop action"),
             Err(e) => tracing::info!(action = name, result = e.code, "desktop action"),
@@ -200,11 +246,13 @@ impl Desktop {
         &self,
         gate: Gate<'_>,
         action: DesktopAction,
+        admitted: authority::Admitted,
     ) -> Result<DesktopActResult, Fail> {
         let ctx = self.context().await?;
         if !gate() {
             return Err(Fail::forbidden());
         }
+        let start = authority::Start::new(admitted, &action);
         let cx = actions::Cx {
             base: &self.base,
             found: &ctx.found,
@@ -212,6 +260,7 @@ impl Desktop {
             events: &self.events,
             walls: &self.walls,
             gate,
+            start: &start,
         };
         let address = cx.perform(action).await?;
         let info = self.fresh_info(&ctx, gate, true).await?;
@@ -236,7 +285,11 @@ pub fn install(desktop: Arc<Desktop>) {
 }
 
 #[cfg(test)]
+mod authority_tests;
+#[cfg(test)]
 mod detect_tests;
+#[cfg(test)]
+mod dispatch_tests;
 #[cfg(test)]
 mod fake;
 #[cfg(test)]

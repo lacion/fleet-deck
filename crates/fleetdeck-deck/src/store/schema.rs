@@ -737,15 +737,19 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V23),
         // V24 (R13, DL-201): the display tables, in `store/displays.rs`.
         M::up(super::displays::DISPLAYS_SQL),
-        // V25 (Fleet Git phase 1): `store/fleet_git_schema.rs`.
+        // V25 (R13 P2b/P3b step 1): display generations, the binding
+        // revision, directives and the wake tables, in `store/display_v25.rs`.
+        M::up(super::display_v25::V25_SQL),
+        // V26 (Fleet Git phase 1): `store/fleet_git_schema.rs`. The Fleet Git
+        // migrations follow the v2 migrations (DL-232): no shipped build has them.
         M::up(super::fleet_git_schema::FLEET_GIT_SQL),
-        // V26 (Fleet Git phase 2): the homes, `store/fleet_git_schema.rs`.
+        // V27 (Fleet Git phase 2): the homes, `store/fleet_git_schema.rs`.
         M::up(super::fleet_git_schema::HOMES_SQL),
-        // V27 (Fleet Git phase 3): the radar and the land queue.
+        // V28 (Fleet Git phase 3): the radar and the land queue.
         M::up(super::fleet_git_schema::LAND_SQL),
-        // V28 (PRE-PR round 1): the Taildrive machine of each station.
+        // V29 (PRE-PR round 1): the Taildrive machine of each station.
         M::up(super::fleet_git_schema::STATION_MACHINES_SQL),
-        // V29 (Fleet Git phase 4): the session moves.
+        // V30 (Fleet Git phase 4): the session moves.
         M::up(super::fleet_git_schema::MOVES_SQL),
     ])
 }

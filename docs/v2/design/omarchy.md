@@ -1,6 +1,6 @@
 # Fleet Deck on Omarchy: the wall, desktop control and the desktop MCP (R13)
 
-- **Status:** §4.5, §5 and §6.1-§6.4/§6.6 **accepted**, revision 5 (2026-10-16, DL-201: design review round 4 PASS; its two MAJOR findings fixed in §5C items 4 and 5); revision 6: §5D (P2b) and §6D (P3b) drafted from the open questions, owner decisions DL-221, DL-222, DL-223; DESIGN REVIEW pending; other parts still draft. §5C answers the round 3 review (`/tmp/adv-r13-p23-r3-report.md`, owner decision: apply the fixes and one more round) and overrides §5B where they differ; §5B answers the round 2 review (`/tmp/adv-r13-p23-r2-report.md`) and overrides §5A where they differ; §5A answers the DESIGN REVIEW round 1 of §4.5, §5 and §6 (`/tmp/adv-r13-p2-design-report.md`) and overrides them where they differ. Not frozen. Each high-risk part needs an adversary DESIGN REVIEW before its code (§13).
+- **Status:** §4.5, §5 and §6.1-§6.4/§6.6 **accepted**, revision 5 (2026-10-16, DL-201: design review round 4 PASS; its two MAJOR findings fixed in §5C items 4 and 5); revision 6: §5D (P2b) and §6D (P3b) drafted from the open questions, owner decisions DL-221, DL-222, DL-223; DESIGN REVIEW pending; revision 7: §5E answers the DESIGN REVIEW round 1 of revision 6; revision 8: §5F answers the DESIGN RE-REVIEW round 2; revision 9: §5G answers the round 3 findings; **§5D/§6D with §5E-§5G accepted by the owner for the P2b/P3b build (DL-230 item 6, 2026-10-18)**; **P2b/P3b (§5D, §6D with §5E-§5G) are built on v2 (`cccaf3d0..5a01c9ca`, DL-231): PRE-PR round 1 FAIL fixed, round 2 PASS (§5H)**; revision 10: §6.5A (P5 capture) and §9A (P8 provisioning) answer the P5/P8 DESIGN REVIEW round 1 with the owner decisions DL-230 items 1-4, DESIGN REVIEW pending; revision 11: P5 split into P5a (owner screenshots, artifact deletion; `omarchy-p5a.md`) and P5b (recordings, later); P8 contracts in `omarchy-p8.md`; DESIGN REVIEW round 3 (last) pending; other parts still draft. §5C answers the round 3 review (`/tmp/adv-r13-p23-r3-report.md`, owner decision: apply the fixes and one more round) and overrides §5B where they differ; §5B answers the round 2 review (`/tmp/adv-r13-p23-r2-report.md`) and overrides §5A where they differ; §5A answers the DESIGN REVIEW round 1 of §4.5, §5 and §6 (`/tmp/adv-r13-p2-design-report.md`) and overrides them where they differ. Not frozen. Each high-risk part needs an adversary DESIGN REVIEW before its code (§13).
 - **Owner request (2026-10-16):** "i have a server thats connected to a ultrawide screen, i use this server to run multiple ai agents as it has 64 cores and 128gb of ram … it would be awesome if i could control omarchy and the screen trough the fleet and maybe also have an mcp … imagine using the screen as a command control center and we could display and control everhting there." Then: "lets create a document for this work so we can implement everything".
 - **Owner answers (DL-198):**
 
@@ -423,6 +423,8 @@ The station refreshes it at most every 10 s, and also after each `desktop.act`. 
 | `capture.record { target, seconds ≤ 300 }` | `gpu-screen-recorder`, with no audio. The result is a video artifact (§6.5) | `allow_desktop_capture` | the artifact id |
 | `input.*` | §7.4 | `allow_desktop_input` | ok |
 
+*Inactive (revision 11): P5a uses only `screen_capture` (monitor, owner); P5b and P6 define their own names in their reviews.* The rows `capture.screenshot` and `capture.record` are historical (see [omarchy-p5a.md](./omarchy-p5a.md)).
+
 **`wall.open` and the display login (rule 5):**
 1. The deck makes a one-time display link for the display and sends the token to the station inside the `desktop.act` request, in memory. This is the credential relay pattern, so the token is never stored or logged.
 2. The station opens a one-shot HTTP listener on `127.0.0.1:<random port>` with a random path. It accepts one request, answers `303 See Other` with `Location: <deck>/#display=<token>`, and then closes. If no request comes in 30 s, it closes anyway.
@@ -455,6 +457,44 @@ The rules follow ADR-008 §3:
 - A recording needs a new artifact kind, **`video`** (`mp4`, `webm`). The viewer shows it in a `<video>` element with no autoplay. This is an additive change to R12.
 - The publisher is the owner (from the board) or the session (from the MCP).
 - The artifact gets the label "desktop capture · <station>/<monitor>".
+
+### 6.5A Revision 10: P5 capture rules (owner decisions DL-230 items 1 and 2; answers the DESIGN REVIEW of §6.5)
+
+These rules replace §6.5 where they differ. They answer the findings A1-A11 of the P5/P8 DESIGN REVIEW round 1 (`adv-omarchy-p5-p8-design-report.md`). The owner answered the two consent and audience findings (DL-230 items 1 and 2); the other answers are architect decisions.
+
+1. **Consent (A1, owner decision DL-230 item 1).** No prompt for each capture. The gates are, all at once:
+   - the station setting `allow_desktop_capture` (default off; turning it on needs the owner's elevation, §6.4);
+   - the deck setting `desktop_control` (§6D item 7);
+   - for an agent: the grant class `capture` (§7.1), which needs the owner's elevation at grant creation;
+   - for the owner: the board Desktop panel (owner login, scope Admin).
+   A display login, a wall binding, a wall directive and the wake rule give no capture authority. Visible signs instead of a prompt:
+   - a screenshot shows a desktop notification on the captured station: "Fleet Deck took a screenshot of <monitor> for <caller>" (`<caller>` is the session callsign, or "the owner");
+   - a recording shows "Fleet Deck is recording <monitor> for <caller>" at start and "Fleet Deck stopped the recording of <monitor>" at the end.
+   Disclosure (stated in the grant dialog under the `capture` class): "A screenshot that an agent takes goes into the conversation of its provider." Audit rows: `desktop.capture` (start, end, refusal) with the station, the monitor, the caller id and a result code only.
+2. **Target (A2).** P5 captures **monitors only**. There is no window target in P5. The target is one monitor name that the station reports now and that `capture_monitors` allows (`[]` = every monitor present at the time of the capture, also a monitor attached later). The capture is the composed pixels of the whole monitor, with every window and notification on it; the grant dialog and the Desktop panel say so: "A capture shows everything on that monitor." A screen that is locked, or whose lock state is unknown, is refused (`screen_locked`, "The screen is locked."). A monitor that is gone at the start is `not_found`; a monitor that goes away during a recording ends the recording (item 5).
+3. **Audience (A3, owner decision DL-230 item 2).** A capture is an ordinary R12 artifact: the same read access, view links and share links as any artifact, kept until deleted. It carries immutable provenance in its version metadata: `capture: { station_id, monitor, kind: "screenshot" | "recording", caller: "owner" | <session id>, caller_station, at }`; the viewer shows "Desktop capture · <station>/<monitor> · <time>". The owner accepted that a principal that may read artifacts may read captures.
+4. **Deletion (A4).** "Kept until deleted" needs a delete. P5 adds one owner-only operation for **every** artifact: `DELETE /api/artifacts/{station}/{id}` (owner, scope Admin, elevation, CSRF, audited `artifacts.delete`):
+   - the deck writes a tombstone row `(station, artifact_id, at)` and in the same transaction deletes its cache rows, view links and share rows of that artifact; every read path checks the tombstone first (404 `unknown_artifact`); a stream in flight ends at its next chunk;
+   - the deck sends `artifacts.delete` to the station (feature `artifacts_delete.v1`); the station deletes the index row and the version folders by identity (DL-150 pattern) and answers `deleted`; an offline station gets the call at its next link up (the tombstone stays until the station answered; retries with the backoff of the land outbox);
+   - the board shows "Delete artifact" in the viewer menu with the confirm text "Delete this artifact and all its versions? Copies that someone downloaded and text that an agent read stay where they are.";
+   - deletion cannot recall downloaded bytes or provider context (stated).
+5. **Active recordings (A5).** A recording runs as a child process group that the station owns (one group per recording; no global recorder kill). The station checks every 1 s and stops it on: `allow_desktop_capture` off, `desktop_control` off (the deck sends `desktop.capture_stop`), the grant revoked or expired (the deck sends `desktop.capture_stop`), the screen locked, the target monitor gone, the deck link down, or the end of the duration. Stop: `SIGINT` to the group, 3 s for the recorder to write its file, then `SIGKILL` of the group. A stopped recording keeps its file when the recorder ended cleanly within the grace, else the station deletes the partial file. Maximum cancellation latency: 1 s for the check plus 3 s grace.
+6. **Budget (A6).** Screenshot: PNG, at most 32 MiB. Recording: 1 to 120 s (`u16` seconds, the same range for the owner and for an agent), at most 30 frames per second, H.264 in MP4, at most 256 MiB per file (the station stops the recorder at the size limit). One capture at a time per station (`busy`, "A capture runs already."). A free-space reserve of 2 GiB on the station data disk (`disk_full`, "The station has too little free space for a capture."). At most 4 GiB of captures per station (sum of the capture artifacts' bytes; `capture_quota`, "The captures of this station use 4 GiB. Delete some first."). Ordinary R12 artifact policy is unchanged.
+7. **Execution (A7).** Screenshot: `grim -o <monitor> <file>`. Recording: `wf-recorder -o <monitor> -r 30 -c libx264 -f <file>` (native Wayland, no privileged helper; `gpu-screen-recorder` is not used). Missing tool: `unsupported` with the tool name. The station runs them through the desktop `Runner` (structured argv, the desktop PATH, the gate) with the start check of the P3b authority. Files: a private folder `<station data>/captures/` (0700), each file created `O_CREAT|O_EXCL|O_NOFOLLOW` 0600; no fallback to the workspace or `~/Pictures`; the folder is swept at station start; every failure path deletes its file.
+8. **Import (A8).** A new station-internal `ArtifactService::import_capture(path, metadata)` moves the staged file into the artifact store; it is not reachable from the MCP publish path and keeps the private-path rules of the publish path for everything else. The artifact's station is the captured station. `session_id` is the caller session only when it runs on the same station; else none (no repository association). The result of the action is `DesktopCaptureResult { artifact_id, version, bytes }`. A capture whose import fails is deleted and answers `failed` with code `capture_publish_failed`.
+9. **Duration and completion (A9).** A screenshot is one `desktop.act` action (`screen_capture { monitor }`, total deadline 30 s). A recording is one action `screen_record { monitor, seconds }` whose total deadline is `seconds + 30` s; the deck waits `seconds + 35` s. The P3b authority makes each request single use; a timeout is an unknown outcome and is never retried (§6D item 9). The MCP tools return when the action ends.
+10. **Video on the board (A10).** The board document CSP gets `media-src 'self'`. The artifact raw route answers `Range` requests for a `video` file (`206`, `416`, `Accept-Ranges: bytes`, `Content-Length`; the authorization runs for every request). Above the 64 MiB cache limit the stream path serves ranges from the station in 700 KiB chunks. The viewer uses `<video controls preload="metadata">` with no autoplay. The wall keeps DL-221: a video is "Open this artifact on your own device".
+11. **Negotiation (A11).** New features: `desktop_capture.v1` (a station that can capture) and `artifacts_video.v1` (a peer that knows the `video` kind). The MCP lists `desktop_screenshot` and `desktop_record` only for a station that negotiated `desktop_capture.v1` and reports the tools present. A deck sends a `video` artifact to a board or peer without `artifacts_video.v1` as kind `other`. The MCP screenshot answer is an image content block: the PNG scaled down to at most 1568 px on the long edge and at most 1 MiB, plus the artifact id of the full file.
+12. **Tests (four proofs).** Behavior: a screenshot and a recording on the fake desktop (fake `grim`/`wf-recorder` scripts with argv logs). Refusals: each gate off, locked screen, gone monitor, busy, disk full, quota, missing tool, old peer. Exposure: a capture never written outside `captures/`; no capture authority from a display, a binding or the wake. Failure: every stop trigger during a recording; import failure deletes the file; deletion through every read path (cache, raw, view link, share, display, MCP).
+
+### 6.5B Revision 11: P5a and P5b
+
+P5 is split. The detailed contracts of P5a are in the annex [omarchy-p5a.md](./omarchy-p5a.md).
+
+- **P5a** (owner screenshots and artifact deletion): one owner action `screen_capture` for one monitor from the board Desktop panel, and the owner deletion of any artifact. The annex gives the wire contract, the deletion barriers (A4), the budgets (A6), the process and files (A7), the durable import and result (A8), and the names and deadlines (A9).
+- **P5b** (recordings, the `video` kind, `Range` playback, the recording stop): later, with its own DESIGN REVIEW. P6 (MCP tools) depends on P3 and P5a.
+- Deferred to P5b and P6, and **not active rules**: §6.5A item 5 (active recordings), item 6 (the video budget), item 7 (`wf-recorder`), item 9 (the recording duration), items 10 and 11 (video, MCP).
+- The annex wins over §6.5A where they differ.
 
 ### 6.6 The wake rule
 
@@ -529,6 +569,167 @@ These rules answer the 13 open questions of P3b (the fact sheet `r13-p3b-facts.m
     - Re-pairing, binding changes and late desktop replies need generation checks and a serialization for each display. An open that timed out can have succeeded on the station.
     - The return to `mission` removes the narrowing filter of a directive and returns to the ceiling that the owner set. The ceiling stays the durable privacy boundary.
 
+## 5E. Answers to the DESIGN REVIEW of revision 6 (round 1)
+
+These rules answer the report `adv-omarchy-r6-design-report.md` (VERDICT: FAIL, 3 BLOCKER, 3 MAJOR). They override §5D and §6D where they differ. The item numbers follow the finding numbers (1 to 6). Items 7 and 8 update the build plan and the status line. The decision DL-221 (single-file artifact) stays. The build plan is in §11.
+
+1. **Dispatch authority (finding 1).**
+   - **Feature.** The new link feature is `desktop_authority.v1`.
+   - **Parameter.** `desktop.act` gets the additive param `authority: { action_id: String (ULID), action_hash: String (hex SHA-256 of the canonical JSON of the action plus the station id and the target monitor), deadline_ms: i64 (deck time + 10 000) }`.
+   - **Fail closed on the deck.** The deck relays `desktop.act` (owner actions and wakes) only to a station that negotiated `desktop_authority.v1`. To any other station it answers `409 desktop_unsupported`.
+   - **Fail closed on the station.** A station with the feature refuses a `desktop.act` without a valid authority. The answer is `forbidden` with the text "The deck did not authorize this desktop action."
+   - **Single use.** The station keeps each used `action_id` until its deadline passes. It refuses a second use.
+   - **Execution start.** "Execution starts" is the first side effect: the spawn of the first program of the action.
+   - **Checks.** Right before that spawn, the station checks three items:
+     - the deadline has not passed (station clock, 5 s skew allowance);
+     - the hash matches the action that the station will run;
+     - its live `allow_desktop`.
+   - **Waits count.** All waits before that point (the per-display lock, the info reads) count against the deadline. An expired authority gives `failed` with the text "The authorization of this desktop action expired." and no side effect.
+   - **Residual interval (accepted).** The deck stops issuing authorities at once when `desktop_control` turns off. An action that was authorized before can still start within its remaining deadline, at most 10 s. This interval is accepted and stated. The documents do not claim an instant remote cancellation.
+2. **Display authentication generation (finding 2).**
+   - **Column.** The new column is `displays.auth_generation INTEGER NOT NULL DEFAULT 0`. It is separate from the directive generation.
+   - **Stored value.** Every display link, approved pairing and display session stores the generation at its creation.
+   - **Fence.** Link redemption, pairing approval, pairing claim and display session creation each check, in the same transaction as their write, that the stored generation equals the current one. The write has the form `INSERT ... SELECT ... WHERE displays.auth_generation = ?`. When the check fails, the answer is `401 login_required`.
+   - **Replacement.** A replacement (re-pairing an existing display, DL-223 item P3b-1) increments the generation. In the same transaction it deletes every session, every unused link and every approved-but-unclaimed pairing of that display.
+   - **Revoke.** A revoke does the same as a replacement.
+   - **Tests.** A delayed redemption: redeem, then a replacement, then the session issuance fails. Two competing approved pairings for one display: the first claim wins and the second fails.
+3. **Wall artifact rendering (finding 3; keeps DL-221).**
+   - **(a) Own document.** The deck serves the board document also at `/display/` (the same `index.html`) with a stricter CSP. Its `frame-src` allows only the display artifact path (`'self'` path `/api/displays/self/artifact/`). Every display link, pair page and kiosk URL uses `/display/#/...`. The board at `/` keeps its CSP.
+   - **(b) Inert response.** The display artifact response is inert. It has the header `Content-Security-Policy: sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'; media-src data:; font-src data:`. The header has no `allow-scripts`. The wall frame has `sandbox` without `allow-scripts`.
+   - **(c) Browser proofs (Playwright, P2c).** An artifact that tries to navigate its own frame to `/a/<token>/` is blocked. A script in an artifact does not run.
+4. **Expected display in `wall.open` (finding 4).**
+   - **Launch URL.** A managed launch carries the non-secret query `?expect=<display_id>&op=<operation_revision>` in the `/display/#/display-pair` URL.
+   - **Pairing record.** The pending pairing stores `expected_display_id` and `operation_revision`.
+   - **Approval.** The approval dialog preselects that display and refuses another one (`409 display_mismatch`).
+   - **Claim.** The claim refuses when the operation revision of the binding has moved on (`409 superseded`).
+   - **Authorization.** The code and the pending cookie stay the authorization.
+5. **Offset sample (finding 5).**
+   - **Validity window.** The deck uses a `DesktopInfo` offset only when `offset_sampled_at` is within [deck now − 15 s, deck now + 5 s]. Otherwise the offset is unknown, and no wake is sent while quiet hours are set.
+   - **Station re-check.** The wake action carries the `quiet_hours` string of the display. The station reads `date +%z` again right before the first side effect. It refuses with `failed` and the text "Quiet hours are active on this station." when its own local time is inside the interval.
+6. **Wake replay (finding 6).**
+   - **Boundary.** For each station link, the deck records an initialization boundary: the `station_seq` of the first snapshot after the link came up.
+   - **Baseline.** A request seen in that snapshot, or in an event with `station_seq` at or below the boundary, is baseline and never wakes.
+   - **Wake condition.** Only an `approval.requested` (or question) event with `station_seq` above the boundary can wake. It must be first observed live and at most 60 s old (5 s future skew).
+   - **Deduplication.** The key is `(station_id, request_id)`. The deck keeps keys in memory for 24 h (at most 10 000 keys, the oldest out first). The keys stay across a disappearance and across station incarnation changes.
+   - **Owner startup rule.** The startup rule of DL-223 (P3b-5) is this boundary for every station link after the deck starts.
+   - **Tests.** A delayed initial sync, a reconnect replay, and a restored request under a new incarnation (no wake).
+7. **Build plan (§11).** The foundation task also owns the `desktop_authority.v1` and `auth_generation` contracts and the `/display/` document route. The P3b station dispatch task owns the station side of item 1 and the station quiet-hours re-check of item 5.
+8. **Status line.** The status line at the top of this document names revision 7.
+
+## 5F. Answers to the DESIGN RE-REVIEW round 2 (revision 7)
+
+These rules answer the report `adv-omarchy-r7-design-report.md` (VERDICT: FAIL, 4 BLOCKER). They override §5E, §5D and §6D where they differ. The item numbers 1 to 4 follow the finding numbers B1 to B4. Items 5 and 6 update the build plan and the status line. The build plan is in §11.
+
+1. **Authority clock contract (finding B1; replaces the 5 s allowance of §5E item 1).**
+   - **New field.** The authority also carries `deck_now_ms: i64`. It is the deck wall clock at the time the deck made the authority.
+   - **Receipt check.** At receipt, the station records a monotonic instant. It compares `deck_now_ms` with its own wall clock. When they differ by more than 5 000 ms in either direction, it refuses with `forbidden` and the text "The station and the deck clocks differ too much for a desktop action."
+   - **Start check.** Right before the first side effect, the action may run only when all of these are true:
+     - (a) the station wall clock is at or before `deadline_ms` (exact comparison, no grace);
+     - (b) the monotonic time since receipt is at most 10 s;
+     - (c) the receipt clock check passed.
+   - **No wall-clock extension.** Rule (b) does not depend on the wall clock. A change of the wall clock cannot extend an authority.
+   - **Residual interval (accepted).** After `desktop_control` turns off, an action can still start within the link delivery time plus at most 10 s. The documents state this interval. They do not claim an instant remote cancellation.
+2. **Single use across restarts (finding B2).**
+   - **Consumption.** The station consumes the `action_id` before the first side effect, in one atomic step (one lock, insert-if-absent). A second use is refused.
+   - **Retention.** The station keeps each consumed id for 30 s of monotonic time. This is longer than any acceptance interval of item 1.
+   - **Link epoch.** Each authority also carries `link_epoch: String`. The station gives a random `link_epoch` to each link connection at its handshake. It is a new additive field of the link handshake reply under `desktop_authority.v1`.
+   - **Epoch check.** The station refuses an authority whose `link_epoch` is not the epoch of the connection that carried it.
+   - **Restart.** A station restart or a new link connection gives a new epoch. Every earlier authority is then invalid. The design needs no durable store.
+3. **The display document path (finding B3; replaces the `/display/` prefix of §5E item 3a).**
+   - **Route.** The deck serves the board `index.html` at exactly `/display` (no trailing slash). The relative `./assets/...` URLs of the bundle then resolve to `/assets/...`.
+   - **Trailing slash.** `/display/` answers `308` to `/display`.
+   - **CSP.** The `/display` response has the stricter CSP of §5E item 3. Its `frame-src` allows only `/api/displays/self/artifact/`. It also has the board `script-src` and `style-src` for `/assets/`.
+   - **URLs.** Every display link, pair page and kiosk URL is `/display#/...`. This replaces `/display/#/...` in §5E items 3 and 4.
+   - **Browser proof (P2c, `web/e2e-real`).** A test with the production bundle proves four things: pairing, display-link redemption, wall navigation and a reload at `/display`.
+4. **Restart-safe wake deduplication (finding B4; replaces the memory-only deduplication of §5E item 6).**
+   - **Table.** The deck store gets the table `wake_seen(station_id TEXT, request_id TEXT, first_seen_ms INTEGER, PRIMARY KEY(station_id, request_id))`.
+   - **Recording.** The table records every request that the wake rule observes, baseline or live.
+   - **Rule.** A request whose key exists never wakes.
+   - **Age limit.** The deck prunes rows older than 24 h on each insert.
+   - **Size limit.** The table holds at most 10 000 rows. When an insert would pass that limit, the deck prunes the oldest rows first. If the table still cannot take the row, the deck sends no wake (fail closed) and logs a warning.
+   - **Test.** A request wakes. The deck restarts. The station restores the request under a new incarnation after the initial snapshot. Result: no wake.
+5. **Build plan (§11).**
+   - The foundation task owns the `link_epoch` handshake field, the `/display` document route and the `wake_seen` table.
+   - The P3b station dispatch task owns items 1 and 2 on the station.
+   - The P3b wake task owns the logic of item 4.
+6. **Status line.** The status line at the top of this document names revision 8.
+
+## 5G. Answers to the DESIGN RE-REVIEW round 3 (revision 9, accepted by the owner, DL-230)
+
+Round 3 of 3 failed with 2 open blockers (report `adv-omarchy-r8-design-report.md`). These answers are proposed. They become binding only when the owner approves a 4th review round and it passes. P2b and P3b are not built until then.
+
+1. **Single use for the whole connection (round 3 finding 1; replaces the 30 s retention of §5F item 2).**
+   - **Retention.** The station keeps every consumed `action_id` for the whole connection epoch. The set holds at most 4 096 ids for each epoch.
+   - **Full set.** When the set is full, the station refuses new authorities with `failed` and the text "Too many desktop actions on this link; it reconnects." The station then closes the link connection. The next connection has a new epoch and an empty set.
+   - **Connection check.** A queued action checks that its connection is still the current one. It checks right before it consumes an id. It checks again right before the first side effect. When the connection is not current, the action refuses with `forbidden`.
+   - **Handshake field.** The station's `Hello` gets a new optional field: `desktop_epoch: Option<String>`. It is a random 128-bit hex id for each connection. It is distinct from the existing `Hello.link_epoch: u64`.
+   - **Ownership.** The foundation task owns this field. It also owns the propagation of the connection context to the desktop dispatch.
+2. **Commit before wake, no eviction of live keys (round 3 finding 2; replaces the eviction rules of §5F item 4).**
+   - **One operation.** The store has one operation: `wake_reserve(station_id, request_id, now_ms) -> Reserved | Seen | Suppressed | Error`. It runs in one transaction.
+   - **Steps.** The operation does these steps in order:
+     - (a) It checks the suppression state.
+     - (b) It prunes the rows older than 24 h.
+     - (c) It prunes the rows older than 120 s, oldest first, while the table holds 10 000 rows or more.
+     - (d) It runs `INSERT ... ON CONFLICT DO NOTHING`.
+     - (e) It commits.
+   - **Wake rule.** Only `Reserved` (one row inserted and committed) may lead to a wake. `Seen`, `Suppressed`, a write error and an unknown outcome never wake.
+   - **No live eviction.** A row younger than 120 s is never evicted. The 120 s is longer than the 60 s window plus the 5 s skew.
+   - **Saturation.** When the table holds 10 000 rows that are all younger than 120 s, the operation sets a persisted suppression state: `wake_suspended_until = now + 120 s`. It is a deck settings row. The operation returns `Suppressed`. No wake is sent while the state is set, also after a restart.
+   - **Baseline.** Baseline observations use the same operation, because they must block later wakes. They are bounded in the same way.
+   - **Tests.**
+     - A crash after the commit and before the dispatch. After the restart: no wake.
+     - Two concurrent observations of one key. One result is `Reserved`.
+     - A baseline overflow. Suppression starts, then the wake recovers after 120 s.
+3. **Ownership (round 3 note).** The web completion task (P2c) also owns `web/e2e-real/**`. It needs these files for the production-bundle proof of §5F item 3.
+4. **Status line.** The status line at the top of this document adds: "revision 9: §5G proposes answers to the round 3 findings; awaiting the owner (4th review round)".
+
+5. **Names.** The authority field that §5F item 2 calls `link_epoch: String` is `desktop_epoch: String` (the value of the station's `Hello.desktop_epoch`); `Hello.link_epoch: u64` is unrelated. When §5G is approved, §11 adds: the foundation row owns `Hello.desktop_epoch` and the `wake_reserve` store operation with the `wake_suspended_until` settings row; the P3b wake row owns its use; the web completion row owns `web/e2e-real/**`.
+
+
+## 5H. Build record of P2b/P3b (DL-231)
+
+This section records what the build of §11 made. It adds no decision. The full text of each decision is in the architect's brief folder: `r13-p23b-decisions.md` (R1-R17) and the worker proposals `r13-*-round1-questions.md`. The range on v2 is `cccaf3d0..5a01c9ca`.
+
+**Step 1: foundation (R1, merge `2c558589`).** The task made the deck setting `desktop_control` (`crates/fleetdeck-core/src/config_deck.rs`, `settings/fields.rs`), the proto contracts (`crates/fleetdeck-proto/src/desktop_authority.rs`, `display_directive.rs`, `display_changes.rs`, `display_event.rs`), the link handshake field and the authority hash (`crates/fleetdeck-link/src/hello.rs`, `desktop_authority.rs`), the V25 store (`crates/fleetdeck-deck/src/store/display_v25.rs`, `displays_binding.rs`, `displays_auth.rs`, `wake_seen.rs`), the `/display` document (`http/display_document.rs`) and the stub routes (`http/not_built.rs`). R1 fixed these points:
+- The handshake field is `Hello.desktop_epoch` (§5G), not `link_epoch`.
+- The action hash binds the current node fingerprint of the station.
+- `quiet_hours` is a field of `DesktopAuthority`. The `desktop.act` row has the feature `desktop_authority.v1`.
+- The `/display` route allows `frame-src https://<allowed request host>/api/displays/self/artifact/`, else `'none'`.
+- Every unbuilt stub answers `501 not_built` or a link refusal code.
+- Migration order: V25 (displays, directives, wake) keeps its list position on v2. At the merge of v2 into `fleet-git`, the Fleet Git deck migrations move after it.
+
+**Step 2, P2b directives (R2, merge `fd0acab4`).** Files: `crates/fleetdeck-deck/src/store/display_directives.rs`, `display_directives_check.rs`, `http/display_directive_routes.rs`. The owner route `POST /api/displays/{id}/directive` takes `{"directive", "refs"}` (8 KiB limit). The display route `GET /api/displays/self/directive` is a pure read: a failed live re-check reads `mission` with the stored generation and deletes nothing (R2 Q2). One transaction bumps `directive_generation`. The station and coordinator senders return `not_granted` (DL-222). The audit rows hold identifiers only.
+
+**Step 2, P3b station dispatch (R3, R4, merge `4211e779`).** Files: `crates/fleetdeck-station/src/desktop/authority.rs`, `deadline.rs`, `quiet.rs`, `link/intake_desktop.rs`. `admit(control, station_node, authority, action)` returns an `Admitted` value that `Desktop::act` needs. A process-global registry keeps every consumed `action_id` for the connection epoch (4 096 at most; a full registry gives `failed` and closes the link). R4 changed the order of the start check: the hash, then the quiet hours (an async `date` read), then the connection, the wall deadline and the 10 s monotonic limit in one sync step. §6D item 3 wins over the advisor: equal endpoints mean no quiet hours, and an unknown offset fails closed. The offset comes from a strict parse of `date +%z`.
+
+**Step 2, P3b relay (R5, R6, merge `19a63512`, fix `bae32a2d`).** Files: `crates/fleetdeck-deck/src/desktop_relay.rs`, `http/desktop_routes.rs`, `link/desktop_authority.rs`, and `DeckStore::update_station_desktop` in `store/mod.rs` (R5 Q11 B). The owner path is `act_body`; the public `act` refuses the wall actions. A wall open sends the pair page `{origin}/display#/display-pair?expect=<id>&op=<rev>` (R5 Q4) and commits the binding after the station answers. A second wall action of one display gets `Conflict` (a per-display `try_lock`). A deck with no reachable board address gets `409 desktop_no_endpoint`. R6 added one process-global wall lock for open, reload and close. Fix `bae32a2d`: a successful `wall_close` clears the binding only when the display has no binding or a binding on the target station.
+
+**Step 2, P3b wake (R7, R8, merge `7d5077f2`).** Files: `crates/fleetdeck-deck/src/wake/mod.rs`, `scan.rs`, `job.rs`, `quiet.rs`. The task scans the cards on each `watch_board()` change. A scan is baseline mode when the `snapshot_mark` of the station changed since the last scan. Only a request that is at most 60 s old (5 s future skew) and has the key `Reserved` wakes. There is one job for each `(station, monitor)`, 4 workers and a queue of 32 (a full queue drops and counts the job). R8 added `skip_raced`: the worker drops a job when the mark differs from the mark of its scan. The 30 s cooldown started at the enqueue; R17 F4 moved it to the send.
+
+**Step 2, P2b payload (R9, R10, merge `f49b8f3f`).** Files: `crates/fleetdeck-deck/src/store/display_timeline.rs`, `display_activity.rs`, `http/ws_display.rs`, `display_view.rs`. One projection serves every path (R9 Q4). A display subscription has no Presence, Driver or Chat frame. The directive filter narrows cards, stations and sessions, and a 2 s re-check sends a delta on a scope change. The extras are all zeros. The resources use an allowlist. A request title is a fixed label. R10: `DisplayBatch.high_water` is an `Option`, and a revoked display gets an empty view until the re-check closes the socket with 4401.
+
+**Step 2, P2b changes (R11, R12, merge `1d9e5247`).** Files: `crates/fleetdeck-station/src/workspace/display_changes.rs`, `crates/fleetdeck-deck/src/http/display_changes.rs`. The route is `GET /api/displays/self/sessions/{station}/{session}/changes`. The station always applies the member deny list. One anonymous marker stands for each hidden section, and a private path has no marker. The station caps a file at 64 KiB and the deck caps the answer at 1 MiB. Patches need `show_diffs`. Identical requests join one station call. One display may have one outstanding computation, else `429 busy`. Every miss of a session gives the same `404 unknown_session`.
+
+**Step 2, P2b artifacts (R13, R14, merge `97f36a13`).** Files: `crates/fleetdeck-deck/src/http/display_artifact.rs`, `artifact_common.rs`, `artifact_stream.rs`. The route serves one file of one version. Every miss before the station work is one `404 unknown_artifact`. The answer is inert: the CSP `INERT_CSP` has `sandbox` with no `allow-scripts`, and the headers are `nosniff`, `no-referrer` and `no-store`. The directive, the scope and the login are checked again after every await and before each streamed chunk (R13 Q7, R14). R15 Q1 A (built on v2 as `2903d206`): `{*path}` = `_` names the one file, and the content type comes from the real file name.
+
+**Step 3, web completion (R15, R16, merge `76cff37b`, fix `04a61495`).** Files: `web/src/display/**` (the display runtime, the pair page, the directive poll), `web/src/displays/**` (the Displays tab, Send to wall data), `web/src/desktop/**` (the Desktop panel), `web/src/wall/**` (the artifact pane, change summaries, Send to wall). The wall renders each artifact kind inert (R15 Q2): HTML in `<iframe sandbox="">`, SVG and images in `<img>`, Markdown read with a 1 MiB cap and drawn with `react-markdown` and `remark-gfm` (`skipHtml`; links and images as plain text), and PDF or any other kind as the card "open it on your own device". The pending row of a pairing never shows the code: the owner types the code that the wall shows (R15 Q9). Send to wall pins by default (R15 Q11). R16: `WallPage` keeps `owner` and takes an optional `display?: DisplayEnv`. Fix `04a61495`: the Displays page keeps the "Approved" status at the section level.
+
+**PRE-PR fixes (R17, merge `5a01c9ca`).** Round 1 of the adversary failed (2 BLOCKER, 2 MAJOR). One round fixed all four:
+- F1: `scope_of` checks the display session first (expiry, idle, revoke, auth generation). Every display route and every streamed artifact chunk re-checks the login.
+- F2: every display projection reads the scope after its data reads, right before the filter.
+- F3: a wall close clears only the binding that it saw (`display_clear_binding_at` with station and revision, one statement).
+- F4: the 30 s wake cooldown is enforced at the send (`Shared.last_wake`).
+
+**Proof status.**
+- `make check` on `5a01c9ca`: PASS (3 953 Rust tests, 11 skipped; 1 660 web tests).
+- Real e2e `web/e2e-real/display.spec.ts`: 4 of 4 after the fix `04a61495`. The first run had 2 passed; the pairing case failed on the missing "Approved" text and the revoke case did not run.
+- Mock e2e `web/e2e/display.spec.ts`: 5 of 5. `web/e2e/wall.spec.ts`: 6 of 6.
+- The first full `make check` on v2 (`04a61495`) failed in an environment race: the test `station_pairing invite_prints_an_invitation_that_pairs_the_deck_and_the_listener_survives_a_restart` got "Address already in use" on a station restart port (open item 24 of §14).
+- Reviews (§13): PRE-PR round 1 FAIL (2 BLOCKER, 2 MAJOR, fixed in `5a01c9ca`), RE-REVIEW round 2 PASS. The review reports are `adv-r13-p23b-prepr-r1-report.md` and `adv-r13-p23b-prepr-r2-report.md` in the architect's brief folder.
+- The live smoke on the owner's Omarchy machine (DL-201 asks for it): result not recorded.
+
+**Open items.** They are items 7 to 24 of §14.
+
 ---
 
 ## 7. The desktop MCP for agents (HIGH RISK)
@@ -542,6 +743,8 @@ These are new `ToolClass` and `GrantClass` values:
 | `desktop` | `desktop_info`, `wall_show`, `notify`, `preview_open`, `terminal_open`, `window_close` | `allow_desktop` |
 | `capture` | `screenshot`, `record_demo` | `allow_desktop_capture` |
 | `input` | `pointer_move`, `pointer_click`, `key_press`, `type_text`, `scroll` | `allow_desktop_input`, plus `capture` in the same grant (an agent that clicks must be able to see) |
+
+*Inactive (revision 11): P5a uses only `screen_capture` (monitor, owner); P5b and P6 define their own names in their reviews.* The tools `screenshot` and `record_demo` of the `capture` class are historical.
 
 ### 7.2 Gates
 
@@ -565,6 +768,8 @@ These are new `ToolClass` and `GrantClass` values:
 | `screenshot` | `target: window <address> \| monitor <name>` | `capture.screenshot`. The image goes back to the agent as MCP image content, and it is also kept as an artifact |
 | `record_demo` | `target`, `seconds ≤ 120` | `capture.record`. The tool returns the artifact id |
 | `pointer_* / key_press / type_text / scroll` | §7.4 | `input.*` |
+
+*Inactive (revision 11): P5a uses only `screen_capture` (monitor, owner); P5b and P6 define their own names in their reviews.* The rows `screenshot` and `record_demo` (and the names `desktop_screenshot` and `desktop_record` of §6.5A item 11) are historical.
 
 ### 7.4 Computer Use: scoped input
 
@@ -725,6 +930,33 @@ The flow uses Omarchy's unattended install (§1.1):
 
 The same flow works for Omarchy VMs on the server (Proxmox `qm create` with a `cidata` ISO). Each VM is its own station with its own workspaces.
 
+## 9A. Revision 10: provisioning rules (owner decisions DL-230 items 3 and 4; answers the DESIGN REVIEW of §9)
+
+These rules replace §9 where they differ and answer the findings B1-B6 of the P5/P8 DESIGN REVIEW round 1.
+
+1. **Enrollment by fingerprint approval (B1, owner decision DL-230 item 3).** The provisioning medium holds **no Fleet Deck secret**. A new machine pairs with the existing station-initiated pairing (DL-178, `pair_request.v1`): `fleetdeck station join --tailnet <deck> --deck-fingerprint <hex> --name <name>`. The station shows its own key fingerprint at first login (a desktop notification and the new command `fleetdeck station fingerprint`, which prints the link key fingerprint of the running station: "Approve this fingerprint on the board: <first 16 hex> …"). The owner opens the pairing window on the board (elevation, 10 minutes) and approves the exact fingerprint that the machine shows. A copied medium gives an attacker nothing: the attacker's own key has another fingerprint, and the owner approves only the fingerprint on the new machine's screen.
+2. **What the medium holds.** `fleetdeck/provision.toml` (0600): `deck = "<host>[:<port>]"`, `deck_fingerprint = "<64 hex>"`, `name = "<station name>"`. `fleetdeck deck provision-file <name> --out <path>` writes it (refuses an existing file, creates it 0600, prints nothing secret). The Omarchy secrets on the same medium (LUKS passphrase, Tailscale key) are outside Fleet Deck; the operations guide says: detach the ISO after install, and rotate the Tailscale key if the medium leaves your control.
+3. **Bootstrap order (B2).** The first-login hook runs, and stops at the first failure:
+   1. install the package (item 6) if `fleetdeck` is missing;
+   2. `fleetdeck service install station` (the station service only, not `both`);
+   3. wait at most 60 s for the station socket (`fleetdeck station fingerprint` exits 0 once the station answers on its socket);
+   4. `fleetdeck station join --tailnet <deck> --deck-fingerprint <hex> --name <name>` (it keeps its retry file and asks again until the owner approves; the existing retry file rules apply);
+   5. after the link is up: `fleetdeck omarchy install --yes`.
+   Every step is idempotent: a rerun skips a done step (`service install` of an installed service, a station already paired with this deck). A station paired with another deck stops with the existing `up.rs` refusal text.
+4. **Recovery (B3).** There is no invitation to consume, so there is no half-redeemed state. A request that the owner never approves expires with the window; the retry file asks again. The owner revokes a wrong station with the existing station removal on the board.
+5. **CLI (B4).** Two commands are new: `fleetdeck station fingerprint` (item 1) and `fleetdeck deck provision-file <name> --out <path>` (name: the station name grammar; no TTL, because the file holds no secret). The deck keeps no provisioning record. The audit row of the pairing approval is the existing one.
+6. **Distribution (B6, owner decision DL-230 item 4).** AUR package `fleetdeck-bin` (the release tarball with its SHA-256 in the PKGBUILD) and a Homebrew tap formula. The hook installs from AUR with the package manager's checks; the service PATH rules of `service install` apply unchanged, and `fleetdeck doctor` checks that the provider binaries run under the installed service environment. The release and package build is a separate task of the owner's release (it needs the owner's release keys); P8 code only uses the installed binary.
+7. **Tests.** A clean home through all steps with a fake deck; each interruption point and a rerun; a second machine with a copied medium gets a different fingerprint and is not approved; `provision-file` refuses an existing file and writes 0600.
+
+## 9B. Revision 11: provisioning contracts
+
+The detailed contracts of P8 are in the annex [omarchy-p8.md](./omarchy-p8.md). **`omarchy-p8.md` overrides §9A where they differ.**
+
+- The annex gives the fingerprint format (B1), the two commands with their local protocol and file rules (B4), the hidden `provision-bootstrap` with its durable state and retry table (B2), the custody procedure (B5), and the package and hook trust (B6).
+- The annex corrects the B3 claim of §9A: a remotely committed, locally uncommitted pairing state does exist, and `pair-pending.json` handles it.
+- The custody procedure is in [operations.md](../operations.md) section 13 "Provisioning media custody (P8)". P8 acceptance requires it.
+- Production P8 acceptance waits for the release task of the owner (§14).
+
 ---
 
 ## 10. Per-session load (the 64-core view)
@@ -747,8 +979,9 @@ Tests: a fixture `/proc` tree gives the expected sums. A session that ends drops
 | **P2 Display principal** | §5: principal, `.display()` rows, cookie, links, the Displays list, the station filter, directives (owner and coordinator) | **High:** adversary DESIGN REVIEW of §5 and §4.5, then PRE-PR | P1 |
 | **P3 Desktop control** | §6.1 to §6.4 and §6.6: detection, `StationInfo.desktop`, `desktop.act` (screen, workspace, wall, notify, browser, terminal, window), settings, the wake rule, the board Desktop panel on the station page, "Send to wall" on a session and on an artifact | **High:** DESIGN REVIEW of §6, then PRE-PR | P2 (`wall.open`) |
 | **P4 Omarchy integration** | §8: `fleet.summary`, `desktop feed`, plugin, installer, hooks, hotkeys, theme sync, screensaver, crash row | Normal: one Codex review | P3 (feature `desktop.v1`) |
-| **P5 Capture** | §6.5 and the capture actions: screenshot, recording, the `video` artifact kind | **High:** DESIGN REVIEW (privacy), then PRE-PR | P3 |
-| **P6 Desktop MCP** | §7.1 to §7.3: classes `desktop` and `capture`, caps, `desktops` | **High:** DESIGN REVIEW, then PRE-PR | P3, P5 |
+| **P5a Screenshots and deletion** | §6.5B and [omarchy-p5a.md](./omarchy-p5a.md): the owner `screen_capture` action, the capture result lookup, the owner deletion of any artifact | **High:** DESIGN REVIEW, then PRE-PR | P3 |
+| **P5b Recordings** | recordings, the `video` artifact kind, `Range` playback, the recording stop (§6.5A items 5, 6, 7, 9, 10, 11 as historical input) | **High:** own DESIGN REVIEW later | P5a |
+| **P6 Desktop MCP** | §7.1 to §7.3: classes `desktop` and `capture`, caps, `desktops` | **High:** DESIGN REVIEW, then PRE-PR | P3, P5a |
 | **P7 Computer Use** | spike: the pointer tool, `wtype` on Omarchy, and how reliable the focus check is. Then §7.4 | **High:** DESIGN REVIEW after the spike, then PRE-PR | P6 |
 | **P8 Accounts and provisioning** | §8.8 and §9 | Normal for §8.8. **High** for §9 (an invitation in a drive): DESIGN REVIEW | P4 |
 | **P9 Per-session load** | §10 | Normal: one Codex review | — (in parallel) |
@@ -761,16 +994,18 @@ The order is: a serial foundation task, then the parallel tasks, then the web co
 
 | Step | Task | Exclusive owned files | Deliverable |
 |---|---|---|---|
-| 1 (serial) | Foundation and integration | Core config, settings and tests; deck `live.rs`, `cert_task_tests.rs`, `tests/common/board.rs`; proto contracts, exports and TS generation; link method tables; deck HTTP module, method tables and guard; store `mod.rs`, `schema.rs`, `displays.rs`, `displays_pairing.rs`; HTTP `display_routes.rs`; station intake routing; deck `lib.rs`, `serve.rs` | Settings, contracts, migrations, binding and pairing transactions, invalidation hooks and the final wiring |
+| 1 (serial) | Foundation and integration | Core config, settings and tests; deck `live.rs`, `cert_task_tests.rs`, `tests/common/board.rs`; proto contracts, exports and TS generation; link method tables; deck HTTP module, method tables and guard; store `mod.rs`, `schema.rs`, `displays.rs`, `displays_pairing.rs`; HTTP `display_routes.rs`; station intake routing; deck `lib.rs`, `serve.rs` | Settings, contracts (including the `desktop_authority.v1` feature and the `desktop.act` authority param, §5E item 1), migrations (including `displays.auth_generation`, §5E item 2), binding and pairing transactions, the `/display` document route (§5E item 3 as changed by §5F item 3), the `link_epoch` handshake field (§5F item 2), the `wake_seen` table (§5F item 4), invalidation hooks and the final wiring |
 | 2 (parallel) | P2b payload | Deck `http/{display_view,ws,read_routes,activity_routes}.rs`, new display projection helpers, `store/activity.rs`; new timeline and activity tests | One projection policy across HTTP and every WS path |
 | 2 (parallel) | P2b directives | New deck `store/display_directives*.rs`, `http/display_directive_routes.rs`; new directive tests | Validation, storage, live sender checks and the polling endpoint |
 | 2 (parallel) | P2b changes | Station `workspace/session_diff.rs` and new display-change helpers and tests; new deck `http/display_changes.rs` and tests | Station-produced protected statistics and patches, and a bounded display route |
 | 2 (parallel) | P2b artifacts | Deck `http/{artifact_routes,artifact_stream}.rs`, new shared artifact helpers and `display_artifact.rs`; new artifact tests | The nearly full module is factored; single-file route, CSP and revocation |
-| 2 (parallel) | P3b station dispatch | Station `desktop/**`, `link/intake_desktop.rs`, new station authority helper and tests | Fresh info, local offset, IPv6 grammar, total deadlines and dispatch authority |
+| 2 (parallel) | P3b station dispatch | Station `desktop/**`, `link/intake_desktop.rs`, new station authority helper and tests | Fresh info, local offset, IPv6 grammar, total deadlines, the station side of the dispatch authority (§5E item 1 with §5F items 1 and 2: clock contract, single use, link epoch) and the station quiet-hours re-check (§5E item 5) |
 | 2 (parallel) | P3b relay | New deck `desktop_relay.rs`, `http/desktop_routes.rs`, `link/desktop_authority.rs`; new relay tests | Owner relay, action authority, binding orchestration and redacted outcomes |
-| 2 (parallel) | P3b wake | New deck `wake/**`; new wake tests | Request detection, quiet hours, joining and bounded execution |
+| 2 (parallel) | P3b wake | New deck `wake/**`; new wake tests | Request detection, restart-safe deduplication (§5F item 4), quiet hours, joining and bounded execution |
 | 3 | Web completion (P2c, P3c) | `web/src/**`, without the generated types that step 1 owns | Pairing, display management, wall panes, the Desktop panel and "Send to wall" |
 | 4 | Documentation | Design, decisions log, `PARITY.md` and `SECURITY-CHECKLIST.md` only | The revision, the worker briefs, and a truthful proof and review status |
+
+All rows are built (DL-231, §5H). The worker briefs and the decisions are in the architect's brief folder (`r13-p23b-decisions.md`, R1-R17).
 
 ---
 
@@ -797,7 +1032,9 @@ The order is: a serial foundation task, then the parallel tasks, then the web co
 | §6.5 capture, §7 MCP classes | adversary DESIGN REVIEW | before P5 and P6 code |
 | §7.4 Computer Use | adversary DESIGN REVIEW after the P7 spike | before P7 code |
 | §9 provisioning | adversary DESIGN REVIEW | before P8 §9 code |
+| P5a, P8 (revision 11) | adversary DESIGN REVIEW round 3 (last) | before P5a and P8 code |
 | P1, P4, P9 | one Codex review of the final branch | before merge |
+| P2b/P3b code | adversary PRE-PR | round 1 FAIL (2 BLOCKER, 2 MAJOR, fixed `5a01c9ca`), round 2 PASS |
 
 ---
 
@@ -805,7 +1042,26 @@ The order is: a serial foundation task, then the parallel tasks, then the web co
 
 1. **The pointer click tool** on Omarchy (P7 spike): `ydotool` needs a root daemon and `uinput`, and `wlrctl` depends on wlroots protocols that Hyprland supports.
 2. **The format of the Omarchy account registry** (P8 brief, from `bin/omarchy-agent-account-state`).
-3. **Distribution of `fleetdeck` on Arch** (owner): a release tarball, an AUR package, or a pacman repository. §9 needs one of them.
+3. **Distribution of `fleetdeck` on Arch** (owner): answered: AUR and Homebrew packages (DL-230 item 4). §9 uses them.
 4. **The Omarchy lock IPC target name** and the sudoers drop-in path (P3 brief, from the Omarchy source).
 5. **Upstream changes** of §8.10 (owner).
 6. **A Fleet Deck record for the Omarchy agents panel.** The panel reads any record in its usage folder, so Fleet Deck could add the fleet-wide usage of all stations. The record contract is in the `claude` and `codex` collectors. This is not planned yet.
+7. R6: the unit variants of `DesktopActBody` (for example `screen_lock`) accept unknown fields (serde internally tagged unit variants). Harmless; open.
+8. R8: a wake scan reads every card on each board change (no cache, no debounce).
+9. R8: a request that the cooldown or a full queue skips stays reserved and never wakes later (accepted, fail closed).
+10. R10: the 3-try scope check (`409 scope_changed`) and the lag catch-up path have no direct test.
+11. R10: a scope change between the send-time check and the socket write is accepted.
+12. R12: the join map and the busy map of the display change route are process-global (keyed by the board address).
+13. R12: the display change route has no server-side 5 s limit and no cache.
+14. R12: `summary.files_changed` can be lower than `files.len()` by the number of hidden markers.
+15. R14: no per-display limit on cache fills of the display artifact route.
+16. R14: bytes that the deck already sent cannot be recalled.
+17. R14: the `sandbox` CSP stops the PDF viewer in a frame and Markdown may download. R15 Q2 decided the wall rendering: PDF and other kinds show the card, Markdown is drawn as text.
+18. R15: `GET /api/displays` returns `PendingPairing.code` to the owner board. This weakens the proof "the owner types the code from the wall". Consider removing the field.
+19. R15, R16: `DisplayView` has no last directive, so the Displays list cannot show it (§5.2 asks for it).
+20. R15, R16: with the owner cookie and the display cookie in one browser, the owner wins on `/api/ws`. The display page shows "This page is for a wall display. Open the board at /." for an owner answer.
+21. R15: there is no `fleetdeck deck display link` CLI command.
+22. R16: built (P9): the wall `side` area shows the per-session load heatmap (§10).
+23. R16: the CSP and the sandboxed frame are proved only in the real e2e (`web/e2e-real/display.spec.ts`).
+24. R17: the test `station_pairing invite_prints_an_invitation_that_pairs_the_deck_and_the_listener_survives_a_restart` failed once with "Address already in use" on a station restart port (an environment race; fail-fast stopped the lane at 1080 of 3943). The full check on `5a01c9ca` passed.
+25. P8 production acceptance waits for the owner's release task (pinned `fleetdeck-bin` package, trusted manifest, installed hooks).

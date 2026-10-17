@@ -20,9 +20,30 @@ use crate::ws::{self, LinkError, STEP_HELLO, STEP_READY, Ws};
 #[derive(Debug)]
 pub struct Established {
     pub peer_hello: Hello,
+    /// The `Hello` that this node sent.
+    pub own_hello: Hello,
     pub negotiated: Negotiated,
     /// The signed transcript; pairing proofs are made over it.
     pub transcript: Vec<u8>,
+}
+
+/// The `desktop_epoch` of each side of a control connection (R13 §5G item
+/// 1): this node's own and the peer's. A station sends one; a deck does not.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DesktopEpochs {
+    pub local: Option<String>,
+    pub peer: Option<String>,
+}
+
+impl Established {
+    /// The desktop epochs of this connection.
+    #[must_use]
+    pub fn desktop_epochs(&self) -> DesktopEpochs {
+        DesktopEpochs {
+            local: self.own_hello.desktop_epoch.clone(),
+            peer: self.peer_hello.desktop_epoch.clone(),
+        }
+    }
 }
 
 /// What one side brings to a channel handshake.
@@ -60,10 +81,13 @@ async fn steps(
     peer_key: PeerKey,
 ) -> Result<Established, LinkError> {
     let nonce = hello::new_nonce().map_err(LinkError::Handshake)?;
-    let mine = match (side, own.attempt) {
+    let mut mine = match (side, own.attempt) {
         (Side::Dialer, Some(a)) => own.local.dialer_hello(own.identity, a, nonce, channel),
         _ => own.local.listener_hello(own.identity, nonce, channel),
     };
+    if own.local.sends_desktop_epoch(channel) {
+        mine.desktop_epoch = Some(hello::random_hex::<16>().map_err(LinkError::Handshake)?);
+    }
     let own_text = ws::send_frame(ws, &HandshakeFrame::Hello(mine.clone())).await?;
     let (peer_text, frame) = ws::recv_frame_capped(ws, own.max_text).await?;
     let HandshakeFrame::Hello(peer_hello) = frame else {
@@ -95,6 +119,7 @@ async fn steps(
     }
     Ok(Established {
         peer_hello,
+        own_hello: mine,
         negotiated,
         transcript: tr,
     })

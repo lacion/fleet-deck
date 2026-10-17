@@ -77,6 +77,8 @@ pub fn is_socket(name: &str) -> bool {
 
 #[path = "methods_table.rs"]
 mod table;
+#[path = "methods_table_display.rs"]
+mod table_display;
 #[path = "methods_table_git.rs"]
 mod table_git;
 #[path = "methods_table_rest.rs"]
@@ -88,6 +90,7 @@ pub fn api() -> impl Iterator<Item = &'static ApiMethod> {
         .iter()
         .chain(table_rest::API_REST.iter())
         .chain(table_git::API_GIT.iter())
+        .chain(table_display::API_DISPLAY.iter())
 }
 
 /// The route prefix of the command methods.

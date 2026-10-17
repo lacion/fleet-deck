@@ -131,7 +131,7 @@ async fn canonical(s: &DeckStore, id: &str) -> Option<String> {
 fn the_migration_moves_each_project_into_a_home_and_keeps_every_field() {
     let mut conn = rusqlite::Connection::open_in_memory().unwrap();
     let migrations = migrations();
-    migrations.to_version(&mut conn, 25).unwrap();
+    migrations.to_version(&mut conn, 26).unwrap();
     for (id, station, path, at, git) in [
         ("p1", "st-1", "/work/app", 1, "{}"),
         ("p2", "st-2", "/srv/other", 2, r#"{"sync":true}"#),
@@ -196,7 +196,7 @@ fn the_migration_moves_each_project_into_a_home_and_keeps_every_field() {
 fn two_projects_on_one_folder_keep_their_home_and_only_the_oldest_sync_project_owns_it() {
     let mut conn = rusqlite::Connection::open_in_memory().unwrap();
     let migrations = migrations();
-    migrations.to_version(&mut conn, 25).unwrap();
+    migrations.to_version(&mut conn, 26).unwrap();
     for (id, at, git) in [
         ("young", 5, r#"{"sync":true}"#),
         ("old", 1, r#"{"sync":true}"#),

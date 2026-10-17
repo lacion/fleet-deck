@@ -133,6 +133,8 @@ pub async fn bound_edit(
     g.classes = classes.iter().copied().collect();
     edit(&mut g);
     let stored = f.store.create_grant(g).await.unwrap();
+    // The link cache follows the grant (the route does it in production).
+    f.ctx.peers.refresh_changed().await.unwrap();
     let b = CoordinatorBinding {
         binding_id: format!("b-{session}"),
         grant_id: stored.grant_id,

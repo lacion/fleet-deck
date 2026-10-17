@@ -98,6 +98,47 @@ pub async fn run_as(
     query: SessionDiffQuery,
     member: bool,
 ) -> Result<SessionDiff, FileError> {
+    let session_id = query.session_id.clone();
+    let mut raw = raw(store, policy, private, git, query).await?;
+    if member {
+        let f = policy.member_deny().filter_patch(&raw.patch);
+        raw.summary.files_changed = raw.summary.files_changed.saturating_sub(f.hidden_files);
+        raw.summary.insertions = raw.summary.insertions.saturating_sub(f.hidden_insertions);
+        raw.summary.deletions = raw.summary.deletions.saturating_sub(f.hidden_deletions);
+        raw.patch = f.patch;
+    }
+    Ok(SessionDiff {
+        session_id,
+        base_oid: raw.base_oid,
+        summary: raw.summary,
+        patch: raw.patch,
+        truncated: raw.truncated,
+        scope: raw.scope,
+    })
+}
+
+/// The session diff before the member deny list: the same engine for
+/// [`run_as`] and for `files.display_changes` (R13 §5D item 13).
+pub(super) struct Raw {
+    pub(super) summary: DiffSummary,
+    pub(super) patch: String,
+    pub(super) truncated: bool,
+    pub(super) scope: DiffScope,
+    base_oid: String,
+}
+
+/// The engine of [`run_as`]: private paths are already left out; the member
+/// deny list is not applied.
+///
+/// # Errors
+/// As [`run`].
+pub(super) async fn raw(
+    store: &Store,
+    policy: &Policy,
+    private: &PrivatePaths,
+    git: &GitOptions,
+    query: SessionDiffQuery,
+) -> Result<Raw, FileError> {
     let internal = |e: &dyn std::fmt::Display| FileError::new("internal", e.to_string());
     let summary = store
         .summary(query.session_id.clone())
@@ -157,23 +198,15 @@ pub async fn run_as(
             .map_err(|e| FileError::new("internal", e.to_string()))?;
         compute(root, base.oid.clone(), options, max, shared, private).await
     };
-    let (mut summary, mut patch, truncated) = tokio::time::timeout(DIFF_TIMEOUT, work)
+    let (summary, patch, truncated) = tokio::time::timeout(DIFF_TIMEOUT, work)
         .await
         .map_err(|_| FileError::new(code::TIMEOUT, "the diff took too long"))??;
-    if member {
-        let f = policy.member_deny().filter_patch(&patch);
-        summary.files_changed = summary.files_changed.saturating_sub(f.hidden_files);
-        summary.insertions = summary.insertions.saturating_sub(f.hidden_insertions);
-        summary.deletions = summary.deletions.saturating_sub(f.hidden_deletions);
-        patch = f.patch;
-    }
-    Ok(SessionDiff {
-        session_id: query.session_id,
-        base_oid: base.oid,
+    Ok(Raw {
         summary,
         patch,
         truncated,
         scope,
+        base_oid: base.oid,
     })
 }
 
@@ -570,6 +603,9 @@ fn new_file_patch(path: &str, content: &FileContent) -> (String, u64) {
     }
     (patch, lines.len() as u64)
 }
+
+#[path = "display_changes.rs"]
+pub mod display_changes;
 
 #[cfg(test)]
 #[path = "session_diff_tests.rs"]

@@ -16,6 +16,9 @@ pub struct DeckLive {
     pub conflict_mail: bool,
     /// The deck setting `fleet_control` (ADR-008 §3).
     pub fleet_control: bool,
+    /// The deck setting `desktop_control` (R13 §6.4): read live at each
+    /// decision; there is no copy in the store.
+    pub desktop_control: bool,
     /// The deck setting `tailscale_cert` (DL-190).
     pub tailscale_cert: bool,
     /// The deck setting `tailscale_bin` (DL-190): the program of the certificate task.
@@ -30,6 +33,7 @@ impl DeckLive {
             name: config.name.clone(),
             conflict_mail: config.conflict_mail,
             fleet_control: config.fleet_control,
+            desktop_control: config.desktop_control,
             tailscale_cert: config.tailscale_cert,
             tailscale_bin: config.tailscale_bin.clone(),
         }
@@ -85,6 +89,7 @@ mod tests {
             name: "a".into(),
             conflict_mail: true,
             fleet_control: false,
+            desktop_control: false,
             tailscale_cert: false,
             tailscale_bin: None,
         });
@@ -93,6 +98,7 @@ mod tests {
             name: "b".into(),
             conflict_mail: false,
             fleet_control: true,
+            desktop_control: false,
             tailscale_cert: true,
             tailscale_bin: None,
         });

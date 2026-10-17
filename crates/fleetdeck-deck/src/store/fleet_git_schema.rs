@@ -1,13 +1,15 @@
-//! The deck migrations of Fleet Git (design §8.2). V25 (phase 1): the Git
-//! settings and the remote identity of a project, the per-station snapshot
-//! state, and the reserved Git names. V26 (phase 2): the homes of a project,
-//! their generations and their clone attempts. V27 (phase 3): the radar and
-//! the land queue. V28 (PRE-PR round 1): the last known Taildrive machine name
-//! of each station. V29 (phase 4): the session moves. A migration only adds
-//! (decision 79). To reverse one, restore the pre-upgrade backup (§3.9);
-//! never drop the tables while the deck runs.
+//! The deck migrations of Fleet Git (design §8.2). They follow the v2
+//! migrations (DL-232): the deck list has v2's V25 (the display migration),
+//! then these five. V26 (phase 1): the Git settings and the remote identity
+//! of a project, the per-station snapshot state, and the reserved Git names.
+//! V27 (phase 2): the homes of a project, their generations and their clone
+//! attempts. V28 (phase 3): the radar and the land queue. V29 (PRE-PR round
+//! 1): the last known Taildrive machine name of each station. V30 (phase 4):
+//! the session moves. A migration only adds (decision 79). To reverse one,
+//! restore the pre-upgrade backup (§3.9); never drop the tables while the
+//! deck runs.
 
-/// V25 (Fleet Git phase 1, FG-5 identity columns, FG-1 to FG-4 settings).
+/// V26 (Fleet Git phase 1, FG-5 identity columns, FG-1 to FG-4 settings).
 pub const FLEET_GIT_SQL: &str = "
 ALTER TABLE projects ADD COLUMN git          TEXT    NOT NULL DEFAULT '{}';
 ALTER TABLE projects ADD COLUMN git_revision INTEGER NOT NULL DEFAULT 0;
@@ -32,7 +34,7 @@ CREATE TABLE slug_reservations (
 ) STRICT;
 ";
 
-/// V26 (Fleet Git phase 2, FG-5): the homes of a project. Each existing
+/// V27 (Fleet Git phase 2, FG-5): the homes of a project. Each existing
 /// project gets one home at position 0 with generation 1 (O16). With sync on,
 /// only the oldest project of a station and folder owns it; the others are
 /// `unverified` with `home_owned` (the migration never fails on duplicates).
@@ -109,7 +111,7 @@ UPDATE project_homes SET state = 'unverified', code = 'home_owned',
 CREATE TABLE fleet_git_prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
 ";
 
-/// V27 (Fleet Git phase 3, FG-7 and FG-8): the radar pairs, the land queue
+/// V28 (Fleet Git phase 3, FG-7 and FG-8): the radar pairs, the land queue
 /// and the land outbox (design §10.3, §11.2). The three partial unique
 /// indexes make a second `running` land of one project or one lock key
 /// impossible.
@@ -169,7 +171,7 @@ CREATE TABLE land_outbox (
 ) STRICT;
 ";
 
-/// V28 (PRE-PR round 1, H16): the last known Taildrive machine name of each
+/// V29 (PRE-PR round 1, H16): the last known Taildrive machine name of each
 /// station, so that a deck restart or a failed report does not make a
 /// paired station look like "not a station" (design §15.5). It starts empty
 /// and fills at the next `station.info` of each station.
@@ -181,7 +183,7 @@ CREATE TABLE station_machines (
 ) STRICT;
 ";
 
-/// V29 (Fleet Git phase 4, FG-9): the moves of a session to another station
+/// V30 (Fleet Git phase 4, FG-9): the moves of a session to another station
 /// (design §12.3). `request_command_id` and `undo_request_command_id` make
 /// the owner requests idempotent (T4.4b Q5, Q17). Only an additive migration;
 /// to reverse it, restore the pre-upgrade backup (§3.9).

@@ -31,7 +31,14 @@ mod coordinator_git;
 pub(crate) mod coordinator_ops;
 pub mod coordinator_query;
 mod coordinator_query_reads;
+pub mod display_directive_schema;
+pub mod display_directives;
+#[cfg(test)]
+mod display_gen_tests;
+pub mod display_v25;
 pub mod displays;
+pub mod displays_auth;
+pub mod displays_binding;
 pub mod displays_pairing;
 pub mod extras;
 pub mod fleet;
@@ -39,6 +46,7 @@ pub mod fleet_git_prefs;
 pub mod fleet_git_schema;
 pub mod fleet_git_start;
 pub mod git_snapshots;
+pub mod grant_scopes;
 pub mod grants;
 pub mod home_attempts;
 mod land_actions;
@@ -77,6 +85,7 @@ pub mod shares;
 pub mod slug_reservations;
 pub mod station_machines;
 pub mod stations;
+pub mod wake_seen;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -236,6 +245,27 @@ struct Inner {
     sentence_jobs: Mutex<Vec<conflicts::SentenceJob>>,
     /// The `ask_coordinator` calls of the workers in the last hour (R2.3).
     ask_limits: coordinator_fleet::AskLimiter,
+    /// The stations whose derived `coordinate` scope changed and whose link
+    /// cache entry is not refreshed yet (`grant_scopes`).
+    scope_dirty: Mutex<BTreeSet<StationId>>,
+    /// Counts the notes in `scope_dirty` (the follower of the link cache
+    /// waits on it).
+    scope_changes: watch::Sender<u64>,
+    /// The last snapshot that each station applied, in this deck process
+    /// (the wake rule reads it, R13 §5E item 6).
+    snapshot_marks: Mutex<BTreeMap<StationId, SnapshotMark>>,
+}
+
+/// The last snapshot batch that the read model applied for a station: the
+/// `station_seq` watermark of the batch is the initialization boundary of the
+/// wake rule (R13 §5E item 6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotMark {
+    pub incarnation: IncarnationId,
+    /// The `station_seq` at which the snapshot was taken.
+    pub watermark: u64,
+    /// Unix ms at which the deck applied it.
+    pub applied_at_ms: i64,
 }
 
 impl Inner {
@@ -328,7 +358,7 @@ impl DeckStore {
             Ok(IncarnationId::from(inc))
         })
         .await?;
-        Ok(Self {
+        let store = Self {
             inner: Arc::new(Inner {
                 db,
                 clock,
@@ -348,8 +378,37 @@ impl DeckStore {
                 sockets: std::sync::atomic::AtomicU64::new(1),
                 sentence_jobs: Mutex::default(),
                 ask_limits: coordinator_fleet::AskLimiter::default(),
+                scope_dirty: Mutex::default(),
+                scope_changes: watch::channel(0).0,
+                snapshot_marks: Mutex::default(),
             }),
-        })
+        };
+        // Deck start (grant stations design §2.3 item 8): end every stale
+        // grant and rebuild the derived `coordinate` scopes before the deck
+        // accepts any link. The link cache is filled from the stored scopes
+        // afterwards, so the notes of this pass are not needed.
+        store.sweep_grants().await?;
+        drop(store.take_scope_changes());
+        Ok(store)
+    }
+
+    /// The last snapshot that `station` applied in this deck process.
+    #[must_use]
+    pub fn snapshot_mark(&self, station: &StationId) -> Option<SnapshotMark> {
+        self.inner
+            .snapshot_marks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(station)
+            .cloned()
+    }
+
+    pub(crate) fn note_snapshot(&self, station: &StationId, mark: SnapshotMark) {
+        self.inner
+            .snapshot_marks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(station.clone(), mark);
     }
 
     /// The deck incarnation (`coordinator.call` targets it, ADR-004 §9.3).
@@ -524,6 +583,35 @@ impl DeckStore {
             let same = infos.get(station).is_some_and(|(old, _)| *old == info);
             infos.insert(station.clone(), (info, at));
             !same
+        };
+        if changed {
+            self.board_changed();
+        }
+    }
+
+    /// Replaces only the `desktop` field of the kept `station.info` of
+    /// `station`, in one step under the lock of the cache (R13 §6D item 6).
+    /// It does nothing when the deck holds no `station.info` of the station.
+    /// The time of the entry does not move: the rest of the answer is not
+    /// newer.
+    pub fn update_station_desktop(
+        &self,
+        station: &StationId,
+        desktop: fleetdeck_proto::desktop::DesktopInfo,
+    ) {
+        let changed = {
+            let mut infos = self
+                .inner
+                .infos
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            match infos.get_mut(station) {
+                Some((info, _)) if info.desktop.as_ref() != Some(&desktop) => {
+                    info.desktop = Some(desktop);
+                    true
+                }
+                _ => false,
+            }
         };
         if changed {
             self.board_changed();

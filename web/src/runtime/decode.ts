@@ -39,6 +39,14 @@ const envelope = (v: unknown) =>
   object(v['event']) &&
   text(v['event']['kind']);
 
+const displayEvent = (v: unknown) =>
+  object(v) &&
+  sequence(v['station_seq']) &&
+  sequence(v['session_seq']) &&
+  typeof v['at'] === 'number' &&
+  object(v['item']) &&
+  text(v['item']['item']);
+
 /** Validate the fields this runtime reads. Unknown event kinds remain readable (L16). */
 export function boardMessage(raw: string): BoardServerMessage {
   const v: unknown = JSON.parse(raw);
@@ -63,6 +71,10 @@ export function boardMessage(raw: string): BoardServerMessage {
       break;
     case 'timeline_events':
       valid = key(v) && list(v['events'], envelope);
+      break;
+    // The timeline frame of a wall display (R13 §5D item 7).
+    case 'display_timeline_events':
+      valid = key(v) && list(v['events'], displayEvent) && sequence(v['high_water']);
       break;
     // The people features of a shared session (R11, DL-166).
     case 'presence':

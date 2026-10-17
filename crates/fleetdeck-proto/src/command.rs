@@ -78,6 +78,14 @@ pub struct CoordinatorSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub answer_cap: Option<u32>,
+    /// The target stations that the owner picked (ADR-006 §"Creation"),
+    /// besides the coordinator's own station. Board → deck only: the deck
+    /// reads it in `owner_start` and clears it before the start command goes
+    /// to a station, so a station never sees it (both coordinator.v1 and the
+    /// current v2 decoders refuse unknown fields).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<StationId>>")]
+    pub stations: Vec<StationId>,
 }
 
 /// The reach of a coordinator grant (ADR-008 §2, §3).

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { DesktopPanel } from '../desktop/DesktopPanel';
 import { formatHash } from '../app/routes';
 import { basename, relativeAge } from '../app/sessions';
 import type { DeckSession, StationView, WorktreeInfo, WorktreeVerdict } from '../gen';
@@ -613,6 +614,7 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                 station={station.station_id}
                 sessions={cards}
               />
+              <DesktopPanel station={station} />
               {info === null ? (
                 <p className="fd-note">Reported when the station links to this deck.</p>
               ) : info.providers.length === 0 ? (

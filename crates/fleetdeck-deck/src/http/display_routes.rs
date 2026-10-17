@@ -20,8 +20,8 @@ use axum::{Json, Router};
 use fleetdeck_core::Secret;
 use fleetdeck_proto::StationId;
 use fleetdeck_proto::display::{
-    DisplayLinkMade, DisplayList, DisplaySelf, DisplayView, PairingPoll, PairingStarted,
-    PairingState,
+    DisplayBinding, DisplayLinkMade, DisplayList, DisplaySelf, DisplayView, PairingPoll,
+    PairingStarted, PairingState,
 };
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
@@ -30,12 +30,14 @@ use super::Board;
 use super::account_routes::body_error;
 use super::admission::{PeerAddr, request_source, too_many_requests};
 use super::auth_routes::{Audit, limit_refusal, named_cookie, start_attempt};
+use super::display_bodies::{BindingBody, parse_pair_body};
 use super::guard::{ApiError, DISPLAY_COOKIE, PENDING_COOKIE, cookie, owner_only};
 use super::settings_routes::{is_elevated, owner};
 use crate::store::auth::LoginSession;
 use crate::store::displays::{
     DISPLAY_MAX_MS, DisplayChange, NewDisplay, check_quiet_hours, clean_name,
 };
+use crate::store::displays_binding::{BindError, check_monitor};
 use crate::store::displays_pairing::{Approval, Claim};
 use crate::store::{AuditResult, DeckError, NewAudit, Principal};
 
@@ -62,6 +64,22 @@ fn bad(code: &'static str, message: impl Into<String>) -> ApiError {
 
 fn unknown_display() -> ApiError {
     ApiError::new(StatusCode::NOT_FOUND, "display_unknown", "no such display")
+}
+
+fn superseded() -> ApiError {
+    ApiError::new(
+        StatusCode::CONFLICT,
+        "superseded",
+        "This wall launch was replaced by a newer one.",
+    )
+}
+
+fn display_mismatch() -> ApiError {
+    ApiError::new(
+        StatusCode::CONFLICT,
+        "display_mismatch",
+        "This pairing belongs to another display.",
+    )
 }
 
 fn unknown_pairing() -> ApiError {
@@ -124,6 +142,7 @@ async fn pair_start(
     State(board): State<Arc<Board>>,
     peer: Option<Extension<PeerAddr>>,
     headers: HeaderMap,
+    body: axum::body::Bytes,
 ) -> Response {
     const ACTION: &str = "display.pair_start";
     let ip = request_source(peer);
@@ -132,6 +151,11 @@ async fn pair_start(
         NewAudit::new("anonymous", ACTION, AuditResult::Refused)
             .target(source.clone())
             .detail(detail)
+    };
+    // A body that is not valid makes no pairing, so it takes no budget.
+    let expected = match parse_pair_body(&body) {
+        Ok(e) => e,
+        Err(message) => return bad("invalid_body", message).into_response(),
     };
     if let Err(wait) = board.limiter.pair_start.reserve(ip, board.store.now_ms()) {
         board.store.audit_or_log(refused("too_many_requests")).await;
@@ -143,7 +167,11 @@ async fn pair_start(
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default()
         .to_owned();
-    match board.store.pairing_create(source.clone(), agent).await {
+    match board
+        .store
+        .pairing_start(source.clone(), agent, expected)
+        .await
+    {
         Ok((pairing_id, code, secret)) => {
             let expires_at = match board.store.pairing_get(pairing_id.clone()).await {
                 Ok(Some(p)) => p.expires_at,
@@ -206,16 +234,31 @@ async fn pair_poll(
         })
         .into_response(),
         Ok(Claim::Unknown) => unknown_pairing().into_response(),
-        Ok(Claim::Claimed(display_id)) => {
-            let session = board.store.create_display_session(display_id.clone()).await;
-            let (cookie_value, _) = match session {
-                Ok(s) => s,
-                Err(e) => return ApiError::internal(e).into_response(),
-            };
+        Ok(Claim::Stale) => {
             board
                 .store
                 .audit_or_log(
-                    NewAudit::new("anonymous", ACTION, AuditResult::Ok).target(display_id),
+                    NewAudit::new("anonymous", ACTION, AuditResult::Refused).detail("stale"),
+                )
+                .await;
+            ApiError::new(StatusCode::UNAUTHORIZED, "login_required", "log in first")
+                .into_response()
+        }
+        Ok(Claim::Superseded) => {
+            board
+                .store
+                .audit_or_log(
+                    NewAudit::new("anonymous", ACTION, AuditResult::Refused).detail("superseded"),
+                )
+                .await;
+            superseded().into_response()
+        }
+        Ok(Claim::Claimed(issued)) => {
+            let cookie_value = issued.cookie;
+            board
+                .store
+                .audit_or_log(
+                    NewAudit::new("anonymous", ACTION, AuditResult::Ok).target(issued.display_id),
                 )
                 .await;
             let mut res = Json(PairingPoll {
@@ -265,8 +308,14 @@ async fn list(
 #[serde(deny_unknown_fields)]
 struct ApproveBody {
     code: String,
-    name: String,
-    ceiling: Vec<StationId>,
+    /// An existing display (a managed `wall.open` launch), or the name and
+    /// ceiling of a new one: exactly one of the two forms.
+    #[serde(default)]
+    display_id: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    ceiling: Option<Vec<StationId>>,
     #[serde(default)]
     elevation: Option<String>,
 }
@@ -299,21 +348,37 @@ async fn approve_pairing(
     if body.code.len() != 6 || !body.code.bytes().all(|b| b.is_ascii_digit()) {
         return Err(bad("invalid_display", "the code is 6 digits"));
     }
-    let new = board
-        .store
-        .display_validate(NewDisplay {
-            name: body.name,
-            ceiling: body.ceiling,
-        })
-        .await
-        .map_err(deck_error)?;
-    require_elevation(board, session, body.elevation.as_deref())?;
-    match board
-        .store
-        .pairing_approve_new(id.to_owned(), body.code, new)
-        .await
-        .map_err(deck_error)?
-    {
+    let approval = match (body.display_id, body.name, body.ceiling) {
+        (Some(display_id), None, None) => {
+            // An existing display gives it a new login: elevation is needed.
+            require_elevation(board, session, body.elevation.as_deref())?;
+            board
+                .store
+                .pairing_approve_existing(id.to_owned(), body.code, display_id)
+                .await
+                .map_err(deck_error)?
+        }
+        (None, Some(name), Some(ceiling)) => {
+            let new = board
+                .store
+                .display_validate(NewDisplay { name, ceiling })
+                .await
+                .map_err(deck_error)?;
+            require_elevation(board, session, body.elevation.as_deref())?;
+            board
+                .store
+                .pairing_approve_new(id.to_owned(), body.code, new)
+                .await
+                .map_err(deck_error)?
+        }
+        _ => {
+            return Err(bad(
+                "invalid_display",
+                "give display_id, or name and ceiling",
+            ));
+        }
+    };
+    match approval {
         Approval::Approved(d) => Ok(d.view()),
         Approval::Unknown => Err(unknown_pairing()),
         Approval::Mismatch => Err(ApiError::new(
@@ -321,6 +386,8 @@ async fn approve_pairing(
             "pairing_mismatch",
             "The code does not match.",
         )),
+        Approval::DisplayUnknown => Err(unknown_display()),
+        Approval::DisplayMismatch => Err(display_mismatch()),
     }
 }
 
@@ -396,8 +463,10 @@ async fn make_link(
         .create_display_with_link(new)
         .await
         .map_err(deck_error)?;
+    // The display document is `/display`; the link is `/display#display=...`
+    // (R13 §5F item 3).
     let url = format!(
-        "{}/#display={}",
+        "{}/display#display={}",
         origin.trim_end_matches('/'),
         token.expose()
     );
@@ -435,8 +504,8 @@ async fn redeem_link(
         .store
         .redeem_display_link(&Secret::new(body.token))
         .await;
-    let id = match found {
-        Ok(Some(id)) => id,
+    let issued = match found {
+        Ok(Some(issued)) => issued,
         Ok(None) => {
             attempt.failed(board.store.now_ms());
             return limit_refusal(
@@ -458,21 +527,22 @@ async fn redeem_link(
         }
     };
     attempt.succeeded();
-    match board.store.create_display_session(id.clone()).await {
-        Ok((value, _)) => {
-            board
-                .store
-                .audit_or_log(NewAudit::new("anonymous", AUDIT.0, AuditResult::Ok).target(id))
-                .await;
-            let mut res = StatusCode::NO_CONTENT.into_response();
-            res.headers_mut().insert(
-                header::SET_COOKIE,
-                named_cookie(DISPLAY_COOKIE, value.expose(), DISPLAY_MAX_MS / 1000),
-            );
-            res
-        }
-        Err(e) => ApiError::internal(e).into_response(),
-    }
+    board
+        .store
+        .audit_or_log(
+            NewAudit::new("anonymous", AUDIT.0, AuditResult::Ok).target(issued.display_id),
+        )
+        .await;
+    let mut res = StatusCode::NO_CONTENT.into_response();
+    res.headers_mut().insert(
+        header::SET_COOKIE,
+        named_cookie(
+            DISPLAY_COOKIE,
+            issued.cookie.expose(),
+            DISPLAY_MAX_MS / 1000,
+        ),
+    );
+    res
 }
 
 /// `Some(None)` for a JSON `null`, `None` for an absent field.
@@ -497,12 +567,16 @@ struct SettingsBody {
     wake_on_needs_you: Option<bool>,
     #[serde(default, deserialize_with = "some_option")]
     quiet_hours: Option<Option<String>>,
+    /// `null` clears the binding (R13 §6D item 2).
+    #[serde(default, deserialize_with = "some_option")]
+    binding: Option<Option<BindingBody>>,
     #[serde(default)]
     elevation: Option<String>,
 }
 
 /// `POST /api/displays/{id}/settings`: changes a display. Elevation is
-/// needed when `show_diffs` turns on or the ceiling gains a station.
+/// needed when `show_diffs` turns on, the ceiling gains a station, or the
+/// binding is set or changed (it gives station authority and the wake).
 ///
 /// # Errors
 /// 400 `invalid_body`, `invalid_display`, `elevation_required`; 403
@@ -522,6 +596,7 @@ async fn settings(
         ("show_diffs", body.show_diffs.is_some()),
         ("wake_on_needs_you", body.wake_on_needs_you.is_some()),
         ("quiet_hours", body.quiet_hours.is_some()),
+        ("binding", body.binding.is_some()),
     ]
     .iter()
     .filter(|(_, set)| *set)
@@ -566,7 +641,24 @@ async fn change_display(
         .as_ref()
         .is_some_and(|c| c.iter().any(|s| !old.ceiling.contains(s)));
     let diffs_on = body.show_diffs == Some(true) && !old.show_diffs;
-    if more_stations || diffs_on {
+    let new_binding = match &body.binding {
+        Some(Some(b)) => {
+            check_monitor(&b.monitor).map_err(bind_error)?;
+            board
+                .store
+                .display_validate_ceiling(vec![b.station_id.clone()])
+                .await
+                .map_err(deck_error)?;
+            Some(DisplayBinding {
+                station_id: b.station_id.clone(),
+                monitor: b.monitor.clone(),
+            })
+        }
+        _ => None,
+    };
+    // Setting or changing the binding needs elevation; clearing it does not.
+    let binding_set = new_binding.is_some() && new_binding != old.binding;
+    if more_stations || diffs_on || binding_set {
         require_elevation(board, session, body.elevation.as_deref())?;
     }
     let change = DisplayChange {
@@ -576,13 +668,36 @@ async fn change_display(
         wake_on_needs_you: body.wake_on_needs_you,
         quiet_hours: body.quiet_hours,
     };
-    board
+    let updated = board
         .store
         .display_update(id.to_owned(), change)
         .await
         .map_err(deck_error)?
-        .map(|d| d.view())
-        .ok_or_else(unknown_display)
+        .ok_or_else(unknown_display)?;
+    match body.binding {
+        None => Ok(updated.view()),
+        Some(_) => board
+            .store
+            .display_set_binding(id.to_owned(), new_binding)
+            .await
+            .map(|d| d.view())
+            .map_err(bind_error),
+    }
+}
+
+/// The HTTP error of a refused binding change.
+fn bind_error(e: BindError) -> ApiError {
+    match e {
+        BindError::Unknown => unknown_display(),
+        BindError::Bound => ApiError::new(
+            StatusCode::CONFLICT,
+            "display_bound",
+            "The display is bound to another station.",
+        ),
+        BindError::Superseded => superseded(),
+        BindError::Invalid(m) => bad("invalid_display", m),
+        BindError::Store(e) => ApiError::internal(e),
+    }
 }
 
 /// `POST /api/displays/{id}/revoke`: deletes the sessions, links and

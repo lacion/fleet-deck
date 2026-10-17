@@ -166,7 +166,7 @@ impl DeckStore {
     /// database error.
     pub async fn pin_station(&self, new: NewStation) -> Result<StationRecord> {
         let now = self.now_ms();
-        let out = call(&self.inner.db, move |conn| {
+        let (out, scopes) = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let hex = key_hex(&new.key);
             let taken: Option<String> = tx
@@ -222,12 +222,18 @@ impl DeckStore {
                 )?;
                 fingerprint
             };
+            // The pairing scopes replace the stored ones; `coordinate` is
+            // derived only from the grants in effect (grant stations design
+            // §2.3 item 6), so an active grant keeps it and no other
+            // writer adds it.
+            let scopes = super::grant_scopes::sync_coordinate_scopes(&tx, now)?;
             let rec = station_by_id(&tx, &StationId::from(id))?
                 .ok_or_else(|| DeckError::Corrupt("the pinned station is missing".to_owned()))?;
             tx.commit()?;
-            Ok(rec)
+            Ok((rec, scopes))
         })
         .await?;
+        self.note_scope_changes(scopes);
         self.board_changed();
         Ok(out)
     }

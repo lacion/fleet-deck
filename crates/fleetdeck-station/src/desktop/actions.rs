@@ -13,6 +13,7 @@ use fleetdeck_proto::desktop::{DesktopAction, DesktopKind, Urgency};
 use ring::rand::{SecureRandom, SystemRandom};
 use tokio::sync::OwnedMutexGuard;
 
+use super::authority::Start;
 use super::detect::Found;
 use super::events::{Events, Kind, Record, preview_name, preview_parent, remove_preview_profile};
 use super::info::{self, RawMonitor};
@@ -76,6 +77,8 @@ pub(super) struct Cx<'a> {
     pub events: &'a Events,
     pub walls: &'a WallLocks,
     pub gate: Gate<'a>,
+    /// The start check of the authority of this action.
+    pub start: &'a Start,
 }
 
 impl Cx<'_> {
@@ -83,6 +86,7 @@ impl Cx<'_> {
         Runner {
             env: self.env,
             gate: Some(self.gate),
+            start: Some(self.start),
         }
     }
 
@@ -263,7 +267,7 @@ impl Cx<'_> {
             launch_id: spec.launch_id.clone(),
         })?;
         let (program, program_args) = self.wrapped(spec.args);
-        let mut child = match self.runner().spawn(program, &program_args) {
+        let mut child = match self.runner().spawn(program, &program_args).await {
             Ok(child) => child,
             Err(e) => {
                 self.events.cancel(&spec.class);
@@ -366,6 +370,8 @@ impl Cx<'_> {
         };
         let id = launch_id()?;
         let profile = preview_parent(&self.found.runtime_dir).join(preview_name(&id));
+        // A file change is a side effect: the start check comes first.
+        self.start.begin(self.env).await?;
         make_parent(&preview_parent(&self.found.runtime_dir)).await?;
         let class = format!("fleetdeck-preview-{id}");
         let address = self
@@ -483,6 +489,7 @@ impl Cx<'_> {
         {
             return Err(not_plain());
         }
+        self.start.begin(self.env).await?;
         make_parent(&parent).await?;
         let id = launch_id()?;
         let class = format!("fleetdeck-wall-{id}");
