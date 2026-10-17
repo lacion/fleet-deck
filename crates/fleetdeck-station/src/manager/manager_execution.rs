@@ -8,7 +8,7 @@ use fleetdeck_proto::command::SessionCommand;
 impl SessionManager {
     /// The boot id reader of this station: the one of its shim host, or
     /// the real reader.
-    fn boot_reader(&self) -> fleetdeck_providers::host::shim::identity::BootIdReader {
+    pub(super) fn boot_reader(&self) -> fleetdeck_providers::host::shim::identity::BootIdReader {
         self.target
             .boot_reader()
             .unwrap_or_else(fleetdeck_providers::host::shim::identity::real_boot_id_reader)

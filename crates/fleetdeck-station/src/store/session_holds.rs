@@ -110,7 +110,7 @@ fn reject(text: impl Into<String>) -> DecideError {
 
 /// The refusal of a session that moved away (design §12.4): `Some` for a
 /// session with `summary.moved_to`.
-fn moved_text(conn: &Connection, session_id: &SessionId) -> Result<Option<String>> {
+pub(crate) fn moved_text(conn: &Connection, session_id: &SessionId) -> Result<Option<String>> {
     Ok(super::log::summary(conn, session_id)?
         .and_then(|s| s.moved_to)
         .map(|m| format!("The session moved to {}. Open it there.", m.station_id)))

@@ -134,6 +134,11 @@ fn publication_of(
     })
 }
 
+/// The text of a source whose previous execution may still run.
+fn unended_text(why: &str) -> String {
+    format!("Another execution of this conversation may still run ({why}).")
+}
+
 /// Decides `session.move_out` (design §12.3 step 1): the checks of §12.2 items
 /// 1, 2 and 5 and the worktree safety checks of the land, then the
 /// `move_out_runs` row (with the publication), the hold, and the stop of an
@@ -188,6 +193,11 @@ pub(in crate::manager) fn decide_out(
             "An approval is open."
         };
         return Err(refuse(NOT_READY, text));
+    }
+    // A lost session is not proof that its run ended: a shim row without
+    // proof may still run the conversation (FG-9 property 1).
+    if let Some(why) = d.unended_execution(&session_id)? {
+        return Err(refuse(NOT_READY, &unended_text(&why)));
     }
     let publication = publication_of(d.connection(), &session_id)?;
     land::worktree_checks(d, policy, shells, &session_id, &stored)?;
@@ -397,6 +407,25 @@ impl SessionManager {
         }
     }
 
+    /// The source must have no execution that may still run: the rule of
+    /// a resume (the shim rows of the session, and the reboot proofs that
+    /// the dispatch revalidates). A store error blocks too.
+    async fn check_ended(&self, session_id: &SessionId) -> Result<(), MoveFileError> {
+        let blocked = |why: &str| MoveFileError::new("invalid_state", unended_text(why));
+        let found = self
+            .store
+            .own_execution_exclusion(session_id.clone())
+            .await
+            .map_err(|e| blocked(&format!("store: {e}")))?;
+        if let Some(why) = found.blocked {
+            return Err(blocked(&why));
+        }
+        match crate::manager::shims::revalidate(&self.boot_reader(), &found.reboot_rows) {
+            Some(why) => Err(blocked(&why)),
+            None => Ok(()),
+        }
+    }
+
     /// The tip of the local branch must be the pushed commit (Q4): a commit
     /// that is not on the remote would be lost by the move.
     async fn check_tip(
@@ -500,6 +529,7 @@ impl SessionManager {
     > {
         let row = self.holding_row(move_id).await?;
         self.wait_stopped(&row.session_id).await?;
+        self.check_ended(&row.session_id).await?;
         self.check_tip(&row.session_id, &row.publication).await?;
         let exported = self.open_files(&row.session_id).await?;
         let instance = self
