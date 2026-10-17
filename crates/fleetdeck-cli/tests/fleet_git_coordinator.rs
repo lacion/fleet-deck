@@ -173,12 +173,24 @@ fn authority_loss_before_admission_of_a_queued_land() {
     let first = land(&rig, 1, id_of(&s1));
     wait_entered(&rig);
 
-    let answer = coord.call(
-        "land_session",
-        json!({ "station": rig.station_id(1), "session_id": id_of(&s2) }),
-    );
-    eprintln!("land_session answered: {}", answer.text);
-    assert!(!answer.is_error, "{}", answer.text);
+    // A call can stay `pending` while the link of the widened grant comes
+    // back; the same idempotency key reads the row again without a new send.
+    let args = json!({
+        "station": rig.station_id(1),
+        "session_id": id_of(&s2),
+        "idempotency_key": "land-s2",
+    });
+    let deadline = Instant::now() + Duration::from_secs(90);
+    let answer = loop {
+        let answer = coord.call("land_session", args.clone());
+        eprintln!("land_session answered: {}", answer.text);
+        assert!(!answer.is_error, "{}", answer.text);
+        if !answer.text.contains("\"pending\"") || Instant::now() > deadline {
+            break answer;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    };
+    assert!(!answer.text.contains("\"pending\""), "{}", answer.text);
     let second = other_land(&rig, &project, &[&first]);
     let queued = wait_land(&rig, &project, &second, "queued", |r| {
         r["state"] == "queued"
