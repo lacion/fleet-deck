@@ -293,6 +293,9 @@ impl BoardClient {
         text.push_str("\r\n");
         text.push_str(&body);
         s.write_all(text.as_bytes()).await.unwrap();
+        // tokio-rustls can accept the bytes and keep the encrypted tail when
+        // the socket buffer is full; only a flush sends it.
+        s.flush().await.unwrap();
         let mut raw = Vec::new();
         // The server may end the TLS stream without close_notify after
         // `Connection: close`; the bytes read so far are the response.
