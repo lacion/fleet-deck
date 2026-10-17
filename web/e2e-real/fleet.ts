@@ -489,6 +489,11 @@ export class GitRig {
   static async create(): Promise<GitRig> {
     const deck = await Deck.create();
     const station = new Station('alpha', ['allow_local_remotes = true']);
+    // A land commits on the station: its Git needs an identity (else the land refuses).
+    writeFileSync(
+      join(station.home, '.gitconfig'),
+      '[user]\n\tname = Fleet Deck Test\n\temail = test@fleetdeck.invalid\n',
+    );
     const projects = join(station.home, 'projects');
     mkdirSync(projects, { recursive: true });
     const real = realpathSync(projects);
