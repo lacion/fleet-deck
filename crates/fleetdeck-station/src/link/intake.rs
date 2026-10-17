@@ -514,10 +514,10 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
                 assist_cap: usage.map(|(_, cap)| cap),
                 resources: crate::resources::current(&policy).await,
                 desktop: intake_desktop::station_info(ctx).await,
-                traits: None,
-                config: None,
+                traits: intake_fleet_git::traits(&ctx.fleet_git, &policy).await,
+                config: ctx.fleet_git.config(),
                 taildrive: None,
-                fleet_git: None,
+                fleet_git: Some(intake_fleet_git::info(&ctx.fleet_git, &policy).await),
             })
         }
         "workspace.list" => workspaces(ctx, req.params).await,
@@ -540,6 +540,8 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
         "desktop.act" => intake_desktop::act(ctx, req.params).await,
         "fleet_git.projects_set" => intake_fleet_git::projects_set(&ctx.manager, req.params).await,
         "fleet_git.push_now" => intake_fleet_git::push_now(&ctx.manager, req.params).await,
+        "project.ensure_home" => intake_fleet_git::ensure_home(ctx, req.params).await,
+        "project.home_status" => intake_fleet_git::home_status(ctx, req.params).await,
         "session.branches" | "files.branch_diff" => {
             branch_method(ctx, &req.method, req.params).await
         }

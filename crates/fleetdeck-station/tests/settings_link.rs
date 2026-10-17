@@ -184,6 +184,9 @@ impl Rig {
             shells: Arc::new(fleetdeck_station::shell::Shells::new(ShellConfig::default())),
             coordinator: fleetdeck_station::coordinator::LinkForward::default(),
             paste_dir: None,
+            fleet_git: Arc::new(fleetdeck_station::fleet_git_runtime::FleetGitRuntime::new(
+                Arc::new(fleetdeck_station::workspace::GitOptions::isolated),
+            )),
         });
         Self {
             _det: det,

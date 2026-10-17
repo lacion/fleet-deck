@@ -59,7 +59,7 @@ pub(super) fn apply_changes(
                 }
                 set_value(doc, key, array.into())?;
             }
-            FieldKind::RepoGroups => set_repo_groups(doc, key, new)?,
+            FieldKind::RepoGroups | FieldKind::ShareMounts => set_repo_groups(doc, key, new)?,
             FieldKind::Instances => apply_instances(doc, new, current.get(key))?,
             FieldKind::Trackers => return Err(bad()),
         }

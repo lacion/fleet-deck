@@ -11,8 +11,9 @@
 //!   publishes nothing. `publish` swaps the snapshot and the rebuilt
 //!   service and cannot fail.
 //! - The fields that apply only at a restart (`listen`, `host`,
-//!   `shim_buffer_mib`, `provider_instances`) are ignored: the running
-//!   values stay.
+//!   `shim_buffer_mib`, `provider_instances`, and the Fleet Git keys
+//!   `clone_root`, `traits`, `allow_check_cmd`, `allow_local_remotes`,
+//!   `taildrive_mounts`) are ignored: the running values stay.
 //! - The caller serializes `prepare` and `publish` (the settings holder
 //!   runs one save at a time).
 

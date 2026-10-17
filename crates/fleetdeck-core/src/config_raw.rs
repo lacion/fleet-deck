@@ -38,6 +38,11 @@ pub(crate) const RAW_STATION_KEYS: &[&str] = &[
     "member_deny",
     "model_help",
     "tailscale_bin",
+    "clone_root",
+    "traits",
+    "allow_check_cmd",
+    "allow_local_remotes",
+    "taildrive_mounts",
 ];
 
 #[derive(Deserialize)]
@@ -63,6 +68,11 @@ pub(super) struct RawStation {
     pub(super) member_deny: Option<Vec<String>>,
     pub(super) model_help: Option<RawModelHelp>,
     pub(super) tailscale_bin: Option<String>,
+    pub(super) clone_root: Option<String>,
+    pub(super) traits: Option<Vec<String>>,
+    pub(super) allow_check_cmd: Option<bool>,
+    pub(super) allow_local_remotes: Option<bool>,
+    pub(super) taildrive_mounts: Option<BTreeMap<String, String>>,
 }
 
 /// The keys of one `[[provider_instance]]` (`RawInstance`).

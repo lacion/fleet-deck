@@ -8,14 +8,17 @@
 //! - `push`: the refspec, the backoff, the outcome of a push and the one
 //!   serialized writer (§5).
 //! - `include`: the copy of ignored files into a new worktree (§7.2).
+//! - `home`: `project.ensure_home` and `project.home_status` (§8.4).
 
 mod fetch;
+mod home;
 mod identity;
 mod include;
 mod push;
 mod redact;
 
 pub use fetch::{BaseStale, StartPoint, fetch_for_start};
+pub use home::{ensure_home, git_version, home_status};
 pub use identity::{PushDestination, Refusal, VerifiedUrl, check_home, effective_push_url};
 pub use include::copy_includes;
 pub use push::{

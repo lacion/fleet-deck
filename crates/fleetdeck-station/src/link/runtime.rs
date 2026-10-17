@@ -37,6 +37,7 @@ use fleetdeck_proto::link::Scope;
 use tokio::task::JoinHandle;
 
 use super::{StationLink, StationPeers, serve};
+use crate::fleet_git_runtime::FleetGitRuntime;
 use crate::manager::SessionManager;
 use crate::shell::{ShellConfig, Shells};
 use crate::store::StoreError;
@@ -238,6 +239,41 @@ impl StationNode {
         paste_dir: Option<std::path::PathBuf>,
         artifacts_dir: Option<std::path::PathBuf>,
     ) -> Result<Arc<Self>, NodeError> {
+        // A node that `serve` did not make clones with plain Git options.
+        let runtime = Arc::new(FleetGitRuntime::new(Arc::new(
+            crate::workspace::GitOptions::isolated,
+        )));
+        Self::start_with_fleet_git(
+            manager,
+            identity,
+            name,
+            listen,
+            backoff,
+            shells,
+            paste_dir,
+            artifacts_dir,
+            runtime,
+        )
+        .await
+    }
+
+    /// [`StationNode::start_with_dirs`] with the Fleet Git runtime that
+    /// `serve` made (FG-5).
+    ///
+    /// # Errors
+    /// As [`StationNode::start`].
+    #[allow(clippy::too_many_arguments)]
+    pub async fn start_with_fleet_git(
+        manager: Arc<SessionManager>,
+        identity: Arc<Identity>,
+        name: String,
+        listen: &[SocketAddr],
+        backoff: BackoffPolicy,
+        shells: Arc<Shells>,
+        paste_dir: Option<std::path::PathBuf>,
+        artifacts_dir: Option<std::path::PathBuf>,
+        fleet_git: Arc<FleetGitRuntime>,
+    ) -> Result<Arc<Self>, NodeError> {
         if let Some(dir) = artifacts_dir {
             manager.set_artifacts_dir(dir, manager.private_paths());
         }
@@ -289,6 +325,7 @@ impl StationNode {
                 shells,
                 coordinator: forward,
                 paste_dir,
+                fleet_git,
             }),
             invitations,
             listening: tokio::sync::Mutex::default(),

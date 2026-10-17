@@ -50,6 +50,38 @@ pub struct StationLink {
     /// The directory of `files.write_temp` (DL-147); `None` answers
     /// `unsupported`.
     pub paste_dir: Option<std::path::PathBuf>,
+    /// The Fleet Git runtime: traits, config digest, deck control and the
+    /// Git options of a clone (FG-5, FG-6, FG-11).
+    pub fleet_git: Arc<crate::fleet_git_runtime::FleetGitRuntime>,
+}
+
+/// Holds the deck control of a link in the Fleet Git runtime for as long as
+/// the link serves, and clears it with its token (a newer link stays).
+struct DeckSlot<'a> {
+    runtime: &'a crate::fleet_git_runtime::FleetGitRuntime,
+    token: Option<u64>,
+}
+
+impl<'a> DeckSlot<'a> {
+    /// `homes`: the link negotiated `fleet_git.homes.v1`.
+    fn new(
+        runtime: &'a crate::fleet_git_runtime::FleetGitRuntime,
+        control: &Control,
+        homes: bool,
+    ) -> Self {
+        Self {
+            runtime,
+            token: homes.then(|| runtime.set_deck(control.clone())),
+        }
+    }
+}
+
+impl Drop for DeckSlot<'_> {
+    fn drop(&mut self) {
+        if let Some(token) = self.token {
+            self.runtime.clear_deck(token);
+        }
+    }
 }
 
 /// Serves `link` until it ends; returns why it ended.
@@ -81,6 +113,16 @@ pub async fn serve(ctx: Arc<StationLink>, link: LiveLink) -> Closing {
             .params()
             .negotiated
             .has(fleetdeck_proto::version::feature::FLEET_GIT),
+    );
+    // The artifact authorization of a later phase asks the deck over this
+    // control (FG-12); it needs `fleet_git.homes.v1`.
+    let _deck = DeckSlot::new(
+        &ctx.fleet_git,
+        &control,
+        control
+            .params()
+            .negotiated
+            .has(fleetdeck_proto::version::feature::FLEET_GIT_HOMES),
     );
     if control
         .params()

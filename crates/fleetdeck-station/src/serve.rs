@@ -20,6 +20,7 @@ use fleetdeck_providers::host::shim::host::{ShimHost, ShimHostConfig};
 use fleetdeck_providers::host::{DirectChildHost, SessionHost};
 use tokio::sync::watch;
 
+use crate::fleet_git_runtime::FleetGitRuntime;
 use crate::link::{NodeError, StationNode};
 use crate::local;
 use crate::manager::target::ShimSettings;
@@ -248,6 +249,13 @@ pub struct RunningStation {
 /// The longest wait for a Fleet Git task at the station stop.
 const FLEET_GIT_STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Whether Fleet Git accepts local remotes: the `station.toml` key, or the
+/// phase-1 env bridge `FLEETDECK_ALLOW_LOCAL_REMOTES` that is exactly `1`
+/// (FG-5: T2.5 moves the test rig to station.toml and removes this bridge).
+fn allow_local_remotes(key: bool, env: Option<&str>) -> bool {
+    key || env == Some("1")
+}
+
 /// The Git options of a Fleet Git write: the program, and under Linux the
 /// confinement with the allowed roots of the current policy (DL-200), read at
 /// each job.
@@ -322,10 +330,13 @@ impl RunningStation {
         if host_choice != config.host {
             policy = policy.without_shim_host();
         }
-        // (FG-5, phase 1: T2.2 replaces this with the station.toml key)
-        policy = policy.with_allow_local_remotes(
-            std::env::var("FLEETDECK_ALLOW_LOCAL_REMOTES").is_ok_and(|v| v == "1"),
-        );
+        // (FG-5: T2.5 moves the test rig to station.toml and removes this bridge)
+        policy = policy.with_allow_local_remotes(allow_local_remotes(
+            config.allow_local_remotes,
+            std::env::var("FLEETDECK_ALLOW_LOCAL_REMOTES")
+                .ok()
+                .as_deref(),
+        ));
         // The station's own credential and config locations (DL-173): the
         // set loads and scans its inode registry here, before the manager
         // starts (its turn checkpoints and reverts refuse these files,
@@ -417,6 +428,23 @@ impl RunningStation {
             program: None,
             instances: terminal_instances(config),
         }));
+        // The runtime of Fleet Git homes, traits and the config digest.
+        let fleet_runtime = Arc::new(FleetGitRuntime::new(fleet_git_options(Arc::clone(
+            manager.policy_hub(),
+        ))));
+        fleet_git.push(tokio::spawn(crate::drift::run(
+            Arc::clone(&fleet_runtime),
+            Arc::clone(&manager),
+            Env::from_process().home,
+            crate::drift::DRIFT_EVERY,
+            rx.clone(),
+        )));
+        // A clone of an earlier process did not finish: its folder stays, the
+        // attempt is `interrupted` (design §8.4).
+        let interrupted = manager.store().home_interrupt_cloning().await?;
+        if interrupted > 0 {
+            tracing::warn!(interrupted, "home clones stopped by the restart");
+        }
         fleet_git.extend(crate::manager::fleet_git_cleanup::start(
             manager.store().clone(),
             Arc::clone(manager.policy_hub()),
@@ -424,7 +452,7 @@ impl RunningStation {
             fleet_git_options(Arc::clone(manager.policy_hub())),
             rx.clone(),
         ));
-        let node = StationNode::start_with_dirs(
+        let node = StationNode::start_with_fleet_git(
             Arc::clone(&manager),
             Arc::clone(&identity),
             config.name.clone(),
@@ -433,6 +461,7 @@ impl RunningStation {
             Arc::clone(&shells),
             Some(station_dir.join("paste")),
             Some(station_dir.join("artifacts")),
+            fleet_runtime,
         )
         .await?;
         tracing::info!(
@@ -688,5 +717,78 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, ServeError::Upgrade { .. }), "{err:?}");
         assert!(!dirs.station_db().exists());
+    }
+    #[test]
+    fn the_env_bridge_ors_with_the_key_and_is_exactly_one() {
+        assert!(!allow_local_remotes(false, None));
+        assert!(allow_local_remotes(true, None));
+        assert!(allow_local_remotes(false, Some("1")));
+        assert!(allow_local_remotes(true, Some("0")));
+        for other in ["", "0", "true", "yes", " 1", "11"] {
+            assert!(!allow_local_remotes(false, Some(other)), "{other:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_station_restart_marks_a_cloning_home_attempt_interrupted() {
+        use crate::store::home_attempts::{BeginHome, NewHomeAttempt};
+        use fleetdeck_proto::fleet_git::{HomeAttemptState, code};
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().canonicalize().unwrap();
+        let dirs = NodeDirs {
+            config: home.join("config"),
+            data: home.join("data"),
+        };
+        ensure_private_dir(&dirs.station()).unwrap();
+        let dest = home.join("projects").join("app");
+        {
+            // The earlier process: a clone started, then the station stopped.
+            let det = fleetdeck_testkit::Det::new();
+            let store = Store::open(
+                &dirs.station_db(),
+                det.clock(),
+                det.ids(),
+                StoreConfig::default(),
+            )
+            .await
+            .unwrap();
+            let new = NewHomeAttempt {
+                attempt_id: "a1".to_owned(),
+                project_id: "p1".to_owned(),
+                generation: 1,
+                request_digest: "d".to_owned(),
+                retry_of: None,
+                dest_path: dest.display().to_string(),
+                url: "https://h.example/acme/app".to_owned(),
+                remote_name: "origin".to_owned(),
+            };
+            assert!(matches!(
+                store.home_begin(new).await.unwrap(),
+                BeginHome::Created(_)
+            ));
+        }
+        let env = Env {
+            home: Some(home.clone()),
+            ..Env::default()
+        };
+        let text = format!(
+            "allowed_roots = [\"{}\"]\nhost = \"direct\"\n",
+            home.display()
+        );
+        let config = StationConfig::parse(&text, &env).unwrap();
+        let station = RunningStation::start(&dirs, &config, None, None)
+            .await
+            .unwrap();
+        let row = station
+            .manager
+            .store()
+            .home_attempt("p1".into(), "a1".into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.state, HomeAttemptState::Interrupted);
+        assert_eq!(row.code.as_deref(), Some(code::CLONE_INTERRUPTED));
+        assert!(row.message.unwrap().contains(&dest.display().to_string()));
+        station.stop().await;
     }
 }
