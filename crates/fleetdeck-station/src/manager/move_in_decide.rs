@@ -2,8 +2,8 @@
 //! pure database work in the transaction of the command. It makes the new
 //! session, its `session_git` row (`created_branch = 0`, no publication ref),
 //! the `move_in_runs` row `staged`, the `move_in` hold and the events. It
-//! queues no effect: the fetch, the worktree, the publication ref, the import
-//! and the launch are the `MoveIn` effect (T4.2d).
+//! queues the `MoveIn` effect (T4.2d): the fetch, the worktree, the publication
+//! ref, the import and the launch are that effect.
 
 use std::path::{Path, PathBuf};
 
@@ -25,7 +25,7 @@ use crate::store::git_state;
 use crate::store::move_runs::{self, NewMoveIn, Staging};
 use crate::store::move_staging::{self, StagingState};
 use crate::store::session_holds::{self, KIND_MOVE_IN};
-use crate::store::{DecideError, Decision, NewSession};
+use crate::store::{DecideError, Decision, EffectPayload, NewSession};
 use crate::workspace::fleet_git::check_publication_values;
 use crate::workspace::provision;
 
@@ -39,6 +39,14 @@ fn invalid(text: impl std::fmt::Display) -> DecideError {
         RejectCode::InvalidCommand,
         format!("{}: {text}", code::INVALID_PARAMS),
     )
+}
+
+/// The most characters of the source summary (design §12.6). A longer text is
+/// cut, never refused.
+const MAX_SUMMARY: usize = 4000;
+
+fn cut_summary(text: &str) -> String {
+    text.chars().take(MAX_SUMMARY).collect()
 }
 
 /// A hint that is 1 to 64 characters of `[a-z0-9-]` (it goes into a folder
@@ -158,19 +166,19 @@ pub(in crate::manager) fn decide_in(
     d.create_session(&NewSession {
         session_id: session_id.clone(),
         provider,
-        provider_instance,
+        provider_instance: provider_instance.clone(),
         cwd: worktree.clone(),
         worktree: Some(worktree.clone()),
         branch: Some(publication.local_branch.clone()),
         mode: None,
-        title,
+        title: title.clone(),
         offline_approval_policy: policy.offline(),
     })?;
     d.append(
         &session_id,
         Event::SessionNamed {
-            callsign,
-            worktree: Some(worktree),
+            callsign: callsign.clone(),
+            worktree: Some(worktree.clone()),
         }
         .into(),
     )?;
@@ -199,6 +207,25 @@ pub(in crate::manager) fn decide_in(
             Event::SessionMoveIn(move_runs::info_of(&row)).into(),
         )?;
     }
+    // The launch of the new session (design §12.3 step 4): the effect carries
+    // the plan, so it does not derive it again (FG-9, T4.2d).
+    d.enqueue(
+        &session_id,
+        EffectPayload::MoveIn {
+            move_id,
+            move_kind: kind,
+            provider_instance,
+            title,
+            callsign,
+            home: home.to_string_lossy().into_owned(),
+            worktree,
+            publication: from.publication,
+            source_session: from.session_id,
+            summary: from.summary.map(|text| cut_summary(&text)),
+            fleet_git: Box::new(fg),
+            authority: None,
+        },
+    )?;
     Ok(result(&session_id, None))
 }
 

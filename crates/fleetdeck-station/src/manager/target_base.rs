@@ -7,7 +7,7 @@ use fleetdeck_proto::command::StopMode;
 use fleetdeck_proto::event::ProviderKind;
 use fleetdeck_proto::mutation::LaunchMode;
 use fleetdeck_proto::session::SessionBase;
-use fleetdeck_proto::{Event, SessionId};
+use fleetdeck_proto::{Event, ProviderInstanceId, SessionId};
 use fleetdeck_providers::{Answer, ControlId, ModelId, PermissionMode};
 
 use super::{Live, SessionTarget, classify};
@@ -18,6 +18,27 @@ use crate::manager::turns::SessionTurns;
 use crate::store::{Dispatch, Effect, EffectPayload, NewEvent};
 
 impl SessionTarget {
+    /// Refuses the starts of `instance`: its probed version is on the deny
+    /// list of its adapter (R8.2, DL-162).
+    pub fn mark_broken(&self, instance: &ProviderInstanceId, kind: ProviderKind) {
+        let name: &'static str = match kind {
+            ProviderKind::Claude => "claude",
+            ProviderKind::Codex => "codex",
+            ProviderKind::Unknown => "provider",
+        };
+        if let Ok(mut broken) = self.broken.lock() {
+            broken.insert(instance.clone(), name);
+        }
+    }
+
+    /// The refusal text of a start on a broken instance, if it is one.
+    pub(super) fn broken_reason(&self, instance: &ProviderInstanceId) -> Option<String> {
+        let broken = self.broken.lock().ok()?;
+        broken
+            .get(instance)
+            .map(|name| format!("this {name} version is known to break the protocol"))
+    }
+
     /// True when the session has a base already, or when the summary cannot
     /// be read (no base is then recorded).
     pub(super) async fn has_base(&self, session_id: &SessionId) -> bool {
@@ -116,6 +137,10 @@ impl SessionTarget {
                 self.adapters.get(&spec.provider_instance).map(|a| a.kind()),
                 spec.mode.clone(),
             ),
+            // (FG-9) A moved session resumes with no mode of its own.
+            EffectPayload::MoveIn {
+                provider_instance, ..
+            } => (self.adapters.get(provider_instance).map(|a| a.kind()), None),
             EffectPayload::SetMode { mode, .. } => {
                 let summary = match self.store.summary(effect.session_id.clone()).await {
                     Ok(summary) => summary,
@@ -285,6 +310,7 @@ impl SessionTarget {
             | EffectPayload::Resume { .. }
             | EffectPayload::Worktree { .. }
             | EffectPayload::Land { .. }
+            | EffectPayload::MoveIn { .. }
             | EffectPayload::Stop { .. } => {
                 return Dispatch::NotDispatched("not_a_live_operation".into());
             }

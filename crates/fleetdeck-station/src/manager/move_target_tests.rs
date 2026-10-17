@@ -44,12 +44,30 @@ impl Fx {
 
     /// As [`Self::new`]; `dir` gives the station its staging root.
     async fn build(dir: bool) -> Option<Self> {
+        Self::build_with(dir, Adapters::new(), None).await
+    }
+
+    /// As [`Self::build`] with provider adapters and, when given, the setup
+    /// environments of the policy (they name the provider homes).
+    async fn build_with(
+        dir: bool,
+        adapters: Adapters,
+        envs: Option<
+            std::collections::BTreeMap<
+                fleetdeck_proto::ProviderInstanceId,
+                fleetdeck_core::ChildEnv,
+            >,
+        >,
+    ) -> Option<Self> {
         let rig = Rig::new(false).await?;
-        let policy = policy(&rig.root, false, true).with_name("Bravo");
+        let mut policy = policy(&rig.root, false, true).with_name("Bravo");
+        if let Some(envs) = envs {
+            policy = policy.with_setup_envs(envs);
+        }
         let manager = SessionManager::start(
             rig.store.clone(),
             policy,
-            Adapters::new(),
+            adapters,
             rig.det.ids(),
             Arc::new(PrivatePaths::default()),
         )
@@ -93,6 +111,27 @@ impl Fx {
             "{:?}",
             decided.receipt.reject
         );
+        // The decision queues the `MoveIn` effect (T4.2d). These tests have no
+        // provider adapter, so the effect ends at once with `unknown_provider`;
+        // wait for it, so that no test races the effect task.
+        for effect in &decided.effects {
+            for _ in 0..200 {
+                let state = self
+                    .rig
+                    .store
+                    .effect(effect.effect_id.clone())
+                    .await
+                    .unwrap()
+                    .map(|e| e.state);
+                if !matches!(
+                    state,
+                    Some(crate::store::EffectState::Queued | crate::store::EffectState::Claimed)
+                ) {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }
         decided
     }
 
@@ -140,6 +179,7 @@ impl Fx {
                 station_id: "alpha".into(),
                 session_id: "src".into(),
                 publication: self.publication(),
+                summary: None,
             },
             fleet_git: Box::new(self.start()),
         }
@@ -251,8 +291,9 @@ async fn the_move_in_decision_makes_the_session_the_hold_the_staged_row_and_crea
     let decided = fx
         .accepted("c1", fx.move_in("m1", MoveKind::BranchOnly))
         .await;
-    // Pure database work: no effect.
-    assert!(decided.effects.is_empty());
+    // The decision queues the `MoveIn` effect (T4.2d).
+    assert_eq!(decided.effects.len(), 1);
+    assert_eq!(decided.effects[0].payload.kind(), "move_in");
     let id = fx.session_of(&decided).await;
     let summary = fx.summary(&id).await;
     let path = fx.rig.root.join("work--fd-cs");
@@ -699,3 +740,6 @@ fn manifest_for_prepare() -> TranscriptManifest {
 
 #[path = "move_discard_tests.rs"]
 mod discard;
+
+#[path = "move_in_tests.rs"]
+mod launch;

@@ -30,6 +30,21 @@ pub const STDIN_LOG_ENV: &str = "FLEETDECK_FAKE_STDIN_LOG";
 /// arguments there, one per line, then `env:` and the value of
 /// `FLEETDECK_COORDINATOR_TOKEN` (coordinator handoff tests, DL-216).
 pub const LAUNCH_LOG_ENV: &str = "FLEETDECK_FAKE_LAUNCH_LOG";
+/// Environment variable with a fault of a resumed fake (FG-9, T4.2d). It
+/// applies only to a process that resumes a conversation: `fake-claude sim`
+/// started with `--resume`, or `fake-codex` answering `thread/resume`; any
+/// other start ignores it. Values: [`RESUME_EXIT_AT_START`],
+/// [`RESUME_MISSING`], [`RESUME_OTHER_ID`].
+pub const RESUME_FAULT_ENV: &str = "FLEETDECK_FAKE_RESUME_FAULT";
+/// The Claude `sim` exits with code 1 at once, before it reads stdin, after a
+/// line on stderr.
+pub const RESUME_EXIT_AT_START: &str = "exit_at_start";
+/// The Claude `sim` prints `No conversation found with session ID: <id>` on
+/// stderr and exits with code 1 at the first user message.
+pub const RESUME_MISSING: &str = "missing";
+/// The Claude `sim` uses `sim-other-<pid>` as its session id; the Codex `sim`
+/// answers `thread/resume` with the thread id `other-<pid>`.
+pub const RESUME_OTHER_ID: &str = "other_id";
 /// Environment variable that overrides the directory of the fake binaries.
 pub const BIN_DIR_ENV: &str = "FLEETDECK_FAKE_BIN_DIR";
 

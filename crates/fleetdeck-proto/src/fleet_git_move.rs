@@ -68,6 +68,12 @@ pub struct MoveFrom {
     pub station_id: StationId,
     pub session_id: SessionId,
     pub publication: MovePublication,
+    /// The last summary of the source session for the held prompt of a
+    /// branch-only move (design §12.6): the digest, else the last assistant
+    /// message, cut to 4000 characters by the deck. FG-9.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub summary: Option<String>,
 }
 
 /// The source of a move without the publication (`source` of

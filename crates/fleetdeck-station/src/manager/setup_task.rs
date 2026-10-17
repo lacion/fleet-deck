@@ -571,7 +571,7 @@ impl SessionTarget {
 
     /// Stops the live session of a start that a stop cancelled, and waits for
     /// its end. The session lock is not held while it waits.
-    async fn stop_started(&self, session_id: &SessionId, how: StopMode) {
+    pub(in crate::manager) async fn stop_started(&self, session_id: &SessionId, how: StopMode) {
         let Some(live) = self.live(session_id) else {
             return;
         };

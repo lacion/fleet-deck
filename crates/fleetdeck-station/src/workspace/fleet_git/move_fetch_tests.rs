@@ -202,6 +202,7 @@ async fn the_publication_is_fetched_from_the_wip_url_into_the_private_ref_and_th
     let path = m.env.root.join("home--fd-cs");
     add_move_worktree(
         &options,
+        &group(),
         &m.home,
         &path,
         &m.publication,
@@ -299,6 +300,7 @@ async fn the_target_worktree_is_on_the_source_branch() {
     let path = m.env.root.join("home--fd-cs");
     add_move_worktree(
         &options,
+        &group(),
         &m.home,
         &path,
         &m.publication,
@@ -333,6 +335,7 @@ async fn a_local_branch_with_the_source_name_gives_move_branch_exists() {
     let path = m.env.root.join("home--fd-cs");
     let err = add_move_worktree(
         &options,
+        &group(),
         &m.home,
         &path,
         &m.publication,
@@ -370,6 +373,7 @@ async fn a_namespace_block_gives_branch_namespace_blocked() {
     let path = m.env.root.join("home--fd-cs");
     let err = add_move_worktree(
         &options,
+        &group(),
         &m.home,
         &path,
         &m.publication,
@@ -389,18 +393,18 @@ async fn the_publish_ref_is_the_first_free_name_and_takes_2_when_the_remote_has_
     let home = env.home(&file_url(&bare));
     let url = file_url(&bare);
     let used = HashSet::new();
-    let first = pick_publish_ref(&env.options(), &home, &url, "bravo", "cs", &used)
+    let first = pick_publish_ref(&env.options(), &group(), &home, &url, "bravo", "cs", &used)
         .await
         .unwrap();
     assert_eq!(first, "fd/bravo/cs");
     env.publish(&bare, "fd/bravo/cs");
-    let second = pick_publish_ref(&env.options(), &home, &url, "bravo", "cs", &used)
+    let second = pick_publish_ref(&env.options(), &group(), &home, &url, "bravo", "cs", &used)
         .await
         .unwrap();
     assert_eq!(second, "fd/bravo/cs-2");
     // A ref below the name takes it too (a ref D/F conflict).
     env.publish(&bare, "fd/bravo/cs-2/x");
-    let third = pick_publish_ref(&env.options(), &home, &url, "bravo", "cs", &used)
+    let third = pick_publish_ref(&env.options(), &group(), &home, &url, "bravo", "cs", &used)
         .await
         .unwrap();
     assert_eq!(third, "fd/bravo/cs-3");
@@ -414,6 +418,7 @@ async fn a_used_name_in_git_pushes_is_skipped() {
     let used: HashSet<String> = ["fd/bravo/cs".to_owned()].into();
     let got = pick_publish_ref(
         &env.options(),
+        &group(),
         &home,
         &file_url(&bare),
         "bravo",
@@ -434,6 +439,7 @@ async fn all_99_names_taken_gives_move_ref_exhausted() {
     used.insert("fd/bravo/cs".to_owned());
     let err = pick_publish_ref(
         &env.options(),
+        &group(),
         &home,
         &file_url(&bare),
         "bravo",
@@ -454,6 +460,7 @@ async fn a_failed_remote_list_gives_fetch_failed_and_picks_no_name() {
     let missing = file_url(&env.root.join("missing.git"));
     let err = pick_publish_ref(
         &env.options(),
+        &group(),
         &home,
         &missing,
         "bravo",
