@@ -766,3 +766,6 @@ async fn a_session_without_a_native_id_has_a_branch_only_plan_and_a_missing_file
         .shutdown(fleetdeck_proto::command::StopMode::Kill)
         .await;
 }
+
+#[path = "move_prepr_tests.rs"]
+mod prepr;

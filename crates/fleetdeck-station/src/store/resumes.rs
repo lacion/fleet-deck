@@ -24,6 +24,7 @@ use rusqlite::{Connection, OptionalExtension as _};
 
 use super::Result;
 use super::receipts::Decision;
+use super::session_holds;
 use super::shims::{ShimRow, ShimState, row as shim_row};
 
 /// The `exited` reason of a clean exit with a verified zero count.
@@ -139,6 +140,41 @@ impl Exclusion {
             self.blocked = Some(why);
         }
     }
+
+    /// Notes every shim row of `session` (its own executions).
+    fn note_session(&mut self, conn: &Connection, session: &SessionId) -> Result<()> {
+        for row in session_rows(conn, session)? {
+            self.note(row, None);
+        }
+        Ok(())
+    }
+
+    /// Blocks when a move reserves the conversation of `holder` or took it
+    /// away (FG-9 property 1): the holder is the source of a move, the
+    /// target that still receives it, or a source that moved and was not
+    /// undone. An import or a resume of the same native id must not start
+    /// a second writer.
+    fn note_move(&mut self, conn: &Connection, holder: &SessionId) -> Result<()> {
+        match session_holds::get(conn, holder)?.map(|h| h.kind) {
+            Some(kind) if kind == session_holds::KIND_MOVE => {
+                self.block(format!(
+                    "session `{holder}` is being moved to another station"
+                ));
+            }
+            Some(kind) if kind == session_holds::KIND_MOVE_IN => {
+                self.block(format!(
+                    "session `{holder}` is still arriving from another station"
+                ));
+            }
+            _ => {}
+        }
+        if session_holds::moved_text(conn, holder)?.is_some() {
+            self.block(format!(
+                "session `{holder}` moved this conversation to another station"
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// True (as a SQL value) when session `s` has not ended: its state is not
@@ -179,9 +215,7 @@ pub(super) fn exclusion(
 ) -> Result<Exclusion> {
     let mut out = Exclusion::default();
     if let Some(own) = own {
-        for row in session_rows(conn, own)? {
-            out.note(row, None);
-        }
+        out.note_session(conn, own)?;
     }
     let Some(native) = native else {
         return Ok(out);
@@ -202,6 +236,7 @@ pub(super) fn exclusion(
         .collect::<rusqlite::Result<Vec<_>>>()?;
     for (holder, busy) in holders {
         let holder = SessionId::from(holder);
+        out.note_move(conn, &holder)?;
         if busy {
             out.block(format!("session `{holder}` still runs this conversation"));
         }
@@ -453,6 +488,23 @@ const UNRESOLVED: &str = "proof IS NULL
          OR (state = 'exited' AND (COALESCE(reason, '') <> 'exited' OR inspection_version < 1)))";
 
 impl super::Store {
+    /// The executions of `session` itself: why one of them may still run
+    /// (`blocked`), and the rows that rest on a reboot proof, which the
+    /// caller revalidates (the own-rows part of [`exclusion`], with no
+    /// conversation). The move of a session uses it to prove that the
+    /// source ended.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn own_execution_exclusion(&self, session: SessionId) -> Result<Exclusion> {
+        super::call(&self.inner.db, move |conn| {
+            let mut out = Exclusion::default();
+            out.note_session(conn, &session)?;
+            Ok(out)
+        })
+        .await
+    }
+
     /// The exclusion of a conversation for the dispatch of a resume or an
     /// import (see [`exclusion`]): what blocks it, and the rows that rest
     /// on a reboot proof, which the caller revalidates.

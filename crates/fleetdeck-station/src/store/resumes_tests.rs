@@ -518,3 +518,25 @@ async fn a_live_session_with_an_unknown_native_id_blocks_an_import_until_it_stor
             .is_some()
     );
 }
+
+#[tokio::test]
+async fn the_own_exclusion_blocks_on_an_unproven_row_and_lists_the_reboot_rows() {
+    let det = Det::new();
+    let s = store(&det).await;
+    session(&s, "a", ProviderKind::Claude, "claude", Some("N")).await;
+    row(&s, "a", "a1", ShimState::Lost, "execution_unknown", 0, None).await;
+    let found = s.own_execution_exclusion("a".into()).await.unwrap();
+    assert_eq!(
+        found.blocked.as_deref(),
+        Some("shim a1 is lost (execution_unknown)")
+    );
+    s.shim_prove_reboot("a1".to_owned(), "boot-2".to_owned())
+        .await
+        .unwrap();
+    let found = s.own_execution_exclusion("a".into()).await.unwrap();
+    assert_eq!(found.blocked, None);
+    assert_eq!(found.reboot_rows.len(), 1);
+    // A session without a row has nothing that may still run.
+    let found = s.own_execution_exclusion("none".into()).await.unwrap();
+    assert_eq!((found.blocked, found.reboot_rows.len()), (None, 0));
+}
