@@ -608,6 +608,19 @@ async fn a_sync_off_project_starts_exactly_as_before() {
 }
 
 #[tokio::test]
+async fn a_station_without_fleet_git_gets_409_for_a_sync_start() {
+    let (s, fake) = synced().await;
+    // The link negotiated no feature (an old station).
+    s.f.store.set_link_features(&s.f.station, 98, vec![]);
+    let r = s
+        .start("c1", "/work/app", json!({ "kind": "worktree" }))
+        .await;
+    expect(&r, 409, "fleet_git_unsupported");
+    assert!(fake.starts().is_empty());
+    assert!(s.app().await.slugs.is_empty(), "a refusal reserves nothing");
+}
+
+#[tokio::test]
 async fn a_batch_start_in_a_sync_project_carries_the_snapshot() {
     let (s, fake) = synced().await;
     let path = format!("/api/projects/{}/sessions", s.app.project_id);

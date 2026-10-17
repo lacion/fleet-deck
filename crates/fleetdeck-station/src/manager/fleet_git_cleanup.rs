@@ -109,17 +109,59 @@ async fn nap(shutdown: &mut watch::Receiver<bool>, time: Duration) -> bool {
 }
 
 async fn run(ctx: CleanupCtx, mut shutdown: watch::Receiver<bool>) {
-    let mut wait = FIRST_DELAY;
+    let (first, every) = delays();
+    let mut wait = first;
     loop {
         if nap(&mut shutdown, wait).await {
             return;
         }
-        wait = INTERVAL;
+        wait = every;
         if ctx.store.fleet_git_paused().load(Ordering::Acquire) {
             continue;
         }
         run_once(&ctx, ctx.store.now_ms()).await;
     }
+}
+
+/// Test seam (FG-3, design decision 84), compiled only with the station
+/// feature `fault-injection`: `FLEETDECK_TEST_CLEANUP_DELAY_MS` and
+/// `FLEETDECK_TEST_CLEANUP_INTERVAL_MS` replace [`FIRST_DELAY`] and
+/// [`INTERVAL`] when they parse as `u64`.
+#[cfg(feature = "fault-injection")]
+fn delays() -> (Duration, Duration) {
+    let read = |name: &str, default: Duration| {
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map_or(default, Duration::from_millis)
+    };
+    (
+        read("FLEETDECK_TEST_CLEANUP_DELAY_MS", FIRST_DELAY),
+        read("FLEETDECK_TEST_CLEANUP_INTERVAL_MS", INTERVAL),
+    )
+}
+
+/// Without the feature the constants apply (design decision 84).
+#[cfg(not(feature = "fault-injection"))]
+fn delays() -> (Duration, Duration) {
+    (FIRST_DELAY, INTERVAL)
+}
+
+/// Test seam (design decision 84), feature `fault-injection` only:
+/// `FLEETDECK_TEST_CLOCK_OFFSET_MS` (an `i64`) is added to the time that the
+/// age check of the cleanup pass uses.
+#[cfg(feature = "fault-injection")]
+fn clock_offset_ms() -> i64 {
+    std::env::var("FLEETDECK_TEST_CLOCK_OFFSET_MS")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(0)
+}
+
+/// Without the feature there is no offset (design decision 84).
+#[cfg(not(feature = "fault-injection"))]
+fn clock_offset_ms() -> i64 {
+    0
 }
 
 /// One run of the loop (no waiting): every worktree session is checked, and
@@ -244,8 +286,10 @@ async fn check(
     // 1. ended: at least `cleanup_after_hours` since the latest end.
     let ended = matches!(summary.state, SessionState::Exited | SessionState::Lost);
     let wait = i64::from(view.settings.cleanup_after_hours).saturating_mul(HOUR_MS);
+    // The test clock offset moves the age check only (decision 84).
+    let age_now = now_ms.saturating_add(clock_offset_ms());
     match row.ended_at.filter(|_| ended) {
-        Some(at) if now_ms >= at.saturating_add(wait) => {}
+        Some(at) if age_now >= at.saturating_add(wait) => {}
         Some(at) => {
             let due = at.saturating_add(wait);
             return Ok(Some((CleanupState::Waiting, Some(due.to_string()))));

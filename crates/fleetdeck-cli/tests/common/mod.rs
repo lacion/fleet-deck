@@ -6,6 +6,7 @@
 #![allow(dead_code, reason = "each test binary uses a part of the harness")]
 
 pub mod deck;
+pub mod fleet_git;
 
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
