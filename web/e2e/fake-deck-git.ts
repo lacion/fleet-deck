@@ -12,7 +12,13 @@ import type {
   StationInfo,
   StationView,
 } from '../src/gen';
-import type { LandRow as Row, OtherBranches, RadarAnswer } from '../src/integrations/actions';
+import type {
+  LandRow as Row,
+  MoveTarget,
+  MoveView,
+  OtherBranches,
+  RadarAnswer,
+} from '../src/integrations/actions';
 import { project } from '../src/integrations/fixtures';
 import { summary } from '../src/testing/summary';
 import { claudeCaps } from '../src/testing/capabilities';
@@ -479,6 +485,66 @@ export function installFleetGitBranches(
   deck.route('POST', new RegExp(`^/api/projects/${projectId}/fetch$`), (m) => {
     state.calls.push(`POST ${m[0]}`);
     return state.fetch;
+  });
+  return state;
+}
+
+/** What the scripted deck answers on the move routes of a session (FG-9). */
+export type FakeMoves = {
+  /** `GET .../move` answers this body (the newest move and the stations of the dialog). */
+  read: { move: MoveView | null; targets: readonly MoveTarget[] };
+  /** `METHOD path` of each call, with its body. */
+  calls: { call: string; body: unknown }[];
+  /** The next POST answers this (status, JSON body) instead of acting; cleared after use. */
+  refuse: { status: number; body: unknown } | null;
+};
+
+/**
+ * The move routes of one session: GET reads `read`; POST move adds a `holding` move for the chosen station; POST
+ * undo sets the move `undoing`. A test changes `read.move` to script the progress.
+ */
+export function installFleetGitMoves(
+  deck: FakeDeck,
+  session: { readonly station: string; readonly session: string },
+  initial: Partial<FakeMoves> = {},
+): FakeMoves {
+  const state: FakeMoves = {
+    read: { move: null, targets: [] },
+    calls: [],
+    refuse: null,
+    ...initial,
+  };
+  const take = () => {
+    const refused = state.refuse;
+    state.refuse = null;
+    return refused;
+  };
+  deck.on(`/api/sessions/${session.station}/${session.session}/move`, () => ({
+    status: 200,
+    body: state.read,
+  }));
+  deck.route('POST', /^\/api\/sessions\/([^/]+)\/([^/]+)\/move$/, (m, raw) => {
+    state.calls.push({ call: `POST ${m[0]}`, body: raw });
+    const refused = take();
+    if (refused !== null) return refused;
+    const to = (raw as { to_station?: string }).to_station ?? '';
+    state.read.move = {
+      move_id: 'mv-1',
+      state: 'holding',
+      kind: state.read.targets.find((t) => t.station_id === to)?.kind ?? 'native',
+      src_station: decodeURIComponent(m[1] ?? ''),
+      src_session: decodeURIComponent(m[2] ?? ''),
+      dst_station: to,
+      created_at: Date.now(),
+    };
+    return { status: 202, body: { move_id: 'mv-1' } };
+  });
+  deck.route('POST', /^\/api\/moves\/([^/]+)\/undo$/, (m, raw) => {
+    state.calls.push({ call: `POST ${m[0]}`, body: raw });
+    const refused = take();
+    if (refused !== null) return refused;
+    if (state.read.move !== null) state.read.move = { ...state.read.move, state: 'undoing' };
+    return { status: 202, body: { move_id: decodeURIComponent(m[1] ?? ''), state: 'undoing' } };
   });
   return state;
 }

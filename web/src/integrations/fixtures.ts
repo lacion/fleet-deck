@@ -169,6 +169,9 @@ export function fakeActions(extra: Partial<IntegrationActions> = {}): Integratio
     abandonLand: never,
     forgetLand: never,
     sendLand: never,
+    moveRead: never,
+    moveStart: never,
+    moveUndo: never,
     ...extra,
   };
 }

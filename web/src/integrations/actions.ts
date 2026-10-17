@@ -197,6 +197,62 @@ export type OtherBranches = {
   readonly branches: readonly OtherBranch[];
 };
 
+/** The state of a move on the deck (design §12.3, §12.4A; the deck's `MoveView`). */
+export type MoveState =
+  | 'holding'
+  | 'exporting'
+  | 'importing'
+  | 'starting'
+  | 'committed'
+  | 'finishing'
+  | 'releasing'
+  | 'done'
+  | 'aborting'
+  | 'failed'
+  | 'resume_failed'
+  | 'undoing'
+  | 'undone';
+
+/** One move of a session (FG-9, T4.4b; the deck omits the fields that are not set). */
+export type MoveView = {
+  readonly move_id: string;
+  readonly state: MoveState;
+  /** `native` or `branch_only`. */
+  readonly kind: string;
+  readonly src_station: string;
+  readonly src_session: string;
+  readonly dst_station: string;
+  readonly dst_session?: string;
+  readonly bytes?: number;
+  readonly code?: string;
+  readonly message?: string;
+  readonly created_at: number;
+  readonly committed_at?: number;
+  readonly ended_at?: number;
+};
+
+/** One station of the move dialog; `failed` is the first failed condition of §12.2. */
+export type MoveTarget = {
+  readonly station_id: string;
+  readonly name: string;
+  /** `native` or `branch_only`. */
+  readonly kind: string;
+  readonly ready: boolean;
+  readonly failed?: { readonly code: string; readonly text: string };
+};
+
+/** `GET /api/sessions/{station}/{session}/move` (FG-9). */
+export type MoveRead = {
+  readonly move: MoveView | null;
+  readonly targets: readonly MoveTarget[];
+};
+
+/** 202 of the move route. */
+export type MoveStarted = { readonly move_id: string };
+
+/** 202 of the undo route. */
+export type MoveUndone = { readonly move_id: string; readonly state: string };
+
 /** 202 of the land route. */
 export type LandStarted = { readonly land_id: string; readonly position: number };
 
@@ -271,6 +327,12 @@ export type IntegrationActions = {
   forgetLand(land: string): Promise<void>;
   /** FG-8 "Send to session": sends the conflict files of a land to its session. */
   sendLand(land: string): Promise<void>;
+  /** FG-9 (§12.8): the newest move of the session and the stations of the move dialog. */
+  moveRead(station: string, session: string): Promise<MoveRead>;
+  /** FG-9 (§12.2): moves the session to a station (an id or a name). */
+  moveStart(station: string, session: string, toStation: string): Promise<MoveStarted>;
+  /** FG-9 (§12.4A): undoes a move whose new session could not resume. */
+  moveUndo(move: string): Promise<MoveUndone>;
 };
 
 /** A command id of 32 characters from `[0-9a-f]` (the deck accepts `[0-9A-Za-z_-]{1,64}`). */
@@ -559,6 +621,32 @@ export function integrationActions(
     sendLand: async (land) => {
       await io.post(`${landPath(land)}/send`, { command_id: commandId() });
     },
+    moveRead: async (station, session) => {
+      const v = shaped<MoveRead>(
+        await io.get(`${sessionPath(station, session)}/move`),
+        ['move', 'targets'],
+        'move answer',
+      );
+      if (!Array.isArray(v.targets) || (v.move !== null && !record(v.move))) {
+        throw new Error('The deck sent an invalid move answer.');
+      }
+      return v;
+    },
+    moveStart: async (station, session, toStation) =>
+      shaped<MoveStarted>(
+        await io.post(`${sessionPath(station, session)}/move`, {
+          to_station: toStation,
+          command_id: commandId(),
+        }),
+        ['move_id'],
+        'move answer',
+      ),
+    moveUndo: async (move) =>
+      shaped<MoveUndone>(
+        await io.post(`/api/moves/${seg(move)}/undo`, { command_id: commandId() }),
+        ['move_id', 'state'],
+        'undo answer',
+      ),
     pushNow: async (station, session) => {
       try {
         return shaped<PushNowAnswer>(

@@ -23,6 +23,7 @@ import {
   Play,
   Power,
   Search,
+  Server,
   Send,
   Square,
   SquareTerminal,
@@ -47,6 +48,7 @@ import { GitPullRequest } from '../integrations/icons';
 import { projectOfSession } from '../integrations/model';
 import { OpenPrDialog } from '../integrations/OpenPrDialog';
 import { Badges, Place } from './HeaderBadges';
+import { MoveDialog } from './MoveDialog';
 import { MoveToProject } from './MoveToProject';
 import { RenameForm } from './RenameForm';
 import { ModeLadder, ModelPicker } from './SessionSettings';
@@ -73,6 +75,8 @@ type Props = {
   readonly models?: readonly ModelChoice[] | null;
   /** Opens the check of the previous run (DL-182); the menu offers it when given (owner only). */
   readonly onCheckExecution?: (() => void) | undefined;
+  /** FG-9: a move started from the menu; the session view reads the move again. */
+  readonly onMoveStarted?: (() => void) | undefined;
 };
 
 /** The status update that "Ask for a status update" sends. */
@@ -190,6 +194,7 @@ export function SessionHeader({
   filesPanel,
   models = null,
   onCheckExecution,
+  onMoveStarted,
 }: Props) {
   const s = session.summary;
   const caps = s.capabilities;
@@ -209,6 +214,14 @@ export function SessionHeader({
   // DL-176: the owner moves a session to a project; the deck needs the drive scope.
   const canMove = useIntegrations()?.actions.canDrive === true && !guest;
   const [moving, setMoving] = useState(false);
+  const syncProject = useProjects().find((p) => p.project_id === session.project_id);
+  // FG-9 (§12.8): "Move to station…" for the owner, in a project with sync on.
+  const canMoveStation =
+    !guest &&
+    actions?.canAdmin === true &&
+    syncProject?.git.sync === true &&
+    s.moved_to === undefined;
+  const [movingStation, setMovingStation] = useState(false);
   const run = (name: string, call: (a: SessionActions) => Promise<Outcome>) => {
     if (actions) controller.act(name, () => call(actions));
   };
@@ -395,6 +408,17 @@ export function SessionHeader({
           }}
         >
           <Icon of={FolderGit2} /> Move to project…
+        </button>
+      ) : null}
+      {canMoveStation ? (
+        <button
+          type="button"
+          onClick={() => {
+            close();
+            setMovingStation(true);
+          }}
+        >
+          <Icon of={Server} /> Move to station…
         </button>
       ) : null}
       {canArchive ? (
@@ -755,6 +779,13 @@ export function SessionHeader({
         </div>
       ) : null}
       {moving ? <MoveToProject session={session} onClose={() => setMoving(false)} /> : null}
+      {movingStation ? (
+        <MoveDialog
+          session={session}
+          onClose={() => setMovingStation(false)}
+          onStarted={() => onMoveStarted?.()}
+        />
+      ) : null}
       {prOpen && prProject !== undefined ? (
         <OpenPrDialog project={prProject} session={session} onClose={() => setPrOpen(false)} />
       ) : null}

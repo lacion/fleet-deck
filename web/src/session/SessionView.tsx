@@ -24,6 +24,7 @@ import { sessionKey } from '../runtime/state';
 import { useShellChips } from '../chat/ShellChips';
 import { usePresenceHeartbeat, useSessionPeople } from '../sharing/hooks';
 import { roleAccess } from '../sharing/member';
+import { useIntegrations } from '../integrations/context';
 import { useReviewActions } from '../review/context';
 import { commentOptions } from '../review/hashMenu';
 import { useReview } from '../review/useReview';
@@ -44,6 +45,9 @@ import { handoverFlow } from './handoverFlow';
 import { ExecutionDialog } from './ExecutionDialog';
 import { FleetControlChip } from './FleetControlChip';
 import { LandPanel } from './LandPanel';
+import { MoveBanner } from './MoveBanner';
+import { useMove } from './MoveDialog';
+import { CONFIRM_LINE, composerHidden, confirmLineShown } from './moveModel';
 import { SessionHeader } from './SessionHeader';
 import { hasAgents, isLive, shownStatus, taskStates, toolTitles } from './tasks';
 import { buildTimeline, sessionModels, slashCommands } from './timeline';
@@ -267,6 +271,10 @@ export function SessionView(props: SessionViewProps) {
   const hold = s.terminal ?? null;
   const [confirmRelease, setConfirmRelease] = useState(false);
   const [checking, setChecking] = useState(false);
+  // FG-9: the newest move of the session (owner only) feeds the move banner.
+  const integrations = useIntegrations();
+  const moveOwner = guest === null && integrations?.actions.canAdmin === true;
+  const move = useMove(session, moveOwner);
   const ids = useId();
   const tabs = useRef<Record<string, HTMLButtonElement | null>>({});
   const changed = turns.filter((t) => !t.reverted && hasChanges(t.diff)).length;
@@ -385,6 +393,14 @@ export function SessionView(props: SessionViewProps) {
         onCheckExecution={
           guest === null && actions?.canAdmin === true ? () => setChecking(true) : undefined
         }
+        onMoveStarted={move.reload}
+      />
+      <MoveBanner
+        session={session}
+        stations={stations}
+        move={move.read?.move ?? null}
+        owner={moveOwner}
+        onChanged={move.reload}
       />
       {guest === null && actions?.canAdmin === true ? <FleetControlChip actions={actions} /> : null}
       <ArtifactsLink
@@ -580,65 +596,72 @@ export function SessionView(props: SessionViewProps) {
                     onRelease={() => drive(people.release)}
                   />
                 ) : null}
-                {agentSub !== undefined ? null : access.composer ? (
-                  <Composer
-                    enabled={
-                      (flags.drive || wakes) && busy === null && people.drive?.locked !== true
-                    }
-                    working={s.current_run !== null}
-                    steer={caps?.steer === true}
-                    nativeQueue={caps?.native_follow_up === true}
-                    onSend={(kind, text, images) => {
-                      if (!actions) return;
-                      // B8: the first 64 chips go with the prompt; a sent prompt uses them up.
-                      const results = shellChips.toSend();
-                      controller.act('send', async () => {
-                        // R6.6: a hibernated session resumes first, then takes the prompt.
-                        const outcome = wakes
-                          ? await resumeThenSend(
-                              {
-                                ...actions,
-                                send: (k, t, i) => actions.send(k, t, i, results),
-                              },
-                              kind,
-                              text,
-                              images,
-                            )
-                          : await actions.send(kind, text, images, results);
-                        if (outcome.ok) shellChips.consume(results);
-                        return outcome;
-                      });
-                    }}
-                    bang={bang}
-                    shared={isShared(env, sessionKey(key))}
-                    onShell={(command) =>
-                      actions && controller.act('shell', () => actions.shellCommand(command))
-                    }
-                    chips={shellChips.chips}
-                    onRemoveChip={shellChips.remove}
-                    resumeBusy={busy !== null}
-                    onResume={
-                      flags.canResume &&
-                      !wakes &&
-                      guest === null &&
-                      actions !== null &&
-                      actions !== undefined
-                        ? () => controller.act('resume', () => actions.resume())
-                        : null
-                    }
-                    disabledReason={
-                      people.drive?.locked === true
-                        ? 'Request to drive to send prompts.'
-                        : wakes
-                          ? null
-                          : disabledReason(flags, actions)
-                    }
-                    slashCommands={s.slash_commands ?? slashCommands(events)}
-                    skills={s.skills ?? []}
-                    searchFiles={searchFiles}
-                    {...(commentChoices.length > 0 ? { comments: commentChoices } : {})}
-                    draftKey={`${session.station_id}/${s.session_id}`}
-                  />
+                {agentSub !== undefined || composerHidden(s) ? null : access.composer ? (
+                  <>
+                    {confirmLineShown(s) ? (
+                      <p className="fd-agent-note" role="note">
+                        {CONFIRM_LINE}
+                      </p>
+                    ) : null}
+                    <Composer
+                      enabled={
+                        (flags.drive || wakes) && busy === null && people.drive?.locked !== true
+                      }
+                      working={s.current_run !== null}
+                      steer={caps?.steer === true}
+                      nativeQueue={caps?.native_follow_up === true}
+                      onSend={(kind, text, images) => {
+                        if (!actions) return;
+                        // B8: the first 64 chips go with the prompt; a sent prompt uses them up.
+                        const results = shellChips.toSend();
+                        controller.act('send', async () => {
+                          // R6.6: a hibernated session resumes first, then takes the prompt.
+                          const outcome = wakes
+                            ? await resumeThenSend(
+                                {
+                                  ...actions,
+                                  send: (k, t, i) => actions.send(k, t, i, results),
+                                },
+                                kind,
+                                text,
+                                images,
+                              )
+                            : await actions.send(kind, text, images, results);
+                          if (outcome.ok) shellChips.consume(results);
+                          return outcome;
+                        });
+                      }}
+                      bang={bang}
+                      shared={isShared(env, sessionKey(key))}
+                      onShell={(command) =>
+                        actions && controller.act('shell', () => actions.shellCommand(command))
+                      }
+                      chips={shellChips.chips}
+                      onRemoveChip={shellChips.remove}
+                      resumeBusy={busy !== null}
+                      onResume={
+                        flags.canResume &&
+                        !wakes &&
+                        guest === null &&
+                        actions !== null &&
+                        actions !== undefined
+                          ? () => controller.act('resume', () => actions.resume())
+                          : null
+                      }
+                      disabledReason={
+                        people.drive?.locked === true
+                          ? 'Request to drive to send prompts.'
+                          : wakes
+                            ? null
+                            : disabledReason(flags, actions)
+                      }
+                      slashCommands={s.slash_commands ?? slashCommands(events)}
+                      skills={s.skills ?? []}
+                      searchFiles={searchFiles}
+                      {...(commentChoices.length > 0 ? { comments: commentChoices } : {})}
+                      draftKey={`${session.station_id}/${s.session_id}`}
+                    />
+                  </>
                 ) : guest?.role === 'viewer' ? (
                   <p className="fd-viewer-note" role="note">
                     You are a viewer.
