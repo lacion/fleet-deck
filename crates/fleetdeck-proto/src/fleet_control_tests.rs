@@ -28,6 +28,7 @@ fn lineage_spec() -> CoordinatorSpec {
         },
         scope: GrantScope::Lineage,
         answer_cap: None,
+        stations: Vec::new(),
     }
 }
 

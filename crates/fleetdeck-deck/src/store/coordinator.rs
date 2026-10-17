@@ -40,6 +40,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use super::coordinator_fleet::{decide_worker, mode_refusal};
 use super::coordinator_ops::{CallFlags, Context, Decision, decide, in_lineage, session_known};
+use super::grant_scopes::{NOT_COVERED, expire_idle, station_covered};
 use super::grants::{Grant, GrantClass, GrantState, caller_grant, get_grant};
 use super::members::scope_of;
 use super::{AuditResult, DeckStore, LinkV2, NewAudit, Result, call, new_id};
@@ -212,6 +213,10 @@ impl DeckStore {
                         "the station is not paired or has no `coordinate` grant",
                     ));
                 }
+                // The exact rule, also for a worker call (design §2.3a).
+                if !station_covered(&tx, &station, now)? {
+                    return Ok(rejected(RejectCode::Forbidden, NOT_COVERED));
+                }
                 let grant = if worker {
                     None
                 } else {
@@ -237,12 +242,7 @@ impl DeckStore {
                         .last_used_at
                         .is_some_and(|t| now.saturating_sub(t) > grant.idle_ttl_ms)
                     {
-                        tx.execute(
-                            "UPDATE tokens SET state = 'expired', revoked_reason = 'idle'
-                         WHERE grant_id = ?1 AND state = 'active'",
-                            [grant.grant_id.as_str()],
-                        )?;
-                        tx.commit()?;
+                        expire_idle(tx, &inner, &grant.grant_id, now)?;
                         return Ok(rejected(
                             RejectCode::Forbidden,
                             "the coordinator grant expired after its idle time",

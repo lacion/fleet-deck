@@ -4,6 +4,7 @@ import type { DeckSession, GrantView, StationView, TaskView } from '../gen';
 import {
   type FleetActions,
   type FleetResult,
+  grantStations,
   grantStatus,
   nextSends,
   type SendEntry,
@@ -324,6 +325,12 @@ export function FleetPanel({ actions, sessions, stations }: Props) {
             <li key={g.grant_id}>
               <span className="fd-task-title">Coordinator {g.session_id}</span>{' '}
               <span className={`fd-task-state fd-grant-${g.state}`}>{grantStatus(g)}</span>
+              {grantStations(g, stations) === '' ? null : (
+                <>
+                  {' '}
+                  <span className="fd-note">{grantStations(g, stations)}</span>
+                </>
+              )}
               {g.state === 'revoked' ? null : (
                 <button
                   type="button"

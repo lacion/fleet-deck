@@ -193,7 +193,7 @@ impl DeckStore {
             .map(|(id, _)| id)
             .collect();
         let (id, inc) = (station.clone(), incarnation.clone());
-        let (applied, folded, jobs) = call(&self.inner.db, move |conn| {
+        let (applied, folded, jobs, scopes) = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let rec = station_by_id(&tx, &station)?
                 .ok_or_else(|| DeckError::UnknownStation(station.0.clone()))?;
@@ -208,6 +208,7 @@ impl DeckStore {
             let mut applied = 0;
             let mut touched = BTreeSet::new();
             let mut folded = Vec::new();
+            let mut scopes = BTreeSet::new();
             let jobs = std::cell::RefCell::new(Vec::new());
             for e in events {
                 if e.station_seq <= cursor {
@@ -220,7 +221,7 @@ impl DeckStore {
                 append_timeline(&tx, &station, &e)?;
                 super::plans::record_plan(&tx, &station, &e, &summary, now)?;
                 super::artifacts::record_artifact(&tx, &station, &e)?;
-                super::grants::record_lifecycle(&tx, &station, &e)?;
+                scopes.extend(super::grants::record_lifecycle(&tx, &station, &e, now)?);
                 let mail = mail_ids.as_ref().map(|ids| super::conflicts::MailContext {
                     ids: ids.as_ref(),
                     now,
@@ -238,9 +239,15 @@ impl DeckStore {
             }
             set_cursor(&tx, &station, &incarnation, cursor)?;
             tx.commit()?;
-            Ok((Applied { applied, cursor }, folded, jobs.into_inner()))
+            Ok((
+                Applied { applied, cursor },
+                folded,
+                jobs.into_inner(),
+                scopes,
+            ))
         })
         .await?;
+        self.note_scope_changes(scopes);
         if !jobs.is_empty() {
             self.inner
                 .sentence_jobs
@@ -300,7 +307,7 @@ impl DeckStore {
         current: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     ) -> Result<()> {
         let now = self.now_ms();
-        call(&self.inner.db, move |conn| {
+        let scopes = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let rec = station_by_id(&tx, &station)?
                 .ok_or_else(|| DeckError::UnknownStation(station.0.clone()))?;
@@ -351,14 +358,16 @@ impl DeckStore {
             // too (DL-179). No foreign key joins them to `sessions`: this
             // path deletes and inserts the session rows.
             super::review::delete_unlisted(&tx, &station, &named)?;
+            let mut scopes = BTreeSet::new();
             if let Some(projection) = &coordinator {
-                super::grants::apply_projection(&tx, &station, now, projection)?;
+                scopes = super::grants::apply_projection(&tx, &station, now, projection)?;
             }
             set_cursor(&tx, &station, &incarnation, watermark)?;
             tx.commit()?;
-            Ok(())
+            Ok(scopes)
         })
         .await?;
+        self.note_scope_changes(scopes);
         self.board_changed();
         Ok(())
     }

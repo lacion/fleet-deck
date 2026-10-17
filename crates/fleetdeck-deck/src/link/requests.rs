@@ -106,6 +106,21 @@ fn invalid(reason: &str) -> AuthorityAnswer {
 /// still holds. The deck answers from its own state and from the live policy
 /// of the caller station (`coordinator.policy_now`), and fails closed.
 async fn authority_check(ctx: &DeckLink, station: StationId, req: &InboundRequest) -> Outcome {
+    // The exact rule of every `coordinate` admission (grant stations design
+    // §2.3a): a grant in effect names the asking station; nothing else runs.
+    match ctx.store.station_covered_now(&station).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return Outcome::Err(WireError::new(
+                code::FORBIDDEN,
+                crate::store::grant_scopes::NOT_COVERED,
+            ));
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "authority check");
+            return Outcome::Err(WireError::new(code::PROTOCOL_ERROR, "deck store error"));
+        }
+    }
     let check = match serde_json::from_value::<AuthorityCheck>(req.params.clone()) {
         Ok(check) => check,
         Err(e) => return Outcome::Err(WireError::new(code::PROTOCOL_ERROR, e.to_string())),
