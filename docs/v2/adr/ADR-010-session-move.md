@@ -1,6 +1,6 @@
 # ADR-010 — Move a session to another station (FG-9)
 
-- **Status:** Proposed
+- **Status:** Proposed (revision 3, 2026-10-17: the answers to the adversary DESIGN REVIEW round 1, DL-225: §5.2 item 4, §6 and §10.1 are rewritten; RE-REVIEW pending)
 - **Date:** 2026-10-17
 - **Deciders:** architect (Fleet Git Phase 0); owner decisions O27-O30 (`fleet-git-owner-spec.md`)
 - **Implements:** Fleet Git FG-9, owner decisions O27 (spike first), O28 (preconditions), O29 (transcript transfer), O30 (branch-only move)
@@ -81,7 +81,7 @@ Source home `H1` = the session's `CODEX_HOME`, else `$HOME/.codex`; target home 
 1. The target computes every target path itself, from its own provider home, its own worktree path `B` and the native id. It never uses a path or a directory name that the source sent.
 2. Accepted names: Claude `<uuid>.jsonl`, `agent-<id>.jsonl`, `agent-<id>.meta.json` with `[A-Za-z0-9_-]` ids; Codex `rollout-YYYY-MM-DDTHH-MM-SS-<uuid>.jsonl`, and the date directories come from that name. Any other name, `/`, `..`, or a NUL refuses the transfer (`transfer_refused`).
 3. Directories that the target creates have mode 0700. Each file is written to a temporary name in the final directory with `O_CREAT|O_EXCL|O_NOFOLLOW`, mode **0600**, `fsync`, then renamed to the final name. An existing final file refuses the move (`transcript_exists`): the target never overwrites a transcript.
-4. On any failure the target removes its temporary and already-renamed files of this move.
+4. **Deletion only before a provider could write (revision 3, B4).** The target records each temporary and renamed file with its `dev` and `ino` (`move_in_runs.imported`, design §12.3). On a failure **before** it stores the state `launching`, it removes these files by their recorded identity (a file whose identity changed is kept and logged). From the moment it stores `launching` (before the provider process starts), it **never** removes a transcript file of this move: a failure then ends the provider process, marks the move `abandoned`, and keeps the new session read only with its files. Fleet Deck never deletes a transcript after a provider could have appended to it.
 
 ### 5.3 Who may transfer
 
@@ -92,13 +92,14 @@ Source home `H1` = the session's `CODEX_HOME`, else `$HOME/.codex`; target home 
 
 A transcript move that is refused before the target resumes (`transcript_too_large`, `transcript_exists`, `transfer_corrupt`, `transfer_refused`, the provider resume error `No conversation found` or `no rollout found`) leaves the source session unchanged. The board shows the reason and offers the branch-only move: a new session on the same branch with a first prompt that has the session title and the last assistant summary of the source.
 
-## 6. Move sequence
+## 6. Move sequence (revision 3, B4, M8, M9)
 
-1. The deck checks O28: owner (or `manage`), no running turn, no open approval, the branch is pushed (the FG-2 push state is `pushed` at the session head), the target has a home of the project.
-2. The source freezes the session (§5.1 rule 4) and exports the files (§4, §5.1).
-3. The target fetches, makes a worktree on the same branch at the pushed commit (path `B`), and writes the files (§5.2).
-4. The target starts the session with the native resume (Claude `--resume <id>` with cwd `B`; Codex `thread/resume` with `cwd: B`) and confirms `session.started { resumed: true }` with the same native id. A different native id ends the new process and the move fails (`identity_changed`), as in ADR-007 §2.4.
-5. The source session gets the state `moved` (read only, with a link to the new session). The source worktree and the source transcript stay until the owner trashes the worktree.
+1. The deck checks O28: owner (or `manage` on a grant that covers both stations), no running turn, no open approval, the branch is pushed (the FG-2 push state is `pushed` at the session head), the target has a home of the project. A coordinator move keeps its authority and the deck checks it again before each step up to the commit point (design §12.3).
+2. The source holds and freezes the session (§5.1 rule 4), captures the publication `{ local branch, destination, publication ref, pushed commit }`, and exports the files (§4, §5.1).
+3. The target checks that the publication's destination is its own branch target, fetches the exact publication ref from its **own** verified URL into a private ref, checks the pushed commit, makes a worktree on the **same local branch** as the source at that commit (path `B`, §10.1), and writes the files (§5.2). The new session is created with a **target hold**: it accepts no input until step 6.
+4. The target stores `launching`, then starts the session with the native resume (Claude `--resume <id>` with cwd `B`; Codex `thread/resume` with `cwd: B`). Only `session.started { resumed: true }` with the same native id within 120 s stores `resumed`: **this is the commit point** of the move. A different native id ends the new process and the move fails (`identity_changed`), as in ADR-007 §2.4; the files stay (§5.2 item 4). Before the commit point the deck can abort: it discards the target first (by state, §5.2 item 4), then releases the source hold, so the source stays the only writable continuation. After the commit point the move only goes forward.
+5. The source session gets the state `moved` (read only, with a link to the new session) through `session.move_finish`, which the deck resends with the same command id until it is accepted. The source worktree and the source transcript stay until the owner trashes the worktree.
+6. The deck sends `session.move_release` to the target until it answers; the target deletes its hold and the new session becomes writable. At no moment do both sessions accept input.
 
 ## 7. Required decisions
 
@@ -129,12 +130,15 @@ A transcript move that is refused before the target resumes (`transcript_too_lar
 11. `a_move_between_stations_of_different_decks_is_refused`
 12. `a_member_cannot_start_a_move`
 13. `a_refused_transcript_move_leaves_the_source_session_unchanged_and_offers_branch_only`
+13a. `an_abort_after_launching_keeps_the_target_transcript_and_the_session_read_only` (revision 3)
+13b. `the_target_accepts_no_input_until_the_release` (revision 3)
+13c. `the_target_worktree_is_on_the_source_branch_and_pushes_under_its_own_slug` (revision 3)
 14. `the_history_reader_finds_a_moved_session_on_the_target` (Claude and Codex)
 15. Live check (manual, not in CI): `spikes/s-move/run.sh` passes with the installed CLIs.
 
 ## 9. Risks and open questions
 
-1. **Branch ownership.** The moved session keeps the branch `fd/<source-slug>/<callsign>`, but O10 lets a station push only `fd/<own-slug>/*`. The architect must decide whether the target may push the moved branch (for example, a moved session row records the original slug) or whether the move renames the branch to `fd/<target-slug>/<callsign>`.
+1. **Branch ownership.** The moved session keeps the branch `fd/<source-slug>/<callsign>`, but O10 lets a station push only `fd/<own-slug>/*`. Decided in §10.1 (revision 3): the local branch stays, the publication ref is under the target's slug.
 2. **Accounts and versions.** The spike used the same provider account and the same CLI versions on both sides. A target with another account (Codex encrypted reasoning items) or an older CLI can fail at resume; §5.4 then applies. Recommendation: the target refuses a move when its provider version is older than the source version (from the FG-11 version report).
 3. **Stale paths in the history.** The old turns name folder A and machine-1 paths. The model can try to use them. The new turns get the new cwd. Open question: does the target add a fixed station note to the first prompt after the move ("This session moved from <station 1> to <station 2>; the worktree is now <B>")?
 4. **Subagents and child threads.** Resume with Claude subagent history or Codex child threads is not tested. Run the spike again with one subagent turn before the code freezes §4.
@@ -142,6 +146,6 @@ A transcript move that is refused before the target resumes (`transcript_too_lar
 
 ## 10. Architect decisions on the open questions (2026-10-17)
 
-1. **The branch of a moved session (§9.1).** The move gives the branch the target station's slug: the target creates `fd/<target-slug>/<callsign>` at the commit that the source pushed (FG-2), and pushes it under its own slug. When that name exists on the target or on the remote, the target adds `-2`, `-3` and so on. This keeps O10: a station never pushes a ref outside `fd/<own-slug>/`. The source's remote branch stays (Fleet Deck never deletes a branch, O13). The moved session records both names.
+1. **The branch of a moved session (§9.1; rewritten in revision 3, architect decision DL-225, design review finding M9).** The target keeps the **source branch name as its local branch**: the new worktree is on `fd/<source-slug>/<callsign>` (or a legacy `fd/<callsign>`) at the commit that the source pushed, so the worktree is on the same branch (O29, O30). The target **publishes** that local branch only under its own slug, with an explicit refspec: `refs/heads/<local branch>:refs/heads/fd/<target-slug>/<callsign>`, with the suffix `-2`, `-3` (up to `-99`) when that remote ref, or a ref below it, already belongs to another session, so a station still pushes only `refs/heads/fd/<own-slug>/*` (O10). The moved session records both: `session_git.branch` (the local branch) and `session_git.publish_ref` (the publication ref). The push lease is kept per publication ref (`(target_dest, publish_ref)`); the target's first push uses the empty lease, and the source's lease is never used by the target. A local branch with the source name that already exists in the target home refuses the move (`move_branch_exists`); Fleet Deck never renames or deletes a branch. The source's remote branch stays (Fleet Deck never deletes a branch, O13). Design §12.5 gives the exact rules.
 2. **The extra rules of this ADR are accepted:** the source stops an idle provider process of the session before the copy (no writer during the transfer), and the deck relays the transfer bytes without writing them to disk.
 3. **Size:** subagent transcripts are the first files that are dropped when a move would pass 64 MiB; a move that is still too large is refused with the text "This conversation is too large to move (over 64 MiB). Use a branch-only move." and the owner can choose the branch-only move (O30).

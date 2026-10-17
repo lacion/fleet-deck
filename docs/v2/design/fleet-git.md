@@ -1,6 +1,6 @@
 # Fleet Git: one repository across the fleet (FG-1 to FG-12)
 
-- **Status:** Draft, revision 2 (advisor changes applied, DL-224); DESIGN REVIEW pending. High risk: pushes to remotes, worktree deletion, deck migrations, transfer of transcripts, a public link API. The adversary DESIGN REVIEW runs before the status changes to "Accepted" (owner spec, phase 0).
+- **Status:** Draft, revision 3 (design review round 1 answered, DL-225); RE-REVIEW pending. High risk: pushes to remotes, worktree deletion, deck migrations, transfer of transcripts, a public link API. The adversary RE-REVIEW (round 2 of at most 3) runs before the status changes to "Accepted" (owner spec, phase 0).
 - **Owner decisions:** `/home/luismorales/fleetdeck-briefs/fleet-git-owner-spec.md`, O1 to O39. They are binding. This design does not change them. §20 lists every choice that this design makes where the spec is silent, and marks each one accepted, replaced or new.
 - **Related:** ADR-004 (link protocol), ADR-006 (coordinator MCP), ADR-008 (fleet control), ADR-009 (the link additions of this design, new), ADR-010 (session move, written in parallel with this draft; §12 refers to it by name), DL-142/DL-143 (worktree inventory), DL-144 (branch choice, preflight), DL-148 (setup command), DL-150 (worktree trash), DL-163 (honest feedback), DL-164 (integrations), DL-166 (member deny list), DL-176 (projects organize sessions), DL-193 (resources), DL-200 (provisioning, Landlock), DL-201 "Repo catalog fields and repo grouping (M3 6-1)" (the `[repo_groups]` group; the decisions log has two entries with the number DL-201, and the spec means this one), DL-306 (conflict radar), DL-145 (conflict mail).
 - **Branch:** `fleet-git` (from `v2` at `3d1c0cd3`; revision 2 written at `068c94ee`).
@@ -11,6 +11,15 @@
   4. Land admission and custody: §11.2, §11.4 (partial unique indexes, the outbox with a stable command id, the durable hold, the shared lock).
   5. What a land tests and publishes: §11.3, §11.5 (the pinned plan, captured OIDs, the unchanged tested commit, the FG-2 writer, one retry with a fresh rebase and check).
   6. PR mode and crash recovery: §11.1, §11.5, §11.6, §11.10 (the forge-head rule, the exact PR lookup, the journal and reconciliation, the occupied queue, the scoped cleanup).
+- **Revision 3 (2026-10-17, DL-225).** The adversary DESIGN REVIEW round 1 (`/home/luismorales/fleetdeck-briefs/adv-fleet-git-design-r1-report.md`, 6 blockers, 14 majors) is answered in full. Where each finding went:
+  - B1 (all push URLs): §2.4, §3.8 item 3 and rules 2 and 3 (every effective fetch and push URL, `remote_ambiguous`, the push to the one verified URL).
+  - B2 (SSH account and path form): §3.8 item 1, §8.1 (`remote_ssh_user`), §3.1.
+  - B3 (coordinator provenance): §11.2, §11.4, §11.5 ("Authority checks"), §12.3 ("Authority"), §13.2.
+  - B4 (move commit point): §12.3 (the target hold, `move_in_runs`, the commit point, finish and release outboxes, the restart table), ADR-010 §5.2 and §6.
+  - B5 (deny-listed descendants): §15.4 (the bounded metadata walk, `exposure_state = unknown`).
+  - B6 (stale remote verdict): §15.5 (`ArtifactAuthorization`, `fleet_git.artifact_authorize`, `fleet_git.share_verdict`), §15.6.
+  - M1: §11.5 (`pending_*` columns, `reconciling` flag). M2: §5.5, §11.5 ("Outcome of a remote write"). M3: §11.2 ("Stop checking", the fence). M4: §6.3 (the HEAD proof, the trash expectation). M5: §8.4 (the home attempt sender). M6: §8.4 step 5 (clear an absent destination). M7: §8.4 (`remote_name`). M8: §12.3 step 4 (the captured publication). M9: §12.5 and ADR-010 §10.1 (the local branch and the publication ref). M10: §15.3 (`path_state = ambiguous`). M11: §15.6 (the HTTP and browser contract). M12: §8.5 (auto-attach by ownership first). M13: §3.4, §3.8 item 1 (`allow_local_remotes`), §16.1. M14: §13.3, §16.1.
+  - §20 marks the replaced choices "replaced (design review r1, revision 3)" and §20.4 lists the choices that are new in revision 3.
 
 ## 1. Facts in the code today
 
@@ -91,7 +100,7 @@ A project with `sync = false` sends no `FleetGitStart`, makes no `session_git` r
 
 ### 2.2 Credentials (O2)
 
-The station runs every network Git command with `GitOptions.isolated = false` (the user configuration, the SSH agent, the credential helper of the station user). The deck never stores, sends or logs a Git credential. A `wip_remote` URL, a `remote_url` and a clone URL with user information are refused by the existing clone URL rules (`provision::check_url`, DL-200) and by the deck validation (§3.1).
+The station runs every network Git command with `GitOptions.isolated = false` (the user configuration, the SSH agent, the credential helper of the station user). The deck never stores, sends or logs a Git credential. A URL with a password or a token (https user information, or `user:password@` in an ssh URL) is refused by the existing clone URL rules (`provision::check_url`, DL-200) and by the deck validation (§3.1). An SSH login name (`git@host:path`) is an account, not a credential: `remote_url` stores it apart (`projects.remote_ssh_user`, §8.1, so `remote_url` stays scrubbed as O16 says), and `wip_remote` may hold it (revision 3, B2).
 
 ### 2.3 Hooks (O3)
 
@@ -106,16 +115,21 @@ Every command below runs through `Git` with `SAFE_CONFIG`, the removed `REDIRECT
 | FG-1, FG-3, FG-7, FG-8, FG-10 fetch | `git fetch --prune --no-tags --no-recurse-submodules --no-write-fetch-head -- <remote>` | 30 s | stderr 2 KiB | yes |
 | FG-1 default branch | `git symbolic-ref --quiet refs/remotes/<remote>/HEAD`, `git rev-parse --verify --quiet --end-of-options <remote>/<branch>^{commit}` | 10 s | 4 KiB | no |
 | O6 namespace check | `git for-each-ref --format=%(refname) -- refs/heads/fd/<slug> refs/remotes/<remote>/fd/<slug>` | 10 s | 4 KiB | no |
-| FG-2 push | `git push --porcelain --no-verify --no-follow-tags --recurse-submodules=no --force-with-lease=refs/heads/<ref>:<lease> -- <target> <oid>:refs/heads/<ref>` | 60 s | stdout 16 KiB, stderr 2 KiB | yes |
-| FG-2 recovery, FG-8 reconcile | `git ls-remote --refs -- <target> refs/heads/<ref>` | 20 s | 4 KiB | no |
-| §3.8 home check | `git remote get-url -- <remote>`, `git remote get-url --push -- <remote>`, `git rev-parse --show-toplevel` | 10 s | 4 KiB | no |
-| §3.8 WIP rewrite check | `git config --get-regexp -- '^url\..*\.(pushinsteadof\|insteadof)$'` | 10 s | 16 KiB | no |
+| FG-2 push | `git push --porcelain --no-verify --no-follow-tags --recurse-submodules=no --force-with-lease=refs/heads/<ref>:<lease> -- <verified push URL> <oid>:refs/heads/<ref>` | 60 s | stdout 16 KiB, stderr 2 KiB | yes |
+| FG-2 recovery, FG-8 reconcile | `git ls-remote --refs -- <verified push URL> refs/heads/<ref>` | 20 s | 4 KiB | no |
+| §3.8 home check (revision 3, B1) | `git remote get-url --all -- <remote>`, `git remote get-url --push --all -- <remote>`, `git ls-remote --get-url -- <remote>`, `git config --get-regexp -- '^remote\.<remote with . as \.>\.(url\|pushurl)$'`, `git rev-parse --show-toplevel` | 10 s each | 4 KiB each | no |
+| §3.8 rewrite rules | `git config --get-regexp -- '^url\..*\.(pushinsteadof\|insteadof)$'` | 10 s | 16 KiB | no |
+| FG-3 HEAD proof (revision 3, M4) | `git symbolic-ref --quiet HEAD`, `git rev-parse --verify --quiet HEAD^{commit}` in the session worktree | 10 s | 4 KiB | no |
+| FG-9 publication fetch (revision 3, M8) | `git fetch --no-tags --no-recurse-submodules --no-write-fetch-head -- <verified URL> +refs/heads/<publication ref>:refs/fleetdeck/move/<move_id>`, then `git update-ref -d refs/fleetdeck/move/<move_id> <oid>` | 30 s, 10 s | stderr 2 KiB | yes |
+| FG-9 publication ref check (revision 3, M9) | `git ls-remote --refs -- <verified URL> 'refs/heads/fd/<target slug>/*'` | 20 s | 64 KiB | no |
 | FG-4 ignored check | `git check-ignore -z --stdin` | 10 s | 64 KiB | no |
 | FG-3 merged | `git merge-base --is-ancestor <tip> <remote>/<default>` | 20 s | 4 KiB | no |
 | FG-7 radar | `git merge-tree --write-tree --name-only --no-messages <a> <b>` | 20 s each, 120 s per run | 64 KiB | no |
 | FG-8 land | `git worktree add --detach`, `git rebase`, `git rebase --abort`, `git diff --name-only -z --diff-filter=U`, `git status --porcelain=v1 -z --untracked-files=no`, `git push` | 120 s (worktree add, rebase), 60 s (push), 10 s (status) | 2 KiB stderr, 16 KiB stdout (1 MiB for the conflict list) | yes (worktree add, rebase, push) |
 | FG-10 branches | `git for-each-ref --format=... refs/remotes/<remote>/fd/ refs/fleetdeck/wip/fd/`, `git rev-list --left-right --count` | 10 s per call, 30 s per answer | 512 KiB | no |
-| FG-7, FG-10 WIP fetch | `git fetch --prune --no-tags --no-recurse-submodules --no-write-fetch-head -- <wip_url> +refs/heads/fd/*:refs/fleetdeck/wip/fd/*` | 30 s | stderr 2 KiB | yes |
+| FG-7, FG-10 WIP fetch | `git fetch --prune --no-tags --no-recurse-submodules --no-write-fetch-head -- <verified WIP URL> +refs/heads/fd/*:refs/fleetdeck/wip/fd/*` | 30 s | stderr 2 KiB | yes |
+
+"Verified URL" (revision 3, B1): the one effective URL that the destination check of §3.8 accepted right before the command. Fleet Git never passes a remote name to `git push` or `git ls-remote`, so a second `pushurl` or a rewrite rule cannot add a destination. A fetch of `push_remote` by name is allowed only because the check proved that the remote has exactly one fetch URL.
 
 `git merge-tree --write-tree` writes tree and blob objects into the object store. It runs inside the repository of a home, which is inside the allowed roots. It does not run under `confine-exec`, because it changes no ref and no work tree file; Landlock would also allow it. Fleet Git needs Git 2.45 or newer for all of these commands (the floor of `branches.rs`; `merge-tree --write-tree --name-only` needs 2.38). An older Git gives the code `git_too_old`.
 
@@ -172,7 +186,8 @@ pub struct GitSettings {
 | Field | Rule | Message |
 | --- | --- | --- |
 | `push_remote` | 1 to 64 characters of `[A-Za-z0-9._-]`, not starting with `-` or `.` | "The push remote must be a remote name, for example origin." |
-| `wip_remote` | `provision::check_url` rules (https, ssh, scp-like; no `file://`); no user information or password; `remote_identity` (§3.8) succeeds | "The WIP remote must be an https, ssh or user@host:path URL without a password." |
+| `wip_remote` | `provision::check_url` rules (https, ssh, scp-like); no password or token (an SSH login name is allowed, revision 3); `remote_identity` (§3.8) succeeds; a `file://` URL or an absolute path only when every home station of the project reports `allow_local_remotes = true` (§3.4, else the message of `remote_local_refused`) | "The WIP remote must be an https, ssh or user@host:path URL without a password." |
+| `remote_url` (route `PUT /api/projects/{id}/remote`) | the same URL rules; the deck splits an SSH login name into `remote_ssh_user` (`[A-Za-z0-9._-]{1,64}`) and stores the rest as `remote_url` (§8.1) | "The remote URL must be an https, ssh or user@host:path URL without a password." / `remote_local_refused`: "Local remotes are allowed only on stations with allow_local_remotes = true." |
 | `default_branch` | `check_branch_choice` syntax | "The default branch name is not valid." |
 | `cleanup_after_hours` | 1 to 720 | "Clean up after 1 to 720 hours." |
 | `worktree_include` | at most 32 entries; each 1 to 200 characters; relative; no `..` segment; no empty segment; no `\`, NUL or control character; segments may hold `*` and `?`; no `**`; no `[` | "Use relative paths without .. (at most 32)." |
@@ -217,9 +232,11 @@ pub struct FleetGitStart {
     pub remote: RemoteIdentity,        // { repo, dest } of the project (§3.8)
     pub slug: String,                  // §3.2; the station checks it
     pub forge: Option<ForgeBinding>,   // the DL-164 binding (was `forge: bool`)
-    pub artifact_share_state: Option<ShareState>, // §15.5; ok, exposed, unknown (+ Unknown)
+    pub clone_url: String,             // remote_url with remote_ssh_user put back (§8.1); the dest of remote is its identity
 }
 ```
+
+Revision 3 removes `artifact_share_state` (B6): the station asks for a fresh `ArtifactAuthorization` in the start effect (§15.5) and never uses a verdict that the start command carried.
 
 The station refuses a start whose `settings_revision` is lower than the `settings_revision` of its `git_projects` row (`stale_settings`, "The project settings changed while the start was on its way. Start again."), or whose `home_generation` differs from the row (`stale_generation`, "The home of this project changed. Start again."). The start uses its own snapshot for the decision and the start effect.
 
@@ -235,6 +252,7 @@ pub struct GitProjectView {
     pub project_id: String, pub project_name: String,
     pub settings_revision: u64, pub settings: GitSettings,
     pub remote: RemoteIdentity, pub forge: Option<ForgeBinding>,
+    pub clone_url: String,             // revision 3 (B2): with the SSH login name
     pub home_generation: u64, pub home_path: String,
     pub radar_home: bool,
 }
@@ -243,7 +261,7 @@ pub struct StationHome { pub project_id: String, pub generation: u64, pub path: 
 pub struct SnapshotAck { pub stored: bool, pub revision: u64, pub checks: Vec<HomeCheck> }
 pub struct HomeCheck {
     pub project_id: String, pub generation: u64,
-    pub state: HomeCheckState,         // verified, mismatch, missing, not_a_repo, remote_ambiguous (+ Unknown)
+    pub state: HomeCheckState,         // verified, mismatch, missing, not_a_repo, remote_ambiguous, no_remote, refused (+ Unknown)
     pub canonical_path: Option<String>, pub seen: Option<RemoteIdentity>, pub code: Option<String>,
 }
 ```
@@ -264,7 +282,8 @@ New keys, parsed in a new file `crates/fleetdeck-core/src/config_fleet_git.rs` (
 | `clone_root` | path | the first allowed root + `/projects` | absolute, inside an allowed root (O17) |
 | `traits` | list of strings | `[]` | at most 16; each `[a-z0-9_-]{1,32}` (O19) |
 | `allow_check_cmd` | bool | `false` | O24; reported in `station.info` |
-| `[taildrive_mounts]` | table `"<machine>/<share>" = "/abs/path"` | empty | at most 16; key as `artifact_share`; value absolute, no `..` (O38) |
+| `[taildrive_mounts]` | table `"<machine>/<share>" = "/abs/path"` | empty | at most 16; key as `artifact_share`; value absolute, no `..` (O38). Revision 3 (M10): for a share of this station whose path is `ambiguous` (§15.3), the value selects one candidate path |
+| `allow_local_remotes` | bool | `false` | Revision 3 (M13). With `true`, the station accepts a `file://` URL or an absolute local path of a **bare** repository as a remote (`remote_url`, `wip_remote`, a home's `push_remote`). Its destination scope is the canonical absolute path (§3.8 item 1). For tests and for a bare repository on the same machine. Reported in `station.info` (`FleetGitInfo.allow_local_remotes`) |
 
 ### 3.5 Station store migrations
 
@@ -285,7 +304,7 @@ CREATE TABLE git_projects (
     home_generation   INTEGER NOT NULL,
     home_path         TEXT    NOT NULL,   -- as the deck sent it
     canonical_path    TEXT,               -- the station's realpath after the home check
-    check_state       TEXT    NOT NULL,   -- verified, mismatch, missing, not_a_repo, remote_ambiguous
+    check_state       TEXT    NOT NULL,   -- verified, mismatch, missing, not_a_repo, remote_ambiguous, no_remote, refused
     check_code        TEXT,
     view              TEXT    NOT NULL,   -- GitProjectView JSON
     updated_at        INTEGER NOT NULL
@@ -303,9 +322,10 @@ CREATE TABLE session_git (
     kind              TEXT    NOT NULL CHECK (kind IN ('worktree', 'in_place')),
     settings_revision INTEGER NOT NULL,
     home_generation   INTEGER NOT NULL,
-    slug              TEXT,               -- NULL for in_place
-    branch            TEXT,               -- NULL for in_place
-    created_branch    INTEGER NOT NULL CHECK (created_branch IN (0, 1)), -- 1: fd/<slug>/<callsign> made by the station
+    slug              TEXT,               -- NULL for in_place; the slug of THIS station at the start or the move-in
+    branch            TEXT,               -- NULL for in_place; the LOCAL branch (a moved-in session keeps the source name, §12.5)
+    publish_ref       TEXT,               -- revision 3 (M9): the remote branch that FG-2 and FG-8 write; fd/<slug>/<callsign>[-n]
+    created_branch    INTEGER NOT NULL CHECK (created_branch IN (0, 1)), -- 1: the station made `branch` for this session (start or move-in)
     repo_root         TEXT    NOT NULL,   -- the canonical home path
     remote_dest       TEXT    NOT NULL,   -- RemoteIdentity.dest of the project at the start
     base_stale        INTEGER NOT NULL DEFAULT 0,
@@ -318,19 +338,21 @@ CREATE TABLE session_git (
     artifacts_url     TEXT,
     created_at        INTEGER NOT NULL,
     CHECK (kind = 'in_place' OR (slug IS NOT NULL AND branch IS NOT NULL)),
-    CHECK (created_branch = 0 OR kind = 'worktree')
+    CHECK (created_branch = 0 OR kind = 'worktree'),
+    CHECK (created_branch = 0 OR (publish_ref IS NOT NULL AND substr(publish_ref, 1, length(slug) + 4) = 'fd/' || slug || '/'))
 ) STRICT;
 CREATE TABLE git_pushes (
     session_id      TEXT PRIMARY KEY REFERENCES sessions(session_id),
     target          TEXT    NOT NULL,  -- the remote name or the wip_remote URL, as configured
     target_dest     TEXT    NOT NULL,  -- RemoteIdentity.dest of the effective push URL (§3.8)
-    ref             TEXT    NOT NULL,  -- fd/<slug>/<callsign>
+    ref             TEXT    NOT NULL,  -- session_git.publish_ref (revision 3, M9); the lease belongs to (target_dest, ref)
     last_pushed_oid TEXT,              -- the lease (O10)
     last_push_kind  TEXT,              -- push, land
     desired_oid     TEXT,              -- the newest tip that a trigger saw (decision 18)
-    attempt_id      TEXT,              -- the open attempt; NULL when none is open
+    attempt_id      TEXT,              -- the open attempt; NULL when none is open (an attempt with an unknown outcome stays open, §5.5)
     attempt_oid     TEXT,              -- the commit of the open attempt; never changed during the attempt
     attempt_lease   TEXT,              -- the lease of the open attempt; '' = the ref must not exist
+    attempt_url     TEXT,              -- revision 3 (B1): the verified push URL of the open attempt
     state           TEXT    NOT NULL,  -- idle, due, pushing, pushed, failing, stopped
     stop_code       TEXT,              -- project_gone, moved, land_published, unsupported_mode
     attempts        INTEGER NOT NULL DEFAULT 0,
@@ -340,9 +362,12 @@ CREATE TABLE git_pushes (
     updated_at      INTEGER NOT NULL,
     UNIQUE (target_dest, ref)
 ) STRICT;
+-- revision 3 (M4): the identity that the cleanup proved; the trash effect checks it again (§6.3)
+ALTER TABLE worktree_ops ADD COLUMN expect_branch TEXT;   -- refs/heads/<session_git.branch>; NULL for a board trash
+ALTER TABLE worktree_ops ADD COLUMN expect_oid    TEXT;   -- the tip T of the proof; NULL for a board trash
 ```
 
-- **V29 (phase 2, `store/schema_v29.rs`):** the home attempts of §8.4:
+- **V29 (phase 2, `store/schema_v29.rs`):** the home attempts of §8.4, and (revision 3, B6) `ALTER TABLE session_git ADD COLUMN artifact_auth TEXT` (the newest `ArtifactAuthorization` JSON, display and audit only):
 
 ```sql
 CREATE TABLE home_attempts (
@@ -352,7 +377,8 @@ CREATE TABLE home_attempts (
     request_digest TEXT    NOT NULL,   -- SHA-256 of the canonical ensure_home params
     retry_of       TEXT,               -- the attempt that this one retries
     dest_path      TEXT    NOT NULL,   -- the reserved destination <canonical clone_root>/<folder>
-    url            TEXT    NOT NULL,
+    url            TEXT    NOT NULL,   -- the clone URL (with the SSH login name)
+    remote_name    TEXT    NOT NULL,   -- revision 3 (M7): the remote that the clone creates (push_remote at the add)
     state          TEXT    NOT NULL,   -- cloning, ready, adopted, failed, interrupted, cleared
     superseded     INTEGER NOT NULL DEFAULT 0 CHECK (superseded IN (0, 1)),
     path           TEXT,               -- the verified canonical path; only for ready and adopted
@@ -367,8 +393,10 @@ CREATE UNIQUE INDEX home_attempts_reserved ON home_attempts (dest_path)
        OR (state IN ('ready', 'adopted') AND superseded = 0);
 ```
 
-- **V30 (phase 3, `store/schema_v30.rs`):** `land_runs`, `land_temps` and `session_holds` (§11.5, §11.6).
-- **V31 (phase 4, `store/schema_v31.rs`):** `session_moves` (§12.3; its hold uses `session_holds`).
+A failed or interrupted row keeps its reservation only while its folder exists. Before any insert into `home_attempts`, the station clears every `failed` or `interrupted` row of the same `dest_path` whose folder is absent (§8.4 step 5, revision 3, M6).
+
+- **V30 (phase 3, `store/schema_v30.rs`):** `land_runs`, `land_fences`, `land_temps` and `session_holds` (§11.2, §11.5, §11.6).
+- **V31 (phase 4, `store/schema_v31.rs`):** `move_out_runs` and `move_in_runs` (§12.3; the holds use `session_holds` with the kinds `move` and `move_in`).
 
 A sync-off station never writes these tables, except `git_snapshot` and `station_homes` (data for §15.4).
 
@@ -384,7 +412,9 @@ In `fleetdeck-proto/src/event.rs`. T1.0 moved `EventBody` and its serde code int
 | `session.cleanup` | `state: CleanupState, reason: Option<String>` | `summary.cleanup` (new optional field) | FG-3 |
 | `artifacts.unavailable` | `code: String, text: String` | ignored | FG-12 |
 | `artifacts.ready` | `path: Option<String>, url: Option<String>` | `summary.artifacts_dir = Some(..)` (new optional field) | FG-12 |
-| `session.land` | `land_id: String, attempt: u32, state: LandState, phase: LandPhase, code: Option<String>, text: Option<String>, files: Vec<String>, source_oid: Option<String>, base_oid: Option<String>, rebased_oid: Option<String>, branch_published_oid: Option<String>, default_published_oid: Option<String>, pr_url: Option<String>` | `summary.land` (new optional field) | FG-8 |
+| `artifacts.revoked` (revision 3, B6) | `code: String, text: String` | `summary.artifacts_dir = None` | FG-12 |
+| `session.move_in` (revision 3, B4) | `move_id: String, state: MoveInState, code: Option<String>, text: Option<String>` (on the **target** session) | `summary.move_in = Some(..)` (new optional field) | FG-9 |
+| `session.land` | `land_id: String, attempt: u32, state: LandState, phase: LandPhase, reconciling: bool, code: Option<String>, text: Option<String>, files: Vec<String>, source_oid: Option<String>, base_oid: Option<String>, rebased_oid: Option<String>, branch_published_oid: Option<String>, default_published_oid: Option<String>, pr_url: Option<String>` | `summary.land` (new optional field) | FG-8 |
 | `session.moved` | `move_id: String, to_station: StationId, to_session: SessionId` | `summary.moved_to = Some(..)` (new optional field) | FG-9 |
 
 `PushState`: `idle`, `due`, `pushing`, `pushed`, `failing`, `stopped`. `CleanupState`: `waiting`, `kept`, `trashed`. `LandState`, `LandPhase`: §11.5. Each enum has a `#[serde(other)] Unknown` variant, so a newer station does not break an older deck's fold. An `Unknown` value never frees a resource: the deck keeps a land with an unknown state `running` (§11.2), and the board shows "Unknown state; update Fleet Deck." (decision 82). The fold of `SessionSummary` gets the new fields with `#[serde(default, skip_serializing_if = "Option::is_none")]` (`session.rs`, 375 lines).
@@ -398,29 +428,44 @@ In `fleetdeck-proto/src/event.rs`. T1.0 moved `EventBody` and its serde code int
 #[serde(default, skip_serializing_if = "Option::is_none")] pub fleet_git: Option<FleetGitInfo>,   // clone_root, allow_check_cmd, git_version
 ```
 
-`FleetGitInfo { clone_root: String, allow_check_cmd: bool, git_version: Option<String> }`.
+`FleetGitInfo { clone_root: String, allow_check_cmd: bool, git_version: Option<String>, #[serde(default)] allow_local_remotes: bool }` (`allow_local_remotes` is new in revision 3, M13).
 
 ### 3.8 Repository identity and write authority (revision 2, advisor item 2)
 
 The project `repo` (O16, `host/path`) groups and names a repository. It is **not** a write authority. Fleet Git separates three things:
 
-1. **`RemoteIdentity`** (new, `fleetdeck-proto/src/fleet_git.rs`): `fleet_git::remote_identity(url: &str) -> Result<RemoteIdentity { repo: String, dest: String }, IdentityError>`. One strict contract for all Fleet Git code:
-   - The URL must pass `provision::check_url` (https, ssh, scp-like; no `file://`, no `ext::`).
-   - Scheme: `https` or `ssh`; a scp-like `[user@]host:path` is `ssh`.
-   - User information is dropped (it is an account, not a destination; a password is refused before this point).
+1. **`RemoteIdentity`** (new, `fleetdeck-proto/src/fleet_git.rs`): `fleet_git::remote_identity(url: &str, local: LocalRemotes) -> Result<RemoteIdentity { repo: String, dest: String }, IdentityError>`, with `LocalRemotes::{Deny, Allow}` (`Allow` only when `allow_local_remotes = true` on the station, or on the deck when every home station of the project reports it, §3.1). One strict contract for all Fleet Git code. **Revision 3 (B2) keeps grouping apart from authority:** `repo` is a grouping key and may join aliases; `dest` is the write authority and never joins two URLs that can name different repositories.
+   - The URL must pass `provision::check_url` (https, ssh, scp-like; no `ext::`). A password or a token in the URL gives `remote_has_credentials`.
+   - Scheme: `https`, `ssh`, or (only with `Allow`) `file`; a scp-like `[user@]host:path` is `ssh`; an absolute path `/x/y` is `file`. With `Deny`, a `file://` URL or a local path gives `remote_local_refused`.
+   - **SSH login name (B2).** For `ssh` the login name of the URL (`git` in `git@github.com:acme/app`) is **kept in `dest`**; a URL without one has none (Git then uses the SSH configuration). `alice@host:repo` and `bob@host:repo` therefore have two different `dest` values. `https` refuses user information before this point.
    - Host: ASCII only, in lower case. An IPv6 literal keeps its brackets (`[2001:db8::1]`), in lower case. A non-ASCII host gives `remote_host_invalid`.
    - Port: the explicit port, else 443 for `https` and 22 for `ssh` and scp-like. **The port is kept.**
-   - Path: the leading and trailing `/` removed, one final `.git` removed, **case kept**, no percent decoding. An empty path or a `..` segment gives `remote_path_invalid`.
-   - `dest = "<scheme>://<host>:<port>/<path>"`, for example `ssh://github.com:22/acme/app`. `repo = "<host>/<path>"` (the O16 form; no port).
+   - **Path form (B2).** The path keeps its case, its bytes and a final `.git`; there is no percent decoding; a `..` segment or an empty path gives `remote_path_invalid`. The form tells an absolute path from a path relative to the SSH login folder, with Git's own meaning:
+     - `ssh://[user@]host[:port]/p` → absolute `/p`;
+     - scp-like `host:/p` → absolute `/p`; scp-like `host:~p` → `/~p` (Git expands `~` and `~user`), the same as `ssh://host/~p`;
+     - scp-like `host:p` (no leading `/` or `~`) → relative, written `/~/p` (Git reads it from the login folder, as `ssh://host/~/p` does);
+     - `https://host[:port]/p` → `/p`; one trailing `/` is removed only for `https`.
+   - `dest`:
+     - `https://<host>:<port><path>`, for example `https://github.com:443/acme/app.git`;
+     - `ssh://[<user>@]<host>:<port><path>`, for example `ssh://git@github.com:22/~/acme/app.git` for `git@github.com:acme/app.git`, and `ssh://git@github.com:22/acme/app.git` for `ssh://git@github.com/acme/app.git`. These two are **different** destinations: on an ordinary SSH server they can be two repositories. A home whose origin uses the other form is `mismatch` (fail closed); the owner uses the same URL form, or rebinds (§8.4).
+     - `file://<path>` (revision 3, M13): `<path>` must be absolute, must already be canonical on the station (`std::fs::canonicalize(path) == path`, so no link and no `.` or `..` in it; else `remote_path_invalid`, "A local remote path must be canonical, without links."), and must be a bare repository (`git -C <path> rev-parse --is-bare-repository` prints `true`; else `remote_local_refused`, "A local remote must be a bare repository."). The deck checks only the syntax (absolute, no `.` or `..` segment, no `//`); the station checks the rest in the home check.
+   - `repo` (grouping, the O16 form, unchanged meaning): `"<host>/<path>"` with the login name dropped, the port dropped, the leading `/`, `/~/` or `/~` and the trailing `/` removed, and one final `.git` removed. For `file`: `"localhost/<path without the leading />"`. Two `dest` values can share one `repo` (two transports, two forms); this is why the land lock and the slug reservations use `repo` (conservative) and the leases use `dest` (exact).
    - The legacy `fleetdeck_core::git::normalize_remote` (DL-306 grouping, clone reuse) does not change. Fleet Git never uses it for a decision.
-2. **The project identity** (deck): `projects.remote_url` (scrubbed), `projects.repo` and `projects.remote_dest` = `remote_identity(remote_url)`. `sync = true` needs `remote_url` (revision 2): the lease scope, the slug reservations and the home check need the destination from phase 1 on.
-3. **The home check** (station, `workspace/fleet_git/identity.rs`): for a home and a remote name, the station runs `git remote get-url -- <push_remote>` and `git remote get-url --push -- <push_remote>` (10 s, 4 KiB; Git expands `insteadOf` and `pushInsteadOf` in this command). Each must print exactly one line (more than one URL gives `remote_ambiguous`). Both `remote_identity(...).dest` values must equal the project `remote_dest`: then the home is `verified`. Else `mismatch` with `seen`. A missing folder gives `missing`; a folder where `git rev-parse --show-toplevel` does not equal its canonical path gives `not_a_repo`. The check also gives `canonical_path` (`std::fs::canonicalize`).
+2. **The project identity** (deck): `projects.remote_url` (scrubbed: no login name, no password, O16), `projects.remote_ssh_user` (revision 3, the login name or NULL), `projects.repo` and `projects.remote_dest` = `remote_identity(clone_url)`, where `clone_url` is `remote_url` with `remote_ssh_user@` put back after `ssh://` or before the host of a scp-like URL. `sync = true` needs `remote_url` (revision 2): the lease scope, the slug reservations and the home check need the destination from phase 1 on.
+3. **The home check** (station, `workspace/fleet_git/identity.rs`; revision 3, B1). For a home and a remote name `<r>` (the `push_remote` of the snapshot, or `remote_name` of a home attempt), the station reads every effective URL, in this order, and stops at the first failure:
+   1. `git config --get-regexp -- '^remote\.<r with each . written \.>\.(url|pushurl)$'` (the raw configured values). No `url` entry → `no_remote` ("The home <path> has no remote <r>. Add it: git remote add <r> <clone_url>."). More than one `url` entry, or more than one `pushurl` entry → `remote_ambiguous`.
+   2. `git remote get-url --all -- <r>`: the effective fetch URLs (Git applies `insteadOf`). Exactly one line, else `remote_ambiguous`. Call it `F`.
+   3. `git remote get-url --push --all -- <r>`: the effective push URLs (Git applies `pushInsteadOf` and `insteadOf`, and uses `pushurl` when it is set). Exactly one line, else `remote_ambiguous`. Call it `P`.
+   4. `git ls-remote --get-url -- <r>`: must equal `F` (a second view of Git's own resolution); else `remote_ambiguous`.
+   5. **Fixed point.** The station reads the rewrite rules (§2.4) and checks that no `pushInsteadOf` prefix and no `insteadOf` prefix matches `P`. A match means that Git would rewrite the explicit URL again when Fleet Git pushes to it, fetches from it (§12.3) or runs `ls-remote` on it; the check gives `remote_rewritten`.
+   6. `remote_identity(F).dest` and `remote_identity(P).dest` must both equal the project `remote_dest`. Then the home is `verified`, and `P` is the **verified push URL** of this home. Else `mismatch` with `seen = remote_identity(P)` (or of `F` when `P` matches). An identity error gives `refused` with its code (`remote_has_credentials`, `remote_local_refused`, `remote_path_invalid`, `remote_host_invalid`).
+   A missing folder gives `missing`; a folder where `git rev-parse --show-toplevel` does not equal its canonical path gives `not_a_repo`. The check also gives `canonical_path` (`std::fs::canonicalize`). Every remote write and every reconciliation read then uses the verified URL `P`, never the name `<r>` (§2.4, "Verified URL").
 
 **Write authority (who may act on a remote):**
 
 1. A sync start, a push, a land, a radar run and a move need a home that is `ready` and `verified`, with the generation of the snapshot (§3.3). The deck attaches `FleetGitStart` only to such a home. A start in an unverified home of a sync project is refused (409 `home_unverified`, "The home <path> on <station> does not point to <repo>. Fix its remote, then try again."); the deck never starts it silently without sync.
-2. **The WIP URL.** `wip_remote` is a URL and has no remote configuration, but Git still applies `url.<base>.pushInsteadOf` and `url.<base>.insteadOf` to it. Right before each push to a WIP URL, the station reads `git config --get-regexp -- '^url\..*\.(pushinsteadof|insteadof)$'` (10 s, 16 KiB) and computes the effective push URL with Git's rule (the longest matching `pushInsteadOf` prefix, else the longest matching `insteadOf` prefix, else the URL). Its `dest` must equal `git_pushes.target_dest`; else the push fails with `remote_rewritten`, "The Git configuration on this station rewrites <url> to another destination."
-3. **The push remote.** Right before each push to `push_remote`, the station runs the home check again for that remote. Another `dest` fails the push with `remote_mismatch`, "The remote <name> of <home> no longer points to <repo>."
+2. **The WIP URL.** `wip_remote` is a URL and has no remote configuration, but Git still applies `url.<base>.pushInsteadOf` and `url.<base>.insteadOf` to it. Right before each push to a WIP URL (and each WIP fetch and `ls-remote`), the station reads `git config --get-regexp -- '^url\..*\.(pushinsteadof|insteadof)$'` (10 s, 16 KiB) and computes the effective URL `W` with Git's rule (the longest matching `pushInsteadOf` prefix, else the longest matching `insteadOf` prefix, else the URL). `remote_identity(W).dest` must equal `git_pushes.target_dest` (for a new row: the `dest` of `wip_remote`), and `W` must be a fixed point (item 3 step 5). Else the write fails with `remote_rewritten`, "The Git configuration on this station rewrites <url> to another destination." The station then pushes to `W` itself (revision 3, B1): `W` is the verified URL of the write.
+3. **The push remote.** Right before each push to `push_remote`, the station runs the whole home check of item 3 again for that remote and pushes to the new verified URL `P`. `remote_ambiguous` or `remote_rewritten` fails the write with that code; a `dest` that differs from the project `remote_dest` or from `git_pushes.target_dest` (a lease never moves to another destination) fails it with `remote_mismatch`, "The remote <name> of <home> no longer points to <repo>." The station stores `P` (or `W`) in `git_pushes.attempt_url` (or `land_runs.pending_url`, §11.5) **before** the write, and the recovery read of that attempt uses the stored URL, so the write and its reconciliation name one destination.
 4. **One sync owner for each folder.** Several projects can share one repository (there is **no** global `UNIQUE(repo)`). But on one station, at most one sync project owns a canonical home path, and no sync home is inside another sync home of the same station: the deck index `project_homes_sync_owner` (§8.2) and the check `home_nested` (§8.4). The deck refuses `sync = true` (400 `invalid_git_settings`, field `sync`) and a home add that break this rule.
 5. **Lease scope.** A push lease belongs to `(target_dest, ref)` (`git_pushes UNIQUE (target_dest, ref)`), not to a remote name such as `origin`.
 6. **Shared write lock.** All lands to one repository are serialized by the deck across projects: the lock key is `repo` (§11.2). This covers two projects that share a remote and its default branch, also through two transports (https and ssh).
@@ -488,8 +533,9 @@ Fleet Deck never pushes today. `WorktreeInfo.unpushed` (DL-143) counts commits o
 
 ### 5.3 What the station pushes (O10)
 
-- Only a ref in `git_pushes`. A row exists only for a `session_git` row with `created_branch = 1`, so the ref is always `fd/<slug>/<callsign>` made by this station for its own session. `push.rs` refuses (an internal error, logged, no push) any ref that does not start with `fd/<session_git.slug>/` (the slug stored with the session, §3.2).
-- The refspec is explicit: `<oid>:refs/heads/<ref>`. The station never uses `--all`, `--mirror`, `--tags` or a configured push refspec. A repository with `remote.<name>.mirror = true` makes Git refuse the explicit refspec; the push fails with `push_failed` and retries.
+- Only a ref in `git_pushes`. A row exists only for a `session_git` row with `created_branch = 1`, so the ref is always the `publish_ref` `fd/<slug>/<callsign>[-n]` of this station for its own session. `push.rs` refuses (an internal error, logged, no push) any ref that does not equal `session_git.publish_ref` or does not start with `fd/<session_git.slug>/` (the slug stored with the session, §3.2).
+- The source of the push is the **local** branch `refs/heads/<session_git.branch>`; for a session that the station started, `branch = publish_ref`; for a moved-in session, the local branch keeps the source name (§12.5, revision 3, M9).
+- The refspec is explicit: `<oid>:refs/heads/<publish_ref>`, and the destination is the verified URL (§3.8 rules 2 and 3), never a remote name (revision 3, B1). The station never uses `--all`, `--mirror`, `--tags` or a configured push refspec.
 - The lease is explicit: `--force-with-lease=refs/heads/<ref>:<attempt_lease>`, where `attempt_lease` is `last_pushed_oid`, or empty (the ref must not exist) before the first push. A revert or a rewrite of the session branch therefore pushes with force, but only over the commit that this station pushed last. The station never takes an arbitrary remote tip as a lease.
 - Before each push, the destination check of §3.8 (rules 2 and 3) runs. The lease belongs to `(target_dest, ref)`.
 - FG-8 in `merge` mode is the only other push (§11.5). FG-9 makes a new ref on the target and stops the source ref (§12.5).
@@ -499,7 +545,7 @@ Fleet Deck never pushes today. `WorktreeInfo.unpushed` (DL-143) counts commits o
 - `on_turn`: each `turn.completed` of the session, and the end of the session.
 - `on_exit`: the end of the session (each transition to `exited` or `lost`).
 - After a station restart: every row in `due` or `failing` is due again at its `next_attempt_at` (or at once); a row in `pushing` runs the recovery of §5.5 step 5 first.
-- The trigger reads the branch tip in the session worktree's repository (`git rev-parse --verify --quiet refs/heads/<ref>`) and writes it to `desired_oid` only. It pushes commits only; it never commits. A `desired_oid` equal to `last_pushed_oid` gives no push.
+- The trigger reads the local branch tip in the session worktree's repository (`git rev-parse --verify --quiet refs/heads/<session_git.branch>`) and writes it to `desired_oid` only. It pushes commits only; it never commits. A `desired_oid` equal to `last_pushed_oid` gives no push.
 - A session with a row in `session_holds` (a land or a move, §11.4) is skipped: the trigger still updates `desired_oid`, but the row does not become `due` until the hold ends.
 
 ### 5.5 The serialized writer and the lease bookkeeping (O10, revision 2)
@@ -508,11 +554,21 @@ Fleet Deck never pushes today. `WorktreeInfo.unpushed` (DL-143) counts commits o
 
 For a `BranchPush` job of a row that is due:
 
-1. **Open the attempt** (one transaction): `attempt_id = <new id>`, `attempt_oid = desired_oid`, `attempt_lease = last_pushed_oid or ''`, `state = pushing`. `attempt_oid` and `attempt_lease` never change while the attempt is open (decision 18).
-2. Run the destination check (§3.8) and the push with `attempt_lease` and `attempt_oid`.
-3. **Success:** `last_pushed_oid = attempt_oid`, `last_push_kind = push`, `attempt_id = NULL`, `attempts = 0`, `code = NULL`, then `state = pushed` when `desired_oid = attempt_oid`, else `state = due` (a newer tip came during the attempt). Append `session.push { state: pushed, oid }`.
-4. **Failure:** the recovery check `git ls-remote --refs -- <target> refs/heads/<ref>`. A remote tip equal to `attempt_oid` means that the push succeeded before a lost answer: record it as step 3. Otherwise: `attempt_id = NULL`, `state = failing`, `attempts += 1`, `next_attempt_at` from §5.6, the code and the redacted text. Append `session.push { state: failing, .. }`.
-5. **Crash:** a row in `pushing` after a restart still has its `attempt_oid` and `attempt_lease`. The station runs the recovery check of step 4 with these values before anything else.
+1. Run the destination check (§3.8). A failure is a **confirmed** failure (nothing was sent): `state = failing` with the code, no attempt opens.
+2. **Open the attempt** (one transaction): `attempt_id = <new id>`, `attempt_oid = desired_oid`, `attempt_lease = last_pushed_oid or ''`, `attempt_url = <the verified URL>`, `state = pushing`. `attempt_oid`, `attempt_lease` and `attempt_url` never change while the attempt is open (decision 18).
+3. Run the push with these three values and classify the outcome with `push_outcome` (below).
+4. **`Applied`:** `last_pushed_oid = attempt_oid`, `last_push_kind = push`, `attempt_id = NULL`, `attempts = 0`, `code = NULL`, then `state = pushed` when `desired_oid = attempt_oid`, else `state = due` (a newer tip came during the attempt). Append `session.push { state: pushed, oid }`.
+5. **`Rejected` or `Unknown`:** the recovery check `git ls-remote --refs -- <attempt_url> refs/heads/<ref>` (20 s):
+   - the remote tip equals `attempt_oid`: the push took effect before a lost answer; record it as step 4;
+   - the check answers and the tip is another value or absent: the attempt is **confirmed** not applied: `attempt_id = NULL`, `state = failing`, `attempts += 1`, `next_attempt_at` from §5.6, the code and the redacted text. Append `session.push { state: failing, .. }`;
+   - the check itself fails (no answer): the outcome stays **unknown**: the attempt stays open (`attempt_id` and its values are kept), `state = failing` with the code, `attempts += 1`, `next_attempt_at` from §5.6. The next run of the row first repeats this recovery check with the stored values and opens no new attempt until the check answers (revision 3, M2).
+6. **Crash:** a row in `pushing` after a restart still has its `attempt_*` values. The station runs the recovery check of step 5 before anything else.
+
+**`push_outcome(exit, porcelain, timed_out) -> Applied | Rejected(code) | Unknown`** (revision 3, M2; `workspace/fleet_git/push.rs`). The porcelain output has one status line per ref, `<flag>\t<src>:<dst>\t<summary>`. Let `L` be the line whose `<dst>` is `refs/heads/<ref>`.
+- `Applied`: exit 0, and `L` exists with the flag ` ` (fast-forward), `+` (forced), `*` (new) or `=` (up to date).
+- `Rejected`: `L` exists with the flag `!` (the server answered for this ref): `stale info` or `fetch first` gives `push_rejected` (a lease failure), `[remote rejected]` gives `push_rejected` with the server's reason.
+- `Unknown`: every other case: a timeout, a signal, no line `L`, exit 128 (a transport or authentication error), or exit 0 without `L`. `push_auth` and `push_timeout` are codes of an `Unknown` outcome (the server may have received the pack before the error).
+A `Rejected` outcome still runs the recovery check (step 5), because a lease failure and a lost answer can look alike; only the check's answer confirms it.
 
 A lease failure (the remote moved, for example another machine pushed) is a normal failure: it retries with backoff (O11). It never takes the remote tip as a new lease, except when the remote tip equals `attempt_oid`.
 
@@ -534,6 +590,8 @@ A lease failure (the remote moved, for example another machine pushed) is a norm
 | `push_timeout` | 60 s | "Push took more than 60 s." |
 | `remote_rewritten` | §3.8 rule 2 | "The Git configuration on this station rewrites <url> to another destination." |
 | `remote_mismatch` | §3.8 rule 3 | "The remote <name> of <home> no longer points to <repo>." |
+| `remote_ambiguous` | §3.8 item 3 (revision 3, B1) | "The remote <name> of <home> has more than one URL. Fleet Deck pushes only to one verified repository; remove the extra url or pushurl." |
+| `no_remote` | §3.8 item 3 | "The home <path> has no remote <name>. Add it: git remote add <name> <clone_url>." |
 | `git_too_old` | | §4.3 |
 
 ### 5.8 Link and deck
@@ -550,6 +608,8 @@ A lease failure (the remote moved, for example another machine pushed) is a norm
 ### 5.10 Tests
 
 - Unit (`workspace/fleet_git/push_tests.rs`, bare repositories in a temp dir): the first push with an empty lease; a second push with the lease; a revert (a reset to an older commit) then a push succeeds with the lease; a push after another clone moved the ref fails with `push_rejected`; the recovery check takes a remote tip equal to `attempt_oid`; a ref outside `fd/<stored slug>/` is refused; a `pre-push` hook does not run; the backoff table (1, 2, 4, 8, 10, 10); a `pushInsteadOf` that rewrites the WIP URL to another host fails with `remote_rewritten`; a `push_remote` whose URL changed fails with `remote_mismatch`.
+- Unit, revision 3 (`workspace/fleet_git/identity_tests.rs`, B1 and B2): a remote with two `pushurl` entries gives `remote_ambiguous` and no push runs (the second bare repository has no new ref); a remote with two `url` entries and no `pushurl` gives `remote_ambiguous`; a `pushurl` to another repository than `url` gives `mismatch`; a `pushInsteadOf` that matches the resolved URL again gives `remote_rewritten`; the push argv names the verified URL, never the remote name; `alice@host:repo`, `bob@host:repo` and `alice@host:/repo` give three different `dest` values and one `repo`; `host:repo`, `host:~/repo` and `ssh://host/~/repo` give one `dest`; `https://h/a.git` and `https://h/a` give two `dest` values and one `repo`; a `file://` URL with `Deny` gives `remote_local_refused`; with `Allow`, a path through a link gives `remote_path_invalid` and a non-bare repository gives `remote_local_refused`.
+- Unit, revision 3 (`push_tests.rs`, M2): `push_outcome` for each porcelain flag, exit 128, a timeout and exit 0 without the ref line; a fake `git` that applies the push and then times out: the row records `pushed` after the recovery check, no `failing` event; a recovery check that cannot reach the remote keeps the attempt open, and the next run repeats the check before it opens an attempt; after a rebind to another SSH login name, the existing row fails with `remote_mismatch` (its `target_dest` is the old `dest`) and its lease is never sent to the new `dest`.
 - Store (`store/git_state_tests.rs`): the restart of a `pushing` row runs the recovery check with the stored `attempt_oid` and `attempt_lease`; a trigger during an attempt changes `desired_oid` only; the unique `(target_dest, ref)`.
 - Writer (`manager/fleet_git_writer_tests.rs`): a branch push job and a land branch job of one session run one after the other; a held session is skipped by the push loop and its `desired_oid` still changes.
 - A2 FG-2 (`fleet_git_push.rs`): stations B and C with the same callsign push `fd/b/<callsign>` and `fd/c/<callsign>` with no collision; a revert then a push succeeds; a push to a stale lease (a test moves the remote ref) fails, shows `failing` with attempts 1 and a next attempt, and retries; at the end, `git for-each-ref` of the bare repository lists only `refs/heads/main` and refs under `refs/heads/fd/<slug of a test station>/`.
@@ -571,15 +631,18 @@ The trash flow (DL-150) accepts only a board command. Its checks are in `manager
 
 1. `ended`: the session is `exited` or `lost`, `ended_at` is set, and `now - ended_at >= cleanup_after_hours`. Else `waiting`. **`ended_at` (revision 2, decision 24)** is set at **each** transition to `exited` or `lost` (the latest end) and is set to NULL when the session runs again (a resume, an import, a follow-up start). So a resumed session counts its age again from its newest end.
 2. `not held`: no row in `session_holds` (a land or a move). Else `kept:held`.
-3. `fetched`: one fetch of `push_remote` per repository per loop run (30 s). A failed fetch keeps the worktree (`kept:fetch_failed`).
-4. `merged` (revision 2, decision 22): the branch tip is an ancestor of `<remote>/<default>` (`git merge-base --is-ancestor <tip> <remote>/<default>`). Only this proof counts. A squash merge or a rebase merge of a forge is **not** detected in v1; such a worktree stays (`kept:not_merged`) and the owner trashes it by hand.
-5. `clean`: the DL-143 scan of the worktree gives no unmerged path, no index or work tree change, no submodule change and no untracked file that is not ignored. A scan verdict `unknown` keeps it. Else `kept:dirty`.
-6. `pushed` (only when `push != off`): `git_pushes.state = pushed`, `last_pushed_oid` equals the branch tip, and `desired_oid` equals the branch tip. Else `kept:not_pushed`.
-7. `trash checks`: the station calls the trash decision with a new internal caller (below). Every DL-150 check runs in the decision transaction, and the decision also refuses a session with a `session_holds` row. A refusal keeps it (`kept:trash_refused`, the refusal text in `reason`).
+3. `on its branch` (revision 3, M4): in the session worktree, `git symbolic-ref --quiet HEAD` must print `refs/heads/<session_git.branch>` (exit 1, a detached HEAD → `kept:detached`; another branch → `kept:branch_changed`), and `git rev-parse --verify --quiet HEAD^{commit}` gives the tip `T`. `T` must also equal `git rev-parse --verify --quiet refs/heads/<session_git.branch>^{commit}` in the home repository. Every later item uses `T` and nothing else.
+4. `fetched`: one fetch of `push_remote` per repository per loop run (30 s). A failed fetch keeps the worktree (`kept:fetch_failed`).
+5. `merged` (revision 2, decision 22): `T` is an ancestor of `<remote>/<default>` (`git merge-base --is-ancestor <T> <remote>/<default>`). Only this proof counts. A squash merge or a rebase merge of a forge is **not** detected in v1; such a worktree stays (`kept:not_merged`) and the owner trashes it by hand.
+6. `clean`: the DL-143 scan of the worktree gives no unmerged path, no index or work tree change, no submodule change and no untracked file that is not ignored. A scan verdict `unknown` keeps it. Else `kept:dirty`.
+7. `pushed` (only when `push != off`): `git_pushes.state = pushed`, `last_pushed_oid = T`, and `desired_oid = T`. Else `kept:not_pushed`.
+8. `trash checks`: the station calls the trash decision with a new internal caller (below) and the expectation `(refs/heads/<branch>, T)`. Every DL-150 check runs in the decision transaction, and the decision also refuses a session with a `session_holds` row. A refusal keeps it (`kept:trash_refused`, the refusal text in `reason`).
 
 Then the normal trash effect runs: the folder moves to `.fleetdeck-trash/`, the owner can restore it, branches are never deleted. `cleanup_state = trashed`.
 
-**The internal caller.** `CommandOrigin` is a wire enum without `#[serde(other)]`, so the design adds no origin value. `manager/trash.rs` gets `pub fn decide_cleanup(d, policy, shells, session_id) -> Result<String /* op id */, DecideError>` that runs the same private `trash()` function and inserts the same row; the op id is `cleanup-<session_id>-<unix ms>`. Only the cleanup loop calls it. The board commands keep the Board-only rule.
+**The trash expectation (revision 3, M4).** `decide_cleanup` stores `worktree_ops.expect_branch = refs/heads/<branch>` and `expect_oid = T` in the row that it inserts. The trash effect (`workspace/trash.rs::run`), for a row with an expectation, runs right before the rename, after its identity checks: `git symbolic-ref --quiet HEAD` (must equal `expect_branch`), `git rev-parse --verify --quiet HEAD^{commit}` (must equal `expect_oid`) and `git status --porcelain=v1 -z --untracked-files=normal --ignore-submodules=none` (must print nothing) in the worktree (10 s each). Any difference ends the op without a move: state `released` with `message = worktree_changed`, and the session gets `cleanup_state = kept:changed`. A board trash has no expectation and runs as today.
+
+**The internal caller.** `CommandOrigin` is a wire enum without `#[serde(other)]`, so the design adds no origin value. `manager/trash.rs` gets `pub fn decide_cleanup(d, policy, shells, session_id, expect: (String, String)) -> Result<String /* op id */, DecideError>` that runs the same private `trash()` function and inserts the same row with the expectation; the op id is `cleanup-<session_id>-<unix ms>`. Only the cleanup loop calls it. The board commands keep the Board-only rule.
 
 ### 6.4 Failure states and texts
 
@@ -589,6 +652,9 @@ Then the normal trash effect runs: the folder moves to `.fleetdeck-trash/`, the 
 | --- | --- |
 | `waiting` | "Cleanup waits until <time>." |
 | `held` | "Kept: a land or a move holds this session." |
+| `detached` | "Kept: the worktree is not on a branch (detached HEAD)." |
+| `branch_changed` | "Kept: the worktree is on another branch than <branch>." |
+| `changed` | "Kept: the worktree changed after the cleanup checks." |
 | `fetch_failed` | "Kept: the fetch failed." |
 | `not_merged` | "Kept: the branch is not merged into <remote>/<default>. A squash merge is not detected; trash the worktree yourself." |
 | `dirty` | "Kept: the worktree has changes or new files." |
@@ -602,8 +668,9 @@ The Stations page Worktrees section (DL-150) shows the existing `trashed` verdic
 
 ### 6.6 Tests
 
-- Station (`manager/fleet_git_cleanup_tests.rs`, real Git): each of the seven conditions false keeps the worktree with its reason; all true moves it to the trash and `workspace.worktrees` shows `trashed`; the branch still exists; a squash-merged branch is **kept** (`not_merged`); a resume clears `ended_at` and a new end sets it again (a session that ended 30 hours ago, resumed and ended 1 hour ago waits); a held session is kept; a restore from the board works for a cleanup row; a project with `cleanup = off` is never checked.
-- A2 FG-3 (`fleet_git_cleanup.rs`): a merged, clean, pushed worktree whose session ended 25 hours ago (the test clock of the station) goes to the trash; five more tests each make one condition false (too new, not merged, an untracked file, an unpushed commit, an open shell) and the folder stays.
+- Station, revision 3 (M4): a worktree switched to another branch whose recorded branch is merged is kept (`branch_changed`), also when the other branch has unpushed commits; a detached HEAD is kept (`detached`); a commit made after the eligibility checks and before the trash effect ends the op `released` with `worktree_changed` and the folder stays.
+- Station (`manager/fleet_git_cleanup_tests.rs`, real Git): each of the eight conditions false keeps the worktree with its reason; all true moves it to the trash and `workspace.worktrees` shows `trashed`; the branch still exists; a squash-merged branch is **kept** (`not_merged`); a resume clears `ended_at` and a new end sets it again (a session that ended 30 hours ago, resumed and ended 1 hour ago waits); a held session is kept; a restore from the board works for a cleanup row; a project with `cleanup = off` is never checked.
+- A2 FG-3 (`fleet_git_cleanup.rs`): a merged, clean, pushed worktree whose session ended 25 hours ago (the test clock of the station) goes to the trash; five more tests each make one condition false (too new, not merged, an untracked file, an unpushed commit, an open shell) and the folder stays; two more (revision 3): a branch switch and a detached HEAD keep it.
 
 ## 7. FG-4: Worktree bootstrap (O14, O15)
 
@@ -652,8 +719,9 @@ pub struct Project {
     // `station_id` and `path` are a copy of the position-0 home (§8.2, the write adapter).
     #[serde(default)] pub homes: Vec<ProjectHome>,
     #[serde(default)] pub repo: Option<String>,        // RemoteIdentity.repo, "host/path"
-    #[serde(default)] pub remote_url: Option<String>,  // scrubbed clone URL
-    #[serde(default)] pub remote_dest: Option<String>, // RemoteIdentity.dest (§3.8)
+    #[serde(default)] pub remote_url: Option<String>,  // scrubbed clone URL (no login name, no password; O16)
+    #[serde(default)] pub remote_ssh_user: Option<String>, // revision 3 (B2): the SSH login name of the clone URL
+    #[serde(default)] pub remote_dest: Option<String>, // RemoteIdentity.dest of the clone URL (§3.8), with the login name
     #[serde(default)] pub git: GitSettings,
     #[serde(default)] pub git_revision: u64,
     #[serde(default)] pub slugs: Vec<SlugReservation>, // §3.2, for display
@@ -691,6 +759,7 @@ ALTER TABLE projects ADD COLUMN git          TEXT    NOT NULL DEFAULT '{}';
 ALTER TABLE projects ADD COLUMN git_revision INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE projects ADD COLUMN repo         TEXT;
 ALTER TABLE projects ADD COLUMN remote_url   TEXT;
+ALTER TABLE projects ADD COLUMN remote_ssh_user TEXT;  -- revision 3 (B2)
 ALTER TABLE projects ADD COLUMN remote_dest  TEXT;
 CREATE TABLE git_snapshots (
     station_id     TEXT PRIMARY KEY,
@@ -748,15 +817,19 @@ CREATE TABLE home_attempts (
     station_id         TEXT    NOT NULL,
     generation         INTEGER NOT NULL,
     request_digest     TEXT    NOT NULL,
+    request            TEXT    NOT NULL,  -- revision 3 (M5): the canonical JSON of the ensure_home params, never changed
     retry_of           TEXT,
     state              TEXT    NOT NULL,  -- sent, cloning, ready, adopted, failed, interrupted, superseded
     path               TEXT,
     code               TEXT,
     message            TEXT,
+    send_attempts      INTEGER NOT NULL DEFAULT 0,  -- revision 3 (M5)
+    next_send_at       INTEGER,                     -- revision 3 (M5); NULL when no send is due
     created_at         INTEGER NOT NULL,
     ended_at           INTEGER
 ) STRICT;
 CREATE INDEX home_attempts_home ON home_attempts (project_id, station_id, generation);
+CREATE INDEX home_attempts_unsent ON home_attempts (next_send_at) WHERE state = 'sent';
 INSERT INTO home_generations (project_id, station_id, last_generation)
     SELECT project_id, station_id, 1 FROM projects;
 INSERT INTO project_homes (project_id, station_id, generation, position, state, path, canonical_path,
@@ -800,24 +873,30 @@ The path rule and the origin rule look at every home of the project on the sessi
 3. The station negotiated `fleet_git.homes.v1` (409 `fleet_git_unsupported`).
 4. The slug rule (409 `slug_taken`, §3.2). The deck reserves `(repo, slug)` for the station in the same transaction.
 
-Then, in one transaction: `generation = home_generations.last_generation + 1` (1 for a new pair; the row is upserted), `attempt_id = "ha-" + <uuid>`, `request_digest = SHA-256(canonical JSON { project_id, station_id, generation, folder, url, dest })`, a `project_homes` row (`cloning`, `path = NULL`, position `max + 1`, `attempt_id`), and a `home_attempts` row (`sent`). After the commit the deck calls `project.ensure_home`. The answer is 202 `{ generation, attempt_id }`.
+Then, in one transaction: `generation = home_generations.last_generation + 1` (1 for a new pair; the row is upserted), `attempt_id = "ha-" + <uuid>`, `remote_name = GitSettings.push_remote` (revision 3, M7), `request = canonical JSON { project_id, project_name, folder, url: clone_url, remote, remote_name, generation, attempt_id, retry_of }`, `request_digest = SHA-256(canonical JSON { project_id, station_id, generation, folder, url, dest, remote_name })`, a `project_homes` row (`cloning`, `path = NULL`, position `max + 1`, `attempt_id`), and a `home_attempts` row (`sent`, `request`, `next_send_at = now`). The answer is 202 `{ generation, attempt_id }`.
 
-**Link method `project.ensure_home`** (deck → station, scope `admin`, feature `fleet_git.homes.v1`, not mutating; idempotent by `attempt_id`): params `{ project_id, project_name, folder, url, remote: RemoteIdentity, generation, attempt_id, request_digest, retry_of: Option<String> }`, answer `HomeStatus { attempt_id, generation, state, path: Option<String>, reserved_path, code?, message? }`. The station, in one store transaction for steps 1 to 5:
+**The home attempt sender (revision 3, M5).** The deck never calls `project.ensure_home` from the route. A deck task (`fleet_git_homes.rs::send_due`) sends every `home_attempts` row in state `sent` whose `next_send_at <= now`: right after the route's commit, after each link start of the station (all its `sent` rows are due at once), and with a backoff of 2, 4, 8, ... 60 s (`send_attempts += 1` at each send). It sends the stored `request` **unchanged** (the same `attempt_id` and `request_digest`). The first `HomeStatus` answer (or `home_status` poll answer) for that attempt moves the row from `sent` to the station's state and sets `next_send_at = NULL`. A row whose home row no longer names it (a removal) becomes `superseded` and is not sent. So a deck crash between the commit and the call only delays the call: the restart finds the row `sent` and sends the same request; the station's step 1 makes a repeat harmless.
+
+**Link method `project.ensure_home`** (deck → station, scope `admin`, feature `fleet_git.homes.v1`, not mutating; idempotent by `attempt_id`): params `{ project_id, project_name, folder, url, remote: RemoteIdentity, remote_name, generation, attempt_id, request_digest, retry_of: Option<String> }`, answer `HomeStatus { attempt_id, generation, state, path: Option<String>, reserved_path, code?, message? }`. The station recomputes `request_digest` from the params and refuses a different value (`attempt_reused`). It checks `remote_name` with the `push_remote` rule of §3.1 (`invalid_params`). The station, in one store transaction for steps 1 to 5:
 
 1. **The same attempt.** A row with this `attempt_id` exists: the same `request_digest` returns its stored state (also `failed`; nothing starts again); another digest answers `attempt_reused` ("This attempt id was used for another request.").
 2. **Generation fence.** The station has an attempt of this project with a **higher** generation: `stale_generation`.
 3. **One attempt at a time.** Without `retry_of`, an attempt of the same `(project_id, generation)` exists: the station returns that attempt's status (no new attempt).
 4. **Explicit retry.** With `retry_of = x`: `x` must be the newest attempt of the same `(project_id, generation)` and be `failed` or `interrupted`, else `retry_refused` ("Only the newest failed attempt can be retried."). When the reserved folder of `x` still exists, the retry is refused with `incomplete_folder` ("The folder <path> holds an incomplete clone. Remove it, then retry."): a known partial clone is **never** adopted, even when its configuration names the right origin. When the folder is gone, `x` becomes `cleared` (it frees the reservation) and the new attempt goes on.
-5. **Reserve the destination.** `dest_path = <canonical clone_root>/<folder>`. `folder` is the project name with every character outside `[A-Za-z0-9._-]` changed to `-` and a leading `.` changed to `-`, cut to 80 characters (the deck computes it and the station checks it). The insert of the attempt row fails on the unique index `home_attempts_reserved` when another attempt holds the folder: `destination_reserved` ("The folder <path> is reserved by project <name> on this station."). An `interrupted` or `failed` attempt keeps its reservation while its folder exists, also after it is superseded.
-6. **The folder exists** (no reservation by another attempt): the station adopts it only when all of these are true: a real folder inside the allowed roots (not a link); `git rev-parse --show-toplevel` equals `dest_path`; `git rev-parse --verify --quiet HEAD^{commit}` succeeds; the home check of §3.8 gives `verified`. Then `adopted` with `path = dest_path` (O17). Else `failed` with `home_conflict`.
-7. **The folder does not exist:** state `cloning`, `path = NULL`. The clone runs in a task with the DL-200 provisioning (`confine-exec`, `CLONE_TIMEOUT` 15 min, `--no-recurse-submodules`, `protocol.ext.allow=never`, the URL rules). The station answers `cloning` at once. At the end: the checks of step 6 → `ready` with the verified path, and `dev`/`ino`; else `failed` (`clone_failed`, or `home_conflict` when the check fails).
+5. **Reserve the destination.** `dest_path = <canonical clone_root>/<folder>`. `folder` is the project name with every character outside `[A-Za-z0-9._-]` changed to `-` and a leading `.` changed to `-`, cut to 80 characters (the deck computes it and the station checks it).
+   - **Clear an absent destination first (revision 3, M6).** Before the insert, the station selects every `home_attempts` row with this `dest_path` and a state in (`failed`, `interrupted`), of **any** project and generation, superseded or not. It runs `lstat(dest_path)` once. When the result is `ENOENT` (nothing exists at the path, not even a link), each of these rows becomes `cleared` in this transaction (`code = destination_cleared`, logged with its attempt id). This is identity-safe: the station deletes nothing, and the absence of the folder is the proof that no partial clone remains. When the path exists, no row changes. A `cloning` row is never cleared (a station restart turns it into `interrupted` first).
+   - Then the insert of the attempt row. It fails on the unique index `home_attempts_reserved` when another attempt still holds the folder. The station answers: `incomplete_folder` ("The folder <path> holds an incomplete clone from an earlier attempt. Remove it, then add the home again.") when the holder is a `failed` or `interrupted` attempt of the **same** project; else `destination_reserved` ("The folder <path> is reserved by project <name> on this station.").
+6. **The folder exists** (no reservation by another attempt): the station adopts it only when all of these are true: a real folder inside the allowed roots (not a link); `git rev-parse --show-toplevel` equals `dest_path`; `git rev-parse --verify --quiet HEAD^{commit}` succeeds; the home check of §3.8 for the remote `remote_name` gives `verified`. Then `adopted` with `path = dest_path` (O17). A `no_remote` check gives `failed` with `home_conflict` and the text "<path> exists but has no remote <remote_name>." Any other result gives `failed` with `home_conflict`.
+7. **The folder does not exist:** state `cloning`, `path = NULL`. The clone runs in a task with the DL-200 provisioning (`confine-exec`, `CLONE_TIMEOUT` 15 min, `--no-recurse-submodules`, `protocol.ext.allow=never`, the URL rules) as `git clone --origin <remote_name> --no-recurse-submodules -- <url> <dest_path>` (revision 3, M7: the clone creates the configured remote name, so the home check of the snapshot finds `push_remote`). The station answers `cloning` at once. At the end: the checks of step 6 → `ready` with the verified path, and `dev`/`ino`; else `failed` (`clone_failed`, or `home_conflict` when the check fails).
 8. `clone_root` that does not exist is made with mode 0700 when its parent is an allowed root; else `failed` with `clone_root_missing`.
 
 A station restart during a clone marks the attempt `interrupted` (`clone_interrupted`) and does not delete the partial folder (DL-200: no recursive delete). The owner sees "The clone stopped when the station restarted. Remove <path>, then retry."
 
-**Status polling (decision 32).** Link method `project.home_status` (deck → station, scope `read`, feature `fleet_git.homes.v1`): params `{ project_id, attempt_id }`, answer `HomeStatus`. The deck asks every 10 s while a home is `cloning` or its attempt is `sent`, and once after each link start. **Fencing:** the deck applies a `HomeStatus` only when its `(attempt_id, generation)` equal the `project_homes` row; else it drops the answer and logs `home_status_stale`. A `ready` or `adopted` answer sets the home `ready`, `path` and `canonical_path`, then the deck sends the snapshot (§3.3) to the station. A `failed` or `interrupted` answer sets the home `failed` with the code; the result stays until an explicit retry or a removal (decision 33).
+**Status polling (decision 32).** Link method `project.home_status` (deck → station, scope `read`, feature `fleet_git.homes.v1`): params `{ project_id, attempt_id }`, answer `HomeStatus`. The deck asks every 10 s while a home is `cloning`, and once after each link start. An attempt in `sent` is not polled: the sender resends its request (above), and the station's answer to a repeat is the stored status. **Fencing:** the deck applies a `HomeStatus` only when its `(attempt_id, generation)` equal the `project_homes` row; else it drops the answer and logs `home_status_stale`. A `ready` or `adopted` answer sets the home `ready`, `path` and `canonical_path`, then the deck sends the snapshot (§3.3) to the station. A `failed` or `interrupted` answer sets the home `failed` with the code; the result stays until an explicit retry or a removal (decision 33).
 
-**Retry.** Route `POST /api/projects/{id}/homes/{station}/retry { command_id }` (owner only, CSRF, audited `project.home_retry`): for a `failed` home only (409 `home_not_failed`). A new `attempt_id`, the same generation, `retry_of` = the failed attempt.
+**Retry.** Route `POST /api/projects/{id}/homes/{station}/retry { command_id }` (owner only, CSRF, audited `project.home_retry`): for a `failed` home only (409 `home_not_failed`). A new `attempt_id`, the same generation and `remote_name`, `retry_of` = the failed attempt; the new `home_attempts` row is `sent` with its own fixed `request`, and the sender delivers it.
+
+**A later change of `push_remote`** changes the snapshot only. The home check then looks for the new name; a home without it is `unverified` with `no_remote` and the text of §5.7 (the owner adds the remote; Fleet Deck does not change a home's configuration).
 
 **Remove a home (decision 34).** `DELETE /api/projects/{id}/homes/{station}` (owner only, audited `project.home_remove`). Refusals, in order:
 
@@ -835,7 +914,14 @@ Then, in one transaction: delete the `project_homes` row (`home_generations` sta
 
 - `StartSessions` (tickets and reviews) gains `#[serde(default)] home: Option<String>` (a station id or `auto`; absent: the position-0 home), `requires`, `prefer` and `spread` (§9).
 - The board's "New session in this project" opens the spawn form with a Home select: the ready homes ("<station> · <path>") and "Auto (best station)". The form uses the home path as `cwd`.
-- **Auto-attach (revision 2, decision 36).** For a start without `project_id`, the deck looks for sync projects with a `ready` home on the start's station whose `path` or `canonical_path` equals the start `cwd` or contains it (path components). Exactly one → it attaches `FleetGitStart` (`kind = worktree` for a worktree start, `in_place` otherwise). None → a plain start. More than one cannot happen for sync homes (§3.8 rule 4); a non-sync match attaches nothing.
+- **Auto-attach (revision 3, M12: ownership first, readiness second).** For a start without `project_id`, the deck runs these steps:
+  1. **Find the owner.** It selects the homes on the start's station of every project with `sync = true`, **in any state** (`cloning`, `ready`, `unverified`, `failed`), whose `path`, `canonical_path` or `reserved_path` equals the start `cwd` or contains it (by path components). It picks one home: a home with `sync_owner = 1` wins (more than one cannot exist, §3.8 rule 4); else the home with the longest matching path; on a tie, the home of the oldest project (`created_at`, then `project_id`). A sync-off project never matches. No match → a plain start (O1).
+  2. **Check readiness of that one home.** The owner home must be `ready` and verified and own the folder:
+     - `ready` with `sync_owner = 1` → attach `FleetGitStart` (`kind = worktree` for a worktree start, `in_place` otherwise);
+     - `unverified` (any code, also `home_owned`) → 409 `home_unverified` (§3.8 rule 1); the deck never starts it without sync;
+     - `cloning` → 409 `home_not_ready`, "The home <reserved path> of <project> is still cloning.";
+     - `failed` → 409 `home_not_ready`, "The home <reserved path> of <project> failed: <text>. Retry or remove it.".
+  The same refusals apply to a start with an explicit `project_id` (below). The board shows the text in the spawn form; the route `POST /api/sessions` and the batch start answer the same codes.
 - **Explicit project.** The start body may name `project_id`. The deck checks that the station and `cwd` match a ready, verified home of that project (400 `not_a_home`, "This folder is not a home of the project."), and that the home is the sync owner when the project has sync on.
 - The station checks again in its decision: `canonical(cwd)` is the `git_projects.canonical_path` of the project or inside it, and the generation matches (`not_a_home`, `stale_generation`).
 
@@ -858,13 +944,15 @@ Then, in one transaction: delete the `project_homes` row (`home_generations` sta
 | `destination_reserved` | ensure home | "The folder <path> is reserved by project <name> on this station." |
 | `attempt_reused`, `retry_refused`, `stale_generation` | link | "This attempt id was used for another request." / "Only the newest failed attempt can be retried." / "The home of this project changed. Start again." |
 | `home_unverified` | start | §3.8 |
+| `home_not_ready` | start (revision 3, M12) | §8.5 |
+| `no_remote`, `remote_ambiguous`, `refused` check | home row | §5.7, §3.8 item 3 |
 | `home_owned`, `home_nested` | sync on, home ready | §3.8 rule 4 |
 | `mismatch` check | home row | "The home <path> on <station> points to <seen repo>, not <repo>." |
 | `last_home`, `home_busy`, `no_ready_home`, `use_homes`, `rebind_needed` | remove, update, rebind | §8.1, §8.2, §8.4 |
 
 ### 8.8 Board
 
-Project page, new section "Homes" (`web/src/integrations/ProjectHomes.tsx`): one row per home, "<station> · <path> · Ready" / "Cloning into <reserved path>…" / "Not verified: <text>" / "Failed: <text>", with "Retry" (failed only) and "Remove" (not on the last home). Button "Add home" opens a dialog "Add a home on another station": a station select (stations with the feature and no home), the text "The station clones <remote_url> into <clone_root>/<folder>. When that folder is already a complete clone of <repo>, the station uses it.", buttons "Add home" and "Cancel". The project form gets the field "Remote URL" (required for sync and for a second home), with the hint "Filled from the origin of the first home. Check it." A changed URL that names another repository opens the confirm dialog "Rebind the project to <new repo>?" with the `rebind_needed` text and the buttons "Rebind" and "Cancel". The section lists the Git names: "Git names: <slug> → <station>".
+Project page, new section "Homes" (`web/src/integrations/ProjectHomes.tsx`): one row per home, "<station> · <path> · Ready" / "Cloning into <reserved path>…" / "Not verified: <text>" / "Failed: <text>", with "Retry" (failed only) and "Remove" (not on the last home). Button "Add home" opens a dialog "Add a home on another station": a station select (stations with the feature and no home), the text "The station clones <remote_url> into <clone_root>/<folder>. When that folder is already a complete clone of <repo>, the station uses it.", buttons "Add home" and "Cancel". The project form gets the field "Remote URL" (required for sync and for a second home), with the hint "Filled from the origin of the first home. Check it. Fleet Deck compares the exact URL form (user@host:path and ssh://user@host/path are different)." (revision 3, B2). A URL with an SSH login name is saved as the scrubbed `remote_url` plus "SSH login: <user>" under the field A changed URL that names another repository opens the confirm dialog "Rebind the project to <new repo>?" with the `rebind_needed` text and the buttons "Rebind" and "Cancel". The section lists the Git names: "Git names: <slug> → <station>".
 
 ### 8.9 Tests
 
@@ -872,6 +960,11 @@ Project page, new section "Homes" (`web/src/integrations/ProjectHomes.tsx`): one
 - Deck routes (`tests/board_project_homes.rs`): owner only, CSRF, audit rows, `needs_remote`, `home_exists`, `slug_taken`, `last_home`, `home_busy` (a running clone, a queued land), `no_ready_home`, `rebind_needed`; a repeated `command_id` returns the first answer.
 - Fencing (`tests/board_project_homes.rs`): **remove and re-add while the old attempt answers late**: the home of generation 2 ignores a `ready` answer of generation 1; the station marks the generation-1 attempt superseded and keeps the folder.
 - Station (`workspace/fleet_git/home_tests.rs`): a clone into `clone_root`; an adopt of an existing complete clone; a conflict; the folder name rule; a repeat with the same attempt id returns the stored result; another digest gives `attempt_reused`; a second project for the same folder gives `destination_reserved`; a restart marks `interrupted`; **a retry of an interrupted attempt with the folder present gives `incomplete_folder` and never adopts it**; with the folder removed the retry clones; `ready` always has a verified path.
+- Revision 3 cases:
+  - Deck (`tests/board_project_homes.rs`, M5): a test hook makes the deck exit after the route's commit and before any send; after the restart the sender sends the stored request once, the station has exactly one attempt with that id, and the home becomes `ready`; a repeat after a lost answer returns the stored status.
+  - Station (`home_tests.rs`, M6): a failed attempt of generation 1, superseded by a removal, with its folder removed: an add of generation 2 clears it (`cleared`, `destination_cleared`) and clones; with the folder present the add gives `incomplete_folder` and the folder is untouched; a dangling link at the path is not cleared (`lstat` finds it).
+  - Station (`home_tests.rs`, M7): a project with `push_remote = "upstream"`: the clone has the remote `upstream` (and no `origin`), the home check is `verified`, the request digest changes when `remote_name` changes; an adopted folder without `upstream` fails with `home_conflict`.
+  - Deck (`tests/board_fleet_git_start.rs`, new, M12): a direct spawn by path (no `project_id`) in an `unverified` sync home answers 409 `home_unverified` and sends no start; in a `cloning` home 409 `home_not_ready`; in a sync-off home a plain start; in a `ready` sync-owned home a start with `FleetGitStart`.
 - A2 FG-5 (`fleet_git_homes.rs`): an existing project made before the migration (the test writes a V24 database) keeps working: its sessions keep their project and a start in it works; "add home" clones on station B; on station C the folder exists as a clone and is adopted (no clone runs: the bare repo's access log, or no new `.git` mtime).
 
 ## 9. FG-6: Placement by station traits (O19, O20)
@@ -1001,6 +1094,8 @@ CREATE TABLE land_queue (
     command_id           TEXT    NOT NULL UNIQUE,  -- the stable id of SessionCommand::Land
     requested_by         TEXT    NOT NULL,         -- owner, coordinator:<grant>
     request_command_id   TEXT    NOT NULL,         -- the board or coordinator command_id
+    authority            TEXT,                     -- revision 3 (B3): CommandAuthority JSON of a coordinator land; NULL for the owner
+    authority_expires_at INTEGER,                  -- revision 3 (B3): created_at + 600 000 (the ADR-008 fleet intent TTL); NULL for the owner
     project_id           TEXT    NOT NULL,
     lock_key             TEXT    NOT NULL,         -- projects.repo (§3.8 rule 6)
     station_id           TEXT    NOT NULL,
@@ -1010,6 +1105,10 @@ CREATE TABLE land_queue (
     state                TEXT    NOT NULL,  -- queued, running, landed, conflict, check_failed, check_mutated,
                                             -- remote_moved, failed, unresolved, cancelled
     phase                TEXT,              -- LandPhase of the newest event
+    reconciling          INTEGER NOT NULL DEFAULT 0,  -- revision 3 (M1): the newest event's `reconciling`
+    abandon_state        TEXT,              -- revision 3 (M3): NULL, requested, fenced
+    abandon_attempts     INTEGER NOT NULL DEFAULT 0,
+    abandon_next_at      INTEGER,
     attempt              INTEGER NOT NULL DEFAULT 0,
     source_oid           TEXT, base_oid TEXT, rebased_oid TEXT,
     branch_published_oid TEXT, default_published_oid TEXT,
@@ -1036,7 +1135,20 @@ CREATE TABLE land_outbox (
 ) STRICT;
 ```
 
-**Request.** The route (§11.9) inserts a `queued` row (`land_id = "land-" + <uuid>`, `command_id = "landcmd-" + <uuid>`). The same `(requested_by, request_command_id)` again returns the first answer. A second open land of the session gives 409 `land_open` (index `land_queue_open_session`).
+**Request.** The route (§11.9) or the coordinator op (§13.2) inserts a `queued` row (`land_id = "land-" + <uuid>`, `command_id = "landcmd-" + <uuid>`). The same `(requested_by, request_command_id)` again returns the first answer. A second open land of the session gives 409 `land_open` (index `land_queue_open_session`). A coordinator land stores `authority` (the `CommandAuthority { grant_id, caller_station, caller_session, generation }` of the op that ADR-008 `decide_op` accepted) and `authority_expires_at`.
+
+**Authority checks of a coordinator land (revision 3, B3).** A row with `authority` passes the deck check `store/coordinator.rs::recheck(tx, env, authority, (station_id, Some(session_id)), now)` (grant `active` and bound at `authority.generation`, the target still passes ADR-008 §4.2, the deck setting `fleet_control` on, both links with `coordinator.v2`) at each of these points, in the same transaction as the step:
+
+| Point | `now > authority_expires_at` | `Check::Lost(reason)` | `Check::Wait` |
+| --- | --- | --- | --- |
+| Admission (`admit_next`, before the plan) | `failed`, `authority_expired` | `failed`, `authority_lost` (message = reason) | stays `queued`; the next candidate is tried |
+| The first outbox send (`attempts = 0`) | `failed`, `authority_expired`; outbox `rejected` | `failed`, `authority_lost`; outbox `rejected` | not sent now; the backoff goes on |
+| Each resend (`attempts >= 1`: an earlier send may have reached the station) | the deck sends nothing; it asks `fleet_git.land_status` | as the cell to the left | not sent now |
+
+When a resend is refused, the deck does not free the queue at once, because the earlier send may have started a run. It asks `fleet_git.land_status { land_id }`: a known state → the outbox becomes `accepted` and the run goes on (the station's own checks of §11.5 end it with `authority_lost` at its next check point); `unknown` → the deck fences the land id with `fleet_git.land_abandon` (below; the station records the fence, so a late copy of the command is refused) and, after the acknowledgement, ends the row `failed` with `authority_lost` or `authority_expired`. Without a link, the row stays `running` until the status or the fence answers.
+| `coordinator.authority_check` from the station (dispatch and publication, §11.5) | not checked (the TTL bounds delivery only, as in ADR-008) | answer `invalid` | answer `invalid` (the station ends the land, it does not wait) |
+
+A renewal of the grant to another generation, a revocation, the grant's own expiry and the kill switch all make `recheck` answer `Lost`. The envelope of `session.land` carries `authority` (`CommandEnvelope.authority`, ADR-008 §6.1), so the station's own receipt checks run too (§11.4). The deck's handler of `coordinator.authority_check` finds a land command by `land_queue.command_id` (the land does not use the generic `commands` table). An owner land (`authority` NULL) skips these checks.
 
 **Admission (atomic).** The deck task `crates/fleetdeck-deck/src/fleet_git_land.rs::admit_next` runs after each queue change, each terminal land, each link start and every 30 s. In one `BEGIN IMMEDIATE` transaction:
 
@@ -1049,7 +1161,7 @@ SELECT q.land_id FROM land_queue q
  ORDER BY q.created_at, q.land_id;
 ```
 
-For each candidate in this order, the deck **checks the request again**: the station link is up with `fleet_git.land.v1` (else the row stays `queued` and the next candidate is tried); the conditions of §11.1 from the read model; the project still has sync on and a verified home on that station. A failed check ends the row `failed` with `land_not_ready` and the reason, and the next candidate is tried. For the first candidate that passes, the deck builds the `LandPlan` (§11.3), then:
+For each candidate in this order, the deck **checks the request again**: the station link is up with `fleet_git.land.v1` (else the row stays `queued` and the next candidate is tried); the authority of a coordinator land (above); the conditions of §11.1 from the read model; the project still has sync on and a verified home on that station. A failed check ends the row `failed` with `land_not_ready` and the reason, and the next candidate is tried. For the first candidate that passes, the deck builds the `LandPlan` (§11.3), then:
 
 ```sql
 UPDATE land_queue SET state = 'running', plan = ?, settings_revision = ?, attempt = 1, started_at = ?
@@ -1067,10 +1179,18 @@ and commits. The three partial unique indexes make a second `running` row of one
 **Status poll.** For each `running` row, the deck asks `fleet_git.land_status { land_id }` after each link start and every 60 s. The station answers `LandStatus { state, phase, attempt, code?, text?, ... }` or `unknown`:
 
 - `unknown` with the outbox `pending`: the outbox keeps sending (the admission did not reach the station).
-- `unknown` with the outbox `accepted`: the station lost its record (data loss). The row stays `running` with `phase = lost`; the outcome is uncertain, so the queue stays occupied until the owner presses "Stop checking" (below).
+- `unknown` with the outbox `accepted`: the station lost its record (data loss). The row stays `running` with `phase = lost`; the outcome is uncertain, so the queue stays occupied until the owner presses "Stop checking" and the station acknowledges the fence (below).
+- `fenced`: the station has a fence for this land; the deck applies it as the acknowledgement of "Stop checking".
 - A known status updates the row as an event would.
 
-**Stop checking.** `POST /api/lands/{land_id}/abandon` (owner only, CSRF, audited `land.abandon`) is allowed for a `running` land in phase `reconciling` or `lost` (else 409 `land_not_uncertain`). The deck sends `fleet_git.land_abandon { land_id }` when the link is up (the station ends its run `unresolved`, releases the hold, and keeps cleaning the temporary folder; idempotent). The deck sets `unresolved` with the text of §11.10. This is the only way that an uncertain land frees the queue.
+**Stop checking (revision 3, M3: the queue is freed only after the station is fenced).** `POST /api/lands/{land_id}/abandon` (owner only, CSRF, audited `land.abandon`) is allowed for a `running` land with `reconciling = 1` or in phase `lost` (else 409 `land_not_uncertain`). The route only sets `abandon_state = requested` and `abandon_next_at = now`; **the row stays `running` and the queue stays occupied.** A deck task sends `fleet_git.land_abandon { land_id }` for each `requested` row: at once, after each link start of the station, and with a backoff of 2, 4, 8, ... 60 s. The station's answer is the fence acknowledgement:
+
+- The station, in one store transaction, inserts `land_fences (land_id, fenced_at)` (also for a land id that it does not know, for example after a data loss), and, when a `land_runs` row exists and is `running`, sets it `unresolved` with `code = abandoned`, deletes its `session_holds` row and drops its queued writer jobs. It answers `{ state: "fenced" }`. A repeat answers the same (idempotent).
+- **The fence is checked by every write path:** the land decision refuses a `land_id` in `land_fences` (`land_fenced`, a rejected receipt); the FG-2 writer reads `land_runs.state = 'running'` and no `land_fences` row **in the transaction that stores each `*_intent` phase**, and again right before it starts the `git push` or the forge call; a fenced run stops without the write. So no write of an abandoned run can start after the acknowledgement.
+- Only on `{ state: "fenced" }` does the deck set `abandon_state = fenced` and the row `unresolved` with the text of §11.10, which frees the project and the lock key. The board shows "Stopping… waiting for <station> to confirm." while the state is `requested`.
+- **A removed station.** When the owner removes (unpairs) the station, a `requested` row of that station can be freed with `POST /api/lands/{land_id}/forget` (owner only, CSRF, audited `land.forget`; 409 `station_paired` while the station is still paired). Confirm text: "The station <name> was removed. If it still runs, it can still push this land. Free the queue?" The row becomes `unresolved` with `code = station_removed`.
+
+This is the only way that an uncertain land frees the queue.
 
 **Cancel.** `POST /api/lands/{land_id}/cancel` (owner only, audited `land.cancel`) for a `queued` row only (409 `land_running` for a running one).
 
@@ -1087,7 +1207,8 @@ pub struct LandPlan {
     pub fetch_remote: String,                 // push_remote (a remote name)
     pub remote: RemoteIdentity,               // the project identity; the default branch is pushed here
     pub default_branch: Option<String>,       // the setting; None: resolved in phase `captured`
-    pub branch_ref: String,                   // session_git.branch, fd/<slug>/<callsign>
+    pub branch_ref: String,                   // session_git.branch: the LOCAL branch that gives source_oid
+    pub publish_ref: String,                  // revision 3 (M9): session_git.publish_ref, fd/<slug>/<callsign>[-n]; the pushed ref and the PR head
     pub branch_target: PushTarget,            // { target: name or URL, dest }; wip_remote when set
     pub forge: Option<ForgeBinding>,          // required for Pr
     pub check_cmd: Option<String>,            // pinned (decision 50)
@@ -1099,15 +1220,15 @@ pub struct PushTarget { pub target: String, pub dest: String }
 pub struct SessionLand { pub session_id: String, pub land_id: String, pub plan: LandPlan }  // SessionCommand::Land
 ```
 
-The station checks the plan in its decision: `branch_ref` equals `session_git.branch` and starts with `fd/<session_git.slug>/`; `home_generation` equals the `git_projects` row; `mode` is known; a `pr` plan has `forge` and its branch target repository is the forge repository; `check_cmd` is set only when `allow_check_cmd = true` (else `check_disabled`); a `branch_target.dest` equal to `git_pushes.target_dest` when the row exists. Any refusal is a rejected receipt with its code.
+The station checks the plan in its decision: `branch_ref` equals `session_git.branch`; `publish_ref` equals `session_git.publish_ref` and starts with `fd/<session_git.slug>/`; `home_generation` equals the `git_projects` row; `mode` is known; a `pr` plan has `forge` and its branch target repository is the forge repository; `check_cmd` is set only when `allow_check_cmd = true` (else `check_disabled`); a `branch_target.dest` equal to `git_pushes.target_dest` when the row exists. Any refusal is a rejected receipt with its code.
 
 ### 11.4 Station admission and custody (advisor item 4, decision 46)
 
 The decision (`manager/land.rs`) runs on the DB thread in the receipt transaction:
 
-1. The state of §11.1, and **every existing worktree safety check of the trash decision** (DL-150 `trash()`): no run or turn, no terminal hold, no unsettled effect, no open request row, no revert, no other session in the worktree, no shell, no pending shell open. Plus: no row in `session_holds`, no open move, the session is not moved.
-2. Insert `land_runs` (phase `admitted`, attempt 1) and the hold `session_holds (session_id, kind = 'land', holder_id = land_id)`.
-3. Queue `EffectPayload::Land { land_id }` (a new effect kind that needs no provider process, routed like `Worktree`). The effect is `Dispatch::Deferred`; a task runs it (the DL-148 pattern), so the effect worker is never blocked.
+1. The state of §11.1, and **every existing worktree safety check of the trash decision** (DL-150 `trash()`): no run or turn, no terminal hold, no unsettled effect, no open request row, no revert, no other session in the worktree, no shell, no pending shell open. Plus: no row in `session_holds`, no open move, the session is not moved, the `land_id` is not in `land_fences` (`land_fenced`). With `CommandEnvelope.authority` (a coordinator land), the station's existing receipt-time checks of ADR-008 §6.2 run (its live `allow_fleet_control`, rule 3).
+2. Insert `land_runs` (phase `admitted`, attempt 1, `authority` = the envelope's authority JSON or NULL) and the hold `session_holds (session_id, kind = 'land', holder_id = land_id)`.
+3. Queue `EffectPayload::Land { land_id, authority: Option<CommandAuthority> }` (a new effect kind that needs no provider process, routed like `Worktree`; `EffectPayload::authority()` returns it, revision 3, B3). The effect is `Dispatch::Deferred`; a task runs it (the DL-148 pattern), so the effect worker is never blocked.
 
 **The hold** is durable (in the store) and survives a restart. While it exists, the station refuses or skips: `session.prompt`, `steer`, `follow_up`, `resume`, `import`, `fork`, revert, `shell.open`, `shell.handover`, the auto-continue, a move (`session.move_out`), the trash and the cleanup (§6.3), and the FG-2 push loop for that session (§5.4). The refusal is `invalid_state` with "A land holds this session. Wait until it ends." The hold ends when the run reaches a terminal state (§11.5). The cleanup of the temporary folder does not need the hold (§11.6).
 
@@ -1134,21 +1255,41 @@ CREATE TABLE land_runs (
     pr_number             INTEGER, pr_url TEXT,
     files                 TEXT    NOT NULL DEFAULT '[]',
     code                  TEXT, message TEXT,
+    authority             TEXT,                 -- revision 3 (B3): CommandAuthority JSON; NULL for an owner land
+    -- revision 3 (M1): the outstanding remote write, kept apart from the phase
+    pending_action        TEXT,                 -- NULL, branch_push, pr_create, default_push
+    pending_attempt       INTEGER,              -- the land attempt (1 or 2) of the write
+    pending_url           TEXT,                 -- the verified URL of the write (§3.8), or the forge API base for pr_create
+    pending_ref           TEXT,                 -- refs/heads/<publish_ref> or refs/heads/<default_ref>
+    pending_oid           TEXT,                 -- R of the write
+    pending_lease         TEXT,                 -- the branch lease ('' = must not exist); NULL for default_push and pr_create
+    pending_expect        TEXT,                 -- default_push: base_oid; pr_create: '<head>\t<base>'
+    reconciling           INTEGER NOT NULL DEFAULT 0 CHECK (reconciling IN (0, 1)),
     reconcile_attempts    INTEGER NOT NULL DEFAULT 0,
     next_reconcile_at     INTEGER,
-    created_at            INTEGER NOT NULL, updated_at INTEGER NOT NULL, ended_at INTEGER
+    created_at            INTEGER NOT NULL, updated_at INTEGER NOT NULL, ended_at INTEGER,
+    CHECK (pending_action IS NULL OR (pending_attempt IS NOT NULL AND pending_url IS NOT NULL AND pending_ref IS NOT NULL AND pending_oid IS NOT NULL)),
+    CHECK (reconciling = 0 OR pending_action IS NOT NULL)
+) STRICT;
+CREATE TABLE land_fences (                  -- revision 3 (M3)
+    land_id   TEXT PRIMARY KEY,
+    fenced_at INTEGER NOT NULL
 ) STRICT;
 CREATE TABLE session_holds (
     session_id TEXT    PRIMARY KEY REFERENCES sessions(session_id),  -- at most one hold per session
-    kind       TEXT    NOT NULL CHECK (kind IN ('land', 'move')),
+    kind       TEXT    NOT NULL CHECK (kind IN ('land', 'move', 'move_in')),
     holder_id  TEXT    NOT NULL,   -- land_id or move_id
     created_at INTEGER NOT NULL
 ) STRICT;
 ```
 
-`LandState`: `queued` (deck only), `running`, `landed`, `conflict`, `check_failed`, `check_mutated`, `remote_moved`, `failed`, `unresolved`, `cancelled` (deck only) (+ `Unknown`). `LandPhase`: `admitted`, `captured`, `worktree_ready`, `rebased`, `checking`, `checked`, `branch_push_intent`, `branch_pushed`, `pr_intent`, `default_push_intent`, `reconciling`, `lost` (deck only), `done` (+ `Unknown`).
+`LandState`: `queued` (deck only), `running`, `landed`, `conflict`, `check_failed`, `check_mutated`, `remote_moved`, `failed`, `unresolved`, `cancelled` (deck only) (+ `Unknown`). `LandPhase`: `admitted`, `captured`, `worktree_ready`, `rebased`, `checking`, `checked`, `branch_push_intent`, `branch_pushed`, `pr_intent`, `default_push_intent`, `lost` (deck only), `done` (+ `Unknown`). Revision 3 (M1) removes the phase `reconciling`: an uncertain write keeps its `*_intent` phase and sets the separate flag `reconciling = 1`, so a later restart still knows which write to reconcile.
 
-**Journal rule.** Each phase change is one store transaction **before** the action that the next phase names, and it appends `session.land`. An external write (a push, a PR creation) runs only after its `*_intent` phase is stored.
+**Journal rule.** Each phase change is one store transaction **before** the action that the next phase names, and it appends `session.land` (with `reconciling`). An external write (a push, a PR creation) runs only after its `*_intent` phase **and** its `pending_*` operands (action, attempt, verified URL, ref, oid, lease, expectation) are stored in one transaction. The operands never change until the write is confirmed or confirmed not applied; then the same transaction that records the result sets `pending_action = NULL` and `reconciling = 0`.
+
+**Authority checks at the station (revision 3, B3).** For a run with `authority`, the station calls `manager/fleet_control.rs::recheck` (the `coordinator.authority_check` round trip of ADR-008 §6.2, 5 s, then its own live `allow_fleet_control` and rule 3 again) at these points: (a) at effect dispatch, before the capture fetch (`target_base::gate_now`, the existing gate of an effect with authority); (b) right before it stores `branch_push_intent`, `pr_intent` or `default_push_intent`; (c) before attempt 2 starts; (d) in reconciliation, before it runs a write **again** (never before a read). A refusal ends the run `failed` with `authority_lost` or `authority_unknown` in the same transaction that would have stored the next phase; the publication rule of §11.10 names what an earlier step already published. A write whose intent is already stored is never refused after the fact: its outcome is reconciled first.
+
+**Outcome of a remote write (revision 3, M2).** Every branch push, default push and PR creation is classified as `Applied`, `Rejected` (the server answered for this exact ref or request) or `Unknown` (a timeout, a signal, a transport error, a 5xx answer, no answer). Only `Applied` and a **confirmed** non-application end a step. `Rejected` and `Unknown` run the reconciliation read of the table below at once; when that read cannot reach the remote or the forge, the run sets `reconciling = 1` and waits (below). **No terminal state, no event with a terminal state and no release of the hold happens while `pending_action` is set.**
 
 Steps:
 
@@ -1156,26 +1297,34 @@ Steps:
 2. **Worktree** (phase `worktree_ready`). The temporary worktree of §11.6. `git worktree add --detach -- <temp> <source_oid>` (120 s). The session worktree is never used (O24).
 3. **Rebase** (phase `rebased`). `git -c rebase.autoStash=false -c rebase.updateRefs=false -c core.editor=true rebase --no-autosquash --no-fork-point <base_oid>` in the temporary worktree (120 s): the captured source onto the captured base, by commit id, never by a branch name. Git needs a committer identity: when `user.name` or `user.email` is missing, the land ends `failed` with `land_no_identity`. A conflict (exit 1 with unmerged paths): the station reads `git diff --name-only -z --diff-filter=U` (NUL-separated; at most 200 paths; each path at most 4096 bytes; a byte that is not UTF-8 is written as `\xNN`), runs `git rebase --abort`, and ends `conflict` with the files and the exact `base_oid` (O26, decision 54). Else `rebased_oid = R = rev-parse HEAD`.
 4. **Check** (phases `checking`, `checked`). When `plan.check_cmd` is set: the DL-148 runner (`workspace/setup.rs`): `/bin/sh -c`, its own process group, the scrubbed environment with `plan.check_env`, the `setup_runs` row and marker (`FLEETDECK_SETUP_ID=<land_id>-<attempt>`), 10 minutes, the restart cleanup. A non-zero exit, a signal or a timeout ends `check_failed` with the last 50 lines of the output, redacted line by line (§2.5 steps 2 to 4), at most 16 KiB (O26). **The tested commit must not change (decision 50):** after a successful check, `git rev-parse HEAD` must equal `R`, and `git status --porcelain=v1 -z --untracked-files=no --ignore-submodules=none` must print nothing (untracked build output is allowed). Else `check_mutated`.
-5. **Branch publication** (phases `branch_push_intent`, `branch_pushed`). The job `WriteJob::LandBranch` on the FG-2 writer (§5.5, decision 15): the destination check (§3.8), then `git push --porcelain --no-verify ... --force-with-lease=refs/heads/<branch_ref>:<branch_lease> -- <branch_target> <R>:refs/heads/<branch_ref>` (60 s). Success, in one transaction: `branch_published_oid = R`; `git_pushes` (created when missing, `target_dest = branch_target.dest`): `last_pushed_oid = R`, `last_push_kind = land`, and `state = stopped` with `stop_code = land_published` unless the local branch tip already contains `R` (decision 53; this happens **right after** the branch push, before the PR or the default push, so a later failure leaves the protection in place). A lease rejection ends `failed` with `branch_moved`; another failure ends `failed` with the push code.
-6. **Mode `pr`** (phase `pr_intent`, decision 52). The station does **not** use the DL-164 write log (`integrations/writes.rs` keeps its deduplication in memory only). New station function `integrations::pr_find(forge, head, base) -> Result<Vec<PrRef>, Fail>`: an exact, uncached lookup: GitHub `GET /repos/{owner}/{repo}/pulls?state=open&head=<owner>:<branch_ref>&base=<default_ref>&per_page=2`; GitLab `GET /projects/<id>/merge_requests?state=opened&source_branch=<branch_ref>&target_branch=<default_ref>&per_page=2`. One result: the branch push updated it; the land ends `landed` with its URL. None: `integrations::pr_create_direct` (the DL-164 create call, without the in-memory log) with `plan.pr_title` and `plan.pr_body`; the land ends `landed` with the URL. Two or more: `failed` with `pr_ambiguous`.
-7. **Mode `merge`** (phase `default_push_intent`, O25). The job `WriteJob::LandDefault`: `git push --porcelain --no-verify ... -- <fetch_remote> <R>:refs/heads/<default_ref>` with no force and no lease (the destination check of §3.8 first). Success: `default_published_oid = R`, `landed`. A rejection: `git ls-remote --refs -- <fetch_remote> refs/heads/<default_ref>` (20 s):
+5. **Branch publication** (phases `branch_push_intent`, `branch_pushed`). The job `WriteJob::LandBranch` on the FG-2 writer (§5.5, decision 15): the authority check (b), the destination check (§3.8; its verified URL `U`), then one transaction stores `branch_push_intent` with `pending_action = branch_push`, `pending_url = U`, `pending_ref = refs/heads/<publish_ref>`, `pending_oid = R`, `pending_lease = branch_lease`; then `git push --porcelain --no-verify ... --force-with-lease=refs/heads/<publish_ref>:<branch_lease> -- <U> <R>:refs/heads/<publish_ref>` (60 s), classified by `push_outcome` (§5.5).
+   - `Applied`, or the reconciliation read finds the tip `R`: **success**, in one transaction: `branch_published_oid = R`, `pending_action = NULL`, phase `branch_pushed`; `git_pushes` (created when missing, `target_dest = branch_target.dest`, `ref = publish_ref`): `last_pushed_oid = R`, `last_push_kind = land`, and `state = stopped` with `stop_code = land_published` unless the local branch tip already contains `R` (decision 53; this happens **right after** the branch push, before the PR or the default push, so a later failure leaves the protection in place).
+   - The read finds another tip than `R` and than `branch_lease`, or a ref where the lease was `''`: confirmed movement → `failed` with `branch_moved`.
+   - The read finds the tip `branch_lease` (or no ref with lease `''`) after `Rejected`: confirmed not applied → `failed` with the push code (`push_rejected`). After `Unknown`: the write did not take effect; the run pushes again once with the same operands (after the authority check (d)); a second confirmed non-application ends `failed` with the push code.
+   - The read cannot reach the remote: `reconciling = 1` (below).
+6. **Mode `pr`** (phase `pr_intent`, decision 52). The station does **not** use the DL-164 write log (`integrations/writes.rs` keeps its deduplication in memory only). New station function `integrations::pr_find(forge, head, base) -> Result<Vec<PrRef>, Fail>`: an exact, uncached lookup: GitHub `GET /repos/{owner}/{repo}/pulls?state=open&head=<owner>:<publish_ref>&base=<default_ref>&per_page=2`; GitLab `GET /projects/<id>/merge_requests?state=opened&source_branch=<publish_ref>&target_branch=<default_ref>&per_page=2`. The authority check (b) runs, then one transaction stores `pr_intent` with `pending_action = pr_create`, `pending_url = <forge API base>`, `pending_ref = refs/heads/<publish_ref>`, `pending_oid = R`, `pending_expect = "<publish_ref>\t<default_ref>"`. Then `pr_find`: one result: the branch push updated it; `landed` with its URL. Two or more: `failed` with `pr_ambiguous`. None: `integrations::pr_create_direct` (the DL-164 create call, without the in-memory log) with `plan.pr_title` and `plan.pr_body`, classified:
+   - `Applied`: an HTTP 201 with a PR URL → `landed` with the URL.
+   - `Rejected`: an HTTP 4xx answer with a body (for example GitHub 422) → `pr_find` once: one → `landed`; none → confirmed → `failed` with `pr_failed` and the redacted answer; two or more → `pr_ambiguous`.
+   - `Unknown`: a timeout, a transport error, or an HTTP 5xx → the reconciliation read (`pr_find`) at once; when it cannot reach the forge, `reconciling = 1`.
+7. **Mode `merge`** (phase `default_push_intent`, O25). The job `WriteJob::LandDefault`: the authority check (b), the destination check of §3.8 for `fetch_remote` (its verified URL `D`), one transaction that stores `default_push_intent` with `pending_action = default_push`, `pending_url = D`, `pending_ref = refs/heads/<default_ref>`, `pending_oid = R`, `pending_expect = base_oid`; then `git push --porcelain --no-verify ... -- <D> <R>:refs/heads/<default_ref>` with no force and no lease, classified by `push_outcome`. `Applied`: `default_published_oid = R`, `landed`. `Rejected` or `Unknown`: `git ls-remote --refs -- <D> refs/heads/<default_ref>` (20 s):
    - the remote tip is `R`: a lost answer; `landed`.
-   - the remote tip is `base_oid`: the server refused for another reason (for example a protected branch); `failed` with `push_rejected`.
-   - another tip: a **confirmed** movement. In attempt 1: `attempt = 2`, and the run starts again at step 1 with a fresh fetch and base, the **same** `source_oid`, `branch_lease = branch_published_oid`, a new temporary folder, a fresh rebase **and** a fresh check (decision 49, 50). In attempt 2: `remote_moved` (O25).
+   - the remote tip is `base_oid`: after `Rejected`, the server refused for another reason (for example a protected branch) → `failed` with `push_rejected`; after `Unknown`, the push did not take effect → push again once (after the authority check (d)), then the same rules.
+   - another tip: a **confirmed** movement. When `R` is an ancestor of that tip (after a fetch of it): `landed`. Else in attempt 1: `attempt = 2`, and the run starts again at step 1 with a fresh fetch and base, the **same** `source_oid`, `branch_lease = branch_published_oid`, a new temporary folder, a fresh rebase **and** a fresh check (decision 49, 50), after the authority check (c). In attempt 2: `remote_moved` (O25).
+   - the read cannot reach the remote: `reconciling = 1`.
    With `wip_remote` set, the branch goes to the WIP remote (step 5) and the default branch goes to `push_remote` (decision 52).
-8. **End.** A terminal state deletes the `session_holds` row in the same transaction. The temporary folder is cleaned by §11.6, independently.
+8. **End.** A terminal state needs `pending_action = NULL`; it deletes the `session_holds` row in the same transaction. The temporary folder is cleaned by §11.6, independently.
 
-**Reconciliation after a crash or a lost answer (decision 55).** At station start, and at `next_reconcile_at` for a run in phase `reconciling`:
+**Reconciliation after a crash or a lost answer (decision 55, revision 3, M1).** At station start, and at `next_reconcile_at` for a run with `reconciling = 1`, the station dispatches on `pending_action` (not on the phase) and uses only the stored `pending_*` operands:
 
-| Stored phase | Action |
-| --- | --- |
-| `admitted` to `checked` | Nothing external ran in this attempt. `failed` with `station_restarted`. The text follows §11.10 (it names a branch that attempt 1 published). |
-| `branch_push_intent` | `ls-remote` of the branch ref on `branch_target`: tip `R` → record step 5 success and continue; tip `branch_lease` (or no ref with lease `''`) → run step 5 again; another tip → `failed` with `branch_moved`. |
-| `branch_pushed` | Continue with step 6 or 7. |
-| `pr_intent` | `pr_find`: one → `landed`; none → create (step 6); two or more → `pr_ambiguous`. |
-| `default_push_intent` | `ls-remote` of the default ref: tip `R` → `landed`; tip `base_oid` → run step 7 again; another tip → fetch it; when `R` is its ancestor → `landed`, else the movement rule of step 7. |
+| `pending_action` | Read | Result |
+| --- | --- | --- |
+| NULL, phase `admitted` to `checked` | none | Nothing external ran in this attempt. `failed` with `station_restarted`. The text follows §11.10 (it names a branch that attempt 1 published). |
+| NULL, phase `branch_pushed` | none | Continue with step 6 or 7 (a new intent and new operands). |
+| `branch_push` | `git ls-remote --refs -- <pending_url> <pending_ref>` | tip `pending_oid` → the step 5 success; tip `pending_lease` (or no ref with lease `''`) → not applied: push again with the same operands (authority check (d)); another tip → `failed` with `branch_moved`. |
+| `pr_create` | `pr_find` with the head and base of `pending_expect` | one → `landed`; none → create (step 6, authority check (d)); two or more → `pr_ambiguous`. |
+| `default_push` | `git ls-remote --refs -- <pending_url> <pending_ref>` | tip `pending_oid` → `landed`; tip `pending_expect` (`base_oid`) → push again (authority check (d)); another tip → fetch it; when `pending_oid` is its ancestor → `landed`, else the movement rule of step 7. |
 
-When a reconciliation cannot reach the remote or the forge, the run stays `running` in phase `reconciling` (the hold stays, the deck queue stays occupied), `reconcile_attempts += 1`, and `next_reconcile_at` uses the FG-2 backoff (1, 2, 4, 8, 10 minutes). Only a result or the owner's "Stop checking" (§11.2) ends it.
+When the read cannot reach the remote or the forge, the run stays `running` with its phase and its `pending_*` operands unchanged, `reconciling = 1`, `reconcile_attempts += 1`, and `next_reconcile_at` uses the FG-2 backoff (1, 2, 4, 8, 10 minutes); the hold stays and the deck queue stays occupied. Each later restart runs the same row of the table again with the same operands, as often as needed. Only a result or the owner's "Stop checking" with the station's fence (§11.2) ends it.
 
 The default land mode (O25): `GitSettings.land`, else `pr` when the project has a forge binding (`projects.forge`, sent as `FleetGitStart.forge` and `LandPlan.forge`), else `merge`. The deck resolves the mode at admission and pins it in the plan.
 
@@ -1223,7 +1372,7 @@ Rebase this branch onto commit <base_oid>, fix the conflicts, run the checks, an
 
 - `POST /api/sessions/{station}/{session}/land { command_id }` (scope `admin`, owner login only, CSRF, audited `session.land`): 202 with `{ land_id, position }`; 409 `land_not_ready` (with the reason), `land_open` (a land of the session is queued or runs), `land_pr_needs_forge_branch`, `home_unverified`, `fleet_git_unsupported`.
 - `GET /api/projects/{id}/lands` (scope `read`): the queue and the last 20 ends.
-- `POST /api/lands/{land_id}/cancel`, `POST /api/lands/{land_id}/abandon`, `POST /api/lands/{land_id}/send` (§11.2, §11.8).
+- `POST /api/lands/{land_id}/cancel`, `POST /api/lands/{land_id}/abandon`, `POST /api/lands/{land_id}/forget` (revision 3), `POST /api/lands/{land_id}/send` (§11.2, §11.8).
 
 ### 11.10 Failure states (decision 77)
 
@@ -1246,13 +1395,19 @@ Rebase this branch onto commit <base_oid>, fix the conflicts, run the checks, an
 | `land_temp_unsafe` | "The folder <root>/.fleetdeck-land is not a private folder of the station user." |
 | `unsupported_mode` | "This station does not know the land mode. Update the station." |
 | `station_restarted` | "The station restarted during the land. Land again." |
-| `unresolved` | "Fleet Deck could not confirm the result of this land. Check <remote>/<default>, the branch <branch_ref> and the pull requests yourself." |
-| phase `reconciling` (status line) | "Checking the result of the land after an interruption…" |
+| `unresolved` | "Fleet Deck could not confirm the result of this land. Check <remote>/<default>, the branch <publish_ref> and the pull requests yourself." |
+| `unresolved`, code `station_removed` | "The station <name> was removed during the land. If it still runs, it can still push. Check <remote>/<default> and the branch <publish_ref> yourself." |
+| `authority_lost` | "The coordinator lost its permission during the land (<reason>)." (revision 3, B3) |
+| `authority_unknown` | "Fleet Deck could not confirm the coordinator's permission, so the land stopped." |
+| `authority_expired` | "The coordinator's land request expired before it started (10 minutes)." |
+| `land_fenced` | "This land was stopped before; it does not run again." |
+| `reconciling = 1` (status line) | "Checking the result of the land after an interruption…" |
+| `abandon_state = requested` (status line) | "Stopping… waiting for <station> to confirm." |
 | phase `lost` (status line) | "The station has no record of this land. Check the remote, then press Stop checking." |
 
 ### 11.11 Board
 
-`web/src/session/LandPanel.tsx`: the session header has "Land" (owner, conditions of §11.1). The confirm dialog: title "Land <branch>?", text for `pr`: "Fleet Deck rebases the branch onto <remote>/<default> in a separate folder, runs the check command, pushes the branch and opens or updates a pull request." For `merge`: "... pushes the branch, then pushes the result to <remote>/<default>." Buttons "Land" and "Cancel". The status line: "Queued (<n> ahead)", "Landing: <phase text>" (phase texts: `captured` "fetching", `worktree_ready` "preparing a folder", `rebased` "rebasing", `checking` "running the check", `branch_push_intent` "pushing the branch", `pr_intent` "opening the pull request", `default_push_intent` "pushing <default>", `reconciling` and `lost` as in §11.10), "Landed <oid7>" or "Pull request #<n>" (a link), and the failure texts of §11.10. In phase `reconciling` or `lost` the panel has "Stop checking" with the confirm text "Stop checking this land? Fleet Deck frees the queue and does not know if the land changed the remote." A conflict shows the file list and "Send to session". The project page has a "Lands" list (the queue).
+`web/src/session/LandPanel.tsx`: the session header has "Land" (owner, conditions of §11.1). The confirm dialog: title "Land <branch>?", text for `pr`: "Fleet Deck rebases the branch onto <remote>/<default> in a separate folder, runs the check command, pushes the branch and opens or updates a pull request." For `merge`: "... pushes the branch, then pushes the result to <remote>/<default>." Buttons "Land" and "Cancel". The status line: "Queued (<n> ahead)", "Landing: <phase text>" (phase texts: `captured` "fetching", `worktree_ready` "preparing a folder", `rebased` "rebasing", `checking` "running the check", `branch_push_intent` "pushing the branch", `pr_intent` "opening the pull request", `default_push_intent` "pushing <default>", `reconciling = 1` and phase `lost` as in §11.10), "Landed <oid7>" or "Pull request #<n>" (a link), and the failure texts of §11.10. With `reconciling = 1` or in phase `lost` the panel has "Stop checking" with the confirm text "Stop checking this land? Fleet Deck frees the queue after <station> confirms that it stopped. Fleet Deck does not know if the land changed the remote." A conflict shows the file list and "Send to session". The project page has a "Lands" list (the queue).
 
 ### 11.12 Tests
 
@@ -1266,6 +1421,12 @@ Rebase this branch onto commit <base_oid>, fix the conflicts, run the checks, an
   - **PR lost acknowledgement:** a fake forge that creates the PR and drops the answer; after the restart `pr_find` finds it, the land ends `landed` with its URL, and the fake forge saw exactly one create;
   - PR mode with a WIP remote that is not the forge is refused; two open PRs give `pr_ambiguous`;
   - the temporary folder is inside the allowed root; it and its admin entry are gone at the end, also for a failed run; a replaced folder is kept; a sibling worktree of the home and its admin entry stay (no prune); a restart in `rebased` ends `station_restarted`; no hook runs.
+- Station, revision 3:
+  - M1 (`manager/land_tests.rs`): for each `pending_action` (`branch_push`, `pr_create`, `default_push`) with an unreachable remote or forge: restart, restart again, then restore the remote: the run reconciles with the stored operands, `phase` is still the `*_intent` phase after each restart, and the result is the same as without the restarts.
+  - M2: a fake `git` that applies the branch push and then times out: no `failed` event, the hold stays, the read finds `R` and the run continues; the same for the default push (`landed`, one push); a fake forge that creates the PR and answers 502: the read finds it, `landed`, exactly one create; a forge 422 with no PR found → `failed` `pr_failed`; a porcelain `!` line with `stale info` and a read that confirms the old tip → `failed` with `push_rejected`, not `reconciling`.
+  - M3: a fenced land id: a resent `session.land` with that id is rejected `land_fenced`; a writer job queued before the fence does not push (the bare repository is unchanged); `fleet_git.land_abandon` for an unknown land id records the fence and answers `fenced`.
+  - B3: an authority check that answers `invalid` before `branch_push_intent` ends `failed` `authority_lost` with no push; before `default_push_intent` after a published branch, the text names the published branch; a check is never made before a reconciliation read, only before a repeated write; no answer in 5 s ends `authority_unknown`.
+- Deck, revision 3 (`fleet_git_land_tests.rs`): B3: a coordinator land with the grant revoked, renewed to another generation, or expired (the test clock passes `authority_expires_at`) **while queued** ends `failed` (`authority_lost`, `authority_lost`, `authority_expired`) and frees the queue; the kill switch turned off between the first send and a resend: the deck sends nothing, asks `land_status`, and with `unknown` fences the land before it ends it; with a known state the land goes on. M3: "Stop checking" with the link down keeps the row `running` with `abandon_state = requested` and the queue occupied; a second land of the project is admitted only after the station answers `fenced`; `forget` is refused while the station is paired.
 - Deck (`fleet_git_land_tests.rs`): two admissions of one project in parallel tasks give one `running` row (the partial index); **two projects with the same `repo` run one land at a time**; the outbox resends the same `command_id` after a lost answer and the station receipt is the stored one; a rejected receipt frees the queue; an unknown state keeps the row `running`; `lost` and `reconciling` keep the queue until "Stop checking"; cancel of a queued land.
 - A2 FG-8 (`fleet_git_land.rs`): a clean land in `merge` mode advances `main` of the bare repo; a conflict stops with the file list and no ref of the bare repo changes; a failed check stops the land; two lands of one project run one after the other (the second `started_at` ≥ the first `ended_at`).
 
@@ -1287,41 +1448,110 @@ Checked by the deck (for the answer) and again by the source station in its deci
 1. The session has no running turn (`current_run` and `current_turn` are empty) and no open request (`open_requests` is empty).
 2. The branch is pushed: `git_pushes.state = pushed` and `last_pushed_oid` equals the local tip.
 3. The target station has a ready home of the project, negotiated `fleet_git.move.v1`, and is not the source.
-4. The caller is the owner's board login, or a coordinator with `manage` (ADR-008 §4.2 rules). Members and tokens get 403.
+4. The caller is the owner's board login, or a coordinator with `manage` (ADR-008 §4.2 rules) whose grant covers **both** the source and the target station (else `target_excluded`). Members and tokens get 403.
 5. No other move of the session is open; the session is not `moved`; the session has no row in `session_holds` (a land holds it, §11.4).
 
 The route is `POST /api/sessions/{station}/{session}/move { to_station, command_id }` (scope `admin`, CSRF, audited `session.move` with the target `<station>/<session> -> <to_station>`). Answers: 202 `{ move_id }`; 409 `move_not_ready` with the first failed condition: "A turn is running.", "An approval is open.", "The branch is not pushed.", "<station> has no home of this project.", "The session is already moving."
 
 ### 12.3 Steps
 
-The two stations never connect to each other: every byte goes through the links of the one deck that both stations are paired with (O29). The deck drives the move (`crates/fleetdeck-deck/src/fleet_git_move.rs`) and stores each step in `session_moves` (deck, phase 4 migration):
+The two stations never connect to each other: every byte goes through the links of the one deck that both stations are paired with (O29). The deck drives the move (`crates/fleetdeck-deck/src/fleet_git_move.rs`) and stores each step in `session_moves` (deck, phase 4 migration). Revision 3 (B4) adds a durable handoff commit point, an input hold on the target, and outboxes for the finish and the release; it also carries the coordinator authority through the whole move (B3).
 
 ```sql
 CREATE TABLE session_moves (
-    move_id       TEXT PRIMARY KEY,
-    src_station   TEXT NOT NULL, src_session TEXT NOT NULL,
-    dst_station   TEXT NOT NULL, dst_session TEXT,
-    kind          TEXT NOT NULL,      -- native, branch_only
-    state         TEXT NOT NULL,      -- holding, exporting, importing, starting, finishing, done, failed
-    code          TEXT, message TEXT,
-    bytes         INTEGER,
-    requested_by  TEXT NOT NULL,
-    created_at    INTEGER NOT NULL, ended_at INTEGER
+    move_id              TEXT PRIMARY KEY,
+    src_station          TEXT NOT NULL, src_session TEXT NOT NULL,
+    dst_station          TEXT NOT NULL, dst_session TEXT,
+    kind                 TEXT NOT NULL,      -- native, branch_only
+    state                TEXT NOT NULL,      -- holding, exporting, importing, starting, committed, finishing,
+                                             -- releasing, done, aborting, failed
+    out_command_id       TEXT NOT NULL UNIQUE,  -- SessionCommand::MoveOut, fixed at the request
+    in_command_id        TEXT NOT NULL UNIQUE,  -- SessionCommand::MoveIn, fixed at the request
+    finish_command_id    TEXT NOT NULL UNIQUE,  -- SessionCommand::MoveFinish, fixed at the request
+    publication          TEXT,               -- MovePublication JSON from the export answer (M8)
+    step_attempts        INTEGER NOT NULL DEFAULT 0,
+    next_step_at         INTEGER,            -- the backoff of the current send (2, 4, 8 ... 60 s)
+    code                 TEXT, message TEXT,
+    bytes                INTEGER,
+    requested_by         TEXT NOT NULL,      -- owner, coordinator:<grant>
+    authority            TEXT,               -- CommandAuthority JSON of a coordinator move; NULL for the owner (B3)
+    authority_expires_at INTEGER,            -- created_at + 600 000; NULL for the owner (B3)
+    created_at           INTEGER NOT NULL, committed_at INTEGER, ended_at INTEGER
 ) STRICT;
 CREATE UNIQUE INDEX session_moves_open ON session_moves (src_station, src_session) WHERE state NOT IN ('done', 'failed');
 ```
 
-1. **Hold** (source, `session.move_out`, a mutating `SessionCommand::MoveOut { session_id, move_id, to_station }`): the decision checks §12.2 items 1, 2 and 5 and the DL-150 worktree safety checks (§11.4 item 1), inserts the station row `session_moves` (role `source`, state `holding`) and the hold `session_holds (session_id, kind = 'move', holder_id = move_id)` (revision 2). While the hold exists, `session.prompt`, `steer`, `follow_up`, `resume`, `import`, `fork`, `shell.open`, `shell.handover`, the auto-continue and the push loop refuse or skip the session (`invalid_state`, "The session is being moved."). An idle live session is stopped with `StopMode::Graceful` as part of this step, so that the transcript does not change.
-2. **Export** (native only; source, `session.move_export { move_id }`, scope `admin`, not mutating): the station lists the files with `TranscriptLayout::export_files` and answers `{ manifest: TranscriptManifest, stream_token }`. `TranscriptManifest { provider: ProviderKind, native_session_id: String, files: Vec<ManifestFile { key: String, rel: String, size: u64, sha256: String }>, total: u64 }`. Every file is opened without following a link, must be a regular file, and is read from that descriptor. `total` over 64 MiB fails with `move_too_large` (O29). The stream (purpose `move-export:<move_id>`) carries the files in manifest order, back to back.
-3. **Import** (target, `session.move_prepare { move_id, manifest, source: { station_id, session_id } }`, scope `admin`, not mutating): the target checks the manifest (at most 64 MiB, at most 256 files, `rel` is relative with no `..`, the provider is supported) and answers `{ stream_token }` for an upload stream (purpose `move-import:<move_id>`). The deck pipes the export stream into the upload stream; it keeps no copy on disk and holds at most the two stream windows in memory. The target writes the files into `<station data>/moves/<move_id>/` (folder mode 0700, files mode 0600, `O_CREAT | O_EXCL | O_NOFOLLOW`), counts the bytes and checks each SHA-256. A mismatch or a short stream fails with `move_checksum`.
-4. **Start** (target, `session.move_in`, a mutating `SessionCommand::MoveIn { move_id, kind, provider_instance, title, callsign_hint, from: { station_id, session_id, ref_name, oid }, fleet_git: FleetGitStart }`):
-   - The decision makes a new session id and a callsign (the source callsign when it is free on the target, else a new one), and the branch `fd/<target slug>/<callsign>` (with the suffix `-2`, `-3`, ... of ADR-010 §10.1 when the name exists on the target or the remote). The target home must be ready and verified with the generation of `fleet_git.home_generation` (§3.8).
-   - The effect fetches `push_remote`, checks that `<remote>/<from.ref_name>` equals `from.oid` (else `move_branch_moved`), and runs `git worktree add -b fd/<target slug>/<callsign> -- <path> <from.oid>` in the target home.
-   - `Native`: `TranscriptLayout::import_files` moves the staged files into the provider home of the target instance (mode 0600) with the ADR-010 rewrites, then the station starts the provider with a native resume of `native_session_id` in the new worktree (the existing `session.resume` launch path). A failed resume fails the move with `move_resume_failed`; the source session stays.
-   - `BranchOnly` (O30): a new session on the new branch with the first prompt of §12.6.
-   - The new session's `git_pushes` row starts with `last_pushed_oid = NULL` (the new ref does not exist yet), so its first push uses the empty lease.
-5. **Finish** (source, `session.move_finish { move_id, to_station, to_session }`, mutating): the source appends `session.moved { move_id, to_station, to_session }`, sets the push row to `stopped` (`stop_code = moved`), deletes the `session_holds` row and records the permanent state `moved` (`summary.moved_to`), which refuses input by itself (§12.4).
-6. **Abort**: any failure before step 5 sends `session.move_abort { move_id }` to the source (the `session_holds` row is deleted; the session is as before) and `session.move_discard { move_id }` to the target (the staging folder is deleted by identity, the DL-150 pattern). A deck restart reads `session_moves` and continues or aborts each open row: steps 1 to 3 abort; step 4 asks the target for the move state (`session.move_status { move_id }`) and finishes when the new session exists.
+Station tables (V31):
+
+```sql
+CREATE TABLE move_out_runs (                 -- on the source
+    move_id     TEXT PRIMARY KEY,
+    command_id  TEXT NOT NULL UNIQUE,
+    session_id  TEXT NOT NULL REFERENCES sessions(session_id),
+    to_station  TEXT NOT NULL,
+    state       TEXT NOT NULL,               -- holding, finished, aborted
+    publication TEXT NOT NULL,               -- MovePublication JSON, captured under the hold
+    authority   TEXT,
+    created_at  INTEGER NOT NULL, updated_at INTEGER NOT NULL
+) STRICT;
+CREATE TABLE move_in_runs (                  -- on the target
+    move_id           TEXT PRIMARY KEY,
+    command_id        TEXT NOT NULL UNIQUE,
+    session_id        TEXT NOT NULL REFERENCES sessions(session_id),  -- the new session
+    provider          TEXT NOT NULL,
+    native_session_id TEXT,                  -- NULL for branch_only
+    state             TEXT NOT NULL,         -- staged, imported, launching, resumed, released, abandoned, discarded
+    staging_path      TEXT, staging_dev INTEGER, staging_ino INTEGER,
+    imported          TEXT NOT NULL DEFAULT '[]',  -- [{ path, dev, ino }] of the files placed in the provider home
+    authority         TEXT,
+    code              TEXT, message TEXT,
+    created_at        INTEGER NOT NULL, updated_at INTEGER NOT NULL
+) STRICT;
+```
+
+`MovePublication { local_branch: String, dest: String, ref_name: String, oid: String }`: `local_branch` is `session_git.branch`, `dest` is `git_pushes.target_dest`, `ref_name` is `git_pushes.ref` (the source's publication ref), `oid` is `git_pushes.last_pushed_oid`. `MoveInState`: `staged`, `imported`, `launching`, `resumed`, `released`, `abandoned`, `discarded` (+ `Unknown`).
+
+**The commit point.** The move is committed exactly when the **target** station stores `move_in_runs.state = resumed` (step 4). Before that moment the move can abort, and the source stays the only writable continuation. From that moment the move only goes forward (finish, then release), and the target is the only continuation that will become writable. The deck's `committed` state mirrors the target's fact; after a deck crash the deck reads it back with `session.move_status`.
+
+**Authority (revision 3, B3).** A coordinator move stores `authority` and `authority_expires_at`. Before each deck send of steps 1 to 4 (`move_out`, `move_export`, `move_prepare`, the start of the stream pipe, `move_in`), the deck runs `store/coordinator.rs::recheck` twice, with the route `(src_station, Some(src_session))` and with `(dst_station, None)` (both stations must stay in the grant, ADR-008 §4.2). `Check::Lost` or `now > authority_expires_at` → abort with `authority_lost` or `authority_expired`; `Check::Wait` → the step waits with its backoff (the expiry still applies). The envelopes of `MoveOut` and `MoveIn` carry `authority`, so each station runs its receipt checks, and the target's `MoveIn` effect runs the dispatch gate (`target_base::gate_now`, the `coordinator.authority_check` round trip) right before it stores `launching`; a refusal there is a failure before the commit point (abort). After the commit point no authority check runs: stopping a committed move would leave no writable continuation. An owner move has no authority and no checks.
+
+Steps:
+
+1. **Hold** (source, `session.move_out`, a mutating `SessionCommand::MoveOut { session_id, move_id, to_station }`): the decision checks §12.2 items 1, 2 and 5 and the DL-150 worktree safety checks (§11.4 item 1), inserts `move_out_runs` (state `holding`, `publication` = the current `MovePublication`, captured in this transaction) and the hold `session_holds (session_id, kind = 'move', holder_id = move_id)`. While the hold exists, `session.prompt`, `steer`, `follow_up`, `resume`, `import`, `fork`, `shell.open`, `shell.handover`, the auto-continue and the push loop refuse or skip the session (`invalid_state`, "The session is being moved."). An idle live session is stopped with `StopMode::Graceful` as part of this step, so that the transcript does not change.
+2. **Export** (source, `session.move_export { move_id }`, scope `admin`, not mutating): the answer is `{ publication: MovePublication, manifest: Option<TranscriptManifest>, stream_token: Option<String> }`; `manifest` and `stream_token` are `None` for `branch_only`. For `native`, the station lists the files with `TranscriptLayout::export_files`. `TranscriptManifest { provider: ProviderKind, native_session_id: String, files: Vec<ManifestFile { key: String, rel: String, size: u64, sha256: String }>, total: u64 }`. Every file is opened without following a link, must be a regular file, and is read from that descriptor. `total` over 64 MiB fails with `move_too_large` (O29). The stream (purpose `move-export:<move_id>`) carries the files in manifest order, back to back. The deck stores `publication` in `session_moves`.
+3. **Import** (native only; target, `session.move_prepare { move_id, manifest, source: { station_id, session_id } }`, scope `admin`, not mutating): the target checks the manifest (at most 64 MiB, at most 256 files, `rel` is relative with no `..`, the provider is supported) and answers `{ stream_token }` for an upload stream (purpose `move-import:<move_id>`). The deck pipes the export stream into the upload stream; it keeps no copy on disk and holds at most the two stream windows in memory. The target writes the files into `<station data>/moves/<move_id>/` (folder mode 0700, files mode 0600, `O_CREAT | O_EXCL | O_NOFOLLOW`), records the folder's `dev`/`ino`, counts the bytes and checks each SHA-256. A mismatch or a short stream fails with `move_checksum`.
+4. **Start** (target, `session.move_in`, a mutating `SessionCommand::MoveIn { move_id, kind, provider_instance, title, callsign_hint, from: { station_id, session_id, publication: MovePublication }, fleet_git: FleetGitStart }`):
+   - **Decision** (one transaction): a new session id and a callsign (the source callsign when it is free on the target, else a new one); the local branch `B = publication.local_branch` (the same branch as the source, O29; §12.5); `session_git` with `branch = B`, `slug = <target slug>`, `publish_ref = NULL` until the effect fixes it, `created_branch = 1`; `move_in_runs` (state `staged`, or `imported` is set later by the effect); and the **target hold** `session_holds (new session, kind = 'move_in', holder_id = move_id)`. The target home must be ready and verified with the generation of `fleet_git.home_generation` (§3.8). While the target hold exists, the new session refuses `session.prompt`, `steer`, `follow_up`, `resume`, `import`, `fork`, revert, `shell.open`, `shell.handover`, the auto-continue, a land, a move, the trash and the cleanup (`invalid_state`, "This session is still arriving from <source station>."), and the push loop skips it. Only the `MoveIn` effect itself launches the provider.
+   - **Publication check (M8).** The target computes its own branch target for the project (the `wip_remote` URL when it is set, else `push_remote`) and its verified URL `U` with §3.8. `remote_identity(U).dest` must equal `publication.dest`; else the move fails with `move_publication_mismatch`, "The branch is on <dest>, but <station> pushes this project to <dest of U>." The target never uses a URL that the source sent.
+   - **Fetch the exact ref (M8).** `git fetch --no-tags --no-recurse-submodules --no-write-fetch-head -- <U> +refs/heads/<publication.ref_name>:refs/fleetdeck/move/<move_id>` in the target home (30 s, confined), then `git rev-parse --verify --quiet refs/fleetdeck/move/<move_id>^{commit}` must equal `publication.oid` (else `move_branch_moved`).
+   - **Local branch (M9).** The namespace check of §3.2 item 1 for `B`; a local branch `B` that already exists in the target home fails with `move_branch_exists`, "The branch <B> already exists in the home on <station>. Trash its old worktree and delete the branch there, then move again." Then `git worktree add -b <B> -- <path> <publication.oid>` and `git update-ref -d refs/fleetdeck/move/<move_id> <publication.oid>`.
+   - **Publication ref (M9).** The candidate is `fd/<target slug>/<callsign>`. The target lists `git ls-remote --refs -- <U> 'refs/heads/fd/<target slug>/*'` (20 s, 64 KiB). A candidate is taken when the list has `refs/heads/<candidate>` or a ref below `refs/heads/<candidate>/`, or a `git_pushes` row has `(dest of U, candidate)`. The first free name of `fd/<target slug>/<callsign>`, `…-2`, `…-3`, … `…-99` is the `publish_ref`; when all are taken, `move_ref_exhausted`. The effect stores `session_git.publish_ref` and a `git_pushes` row (`ref = publish_ref`, `target_dest = dest of U`, `last_pushed_oid = NULL`, so the first push uses the empty lease; `desired_oid = publication.oid`, `state = due`, but the push loop skips the row while the target hold exists).
+   - `Native`: `TranscriptLayout::import_files` moves the staged files into the provider home of the target instance (mode 0600) with the ADR-010 rules and records each placed file's `path`, `dev` and `ino` in `move_in_runs.imported`; state `imported`. Then the dispatch gate (authority), then **one transaction stores `launching`**, and only after it the station starts the provider with a native resume of `native_session_id` in the new worktree (the existing `session.resume` launch path). When `session.started { resumed: true }` arrives with the same native id within 120 s, one transaction stores `resumed` (the commit point; the transaction requires `state = launching`, so after a discard it changes nothing and the station ends the process) and appends `session.move_in { state: resumed }`. Another native id → the station ends the process, state `abandoned`, `identity_changed`. A process that exits first, or no `session.started` in 120 s → the station ends the process, state `abandoned`, `move_resume_failed` (or `move_resume_timeout`).
+   - `BranchOnly` (O30): one transaction stores `launching`, then a new provider session starts on `B` in the new worktree with the first prompt of §12.6 **held** (the prompt is queued and is sent at the release, step 6). `session.started` of the new session stores `resumed` (the commit point).
+5. **Finish** (source, `session.move_finish`, a mutating `SessionCommand::MoveFinish { session_id, move_id, to_station, to_session }` with the fixed `finish_command_id`): the deck sends it after `committed`, with the backoff of `next_step_at` until an accepted receipt (the station deduplicates by `command_id`, so a lost acknowledgement is resent safely). The source, in one transaction: appends `session.moved { move_id, to_station, to_session }`, sets the push row to `stopped` (`stop_code = moved`), deletes the `session_holds` row, sets `move_out_runs.state = finished`, and records the permanent state `moved` (`summary.moved_to`), which refuses input by itself (§12.4). When the source has no `move_out_runs` row (data loss), it still applies `moved` when the session has no current run or turn; when the session runs a turn, the receipt is rejected with `invalid_state`, the deck keeps `finishing` and retries every 60 s, and the board shows "The source session runs again. Stop it, then Fleet Deck finishes the move." The target stays held during this time, so there is never a second writable continuation.
+6. **Release** (target, `session.move_release { move_id }`, scope `admin`, not mutating, idempotent): the deck sends it after the finish receipt, with the same backoff, until the answer `{ state: "released" }`. The target, in one transaction, deletes the `move_in` hold and sets `released`; a `BranchOnly` move then sends its held first prompt. The deck sets `done`.
+
+**Abort (only before the commit point).** Any failure in steps 1 to 4 sets the deck state `aborting`. The deck then sends, each with the backoff until acknowledged:
+
+1. `session.move_discard { move_id }` to the target (when a `MoveIn` may have reached it). The target, in one transaction, by `move_in_runs.state`:
+   - no row, `staged` or `imported` (the provider never started): it deletes the staged folder and every `imported` file **by the recorded `dev`/`ino`** (the DL-150 pattern; a file whose identity changed is kept and logged), deletes the target hold, marks the new session `exited` with `summary.move_in.state = discarded`, and answers `{ state: "discarded" }`;
+   - `launching` or `abandoned` (the provider may have written to the transcript): it ends the provider process (graceful, then kill), **deletes no file**, keeps the target hold (so the copy stays read only), marks the new session `exited` with `summary.move_in.state = abandoned`, and answers `{ state: "abandoned" }`;
+   - `resumed`, `released`: it changes nothing and answers `{ state: "resumed" }`. The commit point has passed, so the deck leaves `aborting`, sets `committed` and continues with step 5.
+2. Only after the target answered `discarded` or `abandoned`: `session.move_abort { move_id }` to the source (idempotent: the `session_holds` row is deleted, `move_out_runs.state = aborted`; the session is as before). Then `failed` with the code.
+
+The order (target first) keeps one writable continuation at every moment. An abandoned target session is never writable: it keeps the `move_in` hold and the board shows "This copy of the conversation was not used. The session stays on <source station>." It is kept until the owner trashes its worktree; its transcript files are never deleted by Fleet Deck.
+
+**Deck restart (revision 3, B4).** The deck reads `session_moves` and acts by state. It never treats "the new session exists" as a proof: `decide.rs` creates the session row before the launch.
+
+| State | Action |
+| --- | --- |
+| `holding`, `exporting`, `importing` | abort (above). |
+| `starting` | `session.move_status { move_id }` on the target: no row, `staged`, `imported` → abort; `launching` → ask again every 10 s for at most 150 s, then abort (the discard ends the process and keeps the files); `resumed` or `released` → `committed`; `abandoned` → abort. |
+| `committed`, `finishing` | resend `MoveFinish` (same `finish_command_id`). |
+| `releasing` | resend `session.move_release`. |
+| `aborting` | resend the discard, then the abort. |
+
+`session.move_status` answers `{ state: MoveInState | "unknown", session_id?, code?, text? }` from `move_in_runs` (the target) or `move_out_runs` (the source).
 
 ### 12.4 The `moved` state (O29)
 
@@ -1330,14 +1560,20 @@ CREATE UNIQUE INDEX session_moves_open ON session_moves (src_station, src_sessio
 - The source worktree stays until the owner trashes it (O29). The cleanup loop (FG-3) skips a moved session (its push row is `stopped`).
 - An older deck sees an `exited` session and ignores the `session.moved` event.
 
-### 12.5 Branches of a move
+### 12.5 Branches of a move (revision 3, M9: architect decision, DL-225)
 
-The target pushes only its own new ref `fd/<target slug>/<callsign>` (O10). The source ref `fd/<source slug>/<callsign>` stays on the remote and is never pushed again by anyone. Cleanup never deletes a branch (O13), so the old ref stays until the owner deletes it.
+A moved session has two branch names, and the design keeps them apart:
+
+- **The local branch** (O29, O30: "a worktree on the same branch"): the target's worktree is on the **same branch name as the source**, `B = session_git.branch` of the source: `fd/<source slug>/<callsign>` (or a legacy `fd/<callsign>`, whose session has no push row and so cannot meet §12.2 item 2). `session_git.branch = B` on the target; `summary.branch = B`. A second move keeps `B` again.
+- **The publication ref** (O10: "the station pushes only `refs/heads/fd/<own-slug>/*`"): the target publishes with the explicit refspec `refs/heads/<B>:refs/heads/fd/<target slug>/<callsign>`, written as `<oid of B>:refs/heads/<publish_ref>` (§5.3), where `publish_ref` is `fd/<target slug>/<callsign>`, or `…-2`, `…-3` up to `…-99` when that remote ref, or a ref below it, already exists (it belongs to another session) or a local push row holds it (§12.3 step 4). So a station still pushes only under its own slug.
+- **The lease** belongs to `(target_dest, publish_ref)` (`git_pushes UNIQUE (target_dest, ref)`): the target's first push uses the empty lease; the source's lease on `fd/<source slug>/<callsign>` is never used by the target.
+- **What the session records:** `session_git.branch` (local) and `session_git.publish_ref`; `summary.branch` shows the local branch and `summary.push.ref_name` shows the publication ref. A land of a moved session captures `source_oid` from `refs/heads/<B>` and publishes `publish_ref`; the PR head is `publish_ref` (§11.3).
+- The source's remote ref stays on the remote and is never pushed again by anyone. Cleanup never deletes a branch (O13), so the old ref stays until the owner deletes it.
 
 ### 12.6 Branch-only first prompt (O30)
 
 ```
-This session continues the work of the session "<title>" from station <source station>. The branch <new branch> starts at its last pushed commit <oid12>.
+This session continues the work of the session "<title>" from station <source station>. The branch <local branch> starts at its last pushed commit <oid12>; this station pushes it as <publish_ref>.
 The last summary of that session:
 <untrusted source="session:<source station>/<source session>">
 <digest, else the text of the last assistant message, cut to 4000 characters>
@@ -1357,15 +1593,27 @@ The summary is fenced with the DL-164 envelope, because it can hold text from to
 | `move_branch_moved` | "The branch changed on the remote after the hold. Try again." |
 | `move_resume_failed` | "<provider> could not resume the conversation on <station>: <redacted line>. The session stays on <source station>." |
 | `move_lost` | "The move stopped when the deck restarted. The session stays on <source station>." |
+| `move_publication_mismatch` | "The branch is on <dest>, but <station> pushes this project to <other dest>." (revision 3, M8) |
+| `move_branch_exists` | "The branch <branch> already exists in the home on <station>. Trash its old worktree and delete the branch there, then move again." (M9) |
+| `move_ref_exhausted` | "The names fd/<slug>/<callsign> to fd/<slug>/<callsign>-99 are all taken on the remote." (M9) |
+| `identity_changed` | "<provider> resumed another conversation on <station>. The session stays on <source station>." (B4) |
+| `move_resume_timeout` | "<provider> did not resume on <station> within 120 s. The session stays on <source station>." (B4) |
+| `authority_lost`, `authority_unknown`, `authority_expired` | §11.10 texts with "move" for "land" (B3) |
+| `summary.move_in.state = abandoned` (target card) | "This copy of the conversation was not used. The session stays on <source station>." (B4) |
+| `summary.move_in.state = discarded` (target card) | "This move was cancelled." (B4) |
+| finishing with the source running (status line) | "The source session runs again. Stop it, then Fleet Deck finishes the move." (B4) |
 
 ### 12.8 Board
 
-The session menu has "Move to station…" (owner only). The dialog: title "Move <callsign> to another station", a station select (stations with a ready home), the checklist of §12.2 with a mark for each condition, the kind line ("The conversation moves with its history." or "Only the branch moves; a new session continues from the last summary."), buttons "Move" and "Cancel". The progress line: "Moving: holding", "copying the conversation (<n> MiB)", "starting on <station>", "finishing". The source session header shows "Moved to <station>" with "Open" and no composer.
+The session menu has "Move to station…" (owner only). The dialog: title "Move <callsign> to another station", a station select (stations with a ready home), the checklist of §12.2 with a mark for each condition, the kind line ("The conversation moves with its history." or "Only the branch moves; a new session continues from the last summary."), buttons "Move" and "Cancel". The progress line: "Moving: holding", "copying the conversation (<n> MiB)", "starting on <station>", "finishing", "releasing the new session", and while aborting "Cancelling the move…". The target session, while its `move_in` hold exists, shows "Arriving from <source station>…" and no composer. The source session header shows "Moved to <station>" with "Open" and no composer.
 
 ### 12.9 Tests
 
 - Station (`workspace/fleet_git/move_tests.rs`, `manager/move_tests.rs`): the hold refuses input, resume and shell; export refuses a link and a file over the limit; the import writes mode 0600 and refuses a bad SHA-256, a `..` path and an existing file; abort releases the hold; finish makes the session `moved` and refuses input.
 - Deck (`fleet_git_move_tests.rs`): the conditions; the pipe holds no file; restart abort; audit rows.
+- Revision 3 (B4, `manager/move_tests.rs`, `fleet_git_move_tests.rs`): the target refuses a prompt, a resume and a shell on the new session until `move_release`; a discard in `staged` or `imported` deletes the staged and imported files by identity; a discard in `launching` ends the process, deletes **no** file (a fake provider appends one line at launch and the line is still there) and keeps the session read only; a discard after `resumed` answers `resumed` and the deck finishes the move; a deck restart in `starting` with the new session row present but `move_in_runs.state = launching` does **not** finish, and after 150 s aborts; a lost `MoveFinish` acknowledgement is resent with the same command id and the source applies `moved` once; a source that runs a turn again (its record lost) keeps the move in `finishing` and the target held; a resume with another native id ends `identity_changed`; at no time do the source and the target both accept a prompt (an assertion at every step of the test).
+- Revision 3 (B3, `fleet_git_move_tests.rs`): a coordinator move with the grant revoked, renewed or expired before `move_out`, before the export, before the pipe and before `move_in` is aborted with `authority_lost` or `authority_expired` and the source is as before; a grant that covers only the source is refused (`target_excluded`); a revocation after the commit point does not stop the finish.
+- Revision 3 (M8, M9, `manager/move_tests.rs`, real Git): with `wip_remote` set, the publication is fetched from the WIP URL into `refs/fleetdeck/move/<id>` and the ref is deleted after `worktree add`; a source that pushed to another destination than the target's branch target gives `move_publication_mismatch`; the target worktree's branch is the source's `fd/<source slug>/<callsign>`; its first push writes `fd/<target slug>/<callsign>` with the empty lease and never `fd/<source slug>/…`; with `fd/<target slug>/<callsign>` already on the remote the ref is `…-2`; a local branch with the source name in the target home gives `move_branch_exists`.
 - A2 FG-9 (`fleet_git_move.rs`): a session of the fake provider (`fake-claude sim`) with three turns moves from B to C; the C session resumes with its history (the sim resume reads the moved transcript and `session.history` lists the three turns); the B session has `moved_to` and refuses a prompt. The real-CLI proof is the spike evidence of ADR-010.
 
 ## 13. FG-10: The architect across the fleet (O31, O32, backlog B1)
@@ -1374,7 +1622,7 @@ The session menu has "Move to station…" (owner only). The dialog: title "Move 
 
 - Link method `project.branches` (deck → station, scope `read`, feature `fleet_git.branches.v1`, not mutating): params `{ project_id }`, answer `RemoteBranches { remote, default_branch, default_oid, fetched_at: Option<i64>, branches: [RemoteBranch { name, slug, callsign, head, ahead, behind, at, subject }], truncated }`. The radar home lists `refs/remotes/<remote>/fd/*` with three components (`fd/<slug>/<callsign>`) **and** with two components (the legacy `fd/<callsign>` of sessions without sync, `slug = None`); a ref with more components is skipped. With `wip_remote`, it lists `refs/fleetdeck/wip/fd/*` with the same rules instead (decision 63). At most 200, newest tip first. `ahead`/`behind` are counted against `<remote>/<default>` with `git rev-list --left-right --count`. The station runs no fetch in this call. `subject` is cut to 200 characters.
 - Link method `project.fetch` (deck → station, scope `read`, feature `fleet_git.branches.v1`, not mutating): params `{ project_id }`, answer `{ fetched_at, code?, text? }`. One fetch of `push_remote` on the radar home (30 s), and one fetch of the WIP URL into `refs/fleetdeck/wip/fd/*` when `wip_remote` is set.
-- Deck routes `GET /api/projects/{id}/branches` and `POST /api/projects/{id}/fetch` (scope `read` and `drive`, closed to members). The deck maps `slug` to the station of `slug_reservations (repo, slug)`, and `(station, name)` to the session whose `summary.branch` is `name` (a link when known). A legacy branch shows the station "legacy branch" and a session link only when exactly one session has that branch. It adds `conflict: none | will_conflict` from `radar_pairs` and the files.
+- Deck routes `GET /api/projects/{id}/branches` and `POST /api/projects/{id}/fetch` (scope `read` and `drive`, closed to members). The deck maps `slug` to the station of `slug_reservations (repo, slug)`, and `(station, name)` to the session whose `summary.push.ref_name` is `name` (the publication ref, revision 3, M9), else whose `summary.branch` is `name` (a link when known). A legacy branch shows the station "legacy branch" and a session link only when exactly one session has that branch. It adds `conflict: none | will_conflict` from `radar_pairs` and the files.
 - Board: `BranchesView.tsx` gets a second group "Other stations" (new `web/src/session/OtherStations.tsx`) when the session belongs to a project with sync on. Rows: "<branch> · <station> · <session link or "no session"> · ↑<ahead> ↓<behind> · Will conflict (<n> files)". The group has the button "Fetch" and the line "Fetched <relative time>". Empty: "No branches of other stations. Push is off, or no other station pushed yet." The branches of the session's own station are not in this group.
 
 ### 13.2 Coordinator tools (O32)
@@ -1392,13 +1640,17 @@ New MCP tools in `crates/fleetdeck-station/src/coordinator/git_tools.rs` (the li
 - New `CoordinatorQuery` variants `project_branches`, `project_fetch` and `CoordinatorOp` variants `land`, `move` (`fleetdeck-proto/src/mutation.rs`). They need `coordinator.v2` and the matching Fleet Git feature on the links; else the tool answers `unsupported`.
 - Text from Git (branch names, commit subjects) is third-party text: the answer fences each `subject` with the untrusted envelope (ADR-008 §4.3).
 - The kill switches, renewal, revocation, elevation at creation, the decision order and the station rechecks of ADR-006 and ADR-008 apply unchanged.
+- **The durable workflows keep the authority (revision 3, B3).** `land_session` and `move_session` do not end at the receipt: the deck stores the op's `CommandAuthority` and an expiry of 10 minutes in `land_queue` and `session_moves`, and checks it again at admission, at each send and resend, at the station's dispatch, before each transcript transfer and before each publication (§11.2, §11.5, §12.3). A renewal (a new generation), a revocation, the grant's expiry or the kill switch at any of these points ends the land or aborts the move before its commit point.
+- `project_branches` and `project_fetch` are queries: they run once, with the ADR-008 checks at the query time; `project_fetch` runs no write outside remote-tracking refs.
 
 ### 13.3 Tests
 
 - Station: the listing of three-component refs only; ahead and behind; the 200 limit; no fetch in `project.branches`.
 - Deck: the slug and session mapping; the conflict column; members refused.
 - Coordinator (`crates/fleetdeck-deck/tests/fleet_git_coordinator.rs`): a grant with `inspect` lists branches; without it `not_granted`; `land_session` with `manage` queues a land; a target that holds a mutating grant is refused (§4.2 rule 3); the kill switch off refuses.
+- Coordinator, revision 3 (M14, same file): `project_fetch` with `inspect` fetches and answers `fetched_at`, without it `not_granted`; `move_session` with `manage` on both stations starts a move; a grant without the target station gives `target_excluded`; a renewal of the grant (a new generation) while a land is queued, and while a move waits before the transfer, ends them with `authority_lost`; a revocation between the first send and a resend of a land; an expiry (10 minutes on the test clock) of a queued land and of a move before `move_in`.
 - A2 FG-10 (`fleet_git_api.rs`): the answers of `GET /api/projects/{id}/branches` and of the coordinator query match §13.1 for two pushed sessions on B and C.
+- A2 FG-10, revision 3 (M14, `crates/fleetdeck-cli/tests/fleet_git_coordinator.rs`, loopback, a coordinator session on station alpha with a grant over alpha, bravo and charlie): all four tools: `project_branches` and `project_fetch` (with `inspect`) answer as the board routes; `land_session` (with `manage`) lands a bravo session in merge mode and the bare repository's `main` advances; `move_session` (with `manage`) moves a bravo session to charlie; a grant over alpha and bravo only refuses `move_session` to charlie (`target_excluded`); authority loss: a revocation before admission (a queued land behind another land), a renewal before a resend (the test drops the first `session.land` answer), a revocation before the transcript transfer (the test holds the export stream), and the station's `allow_fleet_control` turned off before the land's dispatch, each ending with `authority_lost` and no change of the bare repository's refs.
 
 ## 14. FG-11: Config drift report (O33, O34)
 
@@ -1453,13 +1705,17 @@ pub struct TaildriveReport {
     pub machine: Option<String>,            // this station's tailnet machine name
     pub shares: Vec<TaildriveShare>,
     pub checked_at: i64,
+    pub inventory_revision: u64,            // revision 3 (B6): max(previous + 1, now_ms) at each new report
 }
 pub struct TaildriveShare {
     pub name: String,
-    pub path: String,
+    pub path: String,                       // the trimmed path field; for `ambiguous`, the shortest candidate
+    pub candidates: Vec<String>,            // revision 3 (M10): every path that fits the printed field (one when unambiguous)
     pub as_user: Option<String>,            // None: blank (Windows)
     pub exposed: Vec<Exposure>,             // empty: not exposed
-    pub path_state: SharePathState,         // ok, missing (the path does not exist; exposure unknown)
+    pub exposure_state: ExposureState,      // revision 3 (B5): clear, exposed, unknown (+ Unknown)
+    pub unknown_reason: Option<String>,     // for exposure_state = unknown
+    pub path_state: SharePathState,         // ok, missing, ambiguous (revision 3, M10) (+ Unknown)
 }
 pub enum Exposure { ProjectHome, Worktree, DataDir, ClaudeHome, CodexHome, Ssh, Gnupg, Aws, MemberDeny } // + Unknown
 ```
@@ -1483,13 +1739,14 @@ Input: the stdout bytes. It must be UTF-8.
 3. Line 1 must equal `"name"` padded with spaces to `a` characters, 4 spaces, `"path"` padded to `b`, 4 spaces, `"as"`.
 4. Each next line (a share): characters `[0, a)` are the name field, `[a, a+4)` must be 4 spaces, `[a+4, a+4+b)` the path field, `[a+4+b, a+8+b)` 4 spaces, the rest is `as`. A line shorter than `a+8+b` characters is refused.
 5. The name is the name field without trailing spaces; it must be 1 to 64 characters of `[a-z0-9_() ]` with no leading space (the CLI normalizes names). Equal names are refused.
-6. The path is the path field without trailing spaces; it must be absolute (`/` at the start, or a Windows drive `X:\`). A path that ends with a space cannot be told apart from the padding (revision 2, decision 69). Let `k` be the number of trailing spaces of the field. The station tests the `k + 1` candidates "the trimmed path plus 0, 1, ..., k spaces":
-   - exactly one candidate exists → that path;
-   - no candidate exists → `path_state = missing` and `exposed = []` (no path exists, so none is exposed now);
-   - two or more candidates exist → the whole report is `unknown` with the reason "Fleet Deck cannot tell which path the share list names." (no guess).
-   A field without trailing spaces (`k = 0`) has one candidate.
+6. The path is the path field without trailing spaces; it must be absolute (`/` at the start, or a Windows drive `X:\`). A path that ends with a space cannot be told apart from the padding. Let `k` be the number of trailing spaces of the field. **Revision 3 (M10): the parser never uses the file system to choose.** The `k + 1` strings "the trimmed path plus 0, 1, ..., k spaces" all fit the printed field, so:
+   - `k = 0` → one candidate; `path_state` is decided by item 9;
+   - `k ≥ 1` → `path_state = ambiguous`, `candidates` = all `k + 1` strings, whether they exist or not. The path is unknown; it is never guessed. The rest of the report stays readable (a report-wide `unknown` would hide the exposure warnings of the other shares).
 7. `as` is the rest as it is; empty → `None`; else 1 to 64 characters with no space.
 8. At most 64 shares. Any refusal makes the whole report `unknown` (no partial list, no guess).
+9. The path state of a share with one candidate: the candidate does not exist (`lstat` gives `ENOENT`) → `missing` (no path exists, so none is exposed now); else `ok`.
+
+**What an ambiguous share can do (revision 3, M10).** Its exposure is checked for **every** candidate (§15.4); it is exposed when any candidate is. It is never a local artifact share by itself: on its own station, the station uses it only when `[taildrive_mounts]` has the key `<this machine>/<share>` and the value is exactly one of `candidates` (the owner's configuration names the path; Fleet Deck does not guess); else `share_unverified` with the text "Fleet Deck cannot tell the exact path of the share <name>. Add it to [taildrive_mounts] in station.toml." A configured value that is not a candidate gives the same refusal.
 
 ### 15.4 Exposure (O37)
 
@@ -1500,7 +1757,21 @@ Input: the stdout bytes. It must be UTF-8.
 - `DataDir`: the station data directory.
 - `ClaudeHome`, `CodexHome`: `$HOME/.claude`, `$HOME/.codex`, and the `CLAUDE_CONFIG_DIR` and `CODEX_HOME` of every provider instance.
 - `Ssh`, `Gnupg`, `Aws`: `$HOME/.ssh`, `$HOME/.gnupg`, `$HOME/.aws`.
-- `MemberDeny`: a component of the share path matches a name pattern of the member deny list (`fleetdeck_proto::member_deny` plus `member_deny` of `station.toml`). The station does not scan the content of a share.
+- `MemberDeny` (revision 3, B5): a component of the share path matches a name pattern of the member deny list (`fleetdeck_proto::member_deny` plus `member_deny` of `station.toml`), **or** the bounded walk below finds a deny-listed descendant.
+
+**The bounded metadata walk (revision 3, B5)** (`taildrive.rs::walk_share`). For each share of this station with `path_state` `ok` (and for each candidate of an `ambiguous` share that exists), the station walks the share tree. It reads metadata and names only, never file contents:
+
+1. It opens the share path with `O_DIRECTORY | O_NOFOLLOW` (a share path that is a link is resolved once with `canonicalize`, and the walk starts at the canonical folder), then reads each folder with `openat(O_DIRECTORY | O_NOFOLLOW)` and `fstatat(AT_SYMLINK_NOFOLLOW)`. It never follows a link.
+2. Limits: depth at most 8 below the share root, at most 20 000 entries in total, at most 2 s of wall time for one share. A share that reaches a limit is **incomplete**.
+3. For each entry, with `rel` = its path relative to the share root (with `/`):
+   - the member deny list (`MemberDeny::new(station member_deny).denies(path)`, the same matcher as the file service) is tested on `rel`, **and** on the entry's path relative to each project home, session worktree and allowed root that contains the share (so an anchored pattern such as `config/prod.yml` matches below a share that sits inside a workspace). A match adds `MemberDeny`;
+   - a protected path of the list above that is the entry adds its kind (the "contains" case, found by `dev`/`ino` equality with the canonical protected path);
+   - a symbolic link: its target is resolved with `canonicalize` (not walked). A target that is, contains or is inside a protected path adds its kind; a target that is a folder makes the share **incomplete** (the walk does not follow links, so it cannot prove the folder clean); a dangling link is skipped;
+   - an entry that cannot be read (`EACCES`, `EIO`) makes the share **incomplete**.
+4. Result: any exposure → `exposure_state = exposed` with the kinds (an exposure wins over incomplete); else incomplete → `exposure_state = unknown` with `unknown_reason` ("more than 20 000 entries", "deeper than 8 folders", "the check took more than 2 s", "a link to a folder", "a folder that cannot be read"); else `clear`.
+5. An `unknown` share is refused as an artifact share (`share_unverified`), exactly as an exposed one is refused with `share_exposed` (O37: an exposure that Fleet Deck cannot rule out is treated as not safe). The Stations page shows it (§15.7).
+
+The walk runs in a blocking task with the report, at each snapshot and whenever a verdict is asked for a report older than 60 s (§15.5).
 
 A protected path that does not exist is skipped. Exposure is computed again with each report, at each snapshot, and before each artifact use (§15.5, §15.6). Until the station has received its first snapshot from a deck with `fleet_git.v1`, the report marks every share whose exposure depends on homes with the reason "Fleet Deck does not know the project homes yet." and the station refuses every local artifact share (`share_unverified`).
 
@@ -1508,20 +1779,52 @@ A protected path that does not exist is skipped. Exposure is computed again with
 
 Project setting `artifact_share = "<machine>/<share>"` (default none). At each start of a session of the project, a worktree start or an in-place start (§2.1), in the start effect after the setup command and before the provider:
 
-0. **Fresh exposure (revision 2, decision 73).** When the share is on this station, the station uses a report that is at most 60 s old; else it runs `drive_list()` again first. A report that is not `ok` gives `artifacts.unavailable` with `share_unverified` and no variables. When the share is on another station, the deck puts that station's newest result in `FleetGitStart.artifact_share_state`: `ok` (listed, not exposed), `exposed`, or `unknown` (not listed, or the report is not `ok`). Only `ok` goes on; else `share_exposed` or `share_unverified`. When the machine is not a Fleet Deck station (for example a NAS), the deck sends `None` and only the local mount check of item 3 applies.
+0. **A current authorization (revision 3, B6).** The station gets a fresh `ArtifactAuthorization` (below) **before** anything else of this list. No current authorization → `artifacts.unavailable` with its code (`share_exposed` or `share_unverified`) and no variables.
 
-1. **Local path.** `machine` equals this station's machine name (the first label of `Self.DNSName` from `tailscale status --json`, lower case) and the newest report lists `share` with `path_state = ok` → the share path. Else `[taildrive_mounts]` has the key → the mount path. Else there is no local path.
-2. A share on this station with `exposed` not empty → `artifacts.unavailable` with `share_exposed`; no variables (O37: an exposed share is never an artifact share). A local mount path that is, contains or is inside a protected path of §15.4 → `share_exposed` too.
+**The artifact-share authorization (revision 3, B6).** An authorization binds one verdict to its source:
+
+```rust
+pub struct ArtifactAuthorization {
+    pub share: String,                       // "<machine>/<share>"
+    pub exporting_station: Option<StationId>,// None: the machine is not a Fleet Deck station
+    pub inventory_revision: Option<u64>,     // TaildriveReport.inventory_revision of the verdict
+    pub verdict: ShareVerdict,               // ok, exposed, unknown, not_a_station (+ Unknown: refused)
+    pub exposed: Vec<Exposure>,
+    pub checked_at: Option<i64>,             // the exporting station's report time
+    pub issued_at: i64,
+    pub expires_at: i64,                     // issued_at + 10 minutes
+}
+```
+
+- **Where it comes from.**
+  - The share is on **this** station (its `machine` is this station's machine name): the station builds it itself from its own report, after it runs `drive_list()` and the walk again when the report is older than 60 s.
+  - The share is on **another machine**: the station asks the deck with the new link method `fleet_git.artifact_authorize { project_id, session_id, share }` (station → deck, scope `read`, feature `fleet_git.homes.v1`, deadline 10 s). The deck checks that `share` equals the project's `artifact_share` (a station cannot ask about another share), then finds the exporting station: the paired station whose newest `station.info` has `taildrive.machine = <machine>`. None → `verdict = not_a_station`. Found, but its link is down or lacks `fleet_git.homes.v1` → the error `share_unverified` (no authorization). Found and up → the deck calls `fleet_git.share_verdict { share_name }` on it (deck → exporting station, scope `read`, feature `fleet_git.homes.v1`, deadline 5 s). The exporting station answers `{ inventory_revision, checked_at, path_state, exposure_state, exposed }` from a report at most 60 s old (else it runs `drive_list()` and the walk first). The deck maps it: share not listed, `path_state` not `ok` (an `ambiguous` share counts as `ok` only when its own station resolved it through `[taildrive_mounts]`, §15.3), or `exposure_state = unknown` → `unknown`; `exposed` → `exposed`; else `ok`. The deck answers the authorization with `issued_at = now`, `expires_at = now + 600 000`.
+- **When it is refreshed.** The station gets a new authorization (a new request; it never reuses a stored one for these steps) before each start of a session of the project (the start effect), before each resume, and before each `FileRoot::Artifacts` access (§15.6). For each live session with artifact variables, it also gets a new one every 5 minutes (before `expires_at`).
+- **Fail closed.** Only `ok` and `not_a_station` authorize. `exposed` → `share_exposed`; `unknown`, an `Unknown` value, an error, no answer within the deadline, or an `expires_at` in the past → `share_unverified`. When the 5-minute refresh of a live session does not give a current authorization, the station appends `artifacts.revoked { code, text }` ("The artifact share is not verified now. Fleet Deck stops showing the artifact folder. The running agent keeps FLEETDECK_ARTIFACTS until the session ends."), and refuses `FileRoot::Artifacts` until a later refresh is `ok` (then `artifacts.ready` again).
+- **`not_a_station`** (for example a NAS): Fleet Deck cannot see the shares of a machine without a station; only the local mount checks of items 2 and 3 apply. The board's project settings show for such a share: "Fleet Deck cannot check shares on <machine>, because it does not run a Fleet Deck station."
+- The station stores the newest authorization in `session_git.artifact_auth` (JSON, new column of V29) for display and audit only.
+
+1. **Local path.** `machine` equals this station's machine name (the first label of `Self.DNSName` from `tailscale status --json`, lower case) and the newest report lists `share` with `path_state = ok` → the share path (an `ambiguous` share only through `[taildrive_mounts]`, §15.3). Else `[taildrive_mounts]` has the key → the mount path. Else there is no local path.
+2. A share on this station with `exposure_state = exposed` → `artifacts.unavailable` with `share_exposed`; with `exposure_state = unknown` → `share_unverified`; no variables (O37: an exposed share is never an artifact share). A local mount path that is, contains or is inside a protected path of §15.4 → `share_exposed` too.
 3. **With a local path:** the path must exist, be a folder (`metadata`, links followed for a mount point) and be writable (`access(W_OK)`); else `artifacts.unavailable` with `mount_missing`, `mount_not_folder` or `mount_not_writable`, and the session starts without the variables. Then the station opens the local path and makes `<project folder>/<callsign>/` below it with `mkdirat` mode 0700 for each missing level, without following links (`project folder` is the §8.4 folder name). It records the folder's `dev` and `ino` in `session_git`, sets `FLEETDECK_ARTIFACTS=<local path>/<project folder>/<callsign>/` for the provider and the setup command (after the child environment scrub, which removes `FLEETDECK_*`) and appends `artifacts.ready { path }`.
 4. **Without a local path:** `FLEETDECK_ARTIFACTS_URL=http://100.100.100.100:8080/<tailnet>/<machine>/<share>/<project folder>/<callsign>/`, with each segment percent-encoded (a share name can hold a space). `<tailnet>` is `CurrentTailnet.Name` of `tailscale status --json` (a new optional field of the parsed `Status`). No folder is made. When the tailnet name is unknown: `artifacts.unavailable` with `tailnet_unknown` and no variables. The station appends `artifacts.ready { url }`.
-5. A resume sets the same variables again from `session_git.artifacts_path` or `artifacts_url` after the same checks.
+5. A resume sets the same variables again from `session_git.artifacts_path` or `artifacts_url` after the same checks, with a new authorization (item 0).
 
-The deck also refuses to save an `artifact_share` that a station reports as exposed (400 `share_exposed`, "This share exposes <what>. Pick another share.").
+The deck also refuses to save an `artifact_share` that a station reports as exposed (400 `share_exposed`, "This share exposes <what>. Pick another share.") or as `unknown` (400 `share_unverified`, "Fleet Deck cannot check this share now. Pick another share, or fix the warning on the Stations page."). This is only a hint at save time; every use needs its own authorization.
 
 ### 15.6 The Artifacts link (O39)
 
-- `FileRoot` gets a new variant `Artifacts { session_id }` (`fleetdeck-proto/src/files.rs`; an older station refuses the unknown root, so it fails closed). The station resolves it to `session_git.artifacts_path`, opens it without following links, checks that the opened folder has the recorded `artifacts_dev` and `artifacts_ino`, checks the exposure again as in §15.5 item 0 and item 2 (a report at most 60 s old), and then applies every rule of the file service below it, with the member deny list for a member. A failed check answers `artifacts_unavailable`, "The artifact folder cannot be opened safely now." The allowed-roots check does not apply to this root (the station made the folder itself in step 3); it is the only exception, and it covers only that recorded folder.
-- The session view gets "Artifacts" (new `web/src/session/ArtifactsLink.tsx`): with a local path it opens the existing file browser on the root `{ "artifacts": "<session id>" }`; with a URL only it shows "The artifacts are on <machine>. Open this address on a tailnet device: <url>" with "Copy address". A member of a shared session sees the link with the same deny list.
+**Wire shape (revision 3, M11).** `FileRoot` gets the new **newtype** variant `Artifacts(SessionId)` (`fleetdeck-proto/src/files.rs`), next to `Session(SessionId)` and `Workspace(String)`. With the enum's `rename_all = "snake_case"`, its JSON is `{ "artifacts": "<session id>" }`, the same form as `{ "session": "<session id>" }`. An older station refuses the unknown root (`invalid_query`), so it fails closed; the deck sends it only on a link with `fleet_git.homes.v1` (else 409 `fleet_git_unsupported`).
+
+**Deck HTTP (`http/file_routes.rs`).**
+- `FileParams` gains `artifacts: Option<String>`. `FileParams::root()` accepts **exactly one** of `session`, `workspace`, `artifacts` (each with the existing `text_ok` rule) and maps `artifacts=<id>` to `FileRoot::Artifacts(<id>)`. Else 400 `invalid_root`, "name exactly one root: `session`, `workspace` or `artifacts`".
+- The routes `GET /api/stations/{station}/files/list`, `/files/read` and `/files/search` accept the artifacts root; the turn diff route does not (400 `invalid_root`).
+- **Members:** `member_check(board, principal, station, session, workspace, artifacts)` gets the new argument. For a member, exactly one of `session` or `artifacts` must be given (a `workspace` is still refused with 403 `not_shared`), and `session_of(board, principal, station, <that id>, MemberAction::Read, "read these files")` must pass for **that exact session id**. The call then carries `MEMBER_PARAM`, so the station applies the member deny list below the artifact folder. The owner and a `read` token use the routes as for the other roots.
+
+**Station (`manager/files.rs`, `workspace/files.rs`).** `member_root` allows `FileRoot::Session(_)` and `FileRoot::Artifacts(_)` for a member. `root()` resolves `Artifacts(id)` to `session_git.artifacts_path` of session `id` on this station (`unknown_session` when it has none), gets a fresh `ArtifactAuthorization` (§15.5; not `ok` or `not_a_station` → `artifacts_unavailable`), opens the folder without following links, checks the recorded `artifacts_dev` and `artifacts_ino`, checks the local path again against the protected paths (§15.5 item 2), and then applies every rule of the file service below it, with the member deny list when the call has `MEMBER_PARAM`. A failed check answers `artifacts_unavailable`, "The artifact folder cannot be opened safely now." The allowed-roots check does not apply to this root (the station made the folder itself in step 3); it is the only exception, and it covers only that recorded folder.
+
+**Browser transport (`web/src/session/workspace.ts`).** New `artifactFiles(get: Get, key: SessionKey): FileActions` with the root query part `artifacts=${encodeURIComponent(key.session_id)}` and no turn calls, in the same way as `workspaceFiles`. `web/src/session/ArtifactsLink.tsx`: with `summary.artifacts_dir.path`, it opens the existing file browser with `artifactFiles(...)`; with a URL only, it shows "The artifacts are on <machine>. Open this address on a tailnet device: <url>" with "Copy address". A member of a shared session sees the link and the same deny list. While `artifacts.revoked` is the newest artifact event, the link shows "The artifact share is not verified now." and opens nothing.
+
 - The project prompt template can name `$FLEETDECK_ARTIFACTS` (O39). No other agent behavior changes.
 
 ### 15.7 Board (Stations page)
@@ -1533,12 +1836,18 @@ New `web/src/board/StationTaildrive.tsx` in each station card:
 - `unknown`: "Taildrive: Fleet Deck cannot read the share list."
 - `unavailable`: "Taildrive is not available: <reason>."
 - A share with `path_state = missing`: "<name>: the path does not exist on this station."
+- A share with `path_state = ambiguous` (revision 3, M10): "<name>: Fleet Deck cannot tell the exact path (it may end with spaces). Add it to [taildrive_mounts] to use it for artifacts."
+- A share with `exposure_state = unknown` (revision 3, B5): "<name>: Fleet Deck could not check all files of this share (<reason>). It cannot be an artifact share." (warning tone)
 
 The chat shows `artifacts.unavailable` with these texts: `share_exposed` "The artifact share exposes protected folders; the session started without FLEETDECK_ARTIFACTS.", `mount_missing` "The artifact mount <path> does not exist; …", `mount_not_folder` "… is not a folder; …", `mount_not_writable` "… is not writable; …", `tailnet_unknown` "The tailnet name is not known; the session started without FLEETDECK_ARTIFACTS_URL.", `share_unverified` "Fleet Deck cannot check the artifact share now; the session started without FLEETDECK_ARTIFACTS."
 
 ### 15.8 Tests
 
-- Core (`tailscale_drive_tests.rs`): the CLI table from the source of 1.105.0 with 0, 1 and 3 shares; a name with spaces and parentheses; a non-ASCII path; a blank `as`; a wrong header; a wrong dash line; a short row; a tab; `\r`; a duplicate name; an upper-case name; 65 shares; a relative path → each refusal gives `unknown`. Padded paths: a padded path with exactly one existing candidate resolves; with two existing candidates (`/x/a` and `/x/a `) the report is `unknown`; with none, `missing`.
+- Core (`tailscale_drive_tests.rs`): the CLI table from the source of 1.105.0 with 0, 1 and 3 shares; a name with spaces and parentheses; a non-ASCII path; a blank `as`; a wrong header; a wrong dash line; a short row; a tab; `\r`; a duplicate name; an upper-case name; 65 shares; a relative path → each refusal gives `unknown`. Padded paths: see the revision 3 line below (revision 2's existence rule is replaced).
+- Core, revision 3 (M10): a padded path field gives `ambiguous` with all candidates **whatever exists**: `/exports/out ` configured and missing while `/exports/out` exists gives `ambiguous` (not the existing path); with no candidate existing also `ambiguous`; `k = 0` and the path missing gives `missing`. Station: an ambiguous share is refused as an artifact share without `[taildrive_mounts]`, accepted when the configured value is one candidate, refused when it is not; the exposure of an ambiguous share is the union over its candidates.
+- Station, revision 3 (B5, `taildrive_tests.rs`): `/srv/exports` with `/srv/exports/secrets/report.txt` is `exposed` (`MemberDeny`); a share inside a home with `config/prod.yml` below it and the anchored pattern `config/prod.yml` in `member_deny` is `exposed`; a share with 20 001 entries, one with a folder 9 levels deep, and one that a test hook slows past 2 s are `unknown` and refused as artifact shares (`share_unverified`); a link inside the share to `~/.ssh` is `exposed` (`Ssh`); a link to another folder is `unknown`; an unreadable folder is `unknown`.
+- Station and deck, revision 3 (B6, `artifact_share_tests.rs`, `tests/board_fleet_git_artifacts.rs`): a share that becomes exposed after a start: the next `FileRoot::Artifacts` access is refused at once, and the 5-minute refresh appends `artifacts.revoked`; the exporting station offline → the start and the access are refused (`share_unverified`); an authorization whose `expires_at` passed is never used; `fleet_git.artifact_authorize` for a share that is not the project's `artifact_share` is refused; a NAS machine (no station) gives `not_a_station` and only the mount checks apply; a verdict older than 60 s makes the exporting station run `drive list` and the walk again.
+- Deck and station, revision 3 (M11, `tests/board_fleet_git_artifacts.rs`, `manager/files_member_tests.rs`): `GET …/files/list?artifacts=<id>` for the owner lists the folder; a member of the shared session `<id>` lists it and does not see `.env` (the deny list); a member with the id of a session that is not shared with them gets 403 `not_shared`; a member with `workspace=` is still refused; `session` and `artifacts` together give 400 `invalid_root`; a station without `fleet_git.homes.v1` gives 409 `fleet_git_unsupported`; the wire JSON of the root is `{"artifacts":"<id>"}`; a replaced artifact folder (other `dev`/`ino`) is refused. Board (`web/src/session/workspace.test.tsx`): `artifactFiles` builds `artifacts=<encoded id>`.
 - Station (`taildrive_tests.rs`): each exposure kind with real folders (is, contains, inside); a member-deny component; a missing protected path is skipped; a home of a sync-off project and a reserved clone folder are protected; a mount path inside `~/.ssh` is `share_exposed`; a cached report older than 60 s makes the station run `drive list` again before an artifact access; a replaced artifact folder (other `dev`/`ino`) is refused.
 - A2 FG-12 (`crates/fleetdeck-cli/tests/fleet_git_taildrive.rs`, a fake `tailscale` program as in `station_tailnet_join.rs`, which writes each argv to a log file):
   - shares are reported in `station.info`;
@@ -1554,20 +1863,21 @@ The chat shows `artifacts.unavailable` with these texts: `share_exposed` "The ar
 
 ### 16.1 The Rust rig (A2)
 
-New `crates/fleetdeck-cli/tests/common/fleet_git.rs`: one deck and three stations (`alpha`, `bravo`, `charlie`, separate data dirs, `fake-claude sim` as the provider), one bare repository `remote.git` in the temp dir as `origin`, and one clone of it as the first home on each station that a test needs. It uses `common::deck::Deck` and `common::Station` (`deck_two_stations.rs` pattern). Helpers: `project(sync settings)`, `start_in(project, station)`, `bare_refs() -> BTreeMap<String, String>`, `advance_remote(commit)`, `set_station_clock(+h)` (a test-only `FLEETDECK_TEST_CLOCK_OFFSET_MS` read by the cleanup loop; the variable is ignored in a release build). All tests run on loopback.
+New `crates/fleetdeck-cli/tests/common/fleet_git.rs`: one deck and three stations (`alpha`, `bravo`, `charlie`, separate data dirs, `fake-claude sim` as the provider), one bare repository `remote.git` in the temp dir as `origin`, and one clone of it as the first home on each station that a test needs. **Revision 3 (M13):** each of the three `station.toml` files sets `allow_local_remotes = true`; the temp dir is an allowed root of all three stations, so `remote.git` and every home are inside the allowed roots (the confined push and clone of DL-200 can write there); the project's `remote_url` is `file://<canonical temp dir>/remote.git` (the rig canonicalizes the temp dir first, because `/tmp` can be a link). Every other rule of §3.8 runs unchanged: the home check, the one-URL rule, the fixed point and the lease scope. A test that needs a second destination makes `wip.git` beside it. One test (`a_local_remote_is_refused_without_the_setting`) starts a fourth station without the setting and checks `refused` with `remote_local_refused`. It uses `common::deck::Deck` and `common::Station` (`deck_two_stations.rs` pattern). Helpers: `project(sync settings)`, `start_in(project, station)`, `bare_refs() -> BTreeMap<String, String>`, `advance_remote(commit)`, `set_station_clock(+h)` (a test-only `FLEETDECK_TEST_CLOCK_OFFSET_MS` read by the cleanup loop; the variable is ignored in a release build). All tests run on loopback.
 
 | Acceptance item | Test file | Tests |
 | --- | --- | --- |
 | A2 FG-1 | `crates/fleetdeck-cli/tests/fleet_git_fetch.rs` | `an_old_local_head_starts_from_the_fetched_remote`, `a_gone_remote_starts_from_head_with_base_stale`, `a_blocking_fd_slug_branch_fails_the_start` |
 | A2 FG-2 | `fleet_git_push.rs` | `two_stations_with_one_callsign_push_without_collision`, `a_revert_then_a_push_succeeds_with_the_lease`, `a_stale_lease_fails_and_retries`, `no_ref_outside_the_own_slug_is_pushed` |
-| A2 FG-3 | `fleet_git_cleanup.rs` | `a_merged_clean_pushed_old_worktree_goes_to_the_trash`, `too_new_keeps_it`, `not_merged_keeps_it`, `untracked_file_keeps_it`, `unpushed_commit_keeps_it`, `a_trash_check_refusal_keeps_it` |
+| A2 FG-3 | `fleet_git_cleanup.rs` | `a_merged_clean_pushed_old_worktree_goes_to_the_trash`, `too_new_keeps_it`, `not_merged_keeps_it`, `untracked_file_keeps_it`, `unpushed_commit_keeps_it`, `a_trash_check_refusal_keeps_it`, `a_branch_switch_keeps_it`, `a_detached_head_keeps_it` |
 | A2 FG-4 | `fleet_git_include.rs` | `include_files_are_copied_with_their_mode`, `a_symlink_is_refused`, `a_dotdot_path_is_refused_by_the_deck`, `a_too_large_file_is_refused` |
-| A2 FG-5 | `fleet_git_homes.rs` | `the_migration_keeps_every_existing_project_working`, `add_home_clones_on_a_second_station`, `add_home_adopts_an_existing_clone`, `duplicate_legacy_homes_keep_one_sync_owner`, `remove_and_readd_drops_the_late_answer_of_the_old_generation`, `an_interrupted_clone_is_never_adopted` |
+| A2 FG-5 | `fleet_git_homes.rs` | `the_migration_keeps_every_existing_project_working`, `add_home_clones_on_a_second_station`, `add_home_adopts_an_existing_clone`, `duplicate_legacy_homes_keep_one_sync_owner`, `remove_and_readd_drops_the_late_answer_of_the_old_generation`, `an_interrupted_clone_is_never_adopted`, `a_local_remote_is_refused_without_the_setting` |
 | A2 FG-6 | `fleet_git_placement.rs` | `requires_places_on_the_labelled_station`, `prefer_always_on_wins`, `spread_uses_three_stations` |
 | A2 FG-7 | `fleet_git_radar.rs` | `same_lines_will_conflict`, `different_files_of_one_file_set_do_not` |
 | A2 FG-8 | `fleet_git_land.rs` | `a_clean_merge_land_advances_main`, `a_conflict_stops_with_files_and_changes_nothing`, `a_failed_check_stops_the_land`, `two_lands_of_one_project_run_in_order`, `the_push_loop_never_pushes_the_old_tip_after_a_land`, `a_restart_after_each_push_intent_reconciles_without_a_second_push`, `a_second_attempt_conflict_names_the_published_branch` |
-| A2 FG-9 | `fleet_git_move.rs` | `a_claude_session_moves_with_its_history`, `the_source_session_is_moved` |
+| A2 FG-9 | `fleet_git_move.rs` | `a_claude_session_moves_with_its_history`, `the_source_session_is_moved`, `the_target_keeps_the_source_branch_and_publishes_under_its_own_slug`, `a_move_with_a_wip_remote_fetches_the_publication_ref`, `an_abort_after_the_target_launched_keeps_its_transcript`, `a_lost_finish_answer_is_resent_once` |
 | A2 FG-10, FG-11 | `fleet_git_api.rs` | `branches_route_matches_the_design`, `coordinator_project_branches_matches_the_route`, `drift_same_and_differs` |
+| A2 FG-10 (revision 3, M14) | `fleet_git_coordinator.rs` | `coordinator_project_branches_and_fetch`, `coordinator_land_session_lands`, `coordinator_move_session_moves`, `move_session_needs_both_stations_in_the_grant`, `authority_loss_before_admission_resend_transfer_and_dispatch` (§13.3) |
 | A2 FG-12 | `fleet_git_taildrive.rs` | the eight items of §15.8 |
 | A4 | the existing suites | no change; plus `fleet_git_off.rs::sync_off_changes_no_session` (no `session_git` row, no push row, no fetch, branch `fd/<callsign>`; the snapshot lists the home only in `homes` with `sync = false`) |
 
@@ -1585,6 +1895,31 @@ New `crates/fleetdeck-cli/tests/common/fleet_git.rs`: one deck and three station
 | Two admissions in parallel; two projects with one `repo` | §11.12 deck |
 | A pre-upgrade backup is written; no backup, no migration | `fleetdeck-core/src/db_backup_tests.rs` |
 | A stale or conflicting snapshot is refused; loops pause with an old deck | `link/intake_fleet_git_tests.rs`, `manager/fleet_git_push_tests.rs` |
+
+**Added in revision 3 (design review round 1).** Each finding has its cases in the module tests of its section; the A2 cases are in the table above.
+
+| Finding | Cases | Where |
+| --- | --- | --- |
+| B1 | two `pushurl`, two `url`, `pushurl` to another repository, a rewrite of the resolved URL, the push argv names the verified URL | §5.10 `identity_tests.rs`; A2 FG-2 `no_ref_outside_the_own_slug_is_pushed` also checks a second bare repository behind an extra `pushurl` (refused, unchanged) |
+| B2 | login names and path forms give distinct `dest` values and one `repo`; a rebind to another login name never reuses the old lease | §5.10 |
+| B3 | revocation, renewal, expiry and the kill switch while a land is queued, between sends, at dispatch and before each publication; the same for a move before each step and the transfer; nothing after the commit point | §11.12, §12.9, §13.3; A2 FG-10 (revision 3) |
+| B4 | the target hold; discard by state; no transcript deletion after `launching`; restart in `starting`; resent finish; one writable continuation at every step | §12.9; A2 FG-9 |
+| B5 | a deny-listed descendant; an anchored pattern; the three walk limits; links; unreadable folders | §15.8 |
+| B6 | exposure after a start; an offline exporting station; an expired authorization; a foreign share request; `not_a_station` | §15.8 |
+| M1 | two restarts during each `pending_action` | §11.12 |
+| M2 | an applied push or PR with a lost or failed answer reconciles to success; a confirmed rejection ends `failed` | §5.10, §11.12 |
+| M3 | "Stop checking" with the link down; the fence refuses a resend and a queued writer job; `forget` | §11.12 |
+| M4 | a branch switch, a detached HEAD, a change between the checks and the trash | §6.6; A2 FG-3 |
+| M5 | a deck exit between the commit and the call | §8.9 |
+| M6 | re-add after a removed failed home, with the folder gone and present | §8.9 |
+| M7 | `push_remote = "upstream"` | §8.9 |
+| M8 | the move fetches the WIP publication ref | §12.9; A2 FG-9 |
+| M9 | the same local branch, the own-slug publication ref, the suffix, the lease, `move_branch_exists` | §12.9; A2 FG-9 |
+| M10 | ambiguity whatever exists; the `[taildrive_mounts]` choice | §15.8 |
+| M11 | the root wire shape, the HTTP selector, member access to the exact session, the browser transport | §15.8 |
+| M12 | a direct spawn by path in an unverified, cloning, failed and ready sync home | §8.9 |
+| M13 | the rig with `allow_local_remotes = true`; a station without it refuses | §16.1 |
+| M14 | the four coordinator tools and authority loss on loopback | §13.3; A2 FG-10 (revision 3) |
 
 Unit and module tests are listed in each section. Each new store table has a schema test (`the_migrations_are_valid` already covers the list).
 
@@ -1652,6 +1987,8 @@ The near-limit board files get only an import and one element each: `SessionView
 - **Open item:** ADR-010 may change §12.3 step 4 (where the files go, what is rewritten). The DESIGN REVIEW must read both documents together.
 - **Open item (revision 2):** squash and rebase merges of a forge are not detected by the cleanup (decision 22); the owner trashes those worktrees by hand. A later version can ask the forge whether the PR of the branch is merged.
 - **Open item:** the spec's "DL-201 group" is read as the `[repo_groups]` grouping (the first DL-201 entry), not the Omarchy entry with the same number.
+- **Revision 3 (design review round 1):** every remote write and its reconciliation name one verified URL (§3.8); `dest` keeps the SSH login name and the path form, so an alias fails closed as `mismatch`; coordinator authority is stored and checked again through the durable land and move workflows; a move has one commit point on the target and never deletes a transcript that a provider could have written; an artifact share needs a fresh, bound authorization at each use and a complete metadata walk; an uncertain write never ends a land, and "Stop checking" frees the queue only after the station's fence.
+- **Accepted limits (revision 3):** a symbolic link to a folder inside a share makes the share `unknown` (refused for artifacts); a running agent keeps `FLEETDECK_ARTIFACTS` after `artifacts.revoked` until its session ends (an environment variable cannot be taken back); a station that the owner removes during an uncertain land can still push it (`forget` says so).
 
 ## 19. Build plan
 
@@ -1666,7 +2003,7 @@ Rules for every task: one scoped brief (the CLAUDE.md delegation protocol); heav
 | T1.1 Proto and link | backend-dev | `crates/fleetdeck-proto/src/fleet_git.rs` (new), `fleet_git_tests.rs` (new), `event.rs`, `event_tests.rs`, `fold.rs`, `fold_tests.rs`, `session.rs`, `command.rs` (709), `version.rs`, `lib.rs`; `crates/fleetdeck-link/src/methods_table.rs`, `crates/fleetdeck-link/tests/method_table.rs`; `docs/v2/adr/ADR-004-link-protocol-v1.md` (§9.6 rows); `web/src/gen/**` (generated), `fleet_git_identity.rs` (new: `RemoteIdentity`, `remote_identity`, the WIP rewrite rule) and `fleet_git_identity_tests.rs` (new) | T1.0 |
 | T1.2 Station Git operations | backend-dev | `crates/fleetdeck-station/src/workspace/fleet_git/mod.rs`, `fetch.rs`, `push.rs`, `include.rs`, `redact.rs` and their `*_tests.rs` (all new); `workspace/mod.rs`; `identity.rs` (new: the home check and the destination checks of §3.8) and `identity_tests.rs` (new); `include.rs` runs `git check-ignore` | T1.0 (parallel with T1.1) |
 | T1.3 Station wiring | backend-dev | `store/schema_v28.rs` (new), `store/migrations.rs`, `store/git_state.rs` (new), `store/git_state_tests.rs` (new), `store/payload.rs`, `manager/decide_workspace.rs`, `manager/decide_fleet_git.rs` (new), `workspace/provision.rs` (751), `manager/setup_task.rs` (652), `manager/target_launch.rs`, `manager/policy.rs`, `manager/fleet_git_push.rs` (new), `manager/fleet_git_start_tests.rs` (new), `serve.rs` (637), `link/intake.rs` (745, dispatch lines only), `link/intake_fleet_git.rs` (new), `manager/fleet_git_writer.rs` (new), `manager/fleet_git_writer_tests.rs` (new), `link/intake_fleet_git_tests.rs` (new: snapshot revisions, pause rule) | T1.1, T1.2 |
-| T1.4 Cleanup | backend-dev | `manager/fleet_git_cleanup.rs` (new), `manager/fleet_git_cleanup_tests.rs` (new), `manager/trash.rs` | T1.3 |
+| T1.4 Cleanup | backend-dev | `manager/fleet_git_cleanup.rs` (new), `manager/fleet_git_cleanup_tests.rs` (new), `manager/trash.rs`, `workspace/trash.rs` (the expectation check of §6.3, revision 3) | T1.3 |
 | T1.5 Deck | backend-dev | `crates/fleetdeck-deck/src/store/fleet_git_schema.rs` (new), `store/schema.rs` (773, one list line), `store/projects.rs`, `store/projects_git.rs` (new), `http/project_git_routes.rs` (new), `http/mod.rs` (783, route lines only), `http/methods_table_rest.rs`, `link/fleet_git_sync.rs` (new), `link/mod.rs` (763, one call), `http/command_routes.rs`, `http/project_writes.rs` (631), `http/session_git_routes.rs` (new, push now), `tests/board_fleet_git_settings.rs` (new), `store/slug_reservations.rs` (new), `store/git_snapshots.rs` (new) | T1.1 (parallel with T1.3) |
 | T1.6 Board | ux-dev | `web/src/integrations/ProjectGitSettings.tsx` (new), `ProjectForm.tsx`, `integrations/actions.ts`, `web/src/board/PushBadge.tsx` (new), `board/cardParts.tsx`, `web/src/session/timeline_fleet_git.ts` (new), `session/timeline.ts` (one call), the tests `projectgit.test.tsx`, `pushbadge.test.tsx` (new), `web/e2e/fleet-git.spec.ts` (new), `web/e2e/fake-deck-git.ts` (new), `web/e2e/fake-deck.ts` (750, one import) | T1.1 (parallel with T1.4) |
 | T1.7 Integration tests | implementer | `crates/fleetdeck-cli/tests/common/fleet_git.rs` (new), `common/mod.rs` (one line), `fleet_git_fetch.rs`, `fleet_git_push.rs`, `fleet_git_cleanup.rs`, `fleet_git_include.rs`, `fleet_git_off.rs` (all new) | T1.4, T1.5 |
@@ -1677,9 +2014,9 @@ Rules for every task: one scoped brief (the CLAUDE.md delegation protocol); heav
 | --- | --- | --- | --- |
 | T2.0 Make room | implementer | `crates/fleetdeck-core/src/config.rs` (799) → `config_raw.rs` (new) gets `RawStation` and its key list; `crates/fleetdeck-core/src/tailscale.rs` (794) → `tailscale_parse.rs` (new) gets `parse_status`, `parse_whois` and the strict JSON visitor; `run` becomes `pub(crate)` | — |
 | T2.1 Proto | backend-dev | `fleetdeck-proto/src/fleet_git.rs`, `fleet_git_homes.rs` (new), `station_traits.rs` (new), `drift.rs` (new), `taildrive.rs` (new), `integrations/projects.rs`, `link.rs` (704, four fields), `files.rs` (`FileRoot::Artifacts`), `version.rs`, `lib.rs`; `crates/fleetdeck-link/src/methods_table.rs`, `tests/method_table.rs`; ADR-004 §9.6 rows; `web/src/gen/**` | T2.0 |
-| T2.2 Core and station | backend-dev | `fleetdeck-core/src/config_fleet_git.rs` (new), `config.rs`, `config_raw.rs`, `config_tests.rs`, `tailscale_drive.rs` (new), `tailscale_drive_tests.rs` (new), `tailscale_parse.rs` (CurrentTailnet), `lib.rs`; station `traits.rs`, `drift.rs`, `taildrive.rs`, `artifact_share.rs` (all new, with tests), `workspace/fleet_git/home.rs` (new), `store/schema_v29.rs` (new), `store/migrations.rs`, `store/homes_local.rs` (new), `link/intake_fleet_git.rs`, `link/intake.rs` (station.info lines), `manager/files.rs` (artifacts root), `workspace/files.rs`, `manager/setup_task.rs` (artifact env); the station `store/homes_local.rs` is named `store/home_attempts.rs` (V29 of §3.5) | T2.1 |
-| T2.3 Deck | backend-dev | `store/fleet_git_schema.rs`, `store/schema.rs`, `store/project_homes.rs` (new), `store/project_homes_tests.rs` (new), `store/projects.rs`, `store/project_sessions.rs`, `routing_place.rs` (new), `routing_place_tests.rs` (new), `http/project_home_routes.rs` (new), `http/placement_routes.rs` (new), `http/assign_routes.rs`, `http/projects_routes.rs` (673), `http/fleet_git_pref_routes.rs` (new), `http/mod.rs`, `http/methods_table_rest.rs`, `link/fleet_git_sync.rs`, `tests/board_project_homes.rs` (new), `store/projects_legacy.rs` (new: the write adapter and `repair()`), `store/projects_legacy_tests.rs` (new), `store/home_attempts.rs` (new), `http/project_remote_routes.rs` (new: rebind) | T2.1 (parallel with T2.2) |
-| T2.4 Board | ux-dev | `web/src/integrations/ProjectHomes.tsx` (new), `ProjectPage.tsx`, `ProjectForm.tsx`, `ProjectGitSettings.tsx`, `web/src/spawn/PlacementFields.tsx` (new), `spawn/SpawnForm.tsx` (710), `spawn/spawn.ts`, `web/src/board/StationTraits.tsx` (new), `StationConfigDrift.tsx` (new), `StationTaildrive.tsx` (new), `board/StationsPanel.tsx` (698), `web/src/session/ArtifactsLink.tsx` (new), `session/SessionView.tsx` (739), their tests, `web/e2e/fleet-git.spec.ts`, `web/e2e/fake-deck-git.ts` | T2.1 (parallel with T2.2 or T2.3) |
+| T2.2 Core and station | backend-dev | revision 3: `workspace/fleet_git/home.rs` also gets the M6 clearing and the M7 `--origin`; `taildrive.rs` gets `walk_share` (B5); `artifact_share.rs` gets the authorization (B6) and `link/intake_fleet_git.rs` the `fleet_git.share_verdict` handler and the `fleet_git.artifact_authorize` client; `manager/files_member_tests.rs` (M11); `fleetdeck-core/src/config_fleet_git.rs` (new), `config.rs`, `config_raw.rs`, `config_tests.rs`, `tailscale_drive.rs` (new), `tailscale_drive_tests.rs` (new), `tailscale_parse.rs` (CurrentTailnet), `lib.rs`; station `traits.rs`, `drift.rs`, `taildrive.rs`, `artifact_share.rs` (all new, with tests), `workspace/fleet_git/home.rs` (new), `store/schema_v29.rs` (new), `store/migrations.rs`, `store/homes_local.rs` (new), `link/intake_fleet_git.rs`, `link/intake.rs` (station.info lines), `manager/files.rs` (artifacts root), `workspace/files.rs`, `manager/setup_task.rs` (artifact env); the station `store/homes_local.rs` is named `store/home_attempts.rs` (V29 of §3.5) | T2.1 |
+| T2.3 Deck | backend-dev | `store/fleet_git_schema.rs`, `store/schema.rs`, `store/project_homes.rs` (new), `store/project_homes_tests.rs` (new), `store/projects.rs`, `store/project_sessions.rs`, `routing_place.rs` (new), `routing_place_tests.rs` (new), `http/project_home_routes.rs` (new), `http/placement_routes.rs` (new), `http/assign_routes.rs`, `http/projects_routes.rs` (673), `http/fleet_git_pref_routes.rs` (new), `http/mod.rs`, `http/methods_table_rest.rs`, `link/fleet_git_sync.rs`, `tests/board_project_homes.rs` (new), `store/projects_legacy.rs` (new: the write adapter and `repair()`), `store/projects_legacy_tests.rs` (new), `store/home_attempts.rs` (new), `http/project_remote_routes.rs` (new: rebind); revision 3: `fleet_git_homes.rs` (new: the home attempt sender, M5), `http/file_routes.rs` (the artifacts root and the member rule, M11), `link/fleet_git_artifacts.rs` (new: the `fleet_git.artifact_authorize` handler, B6), `link/requests.rs` (one dispatch line), `tests/board_fleet_git_start.rs` (new, M12), `tests/board_fleet_git_artifacts.rs` (new) | T2.1 (parallel with T2.2) |
+| T2.4 Board | ux-dev | `web/src/integrations/ProjectHomes.tsx` (new), `ProjectPage.tsx`, `ProjectForm.tsx`, `ProjectGitSettings.tsx`, `web/src/spawn/PlacementFields.tsx` (new), `spawn/SpawnForm.tsx` (710), `spawn/spawn.ts`, `web/src/board/StationTraits.tsx` (new), `StationConfigDrift.tsx` (new), `StationTaildrive.tsx` (new), `board/StationsPanel.tsx` (698), `web/src/session/ArtifactsLink.tsx` (new), `session/SessionView.tsx` (739), `web/src/session/workspace.ts` and `workspace.test.tsx` (`artifactFiles`, revision 3, M11), their tests, `web/e2e/fleet-git.spec.ts`, `web/e2e/fake-deck-git.ts` | T2.1 (parallel with T2.2 or T2.3) |
 | T2.5 Integration tests | implementer | `fleet_git_homes.rs`, `fleet_git_placement.rs`, `fleet_git_taildrive.rs`, `fleet_git_api.rs` (drift part) (all new), `common/fleet_git.rs` | T2.2, T2.3 |
 
 ### Phase 3: FG-7, FG-8
@@ -1687,8 +2024,8 @@ Rules for every task: one scoped brief (the CLAUDE.md delegation protocol); heav
 | Task | Worker | Owned files | After |
 | --- | --- | --- | --- |
 | T3.1 Proto | backend-dev | `fleetdeck-proto/src/fleet_git_land.rs` (new: radar and land types), `command.rs` (`Land`), `event.rs`, `fold.rs`, `session.rs`, `version.rs`, `lib.rs`; link `methods_table.rs`, `tests/method_table.rs`; ADR-004 rows; `web/src/gen/**` | — |
-| T3.2 Station | backend-dev | `workspace/fleet_git/radar.rs`, `land.rs`, `land_temp.rs` (all new, with tests), `manager/land.rs` (new), `manager/land_tests.rs` (new), `manager/target.rs` (788, the effect route line only), `store/payload.rs` (`EffectPayload::Land`), `store/schema_v30.rs` (new), `store/land_runs.rs` (new), `store/migrations.rs`, `link/intake_fleet_git.rs`, `manager/fleet_git_push.rs` (the `landed` rule), `store/session_holds.rs` (new: `check_free(tx, session_id)`), `manager/land_reconcile.rs` (new), `manager/land_temp_cleanup.rs` (new), `integrations/pr_find.rs` (new: the exact lookup and `pr_create_direct`), `integrations/github.rs` and `integrations/gitlab.rs` (the two request functions only); one `session_holds::check_free` call line each in `manager/decide.rs`, `manager/resume.rs`, `manager/revert.rs`, `manager/shell_decide.rs`, `manager/auto_continue.rs`, `manager/trash.rs` | T3.1 |
-| T3.3 Deck | backend-dev | `store/fleet_git_schema.rs`, `store/schema.rs`, `store/land_queue.rs` (new), `store/radar.rs` (new), `fleet_git_land.rs` (new), `fleet_git_radar.rs` (new), `http/land_routes.rs` (new), `http/radar_routes.rs` (new), `http/mod.rs`, `http/methods_table_rest.rs`, `store/read_model.rs` (fold of `session.land` into the queue), `tests/fleet_git_land_deck.rs` (new), `store/land_outbox.rs` (new), `fleet_git_land_outbox.rs` (new) | T3.1 (parallel with T3.2) |
+| T3.2 Station | backend-dev | `workspace/fleet_git/radar.rs`, `land.rs`, `land_temp.rs` (all new, with tests), `manager/land.rs` (new), `manager/land_tests.rs` (new), `manager/target.rs` (788, the effect route line only), `store/payload.rs` (`EffectPayload::Land`), `store/schema_v30.rs` (new), `store/land_runs.rs` (new), `store/migrations.rs`, `link/intake_fleet_git.rs`, `manager/fleet_git_push.rs` (the `landed` rule), `store/session_holds.rs` (new: `check_free(tx, session_id)`), `manager/land_reconcile.rs` (new), `manager/land_temp_cleanup.rs` (new), `integrations/pr_find.rs` (new: the exact lookup and `pr_create_direct`), `integrations/github.rs` and `integrations/gitlab.rs` (the two request functions only); revision 3: `store/land_fences.rs` (new, M3), `workspace/fleet_git/push_outcome.rs` (new, M2, shared with FG-2); one `session_holds::check_free` call line each in `manager/decide.rs`, `manager/resume.rs`, `manager/revert.rs`, `manager/shell_decide.rs`, `manager/auto_continue.rs`, `manager/trash.rs` | T3.1 |
+| T3.3 Deck | backend-dev | `store/fleet_git_schema.rs`, `store/schema.rs`, `store/land_queue.rs` (new), `store/radar.rs` (new), `fleet_git_land.rs` (new), `fleet_git_radar.rs` (new), `http/land_routes.rs` (new), `http/radar_routes.rs` (new), `http/mod.rs`, `http/methods_table_rest.rs`, `store/read_model.rs` (fold of `session.land` into the queue), `tests/fleet_git_land_deck.rs` (new), `store/land_outbox.rs` (new), `fleet_git_land_outbox.rs` (new); revision 3: `fleet_git_land_abandon.rs` (new: the fence sender, M3), `store/coordinator.rs` (the `authority_check` lookup of a land command id, B3; dispatch lines only), `store/coordinator_ops.rs` (`CoordinatorOp::Land` stores the authority; dispatch lines only) | T3.1 (parallel with T3.2) |
 | T3.4 Board | ux-dev | `web/src/board/ConflictRadar.tsx`, `board/RadarGroups.tsx` (new), `web/src/session/LandPanel.tsx` (new), `session/SessionView.tsx`, `web/src/integrations/ProjectLands.tsx` (new), `ProjectPage.tsx`, tests, `web/e2e/fleet-git.spec.ts`, `web/e2e/fake-deck-git.ts` | T3.1 (parallel with T3.2 or T3.3) |
 | T3.5 Integration tests | implementer | `fleet_git_radar.rs`, `fleet_git_land.rs` (new), `common/fleet_git.rs` | T3.2, T3.3 |
 
@@ -1697,7 +2034,7 @@ Rules for every task: one scoped brief (the CLAUDE.md delegation protocol); heav
 | Task | Worker | Owned files | After |
 | --- | --- | --- | --- |
 | T4.1 Proto | backend-dev | `fleetdeck-proto/src/fleet_git_move.rs` (new), `command.rs` (`MoveOut`, `MoveIn`, `MoveFinish`), `mutation.rs` (654, coordinator variants), `event.rs`, `fold.rs`, `session.rs`, `version.rs`, `lib.rs`; link `methods_table.rs`, `tests/method_table.rs`; ADR-004 rows; `web/src/gen/**` | ADR-010 |
-| T4.2 Station move | backend-dev | `workspace/fleet_git/move_export.rs`, `move_import.rs` (new), the provider layouts named by ADR-010, `manager/move_session.rs` (new), `manager/move_tests.rs` (new), `store/schema_v31.rs` (new), `store/session_moves.rs` (new), `store/migrations.rs`, `link/stream.rs` (275), `link/intake_fleet_git.rs`, `manager/decide_fleet_git.rs` (the hold refusals) | T4.1 |
+| T4.2 Station move | backend-dev | revision 3: `store/move_runs.rs` (new: `move_out_runs`, `move_in_runs`), `manager/move_in.rs` (new: the target hold, the commit point, discard and release), `workspace/fleet_git/move_fetch.rs` (new: the publication fetch and the publication ref, M8, M9); `workspace/fleet_git/move_export.rs`, `move_import.rs` (new), the provider layouts named by ADR-010, `manager/move_session.rs` (new), `manager/move_tests.rs` (new), `store/schema_v31.rs` (new), `store/migrations.rs`, `link/stream.rs` (275), `link/intake_fleet_git.rs`, `manager/decide_fleet_git.rs` (the hold refusals) | T4.1 |
 | T4.3 Station branches and coordinator tools | backend-dev | `workspace/fleet_git/remote_branches.rs` (new), `coordinator/git_tools.rs` (new), `coordinator/fleet_tools.rs` | T4.2 (it shares `intake_fleet_git.rs`; it runs after T4.2) |
 | T4.4 Deck | backend-dev | `store/fleet_git_schema.rs`, `store/schema.rs`, `store/session_moves.rs` (new), `fleet_git_move.rs` (new), `http/move_routes.rs` (new), `http/project_branch_routes.rs` (new), `link/streams.rs`, `store/coordinator_git.rs` (new), `store/coordinator_ops.rs` (741, dispatch lines only), `store/coordinator_query_reads.rs`, `http/mod.rs`, `http/methods_table_rest.rs`, `tests/fleet_git_coordinator.rs` (new) | T4.1 (parallel with T4.2) |
 | T4.5 Board | ux-dev | `web/src/session/OtherStations.tsx` (new), `session/BranchesView.tsx`, `session/MoveDialog.tsx` (new), `session/SessionView.tsx`, tests, `web/e2e/fleet-git.spec.ts`, `web/e2e/fake-deck-git.ts`, `web/e2e-real/fleet-git.spec.ts` (new) | T4.1 |
@@ -1707,9 +2044,9 @@ Rules for every task: one scoped brief (the CLAUDE.md delegation protocol); heav
 
 `docs/v2/operations.md` (every new setting, the hook decision of §2.3, the pre-upgrade backup, the restore steps and the forward-repair rule of §3.9, the push credentials of a service (an SSH agent or a credential helper that the service user can reach; `fleetdeck service install` from a terminal), the Landlock note of §18, the Taildrive policy and the mount steps for an artifact share), `README.md` (the feature list), `docs/v2/internals.md` (the link methods and the tables), `docs/v2/BACKLOG.md` (B1 done), `docs/v2/PROGRESS.md` ("Fleet Git" section). Then the adversary PRE-PR REVIEW of `fleet-git` against `v2` (at most 3 rounds).
 
-## 20. Decisions of this design (revision 2)
+## 20. Decisions of this design (revision 3)
 
-Revision 1 listed 85 choices where the owner spec is silent. The architect accepted the advisor answer (`/home/luismorales/fleetdeck-briefs/advisor-fleet-git-answer.md`) in full (DL-224). Each item below is marked **accepted** (the revision 1 text stays) or **replaced (advisor, revision 2)** (the new text). §20.2 lists the choices that are new in revision 2. Count: 52 accepted, 33 replaced, 28 new.
+Revision 1 listed 85 choices where the owner spec is silent. The architect accepted the advisor answer (`/home/luismorales/fleetdeck-briefs/advisor-fleet-git-answer.md`) in full (DL-224). Each item below is marked **accepted** (the revision 1 text stays), **replaced (advisor, revision 2)** (the new text), or **replaced (design review r1, revision 3)** (the text that answers the adversary DESIGN REVIEW round 1, DL-225). §20.2 lists the choices that are new in revision 2; §20.4 lists the choices that are new in revision 3. Count: §20.1 has 48 accepted, 26 replaced by the advisor and 11 replaced by the design review; §20.2 has 23 standing and 5 replaced by the design review; §20.4 has 34 new choices.
 
 ### 20.1 The revision 1 decisions
 
@@ -1729,13 +2066,13 @@ Revision 1 listed 85 choices where the owner spec is silent. The architect accep
 14. **Accepted.** Push triggers: `on_turn` = each `turn.completed` and the end; `on_exit` = each end.
 15. **Replaced (advisor, revision 2).** One serialized writer per station runs every remote write: FG-2 pushes and the land branch and default pushes (`manager/fleet_git_writer.rs`, §5.5). Reason: separate workers can invalidate each other's lease bookkeeping.
 16. **Accepted.** Timeouts: push 60 s, `ls-remote` 20 s, fetch 30 s (O7), merge-tree 20 s per pair, rebase and land worktree 120 s; the new local commands (`remote get-url`, `config --get-regexp`, `check-ignore`) 10 s.
-17. **Accepted.** Lease recovery: after a failure or a crash, `ls-remote`; a remote tip equal to `attempt_oid` counts as pushed (the field name follows decision 18).
+17. **Replaced (design review r1, revision 3).** Lease recovery: after any failure or a crash, `ls-remote` on the stored `attempt_url`; a tip equal to `attempt_oid` counts as pushed; an outcome that the check cannot confirm keeps the attempt open (no new attempt, no lost evidence) (§5.5, M2). Reason: a timeout or a lost answer is not a failure.
 18. **Replaced (advisor, revision 2).** The newest tip of a trigger goes to `desired_oid`; an attempt has an immutable `attempt_id`, `attempt_oid` and `attempt_lease`; a trigger during `failing` keeps `attempts` and `next_attempt_at`; "Push now" moves only the time (§5.5, §5.6). Reason: a new trigger must not overwrite crash-recovery evidence.
 19. **Replaced (advisor, revision 2).** A `stopped` push row with unpublished commits (`desired_oid` ≠ `last_pushed_oid`) shows the warning "Push stopped" with a reason (§5.9); a moved session shows none. Reason: a terminal row does not mean that the work is on the remote.
 20. **Accepted.** Badge texts: "Not pushed" for `failing`, "Pushing…" after 60 s, "Pushed <oid7>" in the header only.
 21. **Accepted.** Cleanup timing: first run 5 minutes after the start, then every 15 minutes.
 22. **Replaced (advisor, revision 2).** "Merged" is only the ancestor proof (`merge-base --is-ancestor`); a squash or rebase merge keeps the worktree with a text that says so (§6.3). Reason: equal trees do not prove that the history is merged; keeping is the safe error.
-23. **Accepted.** Cleanup calls the trash decision through `decide_cleanup` (no new `CommandOrigin`); op id `cleanup-<session>-<ms>`.
+23. **Replaced (design review r1, revision 3).** Cleanup calls the trash decision through `decide_cleanup` (no new `CommandOrigin`; op id `cleanup-<session>-<ms>`) with the proven branch and tip; the trash effect checks HEAD, the tip and a clean status again before the rename (§6.3, M4). Reason: merge and push proofs of the recorded branch say nothing about another checked-out branch.
 24. **Replaced (advisor, revision 2).** `ended_at` is set at each transition to `exited`/`lost` and cleared when the session runs again (§6.3). Reason: the first end of a resumed session makes new work eligible at once.
 25. **Replaced (advisor, revision 2).** Include patterns as revision 1 (`*` and `?` in one segment, no `**` or `[`, hidden names need a `.` pattern, 32 patterns, 200 matches, folders 0700, no overwrite), **and** each match must be ignored and untracked by `git check-ignore -z --stdin` (else `not_ignored`, fail closed) (§7.2). Reason: O14 copies ignored files only.
 26. **Accepted.** A refused include file does not fail the start; it is listed in `workspace.include_skipped` (at most 50 entries).
@@ -1744,11 +2081,11 @@ Revision 1 listed 85 choices where the owner spec is silent. The architect accep
 29. **Replaced (advisor, revision 2).** The catalog URL (`WorkspaceEntry.origin`) is a hint for `remote_url`; the station verifies each home's effective remote; a change of the destination needs an explicit rebind and makes every home `unverified` until checked (§3.8 rule 7, §8.4). Reason: an edit of the URL must not repoint existing homes in silence.
 30. **Accepted.** Clone folder name: the project name with characters outside `[A-Za-z0-9._-]` changed to `-`, no leading `.`, 80 characters.
 31. **Accepted.** `clone_root` is made (mode 0700) only when its parent is an allowed root.
-32. **Replaced (advisor, revision 2).** `project.ensure_home` answers at once; the deck polls `project.home_status { project_id, attempt_id }` every 10 s and applies an answer only when `(attempt_id, generation)` match the home row (§8.4). Reason: a project id alone does not tell a retry or a stale answer apart.
-33. **Replaced (advisor, revision 2).** A failed or interrupted attempt keeps its result and its folder reservation until an explicit retry or recovery; a retry is refused while the partial folder exists (`incomplete_folder`); a known partial clone is never adopted (§8.4). Reason: a partial clone must not become a successful adoption.
+32. **Replaced (design review r1, revision 3).** `project.ensure_home` is sent by a durable sender from the stored, immutable request (at the commit, at each link start, with a backoff); the deck polls `project.home_status` only while `cloning`; an answer applies only when `(attempt_id, generation)` match (§8.4, M5). Reason: a crash between the commit and the call left the attempt `sent` for ever.
+33. **Replaced (design review r1, revision 3).** A failed or interrupted attempt keeps its result and its reservation while its folder exists; before any new attempt the station clears every failed or interrupted reservation of the same destination whose folder is absent (`lstat` `ENOENT`, nothing deleted); a present partial folder is never adopted (`incomplete_folder`) (§8.4, M6). Reason: a superseded failed row blocked every later generation.
 34. **Replaced (advisor, revision 2).** Remove home is refused while a clone, a land or a move uses the home, or a session runs in it; the removal invalidates the station's ownership by generation and leaves the files (§8.4). Reason: "no live session" misses lands, clones and late answers.
 35. **Replaced (advisor, revision 2).** `project_of` looks at every home; the match by `summary.repo.origin` is a display fallback only; every Fleet Git action needs a verified home (§8.3). Reason: an origin match on another station gives no authority.
-36. **Replaced (advisor, revision 2).** The deck attaches `FleetGitStart` only for exactly one ready, verified, sync-owned home that is the start folder or contains it; an explicit `project_id` is validated against the homes and checked again by the station (§8.5). Reason: equal or aliased paths would select settings at random.
+36. **Replaced (design review r1, revision 3).** Auto-attach finds the owning sync home first, in any state, then checks its readiness: `ready` attaches, `unverified` gives `home_unverified`, `cloning` and `failed` give `home_not_ready`; no sync match is a plain start (§8.5, M12). Reason: filtering by readiness first turned a start in an unverified sync home into a silent plain start.
 37. **Accepted.** `on_battery`: Linux supplies rule, WSL always false, macOS `pmset`, read at most every 60 s; unknown is `None`.
 38. **Accepted.** Requirements accept `os:<os>` and `arch:<arch>` besides labels.
 39. **Accepted.** Placement score: preferences, then `min(1 - load5/cores, mem_available/mem_total)`, then live sessions, then name; `idle` = no session working, verifying or queued.
@@ -1767,10 +2104,10 @@ Revision 1 listed 85 choices where the owner spec is silent. The architect accep
 52. **Replaced (advisor, revision 2).** Merge mode with `wip_remote`: the branch goes to the WIP remote, the default branch to `push_remote` (as revision 1); PR mode is refused before anything is queued when the branch target is not the forge repository (`land_pr_needs_forge_branch`) (§11.1). Reason: a WIP push does not publish to the forge.
 53. **Replaced (advisor, revision 2).** The land never changes the local session branch; right after the branch publication (before the PR or the default push, so also after a later failure) the push row goes to `stopped` with `land_published` (§11.5 step 5, §11.7). Reason: a failed PR or default push can still leave a rebased remote branch.
 54. **Replaced (advisor, revision 2).** "Send to session" (only for a live idle session) has a fixed text; the conflict paths come from `git diff --name-only -z` (NUL-separated), are JSON strings inside the untrusted envelope, and the target is the exact `base_oid` (§11.8). Reason: file names are third-party text; a branch name moves.
-55. **Replaced (advisor, revision 2).** A crash or a lost answer is reconciled from the durable phase and the remote state (ref tips, PR lookup); an uncertain run stays `running` in `reconciling` (or `lost` on the deck) and keeps the hold and the queue until a result or the owner's "Stop checking" (§11.2, §11.5). Reason: an unknown admission or a lost answer does not prove a failure.
-56. **Accepted.** The deck drives the move in five steps with a hold; an idle live session is stopped gracefully at the hold. Revision 2: the hold is a `session_holds` row (kind `move`).
+55. **Replaced (design review r1, revision 3).** A crash or a lost answer is reconciled from the stored `pending_*` operands (action, attempt, verified URL, ref, oid, lease, expectation), kept apart from the phase; every write outcome is `Applied`, `Rejected` or `Unknown`, and only a confirmed result ends a step; an uncertain run keeps its phase with `reconciling = 1`, the hold and the queue until a result or the fenced "Stop checking" (§11.2, §11.5, M1, M2, M3). Reason: the phase `reconciling` overwrote the evidence, and an ordinary failure path skipped reconciliation.
+56. **Replaced (design review r1, revision 3).** The deck drives the move with a durable commit point on the target (`move_in_runs.state = resumed` after a confirmed native resume), a target input hold until the release, outboxes for the finish and the release, an abort that discards the target first and never deletes a transcript after `launching`, and a restart table that never treats an existing session row as a proof (§12.3, B4). Reason: an abort could erase a resumed conversation or leave two writable continuations.
 57. **Accepted.** The deck pipes the transcript stream in memory; staging on the target under the data dir; at most 256 files.
-58. **Accepted.** The target makes `fd/<target slug>/<callsign>` at the source's pushed commit; the source ref stays on the remote. ADR-010 §10.1 adds the suffix `-2`, `-3` when the name exists; that rule applies.
+58. **Replaced (design review r1, revision 3).** The target worktree is on the **same local branch** as the source (`fd/<source slug>/<callsign>`, O29); the target publishes it with the explicit refspec `refs/heads/<local>:refs/heads/fd/<target slug>/<callsign>[-n]` (O10); the session records both; leases are per publication ref (§12.5, ADR-010 §10.1, M9, architect decision DL-225). Reason: revision 2 changed the binding "same branch" of O29.
 59. **Accepted.** The target keeps the source callsign when it is free.
 60. **Accepted.** `moved` is `summary.moved_to` on an `exited` session (no `SessionState` value); a moved session refuses every input.
 61. **Accepted.** Branch-only first prompt (§12.6) with the summary inside the untrusted fence.
@@ -1781,11 +2118,11 @@ Revision 1 listed 85 choices where the owner spec is silent. The architect accep
 66. **Accepted.** Drift versions come from the first provider instance of each kind.
 67. **Accepted.** The drift reference is a deck preference (`fleet_git_prefs`).
 68. **Accepted.** Taildrive interval 10 minutes and at start (O36); a non-zero exit is `unavailable` with "exit <n>" and no stderr text.
-69. **Replaced (advisor, revision 2).** Parser: names per the CLI source, at most 64 shares, any refusal makes the whole report `unknown`; a padded path field is resolved only when exactly one candidate (the trimmed path plus 0 to k trailing spaces) exists; two or more candidates make the report `unknown`; none gives `path_state = missing` (§15.3). Reason: the existence of the trimmed path does not prove which path the CLI printed.
-70. **Replaced (advisor, revision 2).** Exposure covers every project home of the station (sync on or off, from `station_homes`), every session worktree and `repo_root`, the data dir, the provider homes and the config dirs of every instance, `~/.ssh`, `~/.gnupg`, `~/.aws`, and the member deny list by path component (§15.4). Reason: a sync-only inventory leaves gaps.
+69. **Replaced (design review r1, revision 3).** Parser: names per the CLI source, at most 64 shares, any refusal makes the whole report `unknown`; a padded path field (k ≥ 1 trailing spaces) gives `path_state = ambiguous` with all candidates, whatever exists; an ambiguous share is an artifact share only when `[taildrive_mounts]` names one candidate; its exposure is the union over its candidates (§15.3, M10). Reason: existence cannot tell which string the CLI printed.
+70. **Replaced (design review r1, revision 3).** Exposure covers every project home, worktree, `repo_root`, the data dir, the provider homes and config dirs, `~/.ssh`, `~/.gnupg`, `~/.aws`, the member deny list by path component, **and** deny-listed or protected descendants found by a bounded metadata walk (depth 8, 20 000 entries, 2 s; no link followed); an incomplete walk gives `exposure_state = unknown`, refused for artifacts (§15.4, B5). Reason: a component test misses `/srv/exports/secrets/…` and anchored patterns.
 71. **Accepted.** Machine name = first label of `Self.DNSName`; tailnet name = `CurrentTailnet.Name`; URL segments percent-encoded.
 72. **Accepted.** Artifact folders: `<project folder>/<callsign>/` with mode 0700 for each missing level, `mkdirat` without following links; a resume sets the variables again.
-73. **Replaced (advisor, revision 2).** `FileRoot::Artifacts` is the one exception to the allowed-roots check, for the recorded folder only (checked by `dev`/`ino`); before each access and each start the station checks the exposure again from a report at most 60 s old (else it runs `drive list` again) and the local mount path against the protected paths; members see the link with the deny list (§15.5, §15.6). Reason: recorded paths and old reports leave protection gaps.
+73. **Replaced (design review r1, revision 3).** `FileRoot::Artifacts(SessionId)` (JSON `{"artifacts": "<id>"}`) is the one exception to the allowed-roots check, for the recorded folder only; the deck route takes `artifacts=<id>`, a member needs that exact shared session, the browser uses `artifactFiles`; every start, resume and access needs a fresh `ArtifactAuthorization` (§15.5, §15.6, B6, M11). Reason: revision 2 had no HTTP and transport contract and used an unbound remote verdict.
 74. **Accepted.** The deck refuses to save an exposed `artifact_share` (400 `share_exposed`).
 75. **Accepted.** Five features, one per phase.
 76. **Accepted.** 409 `fleet_git_unsupported` for a station without the feature.
@@ -1804,8 +2141,8 @@ Revision 1 listed 85 choices where the owner spec is silent. The architect accep
 Each item is a choice that the advisor items needed and that the advisor did not fix.
 
 1. **`sync = true` needs `remote_url`, also with one home;** the identity columns move to the phase 1 deck migration (§3.1, §8.2). Reason: the lease scope, the slug reservations and the home check need the destination from phase 1 on. O16 requires it only for two homes; a stricter rule does not change O16.
-2. **`RemoteIdentity { repo, dest }`** with the rules of §3.8 (scheme, lower-case ASCII host, bracketed IPv6, default ports 443 and 22, path case kept, one `.git` removed). Reason: one exact destination for leases; `repo` stays the O16 form.
-3. **The effective destination is checked before each push:** `git remote get-url` and `--push` (exactly one URL each) for a remote name; Git's `pushInsteadOf`/`insteadOf` longest-prefix rule for a WIP URL (`remote_rewritten`, `remote_mismatch`). Reason: configuration can rewrite a destination.
+2. **Replaced (design review r1, revision 3).** `RemoteIdentity { repo, dest }`: `repo` groups (login name, port, path form and one `.git` dropped); `dest` is the authority: scheme, lower-case ASCII host, bracketed IPv6, the port, the SSH login name, the absolute or login-relative path form, the exact path bytes; `file://<canonical path>` only with `allow_local_remotes` (§3.8 item 1, B2, M13). Reason: dropping the login name and the leading `/` joined different SSH repositories.
+3. **Replaced (design review r1, revision 3).** The effective destination is checked before each write: every configured `url` and `pushurl`, `get-url --all`, `get-url --push --all` and `ls-remote --get-url` must give exactly one fetch URL and one push URL (else `remote_ambiguous`), a fixed point under the rewrite rules, and the project `dest`; the write and its reconciliation use that one verified URL, never a remote name (§3.8, §2.4, B1). Reason: Git pushes to every configured push URL, and `get-url` without `--all` shows one.
 4. **The lease key is `(target_dest, ref)`; the land lock key and the slug key are `repo`.** Reason: the lease must be exact; the lock must be conservative (two transports of one repository serialize).
 5. **Pre-upgrade backup details:** `VACUUM INTO` under `<data dir>/backups/`, the newest 3 kept, twice the database size free, `FLEETDECK_SKIP_UPGRADE_BACKUP=1` as the only bypass; no backup, no migration (§3.9). Reason: no backup tool exists today; the owner had a full disk before.
 6. **Primary promotion:** unique positions without renumbering; the removal of position 0 needs another ready home, and the ready home with the lowest position gets position 0 (`no_ready_home`). Reason: one row update; the copy always has a path.
@@ -1816,19 +2153,19 @@ Each item is a choice that the advisor items needed and that the advisor did not
 11. **The deck sends the slug in `FleetGitStart`; the station refuses another slug (`slug_mismatch`); the O10 filter uses the slug stored with the session.** Reason: a station rename must not block old sessions or make two names.
 12. **Nested sync homes are refused (`home_nested`), and the migration keeps duplicate legacy homes with the oldest sync project as the owner.** Reason: one owner per folder without a failed migration.
 13. **A start in an unverified home of a sync project is refused (`home_unverified`),** never started without sync. Reason: a silent plain start would make `fd/<callsign>` branches that nobody pushes.
-14. **Home attempt ids `ha-<uuid>`, the request digest over `{ project_id, station_id, generation, folder, url, dest }`, the retry route, and `cleared` for an attempt whose partial folder is gone.** Reason: the advisor fixed the rule, not the shapes.
+14. **Replaced (design review r1, revision 3).** Home attempt ids `ha-<uuid>`, the request digest over `{ project_id, station_id, generation, folder, url, dest, remote_name }`, the stored immutable `request` and its sender, the retry route, `cleared` for an absent folder, and `git clone --origin <remote_name>` (§8.4, M5, M6, M7). Reason: the request must survive a crash, and the clone must create the configured remote.
 15. **The adoption proof:** a real folder inside the roots, `--show-toplevel` equals the folder, `HEAD` resolves to a commit, and the §3.8 check is `verified`. Reason: O17's "the same repo" is read as a complete, verified clone; a known partial clone is never one (§20.3).
 16. **The land outbox** resends the fixed command with a backoff of 2 to 60 s; a rejected receipt ends the land `failed`. Reason: the same id makes a resend safe (ADR-004 receipts).
 17. **The admission skips a project whose station is offline** and tries the next candidate. Reason: one offline station must not block other projects.
 18. **`nothing_to_land`** when the source is already in the base. Reason: a land of nothing would only move the branch to the base.
-19. **The deck-only phase `lost`, the new terminal state `unresolved`, and the owner action "Stop checking" (`fleet_git.land_abandon`).** Reason: the queue stays occupied while the outcome is uncertain, but the owner can free it after a manual check.
+19. **Replaced (design review r1, revision 3).** The deck-only phase `lost`, the terminal state `unresolved`, and the owner action "Stop checking": a durable request that the deck sends until the station records a fence (`land_fences`) and answers `fenced`; only then the queue is freed; a removed station can be forgotten with a warning (§11.2, M3). Reason: an unfenced station could still publish after the queue was freed.
 20. **The reconciliation backoff is the FG-2 backoff** (1, 2, 4, 8, 10 minutes). Reason: one backoff rule for remote checks.
 21. **The check mutation test:** `rev-parse HEAD` equals `R` and `git status --porcelain=v1 -z --untracked-files=no --ignore-submodules=none` is empty (`check_mutated`). Reason: build output is untracked and allowed; tracked changes and new commits are not.
 22. **One `session_holds` table for land and move,** one hold per session. Reason: one place that every refusal path reads.
 23. **The exact PR lookup:** GitHub `pulls?state=open&head=<owner>:<branch>&base=<base>&per_page=2`, GitLab `merge_requests?state=opened&source_branch&target_branch&per_page=2`, no cache; two or more → `pr_ambiguous`; the create call bypasses the in-memory write log. Reason: the DL-164 list is capped at 50 and its deduplication is lost at a restart.
 24. **The land temporary folder is reserved in the store before `worktree add`;** a reserved row without an identity is kept, never deleted (`temp_unknown`). Reason: no deletion without a recorded identity.
 25. **The snapshot carries every home of the station (`homes`, sync on or off) as data for §15.4 only.** Reason: O37 names every project home; this changes no session behavior (O1, §20.3).
-26. **Artifact revalidation:** a report at most 60 s old before each start and each `FileRoot::Artifacts` access; the local mount path is checked against the protected paths; a share on another station uses that station's newest report through `FleetGitStart.artifact_share_state` (`ok` needed); a share on a machine that is not a station needs only the local mount check. Reason: a NAS share is the main use case and has no station report.
+26. **Replaced (design review r1, revision 3).** Artifact use needs a fresh `ArtifactAuthorization { exporting station, share, inventory revision, verdict, expires_at = issued + 10 min }` before each start, resume and access, refreshed every 5 minutes for live sessions; it fails closed (`share_unverified`) when the exporting station gives no current verdict; a machine without a station gives `not_a_station` (mount checks only) (§15.5, B6). Reason: a copied, unversioned verdict could stay valid for ever.
 27. **The WIP namespace `refs/fleetdeck/wip/fd/*`** in the radar home for `project.fetch`, the radar and `project.branches`. Reason: a WIP URL has no remote-tracking refs.
 28. **Conflict path limits:** at most 200 paths, at most 4096 bytes each, non-UTF-8 bytes as `\xNN`. Reason: bounded, lossless enough to find the file.
 
@@ -1839,3 +2176,42 @@ No advisor item overrides an owner decision. Three points needed a reading; in e
 - **O25 (default `pr` with a forge) and the PR-mode refusal.** The default stays `pr` with a forge binding. With a WIP remote that is not the forge, the land in the default mode is refused at request time with a text that names the fix, and the settings form shows a hint (§3.1, §11.1). The design does not change the default to `merge`.
 - **O17 (adopt a folder with the same repo) and "never adopt an interrupted clone".** Any complete clone with the same verified remote is adopted, also one that Fleet Deck did not make. Only a folder that the station itself recorded as an incomplete clone is refused (`incomplete_folder`).
 - **O1 (sync off behaves as today) and complete home coverage for O37.** The snapshot lists sync-off homes as data for the exposure check only. No sync-off session gets a fetch, a branch, a push, a cleanup or a new environment.
+
+### 20.4 New in revision 3 (design review round 1, DL-225)
+
+Each item is a choice that a round 1 finding needed and that the report did not fix. The two architect decisions of DL-225 are items 22 and 31.
+
+1. **The SSH login name is stored apart** (`projects.remote_ssh_user`); `remote_url` stays scrubbed (O16); `clone_url` puts the name back for the clone and the identity (§8.1, §3.8, B2). Reason: the authority needs the account, and O16 forbids user information in `remote_url`.
+2. **`wip_remote` may hold an SSH login name** (no password, no token) (§3.1, B2). Reason: an SSH WIP server needs the account, and the WIP URL is not the O16 `remote_url`.
+3. **The `dest` path form:** an absolute path stays `/p`; a login-relative scp-like path is written `/~/p` (as `ssh://host/~/p`); the path keeps its case, its bytes and its `.git` (§3.8, B2). Reason: these are Git's own meanings; an alias fails closed as `mismatch`.
+4. **Writes go to the explicit verified URL** (`git push` and `ls-remote` never get a remote name); the URL must be a fixed point of the rewrite rules; it is stored before the write (`git_pushes.attempt_url`, `land_runs.pending_url`) (§2.4, §3.8, B1). Reason: one destination for the write and its reconciliation.
+5. **`push_outcome`** classifies by the porcelain line of the exact ref: ` `, `+`, `*`, `=` with exit 0 → `Applied`; `!` → `Rejected`; all else → `Unknown`; a `Rejected` outcome is still confirmed by a read (§5.5, M2). Reason: a lease failure and a lost answer can look alike.
+6. **An FG-2 attempt stays open** when its recovery check cannot answer; the next run repeats the check before it opens a new attempt (§5.5, M2). Reason: closing it would drop the only evidence of a possible remote write.
+7. **Coordinator authority in durable workflows:** stored with an expiry of 10 minutes (the ADR-008 fleet intent TTL) that bounds admission and delivery only; deck checks at admission and at each send; station checks at dispatch, before each `*_intent`, before attempt 2 and before a repeated write, never before a read (§11.2, §11.5, B3). Reason: a read cannot do harm, and a stored intent must be reconciled, not refused.
+8. **A resend with a lost authority** asks `fleet_git.land_status` first and fences the land before it ends the row (§11.2, B3). Reason: the first send may have started a run.
+9. **No authority check after a move's commit point** (§12.3, B3). Reason: stopping a committed move would leave no writable continuation.
+10. **The move commit point** is the target's `move_in_runs.state = resumed`, written only from `launching` after `session.started { resumed: true }` with the same native id (120 s on the target, 150 s of waiting on the deck) (§12.3, B4). Reason: one durable fact decides the direction of the move.
+11. **The target hold** `session_holds.kind = 'move_in'` refuses every input until `session.move_release` (§12.3, B4). Reason: the target must not be writable before the source is `moved`.
+12. **The abort order:** discard on the target first, then abort on the source; a target in `launching` or `abandoned` keeps every file and stays read only (§12.3, B4). Reason: a provider may have appended to the transcript; one writable continuation at every moment.
+13. **A finish without the source record** applies `moved` when the session runs no turn; else the deck keeps `finishing` and the target stays held (§12.3, B4). Reason: data loss on the source must not make two writers.
+14. **The branch-only first prompt is held** until the release (§12.3, B4). Reason: the same one-writer rule.
+15. **`land_fences`** and the fence check in the intent transaction and right before each write; `fleet_git.land_abandon` answers `fenced`, also for an unknown land id (§11.2, M3). Reason: an acknowledgement must prove that no later write can start.
+16. **`POST /api/lands/{land_id}/forget`** for a station that the owner removed, with a warning text (§11.2, M3). Reason: an unpaired station can never acknowledge a fence.
+17. **`pending_*` operands and the `reconciling` flag;** the phase `reconciling` is removed (§11.5, M1). Reason: the phase must stay the intent that a restart reconciles.
+18. **The cleanup HEAD proof** (`symbolic-ref`, the tip `T`) and the trash expectation (`worktree_ops.expect_branch`, `expect_oid`, checked again before the rename; `worktree_changed`) (§6.3, M4). Reason: the proofs must concern the checked-out branch.
+19. **The home attempt sender:** the stored `request`, sent at the commit, at each link start, and with a backoff of 2 to 60 s (§8.4, M5). Reason: the same pattern as the land outbox.
+20. **Clearing a reservation** by `lstat` `ENOENT` for failed or interrupted rows of any project and generation; `incomplete_folder` for the same project, `destination_reserved` for another (§8.4, M6). Reason: absence is a proof that needs no deletion.
+21. **`remote_name`** is `push_remote` at the add; the clone runs `git clone --origin <remote_name>`; a later change of `push_remote` gives `no_remote` until the owner adds it; new `HomeCheckState` values `no_remote` and `refused` (§8.4, §3.8, M7). Reason: Fleet Deck does not edit a home's Git configuration.
+22. **Architect decision (M9): the same local branch and a publication ref under the own slug.** The target's local branch is the source's (`fd/<source slug>/<callsign>`, or a legacy `fd/<callsign>`); it publishes with `refs/heads/<local branch>:refs/heads/fd/<target slug>/<callsign>`, with `-2` … `-99` when that remote ref belongs to another session; `session_git.publish_ref`, `LandPlan.publish_ref` and the PR head use it; leases are per publication ref (§12.5, ADR-010 §10.1). Reason: O29 and O30 ("same branch") and O10 ("only `fd/<own-slug>/*`") both hold.
+23. **A local branch with the source name in the target home refuses the move** (`move_branch_exists`); all 99 publication names taken gives `move_ref_exhausted` (§12.3, M9). Reason: Fleet Deck never deletes or renames a branch.
+24. **`MovePublication`** is captured under the source hold and returned by `session.move_export`; the target fetches the exact ref from its **own** verified URL into `refs/fleetdeck/move/<move_id>` and deletes that ref after `worktree add` (§12.3, M8). Reason: the target never uses a URL from the source.
+25. **The Branches view maps a ref to a session by `summary.push.ref_name`** (the publication ref), else by `summary.branch` (§13.1, M9). Reason: a moved session publishes under another name than its local branch.
+26. **Ambiguity is per share** (`path_state = ambiguous`), not report-wide; `[taildrive_mounts]` can name one candidate for a share of this station (§15.3, M10). Reason: a report-wide `unknown` would hide the exposure warnings of the other shares.
+27. **The walk details:** a link to a folder and an unreadable folder make the share `unknown`; an anchored deny pattern is tested from the share root and from each home, worktree and allowed root that contains the share (§15.4, B5). Reason: the walk must be complete to say `clear`.
+28. **`ArtifactAuthorization`** is requested for each start, resume and access (never reused for those), refreshed every 5 minutes for a live session, with the event `artifacts.revoked`; `fleet_git.artifact_authorize` (station → deck) and `fleet_git.share_verdict` (deck → exporting station); `not_a_station` for a machine without a station (§15.5, B6). Reason: the verdict is bound to its source and its time; a NAS has no station.
+29. **`TaildriveReport.inventory_revision = max(previous + 1, now_ms)`** (§15.2, B6). Reason: the same monotonic rule as the snapshot revision.
+30. **`FileRoot::Artifacts(SessionId)`** as a newtype variant, the `artifacts=` selector, the member check for the exact session id, and `artifactFiles` in `workspace.ts` (§15.6, M11). Reason: one wire shape that matches the existing roots.
+31. **Architect decision (M13): `allow_local_remotes = false`** (station.toml). With `true`, a `file://` URL or an absolute path of a bare repository is a remote; its scope is the canonical absolute path (no link in it); the deck accepts a local URL only when every home station reports the setting; `repo = "localhost/<path>"`. For tests and for a bare repository on the same machine; the A2 rig sets it on all three stations (§3.4, §3.8, §16.1). Reason: the acceptance rig must run the production destination checks; everything else in §3.8 stays.
+32. **Auto-attach order:** the sync owner, then the longest matching path, then the oldest project; `home_not_ready` for `cloning` and `failed` (§8.5, M12). Reason: a deterministic owner before any readiness test.
+33. **A2 coordinator suite** `crates/fleetdeck-cli/tests/fleet_git_coordinator.rs` with the four tools and four authority-loss points (§13.3, §16.1, M14). Reason: A2 must cover the whole O32 API.
+34. **The deck refuses to save an `unknown` artifact share** (`share_unverified`) as a hint; each use still needs its own authorization (§15.5). Reason: early feedback without a second source of truth.
