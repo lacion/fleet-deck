@@ -1,17 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { instanceLimit, mostRoom, rateMeters } from '../board/usage';
 import { batchRef, newBatchId } from '../compare/compare';
-import type {
-  DeckSession,
-  Prefer,
-  ProviderKind,
-  SessionKey,
-  StationView,
-  TranscriptPin,
-  WorkspaceListing,
-} from '../gen';
+import type { Prefer, ProviderKind, TranscriptPin } from '../gen';
 import { useProjects } from '../integrations/context';
-import type { Freshness } from '../runtime/state';
 import { DECK } from '../settings/actions';
 import { useSettings } from '../settings/context';
 import { FolderPicker } from '../ui/FolderPicker';
@@ -56,7 +47,6 @@ import {
   rememberSetupCmd,
   setupKey,
   setupProblem,
-  type SpawnActions,
   startHomes,
   type SpawnOutcome,
   spawnModes,
@@ -64,34 +54,8 @@ import {
   versionWarning,
   workspaceRequest,
 } from './spawn';
+import { coarsePointer, type SpawnFormProps } from './spawnFormProps';
 import { useFleetElevation } from './useFleetElevation';
-
-type Props = {
-  readonly stations: readonly StationView[];
-  readonly freshness: Freshness;
-  readonly actions?: SpawnActions | undefined;
-  readonly onOpen: (key: SessionKey) => void;
-  /** The listing shown at the first render (tests). */
-  readonly initialListing?: WorkspaceListing | null;
-  /** The first prompt at the first render (a plan from the library, DL-301). */
-  readonly initialPrompt?: string;
-  /** DL-141: the station chosen at the first render (an unrouted task). */
-  readonly initialStation?: string | undefined;
-  /** R3: the directory chosen at the first render ("Fix checks" of a project). */
-  readonly initialCwd?: string | undefined;
-  /** DL-176: the workspace choice at the first render ("New session in this project": worktree). */
-  readonly initialPlace?: 'here' | 'worktree' | 'clone' | undefined;
-  /** The repository field at the first render (tests). */
-  readonly initialRepo?: string | undefined;
-  /** DL-141: the fleet, for the recent directories of a station. */
-  readonly sessions?: readonly DeckSession[] | undefined;
-  /** Unix ms of now for the reset times of the limits (tests). */
-  readonly now?: number | undefined;
-};
-
-/** True on a phone or a tablet, where the first field must not open the keyboard by itself. */
-const coarsePointer = (): boolean =>
-  typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches === true;
 
 /** PLAN §11 spawn form for M2: station, provider, directory picker, mode,
  * model, title and first prompt. One button press sends one command. */
@@ -108,7 +72,7 @@ export function SpawnForm({
   initialRepo = '',
   sessions = [],
   now: givenNow,
-}: Props) {
+}: SpawnFormProps) {
   const targets = spawnTargets(stations);
   // FG-5 (§8.5): the form that "New session in this project" opened picks a home, not a station.
   const projects = useProjects();
