@@ -27,7 +27,20 @@ type Props = {
   readonly now: number;
 };
 
-function PendingRow({ pairing, displays, stations, actions, settings, ask, onDone, now }: Props) {
+/** A row also tells the section that it was approved: the reload then removes the row. */
+type RowProps = Props & { readonly onApproved: () => void };
+
+function PendingRow({
+  pairing,
+  displays,
+  stations,
+  actions,
+  settings,
+  ask,
+  onDone,
+  onApproved,
+  now,
+}: RowProps) {
   const expected = pairing.expected_display_id ?? null;
   const locked = expected !== null && displays.some((d) => d.display_id === expected);
   const [mode, setMode] = useState<'new' | 'existing'>(locked ? 'existing' : 'new');
@@ -39,7 +52,6 @@ function PendingRow({ pairing, displays, stations, actions, settings, ask, onDon
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [approved, setApproved] = useState(false);
   const agent =
     pairing.user_agent.length > AGENT_MAX
       ? `${pairing.user_agent.slice(0, AGENT_MAX)}…`
@@ -75,7 +87,7 @@ function PendingRow({ pairing, displays, stations, actions, settings, ask, onDon
         setBusy(false);
         if (shown === null) return;
         setCode('');
-        setApproved(true);
+        onApproved();
         onDone();
       },
       (e: unknown) => {
@@ -91,89 +103,85 @@ function PendingRow({ pairing, displays, stations, actions, settings, ask, onDon
         <span className="fd-note">{relativeAge(pairing.created_at, now)}</span>
       </p>
       <p className="fd-note">{agent === '' ? 'No user agent.' : agent}</p>
-      {approved ? (
-        <p role="status">Approved. The wall display signs in within a few seconds.</p>
-      ) : (
-        <form className="fd-set-dialogform" onSubmit={submit} aria-label="Approve this display">
-          {locked ? (
-            <p className="fd-note">
-              This launch belongs to{' '}
-              <strong>{displays.find((d) => d.display_id === expected)?.name}</strong>.
-            </p>
-          ) : (
-            <fieldset className="fd-disp-modes">
-              <legend className="fd-fieldlabel">Display</legend>
+      <form className="fd-set-dialogform" onSubmit={submit} aria-label="Approve this display">
+        {locked ? (
+          <p className="fd-note">
+            This launch belongs to{' '}
+            <strong>{displays.find((d) => d.display_id === expected)?.name}</strong>.
+          </p>
+        ) : (
+          <fieldset className="fd-disp-modes">
+            <legend className="fd-fieldlabel">Display</legend>
+            <label className="fd-disp-check">
+              <input
+                type="radio"
+                name={`mode-${pairing.pairing_id}`}
+                checked={mode === 'new'}
+                onChange={() => setMode('new')}
+              />{' '}
+              New display
+            </label>
+            {displays.length === 0 ? null : (
               <label className="fd-disp-check">
                 <input
                   type="radio"
                   name={`mode-${pairing.pairing_id}`}
-                  checked={mode === 'new'}
-                  onChange={() => setMode('new')}
+                  checked={mode === 'existing'}
+                  onChange={() => setMode('existing')}
                 />{' '}
-                New display
+                Existing display
               </label>
-              {displays.length === 0 ? null : (
-                <label className="fd-disp-check">
-                  <input
-                    type="radio"
-                    name={`mode-${pairing.pairing_id}`}
-                    checked={mode === 'existing'}
-                    onChange={() => setMode('existing')}
-                  />{' '}
-                  Existing display
-                </label>
-              )}
-            </fieldset>
-          )}
-          {mode === 'existing' ? (
-            <Field label="Existing display">
-              <select
-                value={existing}
-                disabled={locked}
-                onChange={(e) => setExisting(e.target.value)}
-              >
-                {displays.map((d) => (
-                  <option key={d.display_id} value={d.display_id}>
-                    {d.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          ) : (
-            <>
-              <Field label="Name">
-                <input value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
-              </Field>
-              <StationChoices
-                stations={stations}
-                value={ceiling}
-                onChange={setCeiling}
-                label="Stations that it may show"
-              />
-            </>
-          )}
-          <Field label="Code on the wall screen">
-            <input
-              value={code}
-              inputMode="numeric"
-              autoComplete="off"
-              maxLength={6}
-              pattern="[0-9]{6}"
-              onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
-            />
+            )}
+          </fieldset>
+        )}
+        {mode === 'existing' ? (
+          <Field label="Existing display">
+            <select
+              value={existing}
+              disabled={locked}
+              onChange={(e) => setExisting(e.target.value)}
+            >
+              {displays.map((d) => (
+                <option key={d.display_id} value={d.display_id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
           </Field>
-          {error === null ? null : (
-            <p className="fd-fielderror" role="alert">
-              {error}
-            </p>
-          )}
-          <div className="fd-formactions">
-            <button type="submit" className="fd-primary" disabled={busy}>
-              {busy ? 'Approving…' : 'Approve'}
-            </button>
-          </div>
-        </form>
-      )}
+        ) : (
+          <>
+            <Field label="Name">
+              <input value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
+            </Field>
+            <StationChoices
+              stations={stations}
+              value={ceiling}
+              onChange={setCeiling}
+              label="Stations that it may show"
+            />
+          </>
+        )}
+        <Field label="Code on the wall screen">
+          <input
+            value={code}
+            inputMode="numeric"
+            autoComplete="off"
+            maxLength={6}
+            pattern="[0-9]{6}"
+            onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+          />
+        </Field>
+        {error === null ? null : (
+          <p className="fd-fielderror" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="fd-formactions">
+          <button type="submit" className="fd-primary" disabled={busy}>
+            {busy ? 'Approving…' : 'Approve'}
+          </button>
+        </div>
+      </form>
     </li>
   );
 }
@@ -186,15 +194,26 @@ export function PendingPairings(
 ) {
   const clock = useNow(props.now, 1000);
   const { pending, now: _given, ...rest } = props;
+  // The approved row leaves the list at the next read, so the section keeps the text.
+  const [approved, setApproved] = useState(false);
   return (
     <section aria-label="Waiting for a code" className="fd-disp-section">
       <h2 className="fd-form-title">Waiting for a code</h2>
+      {approved ? (
+        <p role="status">Approved. The wall display signs in within a few seconds.</p>
+      ) : null}
       {pending.length === 0 ? (
         <p className="fd-note">No display waits for a code.</p>
       ) : (
         <ul className="fd-disp-list">
           {pending.map((p) => (
-            <PendingRow key={p.pairing_id} {...rest} pairing={p} now={clock} />
+            <PendingRow
+              key={p.pairing_id}
+              {...rest}
+              pairing={p}
+              now={clock}
+              onApproved={() => setApproved(true)}
+            />
           ))}
         </ul>
       )}
