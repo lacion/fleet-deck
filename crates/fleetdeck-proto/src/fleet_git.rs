@@ -29,6 +29,9 @@ pub use taildrive::*;
 #[path = "fleet_git_land.rs"]
 mod land;
 pub use land::*;
+#[path = "fleet_git_branches.rs"]
+mod branches;
+pub use branches::*;
 
 /// Wire strings of the Fleet Git error codes (ADR-009 §4). A code is never
 /// reused for another meaning.
@@ -708,6 +711,9 @@ pub struct FleetGitInfo {
     pub allow_local_remotes: bool,
 }
 
+#[cfg(test)]
+#[path = "fleet_git_branches_tests.rs"]
+mod branches_tests;
 #[cfg(test)]
 #[path = "fleet_git_homes_tests.rs"]
 mod homes_tests;

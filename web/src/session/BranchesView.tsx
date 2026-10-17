@@ -4,11 +4,14 @@ import { relativeAge } from '../app/sessions';
 import { Diff } from '../chat/Diff';
 import type { RepoBranch, RepoBranches, SessionDiff } from '../gen';
 import { ApiError } from '../runtime/api';
+import { type FleetSession, OtherStations } from './OtherStations';
 
 type Props = {
   readonly load: () => Promise<RepoBranches>;
   readonly loadDiff: (head: string) => Promise<SessionDiff>;
   readonly onOpenFile?: ((path: string) => void) | undefined;
+  /** FG-10: the session that shows the group "Other stations"; absent: no group. */
+  readonly fleet?: FleetSession | undefined;
 };
 
 /** A failed request: the deck's own message, and whether "Try again" can help. */
@@ -181,7 +184,7 @@ export function BranchListView({
 }
 
 /** The branches other than the one of the session, newest first, and the diff of the one that was clicked. */
-export function BranchesView({ load, loadDiff, onOpenFile }: Props) {
+export function BranchesView({ load, loadDiff, onOpenFile, fleet }: Props) {
   const [list, setList] = useState<ListState>({ kind: 'loading' });
   const [picked, setPicked] = useState<{
     readonly row: RepoBranch;
@@ -252,5 +255,10 @@ export function BranchesView({ load, loadDiff, onOpenFile }: Props) {
       />
     );
   }
-  return <BranchListView list={list} onOpen={open} onReload={reload} />;
+  return (
+    <>
+      <BranchListView list={list} onOpen={open} onReload={reload} />
+      {fleet === undefined ? null : <OtherStations fleet={fleet} />}
+    </>
+  );
 }

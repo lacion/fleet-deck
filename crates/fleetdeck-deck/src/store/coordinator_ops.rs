@@ -63,6 +63,8 @@ pub(crate) struct Context {
     pub env: FleetEnv,
     /// What the decision tells the caller of the transaction.
     pub flags: CallFlags,
+    /// The new land id and command id of a `Land` op (FG-10).
+    pub land_ids: Option<(String, String)>,
 }
 
 /// Facts that a decision hands back to [`super::coordinator`]: a change of
@@ -103,6 +105,7 @@ fn classes_of(op: &CoordinatorOp) -> Vec<GrantClass> {
         | CoordinatorOp::ProjectAssign { .. } => vec![GrantClass::Manage],
         CoordinatorOp::ProjectStart { .. } => vec![GrantClass::Spawn, GrantClass::Manage],
         CoordinatorOp::Answer { .. } => vec![GrantClass::Answer],
+        CoordinatorOp::Land { .. } => vec![GrantClass::Manage],
     }
 }
 
@@ -423,6 +426,10 @@ fn decide_op(
             now,
         ),
         CoordinatorOp::Answer { .. } => coordinator_fleet::answer(tx, grant, ctx, op, now),
+        CoordinatorOp::Land {
+            station,
+            session_id,
+        } => super::coordinator_git::land(tx, grant, ctx, (station, session_id), (command_id, now)),
         CoordinatorOp::AssignAuto { task, requirements } => {
             if let Some(d) = check_text(task) {
                 return Ok(d);

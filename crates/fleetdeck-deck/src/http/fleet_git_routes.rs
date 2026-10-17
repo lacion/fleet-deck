@@ -16,6 +16,9 @@ use super::{
 // The land routes (FG-8): declared here, `http/mod.rs` has no room for a line.
 #[path = "land_routes.rs"]
 pub mod land_routes;
+// The branches of other stations (FG-10).
+#[path = "project_branch_routes.rs"]
+pub mod project_branch_routes;
 // The radar route (FG-7), declared here for the same reason.
 #[path = "radar_routes.rs"]
 pub mod radar_routes;
@@ -30,6 +33,14 @@ pub fn routes() -> Router<Arc<Board>> {
         .route(
             "/api/projects/{project}/lands",
             get(land_routes::project_lands),
+        )
+        .route(
+            "/api/projects/{project}/branches",
+            get(project_branch_routes::branches),
+        )
+        .route(
+            "/api/projects/{project}/fetch",
+            post(project_branch_routes::fetch),
         )
         .route("/api/radar", get(radar_routes::radar))
         .route("/api/lands/{land}/cancel", post(land_routes::cancel))

@@ -30,7 +30,7 @@ use fleetdeck_proto::integrations::{ForgeBinding, ForgeKind, Project, ProjectInp
 use fleetdeck_proto::link::Scope;
 
 use super::board::{BoardClient, Http, board};
-use super::fleet_git_land::{LandReply, RadarReply};
+use super::fleet_git_land::{GitReply, LandReply, RadarReply};
 use super::{Fixture, T, accepted, fixture};
 
 /// What the fake answers to a snapshot.
@@ -144,6 +144,10 @@ pub struct FakeGit {
     pub land_abandon: Mutex<Value>,
     /// The answer of `project.radar` (FG-7).
     pub radar: Mutex<RadarReply>,
+    /// The answer of `project.branches` (FG-10).
+    pub branches: Mutex<GitReply>,
+    /// The answer of `project.fetch` (FG-10).
+    pub fetch: Mutex<GitReply>,
     /// The answer of `files.list`: `Err((code, message))` is a link error.
     pub files: Mutex<Result<Value, (&'static str, &'static str)>>,
     /// The `station.info` answer (the setters change it).
@@ -304,6 +308,11 @@ impl FakeGit {
             land_status: Mutex::new(json!({ "state": "unknown" })),
             land_abandon: Mutex::new(json!({ "state": "busy" })),
             radar: Mutex::new(RadarReply::clear()),
+            branches: Mutex::new(GitReply::Answer(json!({
+                "remote": "origin", "default_branch": "main",
+                "branches": [], "truncated": false
+            }))),
+            fetch: Mutex::new(GitReply::Answer(json!({ "fetched_at": 7 }))),
             files: Mutex::new(Ok(json!({
                 "root": "/artifacts", "path": "", "entries": [], "truncated": false
             }))),
@@ -339,6 +348,8 @@ impl FakeGit {
             "fleet_git.land_status" => Outcome::Ok(lock(&self.land_status).clone()),
             "fleet_git.land_abandon" => Outcome::Ok(lock(&self.land_abandon).clone()),
             "project.radar" => lock(&self.radar).outcome(),
+            "project.branches" => lock(&self.branches).outcome(),
+            "project.fetch" => lock(&self.fetch).outcome(),
             // One open GitHub issue `#7`, for the batch start.
             "issues.get" => Outcome::Ok(json!({
                 "summary": {
@@ -685,6 +696,11 @@ pub async fn setup() -> Setup {
 /// which `fleet_git.artifact_authorize` (scope `admin`) needs.
 pub fn station_scopes() -> BTreeSet<Scope> {
     STATION_SCOPES.into_iter().collect()
+}
+
+/// [`setup`] with a first station that holds `scopes`.
+pub async fn setup_scopes(scopes: BTreeSet<Scope>) -> Setup {
+    setup_with(super::fixture_with(scopes).await).await
 }
 
 /// [`setup`] with a first station that holds [`station_scopes`].

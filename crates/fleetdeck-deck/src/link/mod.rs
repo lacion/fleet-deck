@@ -23,6 +23,7 @@
 //! coordinator receipts (G7); the others with `not_implemented` (DL-050,
 //! DL-053).
 
+pub mod coordinator_git_reads;
 mod coordinator_reads;
 pub mod fleet_git_artifacts;
 pub mod fleet_git_sync;

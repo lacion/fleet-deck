@@ -721,4 +721,19 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::FLEET_GIT_LAND),
         false,
     ),
+    // Fleet Git phase 4 (ADR-009): the branches of other stations.
+    m(
+        "project.branches",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::FLEET_GIT_BRANCHES),
+        false,
+    ),
+    m(
+        "project.fetch",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::FLEET_GIT_BRANCHES),
+        false,
+    ),
 ];

@@ -162,6 +162,8 @@ export function fakeActions(extra: Partial<IntegrationActions> = {}): Integratio
     setDriftReference: never,
     radar: never,
     projectLands: never,
+    projectBranches: never,
+    fetchProject: never,
     land: never,
     cancelLand: never,
     abandonLand: never,

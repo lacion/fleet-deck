@@ -18,7 +18,7 @@ use fleetdeck_link::control::{Control, InboundRequest};
 use fleetdeck_link::methods::code;
 use fleetdeck_proto::link::{Outcome, WireError};
 use fleetdeck_proto::mutation::{
-    AuthorityAnswer, AuthorityCheck, CoordinatorQueryEnvelope, Mutation,
+    AuthorityAnswer, AuthorityCheck, CoordinatorOp, CoordinatorQueryEnvelope, Mutation,
 };
 use fleetdeck_proto::{CommandId, Receipt, StationId};
 
@@ -72,8 +72,15 @@ async fn coordinator_call(ctx: &DeckLink, station: StationId, req: &InboundReque
             return receipt(&Receipt::rejected(id, reject, now));
         }
     };
+    let lands = matches!(envelope.call.op, CoordinatorOp::Land { .. });
     match ctx.store.decide_coordinator(station, envelope).await {
-        Ok(r) => receipt(&r),
+        Ok(r) => {
+            // A queued coordinator land wakes admission (FG-10).
+            if lands && r.reject.is_none() {
+                ctx.land_kick.kick();
+            }
+            receipt(&r)
+        }
         Err(e) => {
             tracing::warn!(error = %e, "coordinator receipt");
             Outcome::Err(WireError::new(code::PROTOCOL_ERROR, "deck store error"))

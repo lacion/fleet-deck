@@ -432,6 +432,11 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         fg::LandAbandonParams::export_all(&cfg),
         fg::LandWrite::export_all(&cfg),
         fg::LandAbandonAnswer::export_all(&cfg),
+        fg::BranchesParams::export_all(&cfg),
+        fg::RemoteBranch::export_all(&cfg),
+        fg::RemoteBranches::export_all(&cfg),
+        fg::FetchParams::export_all(&cfg),
+        fg::FetchAnswer::export_all(&cfg),
     ];
     for result in results {
         result.map_err(io::Error::other)?;

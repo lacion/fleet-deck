@@ -142,6 +142,9 @@ pub mod feature {
     /// phase 3, ADR-009).
     pub const FLEET_GIT_LAND: &str = "fleet_git.land.v1";
 
+    /// `project.branches` and `project.fetch` (Fleet Git phase 4, ADR-009).
+    pub const FLEET_GIT_BRANCHES: &str = "fleet_git.branches.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -180,6 +183,7 @@ pub mod feature {
         FLEET_GIT,
         FLEET_GIT_HOMES,
         FLEET_GIT_LAND,
+        FLEET_GIT_BRANCHES,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];
