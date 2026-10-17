@@ -19,6 +19,8 @@ pub mod localsock;
 pub mod logging;
 pub mod netscope;
 pub mod paths;
+pub mod private_file;
+pub mod provision;
 pub mod restart;
 pub mod secret;
 pub mod settings;

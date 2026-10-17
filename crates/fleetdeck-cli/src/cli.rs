@@ -230,6 +230,21 @@ pub enum DeckCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Write the provisioning file of a new station (P8): the deck address and fingerprint and the station name.
+    ProvisionFile(ProvisionFileArgs),
+}
+
+/// The arguments of `fleetdeck deck provision-file` (P8).
+#[derive(Debug, Args)]
+pub struct ProvisionFileArgs {
+    /// The name of the new station.
+    pub name: String,
+    /// The tailnet address of this deck: `<host>[:<port>]`.
+    #[arg(long)]
+    pub deck: String,
+    /// The absolute path of the new file.
+    #[arg(long)]
+    pub out: PathBuf,
 }
 
 /// `fleetdeck settings` (DL-172, design 1.3). Without `--station` the
