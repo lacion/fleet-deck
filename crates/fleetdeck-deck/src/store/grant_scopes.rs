@@ -8,6 +8,12 @@
 //!   ([`sync_coordinate_scopes`]). The stored and cached scope is a coarse
 //!   admission filter that can lag the clock; every `coordinate` admission
 //!   also checks [`station_covered`] in its own transaction.
+//! - Every admission (a call, a query, each pass of an authority check,
+//!   [`DeckStore::station_covered_now`]) reads the shared clock inside its own
+//!   database transaction, immediately before [`station_covered`], and uses
+//!   that time for its remaining expiry checks. A time taken before an await
+//!   (a session read, `policy_now`, the queue of the database) can be late
+//!   (grant stations PRE-PR round 1, GS2).
 //! - [`DeckStore::sweep_grants`] ends every grant that is `active` but past
 //!   its lifetime or idle, and rebuilds the scopes. It runs at deck start
 //!   and every 30 s.
@@ -190,9 +196,9 @@ impl DeckStore {
     /// # Errors
     /// A database error.
     pub async fn station_covered_now(&self, station: &StationId) -> Result<bool> {
-        let (station, now) = (station.clone(), self.now_ms());
+        let (station, clock) = (station.clone(), self.inner.clock.clone());
         call(&self.inner.db, move |conn| {
-            station_covered(conn, &station, now)
+            station_covered(conn, &station, super::now_ms(&clock))
         })
         .await
     }

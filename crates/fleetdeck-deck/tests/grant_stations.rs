@@ -10,19 +10,24 @@ mod common;
 mod settings_support;
 
 use std::collections::BTreeSet;
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
 use common::board::board;
+use common::fleet::{Rig, bound_edit, rig, stop, wire};
 use common::*;
 use fleetdeck_core::identity::Identity;
 use fleetdeck_deck::store::stations::NewStation;
-use fleetdeck_deck::store::{AuditResult, DeckStore, NewGrant};
+use fleetdeck_deck::store::{AuditResult, DeckStore, GrantClass, NewGrant};
 use fleetdeck_link::grants::GrantSource;
-use fleetdeck_proto::StationId;
+use fleetdeck_proto::command::{GrantScope, RETRY_WINDOW_MS};
 use fleetdeck_proto::link::{Outcome, Scope};
-use fleetdeck_proto::mutation::AuthorityCheck;
+use fleetdeck_proto::mutation::{
+    AuthorityCheck, CoordinatorBinding, CoordinatorCall, CoordinatorCallEnvelope, CoordinatorQuery,
+};
 use fleetdeck_proto::version::feature::COORDINATOR_V2;
+use fleetdeck_proto::{CommandId, Receipt, RejectCode, StationId};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use settings_support::*;
@@ -360,4 +365,256 @@ async fn the_sweep_task_ends_lapsed_grants_and_the_link_cache_follows() {
         .await
         .unwrap()
         .unwrap();
+}
+
+// PRE-PR round 1 (GS2): the exact rule reads the clock inside the decision's
+// own transaction, also after the waits of the admission.
+
+/// A database job that holds the database thread until [`HeldDb::release`].
+/// The first poll submits the job, so it is queued before this function
+/// returns and every later database call waits behind it.
+struct HeldDb {
+    release: std::sync::mpsc::Sender<()>,
+    job: std::pin::Pin<Box<dyn Future<Output = ()> + Send>>,
+}
+
+impl HeldDb {
+    async fn release(self) {
+        self.release.send(()).unwrap();
+        self.job.await;
+    }
+}
+
+fn hold_db(store: &DeckStore) -> HeldDb {
+    let (release, wait) = std::sync::mpsc::channel::<()>();
+    let db = store.db();
+    let mut job: std::pin::Pin<Box<dyn Future<Output = ()> + Send>> = Box::pin(async move {
+        db.call(move |_| {
+            let _ = wait.recv();
+            Ok(())
+        })
+        .await
+        .unwrap();
+    });
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    assert!(job.as_mut().poll(&mut cx).is_pending());
+    HeldDb { release, job }
+}
+
+/// Runs `work` while the database thread is held, lets the clock go forward
+/// by `by` after `work` has started, and returns the result of `work`.
+async fn lapse_during<T: Send + 'static>(
+    f: &Fixture,
+    by: Duration,
+    work: impl Future<Output = T> + Send + 'static,
+) -> T {
+    let held = hold_db(&f.store);
+    let task = tokio::spawn(work);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    f.det.advance(by);
+    held.release().await;
+    task.await.unwrap()
+}
+
+/// A fleet grant of `coord-1` on the fixture station with the given times.
+async fn short_grant(f: &Fixture, ttl_ms: i64, idle_ttl_ms: i64) -> CoordinatorBinding {
+    bound_edit(f, &f.station, "coord-1", &[GrantClass::Drive], |g| {
+        g.scope = GrantScope::Fleet;
+        g.ttl_ms = ttl_ms;
+        g.idle_ttl_ms = idle_ttl_ms;
+    })
+    .await
+}
+
+fn stop_call(f: &Fixture, b: &CoordinatorBinding, id: &str) -> CoordinatorCallEnvelope {
+    CoordinatorCallEnvelope {
+        command_id: CommandId::from(id),
+        target_incarnation: f.store.incarnation().clone(),
+        retry_until: f.store.now_ms() + RETRY_WINDOW_MS,
+        call: CoordinatorCall {
+            caller: b.native_id.strip_prefix("n-").unwrap().into(),
+            binding: b.clone(),
+            idempotency_key: None,
+            op: stop(f, "w1"),
+        },
+    }
+}
+
+fn assert_not_covered(receipt: &Receipt) {
+    let reject = receipt.reject.as_ref().expect("the call must be refused");
+    assert_eq!(reject.code, RejectCode::Forbidden, "{reject:?}");
+    assert_eq!(
+        reject.message,
+        "No coordinator grant covers this station now."
+    );
+}
+
+#[tokio::test]
+async fn a_call_is_refused_when_its_grant_lapses_while_it_waits_for_its_session_read() {
+    let r = rig().await;
+    let b = short_grant(&r.f, 5_000, 600_000).await;
+    let (store, station) = (r.f.store.clone(), r.f.station.clone());
+    let envelope = stop_call(&r.f, &b, "k1");
+    let receipt = lapse_during(&r.f, Duration::from_millis(5_001), async move {
+        store.decide_coordinator(station, envelope).await.unwrap()
+    })
+    .await;
+    assert_not_covered(&receipt);
+}
+
+#[tokio::test]
+async fn a_call_is_refused_when_its_grant_goes_idle_while_it_waits_for_its_session_read() {
+    let r = rig().await;
+    let b = short_grant(&r.f, 600_000, 1_000).await;
+    let first = common::fleet::call(&r.f, &b, "k0", stop(&r.f, "w1")).await;
+    assert!(first.reject.is_none(), "{first:?}");
+    let (store, station) = (r.f.store.clone(), r.f.station.clone());
+    let envelope = stop_call(&r.f, &b, "k1");
+    let receipt = lapse_during(&r.f, Duration::from_millis(1_001), async move {
+        store.decide_coordinator(station, envelope).await.unwrap()
+    })
+    .await;
+    assert_not_covered(&receipt);
+}
+
+#[tokio::test]
+async fn a_query_is_refused_when_its_grant_lapses_while_it_waits_for_the_database() {
+    let r = rig().await;
+    let b = short_grant(&r.f, 2_000, 600_000).await;
+    let (store, station) = (r.f.store.clone(), r.f.station.clone());
+    let envelope = common::fleet::query(&r.f, &b, CoordinatorQuery::ListSessions);
+    let answer = lapse_during(&r.f, Duration::from_millis(2_001), async move {
+        store.coordinator_query(station, envelope).await.unwrap()
+    })
+    .await;
+    let Err(reject) = answer else {
+        panic!("the lapsed grant must not answer a query");
+    };
+    assert_eq!(reject.code, RejectCode::Forbidden);
+    assert_eq!(
+        reject.message,
+        "No coordinator grant covers this station now."
+    );
+}
+
+/// `coordinator.authority_check` whose `coordinator.policy_now` answer comes
+/// only after `during` ran; the wire outcome, also an error.
+async fn authority_held(
+    r: &mut Rig,
+    check: &AuthorityCheck,
+    during: impl Future<Output = ()>,
+) -> Outcome {
+    let control = r.station.control.clone();
+    let ask = control.request("coordinator.authority_check", None, json!(check));
+    let serve = async {
+        let req = next_request(&mut r.station).await;
+        assert_eq!(req.method, "coordinator.policy_now");
+        during.await;
+        let policy = json!({"fleet_control": true, "bound": true});
+        r.station
+            .control
+            .respond(req.id, Outcome::Ok(policy))
+            .await
+            .unwrap();
+    };
+    let (out, ()) = tokio::join!(ask, serve);
+    out.unwrap()
+}
+
+/// A rig with a sent command whose authority the fake station checks.
+async fn sent_command(ttl_ms: i64, idle_ttl_ms: i64) -> (Rig, AuthorityCheck) {
+    let mut r = rig().await;
+    let b = short_grant(&r.f, ttl_ms, idle_ttl_ms).await;
+    let receipt = common::fleet::call(&r.f, &b, "k1", stop(&r.f, "w1")).await;
+    assert!(receipt.reject.is_none(), "{receipt:?}");
+    let (id, _) = wire(&mut r).await;
+    let check = AuthorityCheck {
+        grant_id: b.grant_id,
+        generation: 1,
+        caller_station: r.f.station.clone(),
+        caller_session: "coord-1".into(),
+        target_session: "w1".into(),
+        command_id: id,
+        launch: None,
+    };
+    (r, check)
+}
+
+#[tokio::test]
+async fn an_authority_check_is_refused_when_its_grant_goes_idle_while_the_deck_waits_for_policy_now()
+ {
+    let (mut r, check) = sent_command(600_000, 1_000).await;
+    // No change: valid.
+    let got = authority_held(&mut r, &check, async {}).await;
+    assert!(
+        matches!(&got, Outcome::Ok(v) if v["valid"] == true),
+        "{got:?}"
+    );
+    // The grant is idle-expired when `policy_now` answers; the row is still
+    // `active` and the sweep has not run.
+    let det = r.f.det.clone();
+    let idle = async move { det.advance(Duration::from_millis(1_001)) };
+    let Outcome::Err(refused) = authority_held(&mut r, &check, idle).await else {
+        panic!("the idle grant must not cover the station");
+    };
+    assert_eq!(refused.code, "forbidden");
+    assert_eq!(
+        refused.message,
+        "No coordinator grant covers this station now."
+    );
+}
+
+#[tokio::test]
+async fn an_authority_check_is_invalid_when_its_grant_lapses_while_the_deck_waits_for_policy_now() {
+    let (mut r, check) = sent_command(5_000, 600_000).await;
+    let det = r.f.det.clone();
+    let lapse = async move { det.advance(Duration::from_millis(5_001)) };
+    let got = authority_held(&mut r, &check, lapse).await;
+    assert!(
+        matches!(&got, Outcome::Ok(v) if v["valid"] == false && v["reason"] == "grant_expired"),
+        "{got:?}"
+    );
+}
+
+#[tokio::test]
+async fn refresh_changed_returns_only_after_the_batch_that_the_follower_is_publishing() {
+    let mut f = fixture().await;
+    let station = f.connect().await;
+    let other = extra(&f.store, "other", true).await;
+    let rec = f.store.station(f.station.clone()).await.unwrap().unwrap();
+    let fingerprint = rec.key.fingerprint();
+    let mut g = NewGrant::new(other, "coord-1".into());
+    g.stations.insert(f.station.clone());
+    f.store.create_grant(g).await.unwrap();
+    // The follower is woken; it has not run yet (one test thread). Hold the
+    // database before it reads, so it stops in the middle of its batch with
+    // the noted set already drained.
+    let held = hold_db(&f.store);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let peers = Arc::clone(&f.ctx.peers);
+    let explicit = tokio::spawn(async move { peers.refresh_changed().await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        !explicit.is_finished(),
+        "an explicit refresh must wait for the batch in progress"
+    );
+    assert!(
+        !f.ctx
+            .peers
+            .scopes(&fingerprint)
+            .contains(&Scope::Coordinate)
+    );
+    held.release().await;
+    explicit.await.unwrap().unwrap();
+    // The authority check of the target runs at once after the refresh.
+    assert!(
+        f.ctx
+            .peers
+            .scopes(&fingerprint)
+            .contains(&Scope::Coordinate)
+    );
+    match ask(&f, &station).await {
+        Outcome::Ok(v) => assert_eq!(v["valid"], false, "{v}"),
+        Outcome::Err(e) => panic!("{e}"),
+    }
 }
