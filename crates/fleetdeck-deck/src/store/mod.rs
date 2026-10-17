@@ -70,6 +70,9 @@ pub mod review_send;
 pub mod review_text;
 pub mod schedules;
 pub mod schema;
+pub mod session_moves;
+mod session_moves_ready;
+pub mod session_moves_steps;
 pub mod shares;
 pub mod slug_reservations;
 pub mod station_machines;
@@ -251,20 +254,9 @@ impl Inner {
                 .map(|(s, l)| (s.clone(), v2_state(l)))
                 .collect(),
             // The land feature of each station (FG-10: a coordinator land).
-            land: links
-                .iter()
-                .map(|(s, l)| {
-                    let all = !l.is_empty()
-                        && l.values()
-                            .all(|f| f.contains(fleetdeck_proto::version::feature::FLEET_GIT_LAND));
-                    let state = if all {
-                        LinkFeature::Negotiated
-                    } else {
-                        LinkFeature::Without
-                    };
-                    (s.as_str().to_owned(), state)
-                })
-                .collect(),
+            land: feature_states(&links, fleetdeck_proto::version::feature::FLEET_GIT_LAND),
+            // The move feature of each station (FG-9: a coordinator move).
+            moves: feature_states(&links, fleetdeck_proto::version::feature::FLEET_GIT_MOVE),
         }
     }
 }
@@ -587,6 +579,25 @@ impl DeckStore {
         })
         .await
     }
+}
+
+/// Whether every live link of each station negotiated `feature`.
+fn feature_states(
+    links: &BTreeMap<StationId, BTreeMap<u64, BTreeSet<String>>>,
+    feature: &str,
+) -> BTreeMap<String, LinkFeature> {
+    links
+        .iter()
+        .map(|(s, l)| {
+            let all = !l.is_empty() && l.values().all(|f| f.contains(feature));
+            let state = if all {
+                LinkFeature::Negotiated
+            } else {
+                LinkFeature::Without
+            };
+            (s.as_str().to_owned(), state)
+        })
+        .collect()
 }
 
 fn v2_state(links: &BTreeMap<u64, BTreeSet<String>>) -> LinkV2 {

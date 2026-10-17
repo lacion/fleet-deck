@@ -165,27 +165,17 @@ fn a_caught_up_deck_restart_does_not_fence_a_coordinator_call() {
 }
 
 #[test]
-fn move_session_is_not_in_the_catalog() {
-    let (rig, _dir, project, folders, coord) = world(json!({}));
-    let s = idle_in(&rig, 1, &folders[1], &project);
+fn move_session_is_in_the_catalog() {
+    let (_rig, _dir, _project, _folders, coord) = world(json!({}));
     let tools = coord.tools();
-    for name in ["project_branches", "project_fetch", "land_session"] {
+    for name in [
+        "project_branches",
+        "project_fetch",
+        "land_session",
+        "move_session",
+    ] {
         assert!(tools.iter().any(|t| t == name), "{name} in {tools:?}");
     }
-    assert!(!tools.iter().any(|t| t == "move_session"), "{tools:?}");
-
-    let before = rig.bare_refs();
-    let answer = coord.call(
-        "move_session",
-        json!({
-            "station": rig.station_id(1),
-            "session_id": id_of(&s),
-            "to_station": rig.station_id(2),
-        }),
-    );
-    assert!(answer.is_error, "{}", answer.text);
-    assert_eq!(answer.text, "forbidden: the grant has no such tool");
-    assert_eq!(rig.bare_refs(), before);
 }
 
 // A land of the owner sits in its push to `main`. The coordinator queues a

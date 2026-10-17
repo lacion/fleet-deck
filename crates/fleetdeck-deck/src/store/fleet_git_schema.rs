@@ -3,7 +3,7 @@
 //! state, and the reserved Git names. V26 (phase 2): the homes of a project,
 //! their generations and their clone attempts. V27 (phase 3): the radar and
 //! the land queue. V28 (PRE-PR round 1): the last known Taildrive machine name
-//! of each station. A migration only adds
+//! of each station. V29 (phase 4): the session moves. A migration only adds
 //! (decision 79). To reverse one, restore the pre-upgrade backup (§3.9);
 //! never drop the tables while the deck runs.
 
@@ -179,6 +179,38 @@ CREATE TABLE station_machines (
     machine    TEXT    NOT NULL,
     updated_at INTEGER NOT NULL
 ) STRICT;
+";
+
+/// V29 (Fleet Git phase 4, FG-9): the moves of a session to another station
+/// (design §12.3). `request_command_id` and `undo_request_command_id` make
+/// the owner requests idempotent (T4.4b Q5, Q17). Only an additive migration;
+/// to reverse it, restore the pre-upgrade backup (§3.9).
+pub const MOVES_SQL: &str = "
+CREATE TABLE session_moves (
+    move_id                 TEXT PRIMARY KEY,
+    request_command_id      TEXT NOT NULL,
+    src_station             TEXT NOT NULL, src_session TEXT NOT NULL,
+    dst_station             TEXT NOT NULL, dst_session TEXT,
+    kind                    TEXT NOT NULL,
+    state                   TEXT NOT NULL,
+    out_command_id          TEXT NOT NULL UNIQUE,
+    in_command_id           TEXT NOT NULL UNIQUE,
+    finish_command_id       TEXT NOT NULL UNIQUE,
+    undo_command_id         TEXT UNIQUE,
+    undo_request_command_id TEXT,
+    publication             TEXT,
+    step_attempts           INTEGER NOT NULL DEFAULT 0,
+    next_step_at            INTEGER,
+    code                    TEXT, message TEXT,
+    bytes                   INTEGER,
+    requested_by            TEXT NOT NULL,
+    authority               TEXT,
+    authority_expires_at    INTEGER,
+    created_at              INTEGER NOT NULL, committed_at INTEGER, ended_at INTEGER,
+    UNIQUE (requested_by, request_command_id)
+) STRICT;
+CREATE UNIQUE INDEX session_moves_open ON session_moves (src_station, src_session)
+    WHERE state NOT IN ('done', 'failed', 'undone');
 ";
 
 #[cfg(test)]

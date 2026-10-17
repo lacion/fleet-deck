@@ -199,6 +199,7 @@ pub const FLEET_TOOLS: &[Tool] = &[
     super::git_tools::PROJECT_BRANCHES,
     super::git_tools::PROJECT_FETCH,
     super::git_tools::LAND_SESSION,
+    super::git_tools::MOVE_SESSION,
 ];
 
 /// True for a fleet-control tool that is a `coordinator.query`.
@@ -281,6 +282,7 @@ pub fn op(tool: &str, args: &Value) -> Result<CoordinatorOp, String> {
         }
         "answer_request" => "answer",
         "land_session" => "land",
+        "move_session" => "move",
         other => return Err(format!("forbidden: the grant has no tool `{other}`")),
     };
     obj.insert("op".to_owned(), json!(name));

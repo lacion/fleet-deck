@@ -1,7 +1,7 @@
 //! The Fleet Git coordinator tools (FG-10, design §13.2, O32): thin forwards
 //! of `CoordinatorQuery::{ProjectBranches, ProjectFetch}` and
-//! `CoordinatorOp::Land`. The deck decides everything. `move_session` is not
-//! here (FG-9 is not built). `fleet_tools.rs` lists these tools.
+//! `CoordinatorOp::Land`, and the forward of `CoordinatorOp::Move` (FG-9). The
+//! deck decides everything. `fleet_tools.rs` lists these tools.
 
 use serde_json::{Value, json};
 
@@ -40,4 +40,18 @@ pub(super) const LAND_SESSION: Tool = Tool {
     classes: &[ToolClass::Manage],
     description: "Land a session of a synced project into its default branch; the deck queues it and checks the grant again at each step.",
     schema: target,
+};
+
+fn move_target() -> Value {
+    json!({"type": "object", "required": ["station", "session_id", "to_station"],
+           "properties": {"station": {"type": "string"}, "session_id": {"type": "string"},
+                          "to_station": {"type": "string"}}})
+}
+
+/// `move_session`: a `coordinator.call` op (FG-9, design §13.2).
+pub(super) const MOVE_SESSION: Tool = Tool {
+    name: "move_session",
+    classes: &[ToolClass::Manage],
+    description: "Move a session of a synced project to another station of the grant; the deck drives the move and checks the grant again at each step.",
+    schema: move_target,
 };

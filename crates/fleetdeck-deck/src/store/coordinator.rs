@@ -120,6 +120,7 @@ pub(crate) struct FleetEnv {
     pub links: BTreeMap<StationId, LinkV2>,
     /// The `fleet_git.land.v1` state of each station link (FG-10).
     pub land: BTreeMap<String, super::LinkFeature>,
+    pub moves: BTreeMap<String, super::LinkFeature>,
 }
 
 impl FleetEnv {
@@ -747,7 +748,7 @@ impl DeckStore {
             }
             let Some((payload, authority)) = row else {
                 // A land command is in `land_queue` (FG-8, design §11.2).
-                return super::land_outbox::authority_local(&tx, &station, &check, &grant, now);
+                return super::session_moves::authority_local(&tx, &station, &check, &grant, now);
             };
             let same = authority
                 .and_then(|t| serde_json::from_str::<CommandAuthority>(&t).ok())

@@ -745,6 +745,8 @@ pub fn migrations() -> Migrations<'static> {
         M::up(super::fleet_git_schema::LAND_SQL),
         // V28 (PRE-PR round 1): the Taildrive machine of each station.
         M::up(super::fleet_git_schema::STATION_MACHINES_SQL),
+        // V29 (Fleet Git phase 4): the session moves.
+        M::up(super::fleet_git_schema::MOVES_SQL),
     ])
 }
 
