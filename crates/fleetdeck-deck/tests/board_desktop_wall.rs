@@ -304,6 +304,28 @@ async fn a_close_clears_the_binding_only_after_a_successful_close() {
     .await;
     assert_eq!(r.status, 200, "{}", r.body);
     assert_eq!(req.params["display_id"], gone.as_str());
+    // A close on this station keeps a binding of another station.
+    let other = f
+        .store
+        .pin_station(NewStation {
+            key: Identity::generate().unwrap().public_key(),
+            name: "other".to_owned(),
+            scopes: BTreeSet::from([Scope::Read]),
+            dial_url: None,
+        })
+        .await
+        .unwrap();
+    let elsewhere = DisplayBinding {
+        station_id: other.station_id.clone(),
+        monitor: "DP-2".to_owned(),
+    };
+    c.store
+        .display_set_binding(id.clone(), Some(elsewhere.clone()))
+        .await
+        .unwrap();
+    let (r, _) = exchange(&c, &h, &mut station, &st, close, ok(None)).await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(record(&c, &id).await.binding, Some(elsewhere));
 }
 
 async fn wake(

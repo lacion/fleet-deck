@@ -612,11 +612,23 @@ impl<'a> Wall<'a> {
             display_id: self.display_id.to_owned(),
         };
         let result = run_act(self.ctx, self.station, &action, None).await?;
-        self.ctx
+        // A close on one station never clears a binding of another station.
+        let display = self
+            .ctx
             .store
-            .display_clear_binding(self.display_id.to_owned())
+            .display_get(self.display_id.to_owned())
             .await
             .map_err(|e| store_error(&e))?;
+        let other = display
+            .and_then(|d| d.binding)
+            .is_some_and(|b| &b.station_id != self.station);
+        if !other {
+            self.ctx
+                .store
+                .display_clear_binding(self.display_id.to_owned())
+                .await
+                .map_err(|e| store_error(&e))?;
+        }
         Ok(result)
     }
 }
