@@ -4,13 +4,14 @@
 //! The settings stay in [`Policy`](crate::manager::Policy).
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use fleetdeck_link::control::Control;
-use fleetdeck_proto::fleet_git::{ConfigDigest, StationTraits};
+use fleetdeck_proto::fleet_git::{ConfigDigest, StationTraits, TaildriveReport};
 
 use crate::manager::Policy;
+use crate::taildrive::{Listing, TaildriveSource};
 use crate::workspace::GitOptions;
 use crate::workspace::fleet_git::OptionsProvider;
 
@@ -33,6 +34,12 @@ pub struct FleetGitRuntime {
     next_token: AtomicU64,
     /// The confined Git options of a clone (DL-200).
     provision: OptionsProvider,
+    /// The inputs of the Taildrive report (FG-12); set once at the start.
+    taildrive_source: Mutex<Option<Arc<TaildriveSource>>>,
+    /// The newest listing and its report (FG-12).
+    taildrive: Mutex<Option<(Listing, TaildriveReport)>>,
+    /// One report is made at a time.
+    taildrive_gate: tokio::sync::Mutex<()>,
 }
 
 impl std::fmt::Debug for FleetGitRuntime {
@@ -51,6 +58,9 @@ impl FleetGitRuntime {
             deck: Mutex::new(None),
             next_token: AtomicU64::new(1),
             provision,
+            taildrive_source: Mutex::new(None),
+            taildrive: Mutex::new(None),
+            taildrive_gate: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -118,5 +128,54 @@ impl FleetGitRuntime {
     #[must_use]
     pub fn provision_options(&self) -> GitOptions {
         (self.provision)()
+    }
+
+    /// Sets the inputs of the Taildrive report (decision C2). Without them
+    /// there is no report and `station.info.taildrive` stays `None`.
+    pub fn set_taildrive_source(&self, source: TaildriveSource) {
+        *lock(&self.taildrive_source) = Some(Arc::new(source));
+    }
+
+    /// The inputs of the Taildrive report, once set.
+    #[must_use]
+    pub fn taildrive_source(&self) -> Option<Arc<TaildriveSource>> {
+        lock(&self.taildrive_source).clone()
+    }
+
+    /// The newest Taildrive report, or `None` before the first one.
+    #[must_use]
+    pub fn taildrive_report(&self) -> Option<TaildriveReport> {
+        lock(&self.taildrive).as_ref().map(|(_, r)| r.clone())
+    }
+
+    /// The tailnet name of the same `status --json` call as the report.
+    #[must_use]
+    pub fn tailnet(&self) -> Option<String> {
+        lock(&self.taildrive)
+            .as_ref()
+            .and_then(|(l, _)| l.tailnet.clone())
+    }
+
+    pub(crate) fn taildrive_listing(&self) -> Option<Listing> {
+        lock(&self.taildrive).as_ref().map(|(l, _)| l.clone())
+    }
+
+    pub(crate) fn taildrive_gate(&self) -> &tokio::sync::Mutex<()> {
+        &self.taildrive_gate
+    }
+
+    /// Stores a new report. `inventory_revision` is
+    /// `max(previous + 1, now_ms)` (design §15.2, B6).
+    pub(crate) fn taildrive_publish(
+        &self,
+        listing: Listing,
+        report: &mut TaildriveReport,
+        now_ms: u64,
+    ) -> TaildriveReport {
+        let mut slot = lock(&self.taildrive);
+        let previous = slot.as_ref().map_or(0, |(_, r)| r.inventory_revision);
+        report.inventory_revision = previous.saturating_add(1).max(now_ms);
+        *slot = Some((listing, report.clone()));
+        report.clone()
     }
 }

@@ -29,6 +29,9 @@ use crate::netscope::{self, AddrClass};
 #[path = "tailscale_cert.rs"]
 mod tailscale_cert;
 pub use tailscale_cert::CertError;
+#[path = "tailscale_drive.rs"]
+mod tailscale_drive;
+pub use tailscale_drive::parse_drive_list;
 #[path = "tailscale_parse.rs"]
 mod tailscale_parse;
 pub use tailscale_parse::{parse_status, parse_whois};
@@ -115,6 +118,9 @@ pub struct Status {
     pub this: Node,
     pub peers: Vec<Node>,
     pub magic_dns_suffix: Option<String>,
+    /// `CurrentTailnet.Name`: the name of the tailnet (FG-12). `None` when
+    /// the document has none.
+    pub current_tailnet: Option<String>,
 }
 
 /// The answer of `tailscale whois --json <ip>`. It is for display only.

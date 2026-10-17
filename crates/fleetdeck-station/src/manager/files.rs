@@ -6,18 +6,20 @@
 //! allowed-roots policy again on every call (fail closed). Each call has a
 //! deadline; searches are capped per station.
 
+use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use fleetdeck_proto::TurnId;
 use fleetdeck_proto::files::{
     FileContent, FileListQuery, FileListing, FileReadQuery, FileRoot, FileSearch, FileSearchQuery,
     MAX_DIFF_BYTES, MAX_QUERY_CHARS, MAX_SEARCH_HITS, MIN_QUERY_CHARS, SearchBackend, SearchHit,
     SearchMode, TurnDiff, TurnDiffQuery, code, hidden_path,
 };
+use fleetdeck_proto::{SessionId, TurnId};
 
 use super::policy::{Policy, WorkspaceError};
+use crate::fleet_git_runtime::FleetGitRuntime;
 use crate::store::{RowSide, RowState, Store};
 use crate::workspace::files::{self, FileError, Found, walk_search_for};
 use crate::workspace::{
@@ -53,7 +55,7 @@ pub async fn root(
     root: &FileRoot,
 ) -> Result<PathBuf, FileError> {
     let cwd = match root {
-        // (FG-12: T2.2 replaces this)
+        // (FG-12: `artifacts_root` opens this root; the dispatch is before `root`)
         FileRoot::Artifacts(_) => {
             return Err(FileError::new(
                 fleetdeck_proto::fleet_git::code::ARTIFACTS_UNAVAILABLE,
@@ -80,6 +82,155 @@ pub async fn root(
     })?;
     refuse_private(policy, private, &canonical)?;
     Ok(canonical)
+}
+
+/// The artifact folder of a session, opened for the file service (FG-12,
+/// design §15.6, decisions C4 and C5). The folder is opened without following
+/// a link, with the recorded device and inode and a fresh authorization, and
+/// the same open serves the query. The allowed-roots check does not apply to
+/// this root. A member may browse it (M11).
+///
+/// # Errors
+/// `unknown_session` when the session has no artifact folder here;
+/// `artifacts_unavailable` for every other failure.
+pub async fn artifacts_root(
+    store: &Store,
+    runtime: &FleetGitRuntime,
+    private: &PrivatePaths,
+    session: &SessionId,
+) -> Result<(OwnedFd, PathBuf), FileError> {
+    use crate::artifact_share::{AccessError, UNAVAILABLE_TEXT, open_folder};
+    let unavailable = || {
+        FileError::new(
+            fleetdeck_proto::fleet_git::code::ARTIFACTS_UNAVAILABLE,
+            UNAVAILABLE_TEXT,
+        )
+    };
+    match open_folder(runtime, store, session).await {
+        Ok((fd, path)) if !private.is_private(&path) => Ok((fd, path)),
+        Ok(_) | Err(AccessError::Unavailable) => Err(unavailable()),
+        Err(AccessError::NoFolder) => Err(FileError::new(
+            code::UNKNOWN_SESSION,
+            format!("session `{session}` has no artifact folder"),
+        )),
+    }
+}
+
+/// `files.list` for any root: an artifacts root opens through
+/// [`artifacts_root`], every other root goes to [`list_as`].
+///
+/// # Errors
+/// [`FileError`].
+pub async fn list_routed(
+    store: &Store,
+    runtime: &FleetGitRuntime,
+    policy: &Policy,
+    private: &PrivatePaths,
+    query: FileListQuery,
+    member: bool,
+) -> Result<FileListing, FileError> {
+    let FileRoot::Artifacts(session) = &query.root else {
+        return list_as(store, policy, private, query, member).await;
+    };
+    let (fd, root) = artifacts_root(store, runtime, private, session).await?;
+    let deny = member.then(|| policy.member_deny().clone());
+    let private = private.clone();
+    let slot = Slot::take(&READS, MAX_READS)?;
+    blocking(READ_TIMEOUT, slot, move || {
+        files::list_in(&fd, &root, &query.path, deny.as_ref(), &private)
+    })
+    .await
+}
+
+/// `files.read` for any root (see [`list_routed`]).
+///
+/// # Errors
+/// [`FileError`].
+pub async fn read_routed(
+    store: &Store,
+    runtime: &FleetGitRuntime,
+    policy: &Policy,
+    private: &PrivatePaths,
+    query: FileReadQuery,
+    member: bool,
+) -> Result<FileContent, FileError> {
+    let FileRoot::Artifacts(session) = &query.root else {
+        return read_as(store, policy, private, query, member).await;
+    };
+    let (fd, root) = artifacts_root(store, runtime, private, session).await?;
+    let deny = member.then(|| policy.member_deny().clone());
+    let private = private.clone();
+    let slot = Slot::take(&READS, MAX_READS)?;
+    blocking(READ_TIMEOUT, slot, move || {
+        files::read_in(
+            &fd,
+            &root,
+            &query.path,
+            query.max_bytes,
+            deny.as_ref(),
+            &private,
+        )
+    })
+    .await
+}
+
+/// `files.search` for any root (see [`list_routed`]). The artifact folder is
+/// searched with the bounded walk, never with Git.
+///
+/// # Errors
+/// [`FileError`].
+pub async fn search_routed(
+    store: &Store,
+    runtime: &FleetGitRuntime,
+    policy: &Policy,
+    private: &PrivatePaths,
+    git: &GitOptions,
+    query: FileSearchQuery,
+    member: bool,
+) -> Result<FileSearch, FileError> {
+    let FileRoot::Artifacts(session) = &query.root else {
+        return search_as(store, policy, private, git, query, member).await;
+    };
+    check_query(&query.query)?;
+    let (fd, root) = artifacts_root(store, runtime, private, session).await?;
+    let deny = member.then(|| policy.member_deny().clone());
+    let private = private.clone();
+    let max = query
+        .max_hits
+        .unwrap_or(MAX_SEARCH_HITS)
+        .clamp(1, MAX_SEARCH_HITS) as usize;
+    let slot = Slot::take(&SEARCHES, MAX_SEARCHES)?;
+    let content = query.mode == SearchMode::Content;
+    let needle = query.query.to_lowercase();
+    let found = blocking(SEARCH_TIMEOUT, slot, move || {
+        Ok(files::walk_search_in(
+            &fd,
+            &root,
+            &needle,
+            content,
+            max,
+            deny.as_ref(),
+            &private,
+        ))
+    })
+    .await?;
+    Ok(FileSearch {
+        hits: found.hits,
+        truncated: found.truncated,
+        backend: SearchBackend::Walk,
+    })
+}
+
+/// The search text rules of `files.search`.
+fn check_query(text: &str) -> Result<(), FileError> {
+    let chars = text.chars().count();
+    if !(MIN_QUERY_CHARS..=MAX_QUERY_CHARS).contains(&chars) || text.contains('\0') {
+        return Err(FileError::new(
+            code::INVALID_QUERY,
+            format!("a search text has {MIN_QUERY_CHARS} to {MAX_QUERY_CHARS} characters"),
+        ));
+    }
+    Ok(())
 }
 
 /// Refuses a root that is a private directory (`.git` or a credential
@@ -264,13 +415,7 @@ pub async fn search_as(
     member: bool,
 ) -> Result<FileSearch, FileError> {
     let deny = member.then(|| policy.member_deny().clone());
-    let chars = query.query.chars().count();
-    if !(MIN_QUERY_CHARS..=MAX_QUERY_CHARS).contains(&chars) || query.query.contains('\0') {
-        return Err(FileError::new(
-            code::INVALID_QUERY,
-            format!("a search text has {MIN_QUERY_CHARS} to {MAX_QUERY_CHARS} characters"),
-        ));
-    }
+    check_query(&query.query)?;
     let root = member_root(store, policy, private, &query.root, member).await?;
     let private = private.clone();
     let max = query

@@ -112,6 +112,7 @@ mod tests {
                 node("laptop", "laptop.other.ts.net", &["100.64.0.7"]),
             ],
             magic_dns_suffix: None,
+            current_tailnet: None,
         }
     }
 

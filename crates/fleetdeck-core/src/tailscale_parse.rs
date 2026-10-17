@@ -151,6 +151,8 @@ struct RawUser {
 struct RawTailnet {
     #[serde(rename = "MagicDNSSuffix")]
     magic_dns_suffix: Option<String>,
+    #[serde(rename = "Name")]
+    name: Option<String>,
 }
 
 /// The tailnet addresses of a node: valid, and inside the Tailscale range.
@@ -223,15 +225,18 @@ pub fn parse_status(bytes: &[u8]) -> Result<Status, TailscaleError> {
             online: peer.online.unwrap_or(false),
         });
     }
-    let magic_dns_suffix = raw
-        .current_tailnet
-        .and_then(|t| t.magic_dns_suffix)
+    let (tailnet_suffix, current_tailnet) = match raw.current_tailnet {
+        Some(t) => (t.magic_dns_suffix, t.name.filter(|n| !n.is_empty())),
+        None => (None, None),
+    };
+    let magic_dns_suffix = tailnet_suffix
         .or(raw.magic_dns_suffix)
         .filter(|s| !s.is_empty());
     Ok(Status {
         this: me,
         peers,
         magic_dns_suffix,
+        current_tailnet,
     })
 }
 

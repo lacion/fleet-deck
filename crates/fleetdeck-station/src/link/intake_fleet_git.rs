@@ -6,7 +6,7 @@ use std::path::Path;
 
 use fleetdeck_proto::fleet_git::{
     EnsureHomeParams, GitProjectView, GitSnapshot, HomeCheck, HomeCheckState, HomeStatusParams,
-    PushNowAnswer, PushNowParams, SnapshotAck, code,
+    PushNowAnswer, PushNowParams, ShareVerdictParams, SnapshotAck, code,
 };
 use fleetdeck_proto::link::{Outcome, WireError};
 
@@ -91,14 +91,59 @@ async fn check_one(policy: &Policy, options: &GitOptions, view: &GitProjectView)
 /// The same revision and digest is a retry: `stored: true` with the stored
 /// checks. A newer snapshot is checked project by project, then replaces the
 /// stored state in one transaction.
+#[cfg(test)]
 pub(super) async fn projects_set(manager: &SessionManager, params: serde_json::Value) -> Outcome {
+    projects_stored(manager, params).await.0
+}
+
+/// `fleet_git.projects_set` and then, for a snapshot that is new, the Taildrive
+/// report again in the background: its exposure depends on the homes (design
+/// §15.4, decision C10).
+pub(super) async fn snapshot(ctx: &StationLink, params: serde_json::Value) -> Outcome {
+    let (outcome, stored) = projects_stored(&ctx.manager, params).await;
+    if stored {
+        let (runtime, store) = (
+            std::sync::Arc::clone(&ctx.fleet_git),
+            ctx.manager.store().clone(),
+        );
+        tokio::spawn(async move {
+            crate::taildrive::recompute(&runtime, &store).await;
+        });
+    }
+    outcome
+}
+
+/// `fleet_git.share_verdict` (design §15.5, decision S5): the verdict of a
+/// share of this station, from a report at most 60 s old.
+pub(super) async fn share_verdict(ctx: &StationLink, params: serde_json::Value) -> Outcome {
+    let query: ShareVerdictParams = match serde_json::from_value(params) {
+        Ok(q) => q,
+        Err(e) => return bad_params(e),
+    };
+    let store = ctx.manager.store();
+    let report = crate::taildrive::fresh(&ctx.fleet_git, store).await;
+    let mounts = ctx
+        .fleet_git
+        .taildrive_source()
+        .map(|s| s.mounts.clone())
+        .unwrap_or_default();
+    ok(crate::artifact_share::verdict_answer(
+        report.as_ref(),
+        &query.share_name,
+        &mounts,
+        store.now_ms(),
+    ))
+}
+
+/// [`projects_set`] and whether the snapshot was stored as a new one.
+async fn projects_stored(manager: &SessionManager, params: serde_json::Value) -> (Outcome, bool) {
     let snapshot: GitSnapshot = match serde_json::from_value(params) {
         Ok(s) => s,
-        Err(e) => return bad_params(e),
+        Err(e) => return (bad_params(e), false),
     };
     let digest = match digest_of(&snapshot) {
         Ok(d) => d,
-        Err(e) => return internal(e),
+        Err(e) => return (internal(e), false),
     };
     let store = manager.store();
     let homes: Vec<(String, u64)> = snapshot
@@ -107,11 +152,14 @@ pub(super) async fn projects_set(manager: &SessionManager, params: serde_json::V
         .map(|h| (h.project_id.clone(), h.generation))
         .collect();
     let stale = |revision| {
-        ok(SnapshotAck {
-            stored: false,
-            revision,
-            checks: Vec::new(),
-        })
+        (
+            ok(SnapshotAck {
+                stored: false,
+                revision,
+                checks: Vec::new(),
+            }),
+            false,
+        )
     };
     match store
         .git_snapshot_compare(snapshot.revision, digest.clone())
@@ -120,19 +168,22 @@ pub(super) async fn projects_set(manager: &SessionManager, params: serde_json::V
         Ok(Some(SnapshotResult::Stale { revision })) => return stale(revision),
         Ok(Some(SnapshotResult::Same)) => {
             if let Err(e) = supersede(store, homes).await {
-                return internal(e);
+                return (internal(e), false);
             }
             return match store.git_project_checks().await {
-                Ok(checks) => ok(SnapshotAck {
-                    stored: true,
-                    revision: snapshot.revision,
-                    checks,
-                }),
-                Err(e) => internal(e),
+                Ok(checks) => (
+                    ok(SnapshotAck {
+                        stored: true,
+                        revision: snapshot.revision,
+                        checks,
+                    }),
+                    false,
+                ),
+                Err(e) => (internal(e), false),
             };
         }
         Ok(_) => {}
-        Err(e) => return internal(e),
+        Err(e) => return (internal(e), false),
     }
     let policy = manager.policy();
     let options = GitOptions::isolated();
@@ -148,18 +199,19 @@ pub(super) async fn projects_set(manager: &SessionManager, params: serde_json::V
         .git_apply_snapshot(snapshot, digest, checks.clone())
         .await
     {
-        Ok(SnapshotResult::Stored | SnapshotResult::Same) => {
+        Ok(result @ (SnapshotResult::Stored | SnapshotResult::Same)) => {
             if let Err(e) = supersede(store, homes).await {
-                return internal(e);
+                return (internal(e), false);
             }
-            ok(SnapshotAck {
+            let ack = ok(SnapshotAck {
                 stored: true,
                 revision,
                 checks,
-            })
+            });
+            (ack, result == SnapshotResult::Stored)
         }
         Ok(SnapshotResult::Stale { revision }) => stale(revision),
-        Err(e) => internal(e),
+        Err(e) => (internal(e), false),
     }
 }
 

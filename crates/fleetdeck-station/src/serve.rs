@@ -439,6 +439,9 @@ impl RunningStation {
             crate::drift::DRIFT_EVERY,
             rx.clone(),
         )));
+        let artifacts =
+            crate::taildrive::start(&fleet_runtime, &manager, config, &station_dir, &rx);
+        fleet_git.extend(artifacts.await);
         // A clone of an earlier process did not finish: its folder stays, the
         // attempt is `interrupted` (design §8.4).
         let interrupted = manager.store().home_interrupt_cloning().await?;
