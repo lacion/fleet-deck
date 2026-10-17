@@ -8,6 +8,7 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
+use fleetdeck_proto::StationId;
 use fleetdeck_proto::orchestration::GrantView;
 
 use super::Board;
@@ -15,7 +16,10 @@ use super::fleet_routes::{LIST_PAGE, audited};
 use super::guard::ApiError;
 use super::settings_routes::is_elevated;
 use crate::store::auth::LoginSession;
-use crate::store::{Grant, GrantClass, GrantState, LinkV2, Principal};
+use crate::store::{AuditResult, Grant, GrantClass, GrantState, LinkV2, NewAudit, Principal};
+
+/// The most stations that one grant names (its own station included).
+pub const MAX_GRANT_STATIONS: usize = 16;
 
 fn view(g: Grant) -> GrantView {
     let class = |c: &GrantClass| {
@@ -84,6 +88,13 @@ pub async fn revoke(
         board
             .store
             .revoke_grant(grant_id.clone(), "owner".to_owned())
+            .await
+            .map_err(ApiError::internal)?;
+        // The stations that lost `coordinate` leave the link cache at once.
+        board
+            .link
+            .peers
+            .refresh_changed()
             .await
             .map_err(ApiError::internal)?;
         // The deck refuses at once; the station learns it through
@@ -196,15 +207,19 @@ pub const CONTROL_SKILL: &str = include_str!("../control_skill.md");
 /// its control skill. Whatever grant id or skill the board sent is
 /// replaced. A resend of the same `command_id` finds the same grant.
 ///
-/// A fleet-control grant (the fleet scope, or the class `inspect`, `manage`
-/// or `answer`) needs the owner's elevation in the same request, and the
-/// coordinator's station and every station of the grant must have negotiated
+/// The grant's stations are the coordinator's own station and the target
+/// stations of `spec.stations`; the deck takes that list out of the spec, so
+/// the start command that goes to a station never carries it. A fleet-control
+/// grant (the fleet scope, or the class `inspect`, `manage` or `answer`) or a
+/// grant with a station other than its own needs the owner's elevation in the
+/// same request, and every station of the grant must have negotiated
 /// `coordinator.v2` on their current link (ADR-008 section 3).
 ///
 /// # Errors
-/// 400 `invalid_grant` for an unknown class, no class, an answer cap out of
-/// range or without the `answer` class, or a limit out of range; 400
-/// `elevation_required`; 409 `unsupported`; 500 for a database error.
+/// 400 `invalid_grant` for an unknown class, no class, an unknown station, more
+/// than 16 stations, an answer cap out of range or without the `answer` class,
+/// or a limit out of range; 400 `elevation_required`; 409 `unsupported`; 500
+/// for a database error.
 pub(super) async fn owner_start(
     board: &Board,
     station: &fleetdeck_proto::StationId,
@@ -213,6 +228,8 @@ pub(super) async fn owner_start(
     (session, elevation): (&LoginSession, Option<&str>),
 ) -> Result<(), ApiError> {
     let invalid = |m: String| ApiError::new(StatusCode::BAD_REQUEST, "invalid_grant", m);
+    // The board-to-deck list never goes on to a station.
+    let targets = std::mem::take(&mut spec.stations);
     let mut classes = std::collections::BTreeSet::new();
     for name in &spec.classes {
         let class: GrantClass = serde_json::from_value(serde_json::Value::String(name.clone()))
@@ -222,7 +239,24 @@ pub(super) async fn owner_start(
     if classes.is_empty() {
         return Err(invalid("a coordinator grant needs a class".to_owned()));
     }
+    for target in &targets {
+        let paired = board
+            .store
+            .station(target.clone())
+            .await
+            .map_err(ApiError::internal)?;
+        if paired.is_none() {
+            return Err(invalid(format!("Unknown station {target}.")));
+        }
+    }
     let mut grant = crate::store::NewGrant::new(station.clone(), "".into());
+    grant.stations.extend(targets);
+    if grant.stations.len() > MAX_GRANT_STATIONS {
+        return Err(invalid(format!(
+            "A grant has at most {MAX_GRANT_STATIONS} stations."
+        )));
+    }
+    let widened = grant.stations.len() > 1;
     grant.classes = classes;
     grant.scope = spec.scope;
     grant.answer_cap = spec.answer_cap;
@@ -235,7 +269,7 @@ pub(super) async fn owner_start(
     }
     let fleet = spec.scope == fleetdeck_proto::command::GrantScope::Fleet
         || grant.classes.iter().any(|c| c.is_fleet_control());
-    if fleet {
+    if fleet || widened {
         // The answer cap is checked first: a bad request is a bad request
         // with or without elevation.
         let answers = grant.classes.contains(&GrantClass::Answer);
@@ -255,7 +289,7 @@ pub(super) async fn owner_start(
                 "a fleet-control grant needs the owner's elevation".to_owned(),
             ));
         }
-        // The stations of a new grant are the coordinator's own station.
+        // Every station of the grant: the coordinator's own and the targets.
         for st in &grant.stations {
             if board.store.link_v2(st) != LinkV2::Negotiated {
                 return Err(ApiError::new(
@@ -270,14 +304,30 @@ pub(super) async fn owner_start(
         crate::store::DeckError::Invalid(m) => invalid(m),
         e => ApiError::internal(e),
     })?;
-    // The station relays coordinator calls with the link scope `coordinate`
-    // that the grant added; the link's grant cache follows (DL-211).
+    // Each station of the grant relays coordinator calls with the link scope
+    // `coordinate` that the grant added; the link's grant cache follows
+    // (DL-211).
     board
         .link
         .peers
-        .refresh(station.clone())
+        .refresh_changed()
         .await
         .map_err(ApiError::internal)?;
+    let named = g
+        .stations
+        .iter()
+        .map(StationId::as_str)
+        .collect::<Vec<_>>()
+        .join(",");
+    board
+        .store
+        .audit_or_log(
+            NewAudit::new("owner", "coordinator.grant_created", AuditResult::Ok)
+                .target(g.grant_id.clone())
+                .command(command_id.clone())
+                .detail(format!("stations={named}")),
+        )
+        .await;
     spec.grant_id = g.grant_id;
     spec.idle_ttl_ms = u64::try_from(g.idle_ttl_ms).unwrap_or(0);
     spec.expires_at = g.expires_at;

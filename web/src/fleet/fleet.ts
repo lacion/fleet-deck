@@ -1,7 +1,8 @@
 // M3 6-2 / 6-4 (DL-205, DL-206): fleet mail and tasks. The deck stores a
 // mail or a task once and its outbox delivers the framed text to the target
 // session; a task stays open until the session (or the owner) completes it.
-import type { GrantView, TaskView } from '../gen';
+import { stationName } from '../board/fleet';
+import type { GrantView, StationView, TaskView } from '../gen';
 import { commandId } from '../session/commands';
 
 type Get = (path: string) => Promise<unknown>;
@@ -106,6 +107,17 @@ export function grantStatus(g: GrantView): string {
   const spawn = g.classes.includes('spawn') ? `, spawned ${g.spawn_used} of ${g.spawn_cap}` : '';
   const state = g.state === 'active' && g.generation === null ? 'waiting for its session' : g.state;
   return `${g.classes.join(', ')}${spawn}: ${state}`;
+}
+
+/**
+ * The stations of a grant by name, the coordinator's own station first (ADR-006 "Creation");
+ * empty when the grant names only its own station.
+ */
+export function grantStations(g: GrantView, stations: readonly StationView[]): string {
+  const targets = g.stations.filter((id) => id !== g.station_id);
+  if (targets.length === 0) return '';
+  const names = [g.station_id, ...targets].map((id) => stationName(id, stations));
+  return `Stations: ${names.join(', ')}`;
 }
 
 /** The words of a task row: its state, then its delivery while open. */

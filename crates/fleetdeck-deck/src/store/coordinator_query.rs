@@ -20,6 +20,7 @@ use fleetdeck_proto::{Reject, RejectCode, SessionId, StationId};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 
+use super::grant_scopes::{NOT_COVERED, station_covered, sync_coordinate_scopes};
 use super::grants::{Grant, GrantClass, GrantState, caller_grant};
 use super::{DeckStore, Result, call};
 
@@ -86,7 +87,7 @@ fn check(
     station: &StationId,
     caller: &SessionId,
     binding: &CoordinatorBinding,
-    now: i64,
+    (now, changed): (i64, &mut BTreeSet<StationId>),
 ) -> Result<std::result::Result<Grant, Reject>> {
     let scopes: Option<String> = conn
         .query_row(
@@ -101,6 +102,10 @@ fn check(
     };
     if !granted {
         return Ok(Err(reject(RejectCode::Forbidden, "no `coordinate` grant")));
+    }
+    // The exact rule (design §2.3a): a grant in effect names the station.
+    if !station_covered(conn, station, now)? {
+        return Ok(Err(reject(RejectCode::Forbidden, NOT_COVERED)));
     }
     let Some(grant) = caller_grant(conn, station, caller)? else {
         return Ok(Err(reject(
@@ -124,11 +129,14 @@ fn check(
         .last_used_at
         .is_some_and(|t| now.saturating_sub(t) > grant.idle_ttl_ms)
     {
+        // The expiry and the scope rebuild commit with the caller's
+        // transaction.
         conn.execute(
             "UPDATE tokens SET state = 'expired', revoked_reason = 'idle'
              WHERE grant_id = ?1 AND state = 'active'",
             [grant.grant_id.as_str()],
         )?;
+        *changed = sync_coordinate_scopes(conn, now)?;
         return Ok(Err(reject(
             RejectCode::Forbidden,
             "the grant expired after its idle time",
@@ -355,9 +363,17 @@ impl DeckStore {
             env.binding.clone(),
             self.now_ms(),
         );
-        call(&self.inner.db, move |conn| {
-            check(conn, &station, &caller, &binding, now)
+        let (checked, changed) = call(&self.inner.db, move |conn| {
+            // One transaction for the admission and the lazy idle expiry; it
+            // commits also for a refusal.
+            let tx = conn.transaction()?;
+            let mut changed = BTreeSet::new();
+            let checked = check(&tx, &station, &caller, &binding, (now, &mut changed))?;
+            tx.commit()?;
+            Ok((checked, changed))
         })
-        .await
+        .await?;
+        self.note_scope_changes(changed);
+        Ok(checked)
     }
 }

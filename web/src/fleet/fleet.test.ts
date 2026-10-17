@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { TaskView } from '../gen';
+import { station } from '../testing/fleet';
 import {
   fleetActions,
   grantList,
+  grantStations,
   grantStatus,
   nextSends,
   type SendEntry,
@@ -128,6 +130,18 @@ describe('coordinator grants', () => {
     expect(grantList({})).toEqual([]);
     expect(grantStatus(grant)).toBe('read, mail, spawn, spawned 1 of 3: waiting for its session');
     expect(grantStatus({ ...grant, classes: ['read'], generation: 1 })).toBe('read: active');
+  });
+  test('the stations of a grant show by name, the own station first, only with targets', () => {
+    const stations = [station('station-a'), station('station-b')];
+    const own = { ...grant, station_id: 'station-a', stations: ['station-a'] };
+    expect(grantStations(own, stations)).toBe('');
+    expect(grantStations({ ...own, stations: ['station-b', 'station-a'] }, stations)).toBe(
+      'Stations: Alpha, Beta',
+    );
+    // A station that is not in the list shows by its id.
+    expect(grantStations({ ...own, stations: ['station-a', 'gone'] }, stations)).toBe(
+      'Stations: Alpha, gone',
+    );
   });
   test('a revoke posts to the grant and a failure says so', async () => {
     const posts: string[] = [];

@@ -146,6 +146,7 @@ async fn a_station_without_v2_gets_no_fleet_control_grant_and_a_lineage_start_ke
         },
         scope: GrantScope::Lineage,
         answer_cap: None,
+        stations: Vec::new(),
     };
     let recorded = r#"{"grant_id":"g","classes":["read","mail"],"idle_ttl_ms":1,"expires_at":2,"control_skill":{"version":"1","text":"t"}}"#;
     assert_eq!(serde_json::to_string(&spec).unwrap(), recorded);
@@ -487,6 +488,9 @@ async fn the_authority_check_asks_the_caller_station_for_its_live_policy() {
     );
     r.f.store.set_fleet_control(true);
     assert_eq!(authority_check(&mut r, &check, live).await["valid"], true);
+    // Another grant keeps the station covered: the revoked grant answers
+    // `grant_revoked`, not the admission refusal of an uncovered station.
+    let _keep = bound(&r.f, "keep", &[GrantClass::Read], false).await;
     assert!(revoke(&r.f, &b).await);
     assert_eq!(
         authority_check(&mut r, &check, None).await["reason"],

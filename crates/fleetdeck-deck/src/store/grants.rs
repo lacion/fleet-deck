@@ -14,6 +14,7 @@ use fleetdeck_proto::{ProviderInstanceId, SessionId, StationId};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 
+use super::grant_scopes::sync_coordinate_scopes;
 use super::{DeckError, DeckStore, Result, call, new_id};
 
 #[path = "fleet_answers.rs"]
@@ -314,7 +315,7 @@ impl DeckStore {
         }
         let now = self.now_ms();
         let grant_id: String = new_id(self.inner.ids.as_ref());
-        call(&self.inner.db, move |conn| {
+        let (stored, changed) = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             if let Some(start) = grant.start_command_id.as_deref() {
                 let found: Option<String> = tx
@@ -325,27 +326,9 @@ impl DeckStore {
                     )
                     .optional()?;
                 if let Some(id) = found {
-                    return get_grant(&tx, &id)?
-                        .ok_or_else(|| DeckError::Corrupt("a found grant is gone".to_owned()));
-                }
-            }
-            // The owner's grant lets the caller's station relay coordinator
-            // calls: it gets the link scope `coordinate` in the same
-            // transaction (DL-211). Pairing alone never grants it.
-            let scopes: Option<String> = tx
-                .query_row(
-                    "SELECT scopes FROM stations WHERE station_id = ?1",
-                    [grant.station_id.as_str()],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            if let Some(text) = scopes {
-                let mut set: BTreeSet<fleetdeck_proto::link::Scope> = serde_json::from_str(&text)?;
-                if set.insert(fleetdeck_proto::link::Scope::Coordinate) {
-                    tx.execute(
-                        "UPDATE stations SET scopes = ?2 WHERE station_id = ?1",
-                        params![grant.station_id.as_str(), serde_json::to_string(&set)?],
-                    )?;
+                    let found = get_grant(&tx, &id)?
+                        .ok_or_else(|| DeckError::Corrupt("a found grant is gone".to_owned()))?;
+                    return Ok((found, BTreeSet::new()));
                 }
             }
             tx.execute(
@@ -375,10 +358,16 @@ impl DeckStore {
             )?;
             let stored = get_grant(&tx, &grant_id)?
                 .ok_or_else(|| DeckError::Corrupt("an inserted grant is gone".to_owned()))?;
+            // The owner's grant lets each station that it names relay
+            // coordinator calls: the derived scope `coordinate` follows in
+            // the same transaction (DL-211, design §2.3 item 1).
+            let changed = sync_coordinate_scopes(&tx, now)?;
             tx.commit()?;
-            Ok(stored)
+            Ok((stored, changed))
         })
-        .await
+        .await?;
+        self.note_scope_changes(changed);
+        Ok(stored)
     }
 
     /// One grant.
@@ -485,15 +474,21 @@ impl DeckStore {
     /// # Errors
     /// A database error.
     pub async fn revoke_grant(&self, grant_id: String, reason: String) -> Result<bool> {
-        call(&self.inner.db, move |conn| {
-            let n = conn.execute(
+        let now = self.now_ms();
+        let (revoked, changed) = call(&self.inner.db, move |conn| {
+            let tx = conn.transaction()?;
+            let n = tx.execute(
                 "UPDATE tokens SET state = 'revoked', revoked_reason = ?2
                  WHERE grant_id = ?1 AND state != 'revoked'",
                 params![grant_id, reason],
             )?;
-            Ok(n == 1)
+            let changed = sync_coordinate_scopes(&tx, now)?;
+            tx.commit()?;
+            Ok((n == 1, changed))
         })
-        .await
+        .await?;
+        self.note_scope_changes(changed);
+        Ok(revoked)
     }
 
     /// Records that `session` on `station` was started by `grant_id` (the
@@ -573,14 +568,19 @@ fn renew_generation(conn: &Connection, grant_id: &str) -> Result<Option<i64>> {
 /// - `coordinator.ended` of the bound binding and generation sets the grant
 ///   `expired` (`idle`) or `revoked` (any other reason); a revoked grant
 ///   stays revoked.
+///
+/// Both events change which grants are in effect, so the derived `coordinate`
+/// scopes are rebuilt in the same transaction; the stations whose scopes
+/// changed are returned (design §2.3 items 4 and 5).
 pub(super) fn record_lifecycle(
     tx: &Connection,
     station: &StationId,
     e: &fleetdeck_proto::EventEnvelope,
-) -> Result<()> {
+    now: i64,
+) -> Result<BTreeSet<StationId>> {
     use fleetdeck_proto::event::{Event, EventBody};
     let EventBody::Known(event) = &e.event else {
-        return Ok(());
+        return Ok(BTreeSet::new());
     };
     match event {
         Event::CoordinatorBound {
@@ -601,14 +601,15 @@ pub(super) fn record_lifecycle(
                 provider_instance: provider_instance.clone().into(),
                 native_id: native_id.clone(),
             },
-        ),
+        )?,
         Event::CoordinatorEnded {
             binding_id,
             generation,
             reason,
-        } => apply_ended(tx, station, binding_id, *generation, reason),
-        _ => Ok(()),
+        } => apply_ended(tx, station, binding_id, *generation, reason)?,
+        _ => return Ok(BTreeSet::new()),
     }
+    sync_coordinate_scopes(tx, now)
 }
 
 /// The `coordinator.bound` rules of [`record_lifecycle`], also used by a
@@ -695,7 +696,7 @@ pub(super) fn apply_projection(
     station: &StationId,
     at: i64,
     projection: &[fleetdeck_proto::CoordinatorBindingState],
-) -> Result<()> {
+) -> Result<BTreeSet<StationId>> {
     use fleetdeck_proto::CoordinatorBindingPhase as Phase;
     for p in projection {
         if p.state == Phase::Pending {
@@ -726,7 +727,8 @@ pub(super) fn apply_projection(
             )?;
         }
     }
-    Ok(())
+    // The projection can reactivate, end or revoke grants (design §2.3).
+    sync_coordinate_scopes(tx, at)
 }
 
 /// True if the first `coordinator.bound` of an owner-start grant may name

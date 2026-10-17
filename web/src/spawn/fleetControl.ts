@@ -33,11 +33,18 @@ export function answerCapProblem(f: FleetControl): string | null {
   return 'The answer limit is a whole number from 0 to 5000.';
 }
 
-/** The grant part of the coordinator spec: classes, and scope/answer_cap only for a fleet-control grant. */
-export function grantFields(f: FleetControl): {
+/**
+ * The grant part of the coordinator spec: classes, scope/answer_cap only for a fleet-control grant,
+ * and the target stations (besides the session's own) only when the owner picked some.
+ */
+export function grantFields(
+  f: FleetControl,
+  targets: readonly string[] = [],
+): {
   classes: string[];
   scope?: 'fleet';
   answer_cap?: number;
+  stations?: string[];
 } {
   return {
     classes: [
@@ -50,6 +57,7 @@ export function grantFields(f: FleetControl): {
     ],
     ...(f.scope ? { scope: 'fleet' as const } : {}),
     ...(f.answer ? { answer_cap: Number(f.answerCap.trim()) } : {}),
+    ...(targets.length > 0 ? { stations: [...targets] } : {}),
   };
 }
 
@@ -60,17 +68,20 @@ export function showFleetFields(owner: boolean, coordinator: boolean, importing:
 
 /**
  * The elevation of a start: asked once, only for a coordinator start (not an import) with a
- * switch on. `{ ok: false }` means the owner cancelled the dialog.
+ * switch on or with target stations picked (the deck treats a grant with other stations as fleet
+ * control). `{ ok: false }` means the owner cancelled the dialog.
  */
 export async function fleetElevation(
   gate: {
     readonly coordinator: boolean;
     readonly importing: boolean;
     readonly fleet: FleetControl;
+    readonly targets?: readonly string[];
   },
   ask: (labels?: readonly string[]) => Promise<string | null>,
 ): Promise<{ readonly ok: true; readonly elevation: string | undefined } | { readonly ok: false }> {
-  if (!(gate.coordinator && !gate.importing && fleetOn(gate.fleet))) {
+  const wide = (gate.targets?.length ?? 0) > 0;
+  if (!(gate.coordinator && !gate.importing && (fleetOn(gate.fleet) || wide))) {
     return { ok: true, elevation: undefined };
   }
   const code = await ask(['Fleet control']);

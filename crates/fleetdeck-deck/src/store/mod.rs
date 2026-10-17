@@ -33,6 +33,7 @@ pub mod displays;
 pub mod displays_pairing;
 pub mod extras;
 pub mod fleet;
+pub mod grant_scopes;
 pub mod grants;
 pub mod members;
 pub mod outbox;
@@ -207,6 +208,12 @@ struct Inner {
     sentence_jobs: Mutex<Vec<conflicts::SentenceJob>>,
     /// The `ask_coordinator` calls of the workers in the last hour (R2.3).
     ask_limits: coordinator_fleet::AskLimiter,
+    /// The stations whose derived `coordinate` scope changed and whose link
+    /// cache entry is not refreshed yet (`grant_scopes`).
+    scope_dirty: Mutex<BTreeSet<StationId>>,
+    /// Counts the notes in `scope_dirty` (the follower of the link cache
+    /// waits on it).
+    scope_changes: watch::Sender<u64>,
 }
 
 impl Inner {
@@ -292,7 +299,7 @@ impl DeckStore {
             Ok(IncarnationId::from(inc))
         })
         .await?;
-        Ok(Self {
+        let store = Self {
             inner: Arc::new(Inner {
                 db,
                 clock,
@@ -312,8 +319,17 @@ impl DeckStore {
                 sockets: std::sync::atomic::AtomicU64::new(1),
                 sentence_jobs: Mutex::default(),
                 ask_limits: coordinator_fleet::AskLimiter::default(),
+                scope_dirty: Mutex::default(),
+                scope_changes: watch::channel(0).0,
             }),
-        })
+        };
+        // Deck start (grant stations design §2.3 item 8): end every stale
+        // grant and rebuild the derived `coordinate` scopes before the deck
+        // accepts any link. The link cache is filled from the stored scopes
+        // afterwards, so the notes of this pass are not needed.
+        store.sweep_grants().await?;
+        drop(store.take_scope_changes());
+        Ok(store)
     }
 
     /// The deck incarnation (`coordinator.call` targets it, ADR-004 §9.3).
