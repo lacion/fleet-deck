@@ -420,6 +420,11 @@ async fn a_matching_directive_serves_the_file_inert_from_the_cache() {
     assert_eq!(res.header("referrer-policy"), Some("no-referrer"));
     assert_eq!(res.header("cache-control"), Some("no-store"));
     assert_eq!(res.header("content-disposition"), None);
+    // `_` names the one file; the content type comes from its real name.
+    let one = r.fetch("a1", "_").await;
+    assert_eq!(one.status, 200, "{}", one.text);
+    assert_eq!(one.text, PAGE);
+    assert_eq!(one.header("content-type"), Some("text/html; charset=utf-8"));
     // A cached file needs no station.
     r.quiet().await;
 }

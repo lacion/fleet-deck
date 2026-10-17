@@ -38,6 +38,9 @@ use super::display_view::{in_scope, scope_of};
 use super::guard::ApiError;
 use crate::store::{DisplayLogin, Principal};
 
+/// The `{*path}` segment that names the one file of the version.
+pub const ONE_FILE: &str = "_";
+
 /// The header of every answer of this route (R13 §5E item 3b). It has no
 /// `allow-scripts`.
 pub const INERT_CSP: &str = "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'; media-src data:; font-src data:";
@@ -225,9 +228,12 @@ async fn artifact(
     if !displayable(&meta.files) {
         return Err(not_displayable());
     }
-    if meta.files.first().map(String::as_str) != Some(path.as_str()) {
-        return Err(miss());
-    }
+    // The wall does not know the file name: `_` names the one file of the
+    // version (R15 Q1). The content type comes from the real name.
+    let path = match meta.files.first() {
+        Some(file) if path == ONE_FILE || *file == path => file.clone(),
+        _ => return Err(miss()),
+    };
     let cache = ensure_cached(&board, &rec, &target.artifact_id, version)
         .await
         .map_err(failure)?;
