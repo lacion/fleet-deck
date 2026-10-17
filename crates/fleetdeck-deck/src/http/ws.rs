@@ -21,6 +21,9 @@
 //!   and the timelines of the sessions of its share only. At every change of
 //!   the board and at every recheck the deck loads the share again, so a
 //!   revoke or a change of a space takes effect at once.
+//! - **Displays** (R13 §5, §5D). A display subscribes to the timelines of the
+//!   sessions in its effective scope and gets the reduced events of
+//!   `ws_display.rs`, never an owner event and never a people frame.
 //! - **People.** A `presence` heartbeat of a viewer (every 20 s) and the
 //!   `presence`, `chat`, `driver` and `drive_request` messages of the people
 //!   features for the sessions that the socket may see.
@@ -42,12 +45,15 @@ use fleetdeck_proto::{EventEnvelope, IncarnationId, StationId};
 use tokio::sync::broadcast::error::RecvError;
 
 use super::Board;
-use super::display_view::{display_cards, display_stations};
 use super::guard::ApiError;
 use super::read_routes::{member_sessions, member_stations};
 use crate::local::station_view;
 use crate::store::auth::{random_token, secret_hash};
+use crate::store::display_directives::EffectiveScope;
 use crate::store::{DeckError, DeckStore, LiveEvents, Principal, SocialEvent};
+
+#[path = "ws_display.rs"]
+mod display;
 
 /// How long a WebSocket ticket is valid.
 pub const TICKET_TTL_MS: i64 = 30_000;
@@ -177,6 +183,8 @@ struct Session {
     cards: BTreeMap<SessionKey, DeckSession>,
     stations: Vec<StationView>,
     subs: BTreeMap<SessionKey, Sub>,
+    /// The effective scope of a display at its last view (R13 §5D item 17).
+    scope: Option<EffectiveScope>,
 }
 
 /// The board view: the paired stations and every card. A free function
@@ -185,28 +193,23 @@ struct Session {
 async fn view(
     store: &DeckStore,
     principal: &Principal,
-) -> Result<(Vec<StationView>, Vec<DeckSession>), WsError> {
+) -> Result<(Vec<StationView>, Vec<DeckSession>, Option<EffectiveScope>), WsError> {
+    if let Principal::Display(d) = principal {
+        return display::view(store, d).await;
+    }
     let stations: Vec<StationView> = store
         .stations()
         .await?
         .iter()
         .map(|st| station_view(st, store))
         .collect();
-    if let Principal::Display(d) = principal {
-        // Reduced cards and stations of the ceiling only (R13 §5).
-        let sessions = store.sessions().await?;
-        return Ok((
-            display_stations(&stations, &d.ceiling),
-            display_cards(&sessions, &d.ceiling),
-        ));
-    }
     let sessions = store.sessions_for(principal).await?;
     Ok(match principal {
         Principal::Member(_, grant) => {
             let sessions = member_sessions(grant, sessions);
-            (member_stations(stations, &sessions), sessions)
+            (member_stations(stations, &sessions), sessions, None)
         }
-        _ => (stations, sessions),
+        _ => (stations, sessions, None),
     })
 }
 
@@ -237,6 +240,7 @@ impl Session {
             cards: BTreeMap::new(),
             stations: Vec::new(),
             subs: BTreeMap::new(),
+            scope: None,
         }
     }
 
@@ -285,7 +289,8 @@ impl Session {
             self.close(CLOSE_LOGIN_ENDED, "login ended").await;
             return Ok(());
         }
-        let (stations, sessions) = view(&self.board.store, &self.principal).await?;
+        let (stations, sessions, scope) = view(&self.board.store, &self.principal).await?;
+        self.scope = scope;
         self.cards = sessions.iter().map(|c| (key(c), c.clone())).collect();
         self.stations.clone_from(&stations);
         self.send(&BoardServerMessage::Snapshot {
@@ -346,6 +351,12 @@ impl Session {
                         self.close(CLOSE_LOGIN_ENDED, "login ended").await;
                         return Ok(());
                     }
+                    // A directive changes no board version: the display looks
+                    // at its scope on each recheck (R9 Q6).
+                    if matches!(self.principal, Principal::Display(_)) {
+                        let version = *board_rx.borrow();
+                        self.display_rescope(version).await?;
+                    }
                 }
             }
         }
@@ -366,7 +377,7 @@ impl Session {
             self.close(CLOSE_LOGIN_ENDED, "login ended").await;
             return Err(WsError::Send(axum::Error::new("the member login ended")));
         }
-        let (stations, sessions) = view(&self.board.store, &self.principal).await?;
+        let (stations, sessions, scope) = view(&self.board.store, &self.principal).await?;
         let mut next: BTreeMap<SessionKey, DeckSession> =
             sessions.into_iter().map(|c| (key(&c), c)).collect();
         let changed: Vec<DeckSession> = next
@@ -382,6 +393,13 @@ impl Session {
             .collect();
         let stations_changed = stations != self.stations;
         std::mem::swap(&mut self.cards, &mut next);
+        if matches!(self.principal, Principal::Display(_)) {
+            // A subscription whose session left the scope ends at once
+            // (R13 §5A item 4, §5D item 16).
+            let cards = &self.cards;
+            self.subs.retain(|k, _| cards.contains_key(k));
+            self.scope = scope;
+        }
         if !changed.is_empty() || !removed.is_empty() || stations_changed {
             self.send(&BoardServerMessage::Delta {
                 version,
@@ -415,6 +433,9 @@ impl Session {
     }
 
     async fn live(&mut self, batch: &LiveEvents) -> Result<(), WsError> {
+        if matches!(self.principal, Principal::Display(_)) {
+            return self.display_live(batch).await;
+        }
         let mut out: BTreeMap<SessionKey, Vec<EventEnvelope>> = BTreeMap::new();
         for e in &batch.events {
             let k = SessionKey {
@@ -474,7 +495,8 @@ impl Session {
     fn may_see(&self, k: &SessionKey) -> bool {
         match &self.principal {
             Principal::Member(_, g) => g.scope.covers(k.station_id.as_str(), k.session_id.as_str()),
-            // A display gets no timelines and no people features (part b).
+            // A display gets no people features. Its timelines use
+            // `display::authorized`.
             Principal::Display(_) => false,
             _ => true,
         }
@@ -499,6 +521,9 @@ impl Session {
     }
 
     async fn stored_after(&mut self, k: &SessionKey) -> Result<(), WsError> {
+        if matches!(self.principal, Principal::Display(_)) {
+            return self.display_stored_after(k).await;
+        }
         let Some(cursor) = self.subs.get(k).map(|s| s.cursor) else {
             return Ok(());
         };
@@ -534,7 +559,10 @@ impl Session {
             }
         };
         if matches!(self.principal, Principal::Display(_))
-            && !matches!(msg, BoardClientMessage::Unsubscribe { .. })
+            && !matches!(
+                msg,
+                BoardClientMessage::Unsubscribe { .. } | BoardClientMessage::Subscribe { .. }
+            )
         {
             return self
                 .error("display_read_only", "A wall display can only read.")
@@ -555,7 +583,13 @@ impl Session {
                     let detail = format!("at most {MAX_SUBSCRIPTIONS} timelines per socket");
                     return self.error("too_many_subscriptions", &detail).await;
                 }
-                if !self.may_see(&k) {
+                let visible = if let Principal::Display(d) = &self.principal {
+                    let (store, id) = (self.board.store.clone(), d.display_id.clone());
+                    display::authorized(&store, &id, &k).await?
+                } else {
+                    self.may_see(&k)
+                };
+                if !visible {
                     return self.error("unknown_session", "no such session").await;
                 }
                 if self
@@ -628,6 +662,11 @@ impl Session {
         })
         .await?;
         self.stored_after(&k).await?;
+        if matches!(self.principal, Principal::Display(_)) {
+            // A display gets no presence, driver or drive request (R13 §5D
+            // item 16).
+            return Ok(());
+        }
         // The current state of the people features of the session.
         let who = store.presence_of(&k);
         if !who.is_empty() {
