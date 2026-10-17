@@ -53,12 +53,6 @@ impl Deck {
         Self::start_with(TempNode::new("deck").unwrap(), &["deck", "serve"], &[])
     }
 
-    /// [`Self::start`] with extra environment variables for the deck process
-    /// (Fleet Git T1.7: `FLEETDECK_ALLOW_LOCAL_REMOTES=1`).
-    pub fn start_with_env(env: &[(&str, &str)]) -> Self {
-        Self::start_with(TempNode::new("deck").unwrap(), &["deck", "serve"], env)
-    }
-
     /// `fleetdeck up` on a node whose station.toml has `fake-claude sim`
     /// (M2 P4-4). Returns the deck and the node's `~/projects/demo`.
     pub fn up(name: &str) -> (Self, std::path::PathBuf) {

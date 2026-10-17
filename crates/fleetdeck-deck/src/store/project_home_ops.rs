@@ -6,20 +6,20 @@
 use std::collections::BTreeMap;
 
 use fleetdeck_core::fleet_git_digest::{ensure_home_digest, home_folder_name};
-use fleetdeck_proto::fleet_git::{
-    EnsureHomeParams, GitHomeState, LocalRemotes, RemoteIdentity, station_slug,
-};
+use fleetdeck_proto::fleet_git::{EnsureHomeParams, GitHomeState, RemoteIdentity, station_slug};
 use fleetdeck_proto::version::feature;
 use fleetdeck_proto::{CardStatus, StationId};
 use rusqlite::{Connection, params};
 use serde::Serialize;
 
 use super::git_snapshots::clear_checks;
-use super::home_attempts::{find as find_attempt, find_by_command, insert as insert_attempt};
+use super::home_attempts::{
+    find as find_attempt, find_by_command, insert as insert_attempt, newest_stored,
+};
 use super::project_homes::{
     HomeRefusal, HomeRow, homes_of, next_generation, set_state, supersede_attempts,
 };
-use super::projects_git::{clone_url, env_bridge, remote_write};
+use super::projects_git::{clone_url, remote_write};
 use super::projects_legacy::{busy, set_copy};
 use super::{DeckStore, LinkFeature, Result, call, new_id, slug_reservations, to_i64};
 
@@ -139,7 +139,6 @@ impl DeckStore {
             }
             let local_remote = p.remote_dest.as_deref().is_some_and(|d| d.starts_with("file://"));
             if local_remote
-                && env_bridge() != LocalRemotes::Allow
                 && !info.as_ref().is_some_and(|(_, allowed)| *allowed)
             {
                 return Ok(refuse(
@@ -257,14 +256,24 @@ impl DeckStore {
                     "Set the remote URL of the project first.",
                 ));
             };
-            let failed = home.attempt_id.clone();
-            let remote_name = match failed
-                .as_deref()
-                .map(|id| find_attempt(&tx, id))
-                .transpose()?
-            {
-                Some(Some(old)) => old.request.remote_name,
-                _ => p.git.push_remote.clone(),
+            // `retry_of` is the newest attempt that the station stored
+            // (decision G2); a refused attempt left no row there. Without
+            // one, the attempt of the home.
+            let stored = newest_stored(&tx, &project, &station, home.generation)?;
+            let failed = stored
+                .as_ref()
+                .map(|a| a.attempt_id.clone())
+                .or_else(|| home.attempt_id.clone());
+            let remote_name = match stored {
+                Some(old) => old.request.remote_name,
+                None => match failed
+                    .as_deref()
+                    .map(|id| find_attempt(&tx, id))
+                    .transpose()?
+                {
+                    Some(Some(old)) => old.request.remote_name,
+                    _ => p.git.push_remote.clone(),
+                },
             };
             let mut request = EnsureHomeParams {
                 project_id: project.clone(),

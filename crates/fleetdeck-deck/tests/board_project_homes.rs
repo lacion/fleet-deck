@@ -479,6 +479,49 @@ async fn a_failed_clone_makes_the_home_failed_and_a_retry_sends_a_new_attempt_of
 }
 
 #[tokio::test]
+async fn a_retry_names_the_newest_attempt_that_the_station_stored_not_a_refused_one() {
+    let r = rig(false).await;
+    // The first attempt ends `interrupted` (the station stored it).
+    *r.beta_fake.ensure.lock().unwrap() = Reply::State {
+        state: "interrupted",
+        path: None,
+        reserved: Some(BETA_PATH.to_owned()),
+        code: Some("clone_interrupted"),
+        message: Some("The clone stopped.".to_owned()),
+    };
+    let first = r.add_beta("c1").await;
+    let interrupted = first.body["attempt_id"].as_str().unwrap().to_owned();
+    r.wait_home(&r.beta, GitHomeState::Failed).await;
+    assert_eq!(attempt(&r.s.f, &interrupted).await.1, "interrupted");
+
+    // The station refuses the first retry (a link error, no row there): the
+    // attempt is `refused` and the home is failed again.
+    *r.beta_fake.ensure.lock().unwrap() = Reply::Error("incomplete_folder");
+    let refused = r.retry(r.beta.as_str(), "c2").await;
+    assert_eq!(refused.status, 202, "{}", refused.body);
+    let refused = refused.body["attempt_id"].as_str().unwrap().to_owned();
+    r.s.f
+        .wait("the refused attempt", |f| {
+            let (store, id) = (f.store.clone(), refused.clone());
+            async move { store.home_attempt_state(id).await.unwrap().as_deref() == Some("refused") }
+        })
+        .await;
+    let h = r.home(&r.beta).await;
+    assert_eq!(h.state, GitHomeState::Failed);
+    assert_eq!(h.code.as_deref(), Some("incomplete_folder"));
+
+    // The next retry names the interrupted attempt, not the refused one.
+    *r.beta_fake.ensure.lock().unwrap() = Reply::ready(BETA_PATH);
+    let again = r.retry(r.beta.as_str(), "c3").await;
+    assert_eq!(again.status, 202, "{}", again.body);
+    r.wait_home(&r.beta, GitHomeState::Ready).await;
+    let sent = r.beta_fake.wait_for("project.ensure_home", 3).await;
+    let params: EnsureHomeParams = serde_json::from_value(sent[2].clone()).unwrap();
+    assert_eq!(params.retry_of, Some(interrupted));
+    assert_eq!(params.request_digest, ensure_home_digest(&params));
+}
+
+#[tokio::test]
 async fn an_error_that_ends_the_attempt_fails_the_home_and_another_error_waits_with_a_backoff() {
     let r = rig(false).await;
     *r.beta_fake.ensure.lock().unwrap() = Reply::Error("home_conflict");
@@ -488,7 +531,8 @@ async fn an_error_that_ends_the_attempt_fails_the_home_and_another_error_waits_w
     let h = r.home(&r.beta).await;
     assert_eq!(h.code.as_deref(), Some("home_conflict"));
     assert_eq!(h.message.as_deref(), Some("the fake says no"));
-    assert_eq!(attempt(&r.s.f, &id).await.1, "failed");
+    // A link error: the station stored no row, so the attempt is `refused`.
+    assert_eq!(attempt(&r.s.f, &id).await.1, "refused");
 
     // An error of the station that does not end the attempt: `sent` again
     // with the backoff.

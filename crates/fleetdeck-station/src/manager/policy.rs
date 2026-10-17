@@ -89,7 +89,7 @@ pub struct Policy {
     /// direct host.
     shim_host: Option<ShimHostPlatform>,
     /// Fleet Git accepts a local bare repository as a remote (design §3.4):
-    /// the `station.toml` key, or the phase-1 env bridge that `serve` ORs in.
+    /// the `station.toml` key.
     allow_local_remotes: bool,
     /// Where Fleet Git clones new homes: `clone_root` of `station.toml`, or
     /// the first allowed root + `/projects` (FG-5).
@@ -420,8 +420,7 @@ impl Policy {
         next.setup_envs.clone_from(&self.setup_envs);
         // The host applies at a restart (DL-182).
         next.shim_host = self.shim_host;
-        // The Fleet Git keys apply at a restart too; the env bridge of
-        // `allow_local_remotes` stays (FG-5).
+        // The Fleet Git keys apply at a restart too (FG-5).
         next.clone_root.clone_from(&self.clone_root);
         next.traits.clone_from(&self.traits);
         next.allow_check_cmd = self.allow_check_cmd;
@@ -577,7 +576,7 @@ mod tests {
     }
 
     #[test]
-    fn a_live_reload_keeps_the_restart_only_fleet_git_values_and_the_env_bridge() {
+    fn a_live_reload_keeps_the_restart_only_fleet_git_values() {
         let root = tempfile::tempdir().unwrap();
         let first = Policy::from_config(&test_config(root.path(), "traits = [\"gpu\"]\n"))
             .with_allow_local_remotes(true);
@@ -588,7 +587,7 @@ mod tests {
         let next = first.reconfigured(&edited);
         assert_eq!(next.traits(), ["gpu"]);
         assert!(!next.allow_check_cmd());
-        assert!(next.allow_local_remotes(), "the bridge stays");
+        assert!(next.allow_local_remotes(), "the restart-only value stays");
     }
 
     #[test]
