@@ -345,7 +345,7 @@ impl SessionTarget {
             wants_base,
             planned,
             cmd,
-            env,
+            mut env,
             fleet_git,
         } = run;
         let session_id = effect.session_id.clone();
@@ -396,6 +396,12 @@ impl SessionTarget {
             }
             (planned, _) => planned,
         };
+        // The artifact variables reach the setup command and the provider
+        // (FG-12, decision C1).
+        if let Some(fg) = fleet_git.as_deref() {
+            self.artifact_step(&session_id, fg, &mut spec, env.as_mut())
+                .await;
+        }
         let held = match (&cmd, &env) {
             (Some(cmd), Some(env)) => match self.child_dir(&spec).await {
                 // The command runs in the checked folder; `_dir` lives until

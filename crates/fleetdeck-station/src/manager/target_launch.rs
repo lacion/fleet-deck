@@ -19,6 +19,7 @@ use tokio::sync::watch;
 use super::super::SessionManager;
 use super::super::turns::SessionTurns;
 use super::SessionTarget;
+use crate::fleet_git_runtime::FleetGitRuntime;
 use crate::store::{Dispatch, Effect, NewEvent, WorkspacePlan};
 use crate::workspace::GitOptions;
 use crate::workspace::base;
@@ -287,6 +288,129 @@ impl SessionManager {
     /// or a clone (B9, DL-200). A second call is ignored.
     pub fn set_confine_exe(&self, exe: PathBuf) {
         let _ = self.target.confine_exe.set(exe);
+    }
+}
+
+/// True when a start has an artifact share: its artifact step runs in the
+/// task of the start, so the start is deferred (FG-12, design §15.5).
+#[allow(clippy::ref_option)]
+pub(in crate::manager) fn artifacts(fleet_git: &Option<Box<FleetGitStart>>) -> bool {
+    crate::artifact_share::wanted(fleet_git.as_deref())
+}
+
+/// Adds the artifact variables to the provider spec (`extra_env`) and to the
+/// environment of the setup command.
+fn add_artifact_vars(
+    spec: &mut SessionSpec,
+    env: Option<&mut ChildEnv>,
+    vars: &BTreeMap<String, String>,
+) {
+    if vars.is_empty() {
+        return;
+    }
+    let mut extra = spec.extra_env.as_deref().cloned().unwrap_or_default();
+    extra.extend(vars.clone());
+    spec.extra_env = Some(Box::new(extra));
+    if let Some(env) = env {
+        for (name, value) in vars {
+            if let Err(e) = env.set(name, value) {
+                tracing::warn!(variable = %name, error = %e, "the artifact variable is dropped");
+            }
+        }
+    }
+}
+
+impl SessionTarget {
+    /// Gives the target the Fleet Git runtime for the artifact share (FG-12).
+    pub(in crate::manager) fn set_artifacts_runtime(&self, runtime: Arc<FleetGitRuntime>) {
+        let _ = self.artifacts_runtime.set(runtime);
+    }
+
+    /// The artifact step of a session (design §15.5, decision C1): the
+    /// authorization, then the folder or the address. It appends
+    /// `artifacts.ready` or `artifacts.unavailable` and adds the variables to
+    /// `spec` and to the setup command `env`. It never fails the start.
+    async fn run_artifact_step(
+        &self,
+        session_id: &SessionId,
+        project: (&str, &str),
+        share: &str,
+        spec: &mut SessionSpec,
+        env: Option<&mut ChildEnv>,
+    ) {
+        use crate::artifact_share::{StepInput, report_unavailable, start_step};
+        let Some(runtime) = self.artifacts_runtime.get() else {
+            let unverified = fleetdeck_proto::fleet_git::code::SHARE_UNVERIFIED;
+            report_unavailable(&self.store, session_id, unverified).await;
+            return;
+        };
+        let callsign = match self.store.summary(session_id.clone()).await {
+            Ok(Some(summary)) => summary.callsign.unwrap_or_default(),
+            _ => String::new(),
+        };
+        let input = StepInput {
+            session_id,
+            project_id: project.0,
+            project_name: project.1,
+            share,
+            callsign: &callsign,
+        };
+        let vars = start_step(runtime, &self.store, &input).await;
+        add_artifact_vars(spec, env, &vars);
+    }
+
+    /// The artifact step of a new session that has an artifact share
+    /// (`prepare_then_start`, before the setup command).
+    pub(in crate::manager) async fn artifact_step(
+        &self,
+        session_id: &SessionId,
+        fg: &FleetGitStart,
+        spec: &mut SessionSpec,
+        env: Option<&mut ChildEnv>,
+    ) {
+        let Some(share) = fg.settings.artifact_share.as_deref() else {
+            return;
+        };
+        let project = (fg.project_id.as_str(), fg.project_name.as_str());
+        self.run_artifact_step(session_id, project, share, spec, env)
+            .await;
+    }
+
+    /// The artifact step of a resume (design §15.5 item 5): only a session
+    /// that has an artifact folder or address. The project's current share
+    /// must be the share of the stored authorization (decision C7); else the
+    /// session resumes without the variables.
+    pub(in crate::manager) async fn resume_artifacts(
+        &self,
+        effect: &Effect,
+        mut launch: Launch,
+    ) -> Launch {
+        use crate::artifact_share::report_unavailable;
+        let session_id = &effect.session_id;
+        let Ok(Some(row)) = self.store.artifacts_row(session_id.clone()).await else {
+            return launch;
+        };
+        if row.path.is_none() && row.url.is_none() {
+            return launch;
+        }
+        let view = match self.store.git_project(row.project_id.clone()).await {
+            Ok(found) => found.map(|p| p.view),
+            Err(_) => None,
+        };
+        let stored = row.auth.as_ref().map(|a| a.share.as_str());
+        let share = view
+            .as_ref()
+            .and_then(|v| v.settings.artifact_share.as_deref())
+            .filter(|current| Some(*current) == stored);
+        let (Some(view), Some(share)) = (&view, share) else {
+            let unverified = fleetdeck_proto::fleet_git::code::SHARE_UNVERIFIED;
+            report_unavailable(&self.store, session_id, unverified).await;
+            return launch;
+        };
+        let project = (view.project_id.as_str(), view.project_name.as_str());
+        self.run_artifact_step(session_id, project, share, &mut launch.spec, None)
+            .await;
+        launch
     }
 }
 

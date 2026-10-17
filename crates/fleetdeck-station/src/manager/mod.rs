@@ -108,6 +108,9 @@ pub struct SessionManager {
     /// The model help of the station, once the station process set it
     /// (R10, DL-167).
     assist: std::sync::OnceLock<Arc<crate::assist::Assist>>,
+    /// The Fleet Git runtime of the station, once the link node set it
+    /// (FG-12): the artifact share of a start and of a resume reads it.
+    fleet_git: std::sync::OnceLock<Arc<crate::fleet_git_runtime::FleetGitRuntime>>,
     /// The private paths of the station (DL-173), given at the start. Built
     /// once; not part of the live policy snapshot.
     private_paths: Arc<crate::workspace::PrivatePaths>,
@@ -362,6 +365,7 @@ impl SessionManager {
             shells,
             artifacts: std::sync::OnceLock::new(),
             assist: std::sync::OnceLock::new(),
+            fleet_git: std::sync::OnceLock::new(),
             private_paths: private,
             settings: std::sync::OnceLock::new(),
             shell_notify,
@@ -386,6 +390,18 @@ impl SessionManager {
             private,
         );
         let _ = self.artifacts.set(service);
+    }
+
+    /// Gives the manager the Fleet Git runtime (FG-12). The first call wins.
+    pub fn set_fleet_git_runtime(&self, runtime: Arc<crate::fleet_git_runtime::FleetGitRuntime>) {
+        self.target.set_artifacts_runtime(Arc::clone(&runtime));
+        let _ = self.fleet_git.set(runtime);
+    }
+
+    /// The Fleet Git runtime, if the link node set it.
+    #[must_use]
+    pub fn fleet_git_runtime(&self) -> Option<&Arc<crate::fleet_git_runtime::FleetGitRuntime>> {
+        self.fleet_git.get()
     }
 
     /// The private paths of the station, given at the start.

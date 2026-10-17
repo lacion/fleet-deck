@@ -309,7 +309,7 @@ pub enum SnapshotResult {
 }
 
 /// The stored snapshot header: its revision and digest.
-fn snapshot_header(conn: &Connection) -> Result<Option<(u64, String)>> {
+pub(crate) fn snapshot_header(conn: &Connection) -> Result<Option<(u64, String)>> {
     let found = conn
         .query_row(
             "SELECT revision, digest FROM git_snapshot WHERE id = 1",

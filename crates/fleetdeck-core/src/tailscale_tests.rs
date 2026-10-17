@@ -37,6 +37,7 @@ fn a_full_status_has_this_machine_and_every_peer() {
     assert_eq!(s.this.login.as_deref(), Some("owner@example.com"));
     assert!(s.this.online && s.this.tags.is_empty());
     assert_eq!(s.magic_dns_suffix.as_deref(), Some("tail1234.ts.net"));
+    assert_eq!(s.current_tailnet.as_deref(), Some("owner@example.com"));
     assert_eq!(s.peers.len(), 3);
     let laptop = &s.peers[0];
     assert_eq!(laptop.host_name, "laptop");
@@ -63,6 +64,7 @@ fn an_ipv6_only_status_without_peers_parses() {
     assert_eq!(s.this.ips, [ip("fd7a:115c:a1e0::1234")]);
     assert!(s.peers.is_empty());
     assert_eq!(s.magic_dns_suffix.as_deref(), Some("tail1234.ts.net"));
+    assert_eq!(s.current_tailnet, None, "a document without a Name");
     assert_eq!(s.this.login, None);
 }
 
@@ -431,6 +433,7 @@ fn status_with(ips: &[&str], dns: &str) -> Status {
         },
         peers: Vec::new(),
         magic_dns_suffix: None,
+        current_tailnet: None,
     }
 }
 

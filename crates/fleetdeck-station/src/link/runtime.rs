@@ -277,6 +277,7 @@ impl StationNode {
         if let Some(dir) = artifacts_dir {
             manager.set_artifacts_dir(dir, manager.private_paths());
         }
+        manager.set_fleet_git_runtime(Arc::clone(&fleet_git));
         // The trash decisions and the file work read the open shells
         // (DL-150).
         manager.set_shells(Arc::clone(&shells));

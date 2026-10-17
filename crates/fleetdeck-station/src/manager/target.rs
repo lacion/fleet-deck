@@ -95,6 +95,7 @@ pub struct SessionTarget {
     launch_hook: GateHook,
     /// The `fleetdeck` executable that confines provisioning Git (B9).
     confine_exe: std::sync::OnceLock<std::path::PathBuf>,
+    artifacts_runtime: std::sync::OnceLock<Arc<crate::fleet_git_runtime::FleetGitRuntime>>,
     /// The instances whose probed version is on the adapter's deny list
     /// (R8.2, DL-162): their starts are refused.
     broken: Arc<StdMutex<BTreeMap<ProviderInstanceId, &'static str>>>,
@@ -138,6 +139,7 @@ impl SessionTarget {
             #[cfg(any(test, feature = "fault-injection"))]
             launch_hook: GateHook::default(),
             confine_exe: std::sync::OnceLock::new(),
+            artifacts_runtime: std::sync::OnceLock::new(),
             shells: ShellsSlot::default(),
             broken: Arc::default(),
             restart: Arc::default(),
@@ -622,7 +624,7 @@ impl EffectTarget for SessionTarget {
                 // The Git work of the start (M3 6-1, DL-200) and its setup
                 // command run in a task of their own: the effect worker
                 // goes on with the other sessions.
-                if workspace.is_some() || setup_cmd.is_some() {
+                if workspace.is_some() || setup_cmd.is_some() || launch::artifacts(fleet_git) {
                     return self
                         .defer_start(
                             effect,
@@ -659,6 +661,7 @@ impl EffectTarget for SessionTarget {
                     Ok(l) => l,
                     Err(refused) => return refused,
                 };
+                let launch = self.resume_artifacts(effect, launch).await;
                 // The transcript is copied before the provider can write to it
                 // again. A failure is recorded and never stops the import
                 // (DL-189).

@@ -304,15 +304,21 @@ async fn file_method(ctx: &StationLink, method: &str, params: serde_json::Value)
     let member = fleetdeck_proto::member_deny::take_member_flag(&mut params);
     match method {
         "files.list" => match serde_json::from_value(params) {
-            Ok(q) => done(files::list_as(store, policy, private, q, member).await),
+            Ok(q) => {
+                done(files::list_routed(store, &ctx.fleet_git, policy, private, q, member).await)
+            }
             Err(e) => bad_params(e),
         },
         "files.read" => match serde_json::from_value(params) {
-            Ok(q) => done(files::read_as(store, policy, private, q, member).await),
+            Ok(q) => {
+                done(files::read_routed(store, &ctx.fleet_git, policy, private, q, member).await)
+            }
             Err(e) => bad_params(e),
         },
         "files.search" => match serde_json::from_value(params) {
-            Ok(q) => done(files::search_as(store, policy, private, &git, q, member).await),
+            Ok(q) => done(
+                files::search_routed(store, &ctx.fleet_git, policy, private, &git, q, member).await,
+            ),
             Err(e) => bad_params(e),
         },
         "files.diff" => match serde_json::from_value(params) {
@@ -516,7 +522,7 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
                 desktop: intake_desktop::station_info(ctx).await,
                 traits: intake_fleet_git::traits(&ctx.fleet_git, &policy).await,
                 config: ctx.fleet_git.config(),
-                taildrive: None,
+                taildrive: ctx.fleet_git.taildrive_report(),
                 fleet_git: Some(intake_fleet_git::info(&ctx.fleet_git, &policy).await),
             })
         }
@@ -538,7 +544,8 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
         "station.native_preview" => intake_native::preview(ctx, req.params).await,
         "desktop.info" => intake_desktop::info(ctx).await,
         "desktop.act" => intake_desktop::act(ctx, req.params).await,
-        "fleet_git.projects_set" => intake_fleet_git::projects_set(&ctx.manager, req.params).await,
+        "fleet_git.projects_set" => intake_fleet_git::snapshot(ctx, req.params).await,
+        "fleet_git.share_verdict" => intake_fleet_git::share_verdict(ctx, req.params).await,
         "fleet_git.push_now" => intake_fleet_git::push_now(&ctx.manager, req.params).await,
         "project.ensure_home" => intake_fleet_git::ensure_home(ctx, req.params).await,
         "project.home_status" => intake_fleet_git::home_status(ctx, req.params).await,
