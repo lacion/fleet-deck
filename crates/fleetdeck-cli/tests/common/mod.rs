@@ -7,6 +7,7 @@
 
 pub mod deck;
 pub mod fleet_git;
+pub mod fleet_git_coord;
 pub mod fleet_git_land;
 
 use std::os::unix::process::ExitStatusExt;
