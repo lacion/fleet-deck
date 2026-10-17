@@ -38,6 +38,10 @@ fn request(count: u32) -> StartSessions {
         model: None,
         count_per_issue: count,
         review_of_pr: None,
+        home: None,
+        requires: Vec::new(),
+        prefer: Vec::new(),
+        spread: false,
     }
 }
 

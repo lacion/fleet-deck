@@ -74,6 +74,9 @@ pub enum FileRoot {
     Session(SessionId),
     /// A workspace directory; it must be inside the allowed roots.
     Workspace(String),
+    /// The artifact folder of this session (FG-12, `fleet_git.homes.v1`).
+    /// JSON `{"artifacts": "<session id>"}`.
+    Artifacts(SessionId),
 }
 
 /// `files.list` params.

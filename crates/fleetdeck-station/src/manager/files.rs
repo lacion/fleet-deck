@@ -53,6 +53,13 @@ pub async fn root(
     root: &FileRoot,
 ) -> Result<PathBuf, FileError> {
     let cwd = match root {
+        // (FG-12: T2.2 replaces this)
+        FileRoot::Artifacts(_) => {
+            return Err(FileError::new(
+                fleetdeck_proto::fleet_git::code::ARTIFACTS_UNAVAILABLE,
+                "The artifact folder cannot be opened safely now.",
+            ));
+        }
         FileRoot::Workspace(path) => path.clone(),
         FileRoot::Session(id) => {
             let summary = store

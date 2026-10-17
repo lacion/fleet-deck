@@ -14,6 +14,18 @@ use crate::integrations::ForgeBinding;
 #[path = "fleet_git_identity.rs"]
 mod identity;
 pub use identity::*;
+#[path = "fleet_git_homes.rs"]
+mod homes;
+pub use homes::*;
+#[path = "station_traits.rs"]
+mod station_traits;
+pub use station_traits::*;
+#[path = "drift.rs"]
+mod drift;
+pub use drift::*;
+#[path = "taildrive.rs"]
+mod taildrive;
+pub use taildrive::*;
 
 /// Wire strings of the Fleet Git error codes (ADR-009 §4). A code is never
 /// reused for another meaning.
@@ -669,6 +681,25 @@ pub struct GitSettingsAnswer {
     pub git_revision: u64,
 }
 
+/// The Fleet Git part of `station.info` (design §3.7).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "fleet_git/")]
+pub struct FleetGitInfo {
+    /// The folder below which the station clones homes.
+    pub clone_root: String,
+    /// `allow_check_cmd` of `station.toml`.
+    pub allow_check_cmd: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub git_version: Option<String>,
+    /// The station accepts a local remote (M13). False from an older station.
+    #[serde(default)]
+    pub allow_local_remotes: bool,
+}
+
+#[cfg(test)]
+#[path = "fleet_git_homes_tests.rs"]
+mod homes_tests;
 #[cfg(test)]
 #[path = "fleet_git_identity_tests.rs"]
 mod identity_tests;

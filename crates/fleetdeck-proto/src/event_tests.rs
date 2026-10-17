@@ -321,6 +321,18 @@ fn samples() -> Vec<Event> {
             state: crate::fleet_git::CleanupState::Kept,
             reason: Some("not_merged".into()),
         },
+        Event::ArtifactsReady {
+            path: Some("/mnt/nas/artifacts/app/ada/".into()),
+            url: None,
+        },
+        Event::ArtifactsUnavailable {
+            code: "share_exposed".into(),
+            text: "The artifact share exposes protected folders.".into(),
+        },
+        Event::ArtifactsRevoked {
+            code: "share_unverified".into(),
+            text: "The artifact share is not verified now.".into(),
+        },
     ]
 }
 
@@ -683,4 +695,35 @@ fn the_fleet_git_events_have_their_wire_names_and_optional_fields() {
     .unwrap();
     assert_eq!(stale.kind_name(), "workspace.base_stale");
     assert!(stale.known().is_some());
+}
+
+#[test]
+fn the_artifact_events_have_their_wire_names_and_optional_fields() {
+    let ready = serde_json::to_value(Event::ArtifactsReady {
+        path: None,
+        url: Some("http://100.100.100.100:8080/t/nas/art/app/ada/".into()),
+    })
+    .unwrap();
+    assert_eq!(
+        ready,
+        json!({"kind": "artifacts.ready", "url": "http://100.100.100.100:8080/t/nas/art/app/ada/"})
+    );
+    for (kind, name) in [
+        ("artifacts.unavailable", "mount_missing"),
+        ("artifacts.revoked", "share_unverified"),
+    ] {
+        let body: EventBody =
+            serde_json::from_value(json!({"kind": kind, "code": name, "text": "t"})).unwrap();
+        assert_eq!(body.kind_name(), kind);
+        assert!(body.known().is_some());
+    }
+    // A bare `artifacts.ready` decodes (both fields are optional).
+    let bare: EventBody = serde_json::from_value(json!({"kind": "artifacts.ready"})).unwrap();
+    assert!(matches!(
+        bare.known(),
+        Some(Event::ArtifactsReady {
+            path: None,
+            url: None
+        })
+    ));
 }

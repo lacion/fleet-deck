@@ -396,6 +396,25 @@ pub enum Event {
         #[ts(optional)]
         reason: Option<String>,
     },
+    /// The artifact folder of the session is ready (FG-12). The fold keeps
+    /// it in `summary.artifacts_dir`.
+    #[serde(rename = "artifacts.ready")]
+    ArtifactsReady {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        url: Option<String>,
+    },
+    /// The session started without the artifact variables (FG-12). The fold
+    /// ignores it.
+    #[serde(rename = "artifacts.unavailable")]
+    ArtifactsUnavailable { code: String, text: String },
+    /// The artifact share is not verified now (FG-12, B6). The fold clears
+    /// `summary.artifacts_dir`.
+    #[serde(rename = "artifacts.revoked")]
+    ArtifactsRevoked { code: String, text: String },
     #[serde(rename = "run.completed")]
     RunCompleted {
         run_id: RunId,

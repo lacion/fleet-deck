@@ -5,7 +5,7 @@ use super::Event;
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 53] = [
+    pub const KINDS: [&'static str; 56] = [
         "session.started",
         "session.state",
         "run.started",
@@ -59,6 +59,9 @@ impl Event {
         "workspace.include_skipped",
         "session.push",
         "session.cleanup",
+        "artifacts.ready",
+        "artifacts.unavailable",
+        "artifacts.revoked",
     ];
 
     /// The dotted kind name.
@@ -118,6 +121,9 @@ impl Event {
             Self::WorkspaceIncludeSkipped { .. } => "workspace.include_skipped",
             Self::SessionPush { .. } => "session.push",
             Self::SessionCleanup { .. } => "session.cleanup",
+            Self::ArtifactsReady { .. } => "artifacts.ready",
+            Self::ArtifactsUnavailable { .. } => "artifacts.unavailable",
+            Self::ArtifactsRevoked { .. } => "artifacts.revoked",
         }
     }
 

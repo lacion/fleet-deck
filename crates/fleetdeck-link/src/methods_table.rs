@@ -661,4 +661,34 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::FLEET_GIT),
         false,
     ),
+    // Fleet Git phase 2 (ADR-009): homes on many stations and the artifact
+    // share verdicts.
+    m(
+        "project.ensure_home",
+        DeckToStation,
+        Scope::Admin,
+        Some(feature::FLEET_GIT_HOMES),
+        false,
+    ),
+    m(
+        "project.home_status",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::FLEET_GIT_HOMES),
+        false,
+    ),
+    m(
+        "fleet_git.artifact_authorize",
+        StationToDeck,
+        Scope::Read,
+        Some(feature::FLEET_GIT_HOMES),
+        false,
+    ),
+    m(
+        "fleet_git.share_verdict",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::FLEET_GIT_HOMES),
+        false,
+    ),
 ];
