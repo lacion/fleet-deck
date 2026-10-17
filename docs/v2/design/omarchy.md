@@ -1,6 +1,6 @@
 # Fleet Deck on Omarchy: the wall, desktop control and the desktop MCP (R13)
 
-- **Status:** §4.5, §5 and §6.1-§6.4/§6.6 **accepted**, revision 5 (2026-10-16, DL-201: design review round 4 PASS; its two MAJOR findings fixed in §5C items 4 and 5); revision 6: §5D (P2b) and §6D (P3b) drafted from the open questions, owner decisions DL-221, DL-222, DL-223; DESIGN REVIEW pending; other parts still draft. §5C answers the round 3 review (`/tmp/adv-r13-p23-r3-report.md`, owner decision: apply the fixes and one more round) and overrides §5B where they differ; §5B answers the round 2 review (`/tmp/adv-r13-p23-r2-report.md`) and overrides §5A where they differ; §5A answers the DESIGN REVIEW round 1 of §4.5, §5 and §6 (`/tmp/adv-r13-p2-design-report.md`) and overrides them where they differ. Not frozen. Each high-risk part needs an adversary DESIGN REVIEW before its code (§13).
+- **Status:** §4.5, §5 and §6.1-§6.4/§6.6 **accepted**, revision 5 (2026-10-16, DL-201: design review round 4 PASS; its two MAJOR findings fixed in §5C items 4 and 5); revision 6: §5D (P2b) and §6D (P3b) drafted from the open questions, owner decisions DL-221, DL-222, DL-223; DESIGN REVIEW pending; revision 7: §5E answers the DESIGN REVIEW round 1 of revision 6; other parts still draft. §5C answers the round 3 review (`/tmp/adv-r13-p23-r3-report.md`, owner decision: apply the fixes and one more round) and overrides §5B where they differ; §5B answers the round 2 review (`/tmp/adv-r13-p23-r2-report.md`) and overrides §5A where they differ; §5A answers the DESIGN REVIEW round 1 of §4.5, §5 and §6 (`/tmp/adv-r13-p2-design-report.md`) and overrides them where they differ. Not frozen. Each high-risk part needs an adversary DESIGN REVIEW before its code (§13).
 - **Owner request (2026-10-16):** "i have a server thats connected to a ultrawide screen, i use this server to run multiple ai agents as it has 64 cores and 128gb of ram … it would be awesome if i could control omarchy and the screen trough the fleet and maybe also have an mcp … imagine using the screen as a command control center and we could display and control everhting there." Then: "lets create a document for this work so we can implement everything".
 - **Owner answers (DL-198):**
 
@@ -529,6 +529,53 @@ These rules answer the 13 open questions of P3b (the fact sheet `r13-p3b-facts.m
     - Re-pairing, binding changes and late desktop replies need generation checks and a serialization for each display. An open that timed out can have succeeded on the station.
     - The return to `mission` removes the narrowing filter of a directive and returns to the ceiling that the owner set. The ceiling stays the durable privacy boundary.
 
+## 5E. Answers to the DESIGN REVIEW of revision 6 (round 1)
+
+These rules answer the report `adv-omarchy-r6-design-report.md` (VERDICT: FAIL, 3 BLOCKER, 3 MAJOR). They override §5D and §6D where they differ. The item numbers follow the finding numbers (1 to 6). Items 7 and 8 update the build plan and the status line. The decision DL-221 (single-file artifact) stays. The build plan is in §11.
+
+1. **Dispatch authority (finding 1).**
+   - **Feature.** The new link feature is `desktop_authority.v1`.
+   - **Parameter.** `desktop.act` gets the additive param `authority: { action_id: String (ULID), action_hash: String (hex SHA-256 of the canonical JSON of the action plus the station id and the target monitor), deadline_ms: i64 (deck time + 10 000) }`.
+   - **Fail closed on the deck.** The deck relays `desktop.act` (owner actions and wakes) only to a station that negotiated `desktop_authority.v1`. To any other station it answers `409 desktop_unsupported`.
+   - **Fail closed on the station.** A station with the feature refuses a `desktop.act` without a valid authority. The answer is `forbidden` with the text "The deck did not authorize this desktop action."
+   - **Single use.** The station keeps each used `action_id` until its deadline passes. It refuses a second use.
+   - **Execution start.** "Execution starts" is the first side effect: the spawn of the first program of the action.
+   - **Checks.** Right before that spawn, the station checks three items:
+     - the deadline has not passed (station clock, 5 s skew allowance);
+     - the hash matches the action that the station will run;
+     - its live `allow_desktop`.
+   - **Waits count.** All waits before that point (the per-display lock, the info reads) count against the deadline. An expired authority gives `failed` with the text "The authorization of this desktop action expired." and no side effect.
+   - **Residual interval (accepted).** The deck stops issuing authorities at once when `desktop_control` turns off. An action that was authorized before can still start within its remaining deadline, at most 10 s. This interval is accepted and stated. The documents do not claim an instant remote cancellation.
+2. **Display authentication generation (finding 2).**
+   - **Column.** The new column is `displays.auth_generation INTEGER NOT NULL DEFAULT 0`. It is separate from the directive generation.
+   - **Stored value.** Every display link, approved pairing and display session stores the generation at its creation.
+   - **Fence.** Link redemption, pairing approval, pairing claim and display session creation each check, in the same transaction as their write, that the stored generation equals the current one. The write has the form `INSERT ... SELECT ... WHERE displays.auth_generation = ?`. When the check fails, the answer is `401 login_required`.
+   - **Replacement.** A replacement (re-pairing an existing display, DL-223 item P3b-1) increments the generation. In the same transaction it deletes every session, every unused link and every approved-but-unclaimed pairing of that display.
+   - **Revoke.** A revoke does the same as a replacement.
+   - **Tests.** A delayed redemption: redeem, then a replacement, then the session issuance fails. Two competing approved pairings for one display: the first claim wins and the second fails.
+3. **Wall artifact rendering (finding 3; keeps DL-221).**
+   - **(a) Own document.** The deck serves the board document also at `/display/` (the same `index.html`) with a stricter CSP. Its `frame-src` allows only the display artifact path (`'self'` path `/api/displays/self/artifact/`). Every display link, pair page and kiosk URL uses `/display/#/...`. The board at `/` keeps its CSP.
+   - **(b) Inert response.** The display artifact response is inert. It has the header `Content-Security-Policy: sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'; media-src data:; font-src data:`. The header has no `allow-scripts`. The wall frame has `sandbox` without `allow-scripts`.
+   - **(c) Browser proofs (Playwright, P2c).** An artifact that tries to navigate its own frame to `/a/<token>/` is blocked. A script in an artifact does not run.
+4. **Expected display in `wall.open` (finding 4).**
+   - **Launch URL.** A managed launch carries the non-secret query `?expect=<display_id>&op=<operation_revision>` in the `/display/#/display-pair` URL.
+   - **Pairing record.** The pending pairing stores `expected_display_id` and `operation_revision`.
+   - **Approval.** The approval dialog preselects that display and refuses another one (`409 display_mismatch`).
+   - **Claim.** The claim refuses when the operation revision of the binding has moved on (`409 superseded`).
+   - **Authorization.** The code and the pending cookie stay the authorization.
+5. **Offset sample (finding 5).**
+   - **Validity window.** The deck uses a `DesktopInfo` offset only when `offset_sampled_at` is within [deck now − 15 s, deck now + 5 s]. Otherwise the offset is unknown, and no wake is sent while quiet hours are set.
+   - **Station re-check.** The wake action carries the `quiet_hours` string of the display. The station reads `date +%z` again right before the first side effect. It refuses with `failed` and the text "Quiet hours are active on this station." when its own local time is inside the interval.
+6. **Wake replay (finding 6).**
+   - **Boundary.** For each station link, the deck records an initialization boundary: the `station_seq` of the first snapshot after the link came up.
+   - **Baseline.** A request seen in that snapshot, or in an event with `station_seq` at or below the boundary, is baseline and never wakes.
+   - **Wake condition.** Only an `approval.requested` (or question) event with `station_seq` above the boundary can wake. It must be first observed live and at most 60 s old (5 s future skew).
+   - **Deduplication.** The key is `(station_id, request_id)`. The deck keeps keys in memory for 24 h (at most 10 000 keys, the oldest out first). The keys stay across a disappearance and across station incarnation changes.
+   - **Owner startup rule.** The startup rule of DL-223 (P3b-5) is this boundary for every station link after the deck starts.
+   - **Tests.** A delayed initial sync, a reconnect replay, and a restored request under a new incarnation (no wake).
+7. **Build plan (§11).** The foundation task also owns the `desktop_authority.v1` and `auth_generation` contracts and the `/display/` document route. The P3b station dispatch task owns the station side of item 1 and the station quiet-hours re-check of item 5.
+8. **Status line.** The status line at the top of this document names revision 7.
+
 ---
 
 ## 7. The desktop MCP for agents (HIGH RISK)
@@ -761,12 +808,12 @@ The order is: a serial foundation task, then the parallel tasks, then the web co
 
 | Step | Task | Exclusive owned files | Deliverable |
 |---|---|---|---|
-| 1 (serial) | Foundation and integration | Core config, settings and tests; deck `live.rs`, `cert_task_tests.rs`, `tests/common/board.rs`; proto contracts, exports and TS generation; link method tables; deck HTTP module, method tables and guard; store `mod.rs`, `schema.rs`, `displays.rs`, `displays_pairing.rs`; HTTP `display_routes.rs`; station intake routing; deck `lib.rs`, `serve.rs` | Settings, contracts, migrations, binding and pairing transactions, invalidation hooks and the final wiring |
+| 1 (serial) | Foundation and integration | Core config, settings and tests; deck `live.rs`, `cert_task_tests.rs`, `tests/common/board.rs`; proto contracts, exports and TS generation; link method tables; deck HTTP module, method tables and guard; store `mod.rs`, `schema.rs`, `displays.rs`, `displays_pairing.rs`; HTTP `display_routes.rs`; station intake routing; deck `lib.rs`, `serve.rs` | Settings, contracts (including the `desktop_authority.v1` feature and the `desktop.act` authority param, §5E item 1), migrations (including `displays.auth_generation`, §5E item 2), binding and pairing transactions, the `/display/` document route (§5E item 3), invalidation hooks and the final wiring |
 | 2 (parallel) | P2b payload | Deck `http/{display_view,ws,read_routes,activity_routes}.rs`, new display projection helpers, `store/activity.rs`; new timeline and activity tests | One projection policy across HTTP and every WS path |
 | 2 (parallel) | P2b directives | New deck `store/display_directives*.rs`, `http/display_directive_routes.rs`; new directive tests | Validation, storage, live sender checks and the polling endpoint |
 | 2 (parallel) | P2b changes | Station `workspace/session_diff.rs` and new display-change helpers and tests; new deck `http/display_changes.rs` and tests | Station-produced protected statistics and patches, and a bounded display route |
 | 2 (parallel) | P2b artifacts | Deck `http/{artifact_routes,artifact_stream}.rs`, new shared artifact helpers and `display_artifact.rs`; new artifact tests | The nearly full module is factored; single-file route, CSP and revocation |
-| 2 (parallel) | P3b station dispatch | Station `desktop/**`, `link/intake_desktop.rs`, new station authority helper and tests | Fresh info, local offset, IPv6 grammar, total deadlines and dispatch authority |
+| 2 (parallel) | P3b station dispatch | Station `desktop/**`, `link/intake_desktop.rs`, new station authority helper and tests | Fresh info, local offset, IPv6 grammar, total deadlines, the station side of the dispatch authority (§5E item 1) and the station quiet-hours re-check (§5E item 5) |
 | 2 (parallel) | P3b relay | New deck `desktop_relay.rs`, `http/desktop_routes.rs`, `link/desktop_authority.rs`; new relay tests | Owner relay, action authority, binding orchestration and redacted outcomes |
 | 2 (parallel) | P3b wake | New deck `wake/**`; new wake tests | Request detection, quiet hours, joining and bounded execution |
 | 3 | Web completion (P2c, P3c) | `web/src/**`, without the generated types that step 1 owns | Pairing, display management, wall panes, the Desktop panel and "Send to wall" |
