@@ -191,7 +191,8 @@ pub struct FilteredPatch {
 /// prefix). A header can name `a/<old> b/<new>`; a path with a space can be
 /// split in several ways, so every split is a candidate. `None` for a header
 /// that cannot be read.
-fn header_paths(rest: &str) -> Option<Vec<String>> {
+#[must_use]
+pub fn header_paths(rest: &str) -> Option<Vec<String>> {
     if rest.starts_with('"') {
         // Quoted names (special characters): `"a/x" "b/x"`, or one quoted.
         let mut names = Vec::new();

@@ -368,7 +368,17 @@ async fn the_stub_routes_refuse_with_not_built_and_the_self_routes_need_the_disp
     ] {
         expect(&get(&c, &h, path).await, 401, "login_required");
         let both = format!("{}; {cookie}", h[0].1);
-        expect(&c.get(path, &[("Cookie", &both)]).await, 501, "not_built");
+        // The changes row is built (R13 P2b changes): the display answers,
+        // here with an unknown session. The artifact row is still a stub.
+        if path.ends_with("/changes") {
+            expect(
+                &c.get(path, &[("Cookie", &both)]).await,
+                404,
+                "unknown_session",
+            );
+        } else {
+            expect(&c.get(path, &[("Cookie", &both)]).await, 501, "not_built");
+        }
     }
     // The directive row is built (R13 P2b directives): the owner cookie alone
     // is refused, and with both cookies the display answers.

@@ -433,15 +433,28 @@ async fn a_display_reads_and_logs_out_with_its_header_and_writes_nothing_else() 
             "display_read_only",
         );
     }
-    // These rows are open to a display, but their projections belong to the
-    // P2b changes and artifacts tasks: until then a display gets the defined
+    // The changes row is built (R13 P2b changes): an unknown session is a
+    // 404. The artifact row is open to a display, but its projection belongs
+    // to the P2b artifacts task: until then a display gets the defined
     // refusal and never the owner payload (R13 P2b/P3b step 1).
-    for path in [
-        "/api/displays/self/sessions/x/y/changes",
-        "/api/displays/self/artifact/x/y/1/index.html",
-    ] {
-        expect(&c.get(path, &[("Cookie", &cookie)]).await, 501, "not_built");
-    }
+    expect(
+        &c.get(
+            "/api/displays/self/sessions/x/y/changes",
+            &[("Cookie", &cookie)],
+        )
+        .await,
+        404,
+        "unknown_session",
+    );
+    expect(
+        &c.get(
+            "/api/displays/self/artifact/x/y/1/index.html",
+            &[("Cookie", &cookie)],
+        )
+        .await,
+        501,
+        "not_built",
+    );
     // The display cookie does not log in the owner's rows, and the owner's
     // cookie is not a display cookie.
     let owner_cookie = &h[0].1;
