@@ -2,7 +2,8 @@
 //! computes it at the home add; the station recomputes it from the params and
 //! refuses another value (`attempt_reused`). It covers every param except
 //! `attempt_id` and `request_digest`: the link binds the station, and the
-//! station derives `dest_path` from `folder` and its `clone_root`.
+//! station derives `dest_path` from `folder` and its `clone_root`. Also the
+//! clone folder name rule that both sides use.
 
 use fleetdeck_proto::fleet_git::{EnsureHomeParams, RemoteIdentity};
 use serde::Serialize;
@@ -37,6 +38,28 @@ pub fn ensure_home_digest(params: &EnsureHomeParams) -> String {
     crate::settings::revision_of(&bytes)
 }
 
+/// The clone folder name of a project (design §8.4 step 5, decision 30): each
+/// character outside `[A-Za-z0-9._-]` becomes `-`, a leading `.` becomes `-`,
+/// cut to 80 characters. The deck computes it; the station checks it.
+#[must_use]
+pub fn home_folder_name(project_name: &str) -> String {
+    let mut out: String = project_name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .take(80)
+        .collect();
+    if out.starts_with('.') {
+        out.replace_range(..1, "-");
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -57,6 +80,14 @@ mod tests {
             request_digest: String::new(),
             retry_of: None,
         }
+    }
+
+    #[test]
+    fn the_folder_name_rule() {
+        assert_eq!(home_folder_name("My App/2"), "My-App-2");
+        assert_eq!(home_folder_name(".hidden"), "-hidden");
+        assert_eq!(home_folder_name("añb"), "a-b");
+        assert_eq!(home_folder_name(&"x".repeat(100)).len(), 80);
     }
 
     #[test]

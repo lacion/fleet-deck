@@ -90,6 +90,8 @@ pub mod code {
     pub const MOVE_RESUME_TIMEOUT: &str = "move_resume_timeout";
     pub const IDENTITY_CHANGED: &str = "identity_changed";
     pub const WORKTREE_CHANGED: &str = "worktree_changed";
+    /// `project.home_status` names an attempt that the station does not know (FG-5).
+    pub const UNKNOWN_ATTEMPT: &str = "unknown_attempt";
     pub const ARTIFACTS_UNAVAILABLE: &str = "artifacts_unavailable";
     pub const REMOTE_UNSUPPORTED: &str = "remote_unsupported";
     pub const MOVE_DISCARDED: &str = "move_discarded";
