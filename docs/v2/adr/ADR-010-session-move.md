@@ -1,6 +1,6 @@
 # ADR-010 — Move a session to another station (FG-9)
 
-- **Status:** Proposed (revision 4, 2026-10-17: the answers to the adversary RE-REVIEW round 2, DL-226: §5.2 item 4, §5.4, §6 and §7 are rewritten for the provider-specific commit point and the durable discard; §11 adds the spike plan of the Claude handshake; RE-REVIEW round 3 pending. Revision 3, DL-225: §5.2 item 4, §6 and §10.1)
+- **Status:** Accepted (owner, 2026-10-18, DL-230 item 5: FG-9 is built on the corrected design; the real-CLI check C3 of §11 stays an owner check before release). Revision 4, 2026-10-17: the answers to the adversary RE-REVIEW round 2, DL-226: §5.2 item 4, §5.4, §6 and §7 are rewritten for the provider-specific commit point and the durable discard; §11 adds the spike plan of the Claude handshake; RE-REVIEW round 3 pending. Revision 3, DL-225: §5.2 item 4, §6 and §10.1)
 - **Date:** 2026-10-17
 - **Deciders:** architect (Fleet Git Phase 0); owner decisions O27-O30 (`fleet-git-owner-spec.md`)
 - **Implements:** Fleet Git FG-9, owner decisions O27 (spike first), O28 (preconditions), O29 (transcript transfer), O30 (branch-only move)
