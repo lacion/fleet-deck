@@ -19,6 +19,7 @@ pub mod link;
 pub mod live;
 pub mod local;
 pub mod local_auth;
+pub mod local_provision;
 pub mod maintenance;
 pub mod oauth;
 pub mod peers;

@@ -93,6 +93,11 @@ pub enum DeckRequest {
     /// local socket is the owner, so it counts as elevated; the
     /// `elevation` field of the change is not used.
     SettingsSet { change: SettingsChange },
+    /// `fleetdeck deck provision-file`: the deck identity for a
+    /// provisioning file, if the deck listens on `host:port` (P8 2.2). A
+    /// read: no audit row.
+    #[serde(rename = "deck.provision_info")]
+    ProvisionInfo { host: String, port: u16 },
 }
 
 /// How long `deck command` waits for a receipt before it answers with the
@@ -171,6 +176,17 @@ pub enum DeckResponse {
     SettingsError {
         code: String,
         message: String,
+    },
+    /// The answer to [`DeckRequest::ProvisionInfo`] (P8 2.2).
+    ProvisionInfo {
+        features: Vec<String>,
+        deck: String,
+        deck_fingerprint: String,
+    },
+    /// A [`DeckRequest::ProvisionInfo`] that failed, with its fixed code:
+    /// `invalid_request` or `deck_not_listening`.
+    ProvisionError {
+        code: String,
     },
     Error {
         message: String,
@@ -258,6 +274,9 @@ async fn handle(deck: &LocalDeck, request: DeckRequest) -> DeckResponse {
         ),
         DeckRequest::SettingsGet => settings_get(deck).await,
         DeckRequest::SettingsSet { change } => settings_set(deck, change).await,
+        DeckRequest::ProvisionInfo { host, port } => {
+            crate::local_provision::provision_info(deck, host, port).await
+        }
         DeckRequest::ElevateCode => {
             let made = deck.elevations.new_code(store.now_ms());
             let row = NewAudit::new(

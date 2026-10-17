@@ -4,6 +4,7 @@ mod auth;
 mod cli;
 mod confine;
 mod deck;
+mod deck_provision;
 mod doctor;
 mod invite;
 mod pairing;
@@ -171,6 +172,7 @@ async fn deck_main(
         Some(DeckCommand::Password { stdin }) => auth::password(dirs, *stdin).await,
         Some(DeckCommand::Token { command }) => auth::token(dirs, command).await,
         Some(DeckCommand::Audit { limit, json }) => auth::audit(dirs, *limit, *json).await,
+        Some(DeckCommand::ProvisionFile(args)) => deck_provision::run(dirs, args).await,
     }
 }
 
