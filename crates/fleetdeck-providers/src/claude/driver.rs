@@ -192,7 +192,11 @@ impl ClaudeAdapter {
                 program: self.config.program.clone(),
                 args,
                 cwd: cwd.clone(),
-                env: CoordinatorLaunch::env_for(coordinator, &self.config.env, &cwd)?,
+                env: CoordinatorLaunch::env_for(
+                    coordinator,
+                    &env_with_extra(&self.config.env, spec.extra_env.as_deref()),
+                    &cwd,
+                )?,
                 launch: pinned,
             })
             .await?;
@@ -661,6 +665,24 @@ impl Drop for ClaudeSession {
             writer.abort();
         }
     }
+}
+
+/// The instance environment plus the project's `worktree_env` (FG-4, design
+/// §7.3). A name that the instance environment has already keeps its value.
+/// A value that `ChildEnv` refuses is dropped with a log line.
+pub(crate) fn env_with_extra(
+    base: &ChildEnv,
+    extra: Option<&std::collections::BTreeMap<String, String>>,
+) -> ChildEnv {
+    let mut env = base.clone();
+    for (name, value) in extra.into_iter().flatten() {
+        if env.get(name).is_none()
+            && let Err(e) = env.set(name, value)
+        {
+            tracing::warn!(variable = %name, error = %e, "extra_env: a variable is dropped");
+        }
+    }
+    env
 }
 
 #[cfg(test)]

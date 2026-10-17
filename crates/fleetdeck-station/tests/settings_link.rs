@@ -242,6 +242,7 @@ impl Rig {
                     title: Some("Fix the build".to_owned()),
                     coordinator: None,
                     launch: None,
+                    extra_env: None,
                 },
                 prompt: None,
                 workspace: None,

@@ -391,6 +391,7 @@ fn start(
             title: Some(title),
             coordinator: None,
             launch: None,
+            extra_env: None,
         },
         prompt: Some(UserInput::new(prompt)),
         workspace: Some(Box::new(WorkspaceRequest::Worktree {

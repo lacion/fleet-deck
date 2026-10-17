@@ -707,6 +707,7 @@ pub fn durable_configs(adapters: &Adapters) -> shim_station::Configs {
             title: summary.title.clone(),
             coordinator: None,
             launch: None,
+            extra_env: None,
         };
         adapter.durable_launch(&spec).ok().map(|l| l.core)
     }

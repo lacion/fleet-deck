@@ -194,6 +194,7 @@ fn spawn(station: &StationId, instance: &str, mode: Option<&str>) -> Coordinator
             title: None,
             coordinator: None,
             launch: None,
+            extra_env: None,
         },
         prompt: Some(UserInput::new("go")),
     }

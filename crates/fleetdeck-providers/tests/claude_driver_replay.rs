@@ -185,6 +185,7 @@ async fn play(path: &Path, index: usize, records: &[Value], root: &Path) -> Play
         title: None,
         coordinator: None,
         launch: None,
+        extra_env: None,
     };
     let mut session = adapter.start_session(spec, sink, origin).await.unwrap();
     let raw_dir = session.raw_log_dir().unwrap().to_path_buf();

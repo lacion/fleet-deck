@@ -405,6 +405,7 @@ impl LinkBackend {
                 )),
                 coordinator: None,
                 launch: None,
+                extra_env: None,
             },
             prompt: Some(input),
             workspace: Some(Box::new(WorkspaceRequest::Worktree {

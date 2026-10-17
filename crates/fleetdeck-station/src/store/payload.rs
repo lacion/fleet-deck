@@ -342,6 +342,7 @@ mod tests {
                 title: None,
                 coordinator: None,
                 launch: None,
+                extra_env: None,
             },
             prompt: None,
             continue_by: None,

@@ -61,6 +61,7 @@ fn spec(instance: &str, cwd: &std::path::Path, mode: &str) -> SessionSpec {
         title: None,
         coordinator: None,
         launch: None,
+        extra_env: None,
     }
 }
 

@@ -240,6 +240,7 @@ async fn live_round(kind: ProviderKind) {
         title: Some("coordinator".to_owned()),
         coordinator: Some(Box::new(coordinator_spec())),
         launch: None,
+        extra_env: None,
     };
     let prompt = "Call the list_sessions tool of the fleetdeck MCP server exactly once. \
                   Then reply with exactly the value of the `answer` field of its result.";

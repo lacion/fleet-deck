@@ -7,7 +7,6 @@
 //! `fleetdeck-proto` (`orchestration`).
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use fleetdeck_core::identity::Identity;
@@ -586,6 +585,7 @@ async fn modes_above_the_ceiling_or_in_bypass_are_refused_by_every_op() {
             title: None,
             coordinator: None,
             launch: None,
+            extra_env: None,
         },
         prompt: Some(UserInput::new("go")),
     };

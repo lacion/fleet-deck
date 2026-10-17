@@ -251,6 +251,7 @@ impl Rig {
                 title: None,
                 coordinator: None,
                 launch: None,
+                extra_env: None,
             },
             prompt: Some(UserInput::new(prompt.to_owned())),
             workspace: None,

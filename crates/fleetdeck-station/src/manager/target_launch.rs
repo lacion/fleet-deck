@@ -2,6 +2,7 @@
 //! checked folder below the allowed roots without a link, and the provider
 //! starts in exactly that directory object, or does not start.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -308,10 +309,10 @@ pub(in crate::manager) struct Prepared {
     pub(in crate::manager) skipped: Vec<SkippedFile>,
 }
 
-/// Adds the names of `worktree_env` that the station accepts, after the same
-/// rule as the deck (design §7.3). A name that the environment has already
-/// (the provider instance `env`) keeps its value.
-pub(in crate::manager) fn add_worktree_env(env: &mut ChildEnv, settings: &GitSettings) {
+/// The names of `worktree_env` that the station accepts, after the same rule
+/// as the deck (design §7.3). A refused name is dropped with a log line.
+fn accepted_worktree_env(settings: &GitSettings) -> BTreeMap<String, String> {
+    let mut accepted = BTreeMap::new();
     for (name, value) in settings.worktree_env.iter().take(32) {
         let one = GitSettings {
             worktree_env: std::iter::once((name.clone(), value.clone())).collect(),
@@ -319,12 +320,37 @@ pub(in crate::manager) fn add_worktree_env(env: &mut ChildEnv, settings: &GitSet
         };
         if check_settings(&one).is_err() {
             tracing::warn!(variable = %name, "worktree_env: a refused variable is dropped");
-        } else if env.get(name).is_none()
-            && let Err(e) = env.set(name, value)
+        } else {
+            accepted.insert(name.clone(), value.clone());
+        }
+    }
+    accepted
+}
+
+/// Adds the names of `worktree_env` that the station accepts. A name that the
+/// environment has already (the provider instance `env`) keeps its value.
+pub(in crate::manager) fn add_worktree_env(env: &mut ChildEnv, settings: &GitSettings) {
+    for (name, value) in accepted_worktree_env(settings) {
+        if env.get(&name).is_none()
+            && let Err(e) = env.set(&name, &value)
         {
             tracing::warn!(variable = %name, error = %e, "worktree_env: a variable is dropped");
         }
     }
+}
+
+/// The spec of a start with the `worktree_env` of its project in `extra_env`
+/// (FG-4, O15), for the provider process. `None`: the start has no Fleet Git
+/// data or no accepted variable, and the spec stays as it is.
+pub(in crate::manager) fn spec_with_worktree_env(
+    spec: &SessionSpec,
+    fleet_git: Option<&FleetGitStart>,
+) -> Option<SessionSpec> {
+    let accepted = accepted_worktree_env(&fleet_git?.settings);
+    (!accepted.is_empty()).then(|| SessionSpec {
+        extra_env: Some(Box::new(accepted)),
+        ..spec.clone()
+    })
 }
 
 impl SessionTarget {
