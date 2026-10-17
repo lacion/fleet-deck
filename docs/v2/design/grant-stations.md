@@ -1,6 +1,6 @@
 # Coordinator grant target stations (ADR-006 §"Creation", DL-230 item 7)
 
-Status: proposed, revision 2 (architect, 2026-10-18): answers the DESIGN REVIEW round 1 (`adv-grant-stations-design-r1-report.md`: B1, M1-M4, U1). High risk (authorization).
+Status: proposed, revision 3 (architect, 2026-10-18): revision 2 answered the DESIGN REVIEW round 1 (B1, M1-M4, U1); revision 3 answers the round 2 blocker (exact expiry for worker calls, §2.3a). High risk (authorization).
 
 ## 1. Problem
 
@@ -48,6 +48,16 @@ A grant is **in effect** when `state = 'active'` and `now <= expires_at` and not
   6. **pairing writes**: `pin_station` for an already paired key replaces the scopes with the pairing scopes and then runs the helper, so an active grant keeps its `coordinate`;
   7. **a periodic sweep**: a deck task every 30 s marks every grant that is `active` but past `expires_at` or idle-expired as `expired` (`revoked_reason = 'expired'` / `'idle'`) and runs the helper;
   8. **deck start**: `DeckStore::open` runs the sweep and the helper before the deck accepts any link (this removes stale scopes left by older code, also for a station that is offline).
+
+### 2.3a Every `coordinate` admission checks a grant in effect (revision 3, round 2 blocker)
+
+The stored and cached scope is only a coarse admission filter; it can lag the clock by up to one sweep. The exact rule is enforced per call:
+
+- `store/coordinator.rs` (calls) and `store/coordinator_query.rs` (queries): before any other work, in the same transaction as the call's decision and before any write, the deck checks that **at least one grant in effect (§2.2) names the calling station** in `grants.stations`. This check runs for **every** call and query that arrives with the `coordinate` scope, also for the worker calls that skip the caller-grant check today (`store/coordinator.rs:215`, `ask_coordinator` in `coordinator_fleet.rs:251`) and for `coordinator.authority_check`.
+- Refusal: the stored rejection `forbidden`, "No coordinator grant covers this station now." (a call), or the wire error `forbidden` with the same text (a query or an authority check). Nothing is written.
+- One store function `station_covered(tx, station, now) -> bool` is the only implementation; it uses `in_effect`.
+- The sweep (§2.3 item 7) stays for cleanup of the stored and cached scope only.
+- Test: a worker `ask_coordinator` and a `coordinator.authority_check` from a target station are refused one millisecond after the last covering grant expires and before the next sweep (test clock), and nothing is written.
 
 ### 2.4 Link scope cache (revision 2, M1)
 
