@@ -26,6 +26,17 @@ const fn drive(name: &'static str) -> MethodSpec {
     m(name, Callers::DeckToStation, Scope::Drive, None, true)
 }
 
+/// A deck-to-station method of `fleet_git.move.v1` (FG-9).
+const fn mv(name: &'static str, scope: Scope, mutating: bool) -> MethodSpec {
+    m(
+        name,
+        Callers::DeckToStation,
+        scope,
+        Some(feature::FLEET_GIT_MOVE),
+        mutating,
+    )
+}
+
 use Callers::{DeckToStation, Either, StationToDeck};
 
 /// Method table v1 (Revision 2).
@@ -736,4 +747,16 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::FLEET_GIT_BRANCHES),
         false,
     ),
+    // Fleet Git phase 4 (ADR-009): move a session to another station.
+    mv("session.move_out", Scope::Admin, true),
+    mv("session.move_export", Scope::Admin, false),
+    mv("session.move_prepare", Scope::Admin, false),
+    mv("session.move_in", Scope::Admin, true),
+    mv("session.move_finish", Scope::Admin, true),
+    mv("session.move_release", Scope::Admin, false),
+    mv("session.move_abort", Scope::Admin, false),
+    mv("session.move_discard", Scope::Admin, false),
+    mv("session.move_status", Scope::Read, false),
+    mv("session.move_fail", Scope::Admin, false),
+    mv("session.move_undo", Scope::Admin, true),
 ];

@@ -80,6 +80,10 @@ pub const SESSION_METHODS: &[&str] = &[
     "session.shell_command",
     "session.release_shell",
     "session.land",
+    "session.move_out",
+    "session.move_in",
+    "session.move_finish",
+    "session.move_undo",
     "approval.answer",
 ];
 
@@ -344,6 +348,13 @@ pub enum CoordinatorOp {
     Land {
         station: StationId,
         session_id: SessionId,
+    },
+    /// Move a session to another station (`manage` class, Fleet Git FG-9,
+    /// design §13.2). Needs `fleet_git.move.v1` on both stations.
+    Move {
+        station: StationId,
+        session_id: SessionId,
+        to_station: StationId,
     },
 }
 

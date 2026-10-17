@@ -129,6 +129,7 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `fleet_git.homes.v1` | `project.ensure_home`, `project.home_status`, `fleet_git.artifact_authorize`, `fleet_git.share_verdict`, the file root `artifacts` of `files.v1`, and the events `artifacts.ready`, `artifacts.unavailable`, `artifacts.revoked` (Fleet Git phase 2, ADR-009; homes of a project on many stations, the artifact share verdicts) |
 | `fleet_git.land.v1` | `project.radar`, `session.land`, `fleet_git.land_status`, `fleet_git.land_abandon` and the event `session.land` (Fleet Git phase 3, ADR-009; the predictive conflict radar and the land flow) |
 | `fleet_git.branches.v1` | `project.branches`, `project.fetch` (Fleet Git phase 4, ADR-009; the branches of other stations in a project) |
+| `fleet_git.move.v1` | `session.move_out`, `session.move_export`, `session.move_prepare`, `session.move_in`, `session.move_finish`, `session.move_release`, `session.move_abort`, `session.move_discard`, `session.move_status`, `session.move_fail`, `session.move_undo`, the stream purposes `move-export:` and `move-import:`, and the events `session.moved`, `session.move_in`, `session.move_undone` (Fleet Git phase 4, ADR-009; move a session to another station) |
 | `pair_request.v1` | The pair-channel frames `pair_request`, `pair_pending`, `pair_approved` and `pair_resume` (DL-178, §10): a station asks a deck to pair without an invitation and the owner approves on the board |
 
 A method whose feature was not negotiated gets the error `feature_not_negotiated`. Behaviour depends on the negotiated features, not only on the version.
@@ -336,7 +337,7 @@ Per link (these values replace §2.7 "at most 256 open streams"):
 
 | Methods | `params` type | Payload field | Holder |
 | --- | --- | --- | --- |
-| `session.start`, `session.resume`, `session.import`, `session.fork`, `session.prompt`, `session.steer`, `session.follow_up`, `session.interrupt`, `session.set_mode`, `session.set_model`, `session.stop`, `session.revert`, `session.rename`, `session.resolve_revert`, `session.set_auto_continue`, `session.coordinator_renew`, `session.coordinator_revoke`, `session.worktree_trash`, `session.worktree_restore`, `session.worktree_purge`, `session.worktree_release`, `session.reconcile_execution`, `session.shell_command`, `session.release_shell`, `session.land`, `approval.answer` | `CommandEnvelope` | `command` | station |
+| `session.start`, `session.resume`, `session.import`, `session.fork`, `session.prompt`, `session.steer`, `session.follow_up`, `session.interrupt`, `session.set_mode`, `session.set_model`, `session.stop`, `session.revert`, `session.rename`, `session.resolve_revert`, `session.set_auto_continue`, `session.coordinator_renew`, `session.coordinator_revoke`, `session.worktree_trash`, `session.worktree_restore`, `session.worktree_purge`, `session.worktree_release`, `session.reconcile_execution`, `session.shell_command`, `session.release_shell`, `session.land`, `session.move_out`, `session.move_in`, `session.move_finish`, `session.move_undo`, `approval.answer` | `CommandEnvelope` | `command` | station |
 | `station.configure` | `StationConfigureEnvelope` | `change` | station |
 | `link.rotate_key` | `KeyRotationEnvelope` | `rotation` | receiver |
 | `shell.open`, `shell.resize`, `shell.close`, `shell.handover`, `shell.release` | `ShellEnvelope` | `change` | station |
@@ -468,6 +469,17 @@ close             { reason, detail }
 | `fleet_git.land_abandon` | deck → station | drive | `fleet_git.land.v1` | no |
 | `project.branches` | deck → station | read | `fleet_git.branches.v1` | no |
 | `project.fetch` | deck → station | read | `fleet_git.branches.v1` | no |
+| `session.move_out` | deck → station | admin | `fleet_git.move.v1` | yes |
+| `session.move_export` | deck → station | admin | `fleet_git.move.v1` | no |
+| `session.move_prepare` | deck → station | admin | `fleet_git.move.v1` | no |
+| `session.move_in` | deck → station | admin | `fleet_git.move.v1` | yes |
+| `session.move_finish` | deck → station | admin | `fleet_git.move.v1` | yes |
+| `session.move_release` | deck → station | admin | `fleet_git.move.v1` | no |
+| `session.move_abort` | deck → station | admin | `fleet_git.move.v1` | no |
+| `session.move_discard` | deck → station | admin | `fleet_git.move.v1` | no |
+| `session.move_status` | deck → station | read | `fleet_git.move.v1` | no |
+| `session.move_fail` | deck → station | admin | `fleet_git.move.v1` | no |
+| `session.move_undo` | deck → station | admin | `fleet_git.move.v1` | yes |
 
 - **`workspace.list` (added in M2 P4-4, DL-061, under the extension rule of §3: "every new method must declare a scope and, if needed, a feature"):** the directory picker of the board's spawn form. It lists the sub-directories of a path inside the station's allowed roots (`WorkspaceQuery` → `WorkspaceListing`). It reads only, but it needs `drive` because only a caller that may start a session needs the station's directory names. Errors: `missing_workspace`, `outside_roots`, `timeout`.
 - **`workspace.worktrees` (DL-142; feature `workspace.worktrees.v1`):** `workspace.worktrees` (DL-142) is read only: it lists the worktrees that the station created for sessions, with what Git reports about each (dirty and ignored entries, commits on no fetched remote ref, registration, last commit). It runs no Git command that writes.

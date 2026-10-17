@@ -113,6 +113,10 @@ const METHODS: Record<SessionCommand['op'], string> = {
   shell_command: 'session.shell_command',
   release_shell: 'session.release_shell',
   land: 'session.land',
+  move_out: 'session.move_out',
+  move_in: 'session.move_in',
+  move_finish: 'session.move_finish',
+  move_undo: 'session.move_undo',
 };
 
 /** A command id: `b` and 24 random base-36 characters (`[0-9A-Za-z_-]{1,64}`). */

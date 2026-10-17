@@ -3,6 +3,7 @@ import type { ArtifactKind } from "../artifacts/ArtifactKind";
 import type { Capabilities } from "../capability/Capabilities";
 import type { CleanupState } from "../fleet_git/CleanupState";
 import type { LandInfo } from "../fleet_git/LandInfo";
+import type { MoveInInfo } from "../fleet_git/MoveInInfo";
 import type { PushState } from "../fleet_git/PushState";
 import type { SkippedFile } from "../fleet_git/SkippedFile";
 import type { InputId } from "../ids/InputId";
@@ -11,6 +12,8 @@ import type { PlanId } from "../ids/PlanId";
 import type { ProviderInstanceId } from "../ids/ProviderInstanceId";
 import type { RequestId } from "../ids/RequestId";
 import type { RunId } from "../ids/RunId";
+import type { SessionId } from "../ids/SessionId";
+import type { StationId } from "../ids/StationId";
 import type { TurnId } from "../ids/TurnId";
 import type { IssueRef } from "../integrations/IssueRef";
 import type { JsonValue } from "../serde_json/JsonValue";
@@ -125,7 +128,7 @@ inferred: boolean, } | { "kind": "artifact.published", artifact_id: string, vers
 /**
  * Named `artifact_kind` because `kind` is the event tag.
  */
-artifact_kind: ArtifactKind, } | { "kind": "artifact.suggested", path: string, } | { "kind": "session.focus", text: string, } | { "kind": "session.batch", batch: BatchRef, } | { "kind": "session.hibernated", after_min: number, } | { "kind": "session.execution_reconciled", shim_id: string, } | { "kind": "session.title_generated", title: string, } | { "kind": "session.digest", text: string, } | { "kind": "workspace.base_stale", code: string, text: string, } | { "kind": "workspace.include_skipped", files: Array<SkippedFile>, } | { "kind": "session.push", state: PushState, ref_name: string, oid?: string, desired_oid?: string, stop_code?: string, attempts: number, next_attempt_at?: number, code?: string, text?: string, } | { "kind": "session.cleanup", state: CleanupState, reason?: string, } | { "kind": "artifacts.ready", path?: string, url?: string, } | { "kind": "artifacts.unavailable", code: string, text: string, } | { "kind": "artifacts.revoked", code: string, text: string, } | { "kind": "session.land" } & LandInfo | { "kind": "run.completed", run_id: RunId, status: TurnStatus, 
+artifact_kind: ArtifactKind, } | { "kind": "artifact.suggested", path: string, } | { "kind": "session.focus", text: string, } | { "kind": "session.batch", batch: BatchRef, } | { "kind": "session.hibernated", after_min: number, } | { "kind": "session.execution_reconciled", shim_id: string, } | { "kind": "session.title_generated", title: string, } | { "kind": "session.digest", text: string, } | { "kind": "workspace.base_stale", code: string, text: string, } | { "kind": "workspace.include_skipped", files: Array<SkippedFile>, } | { "kind": "session.push", state: PushState, ref_name: string, oid?: string, desired_oid?: string, stop_code?: string, attempts: number, next_attempt_at?: number, code?: string, text?: string, } | { "kind": "session.cleanup", state: CleanupState, reason?: string, } | { "kind": "artifacts.ready", path?: string, url?: string, } | { "kind": "artifacts.unavailable", code: string, text: string, } | { "kind": "artifacts.revoked", code: string, text: string, } | { "kind": "session.land" } & LandInfo | { "kind": "session.move_in" } & MoveInInfo | { "kind": "session.moved", move_id: string, to_station: StationId, to_session: SessionId, } | { "kind": "session.move_undone", move_id: string, } | { "kind": "run.completed", run_id: RunId, status: TurnStatus, 
 /**
  * Background work still runs; the session is not idle (L7).
  */

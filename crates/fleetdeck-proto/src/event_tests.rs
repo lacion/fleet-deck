@@ -349,6 +349,20 @@ fn samples() -> Vec<Event> {
             default_published_oid: None,
             pr_url: None,
         })),
+        Event::SessionMoveIn(crate::fleet_git::MoveInInfo {
+            move_id: "mv-1".into(),
+            state: crate::fleet_git::MoveInState::Resumed,
+            code: None,
+            text: None,
+        }),
+        Event::SessionMoved {
+            move_id: "mv-1".into(),
+            to_station: "bravo".into(),
+            to_session: "s2".into(),
+        },
+        Event::SessionMoveUndone {
+            move_id: "mv-1".into(),
+        },
     ]
 }
 

@@ -11,7 +11,7 @@ use crate::event::{
     ApprovalOption, ModelChoice, ProviderKind, RateLimit, RequestKind, ResponseChannel,
     RevertState, SessionState, ToolKind, Usage,
 };
-use crate::fleet_git::{ArtifactsDir, CleanupInfo, LandInfo, PushInfo};
+use crate::fleet_git::{ArtifactsDir, CleanupInfo, LandInfo, MoveInInfo, MovedTo, PushInfo};
 use crate::ids::{NodeId, ProviderInstanceId, RequestId, RunId, SessionId, TurnId};
 use crate::integrations::IssueRef;
 
@@ -184,6 +184,16 @@ pub struct SessionSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub land: Option<LandInfo>,
+    /// Where the session moved to, from `session.moved` (FG-9). The session
+    /// stays `exited`; the station refuses its input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub moved_to: Option<MovedTo>,
+    /// The move state of a session that arrived by a move, from
+    /// `session.move_in` (FG-9).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub move_in: Option<MoveInInfo>,
     /// The artifact folder of the session, from `artifacts.ready` and
     /// `artifacts.revoked` (FG-12).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -242,6 +252,8 @@ impl SessionSummary {
             push: None,
             cleanup: None,
             land: None,
+            moved_to: None,
+            move_in: None,
             artifacts_dir: None,
             session_seq: 0,
             updated_at: 0,
