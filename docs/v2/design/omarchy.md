@@ -1,6 +1,6 @@
 # Fleet Deck on Omarchy: the wall, desktop control and the desktop MCP (R13)
 
-- **Status:** §4.5, §5 and §6.1-§6.4/§6.6 **accepted**, revision 5 (2026-10-16, DL-201: design review round 4 PASS; its two MAJOR findings fixed in §5C items 4 and 5); revision 6: §5D (P2b) and §6D (P3b) drafted from the open questions, owner decisions DL-221, DL-222, DL-223; DESIGN REVIEW pending; revision 7: §5E answers the DESIGN REVIEW round 1 of revision 6; revision 8: §5F answers the DESIGN RE-REVIEW round 2; revision 9: §5G answers the round 3 findings; **§5D/§6D with §5E-§5G accepted by the owner for the P2b/P3b build (DL-230 item 6, 2026-10-18)**; other parts still draft (P5/P8: revision with DL-230 items 1-4 pending). §5C answers the round 3 review (`/tmp/adv-r13-p23-r3-report.md`, owner decision: apply the fixes and one more round) and overrides §5B where they differ; §5B answers the round 2 review (`/tmp/adv-r13-p23-r2-report.md`) and overrides §5A where they differ; §5A answers the DESIGN REVIEW round 1 of §4.5, §5 and §6 (`/tmp/adv-r13-p2-design-report.md`) and overrides them where they differ. Not frozen. Each high-risk part needs an adversary DESIGN REVIEW before its code (§13).
+- **Status:** §4.5, §5 and §6.1-§6.4/§6.6 **accepted**, revision 5 (2026-10-16, DL-201: design review round 4 PASS; its two MAJOR findings fixed in §5C items 4 and 5); revision 6: §5D (P2b) and §6D (P3b) drafted from the open questions, owner decisions DL-221, DL-222, DL-223; DESIGN REVIEW pending; revision 7: §5E answers the DESIGN REVIEW round 1 of revision 6; revision 8: §5F answers the DESIGN RE-REVIEW round 2; revision 9: §5G answers the round 3 findings; **§5D/§6D with §5E-§5G accepted by the owner for the P2b/P3b build (DL-230 item 6, 2026-10-18)**; **P2b/P3b (§5D, §6D with §5E-§5G) are built on v2 (`cccaf3d0..5a01c9ca`, DL-231): PRE-PR round 1 FAIL fixed, round 2 PASS (§5H)**; other parts still draft (P5/P8: revision with DL-230 items 1-4 pending). §5C answers the round 3 review (`/tmp/adv-r13-p23-r3-report.md`, owner decision: apply the fixes and one more round) and overrides §5B where they differ; §5B answers the round 2 review (`/tmp/adv-r13-p23-r2-report.md`) and overrides §5A where they differ; §5A answers the DESIGN REVIEW round 1 of §4.5, §5 and §6 (`/tmp/adv-r13-p2-design-report.md`) and overrides them where they differ. Not frozen. Each high-risk part needs an adversary DESIGN REVIEW before its code (§13).
 - **Owner request (2026-10-16):** "i have a server thats connected to a ultrawide screen, i use this server to run multiple ai agents as it has 64 cores and 128gb of ram … it would be awesome if i could control omarchy and the screen trough the fleet and maybe also have an mcp … imagine using the screen as a command control center and we could display and control everhting there." Then: "lets create a document for this work so we can implement everything".
 - **Owner answers (DL-198):**
 
@@ -645,6 +645,51 @@ Round 3 of 3 failed with 2 open blockers (report `adv-omarchy-r8-design-report.m
 
 5. **Names.** The authority field that §5F item 2 calls `link_epoch: String` is `desktop_epoch: String` (the value of the station's `Hello.desktop_epoch`); `Hello.link_epoch: u64` is unrelated. When §5G is approved, §11 adds: the foundation row owns `Hello.desktop_epoch` and the `wake_reserve` store operation with the `wake_suspended_until` settings row; the P3b wake row owns its use; the web completion row owns `web/e2e-real/**`.
 
+
+## 5H. Build record of P2b/P3b (DL-231)
+
+This section records what the build of §11 made. It adds no decision. The full text of each decision is in the architect's brief folder: `r13-p23b-decisions.md` (R1-R17) and the worker proposals `r13-*-round1-questions.md`. The range on v2 is `cccaf3d0..5a01c9ca`.
+
+**Step 1: foundation (R1, merge `2c558589`).** The task made the deck setting `desktop_control` (`crates/fleetdeck-core/src/config_deck.rs`, `settings/fields.rs`), the proto contracts (`crates/fleetdeck-proto/src/desktop_authority.rs`, `display_directive.rs`, `display_changes.rs`, `display_event.rs`), the link handshake field and the authority hash (`crates/fleetdeck-link/src/hello.rs`, `desktop_authority.rs`), the V25 store (`crates/fleetdeck-deck/src/store/display_v25.rs`, `displays_binding.rs`, `displays_auth.rs`, `wake_seen.rs`), the `/display` document (`http/display_document.rs`) and the stub routes (`http/not_built.rs`). R1 fixed these points:
+- The handshake field is `Hello.desktop_epoch` (§5G), not `link_epoch`.
+- The action hash binds the current node fingerprint of the station.
+- `quiet_hours` is a field of `DesktopAuthority`. The `desktop.act` row has the feature `desktop_authority.v1`.
+- The `/display` route allows `frame-src https://<allowed request host>/api/displays/self/artifact/`, else `'none'`.
+- Every unbuilt stub answers `501 not_built` or a link refusal code.
+- Migration order: V25 (displays, directives, wake) keeps its list position on v2. At the merge of v2 into `fleet-git`, the Fleet Git deck migrations move after it.
+
+**Step 2, P2b directives (R2, merge `fd0acab4`).** Files: `crates/fleetdeck-deck/src/store/display_directives.rs`, `display_directives_check.rs`, `http/display_directive_routes.rs`. The owner route `POST /api/displays/{id}/directive` takes `{"directive", "refs"}` (8 KiB limit). The display route `GET /api/displays/self/directive` is a pure read: a failed live re-check reads `mission` with the stored generation and deletes nothing (R2 Q2). One transaction bumps `directive_generation`. The station and coordinator senders return `not_granted` (DL-222). The audit rows hold identifiers only.
+
+**Step 2, P3b station dispatch (R3, R4, merge `4211e779`).** Files: `crates/fleetdeck-station/src/desktop/authority.rs`, `deadline.rs`, `quiet.rs`, `link/intake_desktop.rs`. `admit(control, station_node, authority, action)` returns an `Admitted` value that `Desktop::act` needs. A process-global registry keeps every consumed `action_id` for the connection epoch (4 096 at most; a full registry gives `failed` and closes the link). R4 changed the order of the start check: the hash, then the quiet hours (an async `date` read), then the connection, the wall deadline and the 10 s monotonic limit in one sync step. §6D item 3 wins over the advisor: equal endpoints mean no quiet hours, and an unknown offset fails closed. The offset comes from a strict parse of `date +%z`.
+
+**Step 2, P3b relay (R5, R6, merge `19a63512`, fix `bae32a2d`).** Files: `crates/fleetdeck-deck/src/desktop_relay.rs`, `http/desktop_routes.rs`, `link/desktop_authority.rs`, and `DeckStore::update_station_desktop` in `store/mod.rs` (R5 Q11 B). The owner path is `act_body`; the public `act` refuses the wall actions. A wall open sends the pair page `{origin}/display#/display-pair?expect=<id>&op=<rev>` (R5 Q4) and commits the binding after the station answers. A second wall action of one display gets `Conflict` (a per-display `try_lock`). A deck with no reachable board address gets `409 desktop_no_endpoint`. R6 added one process-global wall lock for open, reload and close. Fix `bae32a2d`: a successful `wall_close` clears the binding only when the display has no binding or a binding on the target station.
+
+**Step 2, P3b wake (R7, R8, merge `7d5077f2`).** Files: `crates/fleetdeck-deck/src/wake/mod.rs`, `scan.rs`, `job.rs`, `quiet.rs`. The task scans the cards on each `watch_board()` change. A scan is baseline mode when the `snapshot_mark` of the station changed since the last scan. Only a request that is at most 60 s old (5 s future skew) and has the key `Reserved` wakes. There is one job for each `(station, monitor)`, 4 workers and a queue of 32 (a full queue drops and counts the job). R8 added `skip_raced`: the worker drops a job when the mark differs from the mark of its scan. The 30 s cooldown started at the enqueue; R17 F4 moved it to the send.
+
+**Step 2, P2b payload (R9, R10, merge `f49b8f3f`).** Files: `crates/fleetdeck-deck/src/store/display_timeline.rs`, `display_activity.rs`, `http/ws_display.rs`, `display_view.rs`. One projection serves every path (R9 Q4). A display subscription has no Presence, Driver or Chat frame. The directive filter narrows cards, stations and sessions, and a 2 s re-check sends a delta on a scope change. The extras are all zeros. The resources use an allowlist. A request title is a fixed label. R10: `DisplayBatch.high_water` is an `Option`, and a revoked display gets an empty view until the re-check closes the socket with 4401.
+
+**Step 2, P2b changes (R11, R12, merge `1d9e5247`).** Files: `crates/fleetdeck-station/src/workspace/display_changes.rs`, `crates/fleetdeck-deck/src/http/display_changes.rs`. The route is `GET /api/displays/self/sessions/{station}/{session}/changes`. The station always applies the member deny list. One anonymous marker stands for each hidden section, and a private path has no marker. The station caps a file at 64 KiB and the deck caps the answer at 1 MiB. Patches need `show_diffs`. Identical requests join one station call. One display may have one outstanding computation, else `429 busy`. Every miss of a session gives the same `404 unknown_session`.
+
+**Step 2, P2b artifacts (R13, R14, merge `97f36a13`).** Files: `crates/fleetdeck-deck/src/http/display_artifact.rs`, `artifact_common.rs`, `artifact_stream.rs`. The route serves one file of one version. Every miss before the station work is one `404 unknown_artifact`. The answer is inert: the CSP `INERT_CSP` has `sandbox` with no `allow-scripts`, and the headers are `nosniff`, `no-referrer` and `no-store`. The directive, the scope and the login are checked again after every await and before each streamed chunk (R13 Q7, R14). R15 Q1 A (built on v2 as `2903d206`): `{*path}` = `_` names the one file, and the content type comes from the real file name.
+
+**Step 3, web completion (R15, R16, merge `76cff37b`, fix `04a61495`).** Files: `web/src/display/**` (the display runtime, the pair page, the directive poll), `web/src/displays/**` (the Displays tab, Send to wall data), `web/src/desktop/**` (the Desktop panel), `web/src/wall/**` (the artifact pane, change summaries, Send to wall). The wall renders each artifact kind inert (R15 Q2): HTML in `<iframe sandbox="">`, SVG and images in `<img>`, Markdown read with a 1 MiB cap and drawn with `react-markdown` and `remark-gfm` (`skipHtml`; links and images as plain text), and PDF or any other kind as the card "open it on your own device". The pending row of a pairing never shows the code: the owner types the code that the wall shows (R15 Q9). Send to wall pins by default (R15 Q11). R16: `WallPage` keeps `owner` and takes an optional `display?: DisplayEnv`. Fix `04a61495`: the Displays page keeps the "Approved" status at the section level.
+
+**PRE-PR fixes (R17, merge `5a01c9ca`).** Round 1 of the adversary failed (2 BLOCKER, 2 MAJOR). One round fixed all four:
+- F1: `scope_of` checks the display session first (expiry, idle, revoke, auth generation). Every display route and every streamed artifact chunk re-checks the login.
+- F2: every display projection reads the scope after its data reads, right before the filter.
+- F3: a wall close clears only the binding that it saw (`display_clear_binding_at` with station and revision, one statement).
+- F4: the 30 s wake cooldown is enforced at the send (`Shared.last_wake`).
+
+**Proof status.**
+- `make check` on `5a01c9ca`: PASS (3 953 Rust tests, 11 skipped; 1 660 web tests).
+- Real e2e `web/e2e-real/display.spec.ts`: 4 of 4 after the fix `04a61495`. The first run had 2 passed; the pairing case failed on the missing "Approved" text and the revoke case did not run.
+- Mock e2e `web/e2e/display.spec.ts`: 5 of 5. `web/e2e/wall.spec.ts`: 6 of 6.
+- The first full `make check` on v2 (`04a61495`) failed in an environment race: the test `station_pairing invite_prints_an_invitation_that_pairs_the_deck_and_the_listener_survives_a_restart` got "Address already in use" on a station restart port (open item 24 of §14).
+- Reviews (§13): PRE-PR round 1 FAIL (2 BLOCKER, 2 MAJOR, fixed in `5a01c9ca`), RE-REVIEW round 2 PASS. The review reports are `adv-r13-p23b-prepr-r1-report.md` and `adv-r13-p23b-prepr-r2-report.md` in the architect's brief folder.
+- The live smoke on the owner's Omarchy machine (DL-201 asks for it): result not recorded.
+
+**Open items.** They are items 7 to 24 of §14.
+
 ---
 
 ## 7. The desktop MCP for agents (HIGH RISK)
@@ -888,6 +933,8 @@ The order is: a serial foundation task, then the parallel tasks, then the web co
 | 3 | Web completion (P2c, P3c) | `web/src/**`, without the generated types that step 1 owns | Pairing, display management, wall panes, the Desktop panel and "Send to wall" |
 | 4 | Documentation | Design, decisions log, `PARITY.md` and `SECURITY-CHECKLIST.md` only | The revision, the worker briefs, and a truthful proof and review status |
 
+All rows are built (DL-231, §5H). The worker briefs and the decisions are in the architect's brief folder (`r13-p23b-decisions.md`, R1-R17).
+
 ---
 
 ## 12. Security notes
@@ -914,6 +961,7 @@ The order is: a serial foundation task, then the parallel tasks, then the web co
 | §7.4 Computer Use | adversary DESIGN REVIEW after the P7 spike | before P7 code |
 | §9 provisioning | adversary DESIGN REVIEW | before P8 §9 code |
 | P1, P4, P9 | one Codex review of the final branch | before merge |
+| P2b/P3b code | adversary PRE-PR | round 1 FAIL (2 BLOCKER, 2 MAJOR, fixed `5a01c9ca`), round 2 PASS |
 
 ---
 
@@ -921,7 +969,25 @@ The order is: a serial foundation task, then the parallel tasks, then the web co
 
 1. **The pointer click tool** on Omarchy (P7 spike): `ydotool` needs a root daemon and `uinput`, and `wlrctl` depends on wlroots protocols that Hyprland supports.
 2. **The format of the Omarchy account registry** (P8 brief, from `bin/omarchy-agent-account-state`).
-3. **Distribution of `fleetdeck` on Arch** (owner): a release tarball, an AUR package, or a pacman repository. §9 needs one of them.
+3. **Distribution of `fleetdeck` on Arch** (owner): answered: AUR and Homebrew packages (DL-230 item 4). §9 uses them.
 4. **The Omarchy lock IPC target name** and the sudoers drop-in path (P3 brief, from the Omarchy source).
 5. **Upstream changes** of §8.10 (owner).
 6. **A Fleet Deck record for the Omarchy agents panel.** The panel reads any record in its usage folder, so Fleet Deck could add the fleet-wide usage of all stations. The record contract is in the `claude` and `codex` collectors. This is not planned yet.
+7. R6: the unit variants of `DesktopActBody` (for example `screen_lock`) accept unknown fields (serde internally tagged unit variants). Harmless; open.
+8. R8: a wake scan reads every card on each board change (no cache, no debounce).
+9. R8: a request that the cooldown or a full queue skips stays reserved and never wakes later (accepted, fail closed).
+10. R10: the 3-try scope check (`409 scope_changed`) and the lag catch-up path have no direct test.
+11. R10: a scope change between the send-time check and the socket write is accepted.
+12. R12: the join map and the busy map of the display change route are process-global (keyed by the board address).
+13. R12: the display change route has no server-side 5 s limit and no cache.
+14. R12: `summary.files_changed` can be lower than `files.len()` by the number of hidden markers.
+15. R14: no per-display limit on cache fills of the display artifact route.
+16. R14: bytes that the deck already sent cannot be recalled.
+17. R14: the `sandbox` CSP stops the PDF viewer in a frame and Markdown may download. R15 Q2 decided the wall rendering: PDF and other kinds show the card, Markdown is drawn as text.
+18. R15: `GET /api/displays` returns `PendingPairing.code` to the owner board. This weakens the proof "the owner types the code from the wall". Consider removing the field.
+19. R15, R16: `DisplayView` has no last directive, so the Displays list cannot show it (§5.2 asks for it).
+20. R15, R16: with the owner cookie and the display cookie in one browser, the owner wins on `/api/ws`. The display page shows "This page is for a wall display. Open the board at /." for an owner answer.
+21. R15: there is no `fleetdeck deck display link` CLI command.
+22. R16: no per-session load on the wall (§10 is not built).
+23. R16: the CSP and the sandboxed frame are proved only in the real e2e (`web/e2e-real/display.spec.ts`).
+24. R17: the test `station_pairing invite_prints_an_invitation_that_pairs_the_deck_and_the_listener_survives_a_restart` failed once with "Address already in use" on a station restart port (an environment race; fail-fast stopped the lane at 1080 of 3943). The full check on `5a01c9ca` passed.
