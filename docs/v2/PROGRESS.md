@@ -122,8 +122,8 @@ Design: `docs/v2/design/fleet-git.md` (accepted for FG-1..FG-8 and FG-10..FG-12,
 - Phase 1 (FG-1..FG-4): done; T1.0..T1.7 merged, `make check` passed.
 - Phase 2 (FG-5, FG-6, FG-11, FG-12): done; T2.0..T2.5 merged (T2.2, T2.3 split in a/b; T2.4b start dialog), the full check passed (4159 tests). Decisions: `~/fleetdeck-briefs/fg-t2-decisions.md` (architect record).
 - Phase 3 (FG-7, FG-8): done; T3.1..T3.5 merged (T3.2 in three steps a/b/c, T3.3 in two), the full check passed (4363 tests). Decisions: `~/fleetdeck-briefs/fg-t3-decisions.md` (architect record).
-- Phase 4 (FG-9, FG-10): FG-10 done (T4.1a, T4.3, T4.4a, T4.5a, T4.6), the full check passed (4406 tests); FG-9 is not built and waits for the owner (DL-227).
-- Phase 5 (documents, PRE-PR review): documents done (operations §13, README, internals, backlog B1, DL-228, DL-229); the adversary PRE-PR review of `fleet-git` against `v2` runs.
+- Phase 4 (FG-9, FG-10): FG-10 done (T4.1a, T4.3, T4.4a, T4.5a, T4.6), the full check passed (4406 tests). FG-9 done on the owner go (DL-230): T4.1b, T4.2a-d (station), T4.4b (deck, coordinator `move_session`), T4.5b (board), T4.6b (end-to-end move tests), the fixes D1/D2 that T4.6b found (H31-H33); the full check passed at `06c24f86` (4615 Rust tests, 1754 web tests, the mock and the real e2e). Decisions: `~/fleetdeck-briefs/fg-t3-decisions.md` H19-H33.
+- Phase 5 (documents, PRE-PR review): documents done (operations §13, README, internals, backlog B1, DL-228, DL-229); PRE-PR round 1 FAIL (5 findings, fixed, H16); round 2 (the round 1 fixes and FG-9) runs.
 
 - [x] FG-1 Fetch before spawn (O7, O8)
 - [x] FG-2 Push (O9, O10, O11)
@@ -133,7 +133,7 @@ Design: `docs/v2/design/fleet-git.md` (accepted for FG-1..FG-8 and FG-10..FG-12,
 - [x] FG-6 Placement by station traits (O19, O20)
 - [x] FG-7 Predictive conflict radar (O21, O22)
 - [x] FG-8 Land flow (O23 to O26)
-- [ ] FG-9 Move a session to another station (O27 to O30): waits for the owner (DL-227)
+- [x] FG-9 Move a session to another station (O27 to O30)
 - [x] FG-10 The architect across the fleet (O31, O32, B1)
 - [x] FG-11 Config drift report (O33, O34)
 - [x] FG-12 Taildrive artifact share (O35 to O39)

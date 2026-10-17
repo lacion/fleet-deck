@@ -613,7 +613,7 @@ A lease failure (the remote moved, for example another machine pushed) is a norm
 
 ### 5.9 Board
 
-- Card badge (new `web/src/board/PushBadge.tsx`): `failing` shows "Not pushed" (warning tone), title "Push failed <n> times: <text>. Next try <relative time>." and a "Push now" button in the card menu. `due` or `pushing` for more than 60 s shows "Pushing…". `pushed` shows nothing on the card; the session header shows "Pushed <oid7>".
+- Card badge (new `web/src/board/PushBadge.tsx`): `failing` shows "Not pushed" (warning tone), title "Push failed <n> times: <text>. Next try <relative time>." and a "Push now" button in the card menu. `due` or `pushing` for more than 60 s shows "Pushing…". `pushed` shows nothing on the card; the chat shows the line "Pushed <oid7>" only when the push comes after a `failing` or `stopped` state (T1.6 D1; a first push that works shows nothing).
 - **Stopped with unpublished work (revision 2, decision 19).** A `stopped` row whose `desired_oid` is set and differs from `last_pushed_oid` shows "Push stopped" (warning tone). The title by `stop_code`: `land_published` "The land pushed a rebased branch. New commits on this branch are not pushed automatically."; `project_gone` "Sync is off for this project. Commits after <oid7 of last_pushed_oid, else 'the start'> are not pushed."; `unsupported_mode` "This station does not know the push mode of the project. Update the station." A `moved` or `move_failed` row shows no badge (the session is read only). A stopped row with no unpublished commit shows nothing.
 - Sessions with sync off show nothing new.
 
@@ -2064,7 +2064,7 @@ Unit and module tests are listed in each section. Each new store table has a sch
   - the drift line "Config: Differs: skills, agents" and "Use as config reference";
   - the Taildrive shares and the exposed warning text of O37;
   - the session "Artifacts" link (local folder and URL-only).
-- `web/e2e-real/fleet-git.spec.ts` (a real deck and one real station with a bare repository, `e2e-real/fleet.ts` helpers): the project settings save; a sync start shows the branch `fd/<slug>/<callsign>`; after a turn the session header shows "Pushed <oid7>"; a land in merge mode ends "Landed".
+- `web/e2e-real/fleet-git.spec.ts` (a real deck and one real station with a bare repository, `e2e-real/fleet.ts` helpers): the project settings save; a sync start shows the branch `fd/<slug>/<callsign>`; after a turn the station pushes the branch (checked on the station, `push.state = pushed`, and in the bare repository; H27); a land in merge mode ends "Landed".
 
 ## 17. Board screens
 
@@ -2097,7 +2097,7 @@ Save sends `PUT /api/projects/{id}/git` (owner only, CSRF, audited `project.git_
 | Project page | §8.8 | "Homes", "Add home", "Lands" |
 | Spawn form | §8.5, §9.3 | Home select, "Auto (best station)", Needs, Prefer, "Spread over stations" (new `web/src/spawn/PlacementFields.tsx`) |
 | Fleet card | §4.4, §5.9 | "Stale base", "Not pushed", "Pushing…" |
-| Session header and menu | §5.9, §6.5, §11.11, §12.8, §15.6 | "Pushed <oid7>", cleanup line, "Land", "Move to station…", "Moved to <station>", "Artifacts" |
+| Session header and menu | §5.9, §6.5, §11.11, §12.8, §15.6 | "Pushed <oid7>" chat line after a failed push (T1.6 D1), cleanup line, "Land", "Move to station…", "Moved to <station>", "Artifacts" |
 | Conflict radar | §10.5 | project headers, "Will conflict" rows |
 | Branches view | §13.1 | "Other stations" |
 | Stations page | §9.4, §14.3, §15.7 | traits line, "Config: …", Taildrive section |
@@ -2201,7 +2201,7 @@ Revision 1 listed 85 choices where the owner spec is silent. The architect accep
 17. **Replaced (design review r1, revision 3).** Lease recovery: after any failure or a crash, `ls-remote` on the stored `attempt_url`; a tip equal to `attempt_oid` counts as pushed; an outcome that the check cannot confirm keeps the attempt open (no new attempt, no lost evidence) (§5.5, M2). Reason: a timeout or a lost answer is not a failure.
 18. **Replaced (advisor, revision 2).** The newest tip of a trigger goes to `desired_oid`; an attempt has an immutable `attempt_id`, `attempt_oid` and `attempt_lease`; a trigger during `failing` keeps `attempts` and `next_attempt_at`; "Push now" moves only the time (§5.5, §5.6). Reason: a new trigger must not overwrite crash-recovery evidence.
 19. **Replaced (advisor, revision 2).** A `stopped` push row with unpublished commits (`desired_oid` ≠ `last_pushed_oid`) shows the warning "Push stopped" with a reason (§5.9); a moved session shows none. Reason: a terminal row does not mean that the work is on the remote.
-20. **Accepted.** Badge texts: "Not pushed" for `failing`, "Pushing…" after 60 s, "Pushed <oid7>" in the header only.
+20. **Accepted.** Badge texts: "Not pushed" for `failing`, "Pushing…" after 60 s, "Pushed <oid7>" as a chat line only after `failing` or `stopped` (T1.6 D1).
 21. **Accepted.** Cleanup timing: first run 5 minutes after the start, then every 15 minutes.
 22. **Replaced (advisor, revision 2).** "Merged" is only the ancestor proof (`merge-base --is-ancestor`); a squash or rebase merge keeps the worktree with a text that says so (§6.3). Reason: equal trees do not prove that the history is merged; keeping is the safe error.
 23. **Replaced (design review r1, revision 3).** Cleanup calls the trash decision through `decide_cleanup` (no new `CommandOrigin`; op id `cleanup-<session>-<ms>`) with the proven branch and tip; the trash effect checks HEAD, the tip and a clean status again before the rename (§6.3, M4). Reason: merge and push proofs of the recorded branch say nothing about another checked-out branch.
