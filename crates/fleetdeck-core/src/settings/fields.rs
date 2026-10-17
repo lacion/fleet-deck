@@ -306,6 +306,14 @@ pub fn deck_fields() -> Vec<FieldMeta> {
         )
         .danger(),
         field(
+            "desktop_control",
+            "Desktop control",
+            K::Bool,
+            Live,
+            "Allow desktop actions and configured wall wakes. Off blocks actions that have not started.",
+        )
+        .danger(),
+        field(
             "tailscale_cert",
             "Trusted certificate from Tailscale",
             K::Bool,

@@ -279,6 +279,7 @@ impl Holder for DeckHolder {
         m.insert("tailnet_hostname".into(), json!(c.tailnet_hostname));
         m.insert("conflict_mail".into(), json!(c.conflict_mail));
         m.insert("fleet_control".into(), json!(c.fleet_control));
+        m.insert("desktop_control".into(), json!(c.desktop_control));
         m.insert("tailscale_cert".into(), json!(c.tailscale_cert));
         m.insert("clone_host".into(), json!(c.clone_host));
         m.insert("clone_org".into(), json!(c.clone_org));
@@ -305,6 +306,10 @@ impl Holder for DeckHolder {
         // (ADR-008 section 3).
         if !old.fleet_control && new.fleet_control {
             keys.push("fleet_control".to_owned());
+        }
+        // Turning desktop control on needs the elevation too (R13 §6.4).
+        if !old.desktop_control && new.desktop_control {
+            keys.push("desktop_control".to_owned());
         }
         // The name goes into public Certificate Transparency logs and cannot
         // be taken back: turning it on needs the elevation, off does not.

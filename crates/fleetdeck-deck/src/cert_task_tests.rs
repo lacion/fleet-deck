@@ -83,6 +83,7 @@ fn live(on: bool) -> DeckLive {
         name: "d".to_owned(),
         conflict_mail: true,
         fleet_control: false,
+        desktop_control: false,
         tailscale_cert: on,
         tailscale_bin: None,
     }
