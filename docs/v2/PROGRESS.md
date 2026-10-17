@@ -114,6 +114,31 @@ M3 = PLAN Phases 6–7 (goal loop started 2026-10-12, round 1). Rules as for M2:
 - [x] **7-8 Final checks** Clean-checkout `make check`, architect acceptance, adversary PRE-PR REVIEW of the final committed HEAD. Done for the executor part (lane A round 103): the lane decision files `docs/v2/decisions/m3-{orchestration,board,ops}.md` are copied into `docs/v2/DECISIONS-LOG.md` (36 entries, numbers kept); `make check` on a clean checkout of the committed work plus this round (snapshot be4e41d, `/mnt/rust-cow/fd-clean.*`, deleted after): all 15 commands passed, nextest 1275 passed. A first run found three `station_shim_revert_crash` tests that counted the DL-219 start probe as a provider start; fixed in the test (`Rig::provider_starts`). Architect acceptance and the adversary PRE-PR REVIEW are architect steps after this loop (not claimed). Round 105: clean-checkout `make check` of committed 400501b (with the review r103 fixes): all 15 commands passed, nextest 1283 passed.
 - [ ] **Owner demo** The owner runs [DEMO-M2.md](./DEMO-M2.md) (owner action, not an executor item).
 
+## Fleet Git
+
+Design: `docs/v2/design/fleet-git.md` (accepted for FG-1..FG-8 and FG-10..FG-12, DL-224..DL-227). Branch: `fleet-git`.
+
+- Phase 0 (design, spikes, ADR-009, ADR-010): done; FG-9 waits for the owner (DL-227).
+- Phase 1 (FG-1..FG-4): done; T1.0..T1.7 merged, `make check` passed.
+- Phase 2 (FG-5, FG-6, FG-11, FG-12): in progress.
+- Phase 3 (FG-7, FG-8): not started.
+- Phase 4 (FG-9, FG-10): not started; FG-9 needs the owner's decision first.
+- Phase 5 (documents, PRE-PR review): not started.
+
+- [x] FG-1 Fetch before spawn (O7, O8)
+- [x] FG-2 Push (O9, O10, O11)
+- [x] FG-3 Automatic cleanup (O12, O13)
+- [x] FG-4 Worktree bootstrap (O14, O15)
+- [ ] FG-5 One project on many stations (O16, O17, O18)
+- [ ] FG-6 Placement by station traits (O19, O20)
+- [ ] FG-7 Predictive conflict radar (O21, O22)
+- [ ] FG-8 Land flow (O23 to O26)
+- [ ] FG-9 Move a session to another station (O27 to O30): waits for the owner (DL-227)
+- [ ] FG-10 The architect across the fleet (O31, O32, B1)
+- [ ] FG-11 Config drift report (O33, O34)
+- [ ] FG-12 Taildrive artifact share (O35 to O39)
+- Phase 1 limit: scheduler, coordinator and fleet starts start plain (no Fleet Git attach); board and batch starts attach.
+
 ## M3 round log
 
 ### M3 round 1 (2026-10-12)
