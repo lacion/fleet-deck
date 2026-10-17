@@ -382,6 +382,7 @@ async fn a_claude_session_runs_a_turn_through_the_shim_host() {
         title: None,
         coordinator: None,
         launch: None,
+        extra_env: None,
     };
     let (sink, mut rx) = EventSink::channel(256);
     let mut session = adapter

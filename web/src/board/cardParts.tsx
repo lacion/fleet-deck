@@ -6,6 +6,7 @@ import { errorSentence } from '../ui/format';
 import { Icon, TriangleAlert } from '../ui/icons';
 import { isHibernated } from '../views/hibernate';
 import { FocusLine, focusOf } from '../views/marks';
+import { PushBadge, StaleBaseChip } from './PushBadge';
 
 /** The chip under a batch card (R1.4): a link to the compare page; the card is a link too, so it sits beside it. */
 export function CompareChip({
@@ -52,13 +53,7 @@ const FOCUS_STATUSES: readonly CardStatus[] = [
   'idle',
 ];
 
-export function CardNote({
-  card,
-  focus = false,
-}: {
-  readonly card: DeckSession;
-  readonly focus?: boolean;
-}) {
+function NoteLine({ card, focus }: { readonly card: DeckSession; readonly focus: boolean }) {
   const s = card.summary;
   const ask = s.open_requests[0];
   if (ask !== undefined) {
@@ -114,5 +109,26 @@ export function CardNote({
     <span className="fd-card-note" data-note={card.status}>
       {STATUS_NOTE[card.status]}
     </span>
+  );
+}
+
+/** The Fleet Git chips first (a narrow strip clips the end), then the note: "Stale base" and the push state (FG-1, FG-2). */
+export function CardNote({
+  card,
+  focus = false,
+}: {
+  readonly card: DeckSession;
+  readonly focus?: boolean;
+}) {
+  const git = card.summary.base_stale === true || card.summary.push !== undefined;
+  return (
+    <>
+      {git ? (
+        <span className="fd-card-gitchips">
+          <StaleBaseChip card={card} /> <PushBadge card={card} />{' '}
+        </span>
+      ) : null}
+      <NoteLine card={card} focus={focus} />
+    </>
   );
 }

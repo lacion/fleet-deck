@@ -10,7 +10,11 @@ import type {
   BatchRef,
   DeckSession,
   ModelChoice,
+  Prefer,
   Preflight,
+  ProjectHome,
+  Project,
+  ProviderKind,
   SessionSpec,
   StationProvider,
   StationView,
@@ -19,6 +23,7 @@ import type {
   WorkspaceRequest,
 } from '../gen';
 import { limitSuffix, type RateMeter } from '../board/usage';
+import type { PlacementBody } from '../integrations/actions';
 import { commandId, type Outcome, outcomeOf } from '../session/commands';
 import { nativeActions, type NativeActions } from './nativeSessions';
 
@@ -41,6 +46,8 @@ export type SpawnActions = {
   readonly nativeList?: NativeActions['list'];
   /** B7: the preview of one of them. */
   readonly nativePreview?: NativeActions['preview'];
+  /** FG-6 (§9.3): the stations for new sessions (`POST /api/placement`); absent: no Auto choice. */
+  readonly place?: ((body: PlacementBody) => Promise<string[]>) | undefined;
   /** With `importId`: a `session.import` of that native CLI session (DL-308). */
   start(
     stationId: string,
@@ -211,6 +218,127 @@ export function listingView(v: unknown): WorkspaceListing {
 /** Stations that can start a session now: linked, with reported providers. */
 export function spawnTargets(stations: readonly StationView[]): StationView[] {
   return stations.filter((s) => s.reachable && (s.info?.providers.length ?? 0) > 0);
+}
+
+/** The value of the Station (or Home) choice "Auto (best station)" (FG-6, §9.3). */
+export const AUTO = 'auto';
+
+/** The labels of the "Needs" field: comma-separated, trimmed, empty ones left out. */
+export function parseNeeds(text: string): string[] {
+  return text
+    .split(',')
+    .map((l) => l.trim())
+    .filter((l) => l !== '');
+}
+
+/** "Auto (best station)" is offered when a target station reports its traits (FG-6). */
+export function autoOffered(targets: readonly StationView[]): boolean {
+  return targets.some((s) => s.info?.traits !== undefined);
+}
+
+/** The provider families that the target stations have, in a stable order. */
+export function providerKinds(targets: readonly StationView[]): ProviderKind[] {
+  const kinds = new Set<ProviderKind>();
+  for (const s of targets) for (const p of s.info?.providers ?? []) kinds.add(p.provider);
+  return [...kinds].filter((k) => k !== 'unknown').sort();
+}
+
+/** The first signed-in provider instance of a family on a station, or `undefined`. */
+export function instanceOfKind(
+  station: StationView | undefined,
+  kind: ProviderKind,
+): string | undefined {
+  return station?.info?.providers.find((p) => p.provider === kind && p.auth === 'signed_in')
+    ?.instance;
+}
+
+/**
+ * The project that "New session in this project" opened the form for: a home of the project has
+ * this station and this path (FG-5, §8.5).
+ */
+export function projectOfStart(
+  projects: readonly Project[],
+  station: string | undefined,
+  cwd: string | undefined,
+): Project | undefined {
+  if (station === undefined || cwd === undefined) return undefined;
+  return projects.find(
+    (p) =>
+      Array.isArray(p.homes) && p.homes.some((h) => h.station_id === station && h.path === cwd),
+  );
+}
+
+/** The ready homes of a project that can start a session now (their station is a target). */
+export function startHomes(
+  project: Project,
+  targets: readonly StationView[],
+): (ProjectHome & { readonly path: string })[] {
+  const open = new Set(targets.map((t) => t.station_id));
+  return [...project.homes]
+    .sort((a, b) => a.position - b.position)
+    .filter(
+      (h): h is ProjectHome & { path: string } =>
+        h.state === 'ready' && h.path !== null && open.has(h.station_id),
+    );
+}
+
+/** One start of a batch and the station that the deck placed it on. */
+export type PlacedStart<S> = { readonly station: string; readonly spec: S };
+
+/**
+ * FG-6 (§9.3): asks the deck for the stations of `count` starts, then makes the spec of each start
+ * for its station: the first signed-in instance of the chosen family, and the project home (or
+ * the typed directory) of that station as the directory.
+ */
+export async function placeStarts<S extends { provider_instance: string; cwd: string }>(input: {
+  readonly place: SpawnActions['place'];
+  readonly count: number;
+  readonly needs: string;
+  readonly prefer: readonly Prefer[];
+  readonly spread: boolean;
+  readonly kind: ProviderKind;
+  readonly project: Project | undefined;
+  readonly targets: readonly StationView[];
+  readonly cwd: string | null;
+  /** The name of the directory to clone into, below the directory; `null`: no clone. */
+  readonly clone: string | null;
+  readonly spec: S;
+}): Promise<
+  | { readonly ok: true; readonly starts: PlacedStart<S>[] }
+  | { readonly ok: false; readonly text: string }
+> {
+  let stations: string[];
+  try {
+    stations =
+      (await input.place?.({
+        count: input.count,
+        requires: parseNeeds(input.needs),
+        prefer: input.prefer,
+        spread: input.spread && input.count > 1,
+        provider: input.kind,
+        ...(input.project === undefined ? {} : { project_id: input.project.project_id }),
+      })) ?? [];
+  } catch (error) {
+    return { ok: false, text: error instanceof Error ? error.message : 'The placement failed.' };
+  }
+  if (stations.length < input.count) {
+    return { ok: false, text: 'The deck placed fewer stations than sessions.' };
+  }
+  const starts: PlacedStart<S>[] = [];
+  for (const id of stations.slice(0, input.count)) {
+    const chosen = input.targets.find((t) => t.station_id === id);
+    const instance = instanceOfKind(chosen, input.kind);
+    const home = input.project?.homes.find((h) => h.station_id === id)?.path ?? input.cwd;
+    if (instance === undefined || home === null || home === undefined) {
+      return {
+        ok: false,
+        text: `The station ${chosen?.name ?? id} cannot start a ${input.kind} session here.`,
+      };
+    }
+    const cwd = input.clone === null ? home : `${home}/${input.clone}`;
+    starts.push({ station: id, spec: { ...input.spec, provider_instance: instance, cwd } });
+  }
+  return { ok: true, starts };
 }
 
 /** The most pinned directories that one station keeps. */
@@ -396,6 +524,13 @@ export function spawnActions(
   const native = nativeActions(get, post);
   return {
     canDrive: scopes.includes('drive'),
+    place: async (body) => {
+      const v = await post('/api/placement', body);
+      if (!record(v) || !Array.isArray(v['stations'])) {
+        throw new Error('The deck sent an invalid placement answer.');
+      }
+      return v['stations'].filter((x): x is string => typeof x === 'string');
+    },
     nativeList: native.list,
     nativePreview: native.preview,
     list: async (stationId, path) => {

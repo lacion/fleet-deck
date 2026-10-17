@@ -496,11 +496,13 @@ fn start_effect() -> EffectPayload {
             title: None,
             coordinator: None,
             launch: None,
+            extra_env: None,
         },
         prompt: None,
         workspace: None,
         setup_cmd: None,
         authority: None,
+        fleet_git: None,
     }
 }
 

@@ -73,6 +73,7 @@ async fn a_launch_identity_in_a_command_is_cleared_at_the_decide() {
             batch: None,
             issue: None,
             origin_text: false,
+            fleet_git: None,
         })
         .await;
     let s = started.receipt.result.unwrap().session_id.unwrap();

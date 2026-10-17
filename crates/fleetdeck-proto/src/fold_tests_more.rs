@@ -240,3 +240,139 @@ fn a_summary_decodes_without_the_digest_fields() {
     assert!(!s.title_generated);
     assert_eq!(s.digest, None);
 }
+
+fn land_event(land_id: &str, state: crate::fleet_git::LandState, attempt: u32) -> Event {
+    Event::SessionLand(Box::new(crate::fleet_git::LandInfo {
+        land_id: land_id.to_owned(),
+        attempt,
+        state,
+        phase: crate::fleet_git::LandPhase::Checking,
+        reconciling: false,
+        code: None,
+        text: None,
+        files: vec!["a.rs".to_owned()],
+        source_oid: Some("a".repeat(40)),
+        base_oid: None,
+        rebased_oid: None,
+        branch_published_oid: None,
+        default_published_oid: None,
+        pr_url: Some("https://example.test/pr/1".to_owned()),
+    }))
+}
+
+#[test]
+fn session_land_sets_and_replaces_the_land_of_the_summary() {
+    use crate::fleet_git::LandState;
+    let mut f = Feed::new();
+    f.push(started());
+    assert!(f.summary.land.is_none());
+    let s = f.push(land_event("land-1", LandState::Running, 1));
+    let land = s.land.clone().unwrap();
+    assert_eq!((land.land_id.as_str(), land.attempt), ("land-1", 1));
+    assert_eq!(land.state, LandState::Running);
+    assert_eq!(land.files, ["a.rs"]);
+    assert_eq!(land.pr_url.as_deref(), Some("https://example.test/pr/1"));
+    // A later event replaces it, also one of another land id.
+    let s = f.push(land_event("land-2", LandState::Landed, 2));
+    let land = s.land.clone().unwrap();
+    assert_eq!((land.land_id.as_str(), land.attempt), ("land-2", 2));
+    assert_eq!(land.state, LandState::Landed);
+    // An empty `land` is not serialized, and its absence decodes.
+    let v = serde_json::to_value(&f.summary).unwrap();
+    assert!(v.as_object().unwrap().contains_key("land"));
+    let bare = serde_json::to_value(SessionSummary::new(SessionId::from("s2"))).unwrap();
+    assert!(!bare.as_object().unwrap().contains_key("land"));
+    let back: SessionSummary = serde_json::from_value(bare).unwrap();
+    assert!(back.land.is_none());
+}
+
+#[test]
+fn a_session_land_with_a_newer_state_still_folds_as_known() {
+    use crate::fleet_git::LandState;
+    let mut f = Feed::new();
+    f.push(started());
+    let body: EventBody = serde_json::from_value(serde_json::json!({
+        "kind": "session.land", "land_id": "land-1", "attempt": 1,
+        "state": "paused", "phase": "teleporting", "reconciling": false
+    }))
+    .unwrap();
+    assert!(matches!(body, EventBody::Known(_)));
+    f.seq += 1;
+    let s = f.push_body(body);
+    let land = s.land.clone().unwrap();
+    assert_eq!(land.state, LandState::Unknown);
+    assert_eq!(land.phase, crate::fleet_git::LandPhase::Unknown);
+    assert!(land.files.is_empty());
+}
+
+#[test]
+fn session_moved_sets_moved_to_and_leaves_the_state_alone() {
+    use crate::fleet_git::MovedTo;
+    use crate::ids::StationId;
+    let mut f = Feed::new();
+    f.push(started());
+    let state = f.summary.state;
+    assert!(f.summary.moved_to.is_none());
+    let s = f.push(Event::SessionMoved {
+        move_id: "mv-1".to_owned(),
+        to_station: StationId::from("bravo"),
+        to_session: SessionId::from("s2"),
+    });
+    assert_eq!(
+        s.moved_to,
+        Some(MovedTo {
+            move_id: "mv-1".to_owned(),
+            station_id: StationId::from("bravo"),
+            session_id: SessionId::from("s2"),
+        })
+    );
+    assert_eq!(s.state, state);
+}
+
+#[test]
+fn session_move_undone_clears_moved_to_only_for_the_same_move() {
+    use crate::ids::StationId;
+    let mut f = Feed::new();
+    f.push(started());
+    f.push(Event::SessionMoved {
+        move_id: "mv-1".to_owned(),
+        to_station: StationId::from("bravo"),
+        to_session: SessionId::from("s2"),
+    });
+    let s = f.push(Event::SessionMoveUndone {
+        move_id: "mv-other".to_owned(),
+    });
+    assert!(s.moved_to.is_some());
+    let s = f.push(Event::SessionMoveUndone {
+        move_id: "mv-1".to_owned(),
+    });
+    assert!(s.moved_to.is_none());
+}
+
+#[test]
+fn session_move_in_sets_and_replaces_the_move_state_of_the_summary() {
+    use crate::fleet_git::{MoveInInfo, MoveInState};
+    let info = |state| MoveInInfo {
+        move_id: "mv-1".to_owned(),
+        state,
+        code: None,
+        text: None,
+    };
+    let mut f = Feed::new();
+    f.push(started());
+    assert!(f.summary.move_in.is_none());
+    let s = f.push(Event::SessionMoveIn(info(MoveInState::Resumed)));
+    assert_eq!(s.move_in, Some(info(MoveInState::Resumed)));
+    let s = f.push(Event::SessionMoveIn(info(MoveInState::Confirmed)));
+    assert_eq!(s.move_in, Some(info(MoveInState::Confirmed)));
+}
+
+#[test]
+fn a_summary_without_the_move_fields_serializes_and_decodes_as_before() {
+    let bare = serde_json::to_value(SessionSummary::new(SessionId::from("s2"))).unwrap();
+    let object = bare.as_object().unwrap();
+    assert!(!object.contains_key("moved_to"));
+    assert!(!object.contains_key("move_in"));
+    let back: SessionSummary = serde_json::from_value(bare).unwrap();
+    assert!(back.moved_to.is_none() && back.move_in.is_none());
+}

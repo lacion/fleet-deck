@@ -14,6 +14,10 @@
 //! - anything else: a reply `echo: <text>`.
 //!
 //! Inputs that arrive while a turn runs are queued and run in order.
+//! With `--resume` and [`crate::fake::RESUME_FAULT_ENV`] the process fails like
+//! a CLI that cannot resume (FG-9): see [`crate::fake::RESUME_EXIT_AT_START`],
+//! [`crate::fake::RESUME_MISSING`] and [`crate::fake::RESUME_OTHER_ID`].
+//!
 //! End of stdin ends the process with exit code 0, after the linger time of
 //! [`crate::fake::LINGER_ENV`] if that variable is set.
 
@@ -64,12 +68,29 @@ pub const PID_LINE: &str = "# fake-claude pid ";
 pub fn run() -> ExitCode {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
+    // A resume fault applies to a process that resumes (FG-9).
+    let fault = flag_value("--resume").and_then(|_| {
+        std::env::var(crate::fake::RESUME_FAULT_ENV)
+            .ok()
+            .filter(|v| !v.is_empty())
+    });
+    let fault = fault.as_deref();
+    if fault == Some(crate::fake::RESUME_EXIT_AT_START) {
+        eprintln!("fake-claude sim: the resume fault `exit_at_start`");
+        return ExitCode::from(1);
+    }
     let mode = flag_value("--permission-mode").unwrap_or_else(|| "default".to_owned());
     let model = flag_value("--model").unwrap_or_else(|| SIM_MODEL.to_owned());
     let mut sim = Sim {
         out: stdout.lock(),
         // `--resume <id>` continues that native session (DL-118).
-        session_id: flag_value("--resume").unwrap_or_else(|| format!("sim-{}", std::process::id())),
+        session_id: match (flag_value("--resume"), fault) {
+            (Some(_), Some(crate::fake::RESUME_OTHER_ID)) => {
+                format!("sim-other-{}", std::process::id())
+            }
+            (Some(id), _) => id,
+            (None, _) => format!("sim-{}", std::process::id()),
+        },
         mode,
         model,
         started: false,
@@ -101,6 +122,15 @@ pub fn run() -> ExitCode {
             eprintln!("fake-claude sim: not JSON: {line}");
             continue;
         };
+        if fault == Some(crate::fake::RESUME_MISSING)
+            && frame.get("type").and_then(Value::as_str) == Some("user")
+        {
+            eprintln!(
+                "No conversation found with session ID: {}",
+                flag_value("--resume").unwrap_or_default()
+            );
+            return ExitCode::from(1);
+        }
         if sim.on_frame(&frame).is_err() {
             return ExitCode::from(1);
         }

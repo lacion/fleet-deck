@@ -95,6 +95,7 @@ pub struct SessionTarget {
     launch_hook: GateHook,
     /// The `fleetdeck` executable that confines provisioning Git (B9).
     confine_exe: std::sync::OnceLock<std::path::PathBuf>,
+    artifacts_runtime: std::sync::OnceLock<Arc<crate::fleet_git_runtime::FleetGitRuntime>>,
     /// The instances whose probed version is on the adapter's deny list
     /// (R8.2, DL-162): their starts are refused.
     broken: Arc<StdMutex<BTreeMap<ProviderInstanceId, &'static str>>>,
@@ -104,6 +105,8 @@ pub struct SessionTarget {
     pub(super) restart: Arc<super::restart_gate::RestartState>,
     /// The running `!` shell tasks of Claude sessions (B8).
     shell: shell_run::ShellRunState,
+    /// The memory of the target moves (FG-9), shared with the manager.
+    moves: Option<Arc<super::land::move_in::MoveState>>,
 }
 
 impl SessionTarget {
@@ -138,32 +141,13 @@ impl SessionTarget {
             #[cfg(any(test, feature = "fault-injection"))]
             launch_hook: GateHook::default(),
             confine_exe: std::sync::OnceLock::new(),
+            artifacts_runtime: std::sync::OnceLock::new(),
             shells: ShellsSlot::default(),
             broken: Arc::default(),
             restart: Arc::default(),
             shell: shell_run::ShellRunState::default(),
+            moves: None,
         }
-    }
-
-    /// Refuses the starts of `instance`: its probed version is on the deny
-    /// list of its adapter (R8.2, DL-162).
-    pub fn mark_broken(&self, instance: &ProviderInstanceId, kind: ProviderKind) {
-        let name: &'static str = match kind {
-            ProviderKind::Claude => "claude",
-            ProviderKind::Codex => "codex",
-            ProviderKind::Unknown => "provider",
-        };
-        if let Ok(mut broken) = self.broken.lock() {
-            broken.insert(instance.clone(), name);
-        }
-    }
-
-    /// The refusal text of a start on a broken instance, if it is one.
-    fn broken_reason(&self, instance: &ProviderInstanceId) -> Option<String> {
-        let broken = self.broken.lock().ok()?;
-        broken
-            .get(instance)
-            .map(|name| format!("this {name} version is known to break the protocol"))
     }
 
     /// The points where a test holds a start.
@@ -588,8 +572,13 @@ impl EffectTarget for SessionTarget {
                 prompt,
                 workspace,
                 setup_cmd,
+                fleet_git,
                 ..
             } => {
+                // The `worktree_env` of the project reaches the provider
+                // process (FG-4, O15); it is never stored with the effect.
+                let with_env = launch::spec_with_worktree_env(spec, fleet_git.as_deref());
+                let spec = with_env.as_ref().unwrap_or(spec);
                 // The queued start is checked again against the current
                 // policy (DL-172 §1.4).
                 if let Some(why) = self.current_policy().and_then(|p| {
@@ -617,7 +606,7 @@ impl EffectTarget for SessionTarget {
                 // The Git work of the start (M3 6-1, DL-200) and its setup
                 // command run in a task of their own: the effect worker
                 // goes on with the other sessions.
-                if workspace.is_some() || setup_cmd.is_some() {
+                if workspace.is_some() || setup_cmd.is_some() || launch::artifacts(fleet_git) {
                     return self
                         .defer_start(
                             effect,
@@ -654,6 +643,7 @@ impl EffectTarget for SessionTarget {
                     Ok(l) => l,
                     Err(refused) => return refused,
                 };
+                let launch = self.resume_artifacts(effect, launch).await;
                 // The transcript is copied before the provider can write to it
                 // again. A failure is recorded and never stops the import
                 // (DL-189).
@@ -725,6 +715,10 @@ impl EffectTarget for SessionTarget {
                 }
                 None => Dispatch::NotDispatched("no_policy".into()),
             },
+            // (FG-8) The land engine polls the `land_runs` rows itself.
+            EffectPayload::Land { .. } => Dispatch::Confirmed,
+            // (FG-9) The launch of a moved session runs in a task.
+            EffectPayload::MoveIn { .. } => self.dispatch_move_in(effect),
             _ => self.operate(effect).await,
         }
     }
@@ -759,6 +753,9 @@ mod shell_codex;
 
 #[path = "target_base.rs"]
 mod target_base;
+
+#[path = "move_launch.rs"]
+mod move_launch;
 
 #[cfg(any(test, feature = "fault-injection"))]
 #[path = "target_gate.rs"]

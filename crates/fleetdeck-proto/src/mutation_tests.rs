@@ -84,6 +84,29 @@ pub(crate) fn sample(method: &str) -> Value {
                 "release_shell" => {
                     json!({"op": op, "session_id": s, "effect_id": "01J0000000000000000000000E"})
                 }
+                "land" => json!({"op": op, "session_id": s, "land_id": "land-1", "plan": {
+                    "project_id": "p1", "settings_revision": 1, "home_generation": 1,
+                    "mode": "merge", "fetch_remote": "origin",
+                    "remote": {"repo": "github.com/o/r", "dest": "https://github.com:443/o/r"},
+                    "branch_ref": "fd/o-r/a", "publish_ref": "fd/o-r/a",
+                    "branch_target": {"target": "origin", "dest": "https://github.com:443/o/r"},
+                    "check_env": {}, "pr_title": "t", "pr_body": "b"}}),
+                "move_out" => {
+                    json!({"op": op, "session_id": s, "move_id": "mv-1", "to_station": "bravo"})
+                }
+                "move_finish" => json!({"op": op, "session_id": s, "move_id": "mv-1",
+                    "to_station": "bravo", "to_session": "01J0000000000000000000000T"}),
+                "move_undo" => json!({"op": op, "session_id": s, "move_id": "mv-1"}),
+                "move_in" => json!({"op": op, "move_id": "mv-1", "kind": "native",
+                    "provider_instance": "claude",
+                    "from": {"station_id": "alpha", "session_id": s, "publication": {
+                        "local_branch": "fd/alpha/ada", "dest": "https://github.com:443/o/r",
+                        "ref_name": "fd/alpha/ada", "oid": "a".repeat(40)}},
+                    "fleet_git": {"kind": "worktree", "project_id": "p1", "project_name": "app",
+                        "settings": {}, "settings_revision": 1, "home_generation": 1,
+                        "home_path": "/w/app",
+                        "remote": {"repo": "github.com/o/r", "dest": "https://github.com:443/o/r"},
+                        "slug": "bravo", "clone_url": "https://github.com/o/r.git"}}),
                 "worktree_purge" => {
                     json!({"op": op, "session_id": s, "confirm_name": "app--fd-x--01j000000000"})
                 }
@@ -121,7 +144,7 @@ fn every_mutating_method_parses_its_envelope_and_names_its_method() {
             count += 1;
         }
     }
-    assert_eq!(count, 33);
+    assert_eq!(count, 38);
 }
 
 #[test]

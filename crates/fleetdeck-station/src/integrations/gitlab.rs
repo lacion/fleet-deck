@@ -374,6 +374,71 @@ pub async fn pr_create(
         .ok_or_else(|| Fail::bad_answer("GitLab gave no merge request URL"))
 }
 
+/// The numeric id of the bound project: `GET projects/<path>` (H16). The
+/// merge requests of a land must come from this project and go to it.
+pub(super) async fn project_id(f: &Forge<'_>, timeout: std::time::Duration) -> Result<u64, Fail> {
+    let endpoint = format!("projects/{}", f.repo_path());
+    let answer = f.call_http("GET", &endpoint, None, None, timeout).await?;
+    if answer.status != 200 {
+        return Err(Fail::upstream(format!(
+            "HTTP {}: {}",
+            answer.status,
+            String::from_utf8_lossy(&answer.body).trim()
+        )));
+    }
+    serde_json::from_slice::<Value>(&answer.body)
+        .ok()
+        .and_then(|v| v["id"].as_u64())
+        .ok_or_else(|| Fail::bad_answer("GitLab gave no project id"))
+}
+
+/// One page of the exact lookup of open merge requests from `head` to `base`
+/// (FG-8, design §11.5 step 6, H16): 100 to a page, no cache.
+pub(super) async fn mrs_find(
+    f: &Forge<'_>,
+    head: &str,
+    base: &str,
+    page: u32,
+    timeout: std::time::Duration,
+) -> Result<forge::HttpAnswer, Fail> {
+    let endpoint = format!(
+        "projects/{}/merge_requests?state=opened&source_branch={}&target_branch={}&per_page=100&page={page}",
+        f.repo_path(),
+        urlencode(head),
+        urlencode(base),
+    );
+    f.call_http("GET", &endpoint, None, None, timeout).await
+}
+
+/// Does this merge request come from the bound project and go to it? A
+/// fork merge request, or one without the two ids, is not ours.
+pub(super) fn mr_is_ours(item: &Value, project: u64) -> bool {
+    item["source_project_id"].as_u64() == Some(project)
+        && item["target_project_id"].as_u64() == Some(project)
+}
+
+/// The page that `x-next-page` names; an empty header is the last page.
+pub(super) fn next_page(answer: &forge::HttpAnswer) -> Option<u32> {
+    answer.header("x-next-page")?.trim().parse().ok()
+}
+
+/// The create request of a merge request, with its HTTP status (FG-8).
+pub(super) async fn mr_create(
+    f: &Forge<'_>,
+    head: &str,
+    base: &str,
+    title: &str,
+    body: &str,
+    timeout: std::time::Duration,
+) -> Result<forge::HttpAnswer, Fail> {
+    let payload = json!({
+        "source_branch": head, "target_branch": base, "title": title, "description": body
+    });
+    let endpoint = format!("projects/{}/merge_requests", f.repo_path());
+    f.call_http("POST", &endpoint, Some(&payload), None, timeout)
+        .await
+}
+
 /// The web URL of a merge request or an issue.
 fn web_url(f: &Forge<'_>, pr: bool, number: u64) -> String {
     let kind = if pr { "merge_requests" } else { "issues" };

@@ -304,6 +304,10 @@ fn info_with_model_help(assist: bool) -> fleetdeck_proto::link::StationInfo {
         assist_cap: assist.then_some(200_000),
         resources: None,
         desktop: None,
+        traits: None,
+        config: None,
+        taildrive: None,
+        fleet_git: None,
         fleet_summary: None,
     }
 }

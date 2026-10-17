@@ -31,6 +31,8 @@ pub enum FieldKind {
     Instances,
     /// A map from a repository path to a group name.
     RepoGroups,
+    /// A map from a Taildrive share `<machine>/<share>` to a mount path.
+    ShareMounts,
     /// The `[[trackers]]` entries (read only).
     Trackers,
 }

@@ -409,6 +409,62 @@ pub async fn pr_create(
         .ok_or_else(|| Fail::bad_answer("GitHub gave no pull request URL"))
 }
 
+/// One page of the exact lookup of open pull requests from `head` to `base`
+/// (FG-8, design §11.5 step 6, H16): 100 to a page, no cache. A fork has
+/// another owner in `head`, but the caller also checks [`pull_is_ours`].
+pub(super) async fn pulls_find(
+    f: &Forge<'_>,
+    head: &str,
+    base: &str,
+    page: u32,
+    timeout: std::time::Duration,
+) -> Result<forge::HttpAnswer, Fail> {
+    let (owner, _) = split_repo(f);
+    let endpoint = format!(
+        "repos/{}/pulls?state=open&head={}&base={}&per_page=100&page={page}",
+        f.repo_path(),
+        urlencode(&format!("{owner}:{head}")),
+        urlencode(base),
+    );
+    f.call_http("GET", &endpoint, None, None, timeout).await
+}
+
+/// Is the head of this pull request a branch of the bound repository (and
+/// not of a fork)? A pull request without a head repository (a deleted fork)
+/// is not ours.
+pub(super) fn pull_is_ours(f: &Forge<'_>, item: &Value) -> bool {
+    item["head"]["repo"]["full_name"]
+        .as_str()
+        .is_some_and(|name| name.eq_ignore_ascii_case(&f.binding.repo))
+}
+
+/// The page after `page`, when the `Link` header names a `rel="next"`.
+pub(super) fn next_page(answer: &forge::HttpAnswer, page: u32) -> Option<u32> {
+    let link = answer.header("link")?;
+    link.split(',')
+        .any(|part| {
+            part.split(';')
+                .skip(1)
+                .any(|param| param.replace(' ', "") == "rel=\"next\"")
+        })
+        .then(|| page.saturating_add(1))
+}
+
+/// The create request of a pull request, with its HTTP status (FG-8).
+pub(super) async fn pull_create(
+    f: &Forge<'_>,
+    head: &str,
+    base: &str,
+    title: &str,
+    body: &str,
+    timeout: std::time::Duration,
+) -> Result<forge::HttpAnswer, Fail> {
+    let payload = json!({"title": title, "head": head, "base": base, "body": body});
+    let endpoint = format!("repos/{}/pulls", f.repo_path());
+    f.call_http("POST", &endpoint, Some(&payload), None, timeout)
+        .await
+}
+
 pub async fn comment(f: &Forge<'_>, number: u64, body: &str) -> Result<String, Fail> {
     let made = f
         .json(

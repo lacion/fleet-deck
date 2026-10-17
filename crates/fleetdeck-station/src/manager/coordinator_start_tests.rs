@@ -104,6 +104,7 @@ async fn a_deck_start_with_a_grant_hands_the_credential_to_the_child_environment
         title: None,
         coordinator: Some(Box::new(coordinator_spec())),
         launch: None,
+        extra_env: None,
     };
     spec.title = Some("coordinator".to_owned());
     let envelope = CommandEnvelope {
@@ -120,6 +121,7 @@ async fn a_deck_start_with_a_grant_hands_the_credential_to_the_child_environment
             batch: None,
             issue: None,
             origin_text: false,
+            fleet_git: None,
         },
     };
     let command = envelope.command.clone();
@@ -303,6 +305,7 @@ fn the_start_effect_rechecks_the_handoff_and_the_endpoint() {
         title: None,
         coordinator: None,
         launch: None,
+        extra_env: None,
     };
     let grant = coordinator_spec();
     let session: SessionId = "s-1".into();
@@ -358,6 +361,7 @@ fn a_session_without_a_grant_gets_a_fleet_only_binding_when_the_handoff_works() 
         title: None,
         coordinator: None,
         launch: None,
+        extra_env: None,
     };
     let session: SessionId = "s-1".into();
     let ok = Bindings::default().with_handoff(verified);
@@ -434,6 +438,7 @@ fn a_resume_on_the_direct_host_gets_a_launch_and_replaces_the_old_binding() {
         title: None,
         coordinator: None,
         launch: None,
+        extra_env: None,
     };
     let session: SessionId = "s-4".into();
     let bindings = Bindings::default().with_handoff(verified);
@@ -505,6 +510,7 @@ fn a_codex_session_without_a_grant_gets_the_fleet_tools_too() {
         title: None,
         coordinator: None,
         launch: None,
+        extra_env: None,
     };
     let session: SessionId = "s-3".into();
     let bindings = Bindings::default();
@@ -538,6 +544,7 @@ fn tools_spec(grant: bool) -> SessionSpec {
         title: None,
         coordinator: grant.then(|| Box::new(coordinator_spec())),
         launch: None,
+        extra_env: None,
     }
 }
 

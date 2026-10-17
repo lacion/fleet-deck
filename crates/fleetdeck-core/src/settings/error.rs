@@ -69,7 +69,12 @@ pub(super) fn key_of(e: &ConfigError, fallback: &str) -> String {
         }
     };
     let cut = field.split('[').next().unwrap_or(field);
-    for table in ["repo_groups", "provider_instance", "trackers"] {
+    for table in [
+        "repo_groups",
+        "provider_instance",
+        "trackers",
+        "taildrive_mounts",
+    ] {
         if cut == table || cut.starts_with(&format!("{table}.")) {
             return table.to_owned();
         }

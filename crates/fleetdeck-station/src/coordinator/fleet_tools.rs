@@ -195,6 +195,11 @@ pub const FLEET_TOOLS: &[Tool] = &[
         description: "Answer one approval or question of another session: allow once or deny only.",
         schema: answer_request,
     },
+    // Fleet Git (FG-10, design §13.2).
+    super::git_tools::PROJECT_BRANCHES,
+    super::git_tools::PROJECT_FETCH,
+    super::git_tools::LAND_SESSION,
+    super::git_tools::MOVE_SESSION,
 ];
 
 /// True for a fleet-control tool that is a `coordinator.query`.
@@ -211,6 +216,8 @@ pub fn is_query(tool: &str) -> bool {
             | "read_artifact"
             | "read_file"
             | "search_files"
+            | "project_branches"
+            | "project_fetch"
     )
 }
 
@@ -249,6 +256,8 @@ pub fn query(tool: &str, args: &Value) -> Result<CoordinatorQuery, String> {
         "read_artifact" => "artifact",
         "read_file" => "file_read",
         "search_files" => "file_search",
+        "project_branches" => "project_branches",
+        "project_fetch" => "project_fetch",
         other => return Err(format!("invalid_params: no read tool `{other}`")),
     };
     obj.insert("query".to_owned(), json!(name));
@@ -272,6 +281,8 @@ pub fn op(tool: &str, args: &Value) -> Result<CoordinatorOp, String> {
             "project_start"
         }
         "answer_request" => "answer",
+        "land_session" => "land",
+        "move_session" => "move",
         other => return Err(format!("forbidden: the grant has no tool `{other}`")),
     };
     obj.insert("op".to_owned(), json!(name));

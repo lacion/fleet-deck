@@ -96,7 +96,9 @@ impl DurableCore for ClaudeCore {
             | EffectPayload::Resume { prompt: None, .. }
             | EffectPayload::Stop { .. }
             | EffectPayload::Revert { .. }
-            | EffectPayload::Worktree { .. } => Err(not_a_command()),
+            | EffectPayload::Worktree { .. }
+            | EffectPayload::Land { .. }
+            | EffectPayload::MoveIn { .. } => Err(not_a_command()),
             // B8: the execution of `!` commands is a later task.
             EffectPayload::ShellCommand { .. } => {
                 Err(ProviderError::NotReady("shell_command_not_built"))

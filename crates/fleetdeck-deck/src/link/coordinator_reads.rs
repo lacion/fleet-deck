@@ -38,7 +38,7 @@ const ARTIFACT_BYTES: usize = 256 * 1024;
 
 type Shaped = std::result::Result<Value, Reject>;
 
-fn refusal(code: RejectCode, message: impl Into<String>) -> Reject {
+pub(super) fn refusal(code: RejectCode, message: impl Into<String>) -> Reject {
     Reject::new(code, message)
 }
 
@@ -62,13 +62,23 @@ fn station_refusal(code: &str, message: &str) -> Reject {
     refusal(kind, format!("{code}: {}", fence("station_error", message)))
 }
 
-fn station_error(e: impl std::fmt::Display) -> Reject {
+pub(super) fn station_error(e: impl std::fmt::Display) -> Reject {
     refusal(RejectCode::InvalidState, format!("station_error: {e}"))
 }
 
 /// One request to the station; the value of its answer.
 async fn ask(control: &Control, method: &str, params: Value) -> Shaped {
-    let outcome = tokio::time::timeout(STATION_WAIT, control.request(method, None, params))
+    ask_within(control, STATION_WAIT, method, params).await
+}
+
+/// [`ask`] with its own wait (a fetch takes longer than a read).
+pub(super) async fn ask_within(
+    control: &Control,
+    wait: Duration,
+    method: &str,
+    params: Value,
+) -> Shaped {
+    let outcome = tokio::time::timeout(wait, control.request(method, None, params))
         .await
         .map_err(|_| {
             refusal(
@@ -83,11 +93,11 @@ async fn ask(control: &Control, method: &str, params: Value) -> Shaped {
     }
 }
 
-fn parse<T: DeserializeOwned>(value: Value) -> std::result::Result<T, Reject> {
+pub(super) fn parse<T: DeserializeOwned>(value: Value) -> std::result::Result<T, Reject> {
     serde_json::from_value(value).map_err(station_error)
 }
 
-fn rejected(reject: Reject) -> Outcome {
+pub(super) fn rejected(reject: Reject) -> Outcome {
     Outcome::Ok(json!({ "reject": reject }))
 }
 
@@ -96,6 +106,15 @@ pub(crate) async fn run(ctx: &DeckLink, read: StationRead) -> Outcome {
     let Some(control) = ctx.control_for(&read.station) else {
         return rejected(unreachable_station());
     };
+    if matches!(
+        read.shape,
+        ReadShape::ProjectBranches { .. } | ReadShape::ProjectFetch { .. }
+    ) {
+        return match super::coordinator_git_reads::serve(ctx, &control, read).await {
+            Ok(v) => Outcome::Ok(v),
+            Err(r) => rejected(r),
+        };
+    }
     match shaped(&control, read).await {
         Ok(v) => Outcome::Ok(v),
         Err(r) => rejected(r),
@@ -152,6 +171,8 @@ async fn shaped(control: &Control, read: StationRead) -> Shaped {
             let detail: ArtifactDetail = parse(first)?;
             artifact_text(control, (&station, &artifact_id, kind), &detail, &source).await
         }
+        // Served by `coordinator_git_reads` before this function.
+        ReadShape::ProjectBranches { .. } | ReadShape::ProjectFetch { .. } => Ok(first),
     }
 }
 

@@ -1,18 +1,18 @@
 // DL-140: the header of a session: title, status, provider, model, where it
 // runs, and the actions (interrupt, resume, terminal) with one overflow menu (DL-141).
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { formatHash } from '../app/routes';
 import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import type { DeckSession, ModelChoice, StationView } from '../gen';
 import { digestLines, GeneratedMark } from '../ui/generated';
 import { Menu } from '../ui/Menu';
+import { CopyButton, MAX_PATH_CHARS, shortenMiddle } from './CopyButton';
 import {
   Archive,
   ArchiveRestore,
   Check,
   ChevronLeft,
-  Copy,
   Ellipsis,
   FileText,
   Folder,
@@ -23,6 +23,7 @@ import {
   Play,
   Power,
   Search,
+  Server,
   Send,
   Square,
   SquareTerminal,
@@ -47,10 +48,13 @@ import { GitPullRequest } from '../integrations/icons';
 import { projectOfSession } from '../integrations/model';
 import { OpenPrDialog } from '../integrations/OpenPrDialog';
 import { Badges, Place } from './HeaderBadges';
+import { MoveDialog } from './MoveDialog';
 import { MoveToProject } from './MoveToProject';
 import { RenameForm } from './RenameForm';
 import { SendToWall } from '../wall/SendToWall';
 import { ModeLadder, ModelPicker } from './SessionSettings';
+
+export { CopyButton } from './CopyButton';
 
 type TerminalProps = {
   readonly available: boolean;
@@ -74,52 +78,13 @@ type Props = {
   readonly models?: readonly ModelChoice[] | null;
   /** Opens the check of the previous run (DL-182); the menu offers it when given (owner only). */
   readonly onCheckExecution?: (() => void) | undefined;
+  /** FG-9: a move started from the menu; the session view reads the move again. */
+  readonly onMoveStarted?: (() => void) | undefined;
 };
 
 /** The status update that "Ask for a status update" sends. */
 const NUDGE =
   'Give a short status update: what you finished, what you do now, and what blocks you.';
-
-const COPIED_MS = 1500;
-
-/** The longest path the header shows, in characters. */
-const MAX_PATH_CHARS = 48;
-
-/** A long path loses its middle: `/home/lu…/repo/src`. */
-function shortenMiddle(text: string, max: number): string {
-  const chars = [...text];
-  if (chars.length <= max) return text;
-  const keep = max - 1;
-  const head = Math.ceil(keep / 2);
-  const tail = keep - head;
-  return `${chars.slice(0, head).join('')}…${chars.slice(chars.length - tail).join('')}`;
-}
-
-/** An icon button that copies `text`; it shows a check for 1.5 s. */
-export function CopyButton({ text, label }: { readonly text: string; readonly label: string }) {
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!copied) return;
-    const timer = setTimeout(() => setCopied(false), COPIED_MS);
-    return () => clearTimeout(timer);
-  }, [copied]);
-  return (
-    <button
-      type="button"
-      className="fd-iconbtn fd-sm"
-      aria-label={label}
-      title={label}
-      onClick={() => {
-        navigator.clipboard
-          .writeText(text)
-          .then(() => setCopied(true))
-          .catch(() => setCopied(false));
-      }}
-    >
-      <Icon of={copied ? Check : Copy} size={14} />
-    </button>
-  );
-}
 
 /** "retry in 3 min" (rounded up), or "retry in 40 s" under a minute; `null` when the time is past. */
 function retryText(retryAt: number | null, now: number): string | null {
@@ -191,6 +156,7 @@ export function SessionHeader({
   filesPanel,
   models = null,
   onCheckExecution,
+  onMoveStarted,
 }: Props) {
   const s = session.summary;
   const caps = s.capabilities;
@@ -210,6 +176,14 @@ export function SessionHeader({
   // DL-176: the owner moves a session to a project; the deck needs the drive scope.
   const canMove = useIntegrations()?.actions.canDrive === true && !guest;
   const [moving, setMoving] = useState(false);
+  const syncProject = useProjects().find((p) => p.project_id === session.project_id);
+  // FG-9 (§12.8): "Move to station…" for the owner, in a project with sync on.
+  const canMoveStation =
+    !guest &&
+    actions?.canAdmin === true &&
+    syncProject?.git.sync === true &&
+    s.moved_to === undefined;
+  const [movingStation, setMovingStation] = useState(false);
   const run = (name: string, call: (a: SessionActions) => Promise<Outcome>) => {
     if (actions) controller.act(name, () => call(actions));
   };
@@ -396,6 +370,17 @@ export function SessionHeader({
           }}
         >
           <Icon of={FolderGit2} /> Move to project…
+        </button>
+      ) : null}
+      {canMoveStation ? (
+        <button
+          type="button"
+          onClick={() => {
+            close();
+            setMovingStation(true);
+          }}
+        >
+          <Icon of={Server} /> Move to station…
         </button>
       ) : null}
       {guest ? null : (
@@ -762,6 +747,13 @@ export function SessionHeader({
         </div>
       ) : null}
       {moving ? <MoveToProject session={session} onClose={() => setMoving(false)} /> : null}
+      {movingStation ? (
+        <MoveDialog
+          session={session}
+          onClose={() => setMovingStation(false)}
+          onStarted={() => onMoveStarted?.()}
+        />
+      ) : null}
       {prOpen && prProject !== undefined ? (
         <OpenPrDialog project={prProject} session={session} onClose={() => setPrOpen(false)} />
       ) : null}

@@ -35,6 +35,8 @@ type Props = {
   readonly review?: ReviewProps | undefined;
   /** DL-191: the login is the owner and the deck can list branches: the "Branches" view is offered. */
   readonly branchesOffered?: boolean | undefined;
+  /** FG-10: the project of the session; the Branches view then shows "Other stations". */
+  readonly projectId?: string | undefined;
 };
 
 type View = 'spawn' | 'turns' | 'branches';
@@ -362,7 +364,16 @@ export function TurnsPanel(props: Props) {
     return (
       <section className="fd-turns" aria-label="Turns">
         {toggle}
-        <BranchesView load={branchesRead} loadDiff={branchDiffRead} onOpenFile={onOpenFile} />
+        <BranchesView
+          load={branchesRead}
+          loadDiff={branchDiffRead}
+          onOpenFile={onOpenFile}
+          fleet={
+            props.projectId === undefined || station === undefined
+              ? undefined
+              : { projectId: props.projectId, station, session: summary.session_id }
+          }
+        />
       </section>
     );
   }

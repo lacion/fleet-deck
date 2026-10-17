@@ -63,6 +63,7 @@ fn worktree_start(cwd: &str, setup_cmd: Option<&str>) -> SessionCommand {
         batch: None,
         issue: None,
         origin_text: false,
+        fleet_git: None,
     }
 }
 

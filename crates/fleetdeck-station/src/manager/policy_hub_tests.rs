@@ -20,6 +20,7 @@ fn start_command(cwd: &str) -> SessionCommand {
         batch: None,
         issue: None,
         origin_text: false,
+        fleet_git: None,
     }
 }
 

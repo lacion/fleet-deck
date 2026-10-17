@@ -58,6 +58,11 @@ pub struct WorktreeOp {
     pub message: Option<String>,
     pub trashed_at: i64,
     pub updated_at: i64,
+    /// The branch ref that the cleanup proved (`refs/heads/<branch>`); `None`
+    /// for a board trash (FG-3, design §6.3).
+    pub expect_branch: Option<String>,
+    /// The tip that the cleanup proved; `None` for a board trash.
+    pub expect_oid: Option<String>,
 }
 
 /// The facts that the trash decision records.
@@ -69,10 +74,13 @@ pub struct NewWorktreeOp {
     pub trash_path: String,
     pub dev: u64,
     pub ino: u64,
+    /// `(refs/heads/<branch>, tip)` that the trash effect checks again right
+    /// before the move (FG-3); `None` for a board trash.
+    pub expect: Option<(String, String)>,
 }
 
 const COLUMNS: &str = "op_id, session_id, main, admin_dir, original_path, trash_path, dev, ino, \
-     branch, state, phase, message, trashed_at, updated_at";
+     branch, state, phase, message, trashed_at, updated_at, expect_branch, expect_oid";
 
 /// An inode or device number goes into SQLite as the `i64` with the same
 /// bits.
@@ -100,6 +108,8 @@ fn decode(r: &rusqlite::Row<'_>) -> rusqlite::Result<WorktreeOp> {
         message: r.get(11)?,
         trashed_at: r.get(12)?,
         updated_at: r.get(13)?,
+        expect_branch: r.get(14)?,
+        expect_oid: r.get(15)?,
     })
 }
 
@@ -199,8 +209,9 @@ impl Decision<'_> {
     pub fn insert_worktree_op(&mut self, new: &NewWorktreeOp) -> Result<()> {
         self.connection().execute(
             "INSERT INTO worktree_ops (op_id, session_id, main, admin_dir, original_path,
-                 trash_path, dev, ino, branch, state, phase, message, trashed_at, updated_at)
-             VALUES (?1, ?2, '', '', ?3, ?4, ?5, ?6, NULL, 'trashing', NULL, NULL, ?7, ?7)",
+                 trash_path, dev, ino, branch, state, phase, message, trashed_at, updated_at,
+                 expect_branch, expect_oid)
+             VALUES (?1, ?2, '', '', ?3, ?4, ?5, ?6, NULL, 'trashing', NULL, NULL, ?7, ?7, ?8, ?9)",
             params![
                 new.op_id,
                 new.session_id.as_str(),
@@ -209,6 +220,8 @@ impl Decision<'_> {
                 to_db(new.dev),
                 to_db(new.ino),
                 self.now(),
+                new.expect.as_ref().map(|(branch, _)| branch),
+                new.expect.as_ref().map(|(_, oid)| oid),
             ],
         )?;
         Ok(())
@@ -328,6 +341,24 @@ impl Store {
         let now = self.now();
         call(&self.inner.db, move |conn| {
             transition(conn, &op_id, from, to, None, None, now)
+        })
+        .await
+    }
+
+    /// Ends a trash run without a move because the worktree changed after the
+    /// cleanup checks: `trashing` to `released` with `message` (FG-3, design
+    /// §6.3). `false` when the row is in another state.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn worktree_op_release_changed(
+        &self,
+        op_id: String,
+        message: &'static str,
+    ) -> Result<bool> {
+        let now = self.now();
+        call(&self.inner.db, move |conn| {
+            transition(conn, &op_id, TRASHING, RELEASED, None, Some(message), now)
         })
         .await
     }

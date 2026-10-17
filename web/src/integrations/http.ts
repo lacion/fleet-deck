@@ -4,15 +4,22 @@ import { ApiError, type Fetch } from '../runtime/api';
 const record = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
+/** The error of a refused call: the status, the message, the `error` code and the `field`. */
 async function failure(response: Response): Promise<ApiError> {
   let message = `Request failed (${response.status})`;
+  let code: string | null = null;
+  let field: string | null = null;
   try {
     const value: unknown = await response.json();
-    if (record(value) && typeof value['message'] === 'string') message = value['message'];
+    if (record(value)) {
+      if (typeof value['message'] === 'string') message = value['message'];
+      if (typeof value['error'] === 'string') code = value['error'];
+      if (typeof value['field'] === 'string') field = value['field'];
+    }
   } catch {
     // The body is not JSON: the status text stays.
   }
-  return new ApiError(response.status, message);
+  return new ApiError(response.status, message, code, field);
 }
 
 export type IntegrationHttp = {

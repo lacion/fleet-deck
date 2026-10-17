@@ -108,6 +108,24 @@ export function fileActions(get: Get, key: SessionKey): FileActions {
   );
 }
 
+/**
+ * FG-12 (§15.6): the file service of the artifact folder of a session (`artifacts=<session id>`);
+ * it has no turns, as a workspace has none.
+ */
+export function artifactFiles(get: Get, key: SessionKey): FileActions {
+  return rootActions(
+    get,
+    key.station_id,
+    `artifacts=${encodeURIComponent(key.session_id)}`,
+    async () => {
+      throw new Error('The artifact folder has no turns.');
+    },
+    async () => {
+      throw new Error('The artifact folder has no session diff.');
+    },
+  );
+}
+
 /** The file service of one folder of a station (`workspace=<absolute dir>`); a folder has no turns. */
 export function workspaceFiles(get: Get, station: string, workspace: string): FileActions {
   return rootActions(

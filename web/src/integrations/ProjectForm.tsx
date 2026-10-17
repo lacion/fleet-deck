@@ -20,12 +20,15 @@ import {
   systemLabel,
   type TrackerDraft,
 } from './model';
+import { ProjectGitSettings } from './ProjectGitSettings';
 
 type Props = {
   readonly stations: readonly StationView[];
   readonly draft: ProjectDraft;
   readonly onChange: (next: ProjectDraft) => void;
   readonly editing: boolean;
+  /** The id of the edited project; the Git sync section needs it (FG-1..FG-4). */
+  readonly projectId?: string | undefined;
   readonly saving: boolean;
   readonly error: string | null;
   /** The accounts of the project's station (`GET .../accounts`); `null` until they load or when they cannot. */
@@ -184,6 +187,7 @@ export function ProjectForm({
   draft,
   onChange,
   editing,
+  projectId,
   saving,
   error,
   accounts,
@@ -438,6 +442,9 @@ export function ProjectForm({
           </button>
         </FormActions>
       </form>
+      {editing && projectId !== undefined ? (
+        <ProjectGitSettings projectId={projectId} stations={stations} />
+      ) : null}
     </div>
   );
 }

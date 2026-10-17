@@ -411,14 +411,34 @@ impl Git {
         envs: &[(&str, &str)],
         max_bytes: usize,
     ) -> Result<(i32, Vec<u8>, bool), GitError> {
-        use tokio::io::AsyncReadExt;
+        let (code, out, _, cut) = self
+            .spawn_bounded(args, envs)?
+            .collect(max_bytes, 0)
+            .await?;
+        Ok((code, out, cut))
+    }
+
+    /// Starts `git <args>` with extra environment variables and returns the
+    /// child. This function has no `.await`: the process exists when it
+    /// returns, so a caller that checks a condition right before it (the
+    /// authority gate of a land write, design §11.5, revision 4, B3) puts no
+    /// await between the check and the spawn. [`BoundedChild::collect`] reads
+    /// the capped output and applies the time limit.
+    ///
+    /// # Errors
+    /// [`GitError::Spawn`] when `git` does not start.
+    pub fn spawn_bounded(
+        &self,
+        args: &[&str],
+        envs: &[(&str, &str)],
+    ) -> Result<BoundedChild, GitError> {
         let mut cmd = self.command();
         cmd.current_dir(&self.dir)
             .args(SAFE_CONFIG)
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .kill_on_drop(true);
         self.grouped(&mut cmd);
         for name in REDIRECTING_VARS {
@@ -434,38 +454,104 @@ impl Git {
         for (name, value) in envs {
             cmd.env(name, value);
         }
-        let mut child = cmd.spawn().map_err(GitError::Spawn)?;
+        let child = cmd.spawn().map_err(GitError::Spawn)?;
         self.spawned(&child);
-        let Some(stdout) = child.stdout.take() else {
-            return Err(GitError::Spawn(std::io::Error::other("no stdout pipe")));
+        Ok(BoundedChild {
+            child,
+            git: self.clone(),
+            args: args.join(" "),
+        })
+    }
+}
+
+/// A running `git` that [`Git::spawn_bounded`] started. The time limit of
+/// the [`GitOptions`] applies to [`Self::collect`]; the process is killed
+/// when the child is dropped.
+#[derive(Debug)]
+pub struct BoundedChild {
+    child: tokio::process::Child,
+    git: Git,
+    args: String,
+}
+
+impl BoundedChild {
+    /// Reads the output and waits for the end. Returns `(exit code, stdout,
+    /// stderr, cut)`. Stdout keeps at most `max_stdout` bytes; with more the
+    /// process is killed, `cut` is true and the code is -1. Stderr keeps at
+    /// most `max_stderr` bytes (the status line of the confinement helper
+    /// is dropped first). A signal gives the code -1.
+    ///
+    /// # Errors
+    /// [`GitError::Timeout`] after the time limit of the options,
+    /// [`GitError::Confine`] when the confinement helper failed, or
+    /// [`GitError::Spawn`] for a read error.
+    pub async fn collect(
+        mut self,
+        max_stdout: usize,
+        max_stderr: usize,
+    ) -> Result<(i32, Vec<u8>, String, bool), GitError> {
+        use tokio::io::AsyncReadExt;
+        let (Some(stdout), Some(mut stderr)) = (self.child.stdout.take(), self.child.stderr.take())
+        else {
+            return Err(GitError::Spawn(std::io::Error::other("no output pipe")));
         };
-        let limit = u64::try_from(max_bytes)
+        // Room for the status line of the helper (B9).
+        let keep = max_stderr
+            + if self.git.options.confine.is_some() {
+                128
+            } else {
+                0
+            };
+        let limit = u64::try_from(max_stdout)
             .unwrap_or(u64::MAX)
             .saturating_add(1);
-        let timeout = || GitError::Timeout {
-            args: args.join(" "),
-            secs: self.options.timeout.as_secs(),
-        };
-        let work = async {
-            let mut out = Vec::new();
-            stdout
-                .take(limit)
-                .read_to_end(&mut out)
-                .await
-                .map_err(GitError::Spawn)?;
-            let cut = out.len() > max_bytes;
-            if cut {
-                out.truncate(max_bytes);
-                let _ = child.start_kill();
+        let read_err = async {
+            let mut kept = Vec::new();
+            // On the heap: a buffer in the future would grow every caller's stack.
+            let mut chunk = vec![0u8; 8192];
+            loop {
+                let n = stderr.read(&mut chunk).await.map_err(GitError::Spawn)?;
+                if n == 0 {
+                    break;
+                }
+                let room = keep.saturating_sub(kept.len());
+                kept.extend_from_slice(&chunk[..n.min(room)]);
             }
-            let status = child.wait().await.map_err(GitError::Spawn)?;
-            Ok::<_, GitError>((status.code().unwrap_or(-1), out, cut))
+            Ok::<_, GitError>(kept)
         };
-        let result = tokio::time::timeout(self.options.timeout, work)
+        let timeout = self.git.options.timeout;
+        let work = async {
+            let child = &mut self.child;
+            let read_out = async {
+                let mut out = Vec::new();
+                stdout
+                    .take(limit)
+                    .read_to_end(&mut out)
+                    .await
+                    .map_err(GitError::Spawn)?;
+                let cut = out.len() > max_stdout;
+                if cut {
+                    out.truncate(max_stdout);
+                    let _ = child.start_kill();
+                }
+                Ok::<_, GitError>((out, cut))
+            };
+            let (out, err) = tokio::join!(read_out, read_err);
+            let (out, cut) = out?;
+            let status = child.wait().await.map_err(GitError::Spawn)?;
+            Ok::<_, GitError>((status.code().unwrap_or(-1), out, err?, cut))
+        };
+        let result = tokio::time::timeout(timeout, work)
             .await
-            .map_err(|_| timeout())?;
-        self.ended();
-        result
+            .map_err(|_| GitError::Timeout {
+                args: self.args.clone(),
+                secs: timeout.as_secs(),
+            });
+        self.git.ended();
+        let (code, out, kept, cut) = result??;
+        let mut stderr = self.git.confined(code, &kept)?;
+        stderr.truncate(max_stderr);
+        Ok((code, out, shorten_stderr(&stderr), cut))
     }
 }
 
@@ -589,6 +675,104 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, GitError::Confine));
+    }
+
+    /// A program that is a shell script: it ignores the Git arguments.
+    fn script(dir: &Path, body: &str) -> Git {
+        let path = dir.join("fake-git");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let options = GitOptions {
+            program: path,
+            timeout: Duration::from_secs(10),
+            ..GitOptions::isolated()
+        };
+        Git::new(dir, options)
+    }
+
+    #[tokio::test]
+    async fn a_bounded_child_gives_both_streams_and_the_code() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = script(dir.path(), "echo out; echo err >&2; exit 3");
+        // `spawn_bounded` is not `async`: the process exists when it returns.
+        let child = git.spawn_bounded(&["x"], &[]).unwrap();
+        let (code, out, err, cut) = child.collect(100, 100).await.unwrap();
+        assert_eq!(
+            (code, out.as_slice(), err.as_str(), cut),
+            (3, &b"out\n"[..], "err", false)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_bounded_child_passes_its_extra_environment() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = script(dir.path(), "echo \"$FD_TEST_VALUE\"");
+        let (_, out, _, _) = git
+            .spawn_bounded(&[], &[("FD_TEST_VALUE", "seen")])
+            .unwrap()
+            .collect(100, 0)
+            .await
+            .unwrap();
+        assert_eq!(out, b"seen\n");
+    }
+
+    #[tokio::test]
+    async fn a_bounded_child_keeps_a_capped_stderr_and_does_not_block_on_it() {
+        let dir = tempfile::tempdir().unwrap();
+        // 200 KiB on stderr, more than a pipe holds, then a short stdout.
+        let git = script(
+            dir.path(),
+            "head -c 200000 /dev/zero | tr '\\0' e >&2; echo done",
+        );
+        let (code, out, err, cut) = git
+            .spawn_bounded(&[], &[])
+            .unwrap()
+            .collect(100, 10)
+            .await
+            .unwrap();
+        assert_eq!(
+            (code, out.as_slice(), err.len(), cut),
+            (0, &b"done\n"[..], 10, false)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_bounded_child_with_too_much_stdout_is_killed_and_cut() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = script(dir.path(), "exec yes x");
+        let (code, out, _, cut) = git
+            .spawn_bounded(&[], &[])
+            .unwrap()
+            .collect(1024, 0)
+            .await
+            .unwrap();
+        assert!(cut);
+        assert_eq!(out.len(), 1024);
+        assert_eq!(code, -1);
+    }
+
+    #[tokio::test]
+    async fn a_bounded_child_that_runs_too_long_times_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut git = script(dir.path(), "exec sleep 30");
+        git.options.timeout = Duration::from_millis(200);
+        let err = git
+            .spawn_bounded(&[], &[])
+            .unwrap()
+            .collect(100, 0)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, GitError::Timeout { .. }), "{err}");
+    }
+
+    #[tokio::test]
+    async fn bounded_with_env_still_drops_stderr_and_cuts_stdout() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = script(dir.path(), "echo abcdef; echo err >&2");
+        let (_, out, cut) = git.bounded_with_env(&[], &[], 3).await.unwrap();
+        assert_eq!((out.as_slice(), cut), (&b"abc"[..], true));
+        let (code, out, cut) = git.bounded(&[], 100).await.unwrap();
+        assert_eq!((code, out.as_slice(), cut), (0, &b"abcdef\n"[..], false));
     }
 
     #[tokio::test]

@@ -221,6 +221,8 @@ impl DeckStore {
                 append_timeline(&tx, &station, &e)?;
                 super::plans::record_plan(&tx, &station, &e, &summary, now)?;
                 super::artifacts::record_artifact(&tx, &station, &e)?;
+                super::land_queue::record_land(&tx, &station, &e, now)?;
+                super::session_moves::record_move(&tx, &station, &e, now)?;
                 scopes.extend(super::grants::record_lifecycle(&tx, &station, &e, now)?);
                 let mail = mail_ids.as_ref().map(|ids| super::conflicts::MailContext {
                     ids: ids.as_ref(),

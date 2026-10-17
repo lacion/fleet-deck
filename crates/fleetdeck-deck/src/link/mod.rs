@@ -23,9 +23,13 @@
 //! coordinator receipts (G7); the others with `not_implemented` (DL-050,
 //! DL-053).
 
+pub mod coordinator_git_reads;
 mod coordinator_reads;
 pub mod desktop_authority;
 mod display_directive;
+pub mod fleet_git_artifacts;
+pub mod fleet_git_sync;
+mod info;
 mod outbox;
 mod palette;
 mod requests;
@@ -37,14 +41,13 @@ use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
 
 use fleetdeck_link::control::{Control, Inbound};
 use fleetdeck_link::methods::code;
 use fleetdeck_link::node::NodeConfig;
 use fleetdeck_link::revoke::REVOKED;
 use fleetdeck_link::{Closing, LiveLink};
-use fleetdeck_proto::link::{ControlFrame, MAX_SNAPSHOT_SESSIONS, Outcome, StationInfo};
+use fleetdeck_proto::link::{ControlFrame, MAX_SNAPSHOT_SESSIONS, Outcome};
 use fleetdeck_proto::session::SessionSummary;
 use fleetdeck_proto::{EventEnvelope, IncarnationId, StationId};
 use serde_json::{Value, json};
@@ -55,6 +58,9 @@ pub use runtime::{DeckNode, NodeError, NodeOptions};
 
 use crate::peers::DeckPeers;
 use crate::store::{DeckError, DeckStore};
+use info::fetch_info;
+#[cfg(test)]
+use info::{INFO_REFRESH, adopt_name, info_loop};
 
 /// The error code of a method that this build does not serve.
 pub const NOT_IMPLEMENTED: &str = "not_implemented";
@@ -75,6 +81,14 @@ pub struct DeckLink {
     live: Mutex<HashMap<StationId, Vec<LiveEntry>>>,
     next_token: AtomicU64,
     inflight: router::Inflight,
+    /// Wakes the home attempt sender (FG-5, `fleet_git_homes`).
+    pub homes_kick: Arc<crate::fleet_git_homes::HomesKick>,
+    /// Wakes the land tasks (FG-8, `fleet_git_land`).
+    pub land_kick: Arc<crate::fleet_git_land::LandKick>,
+    pub move_kick: Arc<crate::fleet_git_move::MoveKick>,
+    /// The radar notices and the radar wake (FG-7, `fleet_git_radar`).
+    pub radar_state: Arc<crate::fleet_git_radar::RadarState>,
+    pub radar_kick: Arc<crate::fleet_git_radar::RadarKick>,
 }
 
 impl DeckLink {
@@ -87,6 +101,11 @@ impl DeckLink {
             live: Mutex::default(),
             next_token: AtomicU64::new(0),
             inflight: router::Inflight::default(),
+            homes_kick: Arc::default(),
+            land_kick: Arc::default(),
+            move_kick: Arc::default(),
+            radar_state: Arc::default(),
+            radar_kick: Arc::default(),
         }
     }
 
@@ -460,117 +479,13 @@ impl Sync {
     }
 }
 
-/// How often the deck asks a live link for `station.info` again (DL-193).
-const INFO_REFRESH: Duration = Duration::from_secs(60);
-
-/// Asks the station for `station.info` when the link comes up and then every
-/// `INFO_REFRESH` while it is live, and keeps the answer for the board
-/// (version, capacity, providers, resources). The board name follows the
-/// station's own `name` setting: the deck adopts the name of the first
-/// answer only.
-fn fetch_info(ctx: &Arc<DeckLink>, control: &Control, id: &StationId, name: &str) {
-    let (ctx, control, id, stored) = (
-        Arc::clone(ctx),
-        control.clone(),
-        id.clone(),
-        name.to_owned(),
-    );
-    tokio::spawn(async move {
-        let ask = || ask_info(&control);
-        info_loop(
-            &ctx.store,
-            &id,
-            &stored,
-            INFO_REFRESH,
-            ask,
-            control.closed(),
-        )
-        .await;
-    });
-}
-
-/// The loop of [`fetch_info`]. It ends when `closed` resolves or `ask`
-/// fails. An answer that is `Ok(None)` is skipped and tried again later.
-async fn info_loop<F, Fut>(
-    store: &DeckStore,
-    id: &StationId,
-    stored: &str,
-    every: Duration,
-    mut ask: F,
-    closed: impl Future,
-) where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = Result<Option<StationInfo>, ()>>,
-{
-    tokio::pin!(closed);
-    match ask().await {
-        Ok(Some(info)) => {
-            let reported = info.name.clone();
-            store.set_station_info(id, info);
-            adopt_name(store, id.clone(), stored, &reported).await;
-        }
-        Ok(None) => {}
-        Err(()) => return,
-    }
-    loop {
-        tokio::select! {
-            _ = &mut closed => return,
-            () = tokio::time::sleep(every) => {}
-        }
-        match ask().await {
-            Ok(Some(info)) => store.set_station_info(id, info),
-            Ok(None) => {}
-            Err(()) => return,
-        }
-    }
-}
-
-/// One `station.info` request. `Err` when the link is gone; `Ok(None)` when
-/// the answer is an error or does not parse.
-async fn ask_info(control: &Control) -> Result<Option<StationInfo>, ()> {
-    match control.request("station.info", None, json!({})).await {
-        Ok(Outcome::Ok(v)) => match serde_json::from_value::<StationInfo>(v) {
-            Ok(info) => Ok(Some(info)),
-            Err(e) => {
-                tracing::debug!(error = %e, "station.info does not parse");
-                Ok(None)
-            }
-        },
-        Ok(other) => {
-            tracing::debug!(outcome = ?other, "station.info refused");
-            Ok(None)
-        }
-        Err(e) => {
-            tracing::debug!(error = %e, "station.info on a link that ended");
-            Err(())
-        }
-    }
-}
-
-/// Gives the station the name that it reports, when the name is new and
-/// free. A name that another station has leaves the old name.
-async fn adopt_name(store: &DeckStore, id: StationId, stored: &str, reported: &str) {
-    let reported = reported.trim();
-    if reported.is_empty() || reported == stored {
-        return;
-    }
-    match store.rename_station(id.clone(), reported.to_owned()).await {
-        Ok(()) => tracing::info!(station = %id, name = %reported, "station named"),
-        Err(DeckError::NameTaken(_)) => tracing::warn!(
-            station = %id,
-            name = %reported,
-            "another station has this name; the board keeps the old name"
-        ),
-        Err(e) => tracing::warn!(error = %e, station = %id, "station keeps its name"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
+    use std::time::Duration;
 
     use fleetdeck_core::identity::Identity;
-    use fleetdeck_proto::link::Scope;
+    use fleetdeck_proto::link::{Scope, StationInfo};
     use fleetdeck_testkit::Det;
 
     use super::*;
@@ -636,6 +551,10 @@ mod tests {
             assist_cap: None,
             resources: None,
             desktop: None,
+            traits: None,
+            config: None,
+            taildrive: None,
+            fleet_git: None,
             fleet_summary: None,
         }
     }

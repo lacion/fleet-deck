@@ -184,6 +184,9 @@ impl Rig {
             shells: Arc::new(fleetdeck_station::shell::Shells::new(ShellConfig::default())),
             coordinator: fleetdeck_station::coordinator::LinkForward::default(),
             paste_dir: None,
+            fleet_git: Arc::new(fleetdeck_station::fleet_git_runtime::FleetGitRuntime::new(
+                Arc::new(fleetdeck_station::workspace::GitOptions::isolated),
+            )),
         });
         Self {
             _det: det,
@@ -242,6 +245,7 @@ impl Rig {
                     title: Some("Fix the build".to_owned()),
                     coordinator: None,
                     launch: None,
+                    extra_env: None,
                 },
                 prompt: None,
                 workspace: None,
@@ -249,6 +253,7 @@ impl Rig {
                 batch: None,
                 issue: None,
                 origin_text: false,
+                fleet_git: None,
             },
         };
         let decided = self

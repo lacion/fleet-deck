@@ -97,6 +97,12 @@ fn ineligible(
         .is_some_and(|kind| Some(kind) == s.provider);
     let code = if !same_instance || d.native_session_id(session_id)?.is_none() {
         "identity_changed"
+    } else if crate::store::session_holds::held(d.connection(), session_id)? {
+        // (FG-8) A land holds the session: no auto-continue.
+        "held"
+    } else if s.moved_to.is_some() {
+        // (FG-9) A moved session never continues.
+        "moved"
     } else if d.unended_execution(session_id)?.is_some() {
         "execution_unknown"
     } else if w.turn_id.is_none() || !(w.run_open || w.turn_open) {

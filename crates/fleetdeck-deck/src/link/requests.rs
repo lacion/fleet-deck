@@ -18,7 +18,7 @@ use fleetdeck_link::control::{Control, InboundRequest};
 use fleetdeck_link::methods::code;
 use fleetdeck_proto::link::{Outcome, WireError};
 use fleetdeck_proto::mutation::{
-    AuthorityAnswer, AuthorityCheck, CoordinatorQueryEnvelope, Mutation,
+    AuthorityAnswer, AuthorityCheck, CoordinatorOp, CoordinatorQueryEnvelope, Mutation,
 };
 use fleetdeck_proto::{CommandId, Receipt, StationId};
 
@@ -42,6 +42,9 @@ pub(crate) async fn answer(
         "coordinator.call" => coordinator_call(ctx, station, &req).await,
         "coordinator.query" => coordinator_query(ctx, station, &req).await,
         "coordinator.authority_check" => authority_check(ctx, station, &req).await,
+        "fleet_git.artifact_authorize" => {
+            super::fleet_git_artifacts::artifact_authorize(ctx, station, &req).await
+        }
         // R13 P4 (`desktop_shell.v1`): stubs until tasks E and F1.
         "display.directive" => {
             super::display_directive::display_directive(&station, req.params.clone())
@@ -75,8 +78,20 @@ async fn coordinator_call(ctx: &DeckLink, station: StationId, req: &InboundReque
             return receipt(&Receipt::rejected(id, reject, now));
         }
     };
+    let lands = matches!(envelope.call.op, CoordinatorOp::Land { .. });
+    let moves = matches!(envelope.call.op, CoordinatorOp::Move { .. });
     match ctx.store.decide_coordinator(station, envelope).await {
-        Ok(r) => receipt(&r),
+        Ok(r) => {
+            // A queued coordinator land wakes admission (FG-10).
+            if lands && r.reject.is_none() {
+                ctx.land_kick.kick();
+            }
+            // A started coordinator move wakes the move task (FG-9).
+            if moves && r.reject.is_none() {
+                ctx.move_kick.kick();
+            }
+            receipt(&r)
+        }
         Err(e) => {
             tracing::warn!(error = %e, "coordinator receipt");
             Outcome::Err(WireError::new(code::PROTOCOL_ERROR, "deck store error"))

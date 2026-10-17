@@ -413,47 +413,60 @@ impl DeckStore {
     pub async fn conflicts(&self) -> Result<Vec<FileConflict>> {
         let since = self.now_ms().saturating_sub(CONFLICT_WINDOW_MS);
         call(&self.inner.db, move |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT group_key, file, repo, station_id, session_id, session_title, path,
-                     touched_at
-                 FROM file_touches WHERE touched_at >= ?1
-                 ORDER BY touched_at DESC, station_id, session_id",
-            )?;
-            let mut groups: BTreeMap<(String, String), FileConflict> = BTreeMap::new();
-            let rows = stmt.query_map([since], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, Option<String>>(2)?,
-                    FileTouch {
-                        station_id: StationId::from(r.get::<_, String>(3)?),
-                        session_id: r.get::<_, String>(4)?.into(),
-                        session_title: r.get(5)?,
-                        path: r.get(6)?,
-                        touched_at: r.get(7)?,
-                    },
-                ))
-            })?;
-            for row in rows {
-                let (group, file, repo, touch) = row?;
-                groups
-                    .entry((group, file.clone()))
-                    .or_insert_with(|| FileConflict {
-                        repo,
-                        file,
-                        touches: Vec::new(),
-                    })
-                    .touches
-                    .push(touch);
-            }
-            let mut out: Vec<FileConflict> = groups
-                .into_values()
-                .filter(|c| c.touches.len() >= 2)
-                .collect();
-            out.sort_by_key(|c| std::cmp::Reverse(c.touches.first().map_or(0, |t| t.touched_at)));
-            out.truncate(MAX_CONFLICTS);
-            Ok(out)
+            Ok(keyed_conflicts(conn, since)?
+                .into_iter()
+                .map(|(_, conflict)| conflict)
+                .collect())
         })
         .await
     }
+}
+
+/// The conflicts of [`DeckStore::conflicts`] with the `group_key` of each
+/// (FG-7: `GET /api/radar` groups them).
+pub(super) fn keyed_conflicts(
+    conn: &rusqlite::Connection,
+    since: i64,
+) -> Result<Vec<(String, FileConflict)>> {
+    let mut stmt = conn.prepare(
+        "SELECT group_key, file, repo, station_id, session_id, session_title, path,
+             touched_at
+         FROM file_touches WHERE touched_at >= ?1
+         ORDER BY touched_at DESC, station_id, session_id",
+    )?;
+    let mut groups: BTreeMap<(String, String), FileConflict> = BTreeMap::new();
+    let rows = stmt.query_map([since], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, Option<String>>(2)?,
+            FileTouch {
+                station_id: StationId::from(r.get::<_, String>(3)?),
+                session_id: r.get::<_, String>(4)?.into(),
+                session_title: r.get(5)?,
+                path: r.get(6)?,
+                touched_at: r.get(7)?,
+            },
+        ))
+    })?;
+    for row in rows {
+        let (group, file, repo, touch) = row?;
+        groups
+            .entry((group, file.clone()))
+            .or_insert_with(|| FileConflict {
+                repo,
+                file,
+                touches: Vec::new(),
+            })
+            .touches
+            .push(touch);
+    }
+    let mut out: Vec<(String, FileConflict)> = groups
+        .into_iter()
+        .filter(|(_, c)| c.touches.len() >= 2)
+        .map(|((group, _), c)| (group, c))
+        .collect();
+    out.sort_by_key(|(_, c)| std::cmp::Reverse(c.touches.first().map_or(0, |t| t.touched_at)));
+    out.truncate(MAX_CONFLICTS);
+    Ok(out)
 }

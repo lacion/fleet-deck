@@ -357,6 +357,7 @@ pub fn import(native: &str, rig: &Rig) -> SessionCommand {
             title: None,
             coordinator: None,
             launch: None,
+            extra_env: None,
         },
         native_session_id: native.to_owned(),
         prompt: None,

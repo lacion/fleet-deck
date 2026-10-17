@@ -20,6 +20,7 @@ use fleetdeck_providers::host::shim::host::{ShimHost, ShimHostConfig};
 use fleetdeck_providers::host::{DirectChildHost, SessionHost};
 use tokio::sync::watch;
 
+use crate::fleet_git_runtime::FleetGitRuntime;
 use crate::link::{NodeError, StationNode};
 use crate::local;
 use crate::manager::target::ShimSettings;
@@ -241,6 +242,35 @@ pub struct RunningStation {
     prune: tokio::task::JoinHandle<()>,
     /// The sampler of the per-session load (R13 §10).
     loads: tokio::task::JoinHandle<()>,
+    /// The Fleet Git writer, push trigger task, push loop (FG-2) and cleanup loop (FG-3).
+    fleet_git: Vec<tokio::task::JoinHandle<()>>,
+}
+
+/// The longest wait for a Fleet Git task at the station stop.
+const FLEET_GIT_STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The Git options of a Fleet Git write: the program, and under Linux the
+/// confinement with the allowed roots of the current policy (DL-200), read at
+/// each job.
+fn fleet_git_options(
+    hub: Arc<crate::manager::PolicyHub>,
+) -> crate::workspace::fleet_git::OptionsProvider {
+    #[cfg(target_os = "linux")]
+    let exe = fleetdeck_providers::host::shim::exe_hash::own_exe().ok();
+    Arc::new(move || {
+        #[allow(unused_mut)]
+        let mut options = crate::workspace::GitOptions::isolated();
+        #[cfg(target_os = "linux")]
+        if let Some(exe) = &exe {
+            options.confine = Some(crate::workspace::git::Confine {
+                exe: exe.clone(),
+                roots: hub.current().allowed_roots().to_vec(),
+            });
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = &hub;
+        options
+    })
 }
 
 impl RunningStation {
@@ -324,6 +354,9 @@ impl RunningStation {
         if host_choice == HostChoice::Shim && cfg!(target_os = "linux") {
             set_bridge_endpoint(&manager, &station_dir)?;
         }
+        // The staging root of the conversation files of a move (FG-9).
+        manager.set_moves_dir(station_dir.join("moves"));
+        manager.clear_cut_uploads().await;
         // Worktree and clone provisioning runs Git under `fleetdeck
         // confine-exec` (B9, DL-200).
         #[cfg(target_os = "linux")]
@@ -371,6 +404,14 @@ impl RunningStation {
             Arc::clone(&manager),
             rx.clone(),
         ));
+        let (mut fleet_git, land) = crate::manager::fleet_git_push::start(
+            manager.store().clone(),
+            Arc::clone(manager.policy_hub()),
+            fleet_git_options(Arc::clone(manager.policy_hub())),
+            manager.integrations_provider(),
+            rx.clone(),
+        );
+        manager.set_land_engine(land);
         let identity = Arc::new(Identity::load_or_create(&station_dir)?);
         // A station restart ends every shell (PLAN §6.8, A10): the PTYs
         // close with the process.
@@ -378,7 +419,34 @@ impl RunningStation {
             program: None,
             instances: terminal_instances(config),
         }));
-        let node = StationNode::start_with_dirs(
+        // The runtime of Fleet Git homes, traits and the config digest.
+        let fleet_runtime = Arc::new(FleetGitRuntime::new(fleet_git_options(Arc::clone(
+            manager.policy_hub(),
+        ))));
+        fleet_git.push(tokio::spawn(crate::drift::run(
+            Arc::clone(&fleet_runtime),
+            Arc::clone(&manager),
+            Env::from_process().home,
+            crate::drift::DRIFT_EVERY,
+            rx.clone(),
+        )));
+        let artifacts =
+            crate::taildrive::start(&fleet_runtime, &manager, config, &station_dir, &rx);
+        fleet_git.extend(artifacts.await);
+        // A clone of an earlier process did not finish: its folder stays, the
+        // attempt is `interrupted` (design §8.4).
+        let interrupted = manager.store().home_interrupt_cloning().await?;
+        if interrupted > 0 {
+            tracing::warn!(interrupted, "home clones stopped by the restart");
+        }
+        fleet_git.extend(crate::manager::fleet_git_cleanup::start(
+            manager.store().clone(),
+            Arc::clone(manager.policy_hub()),
+            Arc::clone(&shells),
+            fleet_git_options(Arc::clone(manager.policy_hub())),
+            rx.clone(),
+        ));
+        let node = StationNode::start_with_fleet_git(
             Arc::clone(&manager),
             Arc::clone(&identity),
             config.name.clone(),
@@ -387,6 +455,7 @@ impl RunningStation {
             Arc::clone(&shells),
             Some(station_dir.join("paste")),
             Some(station_dir.join("artifacts")),
+            fleet_runtime,
         )
         .await?;
         tracing::info!(
@@ -414,6 +483,7 @@ impl RunningStation {
             rescan,
             prune,
             loads,
+            fleet_git,
         })
     }
 
@@ -427,6 +497,14 @@ impl RunningStation {
         let _ = self.rescan.await;
         let _ = self.prune.await;
         let _ = self.loads.await;
+        for mut task in self.fleet_git {
+            if tokio::time::timeout(FLEET_GIT_STOP_WAIT, &mut task)
+                .await
+                .is_err()
+            {
+                task.abort();
+            }
+        }
         self.node.shutdown();
         // The stop waits for the terminal processes (up to the hangup grace).
         let shells = Arc::clone(&self.shells);
@@ -633,5 +711,67 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, ServeError::Upgrade { .. }), "{err:?}");
         assert!(!dirs.station_db().exists());
+    }
+    #[tokio::test]
+    async fn a_station_restart_marks_a_cloning_home_attempt_interrupted() {
+        use crate::store::home_attempts::{BeginHome, NewHomeAttempt};
+        use fleetdeck_proto::fleet_git::{HomeAttemptState, code};
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().canonicalize().unwrap();
+        let dirs = NodeDirs {
+            config: home.join("config"),
+            data: home.join("data"),
+        };
+        ensure_private_dir(&dirs.station()).unwrap();
+        let dest = home.join("projects").join("app");
+        {
+            // The earlier process: a clone started, then the station stopped.
+            let det = fleetdeck_testkit::Det::new();
+            let store = Store::open(
+                &dirs.station_db(),
+                det.clock(),
+                det.ids(),
+                StoreConfig::default(),
+            )
+            .await
+            .unwrap();
+            let new = NewHomeAttempt {
+                attempt_id: "a1".to_owned(),
+                project_id: "p1".to_owned(),
+                generation: 1,
+                request_digest: "d".to_owned(),
+                retry_of: None,
+                dest_path: dest.display().to_string(),
+                url: "https://h.example/acme/app".to_owned(),
+                remote_name: "origin".to_owned(),
+            };
+            assert!(matches!(
+                store.home_begin(new).await.unwrap(),
+                BeginHome::Created(_)
+            ));
+        }
+        let env = Env {
+            home: Some(home.clone()),
+            ..Env::default()
+        };
+        let text = format!(
+            "allowed_roots = [\"{}\"]\nhost = \"direct\"\n",
+            home.display()
+        );
+        let config = StationConfig::parse(&text, &env).unwrap();
+        let station = RunningStation::start(&dirs, &config, None, None)
+            .await
+            .unwrap();
+        let row = station
+            .manager
+            .store()
+            .home_attempt("p1".into(), "a1".into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.state, HomeAttemptState::Interrupted);
+        assert_eq!(row.code.as_deref(), Some(code::CLONE_INTERRUPTED));
+        assert!(row.message.unwrap().contains(&dest.display().to_string()));
+        station.stop().await;
     }
 }

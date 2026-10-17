@@ -29,6 +29,8 @@ use serde_json::json;
 
 pub mod board;
 pub mod fleet;
+pub mod fleet_git_fake;
+pub mod fleet_git_land;
 
 pub const T: Duration = Duration::from_secs(10);
 
@@ -51,10 +53,28 @@ pub async fn fixture() -> Fixture {
 
 /// A fake station that the deck grants `scopes`.
 pub async fn fixture_with(scopes: BTreeSet<Scope>) -> Fixture {
+    build(scopes, None).await
+}
+
+/// A fixture whose deck store is the file `dir/deck.db`.
+pub async fn fixture_file(dir: &std::path::Path) -> Fixture {
+    build(
+        STATION_SCOPES.into_iter().collect(),
+        Some(dir.join("deck.db")),
+    )
+    .await
+}
+
+async fn build(scopes: BTreeSet<Scope>, file: Option<std::path::PathBuf>) -> Fixture {
     let det = Det::new();
-    let store = DeckStore::open_in_memory(det.clock(), det.ids())
-        .await
-        .unwrap();
+    let store = match file {
+        Some(path) => DeckStore::open(&path, det.clock(), det.ids())
+            .await
+            .unwrap(),
+        None => DeckStore::open_in_memory(det.clock(), det.ids())
+            .await
+            .unwrap(),
+    };
     let deck_id = Arc::new(Identity::generate().unwrap());
     let station_id = Arc::new(Identity::generate().unwrap());
     let rec = store

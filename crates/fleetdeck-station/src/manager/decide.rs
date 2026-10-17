@@ -18,6 +18,10 @@ use crate::store::{
 };
 use crate::workspace::clone_reuse::{self, CloneTarget};
 use crate::workspace::provision;
+use workspace::fleet_git::move_in_decide::decide_in;
+
+#[path = "decide_workspace.rs"]
+mod workspace;
 
 /// The run origin of an input from `origin` (PLAN §6.3).
 #[must_use]
@@ -69,9 +73,10 @@ pub fn decide(
             batch,
             issue,
             origin_text,
+            fleet_git,
         } => {
             if let Some(cmd) = &setup_cmd {
-                check_setup_cmd(policy, origin_run, cmd)?;
+                workspace::check_setup_cmd(policy, origin_run, cmd)?;
             }
             if let Some(why) = batch.as_deref().and_then(BatchRef::problem) {
                 return Err(reject(RejectCode::InvalidCommand, why));
@@ -95,6 +100,7 @@ pub fn decide(
                     issue: issue.map(|i| *i),
                     origin_text,
                     batch: batch.map(|b| *b),
+                    fleet_git,
                     ..StartFacts::default()
                 },
             )
@@ -318,6 +324,13 @@ pub fn decide(
                 },
             )
         }
+        // The session manager decides a land with the shells (FG-8).
+        SessionCommand::Land { .. } => Err(super::land::refuse_direct()),
+        SessionCommand::MoveOut { .. } => Err(super::land::move_session::refuse_direct()),
+        command @ (SessionCommand::MoveFinish { .. } | SessionCommand::MoveUndo { .. }) => {
+            super::land::move_session::decide_finish_undo(d, policy, bindings, origin, command)
+        }
+        command @ SessionCommand::MoveIn { .. } => decide_in(d, policy, bindings, origin, command),
         // The session manager decides these with the resolved root (B8).
         SessionCommand::ShellCommand { .. } | SessionCommand::ReleaseShell { .. } => {
             Err(super::shell_decide::refuse_direct())
@@ -376,6 +389,8 @@ struct StartFacts {
     /// The `Nx` batch of the start (R1.4, DL-170).
     batch: Option<BatchRef>,
     transcript: Option<fleetdeck_proto::native::TranscriptPin>, // B7
+    /// The Fleet Git snapshot of the start (FG-1, design §3.3).
+    fleet_git: Option<Box<fleetdeck_proto::fleet_git::FleetGitStart>>,
 }
 
 /// The modes that a start from third-party text may use, and the mode that
@@ -483,6 +498,24 @@ fn start(
             None,
         ),
     };
+    // Fleet Git (FG-1): the snapshot is checked against the station before
+    // anything is made (design §4.2 step 1). A clone start takes none.
+    let home = match facts.fleet_git.as_deref() {
+        Some(_) if matches!(workspace, Some(WorkspaceRequest::Clone { .. })) => {
+            return Err(reject(
+                RejectCode::InvalidCommand,
+                "invalid_params: a clone start cannot carry Fleet Git settings",
+            ));
+        }
+        Some(fg) => Some(workspace::fleet_git::check(
+            d,
+            policy,
+            fg,
+            &cwd,
+            workspace.as_ref(),
+        )?),
+        None => None,
+    };
     let active = d.active_sessions()?;
     if active >= u64::from(policy.max_sessions()) {
         return Err(reject(
@@ -506,14 +539,17 @@ fn start(
             .as_deref()
             .and_then(provision::ticket_key),
     };
-    let callsign = new_callsign(d, &session_id, active, ticket.as_deref())?;
+    let callsign = workspace::new_callsign(d, &session_id, active, ticket.as_deref())?;
     let mut worktree = None;
-    if let Some(WorkspaceRequest::Worktree { branch, base }) = &workspace {
-        let (worktree_plan, path) =
-            provision::worktree_plan(&cwd, &callsign, branch.as_deref(), base.as_deref(), |p| {
-                canonical_inside(p).is_some()
-            })
-            .map_err(refused)?;
+    if let Some((worktree_plan, path)) = workspace::worktree_block(
+        &cwd,
+        &callsign,
+        workspace.as_ref(),
+        facts.fleet_git.as_deref(),
+        |p| canonical_inside(p).is_some(),
+    )
+    .map_err(refused)?
+    {
         worktree = Some(path.to_string_lossy().into_owned());
         plan = Some(worktree_plan);
         cwd = path;
@@ -560,6 +596,10 @@ fn start(
         &session_id,
         fleetdeck_proto::event::Event::SessionNamed { callsign, worktree }.into(),
     )?;
+    if let (Some(fg), Some(home)) = (facts.fleet_git.as_deref(), home.as_deref()) {
+        let owns = workspace::fleet_git::owns_branch(workspace.as_ref());
+        workspace::fleet_git::record(d, &session_id, fg, plan.as_ref(), home, owns)?;
+    }
     // The batch of an `Nx` start (R1.4, DL-170): the station records it with
     // the name, in the same decision, so a redelivered start adds nothing.
     if let Some(batch) = facts.batch {
@@ -602,52 +642,11 @@ fn start(
             workspace: plan,
             setup_cmd,
             authority: None,
+            fleet_git: facts.fleet_git,
         },
     };
     d.enqueue(&session_id, payload)?;
     Ok(result(&session_id, input_id))
-}
-
-/// The longest setup command, in characters (DL-148).
-const MAX_SETUP_CMD_CHARS: usize = 4096;
-
-/// The refusals of a setup command, in this order: the station policy, a
-/// coordinator origin, then the text (DL-148).
-fn check_setup_cmd(policy: &Policy, origin: RunOrigin, cmd: &str) -> Result<(), DecideError> {
-    if !policy.allow_setup_cmd() {
-        return Err(reject(
-            RejectCode::Forbidden,
-            "setup commands are off on this station (allow_setup_cmd = false)",
-        ));
-    }
-    if origin == RunOrigin::Coordinator {
-        return Err(reject(
-            RejectCode::Forbidden,
-            "a coordinator start cannot carry a setup command",
-        ));
-    }
-    if cmd.trim().is_empty() || cmd.chars().count() > MAX_SETUP_CMD_CHARS || cmd.contains('\0') {
-        return Err(reject(
-            RejectCode::InvalidCommand,
-            "the setup command must be 1 to 4096 characters without NUL",
-        ));
-    }
-    Ok(())
-}
-
-/// The first free callsign of the station for a new session (DL-200).
-fn new_callsign(
-    d: &Decision<'_>,
-    session_id: &SessionId,
-    start: u64,
-    ticket: Option<&str>,
-) -> Result<String, DecideError> {
-    for candidate in provision::callsign_candidates(session_id.as_str(), start, ticket) {
-        if !d.callsign_taken(&candidate)? {
-            return Ok(candidate);
-        }
-    }
-    Err(reject(RejectCode::InvalidState, "no free callsign"))
 }
 
 /// The session's projection, if it can take `op` now: it exists, has not
@@ -749,6 +748,8 @@ fn refuse_resume_while_restarting(
     session_id: &SessionId,
     origin: RunOrigin,
 ) -> Result<(), DecideError> {
+    // (FG-8) A land holds its session: no input. (FG-9) The first input of a moved session.
+    super::land::move_in::check_input(d, session_id)?;
     if restarting && resumes_hibernated(d, session_id, origin)? {
         return Err(reject(
             RejectCode::InvalidState,

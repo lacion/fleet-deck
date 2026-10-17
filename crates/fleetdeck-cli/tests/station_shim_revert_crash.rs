@@ -179,6 +179,7 @@ impl Rig {
                 title: None,
                 coordinator: None,
                 launch: None,
+                extra_env: None,
             },
             prompt: None,
             workspace: None,
@@ -186,6 +187,7 @@ impl Rig {
             batch: None,
             issue: None,
             origin_text: false,
+            fleet_git: None,
         });
         let session = receipt.result.and_then(|r| r.session_id).unwrap();
         self.wait("the thread opens", &session, |s| {

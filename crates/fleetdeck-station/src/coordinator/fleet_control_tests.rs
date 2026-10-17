@@ -122,12 +122,16 @@ const INSPECT: &[&str] = &[
     "read_artifact",
     "read_file",
     "search_files",
+    "project_branches",
+    "project_fetch",
 ];
 const MANAGE: &[&str] = &[
     "resume_session",
     "rename_session",
     "set_mode",
     "move_to_project",
+    "land_session",
+    "move_session",
 ];
 
 #[test]
@@ -437,6 +441,58 @@ fn each_fleet_control_tool_maps_to_its_op_or_query() {
         .unwrap_err()
         .starts_with("invalid_params")
     );
+    // The Fleet Git tools (FG-10): two queries and one op, as thin forwards.
+    assert_eq!(
+        q("project_branches", json!({"project_id": "p1"})).unwrap(),
+        CoordinatorQuery::ProjectBranches {
+            project_id: "p1".to_owned()
+        }
+    );
+    assert_eq!(
+        q("project_fetch", json!({"project_id": "p1"})).unwrap(),
+        CoordinatorQuery::ProjectFetch {
+            project_id: "p1".to_owned()
+        }
+    );
+    assert!(q("project_fetch", json!({"project_id": "p1", "caller": "x"})).is_err());
+    assert!(q("project_branches", json!({})).is_err());
+    assert_eq!(
+        op("land_session", json!({"station": "alpha", "session_id": s})).unwrap(),
+        CoordinatorOp::Land {
+            station: "alpha".into(),
+            session_id: s.into()
+        }
+    );
+    assert!(
+        op(
+            "land_session",
+            json!({"station": "alpha", "session_id": s, "caller": "x"})
+        )
+        .unwrap_err()
+        .starts_with("invalid_params")
+    );
+    // `move_session` (FG-9) is a thin forward of the op `move`.
+    assert_eq!(
+        op(
+            "move_session",
+            json!({"station": "alpha", "session_id": s, "to_station": "bravo"})
+        )
+        .unwrap(),
+        CoordinatorOp::Move {
+            station: "alpha".into(),
+            session_id: s.into(),
+            to_station: "bravo".into()
+        }
+    );
+    assert!(
+        op(
+            "move_session",
+            json!({"station": "alpha", "session_id": s, "to_station": "bravo", "caller": "x"})
+        )
+        .unwrap_err()
+        .starts_with("invalid_params")
+    );
+    assert!(op("move_session", json!({"station": "alpha", "session_id": s})).is_err());
 }
 
 /// A deck link whose answer to `coordinator.authority_check` is set by the

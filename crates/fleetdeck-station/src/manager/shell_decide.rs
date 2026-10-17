@@ -170,6 +170,8 @@ fn shell_command(
     if !policy.allow_shell() {
         return Err(reject(RejectCode::Forbidden, OFF));
     }
+    // (FG-8) A land holds its session.
+    crate::store::session_holds::check_free(d.connection(), session_id)?;
     if command.is_empty() || command.chars().count() > MAX_COMMAND_CHARS || command.contains('\0') {
         return Err(reject(RejectCode::InvalidCommand, BAD_TEXT));
     }

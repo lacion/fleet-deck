@@ -44,6 +44,7 @@ fn spec(cwd: &std::path::Path) -> SessionSpec {
         title: None,
         coordinator: None,
         launch: None,
+        extra_env: None,
     }
 }
 

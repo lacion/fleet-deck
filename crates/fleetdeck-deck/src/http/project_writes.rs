@@ -25,6 +25,7 @@ use fleetdeck_proto::CommandId;
 use fleetdeck_proto::command::{
     CommandOrigin, SessionCommand, SessionSpec, UserInput, WorkspaceRequest,
 };
+use fleetdeck_proto::fleet_git::StartKind;
 use fleetdeck_proto::integrations::{
     Binding, CommentBody, DEFAULT_PROMPT, DEFAULT_REVIEW_PROMPT, IssueCommentWrite, IssueDetail,
     IssueGet, IssueRef, IssueTransition, PrComment, PrCreateBody, PrDetail, PrFetchHead, PrHead,
@@ -37,6 +38,7 @@ use serde_json::{Value, json};
 use super::Board;
 use super::command_routes::RECEIPT_WAIT;
 use super::guard::{ApiError, owner_only};
+use super::project_targets::{Target, target_for, targets};
 use super::projects_routes::{READ_WAIT, ask, bad_body, forge_of, load, station_of};
 use crate::link::CommandKind;
 use crate::store::{AuditResult, DeckError, NewAudit, Principal};
@@ -390,6 +392,7 @@ fn start(
             title: Some(title),
             coordinator: None,
             launch: None,
+            extra_env: None,
         },
         prompt: Some(UserInput::new(prompt)),
         workspace: Some(Box::new(WorkspaceRequest::Worktree {
@@ -399,6 +402,7 @@ fn start(
         setup_cmd: None,
         issue: issue.map(Box::new),
         origin_text: true,
+        fleet_git: None,
         batch: None,
     }
 }
@@ -510,10 +514,40 @@ pub async fn sessions(
     let req = body_of(body)?;
     req.check().map_err(|why| bad("invalid_params", why))?;
     let project = load(&board, &id).await?;
-    let (rec, control) = station_of(&board, &project).await?;
-
-    let mut commands: Vec<(String, SessionCommand)> = Vec::new();
+    // The targets of the batch (FG-5, decisions B8, B16; FG-6, D4): the chosen
+    // home, or with `home = "auto"` one placed station for each start. The
+    // reads and the review fetch go to the first target.
+    let targets = targets(&board, &project, &req).await?;
+    let Target {
+        rec,
+        control,
+        path: first_path,
+    } = target_for(&targets, 0).clone();
+    let mut commands: Vec<(usize, String, SessionCommand)> = Vec::new();
     let mut failed = Vec::new();
+    let Some(cwd) = first_path else {
+        // The home still clones, or failed: every start fails with the
+        // refusal of the home.
+        let keys = match req.review_of_pr {
+            Some(number) => vec![format!("#{number}")],
+            None => req.issues.clone(),
+        };
+        let refusal = super::project_git_routes::attach_start(
+            &board,
+            &rec,
+            "",
+            StartKind::Worktree,
+            Some(project.project_id.clone()),
+        )
+        .await
+        .err()
+        .unwrap_or_else(|| bad("not_a_home", "This folder is not a home of the project."));
+        let failed = keys.iter().map(|key| failure(key, &refusal)).collect();
+        return Ok(Json(StartedSessions {
+            started: Vec::new(),
+            failed,
+        }));
+    };
     if let Some(number) = req.review_of_pr {
         let key = format!("#{number}");
         let pr = PrRef {
@@ -525,11 +559,11 @@ pub async fn sessions(
                 let fetch = PrFetchHead {
                     forge: pr.forge.clone(),
                     number,
-                    path: project.path.clone(),
+                    path: cwd.clone(),
                 };
                 match ask::<PrHead>(&control, "prs.fetch_head", json!(fetch), READ_WAIT).await {
                     Ok(head) => {
-                        commands.push((key, review_start(&project, &req, &detail, &head)));
+                        commands.push((0, key, review_start(&project, &req, &detail, &head)));
                     }
                     Err(e) => failed.push(StartFailure {
                         key,
@@ -547,7 +581,7 @@ pub async fn sessions(
             Err(e) => failed.push(failure(&key, &e)),
         }
     } else {
-        for key in &req.issues {
+        for (at, key) in req.issues.iter().enumerate() {
             let get = binding_of_key(&project, key).map(|binding| IssueGet {
                 binding,
                 key: key.clone(),
@@ -563,8 +597,13 @@ pub async fn sessions(
             };
             match detail {
                 Ok(detail) => {
-                    for command in issue_starts(&project, &req, &detail) {
-                        commands.push((key.clone(), command));
+                    // The index in the request order, failed reads included.
+                    let first = at * req.count_per_issue as usize;
+                    for (nth, command) in issue_starts(&project, &req, &detail)
+                        .into_iter()
+                        .enumerate()
+                    {
+                        commands.push((first + nth, key.clone(), command));
                     }
                 }
                 Err(e) => failed.push(failure(key, &e)),
@@ -572,14 +611,53 @@ pub async fn sessions(
         }
     }
 
+    // Fleet Git (design §8.5): every start of the batch is a worktree start in
+    // the chosen home of this project, and its `cwd` is the path of that
+    // home. A home that cannot start now (an unverified home, a taken Git
+    // name) fails every start with the same 409; a sync-off project with a
+    // ready home starts as before (O1).
+    let mut attached = Vec::new();
+    for (n, (at, key, mut command)) in commands.into_iter().enumerate() {
+        // The station of this start (the same for every start without `auto`).
+        let target = target_for(&targets, at);
+        let Some(cwd) = target.path.clone() else {
+            failed.push(failure(
+                &key,
+                &bad("not_a_home", "This folder is not a home of the project."),
+            ));
+            continue;
+        };
+        if let SessionCommand::Start {
+            spec, fleet_git, ..
+        } = &mut command
+        {
+            spec.cwd.clone_from(&cwd);
+            match super::project_git_routes::attach_start(
+                &board,
+                &target.rec,
+                &cwd,
+                StartKind::Worktree,
+                Some(project.project_id.clone()),
+            )
+            .await
+            {
+                Ok(start) => *fleet_git = start,
+                Err(e) => {
+                    failed.push(failure(&key, &e));
+                    continue;
+                }
+            }
+        }
+        attached.push((n, at, key, command));
+    }
     // Submit every start first, then wait for the receipts.
     let mut submitted = Vec::new();
-    for (n, (key, command)) in commands.into_iter().enumerate() {
+    for (n, at, key, command) in attached {
         let command_id = CommandId::from(format!("{}-{}", req.batch_id, n + 1));
         match board
             .link
             .submit_as(
-                rec.station_id.clone(),
+                target_for(&targets, at).rec.station_id.clone(),
                 CommandOrigin::Board,
                 CommandKind::Session { command },
                 command_id,

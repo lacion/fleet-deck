@@ -117,6 +117,7 @@ fn launched_spec() -> SessionSpec {
             dev: 1,
             ino: 2,
         })),
+        extra_env: None,
     }
 }
 
@@ -130,6 +131,7 @@ fn a_command_never_keeps_a_launch_identity() {
         batch: None,
         issue: None,
         origin_text: false,
+        fleet_git: None,
     };
     start.clear_station_local();
     let mut import = SessionCommand::Import {
@@ -167,4 +169,114 @@ fn a_command_never_keeps_a_launch_identity() {
         SessionCommand::Start { spec, .. } => assert!(spec.launch.is_none()),
         _ => unreachable!(),
     }
+}
+
+#[test]
+fn a_command_never_keeps_the_station_extra_env() {
+    // Never serialized when None (FG-4).
+    let value = serde_json::to_value(launched_spec()).unwrap();
+    assert!(value.get("extra_env").is_none(), "{value}");
+    // A command from the deck may carry the field; the decide clears it.
+    let mut wire: SessionCommand = serde_json::from_value(json!({
+        "op": "start",
+        "spec": {
+            "provider_instance": "claude", "cwd": "/w", "mode": null, "model": null,
+            "title": null,
+            "extra_env": {"RUSTC_WRAPPER": "sccache"},
+        },
+        "prompt": null,
+    }))
+    .unwrap();
+    match &wire {
+        SessionCommand::Start { spec, .. } => assert!(spec.extra_env.is_some()),
+        _ => unreachable!(),
+    }
+    wire.clear_station_local();
+    match &wire {
+        SessionCommand::Start { spec, .. } => assert!(spec.extra_env.is_none()),
+        _ => unreachable!(),
+    }
+    let mut import = SessionCommand::Import {
+        spec: SessionSpec {
+            extra_env: Some(Box::new(std::collections::BTreeMap::from([(
+                "A".to_owned(),
+                "b".to_owned(),
+            )]))),
+            ..launched_spec()
+        },
+        native_session_id: "thr_01".into(),
+        prompt: None,
+        transcript: None,
+    };
+    import.clear_station_local();
+    match &import {
+        SessionCommand::Import { spec, .. } => assert!(spec.extra_env.is_none()),
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn a_start_carries_fleet_git_only_when_set() {
+    use crate::fleet_git::{FleetGitStart, GitSettings, RemoteIdentity, StartKind};
+    let mut start = SessionCommand::Start {
+        spec: launched_spec(),
+        prompt: None,
+        workspace: None,
+        setup_cmd: None,
+        batch: None,
+        issue: None,
+        origin_text: false,
+        fleet_git: None,
+    };
+    let value = serde_json::to_value(&start).unwrap();
+    assert!(value.get("fleet_git").is_none(), "{value}");
+    // An older command without the field decodes with none.
+    let back: SessionCommand = serde_json::from_value(value).unwrap();
+    assert_eq!(back, start);
+    if let SessionCommand::Start { fleet_git, .. } = &mut start {
+        *fleet_git = Some(Box::new(FleetGitStart {
+            kind: StartKind::Worktree,
+            project_id: "p1".into(),
+            project_name: "app".into(),
+            settings: GitSettings::default(),
+            settings_revision: 1,
+            home_generation: 1,
+            home_path: "/w/app".into(),
+            remote: RemoteIdentity {
+                repo: "h/a".into(),
+                dest: "https://h:443/a".into(),
+            },
+            slug: "alpha".into(),
+            forge: None,
+            clone_url: "https://h/a".into(),
+        }));
+    }
+    let value = serde_json::to_value(&start).unwrap();
+    assert_eq!(value["fleet_git"]["slug"], "alpha");
+    assert_eq!(
+        serde_json::from_value::<SessionCommand>(value).unwrap(),
+        start
+    );
+}
+
+#[test]
+fn a_land_command_has_the_op_land_and_the_session_land_method() {
+    let value = serde_json::json!({
+        "op": "land", "session_id": "s1", "land_id": "land-1",
+        "plan": {
+            "project_id": "p1", "settings_revision": 3, "home_generation": 1,
+            "mode": "pr", "fetch_remote": "origin",
+            "remote": {"repo": "github.com/o/r", "dest": "https://github.com:443/o/r"},
+            "branch_ref": "fd/o-r/ada", "publish_ref": "fd/o-r/ada",
+            "branch_target": {"target": "origin", "dest": "https://github.com:443/o/r"},
+            "forge": {"kind": "github", "host": "github.com", "repo": "o/r"},
+            "check_cmd": "make check", "check_env": {"A": "1"},
+            "pr_title": "t", "pr_body": "b"
+        }
+    });
+    let cmd: SessionCommand = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(cmd.method(), "session.land");
+    assert_eq!(cmd.session_id().map(SessionId::as_str), Some("s1"));
+    assert_eq!(serde_json::to_value(&cmd).unwrap(), value);
+    assert!(crate::mutation::SESSION_METHODS.contains(&"session.land"));
 }

@@ -10,6 +10,7 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::capability::Unsupported;
+use crate::fleet_git::{FleetGitStart, LandPlan, MoveFrom, MoveKind};
 use crate::ids::{
     CommandId, IncarnationId, InputId, ProviderInstanceId, RequestId, SessionId, StationId, TurnId,
 };
@@ -47,6 +48,11 @@ pub struct SessionSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(skip)]
     pub launch: Option<Box<crate::launch::LaunchIdentity>>,
+    /// Station-local: the project's worktree_env, set by the station at the
+    /// start; cleared on every incoming command (FG-4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(skip)]
+    pub extra_env: Option<Box<std::collections::BTreeMap<String, String>>>,
 }
 
 /// The coordinator grant that a session starts with (ADR-006 §4). It holds
@@ -202,6 +208,11 @@ pub enum SessionCommand {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         #[ts(optional, as = "Option<bool>")]
         origin_text: bool,
+        /// The Fleet Git snapshot of the project (FG-1, design §3.3). Only a
+        /// deck that negotiated `fleet_git.v1` sends it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        fleet_git: Option<Box<FleetGitStart>>,
     },
     Resume {
         session_id: SessionId,
@@ -331,6 +342,47 @@ pub enum SessionCommand {
         session_id: SessionId,
         effect_id: String,
     },
+    /// Land the session branch on the remote (FG-8, design §11.3). The deck
+    /// pins `plan` at admission and resends the same `command_id` from its
+    /// outbox. Needs `fleet_git.land.v1`.
+    Land {
+        session_id: SessionId,
+        land_id: String,
+        /// Boxed to keep the command small (clippy `large_enum_variant`).
+        plan: Box<LandPlan>,
+    },
+    /// Hold a session for a move (FG-9, design §12.3 step 1). Source.
+    MoveOut {
+        session_id: SessionId,
+        move_id: String,
+        to_station: StationId,
+    },
+    /// Start the moved session (FG-9, step 4). Target; the session id is new.
+    MoveIn {
+        move_id: String,
+        kind: MoveKind,
+        provider_instance: ProviderInstanceId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        title: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        callsign_hint: Option<String>,
+        from: MoveFrom,
+        fleet_git: Box<FleetGitStart>,
+    },
+    /// Mark the source `moved` (FG-9, step 5). Source.
+    MoveFinish {
+        session_id: SessionId,
+        move_id: String,
+        to_station: StationId,
+        to_session: SessionId,
+    },
+    /// Make the source resumable again (FG-9, §12.4A step U2). Source.
+    MoveUndo {
+        session_id: SessionId,
+        move_id: String,
+    },
 }
 
 /// How the owner resolves a revert that needs reconciliation (DL-097).
@@ -425,14 +477,23 @@ impl SessionCommand {
             Self::ReconcileExecution { .. } => "session.reconcile_execution",
             Self::ShellCommand { .. } => "session.shell_command",
             Self::ReleaseShell { .. } => "session.release_shell",
+            Self::Land { .. } => "session.land",
+            Self::MoveOut { .. } => "session.move_out",
+            Self::MoveIn { .. } => "session.move_in",
+            Self::MoveFinish { .. } => "session.move_finish",
+            Self::MoveUndo { .. } => "session.move_undo",
         }
     }
 
     /// Clears the station-local fields that an incoming command must never
-    /// carry (B9 §3.4): `spec.launch` of every command that holds a spec.
+    /// carry (B9 §3.4): `spec.launch` and `spec.extra_env` (FG-4) of every
+    /// command that holds a spec.
     pub fn clear_station_local(&mut self) {
         match self {
-            Self::Start { spec, .. } | Self::Import { spec, .. } => spec.launch = None,
+            Self::Start { spec, .. } | Self::Import { spec, .. } => {
+                spec.launch = None;
+                spec.extra_env = None;
+            }
             _ => {}
         }
     }
@@ -441,7 +502,7 @@ impl SessionCommand {
     #[must_use]
     pub fn session_id(&self) -> Option<&SessionId> {
         match self {
-            Self::Start { .. } | Self::Import { .. } => None,
+            Self::Start { .. } | Self::Import { .. } | Self::MoveIn { .. } => None,
             Self::Resume { session_id }
             | Self::Prompt { session_id, .. }
             | Self::Steer { session_id, .. }
@@ -464,7 +525,11 @@ impl SessionCommand {
             | Self::WorktreeRelease { session_id }
             | Self::ReconcileExecution { session_id, .. }
             | Self::ShellCommand { session_id, .. }
-            | Self::ReleaseShell { session_id, .. } => Some(session_id),
+            | Self::ReleaseShell { session_id, .. }
+            | Self::Land { session_id, .. }
+            | Self::MoveOut { session_id, .. }
+            | Self::MoveFinish { session_id, .. }
+            | Self::MoveUndo { session_id, .. } => Some(session_id),
         }
     }
 }

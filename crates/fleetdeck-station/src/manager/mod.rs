@@ -9,6 +9,7 @@
 //! 3. The pump of each session appends the adapter's events; provider
 //!    evidence in those events confirms the effects.
 
+mod adapters;
 pub mod auto_continue;
 pub(crate) mod binding_rotate;
 pub mod binding_start;
@@ -19,7 +20,17 @@ pub mod drain;
 pub mod durable;
 pub mod files;
 pub mod fleet_control;
+pub mod fleet_git_cleanup;
+pub mod fleet_git_push;
+pub mod fleet_git_writer;
 pub mod hibernate;
+pub mod land;
+pub mod land_abandon;
+mod land_pr;
+mod land_publish;
+mod land_reconcile;
+mod land_run;
+pub mod land_temp_cleanup;
 pub mod policy;
 pub mod policy_hub;
 mod restart_check;
@@ -41,22 +52,21 @@ pub mod shims;
 pub mod target;
 mod task_stop;
 pub mod trash;
+mod turn_rows;
 pub mod turns;
 pub mod workspaces;
+pub use adapters::{adapters_from_config, setup_envs_from_config};
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use fleetdeck_core::config::{Driver, StationConfig};
-use fleetdeck_core::{ChildEnv, SharedIds};
+use turn_rows::settle_turn_rows;
+
+use fleetdeck_core::SharedIds;
+use fleetdeck_core::config::StationConfig;
 use fleetdeck_proto::command::{CommandEnvelope, SessionCommand, StopMode};
 use fleetdeck_proto::link::StationProvider;
-use fleetdeck_providers::ProviderAdapter;
-use fleetdeck_providers::claude::{ClaudeAdapter, ClaudeAdapterConfig, RawLogSettings};
-use fleetdeck_providers::codex::{CodexAdapter, CodexAdapterConfig};
-use fleetdeck_providers::host::SessionHost;
-use fleetdeck_providers::rawlog::RawLogLimits;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
@@ -77,62 +87,6 @@ pub const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How often the manager applies the offline approval policy.
 pub const DENY_TICK: Duration = Duration::from_secs(1);
-
-/// Builds the adapters of the configured provider instances: one Claude or
-/// Codex adapter per instance, with the raw-frame log under `raw_root`.
-///
-/// # Errors
-/// An instance `env` table that cannot go into a child environment.
-pub fn adapters_from_config(
-    config: &StationConfig,
-    host: &Arc<dyn SessionHost>,
-    raw_root: Option<PathBuf>,
-) -> std::result::Result<Adapters, fleetdeck_core::childenv::ChildEnvError> {
-    let mut out = Adapters::new();
-    let raw_log = || {
-        raw_root.as_ref().map(|root| RawLogSettings {
-            root: root.clone(),
-            limits: RawLogLimits::default(),
-        })
-    };
-    for instance in &config.provider_instances {
-        let env = ChildEnv::for_instance(ChildEnv::from_process(), instance)?;
-        let adapter: Arc<dyn ProviderAdapter> = match instance.driver {
-            Driver::Claude => {
-                let mut cfg =
-                    ClaudeAdapterConfig::new(instance.id.clone(), instance.binary.clone(), env);
-                cfg.raw_log = raw_log();
-                cfg.allow_bypass = config.allow_bypass_permissions;
-                Arc::new(ClaudeAdapter::new(cfg, Arc::clone(host)))
-            }
-            Driver::Codex => {
-                let mut cfg =
-                    CodexAdapterConfig::new(instance.id.clone(), instance.binary.clone(), env);
-                cfg.raw_log = raw_log();
-                cfg.allow_full_access = config.allow_bypass_permissions;
-                Arc::new(CodexAdapter::new(cfg, Arc::clone(host)))
-            }
-        };
-        out.insert(instance.id.clone(), adapter);
-    }
-    Ok(out)
-}
-
-/// The environments of the setup commands: for each provider instance the
-/// same environment that its adapter gets (DL-148).
-///
-/// # Errors
-/// An instance `env` table that cannot go into a child environment.
-pub fn setup_envs_from_config(
-    config: &StationConfig,
-) -> std::result::Result<policy::SetupEnvs, fleetdeck_core::childenv::ChildEnvError> {
-    let mut out = policy::SetupEnvs::new();
-    for instance in &config.provider_instances {
-        let env = ChildEnv::for_instance(ChildEnv::from_process(), instance)?;
-        out.insert(instance.id.clone(), env);
-    }
-    Ok(out)
-}
 
 /// One station's session manager.
 pub struct SessionManager {
@@ -164,6 +118,14 @@ pub struct SessionManager {
     /// The model help of the station, once the station process set it
     /// (R10, DL-167).
     assist: std::sync::OnceLock<Arc<crate::assist::Assist>>,
+    /// The Fleet Git runtime of the station, once the link node set it
+    /// (FG-12): the artifact share of a start and of a resume reads it.
+    fleet_git: std::sync::OnceLock<Arc<crate::fleet_git_runtime::FleetGitRuntime>>,
+    /// The land engine of the station, once the station process set it
+    /// (FG-8).
+    land: std::sync::OnceLock<land::LandEngine>,
+    /// The target side of a move in memory (FG-9): locks and uploads.
+    moves: Arc<land::move_in::MoveState>,
     /// The private paths of the station (DL-173), given at the start. Built
     /// once; not part of the live policy snapshot.
     private_paths: Arc<crate::workspace::PrivatePaths>,
@@ -355,12 +317,14 @@ impl SessionManager {
             .unwrap_or_else(|| crate::integrations::Integrations::new(policy.trackers().to_vec()));
         let hub = Arc::new(PolicyHub::new(policy).with_fleet_control(coordinator.clone()));
         let restart = Arc::<restart_gate::RestartState>::default();
+        let moves = Arc::<land::move_in::MoveState>::default();
         let mut target = SessionTarget::new(store.clone(), adapters, Arc::clone(&ids))
             .with_restart(Arc::clone(&restart))
             .with_coordinator(coordinator.clone())
             .with_policy(Arc::clone(&hub))
             .with_shells(shells.clone())
-            .with_private(Arc::clone(&private));
+            .with_private(Arc::clone(&private))
+            .with_moves(Arc::clone(&moves));
         if let Some(settings) = shims {
             target = target.with_shims(settings);
         }
@@ -418,6 +382,9 @@ impl SessionManager {
             shells,
             artifacts: std::sync::OnceLock::new(),
             assist: std::sync::OnceLock::new(),
+            fleet_git: std::sync::OnceLock::new(),
+            land: std::sync::OnceLock::new(),
+            moves,
             private_paths: private,
             settings: std::sync::OnceLock::new(),
             shell_notify,
@@ -442,6 +409,29 @@ impl SessionManager {
             private,
         );
         let _ = self.artifacts.set(service);
+    }
+
+    /// Gives the manager the Fleet Git runtime (FG-12). The first call wins.
+    pub fn set_fleet_git_runtime(&self, runtime: Arc<crate::fleet_git_runtime::FleetGitRuntime>) {
+        self.target.set_artifacts_runtime(Arc::clone(&runtime));
+        let _ = self.fleet_git.set(runtime);
+    }
+
+    /// The Fleet Git runtime, if the link node set it.
+    #[must_use]
+    pub fn fleet_git_runtime(&self) -> Option<&Arc<crate::fleet_git_runtime::FleetGitRuntime>> {
+        self.fleet_git.get()
+    }
+
+    /// Gives the manager the land engine (FG-8). The first call wins.
+    pub fn set_land_engine(&self, engine: land::LandEngine) {
+        let _ = self.land.set(engine);
+    }
+
+    /// The land engine, if the station process set it.
+    #[must_use]
+    pub fn land(&self) -> Option<&land::LandEngine> {
+        self.land.get()
     }
 
     /// The private paths of the station, given at the start.
@@ -516,6 +506,14 @@ impl SessionManager {
         )
     }
 
+    /// The integration service as a provider, for the land tasks (FG-8): each
+    /// call reads the service of that moment.
+    #[must_use]
+    pub fn integrations_provider(self: &Arc<Self>) -> land::IntegrationsProvider {
+        let manager = Arc::clone(self);
+        Arc::new(move || manager.integrations())
+    }
+
     /// Step 1 of a live config change (DL-172 §1.4): validates `new` and
     /// builds the snapshot, with a new integration service when the
     /// trackers changed. It publishes nothing. The fields that apply only at
@@ -576,6 +574,7 @@ impl SessionManager {
         let origin = envelope.origin;
         let command = envelope.command.clone();
         let is_release = matches!(command, SessionCommand::ReleaseShell { .. });
+        let is_land = matches!(command, SessionCommand::Land { .. });
         let interrupted = matches!(command, SessionCommand::Interrupt { .. })
             .then(|| command.session_id().cloned())
             .flatten();
@@ -616,6 +615,9 @@ impl SessionManager {
                     | SessionCommand::WorktreeRelease { .. }) => {
                         trash::decide(d, &policy, origin, shells.as_deref(), command)
                     }
+                    command @ (SessionCommand::Land { .. } | SessionCommand::MoveOut { .. }) => {
+                        land::decide(d, &policy, &coordinator, origin, shells.as_deref(), command)
+                    }
                     command @ (SessionCommand::ShellCommand { .. }
                     | SessionCommand::ReleaseShell { .. }) => {
                         shell_decide::decide(d, &policy, restarting, root.as_deref(), command)
@@ -639,6 +641,10 @@ impl SessionManager {
                 .is_ok_and(|d| d.receipt.state == fleetdeck_proto::command::ReceiptState::Accepted)
         {
             self.shell_notify.notify_one();
+        }
+        // FG-8: an admitted land wakes the engine.
+        if is_land && decided.as_ref().is_ok_and(|d| !d.effects.is_empty()) {
+            self.land.get().inspect(|engine| engine.wake());
         }
         self.target.cancel_shells_after(interrupted, &decided).await;
         decided
@@ -673,20 +679,6 @@ impl SessionManager {
     }
 }
 
-/// Settles the turn checkpoint rows that a crash left open (DL-082).
-async fn settle_turn_rows(store: &Store) -> Result<()> {
-    let settled =
-        crate::workspace::settle_unsettled(store, crate::workspace::GitOptions::isolated()).await?;
-    if !settled.finalized.is_empty() || !settled.abandoned.is_empty() {
-        tracing::info!(
-            finalized = settled.finalized.len(),
-            abandoned = settled.abandoned.len(),
-            "settled turn checkpoints after restart"
-        );
-    }
-    Ok(())
-}
-
 /// The adapter configs of restored shim sessions: each session's adapter
 /// builds its durable launch from the stored summary.
 #[must_use]
@@ -705,6 +697,7 @@ pub fn durable_configs(adapters: &Adapters) -> shim_station::Configs {
             title: summary.title.clone(),
             coordinator: None,
             launch: None,
+            extra_env: None,
         };
         adapter.durable_launch(&spec).ok().map(|l| l.core)
     }
@@ -794,3 +787,7 @@ mod binding_revoke_tests;
 #[cfg(test)]
 #[path = "shell_run_tests.rs"]
 mod shell_run_tests;
+
+#[cfg(test)]
+#[path = "session_holds_wired_tests.rs"]
+mod session_holds_wired_tests;

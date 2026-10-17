@@ -3,4 +3,4 @@
 /**
  * The kind of a settings field; it decides the editor and the check.
  */
-export type FieldKind = "bool" | "int" | "text" | "enum" | "path" | "paths" | "texts" | "addresses" | "instances" | "repo_groups" | "trackers";
+export type FieldKind = "bool" | "int" | "text" | "enum" | "path" | "paths" | "texts" | "addresses" | "instances" | "repo_groups" | "share_mounts" | "trackers";

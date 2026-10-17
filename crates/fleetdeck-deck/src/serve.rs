@@ -151,6 +151,12 @@ pub struct RunningDeck {
     wake: tokio::task::JoinHandle<()>,
     /// The audit log prune (NV-11).
     maintenance: tokio::task::JoinHandle<()>,
+    /// The sender and poller of the home attempts (FG-5).
+    homes: tokio::task::JoinHandle<()>,
+    /// The land tasks and the radar task (FG-7, FG-8).
+    land: [tokio::task::JoinHandle<()>; 4],
+    /// The move task (FG-9).
+    moves: tokio::task::JoinHandle<()>,
     /// The sweep of the grants that ended (grant stations design §2.3).
     grant_sweep: tokio::task::JoinHandle<()>,
     /// The Tailscale certificate of the board (DL-190).
@@ -396,6 +402,52 @@ impl RunningDeck {
             },
             rx.clone(),
         );
+        let homes = tokio::spawn(crate::fleet_git_homes::run(
+            store.clone(),
+            Arc::clone(node.link()),
+            Arc::clone(&node.link().homes_kick),
+            rx.clone(),
+            crate::fleet_git_homes::HomesRunOptions { send: true },
+        ));
+        // The land tasks: admission and status poll, outbox, fence sender (FG-8).
+        let link = node.link();
+        let kick = Arc::clone(&link.land_kick);
+        let land = [
+            tokio::spawn(crate::fleet_git_land::run(
+                store.clone(),
+                Arc::clone(link),
+                Arc::clone(&kick),
+                rx.clone(),
+            )),
+            tokio::spawn(crate::fleet_git_land_outbox::run(
+                store.clone(),
+                Arc::clone(link),
+                Arc::clone(&kick),
+                rx.clone(),
+            )),
+            tokio::spawn(crate::fleet_git_land_abandon::run(
+                store.clone(),
+                Arc::clone(link),
+                kick,
+                rx.clone(),
+            )),
+            tokio::spawn(crate::fleet_git_radar::run(
+                store.clone(),
+                Arc::clone(link),
+                Arc::clone(&link.radar_state),
+                Arc::clone(&link.radar_kick),
+                rx.clone(),
+                crate::fleet_git_radar::RadarOptions::PRODUCTION,
+            )),
+        ];
+        // The move task: the steps of each session move (FG-9).
+        let moves = tokio::spawn(crate::fleet_git_move::run(
+            store.clone(),
+            Arc::clone(link),
+            Arc::clone(&link.move_kick),
+            crate::fleet_git_move::MoveOptions::PRODUCTION,
+            rx.clone(),
+        ));
         let wake = crate::wake::spawn(
             store.clone(),
             Arc::clone(node.link()),
@@ -414,6 +466,9 @@ impl RunningDeck {
             scheduler,
             wake,
             maintenance,
+            homes,
+            land,
+            moves,
             grant_sweep,
             cert,
             shutdown,
@@ -444,6 +499,11 @@ impl RunningDeck {
         let _ = self.scheduler.await;
         let _ = self.wake.await;
         let _ = self.maintenance.await;
+        let _ = self.homes.await;
+        for task in self.land {
+            let _ = task.await;
+        }
+        let _ = self.moves.await;
         let _ = self.grant_sweep.await;
         self.cert.join().await;
         self.board.join().await;

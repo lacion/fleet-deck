@@ -169,6 +169,7 @@ pub fn creates_session(command: &SessionCommand) -> bool {
         SessionCommand::Start { .. }
             | SessionCommand::Import { .. }
             | SessionCommand::Resume { .. }
+            | SessionCommand::MoveIn { .. }
     )
 }
 

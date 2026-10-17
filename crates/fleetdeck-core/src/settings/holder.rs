@@ -172,6 +172,19 @@ impl Holder for StationHolder {
             json!(h.daily_token_cap),
         );
         m.insert("tailscale_bin".into(), tailscale_bin_text(&c.tailscale_bin));
+        m.insert("clone_root".into(), tailscale_bin_text(&c.clone_root));
+        m.insert("traits".into(), strings(c.traits.clone()));
+        m.insert("allow_check_cmd".into(), json!(c.allow_check_cmd));
+        m.insert("allow_local_remotes".into(), json!(c.allow_local_remotes));
+        m.insert(
+            "taildrive_mounts".into(),
+            Value::Object(
+                c.taildrive_mounts
+                    .iter()
+                    .map(|(k, p)| (k.clone(), json!(p.display().to_string())))
+                    .collect(),
+            ),
+        );
         m
     }
 
@@ -237,6 +250,14 @@ impl Holder for StationHolder {
         );
         add(old.host != new.host, "host");
         add(old.tailscale_bin != new.tailscale_bin, "tailscale_bin");
+        add(
+            !old.allow_check_cmd && new.allow_check_cmd,
+            "allow_check_cmd",
+        );
+        add(
+            !old.allow_local_remotes && new.allow_local_remotes,
+            "allow_local_remotes",
+        );
         keys
     }
 

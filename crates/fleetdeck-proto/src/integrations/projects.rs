@@ -6,6 +6,7 @@ use ts_rs::TS;
 
 use super::checks::{check_number, plain, valid_command_id};
 use super::*;
+use crate::fleet_git::{GitSettings, Prefer, ProjectHome, SlugReservation};
 
 /// The longest project name, in characters.
 pub const MAX_PROJECT_NAME_CHARS: usize = 80;
@@ -25,7 +26,7 @@ pub const DEFAULT_REVIEW_PROMPT: &str =
 
 /// A Fleet Deck project: a repository on a station with optional bindings.
 /// The deck stores bindings only; it never holds a token.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export_to = "integrations/")]
 pub struct Project {
     pub project_id: String,
@@ -41,6 +42,31 @@ pub struct Project {
     pub review_prompt: Option<String>,
     /// Unix ms.
     pub created_at: i64,
+    /// The homes of the project (Fleet Git, design §8.1). Phase 1: one,
+    /// derived from `station_id` and `path`.
+    #[serde(default)]
+    pub homes: Vec<ProjectHome>,
+    /// The grouping key of the remote (`host/path`); set with `remote_url`.
+    #[serde(default)]
+    pub repo: Option<String>,
+    /// The remote URL without a login name or a password (O16).
+    #[serde(default)]
+    pub remote_url: Option<String>,
+    /// The SSH login name of the remote URL (design §3.8, B2).
+    #[serde(default)]
+    pub remote_ssh_user: Option<String>,
+    /// The write authority of the remote (design §3.8).
+    #[serde(default)]
+    pub remote_dest: Option<String>,
+    /// The Fleet Git settings; the defaults when the project has none.
+    #[serde(default)]
+    pub git: GitSettings,
+    /// Grows at each save of the Git settings.
+    #[serde(default)]
+    pub git_revision: u64,
+    /// The Git names that stations reserved for the repository.
+    #[serde(default)]
+    pub slugs: Vec<SlugReservation>,
 }
 
 /// The body of `POST /api/projects` and `PUT /api/projects/{id}`.
@@ -113,6 +139,23 @@ pub struct StartSessions {
     /// Review this pull request instead of working on issues.
     #[serde(default)]
     pub review_of_pr: Option<u64>,
+    /// The home to start in: a station id, or `auto` (FG-5, FG-6). Absent:
+    /// the position-0 home.
+    #[serde(default)]
+    #[ts(optional)]
+    pub home: Option<String>,
+    /// Labels, `os:<os>` or `arch:<arch>` that the station must match (FG-6).
+    #[serde(default)]
+    #[ts(optional, as = "Option<Vec<String>>")]
+    pub requires: Vec<String>,
+    /// Placement preferences (FG-6).
+    #[serde(default)]
+    #[ts(optional, as = "Option<Vec<Prefer>>")]
+    pub prefer: Vec<Prefer>,
+    /// Spread a batch over stations (FG-6).
+    #[serde(default)]
+    #[ts(optional, as = "Option<bool>")]
+    pub spread: bool,
 }
 
 /// One session start that the station may take.
@@ -274,8 +317,47 @@ impl StartSessions {
                 return Err("mode and model are 1 to 200 printable characters");
             }
         }
-        Ok(())
+        if let Some(home) = &self.home
+            && !plain(home, 64)
+        {
+            return Err("Home is a station id or auto.");
+        }
+        check_placement(&self.requires, &self.prefer)
     }
+}
+
+/// The rules of `requires` and `prefer` of a placement (FG-6, design §9.2):
+/// used by `StartSessions::check`, `POST /api/placement` and `assign`.
+///
+/// # Errors
+/// The reason text for a malformed field.
+pub fn check_placement(requires: &[String], prefer: &[Prefer]) -> Result<(), &'static str> {
+    if requires.len() > 8 {
+        return Err("At most 8 required labels.");
+    }
+    // `^(os:|arch:)?[a-z0-9_-]{1,32}$` (design §9.2 item 2).
+    let label_ok = |l: &str| {
+        let name = l
+            .strip_prefix("os:")
+            .or_else(|| l.strip_prefix("arch:"))
+            .unwrap_or(l);
+        (1..=32).contains(&name.len())
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-'))
+    };
+    if !requires.iter().all(|l| label_ok(l)) {
+        return Err("A station label is 1 to 32 characters: a-z, 0-9, _ or -.");
+    }
+    if prefer.len() > 3
+        || prefer
+            .iter()
+            .enumerate()
+            .any(|(i, p)| prefer[..i].contains(p))
+    {
+        return Err("Each preference at most once.");
+    }
+    Ok(())
 }
 
 impl PrCreateBody {

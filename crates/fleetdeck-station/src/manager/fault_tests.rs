@@ -211,6 +211,7 @@ impl Rig {
                     title: None,
                     coordinator: None,
                     launch: None,
+                    extra_env: None,
                 },
                 prompt: Some(text(prompt)),
                 workspace: None,
@@ -218,6 +219,7 @@ impl Rig {
                 batch: None,
                 issue: None,
                 origin_text: false,
+                fleet_git: None,
             })
             .await;
         d.receipt.result.unwrap().session_id.unwrap()
