@@ -37,19 +37,23 @@ const BATCH: usize = 256;
 /// The time limit of the read of a branch tip.
 const TIP_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Starts the writer, the trigger task and the runner. The handles end when
-/// `shutdown` becomes `true`.
+/// Starts the writer, the trigger task, the runner and the land engine (FG-8).
+/// The handles end when `shutdown` becomes `true`.
 #[must_use]
 pub fn start(
     store: Store,
     policy: Arc<PolicyHub>,
     options: OptionsProvider,
     shutdown: watch::Receiver<bool>,
-) -> Vec<JoinHandle<()>> {
-    let (writer, writer_task) = FleetGitWriter::start(store.clone(), Arc::clone(&policy), options);
+) -> (Vec<JoinHandle<()>>, super::land::LandEngine) {
+    let (writer, writer_task) =
+        FleetGitWriter::start(store.clone(), Arc::clone(&policy), Arc::clone(&options));
     let triggers = tokio::spawn(follow(store.clone(), shutdown.clone()));
+    let (land, land_tasks) = super::land::start(store.clone(), policy, options, shutdown.clone());
     let runner = tokio::spawn(run(store, writer, shutdown));
-    vec![writer_task, triggers, runner]
+    let mut tasks = vec![writer_task, triggers, runner];
+    tasks.extend(land_tasks);
+    (tasks, land)
 }
 
 /// Waits `time`, or returns `true` at the shutdown.

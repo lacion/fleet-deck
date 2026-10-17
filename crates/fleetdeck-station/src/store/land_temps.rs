@@ -190,6 +190,68 @@ pub fn kept(conn: &Connection) -> Result<Vec<LandTempRow>> {
 }
 
 impl Store {
+    /// Stores the row `reserved`, before `git worktree add`.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn land_temp_reserve(
+        &self,
+        land_id: String,
+        attempt: u32,
+        root: String,
+        path: String,
+    ) -> Result<()> {
+        let now = self.now();
+        call(&self.inner.db, move |conn| {
+            reserve(conn, &land_id, attempt, &root, &path, now)
+        })
+        .await
+    }
+
+    /// Records the identity and the admin entry: `reserved` becomes `present`.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn land_temp_present(
+        &self,
+        land_id: String,
+        attempt: u32,
+        identity: (u64, u64),
+        admin_dir: String,
+    ) -> Result<bool> {
+        let now = self.now();
+        call(&self.inner.db, move |conn| {
+            set_present(conn, &land_id, attempt, identity, &admin_dir, now)
+        })
+        .await
+    }
+
+    /// Ends the cleanup of a row: `removed`, or `kept` with a code.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn land_temp_finish(
+        &self,
+        land_id: String,
+        attempt: u32,
+        state: LandTempState,
+        code: Option<String>,
+    ) -> Result<bool> {
+        let now = self.now();
+        call(&self.inner.db, move |conn| {
+            finish(conn, &land_id, attempt, state, code.as_deref(), now)
+        })
+        .await
+    }
+
+    /// The row of `(land_id, attempt)`.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn land_temp(&self, land_id: String, attempt: u32) -> Result<Option<LandTempRow>> {
+        call(&self.inner.db, move |conn| get(conn, &land_id, attempt)).await
+    }
+
     /// The rows that the cleanup looks at (`reserved` or `present`).
     ///
     /// # Errors

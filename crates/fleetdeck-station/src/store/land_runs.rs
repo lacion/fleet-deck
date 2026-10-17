@@ -5,11 +5,12 @@
 //! The engine (T3.2b, T3.2c) writes each phase change in its own transaction,
 //! with the event, and uses [`guard_running`] for the fence rule of §11.5.
 
-use fleetdeck_proto::fleet_git::{LandPhase, LandPlan, LandState};
+use fleetdeck_proto::fleet_git::{LandInfo, LandPhase, LandPlan, LandState};
 use fleetdeck_proto::mutation::CommandAuthority;
+use fleetdeck_proto::{Event, EventEnvelope, SessionId};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
-use super::{Result, Store, StoreError, call};
+use super::{NewEvent, Result, Store, StoreError, call, log, session_holds};
 
 /// `pending_action` of a branch push.
 pub const PENDING_BRANCH_PUSH: &str = "branch_push";
@@ -228,7 +229,198 @@ pub fn guard_running(conn: &Connection, land_id: &str) -> Result<bool> {
     )?)
 }
 
+/// The `LandInfo` of the `session.land` event of a run (design §3.6). The
+/// text is the end text of a terminal run; `files` is set for a conflict.
+#[must_use]
+pub fn info_of(row: &LandRunRow) -> LandInfo {
+    LandInfo {
+        land_id: row.land_id.clone(),
+        attempt: row.attempt,
+        state: row.state,
+        phase: row.phase,
+        reconciling: row.reconciling,
+        code: row.code.clone(),
+        text: row.message.clone(),
+        files: row.files.clone(),
+        source_oid: row.source_oid.clone(),
+        base_oid: row.base_oid.clone(),
+        rebased_oid: row.rebased_oid.clone(),
+        branch_published_oid: row.branch_published_oid.clone(),
+        default_published_oid: row.default_published_oid.clone(),
+        pr_url: row.pr_url.clone(),
+    }
+}
+
+/// The end of a run (design §11.5 step 8): a terminal state, its code and its
+/// text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct End {
+    pub state: LandState,
+    pub code: Option<String>,
+    pub text: String,
+}
+
+/// One phase change or end of a run: the values that are set.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Change {
+    pub phase: Option<LandPhase>,
+    pub default_ref: Option<String>,
+    pub source_oid: Option<String>,
+    pub base_oid: Option<String>,
+    pub rebased_oid: Option<String>,
+    pub branch_lease: Option<String>,
+    pub files: Option<Vec<String>>,
+    pub end: Option<End>,
+}
+
+/// One store transaction of a run (design §11.5, journal rule): it requires
+/// the fence rule of [`guard_running`] (zero rows: the run is fenced or
+/// ended, nothing is written), sets the values of `change`, and appends one
+/// `session.land` event. An end also needs `pending_action = NULL`; it sets
+/// the phase `done` and `ended_at`, and deletes the session hold (design
+/// §11.5 step 8, one transaction). Returns the event, or `None` when nothing
+/// changed.
+///
+/// # Errors
+/// A database error.
+pub fn advance(
+    conn: &Connection,
+    land_id: &str,
+    change: &Change,
+    now: i64,
+) -> Result<Option<EventEnvelope>> {
+    let files = change.files.as_ref().map(json).transpose()?;
+    let (phase, state, code, message, ended) = match &change.end {
+        Some(end) => (
+            Some(text_of(&LandPhase::Done)),
+            Some(text_of(&end.state)),
+            end.code.clone(),
+            Some(end.text.clone()),
+            true,
+        ),
+        None => (change.phase.as_ref().map(text_of), None, None, None, false),
+    };
+    let changed = conn.execute(
+        "UPDATE land_runs SET
+            phase = COALESCE(?2, phase), state = COALESCE(?3, state),
+            default_ref = COALESCE(?4, default_ref), source_oid = COALESCE(?5, source_oid),
+            base_oid = COALESCE(?6, base_oid), rebased_oid = COALESCE(?7, rebased_oid),
+            branch_lease = COALESCE(?8, branch_lease), files = COALESCE(?9, files),
+            code = COALESCE(?10, code), message = COALESCE(?11, message),
+            ended_at = CASE WHEN ?12 THEN ?13 ELSE ended_at END, updated_at = ?13
+         WHERE land_id = ?1 AND state = 'running'
+           AND NOT EXISTS (SELECT 1 FROM land_fences WHERE land_id = ?1)
+           AND (NOT ?12 OR pending_action IS NULL)",
+        params![
+            land_id,
+            phase,
+            state,
+            change.default_ref,
+            change.source_oid,
+            change.base_oid,
+            change.rebased_oid,
+            change.branch_lease,
+            files,
+            code,
+            message,
+            ended,
+            now,
+        ],
+    )?;
+    if changed == 0 {
+        return Ok(None);
+    }
+    let Some(row) = get(conn, land_id)? else {
+        return Ok(None);
+    };
+    if ended {
+        session_holds::delete(conn, &row.session_id, land_id)?;
+    }
+    let event = NewEvent::from(Event::SessionLand(Box::new(info_of(&row))));
+    Ok(Some(log::append_one(conn, &row.session_id, event, now)?))
+}
+
+/// What the land decision reads of a session's Fleet Git rows (design §11.1,
+/// §11.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionFacts {
+    pub project_id: String,
+    pub kind: String,
+    pub slug: Option<String>,
+    pub branch: Option<String>,
+    pub publish_ref: Option<String>,
+    pub created_branch: bool,
+    /// `git_pushes.target_dest`, when the session has a push row.
+    pub push_dest: Option<String>,
+}
+
+/// The Fleet Git facts of a session, or `None` without a `session_git` row.
+///
+/// # Errors
+/// A database error.
+pub fn session_facts(conn: &Connection, session_id: &SessionId) -> Result<Option<SessionFacts>> {
+    Ok(conn
+        .query_row(
+            "SELECT g.project_id, g.kind, g.slug, g.branch, g.publish_ref, g.created_branch,
+                    (SELECT p.target_dest FROM git_pushes p WHERE p.session_id = g.session_id)
+             FROM session_git g WHERE g.session_id = ?1",
+            params![session_id.as_str()],
+            |r| {
+                Ok(SessionFacts {
+                    project_id: r.get(0)?,
+                    kind: r.get(1)?,
+                    slug: r.get(2)?,
+                    branch: r.get(3)?,
+                    publish_ref: r.get(4)?,
+                    created_branch: r.get::<_, i64>(5)? != 0,
+                    push_dest: r.get(6)?,
+                })
+            },
+        )
+        .optional()?)
+}
+
 impl Store {
+    /// One phase change or end of a run in one transaction, with its
+    /// `session.land` event. `false`: the run is fenced or ended, and nothing
+    /// was written.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn land_advance(&self, land_id: String, change: Change) -> Result<bool> {
+        let now = self.now();
+        let event = call(&self.inner.db, move |conn| {
+            let tx = conn.transaction()?;
+            let event = advance(&tx, &land_id, &change, now)?;
+            tx.commit()?;
+            Ok(event)
+        })
+        .await?;
+        if let Some(event) = &event {
+            self.publish(event.station_seq);
+        }
+        Ok(event.is_some())
+    }
+
+    /// The `git_pushes.last_pushed_oid` of a session (the branch lease of
+    /// attempt 1).
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn land_last_pushed(&self, session_id: SessionId) -> Result<Option<String>> {
+        call(&self.inner.db, move |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT last_pushed_oid FROM git_pushes WHERE session_id = ?1",
+                    params![session_id.as_str()],
+                    |r| r.get::<_, Option<String>>(0),
+                )
+                .optional()?
+                .flatten())
+        })
+        .await
+    }
+
     /// The run of `land_id`.
     ///
     /// # Errors

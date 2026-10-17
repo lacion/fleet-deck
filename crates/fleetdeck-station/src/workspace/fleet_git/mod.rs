@@ -9,6 +9,7 @@
 //!   serialized writer (§5).
 //! - `push_outcome`: the classification of a push (§5.5, M2).
 //! - `radar`: the predictive conflict radar (§10).
+//! - `land`, `land_temp`: the Git work and the temporary folder of a land (§11.5, §11.6).
 //! - `include`: the copy of ignored files into a new worktree (§7.2).
 //! - `home`: `project.ensure_home` and `project.home_status` (§8.4).
 
@@ -16,6 +17,8 @@ mod fetch;
 mod home;
 mod identity;
 mod include;
+mod land;
+mod land_temp;
 mod push;
 mod push_outcome;
 mod radar;
@@ -25,6 +28,11 @@ pub use fetch::{BaseStale, StartPoint, fetch_for_start};
 pub use home::{ensure_home, git_version, home_status};
 pub use identity::{PushDestination, Refusal, VerifiedUrl, check_home, effective_push_url};
 pub use include::copy_includes;
+pub use land::{
+    Captured, Rebased, TempFacts, add_worktree, capture, conflict_files, has_identity, rebase,
+    tested_unchanged,
+};
+pub use land_temp::{TEMP_DIR, ensure_dir, identity as temp_identity, temp_path, temp_root};
 pub use push::{
     OptionsProvider, PushFailure, PushJob, PushResult, PushWriter, RefspecError, backoff_delay,
     refspec_for,

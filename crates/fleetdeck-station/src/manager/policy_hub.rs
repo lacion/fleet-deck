@@ -84,6 +84,13 @@ impl PolicyHub {
         self
     }
 
+    /// The coordinator bindings of the station, when the hub has them (FG-8:
+    /// the land engine checks the authority of a coordinator land).
+    #[must_use]
+    pub fn fleet_bindings(&self) -> Option<&Bindings> {
+        self.fleet.as_ref()
+    }
+
     /// The current snapshot.
     #[must_use]
     pub fn current(&self) -> Arc<Policy> {

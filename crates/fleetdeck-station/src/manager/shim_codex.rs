@@ -94,7 +94,8 @@ impl DurableCore for CodexCore {
             | EffectPayload::Resume { prompt: None, .. }
             | EffectPayload::Stop { .. }
             | EffectPayload::Revert { .. }
-            | EffectPayload::Worktree { .. } => Err(not_a_command()),
+            | EffectPayload::Worktree { .. }
+            | EffectPayload::Land { .. } => Err(not_a_command()),
             // B8: a `!` command of a Codex session.
             EffectPayload::ShellCommand { command, .. } => {
                 self.shell_command(effect.effect_id.as_str(), command)
