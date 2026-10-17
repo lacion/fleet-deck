@@ -3098,3 +3098,16 @@ Owner review: pending.
 - Options (short): for the pairing, a `wall.open` that targets an existing display, or one that creates the display; for quiet hours, the station time zone, a time zone of the display, or UTC; for the trigger, a replay of old requests or only new requests.
 - Decision: §6D answers P3b-1 to P3b-13 and lists the risks as binding mitigations. Owner decisions: P3b-1 (owner): `wall.open` targets an existing display, and the elevated approval selects it; P3b-2 (owner): the binding is committed after a successful open with a checked operation revision, kept across missing or stale window reports, and cleared on an explicit close or a revoke; P3b-3 (owner): quiet hours use the local time of the station, with its UTC offset from a fixed `date +%z` call, half-open intervals, midnight wrap, equal endpoints meaning no quiet hours, and no wake when the offset is unknown; P3b-5 (owner): only a newly observed needs-you request (at most 60 s old, 5 s future skew tolerated) wakes, and the requests that exist at deck start are the baseline.
 - Next: adversary DESIGN REVIEW of §5D and §6D, then the build plan of §11.
+
+## DL-230: Owner answers for R13 P5 (desktop capture) and P8 (provisioning), FG-9 go, grant target stations (owner, 2026-10-18)
+
+- Context: the adversary DESIGN REVIEW of Omarchy §5/§9 (P5 capture, P8 provisioning) found blockers that need owner decisions; Fleet Git FG-9 waited for the owner (DL-227); the FG-10 tests found that a coordinator grant covers only its own station although ADR-006 says the owner picks the target stations.
+- Decision (owner):
+  1. P5 capture consent: an agent whose grant has the `capture` class captures without a prompt for each capture (no per-capture approval). The station setting `allow_desktop_capture` and the grant class stay the gates.
+  2. P5 capture audience and retention: a capture is an ordinary artifact (the R12 artifact rules: read access, share links, kept until deleted).
+  3. P8 enrollment: a new machine shows its station key fingerprint at first login, and the owner approves that fingerprint on the board before the station joins; a copied invitation file alone cannot enroll a station.
+  4. P8 distribution: AUR and Homebrew packages.
+  5. FG-9 (move a session): build it on the corrected design §12 (DL-227).
+  6. R13 P2b/P3b: keep going on the §5G proposed answers.
+  7. Coordinator grants: make the target stations of a grant work (ADR-006 §"Creation").
+- Next: the architect revises the Omarchy design §5 and §9 with 1-4, builds FG-9, P2b/P3b and the grant target stations, each with its review.
