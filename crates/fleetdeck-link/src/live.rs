@@ -75,6 +75,8 @@ pub fn start(node: &NodeConfig, link: OpenLink) -> LiveLink {
         peer_role: node.peer_role(),
         peer: link.peer.fingerprint(),
         negotiated: link.negotiated,
+        local_desktop_epoch: link.desktop_epochs.local,
+        peer_desktop_epoch: link.desktop_epochs.peer,
         grants: Arc::clone(&node.grants),
         config: node.control,
     };

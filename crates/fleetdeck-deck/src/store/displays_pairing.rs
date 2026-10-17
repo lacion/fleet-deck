@@ -198,6 +198,7 @@ impl DeckStore {
                     user_agent: r.get(3)?,
                     created_at: r.get(4)?,
                     expires_at: r.get(5)?,
+                    expected_display_id: None,
                 })
             })?;
             Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)

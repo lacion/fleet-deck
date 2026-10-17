@@ -44,6 +44,11 @@ pub struct PendingPairing {
     pub user_agent: String,
     pub created_at: i64,
     pub expires_at: i64,
+    /// The display that a managed `wall.open` launch expects (R13 §5E item
+    /// 4). The approval dialog preselects it.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub expected_display_id: Option<String>,
 }
 
 /// `GET /api/displays`.

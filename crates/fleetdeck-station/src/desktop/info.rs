@@ -179,5 +179,8 @@ pub async fn collect(env: &ChildEnv, found: &Found) -> Result<DesktopInfo, Fail>
             input: false,
         },
         tools: tools(env),
+        // The station task of P3b reads the offset (`date +%z`).
+        utc_offset_minutes: None,
+        offset_sampled_at: None,
     })
 }

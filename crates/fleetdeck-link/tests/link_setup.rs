@@ -120,6 +120,39 @@ async fn either_role_dials_and_both_sides_agree_on_the_link() {
 }
 
 #[tokio::test]
+async fn a_station_gives_each_control_connection_its_own_desktop_epoch() {
+    for station_dials in [true, false] {
+        let (deck, station) = paired(T);
+        let (dialer, listener) = if station_dials {
+            (&station, &deck)
+        } else {
+            (&deck, &station)
+        };
+        let mut l = listen(listener).await;
+        let (first_d, first_a) = link(dialer, listener, &mut l).await;
+        let (at_station, at_deck) = if station_dials {
+            (&first_d, &first_a)
+        } else {
+            (&first_a, &first_d)
+        };
+        // The station sends 32 hex digits; the deck sends none.
+        let epoch = at_station.desktop_epochs.local.clone().unwrap();
+        assert_eq!(epoch.len(), 32);
+        assert!(at_station.desktop_epochs.peer.is_none());
+        assert!(at_deck.desktop_epochs.local.is_none());
+        assert_eq!(at_deck.desktop_epochs.peer.as_deref(), Some(epoch.as_str()));
+        drop((first_d, first_a));
+        // A new connection gets a new epoch.
+        let (second_d, second_a) = link(dialer, listener, &mut l).await;
+        let at_station = if station_dials { &second_d } else { &second_a };
+        assert_ne!(
+            at_station.desktop_epochs.local.as_deref(),
+            Some(epoch.as_str())
+        );
+    }
+}
+
+#[tokio::test]
 async fn each_dial_commits_a_higher_epoch_and_the_newer_link_supersedes_the_older() {
     let (deck, station) = paired(T);
     let mut l = listen(&deck).await;
