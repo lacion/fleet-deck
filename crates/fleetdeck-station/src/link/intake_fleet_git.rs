@@ -533,10 +533,11 @@ pub(in crate::link) async fn move_export(
             "this link has no data channel",
         ));
     };
-    let (publication, manifest) = match ctx.manager.move_export_plan(&query.move_id).await {
-        Ok(plan) => plan,
-        Err(e) => return Outcome::Err(WireError::new(e.code, e.message)),
-    };
+    let (publication, manifest, provider_instance) =
+        match ctx.manager.move_export_plan(&query.move_id).await {
+            Ok(plan) => plan,
+            Err(e) => return Outcome::Err(WireError::new(e.code, e.message)),
+        };
     let stream_token = if manifest.is_some() {
         match data.issue_token(&format!("{MOVE_EXPORT_PURPOSE}{}", query.move_id)) {
             Ok(token) => Some(token.as_str().to_owned()),
@@ -549,6 +550,7 @@ pub(in crate::link) async fn move_export(
         publication,
         manifest,
         stream_token,
+        provider_instance,
     })
 }
 

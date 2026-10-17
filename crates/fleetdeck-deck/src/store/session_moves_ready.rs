@@ -181,15 +181,13 @@ pub(super) fn check(
     if let Some(refusal) = home_refusal(&home, &project.name) {
         return Ok(Err(refusal));
     }
-    let instance = summary
-        .provider_instance
-        .as_ref()
-        .map(ToString::to_string)
-        .unwrap_or_default();
-    if !env
-        .dst_instances
-        .as_ref()
-        .is_some_and(|set| set.contains(&instance))
+    // A session that never had input has no instance yet (FG-9): the export
+    // answer has it, and the driver checks it then.
+    if let Some(instance) = summary.provider_instance.as_ref().map(ToString::to_string)
+        && !env
+            .dst_instances
+            .as_ref()
+            .is_some_and(|set| set.contains(&instance))
     {
         return not_ready(format!("{dst_name} has no provider named {instance}."));
     }

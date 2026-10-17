@@ -91,6 +91,9 @@ pub struct Files {
     pub import_reset: Option<&'static str>,
     /// The `total` of the manifest, when it differs from `bytes`.
     pub total: Option<u64>,
+    /// The `provider_instance` of the export answer (a real station always
+    /// sends it; FG-9).
+    pub provider_instance: Option<&'static str>,
 }
 
 pub struct MoveFake {
@@ -246,6 +249,7 @@ impl MoveFake {
                 export_reset: None,
                 import_reset: None,
                 total: None,
+                provider_instance: Some("claude"),
             }),
             imported: Mutex::default(),
             import_ends: Mutex::default(),
@@ -369,7 +373,10 @@ impl MoveFake {
                     "ref_name": "fd/alpha/s1", "oid": OID
                 });
                 if files.branch_only {
-                    return Outcome::Ok(json!({ "publication": publication }));
+                    return Outcome::Ok(json!({
+                        "publication": publication,
+                        "provider_instance": files.provider_instance,
+                    }));
                 }
                 let size = files.bytes.len() as u64;
                 Outcome::Ok(json!({
@@ -381,6 +388,7 @@ impl MoveFake {
                         "total": files.total.unwrap_or(size)
                     },
                     "stream_token": self.token(&format!("move-export:{move_id}")),
+                    "provider_instance": files.provider_instance,
                 }))
             }
             "session.move_prepare" => Outcome::Ok(json!({
