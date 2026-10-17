@@ -62,7 +62,7 @@ At most two workers run at the same time (machine limit). Tasks in the same step
 | `station.palette` | station → deck | `Read` | `desktop_shell.v1` | no |
 
   The deck grants `Read` to every paired station for exactly these two station-to-deck methods. `display.directive` is authorized again by the binding in the store (3.6). `tests/method_table.rs` compares the table with ADR-004.
-- **Station setting `fleet_summary`:** `bool`, default `false`, apply `Live`, danger (off to on needs the owner's elevation), label "Fleet summary for the desktop shell", help "Send a summary of the whole fleet (counts, titles of sessions that need you, usage) to this station, for the Omarchy bar. Programs that run as you on this machine can read it." The local socket counts as elevated (like the other station settings).
+- **Station setting `fleet_summary`:** `bool`, default `false`, apply `Live`, danger (off to on needs the owner's elevation), label "Fleet summary for the desktop shell", help "Send a summary of the whole fleet (counts, the callsigns of sessions that need you, usage) to this station, for the Omarchy bar. Programs that run as you on this machine can read it." The local socket counts as elevated (like the other station settings).
 - **`StationInfo.fleet_summary: Option<bool>`**, `#[serde(default, skip_serializing_if = "Option::is_none")]`, `#[ts(optional)]`. The station fills it from the live policy at each `station.info`.
 - **Types** in `proto/src/fleet_summary.rs` (ts-rs exported to `fleet_summary/`):
 
@@ -70,15 +70,16 @@ At most two workers run at the same time (machine limit). Tasks in the same step
 {"v":1,"at":"2026-10-18T12:04:00Z","board":"https://deck.example.ts.net:7420","deck":"up",
  "counts":{"working":7,"idle":3,"needs_you":2,"blocked":1,"lost":0},
  "needs_you":[{"station":"srv","station_id":"…","session":"…","request":"…","callsign":"lynx-12",
-               "title":"Fix cart","kind":"approval","tool":"Bash","age_s":95}],
+               "kind":"approval","age_s":95}],
  "usage":{"label":"claude · 5 h","pct":63,"resets_in_s":4320},
  "stations":[{"name":"srv","up":true,"cpu_load_pct":41},{"name":"laptop","up":true,"cpu_load_pct":null}]}
 ```
 
   - `v` is 1. `deck` is `up` when the deck sends it. `board` is an origin (`scheme://host[:port]`, scheme `http` or `https`, at most 2048 bytes, no whitespace, no path) or `null`.
-  - `callsign` is `null` when the session has none. `tool` is `null` when the request has no tool name. `kind` is the serde name of `RequestKind`. `usage` is `null` without a window with a known use.
-  - Limits: `needs_you` at most 10, `stations` at most 32, `title` at most 80 characters, `tool` at most 40, `callsign` at most 32, `station` at most 64. The whole JSON is at most 16 KiB. The builder removes control and bidirectional characters from every text and cuts at the limit.
-  - The summary holds no chat text, no tool input, no file path and no mail (schema test with sentinel values).
+  - `callsign` is `null` when the session has none or when it does not match `^[a-z0-9-]{1,32}$`. `kind` is the serde name of `RequestKind` (a closed set). `usage` is `null` without a window with a known use.
+  - **No free-form text (revision 12, DESIGN REVIEW round 1, finding 2):** the summary has no session title, no tool name, no request title and no label that a person or an agent wrote. A title can repeat a path or a secret, so filtering it cannot prove the guarantee; it is left out. The only texts are: station names (the owner names them), the checked callsign, the closed `kind` words, the provider instance id and the fixed window words of `usage.label`, and ids.
+  - Limits: `needs_you` at most 10, `stations` at most 32, `callsign` at most 32, `station` at most 64. The whole JSON is at most 16 KiB. The builder removes control and bidirectional characters from every text and cuts at the limit.
+  - The summary holds no chat text, no tool input, no file path, no mail and no free-form title or tool name. The sentinel test puts a sentinel into every free-form source field (session title, tool name, request title, request details, chat text, input, mail, file path) and checks that the sentinel is in no summary.
 - **Station-to-deck and deck-to-station answer codes:** the existing wire errors `invalid_params`, `forbidden`, `unsupported`, `failed`.
 - **`omarchy_root`:** `pub fn omarchy_root(base: &ChildEnv) -> Option<(PathBuf, Option<String>)>` in `station/src/desktop/detect.rs` (the current private `omarchy` function made public, behavior unchanged). The installer and doctor use it.
 
@@ -119,7 +120,7 @@ omarchy-notification-send --app-name "Fleet Deck" -u normal <headline> <descript
 ```
 
   - `headline` = `<callsign> needs you`. The callsign must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$`; else the first 8 characters of the session id if they match it; else `session`. The headline therefore never starts with `-`.
-  - `description` = `<Kind> · <tool> · <title>` where `Kind` is `Approval`, `Question` or `Request` (fixed words), `tool` and `title` are left out when empty. Markup characters (`<`, `>`, `&`) and control characters are removed; the text is cut at 300 characters.
+  - `description` = `<Kind> on <station>` where `Kind` is `Approval`, `Question` or `Request` (fixed words) and `<station>` is the station name; no title and no tool name (revision 12, finding 2). Markup characters (`<`, `>`, `&`) and control characters are removed; the text is cut at 300 characters.
   - `--exec` is added only when `station_id`, `session` and `request` match the grammar above. `<exe>` is `std::env::current_exe()`, absolute. The ids are separate words, so no text can become a command.
   - A missing `omarchy-notification-send`, `busctl` or `jq` gives one warning on stderr; the feed goes on. A notification never answers a request.
 - **`fleetdeck desktop open [<station_id>/<session>] [--request <id>]`** (`cli/src/desktop_open.rs`):
@@ -289,9 +290,9 @@ The icons are Nerd Font code points U+F0E8, U+F0AC and U+F188. A new file holds 
   - A file that still holds `{{`, is not valid JSON, is above 4 KiB, has `mode` other than `dark` or `light`, or has a color that does not match `^#[0-9A-Fa-f]{6}$`: stderr "Fleet Deck: the theme file is not usable; nothing was sent.", exit 0, previous palette stays.
   - Else it calls the station local socket (`LocalRequest::PaletteSet`). The station keeps the palette in memory, sends `station.palette` to the deck, and sends it again at each link up. A deck that cannot be reached: exit 1, "The deck is not connected. The palette is sent when the link is up again."
 - **`station.palette`** (station → deck): params `{"v":1,"mode":"dark|light","colors":{"background":"#rrggbb", …}}` with exactly the ten color keys of the template; unknown keys, other values and a body above 2 KiB are `invalid_params`. The deck keeps one row for each station (table `station_palettes(station_id PRIMARY KEY, mode, colors, updated_at)`, the next free migration number; the row goes when the station is removed).
-- **Routes:** `GET /api/stations/{station}/palette` (owner login, scope Read; station ids only) answers `{"mode":…,"colors":{…},"updated_at":…}` or 404 `no_palette`. `GET /api/displays/self/palette` (a display login only, a new `.display()` row) answers the palette of the display's bound station, or 404 `no_palette`; the exact-rows test `exactly_these_methods_are_open_to_a_display` lists it, and this row is in the review scope.
+- **Routes:** `GET /api/stations/{station}/palette` (owner login, scope Read; station ids only) answers `{"mode":…,"colors":{…},"updated_at":…}` or 404 `no_palette`. `GET /api/displays/self/palette` (a display login only, a new `.display()` row; the exact-rows test `exactly_these_methods_are_open_to_a_display` lists it) follows the R13 display rules (revision 12, DESIGN REVIEW round 1, finding 1): (1) `scope_of` first (the live display session: an ended login is `401 login_required`); (2) the display's bound station must be in its current effective scope (`scope.stations`); (3) read the palette of that station; (4) read the binding and the scope again and check that the same station is still bound and still in scope; (5) answer the palette, else the same `404 no_palette` for an unbound display, a bound station outside the scope, a binding or scope that changed during the read, and a station without a palette. `Cache-Control: no-store`.
 - **Web (F2):** Prefs gets "Use the Omarchy theme of <station>" (a list of the stations that have a palette, plus "Off"). The wall and display pages use the palette of the bound station. The F2 brief names the CSS variables from `web/src/styles`.
-- **Tests:** the file cases above; the station keeps and resends the palette; the deck stores, replaces and deletes with the station; the display route refuses an owner cookie and any other principal; a palette never leaves for another station.
+- **Tests:** the file cases above; the station keeps and resends the palette; the deck stores, replaces and deletes with the station; the display route refuses an owner cookie and any other principal; a palette never leaves for another station; a display bound to a station outside its ceiling gets `404 no_palette`; a rebinding, a ceiling change and a revoke during the read give `404` or `401`; an ended display session gets `401`.
 
 ### 3.8 Task G: the ambient screensaver
 
@@ -379,7 +380,7 @@ The repository and the source copy cannot show these. The live smoke (`make desk
 
 ## 7. Risks
 
-- The summary leaves the deck for a socket that any program of the same user can read. It holds titles and tool names of the whole fleet. Mitigations: default off; turning it on needs elevation; the station keeps it in memory only; the content limits and the sentinel test.
+- The summary leaves the deck for a socket that any program of the same user can read. It holds counts, station names, callsigns, request kinds and usage of the whole fleet, and no free-form text (no titles, no tool names). Mitigations: default off; turning it on needs elevation; the station keeps it in memory only; the content limits and the sentinel test.
 - The Station sender is a new authority. Mitigations: binding check, own sessions only, ceiling, `desktop_control`, rate limit, audit row, adversary review.
 - The installer writes into the user's Omarchy configuration. Mitigations: a fixed file list, hashes, refusal of conflicts, no symlink, uninstall by hash, the owner adds the Hyprland line.
 - A hook or a notification click starts `fleetdeck` with data from the deck. Mitigations: ids and texts follow strict grammars; each value is a separate argument; no text reaches a shell.
