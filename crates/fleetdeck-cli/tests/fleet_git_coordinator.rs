@@ -4,8 +4,8 @@
 //! the fleet over the real MCP endpoint of its station. `project_branches` and
 //! `project_fetch` answer as the board routes; `land_session` lands a bravo
 //! session in merge mode; a revocation before the admission of a queued land
-//! ends it with `authority_lost` and changes no ref; `move_session` is not in
-//! the catalog (FG-9 is not built). The harness is in
+//! ends it with `authority_lost` and changes no ref; `move_session` is in the
+//! catalog (its moves are tested in `fleet_git_move.rs`). The harness is in
 //! `common/fleet_git_coord.rs`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, reason = "test code")]
