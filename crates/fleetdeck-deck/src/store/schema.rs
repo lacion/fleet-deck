@@ -737,6 +737,9 @@ pub fn migrations() -> Migrations<'static> {
         M::up(V23),
         // V24 (R13, DL-201): the display tables, in `store/displays.rs`.
         M::up(super::displays::DISPLAYS_SQL),
+        // V25 (R13 P2b/P3b step 1): display generations, the binding
+        // revision, directives and the wake tables, in `store/display_v25.rs`.
+        M::up(super::display_v25::V25_SQL),
     ])
 }
 

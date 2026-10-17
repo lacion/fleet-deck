@@ -16,6 +16,12 @@ pub mod assist_routes;
 pub mod auth_routes;
 pub mod body_deadline;
 pub mod command_routes;
+pub mod desktop_routes;
+pub mod display_artifact;
+pub mod display_bodies;
+pub mod display_changes;
+pub mod display_directive_routes;
+pub mod display_document;
 pub mod display_routes;
 pub mod display_view;
 pub mod endpoints;
@@ -28,6 +34,7 @@ pub mod guard;
 pub mod history_routes;
 pub mod methods;
 pub mod native_routes;
+pub mod not_built;
 pub mod pairing_routes;
 pub mod paste_routes;
 pub mod people_routes;
@@ -40,6 +47,7 @@ pub mod review_anchor_cache;
 pub mod review_routes;
 pub mod schedule_routes;
 pub mod secrets_routes;
+pub mod server;
 pub mod session_work_routes;
 pub mod settings_routes;
 pub mod share_routes;
@@ -54,26 +62,17 @@ pub mod workspace_routes;
 pub mod worktree_routes;
 pub mod ws;
 
-use std::io;
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::Extension;
 use axum::middleware;
 use axum::routing::{delete, get, patch, post};
-use std::time::Duration;
-use tokio::net::TcpListener;
-use tokio::sync::watch;
-
-use hyper_util::rt::{TokioIo, TokioTimer};
-use hyper_util::service::TowerToHyperService;
-use tokio::task::{JoinHandle, JoinSet};
-use tokio_rustls::TlsAcceptor;
 
 pub use admission::LoginLimits;
 pub use auth_routes::{DeviceLinkLimiter, SessionView};
 pub use guard::{ApiError, Origins};
+pub use server::{BindError, BoardServer};
 pub use tls::BoardTls;
 
 use crate::link::DeckLink;
@@ -537,12 +536,20 @@ pub fn router(board: Arc<Board>) -> Router {
             get(fleet_answers_routes::list),
         )
         .merge(display_routes::routes())
+        .merge(display_directive_routes::routes())
+        .merge(display_changes::routes())
+        .merge(display_artifact::routes())
+        .merge(desktop_routes::routes())
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&board),
             guard::guard,
         ))
         // The public share route is outside the guard: the token is its
         // credential (DL-165).
+        // The document of a wall display: the board page with a stricter
+        // policy (R13 §5E item 3, §5F item 3). `/display/` redirects.
+        .route("/display", get(display_document::document))
+        .route("/display/", get(display_document::redirect))
         .route("/a/{token}", get(artifact_routes::public_slash))
         .route("/a/{token}/", get(artifact_routes::public_main))
         .route("/a/{token}/{*path}", get(artifact_routes::public))
@@ -569,215 +576,4 @@ async fn board_files(
     uri: axum::http::Uri,
 ) -> axum::response::Response {
     assets::serve(&board.assets, &method, &uri).await
-}
-
-/// Bound board listeners (HTTPS, HTTP/1.1 with upgrades for the WS route).
-#[derive(Debug)]
-pub struct BoardServer {
-    /// The bound addresses (a port 0 in the config gets a real port).
-    pub addrs: Vec<SocketAddr>,
-    /// The certificate the listeners present.
-    pub tls: BoardTls,
-    /// The optional addresses that were not used, with the reason.
-    pub skipped: Vec<(SocketAddr, String)>,
-    admission: Arc<admission::Admission>,
-    tasks: Vec<JoinHandle<()>>,
-}
-
-/// How long a client has for the TLS handshake.
-const HANDSHAKE: Duration = Duration::from_secs(10);
-/// How long a client has to send the request headers, also between two
-/// requests of a keep-alive connection (hyper starts the clock again when it
-/// waits for the next request).
-const HEADER_READ: Duration = Duration::from_secs(10);
-
-impl BoardServer {
-    /// Binds every address. The board's [`Origins`] and the certificate
-    /// names come from the bound addresses, so `build` gets them and
-    /// returns the board state and its TLS configuration.
-    ///
-    /// # Errors
-    /// An address cannot be bound, or `build` fails.
-    pub async fn bind<E>(
-        addrs: &[SocketAddr],
-        build: impl FnOnce(&[SocketAddr]) -> Result<(Arc<Board>, BoardTls), E>,
-        shutdown: watch::Receiver<bool>,
-    ) -> Result<Self, BindError<E>> {
-        Self::bind_with(addrs, &[], build, shutdown).await
-    }
-
-    /// [`BoardServer::bind`] with `optional` addresses (design 14.4): each
-    /// one is bound after `addrs`, when it is assigned to a local interface;
-    /// one that is not, or that cannot be bound, is skipped with a warning
-    /// and listed in [`BoardServer::skipped`]. It never fails the bind.
-    ///
-    /// # Errors
-    /// As [`BoardServer::bind`], for `addrs` only.
-    pub async fn bind_with<E>(
-        addrs: &[SocketAddr],
-        optional: &[SocketAddr],
-        build: impl FnOnce(&[SocketAddr]) -> Result<(Arc<Board>, BoardTls), E>,
-        shutdown: watch::Receiver<bool>,
-    ) -> Result<Self, BindError<E>> {
-        let mut listeners = Vec::with_capacity(addrs.len() + optional.len());
-        for addr in addrs {
-            let l = TcpListener::bind(addr)
-                .await
-                .map_err(|source| BindError::Io {
-                    addr: *addr,
-                    source,
-                })?;
-            listeners.push(l);
-        }
-        let mut skipped = Vec::new();
-        for addr in optional {
-            let outcome = match crate::tailnet_auto::unusable(*addr) {
-                Some(reason) => Err(reason),
-                None => TcpListener::bind(addr)
-                    .await
-                    .map_err(|e| crate::tailnet_auto::bind_failed(e.kind())),
-            };
-            match outcome {
-                Ok(l) => listeners.push(l),
-                Err(reason) => {
-                    tracing::warn!(%addr, %reason, "an automatic tailnet board address is not used");
-                    skipped.push((*addr, reason));
-                }
-            }
-        }
-        let bound = listeners
-            .iter()
-            .map(TcpListener::local_addr)
-            .collect::<io::Result<Vec<_>>>()
-            .map_err(|source| BindError::Io {
-                addr: addrs
-                    .first()
-                    .copied()
-                    .unwrap_or(SocketAddr::from(([127, 0, 0, 1], 0))),
-                source,
-            })?;
-        let (board, tls) = build(&bound).map_err(BindError::Build)?;
-        let app = router(board);
-        let acceptor = TlsAcceptor::from(Arc::clone(&tls.config));
-        let admission = Arc::new(admission::Admission::default());
-        let tasks = listeners
-            .into_iter()
-            .map(|listener| {
-                tokio::spawn(serve_tls(
-                    listener,
-                    acceptor.clone(),
-                    app.clone(),
-                    Arc::clone(&admission),
-                    shutdown.clone(),
-                ))
-            })
-            .collect();
-        Ok(Self {
-            addrs: bound,
-            tls,
-            skipped,
-            admission,
-            tasks,
-        })
-    }
-
-    /// The open board connections (live admission guards).
-    #[doc(hidden)]
-    #[must_use]
-    pub fn admitted(&self) -> usize {
-        self.admission.admitted()
-    }
-
-    /// Waits for the listeners after the shutdown signal.
-    pub async fn join(self) {
-        for t in self.tasks {
-            let _ = t.await;
-        }
-    }
-}
-
-/// Why [`BoardServer::bind`] failed.
-#[derive(Debug, thiserror::Error)]
-pub enum BindError<E> {
-    #[error("board listener {addr}: {source}")]
-    Io {
-        addr: SocketAddr,
-        #[source]
-        source: io::Error,
-    },
-    #[error(transparent)]
-    Build(E),
-}
-
-async fn stopped(rx: &mut watch::Receiver<bool>) {
-    while !*rx.borrow() {
-        if rx.changed().await.is_err() {
-            return;
-        }
-    }
-}
-
-async fn serve_tls(
-    listener: TcpListener,
-    acceptor: TlsAcceptor,
-    app: Router,
-    admission: Arc<admission::Admission>,
-    mut shutdown: watch::Receiver<bool>,
-) {
-    let mut conns = JoinSet::new();
-    loop {
-        tokio::select! {
-            accepted = listener.accept() => match accepted {
-                Ok((tcp, peer)) => {
-                    // Admission comes first: a refused connection gets no
-                    // task and no TLS work.
-                    let Some(guard) = admission.try_admit(peer.ip()) else {
-                        if admission.should_log_refusal() {
-                            tracing::debug!(peer = %peer.ip(), "board connection refused: too many open connections");
-                        }
-                        drop(tcp);
-                        continue;
-                    };
-                    let acceptor = acceptor.clone();
-                    conns.spawn(serve_connection(tcp, peer, acceptor, app.clone(), guard));
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "board accept");
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
-            },
-            Some(_) = conns.join_next(), if !conns.is_empty() => {}
-            () = stopped(&mut shutdown) => break,
-        }
-    }
-    conns.abort_all();
-}
-
-/// One board connection: TLS, then HTTP/1.1 with upgrades. The guard lives
-/// in the stream, so it lives as long as an upgraded WebSocket.
-async fn serve_connection(
-    tcp: tokio::net::TcpStream,
-    peer: SocketAddr,
-    acceptor: TlsAcceptor,
-    app: Router,
-    guard: admission::AdmitGuard,
-) {
-    let Ok(Ok(tls)) = tokio::time::timeout(HANDSHAKE, acceptor.accept(tcp)).await else {
-        return;
-    };
-    let inner = TowerToHyperService::new(app);
-    let service =
-        hyper::service::service_fn(move |mut req: axum::http::Request<hyper::body::Incoming>| {
-            req.extensions_mut().insert(admission::PeerAddr(peer));
-            hyper::service::Service::call(&inner, req)
-        });
-    let conn = hyper::server::conn::http1::Builder::new()
-        .timer(TokioTimer::new())
-        .header_read_timeout(HEADER_READ)
-        .keep_alive(true)
-        .serve_connection(TokioIo::new(admission::Guarded::new(tls, guard)), service)
-        .with_upgrades();
-    if let Err(e) = conn.await {
-        tracing::debug!(error = %e, "board connection");
-    }
 }

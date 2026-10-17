@@ -248,6 +248,14 @@ fn deck_defaults_and_rules() {
             .fleet_control
     );
     assert!(DeckConfig::parse("fleet_control = 1").is_err());
+    // Desktop control is off by default (R13 section 6.4).
+    assert!(!d.desktop_control);
+    assert!(
+        DeckConfig::parse("desktop_control = true")
+            .unwrap()
+            .desktop_control
+    );
+    assert!(DeckConfig::parse("desktop_control = 1").is_err());
     // The Tailscale certificate is off by default (DL-190).
     assert!(!d.tailscale_cert);
     assert!(

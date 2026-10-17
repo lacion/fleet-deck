@@ -24,6 +24,7 @@
 //! DL-053).
 
 mod coordinator_reads;
+pub mod desktop_authority;
 mod outbox;
 mod requests;
 pub mod router;

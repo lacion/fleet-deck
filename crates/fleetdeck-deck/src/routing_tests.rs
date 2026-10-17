@@ -53,6 +53,7 @@ fn station(name: &str, reachable: bool, max: Option<u32>, live: u64, auth: &str)
             desktop: None,
         }),
         info_at: None,
+        display_resources: None,
     }
 }
 

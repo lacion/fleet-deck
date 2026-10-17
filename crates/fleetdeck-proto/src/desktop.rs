@@ -82,6 +82,26 @@ pub struct DesktopInfo {
     pub walls: Vec<WallWindow>,
     pub allowed: DesktopAllowed,
     pub tools: DesktopTools,
+    /// The UTC offset of the station in minutes east of UTC, from one fixed
+    /// `date +%z` call (R13 §6D item 3). `None` when the call failed.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub utc_offset_minutes: Option<i32>,
+    /// Unix ms at which the station sampled [`Self::utc_offset_minutes`].
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub offset_sampled_at: Option<i64>,
+}
+
+/// The params of `desktop.info` (R13 §6D item 4). An empty object is
+/// `fresh: false`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "desktop/")]
+pub struct DesktopInfoQuery {
+    /// Bypass the station cache of 10 seconds.
+    #[serde(default)]
+    pub fresh: bool,
 }
 
 /// The urgency of a notification.
@@ -128,6 +148,54 @@ pub enum DesktopAction {
     WallReload {
         display_id: String,
         url: String,
+    },
+    Notify {
+        title: String,
+        body: String,
+        urgency: Urgency,
+    },
+    BrowserOpen {
+        url: String,
+        monitor: Option<String>,
+        session: Option<SessionId>,
+    },
+    WindowClose {
+        address: String,
+    },
+}
+
+/// The action of the owner's HTTP relay (R13 §6D item 6): the closed list of
+/// `desktop.act` actions without a wall URL. The deck builds the pair page
+/// URL of `wall_open` and `wall_reload` itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+#[ts(export_to = "desktop/")]
+pub enum DesktopActBody {
+    ScreenPower {
+        monitor: Option<String>,
+        on: bool,
+    },
+    ScreenLock,
+    ScreenDnd {
+        on: bool,
+    },
+    ScreenIdleInhibit {
+        on: bool,
+    },
+    WorkspaceShow {
+        monitor: String,
+        workspace: u8,
+    },
+    WallOpen {
+        display_id: String,
+        monitor: String,
+        workspace: Option<u8>,
+    },
+    WallClose {
+        display_id: String,
+    },
+    WallReload {
+        display_id: String,
     },
     Notify {
         title: String,

@@ -106,6 +106,11 @@ pub struct Hello {
     /// 32 random bytes, 64 hex digits.
     pub nonce: String,
     pub channel: Channel,
+    /// A random 128-bit id (32 hex digits) of this control connection, sent
+    /// by a station that offers `desktop_authority.v1` (R13 §5G item 1). It
+    /// is not the persistent `link_epoch`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub desktop_epoch: Option<String>,
 }
 
 /// Handshake frames, JSON text messages tagged by `type`.
@@ -290,7 +295,20 @@ impl LocalHello {
             incarnation: self.incarnation.clone(),
             nonce,
             channel,
+            desktop_epoch: None,
         }
+    }
+
+    /// Whether this node puts a `desktop_epoch` into the `Hello` of a control
+    /// channel: a station that offers the feature.
+    #[must_use]
+    pub fn sends_desktop_epoch(&self, channel: Channel) -> bool {
+        self.role == Role::Station
+            && channel == Channel::Control
+            && self
+                .features
+                .iter()
+                .any(|f| f == feature::DESKTOP_AUTHORITY)
     }
 }
 
@@ -389,6 +407,13 @@ pub fn negotiate(
         });
     }
     check_attempt(peer, peer_side)?;
+    if let Some(epoch) = &peer.desktop_epoch
+        && (!is_hex(epoch, 32) || peer.role != Role::Station || channel != Channel::Control)
+    {
+        return Err(HandshakeError::BadHello(
+            "desktop_epoch is 32 hex digits, from a station, on the control channel".into(),
+        ));
+    }
     let ours = VersionOffer {
         proto_min: local.proto_min,
         proto_max: local.proto_max,
@@ -476,7 +501,7 @@ pub fn verify(
 }
 
 /// `N` random bytes as lowercase hex.
-fn random_hex<const N: usize>() -> Result<String, HandshakeError> {
+pub(crate) fn random_hex<const N: usize>() -> Result<String, HandshakeError> {
     use ring::rand::SecureRandom;
     let mut n = [0u8; N];
     ring::rand::SystemRandom::new()

@@ -224,6 +224,10 @@ export function reduceMessage(state: RuntimeState, msg: BoardServerMessage): Run
         },
       };
     }
+    // Only a wall display gets this message (R13 §5D item 7); the P2c web
+    // task decodes it. The board of the owner ignores it.
+    case 'display_timeline_events':
+      return state;
     case 'error':
       return {
         ...state,

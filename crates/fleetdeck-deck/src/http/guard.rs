@@ -322,7 +322,8 @@ async fn authenticate_display(board: &Board, headers: &HeaderMap) -> Result<Prin
 /// True for a route that answers the display login even when the browser
 /// also holds the owner's cookie.
 fn display_route(api: &ApiMethod, headers: &HeaderMap) -> bool {
-    api.name == "displays.self"
+    // Every `/api/displays/self...` row answers the display login only.
+    api.path.starts_with("/api/displays/self")
         || (matches!(api.name, "auth.logout" | "auth.session") && display_header(headers))
 }
 

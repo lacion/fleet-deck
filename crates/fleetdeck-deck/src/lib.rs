@@ -3,6 +3,7 @@
 //! board API.
 
 pub mod cert_task;
+pub mod desktop_relay;
 pub mod elevation;
 pub mod http;
 pub mod link;
@@ -17,6 +18,7 @@ pub mod scheduler;
 pub mod serve;
 pub mod store;
 pub mod tailnet_auto;
+pub mod wake;
 
 pub use link::{DeckLink, DeckNode, NodeError};
 pub use peers::{DeckPeers, Expected};

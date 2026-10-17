@@ -29,7 +29,14 @@ pub(crate) mod coordinator_fleet;
 pub(crate) mod coordinator_ops;
 pub mod coordinator_query;
 mod coordinator_query_reads;
+pub mod display_directive_schema;
+pub mod display_directives;
+#[cfg(test)]
+mod display_gen_tests;
+pub mod display_v25;
 pub mod displays;
+pub mod displays_auth;
+pub mod displays_binding;
 pub mod displays_pairing;
 pub mod extras;
 pub mod fleet;
@@ -53,6 +60,7 @@ pub mod schedules;
 pub mod schema;
 pub mod shares;
 pub mod stations;
+pub mod wake_seen;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -214,6 +222,21 @@ struct Inner {
     /// Counts the notes in `scope_dirty` (the follower of the link cache
     /// waits on it).
     scope_changes: watch::Sender<u64>,
+    /// The last snapshot that each station applied, in this deck process
+    /// (the wake rule reads it, R13 §5E item 6).
+    snapshot_marks: Mutex<BTreeMap<StationId, SnapshotMark>>,
+}
+
+/// The last snapshot batch that the read model applied for a station: the
+/// `station_seq` watermark of the batch is the initialization boundary of the
+/// wake rule (R13 §5E item 6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotMark {
+    pub incarnation: IncarnationId,
+    /// The `station_seq` at which the snapshot was taken.
+    pub watermark: u64,
+    /// Unix ms at which the deck applied it.
+    pub applied_at_ms: i64,
 }
 
 impl Inner {
@@ -321,6 +344,7 @@ impl DeckStore {
                 ask_limits: coordinator_fleet::AskLimiter::default(),
                 scope_dirty: Mutex::default(),
                 scope_changes: watch::channel(0).0,
+                snapshot_marks: Mutex::default(),
             }),
         };
         // Deck start (grant stations design §2.3 item 8): end every stale
@@ -330,6 +354,25 @@ impl DeckStore {
         store.sweep_grants().await?;
         drop(store.take_scope_changes());
         Ok(store)
+    }
+
+    /// The last snapshot that `station` applied in this deck process.
+    #[must_use]
+    pub fn snapshot_mark(&self, station: &StationId) -> Option<SnapshotMark> {
+        self.inner
+            .snapshot_marks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(station)
+            .cloned()
+    }
+
+    pub(crate) fn note_snapshot(&self, station: &StationId, mark: SnapshotMark) {
+        self.inner
+            .snapshot_marks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(station.clone(), mark);
     }
 
     /// The deck incarnation (`coordinator.call` targets it, ADR-004 §9.3).

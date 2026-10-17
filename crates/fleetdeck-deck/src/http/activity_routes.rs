@@ -88,8 +88,14 @@ pub struct ActivityParams {
 /// 400 `invalid_query` for a `limit` of 0 or above [`ACTIVITY_MAX_LIMIT`].
 pub async fn activity(
     State(board): State<Arc<Board>>,
+    Extension(principal): Extension<Principal>,
     Query(params): Query<ActivityParams>,
 ) -> Result<Json<ActivityList>, ApiError> {
+    // A display gets its own projection from the P2b payload task (no mail,
+    // no tool input, R13 §5D item 8). Until then it gets nothing.
+    if matches!(principal, Principal::Display(_)) {
+        return Err(super::not_built::not_built());
+    }
     let limit = params.limit.unwrap_or(ACTIVITY_DEFAULT_LIMIT);
     if limit == 0 || limit > ACTIVITY_MAX_LIMIT {
         return Err(ApiError::new(

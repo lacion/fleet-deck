@@ -7,4 +7,9 @@ export type PendingPairing = { pairing_id: string, code: string,
 /**
  * The source key of the request (an IP address).
  */
-source: string, user_agent: string, created_at: number, expires_at: number, };
+source: string, user_agent: string, created_at: number, expires_at: number, 
+/**
+ * The display that a managed `wall.open` launch expects (R13 §5E item
+ * 4). The approval dialog preselects it.
+ */
+expected_display_id?: string | null, };

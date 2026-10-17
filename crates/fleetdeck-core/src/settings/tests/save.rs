@@ -424,6 +424,32 @@ fn turning_fleet_control_on_needs_elevation_and_off_does_not() {
 }
 
 #[test]
+fn turning_desktop_control_on_needs_elevation_and_off_does_not() {
+    let fx = Fixture::new(None);
+    let deck = fx.dir.path().join("cfg").join("deck.toml");
+    std::fs::write(&deck, "name = \"d\"\n").unwrap();
+    let w = SettingsWriter::<DeckHolder>::new(&deck, None, &fx.env);
+    let view = view_deck(&deck, &[]).unwrap();
+    assert_eq!(view.values["desktop_control"], json!(false));
+    let on = change_with(&view.revision, json!({ "desktop_control": true }));
+    let err = w.save(&on, false, ok_prepare).unwrap_err();
+    assert_eq!(
+        err,
+        SaveError::ElevationRequired {
+            keys: vec!["desktop_control".into()]
+        }
+    );
+    let (saved, new, ()) = w.save(&on, true, ok_prepare).unwrap();
+    assert!(new.desktop_control);
+    assert_eq!(saved.applied, vec!["desktop_control"]);
+    let view = view_deck(&deck, &[]).unwrap();
+    let off = change_with(&view.revision, json!({ "desktop_control": false }));
+    let (saved, new, ()) = w.save(&off, false, ok_prepare).unwrap();
+    assert!(!new.desktop_control);
+    assert_eq!(saved.applied, vec!["desktop_control"]);
+}
+
+#[test]
 fn turning_tailscale_cert_on_needs_elevation_and_off_does_not() {
     let fx = Fixture::new(None);
     let deck = fx.dir.path().join("cfg").join("deck.toml");

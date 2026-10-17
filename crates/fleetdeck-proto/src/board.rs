@@ -210,6 +210,11 @@ pub struct StationView {
     pub info: Option<StationInfo>,
     /// Unix ms of [`Self::info`].
     pub info_at: Option<i64>,
+    /// The reduced resources that a wall display gets in place of `info`
+    /// (R13 §5D item 10). Always `None` for an owner or a member.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub display_resources: Option<crate::display_event::DisplayResources>,
 }
 
 /// `POST /api/stations/invite`: an invitation for a station that dials the
@@ -289,6 +294,16 @@ pub enum BoardServerMessage {
         station_id: StationId,
         session_id: SessionId,
         events: Vec<EventEnvelope>,
+    },
+    /// The timeline events of a session for a wall display (R13 §5D item 7).
+    /// `high_water` is the highest `station_seq` that the deck examined,
+    /// also when it dropped every event: the client advances its cursor to
+    /// it, so a suppressed event is never replayed.
+    DisplayTimelineEvents {
+        station_id: StationId,
+        session_id: SessionId,
+        events: Vec<crate::display_event::DisplayEvent>,
+        high_water: u64,
     },
     /// Who has a session open now (R11.5, DL-166): the actors (`owner`,
     /// `member:<name>`) with a heartbeat in the last 60 s. Sent when the

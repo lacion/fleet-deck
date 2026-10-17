@@ -15,6 +15,7 @@
 
 mod actions;
 pub mod args;
+pub mod authority;
 pub mod detect;
 pub mod env;
 pub mod events;

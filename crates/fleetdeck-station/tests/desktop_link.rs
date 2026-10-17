@@ -43,16 +43,23 @@ fn the_method_rows_are_deck_to_station_rows_of_the_desktop_feature() {
     assert!(!info.mutating);
     let act = method("desktop.act").unwrap();
     assert_eq!(act.scope, Scope::Drive);
-    assert_eq!(act.feature, Some(feature::DESKTOP));
+    // The deck authorizes each action (R13 §5E item 1).
+    assert_eq!(act.feature, Some(feature::DESKTOP_AUTHORITY));
     assert!(!act.mutating);
     assert_eq!(feature::DESKTOP, "desktop.v1");
+    assert_eq!(feature::DESKTOP_AUTHORITY, "desktop_authority.v1");
     assert!(feature::ALL.contains(&feature::DESKTOP));
+    assert!(feature::ALL.contains(&feature::DESKTOP_AUTHORITY));
 }
 
 #[test]
 fn the_methods_need_the_feature_and_the_scope() {
     let without = negotiated(&[feature::CONTROL]);
-    let with = negotiated(&[feature::CONTROL, feature::DESKTOP]);
+    let with = negotiated(&[
+        feature::CONTROL,
+        feature::DESKTOP,
+        feature::DESKTOP_AUTHORITY,
+    ]);
     let read: BTreeSet<Scope> = [Scope::Read].into_iter().collect();
     let drive: BTreeSet<Scope> = [Scope::Read, Scope::Drive].into_iter().collect();
     let call = |name: &str, n: &Negotiated, scopes: &BTreeSet<Scope>| {
@@ -197,8 +204,12 @@ async fn a_station_without_a_desktop_refuses_the_methods_and_has_no_desktop_fiel
     let (code, message) = refused(call(&deck, "desktop.info", json!({})).await);
     assert_eq!(code, "unsupported");
     assert_eq!(message, "This station has no desktop.");
-    let (code, _) = refused(call(&deck, "desktop.act", json!({"action": "screen_lock"})).await);
-    assert_eq!(code, "unsupported");
+    // A `desktop.act` without a valid authority is refused first, also on a
+    // station without a desktop (R13 §5E item 1, DL-230).
+    let (code, message) =
+        refused(call(&deck, "desktop.act", json!({"action": "screen_lock"})).await);
+    assert_eq!(code, "forbidden");
+    assert_eq!(message, "The deck did not authorize this desktop action.");
     // `station.info` carries no `desktop` field.
     let Outcome::Ok(raw) = call(&deck, "station.info", json!({})).await else {
         panic!("station.info failed");
@@ -222,4 +233,43 @@ async fn a_bad_action_is_invalid_params() {
         let (code, _) = refused(call(&deck, "desktop.act", params.clone()).await);
         assert_eq!(code, "invalid_params", "{params}");
     }
+}
+
+#[tokio::test]
+async fn the_step_one_stub_refuses_an_action_with_an_authority_and_a_fresh_info() {
+    let _turn = ONE_AT_A_TIME.lock().await;
+    let mut f = fixture().await;
+    let deck = f.connect().await;
+    let authority = json!({
+        "action_id": "01J00000000000000000000000",
+        "action_hash": "ab".repeat(32),
+        "deadline_ms": 1,
+        "deck_now_ms": 1,
+        "desktop_epoch": "cd".repeat(16),
+    });
+    let (code, message) = refused(
+        call(
+            &deck,
+            "desktop.act",
+            json!({"action": "screen_lock", "authority": authority}),
+        )
+        .await,
+    );
+    assert_eq!(code, "forbidden");
+    assert_eq!(message, "The deck did not authorize this desktop action.");
+    // A malformed authority is a parse error, not an authorization.
+    let (code, _) = refused(
+        call(
+            &deck,
+            "desktop.act",
+            json!({"action": "screen_lock", "authority": {"action_id": 1}}),
+        )
+        .await,
+    );
+    assert_eq!(code, "invalid_params");
+    // `desktop.info` takes `fresh`; the stub refuses it until step 2.
+    let (code, _) = refused(call(&deck, "desktop.info", json!({"fresh": true})).await);
+    assert_eq!(code, "unsupported");
+    let (code, _) = refused(call(&deck, "desktop.info", json!({"other": 1})).await);
+    assert_eq!(code, "invalid_params");
 }

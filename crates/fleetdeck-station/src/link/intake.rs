@@ -479,10 +479,10 @@ async fn answer(
     if req.spec.mutating {
         return mutate(ctx, control, peer, req).await;
     }
-    Some(read(ctx, req).await)
+    Some(read(ctx, control, req).await)
 }
 
-async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
+async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outcome {
     let store = ctx.manager.store();
     match req.method.as_str() {
         "station.info" => {
@@ -528,8 +528,8 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
         "session.subagent" => subagent_method(ctx, req.params).await,
         "station.native_sessions" => intake_native::sessions(ctx, req.params).await,
         "station.native_preview" => intake_native::preview(ctx, req.params).await,
-        "desktop.info" => intake_desktop::info(ctx).await,
-        "desktop.act" => intake_desktop::act(ctx, req.params).await,
+        "desktop.info" => intake_desktop::info(ctx, req.params).await,
+        "desktop.act" => intake_desktop::act(ctx, control, req.params).await,
         "session.branches" | "files.branch_diff" => {
             branch_method(ctx, &req.method, req.params).await
         }

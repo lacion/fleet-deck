@@ -25,6 +25,7 @@
 pub mod admission;
 pub mod control;
 pub mod data;
+pub mod desktop_authority;
 pub mod epochs;
 pub mod grants;
 mod handshake;
@@ -54,7 +55,7 @@ pub mod ws;
 pub use control::{Control, ControlConfig, GrantSource, Grants, Inbound};
 pub use data::{Data, DataEvent};
 pub use epochs::{Epochs, LINK_EPOCHS_SQL};
-pub use handshake::Established;
+pub use handshake::{DesktopEpochs, Established};
 pub use join::pair;
 pub use live::{DataLink, LiveLink, start};
 pub use node::{LinkListener, ListenerKind, NodeConfig, OpenLink, TailnetLimits, dial, listen};

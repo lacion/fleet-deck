@@ -147,6 +147,8 @@ pub struct RunningDeck {
     server: tokio::task::JoinHandle<()>,
     /// The automations scheduler (R5, DL-168).
     scheduler: tokio::task::JoinHandle<()>,
+    /// The wake rule of the wall (R13 §6.6).
+    wake: tokio::task::JoinHandle<()>,
     /// The audit log prune (NV-11).
     maintenance: tokio::task::JoinHandle<()>,
     /// The sweep of the grants that ended (grant stations design §2.3).
@@ -357,6 +359,7 @@ impl RunningDeck {
             "deck ready"
         );
         let cert_live = live_cell.clone();
+        let wake_live = live_cell.clone();
         // The same origins and resolver as the board's endpoints.
         let local_endpoints = Arc::new(Endpoints::new(
             Origins::new(&board.addrs, tailnet.as_deref()).list(),
@@ -393,6 +396,12 @@ impl RunningDeck {
             },
             rx.clone(),
         );
+        let wake = crate::wake::spawn(
+            store.clone(),
+            Arc::clone(node.link()),
+            wake_live,
+            rx.clone(),
+        );
         let scheduler = crate::scheduler::spawn(store.clone(), Arc::clone(node.link()), rx);
         Ok(Self {
             node,
@@ -403,6 +412,7 @@ impl RunningDeck {
             tailnet_start,
             server,
             scheduler,
+            wake,
             maintenance,
             grant_sweep,
             cert,
@@ -432,6 +442,7 @@ impl RunningDeck {
         let _ = self.shutdown.send(true);
         let _ = self.server.await;
         let _ = self.scheduler.await;
+        let _ = self.wake.await;
         let _ = self.maintenance.await;
         let _ = self.grant_sweep.await;
         self.cert.join().await;

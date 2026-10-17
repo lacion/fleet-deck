@@ -127,6 +127,15 @@ pub mod feature {
     /// §6, DL-201).
     pub const DESKTOP: &str = "desktop.v1";
 
+    /// `desktop.act` with an `authority` param: the deck authorizes each
+    /// desktop action, the station checks it right before the first side
+    /// effect (R13 §5E item 1, §5F, §5G).
+    pub const DESKTOP_AUTHORITY: &str = "desktop_authority.v1";
+
+    /// `files.display_changes`: protected change statistics and patches for
+    /// a wall display (R13 §5D item 13).
+    pub const DISPLAY_CHANGES: &str = "display_changes.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -162,6 +171,8 @@ pub mod feature {
         PAIR_REQUEST,
         SHELL_COMMAND,
         DESKTOP,
+        DESKTOP_AUTHORITY,
+        DISPLAY_CHANGES,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];
