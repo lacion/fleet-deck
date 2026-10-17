@@ -40,6 +40,8 @@ mod deck_cfg;
 pub use deck_cfg::CloneTransport;
 #[path = "config_fleet.rs"]
 mod fleet_cfg;
+#[path = "config_fleet_git.rs"]
+mod fleet_git_cfg;
 #[path = "config_tailnet.rs"]
 mod tailnet_cfg;
 pub(crate) use tailnet_cfg::valid_dns_name;
@@ -275,6 +277,17 @@ pub struct StationConfig {
     pub model_help: ModelHelpConfig,
     /// `tailscale_bin`: the absolute path of the program, or `None`: look it up.
     pub tailscale_bin: Option<PathBuf>,
+    /// `clone_root`: where Fleet Git clones new project homes. `None`: the
+    /// first allowed root + `/projects` (FG-5).
+    pub clone_root: Option<PathBuf>,
+    /// `traits`: the labels that a start can require (FG-6).
+    pub traits: Vec<String>,
+    /// `allow_check_cmd`: a project may run its check command here (FG-8).
+    pub allow_check_cmd: bool,
+    /// `allow_local_remotes`: a local bare repository can be a remote (FG-5).
+    pub allow_local_remotes: bool,
+    /// `[taildrive_mounts]`: `<machine>/<share>` to the mount folder (FG-12).
+    pub taildrive_mounts: BTreeMap<String, PathBuf>,
 }
 
 impl StationConfig {
@@ -406,6 +419,17 @@ impl StationConfig {
             None => ModelHelpConfig::default(),
         };
         let tailscale_bin = tailnet_cfg::parse_station(raw.tailscale_bin, home)?;
+        let fleet_git = fleet_git_cfg::parse(
+            fleet_git_cfg::RawFleetGit {
+                clone_root: raw.clone_root,
+                traits: raw.traits,
+                allow_check_cmd: raw.allow_check_cmd,
+                allow_local_remotes: raw.allow_local_remotes,
+                taildrive_mounts: raw.taildrive_mounts,
+            },
+            home,
+            &allowed_roots,
+        )?;
         Ok(Self {
             name,
             allowed_roots,
@@ -427,6 +451,11 @@ impl StationConfig {
             member_deny,
             model_help,
             tailscale_bin,
+            clone_root: fleet_git.clone_root,
+            traits: fleet_git.traits,
+            allow_check_cmd: fleet_git.allow_check_cmd,
+            allow_local_remotes: fleet_git.allow_local_remotes,
+            taildrive_mounts: fleet_git.taildrive_mounts,
         })
     }
 

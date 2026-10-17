@@ -303,3 +303,175 @@ fn a_link_without_fleet_git_pauses_the_loops_until_it_ends() {
     drop(guard);
     assert!(!flag.load(Ordering::Acquire));
 }
+
+// ---- home attempts and `station.info` (FG-5, FG-6, FG-11)
+
+use fleetdeck_core::config::StationConfig;
+use fleetdeck_core::paths::Env;
+use fleetdeck_proto::fleet_git::{ConfigDigest, DigestItem, DriftItem, HomeAttemptState};
+
+use crate::fleet_git_runtime::FleetGitRuntime;
+use crate::store::home_attempts::{BeginHome, HomeOutcome, NewHomeAttempt};
+
+impl Rig {
+    async fn snapshot(&self, revision: u64, homes: &[(&str, u64)]) -> SnapshotAck {
+        let homes = homes
+            .iter()
+            .map(|(id, generation)| StationHome {
+                project_id: (*id).to_owned(),
+                generation: *generation,
+                path: format!("/h/{id}"),
+                sync: false,
+            })
+            .collect();
+        let snapshot = GitSnapshot {
+            revision,
+            projects: Vec::new(),
+            homes,
+        };
+        let params = serde_json::to_value(snapshot).unwrap();
+        match projects_set(&self.manager, params).await {
+            Outcome::Ok(value) => serde_json::from_value(value).unwrap(),
+            Outcome::Err(e) => panic!("{e:?}"),
+        }
+    }
+
+    fn new_attempt(&self, id: &str, project: &str, generation: u64) -> NewHomeAttempt {
+        NewHomeAttempt {
+            attempt_id: id.to_owned(),
+            project_id: project.to_owned(),
+            generation,
+            request_digest: "d".to_owned(),
+            retry_of: None,
+            dest_path: self.root.join(id).display().to_string(),
+            url: "https://h/acme/app.git".to_owned(),
+            remote_name: "origin".to_owned(),
+        }
+    }
+
+    async fn attempt(&self, id: &str, project: &str, generation: u64, state: HomeAttemptState) {
+        let store = self.manager.store();
+        let new = self.new_attempt(id, project, generation);
+        assert!(matches!(
+            store.home_begin(new).await.unwrap(),
+            BeginHome::Created(_)
+        ));
+        let outcome = HomeOutcome {
+            state,
+            path: Some("/p".to_owned()),
+            dev: None,
+            ino: None,
+            code: None,
+            message: None,
+        };
+        store.home_finish(id.to_owned(), outcome).await.unwrap();
+    }
+
+    async fn superseded(&self, project: &str, id: &str) -> bool {
+        let row = self
+            .manager
+            .store()
+            .home_attempt(project.to_owned(), id.to_owned())
+            .await
+            .unwrap()
+            .unwrap();
+        row.superseded
+    }
+}
+
+#[tokio::test]
+async fn a_snapshot_supersedes_the_attempts_of_a_removed_or_older_home() {
+    let Some(rig) = Rig::new().await else { return };
+    rig.attempt("a1", "p1", 1, HomeAttemptState::Ready).await;
+    rig.attempt("a2", "p2", 1, HomeAttemptState::Failed).await;
+    rig.attempt("a3", "p3", 1, HomeAttemptState::Adopted).await;
+    // The same generation is current; a project that is absent is not.
+    rig.snapshot(1, &[("p1", 1), ("p3", 1)]).await;
+    assert!(!rig.superseded("p1", "a1").await);
+    assert!(rig.superseded("p2", "a2").await);
+    assert!(!rig.superseded("p3", "a3").await);
+    // A higher generation supersedes the older attempt.
+    rig.snapshot(2, &[("p1", 2), ("p3", 1)]).await;
+    assert!(rig.superseded("p1", "a1").await);
+    assert!(!rig.superseded("p3", "a3").await);
+}
+
+#[tokio::test]
+async fn a_repeated_snapshot_supersedes_too() {
+    let Some(rig) = Rig::new().await else { return };
+    let first = rig.snapshot(5, &[("p1", 1)]).await;
+    assert!(first.stored);
+    rig.attempt("a1", "p9", 1, HomeAttemptState::Ready).await;
+    // The same revision and digest is a retry (`Same`).
+    let again = rig.snapshot(5, &[("p1", 1)]).await;
+    assert!(again.stored);
+    assert!(rig.superseded("p9", "a1").await);
+}
+
+#[tokio::test]
+async fn a_cloning_attempt_is_never_superseded() {
+    let Some(rig) = Rig::new().await else { return };
+    let new = rig.new_attempt("c1", "p1", 1);
+    rig.manager.store().home_begin(new).await.unwrap();
+    rig.snapshot(1, &[]).await;
+    assert!(!rig.superseded("p1", "c1").await);
+}
+
+fn config(text: &str) -> StationConfig {
+    let env = Env {
+        home: Some("/home/t".into()),
+        ..Env::default()
+    };
+    StationConfig::parse(text, &env).unwrap()
+}
+
+#[tokio::test]
+async fn station_info_carries_traits_config_and_the_fleet_git_part() {
+    let Some(rig) = Rig::new().await else { return };
+    let cfg = config(&format!(
+        "allowed_roots = [\"{}\"]\ntraits = [\"gpu\"]\nallow_check_cmd = true\nallow_local_remotes = true\n",
+        rig.root.display()
+    ));
+    let policy = Arc::new(Policy::from_config(&cfg));
+    let runtime = Arc::new(FleetGitRuntime::new(Arc::new(
+        crate::workspace::GitOptions::isolated,
+    )));
+    // The digest is `None` until the drift task wrote the first one.
+    assert_eq!(runtime.config(), None);
+    let digest = ConfigDigest {
+        claude_version: Some("2.1.0".to_owned()),
+        codex_version: None,
+        items: vec![DigestItem {
+            name: DriftItem::ClaudeMd,
+            hash: "absent".to_owned(),
+        }],
+        computed_at: 7,
+    };
+    runtime.set_config(digest.clone());
+    assert_eq!(runtime.config(), Some(digest));
+
+    let traits = super::traits(&runtime, &policy).await.unwrap();
+    assert_eq!(traits.os, std::env::consts::OS);
+    assert_eq!(traits.arch, std::env::consts::ARCH);
+    assert_eq!(traits.labels, ["gpu"]);
+
+    let info = super::info(&runtime, &policy).await;
+    assert_eq!(
+        info.clone_root,
+        rig.root.join("projects").display().to_string()
+    );
+    assert!(info.allow_check_cmd);
+    assert!(info.allow_local_remotes, "from the station.toml key");
+    assert!(
+        info.git_version
+            .is_some_and(|v| v.starts_with(|c: char| c.is_ascii_digit()))
+    );
+
+    // A policy with the key off and the bridge on reports true too (`serve`
+    // makes the OR); with both off it reports false.
+    let bridged = Arc::new(Policy::from_config(&config("")).with_allow_local_remotes(true));
+    assert!(super::info(&runtime, &bridged).await.allow_local_remotes);
+    let closed = Arc::new(Policy::from_config(&config("")));
+    let info = super::info(&runtime, &closed).await;
+    assert!(!info.allow_local_remotes && !info.allow_check_cmd);
+}

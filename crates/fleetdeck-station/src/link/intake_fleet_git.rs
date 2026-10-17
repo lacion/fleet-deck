@@ -5,15 +5,19 @@
 use std::path::Path;
 
 use fleetdeck_proto::fleet_git::{
-    GitProjectView, GitSnapshot, HomeCheck, HomeCheckState, PushNowAnswer, PushNowParams,
-    SnapshotAck, code,
+    EnsureHomeParams, GitProjectView, GitSnapshot, HomeCheck, HomeCheckState, HomeStatusParams,
+    PushNowAnswer, PushNowParams, SnapshotAck, code,
 };
 use fleetdeck_proto::link::{Outcome, WireError};
 
+use super::StationLink;
 use super::{bad_params, internal, ok};
+use crate::fleet_git_runtime::FleetGitRuntime;
 use crate::manager::SessionManager;
 use crate::manager::policy::{Policy, WorkspaceError};
+use crate::store::Store;
 use crate::store::git_state::SnapshotResult;
+use crate::store::home_attempts::HomeRefusal;
 use crate::workspace::GitOptions;
 use crate::workspace::fleet_git::check_home;
 
@@ -97,6 +101,11 @@ pub(super) async fn projects_set(manager: &SessionManager, params: serde_json::V
         Err(e) => return internal(e),
     };
     let store = manager.store();
+    let homes: Vec<(String, u64)> = snapshot
+        .homes
+        .iter()
+        .map(|h| (h.project_id.clone(), h.generation))
+        .collect();
     let stale = |revision| {
         ok(SnapshotAck {
             stored: false,
@@ -110,6 +119,9 @@ pub(super) async fn projects_set(manager: &SessionManager, params: serde_json::V
     {
         Ok(Some(SnapshotResult::Stale { revision })) => return stale(revision),
         Ok(Some(SnapshotResult::Same)) => {
+            if let Err(e) = supersede(store, homes).await {
+                return internal(e);
+            }
             return match store.git_project_checks().await {
                 Ok(checks) => ok(SnapshotAck {
                     stored: true,
@@ -136,13 +148,90 @@ pub(super) async fn projects_set(manager: &SessionManager, params: serde_json::V
         .git_apply_snapshot(snapshot, digest, checks.clone())
         .await
     {
-        Ok(SnapshotResult::Stored | SnapshotResult::Same) => ok(SnapshotAck {
-            stored: true,
-            revision,
-            checks,
-        }),
+        Ok(SnapshotResult::Stored | SnapshotResult::Same) => {
+            if let Err(e) = supersede(store, homes).await {
+                return internal(e);
+            }
+            ok(SnapshotAck {
+                stored: true,
+                revision,
+                checks,
+            })
+        }
         Ok(SnapshotResult::Stale { revision }) => stale(revision),
         Err(e) => internal(e),
+    }
+}
+
+/// The `traits` of `station.info` (design §9.1). The read may run `pmset`, so
+/// it runs on a blocking thread. `None` only when that thread failed.
+pub(super) async fn traits(
+    runtime: &std::sync::Arc<FleetGitRuntime>,
+    policy: &std::sync::Arc<Policy>,
+) -> Option<fleetdeck_proto::fleet_git::StationTraits> {
+    let runtime = std::sync::Arc::clone(runtime);
+    let policy = std::sync::Arc::clone(policy);
+    match tokio::task::spawn_blocking(move || runtime.traits(&policy)).await {
+        Ok(traits) => Some(traits),
+        Err(e) => {
+            tracing::warn!(error = %e, "the station traits failed");
+            None
+        }
+    }
+}
+
+/// The `fleet_git` part of `station.info` (design §3.7).
+pub(super) async fn info(
+    runtime: &FleetGitRuntime,
+    policy: &Policy,
+) -> fleetdeck_proto::fleet_git::FleetGitInfo {
+    let options = runtime.provision_options();
+    fleetdeck_proto::fleet_git::FleetGitInfo {
+        clone_root: policy.clone_root().to_string_lossy().into_owned(),
+        allow_check_cmd: policy.allow_check_cmd(),
+        git_version: crate::workspace::fleet_git::git_version(&options).await,
+        allow_local_remotes: policy.allow_local_remotes(),
+    }
+}
+
+/// The invalidation of the home attempts that the snapshot no longer names
+/// or names with a higher generation (design §8.4, FG-5). No file is deleted.
+async fn supersede(
+    store: &Store,
+    homes: Vec<(String, u64)>,
+) -> Result<(), crate::store::StoreError> {
+    store.home_supersede(homes).await.map(|_| ())
+}
+
+fn refusal(r: HomeRefusal) -> Outcome {
+    Outcome::Err(WireError::new(r.code, r.text))
+}
+
+/// `project.ensure_home` (design §8.4): the stored status of the attempt.
+pub(super) async fn ensure_home(ctx: &StationLink, params: serde_json::Value) -> Outcome {
+    let params: EnsureHomeParams = match serde_json::from_value(params) {
+        Ok(p) => p,
+        Err(e) => return bad_params(e),
+    };
+    let store = ctx.manager.store();
+    let options = ctx.fleet_git.provision_options();
+    match crate::workspace::fleet_git::ensure_home(store, ctx.manager.policy(), options, params)
+        .await
+    {
+        Ok(status) => ok(status),
+        Err(r) => refusal(r),
+    }
+}
+
+/// `project.home_status` (design §8.4): error code `unknown_attempt`.
+pub(super) async fn home_status(ctx: &StationLink, params: serde_json::Value) -> Outcome {
+    let params: HomeStatusParams = match serde_json::from_value(params) {
+        Ok(p) => p,
+        Err(e) => return bad_params(e),
+    };
+    match crate::workspace::fleet_git::home_status(ctx.manager.store(), params).await {
+        Ok(status) => ok(status),
+        Err(r) => refusal(r),
     }
 }
 

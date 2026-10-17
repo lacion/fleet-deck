@@ -33,12 +33,14 @@ fn sample(f: &FieldMeta) -> String {
         FieldKind::Text if f.key == "tailscale_bin" => "\"/usr/bin/tailscale\"".to_owned(),
         FieldKind::Text if f.key == "clone_host" => "\"git.example.com\"".to_owned(),
         FieldKind::Text if f.key == "offline_approval_policy" => "\"wait\"".to_owned(),
+        FieldKind::Path if f.key == "clone_root" => "\"/home/t/projects\"".to_owned(),
         FieldKind::Text | FieldKind::Path => "\"x\"".to_owned(),
         FieldKind::Enum => format!("{:?}", f.options[0]),
         FieldKind::Paths => "[\"/tmp\"]".to_owned(),
         FieldKind::Addresses => "[\"127.0.0.1:7420\"]".to_owned(),
         FieldKind::Texts | FieldKind::Instances | FieldKind::Trackers => "[]".to_owned(),
         FieldKind::RepoGroups => "{}".to_owned(),
+        FieldKind::ShareMounts => "{ \"nas/out\" = \"/mnt/out\" }".to_owned(),
     }
 }
 
@@ -228,4 +230,75 @@ fn a_reference_needs_the_store() {
     assert!(plain.contains("secret store"), "{plain}");
     let missing = fx.load().unwrap_err().to_string();
     assert!(missing.contains("`x`"), "{missing}");
+}
+
+#[test]
+fn the_fleet_git_keys_are_restart_keys_and_two_are_danger() {
+    let fields = station_fields();
+    let get = |k: &str| fields.iter().find(|f| f.key == k).unwrap().clone();
+    for key in [
+        "clone_root",
+        "traits",
+        "allow_check_cmd",
+        "allow_local_remotes",
+        "taildrive_mounts",
+    ] {
+        let f = get(key);
+        assert_eq!(f.apply, fleetdeck_proto::settings::Apply::Restart, "{key}");
+        assert!(!f.read_only && !f.secret && !f.hidden, "{key}");
+    }
+    assert_eq!(get("clone_root").kind, FieldKind::Path);
+    assert_eq!(get("clone_root").label, "Clone folder");
+    assert_eq!(get("traits").kind, FieldKind::Texts);
+    assert_eq!(get("taildrive_mounts").kind, FieldKind::ShareMounts);
+    assert!(get("allow_check_cmd").danger && get("allow_local_remotes").danger);
+    assert!(!get("clone_root").danger && !get("traits").danger && !get("taildrive_mounts").danger);
+}
+
+#[test]
+fn the_fleet_git_values_save_and_show_in_the_view() {
+    use crate::settings::danger_keys;
+    let fx = Fixture::new(Some("allowed_roots = [\"/tmp\"]\n"));
+    let w = fx.writer();
+    let change = fx.change(json!({
+        "clone_root": "/tmp/projects",
+        "traits": ["gpu", "always_on"],
+        "allow_check_cmd": true,
+        "taildrive_mounts": { "nas/out": "/mnt/out" },
+    }));
+    let ok_prepare = |_: &crate::config::StationConfig| Ok::<(), (String, String)>(());
+    w.save(&change, true, ok_prepare).unwrap();
+    let text = fx.text();
+    assert!(text.contains("[taildrive_mounts]"), "{text}");
+    assert!(text.contains("\"nas/out\" = \"/mnt/out\""), "{text}");
+    let view = view_station(&fx.config, &fx.env, &fx.store, &[]).unwrap();
+    assert_eq!(view.values["clone_root"], json!("/tmp/projects"));
+    assert_eq!(view.values["traits"], json!(["gpu", "always_on"]));
+    assert_eq!(view.values["allow_check_cmd"], json!(true));
+    assert_eq!(view.values["allow_local_remotes"], json!(false));
+    assert_eq!(
+        view.values["taildrive_mounts"],
+        json!({ "nas/out": "/mnt/out" })
+    );
+    // An unset clone_root shows the empty text.
+    let none = Fixture::new(None);
+    let view = view_station(&none.config, &none.env, &none.store, &[]).unwrap();
+    assert_eq!(view.values["clone_root"], json!(""));
+    assert_eq!(view.values["taildrive_mounts"], json!({}));
+    // A bad value names its key, not the entry.
+    let bad = fx.change(json!({ "taildrive_mounts": { "NAS/out": "/m" } }));
+    let err = w.save(&bad, true, ok_prepare).unwrap_err();
+    assert!(err.to_string().contains("taildrive_mounts"), "{err}");
+    // Turning a danger key on needs elevation; the old file and a new one differ.
+    let old = crate::config::StationConfig::parse("", &fx.env).unwrap();
+    let new = crate::config::StationConfig::parse(
+        "allow_check_cmd = true\nallow_local_remotes = true\n",
+        &fx.env,
+    )
+    .unwrap();
+    assert_eq!(
+        danger_keys::<crate::settings::StationHolder>(&old, &new),
+        ["allow_check_cmd", "allow_local_remotes"]
+    );
+    assert!(danger_keys::<crate::settings::StationHolder>(&new, &old).is_empty());
 }

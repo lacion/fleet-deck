@@ -21,6 +21,12 @@ pub mod coordinator;
 
 pub mod fault;
 
+/// The config drift report (FG-11).
+pub mod drift;
+
+/// The runtime state of Fleet Git: traits, config digest, deck control (FG-5, FG-6, FG-11).
+pub mod fleet_git_runtime;
+
 /// The session history from the captured transcript (DL-189).
 pub mod history;
 
@@ -51,6 +57,9 @@ pub mod settings_svc;
 pub mod shell;
 
 pub mod store;
+
+/// The traits of the station for placement (FG-6).
+pub mod traits;
 
 /// Station self-upgrade: snapshot, trial, launcher, rollback (M3 7-3).
 pub mod upgrade;
