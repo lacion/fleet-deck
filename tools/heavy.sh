@@ -12,11 +12,11 @@
 #    tables only (CARGO_PROFILE_DEV_DEBUG), as in Cargo.toml, also for older
 #    worktrees without those lines, unless the environment sets them. The
 #    dependencies keep `debug = false` from Cargo.toml.
-# 4. CPU and memory, from this machine at every run (the owner asked for a
-#    machine that stays usable while agents build, 2026-10-18):
-#      build jobs      = max(2, cores / 4)          (CARGO_BUILD_JOBS)
-#      test threads    = max(2, cores / 8)          (NEXTEST_TEST_THREADS)
-#      CPU quota       = build jobs x 100 % for the whole slice (25 % of the
+# 4. CPU and memory, from this machine at every run (the owner keeps 20 % of
+#    the machine for the system, 2026-10-18):
+#      build jobs      = max(2, cores x 4 / 5)      (CARGO_BUILD_JOBS)
+#      test threads    = max(2, cores / 4)          (NEXTEST_TEST_THREADS)
+#      CPU quota       = build jobs x 100 % for the whole slice (80 % of the
 #                        machine), priority nice 19
 #      memory          = soft: total - max(8 GiB, 20 %), hard: total - max(6 GiB, 15 %)
 #    With a systemd user manager (Linux, WSL2) the command runs in the shared
@@ -50,9 +50,9 @@ if [ -n "$free_kib" ] && [ "$free_kib" -lt $((min_free_gb * 1024 * 1024)) ]; the
 fi
 
 cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
-jobs=$((cores / 4))
+jobs=$((cores * 4 / 5))
 [ "$jobs" -lt 2 ] && jobs=2
-threads=$((cores / 8))
+threads=$((cores / 4))
 [ "$threads" -lt 2 ] && threads=2
 # An explicit value in the environment wins.
 CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-$jobs}
