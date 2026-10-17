@@ -3123,3 +3123,15 @@ Owner review: pending.
 - Decision (architect): the two texts are corrected (a pre-commit state `launch_refused`; the expected state by move kind: `imported` native, `staged` branch-only). The design is accepted for FG-1 to FG-8 and FG-10 to FG-12, whose sections have no open finding, and Phases 1-3 proceed. FG-9 (Phase 4, session move) is not built until the owner decides (accept the corrected §12, or ask for a 4th review round).
 - Next: Phase 1 (FG-1 to FG-4). The owner can reverse this decision in the morning; nothing of FG-9 is built before then.
 
+
+## DL-228: Git hooks stay disabled for every Fleet Git command (architect, 2026-10-18)
+
+- Context: design `docs/v2/design/fleet-git.md` §2.3 (O3) asks for this entry. Fleet Git adds station Git commands that write to remotes (push, land), and a repository hook would run code of the repository on the station.
+- Decision: Git hooks stay disabled for every station Git command, also for push (`core.hooksPath=/dev/null` through the one Git runner); a project that needs a pre-push check uses `check_cmd` of the land flow (FG-8). `docs/v2/operations.md` §13 says the same.
+- Next: none.
+
+## DL-229: Fleet Git build decisions that change the design text (architect, 2026-10-17/18)
+
+- Context: the workers' question rounds of Phases 2-4 found points that the accepted design does not settle or that the code cannot do as written. The full records are in the architect's brief folder (`fg-t2-decisions.md`, `fg-t3-decisions.md` and the verbatim `fg-*-round1-questions.md`).
+- Decision (the ones that change a design text): the `ensure_home` request digest has no station id and no destination (one shared function in core); a rebind of a project without sync keeps its homes `ready`; `fleet_git.artifact_authorize` is scope `admin` (a paired station holds only `admin`, DL-050); `fleet_git.land_status` answers the stored run also for a fenced land (ADR-009 aligned); the deck computes the default radar home and sends it in the snapshot; forge requests use 30 s (`exec::Spec.timeout`); the station answers `project.branches` within 18 s (the deck waits 20 s); `RemoteBranch.at` and `fetched_at` are Unix milliseconds; the coordinator land commits with its receipt in one transaction.
+- Next: the adversary PRE-PR review of `fleet-git` against `v2`.
