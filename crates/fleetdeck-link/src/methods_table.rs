@@ -42,6 +42,12 @@ const fn shell_row(name: &'static str, callers: Callers, scope: Scope) -> Method
     m(name, callers, scope, Some(feature::DESKTOP_SHELL), false)
 }
 
+/// A deck-to-station `admin` row of R13 P5a: never mutating at the link
+/// (the deck keeps its own durable record).
+const fn p5a_row(name: &'static str, feature: &'static str) -> MethodSpec {
+    m(name, DeckToStation, Scope::Admin, Some(feature), false)
+}
+
 use Callers::{DeckToStation, Either, StationToDeck};
 
 /// Method table v1 (Revision 2).
@@ -629,6 +635,9 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::DESKTOP_AUTHORITY),
         false,
     ),
+    // R13 P5a: the screenshot result lookup and artifact deletion.
+    p5a_row("desktop.capture_status", feature::DESKTOP_CAPTURE),
+    p5a_row("artifacts.delete", feature::ARTIFACTS_DELETE),
     // Protected change statistics and patches for a wall display (R13 §5D).
     m(
         "files.display_changes",

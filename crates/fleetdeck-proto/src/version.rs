@@ -166,6 +166,12 @@ pub mod feature {
     /// shell (R13 P4, D1).
     pub const DESKTOP_SHELL: &str = "desktop_shell.v1";
 
+    /// R13 P5a: owner screenshot and its result lookup.
+    pub const DESKTOP_CAPTURE: &str = "desktop_capture.v1";
+
+    /// R13 P5a: station artifact deletion.
+    pub const ARTIFACTS_DELETE: &str = "artifacts_delete.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -209,6 +215,8 @@ pub mod feature {
         DESKTOP_AUTHORITY,
         DISPLAY_CHANGES,
         DESKTOP_SHELL,
+        DESKTOP_CAPTURE,
+        ARTIFACTS_DELETE,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

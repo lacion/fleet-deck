@@ -24,6 +24,13 @@ fn gate(ctx: &StationLink) -> impl Fn() -> bool + Send + Sync + use<> {
     move || manager.policy().allow_desktop()
 }
 
+/// The live P5a gates in the info that leaves the station (P5a-2).
+fn stamp(ctx: &StationLink, info: &mut DesktopInfo) {
+    let policy = ctx.manager.policy();
+    info.allowed.capture = policy.allow_desktop() && policy.allow_desktop_capture();
+    info.allowed.capture_monitors = policy.capture_monitors().to_vec();
+}
+
 /// `desktop.info`.
 pub(super) async fn info(ctx: &StationLink, params: serde_json::Value) -> Outcome {
     let query: DesktopInfoQuery = match serde_json::from_value(params) {
@@ -39,12 +46,18 @@ pub(super) async fn info(ctx: &StationLink, params: serde_json::Value) -> Outcom
     if query.fresh {
         // The station reads everything again and ignores its 10 s cache.
         return match desktop::service().info_fresh(&allowed).await {
-            Ok(info) => ok(info),
+            Ok(mut info) => {
+                stamp(ctx, &mut info);
+                ok(info)
+            }
             Err(e) => failed(e),
         };
     }
     match desktop::service().info(&allowed).await {
-        Ok(info) => ok(info),
+        Ok(mut info) => {
+            stamp(ctx, &mut info);
+            ok(info)
+        }
         Err(e) => failed(e),
     }
 }
@@ -73,7 +86,10 @@ pub(super) async fn act(
     };
     let allowed = gate(ctx);
     match desktop::service().act(&allowed, action, admitted).await {
-        Ok(result) => ok(result),
+        Ok(mut result) => {
+            stamp(ctx, &mut result.info);
+            ok(result)
+        }
         Err(e) => failed(e),
     }
 }
@@ -83,7 +99,10 @@ pub(super) async fn act(
 pub(super) async fn station_info(ctx: &StationLink) -> Option<DesktopInfo> {
     let allowed = gate(ctx);
     match desktop::service().info(&allowed).await {
-        Ok(info) => Some(info),
+        Ok(mut info) => {
+            stamp(ctx, &mut info);
+            Some(info)
+        }
         Err(e) => {
             tracing::debug!(code = e.code, "station.info has no desktop");
             None

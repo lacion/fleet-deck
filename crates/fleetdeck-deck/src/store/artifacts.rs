@@ -293,6 +293,7 @@ impl DeckStore {
                         sha256,
                         files: serde_json::from_str(&files)?,
                         created_at,
+                        capture: None,
                     })
                 })
                 .collect()

@@ -156,6 +156,7 @@ pub async fn get(
                     sha256: String::new(),
                     files: Vec::new(),
                     created_at: 0,
+                    capture: None,
                 })
         })
         .collect();

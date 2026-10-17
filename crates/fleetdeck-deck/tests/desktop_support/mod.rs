@@ -42,6 +42,7 @@ pub fn info() -> DesktopInfo {
         allowed: DesktopAllowed {
             desktop: true,
             capture: false,
+            capture_monitors: Vec::new(),
             input: false,
         },
         tools: DesktopTools {
@@ -54,6 +55,7 @@ pub fn info() -> DesktopInfo {
         },
         utc_offset_minutes: Some(120),
         offset_sampled_at: Some(1),
+        features: Vec::new(),
     }
 }
 

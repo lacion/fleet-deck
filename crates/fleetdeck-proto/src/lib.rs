@@ -13,6 +13,7 @@ pub mod automation;
 pub mod board;
 pub mod branches;
 pub mod capability;
+pub mod capture;
 pub mod command;
 pub mod conflicts;
 pub mod desktop;

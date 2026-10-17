@@ -39,6 +39,8 @@ mod deck_cfg;
 #[cfg(test)]
 pub(crate) use deck_cfg::RAW_DECK_KEYS;
 pub use deck_cfg::{CloneTransport, DeckConfig};
+#[path = "config_capture.rs"]
+mod capture_cfg;
 #[path = "config_fleet.rs"]
 mod fleet_cfg;
 #[path = "config_fleet_git.rs"]
@@ -249,6 +251,10 @@ pub struct StationConfig {
     /// `allow_fleet_control`: coordinators with a fleet-control grant may act here (ADR-008).
     pub allow_fleet_control: bool,
     pub allow_desktop: bool,
+    /// `allow_desktop_capture`: the owner may take screenshots from the board (R13 P5a).
+    pub allow_desktop_capture: bool,
+    /// `capture_monitors`: the monitors that a screenshot may capture; empty means every monitor (R13 P5a).
+    pub capture_monitors: Vec<String>,
     /// `fleet_summary`: the deck may send the fleet summary to this station for the desktop shell (R13 P4).
     pub fleet_summary: bool,
     pub max_shells: u32,
@@ -421,6 +427,7 @@ impl StationConfig {
             Some(raw) => raw.validate()?,
             None => ModelHelpConfig::default(),
         };
+        let capture_monitors = capture_cfg::capture_monitors(raw.capture_monitors)?;
         let tailscale_bin = tailnet_cfg::parse_station(raw.tailscale_bin, home)?;
         let fleet_git = fleet_git_cfg::parse(
             fleet_git_cfg::RawFleetGit {
@@ -442,6 +449,8 @@ impl StationConfig {
             allow_bypass_permissions: raw.allow_bypass_permissions.unwrap_or(false),
             allow_fleet_control: fleet_cfg::parse(raw.allow_fleet_control),
             allow_desktop: raw.allow_desktop.unwrap_or(false),
+            allow_desktop_capture: raw.allow_desktop_capture.unwrap_or(false),
+            capture_monitors,
             fleet_summary: raw.fleet_summary.unwrap_or(false),
             max_shells,
             offline_approval_policy,

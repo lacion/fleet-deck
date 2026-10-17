@@ -100,6 +100,11 @@ impl Holder for StationHolder {
         );
         m.insert("allow_fleet_control".into(), json!(c.allow_fleet_control));
         m.insert("allow_desktop".into(), json!(c.allow_desktop));
+        m.insert(
+            "allow_desktop_capture".into(),
+            json!(c.allow_desktop_capture),
+        );
+        m.insert("capture_monitors".into(), json!(c.capture_monitors));
         m.insert("fleet_summary".into(), json!(c.fleet_summary));
         m.insert("max_shells".into(), json!(c.max_shells));
         m.insert(
@@ -231,6 +236,19 @@ impl Holder for StationHolder {
             "allow_fleet_control",
         );
         add(!old.allow_desktop && new.allow_desktop, "allow_desktop");
+        add(
+            !old.allow_desktop_capture && new.allow_desktop_capture,
+            "allow_desktop_capture",
+        );
+        add(
+            !old.capture_monitors.is_empty()
+                && (new.capture_monitors.is_empty()
+                    || new
+                        .capture_monitors
+                        .iter()
+                        .any(|m| !old.capture_monitors.contains(m))),
+            "capture_monitors",
+        );
         add(!old.fleet_summary && new.fleet_summary, "fleet_summary");
         add(
             new.allowed_roots

@@ -151,6 +151,7 @@ fn version_of(r: &rusqlite::Row<'_>) -> rusqlite::Result<(ArtifactVersion, Strin
             sha256: r.get(3)?,
             files: Vec::new(),
             created_at: r.get(5)?,
+            capture: None,
         },
         files,
     ))
@@ -447,6 +448,7 @@ fn commit(
         sha256: main.sha256.clone(),
         files,
         created_at: now,
+        capture: None,
     };
     Ok((
         Committed {

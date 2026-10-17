@@ -183,11 +183,13 @@ pub async fn collect(env: &ChildEnv, found: &Found) -> Result<DesktopInfo, Fail>
         allowed: DesktopAllowed {
             desktop: false,
             capture: false,
+            capture_monitors: Vec::new(),
             input: false,
         },
         tools: tools(env),
         // The UTC offset of the station (`date +%z`) and when it was read.
         utc_offset_minutes: offset,
         offset_sampled_at: offset.map(|_| sampled_at),
+        features: Vec::new(),
     })
 }

@@ -19,9 +19,9 @@ pub fn target_monitor(action: &DesktopAction) -> Option<&str> {
         DesktopAction::ScreenPower { monitor, .. } | DesktopAction::BrowserOpen { monitor, .. } => {
             monitor.as_deref()
         }
-        DesktopAction::WorkspaceShow { monitor, .. } | DesktopAction::WallOpen { monitor, .. } => {
-            Some(monitor)
-        }
+        DesktopAction::WorkspaceShow { monitor, .. }
+        | DesktopAction::WallOpen { monitor, .. }
+        | DesktopAction::ScreenCapture { monitor } => Some(monitor),
         _ => None,
     }
 }
@@ -45,7 +45,9 @@ fn target_monitor_of(action: &serde_json::Value) -> serde_json::Value {
     // them for every variant.
     let name = action.get("action").and_then(|a| a.as_str());
     match name {
-        Some("screen_power" | "browser_open" | "workspace_show" | "wall_open") => action
+        Some(
+            "screen_power" | "browser_open" | "workspace_show" | "wall_open" | "screen_capture",
+        ) => action
             .get("monitor")
             .cloned()
             .unwrap_or(serde_json::Value::Null),
@@ -137,6 +139,9 @@ mod tests {
             },
             DesktopAction::WindowClose {
                 address: "0x1".into(),
+            },
+            DesktopAction::ScreenCapture {
+                monitor: "DP-1".into(),
             },
         ]
     }
