@@ -9,6 +9,7 @@
 //! 3. The pump of each session appends the adapter's events; provider
 //!    evidence in those events confirms the effects.
 
+mod adapters;
 pub mod auto_continue;
 pub(crate) mod binding_rotate;
 pub mod binding_start;
@@ -46,20 +47,16 @@ mod task_stop;
 pub mod trash;
 pub mod turns;
 pub mod workspaces;
+pub use adapters::{adapters_from_config, setup_envs_from_config};
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use fleetdeck_core::config::{Driver, StationConfig};
-use fleetdeck_core::{ChildEnv, SharedIds};
+use fleetdeck_core::SharedIds;
+use fleetdeck_core::config::StationConfig;
 use fleetdeck_proto::command::{CommandEnvelope, SessionCommand, StopMode};
 use fleetdeck_proto::link::StationProvider;
-use fleetdeck_providers::ProviderAdapter;
-use fleetdeck_providers::claude::{ClaudeAdapter, ClaudeAdapterConfig, RawLogSettings};
-use fleetdeck_providers::codex::{CodexAdapter, CodexAdapterConfig};
-use fleetdeck_providers::host::SessionHost;
-use fleetdeck_providers::rawlog::RawLogLimits;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
@@ -80,62 +77,6 @@ pub const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How often the manager applies the offline approval policy.
 pub const DENY_TICK: Duration = Duration::from_secs(1);
-
-/// Builds the adapters of the configured provider instances: one Claude or
-/// Codex adapter per instance, with the raw-frame log under `raw_root`.
-///
-/// # Errors
-/// An instance `env` table that cannot go into a child environment.
-pub fn adapters_from_config(
-    config: &StationConfig,
-    host: &Arc<dyn SessionHost>,
-    raw_root: Option<PathBuf>,
-) -> std::result::Result<Adapters, fleetdeck_core::childenv::ChildEnvError> {
-    let mut out = Adapters::new();
-    let raw_log = || {
-        raw_root.as_ref().map(|root| RawLogSettings {
-            root: root.clone(),
-            limits: RawLogLimits::default(),
-        })
-    };
-    for instance in &config.provider_instances {
-        let env = ChildEnv::for_instance(ChildEnv::from_process(), instance)?;
-        let adapter: Arc<dyn ProviderAdapter> = match instance.driver {
-            Driver::Claude => {
-                let mut cfg =
-                    ClaudeAdapterConfig::new(instance.id.clone(), instance.binary.clone(), env);
-                cfg.raw_log = raw_log();
-                cfg.allow_bypass = config.allow_bypass_permissions;
-                Arc::new(ClaudeAdapter::new(cfg, Arc::clone(host)))
-            }
-            Driver::Codex => {
-                let mut cfg =
-                    CodexAdapterConfig::new(instance.id.clone(), instance.binary.clone(), env);
-                cfg.raw_log = raw_log();
-                cfg.allow_full_access = config.allow_bypass_permissions;
-                Arc::new(CodexAdapter::new(cfg, Arc::clone(host)))
-            }
-        };
-        out.insert(instance.id.clone(), adapter);
-    }
-    Ok(out)
-}
-
-/// The environments of the setup commands: for each provider instance the
-/// same environment that its adapter gets (DL-148).
-///
-/// # Errors
-/// An instance `env` table that cannot go into a child environment.
-pub fn setup_envs_from_config(
-    config: &StationConfig,
-) -> std::result::Result<policy::SetupEnvs, fleetdeck_core::childenv::ChildEnvError> {
-    let mut out = policy::SetupEnvs::new();
-    for instance in &config.provider_instances {
-        let env = ChildEnv::for_instance(ChildEnv::from_process(), instance)?;
-        out.insert(instance.id.clone(), env);
-    }
-    Ok(out)
-}
 
 /// One station's session manager.
 pub struct SessionManager {

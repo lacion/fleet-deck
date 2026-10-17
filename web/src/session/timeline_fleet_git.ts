@@ -47,11 +47,14 @@ const KEPT: Readonly<Record<string, string>> = {
   detached: 'Kept: the worktree is not on a branch (detached HEAD).',
   branch_changed: 'Kept: the worktree is on another branch.',
   changed: 'Kept: the worktree changed after the cleanup checks.',
-  fetch_failed: 'Kept: the fetch failed.',
+  fetch_failed: 'Kept: the fetch failed; cleanup tries again later.',
   not_merged:
     'Kept: the branch is not merged. A squash merge is not detected; trash the worktree yourself.',
   dirty: 'Kept: the worktree has changes or new files.',
   not_pushed: 'Kept: the last commit is not pushed.',
+  no_default_branch: 'Kept: the default branch of the remote is unknown.',
+  scan_unknown: 'Kept: the worktree scan did not finish.',
+  git_too_old: 'Kept: Fleet Git needs Git 2.45 or newer on this station.',
 };
 
 /** The text of a failing push when the station sent none (§5.7). */
