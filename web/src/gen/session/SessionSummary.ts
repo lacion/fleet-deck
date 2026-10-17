@@ -7,6 +7,7 @@ import type { SessionState } from "../event/SessionState";
 import type { Usage } from "../event/Usage";
 import type { ArtifactsDir } from "../fleet_git/ArtifactsDir";
 import type { CleanupInfo } from "../fleet_git/CleanupInfo";
+import type { LandInfo } from "../fleet_git/LandInfo";
 import type { PushInfo } from "../fleet_git/PushInfo";
 import type { ProviderInstanceId } from "../ids/ProviderInstanceId";
 import type { RunId } from "../ids/RunId";
@@ -159,6 +160,10 @@ push?: PushInfo,
  * The cleanup state of the worktree, from `session.cleanup` (FG-3).
  */
 cleanup?: CleanupInfo, 
+/**
+ * The newest step of a land of the session, from `session.land` (FG-8).
+ */
+land?: LandInfo, 
 /**
  * The artifact folder of the session, from `artifacts.ready` and
  * `artifacts.revoked` (FG-12).

@@ -137,6 +137,11 @@ pub mod feature {
     /// ADR-009).
     pub const FLEET_GIT_HOMES: &str = "fleet_git.homes.v1";
 
+    /// `project.radar`, `session.land`, `fleet_git.land_status`,
+    /// `fleet_git.land_abandon` and the `session.land` event (Fleet Git
+    /// phase 3, ADR-009).
+    pub const FLEET_GIT_LAND: &str = "fleet_git.land.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -174,6 +179,7 @@ pub mod feature {
         DESKTOP,
         FLEET_GIT,
         FLEET_GIT_HOMES,
+        FLEET_GIT_LAND,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

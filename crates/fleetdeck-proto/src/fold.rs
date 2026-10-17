@@ -281,6 +281,7 @@ impl SessionSummary {
                     reason: reason.clone(),
                 });
             }
+            Event::SessionLand(info) => self.land = Some(info.as_ref().clone()),
             Event::ArtifactsReady { path, url } => {
                 self.artifacts_dir = Some(ArtifactsDir {
                     path: path.clone(),

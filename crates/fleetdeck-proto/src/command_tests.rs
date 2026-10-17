@@ -258,3 +258,25 @@ fn a_start_carries_fleet_git_only_when_set() {
         start
     );
 }
+
+#[test]
+fn a_land_command_has_the_op_land_and_the_session_land_method() {
+    let value = serde_json::json!({
+        "op": "land", "session_id": "s1", "land_id": "land-1",
+        "plan": {
+            "project_id": "p1", "settings_revision": 3, "home_generation": 1,
+            "mode": "pr", "fetch_remote": "origin",
+            "remote": {"repo": "github.com/o/r", "dest": "https://github.com:443/o/r"},
+            "branch_ref": "fd/o-r/ada", "publish_ref": "fd/o-r/ada",
+            "branch_target": {"target": "origin", "dest": "https://github.com:443/o/r"},
+            "forge": {"kind": "github", "host": "github.com", "repo": "o/r"},
+            "check_cmd": "make check", "check_env": {"A": "1"},
+            "pr_title": "t", "pr_body": "b"
+        }
+    });
+    let cmd: SessionCommand = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(cmd.method(), "session.land");
+    assert_eq!(cmd.session_id().map(SessionId::as_str), Some("s1"));
+    assert_eq!(serde_json::to_value(&cmd).unwrap(), value);
+    assert!(crate::mutation::SESSION_METHODS.contains(&"session.land"));
+}

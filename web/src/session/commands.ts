@@ -112,6 +112,7 @@ const METHODS: Record<SessionCommand['op'], string> = {
   reconcile_execution: 'session.reconcile_execution',
   shell_command: 'session.shell_command',
   release_shell: 'session.release_shell',
+  land: 'session.land',
 };
 
 /** A command id: `b` and 24 random base-36 characters (`[0-9A-Za-z_-]{1,64}`). */
