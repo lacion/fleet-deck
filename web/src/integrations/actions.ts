@@ -5,6 +5,7 @@ import type {
   CheckFailure,
   ChecksFailing,
   CommentBody,
+  FetchAnswer,
   FileConflict,
   GitSettingsAnswer,
   GitSettingsPut,
@@ -165,6 +166,37 @@ export type ProjectLands = {
   readonly recent: readonly LandRow[];
 };
 
+/** One branch of another station (FG-10, §13.1; the route's answer, decision Q8 of T4.4a). */
+export type OtherBranch = {
+  readonly name: string;
+  readonly slug?: string;
+  readonly callsign: string;
+  readonly head: string;
+  readonly ahead: number;
+  readonly behind: number;
+  /** The commit time of the tip, Unix milliseconds. */
+  readonly at: number;
+  readonly subject: string;
+  /** A `fd/<callsign>` branch of a session without sync. */
+  readonly legacy: boolean;
+  readonly station_id?: string;
+  readonly station_name?: string;
+  readonly session?: SessionRef;
+  readonly conflict: 'none' | 'will_conflict';
+  readonly files: readonly string[];
+};
+
+/** `GET /api/projects/{id}/branches` (FG-10). */
+export type OtherBranches = {
+  readonly remote: string;
+  readonly default_branch: string;
+  readonly default_oid?: string;
+  /** When the last fetch of the radar home ended, Unix milliseconds. */
+  readonly fetched_at?: number;
+  readonly truncated: boolean;
+  readonly branches: readonly OtherBranch[];
+};
+
 /** 202 of the land route. */
 export type LandStarted = { readonly land_id: string; readonly position: number };
 
@@ -225,6 +257,10 @@ export type IntegrationActions = {
   radar(): Promise<RadarAnswer | null>;
   /** FG-8 (§11.9): the land queue and the last ends of a project; `null` for an older deck. */
   projectLands(id: string): Promise<ProjectLands | null>;
+  /** FG-10 (§13.1): the branches of other stations; `null` for an older deck. */
+  projectBranches(id: string): Promise<OtherBranches | null>;
+  /** FG-10 (§13.1): fetches the remote on the radar home of the project. */
+  fetchProject(id: string): Promise<FetchAnswer>;
   /** FG-8 (§11.9): queues a land of the session. */
   land(station: string, session: string): Promise<LandStarted>;
   /** FG-8: cancels a queued land. */
@@ -485,6 +521,25 @@ export function integrationActions(
         if (missing(e)) return null;
         throw e;
       }
+    },
+    projectBranches: async (id) => {
+      try {
+        const v = shaped<OtherBranches>(
+          await io.get(`${projectPath(id)}/branches`),
+          ['branches'],
+          'branch list',
+        );
+        if (!Array.isArray(v.branches)) throw new Error('The deck sent an invalid branch list.');
+        return v;
+      } catch (e) {
+        if (missing(e)) return null;
+        throw e;
+      }
+    },
+    fetchProject: async (id) => {
+      const v = await io.post(`${projectPath(id)}/fetch`, {});
+      if (!record(v)) throw new Error('The deck sent an invalid fetch answer.');
+      return v as FetchAnswer;
     },
     land: async (station, session) =>
       shaped<LandStarted>(

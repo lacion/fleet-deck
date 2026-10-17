@@ -12,7 +12,7 @@ import type {
   StationInfo,
   StationView,
 } from '../src/gen';
-import type { LandRow as Row, RadarAnswer } from '../src/integrations/actions';
+import type { LandRow as Row, OtherBranches, RadarAnswer } from '../src/integrations/actions';
 import { project } from '../src/integrations/fixtures';
 import { summary } from '../src/testing/summary';
 import { claudeCaps } from '../src/testing/capabilities';
@@ -437,6 +437,48 @@ export function installFleetGitLands(
       return { status: 202, body: { abandon_state: 'requested' } };
     }
     return { status: 200, body: { command_id: 'cmd-e2e', state: 'done' } };
+  });
+  return state;
+}
+
+/** What the scripted deck answers on the branches and fetch routes of a project (FG-10). */
+export type FakeBranches = {
+  /** `GET .../branches` answers this (status, JSON body). */
+  list: { status: number; body: unknown };
+  /** `POST .../fetch` answers this (status, JSON body). */
+  fetch: { status: number; body: unknown };
+  /** `METHOD path` of each call, in order. */
+  calls: string[];
+};
+
+/** A 200 answer of the branches route. */
+export const branchesAnswer = (
+  branches: OtherBranches['branches'],
+  extra: Partial<OtherBranches> = {},
+): { status: number; body: OtherBranches } => ({
+  status: 200,
+  body: { remote: 'origin', default_branch: 'main', truncated: false, branches, ...extra },
+});
+
+/** The branches and fetch routes of `projectId`; a test changes `list` and `fetch` at any time. */
+export function installFleetGitBranches(
+  deck: FakeDeck,
+  projectId: string,
+  initial: Partial<FakeBranches> = {},
+): FakeBranches {
+  const state: FakeBranches = {
+    list: branchesAnswer([]),
+    fetch: { status: 200, body: {} },
+    calls: [],
+    ...initial,
+  };
+  deck.on(`/api/projects/${projectId}/branches`, () => {
+    state.calls.push(`GET /api/projects/${projectId}/branches`);
+    return state.list;
+  });
+  deck.route('POST', new RegExp(`^/api/projects/${projectId}/fetch$`), (m) => {
+    state.calls.push(`POST ${m[0]}`);
+    return state.fetch;
   });
   return state;
 }

@@ -669,6 +669,7 @@ export function SessionView(props: SessionViewProps) {
                   act={panelAct}
                   onOpenFile={onOpenFile}
                   branchesOffered={branchesOffered}
+                  projectId={session.project_id}
                   station={session.station_id}
                   review={
                     reviewActions === undefined
