@@ -1,7 +1,9 @@
 // FG-1..FG-4 (design §17.1): the Git sync section of the project form.
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
+import type { ProjectHome, StationView } from '../gen';
 import { ApiError } from '../runtime/api';
+import { station } from '../testing/fleet';
 import { integrationActions } from './actions';
 import { IntegrationsProvider } from './context';
 import { fakeActions, project } from './fixtures';
@@ -58,11 +60,16 @@ describe('the Git sync section', () => {
       expect(html).toContain(text);
     }
     expect(html).toContain('placeholder="origin"');
-    // The settings of the land and the radar (later phases) are not on the form.
-    expect(html).not.toContain('Land as');
-    expect(html).not.toContain('Radar station');
     expect(html).toContain('placeholder="nas/artifacts"');
-    expect(html).not.toContain('Check command');
+    for (const text of [
+      'Land as',
+      'Check command before landing (optional)',
+      'Runs on the station only when allow_check_cmd = true.',
+      'Radar station',
+      'This station checks the branches for conflicts every 5 minutes.',
+    ]) {
+      expect(html).toContain(text);
+    }
   });
 
   test('the hours field is disabled while cleanup is off', () => {
@@ -122,7 +129,7 @@ describe('the Git sync section', () => {
 });
 
 describe('the save body', () => {
-  test('it sends the ten fields and the three of later phases unchanged', () => {
+  test('it sends the settings of the form; the land fields keep their loaded values', () => {
     const loaded = {
       ...project().git,
       land: 'merge' as const,
@@ -282,5 +289,119 @@ describe('the share that no station exports (FG-12)', () => {
     expect(foreignMachine('', stations)).toBeNull();
     expect(foreignMachine('nas/out', [{ info: null } as never])).toBeNull();
     expect(foreignMachine('nas/out', [])).toBeNull();
+  });
+});
+
+describe('Land as, Check command and Radar station (FG-7, FG-8)', () => {
+  const home = (station_id: string, position: number): ProjectHome =>
+    ({ ...project().homes[0], station_id, position, path: `/work/${station_id}` }) as ProjectHome;
+  const labelled = (id: string, labels: string[]): StationView =>
+    station(id, {
+      name: { 'station-a': 'Alpha', 'station-b': 'Beta', 'station-c': 'Gamma' }[id] ?? id,
+      info: { traits: { os: 'linux', arch: 'x86_64', labels } } as unknown as StationView['info'],
+    });
+  const render = (extra: Parameters<typeof project>[0], stations: StationView[] = []) =>
+    renderToStaticMarkup(
+      <IntegrationsProvider actions={fakeActions()} initial={[project(extra)]}>
+        <ProjectGitSettings projectId="p1" stations={stations} />
+      </IntegrationsProvider>,
+    );
+  const selectOf = (html: string, label: string): string => {
+    const field = html.slice(html.indexOf(label));
+    return field.slice(field.indexOf('<select'), field.indexOf('</select>'));
+  };
+  const options = (html: string, label: string): string[] =>
+    [...selectOf(html, label).matchAll(/<option[^>]*>([^<]*)<\/option>/g)].map(
+      (m) => m[1] as string,
+    );
+  const selected = (html: string, label: string): string | undefined =>
+    /<option[^>]*selected=""[^>]*>([^<]*)<\/option>/.exec(selectOf(html, label))?.[1];
+  const threeHomes = [home('station-c', 2), home('station-a', 0), home('station-b', 1)];
+
+  test('Land as: the default names the way of the project, a null setting selects it', () => {
+    const forge = render({});
+    expect(options(forge, 'Land as')).toEqual(['Pull request (default)', 'Pull request', 'Merge']);
+    expect(selected(forge, 'Land as')).toBe('Pull request (default)');
+    const bare = render({ forge: null });
+    expect(options(bare, 'Land as')).toEqual(['Merge (default)', 'Pull request', 'Merge']);
+    expect(selected(bare, 'Land as')).toBe('Merge (default)');
+    const merge = render({ git: { ...project().git, land: 'merge' } });
+    expect(selected(merge, 'Land as')).toBe('Merge');
+  });
+
+  test('Radar station: the default is the first always_on home, else the first home', () => {
+    const stations = [
+      labelled('station-a', []),
+      labelled('station-b', ['always_on']),
+      labelled('station-c', ['always_on']),
+    ];
+    const byLabel = render({ homes: threeHomes }, stations);
+    expect(options(byLabel, 'Radar station')).toEqual(['Beta (default)', 'Alpha', 'Beta', 'Gamma']);
+    const byPosition = render({ homes: threeHomes }, [labelled('station-a', ['gpu'])]);
+    expect(options(byPosition, 'Radar station')).toEqual([
+      'Alpha (default)',
+      'Alpha',
+      'station-b',
+      'station-c',
+    ]);
+    expect(selected(byPosition, 'Radar station')).toBe('Alpha (default)');
+    const chosen = render(
+      { homes: threeHomes, git: { ...project().git, radar_home: 'station-b' } },
+      stations,
+    );
+    expect(selected(chosen, 'Radar station')).toBe('Beta');
+  });
+
+  test('Radar station is hidden without homes', () => {
+    const html = render({ homes: [] });
+    expect(html).not.toContain('Radar station');
+    expect(html).toContain('Land as');
+  });
+
+  test('the save body carries the three values: null for the defaults, trimmed text', () => {
+    const draft = gitDraftOf(project());
+    const put = (d: typeof draft) => {
+      const built = buildGitPut(d, base());
+      return 'put' in built ? built.put.settings : null;
+    };
+    const none = put(draft);
+    expect(none?.land).toBeNull();
+    expect(none?.check_cmd).toBeNull();
+    expect(none?.radar_home).toBeNull();
+    const set = put({
+      ...draft,
+      land: 'merge',
+      checkCmd: '  make check  ',
+      radarHome: 'station-b',
+    });
+    expect(set?.land).toBe('merge');
+    expect(set?.check_cmd).toBe('make check');
+    expect(set?.radar_home).toBe('station-b');
+    expect(put({ ...draft, land: 'pr' })?.land).toBe('pr');
+    expect(put({ ...draft, checkCmd: '   ' })?.check_cmd).toBeNull();
+  });
+
+  test('the draft shows the loaded values of the three settings', () => {
+    const draft = gitDraftOf(
+      project({
+        git: { ...project().git, land: 'pr', check_cmd: 'make check', radar_home: 'station-a' },
+      }),
+    );
+    expect([draft.land, draft.checkCmd, draft.radarHome]).toEqual([
+      'pr',
+      'make check',
+      'station-a',
+    ]);
+  });
+
+  test('the check command has at most 4096 characters', () => {
+    const draft = gitDraftOf(project());
+    expect('put' in buildGitPut({ ...draft, checkCmd: 'x'.repeat(4096) }, base())).toBe(true);
+    expect(buildGitPut({ ...draft, checkCmd: 'x'.repeat(4097) }, base())).toEqual({
+      problems: { check_cmd: 'At most 4096 characters.' },
+    });
+    // The limit counts the trimmed text.
+    const padded = ` ${'x'.repeat(4096)} `;
+    expect('put' in buildGitPut({ ...draft, checkCmd: padded }, base())).toBe(true);
   });
 });
