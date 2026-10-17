@@ -21,6 +21,7 @@ import {
   installFleetGit,
   installFleetGitHomes,
   installFleetGitLands,
+  installFleetGitMoves,
   installFleetGitPlacement,
 } from './fake-deck-git';
 
@@ -739,4 +740,205 @@ test('an uncertain land has Stop checking; a conflict has Send to session; the p
   expect(await fitsWidth(page)).toBe(true);
   await list.getByRole('button', { name: 'Send to session' }).click();
   await expect.poll(() => lands.calls.at(-1)?.call).toBe('POST /api/lands/land-3/send');
+});
+
+// Phase 4 (T4.5b): the move of a session to another station (FG-9).
+
+const MOVE = { station: ST, session: 'g1' };
+const moveTargets = [
+  { station_id: 'st-beta', name: 'Beta', kind: 'native', ready: true },
+  {
+    station_id: 'st-gamma',
+    name: 'Gamma',
+    kind: 'branch_only',
+    ready: false,
+    failed: { code: 'move_not_ready', text: 'The branch is not pushed.' },
+  },
+];
+const moveStations = () => [
+  stationView(ST, 'Alpha'),
+  stationView('st-beta', 'Beta'),
+  stationView('st-gamma', 'Gamma'),
+];
+
+test('Move to station checks the conditions, starts the move and shows its progress', async ({
+  page,
+}) => {
+  const deck = new FakeDeck();
+  await setUp(page, deck);
+  deck.stations = moveStations();
+  deck.sessions = [landSession('g1', { callsign: 'ada' })];
+  await deck.install(page);
+  await installFleetGit(page, deck, [syncedProject()]);
+  const moves = installFleetGitMoves(deck, MOVE, { read: { move: null, targets: moveTargets } });
+  await logIn(page);
+  await openSession(page, 'Fix the build');
+  await page.locator('summary[aria-label="Session menu"]').click();
+  await page.getByRole('button', { name: 'Move to station…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Move ada to another station' });
+  await expect(dialog.getByText('The conversation moves with its history.')).toBeVisible();
+  await expect(dialog.getByRole('img', { name: 'Passed' })).toHaveCount(6);
+  expect(await fitsWidth(page)).toBe(true);
+
+  // A station that is not ready: one failed item with the text of the deck, the rest not checked.
+  await dialog.getByLabel('Station').selectOption('st-gamma');
+  await expect(dialog.getByRole('img', { name: 'Failed' })).toHaveCount(1);
+  await expect(dialog.getByRole('img', { name: 'Not checked' })).toHaveCount(3);
+  await expect(dialog.getByText('The branch is pushed: The branch is not pushed.')).toBeVisible();
+  await expect(
+    dialog.getByText('Only the branch moves; a new session continues from the last summary.'),
+  ).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Move', exact: true })).toBeDisabled();
+
+  // The deck refuses the first try; the second starts the move and the dialog closes.
+  await dialog.getByLabel('Station').selectOption('st-beta');
+  moves.refuse = {
+    status: 409,
+    body: { error: 'move_not_ready', message: 'A turn is running.' },
+  };
+  await dialog.getByRole('button', { name: 'Move', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toHaveText('A turn is running.');
+  await dialog.getByRole('button', { name: 'Move', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(moves.calls.map((c) => c.call)).toEqual([
+    'POST /api/sessions/st-alpha/g1/move',
+    'POST /api/sessions/st-alpha/g1/move',
+  ]);
+  expect(moves.calls[1]?.body).toMatchObject({ to_station: 'st-beta' });
+  await expect(page.getByText('Moving: holding')).toBeVisible();
+
+  // The progress follows the move: the board reads it every two seconds while it is open.
+  const open = moves.read.move;
+  if (open === null) throw new Error('the scripted deck has no move');
+  moves.read.move = { ...open, state: 'exporting', bytes: 2_097_152 };
+  await expect(page.getByText('Moving: copying the conversation (2.0 MiB)')).toBeVisible();
+  moves.read.move = { ...open, state: 'starting' };
+  await expect(page.getByText('Moving: starting on Beta')).toBeVisible();
+  moves.read.move = { ...open, state: 'finishing', code: 'source_running' };
+  await expect(
+    page.getByText('The source session runs again. Stop it, then Fleet Deck finishes the move.'),
+  ).toBeVisible();
+  expect(await fitsWidth(page)).toBe(true);
+});
+
+test('a source that moved shows Moved to with Open; the new session arrives without a composer', async ({
+  page,
+}) => {
+  const deck = new FakeDeck();
+  await setUp(page, deck);
+  deck.stations = moveStations();
+  deck.sessions = [
+    landSession('g1', {
+      moved_to: { move_id: 'mv-1', station_id: 'st-beta', session_id: 'g2' },
+    }),
+    {
+      ...landSession('g2', { move_in: { move_id: 'mv-1', state: 'resumed' } }),
+      station_id: 'st-beta',
+      summary: {
+        ...landSession('g2').summary,
+        title: 'Arriving work',
+        move_in: { move_id: 'mv-1', state: 'resumed' },
+      },
+    },
+  ];
+  await deck.install(page);
+  await installFleetGit(page, deck, [syncedProject()]);
+  const done = {
+    move_id: 'mv-1',
+    state: 'done' as const,
+    kind: 'native',
+    src_station: ST,
+    src_session: 'g1',
+    dst_station: 'st-beta',
+    dst_session: 'g2',
+    created_at: 1,
+  };
+  installFleetGitMoves(deck, MOVE, { read: { move: done, targets: [] } });
+  installFleetGitMoves(
+    deck,
+    { station: 'st-beta', session: 'g2' },
+    {
+      read: { move: { ...done, state: 'releasing' }, targets: [] },
+    },
+  );
+  await logIn(page);
+  await openSession(page, 'Fix the build');
+  await expect(page.getByText('Moved to Beta')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Open', exact: true })).toHaveAttribute(
+    'href',
+    '#/s/st-beta/g2',
+  );
+  await expect(page.getByRole('form', { name: 'Composer' })).toHaveCount(0);
+  expect(await fitsWidth(page)).toBe(true);
+  await page.getByRole('link', { name: 'Open', exact: true }).click();
+  await expect(page.getByText('Arriving from Alpha…')).toBeVisible();
+  await expect(page.getByRole('form', { name: 'Composer' })).toHaveCount(0);
+});
+
+test('a released Claude session asks for one prompt to confirm the moved conversation', async ({
+  page,
+}) => {
+  const deck = new FakeDeck();
+  await setUp(page, deck);
+  deck.stations = moveStations();
+  deck.sessions = [landSession('g1', { move_in: { move_id: 'mv-1', state: 'released' } })];
+  await deck.install(page);
+  await installFleetGit(page, deck, [syncedProject()]);
+  installFleetGitMoves(deck, MOVE);
+  await logIn(page);
+  await openSession(page, 'Fix the build');
+  await expect(page.getByText('Send one prompt to confirm the moved conversation.')).toBeVisible();
+  await expect(page.getByRole('form', { name: 'Composer' })).toBeVisible();
+});
+
+test('Undo move asks, posts the undo and shows Undoing the move', async ({ page }) => {
+  const deck = new FakeDeck();
+  await setUp(page, deck);
+  deck.stations = moveStations();
+  deck.sessions = [
+    landSession('g1', {
+      moved_to: { move_id: 'mv-1', station_id: 'st-beta', session_id: 'g2' },
+    }),
+  ];
+  await deck.install(page);
+  await installFleetGit(page, deck, [syncedProject()]);
+  const moves = installFleetGitMoves(deck, MOVE, {
+    read: {
+      move: {
+        move_id: 'mv-1',
+        state: 'resume_failed',
+        kind: 'native',
+        src_station: ST,
+        src_session: 'g1',
+        dst_station: 'st-beta',
+        dst_session: 'g2',
+        created_at: 1,
+      },
+      targets: [],
+    },
+  });
+  await logIn(page);
+  await openSession(page, 'Fix the build');
+  await expect(page.getByText('Moved to Beta. The new session could not resume.')).toBeVisible();
+  await page.getByRole('button', { name: 'Undo move' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Undo the move?' });
+  await expect(dialog).toContainText(
+    'The session on Alpha becomes resumable again. The new session on Beta stays stopped and read only.',
+  );
+  expect(await fitsWidth(page)).toBe(true);
+  moves.refuse = {
+    status: 409,
+    body: {
+      error: 'move_not_undoable',
+      message: 'Only a move whose new session could not resume can be undone.',
+    },
+  };
+  await dialog.getByRole('button', { name: 'Undo move' }).click();
+  await expect(dialog.getByRole('alert')).toHaveText(
+    'Only a move whose new session could not resume can be undone.',
+  );
+  await dialog.getByRole('button', { name: 'Undo move' }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(moves.calls.at(-1)?.call).toBe('POST /api/moves/mv-1/undo');
+  await expect(page.getByText('Undoing the move…')).toBeVisible();
 });
