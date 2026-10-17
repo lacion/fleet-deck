@@ -4,6 +4,7 @@ import type { DeckArtifactDetail } from '../gen';
 import { ArrowDown, Icon, Link as LinkIcon } from '../ui/icons';
 import { type ArtifactActions, rawPath } from './actions';
 import { fileName, KIND_LABEL } from './kinds';
+import { SendToWall } from '../wall/SendToWall';
 import { ShareDialog } from './ShareDialog';
 import { mainFile, type ViewerData, type ViewerReady, useViewer } from './viewer';
 
@@ -153,6 +154,15 @@ export function ArtifactViewerView({
             <Icon of={ArrowDown} size={14} /> Download
           </a>
         )}
+        <SendToWall
+          className="fd-ghost fd-sm fd-art-action"
+          target={{
+            kind: 'artifact',
+            station_id: artifact.station_id,
+            artifact_id: artifact.artifact_id,
+            version: ready.version,
+          }}
+        />
         {canShare ? (
           <button type="button" className="fd-ghost fd-sm fd-art-action" onClick={onShare}>
             Share…

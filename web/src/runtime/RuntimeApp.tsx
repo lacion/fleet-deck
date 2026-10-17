@@ -12,6 +12,7 @@ import { integrationHttp } from '../integrations/http';
 import { accountActions } from '../accounts/actions';
 import { settingsActions } from '../settings/actions';
 import { tailnetActions } from '../tailnet/api';
+import { desktopActions, displayActions } from '../displays/actions';
 import { deckHttp } from '../settings/http';
 import type { FleetExtras, SessionKey } from '../gen';
 import { sessionActions } from '../session/commands';
@@ -250,6 +251,8 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       settings: settingsActions(io),
       accounts: accountActions(io),
       tailnet: tailnetActions(io),
+      displays: displayActions(io),
+      desktop: desktopActions(io),
     };
   }, [connection, owner, canAdmin, guest]);
   const filesFor = useMemo(

@@ -10,6 +10,8 @@ import { hasChanges } from '../session/changes';
 import type { SessionActions } from '../session/commands';
 import { shortModel } from '../ui/format';
 import { refOf } from '../watch/tiles';
+import { ChangeFiles, type DisplayEnv, useDisplayChanges } from './displayChanges';
+import { lastDisplayMessage } from './displayLines';
 import { keyOf, timelineOf, useSessionDiff, useTimelines } from './hooks';
 
 /** The most columns. */
@@ -96,6 +98,66 @@ function Column({
   );
 }
 
+/** A column for a wall display: the change summary and the last message come from display routes. */
+function DisplayColumn({
+  card,
+  stations,
+  timeline,
+  env,
+}: {
+  readonly card: DeckSession;
+  readonly stations: readonly StationView[];
+  readonly timeline: Timeline | undefined;
+  readonly env: DisplayEnv;
+}) {
+  const s = card.summary;
+  const state = useDisplayChanges(env, card.station_id, s.session_id);
+  const message = timeline?.ready === true ? lastDisplayMessage(timeline.display ?? []) : null;
+  const cost = costText(s.usage);
+  return (
+    <li
+      className="fd-wall-col"
+      data-session={s.session_id}
+      data-status={card.status}
+      data-ref={refOf(card)}
+    >
+      <h2 className="fd-wall-h">{sessionTitle(card)}</h2>
+      <p className="fd-wall-note">
+        <span className="fd-dot" data-status={card.status} aria-hidden="true" />{' '}
+        {STATUS_LABEL[card.status]} · {stationName(card.station_id, stations)}
+        {s.batch === undefined ? '' : ` · ${s.batch.index} of ${s.batch.size}`}
+      </p>
+      <h3 className="fd-wall-label">Changes</h3>
+      {state.kind === 'loading' ? <p className="fd-wall-note">Loading the changes…</p> : null}
+      {state.kind === 'error' ? <p className="fd-wall-note">{state.text}</p> : null}
+      {state.kind === 'ready' ? (
+        state.changes.files.length === 0 && !hasChanges(state.changes.summary) ? (
+          <p className="fd-wall-note">No file changes since the session started.</p>
+        ) : (
+          <>
+            <p className="fd-turn-stat">
+              {state.changes.summary.files_changed}{' '}
+              {state.changes.summary.files_changed === 1 ? 'file' : 'files'}{' '}
+              <span className="fd-add">+{state.changes.summary.insertions}</span>{' '}
+              <span className="fd-del">−{state.changes.summary.deletions}</span>
+            </p>
+            <ChangeFiles changes={state.changes} max={MAX_FILES} />
+          </>
+        )
+      ) : null}
+      <h3 className="fd-wall-label">Last agent message</h3>
+      {message === null ? (
+        <p className="fd-wall-note">
+          {timeline?.ready === true ? 'No agent message yet.' : 'Loading the timeline…'}
+        </p>
+      ) : (
+        <p className="fd-wall-message">{message}</p>
+      )}
+      <p className="fd-wall-note">{cost ?? 'Cost unknown'}</p>
+    </li>
+  );
+}
+
 export function RacePane({
   batch,
   sessions,
@@ -103,7 +165,9 @@ export function RacePane({
   timelines,
   watch,
   sessionActions,
+  display,
 }: {
+  readonly display?: DisplayEnv | undefined;
   readonly batch: string;
   readonly sessions: readonly DeckSession[];
   readonly stations: readonly StationView[];
@@ -117,15 +181,25 @@ export function RacePane({
     return <p className="fd-wall-note">This batch has no session on the board.</p>;
   return (
     <ul className="fd-wall-cols" aria-label="Sessions of the batch" data-count={cards.length}>
-      {cards.map((card) => (
-        <Column
-          key={refOf(card)}
-          card={card}
-          stations={stations}
-          timeline={timelineOf(timelines, keyOf(card))}
-          actions={sessionActions?.(keyOf(card))}
-        />
-      ))}
+      {cards.map((card) =>
+        display === undefined ? (
+          <Column
+            key={refOf(card)}
+            card={card}
+            stations={stations}
+            timeline={timelineOf(timelines, keyOf(card))}
+            actions={sessionActions?.(keyOf(card))}
+          />
+        ) : (
+          <DisplayColumn
+            key={refOf(card)}
+            card={card}
+            stations={stations}
+            timeline={timelineOf(timelines, keyOf(card))}
+            env={display}
+          />
+        ),
+      )}
     </ul>
   );
 }

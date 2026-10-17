@@ -11,6 +11,7 @@ import type { SessionActions } from '../session/commands';
 import { Eye, Icon, TriangleAlert } from '../ui/icons';
 import { EmptyState, Page } from '../ui/page';
 import { FocusLine, UnreadMark, unreadOf } from '../views/marks';
+import { displayTileLines } from '../wall/displayLines';
 import {
   ALL,
   emptyWatchFilter,
@@ -73,7 +74,9 @@ export function Tile({
   const key: SessionKey = { station_id: card.station_id, session_id: s.session_id };
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const lines = tileLines(timeline?.events ?? []);
+  // A wall display gets its own event type (R13 §5D item 7).
+  const shown = timeline?.display ?? [];
+  const lines = shown.length > 0 ? displayTileLines(shown) : tileLines(timeline?.events ?? []);
   const tool = s.running_tools[0];
   const ask = tileRequest(card);
   const answerable =

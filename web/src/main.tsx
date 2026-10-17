@@ -1,5 +1,12 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { DisplayRuntime } from './display/DisplayRuntime';
+import {
+  displayEnvironment,
+  isDisplayPath,
+  redeemDisplayLink,
+  takeDisplayLink,
+} from './display/api';
 import { takeLoginLink } from './runtime/api';
 import { browserEnvironment, Connection } from './runtime/connection';
 import { RuntimeApp } from './runtime/RuntimeApp';
@@ -32,6 +39,7 @@ import './styles/integrations.css';
 import './styles/sharing.css';
 import './styles/settings.css';
 import './styles/wall.css';
+import './styles/displays.css';
 
 initTheme();
 initDensity();
@@ -41,11 +49,29 @@ if (root === null) {
 }
 // The page, not a React effect, owns the runtime. StrictMode cannot redeem
 // the one-time login link twice or create two socket retry loops.
-const token = takeLoginLink(window.location, window.history);
-const connection = new Connection(browserEnvironment());
-connection.start(token);
-createRoot(root).render(
-  <StrictMode>
-    <RuntimeApp connection={connection} />
-  </StrictMode>,
-);
+if (isDisplayPath(window.location.pathname)) {
+  // R13 P2c: the wall display document (`/display`): a display login, never the owner's board.
+  const link = takeDisplayLink(window.location, window.history);
+  const environment = displayEnvironment();
+  const connection = new Connection(environment);
+  createRoot(root).render(
+    <StrictMode>
+      <DisplayRuntime connection={connection} />
+    </StrictMode>,
+  );
+  void (async () => {
+    if (link !== null && (await redeemDisplayLink(environment.fetch, link))) {
+      window.history.replaceState(null, '', '/display#/wall');
+    }
+    connection.start();
+  })();
+} else {
+  const token = takeLoginLink(window.location, window.history);
+  const connection = new Connection(browserEnvironment());
+  connection.start(token);
+  createRoot(root).render(
+    <StrictMode>
+      <RuntimeApp connection={connection} />
+    </StrictMode>,
+  );
+}

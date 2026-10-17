@@ -1,8 +1,9 @@
 // R13 P1: the read-only chat of the focus mode. It shows the newest items of the timeline as
 // text: no composer, no filters and no control. (`ChatView` has a filter menu and `Markdown` has a
 // copy button on a code block, so the wall draws its own lines.)
-import type { EventEnvelope } from '../gen';
+import type { DisplayEvent, EventEnvelope } from '../gen';
 import { buildTimeline, type Item } from '../session/timeline';
+import { displayChatLines } from './displayLines';
 
 /** The most items that the pane draws. */
 export const CHAT_ITEMS = 120;
@@ -52,14 +53,18 @@ export function chatLines(events: readonly EventEnvelope[], max: number = CHAT_I
 
 export function ChatPane({
   events,
+  display,
   ready,
   unavailable,
 }: {
   readonly events: readonly EventEnvelope[];
+  /** The events of a wall display timeline; they replace `events` when there are some. */
+  readonly display?: readonly DisplayEvent[] | undefined;
   readonly ready: boolean;
   readonly unavailable: boolean;
 }) {
-  const lines = chatLines(events);
+  const lines =
+    display !== undefined && display.length > 0 ? displayChatLines(display) : chatLines(events);
   return (
     <section className="fd-wall-chat" aria-label="Chat">
       {unavailable ? (
