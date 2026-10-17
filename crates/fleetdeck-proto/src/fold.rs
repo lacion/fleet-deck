@@ -14,6 +14,7 @@
 //! - An unknown event kind changes only the sequence and the time (L16).
 
 use crate::event::{Event, EventEnvelope, RateLimit, SessionState, Usage};
+use crate::fleet_git::{ArtifactsDir, CleanupInfo, MovedTo, PushInfo};
 use crate::session::{
     Activity, MAX_RUNNING_TOOLS, OpenRequest, RunningTool, SUBAGENT_TASK_KINDS, SessionBase,
     SessionError, SessionRevert, SessionSummary, TerminalHold,
@@ -250,6 +251,61 @@ impl SessionSummary {
                 self.focus = Some(text.clone()).filter(|t| !t.is_empty());
             }
             Event::SessionBatch { batch } => self.batch = Some(batch.clone()),
+            Event::WorkspaceBaseStale { .. } => self.base_stale = true,
+            Event::SessionPush {
+                state,
+                ref_name,
+                oid,
+                desired_oid,
+                stop_code,
+                attempts,
+                next_attempt_at,
+                code,
+                text,
+            } => {
+                self.push = Some(PushInfo {
+                    state: *state,
+                    ref_name: ref_name.clone(),
+                    oid: oid.clone(),
+                    desired_oid: desired_oid.clone(),
+                    stop_code: stop_code.clone(),
+                    attempts: *attempts,
+                    next_attempt_at: *next_attempt_at,
+                    code: code.clone(),
+                    text: text.clone(),
+                });
+            }
+            Event::SessionCleanup { state, reason } => {
+                self.cleanup = Some(CleanupInfo {
+                    state: *state,
+                    reason: reason.clone(),
+                });
+            }
+            Event::SessionLand(info) => self.land = Some(info.as_ref().clone()),
+            Event::SessionMoveIn(info) => self.move_in = Some(info.clone()),
+            Event::SessionMoved {
+                move_id,
+                to_station,
+                to_session,
+            } => {
+                self.moved_to = Some(MovedTo {
+                    move_id: move_id.clone(),
+                    station_id: to_station.clone(),
+                    session_id: to_session.clone(),
+                });
+            }
+            Event::SessionMoveUndone { move_id } => {
+                if self.moved_to.as_ref().is_some_and(|m| &m.move_id == move_id) {
+                    self.moved_to = None;
+                }
+            }
+            Event::ArtifactsReady { path, url } => {
+                self.artifacts_dir = Some(ArtifactsDir {
+                    path: path.clone(),
+                    url: url.clone(),
+                });
+            }
+            Event::ArtifactsRevoked { .. } => self.artifacts_dir = None,
             Event::SessionHibernated { .. } => self.hibernated = true,
             Event::SessionEnded { .. } => {
                 if !matches!(self.state, SessionState::Lost) {
@@ -271,6 +327,10 @@ impl SessionSummary {
             // The reconciliation changes no summary field; the board reads the
             // execution check instead (DL-182).
             | Event::ExecutionReconciled { .. }
+            // The board reads the skipped files from the event (FG-4).
+            | Event::WorkspaceIncludeSkipped { .. }
+            // The board reads the reason from the event (FG-12).
+            | Event::ArtifactsUnavailable { .. }
             // A late checkpoint never changes the activity (L13).
             | Event::TurnFinalized { .. } => {}
         }

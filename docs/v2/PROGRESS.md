@@ -114,6 +114,32 @@ M3 = PLAN Phases 6–7 (goal loop started 2026-10-12, round 1). Rules as for M2:
 - [x] **7-8 Final checks** Clean-checkout `make check`, architect acceptance, adversary PRE-PR REVIEW of the final committed HEAD. Done for the executor part (lane A round 103): the lane decision files `docs/v2/decisions/m3-{orchestration,board,ops}.md` are copied into `docs/v2/DECISIONS-LOG.md` (36 entries, numbers kept); `make check` on a clean checkout of the committed work plus this round (snapshot be4e41d, `/mnt/rust-cow/fd-clean.*`, deleted after): all 15 commands passed, nextest 1275 passed. A first run found three `station_shim_revert_crash` tests that counted the DL-219 start probe as a provider start; fixed in the test (`Rig::provider_starts`). Architect acceptance and the adversary PRE-PR REVIEW are architect steps after this loop (not claimed). Round 105: clean-checkout `make check` of committed 400501b (with the review r103 fixes): all 15 commands passed, nextest 1283 passed.
 - [ ] **Owner demo** The owner runs [DEMO-M2.md](./DEMO-M2.md) (owner action, not an executor item).
 
+## Fleet Git
+
+Design: `docs/v2/design/fleet-git.md` (accepted for FG-1..FG-8 and FG-10..FG-12, DL-224..DL-227). Branch: `fleet-git`.
+
+- Phase 0 (design, spikes, ADR-009, ADR-010): done; FG-9 waits for the owner (DL-227).
+- Phase 1 (FG-1..FG-4): done; T1.0..T1.7 merged, `make check` passed.
+- Phase 2 (FG-5, FG-6, FG-11, FG-12): done; T2.0..T2.5 merged (T2.2, T2.3 split in a/b; T2.4b start dialog), the full check passed (4159 tests). Decisions: `~/fleetdeck-briefs/fg-t2-decisions.md` (architect record).
+- Phase 3 (FG-7, FG-8): done; T3.1..T3.5 merged (T3.2 in three steps a/b/c, T3.3 in two), the full check passed (4363 tests). Decisions: `~/fleetdeck-briefs/fg-t3-decisions.md` (architect record).
+- Phase 4 (FG-9, FG-10): FG-10 done (T4.1a, T4.3, T4.4a, T4.5a, T4.6), the full check passed (4406 tests). FG-9 done on the owner go (DL-230): T4.1b, T4.2a-d (station), T4.4b (deck, coordinator `move_session`), T4.5b (board), T4.6b (end-to-end move tests), the fixes D1/D2 that T4.6b found (H31-H33); the full check passed at `06c24f86` (4615 Rust tests, 1754 web tests, the mock and the real e2e). Decisions: `~/fleetdeck-briefs/fg-t3-decisions.md` H19-H33.
+- Phase 5 (documents, PRE-PR review): documents done (operations §13, README, internals, backlog B1, DL-228, DL-229); PRE-PR round 1 FAIL (5 findings, fixed, H16); round 2 (the round 1 fixes and FG-9) runs.
+
+- [x] FG-1 Fetch before spawn (O7, O8)
+- [x] FG-2 Push (O9, O10, O11)
+- [x] FG-3 Automatic cleanup (O12, O13)
+- [x] FG-4 Worktree bootstrap (O14, O15)
+- [x] FG-5 One project on many stations (O16, O17, O18)
+- [x] FG-6 Placement by station traits (O19, O20)
+- [x] FG-7 Predictive conflict radar (O21, O22)
+- [x] FG-8 Land flow (O23 to O26)
+- [x] FG-9 Move a session to another station (O27 to O30)
+- [x] FG-10 The architect across the fleet (O31, O32, B1)
+- [x] FG-11 Config drift report (O33, O34)
+- [x] FG-12 Taildrive artifact share (O35 to O39)
+- Phase 1 limit: scheduler, coordinator and fleet starts start plain (no Fleet Git attach); board and batch starts attach.
+- Phase 2: the phase-1 env bridge `FLEETDECK_ALLOW_LOCAL_REMOTES` is removed; local remotes need `allow_local_remotes = true` in `station.toml` on every home station. `fleet_git.artifact_authorize` is scope `admin` (the grant of a paired station).
+
 ## M3 round log
 
 ### M3 round 1 (2026-10-12)

@@ -77,6 +77,10 @@ fn info(name: &str) -> StationInfo {
         assist_cap: None,
         resources: None,
         desktop: None,
+        traits: None,
+        config: None,
+        taildrive: None,
+        fleet_git: None,
     }
 }
 
@@ -194,6 +198,7 @@ fn spawn(station: &StationId, instance: &str, mode: Option<&str>) -> Coordinator
             title: None,
             coordinator: None,
             launch: None,
+            extra_env: None,
         },
         prompt: Some(UserInput::new("go")),
     }

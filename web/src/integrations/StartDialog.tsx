@@ -3,7 +3,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { formatHash } from '../app/routes';
 import { newBatchId } from '../compare/compare';
-import type { Project, StartedSession, StartedSessions, StationView } from '../gen';
+import type {
+  Prefer,
+  Project,
+  ProjectHome,
+  StartedSession,
+  StartedSessions,
+  StartSessions,
+  StationView,
+} from '../gen';
+import { PlacementFields, StationChoice } from '../spawn/PlacementFields';
+import { AUTO, autoOffered, parseNeeds } from '../spawn/spawn';
 import { Icon, X } from '../ui/icons';
 import type { IntegrationActions } from './actions';
 import { Dialog } from './Dialog';
@@ -17,7 +27,7 @@ export const RESTRICTED_NOTE =
 export const startedSession = (s: StartedSession): string | null =>
   s.command.receipt?.result?.session_id ?? null;
 
-/** The answer of a start: one line for each started session and each failure. */
+/** The answer of a start: one line for each started session and each failure. `station` is the fallback. */
 export function StartResult({
   station,
   result,
@@ -36,7 +46,14 @@ export function StartResult({
               {session === null ? null : (
                 <>
                   {' '}
-                  <a href={formatHash({ name: 'session', station, session, tab: 'chat' })}>
+                  <a
+                    href={formatHash({
+                      name: 'session',
+                      station: s.command.station_id ?? station,
+                      session,
+                      tab: 'chat',
+                    })}
+                  >
                     Open the session
                   </a>
                 </>
@@ -52,6 +69,91 @@ export function StartResult({
       </ul>
     </div>
   );
+}
+
+type ReadyHome = ProjectHome & { readonly path: string };
+type Provider = NonNullable<StationView['info']>['providers'][number];
+
+/** The ready homes of a project, in position order (an older deck sends no `homes`). */
+export function readyHomes(project: Project): ReadyHome[] {
+  return [...(project.homes ?? [])]
+    .sort((a, b) => a.position - b.position)
+    .filter((h): h is ReadyHome => h.state === 'ready' && h.path !== null);
+}
+
+/** The Home that the select starts with: the position-0 home when ready, else the first ready one. */
+export const initialHome = (ready: readonly ReadyHome[]): string =>
+  (ready.find((h) => h.position === 0) ?? ready[0])?.station_id ?? '';
+
+/** Under Auto: the stations that have a ready home of the project and report their traits. */
+export function autoStations(
+  ready: readonly ReadyHome[],
+  stations: readonly StationView[],
+): StationView[] {
+  return stations.filter((s) => ready.some((h) => h.station_id === s.station_id));
+}
+
+/**
+ * The provider instances of a start: the station of the chosen home; under Auto the instances of
+ * the stations with a ready home (no duplicates, in the order of first appearance). Without a
+ * ready home: the station of the project.
+ */
+export function startProviders(
+  project: Project,
+  stations: readonly StationView[],
+  ready: readonly ReadyHome[],
+  home: string,
+): Provider[] {
+  const of = (id: string) => stations.find((s) => s.station_id === id)?.info?.providers ?? [];
+  if (ready.length === 0) return [...of(project.station_id)];
+  if (home !== AUTO) return [...of(home)];
+  const seen = new Set<string>();
+  const out: Provider[] = [];
+  for (const h of ready) {
+    for (const p of of(h.station_id)) {
+      if (seen.has(p.instance)) continue;
+      seen.add(p.instance);
+      out.push(p);
+    }
+  }
+  return out;
+}
+
+/** The body of a start. `home` is `null` when the dialog has no Home select. */
+export function startBody(input: {
+  readonly batchId: string;
+  readonly issues: readonly string[];
+  readonly review: number | undefined;
+  readonly instance: string;
+  readonly mode: string;
+  readonly model: string;
+  readonly count: number;
+  readonly home: string | null;
+  /** The station of the position-0 home: choosing it sends no `home`. */
+  readonly primary: string | undefined;
+  readonly needs: string;
+  readonly prefer: readonly Prefer[];
+  readonly spread: boolean;
+}): StartSessions {
+  const reviewing = input.review !== undefined;
+  const batch = reviewing ? 1 : input.issues.length * input.count;
+  const body: StartSessions = {
+    batch_id: input.batchId,
+    issues: reviewing ? [] : [...input.issues],
+    provider_instance: input.instance,
+    mode: input.mode === '' ? null : input.mode,
+    model: input.model.trim() === '' ? null : input.model.trim(),
+    count_per_issue: reviewing ? 1 : input.count,
+    review_of_pr: input.review ?? null,
+  };
+  if (input.home === null || input.home === input.primary) return body;
+  body.home = input.home;
+  if (input.home === AUTO) {
+    body.requires = parseNeeds(input.needs);
+    body.prefer = [...input.prefer];
+    if (batch >= 2) body.spread = input.spread;
+  }
+  return body;
 }
 
 type Props = {
@@ -77,9 +179,19 @@ export function StartDialog({
   onClose,
   initialResult,
 }: Props) {
-  const providers =
-    stations.find((s) => s.station_id === project.station_id)?.info?.providers ?? [];
-  const [instance, setInstance] = useState(providers[0]?.instance ?? '');
+  const ready = readyHomes(project);
+  const byHome = ready.length > 0;
+  const auto = autoOffered(autoStations(ready, stations));
+  const [home, setHome] = useState(initialHome(ready));
+  const [chosen, setInstance] = useState('');
+  const [needs, setNeeds] = useState('');
+  const [prefer, setPrefer] = useState<Prefer[]>([]);
+  const [spread, setSpread] = useState(false);
+  const providers = startProviders(project, stations, ready, home);
+  // The chosen instance falls back to the first one when the list of the home does not have it.
+  const instance = providers.some((p) => p.instance === chosen)
+    ? chosen
+    : (providers[0]?.instance ?? '');
   const [mode, setMode] = useState('');
   const [model, setModel] = useState('');
   const [count, setCount] = useState(1);
@@ -96,19 +208,29 @@ export function StartDialog({
   const provider = providers.find((p) => p.instance === instance);
   const modes = ticketModes(provider?.provider);
   const reviewing = review !== undefined;
+  const placed = byHome && home === AUTO;
+  const batch = reviewing ? 1 : issues.length * count;
   const start = async () => {
     setBusy(true);
     setError(null);
     try {
-      const done = await actions.startSessions(project.project_id, {
-        batch_id: newBatchId(),
-        issues: reviewing ? [] : [...issues],
-        provider_instance: instance,
-        mode: mode === '' ? null : mode,
-        model: model.trim() === '' ? null : model.trim(),
-        count_per_issue: reviewing ? 1 : count,
-        review_of_pr: review ?? null,
-      });
+      const done = await actions.startSessions(
+        project.project_id,
+        startBody({
+          batchId: newBatchId(),
+          issues,
+          review,
+          instance,
+          mode,
+          model,
+          count,
+          home: byHome ? home : null,
+          primary: ready.find((h) => h.position === 0)?.station_id,
+          needs,
+          prefer,
+          spread,
+        }),
+      );
       if (alive.current) setResult(done);
     } catch (e) {
       if (alive.current) setError(message(e));
@@ -130,6 +252,28 @@ export function StartDialog({
           <p className="fd-note">
             {reviewing ? `Pull request #${review}` : issues.join(', ')} · {project.name}
           </p>
+          {byHome ? (
+            <>
+              <StationChoice
+                homes={ready}
+                targets={stations}
+                value={home}
+                auto={auto}
+                onChange={setHome}
+              />
+              {placed ? (
+                <PlacementFields
+                  needs={needs}
+                  onNeeds={setNeeds}
+                  prefer={prefer}
+                  onPrefer={setPrefer}
+                  batch={batch >= 2}
+                  spread={spread}
+                  onSpread={setSpread}
+                />
+              ) : null}
+            </>
+          ) : null}
           <label>
             Provider instance
             <select value={instance} onChange={(e) => setInstance(e.target.value)}>

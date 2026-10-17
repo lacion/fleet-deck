@@ -89,6 +89,9 @@ pub struct Spec {
     pub env: Vec<(OsString, OsString)>,
     pub stdin: Option<Vec<u8>>,
     pub max_stdout: usize,
+    /// The time limit of [`run`] (`CALL_TIMEOUT` for every caller except the
+    /// forge calls of a land, FG-8).
+    pub timeout: Duration,
 }
 
 /// What a helper returned.
@@ -159,12 +162,13 @@ async fn read_capped<R: tokio::io::AsyncRead + Unpin>(pipe: Option<R>, max: usiz
     out
 }
 
-/// Runs `spec` with [`CALL_TIMEOUT`].
+/// Runs `spec` with its own `timeout`.
 ///
 /// # Errors
 /// [`ExecError`].
 pub async fn run(spec: Spec) -> Result<Output, ExecError> {
-    run_for(spec, CALL_TIMEOUT).await
+    let limit = spec.timeout;
+    run_for(spec, limit).await
 }
 
 /// Runs `spec` with `limit` as its time limit.
@@ -320,6 +324,7 @@ mod tests {
             env: curl_env(),
             stdin: stdin.map(|s| s.as_bytes().to_vec()),
             max_stdout: 1024,
+            timeout: CALL_TIMEOUT,
         }
     }
 
@@ -342,5 +347,15 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, ExecError::Timeout));
+    }
+
+    #[tokio::test]
+    async fn a_call_uses_the_time_limit_of_its_spec() {
+        let mut slow = spec("sleep", &["5"], None);
+        slow.timeout = Duration::from_millis(100);
+        let err = run(slow).await.unwrap_err();
+        assert!(matches!(err, ExecError::Timeout));
+        // The default of the existing callers is the 20 s limit.
+        assert_eq!(spec("cat", &[], None).timeout, CALL_TIMEOUT);
     }
 }

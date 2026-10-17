@@ -25,11 +25,25 @@
 //!   [`HISTORY_RETENTION_MS`].
 
 pub mod artifacts;
+pub mod artifacts_state;
 pub mod assist;
 pub mod auto_continue;
 pub mod coordinator_outbox;
 pub mod effects;
+pub mod git_cleanup;
+pub mod git_state;
+pub mod home_attempts;
+pub mod land_fences;
+pub mod land_publish;
+pub mod land_runs;
+pub mod land_temps;
 mod log;
+mod migrations;
+pub mod move_commit;
+pub mod move_discard;
+pub mod move_runs;
+pub mod move_source;
+pub mod move_staging;
 pub mod native_browse;
 mod outbox;
 mod payload;
@@ -44,7 +58,13 @@ pub mod reverts;
 pub mod schema;
 mod schema_v26;
 mod schema_v27;
+mod schema_v28;
+mod schema_v29;
+mod schema_v30;
+mod schema_v31;
+mod schema_v32;
 pub mod session_files;
+pub mod session_holds;
 pub mod setup_runs;
 mod sharing;
 pub mod shell_effects;
@@ -84,7 +104,7 @@ use tokio::sync::watch;
 
 pub use effects::{
     Dispatch, Effect, EffectId, EffectPayload, EffectState, FIRST_INPUT_NOT_SENT,
-    FIRST_INPUT_UNKNOWN, InputRecord, ProcessIncarnation, WorkspacePlan, WorktreeAction,
+    FIRST_INPUT_UNKNOWN, InputRecord, ProcessIncarnation, SyncPlan, WorkspacePlan, WorktreeAction,
 };
 pub use receipts::{Caller, DecideError, Decided, Decision};
 pub use recovery::RecoveryReport;
@@ -265,6 +285,9 @@ struct Inner {
     /// The memory side of the shim bindings; none until the host sets it
     /// (DL-194).
     binding_sink: std::sync::RwLock<Option<Arc<dyn shim_bindings::BindingSink>>>,
+    /// True while a deck link without `fleet_git.v1` is up: the Fleet Git
+    /// loops pause (design §3.3).
+    fleet_git_paused: Arc<AtomicBool>,
 }
 
 /// The station store. Clones share one database thread.
@@ -377,6 +400,7 @@ impl Store {
                 recovered: AtomicBool::new(false),
                 history,
                 binding_sink: std::sync::RwLock::new(None),
+                fleet_git_paused: Arc::new(AtomicBool::new(false)),
             }),
         })
     }
@@ -386,6 +410,13 @@ impl Store {
     #[must_use]
     pub fn now_ms(&self) -> i64 {
         now_ms(&self.inner.clock)
+    }
+
+    /// The flag that pauses the Fleet Git loops while a deck link without
+    /// `fleet_git.v1` is up (design §3.3).
+    #[must_use]
+    pub fn fleet_git_paused(&self) -> &Arc<AtomicBool> {
+        &self.inner.fleet_git_paused
     }
 
     /// The history state of this station: its budget, cache and directory.

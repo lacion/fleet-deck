@@ -240,6 +240,12 @@ impl<W: Write> Sim<W> {
 
     fn on_thread(&mut self, id: &Value, method: &str, params: &Value) -> std::io::Result<()> {
         let thread = match (method, str_of(params, &["threadId"])) {
+            ("thread/resume", Some(_))
+                if std::env::var(crate::fake::RESUME_FAULT_ENV).as_deref()
+                    == Ok(crate::fake::RESUME_OTHER_ID) =>
+            {
+                format!("other-{}", std::process::id())
+            }
             ("thread/resume", Some(t)) => t.to_owned(),
             _ => format!("sim-thread-{}-{}", std::process::id(), self.next()),
         };

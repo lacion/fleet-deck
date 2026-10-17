@@ -218,6 +218,7 @@ impl Rig {
                         title: None,
                         coordinator: None,
                         launch: None,
+                        extra_env: None,
                     },
                     prompt: Some(UserInput::new("wait edit".to_owned())),
                     workspace: None,
@@ -225,6 +226,7 @@ impl Rig {
                     batch: None,
                     issue: None,
                     origin_text: false,
+                    fleet_git: None,
                 },
             )
             .await;

@@ -41,6 +41,10 @@ const SECTIONS: readonly { readonly title: string; readonly keys: readonly strin
   { title: 'Notifications', keys: ['conflict_mail'] },
   { title: 'New sessions', keys: ['clone_host', 'clone_org', 'clone_transport'] },
   { title: 'Trackers', keys: ['trackers'] },
+  {
+    title: 'Fleet Git',
+    keys: ['clone_root', 'traits', 'allow_check_cmd', 'allow_local_remotes', 'taildrive_mounts'],
+  },
 ];
 
 export type Group = { readonly title: string; readonly fields: readonly FieldMeta[] };
@@ -177,7 +181,8 @@ export function wire(meta: FieldMeta, value: unknown): unknown {
       const list = asStrings(value).filter((s) => s.trim() !== '');
       return list.length === 0 ? null : list;
     }
-    case 'repo_groups': {
+    case 'repo_groups':
+    case 'share_mounts': {
       const rows = asPairs(value).filter(([p]) => p.trim() !== '');
       return rows.length === 0 ? null : Object.fromEntries(rows);
     }

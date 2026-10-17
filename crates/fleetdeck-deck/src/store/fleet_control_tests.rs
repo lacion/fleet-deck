@@ -7,7 +7,6 @@
 //! `fleetdeck-proto` (`orchestration`).
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use fleetdeck_core::identity::Identity;
@@ -586,6 +585,7 @@ async fn modes_above_the_ceiling_or_in_bypass_are_refused_by_every_op() {
             title: None,
             coordinator: None,
             launch: None,
+            extra_env: None,
         },
         prompt: Some(UserInput::new("go")),
     };
@@ -688,19 +688,14 @@ async fn projects_start_under_the_spawn_cap_and_a_move_keeps_the_station() {
     let other = ProjectTarget::Project { id: pb.clone() };
     let r = call(&w, &b, "a4", assign("w1", other)).await;
     assert_eq!(code(&r), Some(RejectCode::InvalidCommand));
-    assert!(msg(&r).starts_with("wrong_station:"), "{}", msg(&r));
-    let nope = ProjectTarget::Project {
-        id: "nope".to_owned(),
-    };
-    let r = call(&w, &b, "a5", assign("w1", nope)).await;
-    let got = (code(&r), msg(&r));
     assert_eq!(
-        got,
-        (
-            Some(RejectCode::InvalidCommand),
-            "unknown project".to_owned()
-        )
+        msg(&r),
+        "wrong_station: This project has no home on that station."
     );
+    let nope = ProjectTarget::Project { id: "nope".into() };
+    let r = call(&w, &b, "a5", assign("w1", nope)).await;
+    assert_eq!(code(&r), Some(RejectCode::InvalidCommand));
+    assert_eq!(msg(&r), "unknown project");
     let r = call(&w, &b, "a6", assign("ghost", ProjectTarget::None)).await;
     assert_eq!(code(&r), Some(RejectCode::UnknownSession));
     // `start_in_project` counts against the spawn cap and joins the lineage.

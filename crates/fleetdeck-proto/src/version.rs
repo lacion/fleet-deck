@@ -127,6 +127,31 @@ pub mod feature {
     /// §6, DL-201).
     pub const DESKTOP: &str = "desktop.v1";
 
+    /// `fleet_git.projects_set`, `fleet_git.push_now`, `SessionCommand::Start`
+    /// `fleet_git` and the Fleet Git phase 1 events (ADR-009).
+    pub const FLEET_GIT: &str = "fleet_git.v1";
+
+    /// `project.ensure_home`, `project.home_status`,
+    /// `fleet_git.artifact_authorize`, `fleet_git.share_verdict`,
+    /// `FileRoot::Artifacts` and the artifact events (Fleet Git phase 2,
+    /// ADR-009).
+    pub const FLEET_GIT_HOMES: &str = "fleet_git.homes.v1";
+
+    /// `project.radar`, `session.land`, `fleet_git.land_status`,
+    /// `fleet_git.land_abandon` and the `session.land` event (Fleet Git
+    /// phase 3, ADR-009).
+    pub const FLEET_GIT_LAND: &str = "fleet_git.land.v1";
+
+    /// `project.branches` and `project.fetch` (Fleet Git phase 4, ADR-009).
+    pub const FLEET_GIT_BRANCHES: &str = "fleet_git.branches.v1";
+
+    /// `session.move_out`, `session.move_export`, `session.move_prepare`,
+    /// `session.move_in`, `session.move_finish`, `session.move_release`,
+    /// `session.move_abort`, `session.move_discard`, `session.move_status`,
+    /// `session.move_fail`, `session.move_undo`, the stream purposes and the
+    /// events `session.moved`, `session.move_in`, `session.move_undone` (Fleet
+    /// Git phase 4, ADR-009).
+    pub const FLEET_GIT_MOVE: &str = "fleet_git.move.v1";
     /// `desktop.act` with an `authority` param: the deck authorizes each
     /// desktop action, the station checks it right before the first side
     /// effect (R13 §5E item 1, §5F, §5G).
@@ -171,6 +196,11 @@ pub mod feature {
         PAIR_REQUEST,
         SHELL_COMMAND,
         DESKTOP,
+        FLEET_GIT,
+        FLEET_GIT_HOMES,
+        FLEET_GIT_LAND,
+        FLEET_GIT_BRANCHES,
+        FLEET_GIT_MOVE,
         DESKTOP_AUTHORITY,
         DISPLAY_CHANGES,
     ];

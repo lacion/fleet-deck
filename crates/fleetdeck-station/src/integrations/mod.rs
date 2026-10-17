@@ -24,6 +24,7 @@ pub mod gitlab;
 pub mod http;
 pub mod jira;
 pub mod linear;
+pub mod pr_find;
 pub mod tracker;
 pub mod util;
 

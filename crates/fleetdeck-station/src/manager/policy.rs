@@ -88,6 +88,25 @@ pub struct Policy {
     /// `Some` for a station with `host = "shim"` (DL-182); `None` is the
     /// direct host.
     shim_host: Option<ShimHostPlatform>,
+    /// Fleet Git accepts a local bare repository as a remote (design §3.4):
+    /// the `station.toml` key.
+    allow_local_remotes: bool,
+    /// Where Fleet Git clones new homes: `clone_root` of `station.toml`, or
+    /// the first allowed root + `/projects` (FG-5).
+    clone_root: PathBuf,
+    /// The labels of `traits` (FG-6).
+    traits: Vec<String>,
+    /// `allow_check_cmd` of `station.toml` (FG-8).
+    allow_check_cmd: bool,
+    /// `[taildrive_mounts]` of `station.toml` (FG-12).
+    taildrive_mounts: BTreeMap<String, PathBuf>,
+}
+
+/// The default `clone_root`: the first allowed root + `/projects`.
+fn default_clone_root(roots: &[PathBuf]) -> PathBuf {
+    roots
+        .first()
+        .map_or_else(|| PathBuf::from("projects"), |root| root.join("projects"))
 }
 
 impl Policy {
@@ -101,13 +120,18 @@ impl Policy {
                 after_ms: u64::try_from(d.as_millis()).unwrap_or(u64::MAX),
             },
         };
+        let allowed_roots: Vec<PathBuf> = config
+            .allowed_roots
+            .iter()
+            .map(|r| r.canonicalize().unwrap_or_else(|_| r.clone()))
+            .collect();
         Self {
             name: config.name.clone(),
-            allowed_roots: config
-                .allowed_roots
-                .iter()
-                .map(|r| r.canonicalize().unwrap_or_else(|_| r.clone()))
-                .collect(),
+            clone_root: config
+                .clone_root
+                .clone()
+                .unwrap_or_else(|| default_clone_root(&allowed_roots)),
+            allowed_roots,
             max_sessions: config.max_sessions,
             allow_setup_cmd: config.allow_setup_cmd,
             setup_envs: SetupEnvs::new(),
@@ -130,6 +154,10 @@ impl Policy {
             shim_host: matches!(config.host, HostChoice::Shim).then_some(ShimHostPlatform {
                 supported: cfg!(target_os = "linux"),
             }),
+            allow_local_remotes: config.allow_local_remotes,
+            traits: config.traits.clone(),
+            allow_check_cmd: config.allow_check_cmd,
+            taildrive_mounts: config.taildrive_mounts.clone(),
         }
         .with_repo_groups(&config.repo_groups)
     }
@@ -179,12 +207,14 @@ impl Policy {
         offline: OfflineApprovalPolicy,
         instances: BTreeMap<ProviderInstanceId, ProviderKind>,
     ) -> Self {
+        let allowed_roots: Vec<PathBuf> = allowed_roots
+            .into_iter()
+            .map(|r| r.canonicalize().unwrap_or(r))
+            .collect();
         Self {
             name: String::new(),
-            allowed_roots: allowed_roots
-                .into_iter()
-                .map(|r| r.canonicalize().unwrap_or(r))
-                .collect(),
+            clone_root: default_clone_root(&allowed_roots),
+            allowed_roots,
             max_sessions,
             allow_setup_cmd: false,
             setup_envs: SetupEnvs::new(),
@@ -201,7 +231,71 @@ impl Policy {
             model_help: ModelHelpConfig::default(),
             member_deny: MemberDeny::default(),
             shim_host: None,
+            allow_local_remotes: false,
+            traits: Vec::new(),
+            allow_check_cmd: false,
+            taildrive_mounts: BTreeMap::new(),
         }
+    }
+
+    /// The same policy with another station name (tests).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn with_name(mut self, name: &str) -> Self {
+        self.name = name.to_owned();
+        self
+    }
+
+    /// The same policy with local remotes allowed or not (Fleet Git, design
+    /// §3.4).
+    #[must_use]
+    pub fn with_allow_local_remotes(mut self, on: bool) -> Self {
+        self.allow_local_remotes = on;
+        self
+    }
+
+    /// Whether Fleet Git accepts a local bare repository as a remote.
+    #[must_use]
+    pub fn allow_local_remotes(&self) -> bool {
+        self.allow_local_remotes
+    }
+
+    /// Where Fleet Git clones new homes (FG-5).
+    #[must_use]
+    pub fn clone_root(&self) -> &Path {
+        &self.clone_root
+    }
+
+    /// The same policy with another clone folder.
+    #[must_use]
+    pub fn with_clone_root(mut self, root: PathBuf) -> Self {
+        self.clone_root = root;
+        self
+    }
+
+    /// The labels of `traits` (FG-6).
+    #[must_use]
+    pub fn traits(&self) -> &[String] {
+        &self.traits
+    }
+
+    /// The same policy with other station labels.
+    #[must_use]
+    pub fn with_traits(mut self, traits: Vec<String>) -> Self {
+        self.traits = traits;
+        self
+    }
+
+    /// Whether a project may run its check command here (FG-8).
+    #[must_use]
+    pub fn allow_check_cmd(&self) -> bool {
+        self.allow_check_cmd
+    }
+
+    /// The Taildrive mounts of this station (FG-12).
+    #[must_use]
+    pub fn taildrive_mounts(&self) -> &BTreeMap<String, PathBuf> {
+        &self.taildrive_mounts
     }
 
     /// The same policy for a station on the shim host; `supported` is
@@ -326,6 +420,12 @@ impl Policy {
         next.setup_envs.clone_from(&self.setup_envs);
         // The host applies at a restart (DL-182).
         next.shim_host = self.shim_host;
+        // The Fleet Git keys apply at a restart too (FG-5).
+        next.clone_root.clone_from(&self.clone_root);
+        next.traits.clone_from(&self.traits);
+        next.allow_check_cmd = self.allow_check_cmd;
+        next.allow_local_remotes = self.allow_local_remotes;
+        next.taildrive_mounts.clone_from(&self.taildrive_mounts);
         next
     }
 
@@ -447,6 +547,48 @@ impl Policy {
 mod tests {
     use super::*;
     use crate::manager::policy_hub::test_config;
+
+    #[test]
+    fn the_fleet_git_keys_come_from_the_config_with_a_default_clone_root() {
+        let root = tempfile::tempdir().unwrap();
+        let canonical = root.path().canonicalize().unwrap();
+        let extra = "traits = [\"gpu\"]\nallow_check_cmd = true\nallow_local_remotes = true\n\
+                     taildrive_mounts = { \"nas/out\" = \"/mnt/out\" }\n";
+        let policy = Policy::from_config(&test_config(root.path(), extra));
+        assert_eq!(policy.clone_root(), canonical.join("projects"));
+        assert_eq!(policy.traits(), ["gpu"]);
+        assert!(policy.allow_check_cmd() && policy.allow_local_remotes());
+        assert_eq!(policy.taildrive_mounts()["nas/out"], Path::new("/mnt/out"));
+        let key = format!("clone_root = \"{}/clones\"\n", root.path().display());
+        let named = Policy::from_config(&test_config(root.path(), &key));
+        assert_eq!(named.clone_root(), root.path().join("clones"));
+        let bare = Policy::from_config(&test_config(root.path(), ""));
+        assert!(!bare.allow_check_cmd() && !bare.allow_local_remotes());
+        assert!(bare.traits().is_empty() && bare.taildrive_mounts().is_empty());
+        // The policy of tests has the same default.
+        let plain = Policy::new(
+            vec![root.path().to_path_buf()],
+            1,
+            OfflineApprovalPolicy::Wait,
+            BTreeMap::new(),
+        );
+        assert_eq!(plain.clone_root(), canonical.join("projects"));
+    }
+
+    #[test]
+    fn a_live_reload_keeps_the_restart_only_fleet_git_values() {
+        let root = tempfile::tempdir().unwrap();
+        let first = Policy::from_config(&test_config(root.path(), "traits = [\"gpu\"]\n"))
+            .with_allow_local_remotes(true);
+        let edited = test_config(
+            root.path(),
+            "traits = [\"other\"]\nallow_check_cmd = true\nallow_local_remotes = false\n",
+        );
+        let next = first.reconfigured(&edited);
+        assert_eq!(next.traits(), ["gpu"]);
+        assert!(!next.allow_check_cmd());
+        assert!(next.allow_local_remotes(), "the restart-only value stays");
+    }
 
     #[test]
     fn without_shim_host_clears_the_refusal_and_survives_reconfigured() {

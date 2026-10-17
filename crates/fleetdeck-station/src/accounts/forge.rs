@@ -370,6 +370,7 @@ impl Accounts {
             env: login_env(),
             stdin: None,
             max_stdout: 64 * 1024,
+            timeout: exec::CALL_TIMEOUT,
         };
         let out = exec::run(spec).await.map_err(|e| exec::fail_of(&e, name))?;
         if out.code == 0 {
@@ -408,6 +409,7 @@ impl Accounts {
             env: login_env(),
             stdin: Some(stdin),
             max_stdout: 64 * 1024,
+            timeout: exec::CALL_TIMEOUT,
         };
         let out = exec::run(spec).await.map_err(|e| exec::fail_of(&e, name))?;
         if out.code != 0 {

@@ -50,6 +50,38 @@ pub struct StationLink {
     /// The directory of `files.write_temp` (DL-147); `None` answers
     /// `unsupported`.
     pub paste_dir: Option<std::path::PathBuf>,
+    /// The Fleet Git runtime: traits, config digest, deck control and the
+    /// Git options of a clone (FG-5, FG-6, FG-11).
+    pub fleet_git: Arc<crate::fleet_git_runtime::FleetGitRuntime>,
+}
+
+/// Holds the deck control of a link in the Fleet Git runtime for as long as
+/// the link serves, and clears it with its token (a newer link stays).
+struct DeckSlot<'a> {
+    runtime: &'a crate::fleet_git_runtime::FleetGitRuntime,
+    token: Option<u64>,
+}
+
+impl<'a> DeckSlot<'a> {
+    /// `homes`: the link negotiated `fleet_git.homes.v1`.
+    fn new(
+        runtime: &'a crate::fleet_git_runtime::FleetGitRuntime,
+        control: &Control,
+        homes: bool,
+    ) -> Self {
+        Self {
+            runtime,
+            token: homes.then(|| runtime.set_deck(control.clone())),
+        }
+    }
+}
+
+impl Drop for DeckSlot<'_> {
+    fn drop(&mut self) {
+        if let Some(token) = self.token {
+            self.runtime.clear_deck(token);
+        }
+    }
 }
 
 /// Serves `link` until it ends; returns why it ended.
@@ -67,12 +99,32 @@ pub async fn serve(ctx: Arc<StationLink>, link: LiveLink) -> Closing {
         let handle = d.handle.clone();
         tokio::spawn(crate::shell::data::serve(
             Arc::clone(&ctx.shells),
+            Arc::clone(&ctx.manager),
             d.handle,
             d.events,
         ));
         handle
     });
     let mut stream = Stream::new(ctx.manager.store().clone(), control.clone());
+    // A deck without `fleet_git.v1` cannot show or stop Fleet Git work: the
+    // loops pause while this link is up (design §3.3).
+    let _pause = intake::PauseGuard::new(
+        ctx.manager.store().fleet_git_paused(),
+        control
+            .params()
+            .negotiated
+            .has(fleetdeck_proto::version::feature::FLEET_GIT),
+    );
+    // The artifact authorization of a later phase asks the deck over this
+    // control (FG-12); it needs `fleet_git.homes.v1`.
+    let _deck = DeckSlot::new(
+        &ctx.fleet_git,
+        &control,
+        control
+            .params()
+            .negotiated
+            .has(fleetdeck_proto::version::feature::FLEET_GIT_HOMES),
+    );
     if control
         .params()
         .negotiated
@@ -128,6 +180,20 @@ async fn request(
     match req.method.as_str() {
         "shell.attach" => {
             let reply = intake::shell_attach(ctx, data, req.params);
+            if let Err(e) = control.respond(req.id, reply).await {
+                tracing::debug!(error = %e, "response");
+            }
+        }
+        // FG-9: the export token needs the data channel of this link.
+        "session.move_export" => {
+            let reply = intake::move_export(ctx, data, req.params).await;
+            if let Err(e) = control.respond(req.id, reply).await {
+                tracing::debug!(error = %e, "response");
+            }
+        }
+        // FG-9: the upload token needs the data channel of this link.
+        "session.move_prepare" => {
+            let reply = intake::move_prepare(ctx, data, req.params).await;
             if let Err(e) = control.respond(req.id, reply).await {
                 tracing::debug!(error = %e, "response");
             }

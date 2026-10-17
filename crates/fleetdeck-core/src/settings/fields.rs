@@ -256,6 +256,43 @@ pub fn station_fields() -> Vec<FieldMeta> {
             "The full path of the tailscale program. Leave it empty to find tailscale on PATH.",
         )
         .danger(),
+        field(
+            "clone_root",
+            "Clone folder",
+            K::Path,
+            Restart,
+            "Fleet Git clones new project homes below this folder. It must be inside an allowed root. Default: the first allowed root + /projects.",
+        ),
+        field(
+            "traits",
+            "Station labels",
+            K::Texts,
+            Restart,
+            "Labels that a start can require, for example gpu. Each label is 1 to 32 characters: a-z, 0-9, _ or -.",
+        ),
+        field(
+            "allow_check_cmd",
+            "Allow check commands",
+            K::Bool,
+            Restart,
+            "Lets a project run its check command on this station before a land.",
+        )
+        .danger(),
+        field(
+            "allow_local_remotes",
+            "Allow local remotes",
+            K::Bool,
+            Restart,
+            "Lets a project use a file:// URL or a local path of a bare repository as its remote. For tests and for a repository on this machine.",
+        )
+        .danger(),
+        field(
+            "taildrive_mounts",
+            "Taildrive mounts",
+            K::ShareMounts,
+            Restart,
+            "Maps a Taildrive share (<machine>/<share>) to the folder where this station mounts it.",
+        ),
     ]
     .into_iter()
     .map(|f| f.0)

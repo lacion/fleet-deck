@@ -59,6 +59,23 @@ This document is the map of the v2 code for a developer and a reviewer. It gives
 - Handshake: both sides send `Hello { proto_min, proto_max, features, role, node_id, link_epoch, nonce }` and sign the transcript with the TLS exporter value. The highest common version wins; the features decide the behaviour.
 - Frames: `Request`, `Response`, `Event`, `Ack`, `SnapshotBegin`/`SnapshotSession`/`SnapshotEnd`, `Ping`/`Pong`, `Close`.
 - Each method declares its direction, scope and feature (`crates/fleetdeck-link/src/methods.rs`, ADR-004 §9.6). A method whose feature was not negotiated is refused `feature_not_negotiated`. Example: `coordinator.query` and `coordinator.call` need `coordinator.v1`, so an N−1 peer without it cannot reach the coordinator forward (ADR-006 test 26).
+- **Fleet Git methods** (ADR-009, additive; the table is `crates/fleetdeck-link/src/methods_table.rs`). The features are `fleet_git.v1`, `fleet_git.homes.v1`, `fleet_git.land.v1` and `fleet_git.branches.v1`. None is required. A deck does not act for a station without the feature: the board gets 409 `fleet_git_unsupported`. Besides the methods, the features cover the field `fleet_git` of `session.start`, the file root `artifacts` of `files.v1`, and the events `workspace.base_stale`, `workspace.include_skipped`, `session.push`, `session.cleanup`, `artifacts.ready`, `artifacts.unavailable`, `artifacts.revoked` and `session.land`.
+
+| Method | Direction | Scope | Feature | What it does |
+| --- | --- | --- | --- | --- |
+| `fleet_git.projects_set` | deck to station | `admin` | `fleet_git.v1` | The versioned full snapshot of the project settings and homes. |
+| `fleet_git.push_now` | deck to station | `drive` | `fleet_git.v1` | "Push now" for one session. |
+| `project.ensure_home` | deck to station | `admin` | `fleet_git.homes.v1` | Clone or adopt a home. Idempotent by attempt id and request digest. |
+| `project.home_status` | deck to station | `read` | `fleet_git.homes.v1` | The state of a home attempt (the deck polls it while a clone runs). |
+| `fleet_git.artifact_authorize` | station to deck | `admin` | `fleet_git.homes.v1` | A station asks for the verdict of an artifact share on another machine. The scope is `admin` because a paired station holds only `admin` (STATION_SCOPES). |
+| `fleet_git.share_verdict` | deck to station | `read` | `fleet_git.homes.v1` | The exporting station answers the exposure of one of its Taildrive shares. |
+| `project.radar` | deck to station | `read` | `fleet_git.land.v1` | One run of the conflict radar on the radar home. |
+| `session.land` | deck to station | `drive`, mutating | `fleet_git.land.v1` | The land of a session with a pinned plan and a stable command id. |
+| `fleet_git.land_status` | deck to station | `read` | `fleet_git.land.v1` | The stored run of a land, also for a fenced land (so the deck gets the outcome fields). |
+| `fleet_git.land_abandon` | deck to station | `drive` | `fleet_git.land.v1` | The fence of "Stop checking": the station waits for an active write, then fences the land id. |
+| `project.branches` | deck to station | `read` | `fleet_git.branches.v1` | The `fd/` branches of the radar home (times in Unix milliseconds). |
+| `project.fetch` | deck to station | `read` | `fleet_git.branches.v1` | One fetch on the radar home. |
+
 - Commands carry `target_incarnation` and `retry_until`. The deck resends the same `command_id` after a reconnect and never after `retry_until`.
 - Network scope: loopback, private LAN and tailnet addresses only (D13).
 
@@ -188,6 +205,33 @@ How to read it:
 | `session.set_auto_continue` | POST | `/api/commands/session.set_auto_continue` | drive | yes |
 | `approval.answer` | POST | `/api/commands/approval.answer` | approve | yes |
 
+### Fleet Git routes
+
+The Fleet Git routes are in `http/methods_table_git.rs` (`API_GIT`) and two rows of `http/methods_table_rest.rs`. `tools/route-map.sh` reads only the first table of `methods.rs`, so these rows are written by hand. The rule "Admin routes need the owner's board login" holds for every `admin` row below (the handler checks it), and a member never reaches a Fleet Git route.
+
+| Name | Method | Route | Scope | Mutating |
+| --- | --- | --- | --- | --- |
+| `projects.git_set` | PUT | `/api/projects/{project}/git` | admin | yes |
+| `projects.remote_set` | PUT | `/api/projects/{project}/remote` | admin | yes |
+| `projects.home_add` | POST | `/api/projects/{project}/homes` | admin | yes |
+| `projects.home_retry` | POST | `/api/projects/{project}/homes/{station}/retry` | admin | yes |
+| `projects.home_remove` | DELETE | `/api/projects/{project}/homes/{station}` | admin | yes |
+| `placement.place` | POST | `/api/placement` | drive | no |
+| `sessions.push_now` | POST | `/api/sessions/{station}/{session}/push` | drive | yes |
+| `sessions.land` | POST | `/api/sessions/{station}/{session}/land` | admin | yes |
+| `projects.lands` | GET | `/api/projects/{project}/lands` | read | no |
+| `lands.cancel` | POST | `/api/lands/{land}/cancel` | admin | yes |
+| `lands.abandon` | POST | `/api/lands/{land}/abandon` | admin | yes |
+| `lands.forget` | POST | `/api/lands/{land}/forget` | admin | yes |
+| `lands.send` | POST | `/api/lands/{land}/send` | admin | yes |
+| `projects.branches` | GET | `/api/projects/{project}/branches` | read | no |
+| `projects.fetch` | POST | `/api/projects/{project}/fetch` | drive | yes |
+| `radar.list` | GET | `/api/radar` | read | no |
+| `fleet_git.prefs` | GET | `/api/fleet-git/prefs` | read | no |
+| `fleet_git.drift_reference` | PUT | `/api/fleet-git/drift-reference` | admin | yes |
+
+The file routes `files.list`, `files.read` and `files.search` take a third root, `artifacts=<session id>` (exactly one of `session`, `workspace` and `artifacts`). The turn diff route refuses it.
+
 ## 10. Session lifecycle
 
 The board shows the **lane** of a card (`CardStatus`, derived by the deck from the events). The station keeps the state of each **effect** (the outbox row of a command). The two diagrams show the lanes and the effect states. A lane never comes from a guess: each arrow is an event or a link state.
@@ -240,7 +284,9 @@ stateDiagram-v2
 
 The real tables, from the migrations (`store/schema.rs` of each crate). `PLAN.md` §10 is reconciled with this list (DL-162).
 
-**station.db** (20 migrations; V4 is `fleetdeck_link::LINK_EPOCHS_SQL`)
+The rows for V21 to V27 of station.db and for V13 to V24 of deck.db are not in these tables yet. The deck list has v2's V25 (the display migration) first; the Fleet Git deck migrations are V26 to V30 (DL-232). The Fleet Git rows below are complete for their migrations. Fleet Git migrations only add (design §3.9); before a pending migration runs, the process writes a backup (operations §13.6).
+
+**station.db** (30 migrations; V4 is `fleetdeck_link::LINK_EPOCHS_SQL`)
 
 | Migration | Tables (and columns that later migrations add) |
 | --- | --- |
@@ -256,8 +302,11 @@ The real tables, from the migrations (`store/schema.rs` of each crate). `PLAN.md
 | V17 | `coordinator_outbox` |
 | V19 | `setup_runs` (DL-148) |
 | V20 | `worktree_ops` (DL-150) |
+| V28 (Fleet Git, `store/schema_v28.rs`) | `git_snapshot` (the newest settings snapshot: revision and digest), `git_projects` (the settings view and the home check of each project), `station_homes` (every home of the snapshot, for the Taildrive exposure check), `session_git` (the Fleet Git data of a session: kind, branch, publication ref, cleanup state, artifact folder), `git_pushes` (the push state and lease of a session); columns `worktree_ops.expect_branch`, `worktree_ops.expect_oid` |
+| V29 (Fleet Git, `store/schema_v29.rs`) | `home_attempts` (one row for each `project.ensure_home` attempt, with the reserved folder); column `session_git.artifact_auth` |
+| V30 (Fleet Git, `store/schema_v30.rs`) | `land_runs` (the land journal and its pending write), `land_fences` (the fence of "Stop checking"), `land_temps` (the temporary land folders), `session_holds` (the land hold of a session) |
 
-**deck.db** (12 migrations; V2 is `fleetdeck_link::LINK_EPOCHS_SQL`)
+**deck.db** (27 migrations; V2 is `fleetdeck_link::LINK_EPOCHS_SQL`)
 
 | Migration | Tables (and columns that later migrations add) |
 | --- | --- |
@@ -271,5 +320,9 @@ The real tables, from the migrations (`store/schema.rs` of each crate). `PLAN.md
 | V8 | `file_touches` |
 | V9 to V11 | `tokens`, `coordinator_lineage`; `tokens.renew_generation`, `tokens.start_command_id` |
 | V12 | `archived_sessions`, `archive_mutations` (DL-149) |
+| V25 (R13 P2b/P3b, `store/display_v25.rs`) | `display_directives`, `wake_seen`, `wake_state`; columns `displays.auth_generation`, `displays.binding_revision`, `displays.directive_generation`, `auth_generation` of `display_links`, `display_sessions` and `display_pairings`, `display_pairings.expected_display_id`, `display_pairings.operation_revision` |
+| V26 (Fleet Git, `store/fleet_git_schema.rs`) | `git_snapshots` (the snapshot state of each station), `slug_reservations` (the Git name of a station in a repository); columns `projects.git`, `projects.git_revision`, `projects.repo`, `projects.remote_url`, `projects.remote_ssh_user`, `projects.remote_dest` |
+| V27 (Fleet Git) | `project_homes` (the homes of a project, the authority for station and path), `home_generations` (the last generation of each home), `home_attempts` (the deck copy of each home attempt and its outbox state), `fleet_git_prefs` (the drift reference station) |
+| V28 (Fleet Git) | `radar_pairs` (the conflict predictions of a project), `land_queue` (the land queue with partial unique indexes that allow one running land for each project and repository), `land_outbox` (the durable send of `session.land`) |
 
 The grants and the revocation generation of the sketch are columns (`pairing.role`, `pairing.scopes`, `meta.revocation_generation`) and the `tokens` table, not separate `links` and `grants` tables. Raw provider frames are not a table (bounded log files per session, L12).

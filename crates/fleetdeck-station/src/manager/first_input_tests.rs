@@ -223,6 +223,7 @@ impl Rig {
             title: None,
             coordinator: None,
             launch: None,
+            extra_env: None,
         };
         let d = self
             .accepted(SessionCommand::Start {
@@ -233,6 +234,7 @@ impl Rig {
                 batch: None,
                 issue: None,
                 origin_text: false,
+                fleet_git: None,
             })
             .await;
         let result = d.receipt.result.unwrap();

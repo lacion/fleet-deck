@@ -212,6 +212,12 @@ impl DeckStore {
                     },
                 })))
             }
+            CoordinatorQuery::ProjectBranches { project_id } => {
+                self.project_branches_read(grant, project_id).await
+            }
+            CoordinatorQuery::ProjectFetch { project_id } => {
+                self.project_fetch_read(grant, project_id).await
+            }
             // The other queries are answered by `coordinator_query`.
             _ => no(RejectCode::Unsupported, "not a read query"),
         }

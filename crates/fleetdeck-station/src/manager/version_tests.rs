@@ -134,6 +134,7 @@ async fn a_start_on_a_broken_version_is_refused_with_the_reason() {
                 title: None,
                 coordinator: None,
                 launch: None,
+                extra_env: None,
             },
             prompt: Some(UserInput::new("hello".to_owned())),
             workspace: None,
@@ -141,6 +142,7 @@ async fn a_start_on_a_broken_version_is_refused_with_the_reason() {
             batch: None,
             issue: None,
             origin_text: false,
+            fleet_git: None,
         },
     };
     let decided = manager.submit(envelope, Caller::local()).await.unwrap();

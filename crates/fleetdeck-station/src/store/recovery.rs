@@ -132,6 +132,11 @@ pub(super) fn recover(
         report.lost_sessions += 1;
     }
     super::coordinator_outbox::recover(conn, now)?;
+    // (FG-9) A moved-in session that was launching is abandoned.
+    let abandoned = super::move_commit::recover(conn, now, out)?;
+    if abandoned > 0 {
+        tracing::info!(abandoned, "moves that were launching are abandoned");
+    }
     Ok(report)
 }
 

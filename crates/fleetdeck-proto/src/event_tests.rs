@@ -296,6 +296,73 @@ fn samples() -> Vec<Event> {
         Event::ExecutionReconciled {
             shim_id: "01JABCDEFGHJKMNPQRSTVWXYZ0".into(),
         },
+        Event::WorkspaceBaseStale {
+            code: "fetch_failed".into(),
+            text: "Fetch failed; this session started from the local HEAD: timeout".into(),
+        },
+        Event::WorkspaceIncludeSkipped {
+            files: vec![crate::fleet_git::SkippedFile {
+                path: ".env".into(),
+                reason: "symlink".into(),
+            }],
+        },
+        Event::SessionPush {
+            state: crate::fleet_git::PushState::Failing,
+            ref_name: "fd/alpha/ada".into(),
+            oid: None,
+            desired_oid: Some("abc123".into()),
+            stop_code: None,
+            attempts: 2,
+            next_attempt_at: Some(1_791_000_120_000),
+            code: Some("push_rejected".into()),
+            text: Some("Push was rejected: stale info".into()),
+        },
+        Event::SessionCleanup {
+            state: crate::fleet_git::CleanupState::Kept,
+            reason: Some("not_merged".into()),
+        },
+        Event::ArtifactsReady {
+            path: Some("/mnt/nas/artifacts/app/ada/".into()),
+            url: None,
+        },
+        Event::ArtifactsUnavailable {
+            code: "share_exposed".into(),
+            text: "The artifact share exposes protected folders.".into(),
+        },
+        Event::ArtifactsRevoked {
+            code: "share_unverified".into(),
+            text: "The artifact share is not verified now.".into(),
+        },
+        Event::SessionLand(Box::new(crate::fleet_git::LandInfo {
+            land_id: "land-1".into(),
+            attempt: 2,
+            state: crate::fleet_git::LandState::Running,
+            phase: crate::fleet_git::LandPhase::BranchPushIntent,
+            reconciling: true,
+            code: None,
+            text: None,
+            files: vec!["src/a.rs".into()],
+            source_oid: Some("a".repeat(40)),
+            base_oid: Some("b".repeat(40)),
+            rebased_oid: Some("c".repeat(40)),
+            branch_published_oid: None,
+            default_published_oid: None,
+            pr_url: None,
+        })),
+        Event::SessionMoveIn(crate::fleet_git::MoveInInfo {
+            move_id: "mv-1".into(),
+            state: crate::fleet_git::MoveInState::Resumed,
+            code: None,
+            text: None,
+        }),
+        Event::SessionMoved {
+            move_id: "mv-1".into(),
+            to_station: "bravo".into(),
+            to_session: "s2".into(),
+        },
+        Event::SessionMoveUndone {
+            move_id: "mv-1".into(),
+        },
     ]
 }
 
@@ -620,4 +687,73 @@ fn a_task_update_omits_its_empty_optional_fields_and_decodes_without_them() {
                "status": "running"})
     );
     assert_eq!(serde_json::from_value::<Event>(json).unwrap(), bare);
+}
+
+#[test]
+fn the_fleet_git_events_have_their_wire_names_and_optional_fields() {
+    let push = serde_json::to_value(Event::SessionPush {
+        state: crate::fleet_git::PushState::Pushed,
+        ref_name: "fd/a/b".into(),
+        oid: Some("abc".into()),
+        desired_oid: None,
+        stop_code: None,
+        attempts: 0,
+        next_attempt_at: None,
+        code: None,
+        text: None,
+    })
+    .unwrap();
+    assert_eq!(
+        push,
+        json!({"kind": "session.push", "state": "pushed", "ref_name": "fd/a/b", "oid": "abc", "attempts": 0})
+    );
+    // An event of a newer station with an unknown push state still decodes.
+    let newer: EventBody = serde_json::from_value(
+        json!({"kind": "session.push", "state": "paused", "ref_name": "r", "attempts": 1}),
+    )
+    .unwrap();
+    assert!(matches!(
+        newer.known(),
+        Some(Event::SessionPush {
+            state: crate::fleet_git::PushState::Unknown,
+            ..
+        })
+    ));
+    let stale: EventBody = serde_json::from_value(
+        json!({"kind": "workspace.base_stale", "code": "fetch_timeout", "text": "t"}),
+    )
+    .unwrap();
+    assert_eq!(stale.kind_name(), "workspace.base_stale");
+    assert!(stale.known().is_some());
+}
+
+#[test]
+fn the_artifact_events_have_their_wire_names_and_optional_fields() {
+    let ready = serde_json::to_value(Event::ArtifactsReady {
+        path: None,
+        url: Some("http://100.100.100.100:8080/t/nas/art/app/ada/".into()),
+    })
+    .unwrap();
+    assert_eq!(
+        ready,
+        json!({"kind": "artifacts.ready", "url": "http://100.100.100.100:8080/t/nas/art/app/ada/"})
+    );
+    for (kind, name) in [
+        ("artifacts.unavailable", "mount_missing"),
+        ("artifacts.revoked", "share_unverified"),
+    ] {
+        let body: EventBody =
+            serde_json::from_value(json!({"kind": kind, "code": name, "text": "t"})).unwrap();
+        assert_eq!(body.kind_name(), kind);
+        assert!(body.known().is_some());
+    }
+    // A bare `artifacts.ready` decodes (both fields are optional).
+    let bare: EventBody = serde_json::from_value(json!({"kind": "artifacts.ready"})).unwrap();
+    assert!(matches!(
+        bare.known(),
+        Some(Event::ArtifactsReady {
+            path: None,
+            url: None
+        })
+    ));
 }

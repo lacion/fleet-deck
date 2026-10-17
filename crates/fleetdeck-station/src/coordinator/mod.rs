@@ -11,6 +11,7 @@ pub mod bridge;
 pub mod fence;
 pub mod fleet_tools;
 pub mod forward;
+mod git_tools;
 pub mod handoff;
 pub mod ingress;
 mod jsonrpc;

@@ -15,6 +15,7 @@ import type {
   ToolKind,
   TurnStatus,
 } from '../gen';
+import { fleetGitNotice, newFleetGitMemory } from './timeline_fleet_git';
 
 export type SubagentStatus = 'running' | 'background' | 'done' | 'failed' | 'ended';
 
@@ -138,6 +139,7 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
   const allReasoning: Extract<Item, { type: 'reasoning' }>[] = [];
   const openReasoning = new Map<Item[], Extract<Item, { type: 'reasoning' }>>(); // list → open item
   const turns = new Map<string, Extract<Item, { type: 'turn' }>>();
+  const fleetGit = newFleetGitMemory(); // the push state and the cleanup line before (FG-2, FG-3)
   let tasks: string[] = []; // the current subagent task ids
   // Background subagents that the previous event finished by an empty task
   // list. An old station recovery wrote that list just before the loss, so
@@ -506,8 +508,11 @@ export function buildTimeline(events: readonly EventEnvelope[]): SessionTimeline
         add(root, { type: 'notice', key, text: 'The session ended.', tone: 'info' });
         break;
       }
-      default:
+      default: {
+        const notice = fleetGitNotice(event, key, fleetGit); // FG-1..FG-4
+        if (notice !== null) add(root, notice);
         break;
+      }
     }
   }
   const running = subagents.filter((s) => s.status === 'running' || s.status === 'background');

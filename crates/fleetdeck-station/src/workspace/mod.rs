@@ -11,6 +11,7 @@ pub mod checkpoint_refs;
 pub mod clone_reuse;
 pub mod coordinator_diff;
 pub mod files;
+pub mod fleet_git;
 pub mod git;
 pub mod paste;
 pub mod precheck;

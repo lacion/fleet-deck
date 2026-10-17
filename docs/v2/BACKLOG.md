@@ -16,6 +16,7 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
   - Show the tool calls of a subagent inside its card (Claude subagent transcripts)?
 - **Done, first part (2026-10-15):** an import takes the `HEAD` at import time as its base, so "Since the session started" shows the work after the import, also merged branches (be-w4). Open: worktrees that a session created, and subagent tool calls.
 - **Done (2026-10-16):** DL-191: "Show its work" on a subagent card (the subagent's own messages and tool calls) and the "Branches" view in the Changes tab (the repository's branches and the diff of one against its merge base).
+- **Done by Fleet Git (2026-10-17, FG-10, branches of other stations):** the "Other stations" group of the Branches view lists the `fd/<station>/<callsign>` branches that other stations pushed for a sync project (session link, ahead and behind, "Will conflict"), and the coordinator tools `project_branches` and `project_fetch` read them ([operations §13.14](./operations.md)).
 
 ## B2. Background notifications show as "provider turn" (owner screenshot, 2026-10-15)
 

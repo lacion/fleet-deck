@@ -34,7 +34,11 @@ mod intake_native;
 // R13 P3: `desktop.info` and `desktop.act`.
 #[path = "intake_desktop.rs"]
 mod intake_desktop;
+// Fleet Git phase 1: `fleet_git.projects_set` and `fleet_git.push_now`.
+#[path = "intake_fleet_git.rs"]
+mod intake_fleet_git;
 use crate::store::{Caller, DecideError, StoreError, peers};
+pub(super) use intake_fleet_git::{PauseGuard, move_export, move_prepare};
 
 /// The error code of a request that this build does not serve yet.
 pub const NOT_IMPLEMENTED: &str = "not_implemented";
@@ -300,15 +304,21 @@ async fn file_method(ctx: &StationLink, method: &str, params: serde_json::Value)
     let member = fleetdeck_proto::member_deny::take_member_flag(&mut params);
     match method {
         "files.list" => match serde_json::from_value(params) {
-            Ok(q) => done(files::list_as(store, policy, private, q, member).await),
+            Ok(q) => {
+                done(files::list_routed(store, &ctx.fleet_git, policy, private, q, member).await)
+            }
             Err(e) => bad_params(e),
         },
         "files.read" => match serde_json::from_value(params) {
-            Ok(q) => done(files::read_as(store, policy, private, q, member).await),
+            Ok(q) => {
+                done(files::read_routed(store, &ctx.fleet_git, policy, private, q, member).await)
+            }
             Err(e) => bad_params(e),
         },
         "files.search" => match serde_json::from_value(params) {
-            Ok(q) => done(files::search_as(store, policy, private, &git, q, member).await),
+            Ok(q) => done(
+                files::search_routed(store, &ctx.fleet_git, policy, private, &git, q, member).await,
+            ),
             Err(e) => bad_params(e),
         },
         "files.diff" => match serde_json::from_value(params) {
@@ -520,6 +530,10 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
                 assist_cap: usage.map(|(_, cap)| cap),
                 resources: crate::resources::current(&policy).await,
                 desktop: intake_desktop::station_info(ctx).await,
+                traits: intake_fleet_git::traits(&ctx.fleet_git, &policy).await,
+                config: ctx.fleet_git.config(),
+                taildrive: ctx.fleet_git.taildrive_report(),
+                fleet_git: Some(intake_fleet_git::info(&ctx.fleet_git, &policy).await),
             })
         }
         "workspace.list" => workspaces(ctx, req.params).await,
@@ -540,6 +554,23 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
         "station.native_preview" => intake_native::preview(ctx, req.params).await,
         "desktop.info" => intake_desktop::info(ctx, req.params).await,
         "desktop.act" => intake_desktop::act(ctx, control, req.params).await,
+        "fleet_git.projects_set" => intake_fleet_git::snapshot(ctx, req.params).await,
+        "fleet_git.share_verdict" => intake_fleet_git::share_verdict(ctx, req.params).await,
+        "fleet_git.push_now" => intake_fleet_git::push_now(&ctx.manager, req.params).await,
+        "fleet_git.land_status" => intake_fleet_git::land_status(&ctx.manager, req.params).await,
+        "fleet_git.land_abandon" => intake_fleet_git::land_abandon(&ctx.manager, req.params).await,
+        "session.move_abort" => intake_fleet_git::move_abort(&ctx.manager, req.params).await,
+        "session.move_status" => intake_fleet_git::move_status(&ctx.manager, req.params).await,
+        "session.move_discard" => intake_fleet_git::move_discard(&ctx.manager, req.params).await,
+        "session.move_release" => intake_fleet_git::move_release(&ctx.manager, req.params).await,
+        "session.move_fail" => intake_fleet_git::move_fail(&ctx.manager, req.params).await,
+        "project.radar" => intake_fleet_git::radar(&ctx.manager, &ctx.fleet_git, req.params).await,
+        "project.branches" => {
+            intake_fleet_git::branches(&ctx.manager, &ctx.fleet_git, req.params).await
+        }
+        "project.fetch" => intake_fleet_git::fetch(&ctx.manager, &ctx.fleet_git, req.params).await,
+        "project.ensure_home" => intake_fleet_git::ensure_home(ctx, req.params).await,
+        "project.home_status" => intake_fleet_git::home_status(ctx, req.params).await,
         "session.branches" | "files.branch_diff" => {
             branch_method(ctx, &req.method, req.params).await
         }

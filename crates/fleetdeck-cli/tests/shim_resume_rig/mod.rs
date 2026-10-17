@@ -301,6 +301,7 @@ impl Rig {
             title: None,
             coordinator: None,
             launch: None,
+            extra_env: None,
         }
     }
 
@@ -317,6 +318,7 @@ impl Rig {
                     batch: None,
                     issue: None,
                     origin_text: false,
+                    fleet_git: None,
                 },
             )
             .await;

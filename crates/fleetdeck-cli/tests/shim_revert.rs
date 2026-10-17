@@ -213,6 +213,7 @@ impl Rig {
                         title: None,
                         coordinator: None,
                         launch: None,
+                        extra_env: None,
                     },
                     prompt: Some(text(first)),
                     workspace: None,
@@ -220,6 +221,7 @@ impl Rig {
                     batch: None,
                     issue: None,
                     origin_text: false,
+                    fleet_git: None,
                 },
             )
             .await;

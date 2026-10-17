@@ -101,7 +101,7 @@ impl AuditCall {
                 ..
             } => session(station, session_id),
             CoordinatorOp::ProjectStart { project_id, .. } => Some(project_id.clone()),
-            _ => None,
+            other => super::coordinator_git::audit_target(other),
         };
         Self {
             actor: format!("coordinator:{station}/{}", e.call.caller),
@@ -119,6 +119,9 @@ impl AuditCall {
 pub(crate) struct FleetEnv {
     pub fleet_control: bool,
     pub links: BTreeMap<StationId, LinkV2>,
+    /// The `fleet_git.land.v1` state of each station link (FG-10).
+    pub land: BTreeMap<String, super::LinkFeature>,
+    pub moves: BTreeMap<String, super::LinkFeature>,
 }
 
 impl FleetEnv {
@@ -164,6 +167,7 @@ impl DeckStore {
             outbox_id: new_id(self.inner.ids.as_ref()),
             env: FleetEnv::default(),
             flags: CallFlags::default(),
+            land_ids: super::coordinator_git::land_ids(self, &envelope.call.op),
         };
         let audit_row = AuditCall::new(&station, &envelope);
         let other_deck = envelope.target_incarnation != incarnation;
@@ -425,73 +429,6 @@ impl DeckStore {
 // authority checks until the provider write.
 // ---------------------------------------------------------------------------
 
-/// True when the call is a fleet-control op (ADR-008 §2): an op that
-/// ADR-008 adds, or any op of a fleet-control grant.
-fn is_fleet_op(grant: &Grant, op: &CoordinatorOp) -> bool {
-    grant.is_fleet_control()
-        || matches!(
-            op,
-            CoordinatorOp::Resume { .. }
-                | CoordinatorOp::Rename { .. }
-                | CoordinatorOp::SetMode { .. }
-                | CoordinatorOp::ProjectAssign { .. }
-                | CoordinatorOp::ProjectStart { .. }
-                | CoordinatorOp::Answer { .. }
-        )
-}
-
-/// The station that an op names, for the `coordinator.v2` gate.
-fn op_station(op: &CoordinatorOp) -> Option<&StationId> {
-    match op {
-        CoordinatorOp::Send { to, .. } | CoordinatorOp::Assign { to, .. } => Some(&to.station),
-        CoordinatorOp::Interrupt { station, .. }
-        | CoordinatorOp::Stop { station, .. }
-        | CoordinatorOp::Spawn { station, .. }
-        | CoordinatorOp::Resume { station, .. }
-        | CoordinatorOp::Rename { station, .. }
-        | CoordinatorOp::SetMode { station, .. }
-        | CoordinatorOp::ProjectAssign { station, .. }
-        | CoordinatorOp::Answer { station, .. } => Some(station),
-        _ => None,
-    }
-}
-
-/// The gate of a fleet-control op (ADR-008 §3, §4.1): the deck setting
-/// `fleet_control` is on (`fleet_control_off:`, stored `forbidden`), and the
-/// caller's station and the target station did not negotiate less than
-/// `coordinator.v2` on a live link (stored `unsupported`). A station with no
-/// live link passes here: the send waits for it and checks again.
-pub(super) fn fleet_gate(grant: &Grant, op: &CoordinatorOp, ctx: &Context) -> Option<Decision> {
-    if !is_fleet_op(grant, op) {
-        return None;
-    }
-    if !ctx.env.fleet_control {
-        return Some(Decision::Rejected(
-            RejectCode::Forbidden,
-            "fleet_control_off: fleet control is off on this deck".to_owned(),
-        ));
-    }
-    if grant.authority().is_none() {
-        return Some(Decision::Rejected(
-            RejectCode::Forbidden,
-            "the grant is not bound".to_owned(),
-        ));
-    }
-    let stations = std::iter::once(&grant.station_id).chain(op_station(op));
-    stations.into_iter().find_map(|s| v2_refusal(grant, ctx, s))
-}
-
-/// The refusal for a station whose live link did not negotiate
-/// `coordinator.v2`, for a call under a fleet-control grant (ADR-008 §3).
-pub(super) fn v2_refusal(grant: &Grant, ctx: &Context, station: &StationId) -> Option<Decision> {
-    (grant.is_fleet_control() && ctx.env.link(station) == LinkV2::Without).then(|| {
-        Decision::Rejected(
-            RejectCode::Unsupported,
-            format!("the link of station `{station}` did not negotiate coordinator.v2"),
-        )
-    })
-}
-
 /// True when a session holds an active grant with a mutating class (ADR-008
 /// §4.2 rule 3): `state = 'active'`, not past `expires_at`; an idle-expired
 /// row that was not revoked still counts (conservative).
@@ -746,7 +683,8 @@ impl DeckStore {
                 return Ok(Err("fleet_control_off"));
             }
             let Some((payload, authority)) = row else {
-                return Ok(Err("unknown_command"));
+                // A land command is in `land_queue` (FG-8, design §11.2).
+                return super::session_moves::authority_local(&tx, &station, &check, &grant, now);
             };
             let same = authority
                 .and_then(|t| serde_json::from_str::<CommandAuthority>(&t).ok())
@@ -791,6 +729,10 @@ impl DeckStore {
         .await
     }
 }
+
+#[path = "coordinator_gate.rs"]
+mod gate;
+pub(super) use gate::{fleet_gate, v2_refusal};
 
 #[cfg(test)]
 #[path = "coordinator_tests.rs"]

@@ -73,6 +73,14 @@ pub enum ReadShape {
         artifact_id: String,
         version: Option<u32>,
     },
+    /// `project.branches` of the radar home (FG-10).
+    ProjectBranches {
+        project_id: String,
+    },
+    /// `project.fetch` of the radar home (FG-10).
+    ProjectFetch {
+        project_id: String,
+    },
 }
 
 type Answer = std::result::Result<QueryAnswer, Reject>;
@@ -207,7 +215,9 @@ impl DeckStore {
             | CoordinatorQuery::Artifacts { .. }
             | CoordinatorQuery::Artifact { .. }
             | CoordinatorQuery::FileRead { .. }
-            | CoordinatorQuery::FileSearch { .. } => grant.classes.contains(&GrantClass::Inspect),
+            | CoordinatorQuery::FileSearch { .. }
+            | CoordinatorQuery::ProjectBranches { .. }
+            | CoordinatorQuery::ProjectFetch { .. } => grant.classes.contains(&GrantClass::Inspect),
             CoordinatorQuery::CommandStatus { .. } => {
                 grant.classes.iter().any(|c| *c != GrantClass::Read)
             }

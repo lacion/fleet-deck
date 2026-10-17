@@ -10,6 +10,7 @@ pub mod activity_routes;
 pub mod admission;
 pub mod archive_routes;
 pub mod artifact_routes;
+mod artifact_share_check;
 pub mod assets;
 pub mod assign_routes;
 pub mod assist_routes;
@@ -28,6 +29,8 @@ pub mod endpoints;
 pub mod execution_routes;
 pub mod file_routes;
 pub mod fleet_answers_routes;
+pub mod fleet_git_pref_routes;
+pub mod fleet_git_routes;
 pub mod fleet_routes;
 pub mod grant_routes;
 pub mod guard;
@@ -38,8 +41,13 @@ pub mod not_built;
 pub mod pairing_routes;
 pub mod paste_routes;
 pub mod people_routes;
+pub mod placement_routes;
 pub mod plan_routes;
+pub mod project_git_routes;
+pub mod project_home_routes;
+pub mod project_remote_routes;
 pub mod project_session_routes;
+mod project_targets;
 pub mod project_writes;
 pub mod projects_routes;
 pub mod read_routes;
@@ -48,6 +56,7 @@ pub mod review_routes;
 pub mod schedule_routes;
 pub mod secrets_routes;
 pub mod server;
+pub mod session_git_routes;
 pub mod session_work_routes;
 pub mod settings_routes;
 pub mod share_routes;
@@ -377,6 +386,14 @@ pub fn router(board: Arc<Board>) -> Router {
             post(project_writes::pr_review),
         )
         .route(
+            "/api/projects/{project}/git",
+            axum::routing::put(project_git_routes::put_git),
+        )
+        .route(
+            "/api/sessions/{station}/{session}/push",
+            post(session_git_routes::push_now),
+        )
+        .route(
             "/api/projects/{project}/sessions/assign",
             post(project_session_routes::assign),
         )
@@ -536,6 +553,7 @@ pub fn router(board: Arc<Board>) -> Router {
             get(fleet_answers_routes::list),
         )
         .merge(display_routes::routes())
+        .merge(fleet_git_routes::routes())
         .merge(display_directive_routes::routes())
         .merge(display_changes::routes())
         .merge(display_artifact::routes())

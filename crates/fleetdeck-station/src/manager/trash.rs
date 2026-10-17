@@ -71,7 +71,11 @@ fn opening_refusal() -> DecideError {
 }
 
 /// Refuses when a queued or claimed shell effect will open in `path`.
-fn pending_shell(d: &Decision<'_>, policy: &Policy, path: &str) -> Result<(), DecideError> {
+pub(super) fn pending_shell(
+    d: &Decision<'_>,
+    policy: &Policy,
+    path: &str,
+) -> Result<(), DecideError> {
     let cwds = crate::store::shell_effects::pending_cwds(d.connection())?;
     if cwd_overlaps(&cwds, policy, path) {
         return Err(opening_refusal());
@@ -97,7 +101,7 @@ pub fn decide(
     }
     match command {
         SessionCommand::WorktreeTrash { session_id } => {
-            trash(d, policy, shells, &session_id)?;
+            trash(d, policy, shells, &session_id, None)?;
             Ok(result(&session_id, None))
         }
         SessionCommand::WorktreeRestore { session_id } => {
@@ -140,7 +144,7 @@ fn not_in_trash() -> DecideError {
     reject(RejectCode::InvalidState, "the worktree is not in the trash")
 }
 
-fn shell_refusal() -> DecideError {
+pub(super) fn shell_refusal() -> DecideError {
     reject(
         RejectCode::InvalidState,
         "a shell is open in this worktree; close it first",
@@ -148,7 +152,11 @@ fn shell_refusal() -> DecideError {
 }
 
 /// The refusal for another live or held session in the worktree.
-fn sharing_refusal(d: &Decision<'_>, path: &str, except: &SessionId) -> Result<(), DecideError> {
+pub(super) fn sharing_refusal(
+    d: &Decision<'_>,
+    path: &str,
+    except: &SessionId,
+) -> Result<(), DecideError> {
     if let Some(other) = d.sessions_over(path, except)?.first() {
         return Err(reject(
             RejectCode::InvalidState,
@@ -161,12 +169,49 @@ fn sharing_refusal(d: &Decision<'_>, path: &str, except: &SessionId) -> Result<(
     Ok(())
 }
 
+/// The id prefix of the trash operations that the Fleet Git cleanup makes.
+pub const CLEANUP_PREFIX: &str = "cleanup-";
+
+/// The trash decision of the Fleet Git cleanup loop (FG-3, design §6.3): the
+/// same checks and the same row as the board's trash, with the expectation
+/// `(refs/heads/<branch>, tip)` that the trash effect checks again right
+/// before the move. Only the cleanup loop calls it. The command id (the op
+/// id) must be `cleanup-<session id>-<unix ms>`. Returns the op id.
+///
+/// # Errors
+/// A stored rejection (the refusal text), or a store error.
+pub fn decide_cleanup(
+    d: &mut Decision<'_>,
+    policy: &Policy,
+    shells: Option<&Shells>,
+    session_id: &SessionId,
+    expect: (String, String),
+) -> Result<String, DecideError> {
+    trash(d, policy, shells, session_id, Some(expect))?;
+    Ok(d.operation_id())
+}
+
+/// The suffix of a trash folder name: the first 12 characters of the op id,
+/// lower case; for a cleanup op id the last 12 characters of the session id
+/// (the random part of its ULID).
+fn folder_suffix(op_id: &str, session_id: &SessionId) -> String {
+    if op_id.starts_with(CLEANUP_PREFIX) {
+        let tail: Vec<char> = session_id.as_str().chars().rev().take(12).collect();
+        tail.into_iter().rev().collect::<String>().to_lowercase()
+    } else {
+        op_id.chars().take(12).collect::<String>().to_lowercase()
+    }
+}
+
 fn trash(
     d: &mut Decision<'_>,
     policy: &Policy,
     shells: Option<&Shells>,
     session_id: &SessionId,
+    expect: Option<(String, String)>,
 ) -> Result<(), DecideError> {
+    // (FG-8) A land or a move holds its session; a moved session can be trashed (FG-9).
+    crate::store::session_holds::check_hold(d.connection(), session_id)?;
     let s = d
         .summary(session_id)?
         .ok_or_else(|| reject(RejectCode::UnknownSession, "no such session"))?;
@@ -267,7 +312,7 @@ fn trash(
             "the command id cannot name a trash folder",
         ));
     }
-    let suffix: String = op_id.chars().take(12).collect::<String>().to_lowercase();
+    let suffix = folder_suffix(&op_id, session_id);
     let trash_path = parent
         .join(TRASH_DIR)
         .join(format!("{name}--{suffix}"))
@@ -280,6 +325,7 @@ fn trash(
         trash_path,
         dev: meta.dev(),
         ino: meta.ino(),
+        expect,
     })?;
     d.enqueue_worktree(session_id, &op_id, WorktreeAction::Trash)?;
     Ok(())

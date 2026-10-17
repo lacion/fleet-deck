@@ -4,4 +4,4 @@ import type { SessionId } from "../ids/SessionId";
 /**
  * The directory that a query's paths are relative to.
  */
-export type FileRoot = { "session": SessionId } | { "workspace": string };
+export type FileRoot = { "session": SessionId } | { "workspace": string } | { "artifacts": SessionId };

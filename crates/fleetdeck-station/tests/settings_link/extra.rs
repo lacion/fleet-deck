@@ -60,11 +60,13 @@ impl Rig {
                 title: None,
                 coordinator: None,
                 launch: None,
+                extra_env: None,
             },
             prompt: None,
             workspace: None,
             setup_cmd: None,
             authority: None,
+            fleet_git: None,
         };
         let session = id.to_owned();
         store

@@ -11,6 +11,7 @@ use crate::event::{
     ApprovalOption, ModelChoice, ProviderKind, RateLimit, RequestKind, ResponseChannel,
     RevertState, SessionState, ToolKind, Usage,
 };
+use crate::fleet_git::{ArtifactsDir, CleanupInfo, LandInfo, MoveInInfo, MovedTo, PushInfo};
 use crate::ids::{NodeId, ProviderInstanceId, RequestId, RunId, SessionId, TurnId};
 use crate::integrations::IssueRef;
 
@@ -166,6 +167,38 @@ pub struct SessionSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub issue: Option<IssueRef>,
+    /// The fetch before the start failed and the session started from the
+    /// local `HEAD`, from `workspace.base_stale` (FG-1).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(optional, as = "Option<bool>")]
+    pub base_stale: bool,
+    /// The push state of the session branch, from `session.push` (FG-2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub push: Option<PushInfo>,
+    /// The cleanup state of the worktree, from `session.cleanup` (FG-3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub cleanup: Option<CleanupInfo>,
+    /// The newest step of a land of the session, from `session.land` (FG-8).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub land: Option<LandInfo>,
+    /// Where the session moved to, from `session.moved` (FG-9). The session
+    /// stays `exited`; the station refuses its input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub moved_to: Option<MovedTo>,
+    /// The move state of a session that arrived by a move, from
+    /// `session.move_in` (FG-9).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub move_in: Option<MoveInInfo>,
+    /// The artifact folder of the session, from `artifacts.ready` and
+    /// `artifacts.revoked` (FG-12).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub artifacts_dir: Option<ArtifactsDir>,
     /// The highest `session_seq` folded into this summary.
     pub session_seq: u64,
     /// Unix ms of the last folded event.
@@ -215,6 +248,13 @@ impl SessionSummary {
             batch: None,
             hibernated: false,
             issue: None,
+            base_stale: false,
+            push: None,
+            cleanup: None,
+            land: None,
+            moved_to: None,
+            move_in: None,
+            artifacts_dir: None,
             session_seq: 0,
             updated_at: 0,
         }

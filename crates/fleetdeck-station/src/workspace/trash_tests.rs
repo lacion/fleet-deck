@@ -404,6 +404,7 @@ async fn a_start_resume_shell_open_and_handover_are_refused_while_a_row_is_open(
                     title: None,
                     coordinator: None,
                     launch: None,
+                    extra_env: None,
                 },
                 prompt: None,
                 workspace: None,
@@ -411,6 +412,7 @@ async fn a_start_resume_shell_open_and_handover_are_refused_while_a_row_is_open(
                 batch: None,
                 issue: None,
                 origin_text: false,
+                fleet_git: None,
             })
             .await;
         assert_eq!((code, message.as_str()), (RejectCode::InvalidState, HELD));

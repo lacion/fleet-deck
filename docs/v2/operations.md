@@ -33,6 +33,7 @@ Only you may write the file (no group or other write bit). When a `[[provider_in
 | `shim_buffer_mib` | `16` | The shim output buffer, 1–256 MiB. |
 | `hibernate_after_min` | `0` (off) | Minutes of idleness after which the station stops a live, idle session gracefully (`session.hibernated`). The board resumes it with the next input (R6.6, DL-169). Up to 10080. |
 | `repo_groups` | (empty) | Repository path → group name, for the conflict radar. |
+| `clone_root`, `traits`, `allow_check_cmd`, `allow_local_remotes`, `[taildrive_mounts]` | see §13.2 | The Fleet Git keys. They apply after a restart. |
 | `[[trackers]]` | (none) | A Jira or Linear tracker for the board's issue views (R3, DL-164). See "Trackers" below. |
 | `[model_help]` | on | Small generated text from the station's own provider login (R10, DL-167): `enabled` (the off switch), `claude_model` (`claude-haiku-5-5`), `codex_model` (`gpt-5.6-luna`), `provider` (`claude` or `codex`; default the first signed-in instance), `per_call_max_output_tokens` (`400`), `daily_token_cap` (`200000`, one UTC day). The use shows on the usage panel as "Fleet Deck". |
 | `tailscale_bin` | (none) | The absolute path of the `tailscale` program (§6.1). It overrides every automatic choice. Empty or missing: the deck looks for `tailscale` on the `PATH`, then (macOS) the app, then (WSL) Tailscale for Windows. A danger setting: any change needs an elevation. Applies at once. |
@@ -370,43 +371,230 @@ Run `fleetdeck doctor` first. It changes nothing. It prints one line for each ch
 - The live smoke tests against the real `claude` and `codex` CLIs: `make smoke-live` (opt-in, network, a small number of tokens; [LIVE-SMOKE.md](./LIVE-SMOKE.md)).
 - A real GitHub Actions run of `.github/workflows/v2.yml` (it runs `make check`; this repository never pushes).
 - The coordinator live smoke of ADR-006 §8.5 for Codex: until it records a verified context handoff, a Codex coordinator start fails with `handoff_unverified` (§7.2). Run it again for each new Claude version.
+- Fleet Git (§13) on real machines: a push and a land with the SSH agent or the credential helper of a service, a real Taildrive share and mount, and a look at the new board sections on a real screen (the end-to-end tests ran at the phone viewport only).
 
-## 13. Provisioning media custody (P8)
+## 13. Fleet Git
 
-This procedure belongs to the Omarchy provisioning of a new machine (`design/omarchy-p8.md` section 4; `design/omarchy.md` §9A, §9B). It is part of the P8 acceptance. "No Fleet Deck secret" on the medium closes the invitation custody. It does not close the LUKS and Tailscale custody. This section does.
+Fleet Git makes one Git repository work across the stations of the fleet. The design is [design/fleet-git.md](./design/fleet-git.md). The link changes are in [ADR-009](./adr/ADR-009-fleet-git-link.md). This section tells the owner how to turn it on and how to run it.
 
-### 13.1 Supported media
+What is built: fetch before a start (FG-1), push (FG-2), cleanup (FG-3), worktree bootstrap (FG-4), homes on many stations (FG-5), placement by traits (FG-6), the conflict radar (FG-7), land (FG-8), branches of other stations and the coordinator tools (FG-10), the config drift report (FG-11) and Taildrive artifacts (FG-12). **Move a session to another station (FG-9) is not built.** It waits for an owner decision (DL-227). Nothing in this section is available for it.
 
-- Use an owner-controlled LUKS-encrypted POSIX removable filesystem, or a read-only `cidata` ISO whose host image is held on encrypted storage in a 0700 directory as a 0600 file.
-- Do not require Unix mode preservation inside an ISO.
-- FAT and exFAT media are not accepted for secret-bearing P8 media.
+### 13.1 Rules that always hold
 
-### 13.2 Private copy
+- **Opt-in.** Every behavior needs the project setting "Sync this project across stations". A project with sync off keeps every text and route of the earlier releases.
+- **Git version.** Each station needs Git 2.45 or newer. An older Git gives the code `git_too_old`.
+- **Both sides.** The deck and the station must both support the feature of an action. Else the board shows 409 `fleet_git_unsupported`: "This station does not support Fleet Git. Update it first." Update the older side.
+- **No stored credential.** The deck never stores, sends or logs a Git credential. A remote URL with a password or a token is refused. A login name (`git@host:path`) is allowed.
+- **Remote writes.** The only refs that Fleet Git pushes are the branches `fd/<station>/<callsign>` that a station made, and the result of a land (§13.11). Each push goes to one URL that the station checked right before the push.
 
-- The installer copies only `fleetdeck/provision.toml` into `<config home>/fleetdeck/provision.toml`, and creates the destination privately as 0600.
-- It does not keep source modes. It does not run source-media scripts.
-- It rejects source symlinks, nonregular files and files above 16 KiB.
-- It publishes the destination atomically. It does not replace a different existing file.
+### 13.2 Station keys (`station.toml`)
 
-### 13.3 Detach
+| Key | Default | Rule |
+| --- | --- | --- |
+| `clone_root` | the first allowed root + `/projects` | The folder where the station clones a new home (§13.8). It must be inside an allowed root (equal is allowed) and must not hold a `..` part. An empty value means the default. |
+| `traits` | `[]` | The labels that a start can require (§13.9). At most 16. Each label is 1 to 32 characters of `a-z`, `0-9`, `_` or `-`. Each label at most once. |
+| `allow_check_cmd` | `false` | Lets a project run its check command on this station before a land (§13.11). A danger setting: a change in the board needs an elevation. |
+| `allow_local_remotes` | `false` | Lets a project use a `file://` URL or an absolute local path of a bare repository as a remote. For tests and for a repository on this machine. A danger setting. |
+| `[taildrive_mounts]` | empty | A table `"<machine>/<share>" = "/abs/path"`: the folder where this station mounts a Taildrive share (§13.13). At most 16 entries. The key has the same form as `artifact_share`. The value is an absolute path without `..`. |
 
-After the installation, detach or eject the medium. Remove the virtual CD attachment.
+All five keys apply after a station restart. Edit them in the board (`#/settings`, the station section "Fleet Git") or with `fleetdeck settings set <key> <value> --station`. The labels in the board are "Clone folder", "Station labels", "Allow check commands", "Allow local remotes" and "Taildrive mounts". The station reports `clone_root`, `allow_check_cmd`, `allow_local_remotes` and its Git version to the deck.
 
-### 13.4 Retention and disposal
+```toml
+clone_root = "~/projects"
+traits = ["gpu", "always_on"]
+allow_check_cmd = true
 
-- Keep a source only in the protected encrypted location, with access limited to the owner.
-- Disposal includes ISO copies, templates, snapshots and backups.
-- File unlinking or a flash overwrite alone is not claimed as secure erasure.
+[taildrive_mounts]
+"nas/artifacts" = "/mnt/artifacts"
+```
 
-### 13.5 Distinct credentials
+### 13.3 Project Git settings
 
-Each machine gets a distinct Tailscale enrollment key and a distinct disk-encryption credential. Do not clone an initialized Fleet Deck identity, Tailscale state or bootstrap state.
+Open the project page, then the section "Git sync" of the project form. Only the owner can save. The save goes to `PUT /api/projects/{id}/git`. A refused value gives 400 `invalid_git_settings`, and the board shows the message under its field.
 
-### 13.6 Recovery after an exposure
+| Field in the board | Default | Rule |
+| --- | --- | --- |
+| Sync this project across stations | off | Needs the remote URL. Only one sync project can own a folder on a station, and a sync folder cannot be inside another one. |
+| Remote URL | filled from the origin of the first home | An https, ssh or `user@host:path` URL without a password. Fleet Deck compares the exact form. A change to another repository needs a confirm (§13.8). |
+| Push branches | Off | "After each turn" or "When the session ends". Needs sync. |
+| Remote | `origin` | The remote name for fetch and push: 1 to 64 characters of `A-Za-z0-9._-`, not starting with `-` or `.`. |
+| WIP remote URL (optional) | none | Pushes go here instead of the remote, for example a bare repository on an always-on server. |
+| Default branch (optional) | the branch that the remote names | A branch name. |
+| Clean up merged worktrees | Off | "When merged". Needs sync. |
+| After (hours) | 24 | 1 to 720. |
+| Copy ignored files into new worktrees | none | One relative path per line, at most 32. A `*` or `?` matches inside one name. No `..`, no `**`. |
+| Environment for agents and setup | none | One `NAME=value` per line, at most 32. `PATH`, `HOME`, `LD_*`, `DYLD_*`, `GIT_*` and the provider and Fleet Deck variables are refused. |
+| Artifact share (optional) | none | `<machine>/<share>`, for example `nas/artifacts` (§13.13). |
 
-The recovery depends on the credential. Do these four steps in order:
+The settings land mode, check command and radar home are part of the same settings record. This release has no board field for them, and the board form sends them unchanged. To set them, send the full settings and the current `revision` in `PUT /api/projects/{id}/git` as the owner (`"land": "pr"` or `"merge"`, `"check_cmd": "<command>"`, `"radar_home": "<station id>"`).
 
-1. Revoke the exposed Tailscale auth key.
-2. Inspect and remove unauthorized Tailscale nodes. Revoking the auth key does **not** deauthorize nodes that are already enrolled with it ([Tailscale auth-key documentation](https://tailscale.com/docs/features/access-control/auth-keys)).
-3. Replace the exposed LUKS passphrase or keyslot credential. If an attacker also had a disk or header copy, a credential replacement alone does not protect that copy. Require a disk-key replacement or a reinstall.
-4. If a wrong Fleet Deck fingerprint was approved, remove that station from the deck. Removing the medium or revoking a Tailscale auth key does not revoke the Fleet Deck enrollment.
+- **Land mode.** Empty means `pr` when the project has a forge binding, else `merge`.
+- **Check command.** 1 to 4096 characters. It runs only on a station with `allow_check_cmd = true`.
+- **Radar home.** A station that has a home of the project. Empty means the first home on a station with the label `always_on`, else the first home. The deck works this out and sends the result to the stations.
+
+A save sends the new settings to every home station. A station that is offline gets them at its next link.
+
+### 13.4 Git hooks stay off (design §2.3)
+
+Every Git command that a station runs for Fleet Git uses the hardened runner with `core.hooksPath=/dev/null`. This holds for fetch, push, clone, rebase, merge-tree and worktree add. A `pre-push` hook of a repository never runs, and no other hook runs. A project that needs a check before a push uses the check command of the land flow (§13.11).
+
+### 13.5 Push credentials of a service, and Landlock
+
+The station runs each network Git command with your user configuration: your SSH agent and your credential helper. Fleet Deck adds none.
+
+- **Service.** A service does not get the environment of your shell. The Git commands of the service need credentials that the service user can reach: an SSH agent or a credential helper. Run `fleetdeck service install` from a terminal, because the service takes the safe folders of the `PATH` of the shell that runs it (§4.1). Test it as the service user: run `git ls-remote <remote url>` in a home.
+- **Landlock.** On Linux 5.13 or later, the commands that write into a repository (fetch, push, clone, rebase, worktree add) run under `confine-exec`. They can write only inside the allowed roots (§11, "Landlock is not available"). A credential helper that writes outside the allowed roots fails there. Examples: `git-credential-store` with a file outside the roots, the credential cache socket, and a `known_hosts` update. Git ignores a failed `credential approve`, and SSH only warns about `known_hosts`. So a later push can ask for the credential again. Use an agent, or a helper that only reads. Connect once to each Git host from a terminal, so that `known_hosts` has its key.
+- **Repository configuration.** A repository can still name programs in its own configuration (`core.sshCommand`, `credential.helper`). This is the DL-142 position: the agents run as the same user.
+
+### 13.6 Pre-upgrade backup, restore and forward repair
+
+Fleet Git adds tables to `deck.db` and `station.db` (internals §11). Each migration only adds. Before a process runs pending migrations on an existing database, it writes a consistent copy of that database.
+
+- **Where.** `<data>/backups/<deck|station>-v<from>-to-v<to>-<unix ms>.db`, for example `~/.local/share/fleetdeck/backups/station-v27-to-v30-1760000000000.db`. The folder has mode 0700 and the files 0600. Fleet Deck keeps the newest 3 backups of each database.
+- **No backup, no migration.** When the backup cannot be written, or the free space is less than twice the size of the database, the process does not migrate and stops with: "Fleet Deck cannot write the pre-upgrade backup <path>: <reason>. Free disk space, or start once with FLEETDECK_SKIP_UPGRADE_BACKUP=1 to upgrade without a backup." The value `1` skips the backup and logs a warning. Use it once, only when you accept the risk.
+- **Older binaries refuse a newer database** (`DbError::TooNew`). Never lower `user_version` by hand to make an older binary start.
+
+> **Caution:** a restore loses every deck or station write since the upgrade. This includes sessions, mail and tasks, not only Fleet Git data.
+
+Restore (only when the new version has not written data that matters yet, and you must run the older binary):
+
+1. Stop the service: `fleetdeck service stop`. Stop any other Fleet Deck process.
+2. Find the backup with the `<from>` version of the older build: `ls ~/.local/share/fleetdeck/backups/`.
+3. Move the live database and its `-wal` and `-shm` files to a safe folder. For the station these are `<data>/station/station.db*`. For the deck they are `<data>/deck/deck.db*`.
+4. Copy the backup file to the live name (`station.db` or `deck.db`) and run `chmod 600` on it.
+5. Start the older binary.
+
+Forward repair: when the new version has written data that matters (homes, lands, pushes), do not restore. Install a fixed newer build. At each deck start, the deck compares the legacy station and path of each project with its first home, repairs a difference from the home and logs it (`projects_legacy_repaired`). The first home is authoritative.
+
+### 13.7 Fetch, push, cleanup and bootstrap
+
+For a project with sync on, a session that starts in a verified, ready home of the project gets these behaviors.
+
+- **Fetch before a start (FG-1).** A new worktree start fetches the remote first, then makes the branch `fd/<station>/<callsign>` from the default branch (an owner base or branch wins). A failed fetch does not stop the start: the session starts from the local `HEAD` and shows the chip "Stale base" with the reason. A local branch `fd/<station>` blocks the new branch (`branch_namespace_blocked`): rename it.
+- **Station name in branches.** The station part is the station name in lower case, with every character outside `a-z`, `0-9` and `-` changed to `-`. The deck reserves it for one station in a repository (`slug_taken`). A rename of the station does not free it. The project page shows "Git names".
+- **Push (FG-2).** The station pushes only the branch of its own session, to the WIP remote when set, else to the remote. It pushes after each turn or when the session ends (the setting). The lease is the last commit that the station pushed, so a revert pushes with force only over its own commit. The station never pushes an owner branch, tags or other refs. A failed push tries again after 1, 2, 4, 8 and then every 10 minutes, with no last attempt, and survives a restart. The card shows "Not pushed" and a "Push now" button. A push that Fleet Deck stopped on purpose (for example after a land) shows "Push stopped" when commits are not pushed.
+- **Cleanup (FG-3).** For "When merged", the station moves a worktree to the trash (restorable, never a branch delete) after all of these are true: the session ended at least the set hours ago; no land holds it; the worktree is on its own branch; a fetch worked; its last commit is on the default branch of the remote; the worktree is clean; and the last commit is pushed (when push is on). A squash merge or a rebase merge of a forge is not detected: trash that worktree yourself. The session menu shows why a worktree is kept.
+- **Bootstrap (FG-4).** After a worktree start, the station copies the listed ignored files (each at most 1 MiB, 10 MiB in total; never a link, never over an existing file) and gives the environment to the agent and to the setup command. The chat shows "Not copied: <path> (<reason>)" for a skipped file. An in-place start in a home gets the environment only.
+
+### 13.8 Homes on several stations
+
+A project has one home on each station that works on it: a clone of the repository. The first home is the one that you made the project with. The project page section "Homes" lists them as "<station> · <path> · Ready", "Cloning into <path>…", "Not verified: <reason>" or "Failed: <reason>".
+
+- **Add a home.** Needs the remote URL of the project. Select "Add home", pick a station, then confirm. The station clones the URL into `<clone_root>/<project name>` (characters outside `A-Za-z0-9._-` become `-`, at most 80 characters). The board shows "Cloning…" and reads the state again every 5 seconds. A clone has a limit of 15 minutes.
+- **A folder that already exists.** The station uses it only when it is a complete clone with the right remote. A folder that holds an incomplete clone is never used and never deleted. Remove it yourself, then retry.
+- **Retry.** A failed home has "Retry". After a station restart during a clone the home is failed ("The clone stopped when the station restarted. Remove <path>, then retry.").
+- **Remove.** "Remove" is not on the last home. It is refused while a clone runs, while a land of the project uses that station, or while a session runs in the home. It deletes no file.
+- **Rebind (change the remote).** Save a URL that names another repository: the board asks "Rebind the project to <repository>?". With sync on, every home is "Not verified" until its station checks the new remote. With sync off, the homes stay ready. A rebind is refused while a home is busy.
+- **Not verified.** A home that does not match the project remote shows the reason: no remote of that name, a remote with more than one URL, a different repository, or a folder that another sync project owns. Fleet Deck never changes the configuration of a home. Fix the remote by hand.
+- **Local remotes.** A local remote needs `allow_local_remotes = true` on every home station of the project. Else: "This station does not allow a local remote."
+- **Start in a project.** The start dialog has a "Home" select. A start in a home that is not ready gives 409 `home_unverified` or `home_not_ready`.
+
+### 13.9 Placement by traits
+
+Each station reports its traits: the system (`os:linux`), the architecture (`arch:x86_64`), whether it runs on battery, and its `traits` labels. The Stations page shows one line, for example "linux · x86_64 · on battery · gpu, always_on".
+
+In the spawn form, "Auto (best station)" appears when a station reports traits. Its fields:
+
+- "Needs": the labels, `os:<os>` or `arch:<arch>` that the station must have. A station without traits matches no requirement.
+- "Prefer": "Idle station", "Not on battery" and "Always-on station" (the label `always_on`).
+- "Spread over stations" for a batch.
+
+The deck ranks the stations that can start the session: first by the number of preferences met, then by free resources, then by the fewest live sessions, then by name. It never calls a model. A station in WSL always counts as not on battery. When no station matches: 409 `no_station`, "No station matches: <the first unmet requirement>." The same rules serve `POST /api/placement`, the batch start of a project with `home = "auto"` and `assign auto` with `requires` and `prefer`.
+
+### 13.10 Conflict radar
+
+Fleet Git adds a prediction to the radar of the fleet screen. The radar home of the project (§13.3) fetches the remote and tests each pair of pushed branches, and each branch against the default branch, with `git merge-tree`. It changes no ref and no file.
+
+- The run starts every 5 minutes, and 30 seconds after a push of the project. It tests at most 50 pairs in 120 seconds.
+- Only branches that the stations pushed take part. A session with push off shows only in the older "Conflict" rows (the same files changed).
+- The panel groups the rows by project. A prediction shows "Will conflict" with the first 3 files and "+<n>" for more.
+- The panel footer shows the reason when a run fails: the fetch failed, Git older than 2.45, or the radar station is offline (then the results are from an earlier time).
+
+### 13.11 Land
+
+"Land" rebases the branch of a session onto the default branch in a separate folder, checks it, and publishes it. The session folder is never changed.
+
+Needs: a sync project, a session that Fleet Git started in a worktree, a ready home, a session that has ended or is idle, and a station with the land feature. Only the owner can land from the board. A coordinator with the `manage` class can request a land (§13.14).
+
+1. Open the session, select "Land", and confirm the dialog "Land <branch>?".
+2. The deck puts the land in a queue. One land of a project, and one land of a repository, runs at a time. The status line shows "Queued (<n> ahead)", then "Landing: <phase>". The project page section "Lands" shows the queue and the last 20 ends.
+3. The station fetches, fixes the session commit and the default branch commit, and rebases the commit in a temporary folder under `<allowed root>/.fleetdeck-land/`. Git needs `user.name` and `user.email` on the station (`land_no_identity`).
+4. When the project has a check command and the station has `allow_check_cmd = true`, the station runs it with `/bin/sh -c` (10 minutes, the project environment). The check must not change the tested commit or a tracked file (`check_mutated`). A failed check shows the last 50 lines. A station without `allow_check_cmd = true` refuses a land with a check command (`check_disabled`).
+5. The station pushes the branch (to the WIP remote when set). In `pr` mode it then opens or updates a pull request. The branch must be on the repository of the forge, so a WIP remote that is not the forge gives `land_pr_needs_forge_branch`: choose `merge`, or clear the WIP remote. In `merge` mode the station pushes the result to the default branch, never with force.
+6. When the default branch moved during the land, the station fetches, rebases and checks once more. A second move gives `remote_moved`: land again.
+
+During a land the session is held: no prompt, resume, revert, shell, trash or push. After the branch push, the push of that session stops ("Push stopped"), unless the local branch already holds the published commit. So the old local commit is never pushed over the rebased branch.
+
+What to do for each end:
+
+| End | Action |
+| --- | --- |
+| "Landed <commit>", or "Pull request #<n>" | Nothing. |
+| "Conflict in <n> files" | Select "Send to session". The agent gets a fixed message with the base commit and the files. When the session ended, the button reads "Resume the session first". |
+| "The check command failed" | Read the output tail, fix, land again. |
+| A queued land | "Cancel land" works only on a queued land. |
+| "Checking the result of the land after an interruption…" | Wait. The station checks the remote. The queue waits for it. |
+| "The station has no record of this land…" or the result is unclear | Look at the remote, then select "Stop checking". The queue is free only after the station confirms ("Stopping… waiting for <station> to confirm."). Fleet Deck does not know whether the land changed the remote. |
+| The station was removed during the land | "Forget" frees the queue. A station that still runs can still push. |
+
+### 13.12 Config drift report
+
+The Stations page can compare the agent configuration of each station with one reference station. It reports four items: `~/.claude/CLAUDE.md`, `~/.claude/agents/`, `~/.claude/skills/` and `~/.codex/AGENTS.md`, and the Claude and Codex versions.
+
+1. Open the Stations page.
+2. In the menu of one station select "Use as config reference". The header shows "Config reference: <station>" with "Change".
+3. Read the line of each station: "Config: Same", "Config: Differs: <labels>" (`CLAUDE.md`, `agents`, `skills`, `AGENTS.md`, `claude`, `codex`), "Config: Reference" or "Config: Unknown".
+
+Each station computes the hashes at start and every 10 minutes, and never sends a file content. A hash does not use the absolute path. A limit (10000 entries, 4 MiB for a file, 64 MiB in total) gives `too_large`. Nothing is synchronized: fix a difference by hand.
+
+### 13.13 Taildrive artifact share
+
+Taildrive can give the sessions of a project one shared folder for outputs. **Policy:** Fleet Deck runs only `tailscale drive list` and `tailscale status --json`. It never runs `tailscale drive share`, `rename` or `unshare`, and never changes the tailnet policy. Taildrive is never used for code, worktrees, homes, remotes or config. A test makes sure that the source holds no other `drive` call.
+
+Each station lists its shares on the Stations page ("Taildrive shares"), every 10 minutes. A share shows a warning when it exposes a project home, a session worktree, the Fleet Deck data folder, the Claude or Codex home, `~/.ssh`, `~/.gnupg`, `~/.aws` or a path that the member deny list hides. A share that Fleet Deck cannot check completely (more than 20000 entries, deeper than 8 folders, a link to a folder, a folder that it cannot read, or a path with trailing spaces) is not safe either. **An exposed or unverified share is never an artifact share.** Fleet Deck cannot stop your tailnet policy from exposing a folder.
+
+Steps for an artifact share:
+
+1. On the machine that holds the folder, make the share with the Tailscale CLI yourself. Taildrive must be on in your tailnet (the `drive:share` attribute). Choose a folder that holds none of the paths above.
+2. On the Stations page, check that the share shows without a warning.
+3. In the project Git settings, set "Artifact share (optional)" to `<machine>/<share>`. The machine is the tailnet machine name in lower case. The save is refused with `share_exposed` or `share_unverified` when the exporting station reports the share as exposed or unknown. This is only a hint at the save: every use is checked again.
+4. Choose how a session station reaches the share.
+   - **The share is on the session station.** Nothing more. The station uses the share path.
+   - **The share is on another machine.** Mount it as a writable folder for the station user. Add the mount to `station.toml` as `"<machine>/<share>" = "/mount/path"` in `[taildrive_mounts]`, then restart the station. The folder must exist, be a folder and be writable, and must not be inside a protected path.
+   - **No mount.** The agent gets only the address `FLEETDECK_ARTIFACTS_URL` (`http://100.100.100.100:8080/<tailnet>/<machine>/<share>/<project>/<callsign>/`). No folder is made, and the board shows the address with "Copy address".
+   - **The path has trailing spaces.** The share is "ambiguous". Add it to `[taildrive_mounts]` with one exact path.
+5. Start a session of the project. The station makes `<path>/<project folder>/<callsign>/` (mode 0700) and sets `FLEETDECK_ARTIFACTS` to it, with a final `/`. The session shows the "Artifacts" link, which opens the folder in the file browser. A member of a shared session sees it with the member deny list.
+
+Fleet Deck asks for a fresh check at each start, each resume, each access and every 5 minutes. When the share is not verified any more, the chat shows "The artifact share is not verified now…" and the link stops. The running agent keeps `FLEETDECK_ARTIFACTS` until its session ends: an environment variable cannot be taken back. A machine that is not a Fleet Deck station (for example a NAS) cannot be checked: only the mount checks apply, and the board says so. When a start cannot use the share, the session starts without the variables and the chat says why (`share_exposed`, `share_unverified`, `mount_missing`, `mount_not_folder`, `mount_not_writable`, `tailnet_unknown`).
+
+### 13.14 The coordinator across the fleet
+
+The Branches view of a session of a sync project has an "Other stations" group. It lists the `fd/<station>/…` branches that the other stations pushed, with the session, "↑<ahead> ↓<behind>" and "Will conflict". "Fetch" runs one fetch on the radar home. A branch list that takes more than 18 seconds fails. This covers the backlog item B1.
+
+A coordinator session gets three Fleet Git tools (ADR-009 §7):
+
+| Tool | Class | What it does |
+| --- | --- | --- |
+| `project_branches` | `inspect` | The branches of the project on other stations. The commit subjects are fenced as untrusted text. |
+| `project_fetch` | `inspect` | One fetch on the radar home. It changes only remote-tracking refs. |
+| `land_session` | `manage` | Requests a land (§13.11). The deck stores the grant and checks it again at each step. A renewal, a revocation, an expiry (10 minutes) or the kill switch ends the land with `authority_lost`. |
+
+The tools need the link features `coordinator.v2` and the Fleet Git feature. The kill switches `fleet_control` and `allow_fleet_control` (§7.3) apply. There is no `move_session` tool (FG-9).
+
+> **Known gap:** the deck makes every coordinator grant with only the station of the coordinator session. ADR-006 says that the owner picks the target stations. So a coordinator reaches the stations of other homes only after a change of the grant data, and these tools see one station in practice. A coordinator can request a land, but no tool reads the progress of a land yet.
+
+### 13.15 Troubleshooting Fleet Git
+
+| Symptom | What to do |
+| --- | --- |
+| The card shows "Stale base" | The fetch before the start failed. The session started from the local `HEAD`. Check the credentials of the station (§13.5), then start a new session. |
+| The card shows "Not pushed" | The title has the reason and the next try. Typical: `push_auth` (credentials), `push_rejected`, `remote_mismatch`. Fix it, then select "Push now". |
+| A home is "Not verified: …" | Read the reason (§13.8). Fix the remote of that home by hand. A rebind makes every sync home wait for the check. |
+| A home is "Failed: …" | `clone_failed`, `destination_reserved`, `incomplete_folder` or `clone_root_missing`. Fix the cause, remove an incomplete folder, then select "Retry". |
+| A start fails with `branch_namespace_blocked` | A branch `fd/<station>` exists. Rename it, for example `git branch -m fd/<station> fd-<station>`. |
+| A start fails with `slug_mismatch` | The station name changed. Try again in one minute. |
+| 409 `slug_taken` | The Git name of this station is reserved for another station in this repository. Rename this station. |
+| `git_too_old` | Update Git on the station to 2.45 or newer. |
+| A land waits in "Queued" | Another land of the project or of the repository runs. A land that is uncertain keeps the queue until "Stop checking". |
+| The station does not start: "Fleet Deck cannot write the pre-upgrade backup" | See §13.6. |
+| Radar footer: "the fetch failed" | The radar station cannot reach the remote. Check its credentials. |

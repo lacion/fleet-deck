@@ -21,11 +21,13 @@ pub mod artifacts;
 mod assist;
 pub mod audit;
 pub mod auth;
+pub mod branch_map;
 pub mod chat;
 pub mod commands;
 pub mod conflicts;
 pub mod coordinator;
 pub(crate) mod coordinator_fleet;
+mod coordinator_git;
 pub(crate) mod coordinator_ops;
 pub mod coordinator_query;
 mod coordinator_query_reads;
@@ -40,15 +42,33 @@ pub mod displays_binding;
 pub mod displays_pairing;
 pub mod extras;
 pub mod fleet;
+pub mod fleet_git_prefs;
+pub mod fleet_git_schema;
+pub mod fleet_git_start;
+pub mod git_snapshots;
 pub mod grant_scopes;
 pub mod grants;
+pub mod home_attempts;
+mod land_actions;
+mod land_admit;
+pub mod land_outbox;
+pub mod land_queue;
+mod land_ready;
+pub mod land_text;
+#[cfg(test)]
+mod land_world;
 pub mod members;
 pub mod outbox;
 pub mod pairing;
 pub mod plans;
 pub mod presence;
+pub mod project_home_ops;
+pub mod project_homes;
 pub mod project_sessions;
 pub mod projects;
+pub mod projects_git;
+pub(crate) mod projects_legacy;
+pub mod radar;
 pub mod read_cursors;
 pub mod read_model;
 pub mod review;
@@ -58,7 +78,12 @@ pub mod review_send;
 pub mod review_text;
 pub mod schedules;
 pub mod schema;
+pub mod session_moves;
+mod session_moves_ready;
+pub mod session_moves_steps;
 pub mod shares;
+pub mod slug_reservations;
+pub mod station_machines;
 pub mod stations;
 pub mod wake_seen;
 
@@ -155,6 +180,10 @@ pub enum DeckError {
     /// A limit is full (R13 §5B: pairings); the caller tries again later.
     #[error("{0}")]
     Busy(String),
+    /// A rule of the homes of a project refuses a write (FG-5): `use_homes`,
+    /// `home_busy`.
+    #[error("{}", .0.message)]
+    HomeRefused(project_homes::HomeRefusal),
 }
 
 impl From<rusqlite::Error> for DeckError {
@@ -254,6 +283,10 @@ impl Inner {
                 .iter()
                 .map(|(s, l)| (s.clone(), v2_state(l)))
                 .collect(),
+            // The land feature of each station (FG-10: a coordinator land).
+            land: feature_states(&links, fleetdeck_proto::version::feature::FLEET_GIT_LAND),
+            // The move feature of each station (FG-9: a coordinator move).
+            moves: feature_states(&links, fleetdeck_proto::version::feature::FLEET_GIT_MOVE),
         }
     }
 }
@@ -293,6 +326,9 @@ impl DeckStore {
     }
 
     async fn start(db: Db, clock: SharedClock, ids: SharedIds) -> Result<Self> {
+        // The copy of the position-0 home is made again when it differs
+        // (design §3.9 item 6).
+        call(&db, |conn| projects_legacy::repair(conn).map(|_| ())).await?;
         let fresh: IncarnationId = new_id(ids.as_ref());
         let owner: String = new_id(ids.as_ref());
         let now = now_ms(&clock);
@@ -631,6 +667,25 @@ impl DeckStore {
         })
         .await
     }
+}
+
+/// Whether every live link of each station negotiated `feature`.
+fn feature_states(
+    links: &BTreeMap<StationId, BTreeMap<u64, BTreeSet<String>>>,
+    feature: &str,
+) -> BTreeMap<String, LinkFeature> {
+    links
+        .iter()
+        .map(|(s, l)| {
+            let all = !l.is_empty() && l.values().all(|f| f.contains(feature));
+            let state = if all {
+                LinkFeature::Negotiated
+            } else {
+                LinkFeature::Without
+            };
+            (s.as_str().to_owned(), state)
+        })
+        .collect()
 }
 
 fn v2_state(links: &BTreeMap<u64, BTreeSet<String>>) -> LinkV2 {

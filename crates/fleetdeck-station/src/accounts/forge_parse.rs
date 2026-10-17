@@ -217,6 +217,7 @@ pub(super) async fn run_status(
         env: exec::cli_env(&[]),
         stdin: None,
         max_stdout: 256 * 1024,
+        timeout: exec::CALL_TIMEOUT,
     };
     let name = cli_name(kind);
     let out = exec::run(spec).await.map_err(|e| match e {

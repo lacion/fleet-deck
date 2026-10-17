@@ -21,6 +21,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use fleetdeck_link::control::Control;
+use fleetdeck_proto::StationId;
 use fleetdeck_proto::integrations::{
     Asset, AssetQuery, Binding, BindingCheck, ChecksFailing, ForgeBinding, IntegrationsStatus,
     IssueDetail, IssueGet, IssueList, IssueSearch, PrDetail, PrList, PrRef, Project, ProjectInput,
@@ -33,7 +34,8 @@ use serde_json::{Value, json};
 
 use super::Board;
 use super::guard::{ApiError, owner_only};
-use crate::store::{AuditResult, NewAudit, Principal, StationRecord};
+use crate::link::fleet_git_sync;
+use crate::store::{AuditResult, DeckError, NewAudit, Principal, StationRecord};
 
 /// The longest the board waits for the station's answer to a read. The
 /// station limits each of its calls to 20 s and a view makes up to three.
@@ -69,9 +71,18 @@ pub(super) async fn station_of(
     board: &Board,
     project: &Project,
 ) -> Result<(StationRecord, Control), ApiError> {
+    station_of_id(board, &project.station_id).await
+}
+
+/// The station `station_id`, with a live control channel to it (the station
+/// of the chosen home of a batch start, decision B16).
+pub(super) async fn station_of_id(
+    board: &Board,
+    station_id: &str,
+) -> Result<(StationRecord, Control), ApiError> {
     let rec = board
         .store
-        .find_station(project.station_id.clone())
+        .find_station(station_id.to_owned())
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| {
@@ -262,6 +273,7 @@ pub async fn create(
         .create_project(station_id, input)
         .await
         .map_err(ApiError::internal)?;
+    fleet_git_sync::spawn_project(&board.link, project.project_id.clone());
     audited(
         &board,
         &principal,
@@ -288,11 +300,20 @@ pub async fn update(
     let Json(input) = body.map_err(|e| bad_body(&e))?;
     check_input(&input)?;
     let station_id = station_id_of(&board, &input.station).await?;
+    let before = board
+        .store
+        .project(id.clone())
+        .await
+        .map_err(ApiError::internal)?;
     let project = board
         .store
         .update_project(id.clone(), station_id, input)
         .await
-        .map_err(ApiError::internal)?
+        .map_err(|e| match e {
+            // A busy home, or a project with more than one home (design §8.2).
+            DeckError::HomeRefused(r) => super::project_home_routes::refusal(r),
+            e => ApiError::internal(e),
+        })?
         .ok_or_else(|| {
             ApiError::new(
                 StatusCode::NOT_FOUND,
@@ -300,6 +321,14 @@ pub async fn update(
                 format!("no project `{id}`"),
             )
         })?;
+    // The station of the home (and the old one, when the home moved) gets a
+    // new Fleet Git snapshot (design §3.3).
+    fleet_git_sync::spawn_project(&board.link, id.clone());
+    if let Some(old) = before
+        && old.station_id != project.station_id
+    {
+        fleet_git_sync::spawn_changed(&board.link, StationId::from(old.station_id));
+    }
     audited(&board, &principal, "projects.update", &id, &project.name).await;
     Ok(Json(project))
 }
@@ -314,6 +343,11 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     owner_only(&principal, "deletes a project")?;
+    let before = board
+        .store
+        .project(id.clone())
+        .await
+        .map_err(ApiError::internal)?;
     if !board
         .store
         .delete_project(id.clone())
@@ -325,6 +359,12 @@ pub async fn delete(
             "unknown_project",
             format!("no project `{id}`"),
         ));
+    }
+    if let Some(old) = before {
+        // Every station with a home of the project drops it from its state.
+        for station in fleet_git_sync::home_stations(&old) {
+            fleet_git_sync::spawn_changed(&board.link, station);
+        }
     }
     audited(&board, &principal, "projects.delete", &id, "").await;
     Ok(StatusCode::NO_CONTENT)
@@ -624,6 +664,7 @@ mod tests {
             prompt_template: None,
             review_prompt: None,
             created_at: 0,
+            ..Project::default()
         }
     }
 

@@ -4,8 +4,9 @@
 
 use fleetdeck_proto::command::{ApprovalDecision, SessionSpec, StopMode, UserInput};
 use fleetdeck_proto::event::{ProviderKind, ResolvedBy, RunOrigin};
+use fleetdeck_proto::fleet_git::{MoveKind, MovePublication};
 use fleetdeck_proto::mutation::CommandAuthority;
-use fleetdeck_proto::{InputId, RequestId};
+use fleetdeck_proto::{InputId, ProviderInstanceId, RequestId, SessionId};
 use fleetdeck_providers::ShellContext;
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +28,17 @@ pub struct InputRecord {
     pub shell_context: Vec<ShellContext>,
 }
 
+/// The fetch of a synced worktree start (FG-1, design §4.2): which remote to
+/// fetch and which default branch the settings name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncPlan {
+    /// `push_remote` of the project settings.
+    pub remote: String,
+    /// `default_branch` of the project settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_branch: Option<String>,
+}
+
 /// The Git work of a start effect (M3 6-1, DL-200): decided and checked
 /// in the command transaction, done by the effect worker.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,6 +53,10 @@ pub enum WorkspacePlan {
         /// The commit-ish that a new `branch` starts from.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         base: Option<String>,
+        /// Set for a start of a synced project (FG-1): the fetch before the
+        /// worktree. An effect stored without it runs without a fetch.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sync: Option<SyncPlan>,
     },
     /// `git clone <url> <path>`.
     Clone { url: String, path: String },
@@ -73,6 +89,10 @@ pub enum EffectPayload {
         /// effect queued before this field existed has none and gets no check.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         authority: Option<CommandAuthority>,
+        /// The Fleet Git snapshot of a start in a synced project (FG-1, FG-4):
+        /// the settings the start effect uses (design §3.3, §7.3).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fleet_git: Option<Box<fleetdeck_proto::fleet_git::FleetGitStart>>,
     },
     /// A native resume of an ended session (DL-118): a new provider
     /// process continues `native_session_id` with `spec` (the stored
@@ -178,6 +198,43 @@ pub enum EffectPayload {
         /// The canonical root of the folder, as the fences name it.
         worktree_root: String,
     },
+    /// A land run (FG-8, design §11.4 step 3). It needs no provider process:
+    /// the `land_runs` row holds the steps, and the land engine runs them.
+    Land {
+        land_id: String,
+        /// The authority of a coordinator land (ADR-008 section 6.1).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authority: Option<CommandAuthority>,
+    },
+    /// The launch of a moved session on the target (FG-9, design §12.3 step
+    /// 4). The decision stores the plan; the effect does not derive it again.
+    MoveIn {
+        move_id: String,
+        /// The move kind (`kind` is the tag of the payload).
+        move_kind: MoveKind,
+        provider_instance: ProviderInstanceId,
+        /// The normalized title of the new session.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        callsign: String,
+        /// The verified home of the project.
+        home: String,
+        /// The path of the new worktree.
+        worktree: String,
+        /// `B = publication.local_branch`, `oid = publication.oid`.
+        publication: MovePublication,
+        /// The source session, for the held prompt of a branch-only move
+        /// (design §12.6).
+        source_session: SessionId,
+        /// The summary of the source session, cut to 4000 characters by the
+        /// station (design §12.6).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
+        fleet_git: Box<fleetdeck_proto::fleet_git::FleetGitStart>,
+        /// The authority of a coordinator move (ADR-008 section 6.1).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authority: Option<CommandAuthority>,
+    },
 }
 
 impl EffectPayload {
@@ -197,6 +254,8 @@ impl EffectPayload {
             Self::Revert { .. } => "revert",
             Self::Worktree { .. } => "worktree",
             Self::ShellCommand { .. } => "shell_command",
+            Self::Land { .. } => "land",
+            Self::MoveIn { .. } => "move_in",
         }
     }
 
@@ -206,7 +265,11 @@ impl EffectPayload {
     pub fn needs_process(&self) -> bool {
         !matches!(
             self,
-            Self::Start { .. } | Self::Resume { .. } | Self::Worktree { .. }
+            Self::Start { .. }
+                | Self::Resume { .. }
+                | Self::Worktree { .. }
+                | Self::Land { .. }
+                | Self::MoveIn { .. }
         )
     }
 
@@ -250,7 +313,9 @@ impl EffectPayload {
             | Self::Interrupt { authority }
             | Self::Answer { authority, .. }
             | Self::SetMode { authority, .. }
-            | Self::Stop { authority, .. } => authority.as_ref(),
+            | Self::Stop { authority, .. }
+            | Self::Land { authority, .. }
+            | Self::MoveIn { authority, .. } => authority.as_ref(),
             Self::SetModel { .. }
             | Self::Revert { .. }
             | Self::Worktree { .. }
@@ -271,7 +336,9 @@ impl EffectPayload {
             | Self::Interrupt { authority }
             | Self::Answer { authority, .. }
             | Self::SetMode { authority, .. }
-            | Self::Stop { authority, .. } => *authority = value,
+            | Self::Stop { authority, .. }
+            | Self::Land { authority, .. }
+            | Self::MoveIn { authority, .. } => *authority = value,
             Self::SetModel { .. }
             | Self::Revert { .. }
             | Self::Worktree { .. }
@@ -323,6 +390,7 @@ mod tests {
                 title: None,
                 coordinator: None,
                 launch: None,
+                extra_env: None,
             },
             prompt: None,
             continue_by: None,

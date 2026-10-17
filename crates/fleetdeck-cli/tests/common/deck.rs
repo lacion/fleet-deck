@@ -25,6 +25,8 @@ pub struct Deck {
     child: Option<Child>,
     /// `deck serve`, or `up` for the all-in-one process (P4-4).
     command: &'static [&'static str],
+    /// Extra environment variables of every deck process (Fleet Git T1.7).
+    env: Vec<(String, String)>,
 }
 
 /// A loopback port that is free now.
@@ -48,7 +50,7 @@ impl Deck {
     /// and starts the deck. When another process takes the link port
     /// first, the deck exits and the harness picks a new port.
     pub fn start() -> Self {
-        Self::start_with(TempNode::new("deck").unwrap(), &["deck", "serve"])
+        Self::start_with(TempNode::new("deck").unwrap(), &["deck", "serve"], &[])
     }
 
     /// `fleetdeck up` on a node whose station.toml has `fake-claude sim`
@@ -60,15 +62,19 @@ impl Deck {
         let mut text = node.station_toml(&bins, &[fleetdeck_testkit::FakeAgent::Claude]);
         text.push_str("env = { FLEETDECK_FAKE_SCENARIO = \"sim\" }\n");
         node.write_station_toml(&text).unwrap();
-        (Self::start_with(node, &["up"]), workspace)
+        (Self::start_with(node, &["up"], &[]), workspace)
     }
 
-    fn start_with(node: TempNode, command: &'static [&'static str]) -> Self {
+    fn start_with(node: TempNode, command: &'static [&'static str], env: &[(&str, &str)]) -> Self {
         let mut deck = Self {
             node,
             link_port: 0,
             child: None,
             command,
+            env: env
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
         };
         for _ in 0..10 {
             deck.link_port = free_port();
@@ -103,6 +109,7 @@ impl Deck {
         assert!(self.child.is_none(), "a deck process runs already");
         let mut child = fleetdeck(&self.node)
             .args(self.command)
+            .envs(self.env.iter().map(|(k, v)| (k, v)))
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
             .spawn()

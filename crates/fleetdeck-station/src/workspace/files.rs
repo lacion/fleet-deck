@@ -215,6 +215,32 @@ pub fn list_for(
     deny: Option<&MemberDeny>,
     private: &PrivatePaths,
 ) -> Result<FileListing, FileError> {
+    list_with(None, root, path, deny, private)
+}
+
+/// [`list_for`] below a root that the caller already opened: `base` is the
+/// directory descriptor of `root` (the artifact folder, FG-12). `root` is
+/// the path for the private check and the answer.
+///
+/// # Errors
+/// As [`list`].
+pub fn list_in(
+    base: &OwnedFd,
+    root: &Path,
+    path: &str,
+    deny: Option<&MemberDeny>,
+    private: &PrivatePaths,
+) -> Result<FileListing, FileError> {
+    list_with(Some(base), root, path, deny, private)
+}
+
+fn list_with(
+    held: Option<&OwnedFd>,
+    root: &Path,
+    path: &str,
+    deny: Option<&MemberDeny>,
+    private: &PrivatePaths,
+) -> Result<FileListing, FileError> {
     if deny.is_some_and(|d| d.denies(path)) {
         return Err(not_found(path));
     }
@@ -223,9 +249,16 @@ pub fn list_for(
     if private.is_private_canonical(&dir_path) {
         return Err(not_found(path));
     }
-    let base = open_root(root).map_err(|_| not_found(path))?;
-    let dir = match parent_and_last(&base, &segments, path)? {
-        None => descend(&base, &[]).map_err(|_| not_found(path))?,
+    let opened;
+    let base = match held {
+        Some(base) => base,
+        None => {
+            opened = open_root(root).map_err(|_| not_found(path))?;
+            &opened
+        }
+    };
+    let dir = match parent_and_last(base, &segments, path)? {
+        None => descend(base, &[]).map_err(|_| not_found(path))?,
         Some((_, _, kind)) if kind != FileKind::Dir => {
             return Err(FileError::new(
                 code::WRONG_KIND,
@@ -315,6 +348,33 @@ pub fn read_for(
     deny: Option<&MemberDeny>,
     private: &PrivatePaths,
 ) -> Result<FileContent, FileError> {
+    read_with(None, root, path, max_bytes, deny, private)
+}
+
+/// [`read_for`] below a root that the caller already opened (see
+/// [`list_in`]).
+///
+/// # Errors
+/// As [`read`].
+pub fn read_in(
+    base: &OwnedFd,
+    root: &Path,
+    path: &str,
+    max_bytes: Option<u64>,
+    deny: Option<&MemberDeny>,
+    private: &PrivatePaths,
+) -> Result<FileContent, FileError> {
+    read_with(Some(base), root, path, max_bytes, deny, private)
+}
+
+fn read_with(
+    held: Option<&OwnedFd>,
+    root: &Path,
+    path: &str,
+    max_bytes: Option<u64>,
+    deny: Option<&MemberDeny>,
+    private: &PrivatePaths,
+) -> Result<FileContent, FileError> {
     if deny.is_some_and(|d| d.denies(path)) {
         return Err(not_found(path));
     }
@@ -326,8 +386,15 @@ pub fn read_for(
     if private.is_private_canonical(&target) {
         return Err(not_found(path));
     }
-    let base = open_root(root).map_err(|_| not_found(path))?;
-    let Some((parent, last, kind)) = parent_and_last(&base, &segments, path)? else {
+    let opened;
+    let base = match held {
+        Some(base) => base,
+        None => {
+            opened = open_root(root).map_err(|_| not_found(path))?;
+            &opened
+        }
+    };
+    let Some((parent, last, kind)) = parent_and_last(base, &segments, path)? else {
         return Err(FileError::new(code::WRONG_KIND, "the root is a directory"));
     };
     if kind != FileKind::File {
@@ -409,10 +476,24 @@ pub fn walk_search_for(
     deny: Option<&MemberDeny>,
     private: &PrivatePaths,
 ) -> Found {
+    match open_root(root) {
+        Ok(base) => walk_search_in(&base, root, needle, content, max, deny, private),
+        Err(_) => Found::default(),
+    }
+}
+
+/// [`walk_search_for`] below a root that the caller already opened (see
+/// [`list_in`]).
+pub fn walk_search_in(
+    base: &OwnedFd,
+    root: &Path,
+    needle: &str,
+    content: bool,
+    max: usize,
+    deny: Option<&MemberDeny>,
+    private: &PrivatePaths,
+) -> Found {
     let mut found = Found::default();
-    let Ok(base) = open_root(root) else {
-        return found;
-    };
     let mut queue = std::collections::VecDeque::from([(String::new(), 0usize)]);
     let (mut seen, mut opened) = (0usize, 0usize);
     while let Some((rel, depth)) = queue.pop_front() {
@@ -424,7 +505,7 @@ pub fn walk_search_for(
         } else {
             rel.split('/').collect()
         };
-        let Ok(dir) = descend(&base, &segments) else {
+        let Ok(dir) = descend(base, &segments) else {
             continue;
         };
         let (mut names, more) = names_in(&dir, WALK_ENTRY_MAX);

@@ -70,11 +70,20 @@ async fn check_session(board: &Board, station: &str, session: &str) -> Result<()
 
 async fn assign_inner(board: &Board, id: &str, body: &AssignBody) -> Result<Value, ApiError> {
     let project = load(board, id).await?;
-    if project.station_id != body.station {
+    // The project needs a home on the station of the session (design §8.3).
+    let has_home = if project.homes.is_empty() {
+        project.station_id == body.station
+    } else {
+        project
+            .homes
+            .iter()
+            .any(|h| h.station_id.as_str() == body.station)
+    };
+    if !has_home {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "wrong_station",
-            "the session and the project are on different stations",
+            "This project has no home on that station.",
         ));
     }
     check_session(board, &body.station, &body.session_id).await?;

@@ -34,6 +34,10 @@ fn info() -> StationInfo {
         assist_cap: None,
         resources: None,
         desktop: None,
+        traits: None,
+        config: None,
+        taildrive: None,
+        fleet_git: None,
     }
 }
 
