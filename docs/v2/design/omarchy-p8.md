@@ -209,7 +209,7 @@ A rerun validates the config hash and the live effects before it skips steps. It
 | Result | Action |
 | --- | --- |
 | `window_closed`, `not_accepted`, `expired`, `busy`, transport timeout or failure, `tailscale_unavailable`, `not_in_tailnet` | Retry after 30 seconds |
-| `denied`, `cancelled`, `revoked` | Stop; require an explicit `--retry` |
+| `denied`, `cancelled`, `revoked` | Retry after 600 seconds (P8-1 D29: the owner rule is remote first; a request needs an owner-opened pairing window and the owner's approval of the exact fingerprint, so a retry gives nothing to anyone else) |
 | `fingerprint_mismatch`, `request_id_conflict`, `pending`, `unsupported`, `invalid_request`, `retry_file`, local persistence failure | Stop; repair required |
 | `already_paired` | Read the local pairing again; skip only if its full fingerprint matches |
 | Any unrecognized error | Stop |
@@ -221,7 +221,7 @@ Do not parse human stderr. The internal runner uses typed local responses and ty
 - Retryable failures stay in the running bootstrap loop.
 - A process death resumes at the next graphical login, or when the owner reruns the installed first-login hook.
 - Terminal errors are kept and do not clear automatically at login.
-- `--retry` clears only the terminal bootstrap error, after it revalidates the identity and the configuration. It never cancels a different pending pairing.
+- `--retry` clears only the terminal bootstrap error, after it revalidates the identity and the configuration. It never cancels a different pending pairing. `--retry` is optional: no outcome needs it (P8-1 D29).
 - Bootstrap stdout is empty. Progress and error stderr contain the phase and a fixed code only.
 - Exit 0 means complete, or another instance holds the lock. Exit 1 is an unexpected failure. Exit 2 is a retained terminal condition.
 
@@ -239,7 +239,7 @@ Do not parse human stderr. The internal runner uses typed local responses and ty
 
 "No Fleet Deck secret" closes the invitation custody. It does not close the LUKS and Tailscale custody.
 
-The procedure is in `docs/v2/operations.md`, section 13 "Provisioning media custody (P8)". `omarchy.md` §9A links to it. **P8 acceptance requires it.** Its content (the text is the same in `operations.md`):
+The procedure is in `docs/v2/operations.md`, section 14 "Provisioning media custody (P8)". `omarchy.md` §9A links to it. **P8 acceptance requires it.** Its content (the text is the same in `operations.md`):
 
 - Supported source media are an owner-controlled LUKS-encrypted POSIX removable filesystem, or a read-only `cidata` ISO whose host image is held on encrypted storage in a 0700 directory as a 0600 file.
 - Do not require Unix mode preservation inside an ISO. FAT and exFAT media are not accepted for secret-bearing P8 media.

@@ -969,7 +969,7 @@ The detailed contracts of P8 are in the annex [omarchy-p8.md](./omarchy-p8.md). 
 
 - The annex gives the fingerprint format (B1), the two commands with their local protocol and file rules (B4), the hidden `provision-bootstrap` with its durable state and retry table (B2), the custody procedure (B5), and the package and hook trust (B6).
 - The annex corrects the B3 claim of §9A: a remotely committed, locally uncommitted pairing state does exist, and `pair-pending.json` handles it.
-- The custody procedure is in [operations.md](../operations.md) section 13 "Provisioning media custody (P8)". P8 acceptance requires it.
+- The custody procedure is in [operations.md](../operations.md) section 14 "Provisioning media custody (P8)". P8 acceptance requires it.
 - Production P8 acceptance waits for the release task of the owner (§14).
 
 ---
