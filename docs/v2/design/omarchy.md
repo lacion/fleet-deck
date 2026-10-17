@@ -915,6 +915,21 @@ The session shows on the board like any other.
 - **Plugin:** `omarchy plugin validate` passes on the embedded plugin (owner machine smoke). A QML unit test is out of scope.
 - **Exposure:** the summary holds no chat text and no file content (a schema test).
 
+### 8A Revision 12: P4 rules
+
+The detailed contracts of P4 are in the annex [omarchy-p4.md](./omarchy-p4.md) (proposed, revision 12; decision P4-1). **`omarchy-p4.md` overrides §8 where they differ.** The main cases:
+
+- **D1, feature:** `fleet.summary`, `display.directive` and `station.palette` use the new feature `desktop_shell.v1`, not `desktop.v1` (§8.2, §8.4, §8.5). No new link scope.
+- **D3, wall restore (§8.6):** `fleetdeck desktop wall restore` is not built. After §5A item 7 and §6D item 1, a wall needs a deck-authorized `wall.open` and a pairing code, so a station cannot reopen it alone. The owner reopens the wall from the board.
+- **D4, the join (§8.6):** the `post-boot` hook does not run the join of §9. §9A and [omarchy-p8.md](./omarchy-p8.md) replaced it. The hook starts the service and runs the theme sync.
+- **D5, notifications (§8.2, §5C item 4):** the feed uses `omarchy-notification-send` with fixed words and checked ids. It sends D-Bus calls with `busctl`; only the headline position can be read as an option. The exact argv is in the annex.
+- **D6, Hyprland rules (§8.1, §8.4):** the rules match the unique classes `fleetdeck-wall-<id>` and `fleetdeck-preview-<id>` by prefix, in the Lua syntax `o.window` and `o.bind` of Omarchy.
+- **Plugin (§8.3):** kinds `bar-widget` and `panel`; the panel opens with `omarchy-shell shell toggle fleetdeck.fleet '{}'` or the binding `{ panel = "fleetdeck.fleet" }`. The IPC target `fleetdeck.fleet` is dropped.
+- **Hotkeys (§8.4):** `wall show` runs `hyprctl` in the CLI. `wall next` and `wall mode next` use the new station-to-deck method `display.directive`, and the `Station` sender reaches only the sessions of its own station.
+- **Theme (§8.5):** the template and the palette use the keys that the Omarchy template proves (`mode`, `background`, `foreground`, `accent`, `muted`, `dark_background`, `dark_foreground`, `bright_foreground`, `selection`, `red`, `yellow`), not `color0..15`.
+- **Screensaver (§8.7):** `omarchy ascii` draws letters only. The job draws digits with its own table and runs as a process of the plugin, not as a station job.
+- **Doctor (§12 item 2):** the passwordless sudo check runs `omarchy-sudo-passwordless --active`.
+
 ---
 
 ## 9. Omarchy stations with no manual steps
