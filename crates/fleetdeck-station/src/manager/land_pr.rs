@@ -11,7 +11,9 @@ use super::fleet_git_writer::{Gate, Gated, gated_write};
 use super::land::Shared;
 use super::land_publish::{Ctx, Kind};
 use crate::integrations::exec::Fail;
-use crate::integrations::pr_find::{PrCreate, PrRef, pr_create_direct, pr_find};
+use crate::integrations::pr_find::{
+    PrCreate, PrLookup, PrRef, pr_create_direct, pr_find, pr_project_id,
+};
 use crate::store::land_publish::{
     OutcomeChange, Pending, PendingChange, ReconcileChange, Require, Step, StepEnd, WRITE_APPLIED,
     WRITE_REJECTED, WRITE_UNKNOWN,
@@ -69,8 +71,13 @@ pub(super) async fn pr_step(shared: &Shared, land_id: &str) {
     let mut kind = Kind::Unknown;
     let mut message = String::new();
     let mut retried = false;
+    // The bound GitLab project, read once per land (H16).
+    let project = pr_project_id(&forge, ctx.timeouts.forge).await;
     loop {
-        let found = pr_find(&forge, &head, &base, ctx.timeouts.forge).await;
+        let found = match &project {
+            Ok(project) => pr_find(&forge, *project, &head, &base, ctx.timeouts.forge).await,
+            Err(fail) => Err(fail.clone()),
+        };
         let Some(row) = ctx.running(land_id).await else {
             return;
         };
@@ -86,9 +93,13 @@ pub(super) async fn pr_step(shared: &Shared, land_id: &str) {
                 return;
             }
         };
-        match found.as_slice() {
-            [one] => return landed(&ctx, &row, one, OutcomeChange::Keep).await,
-            [] => {}
+        let found = match found {
+            PrLookup::Found(found) => Some(found),
+            PrLookup::TooManyPages => None,
+        };
+        match found.as_deref() {
+            Some([one]) => return landed(&ctx, &row, one, OutcomeChange::Keep).await,
+            Some([]) => {}
             _ => {
                 let first = format!(
                     "More than one open pull request has the head {} and the base {}. \

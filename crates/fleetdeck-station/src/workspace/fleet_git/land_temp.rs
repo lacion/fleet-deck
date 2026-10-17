@@ -26,10 +26,19 @@ pub fn temp_root(roots: &[PathBuf], home: &Path) -> Option<PathBuf> {
         .cloned()
 }
 
-/// `<root>/.fleetdeck-land/<first 12 characters of land_id>-<attempt>`.
+/// `<root>/.fleetdeck-land/<first 16 hex characters of SHA-256(land_id)>-<attempt>`.
+/// A land id is `land-<ULID>`: a prefix of it holds the time and no
+/// randomness, so the name uses a digest of the whole id (H16).
 #[must_use]
 pub fn temp_path(root: &Path, land_id: &str, attempt: u32) -> PathBuf {
-    let short: String = land_id.chars().take(12).collect();
+    use std::fmt::Write as _;
+
+    let digest = ring::digest::digest(&ring::digest::SHA256, land_id.as_bytes());
+    let mut short = String::with_capacity(16);
+    for byte in digest.as_ref().iter().take(8) {
+        // Writing to a `String` cannot fail.
+        let _ = write!(short, "{byte:02x}");
+    }
     root.join(TEMP_DIR).join(format!("{short}-{attempt}"))
 }
 

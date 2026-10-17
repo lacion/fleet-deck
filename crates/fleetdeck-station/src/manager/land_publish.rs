@@ -597,6 +597,7 @@ impl Publish<'_> {
                 &ops.url,
                 &default_ref,
                 &ops.oid,
+                &ops.expect,
             ),
         };
         let push = match push {

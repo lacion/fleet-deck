@@ -4,7 +4,8 @@
 //! that exports the share's machine, asks it for the verdict
 //! (`fleet_git.share_verdict`, 5 s), and answers an `ArtifactAuthorization`
 //! that expires 10 minutes after it was issued. A refusal or a doubt is a
-//! link error; the station fails closed.
+//! link error; the station fails closed. `not_a_station` needs a known
+//! machine name for every paired station (`store/station_machines.rs`).
 
 use std::time::Duration;
 
@@ -117,14 +118,29 @@ async fn decide(
         .split_once('/')
         .map_or("", |(_, n)| n)
         .to_owned();
+    // The machine of a station is its stored name (it survives a restart and
+    // a report without a machine) and, when the cache holds one, the machine
+    // of its current report (H16).
+    let stored = ctx.store.station_machines().await.map_err(internal)?;
     let mut exporters = Vec::new();
+    let mut unknown = None;
     for st in ctx.store.stations().await.map_err(internal)? {
         let reported = ctx
             .store
             .station_info(&st.station_id)
             .and_then(|(info, _)| info.taildrive)
-            .and_then(|t| t.machine);
-        if reported.map(|m| m.to_lowercase()).as_deref() == Some(machine.as_str()) {
+            .and_then(|t| t.machine)
+            .filter(|m| !m.trim().is_empty());
+        let names: Vec<String> = stored
+            .get(&st.station_id)
+            .cloned()
+            .into_iter()
+            .chain(reported)
+            .map(|m| m.to_lowercase())
+            .collect();
+        if names.is_empty() {
+            unknown.get_or_insert(st.name);
+        } else if names.contains(&machine) {
             exporters.push(st.station_id);
         }
     }
@@ -142,6 +158,14 @@ async fn decide(
         };
     let exporter = match exporters.as_slice() {
         [] => {
+            // `not_a_station` only when every paired station has a known
+            // machine name and none matches (H16).
+            if let Some(name) = unknown {
+                return Err(refuse(
+                    code::SHARE_UNVERIFIED,
+                    format!("Fleet Deck does not know the machine name of station {name} yet."),
+                ));
+            }
             return Ok(issued(
                 None,
                 None,

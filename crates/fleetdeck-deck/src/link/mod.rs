@@ -533,7 +533,7 @@ async fn info_loop<F, Fut>(
     match ask().await {
         Ok(Some(info)) => {
             let reported = info.name.clone();
-            store.set_station_info(id, info);
+            store.record_station_info(id, info).await;
             adopt_name(store, id.clone(), stored, &reported).await;
         }
         Ok(None) => {}
@@ -545,7 +545,7 @@ async fn info_loop<F, Fut>(
             () = tokio::time::sleep(every) => {}
         }
         match ask().await {
-            Ok(Some(info)) => store.set_station_info(id, info),
+            Ok(Some(info)) => store.record_station_info(id, info).await,
             Ok(None) => {}
             Err(()) => return,
         }

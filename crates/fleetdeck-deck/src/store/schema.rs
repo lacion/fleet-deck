@@ -743,6 +743,8 @@ pub fn migrations() -> Migrations<'static> {
         M::up(super::fleet_git_schema::HOMES_SQL),
         // V27 (Fleet Git phase 3): the radar and the land queue.
         M::up(super::fleet_git_schema::LAND_SQL),
+        // V28 (PRE-PR round 1): the Taildrive machine of each station.
+        M::up(super::fleet_git_schema::STATION_MACHINES_SQL),
     ])
 }
 

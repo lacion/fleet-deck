@@ -22,9 +22,38 @@ fn the_longest_root_that_holds_the_home_is_the_temp_root() {
 }
 
 #[test]
-fn the_temp_path_uses_twelve_characters_of_the_land_id_and_the_attempt() {
+fn the_temp_path_is_a_digest_of_the_land_id_and_the_attempt() {
     let path = temp_path(Path::new("/r"), "land-0123456789abcdef", 2);
-    assert_eq!(path, PathBuf::from("/r/.fleetdeck-land/land-0123456-2"));
+    let name = path.file_name().unwrap().to_str().unwrap();
+    let (hex, attempt) = name.split_once('-').unwrap();
+    assert_eq!(attempt, "2");
+    assert_eq!(hex.len(), 16);
+    assert!(
+        hex.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    );
+    assert_eq!(path.parent(), Some(Path::new("/r/.fleetdeck-land")));
+    // The same id and attempt give the same path; another attempt does not.
+    assert_eq!(path, temp_path(Path::new("/r"), "land-0123456789abcdef", 2));
+    assert_ne!(path, temp_path(Path::new("/r"), "land-0123456789abcdef", 3));
+}
+
+#[test]
+fn land_ids_one_millisecond_apart_get_different_paths() {
+    // `land-<ULID>`: two ids of nearby milliseconds share their first
+    // characters; a prefix of twelve characters would not tell them apart.
+    let a = "land-01JBXYZ0000000000000000001";
+    let b = "land-01JBXYZ0000100000000000000";
+    assert_eq!(a[..12], b[..12]);
+    assert_ne!(
+        temp_path(Path::new("/r"), a, 1),
+        temp_path(Path::new("/r"), b, 1)
+    );
+    // Two lands of different projects under one root, started together.
+    let seen: std::collections::BTreeSet<PathBuf> = (0..50)
+        .map(|n| temp_path(Path::new("/r"), &format!("land-01JBXYZ{n:019}"), 1))
+        .collect();
+    assert_eq!(seen.len(), 50);
 }
 
 #[test]

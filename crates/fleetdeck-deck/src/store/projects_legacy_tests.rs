@@ -216,6 +216,75 @@ async fn a_project_with_two_homes_or_a_busy_home_refuses_a_new_folder() {
 }
 
 #[tokio::test]
+async fn a_queued_or_running_land_makes_the_home_busy_for_a_new_folder_and_a_removal() {
+    let s = store().await;
+    let p = s
+        .create_project("st-1".into(), input("App", "/work/app"))
+        .await
+        .unwrap();
+    let id = p.project_id;
+    let refused = |e: DeckError| match e {
+        DeckError::HomeRefused(r) => (r.code, r.message),
+        other => panic!("{other}"),
+    };
+    let text = "A land of this project uses this station.";
+    exec(
+        &s,
+        "INSERT INTO land_queue (land_id, command_id, requested_by, request_command_id,
+             project_id, lock_key, station_id, session_id, state, created_at)
+         VALUES ('l1', 'c1', 'owner', 'r1', ?1, 'k', 'st-1', 's1', 'queued', 1)",
+        &id,
+    )
+    .await;
+    for state in ["queued", "running"] {
+        exec(
+            &s,
+            if state == "queued" {
+                "UPDATE land_queue SET state = 'queued' WHERE project_id = ?1"
+            } else {
+                "UPDATE land_queue SET state = 'running' WHERE project_id = ?1"
+            },
+            &id,
+        )
+        .await;
+        let e = s
+            .update_project(id.clone(), "st-1".into(), input("App", "/work/other"))
+            .await
+            .unwrap_err();
+        assert_eq!(refused(e), ("home_busy", text.into()), "{state}");
+        assert_eq!(
+            s.project(id.clone()).await.unwrap().unwrap().path,
+            "/work/app"
+        );
+    }
+    // The removal of a home that a land uses is refused too.
+    add_home(&s, &id, "st-2", 1, "ready").await;
+    exec(
+        &s,
+        "UPDATE land_queue SET station_id = 'st-2' WHERE project_id = ?1",
+        &id,
+    )
+    .await;
+    let refusal = s
+        .home_remove(id.clone(), "st-2".into())
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!((refusal.code, refusal.message), ("home_busy", text.into()));
+    // A land that ended does not block.
+    exec(
+        &s,
+        "UPDATE land_queue SET state = 'landed' WHERE project_id = ?1",
+        &id,
+    )
+    .await;
+    s.home_remove(id.clone(), "st-2".into())
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
 async fn deleting_a_project_deletes_its_homes_and_generations_and_keeps_the_git_names() {
     let s = store().await;
     let p = s

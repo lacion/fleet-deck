@@ -20,7 +20,19 @@ const HTTP_ANSWER_MAX: usize = 1024 * 1024;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct HttpAnswer {
     pub status: u16,
+    /// The response headers: lower-case name, trimmed value.
+    pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+}
+
+impl HttpAnswer {
+    /// The value of the header `name` (lower case), when the answer has it.
+    pub(super) fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+    }
 }
 
 /// The status and the body of `--include` output: the first line is
@@ -37,8 +49,17 @@ fn parse_http(out: &[u8]) -> Option<HttpAnswer> {
     let mut parts = line.split_whitespace();
     parts.next()?.strip_prefix("HTTP/")?;
     let status: u16 = parts.next()?.parse().ok()?;
+    let headers = head
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            Some((name.trim().to_ascii_lowercase(), value.trim().to_owned()))
+        })
+        .collect();
     Some(HttpAnswer {
         status,
+        headers,
         body: out[text_end.0 + text_end.1..].to_vec(),
     })
 }
@@ -488,6 +509,8 @@ mod tests {
             (got.status, got.body.as_slice()),
             (422, b"{\"m\":1}".as_slice())
         );
+        assert_eq!(got.header("content-type"), Some("x"));
+        assert_eq!(got.header("link"), None);
         let got = parse_http(b"HTTP/1.1 201 Created\nA: b\n\n[]").unwrap();
         assert_eq!((got.status, got.body.as_slice()), (201, b"[]".as_slice()));
         assert!(parse_http(b"[1,2]").is_none());

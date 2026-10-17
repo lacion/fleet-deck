@@ -149,8 +149,17 @@ async fn a_crash_after_the_default_intent_continues_with_the_push_done_or_not_do
         assert_eq!(row.state, LandState::Landed, "done={done}: {row:?}");
         assert_eq!(row.default_published_oid.as_deref(), Some(r.as_str()));
         assert_eq!(remote_ref(&rig, "refs/heads/main"), Some(r));
-        // Done: no second push. Not done: it pushed again.
+        // Done: no second push. Not done: it pushed again, with the lease of
+        // the base of the pending intent (H16).
         assert_eq!(rig.lines("pushes").len() - before, usize::from(!done));
+        if !done {
+            let base = row.base_oid.clone().unwrap();
+            let last = rig.lines("pushes").pop().unwrap();
+            assert!(
+                last.contains(&format!("--force-with-lease=refs/heads/main:{base}")),
+                "{last}"
+            );
+        }
     }
 }
 
@@ -261,7 +270,7 @@ async fn an_unreachable_forge_keeps_a_pull_request_land_reconciling_until_it_ans
         if lost {
             std::fs::write(
                 rig.fx("prs"),
-                r#"[{"number":5,"html_url":"https://forge.example/pull/5"}]"#,
+                format!("[{}]", rig.pr_item(5, "https://forge.example/pull/5")),
             )
             .unwrap();
         }
