@@ -99,6 +99,7 @@ pub async fn serve(ctx: Arc<StationLink>, link: LiveLink) -> Closing {
         let handle = d.handle.clone();
         tokio::spawn(crate::shell::data::serve(
             Arc::clone(&ctx.shells),
+            Arc::clone(&ctx.manager),
             d.handle,
             d.events,
         ));
@@ -179,6 +180,20 @@ async fn request(
     match req.method.as_str() {
         "shell.attach" => {
             let reply = intake::shell_attach(ctx, data, req.params);
+            if let Err(e) = control.respond(req.id, reply).await {
+                tracing::debug!(error = %e, "response");
+            }
+        }
+        // FG-9: the export token needs the data channel of this link.
+        "session.move_export" => {
+            let reply = intake::move_export(ctx, data, req.params).await;
+            if let Err(e) = control.respond(req.id, reply).await {
+                tracing::debug!(error = %e, "response");
+            }
+        }
+        // FG-9: the upload token needs the data channel of this link.
+        "session.move_prepare" => {
+            let reply = intake::move_prepare(ctx, data, req.params).await;
             if let Err(e) = control.respond(req.id, reply).await {
                 tracing::debug!(error = %e, "response");
             }

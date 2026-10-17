@@ -18,10 +18,10 @@ use crate::store::{
 };
 use crate::workspace::clone_reuse::{self, CloneTarget};
 use crate::workspace::provision;
+use workspace::fleet_git::move_in_decide::decide_in;
 
 #[path = "decide_workspace.rs"]
 mod workspace;
-const MOVE_TEXT: &str = "Moving a session is not available on this station yet.";
 
 /// The run origin of an input from `origin` (PLAN §6.3).
 #[must_use]
@@ -326,11 +326,11 @@ pub fn decide(
         }
         // The session manager decides a land with the shells (FG-8).
         SessionCommand::Land { .. } => Err(super::land::refuse_direct()),
-        // (FG-9: T4.2 replaces this)
-        SessionCommand::MoveOut { .. }
-        | SessionCommand::MoveIn { .. }
-        | SessionCommand::MoveFinish { .. }
-        | SessionCommand::MoveUndo { .. } => Err(reject(RejectCode::Unsupported, MOVE_TEXT)),
+        SessionCommand::MoveOut { .. } => Err(super::land::move_session::refuse_direct()),
+        command @ (SessionCommand::MoveFinish { .. } | SessionCommand::MoveUndo { .. }) => {
+            super::land::move_session::decide_finish_undo(d, policy, bindings, origin, command)
+        }
+        command @ SessionCommand::MoveIn { .. } => decide_in(d, policy, bindings, origin, command),
         // The session manager decides these with the resolved root (B8).
         SessionCommand::ShellCommand { .. } | SessionCommand::ReleaseShell { .. } => {
             Err(super::shell_decide::refuse_direct())

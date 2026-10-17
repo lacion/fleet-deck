@@ -41,6 +41,14 @@ use crate::store::session_holds::{self, KIND_LAND};
 use crate::store::{DecideError, Decision, EffectPayload, NewEvent, Store};
 use crate::workspace::fleet_git::OptionsProvider;
 
+// (FG-9) The source side of a move. Attached here because `manager/mod.rs`
+// and `decide.rs` are full.
+#[path = "move_session.rs"]
+pub(super) mod move_session;
+// (FG-9) The target side of a move: the locks, the uploads, prepare, discard.
+#[path = "move_in.rs"]
+pub(super) mod move_in;
+
 /// How often the engine looks for an admitted run when nothing wakes it.
 #[cfg(not(test))]
 const POLL: Duration = Duration::from_secs(1);
@@ -107,7 +115,7 @@ fn check_caps(land_id: &str, plan: &LandPlan) -> Result<(), DecideError> {
 }
 
 /// The session must be ended, or idle (design §11.1).
-fn idle_or_ended(summary: &fleetdeck_proto::SessionSummary) -> bool {
+pub(super) fn idle_or_ended(summary: &fleetdeck_proto::SessionSummary) -> bool {
     let ready = match summary.state {
         SessionState::Exited | SessionState::Lost => true,
         SessionState::Running => {
@@ -133,6 +141,10 @@ pub(super) fn decide(
     shells: Option<&Shells>,
     command: SessionCommand,
 ) -> Result<CommandResult, DecideError> {
+    // (FG-9) `submit` routes `MoveOut` here because it needs the shells.
+    if matches!(command, SessionCommand::MoveOut { .. }) {
+        return move_session::decide_out(d, policy, bindings, origin, shells, command);
+    }
     if !matches!(origin, CommandOrigin::Board | CommandOrigin::Coordinator) {
         return Err(reject(
             RejectCode::Forbidden,
@@ -263,7 +275,7 @@ fn plan_checks(
 /// Every existing worktree safety check of the trash decision that applies to
 /// a land (design §11.4 step 1); the folder checks do not, because a land
 /// never moves the worktree.
-fn worktree_checks(
+pub(super) fn worktree_checks(
     d: &Decision<'_>,
     policy: &Policy,
     shells: Option<&Shells>,

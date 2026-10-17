@@ -354,6 +354,9 @@ impl RunningStation {
         if host_choice == HostChoice::Shim && cfg!(target_os = "linux") {
             set_bridge_endpoint(&manager, &station_dir)?;
         }
+        // The staging root of the conversation files of a move (FG-9).
+        manager.set_moves_dir(station_dir.join("moves"));
+        manager.clear_cut_uploads().await;
         // Worktree and clone provisioning runs Git under `fleetdeck
         // confine-exec` (B9, DL-200).
         #[cfg(target_os = "linux")]

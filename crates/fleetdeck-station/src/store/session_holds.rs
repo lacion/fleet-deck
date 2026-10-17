@@ -16,8 +16,14 @@ pub const KIND_MOVE: &str = "move";
 /// The hold of the target of a move (phase 4).
 pub const KIND_MOVE_IN: &str = "move_in";
 
-/// The refusal text of a held session (design §11.4).
+/// The refusal text of a session that a land holds (design §11.4).
 pub const HELD: &str = "A land holds this session. Wait until it ends.";
+/// The refusal text of the source of a move (design §12.3 step 1).
+pub const HELD_MOVE: &str = "The session is being moved.";
+/// The refusal text of the target of a move when the source station is not
+/// known (design §12.3 step 4). With the source it is "This session is still
+/// arriving from <id>." (T4.2c).
+pub const HELD_MOVE_IN: &str = "This session is still arriving from another station.";
 
 /// One row of `session_holds`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,19 +70,58 @@ pub fn held(conn: &Connection, session_id: &SessionId) -> Result<bool> {
     )?)
 }
 
-/// The decision check of a command that a hold refuses (design §11.4): a
-/// stored `invalid_state` rejection with [`HELD`].
+/// The refusal text of a hold, by its kind (design §11.4, §12.3). The text of
+/// a `move_in` hold names the source station of its `move_in_runs` row.
+fn text_of_hold(conn: &Connection, hold: &SessionHold) -> Result<String> {
+    Ok(match hold.kind.as_str() {
+        KIND_MOVE => HELD_MOVE.to_owned(),
+        KIND_MOVE_IN => super::move_runs::get_in(conn, &hold.holder_id)?
+            .and_then(|row| row.source_station)
+            .map_or_else(
+                || HELD_MOVE_IN.to_owned(),
+                |source| format!("This session is still arriving from {source}."),
+            ),
+        _ => HELD.to_owned(),
+    })
+}
+
+fn reject(text: impl Into<String>) -> DecideError {
+    DecideError::Reject(Reject::new(RejectCode::InvalidState, text))
+}
+
+/// The refusal of a session that moved away (design §12.4): `Some` for a
+/// session with `summary.moved_to`.
+fn moved_text(conn: &Connection, session_id: &SessionId) -> Result<Option<String>> {
+    Ok(super::log::summary(conn, session_id)?
+        .and_then(|s| s.moved_to)
+        .map(|m| format!("The session moved to {}. Open it there.", m.station_id)))
+}
+
+/// The check of a hold alone (the trash: a moved session can be trashed,
+/// design §12.4).
+///
+/// # Errors
+/// The rejection, or a database error.
+pub fn check_hold(conn: &Connection, session_id: &SessionId) -> Result<(), DecideError> {
+    match get(conn, session_id)? {
+        Some(hold) => Err(reject(text_of_hold(conn, &hold)?)),
+        None => Ok(()),
+    }
+}
+
+/// The decision check of a command that a hold or a move refuses (design
+/// §11.4, §12.3, §12.4): a stored `invalid_state` rejection with the text of
+/// the hold kind, or "The session moved to <station>. Open it there." for a
+/// moved session.
 ///
 /// # Errors
 /// The rejection, or a database error.
 pub fn check_free(conn: &Connection, session_id: &SessionId) -> Result<(), DecideError> {
-    if held(conn, session_id)? {
-        return Err(DecideError::Reject(Reject::new(
-            RejectCode::InvalidState,
-            HELD,
-        )));
+    check_hold(conn, session_id)?;
+    match moved_text(conn, session_id)? {
+        Some(text) => Err(reject(text)),
+        None => Ok(()),
     }
-    Ok(())
 }
 
 /// Inserts the hold of a session. The primary key refuses a second hold.
