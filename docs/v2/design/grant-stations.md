@@ -1,6 +1,6 @@
 # Coordinator grant target stations (ADR-006 §"Creation", DL-230 item 7)
 
-Status: proposed, revision 3 (architect, 2026-10-18): revision 2 answered the DESIGN REVIEW round 1 (B1, M1-M4, U1); revision 3 answers the round 2 blocker (exact expiry for worker calls, §2.3a). High risk (authorization).
+Status: accepted, revision 3 (architect, 2026-10-18; DESIGN REVIEW round 3 PASS): revision 2 answered the DESIGN REVIEW round 1 (B1, M1-M4, U1); revision 3 answers the round 2 blocker (exact expiry for worker calls, §2.3a). High risk (authorization).
 
 ## 1. Problem
 
