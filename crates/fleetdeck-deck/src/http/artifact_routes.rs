@@ -28,27 +28,27 @@ use std::time::Duration;
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Path, Query, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
-use fleetdeck_link::Control;
 use fleetdeck_proto::SessionId;
 use fleetdeck_proto::artifacts::{
-    ArtifactDetail, ArtifactGetQuery, ArtifactKind, ArtifactPublish, ArtifactPublishRequest,
-    ArtifactPublished, ArtifactVersion, DeckArtifact, DeckArtifactDetail, MAX_AUTHOR_CHARS,
-    ShareLink, ShareRequest, ViewLink, ViewRequest, content_type_of,
+    ArtifactDetail, ArtifactGetQuery, ArtifactPublish, ArtifactPublishRequest, ArtifactPublished,
+    ArtifactVersion, DeckArtifact, DeckArtifactDetail, MAX_AUTHOR_CHARS, ShareLink, ShareRequest,
+    ViewLink, ViewRequest,
 };
-use fleetdeck_proto::link::Outcome;
 use serde::Deserialize;
-use serde::de::DeserializeOwned;
 
 use super::Board;
 use super::guard::{ApiError, owner_only};
 use crate::store::artifacts::{NewShare, ShareRow};
 use crate::store::auth::{random_token, secret_hash};
-use crate::store::{AuditResult, DeckError, NewAudit, Principal, StationRecord};
+use crate::store::{AuditResult, NewAudit, Principal, StationRecord};
 
+#[path = "artifact_common.rs"]
+pub(super) mod common;
 #[path = "artifact_stream.rs"]
-mod stream;
+pub(super) mod stream;
+use common::{ask, bad, db, file_response, not_found, ok_path, station_of};
 use stream::{Cache, ensure_cached, stream_file};
 
 /// The longest the deck waits for one answer of a station.
@@ -64,101 +64,6 @@ const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const MAX_CACHED_VERSION_BYTES: u64 = 64 * 1024 * 1024;
 /// The content security policy of an HTML or SVG answer (DL-165).
 pub const SANDBOX_CSP: &str = "sandbox allow-scripts allow-popups allow-forms allow-modals; default-src * data: blob: 'unsafe-inline' 'unsafe-eval'";
-
-fn bad(code: &'static str, message: impl Into<String>) -> ApiError {
-    ApiError::new(StatusCode::BAD_REQUEST, code, message)
-}
-
-fn not_found(code: &'static str, message: impl Into<String>) -> ApiError {
-    ApiError::new(StatusCode::NOT_FOUND, code, message)
-}
-
-fn db(e: DeckError) -> ApiError {
-    ApiError::internal(e)
-}
-
-async fn station_of(board: &Board, name: &str) -> Result<StationRecord, ApiError> {
-    board
-        .store
-        .find_station(name.to_owned())
-        .await
-        .map_err(db)?
-        .ok_or_else(|| not_found("unknown_station", format!("no station is named `{name}`")))
-}
-
-/// Maps a station `artifacts.*` error code to an HTTP error.
-fn station_error(code: &str, message: String) -> ApiError {
-    use fleetdeck_proto::artifacts::code as c;
-    let (status, known) = match code {
-        c::INVALID_PATH => (StatusCode::BAD_REQUEST, c::INVALID_PATH),
-        c::INVALID_PARAMS => (StatusCode::BAD_REQUEST, c::INVALID_PARAMS),
-        c::OUTSIDE_ROOTS => (StatusCode::BAD_REQUEST, c::OUTSIDE_ROOTS),
-        c::NOT_FOUND => (StatusCode::NOT_FOUND, c::NOT_FOUND),
-        c::UNKNOWN_SESSION => (StatusCode::NOT_FOUND, c::UNKNOWN_SESSION),
-        c::UNKNOWN_ARTIFACT => (StatusCode::NOT_FOUND, c::UNKNOWN_ARTIFACT),
-        c::UNSUPPORTED => (StatusCode::NOT_IMPLEMENTED, c::UNSUPPORTED),
-        _ => {
-            return ApiError::new(
-                StatusCode::BAD_GATEWAY,
-                "station_error",
-                format!("{code}: {message}"),
-            );
-        }
-    };
-    ApiError::new(status, known, message)
-}
-
-/// The live link of a station, or 409 `station_unreachable`.
-fn control_of(board: &Board, rec: &StationRecord) -> Result<Control, ApiError> {
-    board
-        .link
-        .control_for(&rec.station_id)
-        .ok_or_else(|| unreachable_error(&rec.name))
-}
-
-fn unreachable_error(name: &str) -> ApiError {
-    ApiError::new(
-        StatusCode::CONFLICT,
-        "station_unreachable",
-        format!("station `{name}` has no live link to this deck"),
-    )
-}
-
-/// Sends `method` on `control` to the station named `name` and decodes the
-/// answer.
-async fn ask_on<T: DeserializeOwned>(
-    control: &Control,
-    name: &str,
-    method: &'static str,
-    params: serde_json::Value,
-) -> Result<T, ApiError> {
-    let outcome = tokio::time::timeout(STATION_WAIT, control.request(method, None, params))
-        .await
-        .map_err(|_| {
-            ApiError::new(
-                StatusCode::GATEWAY_TIMEOUT,
-                "timeout",
-                "the station did not answer in time",
-            )
-        })?
-        .map_err(|_| unreachable_error(name))?;
-    match outcome {
-        Outcome::Ok(v) => serde_json::from_value(v)
-            .map_err(|e| ApiError::new(StatusCode::BAD_GATEWAY, "station_error", e.to_string())),
-        Outcome::Err(e) => Err(station_error(&e.code, e.message)),
-    }
-}
-
-/// Sends `method` to the station on its live link and decodes the answer.
-async fn ask<T: DeserializeOwned>(
-    board: &Board,
-    rec: &StationRecord,
-    method: &'static str,
-    params: serde_json::Value,
-) -> Result<T, ApiError> {
-    let control = control_of(board, rec)?;
-    ask_on(&control, &rec.name, method, params).await
-}
 
 /// `GET /api/artifacts` query.
 #[derive(Debug, Default, Deserialize)]
@@ -264,40 +169,6 @@ pub async fn get(
         versions,
         shares,
     }))
-}
-
-fn ok_path(path: &str) -> bool {
-    !path.contains('\0') && !path.contains('\\') && !path.split('/').any(|s| s == ".." || s == ".")
-}
-
-/// The headers for one file: its content type, `nosniff`, and for a
-/// document (HTML, SVG) the sandbox policy.
-fn file_headers(path: &str) -> HeaderMap {
-    let content_type = content_type_of(path);
-    let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-    headers.insert(
-        header::X_CONTENT_TYPE_OPTIONS,
-        HeaderValue::from_static("nosniff"),
-    );
-    headers.insert(
-        header::REFERRER_POLICY,
-        HeaderValue::from_static("no-referrer"),
-    );
-    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    let kind = ArtifactKind::of_path(path);
-    if matches!(kind, ArtifactKind::Html | ArtifactKind::Svg) {
-        headers.insert(
-            header::CONTENT_SECURITY_POLICY,
-            HeaderValue::from_static(SANDBOX_CSP),
-        );
-    }
-    headers
-}
-
-/// The response for one cached file.
-fn file_response(path: &str, bytes: Vec<u8>) -> Response {
-    (StatusCode::OK, file_headers(path), bytes).into_response()
 }
 
 /// `GET /api/artifacts/{station}/{id}/{version}/raw/{*path}`.

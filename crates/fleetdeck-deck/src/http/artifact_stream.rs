@@ -1,19 +1,20 @@
 //! The cache fill and the streaming of the artifact files (NV-01).
 
+use std::sync::Arc;
+
 use axum::body::{Body, Bytes};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use fleetdeck_link::Control;
 use fleetdeck_proto::artifacts::{
-    ArtifactDetail, ArtifactFile, ArtifactFileQuery, ArtifactGetQuery,
+    ArtifactDetail, ArtifactFile, ArtifactFileQuery, ArtifactGetQuery, ArtifactVersion,
 };
+use futures_util::future::BoxFuture;
 
-use super::{
-    ApiError, Board, MAX_CACHED_VERSION_BYTES, StationRecord, ask, ask_on, control_of, db,
-    file_headers, not_found,
-};
+use super::common::{ask, ask_on, control_of, db, file_headers, not_found};
+use super::{ApiError, Board, MAX_CACHED_VERSION_BYTES, StationRecord};
 
 /// One chunk of a file: its bytes, and whether it is the last one (`eof` or
 /// no bytes).
@@ -123,22 +124,21 @@ async fn fill_cache(
 
 /// How `ensure_cached` left a version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Cache {
+pub(crate) enum Cache {
     /// The cache holds every file of the version.
     Cached,
     /// The version is too large to cache: read it from the station.
     Stream,
 }
 
-/// Makes sure the cache holds `version`: it reads the version from the
-/// station when it does not. A version over [`MAX_CACHED_VERSION_BYTES`] is
-/// not cached (NV-01); the deck stores only its metadata.
-pub(super) async fn ensure_cached(
+/// The metadata of one version: the stored row, or the answer of the
+/// station (which the deck then stores). It caches no file.
+pub(crate) async fn version_meta(
     board: &Board,
     rec: &StationRecord,
     artifact_id: &str,
     version: u32,
-) -> Result<Cache, ApiError> {
+) -> Result<ArtifactVersion, ApiError> {
     let known = board
         .store
         .artifact_versions(rec.station_id.clone(), artifact_id.to_owned())
@@ -146,14 +146,24 @@ pub(super) async fn ensure_cached(
         .map_err(db)?
         .into_iter()
         .find(|v| v.version == version && !v.files.is_empty());
-    let meta = match known {
-        Some(v) => v,
-        None => {
-            fetch_detail(board, rec, artifact_id, version)
-                .await?
-                .version
-        }
-    };
+    match known {
+        Some(v) => Ok(v),
+        None => Ok(fetch_detail(board, rec, artifact_id, version)
+            .await?
+            .version),
+    }
+}
+
+/// Makes sure the cache holds `version`: it reads the version from the
+/// station when it does not. A version over [`MAX_CACHED_VERSION_BYTES`] is
+/// not cached (NV-01); the deck stores only its metadata.
+pub(crate) async fn ensure_cached(
+    board: &Board,
+    rec: &StationRecord,
+    artifact_id: &str,
+    version: u32,
+) -> Result<Cache, ApiError> {
+    let meta = version_meta(board, rec, artifact_id, version).await?;
     if meta.size > MAX_CACHED_VERSION_BYTES {
         return Ok(Cache::Stream);
     }
@@ -180,7 +190,12 @@ struct Chunks {
     /// The first chunk, asked before the response left (NV-01).
     first: Option<(Vec<u8>, bool)>,
     done: bool,
+    gate: Option<Gate>,
 }
+
+/// A check that runs before each chunk of a streamed file leaves the deck
+/// (R13 §5D item 20): false stops the body.
+pub(crate) type Gate = Arc<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync>;
 
 /// Streams one file of a version from the station, chunk by chunk, without
 /// the cache (NV-01). The first chunk is asked before the response is
@@ -192,6 +207,31 @@ pub(super) async fn stream_file(
     artifact_id: &str,
     version: u32,
     path: &str,
+) -> Result<Response, ApiError> {
+    stream_with(
+        board,
+        rec,
+        artifact_id,
+        version,
+        path,
+        file_headers(path),
+        None,
+    )
+    .await
+}
+
+/// As [`stream_file`], with the headers of the answer and, for a display, a
+/// [`Gate`]. The gate runs before the response is returned (a refusal is
+/// 404 `unknown_artifact`) and before every chunk leaves (a refusal ends the
+/// body with an error).
+pub(crate) async fn stream_with(
+    board: &Board,
+    rec: &StationRecord,
+    artifact_id: &str,
+    version: u32,
+    path: &str,
+    headers: HeaderMap,
+    gate: Option<Gate>,
 ) -> Result<Response, ApiError> {
     let listed = board
         .store
@@ -208,6 +248,11 @@ pub(super) async fn stream_file(
     }
     let control = control_of(board, rec)?;
     let first = read_chunk(&control, &rec.name, artifact_id, version, path, 0).await?;
+    if let Some(gate) = &gate
+        && !gate().await
+    {
+        return Err(not_found("unknown_artifact", "No such artifact."));
+    }
     let state = Chunks {
         control,
         name: rec.name.clone(),
@@ -217,6 +262,7 @@ pub(super) async fn stream_file(
         offset: 0,
         first: Some(first),
         done: false,
+        gate,
     };
     let body = futures_util::stream::unfold(state, |mut s| async move {
         if s.done {
@@ -245,9 +291,18 @@ pub(super) async fn stream_file(
         if part.is_empty() {
             return None;
         }
+        // The authority of this moment, right before the chunk leaves
+        // (R13 §5D item 20).
+        if let Some(gate) = &s.gate
+            && !gate().await
+        {
+            s.done = true;
+            let cut = std::io::Error::other("the display authority ended");
+            return Some((Err(cut), s));
+        }
         s.offset += part.len() as u64;
         s.done = last;
         Some((Ok::<_, std::io::Error>(Bytes::from(part)), s))
     });
-    Ok((StatusCode::OK, file_headers(path), Body::from_stream(body)).into_response())
+    Ok((StatusCode::OK, headers, Body::from_stream(body)).into_response())
 }

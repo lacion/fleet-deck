@@ -452,8 +452,8 @@ async fn a_display_reads_and_logs_out_with_its_header_and_writes_nothing_else() 
             &[("Cookie", &cookie)],
         )
         .await,
-        501,
-        "not_built",
+        404,
+        "unknown_artifact",
     );
     // The display cookie does not log in the owner's rows, and the owner's
     // cookie is not a display cookie.
