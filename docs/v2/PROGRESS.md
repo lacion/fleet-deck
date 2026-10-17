@@ -122,8 +122,8 @@ Design: `docs/v2/design/fleet-git.md` (accepted for FG-1..FG-8 and FG-10..FG-12,
 - Phase 1 (FG-1..FG-4): done; T1.0..T1.7 merged, `make check` passed.
 - Phase 2 (FG-5, FG-6, FG-11, FG-12): done; T2.0..T2.5 merged (T2.2, T2.3 split in a/b; T2.4b start dialog), the full check passed (4159 tests). Decisions: `~/fleetdeck-briefs/fg-t2-decisions.md` (architect record).
 - Phase 3 (FG-7, FG-8): done; T3.1..T3.5 merged (T3.2 in three steps a/b/c, T3.3 in two), the full check passed (4363 tests). Decisions: `~/fleetdeck-briefs/fg-t3-decisions.md` (architect record).
-- Phase 4 (FG-9, FG-10): in progress; FG-10 only, FG-9 waits for the owner (DL-227).
-- Phase 5 (documents, PRE-PR review): not started.
+- Phase 4 (FG-9, FG-10): FG-10 done (T4.1a, T4.3, T4.4a, T4.5a, T4.6), the full check passed (4406 tests); FG-9 is not built and waits for the owner (DL-227).
+- Phase 5 (documents, PRE-PR review): documents done (operations §13, README, internals, backlog B1, DL-228, DL-229); the adversary PRE-PR review of `fleet-git` against `v2` runs.
 
 - [x] FG-1 Fetch before spawn (O7, O8)
 - [x] FG-2 Push (O9, O10, O11)
@@ -134,7 +134,7 @@ Design: `docs/v2/design/fleet-git.md` (accepted for FG-1..FG-8 and FG-10..FG-12,
 - [x] FG-7 Predictive conflict radar (O21, O22)
 - [x] FG-8 Land flow (O23 to O26)
 - [ ] FG-9 Move a session to another station (O27 to O30): waits for the owner (DL-227)
-- [ ] FG-10 The architect across the fleet (O31, O32, B1)
+- [x] FG-10 The architect across the fleet (O31, O32, B1)
 - [x] FG-11 Config drift report (O33, O34)
 - [x] FG-12 Taildrive artifact share (O35 to O39)
 - Phase 1 limit: scheduler, coordinator and fleet starts start plain (no Fleet Git attach); board and batch starts attach.
