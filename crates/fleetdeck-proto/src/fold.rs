@@ -14,7 +14,7 @@
 //! - An unknown event kind changes only the sequence and the time (L16).
 
 use crate::event::{Event, EventEnvelope, RateLimit, SessionState, Usage};
-use crate::fleet_git::{CleanupInfo, PushInfo};
+use crate::fleet_git::{ArtifactsDir, CleanupInfo, PushInfo};
 use crate::session::{
     Activity, MAX_RUNNING_TOOLS, OpenRequest, RunningTool, SUBAGENT_TASK_KINDS, SessionBase,
     SessionError, SessionRevert, SessionSummary, TerminalHold,
@@ -281,6 +281,13 @@ impl SessionSummary {
                     reason: reason.clone(),
                 });
             }
+            Event::ArtifactsReady { path, url } => {
+                self.artifacts_dir = Some(ArtifactsDir {
+                    path: path.clone(),
+                    url: url.clone(),
+                });
+            }
+            Event::ArtifactsRevoked { .. } => self.artifacts_dir = None,
             Event::SessionHibernated { .. } => self.hibernated = true,
             Event::SessionEnded { .. } => {
                 if !matches!(self.state, SessionState::Lost) {
@@ -304,6 +311,8 @@ impl SessionSummary {
             | Event::ExecutionReconciled { .. }
             // The board reads the skipped files from the event (FG-4).
             | Event::WorkspaceIncludeSkipped { .. }
+            // The board reads the reason from the event (FG-12).
+            | Event::ArtifactsUnavailable { .. }
             // A late checkpoint never changes the activity (L13).
             | Event::TurnFinalized { .. } => {}
         }

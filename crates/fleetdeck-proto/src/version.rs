@@ -131,6 +131,12 @@ pub mod feature {
     /// `fleet_git` and the Fleet Git phase 1 events (ADR-009).
     pub const FLEET_GIT: &str = "fleet_git.v1";
 
+    /// `project.ensure_home`, `project.home_status`,
+    /// `fleet_git.artifact_authorize`, `fleet_git.share_verdict`,
+    /// `FileRoot::Artifacts` and the artifact events (Fleet Git phase 2,
+    /// ADR-009).
+    pub const FLEET_GIT_HOMES: &str = "fleet_git.homes.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -167,6 +173,7 @@ pub mod feature {
         SHELL_COMMAND,
         DESKTOP,
         FLEET_GIT,
+        FLEET_GIT_HOMES,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

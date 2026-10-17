@@ -749,5 +749,50 @@ fn a_summary_without_the_fleet_git_fields_decodes_and_hides_them_when_empty() {
     assert!(!s.base_stale && s.push.is_none() && s.cleanup.is_none());
 }
 
+#[test]
+fn artifact_events_set_and_clear_the_artifacts_dir() {
+    use crate::fleet_git::ArtifactsDir;
+    let mut f = Feed::new();
+    f.push(started());
+    assert!(f.summary.artifacts_dir.is_none());
+    let s = f.push(Event::ArtifactsReady {
+        path: Some("/mnt/a/app/ada/".to_owned()),
+        url: None,
+    });
+    assert_eq!(
+        s.artifacts_dir,
+        Some(ArtifactsDir {
+            path: Some("/mnt/a/app/ada/".to_owned()),
+            url: None,
+        })
+    );
+    // `artifacts.unavailable` changes no summary field.
+    let before = f.summary.artifacts_dir.clone();
+    let s = f.push(Event::ArtifactsUnavailable {
+        code: "mount_missing".to_owned(),
+        text: "t".to_owned(),
+    });
+    assert_eq!(s.artifacts_dir, before);
+    // A later `artifacts.ready` replaces it; `artifacts.revoked` clears it.
+    let s = f.push(Event::ArtifactsReady {
+        path: None,
+        url: Some("http://100.100.100.100:8080/t/m/s/p/c/".to_owned()),
+    });
+    assert_eq!(
+        s.artifacts_dir.as_ref().and_then(|d| d.url.as_deref()),
+        Some("http://100.100.100.100:8080/t/m/s/p/c/")
+    );
+    let s = f.push(Event::ArtifactsRevoked {
+        code: "share_unverified".to_owned(),
+        text: "t".to_owned(),
+    });
+    assert!(s.artifacts_dir.is_none());
+    // An empty `artifacts_dir` is not serialized, and its absence decodes.
+    let v = serde_json::to_value(&f.summary).unwrap();
+    assert!(!v.as_object().unwrap().contains_key("artifacts_dir"));
+    let back: SessionSummary = serde_json::from_value(v).unwrap();
+    assert!(back.artifacts_dir.is_none());
+}
+
 #[path = "fold_tests_more.rs"]
 mod more;

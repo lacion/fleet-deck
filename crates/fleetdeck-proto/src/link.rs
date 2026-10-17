@@ -286,6 +286,23 @@ pub struct StationInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub desktop: Option<crate::desktop::DesktopInfo>,
+    /// The traits of the station for placement (FG-6). Absent from an older
+    /// station.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub traits: Option<crate::fleet_git::StationTraits>,
+    /// The hashes of the provider config files (FG-11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub config: Option<crate::fleet_git::ConfigDigest>,
+    /// The Taildrive shares of the station (FG-12).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub taildrive: Option<crate::fleet_git::TaildriveReport>,
+    /// The Fleet Git settings of the station (FG-5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub fleet_git: Option<crate::fleet_git::FleetGitInfo>,
 }
 
 /// One configured provider instance of a station (`[[provider_instance]]`,

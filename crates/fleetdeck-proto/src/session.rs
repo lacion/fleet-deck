@@ -11,7 +11,7 @@ use crate::event::{
     ApprovalOption, ModelChoice, ProviderKind, RateLimit, RequestKind, ResponseChannel,
     RevertState, SessionState, ToolKind, Usage,
 };
-use crate::fleet_git::{CleanupInfo, PushInfo};
+use crate::fleet_git::{ArtifactsDir, CleanupInfo, PushInfo};
 use crate::ids::{NodeId, ProviderInstanceId, RequestId, RunId, SessionId, TurnId};
 use crate::integrations::IssueRef;
 
@@ -180,6 +180,11 @@ pub struct SessionSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub cleanup: Option<CleanupInfo>,
+    /// The artifact folder of the session, from `artifacts.ready` and
+    /// `artifacts.revoked` (FG-12).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub artifacts_dir: Option<ArtifactsDir>,
     /// The highest `session_seq` folded into this summary.
     pub session_seq: u64,
     /// Unix ms of the last folded event.
@@ -232,6 +237,7 @@ impl SessionSummary {
             base_stale: false,
             push: None,
             cleanup: None,
+            artifacts_dir: None,
             session_seq: 0,
             updated_at: 0,
         }

@@ -514,6 +514,10 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
                 assist_cap: usage.map(|(_, cap)| cap),
                 resources: crate::resources::current(&policy).await,
                 desktop: intake_desktop::station_info(ctx).await,
+                traits: None,
+                config: None,
+                taildrive: None,
+                fleet_git: None,
             })
         }
         "workspace.list" => workspaces(ctx, req.params).await,

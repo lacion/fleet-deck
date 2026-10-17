@@ -5,6 +5,7 @@ import type { ProviderKind } from "../event/ProviderKind";
 import type { RateLimit } from "../event/RateLimit";
 import type { SessionState } from "../event/SessionState";
 import type { Usage } from "../event/Usage";
+import type { ArtifactsDir } from "../fleet_git/ArtifactsDir";
 import type { CleanupInfo } from "../fleet_git/CleanupInfo";
 import type { PushInfo } from "../fleet_git/PushInfo";
 import type { ProviderInstanceId } from "../ids/ProviderInstanceId";
@@ -158,6 +159,11 @@ push?: PushInfo,
  * The cleanup state of the worktree, from `session.cleanup` (FG-3).
  */
 cleanup?: CleanupInfo, 
+/**
+ * The artifact folder of the session, from `artifacts.ready` and
+ * `artifacts.revoked` (FG-12).
+ */
+artifacts_dir?: ArtifactsDir, 
 /**
  * The highest `session_seq` folded into this summary.
  */
