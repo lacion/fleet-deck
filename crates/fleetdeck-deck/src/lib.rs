@@ -14,6 +14,7 @@ pub mod maintenance;
 pub mod oauth;
 pub mod peers;
 pub mod routing;
+pub mod routing_place;
 pub mod scheduler;
 pub mod serve;
 pub mod store;

@@ -39,4 +39,27 @@ pub const API_GIT: &[ApiMethod] = &[
         Some(Scope::Admin),
         true,
     ),
+    // FG-6: placement; `drive`, not mutating, not audited, closed to members.
+    m(
+        "placement.place",
+        Method::POST,
+        "/api/placement",
+        Some(Scope::Drive),
+        false,
+    ),
+    // FG-11: the drift reference station.
+    m(
+        "fleet_git.prefs",
+        Method::GET,
+        "/api/fleet-git/prefs",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
+        "fleet_git.drift_reference",
+        Method::PUT,
+        "/api/fleet-git/drift-reference",
+        Some(Scope::Admin),
+        true,
+    ),
 ];

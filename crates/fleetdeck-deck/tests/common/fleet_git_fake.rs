@@ -93,6 +93,27 @@ impl Reply {
     }
 }
 
+/// What the fake answers to `fleet_git.share_verdict` (FG-12).
+#[derive(Debug, Clone)]
+pub enum ShareReply {
+    /// A `ShareVerdictAnswer` as JSON.
+    Answer(Value),
+    /// A link error with this code.
+    Error(&'static str),
+    /// No answer at all (the deck times out).
+    Silent,
+}
+
+impl ShareReply {
+    /// A clear share: the path is `ok`, nothing is exposed.
+    pub fn clear() -> Self {
+        Self::Answer(json!({
+            "inventory_revision": 7, "checked_at": 1234,
+            "path_state": "ok", "exposure_state": "clear", "exposed": []
+        }))
+    }
+}
+
 /// What a fake station reports in `station.info`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FakeOptions {
@@ -112,6 +133,12 @@ pub struct FakeGit {
     pub status: Mutex<Reply>,
     /// The attempts that this station knows, by id, with their generation.
     pub attempts: Mutex<std::collections::BTreeMap<String, u64>>,
+    /// The answer of `fleet_git.share_verdict`.
+    pub share_verdict: Mutex<ShareReply>,
+    /// The answer of `files.list`: `Err((code, message))` is a link error.
+    pub files: Mutex<Result<Value, (&'static str, &'static str)>>,
+    /// The `station.info` answer (the setters change it).
+    info: Mutex<Value>,
     pub control: Control,
 }
 
@@ -157,7 +184,7 @@ impl FakeGit {
             .pin_station(NewStation {
                 key: identity.public_key(),
                 name: name.to_owned(),
-                scopes: STATION_SCOPES.into_iter().collect(),
+                scopes: station_scopes(),
                 dial_url: None,
             })
             .await
@@ -263,28 +290,37 @@ impl FakeGit {
             ensure: Mutex::new(Reply::cloning("/srv/projects/App")),
             status: Mutex::new(Reply::cloning("/srv/projects/App")),
             attempts: Mutex::default(),
+            share_verdict: Mutex::new(ShareReply::clear()),
+            files: Mutex::new(Ok(json!({
+                "root": "/artifacts", "path": "", "entries": [], "truncated": false
+            }))),
+            info: Mutex::new(info.clone()),
             control: station.control.clone(),
         });
         let me = Arc::clone(&fake);
         tokio::spawn(async move {
             while let Some(message) = station.inbound.recv().await {
                 if let Inbound::Request(req) = message {
-                    me.answer(&station.control, req, &info).await;
+                    me.answer(&station.control, req).await;
                 }
             }
         });
         fake
     }
 
-    async fn answer(
-        &self,
-        control: &Control,
-        req: fleetdeck_link::control::InboundRequest,
-        info: &Value,
-    ) {
+    async fn answer(&self, control: &Control, req: fleetdeck_link::control::InboundRequest) {
         lock(&self.seen).push((req.method.clone(), req.params.clone()));
         let outcome = match req.method.as_str() {
-            "station.info" => Outcome::Ok(info.clone()),
+            "station.info" => Outcome::Ok(lock(&self.info).clone()),
+            "fleet_git.share_verdict" => match lock(&self.share_verdict).clone() {
+                ShareReply::Answer(v) => Outcome::Ok(v),
+                ShareReply::Error(code) => Outcome::Err(WireError::new(code, "the fake says no")),
+                ShareReply::Silent => return,
+            },
+            "files.list" => match lock(&self.files).clone() {
+                Ok(v) => Outcome::Ok(v),
+                Err((code, message)) => Outcome::Err(WireError::new(code, message)),
+            },
             "fleet_git.projects_set" => self.snapshot(&req.params),
             // One open GitHub issue `#7`, for the batch start.
             "issues.get" => Outcome::Ok(json!({
@@ -384,6 +420,46 @@ impl FakeGit {
             revision: snapshot.revision,
             checks,
         }))
+    }
+
+    /// Sets one field of the `station.info` answer.
+    pub fn set_info(&self, key: &str, value: Value) {
+        lock(&self.info)[key] = value;
+    }
+
+    /// The traits that the station reports (FG-6).
+    pub fn set_traits(&self, os: &str, arch: &str, battery: Option<bool>, labels: &[&str]) {
+        let mut traits = json!({ "os": os, "arch": arch, "labels": labels });
+        if let Some(b) = battery {
+            traits["on_battery"] = json!(b);
+        }
+        self.set_info("traits", traits);
+    }
+
+    /// The Taildrive report that the station reports (FG-12).
+    pub fn set_taildrive(&self, report: Value) {
+        self.set_info("taildrive", report);
+    }
+
+    /// A signed-in `claude` instance, so the station can take a new session.
+    pub fn set_signed_in(&self) {
+        self.set_info(
+            "providers",
+            json!([{
+                "instance": "claude", "provider": "claude", "version": "2.1.0",
+                "auth": "signed_in"
+            }]),
+        );
+    }
+
+    /// Hands the current `station.info` answer to the deck store at once
+    /// (the deck asks again only every minute).
+    pub fn publish(&self, store: &fleetdeck_deck::DeckStore, station: &StationId) {
+        let info = lock(&self.info).clone();
+        store.set_station_info(
+            station,
+            serde_json::from_value(info).expect("a station.info"),
+        );
     }
 
     /// The params of every request of `method` so far.
@@ -558,6 +634,18 @@ pub fn body(settings: Value, revision: u64, remote: Option<&str>) -> Value {
 
 pub async fn setup() -> Setup {
     setup_with(fixture().await).await
+}
+
+/// The scopes of a test station: `STATION_SCOPES` and `read`. The table row of
+/// `fleet_git.artifact_authorize` is scope `read`, so a station that sends it
+/// needs that grant (the pairing grants `admin` only, see the T2.3b report).
+pub fn station_scopes() -> BTreeSet<Scope> {
+    STATION_SCOPES.into_iter().chain([Scope::Read]).collect()
+}
+
+/// [`setup`] with a first station that holds [`station_scopes`].
+pub async fn setup_reading() -> Setup {
+    setup_with(super::fixture_with(station_scopes()).await).await
 }
 
 /// [`setup`] on a deck store that is a file of `dir`.

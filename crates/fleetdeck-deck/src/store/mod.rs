@@ -33,6 +33,7 @@ pub mod displays;
 pub mod displays_pairing;
 pub mod extras;
 pub mod fleet;
+pub mod fleet_git_prefs;
 pub mod fleet_git_schema;
 pub mod fleet_git_start;
 pub mod git_snapshots;

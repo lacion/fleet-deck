@@ -15,11 +15,13 @@ use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use fleetdeck_proto::StationId;
 use fleetdeck_proto::fleet_git::{
-    FleetGitStart, GitSettingsAnswer, GitSettingsPut, SettingsError, StartKind, code, station_slug,
+    FleetGitStart, GitSettingsAnswer, GitSettingsPut, SettingsError, StartKind, check_settings,
+    code, station_slug,
 };
 use fleetdeck_proto::version::feature;
 
 use super::Board;
+use super::artifact_share_check::check_share;
 use super::guard::{ApiError, owner_only};
 use super::projects_routes::bad_body;
 use crate::link::fleet_git_sync;
@@ -47,6 +49,27 @@ async fn save(
     body: Result<Json<GitSettingsPut>, JsonRejection>,
 ) -> Result<GitSettingsAnswer, ApiError> {
     let Json(put) = body.map_err(|e| bad_body(&e))?;
+    // A new `artifact_share` that the exporting station reports as exposed or
+    // unverified is refused (FG-12, decision D8): after the 404 and the
+    // settings rules, before the revision check.
+    if let Some(share) = &put.settings.artifact_share {
+        let Some(stored) = board
+            .store
+            .project(id.to_owned())
+            .await
+            .map_err(ApiError::internal)?
+        else {
+            return Err(ApiError::new(
+                StatusCode::NOT_FOUND,
+                "unknown_project",
+                format!("no project `{id}`"),
+            ));
+        };
+        if stored.git.artifact_share.as_ref() != Some(share) {
+            check_settings(&put.settings).map_err(|e| invalid(&e))?;
+            check_share(board, share).await?;
+        }
+    }
     match board
         .store
         .set_project_git(id.to_owned(), put)

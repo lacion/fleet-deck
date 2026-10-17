@@ -255,13 +255,9 @@ async fn a_batch_start_goes_to_the_chosen_home_and_its_station() {
 }
 
 #[tokio::test]
-async fn a_batch_start_refuses_auto_an_unknown_home_and_a_home_that_is_not_ready() {
+async fn a_batch_start_refuses_an_unknown_home_and_a_home_that_is_not_ready() {
+    // `home = "auto"` is placed (T2.3b); see `board_fleet_git_placement.rs`.
     let t = two(json!({})).await;
-    let mut body = batch("b1");
-    body["home"] = json!("auto");
-    let r = t.batch(body).await;
-    expect(&r, 400, "invalid_body");
-    assert_eq!(r.body["message"], "Auto placement is not available yet.");
     for (n, home) in ["nope", t.beta.as_str()].into_iter().enumerate() {
         let mut body = batch(&format!("b{}", n + 2));
         body["home"] = json!(home);

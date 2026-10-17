@@ -15,6 +15,8 @@ use axum::extract::{Extension, State};
 use axum::http::StatusCode;
 use fleetdeck_proto::board::{DeckCommand, DeckSession};
 use fleetdeck_proto::command::{CommandOrigin, UserInput};
+use fleetdeck_proto::fleet_git::Prefer;
+use fleetdeck_proto::integrations::check_placement;
 use fleetdeck_proto::link::{Outcome, WorkspaceQuery};
 use fleetdeck_proto::orchestration::{
     ASSIGNMENT_PREFIX, AssignOutcome, AssignRequest, MAX_TASK_CHARS, SpawnHint,
@@ -28,7 +30,8 @@ use super::guard::ApiError;
 use super::workspace_routes::WORKSPACE_WAIT;
 use crate::link::CommandKind;
 use crate::local::station_view;
-use crate::routing::{Needs, pick_session, spawn_candidates};
+use crate::routing::{Needs, pick_session};
+use crate::routing_place::{PlaceNeeds, rank};
 use crate::store::{AuditResult, DeckError, NewAudit, Principal};
 
 /// The audit action and the API method name.
@@ -76,6 +79,19 @@ pub async fn assign(
             .await;
         return Err(e);
     }
+    // The placement fields of a new session (FG-6, decision D2).
+    if let Err(why) = check_placement(&req.requires, &req.prefer) {
+        let e = ApiError::new(StatusCode::BAD_REQUEST, "invalid_body", why);
+        board
+            .store
+            .audit_or_log(
+                audit(AuditResult::Refused)
+                    .command(req.command_id.clone())
+                    .detail(e.code),
+            )
+            .await;
+        return Err(e);
+    }
     let sessions = board.store.sessions().await.map_err(ApiError::internal)?;
     // A resend after a lost response: the stored command, nothing new.
     if let Some(cmd) = board
@@ -96,7 +112,7 @@ pub async fn assign(
         .await
         .map_err(ApiError::internal)?;
     let Some(target) = pick_session(&sessions, &needs, &buried) else {
-        let spawn_on = spawn_on(&board, &needs).await;
+        let spawn_on = spawn_on(&board, &needs, &req.requires, &req.prefer).await;
         let detail = spawn_on.as_ref().map_or_else(
             || "unrouted".to_owned(),
             |s| format!("unrouted; spawn on {}", s.name),
@@ -176,22 +192,36 @@ fn assigned(cmd: &DeckCommand, sessions: &[DeckSession]) -> AssignOutcome {
     }
 }
 
-/// The best station for a new session; with a repository, the first
-/// candidate whose `workspace.list` finds it.
-async fn spawn_on(board: &Arc<Board>, needs: &Needs<'_>) -> Option<SpawnHint> {
+/// The best station for a new session, in the placement order of FG-6
+/// (`requires`, `prefer`, resources, live sessions, name); with a
+/// repository, the first candidate whose `workspace.list` finds it.
+async fn spawn_on(
+    board: &Arc<Board>,
+    needs: &Needs<'_>,
+    requires: &[String],
+    prefer: &[Prefer],
+) -> Option<SpawnHint> {
     let records = board.store.stations().await.ok()?;
     let views: Vec<_> = records
         .iter()
         .map(|st| station_view(st, &board.store))
         .collect();
-    for st in spawn_candidates(&views, needs) {
+    let sessions = board.store.sessions().await.ok()?;
+    let place = PlaceNeeds {
+        requires,
+        prefer,
+        provider: needs.provider,
+        homes: None,
+    };
+    for id in rank(&views, &sessions, &place) {
         if let Some(repo) = needs.repo
-            && !repo_exists(board, &st.station_id, repo).await
+            && !repo_exists(board, &id, repo).await
         {
             continue;
         }
+        let st = views.iter().find(|st| st.station_id == id)?;
         return Some(SpawnHint {
-            station_id: st.station_id.clone(),
+            station_id: id,
             name: st.name.clone(),
         });
     }
