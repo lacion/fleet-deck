@@ -16,6 +16,25 @@ use std::path::Path;
 use super::git_snapshots::{PHASE1_GENERATION, checks_of, clear_checks, verified};
 use super::{DeckStore, LinkFeature, Result, call, slug_reservations, to_i64};
 
+/// The environment variable that lets the deck accept local remotes.
+const ALLOW_LOCAL_REMOTES_ENV: &str = "FLEETDECK_ALLOW_LOCAL_REMOTES";
+
+/// `Allow` only for the value exactly `1`, else `Deny`.
+fn local_remotes_for(value: Option<&str>) -> LocalRemotes {
+    if value == Some("1") {
+        LocalRemotes::Allow
+    } else {
+        LocalRemotes::Deny
+    }
+}
+
+/// The local-remote rule of the deck rules: the deck's own process
+/// environment decides. (FG-5 phase 1: T2.1 replaces this with the stations'
+/// FleetGitInfo)
+fn local_remotes() -> LocalRemotes {
+    local_remotes_for(std::env::var(ALLOW_LOCAL_REMOTES_ENV).ok().as_deref())
+}
+
 /// The wire name of a check state, for the code of an unverified home.
 fn state_name(check: &HomeCheck) -> String {
     serde_json::to_value(check.state)
@@ -148,14 +167,14 @@ fn refuse(field: &str, message: impl Into<String>) -> SettingsError {
     }
 }
 
-/// Checks a remote URL and splits it (design §3.1, §3.8; phase 1 refuses
-/// every local remote: no station reports `allow_local_remotes` yet).
+/// Checks a remote URL and splits it (design §3.1, §3.8; phase 1: a local
+/// remote only with `FLEETDECK_ALLOW_LOCAL_REMOTES=1` in the deck process).
 ///
 /// # Errors
 /// A [`SettingsError`] for field `remote_url`.
 pub fn remote_write(url: &str) -> std::result::Result<RemoteWrite, SettingsError> {
     let url = url.trim();
-    let identity = remote_identity(url, LocalRemotes::Deny).map_err(|e| {
+    let identity = remote_identity(url, local_remotes()).map_err(|e| {
         refuse(
             "remote_url",
             match e {
@@ -291,7 +310,7 @@ impl DeckStore {
             }
             if let Some(url) = &settings.wip_remote
                 && let Err(e @ IdentityError::RemoteLocalRefused) =
-                    remote_identity(url, LocalRemotes::Deny)
+                    remote_identity(url, local_remotes())
             {
                 return Ok(GitWrite::Invalid(refuse("wip_remote", e.to_string())));
             }
@@ -429,6 +448,21 @@ impl DeckStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_deck_allows_local_remotes_only_for_the_value_one() {
+        for (value, want) in [
+            (Some("1"), LocalRemotes::Allow),
+            (None, LocalRemotes::Deny),
+            (Some(""), LocalRemotes::Deny),
+            (Some("0"), LocalRemotes::Deny),
+            (Some("true"), LocalRemotes::Deny),
+            (Some("11"), LocalRemotes::Deny),
+            (Some(" 1"), LocalRemotes::Deny),
+        ] {
+            assert_eq!(local_remotes_for(value), want, "{value:?}");
+        }
+    }
 
     #[test]
     fn the_login_name_is_split_off_and_put_back() {

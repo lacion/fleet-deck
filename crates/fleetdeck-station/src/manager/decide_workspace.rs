@@ -47,6 +47,26 @@ pub(super) fn check_setup_cmd(
     Ok(())
 }
 
+/// Test seam (Fleet Git T1.7), compiled only with the station feature
+/// `fault-injection`: `FLEETDECK_TEST_CALLSIGN` names the callsign that a new
+/// session tries first (1 to 64 characters of `[a-z0-9-]`, like the generated
+/// ones), so two stations can be made to pick the same one (A2 FG-2).
+#[cfg(feature = "fault-injection")]
+fn forced_callsign() -> Option<String> {
+    let name = std::env::var("FLEETDECK_TEST_CALLSIGN").ok()?;
+    let valid = (1..=64).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+    valid.then_some(name)
+}
+
+/// Without the feature the variable is ignored.
+#[cfg(not(feature = "fault-injection"))]
+fn forced_callsign() -> Option<String> {
+    None
+}
+
 /// The first free callsign of the station for a new session (DL-200).
 pub(super) fn new_callsign(
     d: &Decision<'_>,
@@ -54,6 +74,11 @@ pub(super) fn new_callsign(
     start: u64,
     ticket: Option<&str>,
 ) -> Result<String, DecideError> {
+    if let Some(forced) = forced_callsign()
+        && !d.callsign_taken(&forced)?
+    {
+        return Ok(forced);
+    }
     for candidate in provision::callsign_candidates(session_id.as_str(), start, ticket) {
         if !d.callsign_taken(&candidate)? {
             return Ok(candidate);
