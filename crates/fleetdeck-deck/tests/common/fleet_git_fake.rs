@@ -30,7 +30,7 @@ use fleetdeck_proto::integrations::{ForgeBinding, ForgeKind, Project, ProjectInp
 use fleetdeck_proto::link::Scope;
 
 use super::board::{BoardClient, Http, board};
-use super::fleet_git_land::LandReply;
+use super::fleet_git_land::{LandReply, RadarReply};
 use super::{Fixture, T, accepted, fixture};
 
 /// What the fake answers to a snapshot.
@@ -142,6 +142,8 @@ pub struct FakeGit {
     pub land_status: Mutex<Value>,
     /// The answer of `fleet_git.land_abandon`.
     pub land_abandon: Mutex<Value>,
+    /// The answer of `project.radar` (FG-7).
+    pub radar: Mutex<RadarReply>,
     /// The answer of `files.list`: `Err((code, message))` is a link error.
     pub files: Mutex<Result<Value, (&'static str, &'static str)>>,
     /// The `station.info` answer (the setters change it).
@@ -301,6 +303,7 @@ impl FakeGit {
             land: Mutex::new(std::collections::VecDeque::from([LandReply::Accept])),
             land_status: Mutex::new(json!({ "state": "unknown" })),
             land_abandon: Mutex::new(json!({ "state": "busy" })),
+            radar: Mutex::new(RadarReply::clear()),
             files: Mutex::new(Ok(json!({
                 "root": "/artifacts", "path": "", "entries": [], "truncated": false
             }))),
@@ -335,6 +338,7 @@ impl FakeGit {
             "session.land" => self.land_answer(req.command_id.as_ref()),
             "fleet_git.land_status" => Outcome::Ok(lock(&self.land_status).clone()),
             "fleet_git.land_abandon" => Outcome::Ok(lock(&self.land_abandon).clone()),
+            "project.radar" => lock(&self.radar).outcome(),
             // One open GitHub issue `#7`, for the batch start.
             "issues.get" => Outcome::Ok(json!({
                 "summary": {

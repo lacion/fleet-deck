@@ -114,7 +114,8 @@ pub struct RunningDeck {
     maintenance: tokio::task::JoinHandle<()>,
     /// The sender and poller of the home attempts (FG-5).
     homes: tokio::task::JoinHandle<()>,
-    land: [tokio::task::JoinHandle<()>; 3],
+    /// The land tasks and the radar task (FG-7, FG-8).
+    land: [tokio::task::JoinHandle<()>; 4],
     /// The Tailscale certificate of the board (DL-190).
     cert: crate::cert_task::CertTask,
     shutdown: watch::Sender<bool>,
@@ -379,6 +380,14 @@ impl RunningDeck {
                 Arc::clone(link),
                 kick,
                 rx.clone(),
+            )),
+            tokio::spawn(crate::fleet_git_radar::run(
+                store.clone(),
+                Arc::clone(link),
+                Arc::clone(&link.radar_state),
+                Arc::clone(&link.radar_kick),
+                rx.clone(),
+                crate::fleet_git_radar::RadarOptions::PRODUCTION,
             )),
         ];
         let scheduler = crate::scheduler::spawn(store.clone(), Arc::clone(node.link()), rx);
