@@ -322,6 +322,16 @@ async fn file_method(ctx: &StationLink, method: &str, params: serde_json::Value)
             ),
             Err(e) => bad_params(e),
         },
+        // The deny list always applies; the member flag is already removed.
+        "files.display_changes" => match serde_json::from_value(params) {
+            Ok(q) => done(
+                crate::workspace::session_diff::display_changes::run(
+                    store, policy, private, &git, q,
+                )
+                .await,
+            ),
+            Err(e) => bad_params(e),
+        },
         "files.coordinator_diff" => match serde_json::from_value(params) {
             Ok(q) => {
                 done(crate::workspace::coordinator_diff::run(store, policy, private, &git, q).await)
@@ -538,6 +548,7 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
         | "files.search"
         | "files.diff"
         | "files.session_diff"
+        | "files.display_changes"
         | "files.coordinator_diff" => file_method(ctx, &req.method, req.params).await,
         "artifacts.publish" | "artifacts.list" | "artifacts.get" | "artifacts.file" => {
             artifact_method(ctx, &req.method, req.params).await
