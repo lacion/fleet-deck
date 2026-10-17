@@ -58,10 +58,10 @@ At most two workers run at the same time (machine limit). Tasks in the same step
 | Method | Callers | Scope | Feature | Mutating |
 | --- | --- | --- | --- | --- |
 | `fleet.summary` | deck → station | `Read` | `desktop_shell.v1` | no |
-| `display.directive` | station → deck | `Read` | `desktop_shell.v1` | no |
-| `station.palette` | station → deck | `Read` | `desktop_shell.v1` | no |
+| `display.directive` | station → deck | `Admin` | `desktop_shell.v1` | no |
+| `station.palette` | station → deck | `Admin` | `desktop_shell.v1` | no |
 
-  The deck grants `Read` to every paired station for exactly these two station-to-deck methods. `display.directive` is authorized again by the binding in the store (3.6). `tests/method_table.rs` compares the table with ADR-004.
+  The two station-to-deck rows use `Admin`, the scope that every paired station already holds (`deck/src/link/runtime.rs` `STATION_SCOPES`); no scope is added to any station, because a `Read` grant would also open every other station-to-deck row that needs `Read` (the same reason as `fleet_git.artifact_authorize`, Fleet Git). The handlers authorize by the caller's own station identity: `display.directive` again by the binding in the store (3.6), `station.palette` only for the caller's own palette (3.7). (Revision 12c, decision P4-6.) `tests/method_table.rs` compares the table with ADR-004.
 - **Station setting `fleet_summary`:** `bool`, default `false`, apply `Live`, danger (off to on needs the owner's elevation), label "Fleet summary for the desktop shell", help "Send a summary of the whole fleet (counts, the callsigns of sessions that need you, usage) to this station, for the Omarchy bar. Programs that run as you on this machine can read it." The local socket counts as elevated (like the other station settings).
 - **`StationInfo.fleet_summary: Option<bool>`**, `#[serde(default, skip_serializing_if = "Option::is_none")]`, `#[ts(optional)]`. The station fills it from the live policy at each `station.info`.
 - **Types** in `proto/src/fleet_summary.rs` (ts-rs exported to `fleet_summary/`):
