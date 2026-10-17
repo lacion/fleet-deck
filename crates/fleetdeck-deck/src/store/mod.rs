@@ -553,6 +553,35 @@ impl DeckStore {
         }
     }
 
+    /// Replaces only the `desktop` field of the kept `station.info` of
+    /// `station`, in one step under the lock of the cache (R13 §6D item 6).
+    /// It does nothing when the deck holds no `station.info` of the station.
+    /// The time of the entry does not move: the rest of the answer is not
+    /// newer.
+    pub fn update_station_desktop(
+        &self,
+        station: &StationId,
+        desktop: fleetdeck_proto::desktop::DesktopInfo,
+    ) {
+        let changed = {
+            let mut infos = self
+                .inner
+                .infos
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            match infos.get_mut(station) {
+                Some((info, _)) if info.desktop.as_ref() != Some(&desktop) => {
+                    info.desktop = Some(desktop);
+                    true
+                }
+                _ => false,
+            }
+        };
+        if changed {
+            self.board_changed();
+        }
+    }
+
     /// Every kept `station.info` (the coordinator decision reads them).
     #[must_use]
     pub fn station_infos(&self) -> BTreeMap<StationId, (StationInfo, i64)> {

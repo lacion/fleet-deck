@@ -1,5 +1,6 @@
-//! The step 1 stubs of the desktop relay and the wake task (R13 P2b/P3b):
-//! the interface is final and the defined refusal holds until step 2.
+//! The step 1 stub of the wake task (R13 P2b/P3b): the interface is final and
+//! the task only waits for the shutdown until the wake row is built. The relay
+//! stub became real in the P3b relay task (`board_desktop.rs`).
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -8,9 +9,7 @@ mod common;
 use std::time::Duration;
 
 use common::*;
-use fleetdeck_deck::desktop_relay::{Actor, RelayCtx, RelayError, act, info};
 use fleetdeck_deck::live::{DeckLive, LiveCell};
-use fleetdeck_proto::desktop::DesktopAction;
 use tokio::sync::watch;
 
 fn live() -> LiveCell {
@@ -22,39 +21,6 @@ fn live() -> LiveCell {
         tailscale_cert: false,
         tailscale_bin: None,
     })
-}
-
-#[tokio::test]
-async fn the_relay_stub_refuses_every_action_and_every_info_as_unsupported() {
-    let f = fixture().await;
-    let ctx = RelayCtx {
-        store: f.store.clone(),
-        link: std::sync::Arc::clone(&f.ctx),
-        live: live(),
-    };
-    let r = act(
-        &ctx,
-        f.station.clone(),
-        DesktopAction::ScreenLock,
-        Actor::Owner,
-    )
-    .await;
-    assert_eq!(r.unwrap_err(), RelayError::Unsupported);
-    let r = act(
-        &ctx,
-        f.station.clone(),
-        DesktopAction::ScreenPower {
-            monitor: Some("DP-1".into()),
-            on: true,
-        },
-        Actor::Wake {
-            display_id: "d".into(),
-        },
-    )
-    .await;
-    assert_eq!(r.unwrap_err(), RelayError::Unsupported);
-    let r = info(&ctx, f.station.clone(), true).await;
-    assert_eq!(r.unwrap_err(), RelayError::Unsupported);
 }
 
 #[tokio::test]
