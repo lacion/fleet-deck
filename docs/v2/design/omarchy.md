@@ -1,6 +1,6 @@
 # Fleet Deck on Omarchy: the wall, desktop control and the desktop MCP (R13)
 
-- **Status:** §4.5, §5 and §6.1-§6.4/§6.6 **accepted**, revision 5 (2026-10-16, DL-201: design review round 4 PASS; its two MAJOR findings fixed in §5C items 4 and 5); revision 6: §5D (P2b) and §6D (P3b) drafted from the open questions, owner decisions DL-221, DL-222, DL-223; DESIGN REVIEW pending; revision 7: §5E answers the DESIGN REVIEW round 1 of revision 6; other parts still draft. §5C answers the round 3 review (`/tmp/adv-r13-p23-r3-report.md`, owner decision: apply the fixes and one more round) and overrides §5B where they differ; §5B answers the round 2 review (`/tmp/adv-r13-p23-r2-report.md`) and overrides §5A where they differ; §5A answers the DESIGN REVIEW round 1 of §4.5, §5 and §6 (`/tmp/adv-r13-p2-design-report.md`) and overrides them where they differ. Not frozen. Each high-risk part needs an adversary DESIGN REVIEW before its code (§13).
+- **Status:** §4.5, §5 and §6.1-§6.4/§6.6 **accepted**, revision 5 (2026-10-16, DL-201: design review round 4 PASS; its two MAJOR findings fixed in §5C items 4 and 5); revision 6: §5D (P2b) and §6D (P3b) drafted from the open questions, owner decisions DL-221, DL-222, DL-223; DESIGN REVIEW pending; revision 7: §5E answers the DESIGN REVIEW round 1 of revision 6; revision 8: §5F answers the DESIGN RE-REVIEW round 2; other parts still draft. §5C answers the round 3 review (`/tmp/adv-r13-p23-r3-report.md`, owner decision: apply the fixes and one more round) and overrides §5B where they differ; §5B answers the round 2 review (`/tmp/adv-r13-p23-r2-report.md`) and overrides §5A where they differ; §5A answers the DESIGN REVIEW round 1 of §4.5, §5 and §6 (`/tmp/adv-r13-p2-design-report.md`) and overrides them where they differ. Not frozen. Each high-risk part needs an adversary DESIGN REVIEW before its code (§13).
 - **Owner request (2026-10-16):** "i have a server thats connected to a ultrawide screen, i use this server to run multiple ai agents as it has 64 cores and 128gb of ram … it would be awesome if i could control omarchy and the screen trough the fleet and maybe also have an mcp … imagine using the screen as a command control center and we could display and control everhting there." Then: "lets create a document for this work so we can implement everything".
 - **Owner answers (DL-198):**
 
@@ -576,6 +576,44 @@ These rules answer the report `adv-omarchy-r6-design-report.md` (VERDICT: FAIL, 
 7. **Build plan (§11).** The foundation task also owns the `desktop_authority.v1` and `auth_generation` contracts and the `/display/` document route. The P3b station dispatch task owns the station side of item 1 and the station quiet-hours re-check of item 5.
 8. **Status line.** The status line at the top of this document names revision 7.
 
+## 5F. Answers to the DESIGN RE-REVIEW round 2 (revision 7)
+
+These rules answer the report `adv-omarchy-r7-design-report.md` (VERDICT: FAIL, 4 BLOCKER). They override §5E, §5D and §6D where they differ. The item numbers 1 to 4 follow the finding numbers B1 to B4. Items 5 and 6 update the build plan and the status line. The build plan is in §11.
+
+1. **Authority clock contract (finding B1; replaces the 5 s allowance of §5E item 1).**
+   - **New field.** The authority also carries `deck_now_ms: i64`. It is the deck wall clock at the time the deck made the authority.
+   - **Receipt check.** At receipt, the station records a monotonic instant. It compares `deck_now_ms` with its own wall clock. When they differ by more than 5 000 ms in either direction, it refuses with `forbidden` and the text "The station and the deck clocks differ too much for a desktop action."
+   - **Start check.** Right before the first side effect, the action may run only when all of these are true:
+     - (a) the station wall clock is at or before `deadline_ms` (exact comparison, no grace);
+     - (b) the monotonic time since receipt is at most 10 s;
+     - (c) the receipt clock check passed.
+   - **No wall-clock extension.** Rule (b) does not depend on the wall clock. A change of the wall clock cannot extend an authority.
+   - **Residual interval (accepted).** After `desktop_control` turns off, an action can still start within the link delivery time plus at most 10 s. The documents state this interval. They do not claim an instant remote cancellation.
+2. **Single use across restarts (finding B2).**
+   - **Consumption.** The station consumes the `action_id` before the first side effect, in one atomic step (one lock, insert-if-absent). A second use is refused.
+   - **Retention.** The station keeps each consumed id for 30 s of monotonic time. This is longer than any acceptance interval of item 1.
+   - **Link epoch.** Each authority also carries `link_epoch: String`. The station gives a random `link_epoch` to each link connection at its handshake. It is a new additive field of the link handshake reply under `desktop_authority.v1`.
+   - **Epoch check.** The station refuses an authority whose `link_epoch` is not the epoch of the connection that carried it.
+   - **Restart.** A station restart or a new link connection gives a new epoch. Every earlier authority is then invalid. The design needs no durable store.
+3. **The display document path (finding B3; replaces the `/display/` prefix of §5E item 3a).**
+   - **Route.** The deck serves the board `index.html` at exactly `/display` (no trailing slash). The relative `./assets/...` URLs of the bundle then resolve to `/assets/...`.
+   - **Trailing slash.** `/display/` answers `308` to `/display`.
+   - **CSP.** The `/display` response has the stricter CSP of §5E item 3. Its `frame-src` allows only `/api/displays/self/artifact/`. It also has the board `script-src` and `style-src` for `/assets/`.
+   - **URLs.** Every display link, pair page and kiosk URL is `/display#/...`. This replaces `/display/#/...` in §5E items 3 and 4.
+   - **Browser proof (P2c, `web/e2e-real`).** A test with the production bundle proves four things: pairing, display-link redemption, wall navigation and a reload at `/display`.
+4. **Restart-safe wake deduplication (finding B4; replaces the memory-only deduplication of §5E item 6).**
+   - **Table.** The deck store gets the table `wake_seen(station_id TEXT, request_id TEXT, first_seen_ms INTEGER, PRIMARY KEY(station_id, request_id))`.
+   - **Recording.** The table records every request that the wake rule observes, baseline or live.
+   - **Rule.** A request whose key exists never wakes.
+   - **Age limit.** The deck prunes rows older than 24 h on each insert.
+   - **Size limit.** The table holds at most 10 000 rows. When an insert would pass that limit, the deck prunes the oldest rows first. If the table still cannot take the row, the deck sends no wake (fail closed) and logs a warning.
+   - **Test.** A request wakes. The deck restarts. The station restores the request under a new incarnation after the initial snapshot. Result: no wake.
+5. **Build plan (§11).**
+   - The foundation task owns the `link_epoch` handshake field, the `/display` document route and the `wake_seen` table.
+   - The P3b station dispatch task owns items 1 and 2 on the station.
+   - The P3b wake task owns the logic of item 4.
+6. **Status line.** The status line at the top of this document names revision 8.
+
 ---
 
 ## 7. The desktop MCP for agents (HIGH RISK)
@@ -808,14 +846,14 @@ The order is: a serial foundation task, then the parallel tasks, then the web co
 
 | Step | Task | Exclusive owned files | Deliverable |
 |---|---|---|---|
-| 1 (serial) | Foundation and integration | Core config, settings and tests; deck `live.rs`, `cert_task_tests.rs`, `tests/common/board.rs`; proto contracts, exports and TS generation; link method tables; deck HTTP module, method tables and guard; store `mod.rs`, `schema.rs`, `displays.rs`, `displays_pairing.rs`; HTTP `display_routes.rs`; station intake routing; deck `lib.rs`, `serve.rs` | Settings, contracts (including the `desktop_authority.v1` feature and the `desktop.act` authority param, §5E item 1), migrations (including `displays.auth_generation`, §5E item 2), binding and pairing transactions, the `/display/` document route (§5E item 3), invalidation hooks and the final wiring |
+| 1 (serial) | Foundation and integration | Core config, settings and tests; deck `live.rs`, `cert_task_tests.rs`, `tests/common/board.rs`; proto contracts, exports and TS generation; link method tables; deck HTTP module, method tables and guard; store `mod.rs`, `schema.rs`, `displays.rs`, `displays_pairing.rs`; HTTP `display_routes.rs`; station intake routing; deck `lib.rs`, `serve.rs` | Settings, contracts (including the `desktop_authority.v1` feature and the `desktop.act` authority param, §5E item 1), migrations (including `displays.auth_generation`, §5E item 2), binding and pairing transactions, the `/display` document route (§5E item 3 as changed by §5F item 3), the `link_epoch` handshake field (§5F item 2), the `wake_seen` table (§5F item 4), invalidation hooks and the final wiring |
 | 2 (parallel) | P2b payload | Deck `http/{display_view,ws,read_routes,activity_routes}.rs`, new display projection helpers, `store/activity.rs`; new timeline and activity tests | One projection policy across HTTP and every WS path |
 | 2 (parallel) | P2b directives | New deck `store/display_directives*.rs`, `http/display_directive_routes.rs`; new directive tests | Validation, storage, live sender checks and the polling endpoint |
 | 2 (parallel) | P2b changes | Station `workspace/session_diff.rs` and new display-change helpers and tests; new deck `http/display_changes.rs` and tests | Station-produced protected statistics and patches, and a bounded display route |
 | 2 (parallel) | P2b artifacts | Deck `http/{artifact_routes,artifact_stream}.rs`, new shared artifact helpers and `display_artifact.rs`; new artifact tests | The nearly full module is factored; single-file route, CSP and revocation |
-| 2 (parallel) | P3b station dispatch | Station `desktop/**`, `link/intake_desktop.rs`, new station authority helper and tests | Fresh info, local offset, IPv6 grammar, total deadlines, the station side of the dispatch authority (§5E item 1) and the station quiet-hours re-check (§5E item 5) |
+| 2 (parallel) | P3b station dispatch | Station `desktop/**`, `link/intake_desktop.rs`, new station authority helper and tests | Fresh info, local offset, IPv6 grammar, total deadlines, the station side of the dispatch authority (§5E item 1 with §5F items 1 and 2: clock contract, single use, link epoch) and the station quiet-hours re-check (§5E item 5) |
 | 2 (parallel) | P3b relay | New deck `desktop_relay.rs`, `http/desktop_routes.rs`, `link/desktop_authority.rs`; new relay tests | Owner relay, action authority, binding orchestration and redacted outcomes |
-| 2 (parallel) | P3b wake | New deck `wake/**`; new wake tests | Request detection, quiet hours, joining and bounded execution |
+| 2 (parallel) | P3b wake | New deck `wake/**`; new wake tests | Request detection, restart-safe deduplication (§5F item 4), quiet hours, joining and bounded execution |
 | 3 | Web completion (P2c, P3c) | `web/src/**`, without the generated types that step 1 owns | Pairing, display management, wall panes, the Desktop panel and "Send to wall" |
 | 4 | Documentation | Design, decisions log, `PARITY.md` and `SECURITY-CHECKLIST.md` only | The revision, the worker briefs, and a truthful proof and review status |
 
