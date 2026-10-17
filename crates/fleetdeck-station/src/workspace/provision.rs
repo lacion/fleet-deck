@@ -191,6 +191,7 @@ pub fn worktree_plan(
             path: text(&path),
             branch: branch.map_or_else(|| format!("fd/{callsign}"), str::to_owned),
             base: base.map(str::to_owned),
+            sync: None,
         },
         path,
     ))
@@ -324,6 +325,7 @@ pub async fn provision(
             path,
             branch,
             base,
+            ..
         } => {
             if Path::new(path).is_dir() {
                 let git = grouped(dest_dir.unwrap_or(Path::new(path)), WORKTREE_TIMEOUT);

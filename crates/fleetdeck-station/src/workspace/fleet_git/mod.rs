@@ -19,7 +19,7 @@ pub use fetch::{BaseStale, StartPoint, fetch_for_start};
 pub use identity::{PushDestination, Refusal, VerifiedUrl, check_home, effective_push_url};
 pub use include::copy_includes;
 pub use push::{
-    PushFailure, PushJob, PushOutcome, PushResult, PushWriter, RefspecError, backoff_delay,
-    push_outcome, refspec_for,
+    OptionsProvider, PushFailure, PushJob, PushOutcome, PushResult, PushWriter, RefspecError,
+    backoff_delay, push_outcome, refspec_for,
 };
 pub use redact::redact;

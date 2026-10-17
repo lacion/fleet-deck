@@ -19,14 +19,15 @@ use fleetdeck_core::ChildEnv;
 use fleetdeck_core::launch_dir::{LaunchDir, LaunchDirError};
 use fleetdeck_proto::SessionId;
 use fleetdeck_proto::command::{SessionSpec, StopMode};
+use fleetdeck_proto::fleet_git::FleetGitStart;
 use fleetdeck_proto::session::SessionBase;
 use fleetdeck_providers::host::ProcessControl;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use super::SessionTarget;
-use super::launch::pinned_path;
-use crate::store::{Dispatch, Effect, InputRecord, WorkspacePlan};
+use super::launch::{Prepared, add_worktree_env, pinned_path};
+use crate::store::{Dispatch, Effect, EffectPayload, InputRecord, WorkspacePlan};
 use crate::workspace::provision::ProvisionError;
 use crate::workspace::setup::{Held, STOPPED_MESSAGE, SetupError};
 
@@ -84,6 +85,8 @@ struct SetupRun {
     cmd: Option<String>,
     /// The environment of the command; set with `cmd`.
     env: Option<ChildEnv>,
+    /// The Fleet Git snapshot of the start (FG-1, FG-4).
+    fleet_git: Option<Box<FleetGitStart>>,
 }
 
 /// The points where a test holds a start (tests only).
@@ -165,11 +168,21 @@ impl SessionTarget {
         planned: Option<SessionBase>,
     ) -> Dispatch {
         let session_id = &effect.session_id;
+        let fleet_git = match &effect.payload {
+            EffectPayload::Start { fleet_git, .. } => fleet_git.clone(),
+            _ => None,
+        };
         // The environment is needed only for a command.
         let env = if cmd.is_some() {
             let env = self
                 .current_policy()
                 .and_then(|p| p.setup_env(&spec.provider_instance).cloned());
+            let env = env.map(|mut env| {
+                if let Some(fg) = &fleet_git {
+                    add_worktree_env(&mut env, &fg.settings);
+                }
+                env
+            });
             let Some(env) = env else {
                 let text = "the setup command has no environment for this provider instance";
                 self.start_failed(session_id, text).await;
@@ -194,6 +207,7 @@ impl SessionTarget {
             planned,
             cmd: cmd.map(str::to_owned),
             env,
+            fleet_git,
         };
         let (cancel, cancel_rx) = watch::channel(false);
         // The lock covers the spawn and the insert: the task removes itself
@@ -218,7 +232,7 @@ impl SessionTarget {
     /// (B9, DL-200). The error is the failure text and the settle reason. A
     /// stopped or failed Git work deletes nothing: a new folder stays and the
     /// text names it.
-    async fn provision_plan(
+    pub(super) async fn provision_plan(
         &self,
         plan: &WorkspacePlan,
         cancel: &watch::Receiver<bool>,
@@ -283,13 +297,19 @@ impl SessionTarget {
         effect: &Effect,
         fence: u64,
         plan: &WorkspacePlan,
+        (fleet, wants_base): (Option<&FleetGitStart>, bool),
         cancel: &watch::Receiver<bool>,
-    ) -> bool {
-        let Err((text, reason)) = self.provision_plan(plan, cancel).await else {
-            return true;
-        };
-        self.end_prepare(effect, fence, &text, reason).await;
-        false
+    ) -> Option<Prepared> {
+        let result = self
+            .prepare_synced(effect, plan, fleet, wants_base, cancel)
+            .await;
+        match result {
+            Ok(prepared) => Some(prepared),
+            Err((text, reason)) => {
+                self.end_prepare(effect, fence, &text, reason).await;
+                None
+            }
+        }
     }
 
     /// Ends a start that failed before its provider start: the failure text,
@@ -326,14 +346,23 @@ impl SessionTarget {
             planned,
             cmd,
             env,
+            fleet_git,
         } = run;
         let session_id = effect.session_id.clone();
         let stop_flag = cancel.clone();
-        if let Some(plan) = &workspace
-            && !self.prepare_workspace(&effect, fence, plan, &cancel).await
-        {
-            return;
+        let mut prepared = Prepared::default();
+        if let Some(plan) = &workspace {
+            let work = (fleet_git.as_deref(), wants_base);
+            match self
+                .prepare_workspace(&effect, fence, plan, work, &cancel)
+                .await
+            {
+                Some(found) => prepared = found,
+                None => return,
+            }
         }
+        // A fetched start point gives the base of the session (FG-1).
+        let planned = prepared.base.take().or(planned);
         // A new workspace takes its identity right after the Git work, before
         // the base read and the setup command (B9, DL-200): `child_dir` and
         // `take_launch` then reopen this object. `dest` stays open until the
@@ -450,6 +479,7 @@ impl SessionTarget {
                 drop(dest.take());
                 if matches!(dispatch, Dispatch::Confirmed | Dispatch::Deferred) {
                     self.record_base(&session_id, base).await;
+                    self.record_prepared(&session_id, &prepared).await;
                 }
                 dispatch
             }

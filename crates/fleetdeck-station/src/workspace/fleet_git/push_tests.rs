@@ -291,7 +291,7 @@ async fn a_first_push_with_an_empty_lease_then_a_second_with_the_lease() {
     let Some(env) = Env::new() else { return };
     let bare = env.bare("remote.git");
     let repo = env.repo("work");
-    let writer = PushWriter::new(env.options(&env.program));
+    let writer = PushWriter::fixed(env.options(&env.program));
     let first = env.git(&repo, &["rev-parse", "HEAD"]);
     let got = writer
         .submit(&env.job(&repo, &bare, &first, ""))
@@ -314,7 +314,7 @@ async fn a_revert_then_a_push_succeeds_with_the_lease() {
     let Some(env) = Env::new() else { return };
     let bare = env.bare("remote.git");
     let repo = env.repo("work");
-    let writer = PushWriter::new(env.options(&env.program));
+    let writer = PushWriter::fixed(env.options(&env.program));
     let first = env.git(&repo, &["rev-parse", "HEAD"]);
     let second = env.commit(&repo, "two");
     assert!(is_applied(
@@ -338,7 +338,7 @@ async fn a_push_over_a_moved_remote_ref_is_rejected_and_confirmed_not_applied() 
     let Some(env) = Env::new() else { return };
     let bare = env.bare("remote.git");
     let repo = env.repo("work");
-    let writer = PushWriter::new(env.options(&env.program));
+    let writer = PushWriter::fixed(env.options(&env.program));
     let first = env.git(&repo, &["rev-parse", "HEAD"]);
     assert!(is_applied(
         &writer
@@ -390,7 +390,7 @@ async fn the_recovery_read_takes_a_remote_tip_equal_to_the_attempt() {
     let Some(env) = Env::new() else { return };
     let bare = env.bare("remote.git");
     let repo = env.repo("work");
-    let writer = PushWriter::new(env.options(&env.program));
+    let writer = PushWriter::fixed(env.options(&env.program));
     let first = env.git(&repo, &["rev-parse", "HEAD"]);
     assert!(is_applied(
         &writer
@@ -419,7 +419,7 @@ async fn the_recovery_read_takes_a_remote_tip_equal_to_the_attempt() {
 async fn a_remote_that_does_not_answer_leaves_the_outcome_unknown() {
     let Some(env) = Env::new() else { return };
     let repo = env.repo("work");
-    let writer = PushWriter::new(env.options(&env.program));
+    let writer = PushWriter::fixed(env.options(&env.program));
     let oid = env.git(&repo, &["rev-parse", "HEAD"]);
     let gone = env.root.join("gone.git");
     let got = writer
@@ -441,7 +441,7 @@ async fn a_ref_outside_the_own_namespace_is_never_pushed() {
     let Some(env) = Env::new() else { return };
     let bare = env.bare("remote.git");
     let repo = env.repo("work");
-    let writer = PushWriter::new(env.options(&env.program));
+    let writer = PushWriter::fixed(env.options(&env.program));
     let oid = env.git(&repo, &["rev-parse", "HEAD"]);
     for publish in ["main", "fd/bravo/falcon", "refs/heads/fd/alpha/falcon"] {
         let mut job = env.job(&repo, &bare, &oid, "");
@@ -471,7 +471,7 @@ async fn a_pre_push_hook_does_not_run() {
     )
     .unwrap();
     fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
-    let writer = PushWriter::new(env.options(&env.program));
+    let writer = PushWriter::fixed(env.options(&env.program));
     let oid = env.git(&repo, &["rev-parse", "HEAD"]);
     let got = writer
         .submit(&env.job(&repo, &bare, &oid, ""))
@@ -495,7 +495,7 @@ async fn the_push_command_names_the_verified_url_and_the_commit() {
             log.display()
         ),
     );
-    let writer = PushWriter::new(env.options(&logger));
+    let writer = PushWriter::fixed(env.options(&logger));
     let oid = env.git(&repo, &["rev-parse", "HEAD"]);
     let job = env.job(&repo, &bare, &oid, "");
     assert!(is_applied(&writer.submit(&job).await.unwrap()));
@@ -540,7 +540,7 @@ async fn a_push_that_applies_and_then_times_out_is_found_by_the_recovery_read() 
         &slow,
         "for a in \"$@\"; do if [ \"$a\" = push ]; then git \"$@\"; exec sleep 5; fi; done\nexec git \"$@\"",
     );
-    let writer = PushWriter::new(env.options(&slow));
+    let writer = PushWriter::fixed(env.options(&slow));
     let oid = env.git(&repo, &["rev-parse", "HEAD"]);
     let got = writer
         .submit_within(
@@ -563,7 +563,7 @@ async fn a_push_that_times_out_without_applying_reports_the_timeout() {
         &hang,
         "for a in \"$@\"; do if [ \"$a\" = push ]; then exec sleep 5; fi; done\nexec git \"$@\"",
     );
-    let writer = PushWriter::new(env.options(&hang));
+    let writer = PushWriter::fixed(env.options(&hang));
     let oid = env.git(&repo, &["rev-parse", "HEAD"]);
     let got = writer
         .submit_within(&env.job(&repo, &bare, &oid, ""), Duration::from_millis(500))
@@ -593,7 +593,7 @@ async fn jobs_run_one_after_the_other() {
             log = log.display()
         ),
     );
-    let writer = PushWriter::new(env.options(&logger));
+    let writer = PushWriter::fixed(env.options(&logger));
     let oid = env.git(&repo, &["rev-parse", "HEAD"]);
     let first = env.job(&repo, &bare, &oid, "");
     let mut second = env.job(&repo, &bare, &oid, "");

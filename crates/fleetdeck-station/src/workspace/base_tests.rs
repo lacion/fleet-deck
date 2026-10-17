@@ -44,6 +44,7 @@ fn plan(repo: &Path, name: &str, branch: &str, base: Option<&str>) -> WorkspaceP
         path: repo.with_file_name(name).display().to_string(),
         branch: branch.to_owned(),
         base: base.map(str::to_owned),
+        sync: None,
     }
 }
 

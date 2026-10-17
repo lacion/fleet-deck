@@ -34,7 +34,11 @@ mod intake_native;
 // R13 P3: `desktop.info` and `desktop.act`.
 #[path = "intake_desktop.rs"]
 mod intake_desktop;
+// Fleet Git phase 1: `fleet_git.projects_set` and `fleet_git.push_now`.
+#[path = "intake_fleet_git.rs"]
+mod intake_fleet_git;
 use crate::store::{Caller, DecideError, StoreError, peers};
+pub(super) use intake_fleet_git::PauseGuard;
 
 /// The error code of a request that this build does not serve yet.
 pub const NOT_IMPLEMENTED: &str = "not_implemented";
@@ -530,6 +534,8 @@ async fn read(ctx: &StationLink, req: InboundRequest) -> Outcome {
         "station.native_preview" => intake_native::preview(ctx, req.params).await,
         "desktop.info" => intake_desktop::info(ctx).await,
         "desktop.act" => intake_desktop::act(ctx, req.params).await,
+        "fleet_git.projects_set" => intake_fleet_git::projects_set(&ctx.manager, req.params).await,
+        "fleet_git.push_now" => intake_fleet_git::push_now(&ctx.manager, req.params).await,
         "session.branches" | "files.branch_diff" => {
             branch_method(ctx, &req.method, req.params).await
         }

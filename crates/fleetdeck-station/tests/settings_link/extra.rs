@@ -65,6 +65,7 @@ impl Rig {
             workspace: None,
             setup_cmd: None,
             authority: None,
+            fleet_git: None,
         };
         let session = id.to_owned();
         store

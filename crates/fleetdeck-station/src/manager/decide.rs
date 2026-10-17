@@ -72,7 +72,7 @@ pub fn decide(
             batch,
             issue,
             origin_text,
-            ..
+            fleet_git,
         } => {
             if let Some(cmd) = &setup_cmd {
                 workspace::check_setup_cmd(policy, origin_run, cmd)?;
@@ -99,6 +99,7 @@ pub fn decide(
                     issue: issue.map(|i| *i),
                     origin_text,
                     batch: batch.map(|b| *b),
+                    fleet_git,
                     ..StartFacts::default()
                 },
             )
@@ -380,6 +381,8 @@ struct StartFacts {
     /// The `Nx` batch of the start (R1.4, DL-170).
     batch: Option<BatchRef>,
     transcript: Option<fleetdeck_proto::native::TranscriptPin>, // B7
+    /// The Fleet Git snapshot of the start (FG-1, design §3.3).
+    fleet_git: Option<Box<fleetdeck_proto::fleet_git::FleetGitStart>>,
 }
 
 /// The modes that a start from third-party text may use, and the mode that
@@ -487,6 +490,24 @@ fn start(
             None,
         ),
     };
+    // Fleet Git (FG-1): the snapshot is checked against the station before
+    // anything is made (design §4.2 step 1). A clone start takes none.
+    let home = match facts.fleet_git.as_deref() {
+        Some(_) if matches!(workspace, Some(WorkspaceRequest::Clone { .. })) => {
+            return Err(reject(
+                RejectCode::InvalidCommand,
+                "invalid_params: a clone start cannot carry Fleet Git settings",
+            ));
+        }
+        Some(fg) => Some(workspace::fleet_git::check(
+            d,
+            policy,
+            fg,
+            &cwd,
+            workspace.as_ref(),
+        )?),
+        None => None,
+    };
     let active = d.active_sessions()?;
     if active >= u64::from(policy.max_sessions()) {
         return Err(reject(
@@ -512,12 +533,15 @@ fn start(
     };
     let callsign = workspace::new_callsign(d, &session_id, active, ticket.as_deref())?;
     let mut worktree = None;
-    if let Some(WorkspaceRequest::Worktree { branch, base }) = &workspace {
-        let (worktree_plan, path) =
-            provision::worktree_plan(&cwd, &callsign, branch.as_deref(), base.as_deref(), |p| {
-                canonical_inside(p).is_some()
-            })
-            .map_err(refused)?;
+    if let Some((worktree_plan, path)) = workspace::worktree_block(
+        &cwd,
+        &callsign,
+        workspace.as_ref(),
+        facts.fleet_git.as_deref(),
+        |p| canonical_inside(p).is_some(),
+    )
+    .map_err(refused)?
+    {
         worktree = Some(path.to_string_lossy().into_owned());
         plan = Some(worktree_plan);
         cwd = path;
@@ -564,6 +588,10 @@ fn start(
         &session_id,
         fleetdeck_proto::event::Event::SessionNamed { callsign, worktree }.into(),
     )?;
+    if let (Some(fg), Some(home)) = (facts.fleet_git.as_deref(), home.as_deref()) {
+        let owns = workspace::fleet_git::owns_branch(workspace.as_ref());
+        workspace::fleet_git::record(d, &session_id, fg, plan.as_ref(), home, owns)?;
+    }
     // The batch of an `Nx` start (R1.4, DL-170): the station records it with
     // the name, in the same decision, so a redelivered start adds nothing.
     if let Some(batch) = facts.batch {
@@ -606,6 +634,7 @@ fn start(
             workspace: plan,
             setup_cmd,
             authority: None,
+            fleet_git: facts.fleet_git,
         },
     };
     d.enqueue(&session_id, payload)?;

@@ -4,19 +4,27 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
 
+use fleetdeck_core::ChildEnv;
 use fleetdeck_core::launch_dir::{LaunchDir, LaunchDirError};
 use fleetdeck_proto::SessionId;
 use fleetdeck_proto::command::SessionSpec;
+use fleetdeck_proto::fleet_git::{FleetGitStart, GitSettings, SkippedFile, check_settings};
 use fleetdeck_proto::session::SessionBase;
+use tokio::sync::watch;
 
 use super::super::SessionManager;
 use super::super::turns::SessionTurns;
 use super::SessionTarget;
-use crate::store::{Dispatch, Effect, WorkspacePlan};
+use crate::store::{Dispatch, Effect, NewEvent, WorkspacePlan};
 use crate::workspace::GitOptions;
 use crate::workspace::base;
+use crate::workspace::fleet_git::{self, BaseStale};
 use crate::workspace::git::Confine;
+use crate::workspace::provision::ProvisionError;
+use crate::workspace::setup::STOPPED_MESSAGE;
 
 /// The text of a launch without an identity.
 pub(super) const LAUNCH_MISSING: &str =
@@ -286,6 +294,178 @@ impl std::fmt::Debug for SessionTarget {
         f.debug_struct("SessionTarget")
             .field("adapters", &self.adapters.keys().collect::<Vec<_>>())
             .finish_non_exhaustive()
+    }
+}
+
+/// What the Git work of a synced start found (FG-1, FG-4).
+#[derive(Default)]
+pub(in crate::manager) struct Prepared {
+    /// The fetch failed: the session started from the local `HEAD`.
+    pub(in crate::manager) stale: Option<BaseStale>,
+    /// The base of the fetched start point.
+    pub(in crate::manager) base: Option<SessionBase>,
+    /// The ignored files that were not copied (at most 50).
+    pub(in crate::manager) skipped: Vec<SkippedFile>,
+}
+
+/// Adds the names of `worktree_env` that the station accepts, after the same
+/// rule as the deck (design §7.3). A name that the environment has already
+/// (the provider instance `env`) keeps its value.
+pub(in crate::manager) fn add_worktree_env(env: &mut ChildEnv, settings: &GitSettings) {
+    for (name, value) in settings.worktree_env.iter().take(32) {
+        let one = GitSettings {
+            worktree_env: std::iter::once((name.clone(), value.clone())).collect(),
+            ..GitSettings::default()
+        };
+        if check_settings(&one).is_err() {
+            tracing::warn!(variable = %name, "worktree_env: a refused variable is dropped");
+        } else if env.get(name).is_none()
+            && let Err(e) = env.set(name, value)
+        {
+            tracing::warn!(variable = %name, error = %e, "worktree_env: a variable is dropped");
+        }
+    }
+}
+
+impl SessionTarget {
+    /// The fetch before the worktree (FG-1), the worktree, and the copy of the
+    /// ignored files (FG-4). A plan without Fleet Git data is only the
+    /// worktree or the clone.
+    pub(in crate::manager) async fn prepare_synced(
+        &self,
+        effect: &Effect,
+        plan: &WorkspacePlan,
+        fleet: Option<&FleetGitStart>,
+        wants_base: bool,
+        cancel: &watch::Receiver<bool>,
+    ) -> Result<Prepared, (String, &'static str)> {
+        let mut prepared = Prepared::default();
+        let mut run = plan.clone();
+        if let Some(fg) = fleet {
+            (run, prepared) = self.fetch_before(plan, fg, wants_base, cancel).await?;
+            if prepared.stale.is_some()
+                && let Err(e) = self
+                    .store
+                    .git_set_base_stale(effect.session_id.clone())
+                    .await
+            {
+                tracing::warn!(error = %e, "base_stale was not stored");
+            }
+        }
+        let created =
+            matches!(plan, WorkspacePlan::Worktree { path, .. } if !Path::new(path).exists());
+        self.provision_plan(&run, cancel).await?;
+        if let (true, Some(fg), WorkspacePlan::Worktree { path, .. }) = (created, fleet, plan)
+            && !fg.settings.worktree_include.is_empty()
+        {
+            prepared.skipped = fleet_git::copy_includes(
+                Path::new(&fg.home_path),
+                Path::new(path),
+                &fg.settings.worktree_include,
+                &self.provision_options(),
+            )
+            .await;
+        }
+        Ok(prepared)
+    }
+
+    /// The fetch of a synced worktree plan (FG-1, design §4.2 step 2): the
+    /// plan that starts from the fetched remote, and the base to record. A
+    /// plan without `sync` is unchanged.
+    pub(in crate::manager) async fn fetch_before(
+        &self,
+        plan: &WorkspacePlan,
+        fg: &FleetGitStart,
+        wants_base: bool,
+        cancel: &watch::Receiver<bool>,
+    ) -> Result<(WorkspacePlan, Prepared), (String, &'static str)> {
+        use crate::workspace::{base, provision};
+        let WorkspacePlan::Worktree {
+            repo,
+            branch,
+            base: owner_base,
+            sync: Some(sync),
+            ..
+        } = plan
+        else {
+            return Ok((plan.clone(), Prepared::default()));
+        };
+        if *cancel.borrow() {
+            return Err((STOPPED_MESSAGE.to_owned(), "setup_stopped"));
+        }
+        let dir = self.open_checked(Path::new(repo)).await?;
+        let pinned = pinned_path(&dir).map_err(|e| (e.to_string(), e.code()))?;
+        let options = self.provision_options();
+        let group = Arc::new(AtomicU32::new(0));
+        let callsign = branch.rsplit('/').next().unwrap_or(branch);
+        let mut stop = cancel.clone();
+        let done = tokio::select! {
+            r = fleet_git::fetch_for_start(
+                &options, &group, &pinned, &sync.remote, &fg.settings, &fg.slug, callsign,
+                owner_base.as_deref(),
+            ) => Some(r),
+            _ = stop.wait_for(|c| *c) => None,
+        };
+        let Some(point) = done else {
+            return Err(
+                match provision::after_cancel(group.load(Ordering::SeqCst), Duration::from_secs(5))
+                    .await
+                {
+                    ProvisionError::Stopped => (STOPPED_MESSAGE.to_owned(), "setup_stopped"),
+                    ProvisionError::Failed(e) => (
+                        format!("the workspace was not created: {e}"),
+                        "workspace_failed",
+                    ),
+                },
+            );
+        };
+        let point = point.map_err(|refusal| (refusal.text, refusal.code))?;
+        let mut next = plan.clone();
+        if let (WorkspacePlan::Worktree { base, .. }, Some(rev)) = (&mut next, point.rev) {
+            *base = Some(rev);
+        }
+        // The base of the session is read after the fetch, before the
+        // worktree exists (R1.1).
+        let session_base = if wants_base {
+            base::planned(&self.git, Some(&next), "", Some(&pinned)).await
+        } else {
+            None
+        };
+        let prepared = Prepared {
+            stale: point.stale,
+            base: session_base,
+            skipped: Vec::new(),
+        };
+        Ok((next, prepared))
+    }
+
+    /// The events of the Git work of a synced start (FG-1, FG-4), after the
+    /// provider start (design §4.2 step 3).
+    pub(in crate::manager) async fn record_prepared(
+        &self,
+        session_id: &SessionId,
+        prepared: &Prepared,
+    ) {
+        let mut events = Vec::new();
+        if let Some(stale) = &prepared.stale {
+            events.push(NewEvent::from(fleetdeck_proto::Event::WorkspaceBaseStale {
+                code: stale.code.to_owned(),
+                text: stale.reason.clone(),
+            }));
+        }
+        if !prepared.skipped.is_empty() {
+            events.push(NewEvent::from(
+                fleetdeck_proto::Event::WorkspaceIncludeSkipped {
+                    files: prepared.skipped.clone(),
+                },
+            ));
+        }
+        if events.is_empty() {
+            return;
+        }
+        if let Err(e) = self.store.append(session_id.clone(), events).await {
+            tracing::warn!(error = %e, "the Fleet Git start events were not stored");
+        }
     }
 }
 
