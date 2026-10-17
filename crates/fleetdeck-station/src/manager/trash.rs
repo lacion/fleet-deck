@@ -71,7 +71,11 @@ fn opening_refusal() -> DecideError {
 }
 
 /// Refuses when a queued or claimed shell effect will open in `path`.
-fn pending_shell(d: &Decision<'_>, policy: &Policy, path: &str) -> Result<(), DecideError> {
+pub(super) fn pending_shell(
+    d: &Decision<'_>,
+    policy: &Policy,
+    path: &str,
+) -> Result<(), DecideError> {
     let cwds = crate::store::shell_effects::pending_cwds(d.connection())?;
     if cwd_overlaps(&cwds, policy, path) {
         return Err(opening_refusal());
@@ -140,7 +144,7 @@ fn not_in_trash() -> DecideError {
     reject(RejectCode::InvalidState, "the worktree is not in the trash")
 }
 
-fn shell_refusal() -> DecideError {
+pub(super) fn shell_refusal() -> DecideError {
     reject(
         RejectCode::InvalidState,
         "a shell is open in this worktree; close it first",
@@ -148,7 +152,11 @@ fn shell_refusal() -> DecideError {
 }
 
 /// The refusal for another live or held session in the worktree.
-fn sharing_refusal(d: &Decision<'_>, path: &str, except: &SessionId) -> Result<(), DecideError> {
+pub(super) fn sharing_refusal(
+    d: &Decision<'_>,
+    path: &str,
+    except: &SessionId,
+) -> Result<(), DecideError> {
     if let Some(other) = d.sessions_over(path, except)?.first() {
         return Err(reject(
             RejectCode::InvalidState,
@@ -202,6 +210,8 @@ fn trash(
     session_id: &SessionId,
     expect: Option<(String, String)>,
 ) -> Result<(), DecideError> {
+    // (FG-8) A land or a move holds its session.
+    crate::store::session_holds::check_free(d.connection(), session_id)?;
     let s = d
         .summary(session_id)?
         .ok_or_else(|| reject(RejectCode::UnknownSession, "no such session"))?;

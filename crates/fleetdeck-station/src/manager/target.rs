@@ -733,6 +733,8 @@ impl EffectTarget for SessionTarget {
                 }
                 None => Dispatch::NotDispatched("no_policy".into()),
             },
+            // (FG-8) The land engine polls the `land_runs` rows itself.
+            EffectPayload::Land { .. } => Dispatch::Confirmed,
             _ => self.operate(effect).await,
         }
     }

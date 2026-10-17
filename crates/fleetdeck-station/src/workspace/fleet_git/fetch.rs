@@ -171,14 +171,37 @@ async fn choose(
             stale: None,
         };
     }
+    match default_branch(git, remote, settings).await {
+        Some(name) => StartPoint {
+            rev: Some(format!("{remote}/{name}")),
+            stale: None,
+        },
+        None => StartPoint {
+            rev: None,
+            stale: Some(stale(
+                code::NO_DEFAULT_BRANCH,
+                "The remote has no default branch; this session started from the local HEAD.",
+            )),
+        },
+    }
+}
+
+/// The default branch of the fetched `remote` (design §4.2 step 2): the
+/// setting `default_branch`, else the target of `refs/remotes/<remote>/HEAD`,
+/// else `main`, else `master`. The first name whose `<remote>/<name>` is a
+/// commit wins. `None`: none of them is.
+pub(super) async fn default_branch(
+    git: &crate::workspace::Git,
+    remote: &str,
+    settings: &GitSettings,
+) -> Option<String> {
     let mut names: Vec<String> = Vec::new();
     names.extend(settings.default_branch.clone());
     names.extend(remote_head(git, remote).await);
     names.push("main".to_owned());
     names.push("master".to_owned());
     for name in names {
-        let rev = format!("{remote}/{name}");
-        let probe = format!("{rev}^{{commit}}");
+        let probe = format!("{remote}/{name}^{{commit}}");
         let args = [
             "rev-parse",
             "--verify",
@@ -187,17 +210,49 @@ async fn choose(
             &probe,
         ];
         if matches!(read(git, &args, SMALL_CAP).await, Ok((0, _, _))) {
-            return StartPoint {
-                rev: Some(rev),
-                stale: None,
-            };
+            return Some(name);
         }
     }
-    StartPoint {
-        rev: None,
-        stale: Some(stale(
-            code::NO_DEFAULT_BRANCH,
-            "The remote has no default branch; this session started from the local HEAD.",
+    None
+}
+
+/// The plain fetch of `remote` in `repo_dir` (design §2.4, FG-7, FG-8): the
+/// same command, limit and confinement as the fetch of a start. The text of
+/// a failure has the redacted Git line; a timeout is `fetch_failed` too.
+///
+/// # Errors
+/// A [`Refusal`]: `git_too_old`, or `fetch_failed`.
+pub(super) async fn fetch_remote(
+    options: &GitOptions,
+    repo_dir: &Path,
+    remote: &str,
+) -> Result<(), Refusal> {
+    require_git(options).await?;
+    let net = net_git(options, repo_dir, FETCH_TIMEOUT);
+    let args = [
+        "-c",
+        "protocol.ext.allow=never",
+        "fetch",
+        "--prune",
+        "--no-tags",
+        "--no-recurse-submodules",
+        "--no-write-fetch-head",
+        "--",
+        remote,
+    ];
+    match net.status_stderr(&args, &[], FETCH_STDERR).await {
+        Ok((0, _)) => Ok(()),
+        Ok((_, stderr)) => Err(Refusal::new(
+            code::FETCH_FAILED,
+            format!("The fetch failed: {}", redact(&stderr)),
+        )),
+        Err(GitError::Timeout { .. }) => Err(Refusal::new(
+            code::FETCH_FAILED,
+            "The fetch failed: it took more than 30 s.",
+        )),
+        Err(e) => Err(Refusal::new(
+            code::FETCH_FAILED,
+            format!("The fetch failed: {}", redact(&e.to_string())),
         )),
     }
 }

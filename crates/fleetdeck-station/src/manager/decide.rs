@@ -323,11 +323,8 @@ pub fn decide(
                 },
             )
         }
-        // (FG-8: T3.2 replaces this arm with the land decision.)
-        SessionCommand::Land { .. } => Err(reject(
-            RejectCode::Unsupported,
-            "Land is not available on this station yet.",
-        )),
+        // The session manager decides a land with the shells (FG-8).
+        SessionCommand::Land { .. } => Err(super::land::refuse_direct()),
         // The session manager decides these with the resolved root (B8).
         SessionCommand::ShellCommand { .. } | SessionCommand::ReleaseShell { .. } => {
             Err(super::shell_decide::refuse_direct())
@@ -745,6 +742,8 @@ fn refuse_resume_while_restarting(
     session_id: &SessionId,
     origin: RunOrigin,
 ) -> Result<(), DecideError> {
+    // (FG-8) A land holds its session: no input.
+    crate::store::session_holds::check_free(d.connection(), session_id)?;
     if restarting && resumes_hibernated(d, session_id, origin)? {
         return Err(reject(
             RejectCode::InvalidState,

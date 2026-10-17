@@ -24,6 +24,13 @@ pub mod fleet_git_cleanup;
 pub mod fleet_git_push;
 pub mod fleet_git_writer;
 pub mod hibernate;
+pub mod land;
+pub mod land_abandon;
+mod land_pr;
+mod land_publish;
+mod land_reconcile;
+mod land_run;
+pub mod land_temp_cleanup;
 pub mod policy;
 pub mod policy_hub;
 mod restart_check;
@@ -111,6 +118,9 @@ pub struct SessionManager {
     /// The Fleet Git runtime of the station, once the link node set it
     /// (FG-12): the artifact share of a start and of a resume reads it.
     fleet_git: std::sync::OnceLock<Arc<crate::fleet_git_runtime::FleetGitRuntime>>,
+    /// The land engine of the station, once the station process set it
+    /// (FG-8).
+    land: std::sync::OnceLock<land::LandEngine>,
     /// The private paths of the station (DL-173), given at the start. Built
     /// once; not part of the live policy snapshot.
     private_paths: Arc<crate::workspace::PrivatePaths>,
@@ -366,6 +376,7 @@ impl SessionManager {
             artifacts: std::sync::OnceLock::new(),
             assist: std::sync::OnceLock::new(),
             fleet_git: std::sync::OnceLock::new(),
+            land: std::sync::OnceLock::new(),
             private_paths: private,
             settings: std::sync::OnceLock::new(),
             shell_notify,
@@ -402,6 +413,17 @@ impl SessionManager {
     #[must_use]
     pub fn fleet_git_runtime(&self) -> Option<&Arc<crate::fleet_git_runtime::FleetGitRuntime>> {
         self.fleet_git.get()
+    }
+
+    /// Gives the manager the land engine (FG-8). The first call wins.
+    pub fn set_land_engine(&self, engine: land::LandEngine) {
+        let _ = self.land.set(engine);
+    }
+
+    /// The land engine, if the station process set it.
+    #[must_use]
+    pub fn land(&self) -> Option<&land::LandEngine> {
+        self.land.get()
     }
 
     /// The private paths of the station, given at the start.
@@ -476,6 +498,14 @@ impl SessionManager {
         )
     }
 
+    /// The integration service as a provider, for the land tasks (FG-8): each
+    /// call reads the service of that moment.
+    #[must_use]
+    pub fn integrations_provider(self: &Arc<Self>) -> land::IntegrationsProvider {
+        let manager = Arc::clone(self);
+        Arc::new(move || manager.integrations())
+    }
+
     /// Step 1 of a live config change (DL-172 §1.4): validates `new` and
     /// builds the snapshot, with a new integration service when the
     /// trackers changed. It publishes nothing. The fields that apply only at
@@ -536,6 +566,7 @@ impl SessionManager {
         let origin = envelope.origin;
         let command = envelope.command.clone();
         let is_release = matches!(command, SessionCommand::ReleaseShell { .. });
+        let is_land = matches!(command, SessionCommand::Land { .. });
         let interrupted = matches!(command, SessionCommand::Interrupt { .. })
             .then(|| command.session_id().cloned())
             .flatten();
@@ -576,6 +607,9 @@ impl SessionManager {
                     | SessionCommand::WorktreeRelease { .. }) => {
                         trash::decide(d, &policy, origin, shells.as_deref(), command)
                     }
+                    command @ SessionCommand::Land { .. } => {
+                        land::decide(d, &policy, &coordinator, origin, shells.as_deref(), command)
+                    }
                     command @ (SessionCommand::ShellCommand { .. }
                     | SessionCommand::ReleaseShell { .. }) => {
                         shell_decide::decide(d, &policy, restarting, root.as_deref(), command)
@@ -599,6 +633,10 @@ impl SessionManager {
                 .is_ok_and(|d| d.receipt.state == fleetdeck_proto::command::ReceiptState::Accepted)
         {
             self.shell_notify.notify_one();
+        }
+        // FG-8: an admitted land wakes the engine.
+        if is_land && decided.as_ref().is_ok_and(|d| !d.effects.is_empty()) {
+            self.land.get().inspect(|engine| engine.wake());
         }
         self.target.cancel_shells_after(interrupted, &decided).await;
         decided
@@ -755,3 +793,7 @@ mod binding_revoke_tests;
 #[cfg(test)]
 #[path = "shell_run_tests.rs"]
 mod shell_run_tests;
+
+#[cfg(test)]
+#[path = "session_holds_wired_tests.rs"]
+mod session_holds_wired_tests;

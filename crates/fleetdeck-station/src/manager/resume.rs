@@ -201,6 +201,8 @@ pub(crate) fn import_exclusion(
 /// # Errors
 /// A stored rejection, or a database error.
 pub(crate) fn not_held(d: &Decision<'_>, r: &Resumable) -> Result<(), DecideError> {
+    // (FG-8) A land holds its session.
+    crate::store::session_holds::check_free(d.connection(), &r.summary.session_id)?;
     if let Some(hold) = &r.summary.terminal {
         return Err(reject(
             RejectCode::InvalidState,

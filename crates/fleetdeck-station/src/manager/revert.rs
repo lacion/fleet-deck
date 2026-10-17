@@ -41,6 +41,8 @@ pub fn decide_revert(
     session_id: &SessionId,
     turn_id: &TurnId,
 ) -> Result<CommandResult, DecideError> {
+    // (FG-8) A land holds its session.
+    crate::store::session_holds::check_free(d.connection(), session_id)?;
     let s = live_session(d, session_id, Operation::Revert)?;
     if !s.capabilities.as_ref().is_some_and(|c| c.rollback) {
         return Err(reject(

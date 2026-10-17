@@ -195,7 +195,7 @@ fn identity(path: &str) -> Result<Option<(u64, u64)>, String> {
 
 /// Why a checked file operation did not happen.
 #[derive(Debug, PartialEq, Eq)]
-enum Checked {
+pub(crate) enum Checked {
     /// The folder is not the recorded one (or the destination is taken):
     /// nothing was changed.
     Changed,
@@ -222,7 +222,7 @@ fn move_checked(from: &str, to: &str, expect: (u64, u64)) -> Result<(), Checked>
 /// The deletion of the trash folder in one blocking call: only a folder
 /// with the recorded identity is deleted, checked right before
 /// `remove_dir_all`. A folder that is gone counts as deleted.
-fn delete_checked(path: &str, expect: (u64, u64)) -> Result<(), Checked> {
+pub(crate) fn delete_checked(path: &str, expect: (u64, u64)) -> Result<(), Checked> {
     match identity(path) {
         Ok(Some(id)) if id == expect => {
             std::fs::remove_dir_all(path).map_err(|e| Checked::Io(e.to_string()))
@@ -237,7 +237,11 @@ fn delete_checked(path: &str, expect: (u64, u64)) -> Result<(), Checked> {
 /// inside `<common>/worktrees/` and its `gitdir` file must name the trash
 /// folder, checked right before `remove_dir_all`. A directory that is gone
 /// counts as deleted.
-fn delete_admin_checked(admin_dir: &str, common: &Path, trash_path: &str) -> Result<(), Checked> {
+pub(crate) fn delete_admin_checked(
+    admin_dir: &str,
+    common: &Path,
+    trash_path: &str,
+) -> Result<(), Checked> {
     let admin = match Path::new(admin_dir).canonicalize() {
         Ok(a) => a,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),

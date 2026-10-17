@@ -374,6 +374,40 @@ pub async fn pr_create(
         .ok_or_else(|| Fail::bad_answer("GitLab gave no merge request URL"))
 }
 
+/// The exact lookup of open merge requests from `head` to `base` (FG-8,
+/// design §11.5 step 6): at most two answers, no cache.
+pub(super) async fn mrs_find(
+    f: &Forge<'_>,
+    head: &str,
+    base: &str,
+    timeout: std::time::Duration,
+) -> Result<forge::HttpAnswer, Fail> {
+    let endpoint = format!(
+        "projects/{}/merge_requests?state=opened&source_branch={}&target_branch={}&per_page=2",
+        f.repo_path(),
+        urlencode(head),
+        urlencode(base),
+    );
+    f.call_http("GET", &endpoint, None, None, timeout).await
+}
+
+/// The create request of a merge request, with its HTTP status (FG-8).
+pub(super) async fn mr_create(
+    f: &Forge<'_>,
+    head: &str,
+    base: &str,
+    title: &str,
+    body: &str,
+    timeout: std::time::Duration,
+) -> Result<forge::HttpAnswer, Fail> {
+    let payload = json!({
+        "source_branch": head, "target_branch": base, "title": title, "description": body
+    });
+    let endpoint = format!("projects/{}/merge_requests", f.repo_path());
+    f.call_http("POST", &endpoint, Some(&payload), None, timeout)
+        .await
+}
+
 /// The web URL of a merge request or an issue.
 fn web_url(f: &Forge<'_>, pr: bool, number: u64) -> String {
     let kind = if pr { "merge_requests" } else { "issues" };

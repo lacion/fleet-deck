@@ -409,6 +409,39 @@ pub async fn pr_create(
         .ok_or_else(|| Fail::bad_answer("GitHub gave no pull request URL"))
 }
 
+/// The exact lookup of open pull requests from `head` to `base` (FG-8, design
+/// §11.5 step 6): at most two answers, no cache.
+pub(super) async fn pulls_find(
+    f: &Forge<'_>,
+    head: &str,
+    base: &str,
+    timeout: std::time::Duration,
+) -> Result<forge::HttpAnswer, Fail> {
+    let (owner, _) = split_repo(f);
+    let endpoint = format!(
+        "repos/{}/pulls?state=open&head={}&base={}&per_page=2",
+        f.repo_path(),
+        urlencode(&format!("{owner}:{head}")),
+        urlencode(base),
+    );
+    f.call_http("GET", &endpoint, None, None, timeout).await
+}
+
+/// The create request of a pull request, with its HTTP status (FG-8).
+pub(super) async fn pull_create(
+    f: &Forge<'_>,
+    head: &str,
+    base: &str,
+    title: &str,
+    body: &str,
+    timeout: std::time::Duration,
+) -> Result<forge::HttpAnswer, Fail> {
+    let payload = json!({"title": title, "head": head, "base": base, "body": body});
+    let endpoint = format!("repos/{}/pulls", f.repo_path());
+    f.call_http("POST", &endpoint, Some(&payload), None, timeout)
+        .await
+}
+
 pub async fn comment(f: &Forge<'_>, number: u64, body: &str) -> Result<String, Fail> {
     let made = f
         .json(

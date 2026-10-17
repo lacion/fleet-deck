@@ -401,12 +401,14 @@ impl RunningStation {
             Arc::clone(&manager),
             rx.clone(),
         ));
-        let mut fleet_git = crate::manager::fleet_git_push::start(
+        let (mut fleet_git, land) = crate::manager::fleet_git_push::start(
             manager.store().clone(),
             Arc::clone(manager.policy_hub()),
             fleet_git_options(Arc::clone(manager.policy_hub())),
+            manager.integrations_provider(),
             rx.clone(),
         );
+        manager.set_land_engine(land);
         let identity = Arc::new(Identity::load_or_create(&station_dir)?);
         // A station restart ends every shell (PLAN §6.8, A10): the PTYs
         // close with the process.

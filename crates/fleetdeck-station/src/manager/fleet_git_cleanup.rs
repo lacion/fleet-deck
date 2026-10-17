@@ -301,7 +301,15 @@ async fn check(
         }
         None => return Ok(None),
     }
-    // 2. not held: the holds of a land or a move arrive with phase 3.
+    // 2. not held: a land or a move holds the session (FG-8).
+    if ctx
+        .store
+        .session_hold(row.session_id.clone())
+        .await?
+        .is_some()
+    {
+        return kept("held");
+    }
     let Some(worktree) = summary.worktree.as_deref() else {
         return Ok(None);
     };

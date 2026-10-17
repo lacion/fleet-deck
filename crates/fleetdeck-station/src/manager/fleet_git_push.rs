@@ -37,19 +37,38 @@ const BATCH: usize = 256;
 /// The time limit of the read of a branch tip.
 const TIP_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Starts the writer, the trigger task and the runner. The handles end when
-/// `shutdown` becomes `true`.
+/// Starts the writer, the trigger task, the runner and the land engine (FG-8).
+/// The handles end when `shutdown` becomes `true`.
 #[must_use]
 pub fn start(
     store: Store,
     policy: Arc<PolicyHub>,
     options: OptionsProvider,
+    integrations: super::land::IntegrationsProvider,
     shutdown: watch::Receiver<bool>,
-) -> Vec<JoinHandle<()>> {
-    let (writer, writer_task) = FleetGitWriter::start(store.clone(), Arc::clone(&policy), options);
+) -> (Vec<JoinHandle<()>>, super::land::LandEngine) {
+    let locks = super::fleet_git_writer::LandLocks::new();
+    let timeouts = super::fleet_git_writer::LandTimeouts::default();
+    let (writer, writer_task) = FleetGitWriter::start_with(
+        store.clone(),
+        Arc::clone(&policy),
+        Arc::clone(&options),
+        Arc::clone(&locks),
+        timeouts,
+    );
     let triggers = tokio::spawn(follow(store.clone(), shutdown.clone()));
+    let deps = super::land::Deps {
+        writer: writer.clone(),
+        locks,
+        integrations,
+        timeouts,
+    };
+    let (land, land_tasks) =
+        super::land::start(store.clone(), policy, options, shutdown.clone(), deps);
     let runner = tokio::spawn(run(store, writer, shutdown));
-    vec![writer_task, triggers, runner]
+    let mut tasks = vec![writer_task, triggers, runner];
+    tasks.extend(land_tasks);
+    (tasks, land)
 }
 
 /// Waits `time`, or returns `true` at the shutdown.
@@ -81,6 +100,15 @@ async fn run(store: Store, writer: FleetGitWriter, mut shutdown: watch::Receiver
         for (row, _) in due {
             if *shutdown.borrow() {
                 return;
+            }
+            // A land or a move holds the session: the row waits (design §5.4).
+            match store.session_hold(row.session_id.clone()).await {
+                Ok(None) => {}
+                Ok(Some(_)) => continue,
+                Err(e) => {
+                    tracing::warn!(error = %e, "a session hold is unreadable");
+                    continue;
+                }
             }
             let job = WriteJob::BranchPush {
                 session_id: row.session_id,

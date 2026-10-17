@@ -197,6 +197,14 @@ pub enum EffectPayload {
         /// The canonical root of the folder, as the fences name it.
         worktree_root: String,
     },
+    /// A land run (FG-8, design §11.4 step 3). It needs no provider process:
+    /// the `land_runs` row holds the steps, and the land engine runs them.
+    Land {
+        land_id: String,
+        /// The authority of a coordinator land (ADR-008 section 6.1).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authority: Option<CommandAuthority>,
+    },
 }
 
 impl EffectPayload {
@@ -216,6 +224,7 @@ impl EffectPayload {
             Self::Revert { .. } => "revert",
             Self::Worktree { .. } => "worktree",
             Self::ShellCommand { .. } => "shell_command",
+            Self::Land { .. } => "land",
         }
     }
 
@@ -225,7 +234,7 @@ impl EffectPayload {
     pub fn needs_process(&self) -> bool {
         !matches!(
             self,
-            Self::Start { .. } | Self::Resume { .. } | Self::Worktree { .. }
+            Self::Start { .. } | Self::Resume { .. } | Self::Worktree { .. } | Self::Land { .. }
         )
     }
 
@@ -269,7 +278,8 @@ impl EffectPayload {
             | Self::Interrupt { authority }
             | Self::Answer { authority, .. }
             | Self::SetMode { authority, .. }
-            | Self::Stop { authority, .. } => authority.as_ref(),
+            | Self::Stop { authority, .. }
+            | Self::Land { authority, .. } => authority.as_ref(),
             Self::SetModel { .. }
             | Self::Revert { .. }
             | Self::Worktree { .. }
@@ -290,7 +300,8 @@ impl EffectPayload {
             | Self::Interrupt { authority }
             | Self::Answer { authority, .. }
             | Self::SetMode { authority, .. }
-            | Self::Stop { authority, .. } => *authority = value,
+            | Self::Stop { authority, .. }
+            | Self::Land { authority, .. } => *authority = value,
             Self::SetModel { .. }
             | Self::Revert { .. }
             | Self::Worktree { .. }
