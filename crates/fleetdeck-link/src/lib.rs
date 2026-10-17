@@ -32,6 +32,7 @@ pub mod hello;
 pub mod join;
 pub mod live;
 pub mod methods;
+mod methods_table;
 pub mod mux;
 pub mod net;
 pub mod node;

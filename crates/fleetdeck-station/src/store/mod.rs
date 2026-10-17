@@ -30,6 +30,7 @@ pub mod auto_continue;
 pub mod coordinator_outbox;
 pub mod effects;
 mod log;
+mod migrations;
 pub mod native_browse;
 mod outbox;
 mod payload;
