@@ -79,6 +79,7 @@ pub const SESSION_METHODS: &[&str] = &[
     "session.reconcile_execution",
     "session.shell_command",
     "session.release_shell",
+    "session.land",
     "approval.answer",
 ];
 

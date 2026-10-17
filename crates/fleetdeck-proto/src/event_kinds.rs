@@ -5,7 +5,7 @@ use super::Event;
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 56] = [
+    pub const KINDS: [&'static str; 57] = [
         "session.started",
         "session.state",
         "run.started",
@@ -62,6 +62,7 @@ impl Event {
         "artifacts.ready",
         "artifacts.unavailable",
         "artifacts.revoked",
+        "session.land",
     ];
 
     /// The dotted kind name.
@@ -124,6 +125,7 @@ impl Event {
             Self::ArtifactsReady { .. } => "artifacts.ready",
             Self::ArtifactsUnavailable { .. } => "artifacts.unavailable",
             Self::ArtifactsRevoked { .. } => "artifacts.revoked",
+            Self::SessionLand(_) => "session.land",
         }
     }
 

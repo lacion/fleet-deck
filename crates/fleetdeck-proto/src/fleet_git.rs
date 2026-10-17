@@ -26,6 +26,9 @@ pub use drift::*;
 #[path = "taildrive.rs"]
 mod taildrive;
 pub use taildrive::*;
+#[path = "fleet_git_land.rs"]
+mod land;
+pub use land::*;
 
 /// Wire strings of the Fleet Git error codes (ADR-009 §4). A code is never
 /// reused for another meaning.
@@ -108,6 +111,12 @@ pub mod code {
     pub const NO_DEFAULT_BRANCH: &str = "no_default_branch";
     pub const INVALID_GIT_SETTINGS: &str = "invalid_git_settings";
     pub const FLEET_GIT_UNSUPPORTED: &str = "fleet_git_unsupported";
+    /// A `project.radar` run is active for the project (FG-7).
+    pub const RADAR_BUSY: &str = "radar_busy";
+    /// An `unresolved` land that the owner stopped (FG-8, M3).
+    pub const ABANDONED: &str = "abandoned";
+    /// An `unresolved` land whose station was removed (FG-8, M3).
+    pub const STATION_REMOVED: &str = "station_removed";
 }
 
 fn origin() -> String {
@@ -705,6 +714,9 @@ mod homes_tests;
 #[cfg(test)]
 #[path = "fleet_git_identity_tests.rs"]
 mod identity_tests;
+#[cfg(test)]
+#[path = "fleet_git_land_tests.rs"]
+mod land_tests;
 #[cfg(test)]
 #[path = "fleet_git_tests.rs"]
 mod tests;

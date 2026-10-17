@@ -10,7 +10,7 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::capability::Unsupported;
-use crate::fleet_git::FleetGitStart;
+use crate::fleet_git::{FleetGitStart, LandPlan};
 use crate::ids::{
     CommandId, IncarnationId, InputId, ProviderInstanceId, RequestId, SessionId, TurnId,
 };
@@ -334,6 +334,15 @@ pub enum SessionCommand {
         session_id: SessionId,
         effect_id: String,
     },
+    /// Land the session branch on the remote (FG-8, design §11.3). The deck
+    /// pins `plan` at admission and resends the same `command_id` from its
+    /// outbox. Needs `fleet_git.land.v1`.
+    Land {
+        session_id: SessionId,
+        land_id: String,
+        /// Boxed to keep the command small (clippy `large_enum_variant`).
+        plan: Box<LandPlan>,
+    },
 }
 
 /// How the owner resolves a revert that needs reconciliation (DL-097).
@@ -428,6 +437,7 @@ impl SessionCommand {
             Self::ReconcileExecution { .. } => "session.reconcile_execution",
             Self::ShellCommand { .. } => "session.shell_command",
             Self::ReleaseShell { .. } => "session.release_shell",
+            Self::Land { .. } => "session.land",
         }
     }
 
@@ -471,7 +481,8 @@ impl SessionCommand {
             | Self::WorktreeRelease { session_id }
             | Self::ReconcileExecution { session_id, .. }
             | Self::ShellCommand { session_id, .. }
-            | Self::ReleaseShell { session_id, .. } => Some(session_id),
+            | Self::ReleaseShell { session_id, .. }
+            | Self::Land { session_id, .. } => Some(session_id),
         }
     }
 }

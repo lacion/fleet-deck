@@ -13,7 +13,7 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::capability::Capabilities;
-use crate::fleet_git::{CleanupState, PushState, SkippedFile};
+use crate::fleet_git::{CleanupState, LandInfo, PushState, SkippedFile};
 use crate::ids::{InputId, NodeId, PlanId, ProviderInstanceId, RequestId, RunId, TurnId};
 use crate::integrations::IssueRef;
 use crate::session::{BatchRef, RepoInfo};
@@ -415,6 +415,11 @@ pub enum Event {
     /// `summary.artifacts_dir`.
     #[serde(rename = "artifacts.revoked")]
     ArtifactsRevoked { code: String, text: String },
+    /// A step of a land (FG-8, design §11.5). The wire fields are those of
+    /// [`LandInfo`]; they are boxed to keep the event small (clippy
+    /// `large_enum_variant`). The fold keeps it in `summary.land`.
+    #[serde(rename = "session.land")]
+    SessionLand(Box<LandInfo>),
     #[serde(rename = "run.completed")]
     RunCompleted {
         run_id: RunId,

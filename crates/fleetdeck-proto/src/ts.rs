@@ -417,6 +417,21 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         fg::ShareVerdictAnswer::export_all(&cfg),
         fg::ArtifactsDir::export_all(&cfg),
         fg::FleetGitInfo::export_all(&cfg),
+        fg::RadarBranch::export_all(&cfg),
+        fg::RadarParams::export_all(&cfg),
+        fg::RadarPair::export_all(&cfg),
+        fg::RadarResult::export_all(&cfg),
+        fg::LandState::export_all(&cfg),
+        fg::LandPhase::export_all(&cfg),
+        fg::PushTarget::export_all(&cfg),
+        fg::LandPlan::export_all(&cfg),
+        fg::LandInfo::export_all(&cfg),
+        fg::LandStatusParams::export_all(&cfg),
+        fg::LandStatus::export_all(&cfg),
+        fg::LandStatusAnswer::export_all(&cfg),
+        fg::LandAbandonParams::export_all(&cfg),
+        fg::LandWrite::export_all(&cfg),
+        fg::LandAbandonAnswer::export_all(&cfg),
     ];
     for result in results {
         result.map_err(io::Error::other)?;

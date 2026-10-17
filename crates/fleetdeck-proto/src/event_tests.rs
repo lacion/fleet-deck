@@ -333,6 +333,22 @@ fn samples() -> Vec<Event> {
             code: "share_unverified".into(),
             text: "The artifact share is not verified now.".into(),
         },
+        Event::SessionLand(Box::new(crate::fleet_git::LandInfo {
+            land_id: "land-1".into(),
+            attempt: 2,
+            state: crate::fleet_git::LandState::Running,
+            phase: crate::fleet_git::LandPhase::BranchPushIntent,
+            reconciling: true,
+            code: None,
+            text: None,
+            files: vec!["src/a.rs".into()],
+            source_oid: Some("a".repeat(40)),
+            base_oid: Some("b".repeat(40)),
+            rebased_oid: Some("c".repeat(40)),
+            branch_published_oid: None,
+            default_published_oid: None,
+            pr_url: None,
+        })),
     ]
 }
 

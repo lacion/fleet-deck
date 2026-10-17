@@ -323,6 +323,11 @@ pub fn decide(
                 },
             )
         }
+        // (FG-8: T3.2 replaces this arm with the land decision.)
+        SessionCommand::Land { .. } => Err(reject(
+            RejectCode::Unsupported,
+            "Land is not available on this station yet.",
+        )),
         // The session manager decides these with the resolved root (B8).
         SessionCommand::ShellCommand { .. } | SessionCommand::ReleaseShell { .. } => {
             Err(super::shell_decide::refuse_direct())

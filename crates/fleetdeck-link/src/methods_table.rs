@@ -692,4 +692,33 @@ pub const METHODS: &[MethodSpec] = &[
         Some(feature::FLEET_GIT_HOMES),
         false,
     ),
+    // Fleet Git phase 3 (ADR-009): the conflict radar and the land flow.
+    m(
+        "project.radar",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::FLEET_GIT_LAND),
+        false,
+    ),
+    m(
+        "session.land",
+        DeckToStation,
+        Scope::Drive,
+        Some(feature::FLEET_GIT_LAND),
+        true,
+    ),
+    m(
+        "fleet_git.land_status",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::FLEET_GIT_LAND),
+        false,
+    ),
+    m(
+        "fleet_git.land_abandon",
+        DeckToStation,
+        Scope::Drive,
+        Some(feature::FLEET_GIT_LAND),
+        false,
+    ),
 ];
