@@ -253,6 +253,8 @@ pub struct StationConfig {
     pub allow_desktop: bool,
     /// `allow_desktop_capture`: the owner may take screenshots from the board (R13 P5a).
     pub allow_desktop_capture: bool,
+    /// `allow_desktop_input`: authorized coordinator grants may use keyboard input and pointer movement here (R13 P7 §3.3). Off by default; the station task reads it.
+    pub allow_desktop_input: bool,
     /// `capture_monitors`: the monitors that a screenshot may capture; empty means every monitor (R13 P5a).
     pub capture_monitors: Vec<String>,
     /// `fleet_summary`: the deck may send the fleet summary to this station for the desktop shell (R13 P4).
@@ -450,6 +452,7 @@ impl StationConfig {
             allow_fleet_control: fleet_cfg::parse(raw.allow_fleet_control),
             allow_desktop: raw.allow_desktop.unwrap_or(false),
             allow_desktop_capture: raw.allow_desktop_capture.unwrap_or(false),
+            allow_desktop_input: raw.allow_desktop_input.unwrap_or(false),
             capture_monitors,
             fleet_summary: raw.fleet_summary.unwrap_or(false),
             max_shells,

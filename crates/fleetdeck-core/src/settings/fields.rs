@@ -132,6 +132,14 @@ pub fn station_fields() -> Vec<FieldMeta> {
         )
         .danger(),
         field(
+            "allow_desktop_input",
+            "Allow agent desktop input",
+            K::Bool,
+            Live,
+            "Allows explicitly authorized coordinator grants to use keyboard input and pointer movement on this station. Turning this off stops new input and requests interruption of active input; already sent input cannot be undone.",
+        )
+        .danger(),
+        field(
             "capture_monitors",
             "Screenshot monitors",
             K::Texts,

@@ -81,7 +81,9 @@ fn call_handler_ms(tool: Tool, call: &DesktopCall) -> u64 {
 
 /// The tool and the target argument of a call. Every tool of
 /// `coordinator.desktop_call` is served (`wall_show` by [`super::wall`],
-/// `record_monitor` by [`super::record`]).
+/// `record_monitor` by [`super::record`]) except the input tools of R13 P7:
+/// no input path exists yet (task F), so they have no shape and the call
+/// answers `desktop_unsupported` before anything is read or stored.
 fn shape(call: &DesktopCall) -> Option<(Tool, Option<&str>)> {
     match call {
         DesktopCall::Notify(a) => Some((Tool::Notify, a.station.as_deref())),
@@ -90,6 +92,7 @@ fn shape(call: &DesktopCall) -> Option<(Tool, Option<&str>)> {
         DesktopCall::Screenshot(a) => Some((Tool::Screenshot, a.station.as_deref())),
         DesktopCall::WallShow(a) => Some((Tool::WallShow, a.station.as_deref())),
         DesktopCall::RecordMonitor(a) => Some((Tool::RecordMonitor, a.station.as_deref())),
+        DesktopCall::KeyPress(_) | DesktopCall::TypeText(_) | DesktopCall::PointerMove(_) => None,
     }
 }
 
@@ -187,7 +190,10 @@ fn build(
             monitor: Some(a.monitor.clone()),
             seconds: Some(a.seconds),
         }),
-        DesktopCall::WallShow(_) => Err(code::DESKTOP_UNSUPPORTED),
+        DesktopCall::WallShow(_)
+        | DesktopCall::KeyPress(_)
+        | DesktopCall::TypeText(_)
+        | DesktopCall::PointerMove(_) => Err(code::DESKTOP_UNSUPPORTED),
     }
 }
 
@@ -296,6 +302,7 @@ impl Call<'_> {
             )),
             resource: built.resource.clone(),
             seconds: built.seconds,
+            input_length: None,
         };
         self.link
             .store

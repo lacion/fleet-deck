@@ -260,7 +260,10 @@ fn the_policy_request_and_answer_have_their_shapes() {
         serde_json::from_value::<DesktopPolicyNow>(v).unwrap(),
         capture
     );
-    assert!(serde_json::from_value::<DesktopPolicyNow>(json!({"purpose": "input"})).is_err());
+    // An unknown purpose is refused. The purpose `input` exists since R13 P7
+    // §6.4 (feature `desktop_input_mcp.v1`).
+    assert!(serde_json::from_value::<DesktopPolicyNow>(json!({"purpose": "click"})).is_err());
+    assert!(serde_json::from_value::<DesktopPolicyNow>(json!({"purpose": "Input"})).is_err());
     let answer = DesktopPolicyAnswer {
         allow_fleet_control: true,
         allow_desktop: false,
@@ -276,5 +279,81 @@ fn the_policy_request_and_answer_have_their_shapes() {
     assert_eq!(
         serde_json::from_value::<DesktopPolicyAnswer>(v).unwrap(),
         answer
+    );
+}
+
+#[test]
+fn the_input_policy_request_and_answer_have_their_shapes() {
+    // §6.4: `{purpose: "input", monitor: string | null}`; `monitor` is always
+    // written, as for the P6 purposes.
+    let ask = DesktopPolicyNow {
+        purpose: PolicyPurpose::Input,
+        monitor: None,
+    };
+    let v = serde_json::to_value(&ask).unwrap();
+    assert_eq!(v, json!({"purpose": "input", "monitor": null}));
+    assert_eq!(serde_json::from_value::<DesktopPolicyNow>(v).unwrap(), ask);
+    let named = DesktopPolicyNow {
+        purpose: PolicyPurpose::Input,
+        monitor: Some("DP-1".into()),
+    };
+    assert_eq!(
+        serde_json::to_value(&named).unwrap(),
+        json!({"purpose": "input", "monitor": "DP-1"})
+    );
+    // The closed answer of this purpose has the five booleans of §6.4.
+    let answer = DesktopInputPolicyAnswer {
+        allow_fleet_control: true,
+        allow_desktop: true,
+        allow_desktop_capture: true,
+        allow_desktop_input: false,
+        monitor_allowed: true,
+    };
+    let v: Value = serde_json::to_value(&answer).unwrap();
+    assert_eq!(
+        v,
+        json!({"allow_fleet_control": true, "allow_desktop": true,
+            "allow_desktop_capture": true, "allow_desktop_input": false,
+            "monitor_allowed": true})
+    );
+    assert_eq!(
+        serde_json::from_value::<DesktopInputPolicyAnswer>(v.clone()).unwrap(),
+        answer
+    );
+    // It is closed: a missing or an extra field is refused, and the P6 answer
+    // is not an input answer (and the reverse).
+    let mut extra = v.clone();
+    extra["x"] = json!(1);
+    assert!(serde_json::from_value::<DesktopInputPolicyAnswer>(extra).is_err());
+    let mut missing = v.clone();
+    missing
+        .as_object_mut()
+        .unwrap()
+        .remove("allow_desktop_input");
+    assert!(serde_json::from_value::<DesktopInputPolicyAnswer>(missing).is_err());
+    assert!(serde_json::from_value::<DesktopPolicyAnswer>(v).is_err());
+    // The P6 request and answer bytes are unchanged.
+    for (purpose, text) in [
+        (PolicyPurpose::Desktop, "desktop"),
+        (PolicyPurpose::Capture, "capture"),
+    ] {
+        let ask = DesktopPolicyNow {
+            purpose,
+            monitor: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&ask).unwrap(),
+            format!(r#"{{"purpose":"{text}","monitor":null}}"#)
+        );
+    }
+    let p6 = DesktopPolicyAnswer {
+        allow_fleet_control: true,
+        allow_desktop: true,
+        allow_desktop_capture: false,
+        monitor_allowed: true,
+    };
+    assert_eq!(
+        serde_json::to_string(&p6).unwrap(),
+        r#"{"allow_fleet_control":true,"allow_desktop":true,"allow_desktop_capture":false,"monitor_allowed":true}"#
     );
 }

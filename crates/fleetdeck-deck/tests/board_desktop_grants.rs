@@ -23,6 +23,9 @@ use fleetdeck_proto::version::feature;
 use serde_json::{Value, json};
 use settings_support::*;
 
+#[path = "board_desktop_grants/input.rs"]
+mod input;
+
 const START: &str = "/api/commands/session.start";
 const UNSUPPORTED: &str = "The selected peers do not support this desktop grant.";
 

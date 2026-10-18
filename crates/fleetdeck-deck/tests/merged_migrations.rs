@@ -4,19 +4,20 @@
 //! to V30, and R13 P5a adds V31 (the artifact tombstones) and V32 (the owner
 //! screenshots); R13 P4 adds V33 (the station palettes); R13 P6 adds V34 (the
 //! grant caps and the coordinator desktop ledger); R13 P5b adds V35 (the
-//! recording columns of the owner captures) and R13 P5b-2 adds V36 (the
-//! recording caps of a grant and the rebuilt coordinator ledger). The station list is Fleet Git's
-//! list (32 entries), R13 P5a V33 (the artifact deletions) and V34 (the
-//! capture operations), R13 P6 V35 (the coordinator desktop operations) and
-//! R13 P5b V36 (the recording columns and the capture garbage); a station
-//! database made by v2 is at version 27.
+//! recording columns of the owner captures); R13 P5b-2 adds V36 (the recording
+//! caps and the rebuilt ledger); R13 P7 adds V37 (the input allowance, the
+//! ledger rebuilds, the session addresses). The station list is Fleet Git's
+//! list (32 entries), R13 P5a V33 (the artifact deletions) and V34 (the capture
+//! operations), R13 P6 V35 (the coordinator desktop operations) and R13 P5b V36
+//! (the recording columns and the capture garbage); a station database made by
+//! v2 is at version 27.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use rusqlite::Connection;
 
 const DECK_V2_LAST: usize = 25;
-const DECK_LATEST: i64 = 36;
+const DECK_LATEST: i64 = 37;
 const STATION_V2_LAST: usize = 27;
 const STATION_LATEST: i64 = 36;
 
@@ -288,7 +289,7 @@ fn migration_v34_keeps_a_grant_and_adds_the_desktop_columns_at_their_defaults() 
     assert!(op("notify", "desktop", "prepared").is_ok());
     assert!(op("screenshot", "capture", "unknown").is_ok());
     assert!(op("terminal_open", "desktop", "prepared").is_err());
-    assert!(op("notify", "input", "prepared").is_err());
+    assert!(op("notify", "keyboard", "prepared").is_err());
     assert!(op("notify", "desktop", "claimed").is_err());
     // One request key for each grant.
     assert!(
@@ -585,6 +586,111 @@ fn migration_v36_keeps_a_grant_at_zero_recording_caps_and_an_op_row_through_the_
         )
         .is_err()
     );
+}
+
+/// R13 P7 task F: V36 to V37 keeps a grant, an op row (recording `seconds`) and
+/// a rate row through the rebuilds, takes the input values, signs sessions out.
+#[test]
+fn migration_v37_keeps_the_rows_and_signs_every_session_out() {
+    let migrations = fleetdeck_deck::store::schema::migrations();
+    let mut conn = Connection::open_in_memory().unwrap();
+    migrations.to_version(&mut conn, 36).unwrap();
+    for sql in [
+        "PRAGMA foreign_keys = OFF",
+        "INSERT INTO tokens (grant_id, station_id, session_id, classes, stations, spawn_cap,
+             max_modes, idle_ttl_ms, created_at, expires_at, state)
+         VALUES ('g1', 'st-1', 'se-1', '[]', '[\"st-1\"]', 3, '{}', 60000, 1, 2, 'active')",
+        "INSERT INTO coordinator_desktop_ops (operation_id, grant_id, request_key, payload_hash,
+             tool, class, binding_id, generation, caller_station, caller_session, target_station,
+             action_hash, resource, state, result, code, charged, created_at, updated_at, seconds)
+         VALUES ('op1', 'g1', 'k1', 'h', 'record_monitor', 'capture', 'b', 4, 's', 's', 't',
+             'ah', '{}', 'done', '{}', NULL, '{}', 10, 11, 30)",
+        "INSERT INTO coordinator_desktop_rate VALUES ('grant:g1', 'mutation', 5)",
+        "INSERT INTO login_sessions VALUES ('s1', 'c', 'password', 1, 1, 99)",
+        "INSERT INTO member_sessions VALUES ('m1', 'mem', 'sh', 'c', 1, 99)",
+    ] {
+        conn.execute(sql, []).unwrap();
+    }
+    migrations.to_latest(&mut conn).unwrap();
+    assert_eq!(user_version(&conn), DECK_LATEST);
+    let text = |sql: &str| -> String { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+    // The grant reads input disabled with zero caps and usage; the checks hold.
+    assert_eq!(
+        text(
+            "SELECT json_array(allow_input, input_scope, input_cap, input_used,
+                 input_character_cap, input_character_used) FROM tokens"
+        ),
+        "[0,null,0,0,0,0]"
+    );
+    for bad in ["allow_input = 2", "input_scope = 'any'", "input_cap = 5001"] {
+        assert!(
+            conn.execute(&format!("UPDATE tokens SET {bad}"), [])
+                .is_err()
+        );
+    }
+    for bad in ["input_used = -1", "input_character_cap = 1000001"] {
+        assert!(
+            conn.execute(&format!("UPDATE tokens SET {bad}"), [])
+                .is_err()
+        );
+    }
+    let ok = "UPDATE tokens SET allow_input = 1, input_scope = 'own_windows', input_cap = 5000,
+        input_character_cap = 1000000, input_character_used = 3";
+    assert_eq!(conn.execute(ok, []).unwrap(), 1);
+    // The op row, its recording `seconds` included, the index and the rate row.
+    assert_eq!(
+        text(
+            "SELECT json_array(tool, state, generation, created_at, updated_at, seconds,
+                 input_length, attempted_at, finished_at, exposure_addrs)
+             FROM coordinator_desktop_ops WHERE operation_id = 'op1'"
+        ),
+        r#"["record_monitor","done",4,10,11,30,null,null,null,null]"#
+    );
+    assert_eq!(
+        text(
+            "SELECT group_concat(name) FROM sqlite_master WHERE name IN
+             ('coordinator_desktop_ops_state', 'coordinator_desktop_rate_key')
+             OR name LIKE '%_new'"
+        ),
+        "coordinator_desktop_ops_state,coordinator_desktop_rate_key"
+    );
+    assert_eq!(
+        count(&conn, "SELECT count(*) FROM coordinator_desktop_rate"),
+        1
+    );
+    // The input tools, class and length (0 to 2000); the old checks still hold.
+    let insert = |id: &str, tool: &str, class: &str, length: Option<i64>| {
+        conn.execute(
+            "INSERT INTO coordinator_desktop_ops (operation_id, grant_id, request_key,
+                 payload_hash, tool, class, binding_id, generation, caller_station,
+                 caller_session, target_station, resource, state, charged, created_at,
+                 updated_at, input_length)
+             VALUES (?1, 'g1', ?1, 'h', ?2, ?3, 'b', 1, 's', 's', 's', '{}', 'prepared', '{}',
+                 1, 1, ?4)",
+            rusqlite::params![id, tool, class, length],
+        )
+    };
+    assert!(insert("i1", "key_press", "input", Some(1)).is_ok());
+    assert!(insert("i2", "type_text", "input", Some(2000)).is_ok());
+    assert!(insert("i3", "pointer_move", "input", Some(0)).is_ok());
+    assert!(insert("i4", "type_text", "input", Some(2001)).is_err());
+    assert!(insert("i5", "pointer_click", "input", None).is_err());
+    assert!(insert("op1", "notify", "desktop", None).is_err()); // the key stays unique
+    let rate = |bucket: &str| {
+        let sql = "INSERT INTO coordinator_desktop_rate VALUES ('grant:g1', ?1, 6)";
+        conn.execute(sql, [bucket])
+    };
+    assert!(rate("input").is_ok() && rate("click").is_err());
+    // Every browser session is gone; the new columns exist for the next ones.
+    let sessions =
+        "SELECT (SELECT count(*) FROM login_sessions) + (SELECT count(*) FROM member_sessions)";
+    assert_eq!(count(&conn, sessions), 0);
+    for sql in [
+        "INSERT INTO login_sessions VALUES ('s2', 'c', 'password', 1, 1, 99, '192.0.2.1', 5)",
+        "INSERT INTO member_sessions VALUES ('m2', 'mem', 'sh', 'c', 1, 99, '2001:db8::1', 5)",
+    ] {
+        conn.execute(sql, []).unwrap();
+    }
 }
 
 /// R13 P5b task F: V35 to V36 keeps a capture operation row as a

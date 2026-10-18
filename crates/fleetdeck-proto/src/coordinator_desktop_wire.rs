@@ -165,6 +165,9 @@ pub struct DesktopAuthorityAnswer {
 pub enum PolicyPurpose {
     Desktop,
     Capture,
+    /// R13 P7 §6.4: the input purpose; sent and answered only with
+    /// `desktop_input_mcp.v1`. Its answer is [`DesktopInputPolicyAnswer`].
+    Input,
 }
 
 /// `desktop.policy_now` params (§5.5). `monitor` is always written.
@@ -184,6 +187,20 @@ pub struct DesktopPolicyAnswer {
     pub allow_fleet_control: bool,
     pub allow_desktop: bool,
     pub allow_desktop_capture: bool,
+    pub monitor_allowed: bool,
+}
+
+/// The answer to [`DesktopPolicyNow`] for [`PolicyPurpose::Input`] only (R13
+/// P7 §6.4): the live policy of the target with the input setting. The
+/// answer to the `desktop` and `capture` purposes keeps its P6 bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "coordinator_desktop/")]
+pub struct DesktopInputPolicyAnswer {
+    pub allow_fleet_control: bool,
+    pub allow_desktop: bool,
+    pub allow_desktop_capture: bool,
+    pub allow_desktop_input: bool,
     pub monitor_allowed: bool,
 }
 

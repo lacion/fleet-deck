@@ -63,6 +63,27 @@ pub struct CoordinatorSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub recording_second_cap: Option<u32>,
+    /// R13 P7 §3.2: the explicit opt-in to keyboard input and pointer
+    /// movement in the caller's own previews. Sent to a caller link that
+    /// negotiated `desktop_input_mcp.v1` only; absent otherwise.
+    #[serde(default, skip_serializing_if = "is_false")]
+    #[ts(optional, as = "Option<bool>")]
+    pub allow_input: bool,
+    /// R13 P7 §3.2: the scope of the input allowance; with `allow_input` it
+    /// is `own_windows`. Sent with `allow_input` only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub input_scope: Option<InputScope>,
+    /// The input action budget of a grant with `allow_input` (R13 P7 §3.2).
+    /// Board → deck only: the deck reads it in `owner_start` and removes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub input_cap: Option<u32>,
+    /// The typed-character budget of a grant with `allow_input` (R13 P7
+    /// §3.2). Board → deck only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub input_character_cap: Option<u32>,
     /// The target stations that the owner picked (ADR-006 §"Creation"),
     /// besides the coordinator's own station. Board → deck only: the deck
     /// reads it in `owner_start` and clears it before the start command goes
@@ -77,6 +98,16 @@ pub struct CoordinatorSpec {
 #[allow(clippy::trivially_copy_pass_by_ref)]
 const fn is_false(value: &bool) -> bool {
     !*value
+}
+
+/// The scope of the input allowance of a grant (R13 P7 §3.1, §3.2). This
+/// build knows one scope; `any` and every other name is refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "command/")]
+pub enum InputScope {
+    /// The preview windows that this caller opened.
+    OwnWindows,
 }
 
 /// The reach of a coordinator grant (ADR-008 §2, §3).

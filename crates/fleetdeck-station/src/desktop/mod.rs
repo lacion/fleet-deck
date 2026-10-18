@@ -92,6 +92,16 @@ impl Fail {
     pub fn no_desktop() -> Self {
         Self::new(code::UNSUPPORTED, "This station has no desktop.")
     }
+
+    /// R13 P7 task F: the stub refusal of an input action; no program runs
+    /// until the station task builds the input path.
+    #[must_use]
+    pub fn input_unsupported() -> Self {
+        Self::new(
+            code::UNSUPPORTED,
+            "This station cannot send desktop input yet.",
+        )
+    }
 }
 
 /// The live `allow_desktop` of the station policy. It is called right before

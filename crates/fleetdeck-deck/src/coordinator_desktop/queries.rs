@@ -225,6 +225,7 @@ async fn fetch_info(
     let purpose = match auth.class() {
         crate::store::coordinator_desktop::OpClass::Desktop => PolicyPurpose::Desktop,
         crate::store::coordinator_desktop::OpClass::Capture => PolicyPurpose::Capture,
+        crate::store::coordinator_desktop::OpClass::Input => PolicyPurpose::Input,
     };
     // `false`: the station was not asked for data yet (a refusal).
     caller_policy(

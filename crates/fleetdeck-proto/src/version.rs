@@ -198,6 +198,13 @@ pub mod feature {
     /// (design `omarchy-admin.md`).
     pub const OMARCHY_ADMIN: &str = "omarchy_admin.v1";
 
+    /// R13 P7: the coordinator input tools `key_press`, `type_text` and
+    /// `pointer_move`, the input grant fields, the input target actions, the
+    /// `input` policy purpose and `DesktopInfo.host_addresses` (needs
+    /// `desktop_mcp.v1` and `capture_mcp.v1`). It means support for the
+    /// protocol: it does not attest that `wtype` is installed.
+    pub const DESKTOP_INPUT_MCP: &str = "desktop_input_mcp.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -249,6 +256,7 @@ pub mod feature {
         ARTIFACTS_VIDEO,
         CAPTURE_RECORDING_MCP,
         OMARCHY_ADMIN,
+        DESKTOP_INPUT_MCP,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

@@ -162,6 +162,16 @@ fn the_tables_are_well_formed() {
     assert!(capture.danger && capture.apply == fleetdeck_proto::settings::Apply::Live);
     assert_eq!(capture.kind, FieldKind::Bool);
     assert_eq!(capture.label, "Desktop screenshots");
+    let input = get("allow_desktop_input");
+    assert!(input.danger && input.apply == fleetdeck_proto::settings::Apply::Live);
+    assert_eq!(input.kind, FieldKind::Bool);
+    assert_eq!(input.label, "Allow agent desktop input");
+    assert_eq!(
+        input.help,
+        "Allows explicitly authorized coordinator grants to use keyboard input and pointer \
+         movement on this station. Turning this off stops new input and requests interruption \
+         of active input; already sent input cannot be undone."
+    );
     let monitors = get("capture_monitors");
     assert!(monitors.danger && monitors.apply == fleetdeck_proto::settings::Apply::Live);
     assert_eq!(monitors.kind, FieldKind::Texts);
@@ -318,4 +328,23 @@ fn the_fleet_git_values_save_and_show_in_the_view() {
         ["allow_check_cmd", "allow_local_remotes"]
     );
     assert!(danger_keys::<crate::settings::StationHolder>(&new, &old).is_empty());
+}
+
+#[test]
+fn agent_desktop_input_is_off_by_default_and_parses_as_a_bool() {
+    // R13 P7 §3.3: the default is false everywhere; the key is a strict bool.
+    let c = StationConfig::parse("", &home()).unwrap();
+    assert!(!c.allow_desktop_input);
+    let c = StationConfig::parse("allow_desktop_input = true\n", &home()).unwrap();
+    assert!(c.allow_desktop_input);
+    let c = StationConfig::parse("allow_desktop_input = false\n", &home()).unwrap();
+    assert!(!c.allow_desktop_input);
+    assert!(StationConfig::parse("allow_desktop_input = \"yes\"\n", &home()).is_err());
+    // The view of a missing file shows `false`, and the value follows the file.
+    let fx = Fixture::new(None);
+    let view = view_station(&fx.config, &fx.env, &fx.store, &[]).unwrap();
+    assert_eq!(view.values["allow_desktop_input"], json!(false));
+    let fx = Fixture::new(Some("name = \"box\"\nallow_desktop_input = true\n"));
+    let view = view_station(&fx.config, &fx.env, &fx.store, &[]).unwrap();
+    assert_eq!(view.values["allow_desktop_input"], json!(true));
 }

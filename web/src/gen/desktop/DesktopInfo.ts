@@ -28,4 +28,10 @@ features: Array<string>,
  * The previews that agents opened for the deck that asks (R13 P6). The
  * station fills it only on a link with `desktop_mcp.v1`.
  */
-previews?: Array<PreviewWindow>, };
+previews?: Array<PreviewWindow>, 
+/**
+ * R13 P7 §7.6: the canonical addresses of the up interfaces of this
+ * machine (at most 16, loopback and link-local excluded). The station
+ * sends it only on a link with `desktop_input_mcp.v1`.
+ */
+host_addresses?: Array<string>, };

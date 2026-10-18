@@ -24,6 +24,10 @@ pub enum OpTool {
     WindowClose,
     Screenshot,
     RecordMonitor,
+    /// R13 P7: the input tools. No path admits them yet (task F stubs).
+    KeyPress,
+    TypeText,
+    PointerMove,
 }
 
 impl OpTool {
@@ -36,6 +40,9 @@ impl OpTool {
             Self::WindowClose => "window_close",
             Self::Screenshot => "screenshot",
             Self::RecordMonitor => "record_monitor",
+            Self::KeyPress => "key_press",
+            Self::TypeText => "type_text",
+            Self::PointerMove => "pointer_move",
         }
     }
 
@@ -47,6 +54,9 @@ impl OpTool {
             "window_close" => Self::WindowClose,
             "screenshot" => Self::Screenshot,
             "record_monitor" => Self::RecordMonitor,
+            "key_press" => Self::KeyPress,
+            "type_text" => Self::TypeText,
+            "pointer_move" => Self::PointerMove,
             _ => return None,
         })
     }
@@ -57,6 +67,8 @@ impl OpTool {
 pub enum OpClass {
     Desktop,
     Capture,
+    /// R13 P7: the class of the input tools.
+    Input,
 }
 
 impl OpClass {
@@ -65,6 +77,7 @@ impl OpClass {
         match self {
             Self::Desktop => "desktop",
             Self::Capture => "capture",
+            Self::Input => "input",
         }
     }
 
@@ -72,6 +85,7 @@ impl OpClass {
         match text {
             "desktop" => Some(Self::Desktop),
             "capture" => Some(Self::Capture),
+            "input" => Some(Self::Input),
             _ => None,
         }
     }
@@ -151,6 +165,9 @@ pub struct NewOp {
     /// The requested recording seconds (1 to 120); `None` for any other
     /// tool (R13 P5b-2).
     pub seconds: Option<u32>,
+    /// R13 P7 §3.5: the length of an input operation (a chord is 1, a text is
+    /// its scalar count, a pointer movement is 0); `None` for any other tool.
+    pub input_length: Option<u32>,
 }
 
 /// A stored operation.
@@ -177,6 +194,9 @@ pub struct DesktopOp {
     pub updated_at: i64,
     /// The requested recording seconds; `None` for any other tool.
     pub seconds: Option<u32>,
+    /// The length of an input operation; `None` for any other tool and for a
+    /// row of an older build.
+    pub input_length: Option<u32>,
 }
 
 /// The answer of the admission transaction.
@@ -216,7 +236,7 @@ pub fn request_key(request_id: &str) -> String {
 
 const COLUMNS: &str = "operation_id, grant_id, request_key, payload_hash, tool, class, \
     binding_id, generation, caller_station, caller_session, target_station, action_hash, \
-    resource, state, result, code, charged, created_at, updated_at, seconds";
+    resource, state, result, code, charged, created_at, updated_at, seconds, input_length";
 
 /// A row as the database holds it, before the text is decoded.
 struct Raw {
@@ -240,6 +260,7 @@ struct Raw {
     created_at: i64,
     updated_at: i64,
     seconds: Option<i64>,
+    input_length: Option<i64>,
 }
 
 impl Raw {
@@ -265,6 +286,7 @@ impl Raw {
             created_at: r.get(17)?,
             updated_at: r.get(18)?,
             seconds: r.get(19)?,
+            input_length: r.get(20)?,
         })
     }
 
@@ -289,6 +311,11 @@ impl Raw {
                 .map(u32::try_from)
                 .transpose()
                 .map_err(|_| corrupt("seconds"))?,
+            input_length: self
+                .input_length
+                .map(u32::try_from)
+                .transpose()
+                .map_err(|_| corrupt("input length"))?,
             operation_id: self.operation_id,
             grant_id: self.grant_id,
             request_key: self.request_key,

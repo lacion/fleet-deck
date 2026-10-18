@@ -198,6 +198,7 @@ pub fn info() -> DesktopInfo {
         offset_sampled_at: Some(1),
         features: Vec::new(),
         previews: Vec::new(),
+        host_addresses: Vec::new(),
     }
 }
 
@@ -534,6 +535,7 @@ impl World {
             action_hash: Some(hash.to_owned()),
             resource: json!({}),
             seconds: None,
+            input_length: None,
         }
     }
 

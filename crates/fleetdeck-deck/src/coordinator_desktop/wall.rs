@@ -182,6 +182,7 @@ impl Wall<'_> {
             action_hash: None,
             resource: json!({ "display_id": self.args.display_id }),
             seconds: None,
+            input_length: None,
         };
         self.link
             .store

@@ -93,6 +93,7 @@ pub(super) fn new_op(grant_id: &str, ctx: &CoordinatorContext, name: &str, tool:
         action_hash: None,
         resource: serde_json::json!({"display": "d-1"}),
         seconds: None,
+        input_length: None,
     }
 }
 
@@ -499,4 +500,72 @@ async fn a_record_monitor_row_keeps_its_seconds_and_reads_back() {
     .await
     .unwrap();
     assert!(bad);
+}
+
+/// R13 P7 task F: no input path exists yet. `desktop_admit` refuses an input
+/// tool with `desktop_unsupported` before anything is read or stored, also for
+/// a grant that has the allowance.
+#[tokio::test]
+async fn an_input_tool_is_refused_as_unsupported_and_stores_and_charges_nothing() {
+    let (det, s) = store().await;
+    let classes = [GrantClass::Desktop, GrantClass::Capture, GrantClass::Input];
+    let (gid, ctx) = grant(&s, "coord", &classes, |g| {
+        g.allow_input = true;
+        g.input_cap = 100;
+        g.input_character_cap = 1000;
+    })
+    .await;
+    for (i, tool) in [OpTool::KeyPress, OpTool::TypeText, OpTool::PointerMove]
+        .into_iter()
+        .enumerate()
+    {
+        let mut op = new_op(&gid, &ctx, &format!("in-{i}"), tool);
+        op.class = OpClass::Input;
+        op.input_length = Some(1);
+        let a = s.desktop_admit(op, t0(&det)).await.unwrap();
+        assert_eq!(rejected(a), (code::DESKTOP_UNSUPPORTED, false), "{tool:?}");
+    }
+    assert_untouched(&s, &gid).await;
+    let g = s.grant(gid).await.unwrap().unwrap();
+    assert_eq!((g.input_used, g.input_character_used), (0, 0));
+}
+
+/// The stored names of the input tools and class: a row written by the next
+/// task reads back with its length.
+#[tokio::test]
+async fn the_input_tools_and_class_have_their_stored_names_and_read_back() {
+    let (_det, s) = store().await;
+    let (gid, _ctx) = both(&s).await;
+    for (i, (tool, name, length)) in [
+        (OpTool::KeyPress, "key_press", Some(1)),
+        (OpTool::TypeText, "type_text", Some(42)),
+        (OpTool::PointerMove, "pointer_move", Some(0)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(tool.as_str(), name);
+        let (gid, id) = (gid.clone(), format!("op-in-{i}"));
+        let (insert_id, length_value) = (id.clone(), length);
+        call(&s.inner.db, move |conn| {
+            conn.execute(
+                "INSERT INTO coordinator_desktop_ops (operation_id, grant_id, request_key,
+                     payload_hash, tool, class, binding_id, generation, caller_station,
+                     caller_session, target_station, resource, state, charged, created_at,
+                     updated_at, input_length)
+                 VALUES (?1, ?2, ?1, 'h', ?3, 'input', 'b', 1, 'alpha', 'coord', 'alpha', '{}',
+                     'prepared', '{\"desktop\":1,\"capture\":0}', 1, 1, ?4)",
+                rusqlite::params![insert_id, gid, name, length_value],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let row = s.desktop_op(&id).await.unwrap().unwrap();
+        assert_eq!(
+            (row.tool, row.class, row.input_length),
+            (tool, OpClass::Input, length)
+        );
+    }
+    assert_eq!(OpClass::Input.as_str(), "input");
 }

@@ -228,6 +228,12 @@ fn a_grant_is_in_effect_only_while_active_inside_its_lifetime_and_not_idle() {
         recording_used: 0,
         recording_second_cap: 0,
         recording_second_used: 0,
+        allow_input: false,
+        input_scope: None,
+        input_cap: 0,
+        input_used: 0,
+        input_character_cap: 0,
+        input_character_used: 0,
     };
     assert!(in_effect(&base, 10_000));
     assert!(!in_effect(&base, 10_001));

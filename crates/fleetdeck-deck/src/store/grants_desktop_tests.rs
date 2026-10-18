@@ -36,6 +36,8 @@ fn the_new_classes_have_their_names_and_are_fleet_control_and_mutating() {
     for (class, name) in [
         (GrantClass::Desktop, "desktop"),
         (GrantClass::Capture, "capture"),
+        // R13 P7 §3.1: the input class is fleet control and mutating too.
+        (GrantClass::Input, "input"),
     ] {
         assert_eq!(serde_json::to_value(class).unwrap(), name);
         assert_eq!(
@@ -50,7 +52,9 @@ fn the_new_classes_have_their_names_and_are_fleet_control_and_mutating() {
     assert!(!GrantClass::Read.is_mutating());
     assert!(GrantClass::Inspect.is_fleet_control());
     assert!(!GrantClass::Inspect.is_mutating());
-    assert!(serde_json::from_value::<GrantClass>(serde_json::json!("input")).is_err());
+    for unknown in ["input_enabled", "Input", "keyboard"] {
+        assert!(serde_json::from_value::<GrantClass>(serde_json::json!(unknown)).is_err());
+    }
 }
 
 #[tokio::test]
@@ -337,4 +341,143 @@ fn the_recording_cap_check_names_no_value() {
     assert!(!err.contains("123456"));
     assert_eq!(check_recording_caps(&classes, 0, 0), Ok(()));
     assert_eq!(check_recording_caps(&classes, 5000, 600_000), Ok(()));
+}
+
+const INPUT_CLASSES: [GrantClass; 3] =
+    [GrantClass::Desktop, GrantClass::Capture, GrantClass::Input];
+
+fn input_grant(edit: fn(&mut NewGrant)) -> NewGrant {
+    let mut g = new_grant(&INPUT_CLASSES);
+    g.allow_input = true;
+    edit(&mut g);
+    g
+}
+
+#[tokio::test]
+async fn a_grant_has_no_input_allowance_unless_it_asks_and_the_row_reads_back() {
+    let s = store().await;
+    // The default of `NewGrant`, a grant with the input class but no
+    // allowance, and an older-style grant: input disabled, zero caps.
+    let none = NewGrant::new(StationId::from("alpha"), SessionId::from("coord"));
+    assert_eq!(
+        (
+            none.allow_input,
+            none.input_scope,
+            none.input_cap,
+            none.input_character_cap
+        ),
+        (false, None, 0, 0)
+    );
+    let classed = s.create_grant(new_grant(&INPUT_CLASSES)).await.unwrap();
+    let plain = new_grant(&[GrantClass::Desktop]);
+    let plain = s
+        .create_grant(NewGrant {
+            session_id: SessionId::from("c2"),
+            ..plain
+        })
+        .await
+        .unwrap();
+    for g in [&classed, &plain] {
+        assert!(!g.allow_input && g.input_scope.is_none(), "{g:?}");
+        assert_eq!(
+            (
+                g.input_cap,
+                g.input_used,
+                g.input_character_cap,
+                g.input_character_used
+            ),
+            (0, 0, 0, 0)
+        );
+    }
+    assert!(classed.is_fleet_control());
+    // An opted-in grant gets the scope `own_windows`, keeps its caps and
+    // starts its counters at zero; the row reads back as stored.
+    let mut g = input_grant(|g| {
+        g.session_id = SessionId::from("c3");
+        g.input_cap = limits::INPUT_CAP_MAX;
+        g.input_character_cap = limits::INPUT_CHARACTER_CAP_MAX;
+    });
+    let on = s.create_grant(g.clone()).await.unwrap();
+    assert!(on.allow_input);
+    assert_eq!(on.input_scope, Some(InputScope::OwnWindows));
+    assert_eq!(
+        (
+            on.input_cap,
+            on.input_used,
+            on.input_character_cap,
+            on.input_character_used
+        ),
+        (5000, 0, 1_000_000, 0)
+    );
+    assert_eq!(s.grant(on.grant_id.clone()).await.unwrap().unwrap(), on);
+    // Caps of zero are an allowance with no new accepted calls, not "none".
+    g.session_id = SessionId::from("c4");
+    g.input_cap = 0;
+    g.input_character_cap = 0;
+    let zero = s.create_grant(g).await.unwrap();
+    assert!(zero.allow_input);
+    assert_eq!((zero.input_cap, zero.input_character_cap), (0, 0));
+}
+
+#[tokio::test]
+async fn the_input_rules_refuse_with_the_fixed_texts_class_first_then_the_opt_in_then_range() {
+    let s = store().await;
+    let classes = "allow_input needs the desktop, capture and input classes";
+    for missing in INPUT_CLASSES {
+        let mut g = input_grant(|_| {});
+        g.classes.remove(&missing);
+        assert_eq!(invalid(&s, g).await, classes, "{missing:?}");
+    }
+    let mut read = input_grant(|_| {});
+    read.classes = BTreeSet::from([GrantClass::Read]);
+    assert_eq!(invalid(&s, read).await, classes);
+    let off = |edit: fn(&mut NewGrant)| {
+        let mut g = new_grant(&INPUT_CLASSES);
+        edit(&mut g);
+        g
+    };
+    assert_eq!(
+        invalid(&s, off(|g| g.input_scope = Some(InputScope::OwnWindows))).await,
+        "input_scope needs allow_input"
+    );
+    assert_eq!(
+        invalid(&s, off(|g| g.input_cap = 1)).await,
+        "input caps need allow_input"
+    );
+    assert_eq!(
+        invalid(&s, off(|g| g.input_character_cap = 1)).await,
+        "input caps need allow_input"
+    );
+    // The class rule comes before the others, the opt-in rule before the range.
+    let mut g = new_grant(&[GrantClass::Read]);
+    g.allow_input = true;
+    g.input_cap = 9999;
+    assert_eq!(invalid(&s, g).await, classes);
+    assert_eq!(
+        invalid(&s, off(|g| g.input_cap = 9999)).await,
+        "input caps need allow_input"
+    );
+    assert_eq!(
+        invalid(&s, input_grant(|g| g.input_cap = 5001)).await,
+        "input_cap is 0 to 5000"
+    );
+    assert_eq!(
+        invalid(&s, input_grant(|g| g.input_character_cap = 1_000_001)).await,
+        "input_character_cap is 0 to 1000000"
+    );
+    assert!(s.grants(10).await.unwrap().is_empty());
+}
+
+#[test]
+fn the_input_check_names_no_value() {
+    let classes = BTreeSet::from(INPUT_CLASSES);
+    let err = check_input_grant(&classes, true, None, (123_456, 0)).unwrap_err();
+    assert!(!err.contains("123456"));
+    let err = check_input_grant(&classes, true, None, (0, 7_654_321)).unwrap_err();
+    assert!(!err.contains("7654321"));
+    assert_eq!(
+        check_input_grant(&classes, true, None, (5000, 1_000_000)),
+        Ok(())
+    );
+    assert_eq!(check_input_grant(&classes, false, None, (0, 0)), Ok(()));
 }

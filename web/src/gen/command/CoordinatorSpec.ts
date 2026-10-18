@@ -2,6 +2,7 @@
 import type { StationId } from "../ids/StationId";
 import type { ControlSkill } from "./ControlSkill";
 import type { GrantScope } from "./GrantScope";
+import type { InputScope } from "./InputScope";
 
 /**
  * The coordinator grant that a session starts with (ADR-006 §4). It holds
@@ -54,6 +55,27 @@ recording_cap?: number,
  * Board → deck only.
  */
 recording_second_cap?: number, 
+/**
+ * R13 P7 §3.2: the explicit opt-in to keyboard input and pointer
+ * movement in the caller's own previews. Sent to a caller link that
+ * negotiated `desktop_input_mcp.v1` only; absent otherwise.
+ */
+allow_input?: boolean, 
+/**
+ * R13 P7 §3.2: the scope of the input allowance; with `allow_input` it
+ * is `own_windows`. Sent with `allow_input` only.
+ */
+input_scope?: InputScope, 
+/**
+ * The input action budget of a grant with `allow_input` (R13 P7 §3.2).
+ * Board → deck only: the deck reads it in `owner_start` and removes it.
+ */
+input_cap?: number, 
+/**
+ * The typed-character budget of a grant with `allow_input` (R13 P7
+ * §3.2). Board → deck only.
+ */
+input_character_cap?: number, 
 /**
  * The target stations that the owner picked (ADR-006 §"Creation"),
  * besides the coordinator's own station. Board → deck only: the deck

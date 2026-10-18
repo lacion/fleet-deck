@@ -19,6 +19,7 @@ pub mod conflicts;
 pub mod coordinator_desktop;
 pub mod coordinator_desktop_text;
 pub mod coordinator_desktop_wire;
+pub mod coordinator_input;
 pub mod coordinator_spec;
 pub mod desktop;
 pub mod desktop_authority;
