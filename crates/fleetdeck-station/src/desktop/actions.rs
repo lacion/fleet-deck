@@ -48,6 +48,9 @@ pub(super) fn name(action: &DesktopAction) -> &'static str {
         DesktopAction::ScreenCapture { .. } => "screen_capture",
         DesktopAction::ScreenRecord { .. } => "screen_record",
         DesktopAction::PreviewClose { .. } => "preview_close",
+        DesktopAction::InputKeyPress { .. } => "input_key_press",
+        DesktopAction::InputTypeText { .. } => "input_type_text",
+        DesktopAction::InputPointerMove { .. } => "input_pointer_move",
     }
 }
 
@@ -224,6 +227,9 @@ impl Cx<'_> {
             DesktopAction::PreviewClose { window_id } => {
                 self.owner_preview_close(&window_id).await.map(|()| None)
             }
+            DesktopAction::InputKeyPress { .. }
+            | DesktopAction::InputTypeText { .. }
+            | DesktopAction::InputPointerMove { .. } => Err(Fail::input_unsupported()),
         }
     }
 

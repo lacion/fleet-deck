@@ -234,6 +234,19 @@ mod tests {
                 monitor: "DP-1".into(),
                 seconds: 30,
             },
+            DesktopAction::InputKeyPress {
+                window_id: "0123456789abcdef0123456789abcdef".into(),
+                chord: "Return".into(),
+            },
+            DesktopAction::InputTypeText {
+                window_id: "0123456789abcdef0123456789abcdef".into(),
+                text: "t".into(),
+            },
+            DesktopAction::InputPointerMove {
+                window_id: "0123456789abcdef0123456789abcdef".into(),
+                x: 1,
+                y: 2,
+            },
         ]
     }
 

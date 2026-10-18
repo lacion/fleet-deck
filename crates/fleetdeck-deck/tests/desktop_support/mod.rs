@@ -57,6 +57,7 @@ pub fn info() -> DesktopInfo {
         offset_sampled_at: Some(1),
         features: Vec::new(),
         previews: Vec::new(),
+        host_addresses: Vec::new(),
     }
 }
 

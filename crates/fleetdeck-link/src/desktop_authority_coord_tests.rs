@@ -251,3 +251,115 @@ fn a_read_hash_never_equals_an_action_hash() {
         assert_ne!(read, action_hash_for(&a, "ff00", Some(&ctx())));
     }
 }
+
+const INPUT_WINDOW: &str = "0123456789abcdef0123456789abcdef";
+
+fn input_actions() -> [DesktopAction; 3] {
+    [
+        DesktopAction::InputKeyPress {
+            window_id: INPUT_WINDOW.into(),
+            chord: "Ctrl+a".into(),
+        },
+        DesktopAction::InputTypeText {
+            window_id: INPUT_WINDOW.into(),
+            text: "héllo --help".into(),
+        },
+        DesktopAction::InputPointerMove {
+            window_id: INPUT_WINDOW.into(),
+            x: 12,
+            y: 34,
+        },
+    ]
+}
+
+/// R13 P7 §6.3: the hash of each input action, with the fixed context above
+/// and the node `ff00`. The monitor field is null, and the logical target is
+/// the `window_id` (never an address). Each value was computed once with
+/// `sha256sum` over the exact compact JSON and is pinned here.
+#[test]
+fn the_input_actions_have_pinned_coordinator_hashes_and_a_null_monitor() {
+    let pinned = [
+        "136575162a6e63a816a30eea1875f745c57d591768b99f3428c9e4546ff9fae2",
+        "6c2b91464166672504678b1dc879e839f92941d516f5a02c169bdfc125261312",
+        "e484400e03cd3f884612db40961b7b9452f407e9303cbef02c80f3c1f212a950",
+    ];
+    let texts = [
+        format!(
+            r#"{{"action":{{"action":"input_key_press","chord":"Ctrl+a","window_id":"{INPUT_WINDOW}"}},"coordinator":{CTX_JSON},"monitor":null,"station":"ff00"}}"#
+        ),
+        format!(
+            r#"{{"action":{{"action":"input_type_text","text":"héllo --help","window_id":"{INPUT_WINDOW}"}},"coordinator":{CTX_JSON},"monitor":null,"station":"ff00"}}"#
+        ),
+        format!(
+            r#"{{"action":{{"action":"input_pointer_move","window_id":"{INPUT_WINDOW}","x":12,"y":34}},"coordinator":{CTX_JSON},"monitor":null,"station":"ff00"}}"#
+        ),
+    ];
+    for ((action, hash), text) in input_actions().iter().zip(pinned).zip(texts) {
+        assert_eq!(target_monitor(action), None, "{action:?}");
+        assert_eq!(
+            String::from_utf8(canonical_bytes_for(action, "ff00", Some(&ctx()))).unwrap(),
+            text
+        );
+        assert_eq!(action_hash_for(action, "ff00", Some(&ctx())), hash);
+    }
+}
+
+#[test]
+fn an_input_hash_binds_the_action_the_context_and_the_node() {
+    let [key, typed, point] = input_actions();
+    let base = action_hash_for(&key, "ff00", Some(&ctx()));
+    // Each field of each action.
+    let other_key = DesktopAction::InputKeyPress {
+        window_id: INPUT_WINDOW.into(),
+        chord: "Ctrl+b".into(),
+    };
+    let other_window = DesktopAction::InputKeyPress {
+        window_id: "f123456789abcdef0123456789abcdef".into(),
+        chord: "Ctrl+a".into(),
+    };
+    assert_ne!(base, action_hash_for(&other_key, "ff00", Some(&ctx())));
+    assert_ne!(base, action_hash_for(&other_window, "ff00", Some(&ctx())));
+    let other_text = DesktopAction::InputTypeText {
+        window_id: INPUT_WINDOW.into(),
+        text: "héllo --help ".into(),
+    };
+    assert_ne!(
+        action_hash_for(&typed, "ff00", Some(&ctx())),
+        action_hash_for(&other_text, "ff00", Some(&ctx()))
+    );
+    let other_point = DesktopAction::InputPointerMove {
+        window_id: INPUT_WINDOW.into(),
+        x: 12,
+        y: 35,
+    };
+    assert_ne!(
+        action_hash_for(&point, "ff00", Some(&ctx())),
+        action_hash_for(&other_point, "ff00", Some(&ctx()))
+    );
+    // The context, its absence and the node.
+    assert_ne!(base, action_hash_for(&key, "ff00", None));
+    assert_ne!(base, action_hash_for(&key, "other", Some(&ctx())));
+    let mut c = ctx();
+    c.generation = 3;
+    assert_ne!(base, action_hash_for(&key, "ff00", Some(&c)));
+    // The three input hashes differ from each other and from a P6 hash.
+    let all = input_actions().map(|a| action_hash_for(&a, "ff00", Some(&ctx())));
+    assert_ne!(all[0], all[1]);
+    assert_ne!(all[1], all[2]);
+    assert_ne!(all[0], all[2]);
+    assert_ne!(all[0], action_hash_for(&notify(), "ff00", Some(&ctx())));
+}
+
+#[test]
+fn the_p6_and_owner_hash_fixtures_do_not_move_with_the_input_variants() {
+    // The same values as the pinned tests of this file and of the owner
+    // fixtures: adding three variants changes no earlier byte.
+    assert_eq!(
+        action_hash_for(&notify(), "ff00", Some(&ctx())),
+        "6eb744cd3bb23528003c97ac4caa951b7c38fadab8b3b90f1f81a7afb9103cdb"
+    );
+    assert_eq!(
+        action_hash(&DesktopAction::ScreenLock, "node"),
+        "c0ec8ef2d0e2f483eddae5fb6f817123d0804c22279e2c5c44e81f34ab4031b2"
+    );
+}

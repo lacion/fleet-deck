@@ -120,6 +120,7 @@ pub(super) fn needs(class: OpClass) -> GrantClass {
     match class {
         OpClass::Desktop => GrantClass::Desktop,
         OpClass::Capture => GrantClass::Capture,
+        OpClass::Input => GrantClass::Input,
     }
 }
 

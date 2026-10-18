@@ -63,10 +63,19 @@ fn needs(class: OpClass) -> GrantClass {
     match class {
         OpClass::Desktop => GrantClass::Desktop,
         OpClass::Capture => GrantClass::Capture,
+        OpClass::Input => GrantClass::Input,
     }
 }
 
 fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admission> {
+    // R13 P7 task F: no input path is built yet. An input tool is refused
+    // before anything is read or stored (the deck task adds the admission).
+    if matches!(
+        op.tool,
+        OpTool::KeyPress | OpTool::TypeText | OpTool::PointerMove
+    ) {
+        return refuse(code::DESKTOP_UNSUPPORTED);
+    }
     // 1. The grant, checked again in this transaction, also for a replay.
     let ctx = &op.ctx;
     let Some(grant) = get_grant(&tx, &op.grant_id)? else {
@@ -178,9 +187,9 @@ fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admi
         "INSERT INTO coordinator_desktop_ops
          (operation_id, grant_id, request_key, payload_hash, tool, class, binding_id,
           generation, caller_station, caller_session, target_station, action_hash, resource,
-          state, result, code, charged, created_at, updated_at, seconds)
+          state, result, code, charged, created_at, updated_at, seconds, input_length)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'prepared', NULL, NULL,
-                 ?14, ?15, ?15, ?16)",
+                 ?14, ?15, ?15, ?16, ?17)",
         params![
             op.operation_id,
             op.grant_id,
@@ -198,6 +207,7 @@ fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admi
             stored_charges,
             now,
             op.seconds,
+            op.input_length,
         ],
     )?;
     tx.execute(
@@ -243,6 +253,7 @@ fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admi
         created_at: now,
         updated_at: now,
         seconds: op.seconds,
+        input_length: op.input_length,
     }))
 }
 

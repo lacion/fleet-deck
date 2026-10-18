@@ -116,6 +116,11 @@ pub struct DesktopInfo {
     /// station fills it only on a link with `desktop_mcp.v1`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub previews: Vec<PreviewWindow>,
+    /// R13 P7 §7.6: the canonical addresses of the up interfaces of this
+    /// machine (at most 16, loopback and link-local excluded). The station
+    /// sends it only on a link with `desktop_input_mcp.v1`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub host_addresses: Vec<String>,
 }
 
 /// The params of `desktop.info` (R13 §6D item 4). An empty object is
@@ -202,6 +207,25 @@ pub enum DesktopAction {
     /// the action covers the handle; the deck never learns the address.
     PreviewClose {
         window_id: String,
+    },
+    /// R13 P7 §6.2: one key chord into a preview that the caller owns (needs
+    /// `desktop_input_mcp.v1` and a coordinator authority). The target
+    /// resolves `window_id`; the hash covers the handle, never an address.
+    InputKeyPress {
+        window_id: String,
+        chord: String,
+    },
+    /// R13 P7 §6.2: typed text into a preview that the caller owns.
+    InputTypeText {
+        window_id: String,
+        text: String,
+    },
+    /// R13 P7 §6.2: one pointer movement inside a preview that the caller
+    /// owns. `x` and `y` are logical coordinates relative to the preview.
+    InputPointerMove {
+        window_id: String,
+        x: u32,
+        y: u32,
     },
 }
 
@@ -444,5 +468,70 @@ mod tests {
         let v = serde_json::to_value(&info).unwrap();
         assert_eq!(v["previews"][0]["window_id"], "w1");
         assert_eq!(v["previews"][0]["monitor"], "DP-1");
+    }
+
+    #[test]
+    fn host_addresses_are_absent_when_empty_and_parse_when_present() {
+        let info: DesktopInfo = serde_json::from_str(&info_json("")).unwrap();
+        assert!(info.host_addresses.is_empty());
+        let v = serde_json::to_value(&info).unwrap();
+        assert!(!v.as_object().unwrap().contains_key("host_addresses"));
+
+        let with = info_json(r#","host_addresses":["192.0.2.7","2001:db8::1"]"#);
+        let info: DesktopInfo = serde_json::from_str(&with).unwrap();
+        assert_eq!(info.host_addresses, ["192.0.2.7", "2001:db8::1"]);
+        let v = serde_json::to_value(&info).unwrap();
+        assert_eq!(v["host_addresses"][1], "2001:db8::1");
+    }
+
+    #[test]
+    fn the_input_actions_have_their_wire_forms_and_are_not_owner_actions() {
+        let window = "0123456789abcdef0123456789abcdef";
+        for (json, action) in [
+            (
+                format!(
+                    r#"{{"action":"input_key_press","window_id":"{window}","chord":"Ctrl+a"}}"#
+                ),
+                DesktopAction::InputKeyPress {
+                    window_id: window.into(),
+                    chord: "Ctrl+a".into(),
+                },
+            ),
+            (
+                format!(r#"{{"action":"input_type_text","window_id":"{window}","text":"hi"}}"#),
+                DesktopAction::InputTypeText {
+                    window_id: window.into(),
+                    text: "hi".into(),
+                },
+            ),
+            (
+                format!(r#"{{"action":"input_pointer_move","window_id":"{window}","x":3,"y":4}}"#),
+                DesktopAction::InputPointerMove {
+                    window_id: window.into(),
+                    x: 3,
+                    y: 4,
+                },
+            ),
+        ] {
+            let parsed: DesktopAction = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed, action);
+            assert_eq!(serde_json::to_string(&action).unwrap(), json);
+            // The owner's HTTP body never offers an input action (§6.2).
+            assert!(serde_json::from_str::<DesktopActBody>(&json).is_err());
+        }
+        // Unknown fields are refused, and so is an address instead of a handle.
+        for bad in [
+            format!(r#"{{"action":"input_key_press","window_id":"{window}","chord":"a","x":1}}"#),
+            format!(r#"{{"action":"input_type_text","window_id":"{window}"}}"#),
+            format!(r#"{{"action":"input_pointer_move","window_id":"{window}","x":-1,"y":0}}"#),
+            format!(r#"{{"action":"input_pointer_move","window_id":"{window}","x":1.5,"y":0}}"#),
+            format!(r#"{{"action":"input_pointer_click","window_id":"{window}"}}"#),
+            r#"{"action":"input_key_press","address":"0x1","chord":"a"}"#.to_owned(),
+        ] {
+            assert!(
+                serde_json::from_str::<DesktopAction>(&bad).is_err(),
+                "{bad}"
+            );
+        }
     }
 }

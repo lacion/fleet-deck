@@ -32,6 +32,7 @@ fn info() -> DesktopInfo {
         offset_sampled_at: None,
         features: Vec::new(),
         previews: Vec::new(),
+        host_addresses: Vec::new(),
     }
 }
 

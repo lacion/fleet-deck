@@ -5,6 +5,7 @@
 use serde_json::json;
 
 use crate::command::{ControlSkill, CoordinatorSpec, GrantScope};
+use crate::coordinator_spec::InputScope;
 use crate::ids::{CommandId, IncarnationId, ProviderInstanceId, SessionId};
 use crate::mutation::{
     CoordinatorBinding, Holder, Mutation, PolicyNow, PolicyNowAnswer, envelope_of,
@@ -155,6 +156,10 @@ fn spec() -> CoordinatorSpec {
         allow_recording: false,
         recording_cap: None,
         recording_second_cap: None,
+        allow_input: false,
+        input_scope: None,
+        input_cap: None,
+        input_character_cap: None,
         stations: Vec::new(),
     }
 }
@@ -206,6 +211,12 @@ fn a_grant_view_writes_the_p6_counters_only_when_set() {
         recording_used: None,
         recording_second_cap: None,
         recording_second_used: None,
+        allow_input: None,
+        input_scope: None,
+        input_cap: None,
+        input_used: None,
+        input_character_cap: None,
+        input_character_used: None,
     };
     let v = serde_json::to_value(&view).unwrap();
     for key in [
@@ -287,11 +298,125 @@ fn a_grant_view_writes_the_recording_counters_only_when_set() {
         recording_used: Some(1),
         recording_second_cap: Some(600),
         recording_second_used: Some(30),
+        allow_input: None,
+        input_scope: None,
+        input_cap: None,
+        input_used: None,
+        input_character_cap: None,
+        input_character_used: None,
     };
     let v = serde_json::to_value(&view).unwrap();
     assert_eq!(v["recording_cap"], 5);
     assert_eq!(v["recording_used"], 1);
     assert_eq!(v["recording_second_cap"], 600);
     assert_eq!(v["recording_second_used"], 30);
+    assert_eq!(serde_json::from_value::<GrantView>(v).unwrap(), view);
+}
+
+#[test]
+fn the_input_fields_of_the_spec_are_written_only_when_set_and_parse_back() {
+    // A spec without input has none of the four fields (P6 and P5b-2 bytes
+    // unchanged, R13 P7 §14 items 1 and 2).
+    let none = serde_json::to_value(spec()).unwrap();
+    for key in [
+        "allow_input",
+        "input_scope",
+        "input_cap",
+        "input_character_cap",
+    ] {
+        assert!(!none.as_object().unwrap().contains_key(key), "{key}");
+    }
+    let allowed = CoordinatorSpec {
+        allow_input: true,
+        input_scope: Some(InputScope::OwnWindows),
+        input_cap: Some(100),
+        input_character_cap: Some(20_000),
+        ..spec()
+    };
+    let v = serde_json::to_value(&allowed).unwrap();
+    assert_eq!(v["allow_input"], true);
+    assert_eq!(v["input_scope"], "own_windows");
+    assert_eq!(v["input_cap"], 100);
+    assert_eq!(v["input_character_cap"], 20_000);
+    assert_eq!(
+        serde_json::from_value::<CoordinatorSpec>(v).unwrap(),
+        allowed
+    );
+    // `allow_input: false` is the default and is not written either.
+    let v = serde_json::to_value(CoordinatorSpec {
+        allow_input: false,
+        ..allowed.clone()
+    })
+    .unwrap();
+    assert!(!v.as_object().unwrap().contains_key("allow_input"));
+    // The scope `any` and every other name is refused (§3.1), and so is an
+    // unknown field next to the new ones.
+    let mut any = serde_json::to_value(&allowed).unwrap();
+    any["input_scope"] = json!("any");
+    assert!(serde_json::from_value::<CoordinatorSpec>(any).is_err());
+    let mut other = serde_json::to_value(&allowed).unwrap();
+    other["input_scope"] = json!("OwnWindows");
+    assert!(serde_json::from_value::<CoordinatorSpec>(other).is_err());
+    let mut extra = serde_json::to_value(&allowed).unwrap();
+    extra["input_cap_used"] = json!(1);
+    assert!(serde_json::from_value::<CoordinatorSpec>(extra).is_err());
+}
+
+#[test]
+fn a_grant_view_writes_the_input_fields_only_when_set() {
+    let mut view = GrantView {
+        grant_id: "g".into(),
+        station_id: "s".into(),
+        session_id: "x".into(),
+        classes: vec!["desktop".into(), "capture".into(), "input".into()],
+        stations: vec!["s".into()],
+        spawn_cap: 3,
+        spawn_used: 0,
+        state: "active".into(),
+        revoked_reason: None,
+        generation: None,
+        expires_at: 1,
+        last_used_at: None,
+        desktop_cap: None,
+        desktop_used: None,
+        capture_cap: None,
+        capture_used: None,
+        image_byte_cap: None,
+        image_byte_used: None,
+        recording_cap: None,
+        recording_used: None,
+        recording_second_cap: None,
+        recording_second_used: None,
+        allow_input: None,
+        input_scope: None,
+        input_cap: None,
+        input_used: None,
+        input_character_cap: None,
+        input_character_used: None,
+    };
+    let v = serde_json::to_value(&view).unwrap();
+    for key in [
+        "allow_input",
+        "input_scope",
+        "input_cap",
+        "input_used",
+        "input_character_cap",
+        "input_character_used",
+    ] {
+        assert!(!v.as_object().unwrap().contains_key(key), "{key}");
+    }
+    view.allow_input = Some(true);
+    view.input_scope = Some(InputScope::OwnWindows);
+    view.input_cap = Some(100);
+    view.input_used = Some(3);
+    view.input_character_cap = Some(20_000);
+    view.input_character_used = Some(41);
+    let v = serde_json::to_value(&view).unwrap();
+    assert_eq!(v["allow_input"], true);
+    assert_eq!(v["input_scope"], "own_windows");
+    assert_eq!(v["input_cap"], 100);
+    assert_eq!(v["input_used"], 3);
+    assert_eq!(v["input_character_cap"], 20_000);
+    assert_eq!(v["input_character_used"], 41);
     assert_eq!(serde_json::from_value::<GrantView>(v).unwrap(), view);
 }

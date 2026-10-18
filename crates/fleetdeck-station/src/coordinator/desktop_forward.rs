@@ -141,6 +141,11 @@ impl DesktopRequest {
             Self::Call(
                 DesktopCall::WallShow(_) | DesktopCall::Notify(_) | DesktopCall::WindowClose(_),
             ) => deadline_ms::ACTION_MCP,
+            // R13 P7 §10: 45 s. The tools are not in the catalog yet (the
+            // station task), so no call reaches this arm.
+            Self::Call(
+                DesktopCall::KeyPress(_) | DesktopCall::TypeText(_) | DesktopCall::PointerMove(_),
+            ) => deadline_ms::ACTION_MCP,
             Self::Call(DesktopCall::PreviewOpen(_)) => deadline_ms::PREVIEW_MCP,
             Self::Call(DesktopCall::Screenshot(_)) => deadline_ms::SCREENSHOT_MCP,
             // R13 P5b-2 §13.5: `seconds + 45` s.

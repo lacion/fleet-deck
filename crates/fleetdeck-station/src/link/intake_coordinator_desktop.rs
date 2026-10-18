@@ -317,6 +317,10 @@ pub(super) fn policy_now(
     {
         return unsupported();
     }
+    // R13 P7 task F: a stub until the station task answers the input purpose.
+    if query.purpose == PolicyPurpose::Input {
+        return unsupported();
+    }
     ok(policy_answer(
         &Live::of(&ctx.manager.policy()),
         query.monitor.as_deref(),

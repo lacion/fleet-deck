@@ -33,6 +33,7 @@ fn op(state: OpState, tool: OpTool) -> DesktopOp {
         created_at: 1,
         updated_at: 2,
         seconds: None,
+        input_length: None,
     }
 }
 

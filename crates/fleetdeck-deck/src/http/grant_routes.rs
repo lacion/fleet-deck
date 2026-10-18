@@ -15,6 +15,7 @@ use fleetdeck_proto::StationId;
 use fleetdeck_proto::coordinator_desktop_text::{
     code as desktop_code, limits, text as desktop_text,
 };
+use fleetdeck_proto::coordinator_spec::InputScope;
 use fleetdeck_proto::orchestration::GrantView;
 use fleetdeck_proto::version::feature;
 
@@ -44,10 +45,14 @@ fn view(g: Grant) -> GrantView {
             GrantClass::Answer => "answer",
             GrantClass::Desktop => "desktop",
             GrantClass::Capture => "capture",
+            GrantClass::Input => "input",
         }
         .to_owned()
     };
     let recording = g.recording_cap > 0;
+    // The input fields show only for a grant with the input allowance (R13 P7
+    // §3.1): a grant without it has none of them.
+    let input = g.allow_input;
     GrantView {
         classes: g.classes.iter().map(class).collect(),
         stations: g.stations.into_iter().collect(),
@@ -79,6 +84,12 @@ fn view(g: Grant) -> GrantView {
         recording_used: recording.then_some(g.recording_used),
         recording_second_cap: recording.then_some(g.recording_second_cap),
         recording_second_used: recording.then_some(g.recording_second_used),
+        allow_input: input.then_some(true),
+        input_scope: g.input_scope.filter(|_| input),
+        input_cap: input.then_some(g.input_cap),
+        input_used: input.then_some(g.input_used),
+        input_character_cap: input.then_some(g.input_character_cap),
+        input_character_used: input.then_some(g.input_character_used),
     }
 }
 
@@ -420,6 +431,13 @@ pub(super) async fn owner_start(
     let allow_recording = std::mem::take(&mut spec.allow_recording);
     let (recording_cap, recording_second_cap) =
         (spec.recording_cap.take(), spec.recording_second_cap.take());
+    // The input opt-in, scope and caps (R13 P7 §3.1, §3.2) are read here too.
+    let allow_input = std::mem::take(&mut spec.allow_input);
+    let (input_scope, input_cap, input_character_cap) = (
+        spec.input_scope.take(),
+        spec.input_cap.take(),
+        spec.input_character_cap.take(),
+    );
     let mut classes = std::collections::BTreeSet::new();
     for name in &spec.classes {
         let class: GrantClass = serde_json::from_value(serde_json::Value::String(name.clone()))
@@ -475,6 +493,30 @@ pub(super) async fn owner_start(
         grant.recording_second_cap,
     )
     .map_err(|m| invalid(m.to_owned()))?;
+    // The input rules, for every request, before the elevation: an explicit
+    // scope or cap without the opt-in is invalid; with the opt-in the scope is
+    // `own_windows` and the caps have the defaults of §9.1.
+    if !allow_input && input_scope.is_some() {
+        return Err(invalid("input_scope needs allow_input".to_owned()));
+    }
+    if !allow_input && (input_cap.is_some() || input_character_cap.is_some()) {
+        return Err(invalid("input caps need allow_input".to_owned()));
+    }
+    if allow_input {
+        grant.allow_input = true;
+        grant.input_scope = Some(input_scope.unwrap_or(InputScope::OwnWindows));
+        grant.input_cap = input_cap.unwrap_or(limits::INPUT_CAP_DEFAULT);
+        grant.input_character_cap =
+            input_character_cap.unwrap_or(limits::INPUT_CHARACTER_CAP_DEFAULT);
+    }
+    let input_caps = (grant.input_cap, grant.input_character_cap);
+    crate::store::grants::check_input_grant(
+        &grant.classes,
+        grant.allow_input,
+        grant.input_scope,
+        input_caps,
+    )
+    .map_err(|m| invalid(m.to_owned()))?;
     grant.start_command_id = Some(command_id.to_string());
     if spec.idle_ttl_ms > 0 {
         grant.idle_ttl_ms = i64::try_from(spec.idle_ttl_ms).unwrap_or(i64::MAX);
@@ -527,7 +569,7 @@ pub(super) async fn owner_start(
             station,
             &grant.classes,
             &grant.stations,
-            allow_recording,
+            (allow_recording, allow_input),
         )?;
     }
     let g = board.store.create_grant(grant).await.map_err(|e| match e {
@@ -567,6 +609,16 @@ pub(super) async fn owner_start(
             .store
             .link_feature(station, feature::CAPTURE_RECORDING_MCP)
             == LinkFeature::Negotiated;
+    // R13 P7 §3.2: the opt-in and its scope go on to the caller station only
+    // when its link negotiated `desktop_input_mcp.v1`; the two caps never go
+    // on. A station that lacks the feature never sees the fields.
+    let input_link = allow_input
+        && board
+            .store
+            .link_feature(station, feature::DESKTOP_INPUT_MCP)
+            == LinkFeature::Negotiated;
+    spec.allow_input = input_link;
+    spec.input_scope = g.input_scope.filter(|_| input_link);
     spec.grant_id = g.grant_id;
     spec.idle_ttl_ms = u64::try_from(g.idle_ttl_ms).unwrap_or(0);
     spec.expires_at = g.expires_at;
@@ -591,7 +643,7 @@ fn desktop_features(
     caller: &StationId,
     classes: &std::collections::BTreeSet<GrantClass>,
     stations: &std::collections::BTreeSet<StationId>,
-    recording: bool,
+    (recording, input): (bool, bool),
 ) -> Result<(), ApiError> {
     let capture = classes.contains(&GrantClass::Capture);
     if !capture && !classes.contains(&GrantClass::Desktop) {
@@ -621,6 +673,12 @@ fn desktop_features(
     if recording {
         on_caller.push(feature::CAPTURE_RECORDING_MCP);
         on_target.push(feature::CAPTURE_RECORDING_MCP);
+    }
+    // R13 P7: an input allowance also needs `desktop_input_mcp.v1` on the
+    // caller's link and on every other station of the grant.
+    if input {
+        on_caller.push(feature::DESKTOP_INPUT_MCP);
+        on_target.push(feature::DESKTOP_INPUT_MCP);
     }
     let has_all = |station: &StationId, wanted: &[&str]| {
         wanted

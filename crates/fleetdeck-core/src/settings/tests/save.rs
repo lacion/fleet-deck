@@ -312,6 +312,13 @@ fn the_danger_rules() {
         .is_empty()
     );
     assert!(d("", "allow_desktop_capture = false").is_empty());
+    // Agent desktop input (R13 P7 §3.3): off to on is a danger change.
+    assert_eq!(
+        d("", "allow_desktop_input = true"),
+        vec!["allow_desktop_input"]
+    );
+    assert!(d("allow_desktop_input = true", "allow_desktop_input = false").is_empty());
+    assert!(d("", "allow_desktop_input = false").is_empty());
     // Screenshot monitors (R13 P5a): only a widening is a danger change.
     assert!(d("", "capture_monitors = [\"DP-1\"]").is_empty());
     assert_eq!(
@@ -486,6 +493,32 @@ fn turning_desktop_screenshots_on_needs_elevation_and_off_does_not() {
     let (saved, new, ()) = w.save(&off, false, ok_prepare).unwrap();
     assert!(!new.allow_desktop_capture);
     assert_eq!(saved.applied, vec!["allow_desktop_capture"]);
+}
+
+#[test]
+fn turning_agent_desktop_input_on_needs_elevation_and_off_does_not() {
+    let fx = Fixture::new(Some("name = \"box\"\n"));
+    let w = fx.writer();
+    let view = crate::settings::view_station(&fx.config, &fx.env, &fx.store, &[]).unwrap();
+    assert_eq!(view.values["allow_desktop_input"], json!(false));
+    let on = change_with(&view.revision, json!({ "allow_desktop_input": true }));
+    let err = w.save(&on, false, ok_prepare).unwrap_err();
+    assert_eq!(
+        err,
+        SaveError::ElevationRequired {
+            keys: vec!["allow_desktop_input".into()]
+        }
+    );
+    // The refused save wrote nothing.
+    assert!(!fx.text().contains("allow_desktop_input"), "{}", fx.text());
+    let (saved, new, ()) = w.save(&on, true, ok_prepare).unwrap();
+    assert!(new.allow_desktop_input);
+    assert_eq!(saved.applied, vec!["allow_desktop_input"]);
+    let view = crate::settings::view_station(&fx.config, &fx.env, &fx.store, &[]).unwrap();
+    let off = change_with(&view.revision, json!({ "allow_desktop_input": false }));
+    let (saved, new, ()) = w.save(&off, false, ok_prepare).unwrap();
+    assert!(!new.allow_desktop_input);
+    assert_eq!(saved.applied, vec!["allow_desktop_input"]);
 }
 
 #[test]

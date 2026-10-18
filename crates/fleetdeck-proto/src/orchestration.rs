@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::command::DeckCommandState;
+use crate::coordinator_spec::InputScope;
 use crate::event::ProviderKind;
 use crate::fleet_git::Prefer;
 use crate::ids::{CommandId, SessionId, StationId};
@@ -428,6 +429,30 @@ pub struct GrantView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub recording_second_used: Option<u32>,
+    /// R13 P7 §3.1: `Some(true)` only for a grant with the input allowance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub allow_input: Option<bool>,
+    /// The input scope; `Some` only with `allow_input`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub input_scope: Option<InputScope>,
+    /// The input action budget; `Some` only with `allow_input`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub input_cap: Option<u32>,
+    /// The input actions charged; `Some` only with `allow_input`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub input_used: Option<u32>,
+    /// The typed-character budget; `Some` only with `allow_input`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub input_character_cap: Option<u32>,
+    /// The typed characters charged; `Some` only with `allow_input`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub input_character_used: Option<u32>,
 }
 
 #[cfg(test)]

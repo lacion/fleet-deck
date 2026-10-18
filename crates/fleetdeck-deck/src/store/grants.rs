@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use fleetdeck_proto::command::GrantScope;
 use fleetdeck_proto::coordinator_desktop_text::limits;
+use fleetdeck_proto::coordinator_spec::InputScope;
 use fleetdeck_proto::mutation::{CommandAuthority, CoordinatorBinding};
 use fleetdeck_proto::{ProviderInstanceId, SessionId, StationId};
 use rusqlite::{Connection, OptionalExtension, Row, params};
@@ -61,16 +62,16 @@ pub enum GrantClass {
     Desktop,
     /// The coordinator screenshot tools (R13 P6 §2.1; fleet control, OD-3).
     Capture,
+    /// The coordinator input tools (R13 P7 §3.1; fleet control); implies no class.
+    Input,
 }
 
 impl GrantClass {
     /// True for the classes of fleet control (ADR-008 §2, R13 P6 OD-3).
     #[must_use]
     pub fn is_fleet_control(self) -> bool {
-        matches!(
-            self,
-            Self::Inspect | Self::Manage | Self::Answer | Self::Desktop | Self::Capture
-        )
+        use GrantClass::{Answer, Capture, Desktop, Input, Inspect, Manage};
+        matches!(self, Inspect | Manage | Answer | Desktop | Capture | Input)
     }
 
     /// True for the classes that change something; a session that holds an
@@ -125,6 +126,13 @@ pub struct NewGrant {
     pub recording_cap: u32,
     /// The recording seconds cap; 0 is no recording allowance.
     pub recording_second_cap: u32,
+    /// R13 P7 §3.1: the explicit input allowance (needs `desktop`, `capture`
+    /// and `input`), its scope (`create_grant` fills `own_windows`) and its
+    /// two caps (0 without `allow_input`).
+    pub allow_input: bool,
+    pub input_scope: Option<InputScope>,
+    pub input_cap: u32,
+    pub input_character_cap: u32,
 }
 
 impl NewGrant {
@@ -149,6 +157,10 @@ impl NewGrant {
             image_byte_cap: None,
             recording_cap: 0,
             recording_second_cap: 0,
+            allow_input: false,
+            input_scope: None,
+            input_cap: 0,
+            input_character_cap: 0,
         }
     }
 }
@@ -202,6 +214,14 @@ pub struct Grant {
     pub recording_second_cap: u32,
     /// The recording seconds that the grant charged, for good.
     pub recording_second_used: u32,
+    /// R13 P7 §3.1: the input allowance (false for every older grant), its
+    /// scope (`Some` only with it), the caps and the counters (for good).
+    pub allow_input: bool,
+    pub input_scope: Option<InputScope>,
+    pub input_cap: u32,
+    pub input_used: u32,
+    pub input_character_cap: u32,
+    pub input_character_used: u32,
 }
 
 impl Grant {
@@ -230,7 +250,8 @@ pub(crate) const GRANT_COLUMNS: &str = "grant_id, station_id, session_id, classe
     bound_generation, bound_native_id, bound_provider_instance, binding_id, last_used_at, \
     scope, answer_cap, answer_used, desktop_cap, desktop_used, capture_cap, capture_used, \
     image_byte_cap, image_byte_used, desktop_attempts, recording_cap, recording_used, \
-    recording_second_cap, recording_second_used";
+    recording_second_cap, recording_second_used, allow_input, input_scope, input_cap, input_used, \
+    input_character_cap, input_character_used";
 
 fn state_of(text: &str) -> GrantState {
     match text {
@@ -274,6 +295,13 @@ pub(crate) fn grant_row(r: &Row<'_>) -> rusqlite::Result<(Grant, String, String,
     let recording_used: i64 = r.get(29)?;
     let recording_second_cap: i64 = r.get(30)?;
     let recording_second_used: i64 = r.get(31)?;
+    let allow_input: i64 = r.get(32)?;
+    let input_scope: Option<String> = r.get(33)?;
+    let input: [i64; 4] = [r.get(34)?, r.get(35)?, r.get(36)?, r.get(37)?];
+    // The allowance and the scope are both durable facts: an unknown scope
+    // text or a missing scope is no allowance (fail closed).
+    let input_scope = (allow_input == 1 && input_scope.as_deref() == Some("own_windows"))
+        .then_some(InputScope::OwnWindows);
     Ok((
         Grant {
             grant_id,
@@ -310,6 +338,12 @@ pub(crate) fn grant_row(r: &Row<'_>) -> rusqlite::Result<(Grant, String, String,
             recording_used: u32::try_from(recording_used).unwrap_or(u32::MAX),
             recording_second_cap: u32::try_from(recording_second_cap).unwrap_or(0),
             recording_second_used: u32::try_from(recording_second_used).unwrap_or(u32::MAX),
+            allow_input: input_scope.is_some(),
+            input_scope,
+            input_cap: u32::try_from(input[0]).unwrap_or(0),
+            input_used: u32::try_from(input[1]).unwrap_or(u32::MAX),
+            input_character_cap: u32::try_from(input[2]).unwrap_or(0),
+            input_character_used: u32::try_from(input[3]).unwrap_or(u32::MAX),
         },
         r.get(3)?,
         r.get(4)?,
@@ -417,6 +451,37 @@ pub fn check_recording_caps(
     Ok(())
 }
 
+/// The rules of the input allowance of a new grant (R13 P7 §3.1), the same for
+/// the board request and for `create_grant`: the class rule, scope and caps
+/// need `allow_input`, then the ranges. The text is fixed and shows no value.
+///
+/// # Errors
+/// The fixed text of the first rule that fails.
+pub fn check_input_grant(
+    classes: &BTreeSet<GrantClass>,
+    allow_input: bool,
+    scope: Option<InputScope>,
+    (input_cap, input_character_cap): (u32, u32),
+) -> std::result::Result<(), &'static str> {
+    let all = [GrantClass::Desktop, GrantClass::Capture, GrantClass::Input];
+    if allow_input && !all.iter().all(|c| classes.contains(c)) {
+        return Err("allow_input needs the desktop, capture and input classes");
+    }
+    if !allow_input && scope.is_some() {
+        return Err("input_scope needs allow_input");
+    }
+    if !allow_input && (input_cap != 0 || input_character_cap != 0) {
+        return Err("input caps need allow_input");
+    }
+    if input_cap > limits::INPUT_CAP_MAX {
+        return Err("input_cap is 0 to 5000");
+    }
+    if input_character_cap > limits::INPUT_CHARACTER_CAP_MAX {
+        return Err("input_character_cap is 0 to 1000000");
+    }
+    Ok(())
+}
+
 impl DeckStore {
     /// Stores an owner-authorized grant (ADR-006 §4). The limits are
     /// checked here: cap ≤ 50, idle TTL ≤ 24 h, lifetime ≤ 7 days.
@@ -464,6 +529,12 @@ impl DeckStore {
             grant.recording_second_cap,
         )
         .map_err(|m| DeckError::Invalid(m.to_owned()))?;
+        let input = (grant.input_cap, grant.input_character_cap);
+        check_input_grant(&grant.classes, grant.allow_input, grant.input_scope, input)
+            .map_err(|m| DeckError::Invalid(m.to_owned()))?;
+        if grant.allow_input {
+            grant.input_scope.get_or_insert(InputScope::OwnWindows);
+        }
         if grant.classes.contains(&GrantClass::Desktop)
             || grant.classes.contains(&GrantClass::Capture)
         {
@@ -497,9 +568,10 @@ impl DeckStore {
                 "INSERT INTO tokens (grant_id, station_id, session_id, classes, stations,
                      spawn_cap, max_modes, idle_ttl_ms, created_at, expires_at, state,
                      start_command_id, scope, answer_cap, desktop_cap, capture_cap,
-                     image_byte_cap, recording_cap, recording_second_cap)
+                     image_byte_cap, recording_cap, recording_second_cap, allow_input,
+                     input_scope, input_cap, input_character_cap)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active', ?11, ?12, ?13,
-                     ?14, ?15, ?16, ?17, ?18)",
+                     ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
                 params![
                     grant_id,
                     grant.station_id.as_str(),
@@ -523,7 +595,11 @@ impl DeckStore {
                     // SQLite integers are signed 64-bit; the cap is at most 1 GiB.
                     grant.image_byte_cap.and_then(|c| i64::try_from(c).ok()),
                     grant.recording_cap,
-                    grant.recording_second_cap
+                    grant.recording_second_cap,
+                    grant.allow_input,
+                    grant.input_scope.map(|_| "own_windows"),
+                    grant.input_cap,
+                    grant.input_character_cap
                 ],
             )?;
             let stored = get_grant(&tx, &grant_id)?

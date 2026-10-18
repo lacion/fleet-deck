@@ -15,6 +15,8 @@ use crate::desktop::DesktopKind;
 use crate::display_directive::{ArtifactRef, SessionRef};
 use crate::recording::StopReason;
 
+pub use crate::coordinator_input::{KeyPressArguments, PointerMoveArguments, TypeTextArguments};
+
 /// A tool argument that failed validation: the name of the field only,
 /// never its value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,7 +24,7 @@ pub struct ArgError {
     pub field: &'static str,
 }
 
-const fn bad(field: &'static str) -> ArgError {
+pub(crate) const fn bad(field: &'static str) -> ArgError {
     ArgError { field }
 }
 
@@ -170,6 +172,12 @@ pub enum DesktopCall {
     WindowClose(WindowCloseArguments),
     Screenshot(ScreenshotArguments),
     RecordMonitor(RecordMonitorArguments),
+    /// R13 P7 §4, §6.2 (feature `desktop_input_mcp.v1`).
+    KeyPress(KeyPressArguments),
+    /// R13 P7 §4, §6.2.
+    TypeText(TypeTextArguments),
+    /// R13 P7 §4, §6.2.
+    PointerMove(PointerMoveArguments),
 }
 
 /// A read tool of a coordinator (the payload of `coordinator.desktop_query`).
@@ -212,7 +220,7 @@ fn check_id(text: &str, field: &'static str) -> Result<(), ArgError> {
     }
 }
 
-fn check_request(text: &str) -> Result<(), ArgError> {
+pub(crate) fn check_request(text: &str) -> Result<(), ArgError> {
     if word(text, 64) {
         Ok(())
     } else {
@@ -220,7 +228,7 @@ fn check_request(text: &str) -> Result<(), ArgError> {
     }
 }
 
-fn check_station(station: Option<&String>) -> Result<(), ArgError> {
+pub(crate) fn check_station(station: Option<&String>) -> Result<(), ArgError> {
     station.map_or(Ok(()), |s| check_id(s, "station"))
 }
 
@@ -306,6 +314,9 @@ impl DesktopCall {
                     Err(bad("seconds"))
                 }
             }
+            Self::KeyPress(a) => a.validate(),
+            Self::TypeText(a) => a.validate(),
+            Self::PointerMove(a) => a.validate(),
         }
     }
 }

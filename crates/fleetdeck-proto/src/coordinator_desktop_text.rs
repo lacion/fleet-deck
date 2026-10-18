@@ -57,6 +57,38 @@ pub mod code {
     pub const RECORDING_CAP_REACHED: &str = "recording_cap_reached";
     /// R13 P5b §16: the grant used its recording seconds.
     pub const RECORDING_SECONDS_REACHED: &str = "recording_seconds_reached";
+    /// R13 P7 §13: the grant has the input class but no input allowance.
+    pub const INPUT_NOT_ALLOWED: &str = "input_not_allowed";
+    /// R13 P7 §13: an owner grant request names an unsupported input scope.
+    pub const INPUT_SCOPE_UNSUPPORTED: &str = "input_scope_unsupported";
+    /// R13 P7 §13: `wtype` is not installed on the target.
+    pub const INPUT_TOOL_MISSING: &str = "input_tool_missing";
+    /// R13 P7 §13: the target desktop cannot use `wtype`.
+    pub const INPUT_TOOL_UNSUPPORTED: &str = "input_tool_unsupported";
+    /// R13 P7 §13: the target window is a board or wall window.
+    pub const INPUT_BOARD_FORBIDDEN: &str = "input_board_forbidden";
+    /// R13 P7 §13: the grant used its input action count.
+    pub const INPUT_CAP_REACHED: &str = "input_cap_reached";
+    /// R13 P7 §13: the grant used its typed-character count.
+    pub const INPUT_CHARACTERS_REACHED: &str = "input_characters_reached";
+    /// R13 P7 §13: the pointer destination is not inside the preview.
+    pub const INPUT_DESTINATION_UNAVAILABLE: &str = "input_destination_unavailable";
+    /// R13 P7 §13: the focus of the preview could not be verified.
+    pub const INPUT_FOCUS_UNKNOWN: &str = "input_focus_unknown";
+    /// R13 P7 §13: the preview lost focus.
+    pub const FOCUS_CHANGED: &str = "focus_changed";
+    /// R13 P7 §13: the input was interrupted.
+    pub const INPUT_INTERRUPTED: &str = "input_interrupted";
+    /// R13 P7 §7.6, §13: the board API answer (401) that signs a browser out
+    /// because an agent typed on its machine.
+    pub const SIGNED_OUT_FOR_INPUT: &str = "signed_out_for_input";
+    /// R13 P7 §7.6: the board API answer (403) to a sign-in from an address
+    /// where an agent is typing.
+    pub const SIGN_IN_BLOCKED_FOR_INPUT: &str = "sign_in_blocked_for_input";
+    /// R13 P7 §13: the input tool failed.
+    pub const INPUT_FAILED: &str = "input_failed";
+    /// R13 P7 §13: the input did not finish in time.
+    pub const INPUT_TIMEOUT: &str = "input_timeout";
 }
 
 /// The exact text of an error code of §11.1, or of a relay code of §11.2.
@@ -115,9 +147,52 @@ pub fn text(code: &str) -> Option<&'static str> {
         code::RECORDING_NOT_ALLOWED => "This grant does not allow monitor recordings.",
         code::RECORDING_CAP_REACHED => "This grant has used its recording limit.",
         code::RECORDING_SECONDS_REACHED => "This grant has used its recording time limit.",
+        code::INPUT_NOT_ALLOWED => "This grant does not allow desktop input.",
+        code::INPUT_SCOPE_UNSUPPORTED => {
+            "This build supports input only in this caller's preview windows."
+        }
+        code::INPUT_TOOL_MISSING => {
+            "The keyboard input tool wtype is not installed on the target station."
+        }
+        code::INPUT_TOOL_UNSUPPORTED => {
+            "The target desktop cannot use the configured keyboard input tool."
+        }
+        code::INPUT_BOARD_FORBIDDEN => {
+            "Fleet Deck board and wall windows cannot receive agent input."
+        }
+        code::INPUT_CAP_REACHED => "This grant has used its input action limit.",
+        code::INPUT_CHARACTERS_REACHED => "This grant has used its typed-character limit.",
+        code::INPUT_DESTINATION_UNAVAILABLE => {
+            "The pointer destination is not available inside this preview."
+        }
+        code::INPUT_FOCUS_UNKNOWN => {
+            "The preview's input focus could not be verified. Input was not started."
+        }
+        code::FOCUS_CHANGED => {
+            "The preview no longer has focus. Input stopped; some input may already have been sent."
+        }
+        code::INPUT_INTERRUPTED => {
+            "Input was interrupted. Some input may already have been sent. Do not retry automatically."
+        }
+        code::SIGNED_OUT_FOR_INPUT => {
+            "You were signed out because an agent typed on the station where this board is open."
+        }
+        code::SIGN_IN_BLOCKED_FOR_INPUT => {
+            "An agent is typing on this station. Sign in again in a minute."
+        }
+        code::INPUT_FAILED => {
+            "The input tool failed. Some input may already have been sent. Do not retry automatically."
+        }
+        code::INPUT_TIMEOUT => {
+            "Input did not finish in time. Some input may already have been sent. Do not retry automatically."
+        }
         _ => return None,
     })
 }
+
+/// R13 P7 §13: the fixed explanatory text of an unknown durable input outcome.
+pub const INPUT_OUTCOME_UNKNOWN_TEXT: &str =
+    "The input outcome is unknown. Inspect the preview before issuing another input request.";
 
 /// The budgets, rates and size limits of §8.1, §8.2 and §4.9.
 pub mod limits {
@@ -180,6 +255,22 @@ pub mod limits {
     pub const RECORDING_SECOND_CAP_DEFAULT: u32 = 600;
     /// R13 P5b-2 §13.2: the highest `recording_second_cap`.
     pub const RECORDING_SECOND_CAP_MAX: u32 = 600_000;
+    /// R13 P7 §9.1: the default `input_cap` of a grant with `allow_input`.
+    pub const INPUT_CAP_DEFAULT: u32 = 100;
+    /// R13 P7 §9.1: the highest `input_cap`.
+    pub const INPUT_CAP_MAX: u32 = 5000;
+    /// R13 P7 §9.1: the default `input_character_cap` of a grant with
+    /// `allow_input`.
+    pub const INPUT_CHARACTER_CAP_DEFAULT: u32 = 20_000;
+    /// R13 P7 §9.1: the highest `input_character_cap`.
+    pub const INPUT_CHARACTER_CAP_MAX: u32 = 1_000_000;
+    /// R13 P7 §9.3: new input mutations per grant in one window.
+    pub const INPUT_PER_GRANT_WINDOW: u32 = 20;
+    /// R13 P7 §9.3: new input mutations per caller session, across grants,
+    /// in one window.
+    pub const INPUT_PER_SESSION_WINDOW: u32 = 20;
+    /// R13 P7 §9.3: active input operations per target station.
+    pub const INPUT_PER_STATION_IN_FLIGHT: u32 = 1;
 }
 
 /// The total deadlines of §9, in milliseconds, from entry to the named
@@ -239,7 +330,7 @@ pub mod deadline_ms {
 mod tests {
     use super::*;
 
-    const CODES: [&str; 39] = [
+    const CODES: [&str; 54] = [
         code::NOT_BOUND,
         code::NOT_GRANTED,
         code::BINDING_STALE,
@@ -279,6 +370,21 @@ mod tests {
         code::RECORDING_NOT_ALLOWED,
         code::RECORDING_CAP_REACHED,
         code::RECORDING_SECONDS_REACHED,
+        code::INPUT_NOT_ALLOWED,
+        code::INPUT_SCOPE_UNSUPPORTED,
+        code::INPUT_TOOL_MISSING,
+        code::INPUT_TOOL_UNSUPPORTED,
+        code::INPUT_BOARD_FORBIDDEN,
+        code::INPUT_CAP_REACHED,
+        code::INPUT_CHARACTERS_REACHED,
+        code::INPUT_DESTINATION_UNAVAILABLE,
+        code::INPUT_FOCUS_UNKNOWN,
+        code::FOCUS_CHANGED,
+        code::INPUT_INTERRUPTED,
+        code::SIGNED_OUT_FOR_INPUT,
+        code::SIGN_IN_BLOCKED_FOR_INPUT,
+        code::INPUT_FAILED,
+        code::INPUT_TIMEOUT,
     ];
 
     #[test]
@@ -448,6 +554,66 @@ mod tests {
                 code::RECORDING_SECONDS_REACHED,
                 "This grant has used its recording time limit.",
             ),
+            (
+                code::INPUT_NOT_ALLOWED,
+                "This grant does not allow desktop input.",
+            ),
+            (
+                code::INPUT_SCOPE_UNSUPPORTED,
+                "This build supports input only in this caller's preview windows.",
+            ),
+            (
+                code::INPUT_TOOL_MISSING,
+                "The keyboard input tool wtype is not installed on the target station.",
+            ),
+            (
+                code::INPUT_TOOL_UNSUPPORTED,
+                "The target desktop cannot use the configured keyboard input tool.",
+            ),
+            (
+                code::INPUT_BOARD_FORBIDDEN,
+                "Fleet Deck board and wall windows cannot receive agent input.",
+            ),
+            (
+                code::INPUT_CAP_REACHED,
+                "This grant has used its input action limit.",
+            ),
+            (
+                code::INPUT_CHARACTERS_REACHED,
+                "This grant has used its typed-character limit.",
+            ),
+            (
+                code::INPUT_DESTINATION_UNAVAILABLE,
+                "The pointer destination is not available inside this preview.",
+            ),
+            (
+                code::INPUT_FOCUS_UNKNOWN,
+                "The preview's input focus could not be verified. Input was not started.",
+            ),
+            (
+                code::FOCUS_CHANGED,
+                "The preview no longer has focus. Input stopped; some input may already have been sent.",
+            ),
+            (
+                code::INPUT_INTERRUPTED,
+                "Input was interrupted. Some input may already have been sent. Do not retry automatically.",
+            ),
+            (
+                code::SIGNED_OUT_FOR_INPUT,
+                "You were signed out because an agent typed on the station where this board is open.",
+            ),
+            (
+                code::SIGN_IN_BLOCKED_FOR_INPUT,
+                "An agent is typing on this station. Sign in again in a minute.",
+            ),
+            (
+                code::INPUT_FAILED,
+                "The input tool failed. Some input may already have been sent. Do not retry automatically.",
+            ),
+            (
+                code::INPUT_TIMEOUT,
+                "Input did not finish in time. Some input may already have been sent. Do not retry automatically.",
+            ),
         ] {
             assert_eq!(text(c), Some(t), "{c}");
         }
@@ -476,6 +642,23 @@ mod tests {
         assert_eq!(limits::RECORDING_SECOND_CAP_DEFAULT, 600);
         assert_eq!(limits::RECORDING_SECOND_CAP_MAX, 600_000);
         assert_eq!(deadline_ms::RECORD_MCP_EXTRA, 45_000);
+        // R13 P7 §9: the input defaults are inside their ranges.
+        assert_eq!(limits::INPUT_CAP_DEFAULT, 100);
+        assert_eq!(limits::INPUT_CAP_MAX, 5000);
+        assert_eq!(limits::INPUT_CHARACTER_CAP_DEFAULT, 20_000);
+        assert_eq!(limits::INPUT_CHARACTER_CAP_MAX, 1_000_000);
+        assert_eq!(limits::INPUT_PER_GRANT_WINDOW, 20);
+        assert_eq!(limits::INPUT_PER_SESSION_WINDOW, 20);
+        assert_eq!(limits::INPUT_PER_STATION_IN_FLIGHT, 1);
+        const {
+            assert!(limits::INPUT_CAP_DEFAULT <= limits::INPUT_CAP_MAX);
+            assert!(limits::INPUT_CHARACTER_CAP_DEFAULT <= limits::INPUT_CHARACTER_CAP_MAX);
+            assert!(limits::INPUT_PER_GRANT_WINDOW <= limits::MUTATIONS_PER_WINDOW);
+        }
+        assert_eq!(
+            INPUT_OUTCOME_UNKNOWN_TEXT,
+            "The input outcome is unknown. Inspect the preview before issuing another input request."
+        );
         // §9: every MCP deadline is above its deck deadline.
         const {
             assert!(deadline_ms::AUTHORITY_CHECK >= deadline_ms::CALLER_POLICY);

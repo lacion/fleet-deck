@@ -764,6 +764,10 @@ pub fn migrations() -> Migrations<'static> {
         // V36 (R13 P5b-2 task Q-F): the recording caps of a grant and the
         // rebuild of `coordinator_desktop_ops` (`record_monitor`, `seconds`).
         M::up(super::coordinator_recording_schema::SQL),
+        // V37 (R13 P7 task F): the input allowance of a grant, the rebuild of
+        // `coordinator_desktop_ops` and `coordinator_desktop_rate`, the last
+        // address of a session, and the sign-out of every session.
+        M::up(super::coordinator_input_schema::SQL),
     ])
 }
 
