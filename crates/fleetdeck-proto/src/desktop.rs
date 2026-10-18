@@ -45,6 +45,18 @@ pub struct WallWindow {
     pub address: String,
 }
 
+/// A preview window that an agent opened on the station (R13 P6). It holds
+/// no address, no PID, no URL and no profile: `window_id` is the opaque
+/// handle of the station.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "desktop/")]
+pub struct PreviewWindow {
+    pub window_id: String,
+    pub monitor: Option<String>,
+    /// The label of the agent caller (at most 64 characters).
+    pub caller_label: String,
+}
+
 /// The live station settings of the desktop gates.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export_to = "desktop/")]
@@ -100,6 +112,10 @@ pub struct DesktopInfo {
     /// The station sends `[]`; the deck fills it (task E).
     #[serde(default)]
     pub features: Vec<String>,
+    /// The previews that agents opened for the deck that asks (R13 P6). The
+    /// station fills it only on a link with `desktop_mcp.v1`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub previews: Vec<PreviewWindow>,
 }
 
 /// The params of `desktop.info` (R13 §6D item 4). An empty object is
@@ -247,6 +263,11 @@ pub enum DesktopActBody {
         #[ts(type = "number")]
         seconds: serde_json::Number,
     },
+    /// R13 P6: the owner closes a preview that an agent opened (needs
+    /// `desktop_mcp.v1`).
+    PreviewClose {
+        window_id: String,
+    },
 }
 
 /// The response to `desktop.act`.
@@ -312,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn preview_close_has_its_wire_form_and_is_not_an_owner_body() {
+    fn preview_close_has_its_wire_form_in_both_enums() {
         let json = r#"{"action":"preview_close","window_id":"ab12"}"#;
         let a: DesktopAction = serde_json::from_str(json).unwrap();
         assert_eq!(
@@ -322,8 +343,15 @@ mod tests {
             }
         );
         assert_eq!(serde_json::to_string(&a).unwrap(), json);
-        // The owner's HTTP body does not offer it.
-        assert!(serde_json::from_str::<DesktopActBody>(json).is_err());
+        // The owner's HTTP body offers it too (R13 P6 follow-up).
+        let b: DesktopActBody = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            b,
+            DesktopActBody::PreviewClose {
+                window_id: "ab12".into()
+            }
+        );
+        assert_eq!(serde_json::to_string(&b).unwrap(), json);
         assert!(
             serde_json::from_str::<DesktopAction>(
                 r#"{"action":"preview_close","window_id":"a","address":"0x1"}"#
@@ -382,5 +410,39 @@ mod tests {
         let info: DesktopInfo = serde_json::from_str(json).unwrap();
         assert!(info.features.is_empty());
         assert!(info.allowed.capture_monitors.is_empty());
+    }
+
+    fn info_json(previews: &str) -> String {
+        format!(
+            r#"{{"kind":"omarchy","omarchy_version":null,"monitors":[],"locked":null,
+            "dnd":null,"idle_inhibited":null,"walls":[]{previews},
+            "allowed":{{"desktop":true,"capture":false,"input":false}},
+            "tools":{{"wtype":false,"pointer":false,"recorder":false,"grim":true,
+                     "chromium":false,"notify_send":false}}}}"#
+        )
+    }
+
+    #[test]
+    fn previews_are_absent_when_empty_and_parse_when_present() {
+        let info: DesktopInfo = serde_json::from_str(&info_json("")).unwrap();
+        assert!(info.previews.is_empty());
+        let v = serde_json::to_value(&info).unwrap();
+        assert!(!v.as_object().unwrap().contains_key("previews"));
+
+        let with = info_json(
+            r#","previews":[{"window_id":"w1","monitor":"DP-1","caller_label":"agent"}]"#,
+        );
+        let info: DesktopInfo = serde_json::from_str(&with).unwrap();
+        assert_eq!(
+            info.previews,
+            vec![PreviewWindow {
+                window_id: "w1".into(),
+                monitor: Some("DP-1".into()),
+                caller_label: "agent".into(),
+            }]
+        );
+        let v = serde_json::to_value(&info).unwrap();
+        assert_eq!(v["previews"][0]["window_id"], "w1");
+        assert_eq!(v["previews"][0]["monitor"], "DP-1");
     }
 }

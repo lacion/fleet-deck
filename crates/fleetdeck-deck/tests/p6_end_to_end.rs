@@ -12,6 +12,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod common;
+#[path = "p5b_support/mp4.rs"]
+mod mp4;
 mod p6_support;
 mod settings_support;
 
@@ -92,6 +94,144 @@ async fn a_remote_notification_and_preview_run_on_the_target_and_a_handle_closes
     let own = json!({"request_id": "c1", "station": b, "window_id": window});
     assert_eq!(w.mcp.call("window_close", own).await.ok(), json!({}));
     assert_eq!(closes(&w), 1);
+}
+
+/// R13 P6 follow-up (§6.4): the owner sees the preview that an agent opened
+/// in the answer of an owner screenshot (the capture path stamps the
+/// previews too), closes it on the board, and an unknown handle is the owner
+/// not-found answer, not a failure of the deck.
+#[tokio::test]
+async fn the_owner_sees_the_preview_of_an_agent_and_closes_it_on_the_board() {
+    let w = World::start().await;
+    let url = json!({"request_id": "p1", "station": w.to_b(), "url": "http://localhost:3000/"});
+    let window = w.mcp.call("preview_open", url).await.ok()["window_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (c, h) = w.deck().board().await;
+    p6_support::board::enable_desktop(&c);
+    w.b.grim(&png_of(4096, b"owner pixels "));
+    let shot = p6_support::board::owner_capture(&c, &h, "beta", "DP-1").await;
+    assert_eq!(shot.status, 200, "{}", shot.body);
+    assert_eq!(
+        shot.body["info"]["previews"],
+        json!([{"window_id": window, "monitor": null, "caller_label": "swift-fox"}]),
+        "{}",
+        shot.body
+    );
+    assert!(!shot.body.to_string().contains("0x"), "no address leaves");
+
+    let origin = format!("https://deck.tail1234.ts.net:{}", c.addr.port());
+    let mut headers = settings_support::refs(&h);
+    headers.push(("Origin", origin.as_str()));
+    let act = "/api/stations/beta/desktop/act";
+    let unknown = c
+        .post(
+            act,
+            &headers,
+            json!({"action": "preview_close", "window_id": "0".repeat(32)}),
+        )
+        .await;
+    assert_eq!(unknown.status, 404, "{}", unknown.body);
+    assert_eq!(unknown.code(), "desktop_not_found");
+    let closed = c
+        .post(
+            act,
+            &headers,
+            json!({"action": "preview_close", "window_id": window}),
+        )
+        .await;
+    assert_eq!(closed.status, 200, "{}", closed.body);
+    let sent = w.b.rig.calls_of("hyprctl");
+    let closes = sent
+        .iter()
+        .filter(|c| c.args.iter().any(|a| a == "closewindow"))
+        .count();
+    assert_eq!(closes, 1);
+    // The record goes with the window: the next answer lists nothing.
+    let again = c
+        .post(
+            act,
+            &headers,
+            json!({"action": "preview_close", "window_id": window}),
+        )
+        .await;
+    assert_eq!(again.status, 404, "{}", again.body);
+}
+
+/// The fake recorder of the P5b rig, put into the folder of a P6 rig: a
+/// `wf-recorder` that writes a clip to FD 3 and waits, and the `shim-exec`
+/// executable that moves stdin to FD 3 and runs the rest.
+fn add_recorder(root: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let write = |path: std::path::PathBuf, body: String| {
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    let d = root.display();
+    write(
+        root.join("bin/wf-recorder"),
+        format!(
+            "[ -e /proc/self/fd/3 ] || exit 9\n\
+             trap 'exit 0' INT\n\
+             /bin/cat {d}/fixture.mp4 >&3\n\
+             while :; do /bin/sleep 0.05; done"
+        ),
+    );
+    write(
+        root.join("shim.sh"),
+        "[ \"$1\" = shim-exec ] && [ \"$2\" = --parent ] || exit 3\n\
+         shift 3\n\
+         while [ \"$1\" != -- ]; do\n\
+           case \"$1\" in\n\
+             --fsize) shift;;\n\
+             --stdin-fd3) exec 3<&0 </dev/null;;\n\
+             *) exit 4;;\n\
+           esac\n\
+           shift\n\
+         done\n\
+         shift\n\
+         exec /usr/bin/setsid \"$@\""
+            .to_owned(),
+    );
+    std::fs::write(root.join("fixture.mp4"), mp4::clip(3440, 1440, 1)).unwrap();
+}
+
+/// The owner recording answer lists the previews too (the recording path
+/// stamps them like every owner answer).
+#[tokio::test]
+async fn the_owner_recording_answer_lists_the_previews_of_the_agents() {
+    let w = World::start().await;
+    let url = json!({"request_id": "p1", "station": w.to_b(), "url": "http://localhost:3000/"});
+    let window = w.mcp.call("preview_open", url).await.ok()["window_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    add_recorder(w.b.rig.dir.path());
+    let (c, h) = w.deck().board().await;
+    p6_support::board::enable_desktop(&c);
+    let origin = format!("https://deck.tail1234.ts.net:{}", c.addr.port());
+    let mut headers = settings_support::refs(&h);
+    headers.push(("Origin", origin.as_str()));
+    headers.push((
+        fleetdeck_proto::capture::CAPTURE_ID_HEADER,
+        p6_support::board::OWNER_CAPTURE,
+    ));
+    headers.push(("X-FleetDeck-Features", "artifacts_video.v1"));
+    let started = c
+        .post(
+            "/api/stations/beta/desktop/act",
+            &headers,
+            json!({"action": "screen_record", "monitor": "DP-1", "seconds": 1}),
+        )
+        .await;
+    assert_eq!(started.status, 200, "{}", started.body);
+    assert_eq!(
+        started.body["info"]["previews"],
+        json!([{"window_id": window, "monitor": null, "caller_label": "swift-fox"}]),
+        "{}",
+        started.body
+    );
 }
 
 // ------------------------------------------------------------ proofs 8 and 9

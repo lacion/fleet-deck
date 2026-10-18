@@ -385,6 +385,93 @@ async fn the_deck_checks_monitor_names_display_ids_and_the_session_station() {
 }
 
 #[tokio::test]
+async fn an_owner_preview_close_reaches_the_station_with_the_handle_and_an_audit_row() {
+    let (f, mut station, c, h) = setup().await;
+    enable(&c, true);
+    let st = f.station.0.clone();
+    let handle = "0123456789abcdef0123456789abcdef";
+    let (r, req) = exchange(
+        &c,
+        &h,
+        &mut station,
+        &st,
+        json!({ "action": "preview_close", "window_id": handle }),
+        ok(None),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(req.params["action"], "preview_close");
+    assert_eq!(req.params["window_id"], handle);
+    // An owner authority: no coordinator context, no quiet hours.
+    let a = authority(&req);
+    let node = f.station_node.identity.fingerprint().to_string();
+    let action = DesktopAction::PreviewClose {
+        window_id: handle.to_owned(),
+    };
+    assert_eq!(a.action_hash, action_hash(&action, &node));
+    assert_eq!(a.quiet_hours, None);
+    assert_eq!(a.coordinator, None);
+    assert_eq!(
+        c.audited("desktop.preview_close", AuditResult::Ok).await,
+        vec![None]
+    );
+}
+
+#[tokio::test]
+async fn an_owner_preview_close_on_a_link_without_the_mcp_feature_is_unsupported() {
+    let (f, mut station, c, h) = setup().await;
+    enable(&c, true);
+    let st = f.station.0.clone();
+    let body = json!({ "action": "preview_close", "window_id": "ab12" });
+    // Another link of the station that has the desktop features but not
+    // `desktop_mcp.v1`.
+    f.store.set_link_features(
+        &f.station,
+        98,
+        vec![
+            feature::DESKTOP.to_owned(),
+            feature::DESKTOP_AUTHORITY.to_owned(),
+        ],
+    );
+    expect(&call(&c, &h, &st, body).await, 409, "desktop_unsupported");
+    quiet(&mut station).await;
+    assert_eq!(
+        c.audited("desktop.preview_close", AuditResult::Refused)
+            .await,
+        vec![Some("desktop_unsupported".to_owned())]
+    );
+}
+
+#[tokio::test]
+async fn an_owner_preview_close_of_an_unknown_handle_is_the_owner_not_found_and_a_refusal() {
+    let (f, mut station, c, h) = setup().await;
+    enable(&c, true);
+    let st = f.station.0.clone();
+    // The station answers `not_found` with "The window is gone." for a
+    // handle that it does not know (or that belongs to another deck).
+    let (r, _) = exchange(
+        &c,
+        &h,
+        &mut station,
+        &st,
+        json!({ "action": "preview_close", "window_id": "00000000000000000000000000000000" }),
+        err("not_found", "The window is gone."),
+    )
+    .await;
+    expect(&r, 404, "desktop_not_found");
+    assert_eq!(
+        c.audited("desktop.preview_close", AuditResult::Refused)
+            .await,
+        vec![Some("desktop_not_found".to_owned())]
+    );
+    assert!(
+        c.audited("desktop.preview_close", AuditResult::Failed)
+            .await
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn the_audit_rows_name_the_action_and_the_station_and_never_a_text() {
     let (f, mut station, c, h) = setup().await;
     enable(&c, true);

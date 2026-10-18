@@ -448,7 +448,7 @@ async fn at_most_256_previews_are_kept_and_the_257th_removes_the_oldest() {
             .unwrap();
         let address = rx.await.unwrap();
         events
-            .register_preview(&format!("handle-{i}"), owner(), &address)
+            .register_preview(&format!("handle-{i}"), owner(), "label", &address)
             .unwrap();
         addresses.push(address);
     }
@@ -475,7 +475,7 @@ async fn at_most_256_previews_are_kept_and_the_257th_removes_the_oldest() {
 async fn a_preview_needs_a_window_record_of_its_address() {
     let events = Events::new();
     let e = events
-        .register_preview("handle", owner(), "0xdead")
+        .register_preview("handle", owner(), "label", "0xdead")
         .unwrap_err();
     assert_eq!(act_err(e), ("not_found", "The window is gone.".into()));
     assert!(events.preview("handle").is_none());

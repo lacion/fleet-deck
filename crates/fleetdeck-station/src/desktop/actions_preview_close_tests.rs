@@ -1,6 +1,5 @@
-//! The `preview_close` stub of R13 P6 task F1: the action has its log name
-//! and refuses with the same failure as a `window_close` of a window that
-//! Fleet Deck did not open, without a program. Task T2 replaces the stub.
+//! The log name of `preview_close` and the owner call without a deck: it
+//! finds no preview and runs no program (R13 P6).
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -19,7 +18,7 @@ fn the_action_has_its_log_name() {
 }
 
 #[tokio::test]
-async fn preview_close_is_refused_and_runs_no_program() {
+async fn an_owner_preview_close_without_a_deck_is_not_found_and_runs_no_program() {
     let rig = Rig::new(Opts::default());
     let e = run(
         &rig,
@@ -29,9 +28,6 @@ async fn preview_close_is_refused_and_runs_no_program() {
     )
     .await
     .unwrap_err();
-    assert_eq!(
-        act_err(e),
-        ("forbidden", "Fleet Deck did not open this window.".into())
-    );
+    assert_eq!(act_err(e), ("not_found", "The window is gone.".into()));
     assert!(rig.calls().is_empty());
 }

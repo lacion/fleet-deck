@@ -29,6 +29,7 @@ pub mod detect;
 pub mod env;
 pub mod events;
 pub mod info;
+mod preview_close;
 pub mod profile;
 pub mod quiet;
 #[doc(hidden)]
@@ -39,7 +40,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use fleetdeck_core::ChildEnv;
-use fleetdeck_proto::desktop::{DesktopActResult, DesktopAction, DesktopAllowed, DesktopInfo};
+use fleetdeck_proto::desktop::{
+    DesktopActResult, DesktopAction, DesktopAllowed, DesktopInfo, PreviewWindow,
+};
+use fleetdeck_proto::version::{Negotiated, feature};
 
 use detect::Found;
 use events::Events;
@@ -232,6 +236,17 @@ impl Desktop {
         }
     }
 
+    /// The previews that agents opened for the deck `deck_fp`, oldest first,
+    /// for a link with `negotiated` features: empty without `desktop_mcp.v1`.
+    #[must_use]
+    pub fn previews_for_link(&self, deck_fp: &str, negotiated: &Negotiated) -> Vec<PreviewWindow> {
+        if negotiated.has(feature::DESKTOP_MCP) {
+            self.events.previews_of(deck_fp)
+        } else {
+            Vec::new()
+        }
+    }
+
     /// `desktop.info`: the cached info, at most 10 s old.
     ///
     /// # Errors
@@ -265,9 +280,29 @@ impl Desktop {
         action: DesktopAction,
         admitted: authority::Admitted,
     ) -> Result<DesktopActResult, Fail> {
+        self.act_for_deck(gate, action, admitted, None).await
+    }
+
+    /// [`Desktop::act`] for an owner action that needs the deck of its link:
+    /// `deck_fp` is the fingerprint of that deck (the owner `preview_close`
+    /// finds the previews of this deck only).
+    ///
+    /// # Errors
+    /// As [`Desktop::act`].
+    pub async fn act_for_deck(
+        &self,
+        gate: Gate<'_>,
+        action: DesktopAction,
+        admitted: authority::Admitted,
+        deck_fp: Option<String>,
+    ) -> Result<DesktopActResult, Fail> {
         let name = actions::name(&action);
         let limit = self.limits().of(&action);
-        let result = match tokio::time::timeout(limit, self.act_inner(gate, action, admitted)).await
+        let result = match tokio::time::timeout(
+            limit,
+            self.act_inner(gate, action, admitted, deck_fp.as_deref()),
+        )
+        .await
         {
             Ok(result) => result,
             Err(_) => Err(Fail::new(code::FAILED, deadline::ACT_TIMEOUT)),
@@ -284,6 +319,7 @@ impl Desktop {
         gate: Gate<'_>,
         action: DesktopAction,
         admitted: authority::Admitted,
+        deck_fp: Option<&str>,
     ) -> Result<DesktopActResult, Fail> {
         let ctx = self.context().await?;
         if !gate() {
@@ -298,6 +334,7 @@ impl Desktop {
             walls: &self.walls,
             gate,
             start: &start,
+            deck_fp,
         };
         let (address, window_id) = cx.perform(action).await?;
         let info = self.fresh_info(&ctx, gate, true).await?;
@@ -337,6 +374,8 @@ mod detect_tests;
 mod dispatch_tests;
 #[cfg(test)]
 pub(crate) mod fake;
+#[cfg(test)]
+mod owner_preview_close_tests;
 #[cfg(test)]
 mod preview_tests;
 #[cfg(test)]

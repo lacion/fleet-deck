@@ -7,6 +7,7 @@ import { useState } from 'react';
 import type { DesktopActBody, DesktopInfo, StationView } from '../gen';
 import { useSettings } from '../settings/context';
 import { describe } from '../settings/http';
+import { AgentPreviews, closePreview } from './AgentPreviews';
 import { useCapture } from './CapturePanel';
 import { LinkForm, NotifyForm, type Run, WallOpenForm, WorkspaceForm } from './DesktopForms';
 import { useRecording } from './RecordPanel';
@@ -56,6 +57,22 @@ export function DesktopPanel({ station }: { readonly station: StationView }) {
     );
   };
   const run: Run = send;
+  const closeOne = (windowId: string) => {
+    setBusy(true);
+    setError(null);
+    setNote(null);
+    setConfirm(null);
+    closePreview(env.desktop, station.name, windowId, setInfo).then(
+      () => {
+        setBusy(false);
+        setNote('The preview is closed.');
+      },
+      (e: unknown) => {
+        setBusy(false);
+        setError(describe(e));
+      },
+    );
+  };
   const refresh = () => {
     setBusy(true);
     setError(null);
@@ -259,6 +276,7 @@ export function DesktopPanel({ station }: { readonly station: StationView }) {
           ))}
         </ul>
       )}
+      <AgentPreviews previews={shown.previews} busy={busy} onClose={closeOne} />
       {error === null ? null : (
         <p className="fd-fielderror" role="alert">
           {error}

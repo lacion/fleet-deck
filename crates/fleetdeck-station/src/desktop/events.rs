@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use fleetdeck_proto::SessionId;
-use fleetdeck_proto::desktop::WallWindow;
+use fleetdeck_proto::desktop::{PreviewWindow, WallWindow};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::{oneshot, watch};
@@ -150,6 +150,8 @@ struct PreviewEntry {
     /// The order of registration (the oldest has the smallest).
     seq: u64,
     owner: PreviewOwner,
+    /// The label of the caller at registration (for the owner's list).
+    caller_label: String,
     record: Record,
 }
 
@@ -285,7 +287,8 @@ impl Events {
     }
 
     /// Registers the preview `window_id` for the window at `address`: a
-    /// copy of the record of that window and its owner. At most
+    /// copy of the record of that window, its owner and the label of the
+    /// caller. At most
     /// [`MAX_PREVIEWS`] previews are kept; the oldest goes first.
     ///
     /// # Errors
@@ -294,6 +297,7 @@ impl Events {
         &self,
         window_id: &str,
         owner: PreviewOwner,
+        caller_label: &str,
         address: &str,
     ) -> Result<(), Fail> {
         let mut st = self.inner.lock();
@@ -312,9 +316,40 @@ impl Events {
         }
         st.preview_seq += 1;
         let seq = st.preview_seq;
-        st.previews
-            .insert(window_id.to_owned(), PreviewEntry { seq, owner, record });
+        st.previews.insert(
+            window_id.to_owned(),
+            PreviewEntry {
+                seq,
+                owner,
+                caller_label: caller_label.to_owned(),
+                record,
+            },
+        );
         Ok(())
+    }
+
+    /// The live previews of the deck `deck_fp`, oldest first. Each holds the
+    /// handle, the monitor and the label: no address and no profile.
+    #[must_use]
+    pub fn previews_of(&self, deck_fp: &str) -> Vec<PreviewWindow> {
+        let st = self.inner.lock();
+        let mut list: Vec<(u64, PreviewWindow)> = st
+            .previews
+            .iter()
+            .filter(|(_, p)| p.owner.deck_fp == deck_fp)
+            .map(|(id, p)| {
+                (
+                    p.seq,
+                    PreviewWindow {
+                        window_id: id.clone(),
+                        monitor: p.record.monitor.clone(),
+                        caller_label: p.caller_label.clone(),
+                    },
+                )
+            })
+            .collect();
+        list.sort_by_key(|(seq, _)| *seq);
+        list.into_iter().map(|(_, w)| w).collect()
     }
 
     /// The owner and the window record of the preview `window_id`.

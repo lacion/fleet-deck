@@ -31,6 +31,7 @@ fn info() -> DesktopInfo {
         utc_offset_minutes: None,
         offset_sampled_at: None,
         features: Vec::new(),
+        previews: Vec::new(),
     }
 }
 

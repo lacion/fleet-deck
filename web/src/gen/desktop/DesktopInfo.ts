@@ -3,6 +3,7 @@ import type { DesktopAllowed } from "./DesktopAllowed";
 import type { DesktopKind } from "./DesktopKind";
 import type { DesktopTools } from "./DesktopTools";
 import type { MonitorInfo } from "./MonitorInfo";
+import type { PreviewWindow } from "./PreviewWindow";
 import type { WallWindow } from "./WallWindow";
 
 /**
@@ -22,4 +23,9 @@ offset_sampled_at?: number | null,
  * The P5a features of this station that the deck and the link support.
  * The station sends `[]`; the deck fills it (task E).
  */
-features: Array<string>, };
+features: Array<string>, 
+/**
+ * The previews that agents opened for the deck that asks (R13 P6). The
+ * station fills it only on a link with `desktop_mcp.v1`.
+ */
+previews?: Array<PreviewWindow>, };
