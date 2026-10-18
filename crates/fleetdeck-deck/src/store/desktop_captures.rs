@@ -379,6 +379,25 @@ impl DeckStore {
             .await
     }
 
+    /// At deck start: every `prepared` row becomes `unknown` (§6.2). A row
+    /// is `attempted` before each send, so a `prepared` row after a restart
+    /// was never sent; it must not answer `pending` for ever, and it is
+    /// never sent again. Returns the number of rows.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn captures_prepared_to_unknown(&self) -> Result<usize> {
+        let now = self.now_ms();
+        call(&self.inner.db, move |conn| {
+            Ok(conn.execute(
+                "UPDATE desktop_captures SET state = 'unknown', updated_at = ?1
+                 WHERE state = 'prepared'",
+                params![now],
+            )?)
+        })
+        .await
+    }
+
     async fn capture_move(
         &self,
         station: StationId,

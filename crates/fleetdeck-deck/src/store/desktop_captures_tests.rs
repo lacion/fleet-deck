@@ -532,3 +532,16 @@ async fn a_capture_file_over_the_limit_is_not_cached() {
             .is_some()
     );
 }
+
+#[tokio::test]
+async fn a_prepared_row_becomes_unknown_at_deck_start_and_is_never_sent() {
+    let w = setup().await;
+    assert_eq!(prepare(&w, ID1, "h1").await, Prepared::New);
+    assert_eq!(w.s.captures_prepared_to_unknown().await.unwrap(), 1);
+    let Prepared::Existing(row) = prepare(&w, ID1, "h1").await else {
+        panic!("a repeat is Existing");
+    };
+    assert_eq!(row.state, CaptureState::Unknown);
+    assert!(!row.unresolved());
+    assert_eq!(w.s.captures_prepared_to_unknown().await.unwrap(), 0);
+}

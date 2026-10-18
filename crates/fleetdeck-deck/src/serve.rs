@@ -469,6 +469,10 @@ impl RunningDeck {
         );
         let artifact_deletions =
             crate::artifact_deletions::spawn(store.clone(), Arc::clone(node.link()), rx.clone());
+        // A screenshot row that a crash left before its send is unknown (P5a §6.2).
+        if let Err(e) = store.captures_prepared_to_unknown().await {
+            tracing::warn!(error = %e, "the unsent screenshot rows could not be closed");
+        }
         let desktop_captures =
             crate::desktop_capture::spawn(store.clone(), Arc::clone(node.link()), rx.clone());
         let scheduler = crate::scheduler::spawn(store.clone(), Arc::clone(node.link()), rx);
