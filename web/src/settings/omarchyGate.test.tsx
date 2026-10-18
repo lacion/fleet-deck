@@ -135,3 +135,21 @@ describe('the request gate of the card', () => {
     await acted;
   });
 });
+
+describe('a done action with warnings', () => {
+  test('runAction keeps the warnings of the station', async () => {
+    const warned: OmarchyActResult = {
+      ...done(),
+      message: 'fleetdeck: warning: plugin not enabled',
+    };
+    const actions = {
+      status: async () => status(),
+      act: async () => warned,
+    } as unknown as OmarchyActions;
+    expect(await runAction(actions, 'a', 'install', async () => 't')).toEqual({
+      kind: 'done',
+      status: warned.status,
+      message: 'fleetdeck: warning: plugin not enabled',
+    });
+  });
+});

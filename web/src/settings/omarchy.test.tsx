@@ -369,6 +369,7 @@ describe('runAction', () => {
     expect(await runAction(actions, 'a', 'install', async () => 't')).toEqual({
       kind: 'done',
       status: next,
+      message: null,
     });
   });
 

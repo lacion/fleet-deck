@@ -23,7 +23,17 @@ import {
 } from './omarchy';
 
 /** A failed action: its fixed text, and the message of the station as plain text. */
-export type Failure = { readonly text: string; readonly message: string | null };
+export type Failure = {
+  readonly text: string;
+  readonly message: string | null;
+  /** `warn` for a done action that printed warnings; `error` otherwise. */
+  readonly tone?: 'error' | 'warn';
+};
+
+/** The text above the warnings of a done action. */
+export const WARNINGS_TEXT = 'Done, with warnings from the station:';
+/** The pause after an action, so that a double click does not run the next button. */
+const SETTLE_MS = 1_000;
 
 type ViewProps = {
   readonly state: CardState;
@@ -168,7 +178,7 @@ export function OmarchyView({ state, busy, failure, onAct, onRetryRead }: ViewPr
         ))}
         {busy && state.status.running === null ? <p role="status">{WORKING_TEXT}</p> : null}
         {failure === null ? null : (
-          <div className="fd-set-notice" data-tone="error" role="alert">
+          <div className="fd-set-notice" data-tone={failure.tone ?? 'error'} role="alert">
             <span>{failure.text}</span>
             {failure.message === null ? null : <pre>{failure.message}</pre>}
           </div>
@@ -285,14 +295,24 @@ export function OmarchyCard({ station, actions: direct, ask, initial }: Props) {
       const mine = ++turn.current;
       const end = await runAction(actions, station, action, ask);
       if (!alive.current) return;
+      if (end.kind === 'cancelled') {
+        setBusy(false);
+        return;
+      }
+      // The buttons stay off for a moment: the next button appears where the
+      // pressed one was, and a double click must not press it.
+      await sleeper.current.sleep(SETTLE_MS);
+      if (!alive.current) return;
       setBusy(false);
-      if (end.kind === 'cancelled') return;
       if (end.kind === 'failed') {
         if (end.status !== null) show(end.status);
         setFailure({ text: end.text, message: end.message });
         return;
       }
       show(end.status);
+      if (end.kind === 'done' && end.message !== null) {
+        setFailure({ text: WARNINGS_TEXT, message: end.message, tone: 'warn' });
+      }
       if (end.kind === 'started') {
         await pollRetry(actions, station, {
           sleep: sleeper.current.sleep,

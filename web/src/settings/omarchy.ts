@@ -263,7 +263,7 @@ export function stateOfReadError(e: unknown): CardState {
 /** How an action ended, for the card. */
 export type ActEnd =
   | { readonly kind: 'cancelled' }
-  | { readonly kind: 'done'; readonly status: OmarchyStatus }
+  | { readonly kind: 'done'; readonly status: OmarchyStatus; readonly message: string | null }
   | { readonly kind: 'started'; readonly status: OmarchyStatus }
   | {
       readonly kind: 'failed';
@@ -304,7 +304,10 @@ export async function runAction(
       status: result.status,
     };
   }
-  return { kind: result.outcome, status: result.status };
+  if (result.outcome === 'done') {
+    return { kind: 'done', status: result.status, message: result.message };
+  }
+  return { kind: 'started', status: result.status };
 }
 
 /** The poll after `started`: every 5 s, for at most 10 min. */

@@ -93,7 +93,13 @@ impl OmarchyAdmin {
             OmarchyAction::ProvisionRetry => return (ActOutcome::Failed, Some(code::FAILED), None),
         };
         match self.run_tail(tail, limit).await {
-            Ok(RunResult::Exit { code: Some(0), .. }) => (ActOutcome::Done, None, None),
+            // A done action keeps the warnings of the command (for example a
+            // plugin step that failed), so that the card can show them.
+            Ok(RunResult::Exit {
+                code: Some(0),
+                stderr,
+                ..
+            }) => (ActOutcome::Done, None, clean_message(&stderr)),
             Ok(RunResult::Exit {
                 code: Some(1),
                 stderr,
