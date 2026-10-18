@@ -133,7 +133,7 @@ Add these method-table entries:
 | `desktop.capture_active` | deck → station | Admin | absent | `desktop_recording.v1` |
 | `desktop.capture_stop` | deck → station | Admin | absent | `desktop_recording.v1` |
 | `desktop.capture_policy_now` | deck → station | Read | absent | `desktop_recording.v1` |
-| `desktop.capture_lease` | station → deck | Read | absent | `desktop_recording.v1` |
+| `desktop.capture_lease` | station → deck | Admin (decision O12-17: the deck grants a paired station only `admin`, as for `display.directive`) | absent | `desktop_recording.v1` |
 
 `desktop.capture_stop` is an idempotent operation control, explicitly excluded from generic mutation receipts and outboxes. Its durable identity is the capture operation it controls.
 

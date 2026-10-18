@@ -136,15 +136,15 @@ pub fn active_path(st: &str) -> String {
     format!("/api/stations/{st}/desktop/recording")
 }
 
-/// The deck, a linked fake station and the owner. The pairing of a real
-/// station grants `admin` only, and the lease row needs `read`: the fake
-/// station gets both, so that the lease can be tested.
+/// The deck, a linked fake station and the owner. The fake station is
+/// paired as a real station is: with `admin` only (the lease row needs
+/// `admin`, decision O12-17).
 pub async fn rec_setup_with(f: Fixture) -> (Fixture, LiveLink, BoardClient, Headers) {
     f.store
         .pin_station(NewStation {
             key: f.station_node.identity.public_key(),
             name: "fake".to_owned(),
-            scopes: BTreeSet::from([Scope::Admin, Scope::Read]),
+            scopes: BTreeSet::from([Scope::Admin]),
             dial_url: None,
         })
         .await

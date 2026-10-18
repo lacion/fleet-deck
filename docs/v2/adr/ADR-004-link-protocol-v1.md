@@ -461,7 +461,7 @@ close             { reason, detail }
 | `desktop.capture_active` | deck → station | admin | `desktop_recording.v1` | no |
 | `desktop.capture_stop` | deck → station | admin | `desktop_recording.v1` | no |
 | `desktop.capture_policy_now` | deck → station | read | `desktop_recording.v1` | no |
-| `desktop.capture_lease` | station → deck | read | `desktop_recording.v1` | no |
+| `desktop.capture_lease` | station → deck | admin | `desktop_recording.v1` | no |
 | `files.display_changes` | deck → station | read | `display_changes.v1` | no |
 | `fleet.summary` | deck → station | read | `desktop_shell.v1` | no |
 | `approval.answer` | deck → station | approve | — | yes |

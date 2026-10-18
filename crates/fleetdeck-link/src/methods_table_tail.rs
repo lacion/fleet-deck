@@ -70,7 +70,8 @@ pub(crate) const TAIL: [MethodSpec; 47] = [
     m(
         "desktop.capture_lease",
         StationToDeck,
-        Scope::Read,
+        // The deck grants a station only `admin` (as `display.directive`).
+        Scope::Admin,
         Some(feature::DESKTOP_RECORDING),
         false,
     ),
