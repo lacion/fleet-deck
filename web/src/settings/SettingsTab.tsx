@@ -1,7 +1,7 @@
 // DL-172: one settings tab: the deck's own settings or the settings of one station. It loads the
 // view, keeps the edits, saves only the changed keys and shows what the deck answers.
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { DeckSession, SettingsSaved, SettingsView } from '../gen';
+import type { DeckSession, MonitorInfo, SettingsSaved, SettingsView } from '../gen';
 import type { ListWorkspaces } from '../ui/FolderPicker';
 import { Icon, RefreshCw } from '../ui/icons';
 import { DECK, type SettingsActions, type Target } from './actions';
@@ -38,6 +38,8 @@ type Props = {
   readonly live: boolean;
   readonly list?: ListWorkspaces | undefined;
   readonly sessions?: readonly DeckSession[] | undefined;
+  /** The monitors that the station reports; `undefined` when it reports no desktop. */
+  readonly monitors?: readonly MonitorInfo[] | undefined;
   readonly initial?: InitialTab;
   /** The Omarchy calls; the card shows only on a live station tab when this is set. */
   readonly omarchy?: OmarchyActions | undefined;
@@ -127,6 +129,7 @@ export function SettingsTab({
   live,
   list,
   sessions,
+  monitors,
   initial,
   omarchy,
 }: Props) {
@@ -411,6 +414,7 @@ export function SettingsTab({
         stationId={stationId}
         list={list}
         sessions={sessions}
+        monitors={monitors}
         savedIds={savedIds}
         secretBlocked={secretBlocked}
         onSecret={(instanceId, varName) =>

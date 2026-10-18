@@ -1,6 +1,6 @@
 // DL-172: the control of one settings field, by its kind. It shows the value it is given and
 // reports an edit; the form keeps the edits.
-import type { DeckSession, FieldMeta } from '../gen';
+import type { DeckSession, FieldMeta, MonitorInfo } from '../gen';
 import { FolderPicker, type ListWorkspaces } from '../ui/FolderPicker';
 import { Icon, Plus, X } from '../ui/icons';
 import { asNumber, asPairs, asStrings, asText } from './model';
@@ -15,6 +15,8 @@ export type EditorProps = {
   readonly stationId: string | null;
   readonly list?: ListWorkspaces | undefined;
   readonly sessions?: readonly DeckSession[] | undefined;
+  /** The monitors that the station reports; `undefined` when it reports no desktop. */
+  readonly monitors?: readonly MonitorInfo[] | undefined;
 };
 
 /** The rows of a list of texts: one input and "Remove" for each, then an "Add" button. */
@@ -68,6 +70,73 @@ function TextRows({
           onClick={() => onChange([...rows, ''])}
         >
           <Icon of={Plus} size={14} /> {addLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** The key of the field whose names are picked from the monitors of the station. */
+export const MONITOR_KEY = 'capture_monitors';
+
+/** One option text of a monitor: `<name> — <description>`, or only the name. */
+const monitorText = (m: MonitorInfo): string =>
+  m.description === '' ? m.name : `${m.name} — ${m.description}`;
+
+/** The rows of the monitor names: a drop-down of the station's monitors for each, then "Add". */
+function MonitorRows({
+  label,
+  rows,
+  onChange,
+  disabled,
+  monitors,
+}: {
+  readonly label: string;
+  readonly rows: readonly string[];
+  readonly onChange: (next: string[]) => void;
+  readonly disabled: boolean;
+  readonly monitors: readonly MonitorInfo[];
+}) {
+  const unused = monitors.find((m) => !rows.includes(m.name));
+  return (
+    <div className="fd-set-rows">
+      {rows.map((row, i) => (
+        <div className="fd-set-row" key={i}>
+          <select
+            aria-label={`${label} ${i + 1}`}
+            value={row}
+            disabled={disabled}
+            onChange={(e) => onChange(rows.map((r, at) => (at === i ? e.target.value : r)))}
+          >
+            {monitors.some((m) => m.name === row) ? null : (
+              <option value={row}>{`${row} (not connected)`}</option>
+            )}
+            {monitors.map((m) => (
+              <option key={m.name} value={m.name}>
+                {monitorText(m)}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="fd-ghost fd-sm"
+            disabled={disabled}
+            aria-label={`Remove ${label} ${i + 1}`}
+            onClick={() => onChange(rows.filter((_, at) => at !== i))}
+          >
+            <Icon of={X} size={14} /> Remove
+          </button>
+        </div>
+      ))}
+      <div>
+        <button
+          type="button"
+          className="fd-ghost fd-sm"
+          disabled={disabled || unused === undefined}
+          title={unused === undefined ? 'Every monitor is in the list.' : undefined}
+          onClick={() => unused !== undefined && onChange([...rows, unused.name])}
+        >
+          <Icon of={Plus} size={14} /> Add
         </button>
       </div>
     </div>
@@ -279,6 +348,7 @@ export function FieldEditor({
   stationId,
   list,
   sessions,
+  monitors,
 }: EditorProps) {
   switch (meta.kind) {
     case 'bool':
@@ -363,6 +433,17 @@ export function FieldEditor({
         />
       );
     case 'texts':
+      if (meta.key === MONITOR_KEY && monitors !== undefined && monitors.length > 0) {
+        return (
+          <MonitorRows
+            label={meta.label}
+            rows={asStrings(value)}
+            onChange={onChange}
+            disabled={disabled}
+            monitors={monitors}
+          />
+        );
+      }
       return (
         <TextRows
           label={meta.label}

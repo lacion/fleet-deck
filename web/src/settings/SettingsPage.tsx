@@ -117,6 +117,7 @@ export function SettingsPage({ route, stations, navigate, live, list, sessions }
           omarchy={env.omarchy}
           list={list}
           sessions={sessions}
+          monitors={station.info?.desktop?.monitors}
         />
       );
   } else if (route.tab === 'displays') {
