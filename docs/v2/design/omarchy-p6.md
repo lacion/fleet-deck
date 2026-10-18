@@ -1,6 +1,6 @@
 # P6: coordinator desktop tools and monitor screenshots
 
-- **Status:** proposed contract (2026-10-20, from the advisor answer `advisor-p6-answer.md`). The architect accepts the recommendations OD-1 to OD-7 (decision O12-1; the owner may change any of them). Adversary DESIGN REVIEW required before implementation.
+- **Status:** proposed contract (2026-10-20, from the advisor answer `advisor-p6-answer.md`; revised for DESIGN REVIEW round 1, decision O12-2). The architect accepts the recommendations OD-1 to OD-7 (decision O12-1; the owner may change any of them). Adversary DESIGN REVIEW required before implementation.
 - **Parent:** [omarchy.md](./omarchy.md), §§7.1–7.3, 7.5, 11 and 13.
 - **Prerequisites:** built P3 desktop relay and dispatch authority; built P5a screenshot, durable result, import, deletion and artifact paths.
 - **Authority model:** ADR-006 coordinator bindings and lifecycle, extended through ADR-008 grants.
@@ -20,7 +20,7 @@ These are proposed decisions, not previously accepted instructions. Implementati
 | **OD-3** | Whether desktop tools participate in the existing fleet-control kill switches. | Classify `desktop` and `capture` as fleet-control classes. Require `fleet_control`, caller `allow_fleet_control`, target `allow_fleet_control`, and the applicable desktop gates. |
 | **OD-4** | The drafted `terminal_open` cannot reuse the existing handover unchanged. | Defer it. P6 does not advertise or accept `terminal_open`; retain owner handover unchanged. |
 | **OD-5** | Meaning of remote capture and permission to read a saved image. | Permit pixels from the explicitly selected grant station. A capture grant may read only captures made by that same grant and caller. Current capture gates also govern subsequent MCP image reads. |
-| **OD-6** | Numeric action, capture, read and image budgets. | Accept §8, including a 1 MiB MCP PNG limit without resizing. A larger screenshot remains an ordinary owner-viewable artifact. |
+| **OD-6** | Numeric action, capture, read and image budgets. | Accept §8, including a 700 KiB (716,800-byte) MCP PNG limit without resizing (decision O12-2: one existing artifact chunk, so the image crosses each link hop in one frame). A larger screenshot remains an ordinary owner-viewable artifact. |
 | **OD-7** | Meaning of “own task” for coordinator wall references. | Use the caller and its spawn lineage, plus captures belonging to the same grant and caller. Do not let fleet scope alone authorize arbitrary wall references. |
 
 The remaining protocol details implement these choices; they are not separate requests for elevation or per-action approval.
@@ -422,20 +422,32 @@ Return a station-generated opaque `window_id`. Never return the compositor addre
 
 Accept only the opaque `window_id` returned for a preview.
 
-Extend the window record to bind:
+The target station keeps a preview record for each coordinator preview. It binds:
 
 ```text
 deck fingerprint
 grant ID
 caller station ID
 caller session ID
-window ID / launch ID
-existing compositor-instance, address, PID and class identity
+window ID (the opaque handle; 128 random bits, lowercase hex, 32 characters)
+existing compositor signature, address and class identity
 ```
 
-The target resolves the handle. It must belong to the same grant and caller. A renewal may retain ownership; a new grant does not inherit it.
+The existing window identity is the compositor signature, the address and the class. It has no PID: `desktop/events.rs` never uses one, and P6 adds none.
 
-Immediately before closing, retain the built fresh compositor identity check. Reconnects, event gaps and compositor changes retain their existing record-clearing behavior.
+The wire action is a new feature-gated variant of `DesktopAction` (needs `desktop_mcp.v1`; a coordinator authority only):
+
+```ts
+{ action: "preview_close"; window_id: string }
+```
+
+The deck never learns or sends the compositor address. The `action_hash` of §5.4 covers the serialized `preview_close` object with its `window_id`, so the handle is the logical identity of the action from admission to the final dispatch. The legacy `WindowClose { address }` action and its owner bytes stay unchanged; a coordinator authority with the legacy wire action `window_close` is refused. The MCP tool keeps the name `window_close`; the deck maps it to `preview_close`.
+
+After admission and the `execute` authority check, the target resolves the handle in its own preview records. The record must belong to the same grant (or its renewal) and the caller station and session of the coordinator context. A new grant does not inherit it.
+
+The preview records live on the target station, so a deck restart does not change them. A target restart, a compositor reconnect, an event gap or a compositor change clears them with the existing record-clearing behavior; a later close then gives `desktop_window_not_found`.
+
+Immediately before closing, retain the built fresh compositor identity check on the resolved signature, address and class. Reconnects, event gaps and compositor changes retain their existing record-clearing behavior.
 
 Never close an owner-opened window, another coordinator’s preview or a wall window through this tool. Unknown and foreign handles produce the same error.
 
@@ -586,7 +598,7 @@ Read through the existing protected artifact-file implementation and deletion ba
 
 Limits:
 
-- PNG bytes at most **1,048,576**.
+- PNG bytes at most **716,800** (700 KiB, `artifacts::MAX_CHUNK_BYTES`).
 - Existing P5a dimension limits.
 - No partial image, resizing, recompression, thumbnail, alternate file or external URL.
 - Reject oversized metadata before loading the file; enforce the cap again while reading.
@@ -605,7 +617,15 @@ The metadata text also states:
 
 Source identity is outside the image. This label does not make image content safe to follow.
 
-Base64 for a maximum-sized image is at most 1,398,104 characters. The complete serialized tool result must be at most **2,097,152 bytes**.
+Base64 for a maximum-sized image is at most 955,736 characters.
+
+Transport (one frame on each hop, no new chunk protocol):
+
+1. Target → deck: one `desktop.coordinator_read` `capture_file` answer with offset 0 and the full committed length (§5.7). It is one existing artifact chunk.
+2. Deck → caller station: one `coordinator.desktop_query` response with the metadata and the base64 PNG. Its complete serialized control frame must be at most **1,048,576 bytes** (`fleetdeck-proto/src/link.rs`). The deck checks the serialized size before it responds and refuses with `image_too_large` (and keeps the budget charge) if the frame is larger.
+3. Caller station → MCP client: the complete serialized tool result must be at most **1,048,576 bytes**.
+
+The deck reserves the image budget once, before step 1. The caller station decodes, checks the byte count and SHA-256 against the metadata, and emits nothing on a mismatch.
 
 Deletion, revocation and current policy are checked after awaited work and before either content block is emitted. Already delivered bytes and provider conversations cannot be recalled.
 
@@ -654,7 +674,7 @@ Add the following method-table rows:
 
 Capture variants additionally require `capture_mcp.v1` in handlers.
 
-Continue using `desktop.act` for actual notifications, previews, window closes and screenshots, with its existing Drive scope and `desktop_authority.v1` requirement.
+Continue using `desktop.act` for actual notifications, previews, preview closes (`preview_close`, §4.5) and screenshots, with its existing Drive scope and `desktop_authority.v1` requirement.
 
 `wall_show` commits a deck directive through the shared directive validation path; it does not invoke `desktop.act`.
 
@@ -718,11 +738,10 @@ Add an optional `coordinator` field to `DesktopAuthority`, omitted for owner and
   generation: number;
   caller_station: string;
   caller_session: string;
-  window_id: string | null;
 }
 ```
 
-`window_id` is non-null only for coordinator window closing.
+The window handle of a close is in the typed action (`preview_close`, §4.5), not in this context.
 
 For coordinator actions, `action_hash` is the SHA-256 of canonical compact JSON with these fields:
 
@@ -779,6 +798,8 @@ The handler rejects capture purpose without `capture_mcp.v1`.
 }
 ```
 
+For phase `read`, `operation_id` is the `read_id` and `action_hash` is the `read_hash` of §5.7. For phases `execute` and `import`, they are the action operation ID and the §5.4 action hash.
+
 The authenticated requesting station is the target. It cannot supply or substitute that identity.
 
 The deck resolves the operation or temporary read permit, validates the target, hash, phase and current authority, asks the caller station for live policy, repeats deck-local checks, and returns:
@@ -821,11 +842,31 @@ The five-second authority-check deadline includes the caller’s three-second po
         kind: "capture_file";
         artifact_id: string;
         version: 1;
-        offset: number;
-        length: number;
+        offset: 0;
+        length: number;   // the full committed byte count, at most 716,800
       };
+  read_hash: string;
 }
 ```
+
+One request is one read and one chunk. A `capture_file` read has offset 0 and the full committed length. The target refuses any other offset, and a length that is not the committed byte count.
+
+**Read-permit hash.** `read_hash` is the lowercase hex SHA-256 of canonical compact JSON (the existing canonical ordering rules of §5.4) with these fields:
+
+```json
+{
+  "coordinator": "<complete coordinator context object of §5.4>",
+  "kind": "read",
+  "link": "<the deck's current link ID of the target>",
+  "read": "<the serialized read object above>",
+  "read_id": "<read_id>",
+  "station": "<target node fingerprint>"
+}
+```
+
+The deck sends `read_hash`; the target does not recompute it. The target passes it unchanged to `desktop.authority_check` with `operation_id = read_id` and `phase = "read"`. The deck finds the temporary read permit by `read_id` and recomputes the hash from the permit, the authenticated requesting station and the current link. Any difference gives `valid: false` with `authority_lost`. The `"kind": "read"` field keeps a read hash apart from every action hash.
+
+`read_id` is 128 random bits in lowercase hex (32 characters), unique per read. A permit authorizes exactly one `authority_check` with phase `read` and one answer; a second use is refused.
 
 The deck registers a bounded temporary read permit before sending it. The permit binds:
 
@@ -840,7 +881,7 @@ The target checks that permit through `desktop.authority_check`, then its own li
 
 Reuse the existing desktop information, capture-operation lookup and artifact-file implementation internally. Do not fork their filesystem or tombstone logic.
 
-Capture-file chunks remain at most **700 KiB**. Validate requested offsets, lengths, returned offsets, decoded lengths and EOF. A response larger than requested or inconsistent with the version fails before accumulation.
+The capture-file answer is at most **700 KiB** (716,800 bytes). Validate the returned offset (0), the decoded length (equal to the committed byte count), EOF and the SHA-256. A response larger than requested or inconsistent with the version fails before any byte is kept.
 
 Temporary read permits expire with their query, are removed on completion or cancellation, and cannot authorize mutations.
 
@@ -993,7 +1034,7 @@ All figures in this section require **OD-6**.
 |---|---:|---:|---|
 | `desktop_cap` / `desktop_used` | 300 | 0–5000 | Every newly accepted mutation, including screenshots and wall directives |
 | `capture_cap` / `capture_used` | 20 | 0–5000 | Every newly accepted screenshot; also consumes one desktop action |
-| `image_byte_cap` / `image_byte_used` | 67,108,864 bytes | 0–1,073,741,824, in 1 MiB units | Reserve and permanently charge 1 MiB before each image fetch |
+| `image_byte_cap` / `image_byte_used` | 67,108,864 bytes | 0–1,073,741,824, in 1 MiB units | Reserve and permanently charge 716,800 bytes (700 KiB) once before each image fetch |
 | Distinct well-formed mutation attempts | 10,000 | Fixed | New request keys that reach the authorized decision stage, accepted or rejected |
 
 The final row bounds durable request-key/rejection storage. Once reached, only known-key status/replay checks remain possible; a new grant requires the owner.
@@ -1137,7 +1178,7 @@ Pending/unknown durable capture states are normal status results, with the expla
 | `authority_unknown` | `Desktop authority could not be checked. No further desktop work was started.` |
 | `fleet_control_off` | `Fleet control is off on this deck.` |
 | `desktop_result_too_large` | `The desktop information exceeds the tool response limit.` |
-| `image_too_large` | `The screenshot exceeds the 1 MiB MCP image limit. Open the artifact on the board.` |
+| `image_too_large` | `The screenshot exceeds the 700 KiB MCP image limit. Open the artifact on the board.` |
 | `image_invalid` | `The screenshot artifact could not be verified.` |
 | `unknown_artifact` | `No such capture artifact is available to this grant.` |
 | `desktop_window_not_found` | `No window opened by this grant matches that handle.` |
@@ -1320,10 +1361,10 @@ P6 must not silently depend on recordings, input tools, a station-local setup co
 3. **Targeting:** omitted station means caller; explicit authorized remote station operates there; headless caller can operate a remote desktop.
 4. **Notifications:** exact argv, option-looking title/body, markup removal, prefix and final scalar limits; no critical urgency or click action.
 5. **Preview:** initial-host allowlist, IPv6, ports, exact tailnet hostname, fresh profile and returned opaque handle.
-6. **Window ownership:** same session ID on two stations, different grants on one station, renewed binding, unknown handle, compositor restart, event gap and reused address.
+6. **Window ownership:** same session ID on two stations, different grants on one station, renewed binding, unknown handle, substituted handle (another caller's `window_id` in a valid authority gives `desktop_window_not_found`), close after a deck restart (succeeds), compositor restart, event gap and reused address; a coordinator authority with the legacy `window_close` is refused.
 7. **Wall:** own/lineage session and artifact references; same-grant capture; ceiling narrowing; no binding change, URL, batch or unrelated reference.
 8. **Screenshot:** one selected monitor, fixed disclosure notification, P5a process/import behavior and correct remote caller provenance.
-9. **Image:** exact-cap PNG succeeds; cap+1 fails; metadata and image blocks match the one committed artifact; oversized delivery does not invalidate the artifact.
+9. **Image:** an exact-cap PNG (716,800 bytes) succeeds through both real link hops (target → deck → caller station) and the MCP result; cap+1 fails with `image_too_large`; metadata and image blocks match the one committed artifact; oversized delivery does not invalidate the artifact.
 10. **Accounting:** concurrent final-budget-slot races; duplicates charge once; screenshots charge both counters; renewal, restart, pruning and deletion do not refund usage.
 
 ### 15.2 Failure
@@ -1347,7 +1388,7 @@ P6 must not silently depend on recordings, input tools, a station-local setup co
 24. Give identical artifact IDs on two stations. Every lookup and cache key includes the stable station ID.
 25. Guess foreign request IDs, capture IDs, window handles, displays and artifact IDs. Responses do not reveal their existence.
 26. Put sentinel secrets in raw `DesktopInfo`, wall addresses, monitor descriptions, notification text, URL, stderr and native identity. They never appear in P6 responses, audit or logs.
-27. Test malformed/oversized chunk responses, base64 expansion, offsets, EOF, hash mismatch, wrong MIME/kind/version/file and substituted provenance. No partial image reaches MCP.
+27. Test malformed/oversized chunk responses, base64 expansion, offsets, EOF, hash mismatch, wrong MIME/kind/version/file and substituted provenance. No partial image reaches MCP. Read-permit fixtures: a fixed byte fixture of the `read_hash` input and output; the authority check refuses a changed read kind, resource, offset, length, link, station or coordinator context, and a second use of a `read_id`.
 28. Test revocation and deletion immediately before response emission, including cache-hit paths.
 29. Restore a coordinator directive after revoke, generation change, task/lineage change, ceiling change and target-policy loss. No stale content is delivered.
 30. Ordinary artifact publication cannot forge capture provenance or gain `read_capture_image` eligibility.
@@ -1360,7 +1401,7 @@ P6 must not silently depend on recordings, input tools, a station-local setup co
 34. Byte fixtures prove unchanged legacy grant specs, owner/wake hashes, owner capture provenance and non-P6 policy requests.
 35. Unknown classes/context/provenance fail closed; coordinator authority is never stripped for compatibility.
 36. Fixed catalog survives reconnect and renewal; unsupported calls return the specified error.
-37. Both supported MCP protocol versions encode text and image results correctly within the total response limit.
+37. Each of the three supported MCP protocol versions (`2025-11-25`, `2025-06-18`, `2025-03-26`; `coordinator/jsonrpc.rs`) encodes text and image results correctly within the total response limit.
 38. Opt-in Claude and Codex smoke: authenticated discovery, remote notification/preview, screenshot artifact, image read, revoke and denial of the next action. All enablement and approvals occur from the board.
 
 Run targeted checks through:
