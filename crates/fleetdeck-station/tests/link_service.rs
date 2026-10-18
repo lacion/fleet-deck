@@ -110,6 +110,7 @@ async fn fixture_policy(shells: ShellConfig, policy: Policy) -> Fixture {
         shells: Arc::new(fleetdeck_station::shell::Shells::new(shells)),
         coordinator: fleetdeck_station::coordinator::LinkForward::default(),
         paste_dir: None,
+        summary: std::sync::Arc::default(),
         fleet_git: Arc::new(fleetdeck_station::fleet_git_runtime::FleetGitRuntime::new(
             Arc::new(fleetdeck_station::workspace::GitOptions::isolated),
         )),

@@ -34,6 +34,9 @@ pub mod artifact_share;
 /// The session history from the captured transcript (DL-189).
 pub mod history;
 
+/// The last fleet summary of the deck, in memory (R13 P4).
+pub mod fleet_summary;
+
 /// GitHub, GitLab, Jira and Linear (R3, DL-164).
 pub mod integrations;
 
@@ -45,6 +48,9 @@ pub mod link;
 
 /// The station-local control socket (M2 P2-7).
 pub mod local;
+
+/// The local socket op `fleet_summary` (R13 P4).
+pub mod local_summary;
 
 /// The session manager (PLAN §6.4, M2 P2-6).
 pub mod manager;

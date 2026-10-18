@@ -161,6 +161,7 @@ async fn fixture_with(policy: Policy) -> Fixture {
         shells: Arc::new(fleetdeck_station::shell::Shells::new(ShellConfig::default())),
         coordinator: fleetdeck_station::coordinator::LinkForward::default(),
         paste_dir: None,
+        summary: std::sync::Arc::default(),
         fleet_git: Arc::new(fleetdeck_station::fleet_git_runtime::FleetGitRuntime::new(
             Arc::new(fleetdeck_station::workspace::GitOptions::isolated),
         )),
@@ -364,16 +365,38 @@ fn the_desktop_shell_rows_are_in_the_feature_and_need_the_feature_to_be_called()
 }
 
 #[tokio::test]
-async fn fleet_summary_is_a_stub_that_answers_unsupported() {
+async fn fleet_summary_is_refused_with_forbidden_when_the_setting_is_off() {
     let _turn = ONE_AT_A_TIME.lock().await;
     let mut f = fixture().await;
     let deck = f.connect().await;
     let (code, message) = refused(call(&deck, "fleet.summary", json!({})).await);
-    assert_eq!(code, "unsupported");
+    assert_eq!(code, "forbidden");
+    assert_eq!(message, "The fleet summary is off on this station.");
+}
+
+#[tokio::test]
+async fn fleet_summary_with_the_setting_on_refuses_an_invalid_body_and_stores_a_valid_one() {
+    let _turn = ONE_AT_A_TIME.lock().await;
+    let on = Policy::new(Vec::new(), 4, OfflineApprovalPolicy::Wait, BTreeMap::new())
+        .with_fleet_summary(true);
+    let mut f = fixture_with(on).await;
+    let deck = f.connect().await;
+    let (code, message) = refused(call(&deck, "fleet.summary", json!({})).await);
+    assert_eq!(code, "invalid_params");
+    assert_eq!(message, "The fleet summary is not valid.");
+    assert_eq!(f.ctx.summary.read().summary, None, "nothing is stored");
+    let valid = json!({
+        "v": 1, "at": "2026-10-18T12:04:00Z", "board": null, "deck": "up",
+        "counts": {"working": 1, "idle": 0, "needs_you": 0, "blocked": 0, "lost": 0},
+        "needs_you": [], "usage": null, "stations": []
+    });
     assert_eq!(
-        message,
-        "The fleet summary is not served by this station build."
+        call(&deck, "fleet.summary", valid).await,
+        Outcome::Ok(json!({"ok": true}))
     );
+    let read = f.ctx.summary.read();
+    assert!(read.seq >= 1);
+    assert_eq!(read.summary.unwrap().at, "2026-10-18T12:04:00Z");
 }
 
 #[tokio::test]
