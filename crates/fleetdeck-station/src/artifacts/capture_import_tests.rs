@@ -13,12 +13,15 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use fleetdeck_proto::capture::{CaptureCaller, CaptureKind, CaptureProvenance, code, text};
 use fleetdeck_testkit::Det;
 
 use super::{DurableFs, SyncFs, discard, import_png};
 use crate::artifacts::ArtifactService;
+use crate::desktop::Fail;
+use crate::desktop::capture::MAX_PNG_BYTES;
 use crate::desktop::capture::Staging;
 use crate::manager::policy::Policy;
 use crate::manager::policy_hub::PolicyHub;
@@ -135,6 +138,12 @@ impl DurableFs for Recorder {
     }
 }
 
+/// The free-space check of a disk with room to spare.
+#[allow(clippy::unnecessary_wraps, reason = "the signature of the check")]
+fn open_room(_: &OwnedFd, _: u64) -> Result<(), Fail> {
+    Ok(())
+}
+
 fn source(bytes: &[u8]) -> File {
     let mut file = tempfile::tempfile().unwrap();
     file.write_all(bytes).unwrap();
@@ -167,7 +176,15 @@ fn the_import_copies_the_bytes_with_private_modes_and_syncs_in_the_contract_orde
     let (_tmp, data, root) = layout(true);
     let bytes: Vec<u8> = (0..200_000_u32).map(|n| (n % 251) as u8).collect();
     let rec = Recorder::default();
-    import_png(&root, ID, &mut source(&bytes), bytes.len() as u64, &rec).unwrap();
+    import_png(
+        &root,
+        ID,
+        &mut source(&bytes),
+        bytes.len() as u64,
+        &rec,
+        &open_room,
+    )
+    .unwrap();
     let dir = root.join(ID);
     assert_eq!(std::fs::read(dir.join("1/capture.png")).unwrap(), bytes);
     let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
@@ -198,7 +215,7 @@ fn the_import_copies_the_bytes_with_private_modes_and_syncs_in_the_contract_orde
 fn a_new_artifacts_folder_also_syncs_the_station_data_folder() {
     let (_tmp, data, root) = layout(false);
     let rec = Recorder::default();
-    import_png(&root, ID, &mut source(b"png"), 3, &rec).unwrap();
+    import_png(&root, ID, &mut source(b"png"), 3, &rec, &open_room).unwrap();
     let dir = root.join(ID);
     let known = [
         dir.join("1/capture.png"),
@@ -223,7 +240,7 @@ fn the_fault_hook_keeps_the_png_when_every_sync_ran() {
     for with_root in [true, false] {
         let (_tmp, data, root) = layout(with_root);
         let rec = Recorder::default();
-        import_png(&root, ID, &mut source(b"the png"), 7, &rec).unwrap();
+        import_png(&root, ID, &mut source(b"the png"), 7, &rec, &open_room).unwrap();
         rec.drop_unsynced(if with_root { &root } else { &data });
         assert_eq!(
             std::fs::read(root.join(ID).join("1/capture.png")).unwrap(),
@@ -238,7 +255,7 @@ fn the_fault_hook_drops_the_png_when_one_sync_is_missing() {
     for skip in 0..4 {
         let (_tmp, _data, root) = layout(true);
         let rec = Recorder::skipping(skip);
-        import_png(&root, ID, &mut source(b"the png"), 7, &rec).unwrap();
+        import_png(&root, ID, &mut source(b"the png"), 7, &rec, &open_room).unwrap();
         rec.drop_unsynced(&root);
         assert!(
             !root.join(ID).join("1/capture.png").exists(),
@@ -248,7 +265,7 @@ fn the_fault_hook_drops_the_png_when_one_sync_is_missing() {
     // The sync of `<data>/` matters when this import made `artifacts/`.
     let (_tmp, data, root) = layout(false);
     let rec = Recorder::skipping(4);
-    import_png(&root, ID, &mut source(b"the png"), 7, &rec).unwrap();
+    import_png(&root, ID, &mut source(b"the png"), 7, &rec, &open_room).unwrap();
     rec.drop_unsynced(&data);
     assert!(!root.exists());
 }
@@ -258,10 +275,10 @@ fn a_failed_sync_is_a_failed_import_and_discard_removes_the_partial_folder() {
     for at in 0..4 {
         let (_tmp, _data, root) = layout(true);
         let rec = Recorder::failing_at(at);
-        let r = import_png(&root, ID, &mut source(b"png"), 3, &rec);
+        let r = import_png(&root, ID, &mut source(b"png"), 3, &rec, &open_room);
         assert_eq!(fail_of(r), publish_failed(), "sync {at}");
         assert_eq!(rec.count(), at + 1, "no sync runs after the failed one");
-        discard(&root, ID);
+        discard(&root, ID).unwrap();
         assert!(!root.join(ID).exists());
         assert!(root.exists());
     }
@@ -272,7 +289,7 @@ fn the_import_refuses_an_existing_folder_a_linked_root_and_a_short_source() {
     let (_tmp, data, root) = layout(true);
     std::fs::create_dir(root.join(ID)).unwrap();
     std::fs::write(root.join(ID).join("keep"), b"x").unwrap();
-    let r = import_png(&root, ID, &mut source(b"png"), 3, &SyncFs);
+    let r = import_png(&root, ID, &mut source(b"png"), 3, &SyncFs, &open_room);
     assert_eq!(fail_of(r), publish_failed());
     assert!(
         root.join(ID).join("keep").exists(),
@@ -287,6 +304,7 @@ fn the_import_refuses_an_existing_folder_a_linked_root_and_a_short_source() {
         &mut source(b"png"),
         3,
         &SyncFs,
+        &open_room,
     );
     assert_eq!(fail_of(r), publish_failed());
     assert!(!root.join("01ARZ3NDEKTSV4RRFFQ69G5FAW").exists());
@@ -298,11 +316,12 @@ fn the_import_refuses_an_existing_folder_a_linked_root_and_a_short_source() {
         &mut source(b"ab"),
         3,
         &SyncFs,
+        &open_room,
     );
     assert_eq!(fail_of(r), publish_failed());
 
     for bad in ["", "..", "a/b"] {
-        let r = import_png(&root, bad, &mut source(b"png"), 3, &SyncFs);
+        let r = import_png(&root, bad, &mut source(b"png"), 3, &SyncFs, &open_room);
         assert_eq!(fail_of(r), publish_failed(), "{bad:?}");
     }
 }
@@ -406,7 +425,7 @@ async fn a_crash_before_the_file_move_fails_the_row_and_removes_the_staging() {
 async fn a_crash_after_the_file_move_before_the_commit_removes_the_folder() {
     let r = rig().await;
     start(&r, ID, "ART1").await;
-    import_png(&r.root, "ART1", &mut source(b"png"), 3, &SyncFs).unwrap();
+    import_png(&r.root, "ART1", &mut source(b"png"), 3, &SyncFs, &open_room).unwrap();
     // An ordinary folder with no version row is not swept.
     std::fs::create_dir_all(r.root.join("ORDINARY/1")).unwrap();
     std::fs::write(r.root.join("ORDINARY/1/a.html"), b"x").unwrap();
@@ -422,7 +441,7 @@ async fn a_crash_after_the_file_move_before_the_commit_removes_the_folder() {
 async fn a_crash_after_the_commit_loses_nothing_and_a_repeat_never_runs_again() {
     let r = rig().await;
     start(&r, ID, "ART1").await;
-    import_png(&r.root, "ART1", &mut source(b"png"), 3, &SyncFs).unwrap();
+    import_png(&r.root, "ART1", &mut source(b"png"), 3, &SyncFs, &open_room).unwrap();
     r.store
         .capture_commit(
             FP,
@@ -453,4 +472,160 @@ async fn a_crash_after_the_commit_loses_nothing_and_a_repeat_never_runs_again() 
         r.store.capture_get(FP, ID).await.unwrap().unwrap().state,
         CaptureState::Committed
     );
+}
+
+// ----- the free-space reserve of the import -----
+
+fn disk_full() -> (&'static str, String) {
+    (code::DISK_FULL, text::DISK_FULL.to_owned())
+}
+
+#[tokio::test]
+async fn a_refused_write_in_the_middle_of_the_copy_is_disk_full_and_the_reservation_waits_for_the_removal()
+ {
+    let r = rig().await;
+    start(&r, ID, "ART1").await;
+    let bytes = vec![7_u8; 200_000];
+    // The check passes for the first write and refuses the second one.
+    let calls = AtomicUsize::new(0);
+    let room = |_: &OwnedFd, n: u64| {
+        assert!(n <= 65_536, "a write is at most one copy buffer");
+        if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            Ok(())
+        } else {
+            Err(Fail::new(code::DISK_FULL, text::DISK_FULL))
+        }
+    };
+    let result = import_png(
+        &r.root,
+        "ART1",
+        &mut source(&bytes),
+        bytes.len() as u64,
+        &SyncFs,
+        &room,
+    );
+    assert_eq!(fail_of(result), disk_full());
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    let partial = std::fs::metadata(r.root.join("ART1/1/capture.png")).unwrap();
+    assert_eq!(partial.len(), 65_536, "only the first write happened");
+    // The cleanup order: the row fails, the folder goes, then the reservation.
+    r.store
+        .capture_fail(FP, ID, code::DISK_FULL, text::DISK_FULL)
+        .await
+        .unwrap();
+    let held = r.store.capture_get(FP, ID).await.unwrap().unwrap();
+    assert_eq!(held.state, CaptureState::Failed);
+    assert_eq!(held.reserved_bytes, MAX_PNG_BYTES);
+    discard(&r.root, "ART1").unwrap();
+    assert!(!r.root.join("ART1").exists());
+    r.store.capture_cleaned(FP, ID).await.unwrap();
+    let freed = r.store.capture_get(FP, ID).await.unwrap().unwrap();
+    assert_eq!(freed.reserved_bytes, 0);
+    assert!(!r.store.artifact_has_version("ART1").await.unwrap());
+}
+
+#[test]
+fn a_write_that_fails_with_enospc_is_disk_full() {
+    let dir = tempfile::tempdir().unwrap();
+    let fd = OwnedFd::from(File::open(dir.path()).unwrap());
+    let mut full = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .unwrap();
+    let result = super::copy(&mut source(b"png"), &mut full, 3, &fd, &open_room);
+    match result {
+        Err(super::ImportError::Fail(f)) => assert_eq!((f.code, f.message), disk_full()),
+        _ => panic!("expected disk_full"),
+    }
+}
+
+// ----- the durable cleanup of the recovery -----
+
+#[tokio::test]
+async fn a_crash_between_the_failure_and_the_removal_is_finished_by_the_next_recovery() {
+    let r = rig().await;
+    start(&r, ID, "ART1").await;
+    import_png(&r.root, "ART1", &mut source(b"png"), 3, &SyncFs, &open_room).unwrap();
+    // The failure was recorded, then the process died before the removal.
+    r.store
+        .capture_fail(FP, ID, code::CAPTURE_FAILED, text::CAPTURE_FAILED)
+        .await
+        .unwrap();
+    let held = r.store.capture_get(FP, ID).await.unwrap().unwrap();
+    assert_eq!(held.reserved_bytes, MAX_PNG_BYTES);
+    assert_eq!(r.store.captures_to_recover().await.unwrap().len(), 1);
+    r.service.ensure_recovered().await.unwrap();
+    assert!(!r.root.join("ART1").exists());
+    let row = r.store.capture_get(FP, ID).await.unwrap().unwrap();
+    assert_eq!(row.state, CaptureState::Failed);
+    assert_eq!(
+        row.code.as_deref(),
+        Some(code::CAPTURE_FAILED),
+        "the first failure is kept"
+    );
+    assert_eq!(row.reserved_bytes, 0);
+    assert!(r.store.captures_to_recover().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_removal_that_fails_keeps_the_reservation_and_the_next_recovery_retries() {
+    let r = rig().await;
+    start(&r, ID, "ART1").await;
+    let other = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    start(&r, other, "ART2").await;
+    // The folder of ART1 is a file, which the no-follow removal refuses.
+    std::fs::create_dir_all(&r.root).unwrap();
+    std::fs::write(r.root.join("ART1"), b"not a folder").unwrap();
+    import_png(&r.root, "ART2", &mut source(b"png"), 3, &SyncFs, &open_room).unwrap();
+    r.service.recover_captures().await.unwrap();
+    let stuck = r.store.capture_get(FP, ID).await.unwrap().unwrap();
+    assert_eq!(stuck.state, CaptureState::Failed);
+    assert_eq!(stuck.reserved_bytes, MAX_PNG_BYTES);
+    assert!(r.root.join("ART1").exists());
+    // The other row went on: its folder is gone and its reservation free.
+    assert!(!r.root.join("ART2").exists());
+    let done = r.store.capture_get(FP, other).await.unwrap().unwrap();
+    assert_eq!(done.reserved_bytes, 0);
+    let todo = r.store.captures_to_recover().await.unwrap();
+    assert_eq!(todo.len(), 1);
+    assert_eq!(todo[0].capture_id, ID);
+    // The cause goes away: the next start retries and frees the reservation.
+    std::fs::remove_file(r.root.join("ART1")).unwrap();
+    std::fs::create_dir(r.root.join("ART1")).unwrap();
+    std::fs::write(r.root.join("ART1/leftover"), b"x").unwrap();
+    r.service.recover_captures().await.unwrap();
+    assert!(!r.root.join("ART1").exists());
+    let freed = r.store.capture_get(FP, ID).await.unwrap().unwrap();
+    assert_eq!(freed.reserved_bytes, 0);
+    assert!(r.store.captures_to_recover().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_committed_artifact_is_never_removed_by_the_recovery() {
+    let r = rig().await;
+    start(&r, ID, "ART1").await;
+    import_png(&r.root, "ART1", &mut source(b"png"), 3, &SyncFs, &open_room).unwrap();
+    // A failed row that holds a reservation, for an artifact with a version.
+    r.store
+        .capture_fail(FP, ID, code::CAPTURE_FAILED, text::CAPTURE_FAILED)
+        .await
+        .unwrap();
+    r.store
+        .db()
+        .call(|conn| {
+            conn.execute_batch(
+                "INSERT INTO artifacts VALUES ('ART1', NULL, 't', 'image', 1, 'owner', 1, 1);
+                 INSERT INTO artifact_versions VALUES ('ART1', 1, 3, 's', 'm', '[]', 1, '{}');",
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    r.service.recover_captures().await.unwrap();
+    assert_eq!(
+        std::fs::read(r.root.join("ART1/1/capture.png")).unwrap(),
+        b"png"
+    );
+    let row = r.store.capture_get(FP, ID).await.unwrap().unwrap();
+    assert_eq!(row.reserved_bytes, 0);
 }
