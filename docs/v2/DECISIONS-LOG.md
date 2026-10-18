@@ -3217,3 +3217,34 @@ Owner review: pending.
   - d. The live smoke of `grim` on the owner's Omarchy machine is not done. The list is in `docs/v2/LIVE-SMOKE.md` (`make desktop-smoke`).
   - e. The PRE-PR review of P5a is pending.
 - Next: the PRE-PR review of P5a; the owner reads the new rows of `SECURITY-CHECKLIST.md` (DL-158); the live smoke on Omarchy.
+
+## DL-234: R13 P8 built (provisioning of a new Omarchy station) (architect, 2026-10-19)
+
+- Context: the owner accepted revision 11 of `docs/v2/design/omarchy-p8.md` (O11-4) and told the architect to start the P8 code. P8 adds a new Omarchy machine as a station with no manual step on that machine after its first login. The enrollment is the approval of the full station fingerprint on the board (DL-230 items 3 and 4).
+- What was built, in these tasks. Each merge is on v2:
+  - Task T1, `745d7324` (fix `dd997b8a`): `fleetdeck deck provision-file` and the private file writer in `fleetdeck-core`.
+  - Task T2, `6302e12a`: `fleetdeck station fingerprint [--json] [--probe-providers]`, the link readiness, the binary hash and the fresh provider probe.
+  - Task T4, `7cc619b4`: the board text of the pair request card: "Compare all 16 groups with the fingerprint shown on the new machine. Approve only if every group matches."
+  - Task T3a (merge `1cfdbf21`, fix `3b3bdaa1`): the core of the hidden `fleetdeck provision-bootstrap`: the durable state, the sequence and the retry table, over a fake `Effects`.
+  - Task T3b, `d884b8a8`: the real effects, the release trust check and the wiring of the hidden command.
+  - Task T5, `baf74753`: the first-login hook `/usr/lib/fleetdeck/provision-first-login` and `/etc/xdg/autostart/fleetdeck-provision.desktop`, in `packaging/omarchy/`.
+  - Task T6, `af4b635e`: the hidden `fleetdeck provision-import --source <absolute-path>` from a supported medium.
+  - Task T7 (this change): the documents: this entry, the status lines, `operations.md` section 15, the rows of `PARITY.md` and `SECURITY-CHECKLIST.md`, and the P8 part of `LIVE-SMOKE.md`.
+- Decisions. Each line is one record. The full text is in `omarchy-r11-decisions.md` of the architect's brief folder:
+  - P8-1: the split into T1 to T8 and D1 to D28 as proposed. D19: a station that does not answer within 60 s is retryable (retry after 30 s). D28: the custody section is `operations.md` section 14. D29 (option C, remote first): `denied`, `cancelled` and `revoked` retry after 600 s. `--retry` stays, but no outcome needs it. D30 is resolved by P4-7.
+  - P8-2 (T1 verification): `local_provision` is `pub mod`; `read_private` checks only the parent; the deck wraps the lookup in one 3 s timeout and every failure is `deck_not_listening`; a private path with a `..` component is unsafe (fix `dd997b8a`).
+  - P8-3 (T2 verification): no `mark_broken` test; the real-station test is in `crates/fleetdeck-cli/tests/station_fingerprint.rs`; readiness is unit-tested on `ReadyGuard`; `binary_hash` uses a static `OnceCell`.
+  - P8-4 (T3a questions): a `Terminal(&'static str)` type; `ring` as a dependency of the CLI crate; `Effects::trust_root`; `ensure_station_dir`; `unknown_error` for an unlisted code; fixed exit-1 lines.
+  - P8-5 (T3a verification): a hand-written `StateError`; `provision::sha256_hex`; the four-field build check; `set_phase` keeps the furthest phase (fix `3b3bdaa1`).
+  - P8-6 (T3b questions): `toml` as a normal dependency; `dirs.station_config()`; the core writer `write_new_shared_parent` (a 0755 parent is allowed, the file is 0600).
+  - P8-7 (T3b verification): `read_root_file` flags a symlink; one `ensure_private_dir` helper; `ask_fingerprint` checks a 64-hex `binary_sha256`; `private_file.rs` has 782 lines, so the next change must split it.
+  - P8-8 (T5 verification): the hook and the desktop entry as specified; extra tests for an unset `HOME` and an absolute `XDG_CONFIG_HOME`.
+  - P8-9 (T6 questions): `source_unreadable` for an open, `fstat`, `fstatfs` or read failure; `O_NONBLOCK` so that a FIFO cannot hang; an unreadable or oversize destination counts as different.
+  - P8-10 (T6 verification): an unknown config home gives `write_failed`; the integration test ran the real `fstatfs` on ext4.
+  - P8-11 (T8 disposition): there is no separate integration task. A binary run of `provision-bootstrap` always stops at `release_untrusted`, because the trusted manifest is root-owned in `/etc` and no override exists (D23), and the pairing needs Tailscale. T3a drives every sequence with a fake `Effects`. T3b tests each real effect. T1, T2, T5 and T6 test their commands through the binary. The real end-to-end run is a live-smoke item.
+- Open items:
+  - a. **Production acceptance waits for the release task of the owner:** the pinned `fleetdeck-bin` package, its SHA-256, the trusted `/etc/fleetdeck-provision-release.json`, and the installer image step that runs `pacman -U` and `provision-import`.
+  - b. The end-to-end run is a live-smoke item (P8-11). The list is in `docs/v2/LIVE-SMOKE.md` (`make desktop-smoke`).
+  - c. The PRE-PR review of P8 is pending.
+  - d. A terminal state of the bootstrap has no board path for its repair in this version (`operations.md` section 15.3).
+- Next: the PRE-PR review of P8; the owner reads the new rows of `SECURITY-CHECKLIST.md` (DL-158); the release task; the live smoke.

@@ -114,5 +114,52 @@ Result:
 | --- | --- | --- | --- |
 | (not run) | | | The live smoke of P5a on the owner's Omarchy machine is open (DL-233 item d). |
 
+### P8 provisioning (DL-234)
+
+Do this smoke after the release task of the owner. The release task supplies the pinned `fleetdeck-bin` package, its SHA-256, the trusted `/etc/fleetdeck-provision-release.json` and the installer image step. Before that task, a binary run of the bootstrap stops at `release_untrusted`, and P8-11 puts the real end-to-end run here.
+
+The steps are in `docs/v2/operations.md` section 15. After the first login of the new machine, every step is a board step. No step needs you at the new machine.
+
+Set up:
+
+1. On your deck machine, make the file: `fleetdeck deck provision-file <name> --deck <tailnet name>:7421 --out <private folder>/provision.toml`.
+2. Put the file on a supported medium as `fleetdeck/provision.toml`.
+3. Make sure that the new machine has its own Tailscale enrollment key and its own disk-encryption credential.
+
+Items:
+
+1. **A fresh machine from the medium.**
+   1. Install a fresh machine with the trusted installer image and the medium.
+   2. Expect the file `<config home>/fleetdeck/provision.toml` on the new machine, made by the image.
+   3. Log in. Expect no terminal window from the hook.
+2. **The notification.**
+   1. Expect a notification "Fleet Deck pairing" with the text "Approve this station fingerprint on the board:" and 16 groups of four characters.
+   2. Open the board. Stations, "Add station", "A computer on my tailnet", then "Add" on the row of the new machine.
+   3. Expect the request card "<name> asks to join this deck" with the text "Compare all 16 groups with the fingerprint shown on the new machine. Approve only if every group matches."
+   4. Compare the 16 groups on the card with the 16 groups in the notification. Write in the result that every group matched.
+3. **The approval.**
+   1. Select "Yes, the codes match. Add <name>". Sign in again when the board asks.
+   2. Expect the station on the board with its link up.
+4. **The providers.**
+   1. Open the station card. Expect the provider versions of the station.
+   2. A provider that is signed out is a warning only. A provider that is `broken` or `unknown` stops the bootstrap with `provider_probe_failed`.
+5. **The Omarchy integration.**
+   1. The bootstrap installs the Omarchy integration and checks its status as its last step.
+   2. Open the station card on the board. Expect the Desktop panel of the station. Write in the result what the board shows.
+6. **A refused pairing asks again.**
+   1. Use a machine that you have not approved yet.
+   2. When the request card shows, select "No, refuse".
+   3. Wait 10 minutes. Expect a new request card with the same 16 groups. Open the pairing window again when the board shows that it is closed.
+   4. Approve it. Expect the station on the board.
+7. **A clone test.**
+   1. Install two machines from one medium. Use a distinct Tailscale enrollment key and a distinct disk-encryption credential for each machine.
+   2. Expect two different fingerprints in the two notifications and on the two request cards.
+   3. Write both fingerprints in the result.
+Result:
+
+| Date | Machines | Items | Result |
+| --- | --- | --- | --- |
+| (not run) | | | The live smoke of P8 waits for the release task of the owner (DL-234 item b). |
+
 Task P4 I adds its items to this section later.
 <!-- desktop-smoke:end -->

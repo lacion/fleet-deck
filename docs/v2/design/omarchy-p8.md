@@ -1,6 +1,6 @@
 # P8: provisioning (revision 11)
 
-- **Status:** proposed (revision 11, 2026-10-18). Not implemented. Accepted by the architect as written (O11-1, O11-2) from the advisor answer on the P5/P8 DESIGN REVIEW round 1. The adversary DESIGN REVIEW round 3 (last) reviews this annex before the P8 code.
+- **Status:** built on v2 (DL-234); production acceptance waits for the owner's release task; PRE-PR review pending. Revision 11 (2026-10-18) was accepted by the architect as written (O11-1, O11-2) from the advisor answer on the P5/P8 DESIGN REVIEW round 1, and by the owner (O11-4).
 - **Parent:** [omarchy.md](./omarchy.md) (§9, §9A, §9B). This annex overrides §9 and §9A where they differ. DL-230 items 3 and 4 stay binding and unchanged.
 - **Sibling:** [omarchy-p5a.md](./omarchy-p5a.md).
 - **Code references:** each `file:line` points to the code at `c00eea8f`.
