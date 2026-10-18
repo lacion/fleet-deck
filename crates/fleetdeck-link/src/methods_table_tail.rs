@@ -33,7 +33,7 @@ const fn p5a_row(name: &'static str, feature: &'static str) -> MethodSpec {
 use Callers::{DeckToStation, Either, StationToDeck};
 
 /// The last rows of [`crate::methods::METHODS`].
-pub(crate) const TAIL: [MethodSpec; 47] = [
+pub(crate) const TAIL: [MethodSpec; 49] = [
     // Desktop control on the station (R13 P3): the board gates it for the
     // owner; the station checks `allow_desktop` live.
     m(
@@ -264,4 +264,8 @@ pub(crate) const TAIL: [MethodSpec; 47] = [
     mv("session.move_status", Scope::Read, false),
     mv("session.move_fail", Scope::Admin, false),
     mv("session.move_undo", Scope::Admin, true),
+    // Omarchy management from the board (`omarchy_admin.v1`): the station
+    // runs fixed `fleetdeck` subcommands; the deck keeps its own record.
+    p5a_row("omarchy.status", feature::OMARCHY_ADMIN),
+    p5a_row("omarchy.act", feature::OMARCHY_ADMIN),
 ];

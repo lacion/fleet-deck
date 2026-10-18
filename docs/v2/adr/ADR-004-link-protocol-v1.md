@@ -137,6 +137,7 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `desktop_mcp.v1` | `coordinator.desktop_call`, `coordinator.desktop_query`, `desktop.authority_check`, `desktop.policy_now`, `desktop.coordinator_read`, the `coordinator` context of a desktop authority, the `preview_close` desktop action, and the P6 extension of `coordinator.policy_now` (R13 P6, `omarchy-p6.md` §5; the coordinator desktop tools) |
 | `capture_mcp.v1` | The screenshot variants of the `desktop_mcp.v1` methods and the `coordinator` caller of a capture (R13 P6, `omarchy-p6.md` §4.6, §4.9; the coordinator screenshot tools and the bounded image read; needs `desktop_mcp.v1`) |
 | `desktop_recording.v1` | `desktop.capture_active`, `desktop.capture_stop`, `desktop.capture_policy_now`, `desktop.capture_lease`, and `desktop.act` with the `screen_record` action (R13 P5b, `omarchy-p5b.md` §3; the owner monitor recording, its progress, active discovery, owner stop, live policy query and continuation leases; no envelope) |
+| `omarchy_admin.v1` | Omarchy management from the board: `omarchy.status`, `omarchy.act` (design `omarchy-admin.md`) |
 | `artifacts_video.v1` | The `video` artifact kind, the `recording` capture provenance and metadata, and the HTTP video and `Range` contract of the deck (R13 P5b, `omarchy-p5b.md` §3.1, §11, §14; a peer without it receives `kind: "other"` and no recording provenance) |
 | `desktop_shell.v1` | `fleet.summary`, `display.directive`, `station.palette` (R13 P4, `omarchy-p4.md` §3.1; the fleet summary the deck sends to a station, the wall hotkeys and the Omarchy theme palette of the desktop shell) |
 | `pair_request.v1` | The pair-channel frames `pair_request`, `pair_pending`, `pair_approved` and `pair_resume` (DL-178, §10): a station asks a deck to pair without an invitation and the owner approves on the board |
@@ -505,6 +506,8 @@ close             { reason, detail }
 | `session.move_undo` | deck → station | admin | `fleet_git.move.v1` | yes |
 | `display.directive` | station → deck | admin | `desktop_shell.v1` | no |
 | `station.palette` | station → deck | admin | `desktop_shell.v1` | no |
+| `omarchy.status` | deck → station | admin | `omarchy_admin.v1` | no |
+| `omarchy.act` | deck → station | admin | `omarchy_admin.v1` | no |
 
 - **`workspace.list` (added in M2 P4-4, DL-061, under the extension rule of §3: "every new method must declare a scope and, if needed, a feature"):** the directory picker of the board's spawn form. It lists the sub-directories of a path inside the station's allowed roots (`WorkspaceQuery` → `WorkspaceListing`). It reads only, but it needs `drive` because only a caller that may start a session needs the station's directory names. Errors: `missing_workspace`, `outside_roots`, `timeout`.
 - **`workspace.worktrees` (DL-142; feature `workspace.worktrees.v1`):** `workspace.worktrees` (DL-142) is read only: it lists the worktrees that the station created for sessions, with what Git reports about each (dirty and ignored entries, commits on no fetched remote ref, registration, last commit). It runs no Git command that writes.

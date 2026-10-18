@@ -70,6 +70,10 @@ pub mod media;
 /// The session manager (PLAN §6.4, M2 P2-6).
 pub mod manager;
 
+/// Omarchy management: `omarchy.status`, `omarchy.act` and the screensaver
+/// tick (design `omarchy-admin.md`).
+pub mod omarchy_admin;
+
 /// Disk, memory and CPU for `station.info` (DL-193).
 pub mod resources;
 
