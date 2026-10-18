@@ -12,6 +12,7 @@ pub mod digits;
 pub mod fsx;
 pub mod hyprland;
 pub mod install;
+pub mod lock;
 pub mod record;
 pub mod screensaver;
 pub mod status;
@@ -30,7 +31,7 @@ use fleetdeck_station::desktop::run::{Out, Runner};
 use fleetdeck_station::local::{LocalRequest, LocalResponse};
 use serde_json::{Map, Value};
 
-use crate::cli_omarchy::OmarchyCommand;
+use crate::cli_omarchy::{OmarchyCommand, ScreensaverAction};
 use fsx::Home;
 
 /// The time limit of one external command.
@@ -166,6 +167,15 @@ pub async fn run(dirs: &NodeDirs, command: &OmarchyCommand) -> anyhow::Result<Ex
         OmarchyCommand::Uninstall => uninstall::run(dirs).await,
         OmarchyCommand::Status { json } => status::run(dirs, *json).await,
         OmarchyCommand::ThemeSync => theme_sync::run(dirs).await,
+        OmarchyCommand::Screensaver { action } => {
+            let home = open_home()?;
+            match action {
+                ScreensaverAction::On => screensaver::on(&home, lock::WAIT),
+                ScreensaverAction::Off => screensaver::off(&home, lock::WAIT),
+                ScreensaverAction::Rebaseline => screensaver::rebaseline(&home, lock::WAIT),
+            }
+        }
+        OmarchyCommand::ScreensaverTick => screensaver::tick(dirs).await,
     }
 }
 

@@ -7,7 +7,8 @@ use fleetdeck_core::paths::NodeDirs;
 
 use super::assets::{Base, HYPR_PATH};
 use super::fsx::Home;
-use super::record::{self, Record, rel, sha256_hex};
+use super::lock::{self, Take};
+use super::record::{self, LoadError, Record, rel, sha256_hex};
 use super::{TOOL_LIMIT, hyprland, omarchy_env, open_home, screensaver, set_summary, tool};
 
 const DISABLE: &str = "omarchy plugin disable fleetdeck.fleet";
@@ -72,12 +73,31 @@ fn remove_files(home: &Home, record: &Record) -> Vec<record::FileEntry> {
 /// # Errors
 /// The config home cannot be opened, or the record is not valid, or the
 /// record cannot be written or removed. Exit 1 (no error) when
-/// `fleet_summary` could not be turned off: the record stays.
+/// `fleet_summary` could not be turned off or the screensaver could not be
+/// restored: the record stays. Exit 1 also for a version 1 record, and when
+/// another Omarchy change runs.
 pub async fn run(dirs: &NodeDirs) -> anyhow::Result<ExitCode> {
     let home = open_home()?;
-    let Some(mut record) = record::load(&home)? else {
+    let nothing = || {
         println!("Nothing to remove: no install record was found.");
-        return Ok(ExitCode::SUCCESS);
+        Ok(ExitCode::SUCCESS)
+    };
+    let _guard = match lock::take(&home, lock::WAIT, false)? {
+        Take::Held(guard) => guard,
+        Take::Busy => {
+            eprintln!("{}", lock::BUSY);
+            return Ok(ExitCode::from(1));
+        }
+        Take::NoLockFile => return nothing(),
+    };
+    let mut record = match record::load_current(&home) {
+        Ok(Some(record)) => record,
+        Ok(None) => return nothing(),
+        Err(LoadError::Outdated) => {
+            eprintln!("{}", record::OUTDATED);
+            return Ok(ExitCode::from(1));
+        }
+        Err(e) => return Err(e.into()),
     };
     let env = omarchy_env();
 
@@ -118,7 +138,13 @@ pub async fn run(dirs: &NodeDirs) -> anyhow::Result<ExitCode> {
     // The setting that install turned on is still on: the record stays.
     let pending = record.fleet_summary_set_by_install;
 
-    screensaver::restore(&home, &mut record);
+    // A failed restore counts like a pending revocation: the record stays,
+    // with the screensaver part unchanged (the restore printed the error).
+    let restore_failed = screensaver::restore(&home, &mut record).is_err();
+    if !restore_failed {
+        record.screensaver.enabled = false;
+        screensaver::report_backup(&home);
+    }
 
     record.files = kept;
     record.hyprland_line = record::HyprlandLine::default();
@@ -126,7 +152,7 @@ pub async fn run(dirs: &NodeDirs) -> anyhow::Result<ExitCode> {
     record.menu_file_written = record
         .entry(Base::Omarchy, super::assets::MENU_PATH)
         .is_some();
-    if record.files.is_empty() && !pending {
+    if record.files.is_empty() && !pending && !restore_failed {
         home.remove(Path::new(record::RECORD_PATH))?;
         println!("Fleet Deck is removed from Omarchy.");
     } else {
@@ -135,8 +161,8 @@ pub async fn run(dirs: &NodeDirs) -> anyhow::Result<ExitCode> {
             println!("Some files stay; the record stays with them.");
         }
     }
-    // A pending revocation is an incomplete teardown.
-    Ok(if pending {
+    // A pending revocation or a failed restore is an incomplete teardown.
+    Ok(if pending || restore_failed {
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS

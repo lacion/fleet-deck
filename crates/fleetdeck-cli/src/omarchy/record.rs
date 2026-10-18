@@ -1,6 +1,7 @@
 //! The install record `<fd>/omarchy-install.json` (R13 P4 task C,
-//! `omarchy-p4.md` §3.4, decisions P4-7 and P4-13). Mode 0600, rewritten
-//! atomically after each file.
+//! `omarchy-p4.md` §3.4, decisions P4-7 and P4-13; version 2 in
+//! `omarchy-admin.md` §3.6). Mode 0600, rewritten atomically after each
+//! file.
 
 use std::path::{Path, PathBuf};
 
@@ -23,13 +24,29 @@ pub struct FileEntry {
     pub existed_before: bool,
 }
 
-/// The screensaver part (the job is task G).
+/// How the last restore of the screensaver file ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Restored {
+    /// The backup was copied over the file.
+    Backup,
+    /// The file was removed (there was no original).
+    Removed,
+}
+
+/// The screensaver part.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Screensaver {
     pub enabled: bool,
     pub had_original: bool,
     pub backup_sha256: Option<String>,
     pub last_written_sha256: Option<String>,
+    /// The first write was refused because a kept backup differs from the
+    /// current file.
+    #[serde(default)]
+    pub first_write_refused: bool,
+    #[serde(default)]
+    pub restored: Option<Restored>,
 }
 
 /// The managed line of `hyprland.lua` (decision P4-7).
@@ -56,13 +73,16 @@ pub struct Record {
     pub screensaver: Screensaver,
     #[serde(default)]
     pub hyprland_line: HyprlandLine,
+    /// Unix milliseconds; set only when install converts a version 1 record.
+    #[serde(default)]
+    pub converted_at: Option<i64>,
 }
 
 impl Record {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            v: 1,
+            v: 2,
             fleetdeck_version: fleetdeck_core::build::version().to_owned(),
             files: Vec::new(),
             plugin_enabled: false,
@@ -70,6 +90,7 @@ impl Record {
             menu_file_written: false,
             screensaver: Screensaver::default(),
             hyprland_line: HyprlandLine::default(),
+            converted_at: None,
         }
     }
 
@@ -111,6 +132,16 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
         })
 }
 
+/// The time now, in unix milliseconds (0 before the epoch).
+#[must_use]
+pub fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from(d.as_millis()).ok())
+        .unwrap_or(0)
+}
+
 /// The path of a file relative to the config home.
 #[must_use]
 pub fn rel(base: Base, path: &str) -> PathBuf {
@@ -123,6 +154,8 @@ pub enum LoadError {
     Fs(FsError),
     /// The file is not a record that this build understands.
     Invalid(PathBuf),
+    /// The record is version 1: a command that is not `install` refuses it.
+    Outdated,
 }
 
 impl std::fmt::Display for LoadError {
@@ -136,13 +169,17 @@ impl std::fmt::Display for LoadError {
                     path.display()
                 )
             }
+            Self::Outdated => f.write_str(OUTDATED),
         }
     }
 }
 
 impl std::error::Error for LoadError {}
 
-/// Reads the record. `Ok(None)` when there is none.
+/// The text of [`LoadError::Outdated`].
+pub const OUTDATED: &str = "The Omarchy integration is outdated: run fleetdeck omarchy install.";
+
+/// Reads the record (version 1 or 2). `Ok(None)` when there is none.
 ///
 /// # Errors
 /// A link or a foreign owner, an unreadable file, or invalid content.
@@ -152,8 +189,20 @@ pub fn load(home: &Home) -> Result<Option<Record>, LoadError> {
         return Ok(None);
     };
     match serde_json::from_slice::<Record>(&data.bytes) {
-        Ok(record) if record.v == 1 => Ok(Some(record)),
+        Ok(record) if record.v == 1 || record.v == 2 => Ok(Some(record)),
         _ => Err(LoadError::Invalid(home.abs(path))),
+    }
+}
+
+/// Reads the record like [`load`], but a version 1 record is
+/// [`LoadError::Outdated`].
+///
+/// # Errors
+/// The errors of [`load`], and `Outdated` for version 1.
+pub fn load_current(home: &Home) -> Result<Option<Record>, LoadError> {
+    match load(home)? {
+        Some(record) if record.v == 1 => Err(LoadError::Outdated),
+        other => Ok(other),
     }
 }
 
@@ -166,3 +215,7 @@ pub fn save(home: &Home, record: &Record) -> Result<(), FsError> {
     text.push(b'\n');
     home.write(Path::new(RECORD_PATH), &text, 0o600)
 }
+
+#[cfg(test)]
+#[path = "record_tests.rs"]
+mod tests;
