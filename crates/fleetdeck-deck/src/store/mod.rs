@@ -51,6 +51,7 @@ pub mod fleet_git_start;
 pub mod git_snapshots;
 pub mod grant_scopes;
 pub mod grants;
+mod grants_lifecycle;
 pub mod home_attempts;
 mod land_actions;
 mod land_admit;

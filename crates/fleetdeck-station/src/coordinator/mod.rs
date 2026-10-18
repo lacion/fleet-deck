@@ -17,6 +17,7 @@ pub mod ingress;
 mod jsonrpc;
 pub mod outbox;
 pub mod socket;
+mod tool_class;
 pub mod tools;
 
 pub use bindings::{
