@@ -1,6 +1,6 @@
 # P5b: monitor recordings, video artifacts and playback
 
-- **Status:** proposed contract (2026-10-20, from the advisor answer `advisor-p5b-answer.md`). The architect accepts the recommendations OD-1 to OD-6 (decision O12-6; the owner may change any of them). Adversary DESIGN REVIEW required before implementation.
+- **Status:** proposed contract (2026-10-20, from the advisor answer `advisor-p5b-answer.md`). The architect accepts the recommendations OD-1 to OD-6 (decision O12-6; the owner may change any of them). Adversary DESIGN REVIEW: round 1 PASS with one MAJOR and one MINOR, both fixed (O12-7: durable removal, stop reasons §7.5); round 2 required.
 - **Parent:** [omarchy.md](./omarchy.md), especially the deferred recording proposals in §6.5A.
 - **Prerequisites:** accepted [P5a](./omarchy-p5a.md); P5b-2 additionally requires accepted [P6](./omarchy-p6.md) and its completed implementation.
 - **P5b-1:** owner recording from the board Desktop panel, recording lifecycle and stop, the `video` artifact kind, and byte-range playback.
@@ -266,7 +266,7 @@ The deck commits `stop_requested` before sending:
 
 through `desktop.capture_stop`.
 
-Internal callers may use the fixed discard reasons in §7. Public HTTP callers cannot select them.
+Internal callers may use the fixed discard reasons of §7.5. Public HTTP callers cannot select them.
 
 The station derives the deck identity from the authenticated link. It accepts no PID, process group, monitor substitution or pathname.
 
@@ -364,6 +364,8 @@ The artifact, version, immutable provenance, recording metadata and `committed` 
 
 A failed operation retains its reservation until its physical cleanup finishes. A committed operation retains accounting for any remaining staging copy until that copy is removed.
 
+**Durable removal (decision O12-7).** Physical cleanup is finished only when the removal is durable: unlink every file of the staging or uncommitted destination tree, remove each emptied directory, then `fsync` the parent directory of every removed entry (and the capture root). Only after every `fsync` succeeds may the station commit cleanup completion or reduce the reservation. A failed `fsync` keeps the reservation and the operation in its cleanup state; startup retries it. This rule also applies to the P5a screenshot cleanup that P5b reuses (`desktop/capture/op.rs` cleanup and `desktop/profile.rs` removal).
+
 Permanent compact operation identities survive cleanup and receipt pruning.
 
 ### 5.4 Recovery
@@ -373,10 +375,11 @@ Station startup:
 1. Finish pending artifact deletions.
 2. Resolve all interrupted recording operations.
 3. Mark uncommitted recordings `failed` with `recording_interrupted`.
-4. Remove their staging and uncommitted destination trees.
+4. Remove their staging and uncommitted destination trees (durable removal, §5.3).
 5. Finish staging cleanup for committed recordings.
-6. Reconcile reservations.
-7. Admit new captures and artifact reads only after required recovery succeeds.
+6. Scan the capture staging root and the uncommitted destination area. Every entry that belongs to no `running` operation and to no committed artifact version is garbage: count it in capture usage until its durable removal finishes, then remove it durably. This includes entries of `failed` operations whose reservation is already zero (an entry that a power loss restored after an unsynced unlink).
+7. Reconcile reservations.
+8. Admit new captures and artifact reads only after required recovery succeeds.
 
 Never finalize, import or resume an interrupted recording after restart, even if its staging file appears playable.
 
@@ -461,7 +464,7 @@ Return:
 {
   sequence: number;
   decision: "continue" | "save" | "discard";
-  reason: string | null; // fixed enum only
+  reason: string | null; // §7.5: null for continue, "owner_stop" for save, a lease discard reason for discard
 }
 ```
 
@@ -565,7 +568,34 @@ Failure to obtain fresh lock/resource information is a safety failure, not permi
 
 The owner stop route records intent before its RPC. An online attempt has a five-second RPC deadline; if delivery fails, the next valid lease answer carries stop intent. If communication has failed entirely, lease expiry causes discard instead of saving.
 
-### 7.5 Commit boundary
+### 7.5 Stop reasons (decision O12-7)
+
+One closed enum, serialized in snake case, shared by deck and station, stored with the operation (`stop_reason`) and written to audit. Save reasons: `duration`, `owner_stop`. Discard reasons and their triggers (§7.4) and terminal codes (§16):
+
+| Reason | Trigger | Owner terminal code | Coordinator terminal code |
+|---|---|---|---|
+| `policy_off` | local `allow_desktop`, capture permission or monitor allowlist | `recording_interrupted` | `authority_lost` |
+| `screen_locked` | lock or unknown lock state | `screen_locked` | `screen_locked` |
+| `monitor_changed` | monitor removal, geometry/transform change, desktop/compositor epoch change | `desktop_not_found` | `desktop_not_found` |
+| `link_closed` | explicit target-link closure | `recording_interrupted` | `authority_unknown` |
+| `lease_expired` | lease timeout, silent partition, deck crash | `recording_interrupted` | `authority_unknown` |
+| `lease_denied` | invalid or denied lease response, or a lease reason outside the allowed set | `recording_interrupted` | `authority_unknown` |
+| `deck_policy` | deck switch off | `recording_interrupted` | `authority_lost` |
+| `owner_login_ended` | initiating owner login revoked or expired | `recording_interrupted` | — |
+| `coordinator_authority_lost` | coordinator revoke, expiry, binding/generation change, caller-policy loss, caller disconnect, fleet-control loss | — | `authority_lost` |
+| `output_limit` | output ceiling or write failure | `recording_too_large` (ceiling) or `recording_failed` (write) | same |
+| `disk_reserve` | free-space reserve lost | `disk_full` | `disk_full` |
+| `recorder_exited` | recorder exits unexpectedly, also with code 0 | `recording_failed` | `recording_failed` |
+| `station_shutdown` | orderly shutdown or supervisor cancellation | `recording_interrupted` | `authority_unknown` |
+| `recording_interrupted` | crash found at startup (§5.4) | `recording_interrupted` | `authority_unknown` |
+| `artifact_deleted` | artifact tombstone before commit | `recording_interrupted` | `authority_lost` |
+| `deadline` | total operation deadline | `desktop_timeout` | `desktop_read_timeout` |
+
+A lease answer may carry only `owner_stop` (with `save`) or one of `deck_policy`, `owner_login_ended`, `coordinator_authority_lost`, `artifact_deleted`, `deadline` (with `discard`); any other value is treated as `lease_denied`.
+
+The first discard reason latched wins: the station sets the discard latch once, and a later trigger never replaces the stored reason. A save request that arrives after a discard latch does not save. A discard trigger after a save request but before the commit transaction discards, and its reason is stored.
+
+### 7.6 Commit boundary
 
 Continue checking policy through recording, graceful shutdown and finalization.
 
