@@ -410,7 +410,7 @@ Apply the existing URL validation:
 - Existing host, bracketed IPv6 and port grammar.
 - No user information or alternate URL scheme.
 
-Add the coordinator restriction from the parent (decision O12-4: the deck checks the URL grammar; the target checks the host list with its live tailnet status at execution, and refuses with `invalid_arguments`): the initial host must be exactly `localhost`, `127.0.0.1`, `[::1]`, or the selected target station’s authenticated advertised tailnet hostname. Hostname comparison is case-insensitive; suffix matches and caller-supplied aliases do not qualify. No DNS lookup grants permission.
+Add the coordinator restriction from the parent (decision O12-4: the deck checks the URL grammar; the target checks the host list with its live tailnet status at execution, and refuses with `invalid_params`): the initial host must be exactly `localhost`, `127.0.0.1`, `[::1]`, or the selected target station’s authenticated advertised tailnet hostname. Hostname comparison is case-insensitive; suffix matches and caller-supplied aliases do not qualify. No DNS lookup grants permission.
 
 The URL is interpreted on the **target** station. Do not rewrite a caller-local URL into another station’s origin.
 
