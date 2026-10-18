@@ -42,7 +42,7 @@ pub(crate) async fn answer(
         "coordinator.call" => coordinator_call(ctx, station, &req).await,
         "coordinator.query" => coordinator_query(ctx, station, &req).await,
         "coordinator.authority_check" => authority_check(ctx, station, &req).await,
-        // R13 P6 (`desktop_mcp.v1`): stubs until the deck core task.
+        // R13 P6 (`desktop_mcp.v1`).
         "coordinator.desktop_call" => {
             crate::coordinator_desktop::desktop_call(ctx, station, &req).await
         }
@@ -50,7 +50,7 @@ pub(crate) async fn answer(
             crate::coordinator_desktop::desktop_query(ctx, station, &req).await
         }
         "desktop.authority_check" => {
-            crate::coordinator_desktop::authority_check(ctx, station, &req).await
+            crate::coordinator_desktop::authority_check(ctx, control, station, &req).await
         }
         "fleet_git.artifact_authorize" => {
             super::fleet_git_artifacts::artifact_authorize(ctx, station, &req).await

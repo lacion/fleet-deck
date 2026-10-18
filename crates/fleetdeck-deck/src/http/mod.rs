@@ -318,6 +318,14 @@ pub fn router(board: Arc<Board>) -> Router {
             "/api/coordinator/grants/{grant_id}/renew",
             post(grant_routes::renew),
         )
+        .route(
+            "/api/coordinator/grants/{grant_id}/caps",
+            post(grant_routes::caps),
+        )
+        .route(
+            "/api/coordinator/grants/{grant_id}/desktop-ops",
+            get(grant_routes::desktop_ops),
+        )
         .route("/api/artifacts", get(artifact_routes::list))
         .route("/api/artifacts/publish", post(artifact_routes::publish))
         .route(

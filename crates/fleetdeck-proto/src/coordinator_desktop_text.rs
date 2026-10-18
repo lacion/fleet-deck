@@ -33,10 +33,28 @@ pub mod code {
     /// §11.2: the station build has no desktop control (also the stub answer
     /// of a build that has the P6 methods but no P6 behavior).
     pub const DESKTOP_UNSUPPORTED: &str = "desktop_unsupported";
+    /// §11.2: the station refused the desktop action.
+    pub const DESKTOP_FORBIDDEN: &str = "desktop_forbidden";
+    /// §11.2: the desktop action is not valid.
+    pub const INVALID_DESKTOP_ACTION: &str = "invalid_desktop_action";
+    /// §11.2: the target of the desktop action was not found.
+    pub const DESKTOP_NOT_FOUND: &str = "desktop_not_found";
+    /// §11.2: the desktop action conflicts with the current state.
+    pub const DESKTOP_CONFLICT: &str = "desktop_conflict";
+    /// §11.2: the desktop action failed.
+    pub const DESKTOP_FAILED: &str = "desktop_failed";
+    /// §11.2: the station is busy.
+    pub const DESKTOP_OVERLOADED: &str = "desktop_overloaded";
+    /// §11.2: the station did not answer in time.
+    pub const DESKTOP_TIMEOUT: &str = "desktop_timeout";
+    /// §11.2: the station is not connected.
+    pub const STATION_UNREACHABLE: &str = "station_unreachable";
+    /// §11.2: desktop control is off on this deck.
+    pub const DESKTOP_CONTROL_OFF: &str = "desktop_control_off";
 }
 
-/// The exact text of an error code of §11.1, or of `desktop_unsupported`
-/// (§11.2). `None` for any other code.
+/// The exact text of an error code of §11.1, or of a relay code of §11.2.
+/// `None` for any other code.
 #[must_use]
 pub fn text(code: &str) -> Option<&'static str> {
     Some(match code {
@@ -79,6 +97,15 @@ pub fn text(code: &str) -> Option<&'static str> {
         code::DESKTOP_REFERENCE_NOT_GRANTED => "This grant cannot show that reference on the wall.",
         code::DESKTOP_READ_TIMEOUT => "The desktop data did not finish loading in time.",
         code::DESKTOP_UNSUPPORTED => "This station's build has no desktop control.",
+        code::DESKTOP_FORBIDDEN => "The station refused the desktop action.",
+        code::INVALID_DESKTOP_ACTION => "The desktop action is not valid.",
+        code::DESKTOP_NOT_FOUND => "The target of the desktop action was not found.",
+        code::DESKTOP_CONFLICT => "The desktop action conflicts with the current state.",
+        code::DESKTOP_FAILED => "The desktop action failed.",
+        code::DESKTOP_OVERLOADED => "The station is busy; try again later.",
+        code::DESKTOP_TIMEOUT => "The station did not answer in time; the action may have run.",
+        code::STATION_UNREACHABLE => "The station is not connected.",
+        code::DESKTOP_CONTROL_OFF => "Desktop control is off on this deck.",
         _ => return None,
     })
 }
@@ -191,7 +218,7 @@ pub mod deadline_ms {
 mod tests {
     use super::*;
 
-    const CODES: [&str; 27] = [
+    const CODES: [&str; 36] = [
         code::NOT_BOUND,
         code::NOT_GRANTED,
         code::BINDING_STALE,
@@ -219,6 +246,15 @@ mod tests {
         code::DESKTOP_REFERENCE_NOT_GRANTED,
         code::DESKTOP_READ_TIMEOUT,
         code::DESKTOP_UNSUPPORTED,
+        code::DESKTOP_FORBIDDEN,
+        code::INVALID_DESKTOP_ACTION,
+        code::DESKTOP_NOT_FOUND,
+        code::DESKTOP_CONFLICT,
+        code::DESKTOP_FAILED,
+        code::DESKTOP_OVERLOADED,
+        code::DESKTOP_TIMEOUT,
+        code::STATION_UNREACHABLE,
+        code::DESKTOP_CONTROL_OFF,
     ];
 
     #[test]
@@ -345,6 +381,36 @@ mod tests {
             (
                 code::DESKTOP_UNSUPPORTED,
                 "This station's build has no desktop control.",
+            ),
+            (
+                code::DESKTOP_FORBIDDEN,
+                "The station refused the desktop action.",
+            ),
+            (
+                code::INVALID_DESKTOP_ACTION,
+                "The desktop action is not valid.",
+            ),
+            (
+                code::DESKTOP_NOT_FOUND,
+                "The target of the desktop action was not found.",
+            ),
+            (
+                code::DESKTOP_CONFLICT,
+                "The desktop action conflicts with the current state.",
+            ),
+            (code::DESKTOP_FAILED, "The desktop action failed."),
+            (
+                code::DESKTOP_OVERLOADED,
+                "The station is busy; try again later.",
+            ),
+            (
+                code::DESKTOP_TIMEOUT,
+                "The station did not answer in time; the action may have run.",
+            ),
+            (code::STATION_UNREACHABLE, "The station is not connected."),
+            (
+                code::DESKTOP_CONTROL_OFF,
+                "Desktop control is off on this deck.",
             ),
         ] {
             assert_eq!(text(c), Some(t), "{c}");

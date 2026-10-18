@@ -398,6 +398,20 @@ pub const API_REST: &[ApiMethod] = &[
         true,
     ),
     m(
+        "coordinator.grant_caps",
+        Method::POST,
+        "/api/coordinator/grants/{grant_id}/caps",
+        Some(Scope::Drive),
+        true,
+    ),
+    m(
+        "coordinator.desktop_ops",
+        Method::GET,
+        "/api/coordinator/grants/{grant_id}/desktop-ops",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
         "mail.send_group",
         Method::POST,
         "/api/mail/group",

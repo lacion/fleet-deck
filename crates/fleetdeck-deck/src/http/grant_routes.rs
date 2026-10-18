@@ -2,22 +2,27 @@
 //! `GET /api/coordinator/grants` lists the grants without any credential;
 //! `POST /api/coordinator/grants/{grant_id}/revoke` commits `revoked` on the
 //! deck first, so every later decision for the grant is `forbidden`.
+//! `POST .../caps` changes the desktop caps (R13 P6 §2.2) and
+//! `GET .../desktop-ops` lists the recent desktop operations of a grant.
 
 use std::sync::Arc;
 
 use axum::Json;
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use fleetdeck_proto::StationId;
 use fleetdeck_proto::coordinator_desktop_text::{code as desktop_code, text as desktop_text};
 use fleetdeck_proto::orchestration::GrantView;
 use fleetdeck_proto::version::feature;
 
 use super::Board;
+use super::artifact_delete::ELEVATION_HEADER;
 use super::fleet_routes::{LIST_PAGE, audited};
 use super::guard::ApiError;
-use super::settings_routes::is_elevated;
+use super::settings_routes::{is_elevated, owner};
 use crate::store::auth::LoginSession;
+use crate::store::coordinator_desktop::{CapsError, RecentOp};
 use crate::store::{
     AuditResult, Grant, GrantClass, GrantState, LinkFeature, LinkV2, NewAudit, Principal,
 };
@@ -180,6 +185,140 @@ pub async fn renew(
     )
     .await
     .map(Json)
+}
+
+/// The body of `POST /api/coordinator/grants/{grant_id}/caps`: the caps to
+/// change; an absent cap keeps its value.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapsBody {
+    desktop_cap: Option<u32>,
+    capture_cap: Option<u32>,
+    image_byte_cap: Option<u64>,
+}
+
+/// The three caps of a grant as JSON, for the audit row.
+fn caps_json(g: &Grant) -> serde_json::Value {
+    serde_json::json!({
+        "desktop_cap": g.desktop_cap,
+        "capture_cap": g.capture_cap,
+        "image_byte_cap": g.image_byte_cap,
+    })
+}
+
+fn no_grant() -> ApiError {
+    ApiError::new(StatusCode::NOT_FOUND, "not_found", "No such grant.")
+}
+
+/// `POST /api/coordinator/grants/{grant_id}/caps` (owner only, R13 P6 §2.2,
+/// decision O12-4 item 16): a decrease needs no elevation, an increase needs
+/// the elevation of the header `x-fleetdeck-elevation`. The counters never
+/// change. The audit row `coordinator.grant_caps` holds the old and the new
+/// caps.
+///
+/// # Errors
+/// 400 `invalid_body`; 400 `invalid_grant` (the fixed text of the cap rule);
+/// 400 `elevation_required`; 403 `owner_only`; 404 `not_found`.
+pub async fn caps(
+    State(board): State<Arc<Board>>,
+    Extension(principal): Extension<Principal>,
+    headers: HeaderMap,
+    Path(grant_id): Path<String>,
+    body: Result<Json<CapsBody>, JsonRejection>,
+) -> Result<Json<GrantView>, ApiError> {
+    const ACTION: &str = "coordinator.grant_caps";
+    let session = owner(
+        &board,
+        &principal,
+        ACTION,
+        &grant_id,
+        "changes the caps of a coordinator grant",
+    )
+    .await?;
+    let token = headers.get(ELEVATION_HEADER).and_then(|v| v.to_str().ok());
+    let result: Result<(Grant, Grant), ApiError> = async {
+        let Json(req) = body.map_err(|_| {
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_body",
+                "the request body is not valid",
+            )
+        })?;
+        let before = board
+            .store
+            .grant(grant_id.clone())
+            .await
+            .map_err(ApiError::internal)?
+            .ok_or_else(no_grant)?;
+        board
+            .store
+            .desktop_caps_update(
+                &grant_id,
+                req.desktop_cap,
+                req.capture_cap,
+                req.image_byte_cap,
+                is_elevated(&board, &session, token),
+            )
+            .await
+            .map_err(ApiError::internal)?
+            .map_err(|e| match e {
+                CapsError::NotFound => no_grant(),
+                CapsError::Invalid(text) => {
+                    ApiError::new(StatusCode::BAD_REQUEST, "invalid_grant", text.to_owned())
+                }
+                CapsError::ElevationRequired => ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "elevation_required",
+                    "a fleet-control grant needs the owner's elevation".to_owned(),
+                ),
+            })?;
+        let after = current_grant(&board, &grant_id).await?;
+        Ok((before, after))
+    }
+    .await;
+    let row = match &result {
+        Ok((before, after)) => NewAudit::new(principal.actor(), ACTION, AuditResult::Ok)
+            .target(grant_id.clone())
+            .detail(
+                serde_json::json!({"old": caps_json(before), "new": caps_json(after)}).to_string(),
+            ),
+        Err(e) => NewAudit::new(principal.actor(), ACTION, AuditResult::Refused)
+            .target(grant_id.clone())
+            .detail(e.code),
+    };
+    board.store.audit_or_log(row).await;
+    result.map(|(_, after)| Json(view(after)))
+}
+
+/// How many recent operations `GET .../desktop-ops` returns.
+const RECENT_OPS: u32 = 50;
+
+/// `GET /api/coordinator/grants/{grant_id}/desktop-ops` (owner only): the
+/// newest 50 desktop operations of the grant. A row has no resource, result or
+/// hash.
+///
+/// # Errors
+/// 403 `owner_only`; 404 `unknown_grant`.
+pub async fn desktop_ops(
+    State(board): State<Arc<Board>>,
+    Extension(principal): Extension<Principal>,
+    Path(grant_id): Path<String>,
+) -> Result<Json<Vec<RecentOp>>, ApiError> {
+    owner(
+        &board,
+        &principal,
+        "coordinator.desktop_ops",
+        &grant_id,
+        "reads the desktop operations of a coordinator grant",
+    )
+    .await?;
+    current_grant(&board, &grant_id).await?;
+    let rows = board
+        .store
+        .desktop_ops_recent(&grant_id, RECENT_OPS)
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Json(rows))
 }
 
 /// Queues a deck-only coordinator command for the grant's station.
