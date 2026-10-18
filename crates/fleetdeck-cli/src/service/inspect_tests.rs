@@ -4,10 +4,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use super::*;
-use crate::service::Platform;
 use crate::service::fake::ok;
 use crate::service::program;
 use crate::service::tests::Rig;
+use crate::service::{Context, Platform};
 
 /// A station service as `fleetdeck service install station` leaves it: the
 /// unit with our data directory and the program link at the running binary.
@@ -17,10 +17,29 @@ fn installed(rig: &Rig) {
     program::ensure(&root, &rig.ctx.exe, "1.2.3", "01aaa").unwrap();
     if rig.ctx.platform == Platform::Systemd {
         exec_start(rig, &expected_argv(&rig.ctx));
+        environment(rig, &rendered_environment(&rig.ctx), "", "");
     } else {
         plist(rig, &expected_argv(&rig.ctx));
     }
 }
+
+/// The prefix of the `ExecStart` query of the inspection.
+const EXEC_START: &[&str] = &[
+    "--user",
+    "show",
+    "fleetdeck-station.service",
+    "-p",
+    "ExecStart",
+];
+
+/// The prefix of the environment query of the inspection.
+const ENVIRONMENT: &[&str] = &[
+    "--user",
+    "show",
+    "fleetdeck-station.service",
+    "-p",
+    "Environment",
+];
 
 /// The answer of `systemctl --user show <unit> -p ExecStart --value` for one
 /// entry that runs `argv`.
@@ -33,10 +52,43 @@ fn exec_line(argv: &[String]) -> String {
 }
 
 fn exec_start(rig: &Rig, argv: &[String]) {
+    rig.fake
+        .always("systemctl", EXEC_START, ok(&exec_line(argv)));
+}
+
+/// The assignments that the install renders, as `KEY=value`.
+fn rendered_environment(ctx: &Context) -> Vec<String> {
+    let program = Kind::Station.root(&ctx.dirs).join("current");
+    crate::service::validate(ctx, &program)
+        .unwrap()
+        .into_iter()
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect()
+}
+
+/// One assignment as `systemctl show` prints it: in double quotes, with a
+/// backslash before `"` and `\`, when it holds white space or such a
+/// character.
+fn shown(assignment: &str) -> String {
+    if assignment.contains(|c: char| c.is_whitespace() || c == '"' || c == '\\') {
+        let body = assignment.replace('\\', "\\\\").replace('"', "\\\"");
+        format!("\"{body}\"")
+    } else {
+        assignment.to_owned()
+    }
+}
+
+/// The answer of the environment query: the assignments and the two file
+/// properties (`files` and `unset` are the text after the `=`).
+fn environment(rig: &Rig, assignments: &[String], files: &str, unset: &str) {
+    let shown: Vec<String> = assignments.iter().map(|a| shown(a)).collect();
     rig.fake.always(
         "systemctl",
-        &["--user", "show", "fleetdeck-station.service"],
-        ok(&exec_line(argv)),
+        ENVIRONMENT,
+        ok(&format!(
+            "Environment={}\nEnvironmentFiles={files}\nUnsetEnvironment={unset}\n",
+            shown.join(" ")
+        )),
     );
 }
 
@@ -185,11 +237,7 @@ fn a_changed_exec_start_with_the_right_marker_is_a_conflict() {
     // `path=` differs from `argv[0]`.
     let argv = expected_argv(&rig.ctx);
     let line = exec_line(&argv).replacen(&format!("path={}", argv[0]), "path=/bin/sh", 1);
-    rig.fake.always(
-        "systemctl",
-        &["--user", "show", "fleetdeck-station.service"],
-        ok(&line),
-    );
+    rig.fake.always("systemctl", EXEC_START, ok(&line));
     assert_eq!(inspected(&rig), ServiceInspect::Conflict);
 }
 
@@ -237,16 +285,12 @@ fn a_missing_failed_or_multiple_exec_start_is_a_conflict() {
         ok(&line.replace(" ; ignore_errors=no", "")),
         crate::service::fake::fail(1, "no unit"),
     ] {
-        rig.fake.always(
-            "systemctl",
-            &["--user", "show", "fleetdeck-station.service"],
-            answer,
-        );
+        rig.fake.always("systemctl", EXEC_START, answer);
         assert_eq!(inspected(&rig), ServiceInspect::Conflict);
     }
     rig.fake.always(
         "systemctl",
-        &["--user", "show", "fleetdeck-station.service"],
+        EXEC_START,
         Err(crate::service::runner::RunError::Start("none".to_owned())),
     );
     assert_eq!(inspected(&rig), ServiceInspect::Conflict);
@@ -294,4 +338,147 @@ fn the_plist_scanner_unescapes_the_five_entities() {
     assert!(
         plist_arguments("<key>ProgramArguments</key><array><integer>1</integer></array>").is_none()
     );
+}
+
+#[test]
+fn a_redirected_or_extended_service_environment_is_a_conflict() {
+    let rig = Rig::systemd();
+    installed(&rig);
+    active(&rig, true);
+    assert_eq!(inspected(&rig), ServiceInspect::Matching { active: true });
+    let good = rendered_environment(&rig.ctx);
+    // A drop-in that redirects the data directory; `ExecStart` is unchanged.
+    let mut other = good.clone();
+    other.push("XDG_DATA_HOME=/other".to_owned());
+    environment(&rig, &other, "", "");
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+    // The same name with another value.
+    let mut other = good.clone();
+    other[0] = "PATH=/tmp/evil".to_owned();
+    environment(&rig, &other, "", "");
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+    // An extra harmless variable: the set must be exact.
+    let mut other = good.clone();
+    other.push("HARMLESS=1".to_owned());
+    environment(&rig, &other, "", "");
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+    // A missing variable.
+    environment(&rig, &good[1..], "", "");
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+    // An `EnvironmentFile=`.
+    environment(&rig, &good, "/etc/evil.env (ignore_errors=no)", "");
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+    // An `UnsetEnvironment=`.
+    environment(&rig, &good, "", "PATH");
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+    // The unit as rendered.
+    environment(&rig, &good, "", "");
+    assert_eq!(inspected(&rig), ServiceInspect::Matching { active: true });
+}
+
+#[test]
+fn the_environment_answer_is_parsed_with_systemd_quoting() {
+    let mut rig = Rig::systemd();
+    rig.ctx.xdg_data_home = Some("/data \"home\"\\x".to_owned());
+    installed(&rig);
+    active(&rig, true);
+    let good = rendered_environment(&rig.ctx);
+    assert!(good.contains(&"XDG_DATA_HOME=/data \"home\"\\x".to_owned()));
+    assert_eq!(inspected(&rig), ServiceInspect::Matching { active: true });
+    let mut other = good.clone();
+    let at = other
+        .iter()
+        .position(|a| a.starts_with("XDG_DATA_HOME="))
+        .unwrap();
+    other[at] = "XDG_DATA_HOME=/data".to_owned();
+    environment(&rig, &other, "", "");
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+    assert_eq!(
+        split_assignments("A=1  \"B=x y\" C=\"p q\"").unwrap(),
+        ["A=1", "B=x y", "C=p q"]
+    );
+    assert_eq!(split_assignments("").unwrap(), Vec::<String>::new());
+    assert!(split_assignments("\"open").is_none());
+    assert!(split_assignments("end\\").is_none());
+}
+
+#[test]
+fn a_missing_failed_or_repeated_environment_answer_is_a_conflict() {
+    let rig = Rig::systemd();
+    installed(&rig);
+    active(&rig, true);
+    let assignments = rendered_environment(&rig.ctx).join(" ");
+    let all = format!("Environment={assignments}\nEnvironmentFiles=\nUnsetEnvironment=\n");
+    for answer in [
+        ok(""),
+        ok("not a line\n"),
+        // A property is missing.
+        ok(&format!("Environment={assignments}\nEnvironmentFiles=\n")),
+        ok("EnvironmentFiles=\nUnsetEnvironment=\n"),
+        // A property is repeated.
+        ok(&format!("{all}EnvironmentFiles=\n")),
+        // A quote that stays open.
+        ok("Environment=\"open\nEnvironmentFiles=\nUnsetEnvironment=\n"),
+        crate::service::fake::fail(1, "no unit"),
+        Err(crate::service::runner::RunError::Start("none".to_owned())),
+    ] {
+        rig.fake.always("systemctl", ENVIRONMENT, answer);
+        assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+    }
+    rig.fake.always("systemctl", ENVIRONMENT, ok(&all));
+    assert_eq!(inspected(&rig), ServiceInspect::Matching { active: true });
+}
+
+/// Writes the plist as rendered; `edit` changes its text first.
+fn plist_edited(rig: &Rig, edit: impl Fn(&str) -> String) {
+    let root = Kind::Station.root(&rig.ctx.dirs);
+    let text =
+        crate::service::launchd::render(&rig.ctx, Kind::Station, &root.join("current")).unwrap();
+    std::fs::write(rig.file(Kind::Station), edit(&text)).unwrap();
+}
+
+#[test]
+fn a_launchd_plist_with_another_environment_is_a_conflict() {
+    let mut rig = Rig::launchd();
+    rig.ctx.xdg_data_home = Some("/data & <more>".to_owned());
+    rig.ctx.data_dir_flag = true;
+    installed(&rig);
+    rig.fake.always(
+        "launchctl",
+        &["print", "gui/1000/dev.fleetdeck.station"],
+        ok("state = running\n"),
+    );
+    // As rendered, with an escaped value.
+    plist_edited(&rig, str::to_owned);
+    assert_eq!(inspected(&rig), ServiceInspect::Matching { active: true });
+    // A changed variable.
+    plist_edited(&rig, |t| {
+        t.replace("<string>json</string>", "<string>text</string>")
+    });
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+    plist_edited(&rig, |t| t.replace("/data &amp; &lt;more&gt;", "/other"));
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+    // An extra variable.
+    plist_edited(&rig, |t| {
+        t.replace(
+            "    </dict>\n    <key>StandardOutPath</key>",
+            "        <key>HARMLESS</key>\n        <string>1</string>\n    </dict>\n    <key>StandardOutPath</key>",
+        )
+    });
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+    // A missing variable.
+    plist_edited(&rig, |t| {
+        t.replace(
+            "        <key>FLEETDECK_LOG_FORMAT</key>\n        <string>json</string>\n",
+            "",
+        )
+    });
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+    // An odd number of items, and no dict.
+    plist_edited(&rig, |t| {
+        t.replace("        <key>FLEETDECK_LOG_FORMAT</key>\n", "")
+    });
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+    plist_edited(&rig, |t| t.replace("EnvironmentVariables", "Other"));
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
 }
