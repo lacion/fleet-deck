@@ -10,6 +10,7 @@
 pub mod board;
 pub mod fake_deck;
 pub mod fake_desktop;
+pub mod input_rig;
 pub mod mcp;
 mod proofs_exposure;
 pub mod recorder;
@@ -30,6 +31,7 @@ use fleetdeck_deck::{DeckNode, DeckStore, NodeError};
 use fleetdeck_link::reconnect::BackoffPolicy;
 use fleetdeck_proto::StationId;
 use fleetdeck_proto::command::GrantScope;
+use fleetdeck_proto::coordinator_spec::InputScope;
 use fleetdeck_proto::event::{Event, ProviderKind};
 use fleetdeck_proto::mutation::CoordinatorBinding;
 use fleetdeck_proto::version::feature;
@@ -217,6 +219,24 @@ pub fn set_policy(manager: &SessionManager, fleet: bool, desktop: bool, capture:
     manager.publish(prepared);
 }
 
+/// The settings of a station as `station.toml` values, with
+/// `allow_desktop_input` (R13 P7).
+pub fn set_policy_input(
+    manager: &SessionManager,
+    (fleet, desktop, capture, input): (bool, bool, bool, bool),
+) {
+    let env = Env {
+        home: Some("/home/test".into()),
+        ..Env::default()
+    };
+    let text = format!(
+        "allow_fleet_control = {fleet}\nallow_desktop = {desktop}\nallow_desktop_capture = {capture}\nallow_desktop_input = {input}\n"
+    );
+    let config = fleetdeck_core::config::StationConfig::parse(&text, &env).unwrap();
+    let prepared = manager.prepare(&config).unwrap();
+    manager.publish(prepared);
+}
+
 async fn station_a(dir: &Path) -> StationA {
     let (clock, ids) = clock_ids();
     std::fs::create_dir_all(dir).unwrap();
@@ -312,6 +332,9 @@ pub struct World {
     /// The recording cap and the recording seconds cap of the grant, if the
     /// world has the recording allowance.
     recording: Option<(u32, u32)>,
+    /// The input cap and the character cap of the grant, if the world has the
+    /// input allowance (R13 P7).
+    input: Option<(u32, u32)>,
 }
 
 /// What a world starts with.
@@ -324,6 +347,12 @@ pub struct Setup {
     /// gives the grant the recording allowance and the binding the
     /// `recording` class; `None` is a screenshot-only grant.
     pub recording: Option<(u32, u32)>,
+    /// The input cap and the character cap of the grant (R13 P7). `Some`
+    /// gives the grant the classes `desktop`, `capture` and `input`, the
+    /// allowance `allow_input` with the scope `own_windows` and the two caps,
+    /// gives the binding on A the classes `Input` and `InputEnabled`, and
+    /// turns `allow_desktop_input` on for B. `None` is a grant without input.
+    pub input: Option<(u32, u32)>,
 }
 
 impl Default for Setup {
@@ -332,6 +361,7 @@ impl Default for Setup {
             b_without: Vec::new(),
             grant: true,
             recording: None,
+            input: None,
         }
     }
 }
@@ -348,6 +378,9 @@ impl World {
         let rig = Rig::new();
         fleetdeck_station::desktop::install(Arc::clone(&rig.desktop));
         let b = StationB::new(&tmp.path().join("b"), rig, &identity).await;
+        if setup.input.is_some() {
+            input_rig::arm(&b.rig);
+        }
         let pin = vec![NewStation {
             key: b.identity.public_key(),
             name: "beta".to_owned(),
@@ -391,6 +424,7 @@ impl World {
                 token: String::new(),
             },
             recording: setup.recording,
+            input: setup.input,
         };
         world.wait_linked(&setup.b_without).await;
         if setup.grant {
@@ -427,6 +461,9 @@ impl World {
                 feature::CAPTURE_RECORDING_MCP,
             ]);
         }
+        if self.input.is_some() && !missing.contains(&feature::DESKTOP_INPUT_MCP) {
+            wanted.push(feature::DESKTOP_INPUT_MCP);
+        }
         eventually("the features of the links", || {
             let (store, b, missing, wanted) =
                 (store.clone(), b.clone(), missing.clone(), wanted.clone());
@@ -462,6 +499,13 @@ impl World {
             spec.recording_cap = count;
             spec.recording_second_cap = seconds;
         }
+        if let Some((count, characters)) = self.input {
+            spec.classes.insert(GrantClass::Input);
+            spec.allow_input = true;
+            spec.input_scope = Some(InputScope::OwnWindows);
+            spec.input_cap = count;
+            spec.input_character_cap = characters;
+        }
         // A second grant of another session keeps the `coordinate` scope of
         // both stations when the grant of the caller ends, so that a refusal
         // after a revocation is the answer of the handler and not the refusal
@@ -488,6 +532,12 @@ impl World {
         .collect();
         if self.recording.is_some() {
             classes.insert(ToolClass::Recording);
+        }
+        if self.input.is_some() {
+            classes.insert(ToolClass::Input);
+            classes.insert(ToolClass::InputEnabled);
+            // The station B of an input world allows desktop input.
+            self.set_b_input(true, true, true, true);
         }
         let (token, digest) = mint().unwrap();
         self.a.node.coordinator_bindings().insert(
@@ -522,6 +572,12 @@ impl World {
     /// `allow_desktop_capture`.
     pub fn set_b(&self, fleet: bool, desktop: bool, capture: bool) {
         set_policy(&self.b.manager, fleet, desktop, capture);
+    }
+
+    /// The settings of B with `allow_desktop_input` (R13 P7): fleet control,
+    /// desktop, capture, input.
+    pub fn set_b_input(&self, fleet: bool, desktop: bool, capture: bool, input: bool) {
+        set_policy_input(&self.b.manager, (fleet, desktop, capture, input));
     }
 
     /// The setting `allow_fleet_control` of A.
