@@ -98,8 +98,11 @@ async fn only_the_full_reservation_can_cross_the_quota() {
     // The reservation of B crosses it for C, though no byte of B is written.
     assert_eq!(begin(&s, C, "h").await, Begin::Quota);
     assert!(s.capture_get(FP, C).await.unwrap().is_none());
-    // B fails: the reservation is free again.
+    // B fails: its files may still exist, so the reservation stays.
     s.capture_fail(FP, B, "capture_failed", "x").await.unwrap();
+    assert_eq!(begin(&s, C, "h").await, Begin::Quota);
+    // The reservation is free again after the cleanup.
+    s.capture_cleaned(FP, B).await.unwrap();
     assert_eq!(begin(&s, C, "h").await, Begin::Started);
 }
 
@@ -178,7 +181,10 @@ async fn a_failure_keeps_its_code_and_a_late_failure_does_not_undo_a_commit() {
         .unwrap();
     let row = s.capture_get(FP, A).await.unwrap().unwrap();
     assert_eq!(row.state, CaptureState::Failed);
-    assert_eq!(row.reserved_bytes, 0);
+    assert_eq!(
+        row.reserved_bytes, MAX_PNG_BYTES,
+        "the files may still exist"
+    );
     assert_eq!(row.code.as_deref(), Some("screen_locked"));
     assert_eq!(row.message.as_deref(), Some("locked"));
     assert!(matches!(
@@ -206,9 +212,9 @@ async fn the_lookup_reads_each_state_and_a_deleted_artifact_wins() {
         s.capture_lookup(FP, A).await.unwrap(),
         Lookup::Running(_)
     ));
-    assert_eq!(s.captures_running().await.unwrap().len(), 1);
+    assert_eq!(s.captures_to_recover().await.unwrap().len(), 1);
     s.capture_commit(FP, A, new_artifact(A, 9)).await.unwrap();
-    assert!(s.captures_running().await.unwrap().is_empty());
+    assert!(s.captures_to_recover().await.unwrap().is_empty());
     match s.capture_lookup(FP, A).await.unwrap() {
         Lookup::Committed {
             artifact,
@@ -244,4 +250,42 @@ async fn the_has_version_check_sees_only_a_version_row() {
     assert!(!s.artifact_has_version(ART_A).await.unwrap());
     s.capture_commit(FP, A, new_artifact(A, 9)).await.unwrap();
     assert!(s.artifact_has_version(ART_A).await.unwrap());
+}
+
+#[tokio::test]
+async fn a_cleaned_row_frees_its_reservation_and_only_a_failed_row_changes() {
+    let s = store().await;
+    assert_eq!(begin(&s, A, "h").await, Begin::Started);
+    // A `running` row does not change.
+    s.capture_cleaned(FP, A).await.unwrap();
+    let row = s.capture_get(FP, A).await.unwrap().unwrap();
+    assert_eq!(row.state, CaptureState::Running);
+    assert_eq!(row.reserved_bytes, MAX_PNG_BYTES);
+    s.capture_fail(FP, A, "capture_failed", "x").await.unwrap();
+    s.capture_cleaned(FP, A).await.unwrap();
+    let row = s.capture_get(FP, A).await.unwrap().unwrap();
+    assert_eq!(row.state, CaptureState::Failed);
+    assert_eq!(row.reserved_bytes, 0);
+    assert_eq!(row.code.as_deref(), Some("capture_failed"));
+}
+
+#[tokio::test]
+async fn the_recovery_list_has_the_running_rows_and_the_failed_rows_with_a_reservation() {
+    let s = store().await;
+    let ids = |rows: Vec<super::CaptureOp>| -> Vec<String> {
+        rows.into_iter().map(|r| r.capture_id).collect()
+    };
+    assert_eq!(begin(&s, A, "h").await, Begin::Started);
+    assert_eq!(begin(&s, B, "h").await, Begin::Started);
+    assert_eq!(begin(&s, C, "h").await, Begin::Started);
+    // A stays running, B fails with its reservation, C commits.
+    s.capture_fail(FP, B, "capture_failed", "x").await.unwrap();
+    s.capture_commit(FP, C, new_artifact(C, 9)).await.unwrap();
+    assert_eq!(
+        ids(s.captures_to_recover().await.unwrap()),
+        [A.to_owned(), B.to_owned()]
+    );
+    // B is cleaned: only A is left.
+    s.capture_cleaned(FP, B).await.unwrap();
+    assert_eq!(ids(s.captures_to_recover().await.unwrap()), [A.to_owned()]);
 }

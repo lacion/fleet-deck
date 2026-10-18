@@ -658,3 +658,43 @@ async fn every_request_makes_at_most_one_artifact() {
     assert_eq!(t.artifact_count().await, 1);
     assert_eq!(t.grim_runs(), 1);
 }
+
+#[tokio::test]
+async fn a_failed_cleanup_keeps_the_reservation_and_the_quota_counts_it() {
+    let t = setup().await;
+    t.service().ensure_recovered().await.unwrap();
+    // The artifacts root is a file: the folder removal refuses it.
+    std::fs::write(&t.s.root, b"not a folder").unwrap();
+    write_grim(t.dir(), b"this is not a png", "");
+    assert_eq!(
+        err(t.run(ID, "DP-1").await),
+        (code::CAPTURE_FAILED, text::CAPTURE_FAILED.to_owned())
+    );
+    let row = t.store().capture_get(FP, ID).await.unwrap().unwrap();
+    assert_eq!(row.state, CaptureState::Failed);
+    assert_eq!(row.code.as_deref(), Some(code::CAPTURE_FAILED));
+    assert_eq!(row.reserved_bytes, super::MAX_PNG_BYTES);
+    assert_eq!(
+        t.store().captures_to_recover().await.unwrap().len(),
+        1,
+        "the next start retries it"
+    );
+    // The committed bytes alone leave room for one more capture; with the
+    // reservation of the failed row they cross the quota.
+    let committed = super::CAPTURE_QUOTA - 2 * super::MAX_PNG_BYTES + 1;
+    t.store()
+        .db()
+        .call(move |conn| {
+            conn.execute_batch(&format!(
+                "INSERT INTO artifacts VALUES ('ARTC', NULL, 't', 'image', 1, 'owner', 1, 1);
+                 INSERT INTO artifact_versions VALUES ('ARTC', 1, {committed}, 's', 'm', '[]', 1, '{{}}');"
+            ))?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        err(t.run(ID2, "DP-1").await),
+        (code::CAPTURE_QUOTA, text::CAPTURE_QUOTA.to_owned())
+    );
+}

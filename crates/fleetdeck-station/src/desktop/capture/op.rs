@@ -398,7 +398,7 @@ impl Desktop {
             Arc::clone(&req.params.fs),
         );
         let (imported, back) = tokio::task::spawn_blocking(move || {
-            let result = import_png(&root, &id, staging.file(), len, &*fs);
+            let result = import_png(&root, &id, staging.file(), len, &*fs, &room);
             (result, staging)
         })
         .await
@@ -570,28 +570,47 @@ async fn within<T>(
         .map_err(|_| timeout_fail())?
 }
 
-/// A failure after step 6: the staging and the partial artifact folder go,
-/// then the row becomes `failed`. The files go first, so a crash between the
-/// two leaves a `running` row for the startup recovery.
+/// A failure after step 6: the row becomes `failed` and keeps its
+/// reservation, then the staging and the partial artifact folder go, and only
+/// when both removals worked the reservation is freed. A removal that fails
+/// leaves the reservation (the quota counts it) and the startup recovery
+/// retries it. A crash between the steps leaves a `failed` row with a
+/// reservation, which the recovery handles in the same way.
 async fn cleanup(req: &Request, artifact_id: &str, fail: &Fail) {
-    let (captures, id) = (req.service.captures_dir(), req.capture_id.clone());
-    let (root, artifact) = (req.service.root().to_path_buf(), artifact_id.to_owned());
-    let removed = tokio::task::spawn_blocking(move || {
-        if let Err(e) = Staging::remove(&captures, &id) {
-            tracing::warn!(code = e.code, "cannot remove the screenshot staging");
-        }
-        discard(&root, &artifact);
-    })
-    .await;
-    if let Err(e) = removed {
-        tracing::warn!(error = %e, "the screenshot cleanup ended abnormally");
-    }
-    if let Err(e) = req
-        .service
-        .store()
+    let store = req.service.store();
+    // When the row cannot be recorded it stays `running` with its files: the
+    // startup recovery handles both.
+    if let Err(e) = store
         .capture_fail(&req.deck_fp, &req.capture_id, fail.code, &fail.message)
         .await
     {
         tracing::warn!(error = %e, "cannot record the failed screenshot");
+        return;
+    }
+    let (captures, id) = (req.service.captures_dir(), req.capture_id.clone());
+    let (root, artifact) = (req.service.root().to_path_buf(), artifact_id.to_owned());
+    let removed = tokio::task::spawn_blocking(move || {
+        let staging = Staging::remove(&captures, &id);
+        let folder = discard(&root, &artifact);
+        (staging, folder)
+    })
+    .await;
+    match removed {
+        Ok((Ok(()), Ok(()))) => {}
+        Ok((staging, folder)) => {
+            tracing::warn!(
+                staging = ?staging.err().map(|e| e.code),
+                folder = ?folder.err().map(|e| e.kind()),
+                "the screenshot cleanup did not finish; the next start retries"
+            );
+            return;
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "the screenshot cleanup ended abnormally");
+            return;
+        }
+    }
+    if let Err(e) = store.capture_cleaned(&req.deck_fp, &req.capture_id).await {
+        tracing::warn!(error = %e, "cannot free the reservation of the failed screenshot");
     }
 }

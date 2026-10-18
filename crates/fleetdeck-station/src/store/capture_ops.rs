@@ -8,7 +8,8 @@
 //! - [`Store::capture_commit`] makes the artifact, its version and the
 //!   `committed` state of the row in one transaction. A capture has no
 //!   session, so it writes no log event.
-//! - [`Store::capture_fail`] ends a `running` row and frees its reservation.
+//! - [`Store::capture_fail`] ends a `running` row as `failed`; [`Store::capture_cleaned`] frees its
+//!   reservation after its files are removed.
 //! - [`Store::capture_lookup`] reads a row with its artifact for the answer
 //!   of a repeated request and of `desktop.capture_status`.
 
@@ -196,8 +197,8 @@ impl Store {
     /// Decides a capture request in one transaction. A row with another
     /// action hash is a conflict; a row with the same hash is returned and
     /// nothing changes; otherwise the quota is checked (the committed
-    /// capture bytes, the reservations of the `running` rows and the new
-    /// reservation of [`MAX_PNG_BYTES`] must stay within [`CAPTURE_QUOTA`])
+    /// capture bytes, the reservations of every row that still holds one and
+    /// the new reservation of [`MAX_PNG_BYTES`] must stay within [`CAPTURE_QUOTA`])
     /// and a `running` row that holds the reservation is inserted.
     ///
     /// # Errors
@@ -229,7 +230,7 @@ impl Store {
                 |r| r.get(0),
             )?;
             let reserved: i64 = tx.query_row(
-                "SELECT COALESCE(SUM(reserved_bytes), 0) FROM capture_ops WHERE state = 'running'",
+                "SELECT COALESCE(SUM(reserved_bytes), 0) FROM capture_ops",
                 [],
                 |r| r.get(0),
             )?;
@@ -282,8 +283,10 @@ impl Store {
         .await?
     }
 
-    /// Ends a `running` operation as `failed` and frees its reservation. A
-    /// row in another state does not change.
+    /// Ends a `running` operation as `failed`. The reservation stays: the
+    /// files of the operation may still exist, and
+    /// [`Store::capture_cleaned`] frees it after they are removed. A row in
+    /// another state does not change.
     ///
     /// # Errors
     /// A database error.
@@ -300,9 +303,28 @@ impl Store {
         call(&self.inner.db, move |conn| {
             conn.execute(
                 "UPDATE capture_ops
-                 SET state = 'failed', code = ?3, message = ?4, reserved_bytes = 0, updated_at = ?5
+                 SET state = 'failed', code = ?3, message = ?4, updated_at = ?5
                  WHERE deck_fp = ?1 AND capture_id = ?2 AND state = 'running'",
                 params![deck_fp, capture_id, code, message, now],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Frees the reservation of a `failed` operation whose files are gone.
+    /// A row in another state does not change.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn capture_cleaned(&self, deck_fp: &str, capture_id: &str) -> Result<()> {
+        let now = self.now();
+        let (deck_fp, capture_id) = (deck_fp.to_owned(), capture_id.to_owned());
+        call(&self.inner.db, move |conn| {
+            conn.execute(
+                "UPDATE capture_ops SET reserved_bytes = 0, updated_at = ?3
+                 WHERE deck_fp = ?1 AND capture_id = ?2 AND state = 'failed'",
+                params![deck_fp, capture_id, now],
             )?;
             Ok(())
         })
@@ -321,14 +343,17 @@ impl Store {
         .await
     }
 
-    /// The `running` operations, oldest first (the startup recovery).
+    /// The operations that the startup recovery handles, oldest first: the
+    /// `running` ones, and the `failed` ones that still hold a reservation
+    /// (their files are not removed yet).
     ///
     /// # Errors
     /// A database error.
-    pub async fn captures_running(&self) -> Result<Vec<CaptureOp>> {
+    pub async fn captures_to_recover(&self) -> Result<Vec<CaptureOp>> {
         call(&self.inner.db, move |conn| {
             let mut stmt = conn.prepare(&format!(
                 "SELECT {COLUMNS} FROM capture_ops WHERE state = 'running'
+                    OR (state = 'failed' AND reserved_bytes > 0)
                  ORDER BY started_at, capture_id"
             ))?;
             let rows = stmt
