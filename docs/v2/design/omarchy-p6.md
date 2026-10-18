@@ -502,7 +502,7 @@ Keep:
 - `session_id = null`, including remote captures.
 - Kind `image`, version `1`, file `capture.png`.
 - No repository association.
-- Author derived as `coordinator:<caller station>/<caller session>`.
+- Author derived as `coordinator:<first 16 characters of the caller station ID>/<caller session>` (decision O12-8: the artifact author is at most 64 characters; the full IDs stay in the provenance).
 - P5a title and size/hash rules.
 
 Deck indexing and recovery must preserve coordinator provenance. They must not reconstruct a missing or malformed coordinator record as an owner capture. Invalid provenance prevents coordinator delivery and is reported to the owner as an indexing failure.
