@@ -393,6 +393,26 @@ impl DeckStore {
         .await
     }
 
+    /// True while the login session `session_hash` is valid: the condition of
+    /// [`Self::principal_alive`] for an owner, without the `last_seen` bump (a
+    /// recording lease reads it every second and must not keep a login alive).
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn login_alive(&self, session_hash: String) -> Result<bool> {
+        let now = self.now_ms();
+        call(&self.inner.db, move |conn| {
+            let n: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM login_sessions
+                 WHERE session_hash = ?1 AND expires_at > ?2 AND last_seen > ?3",
+                params![session_hash, now, now - SESSION_IDLE_MS],
+                |r| r.get(0),
+            )?;
+            Ok(n == 1)
+        })
+        .await
+    }
+
     /// Ends one login session. True when it existed.
     ///
     /// # Errors

@@ -23,11 +23,13 @@ use fleetdeck_proto::capture::{CAPTURE_ID_HEADER, CaptureStatus, valid_capture_i
 use fleetdeck_proto::link::Scope;
 
 use super::Board;
+use super::desktop_recording_routes as recording_routes;
 use super::desktop_routes::{ctx, refused, relay_error, station_id};
 use super::guard::{ApiError, owner_only};
 use crate::desktop_capture::{self, CaptureError, CaptureOptions, Reply};
 use crate::desktop_relay::RelayError;
 use crate::store::Principal;
+use crate::store::desktop_recordings::OperationKind;
 
 /// The routes of this part; the caller adds the guard.
 pub fn routes() -> Router<Arc<Board>> {
@@ -45,12 +47,18 @@ fn capture_error(e: CaptureError) -> ApiError {
 /// The capture id of the request header: missing is `capture_id_required`;
 /// not a canonical ULID, or sent twice, is `invalid_capture_id` (§2.2).
 fn header_id(headers: &HeaderMap) -> Result<String, ApiError> {
+    header_id_or(headers, "A screenshot needs a capture ID.")
+}
+
+/// [`header_id`] with the text of a missing header: a recording has its own
+/// (`omarchy-p5b.md` §16).
+pub(super) fn header_id_or(headers: &HeaderMap, missing: &'static str) -> Result<String, ApiError> {
     let mut values = headers.get_all(CAPTURE_ID_HEADER).iter();
     let Some(first) = values.next() else {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "capture_id_required",
-            "A screenshot needs a capture ID.",
+            missing,
         ));
     };
     first
@@ -61,7 +69,7 @@ fn header_id(headers: &HeaderMap) -> Result<String, ApiError> {
         .ok_or_else(invalid_id)
 }
 
-fn invalid_id() -> ApiError {
+pub(super) fn invalid_id() -> ApiError {
     ApiError::new(
         StatusCode::BAD_REQUEST,
         "invalid_capture_id",
@@ -114,7 +122,8 @@ async fn lookup(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
     Path((station, capture_id)): Path<(String, String)>,
-) -> Result<Json<CaptureStatus>, ApiError> {
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
     owner_only(&principal, "reads a screenshot result")?;
     if !principal.has(Scope::Admin) {
         return Err(relay_error(RelayError::Forbidden));
@@ -123,11 +132,23 @@ async fn lookup(
     if !valid_capture_id(&capture_id) {
         return Err(invalid_id());
     }
+    // A recording answers its own status (R13 P5b-1).
+    let recording = board
+        .store
+        .recording_get(id.clone(), capture_id.clone())
+        .await
+        .map_err(ApiError::internal)?
+        .filter(|r| r.kind == OperationKind::Recording);
+    if let Some(row) = recording {
+        let mut status = recording_routes::status(&board, &id, row).await?;
+        recording_routes::project(&headers, &mut status);
+        return Ok(Json(status).into_response());
+    }
     match desktop_capture::lookup(&ctx(&board), &id, &capture_id, CaptureOptions::default())
         .await
         .map_err(ApiError::internal)?
     {
-        Some(status) => Ok(Json(status)),
+        Some(status) => Ok(Json::<CaptureStatus>(status).into_response()),
         None => Err(ApiError::new(
             StatusCode::NOT_FOUND,
             "unknown_capture",

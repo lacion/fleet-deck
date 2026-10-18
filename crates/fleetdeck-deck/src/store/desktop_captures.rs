@@ -226,7 +226,11 @@ fn row_of(raw: Raw) -> Result<CaptureRow> {
     })
 }
 
-fn get_row(conn: &Connection, station: &str, capture_id: &str) -> Result<Option<CaptureRow>> {
+pub(super) fn get_row(
+    conn: &Connection,
+    station: &str,
+    capture_id: &str,
+) -> Result<Option<CaptureRow>> {
     conn.query_row(
         &format!(
             "SELECT {COLUMNS} FROM desktop_captures c

@@ -11,6 +11,9 @@
 //!   and every 30 s it reconciles each unresolved row. It never sends
 //!   `desktop.act`.
 //! - [`stamp_features`] fills `DesktopInfo.features` from the live link.
+//! - [`recording`]: the owner recording (R13 P5b-1, `desktop_recording`)
+//!   shares the rows of this module; the integration tests and the routes reach
+//!   it here.
 //!
 //! A station text never reaches an answer: see [`CaptureError`].
 
@@ -48,6 +51,16 @@ mod errors;
 mod recovery;
 pub use errors::CaptureError;
 use errors::KNOWN;
+
+/// The owner recording of R13 P5b-1 (`crate::desktop_recording`).
+pub mod recording {
+    pub use crate::desktop_recording::{
+        RecordOptions, RecordingError, active, recording_provenance, start, status, stop,
+    };
+    pub use crate::store::desktop_recordings::{
+        NewRecording, OperationKind, RecordingRow, StopIntent,
+    };
+}
 use recovery::refresh;
 pub use recovery::{reconcile, spawn, spawn_with};
 
@@ -95,14 +108,19 @@ impl Default for CaptureOptions {
     }
 }
 
-/// Sets `info.features` to the P5a features that the live link of `station`
-/// negotiated (every live link, fail closed; none without a link).
+/// Sets `info.features` to the P5a and P5b features that the live link of
+/// `station` negotiated (every live link, fail closed; none without a link).
 pub fn stamp_features(store: &DeckStore, station: &StationId, info: &mut DesktopInfo) {
-    info.features = [feature::DESKTOP_CAPTURE, feature::ARTIFACTS_DELETE]
-        .into_iter()
-        .filter(|f| store.link_feature(station, f) == LinkFeature::Negotiated)
-        .map(str::to_owned)
-        .collect();
+    info.features = [
+        feature::DESKTOP_CAPTURE,
+        feature::ARTIFACTS_DELETE,
+        feature::DESKTOP_RECORDING,
+        feature::ARTIFACTS_VIDEO,
+    ]
+    .into_iter()
+    .filter(|f| store.link_feature(station, f) == LinkFeature::Negotiated)
+    .map(str::to_owned)
+    .collect();
 }
 
 /// What a capture request answers.

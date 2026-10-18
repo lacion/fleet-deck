@@ -72,10 +72,15 @@ async fn a_capture_is_sent_once_indexed_with_its_provenance_and_cached_as_a_capt
     assert_eq!(provenance["caller"], "owner");
     assert!(provenance["caller_station"].is_null());
     assert_eq!(provenance["at"], 1_000);
-    // The info of the answer carries the negotiated P5a features.
+    // The info of the answer carries the negotiated P5a and P5b features.
     assert_eq!(
         r.body["info"]["features"],
-        json!([feature::DESKTOP_CAPTURE, feature::ARTIFACTS_DELETE])
+        json!([
+            feature::DESKTOP_CAPTURE,
+            feature::ARTIFACTS_DELETE,
+            feature::DESKTOP_RECORDING,
+            feature::ARTIFACTS_VIDEO
+        ])
     );
     // The artifact list shows it, and the version read has the provenance.
     let list = f.store.artifacts(None, None, None).await.unwrap();
