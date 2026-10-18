@@ -27,6 +27,7 @@ pub mod chat;
 pub mod commands;
 pub mod conflicts;
 pub mod coordinator;
+pub mod coordinator_desktop;
 pub(crate) mod coordinator_fleet;
 mod coordinator_git;
 pub(crate) mod coordinator_ops;

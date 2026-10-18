@@ -34,6 +34,8 @@ use crate::capture::{
 };
 use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
 use crate::conflicts::FileConflict;
+use crate::coordinator_desktop as cd;
+use crate::coordinator_desktop_wire as cdw;
 use crate::desktop as dk;
 use crate::desktop_authority::DesktopAuthority;
 use crate::display::{
@@ -160,6 +162,41 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         dk::DesktopActBody::export_all(&cfg),
         dk::DesktopInfoQuery::export_all(&cfg),
         DesktopAuthority::export_all(&cfg),
+        cd::WallContent::export_all(&cfg),
+        cd::CoordUrgency::export_all(&cfg),
+        cd::DesktopInfoArguments::export_all(&cfg),
+        cd::WallShowArguments::export_all(&cfg),
+        cd::NotifyArguments::export_all(&cfg),
+        cd::PreviewOpenArguments::export_all(&cfg),
+        cd::WindowCloseArguments::export_all(&cfg),
+        cd::ScreenshotArguments::export_all(&cfg),
+        cd::StatusArguments::export_all(&cfg),
+        cd::ImageArguments::export_all(&cfg),
+        cd::DesktopCall::export_all(&cfg),
+        cd::DesktopQuery::export_all(&cfg),
+        cd::CoordinatorMonitor::export_all(&cfg),
+        cd::CoordinatorCapabilities::export_all(&cfg),
+        cd::CoordinatorWall::export_all(&cfg),
+        cd::CoordinatorDesktopInfo::export_all(&cfg),
+        cd::ActionState::export_all(&cfg),
+        cd::DesktopActionStatus::export_all(&cfg),
+        cd::CaptureState::export_all(&cfg),
+        cd::CoordinatorCaptureStatus::export_all(&cfg),
+        cd::CaptureImageMeta::export_all(&cfg),
+        cd::CaptureImageAnswer::export_all(&cfg),
+        cdw::CoordinatorContext::export_all(&cfg),
+        cdw::CoordinatorDesktopCallEnvelope::export_all(&cfg),
+        cdw::CoordinatorDesktopQueryEnvelope::export_all(&cfg),
+        cdw::DesktopReply::export_all(&cfg),
+        cdw::AuthorityPhase::export_all(&cfg),
+        cdw::ProtectedRead::export_all(&cfg),
+        cdw::CoordinatorRead::export_all(&cfg),
+        cdw::DesktopAuthorityCheck::export_all(&cfg),
+        cdw::AuthorityReason::export_all(&cfg),
+        cdw::DesktopAuthorityAnswer::export_all(&cfg),
+        cdw::PolicyPurpose::export_all(&cfg),
+        cdw::DesktopPolicyNow::export_all(&cfg),
+        cdw::DesktopPolicyAnswer::export_all(&cfg),
         StationResources::export_all(&cfg),
         DiskSpace::export_all(&cfg),
         MemoryUse::export_all(&cfg),

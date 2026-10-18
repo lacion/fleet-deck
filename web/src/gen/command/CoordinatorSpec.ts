@@ -22,6 +22,23 @@ scope?: GrantScope,
  */
 answer_cap?: number, 
 /**
+ * The desktop action budget of a grant with `desktop` or `capture`
+ * (R13 P6 §8.1). Board → deck only, like `stations`: the deck reads it
+ * in `owner_start` and clears it before the start command goes to a
+ * station.
+ */
+desktop_cap?: number, 
+/**
+ * The screenshot budget of a grant with `capture` (R13 P6 §8.1).
+ * Board → deck only.
+ */
+capture_cap?: number, 
+/**
+ * The image-read byte budget of a grant with `capture` (R13 P6 §8.1).
+ * Board → deck only.
+ */
+image_byte_cap?: number, 
+/**
  * The target stations that the owner picked (ADR-006 §"Creation"),
  * besides the coordinator's own station. Board → deck only: the deck
  * reads it in `owner_start` and clears it before the start command goes

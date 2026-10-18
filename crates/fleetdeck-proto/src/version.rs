@@ -172,6 +172,14 @@ pub mod feature {
     /// R13 P5a: station artifact deletion.
     pub const ARTIFACTS_DELETE: &str = "artifacts_delete.v1";
 
+    /// R13 P6: the coordinator desktop tools (`coordinator.desktop_call`,
+    /// `coordinator.desktop_query`, `desktop.authority_check`,
+    /// `desktop.policy_now`, `desktop.coordinator_read`).
+    pub const DESKTOP_MCP: &str = "desktop_mcp.v1";
+
+    /// R13 P6: the coordinator screenshot tools (needs `desktop_mcp.v1`).
+    pub const CAPTURE_MCP: &str = "capture_mcp.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -217,6 +225,8 @@ pub mod feature {
         DESKTOP_SHELL,
         DESKTOP_CAPTURE,
         ARTIFACTS_DELETE,
+        DESKTOP_MCP,
+        CAPTURE_MCP,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

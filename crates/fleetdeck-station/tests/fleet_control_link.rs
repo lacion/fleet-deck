@@ -162,7 +162,8 @@ async fn policy_now_answers_the_live_setting_and_whether_the_caller_is_bound() {
                 answer,
                 PolicyNowAnswer {
                     fleet_control,
-                    bound
+                    bound,
+                    binding_matches: None
                 },
                 "{session}"
             );

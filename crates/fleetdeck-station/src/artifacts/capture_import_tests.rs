@@ -379,6 +379,8 @@ fn provenance() -> CaptureProvenance {
         kind: CaptureKind::Screenshot,
         caller: CaptureCaller::Owner,
         caller_station: None,
+        caller_session: None,
+        caller_grant_id: None,
         at: 1,
     }
 }

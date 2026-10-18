@@ -43,6 +43,7 @@ pub(super) fn name(action: &DesktopAction) -> &'static str {
         DesktopAction::BrowserOpen { .. } => "browser_open",
         DesktopAction::WindowClose { .. } => "window_close",
         DesktopAction::ScreenCapture { .. } => "screen_capture",
+        DesktopAction::PreviewClose { .. } => "preview_close",
     }
 }
 
@@ -180,6 +181,13 @@ impl Cx<'_> {
             DesktopAction::ScreenCapture { .. } => Err(Fail::new(
                 code::UNSUPPORTED,
                 "This station cannot take screenshots yet.",
+            )),
+            // R13 P6 task F1: a stub until task T2 resolves the handle in
+            // the preview records. The same refusal as `WindowClose` of a
+            // window that Fleet Deck did not open.
+            DesktopAction::PreviewClose { .. } => Err(Fail::new(
+                code::FORBIDDEN,
+                "Fleet Deck did not open this window.",
             )),
         }
     }
@@ -645,3 +653,7 @@ async fn make_parent(dir: &std::path::Path) -> Result<(), Fail> {
             )
         })
 }
+
+#[cfg(test)]
+#[path = "actions_preview_close_tests.rs"]
+mod preview_close_tests;

@@ -2,19 +2,20 @@
 //! database made by v2 is at version 25 (v2's display migration); the merged
 //! list keeps v2's V1 to V25 and appends the five Fleet Git migrations as V26
 //! to V30, and R13 P5a adds V31 (the artifact tombstones) and V32 (the owner
-//! screenshots); R13 P4 adds V33 (the station palettes). The station list
-//! is Fleet Git's list (32 entries), R13 P5a V33 (the artifact deletions)
-//! and V34 (the capture operations); a station database made by v2 is at
-//! version 27.
+//! screenshots); R13 P4 adds V33 (the station palettes); R13 P6 adds V34 (the
+//! grant caps and the coordinator desktop ledger). The station list is Fleet
+//! Git's list (32 entries), R13 P5a V33 (the artifact deletions) and V34 (the
+//! capture operations), and R13 P6 V35 (the coordinator desktop operations);
+//! a station database made by v2 is at version 27.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use rusqlite::Connection;
 
 const DECK_V2_LAST: usize = 25;
-const DECK_LATEST: i64 = 33;
+const DECK_LATEST: i64 = 34;
 const STATION_V2_LAST: usize = 27;
-const STATION_LATEST: i64 = 34;
+const STATION_LATEST: i64 = 35;
 
 fn user_version(conn: &Connection) -> i64 {
     conn.pragma_query_value(None, "user_version", |r| r.get(0))
@@ -133,7 +134,7 @@ fn migration_v33_adds_the_station_palettes_and_keeps_the_rows() {
     .unwrap();
 
     migrations.to_latest(&mut conn).unwrap();
-    assert_eq!(user_version(&conn), 33);
+    assert_eq!(user_version(&conn), DECK_LATEST);
     assert_eq!(count(&conn, "SELECT count(*) FROM displays"), 1);
     assert_eq!(count(&conn, "SELECT count(*) FROM station_palettes"), 0);
     conn.execute(
@@ -161,6 +162,146 @@ fn migration_v33_adds_the_station_palettes_and_keeps_the_rows() {
     );
 }
 
+/// R13 P6 task F1: V33 to V34 keeps a grant row and gives it the new columns
+/// at their defaults; the new tables are empty and STRICT.
+#[test]
+fn migration_v34_keeps_a_grant_and_adds_the_desktop_columns_at_their_defaults() {
+    let migrations = fleetdeck_deck::store::schema::migrations();
+    let mut conn = Connection::open_in_memory().unwrap();
+    migrations.to_version(&mut conn, 33).unwrap();
+    assert_eq!(user_version(&conn), 33);
+    conn.execute(
+        "INSERT INTO tokens (grant_id, station_id, session_id, classes, stations, spawn_cap,
+             max_modes, idle_ttl_ms, created_at, expires_at, state)
+         VALUES ('g1', 'st-1', 'se-1', '[\"read\"]', '[\"st-1\"]', 3, '{}', 60000, 1, 2,
+             'active')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO desktop_captures (station_id, capture_id, action_hash, state, monitor,
+             created_at, updated_at)
+         VALUES ('st-1', 'c1', 'h', 'prepared', 'DP-1', 1, 1)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO display_directives (display_id, generation, mode, sender_kind, body,
+             created_at)
+         VALUES ('d1', 1, 'mission', 'owner', '{}', 1)",
+        [],
+    )
+    .unwrap();
+
+    migrations.to_latest(&mut conn).unwrap();
+    assert_eq!(user_version(&conn), DECK_LATEST);
+    type Row = (
+        String,
+        Option<i64>,
+        i64,
+        Option<i64>,
+        i64,
+        Option<i64>,
+        i64,
+        i64,
+    );
+    let row: Row = conn
+        .query_row(
+            "SELECT state, desktop_cap, desktop_used, capture_cap, capture_used,
+                    image_byte_cap, image_byte_used, desktop_attempts
+             FROM tokens WHERE grant_id = 'g1'",
+            [],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                    r.get(7)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(row, ("active".to_owned(), None, 0, None, 0, None, 0, 0));
+    // The other changed tables keep their row; the new columns are NULL.
+    let coordinator: Option<String> = conn
+        .query_row(
+            "SELECT coordinator FROM desktop_captures WHERE capture_id = 'c1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(coordinator, None);
+    let sender: (Option<i64>, Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT sender_generation, sender_station, sender_session
+             FROM display_directives WHERE display_id = 'd1'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(sender, (None, None, None));
+    for table in [
+        "coordinator_desktop_ops",
+        "coordinator_desktop_rejects",
+        "coordinator_desktop_rate",
+    ] {
+        assert_eq!(count(&conn, &format!("SELECT count(*) FROM {table}")), 0);
+    }
+    // The cap columns hold only their ranges, and the byte cap only whole MiB.
+    for bad in [
+        "desktop_cap = 5001",
+        "capture_cap = -1",
+        "image_byte_cap = 1048577",
+        "image_byte_cap = 1073741825",
+        "desktop_used = -1",
+    ] {
+        let sql = format!("UPDATE tokens SET {bad} WHERE grant_id = 'g1'");
+        assert!(conn.execute(&sql, []).is_err(), "{bad}");
+    }
+    for ok in [
+        "desktop_cap = 5000",
+        "capture_cap = 0",
+        "image_byte_cap = 1073741824",
+    ] {
+        let sql = format!("UPDATE tokens SET {ok} WHERE grant_id = 'g1'");
+        assert_eq!(conn.execute(&sql, []).unwrap(), 1, "{ok}");
+    }
+    // An operation row takes only a known tool, class and state.
+    let op = |tool: &str, class: &str, state: &str| {
+        conn.execute(
+            "INSERT INTO coordinator_desktop_ops (operation_id, grant_id, request_key,
+                 payload_hash, tool, class, binding_id, generation, caller_station,
+                 caller_session, target_station, resource, state, charged, created_at,
+                 updated_at)
+             VALUES (?1, 'g1', ?1, 'h', ?2, ?3, 'b', 1, 'st-1', 'se-1', 'st-1', '{}', ?4, '{}',
+                 1, 1)",
+            rusqlite::params![format!("{tool}{class}{state}"), tool, class, state],
+        )
+    };
+    assert!(op("notify", "desktop", "prepared").is_ok());
+    assert!(op("screenshot", "capture", "unknown").is_ok());
+    assert!(op("terminal_open", "desktop", "prepared").is_err());
+    assert!(op("notify", "input", "prepared").is_err());
+    assert!(op("notify", "desktop", "claimed").is_err());
+    // One request key for each grant.
+    assert!(
+        conn.execute(
+            "INSERT INTO coordinator_desktop_ops (operation_id, grant_id, request_key,
+                 payload_hash, tool, class, binding_id, generation, caller_station,
+                 caller_session, target_station, resource, state, charged, created_at,
+                 updated_at)
+             VALUES ('other', 'g1', 'notifydesktopprepared', 'h', 'notify', 'desktop', 'b', 1,
+                 's', 's', 's', '{}', 'prepared', '{}', 1, 1)",
+            [],
+        )
+        .is_err()
+    );
+}
+
 /// A fresh deck database and a migrated one have the same schema.
 #[test]
 fn a_fresh_deck_database_and_a_migrated_one_have_the_same_schema() {
@@ -177,7 +318,51 @@ fn a_fresh_deck_database_and_a_migrated_one_have_the_same_schema() {
     assert_eq!(schema_of(&fresh), schema_of(&migrated));
 }
 
-/// A station database at v2's last version (27) migrates to 34, and a fresh
+/// R13 P6 task F1: V34 to V35 keeps a capture operation row and gives it the
+/// new `coordinator` column at its default; the new ledger is empty and
+/// accepts only its own kinds and states.
+#[test]
+fn migration_v35_keeps_a_capture_op_and_adds_the_desktop_ledger() {
+    let migrations = fleetdeck_station::store::schema::migrations();
+    let mut conn = Connection::open_in_memory().unwrap();
+    migrations.to_version(&mut conn, 34).unwrap();
+    assert_eq!(user_version(&conn), 34);
+    conn.execute(
+        "INSERT INTO capture_ops (deck_fp, capture_id, action_hash, state, monitor,
+             artifact_id, reserved_bytes, started_at, updated_at)
+         VALUES ('fp', 'c1', 'h', 'committed', 'DP-1', 'a1', 100, 1, 2)",
+        [],
+    )
+    .unwrap();
+
+    migrations.to_latest(&mut conn).unwrap();
+    assert_eq!(user_version(&conn), STATION_LATEST);
+    let (state, coordinator): (String, Option<String>) = conn
+        .query_row(
+            "SELECT state, coordinator FROM capture_ops WHERE capture_id = 'c1'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((state.as_str(), coordinator), ("committed", None));
+    assert_eq!(count(&conn, "SELECT count(*) FROM desktop_ops"), 0);
+    let op = |op_id: &str, kind: &str, state: &str| {
+        conn.execute(
+            "INSERT INTO desktop_ops (deck_fp, operation_id, action_hash, kind, grant_id,
+                 caller_station, caller_session, state, claimed_at, updated_at)
+             VALUES ('fp', ?1, 'h', ?2, 'g', 's', 'x', ?3, 1, 1)",
+            rusqlite::params![op_id, kind, state],
+        )
+    };
+    assert!(op("o1", "notify", "claimed").is_ok());
+    assert!(op("o2", "preview_close", "failed").is_ok());
+    assert!(op("o3", "screenshot", "claimed").is_err());
+    assert!(op("o4", "notify", "running").is_err());
+    // The key is the deck and the operation.
+    assert!(op("o1", "notify", "done").is_err());
+}
+
+/// A station database at v2's last version (27) migrates to 35, and a fresh
 /// one has the same schema.
 #[test]
 fn a_station_database_at_v2_last_version_migrates_to_the_merged_list() {

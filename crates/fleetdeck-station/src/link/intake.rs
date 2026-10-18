@@ -49,6 +49,10 @@ mod intake_summary;
 // R13 P6: `coordinator.policy_now`.
 #[path = "intake_policy.rs"]
 mod intake_policy;
+// R13 P6: `desktop.policy_now` and `desktop.coordinator_read` (stubs until
+// task T2).
+#[path = "intake_coordinator_desktop.rs"]
+mod intake_coordinator_desktop;
 use crate::store::{Caller, DecideError, StoreError, peers};
 pub(super) use intake_fleet_git::{PauseGuard, move_export, move_prepare};
 
@@ -505,6 +509,8 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
             accounts(ctx, m, req.params).await
         }
         "coordinator.policy_now" => intake_policy::policy_now(ctx, req.params),
+        "desktop.policy_now" => intake_coordinator_desktop::policy_now(req.params),
+        "desktop.coordinator_read" => intake_coordinator_desktop::coordinator_read(req.params),
         "session.history" => history_method(ctx, req.params).await,
         "session.subagent" => subagent_method(ctx, req.params).await,
         "station.native_sessions" => intake_native::sessions(ctx, req.params).await,
@@ -672,7 +678,7 @@ async fn mutate(
             decided
         }
         // The roles of the method table never deliver it to a station.
-        Mutation::Coordinator(_) => {
+        Mutation::Coordinator(_) | Mutation::DesktopCall(_) => {
             let reject = Reject::new(
                 RejectCode::InvalidCommand,
                 "a station does not hold coordinator calls",

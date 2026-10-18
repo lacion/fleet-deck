@@ -18,4 +18,29 @@ state: string, revoked_reason: string | null,
 /**
  * The binding generation; `None` until the station binds it.
  */
-generation: number | null, expires_at: number, last_used_at: number | null, };
+generation: number | null, expires_at: number, last_used_at: number | null, 
+/**
+ * R13 P6 §8.1: the desktop action budget. `Some` only for a grant with
+ * `desktop` or `capture`.
+ */
+desktop_cap?: number, 
+/**
+ * The desktop actions used; `Some` only with `desktop_cap`.
+ */
+desktop_used?: number, 
+/**
+ * The screenshot budget of a grant with `capture`.
+ */
+capture_cap?: number, 
+/**
+ * The screenshots used; `Some` only with `capture_cap`.
+ */
+capture_used?: number, 
+/**
+ * The image-read byte budget of a grant with `capture`.
+ */
+image_byte_cap?: number, 
+/**
+ * The image bytes charged; `Some` only with `image_byte_cap`.
+ */
+image_byte_used?: number, };

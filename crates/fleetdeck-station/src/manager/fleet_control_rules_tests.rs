@@ -383,6 +383,7 @@ fn policy_now_answers_the_live_setting_and_whether_the_caller_is_bound() {
             &bindings,
             &PolicyNow {
                 caller_session: session.into(),
+                binding: None,
             },
         )
     };

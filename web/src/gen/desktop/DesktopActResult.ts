@@ -11,6 +11,11 @@ export type DesktopActResult = {
  */
 address: string | null, 
 /**
+ * The opaque handle of a coordinator preview (`preview_open`, R13 P6
+ * §4.5); the station sends `address: None` then.
+ */
+window_id?: string, 
+/**
  * The fresh info after the action.
  */
 info: DesktopInfo, 

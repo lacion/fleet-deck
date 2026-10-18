@@ -152,6 +152,7 @@ impl DeckLink {
         let control = self.control_for(station)?;
         let params = serde_json::to_value(PolicyNow {
             caller_session: caller_session.clone(),
+            binding: None,
         })
         .ok()?;
         let outcome = tokio::time::timeout(

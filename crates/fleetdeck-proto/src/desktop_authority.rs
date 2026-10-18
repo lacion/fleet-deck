@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+use crate::coordinator_desktop_wire::CoordinatorContext;
 use crate::desktop::DesktopAction;
 
 /// The key of the authority in the params of `desktop.act`.
@@ -45,6 +46,12 @@ pub struct DesktopAuthority {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub quiet_hours: Option<String>,
+    /// The coordinator that the action runs for (R13 P6 §5.4, feature
+    /// `desktop_mcp.v1`). Absent for an owner or wake action, whose bytes
+    /// stay unchanged. The action hash covers it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub coordinator: Option<CoordinatorContext>,
 }
 
 /// Splits the `authority` key off the params of `desktop.act`. The rest is
@@ -86,7 +93,59 @@ mod tests {
             deck_now_ms: 10_000,
             desktop_epoch: "cd".repeat(16),
             quiet_hours: None,
+            coordinator: None,
         }
+    }
+
+    /// The bytes of an owner authority, written down from the struct before
+    /// `coordinator` existed: an owner or wake action must not change.
+    #[test]
+    fn an_owner_authority_serializes_to_its_pinned_bytes() {
+        let owner = concat!(
+            r#"{"action_id":"01J00000000000000000000000","#,
+            r#""action_hash":"abababababababababababababababababababababababababababababababab","#,
+            r#""deadline_ms":20000,"deck_now_ms":10000,"#,
+            r#""desktop_epoch":"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"}"#
+        );
+        assert_eq!(serde_json::to_string(&authority()).unwrap(), owner);
+        let wake = DesktopAuthority {
+            quiet_hours: Some("22:00-07:00".to_owned()),
+            ..authority()
+        };
+        assert_eq!(
+            serde_json::to_string(&wake).unwrap(),
+            owner.replace('}', r#","quiet_hours":"22:00-07:00"}"#)
+        );
+        // The old bytes parse, with no coordinator.
+        let parsed: DesktopAuthority = serde_json::from_str(owner).unwrap();
+        assert_eq!(parsed, authority());
+    }
+
+    #[test]
+    fn a_coordinator_context_is_written_after_the_owner_fields_and_round_trips() {
+        let with = DesktopAuthority {
+            coordinator: Some(CoordinatorContext {
+                grant_id: "g1".into(),
+                binding_id: "b1".into(),
+                generation: 3,
+                caller_station: "st-a".into(),
+                caller_session: "01J0000000000000000000000S".into(),
+                caller_label: "swift-otter".into(),
+            }),
+            ..authority()
+        };
+        let v = serde_json::to_value(&with).unwrap();
+        assert_eq!(v["coordinator"]["generation"], 3);
+        assert_eq!(v["coordinator"]["caller_label"], "swift-otter");
+        assert_eq!(serde_json::from_value::<DesktopAuthority>(v).unwrap(), with);
+        // A context with an unknown field is refused.
+        let bad = serde_json::json!({
+            "action_id": "a", "action_hash": "b", "deadline_ms": 1, "deck_now_ms": 1,
+            "desktop_epoch": "c",
+            "coordinator": {"grant_id": "g", "binding_id": "b", "generation": 1,
+                "caller_station": "s", "caller_session": "x", "caller_label": "l", "z": 1}
+        });
+        assert!(serde_json::from_value::<DesktopAuthority>(bad).is_err());
     }
 
     #[test]

@@ -4,6 +4,7 @@
 
 pub mod artifact_deletions;
 pub mod cert_task;
+mod coordinator_desktop;
 pub mod desktop_capture;
 pub mod desktop_relay;
 pub mod elevation;

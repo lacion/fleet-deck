@@ -33,7 +33,7 @@ const fn p5a_row(name: &'static str, feature: &'static str) -> MethodSpec {
 use Callers::{DeckToStation, Either, StationToDeck};
 
 /// The last rows of [`crate::methods::METHODS`].
-pub(crate) const TAIL: [MethodSpec; 38] = [
+pub(crate) const TAIL: [MethodSpec; 43] = [
     // Desktop control on the station (R13 P3): the board gates it for the
     // owner; the station checks `allow_desktop` live.
     m(
@@ -101,6 +101,44 @@ pub(crate) const TAIL: [MethodSpec; 38] = [
         DeckToStation,
         Scope::Read,
         Some(feature::COORDINATOR_V2),
+        false,
+    ),
+    // R13 P6 (`desktop_mcp.v1`): the coordinator desktop tools. The call is
+    // mutating like `coordinator.call`; the query, the dispatch authority
+    // check, the live target policy and the protected read are not.
+    m(
+        "coordinator.desktop_call",
+        StationToDeck,
+        Scope::Coordinate,
+        Some(feature::DESKTOP_MCP),
+        true,
+    ),
+    m(
+        "coordinator.desktop_query",
+        StationToDeck,
+        Scope::Coordinate,
+        Some(feature::DESKTOP_MCP),
+        false,
+    ),
+    m(
+        "desktop.authority_check",
+        StationToDeck,
+        Scope::Coordinate,
+        Some(feature::DESKTOP_MCP),
+        false,
+    ),
+    m(
+        "desktop.policy_now",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::DESKTOP_MCP),
+        false,
+    ),
+    m(
+        "desktop.coordinator_read",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::DESKTOP_MCP),
         false,
     ),
     // Fleet Git phase 1 (ADR-009): the versioned full snapshot of the
