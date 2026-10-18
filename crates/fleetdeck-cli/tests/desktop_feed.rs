@@ -491,11 +491,15 @@ fn desktop_feed_notify_baseline_dedup_age_rule_and_burst_of_six() {
     std::thread::sleep(Duration::from_millis(400));
     let calls = rig.calls("omarchy-notification-send");
     assert_eq!(calls.len(), 7, "{calls:?}");
-    assert_eq!(calls[0], argv_of(2));
-    for (call, n) in calls[1..6].iter().zip(11..=15) {
-        assert_eq!(*call, argv_of(n));
-    }
-    assert_eq!(calls[6], more_argv("1 more sessions need you"));
+    // The notification programs run without a wait, so their logs can come
+    // in any order: compare the sorted lists. Keys 11 to 15 (the first five of
+    // `needs_you`) notify; key 16 only counts in "1 more".
+    let mut got = calls.clone();
+    got.sort();
+    let mut want = vec![argv_of(2), more_argv("1 more sessions need you")];
+    want.extend((11..=15).map(argv_of));
+    want.sort();
+    assert_eq!(got, want);
     assert!(calls.iter().flatten().all(|a| a != "--"));
     assert!(rig.stderr().is_empty(), "{}", rig.stderr());
 }
@@ -521,14 +525,20 @@ fn desktop_feed_notify_argv_for_a_dash_callsign_an_option_like_name_and_a_bad_id
         rig.calls("omarchy-notification-send").len() >= 3
     });
     let calls = rig.calls("omarchy-notification-send");
+    // The feed does not wait for a notification program, so the three logs
+    // can come in any order: find each call by its headline.
+    let by = |headline: &str| -> &Vec<String> {
+        calls
+            .iter()
+            .find(|c| c[4] == headline)
+            .unwrap_or_else(|| panic!("no call `{headline}` in {calls:?}"))
+    };
     let exec = |call: &[String]| call[6..].to_vec();
+    // A callsign that starts with `-` gives the first 8 characters of the session.
+    let dash = by("sess-123 needs you");
+    assert_eq!(dash[5], "Approval on srv");
     assert_eq!(
-        calls[0][4], "sess-123 needs you",
-        "a callsign that starts with `-`"
-    );
-    assert_eq!(calls[0][5], "Approval on srv");
-    assert_eq!(
-        exec(&calls[0]),
+        exec(dash),
         strings(&[
             "--exec",
             &exe(),
@@ -539,14 +549,14 @@ fn desktop_feed_notify_argv_for_a_dash_callsign_an_option_like_name_and_a_bad_id
             "q1"
         ])
     );
-    assert_eq!(calls[1][4], "abc needs you");
     assert_eq!(
-        calls[1][5], "Question on --exec",
+        by("abc needs you")[5],
+        "Question on --exec",
         "a name that looks like an option"
     );
-    assert_eq!(calls[2][4], "lynx-12 needs you");
-    assert_eq!(calls[2][5], "Approval on abc");
-    assert_eq!(calls[2].len(), 6, "an id outside the grammar: no --exec");
+    let bad = by("lynx-12 needs you");
+    assert_eq!(bad[5], "Approval on abc");
+    assert_eq!(bad.len(), 6, "an id outside the grammar: no --exec");
     for call in &calls {
         assert!(
             !call[4].starts_with('-') && !call[5].starts_with('-'),
