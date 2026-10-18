@@ -129,7 +129,9 @@ async fn action(
         || op.action_hash.as_deref() != Some(check.action_hash.as_str())
         || op.state != OpState::Attempted
         // Only a capture imports: a screenshot, or a recording (R13 P5b-2
-        // §7.6: the station asks for import authority before its import).
+        // §7.6: the station asks for import authority before its import). An
+        // input operation never imports (R13 P7 §6.4); it has the `execute`
+        // phase only, with the same rule as every other mutating tool.
         || (check.phase == AuthorityPhase::Import
             && !matches!(op.tool, OpTool::Screenshot | OpTool::RecordMonitor))
     {

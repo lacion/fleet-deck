@@ -678,3 +678,7 @@ pub use capture::*;
 mod record;
 #[allow(unused_imports)]
 pub use record::*;
+
+mod input;
+#[allow(unused_imports)]
+pub use input::*;

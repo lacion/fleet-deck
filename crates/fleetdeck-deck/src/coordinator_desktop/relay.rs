@@ -35,7 +35,7 @@ pub(super) enum Ran {
 
 /// Ends the operation and logs a failed write (the real outcome is answered
 /// anyway; start recovery fixes a row that stays open).
-async fn finish(link: &DeckLink, operation_id: &str, outcome: OpOutcome) -> Ran {
+pub(super) async fn finish(link: &DeckLink, operation_id: &str, outcome: OpOutcome) -> Ran {
     let first = match link
         .store
         .desktop_op_finish(operation_id, outcome.clone(), link.store.now_ms())
@@ -52,7 +52,7 @@ async fn finish(link: &DeckLink, operation_id: &str, outcome: OpOutcome) -> Ran 
 
 /// The wait of the send for `action`: the deck wait of §9 (95 s for a preview,
 /// 35 s for the others), cut by what is left of the handler deadline.
-fn waits(deadline: Instant) -> Waits {
+pub(super) fn waits(deadline: Instant) -> Waits {
     let left = deadline.saturating_duration_since(Instant::now());
     Waits {
         long: left.min(Duration::from_millis(deadline_ms::PREVIEW_DECK_WAIT)),

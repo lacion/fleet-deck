@@ -471,6 +471,15 @@ impl DeckStore {
             .insert(token, ip.to_canonical());
     }
 
+    /// The remote address of the newest live link of `station` (the one
+    /// with the highest token), or `None` without a live link.
+    #[must_use]
+    pub fn link_peer(&self, station: &StationId) -> Option<std::net::IpAddr> {
+        let map = self.link_peers();
+        map.get(station)
+            .and_then(|links| links.last_key_value().map(|(_, ip)| *ip))
+    }
+
     /// The remote addresses of every live station link.
     #[must_use]
     pub fn link_peer_ips(&self) -> BTreeSet<std::net::IpAddr> {

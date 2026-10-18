@@ -12,6 +12,7 @@ use std::collections::BTreeSet;
 
 use fleetdeck_proto::coordinator_desktop_text::code;
 use fleetdeck_proto::coordinator_desktop_wire::CoordinatorContext;
+use fleetdeck_proto::coordinator_spec::InputScope;
 use fleetdeck_proto::mutation::CoordinatorBinding;
 use fleetdeck_proto::version::feature;
 use fleetdeck_proto::{SessionId, StationId};
@@ -21,8 +22,8 @@ use crate::link::desktop_authority::{Route, resolve};
 use crate::store::coordinator_desktop::{OpClass, OpTool};
 use crate::store::{Grant, GrantClass, LinkFeature};
 
-/// The nine tools of §3 and `record_monitor` (R13 P5b-2 §13.1). The variants
-/// of the tools of tasks T3 and T5 are not built yet.
+/// The nine tools of §3, `record_monitor` (R13 P5b-2 §13.1) and the three
+/// input tools (R13 P7 §4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub(crate) enum Tool {
@@ -36,6 +37,9 @@ pub(crate) enum Tool {
     CaptureStatus,
     ReadCaptureImage,
     DesktopInfo,
+    KeyPress,
+    TypeText,
+    PointerMove,
 }
 
 impl Tool {
@@ -53,6 +57,7 @@ impl Tool {
             | Self::RecordMonitor
             | Self::CaptureStatus
             | Self::ReadCaptureImage => Some(OpClass::Capture),
+            Self::KeyPress | Self::TypeText | Self::PointerMove => Some(OpClass::Input),
             Self::DesktopInfo => None,
         }
     }
@@ -68,6 +73,9 @@ impl Tool {
             Self::WindowClose => Some(OpTool::WindowClose),
             Self::Screenshot => Some(OpTool::Screenshot),
             Self::RecordMonitor => Some(OpTool::RecordMonitor),
+            Self::KeyPress => Some(OpTool::KeyPress),
+            Self::TypeText => Some(OpTool::TypeText),
+            Self::PointerMove => Some(OpTool::PointerMove),
             Self::DesktopActionStatus
             | Self::CaptureStatus
             | Self::ReadCaptureImage
@@ -124,6 +132,20 @@ pub(super) fn needs(class: OpClass) -> GrantClass {
     }
 }
 
+/// The rules of an input grant (R13 P7 §3.1): the three classes `desktop`,
+/// `capture` and `input` (`not_granted`), then the explicit allowance and the
+/// one supported scope (`input_not_allowed`).
+fn input_grant(grant: &Grant) -> Result<(), &'static str> {
+    let all = [GrantClass::Desktop, GrantClass::Capture, GrantClass::Input];
+    if !all.iter().all(|c| grant.classes.contains(c)) {
+        return Err(code::NOT_GRANTED);
+    }
+    if !grant.allow_input || grant.input_scope != Some(InputScope::OwnWindows) {
+        return Err(code::INPUT_NOT_ALLOWED);
+    }
+    Ok(())
+}
+
 /// A deck store error: a warning without any request data, and
 /// `authority_unknown`.
 pub(super) fn store_error(e: &crate::store::DeckError) -> &'static str {
@@ -149,8 +171,10 @@ pub(super) fn switches(link: &DeckLink) -> Result<(), &'static str> {
 }
 
 /// The features of the caller link (§5.1); a recording also needs
-/// `capture_recording_mcp.v1` (R13 P5b-2 §13.1).
-fn caller_features(capture: bool, recording: bool) -> Vec<&'static str> {
+/// `capture_recording_mcp.v1` (R13 P5b-2 §13.1), and an input tool the
+/// capture set and `desktop_input_mcp.v1` (R13 P7 §6.1).
+fn caller_features(class: OpClass, recording: bool) -> Vec<&'static str> {
+    let capture = matches!(class, OpClass::Capture | OpClass::Input);
     let mut wanted = vec![
         feature::COORDINATOR,
         feature::COORDINATOR_V2,
@@ -161,6 +185,9 @@ fn caller_features(capture: bool, recording: bool) -> Vec<&'static str> {
     }
     if recording {
         wanted.push(feature::CAPTURE_RECORDING_MCP);
+    }
+    if class == OpClass::Input {
+        wanted.push(feature::DESKTOP_INPUT_MCP);
     }
     wanted
 }
@@ -205,9 +232,14 @@ fn target_features(capture: bool) -> Vec<&'static str> {
 }
 
 /// The target link has every feature of its class: `station_unreachable`
-/// without a link, `desktop_unsupported` when a link lacks one.
+/// without a link, `desktop_unsupported` when a link lacks one. An input
+/// operation needs the capture set and `desktop_input_mcp.v1` (R13 P7 §6.1).
 fn target_ready(link: &DeckLink, target: &StationId, class: OpClass) -> Result<(), &'static str> {
-    for f in target_features(class == OpClass::Capture) {
+    let mut wanted = target_features(matches!(class, OpClass::Capture | OpClass::Input));
+    if class == OpClass::Input {
+        wanted.push(feature::DESKTOP_INPUT_MCP);
+    }
+    for f in wanted {
         match link.store.link_feature(target, f) {
             LinkFeature::Down => return Err(code::STATION_UNREACHABLE),
             LinkFeature::Without => return Err(code::DESKTOP_UNSUPPORTED),
@@ -287,7 +319,9 @@ pub(super) async fn begin(
     // 4. The class and the target, before any target or resource lookup.
     let class = match tool.class() {
         Some(class) => {
-            if !grant.classes.contains(&needs(class)) {
+            if class == OpClass::Input {
+                input_grant(&grant)?;
+            } else if !grant.classes.contains(&needs(class)) {
                 return Err(code::NOT_GRANTED);
             }
             // A recording needs the explicit allowance (R13 P5b-2 §13.2).
@@ -305,7 +339,7 @@ pub(super) async fn begin(
         return Err(code::NOT_GRANTED);
     }
     // 5a. The features of the caller link.
-    for f in caller_features(class == OpClass::Capture, tool == Tool::RecordMonitor) {
+    for f in caller_features(class, tool == Tool::RecordMonitor) {
         if link.store.link_feature(caller_station, f) != LinkFeature::Negotiated {
             return Err(code::DESKTOP_UNSUPPORTED);
         }
@@ -401,6 +435,10 @@ pub(super) async fn grant_pass(link: &DeckLink, held: &Held<'_>) -> Result<Grant
     if !classes.contains(&needs(held.class)) || !grant.stations.contains(held.target) {
         return Err(code::NOT_GRANTED);
     }
+    // R13 P7 §3.1: the allowance and the scope of an input grant.
+    if held.class == OpClass::Input {
+        input_grant(&grant)?;
+    }
     Ok(grant)
 }
 
@@ -443,6 +481,29 @@ pub(super) async fn delivery_pass(
         return Err(code::RECORDING_NOT_ALLOWED);
     }
     Ok(())
+}
+
+/// The deck-local authority to deliver an input result to its caller (R13 P7
+/// §8.3, DL-242): [`grant_pass`] for the input class, which also checks the
+/// classes, the allowance and the scope of the grant. It makes no check of the
+/// target link.
+///
+/// # Errors
+/// The code of the first check that fails.
+pub(super) async fn input_delivery_pass(
+    link: &DeckLink,
+    ctx: &CoordinatorContext,
+    target: &StationId,
+) -> Result<(), &'static str> {
+    let held = Held {
+        grant_id: &ctx.grant_id,
+        binding_id: &ctx.binding_id,
+        generation: ctx.generation,
+        caller: &ctx.caller_station,
+        target,
+        class: OpClass::Input,
+    };
+    grant_pass(link, &held).await.map(|_| ())
 }
 
 /// The deck-local pass of a coordinator recording (R13 P5b-2 §6.3, §13.2):

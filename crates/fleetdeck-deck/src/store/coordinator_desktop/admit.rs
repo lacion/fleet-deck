@@ -6,8 +6,10 @@
 use std::sync::Arc;
 
 use fleetdeck_proto::coordinator_desktop_text::{code, limits};
+use fleetdeck_proto::coordinator_spec::InputScope;
 use rusqlite::{Transaction, params};
 
+use super::input::StoredInputCharges;
 use super::ops::{
     self, Admission, Charges, DesktopOp, NewOp, OpClass, OpState, OpTool, StoredCharges,
 };
@@ -32,6 +34,8 @@ fn stored_code(text: &str) -> Result<&'static str> {
         code::CAPTURE_CAP_REACHED => Ok(code::CAPTURE_CAP_REACHED),
         code::RECORDING_CAP_REACHED => Ok(code::RECORDING_CAP_REACHED),
         code::RECORDING_SECONDS_REACHED => Ok(code::RECORDING_SECONDS_REACHED),
+        code::INPUT_CAP_REACHED => Ok(code::INPUT_CAP_REACHED),
+        code::INPUT_CHARACTERS_REACHED => Ok(code::INPUT_CHARACTERS_REACHED),
         _ => Err(DeckError::Corrupt(
             "a stored desktop refusal has an unknown code".to_owned(),
         )),
@@ -68,14 +72,34 @@ fn needs(class: OpClass) -> GrantClass {
 }
 
 fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admission> {
-    // R13 P7 task F: no input path is built yet. An input tool is refused
-    // before anything is read or stored (the deck task adds the admission).
-    if matches!(
+    let input = matches!(
         op.tool,
         OpTool::KeyPress | OpTool::TypeText | OpTool::PointerMove
-    ) {
-        return refuse(code::DESKTOP_UNSUPPORTED);
+    );
+    // An input tool is always of the input class, and has its length (the
+    // call layer builds both from the validated arguments).
+    if input && op.class != OpClass::Input {
+        return Err(DeckError::Invalid(
+            "an input operation is not of the input class".to_owned(),
+        ));
     }
+    let length = match (input, op.input_length) {
+        (true, Some(length)) => length,
+        (true, None) => {
+            return Err(DeckError::Invalid(
+                "an input operation has no length".to_owned(),
+            ));
+        }
+        (false, _) => 0,
+    };
+    // The typed characters that the operation charges (R13 P7 §9.1): the
+    // scalar count of a `type_text`; a chord and a pointer movement consume
+    // no character budget.
+    let characters = if op.tool == OpTool::TypeText {
+        length
+    } else {
+        0
+    };
     // 1. The grant, checked again in this transaction, also for a replay.
     let ctx = &op.ctx;
     let Some(grant) = get_grant(&tx, &op.grant_id)? else {
@@ -102,6 +126,17 @@ fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admi
     }
     if !grant.classes.contains(&needs(op.class)) || !grant.stations.contains(&op.target_station) {
         return refuse(code::NOT_GRANTED);
+    }
+    if input {
+        // R13 P7 §3.1: an input grant holds the three classes, the explicit
+        // allowance and the one supported scope.
+        let all = [GrantClass::Desktop, GrantClass::Capture, GrantClass::Input];
+        if !all.iter().all(|c| grant.classes.contains(c)) {
+            return refuse(code::NOT_GRANTED);
+        }
+        if !grant.allow_input || grant.input_scope != Some(InputScope::OwnWindows) {
+            return refuse(code::INPUT_NOT_ALLOWED);
+        }
     }
     // 3. The request key: the same payload replays, another one conflicts.
     //    Only a grant that holds now sees a stored result (§6.2).
@@ -136,7 +171,15 @@ fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admi
             && rate::count(&tx, &grant_scope, rate::SCREENSHOT, now)?
                 >= limits::SCREENSHOTS_PER_WINDOW)
         || (op.tool == OpTool::Notify
-            && rate::count(&tx, &session_scope, rate::NOTIFY, now)? >= limits::NOTIFY_PER_WINDOW);
+            && rate::count(&tx, &session_scope, rate::NOTIFY, now)? >= limits::NOTIFY_PER_WINDOW)
+        // R13 P7 §9.3: the input bucket of the grant and of the caller
+        // session (across grants); the shared mutation bucket is checked
+        // above.
+        || (input
+            && (rate::count(&tx, &grant_scope, rate::INPUT, now)?
+                >= limits::INPUT_PER_GRANT_WINDOW
+                || rate::count(&tx, &session_scope, rate::INPUT, now)?
+                    >= limits::INPUT_PER_SESSION_WINDOW));
     if limited {
         return refuse(code::RATE_LIMITED);
     }
@@ -166,19 +209,35 @@ fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admi
     {
         return refuse_stored(tx, &op, code::RECORDING_SECONDS_REACHED, now);
     }
+    // R13 P7 §9.2: after the desktop count, the input count and then the
+    // typed characters.
+    if input && grant.input_used.saturating_add(1) > grant.input_cap {
+        return refuse_stored(tx, &op, code::INPUT_CAP_REACHED, now);
+    }
+    if input && grant.input_character_used.saturating_add(characters) > grant.input_character_cap {
+        return refuse_stored(tx, &op, code::INPUT_CHARACTERS_REACHED, now);
+    }
     // 7. Accept.
     let charged = Charges {
         desktop: 1,
         capture: u32::from(capturing),
     };
-    // Only a recording stores its two counters in the JSON (§13.2); the other
-    // tools keep the JSON that they always had.
+    // Only a recording stores its two counters in the JSON (§13.2) and an
+    // input operation its two (R13 P7 §9.1); the other tools keep the JSON
+    // that they always had.
     let stored_charges = if recording {
         serde_json::to_string(&StoredCharges {
             desktop: charged.desktop,
             capture: charged.capture,
             recording: 1,
             recording_seconds: seconds,
+        })?
+    } else if input {
+        serde_json::to_string(&StoredInputCharges {
+            desktop: charged.desktop,
+            capture: charged.capture,
+            input: 1,
+            input_characters: characters,
         })?
     } else {
         serde_json::to_string(&charged)?
@@ -214,14 +273,18 @@ fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admi
         "UPDATE tokens SET desktop_used = desktop_used + 1, capture_used = capture_used + ?2,
              desktop_attempts = desktop_attempts + 1, last_used_at = ?3,
              recording_used = recording_used + ?4,
-             recording_second_used = recording_second_used + ?5
+             recording_second_used = recording_second_used + ?5,
+             input_used = input_used + ?6,
+             input_character_used = input_character_used + ?7
          WHERE grant_id = ?1",
         params![
             op.grant_id,
             charged.capture,
             now,
             u32::from(recording),
-            seconds
+            seconds,
+            u32::from(input),
+            characters
         ],
     )?;
     rate::charge(&tx, &grant_scope, rate::MUTATION, now)?;
@@ -230,6 +293,10 @@ fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admi
     }
     if op.tool == OpTool::Notify {
         rate::charge(&tx, &session_scope, rate::NOTIFY, now)?;
+    }
+    if input {
+        rate::charge(&tx, &grant_scope, rate::INPUT, now)?;
+        rate::charge(&tx, &session_scope, rate::INPUT, now)?;
     }
     tx.commit()?;
     Ok(Admission::Accepted(DesktopOp {

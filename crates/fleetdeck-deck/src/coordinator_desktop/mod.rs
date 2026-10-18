@@ -28,6 +28,8 @@ mod check;
 mod directive;
 mod envelope;
 mod image;
+mod input;
+mod input_run;
 mod limits;
 mod permits;
 mod policy;
@@ -162,6 +164,17 @@ pub(super) fn reply_err_text(error: &str, message: &str) -> Outcome {
         error: error.to_owned(),
         message: message.to_owned(),
         operation_id: None,
+        capture_id: None,
+    })
+}
+
+/// The reply of a failure of an input operation (R13 P7 §8.3, §13): the code,
+/// its fixed text and the operation ID.
+pub(super) fn reply_err_op_text(error: &str, message: &str, operation_id: &str) -> Outcome {
+    reply(&DesktopReply::Err {
+        error: error.to_owned(),
+        message: message.to_owned(),
+        operation_id: Some(operation_id.to_owned()),
         capture_id: None,
     })
 }

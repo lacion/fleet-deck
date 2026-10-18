@@ -18,6 +18,7 @@ use serde_json::{Value, json};
 
 use super::audit::{self, Facts};
 use super::authorize::{Authorized, Tool, authorize, begin, store_error};
+use super::input;
 use super::policy::{caller_policy, target_policy};
 use super::reads::coordinator_read;
 use super::{reply_err, reply_ok};
@@ -156,6 +157,7 @@ pub(super) async fn status(
         Ok(Some(op)) if matches!(op.tool, OpTool::Screenshot | OpTool::RecordMonitor) => {
             Ok(status_without_op(&args.request_id, None))
         }
+        Ok(Some(op)) if input::is_input(op.tool) => Ok(input::status_of(&args.request_id, &op)),
         Ok(Some(op)) => Ok(status_of(&args.request_id, &op)),
         Ok(None) => match link
             .store

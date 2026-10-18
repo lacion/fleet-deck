@@ -502,34 +502,6 @@ async fn a_record_monitor_row_keeps_its_seconds_and_reads_back() {
     assert!(bad);
 }
 
-/// R13 P7 task F: no input path exists yet. `desktop_admit` refuses an input
-/// tool with `desktop_unsupported` before anything is read or stored, also for
-/// a grant that has the allowance.
-#[tokio::test]
-async fn an_input_tool_is_refused_as_unsupported_and_stores_and_charges_nothing() {
-    let (det, s) = store().await;
-    let classes = [GrantClass::Desktop, GrantClass::Capture, GrantClass::Input];
-    let (gid, ctx) = grant(&s, "coord", &classes, |g| {
-        g.allow_input = true;
-        g.input_cap = 100;
-        g.input_character_cap = 1000;
-    })
-    .await;
-    for (i, tool) in [OpTool::KeyPress, OpTool::TypeText, OpTool::PointerMove]
-        .into_iter()
-        .enumerate()
-    {
-        let mut op = new_op(&gid, &ctx, &format!("in-{i}"), tool);
-        op.class = OpClass::Input;
-        op.input_length = Some(1);
-        let a = s.desktop_admit(op, t0(&det)).await.unwrap();
-        assert_eq!(rejected(a), (code::DESKTOP_UNSUPPORTED, false), "{tool:?}");
-    }
-    assert_untouched(&s, &gid).await;
-    let g = s.grant(gid).await.unwrap().unwrap();
-    assert_eq!((g.input_used, g.input_character_used), (0, 0));
-}
-
 /// The stored names of the input tools and class: a row written by the next
 /// task reads back with its length.
 #[tokio::test]

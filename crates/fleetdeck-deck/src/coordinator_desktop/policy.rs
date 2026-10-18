@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use fleetdeck_proto::coordinator_desktop_text::{code, deadline_ms};
 use fleetdeck_proto::coordinator_desktop_wire::{
-    DesktopPolicyAnswer, DesktopPolicyNow, PolicyPurpose,
+    DesktopInputPolicyAnswer, DesktopPolicyAnswer, DesktopPolicyNow, PolicyPurpose,
 };
 use fleetdeck_proto::link::Outcome;
 use fleetdeck_proto::mutation::{CoordinatorBinding, PolicyNow};
@@ -61,7 +61,9 @@ pub(crate) async fn caller_policy(
 
 /// The live policy of the target station (§5.5): fleet control and desktop
 /// are on, and for a capture purpose also the capture setting and the monitor
-/// rule. An uncertain answer is `authority_unknown`; a false value is
+/// rule. For the input purpose (R13 P7 §6.4) the answer has its own closed
+/// shape, and every flag must be true (the monitor of the deck query is
+/// `null`; the target enforces the real monitor coverage). An uncertain answer is `authority_unknown`; a false value is
 /// `not_granted`. (`_link` keeps the signature of the call layer; the route
 /// holds the control channel.)
 ///
@@ -92,6 +94,20 @@ pub(crate) async fn target_policy(
         // A refusal, a lost link and a timeout are all uncertain.
         _ => return Err(code::AUTHORITY_UNKNOWN),
     };
+    if purpose == PolicyPurpose::Input {
+        let answer: DesktopInputPolicyAnswer =
+            serde_json::from_value(value).map_err(|_| code::AUTHORITY_UNKNOWN)?;
+        return if answer.allow_fleet_control
+            && answer.allow_desktop
+            && answer.allow_desktop_capture
+            && answer.allow_desktop_input
+            && answer.monitor_allowed
+        {
+            Ok(())
+        } else {
+            Err(code::NOT_GRANTED)
+        };
+    }
     let answer: DesktopPolicyAnswer =
         serde_json::from_value(value).map_err(|_| code::AUTHORITY_UNKNOWN)?;
     let capture_ok = purpose == PolicyPurpose::Desktop

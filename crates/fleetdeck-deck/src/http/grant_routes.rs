@@ -217,11 +217,14 @@ pub struct CapsBody {
     image_byte_cap: Option<u64>,
     recording_cap: Option<u32>,
     recording_second_cap: Option<u32>,
+    input_cap: Option<u32>,
+    input_character_cap: Option<u32>,
 }
 
 /// The caps of a grant as JSON, for the audit row. The two recording caps are
-/// in it only for a grant that allows recordings, so the row of any other
-/// grant keeps its exact JSON.
+/// in it only for a grant that allows recordings, and the two input caps only
+/// for a grant that allows input (R13 P7 §3.1), so the row of any other grant
+/// keeps its exact JSON.
 fn caps_json(g: &Grant) -> serde_json::Value {
     let mut caps = serde_json::json!({
         "desktop_cap": g.desktop_cap,
@@ -231,6 +234,10 @@ fn caps_json(g: &Grant) -> serde_json::Value {
     if g.recording_cap > 0 || g.recording_second_cap > 0 {
         caps["recording_cap"] = g.recording_cap.into();
         caps["recording_second_cap"] = g.recording_second_cap.into();
+    }
+    if g.allow_input {
+        caps["input_cap"] = g.input_cap.into();
+        caps["input_character_cap"] = g.input_character_cap.into();
     }
     caps
 }
@@ -242,8 +249,9 @@ fn no_grant() -> ApiError {
 /// `POST /api/coordinator/grants/{grant_id}/caps` (owner only, R13 P6 §2.2,
 /// decision O12-4 item 16): a decrease needs no elevation, an increase needs
 /// the elevation of the header `x-fleetdeck-elevation`. The caps are the
-/// three desktop limits and the two recording limits. The counters never
-/// change. The audit row `coordinator.grant_caps` holds the old and the new
+/// three desktop limits, the two recording limits and the two input limits
+/// (R13 P7 §9.1; a grant without `allow_input` refuses them). The counters
+/// never change. The audit row `coordinator.grant_caps` holds the old and the new
 /// caps.
 ///
 /// # Errors
@@ -290,6 +298,8 @@ pub async fn caps(
                     image_byte_cap: req.image_byte_cap,
                     recording_cap: req.recording_cap,
                     recording_second_cap: req.recording_second_cap,
+                    input_cap: req.input_cap,
+                    input_character_cap: req.input_character_cap,
                 },
                 is_elevated(&board, &session, token),
             )

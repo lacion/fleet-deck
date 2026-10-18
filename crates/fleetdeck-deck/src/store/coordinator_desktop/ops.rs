@@ -380,8 +380,10 @@ pub(super) fn find_reject(
 }
 
 impl DeckStore {
-    /// `prepared` becomes `attempted`, before the send. False when the row is
-    /// not `prepared`.
+    /// `prepared` becomes `attempted`, before the send, and `attempted_at`
+    /// is set (R13 P7 §7.6; every tool). False when the row is not
+    /// `prepared`. An input operation uses
+    /// [`DeckStore::desktop_op_attempted_input`] instead.
     ///
     /// # Errors
     /// A database error.
@@ -389,7 +391,8 @@ impl DeckStore {
         let operation_id = operation_id.to_owned();
         call(&self.inner.db, move |conn| {
             let n = conn.execute(
-                "UPDATE coordinator_desktop_ops SET state = 'attempted', updated_at = ?2
+                "UPDATE coordinator_desktop_ops
+                 SET state = 'attempted', updated_at = ?2, attempted_at = ?2
                  WHERE operation_id = ?1 AND state = 'prepared'",
                 params![operation_id, now],
             )?;
@@ -400,7 +403,8 @@ impl DeckStore {
 
     /// Ends an operation that is `prepared` or `attempted`. A row in `done`,
     /// `failed` or `unknown` never changes (false). `unknown` is final for a
-    /// non-capture operation.
+    /// non-capture operation. `finished_at` is set when it is NULL (R13 P7
+    /// §7.6; every tool).
     ///
     /// # Errors
     /// A database error.
@@ -419,7 +423,8 @@ impl DeckStore {
         call(&self.inner.db, move |conn| {
             let n = conn.execute(
                 "UPDATE coordinator_desktop_ops
-                 SET state = ?2, result = ?3, code = ?4, updated_at = ?5
+                 SET state = ?2, result = ?3, code = ?4, updated_at = ?5,
+                     finished_at = COALESCE(finished_at, ?5)
                  WHERE operation_id = ?1 AND state IN ('prepared', 'attempted')",
                 params![operation_id, state, result, code, now],
             )?;
@@ -472,7 +477,8 @@ impl DeckStore {
 
     /// The start recovery: every `prepared` row never reached the send and
     /// becomes `failed` with `authority_unknown`; every `attempted` row may
-    /// have run and becomes `unknown`. Returns the two counts.
+    /// have run and becomes `unknown`. Both set `finished_at` when it is
+    /// NULL (R13 P7 §7.6). Returns the two counts.
     ///
     /// # Errors
     /// A database error.
@@ -480,12 +486,15 @@ impl DeckStore {
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let prepared = tx.execute(
-                "UPDATE coordinator_desktop_ops SET state = 'failed', code = ?2, updated_at = ?1
+                "UPDATE coordinator_desktop_ops
+                 SET state = 'failed', code = ?2, updated_at = ?1,
+                     finished_at = COALESCE(finished_at, ?1)
                  WHERE state = 'prepared'",
                 params![now, code::AUTHORITY_UNKNOWN],
             )?;
             let attempted = tx.execute(
-                "UPDATE coordinator_desktop_ops SET state = 'unknown', updated_at = ?1
+                "UPDATE coordinator_desktop_ops
+                 SET state = 'unknown', updated_at = ?1, finished_at = COALESCE(finished_at, ?1)
                  WHERE state = 'attempted'",
                 params![now],
             )?;

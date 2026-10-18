@@ -23,7 +23,7 @@ use super::authorize::{Authorized, Tool, authorize, store_error, switches};
 use super::policy::{caller_policy, target_policy};
 use super::queries::status_of;
 use super::relay::{self, Ran};
-use super::{capture, capture_status, record, wall};
+use super::{capture, capture_status, input, input_run, record, wall};
 use super::{reply_err, reply_err_text, reply_ok};
 use crate::link::DeckLink;
 use crate::store::AuditResult;
@@ -45,17 +45,22 @@ const RECORDING_CAPTURE_LIMIT: &str = "This grant has used its capture limit.";
 
 /// The checked call: the typed action and what the operation row and the audit
 /// row may hold.
-struct Built {
-    op_tool: OpTool,
-    action: DesktopAction,
-    request_id: String,
+pub(super) struct Built {
+    pub(super) op_tool: OpTool,
+    pub(super) action: DesktopAction,
+    pub(super) request_id: String,
     /// The validated arguments as JSON (`serde_json` writes the keys sorted).
-    args: Value,
-    resource: Value,
-    window_id: Option<String>,
-    monitor: Option<String>,
+    pub(super) args: Value,
+    pub(super) resource: Value,
+    /// The validated window handle of a close or an input. A row of an input
+    /// call never names it, except the outcome row of a `done` operation
+    /// (R13 P7 §12).
+    pub(super) window_id: Option<String>,
+    pub(super) monitor: Option<String>,
     /// The requested seconds of a recording (R13 P5b-2).
-    seconds: Option<u32>,
+    pub(super) seconds: Option<u32>,
+    /// The length of an input call (R13 P7 §3.5).
+    pub(super) input_length: Option<u32>,
 }
 
 /// The handler deadline of a tool (§9).
@@ -81,9 +86,8 @@ fn call_handler_ms(tool: Tool, call: &DesktopCall) -> u64 {
 
 /// The tool and the target argument of a call. Every tool of
 /// `coordinator.desktop_call` is served (`wall_show` by [`super::wall`],
-/// `record_monitor` by [`super::record`]) except the input tools of R13 P7:
-/// no input path exists yet (task F), so they have no shape and the call
-/// answers `desktop_unsupported` before anything is read or stored.
+/// `record_monitor` by [`super::record`], the input tools by
+/// [`super::input_run`]).
 fn shape(call: &DesktopCall) -> Option<(Tool, Option<&str>)> {
     match call {
         DesktopCall::Notify(a) => Some((Tool::Notify, a.station.as_deref())),
@@ -92,7 +96,9 @@ fn shape(call: &DesktopCall) -> Option<(Tool, Option<&str>)> {
         DesktopCall::Screenshot(a) => Some((Tool::Screenshot, a.station.as_deref())),
         DesktopCall::WallShow(a) => Some((Tool::WallShow, a.station.as_deref())),
         DesktopCall::RecordMonitor(a) => Some((Tool::RecordMonitor, a.station.as_deref())),
-        DesktopCall::KeyPress(_) | DesktopCall::TypeText(_) | DesktopCall::PointerMove(_) => None,
+        DesktopCall::KeyPress(a) => Some((Tool::KeyPress, a.station.as_deref())),
+        DesktopCall::TypeText(a) => Some((Tool::TypeText, a.station.as_deref())),
+        DesktopCall::PointerMove(a) => Some((Tool::PointerMove, a.station.as_deref())),
     }
 }
 
@@ -131,6 +137,7 @@ fn build(
                 window_id: None,
                 monitor: None,
                 seconds: None,
+                input_length: None,
             })
         }
         DesktopCall::PreviewOpen(a) => {
@@ -151,6 +158,7 @@ fn build(
                 window_id: None,
                 monitor: a.monitor.clone(),
                 seconds: None,
+                input_length: None,
             })
         }
         DesktopCall::WindowClose(a) => Ok(Built {
@@ -164,6 +172,7 @@ fn build(
             window_id: Some(a.window_id.clone()),
             monitor: None,
             seconds: None,
+            input_length: None,
         }),
         DesktopCall::Screenshot(a) => Ok(Built {
             op_tool: OpTool::Screenshot,
@@ -176,6 +185,7 @@ fn build(
             window_id: None,
             monitor: Some(a.monitor.clone()),
             seconds: None,
+            input_length: None,
         }),
         DesktopCall::RecordMonitor(a) => Ok(Built {
             op_tool: OpTool::RecordMonitor,
@@ -189,11 +199,12 @@ fn build(
             window_id: None,
             monitor: Some(a.monitor.clone()),
             seconds: Some(a.seconds),
+            input_length: None,
         }),
-        DesktopCall::WallShow(_)
-        | DesktopCall::KeyPress(_)
-        | DesktopCall::TypeText(_)
-        | DesktopCall::PointerMove(_) => Err(code::DESKTOP_UNSUPPORTED),
+        DesktopCall::KeyPress(_) | DesktopCall::TypeText(_) | DesktopCall::PointerMove(_) => {
+            input::build(call).unwrap_or(Err(code::DESKTOP_UNSUPPORTED))
+        }
+        DesktopCall::WallShow(_) => Err(code::DESKTOP_UNSUPPORTED),
     }
 }
 
@@ -214,6 +225,9 @@ fn action_name(tool: Tool) -> &'static str {
         Tool::Notify => "desktop.notify",
         Tool::PreviewOpen => "desktop.preview_open",
         Tool::Screenshot | Tool::RecordMonitor => audit::CAPTURE,
+        Tool::KeyPress => input::KEY_PRESS,
+        Tool::TypeText => input::TYPE_TEXT,
+        Tool::PointerMove => input::POINTER_MOVE,
         _ => "desktop.window_close",
     }
 }
@@ -235,7 +249,11 @@ impl Call<'_> {
             ctx: self.auth.ctx(),
             target: self.auth.target(),
             operation_id,
-            window_id: self.built.and_then(|b| b.window_id.as_deref()),
+            // A row of an input call names no supplied handle (R13 P7 §12).
+            window_id: self
+                .built
+                .and_then(|b| b.window_id.as_deref())
+                .filter(|_| !input::is_input_tool(self.tool)),
             monitor: self.built.and_then(|b| b.monitor.as_deref()),
         }
     }
@@ -276,6 +294,10 @@ impl Call<'_> {
             (Tool::Screenshot | Tool::RecordMonitor, Some(built)) => {
                 (PolicyPurpose::Capture, built.monitor.as_deref())
             }
+            // R13 P7 §6.4: the deck query of an input has a null monitor.
+            (Tool::KeyPress | Tool::TypeText | Tool::PointerMove, _) => {
+                (PolicyPurpose::Input, None)
+            }
             _ => (PolicyPurpose::Desktop, None),
         };
         target_policy(self.link, self.auth.route(), purpose, monitor, deadline).await
@@ -302,7 +324,7 @@ impl Call<'_> {
             )),
             resource: built.resource.clone(),
             seconds: built.seconds,
-            input_length: None,
+            input_length: built.input_length,
         };
         self.link
             .store
@@ -317,6 +339,8 @@ impl Call<'_> {
         let id = op.operation_id.as_str();
         let extra = if self.tool == Tool::RecordMonitor {
             audit::recording_extras(op)
+        } else if input::is_input(op.tool) {
+            input::attempt_extras(op)
         } else {
             Vec::new()
         };
@@ -340,6 +364,11 @@ impl Call<'_> {
                 tracing::warn!(error = %e, "coordinator desktop finish");
             }
             return reply_err(code::AUTHORITY_UNKNOWN, Some(id));
+        }
+        // An input has its own run: the sign-out of the board sessions of the
+        // target machine, the send and the final delivery pass.
+        if input::is_input(op.tool) {
+            return input_run::run_input(self.link, self.auth, op, &built.action, deadline).await;
         }
         // A screenshot has its own send: the capture record and the indexing.
         if let (Tool::Screenshot, Some(monitor)) = (self.tool, built.monitor.as_deref()) {
@@ -439,6 +468,9 @@ pub(super) async fn run(
         {
             capture_status::replay(link, &built.request_id, &op).await
         }
+        Ok(Admission::Existing(op)) if input::is_input(op.tool) => reply_ok(
+            serde_json::to_value(input::status_of(&built.request_id, &op)).unwrap_or(Value::Null),
+        ),
         Ok(Admission::Existing(op)) => {
             reply_ok(serde_json::to_value(status_of(&built.request_id, &op)).unwrap_or(Value::Null))
         }
