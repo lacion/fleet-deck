@@ -57,12 +57,21 @@ fn main() -> ExitCode {
     // they need no data directory and no logging set-up (ADR-005 §2).
     match &cli.command {
         Command::Shim { id } => return exit_code(fleetdeck_providers::host::shim::server::run(id)),
-        Command::ShimExec { parent, program } => {
+        Command::ShimExec {
+            parent,
+            fsize,
+            stdin_fd3,
+            program,
+        } => {
             let Some((program, args)) = program.split_first() else {
                 return ExitCode::from(2);
             };
-            return exit_code(fleetdeck_providers::host::shim::server::exec_provider(
-                *parent, program, args,
+            let options = fleetdeck_providers::host::shim::server::ExecOptions {
+                fsize: *fsize,
+                stdin_fd3: *stdin_fd3,
+            };
+            return exit_code(fleetdeck_providers::host::shim::server::exec_provider_with(
+                *parent, options, program, args,
             ));
         }
         Command::ConfineExec {

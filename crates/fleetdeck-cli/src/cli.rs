@@ -106,6 +106,12 @@ pub enum Command {
     ShimExec {
         #[arg(long)]
         parent: u32,
+        /// `RLIMIT_FSIZE` of the child, in bytes.
+        #[arg(long)]
+        fsize: Option<u64>,
+        /// Move stdin to FD 3; the child gets `/dev/null` as stdin.
+        #[arg(long)]
+        stdin_fd3: bool,
         #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
         program: Vec<std::ffi::OsString>,
     },
