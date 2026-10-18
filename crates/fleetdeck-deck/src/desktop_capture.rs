@@ -25,6 +25,7 @@ use fleetdeck_proto::capture::{
     CaptureCaller, CaptureKind, CaptureProvenance, CaptureResult, CaptureStatus,
     CaptureStatusQuery, code, text,
 };
+use fleetdeck_proto::coordinator_desktop_wire::CoordinatorContext;
 use fleetdeck_proto::desktop::{DesktopActResult, DesktopAction, DesktopInfo};
 use fleetdeck_proto::link::Outcome as Wire;
 use fleetdeck_proto::version::feature;
@@ -63,6 +64,8 @@ pub const RECOVERY_TICK: Duration = Duration::from_secs(30);
 
 /// The audit action of a screenshot.
 const AUDIT_ACTION: &str = "desktop.screen_capture";
+/// The audit action of a coordinator capture (R13 P6 §12).
+const COORDINATOR_AUDIT_ACTION: &str = "desktop.capture";
 
 /// The waits of one capture request (a test makes them short).
 #[derive(Debug, Clone, Copy)]
@@ -140,10 +143,15 @@ fn control_on(ctx: &RelayCtx) -> Result<(), RelayError> {
     }
 }
 
-/// The immutable provenance of a capture, built by the deck (never taken
-/// from the station): `at` is the creation time of the station's version.
+/// A coordinator capture whose provenance cannot be made or that the station
+/// reports in another way (R13 P6 §4.7): an indexing failure. It is never an
+/// owner capture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProvenanceMismatch;
+
+/// The provenance of an owner capture.
 #[must_use]
-pub fn provenance_of(
+pub fn owner_provenance(
     station: &StationId,
     capture_id: &str,
     monitor: &str,
@@ -160,6 +168,89 @@ pub fn provenance_of(
         caller_grant_id: None,
         at: published.version.created_at,
     }
+}
+
+/// The immutable provenance of a capture, built by the deck (never taken
+/// from the station): `at` is the creation time of the station's version.
+///
+/// `coordinator` is the `coordinator` column of the capture row. `None` is an
+/// owner capture. A value gives a coordinator provenance from the stored
+/// `CoordinatorContext` (the caller station, session and grant); the
+/// provenance that the station reported must equal it in the caller, caller
+/// station, session, grant ID, monitor and capture ID.
+///
+/// # Errors
+/// [`ProvenanceMismatch`] for a `coordinator` value that does not parse as a
+/// `CoordinatorContext`, and for a missing or different reported provenance.
+pub fn provenance_of(
+    coordinator: Option<&str>,
+    station: &StationId,
+    capture_id: &str,
+    monitor: &str,
+    published: &ArtifactPublished,
+) -> Result<CaptureProvenance, ProvenanceMismatch> {
+    let mut provenance = owner_provenance(station, capture_id, monitor, published);
+    let Some(raw) = coordinator else {
+        return Ok(provenance);
+    };
+    let ctx: CoordinatorContext = serde_json::from_str(raw).map_err(|_| ProvenanceMismatch)?;
+    provenance.caller = CaptureCaller::Coordinator;
+    provenance.caller_station = Some(ctx.caller_station.to_string());
+    provenance.caller_session = Some(ctx.caller_session.to_string());
+    provenance.caller_grant_id = Some(ctx.grant_id);
+    let reported = published
+        .version
+        .capture
+        .as_ref()
+        .ok_or(ProvenanceMismatch)?;
+    let same = reported.caller == provenance.caller
+        && reported.caller_station == provenance.caller_station
+        && reported.caller_session == provenance.caller_session
+        && reported.caller_grant_id == provenance.caller_grant_id
+        && reported.monitor == provenance.monitor
+        && reported.capture_id == provenance.capture_id;
+    if same {
+        Ok(provenance)
+    } else {
+        Err(ProvenanceMismatch)
+    }
+}
+
+/// The audit row `desktop.capture` with stage `indexing_failed` of a
+/// coordinator capture (R13 P6 §4.7, §12): a fixed code, the deck's own
+/// identifiers, never a path or image data. `coordinator` is the `coordinator`
+/// column; the caller fields are written only when it parses.
+pub(crate) async fn audit_indexing_failed(
+    store: &DeckStore,
+    station: &StationId,
+    capture_id: &str,
+    coordinator: Option<&str>,
+) {
+    let mut detail = serde_json::Map::new();
+    detail.insert("stage".into(), serde_json::json!("indexing_failed"));
+    detail.insert("code".into(), serde_json::json!("indexing_failed"));
+    detail.insert("capture_id".into(), serde_json::json!(capture_id));
+    detail.insert("target_station".into(), serde_json::json!(station));
+    if let Some(ctx) = coordinator.and_then(|c| serde_json::from_str::<CoordinatorContext>(c).ok())
+    {
+        detail.insert("grant_id".into(), serde_json::json!(ctx.grant_id));
+        detail.insert("generation".into(), serde_json::json!(ctx.generation));
+        detail.insert(
+            "caller_station".into(),
+            serde_json::json!(ctx.caller_station),
+        );
+        detail.insert(
+            "caller_session".into(),
+            serde_json::json!(ctx.caller_session),
+        );
+    }
+    store
+        .audit_or_log(
+            NewAudit::new("coordinator", COORDINATOR_AUDIT_ACTION, AuditResult::Failed)
+                .target(capture_id)
+                .detail(serde_json::Value::Object(detail).to_string()),
+        )
+        .await;
 }
 
 /// Runs one owner screenshot: the checks, the durable record, one send, and
@@ -310,7 +401,8 @@ async fn after_station(
     };
     stamp_features(&ctx.store, station, &mut info);
     ctx.store.update_station_desktop(station, info.clone());
-    let provenance = provenance_of(station, capture_id, monitor, &sent.published);
+    // An owner capture: its row has no `coordinator` value.
+    let provenance = owner_provenance(station, capture_id, monitor, &sent.published);
     let done = tokio::time::timeout_at(
         deadline,
         ctx.store.complete_capture(

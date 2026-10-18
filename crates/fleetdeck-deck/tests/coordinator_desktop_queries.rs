@@ -129,18 +129,8 @@ async fn desktop_action_status_maps_every_state_and_hides_what_is_not_its_own() 
 }
 
 #[tokio::test]
-async fn desktop_queries_of_other_tasks_keep_the_stub() {
+async fn a_malformed_query_is_the_wire_error_invalid_params() {
     let w = world_with(&BOTH, |_| {}).await;
-    for query in [
-        json!({"tool": "capture_status", "arguments": {"request_id": "r1"}}),
-        json!({"tool": "read_capture_image", "arguments": {"artifact": {
-            "station_id": "s", "artifact_id": "a", "version": 1}}}),
-    ] {
-        let Outcome::Err(e) = w.query_raw(w.query_env(query)).await else {
-            panic!("the stub");
-        };
-        assert_eq!(e.code, "desktop_unsupported");
-    }
     // A malformed query is the wire error `invalid_params`.
     let Outcome::Err(e) = w.query_raw(json!({"junk": 1})).await else {
         panic!("a wire error");

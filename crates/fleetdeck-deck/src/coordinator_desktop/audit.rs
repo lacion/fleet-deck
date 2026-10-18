@@ -26,6 +26,9 @@ pub(super) const OUTCOME: &str = "outcome";
 /// The stage of the row of a refusal.
 pub(super) const REFUSED: &str = "refused";
 
+/// The audit action of a coordinator screenshot (§12).
+pub(super) const CAPTURE: &str = "desktop.capture";
+
 /// The facts of one row.
 pub(super) struct Facts<'a> {
     pub action: &'static str,
@@ -49,6 +52,20 @@ impl Facts<'_> {
         code: Option<&str>,
         charged: Option<Charges>,
     ) -> NewAudit {
+        self.row_with(stage, result, code, charged, &[])
+    }
+
+    /// As [`Self::row`], with more fixed keys (`extra`: a key and a value).
+    /// A screenshot row (`desktop.capture`) also names the capture: the
+    /// capture ID is the operation ID.
+    pub(super) fn row_with(
+        &self,
+        stage: &'static str,
+        result: AuditResult,
+        code: Option<&str>,
+        charged: Option<Charges>,
+        extra: &[(&'static str, Value)],
+    ) -> NewAudit {
         let mut detail = Map::new();
         detail.insert("grant_id".into(), json!(self.ctx.grant_id));
         detail.insert("generation".into(), json!(self.ctx.generation));
@@ -56,6 +73,9 @@ impl Facts<'_> {
         detail.insert("caller_session".into(), json!(self.ctx.caller_session));
         detail.insert("target_station".into(), json!(self.target));
         detail.insert("operation_id".into(), json!(self.operation_id));
+        if self.action == CAPTURE {
+            detail.insert("capture_id".into(), json!(self.operation_id));
+        }
         if let Some(window_id) = self.window_id {
             detail.insert("window_id".into(), json!(window_id));
         }
@@ -69,6 +89,9 @@ impl Facts<'_> {
                 "charged".into(),
                 json!({"desktop": charged.desktop, "capture": charged.capture}),
             );
+        }
+        for (key, value) in extra {
+            detail.insert((*key).into(), value.clone());
         }
         let target = self
             .operation_id

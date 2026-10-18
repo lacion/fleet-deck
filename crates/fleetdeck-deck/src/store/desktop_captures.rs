@@ -110,6 +110,10 @@ pub struct CaptureRow {
     pub updated_at: i64,
     /// True when the artifact of `published` has a tombstone.
     pub deleted: bool,
+    /// The compact JSON of the `CoordinatorContext` of a coordinator capture
+    /// (R13 P6 §4.7); `None` for an owner capture. A value is never an owner
+    /// capture, whatever it holds.
+    pub coordinator: Option<String>,
 }
 
 impl CaptureRow {
@@ -164,7 +168,8 @@ const COLUMNS: &str = "c.station_id, c.capture_id, c.action_hash, c.state, c.mon
     c.published, c.indexed, c.code, c.message, c.created_at, c.updated_at,
     EXISTS (SELECT 1 FROM artifact_tombstones t
             WHERE t.station_id = c.station_id
-              AND t.artifact_id = json_extract(c.published, '$.artifact.artifact_id'))";
+              AND t.artifact_id = json_extract(c.published, '$.artifact.artifact_id')),
+    c.coordinator";
 
 struct Raw {
     station: String,
@@ -179,6 +184,7 @@ struct Raw {
     created_at: i64,
     updated_at: i64,
     deleted: bool,
+    coordinator: Option<String>,
 }
 
 fn raw_row(r: &Row<'_>) -> rusqlite::Result<Raw> {
@@ -195,6 +201,7 @@ fn raw_row(r: &Row<'_>) -> rusqlite::Result<Raw> {
         created_at: r.get(9)?,
         updated_at: r.get(10)?,
         deleted: r.get(11)?,
+        coordinator: r.get(12)?,
     })
 }
 
@@ -215,6 +222,7 @@ fn row_of(raw: Raw) -> Result<CaptureRow> {
         created_at: raw.created_at,
         updated_at: raw.updated_at,
         deleted: raw.deleted,
+        coordinator: raw.coordinator,
     })
 }
 
@@ -317,6 +325,36 @@ impl DeckStore {
         action_hash: String,
         monitor: String,
     ) -> Result<Prepared> {
+        self.prepare(station, capture_id, action_hash, monitor, None)
+            .await
+    }
+
+    /// As [`Self::capture_prepare`] for a coordinator capture (R13 P6): the
+    /// `coordinator` column holds `coordinator`, the compact JSON of the
+    /// `CoordinatorContext`.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn capture_prepare_coordinator(
+        &self,
+        station: StationId,
+        capture_id: String,
+        action_hash: String,
+        monitor: String,
+        coordinator: String,
+    ) -> Result<Prepared> {
+        self.prepare(station, capture_id, action_hash, monitor, Some(coordinator))
+            .await
+    }
+
+    async fn prepare(
+        &self,
+        station: StationId,
+        capture_id: String,
+        action_hash: String,
+        monitor: String,
+        coordinator: Option<String>,
+    ) -> Result<Prepared> {
         let now = self.now_ms();
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
@@ -329,9 +367,17 @@ impl DeckStore {
             }
             tx.execute(
                 "INSERT INTO desktop_captures
-                     (station_id, capture_id, action_hash, state, monitor, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, 'prepared', ?4, ?5, ?5)",
-                params![station.as_str(), capture_id, action_hash, monitor, now],
+                     (station_id, capture_id, action_hash, state, monitor, created_at, updated_at,
+                      coordinator)
+                 VALUES (?1, ?2, ?3, 'prepared', ?4, ?5, ?5, ?6)",
+                params![
+                    station.as_str(),
+                    capture_id,
+                    action_hash,
+                    monitor,
+                    now,
+                    coordinator
+                ],
             )?;
             tx.commit()?;
             Ok(Prepared::New)
@@ -533,6 +579,35 @@ impl DeckStore {
     ) -> Result<Option<CaptureRow>> {
         call(&self.inner.db, move |conn| {
             get_row(conn, station.as_str(), &capture_id)
+        })
+        .await
+    }
+
+    /// The coordinator capture whose artifact is `(station, artifact_id)`
+    /// (R13 P6 §4.9): a row with a `coordinator` value only. An owner capture
+    /// is never returned.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn coordinator_capture_by_artifact(
+        &self,
+        station: StationId,
+        artifact_id: String,
+    ) -> Result<Option<CaptureRow>> {
+        call(&self.inner.db, move |conn| {
+            conn.query_row(
+                &format!(
+                    "SELECT {COLUMNS} FROM desktop_captures c
+                     WHERE c.station_id = ?1 AND c.coordinator IS NOT NULL
+                       AND json_extract(c.published, '$.artifact.artifact_id') = ?2
+                     ORDER BY c.created_at, c.capture_id LIMIT 1"
+                ),
+                params![station.as_str(), artifact_id],
+                raw_row,
+            )
+            .optional()?
+            .map(row_of)
+            .transpose()
         })
         .await
     }
