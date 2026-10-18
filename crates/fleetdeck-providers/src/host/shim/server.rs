@@ -41,7 +41,7 @@ mod process;
 #[path = "server_secrets.rs"]
 mod secrets;
 
-pub use process::exec_provider;
+pub use process::{ExecOptions, exec_provider, exec_provider_with};
 use process::{bind, group_members, reap_orphans, signal_group, spawn_provider};
 
 /// The largest `output` frame payload.

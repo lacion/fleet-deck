@@ -66,11 +66,71 @@ pub(super) fn spawn_provider(
     child
 }
 
+/// The options of `shim-exec` for a child that needs more than the plain
+/// launch (the recorder: its output file as FD 3, a file-size limit).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ExecOptions {
+    /// `RLIMIT_FSIZE` (soft and hard) in bytes.
+    pub fsize: Option<u64>,
+    /// Move the inherited stdin to FD 3 and replace stdin with `/dev/null`.
+    pub stdin_fd3: bool,
+}
+
 /// The provider side of `shim-exec`: a new session, the parent-death
 /// signal (Linux), the parent check, then `exec`. Returns only on error.
 #[must_use]
 pub fn exec_provider(parent: u32, program: &std::ffi::OsStr, args: &[std::ffi::OsString]) -> i32 {
+    exec_provider_with(parent, ExecOptions::default(), program, args)
+}
+
+/// Moves stdin to FD 3 (inheritable) and puts `/dev/null` on stdin.
+fn stdin_to_fd3() -> Result<(), String> {
+    use std::os::fd::IntoRawFd as _;
+    let fd3 = rustix::io::fcntl_dupfd_cloexec(rustix::stdio::stdin(), 3)
+        .map_err(|e| format!("duplicate stdin: {e}"))?;
+    if std::os::fd::AsRawFd::as_raw_fd(&fd3) != 3 {
+        return Err("descriptor 3 is not free".to_owned());
+    }
+    rustix::io::fcntl_setfd(&fd3, rustix::io::FdFlags::empty())
+        .map_err(|e| format!("clear close-on-exec on descriptor 3: {e}"))?;
+    // Descriptor 3 stays open for the child: `exec` keeps it.
+    let _ = fd3.into_raw_fd();
+    let null = rustix::fs::open(
+        "/dev/null",
+        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    )
+    .map_err(|e| format!("open /dev/null: {e}"))?;
+    rustix::stdio::dup2_stdin(&null).map_err(|e| format!("replace stdin: {e}"))
+}
+
+/// [`exec_provider`] with `o`: the options apply before the new session.
+#[must_use]
+pub fn exec_provider_with(
+    parent: u32,
+    o: ExecOptions,
+    program: &std::ffi::OsStr,
+    args: &[std::ffi::OsString],
+) -> i32 {
     use std::os::unix::process::CommandExt as _;
+    if o.stdin_fd3
+        && let Err(e) = stdin_to_fd3()
+    {
+        eprintln!("fleetdeck shim-exec: {e}");
+        return 126;
+    }
+    if let Some(n) = o.fsize
+        && let Err(e) = rustix::process::setrlimit(
+            rustix::process::Resource::Fsize,
+            rustix::process::Rlimit {
+                current: Some(n),
+                maximum: Some(n),
+            },
+        )
+    {
+        eprintln!("fleetdeck shim-exec: file size limit: {e}");
+        return 126;
+    }
     if let Err(e) = rustix::process::setsid() {
         eprintln!("fleetdeck shim-exec: setsid: {e}");
         return 126;

@@ -32,35 +32,7 @@ use crate::desktop::capture::{COPY_BUFFER, Staging};
 use crate::desktop::{Fail, profile};
 use crate::store::capture_ops::{CAPTURE_FILE, CaptureState};
 
-/// The syncs of the import. The production value calls `fsync`; a test
-/// records the calls or fails one of them.
-pub trait DurableFs: Send + Sync {
-    /// Makes the data of the file durable.
-    ///
-    /// # Errors
-    /// The I/O error of the sync.
-    fn sync_file(&self, f: &File) -> io::Result<()>;
-
-    /// Makes the entries of the directory durable.
-    ///
-    /// # Errors
-    /// The I/O error of the sync.
-    fn sync_dir(&self, d: &OwnedFd) -> io::Result<()>;
-}
-
-/// The production [`DurableFs`]: `fsync`.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SyncFs;
-
-impl DurableFs for SyncFs {
-    fn sync_file(&self, f: &File) -> io::Result<()> {
-        rustix::fs::fsync(f).map_err(io::Error::from)
-    }
-
-    fn sync_dir(&self, d: &OwnedFd) -> io::Result<()> {
-        rustix::fs::fsync(d).map_err(io::Error::from)
-    }
-}
+pub use crate::media::durable::{DurableFs, SyncFs};
 
 const DIR_FLAGS: OFlags = OFlags::RDONLY
     .union(OFlags::DIRECTORY)
