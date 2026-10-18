@@ -41,21 +41,31 @@ async function failure(response: Response): Promise<DeckError> {
 
 export type DeckIo = {
   get(path: string): Promise<unknown>;
-  post(path: string, body: unknown): Promise<unknown>;
+  post(path: string, body: unknown, headers?: Readonly<Record<string, string>>): Promise<unknown>;
 };
 
-/** `GET` and `POST` of the deck API with the details of an error. */
-export function deckHttp(fetcher: Fetch, csrf: () => string | null, timeoutMs: number): DeckIo {
-  const call = async (path: string, body?: unknown): Promise<unknown> => {
+/** `DeckIo` and `DELETE` (no body); the extra headers are merged into the request. */
+export type DeckHttp = DeckIo & {
+  del(path: string, headers?: Readonly<Record<string, string>>): Promise<unknown>;
+};
+
+/** `GET`, `POST` and `DELETE` of the deck API with the details of an error. */
+export function deckHttp(fetcher: Fetch, csrf: () => string | null, timeoutMs: number): DeckHttp {
+  const call = async (
+    method: 'GET' | 'POST' | 'DELETE',
+    path: string,
+    body?: unknown,
+    extra?: Readonly<Record<string, string>>,
+  ): Promise<unknown> => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const token = csrf();
-      const headers: Record<string, string> = {};
+      const headers: Record<string, string> = { ...extra };
       if (body !== undefined) headers['Content-Type'] = 'application/json';
       if (token !== null) headers['X-CSRF-Token'] = token;
       const response = await fetcher(path, {
-        method: body === undefined ? 'GET' : 'POST',
+        method,
         credentials: 'same-origin',
         cache: 'no-store',
         redirect: 'error',
@@ -69,7 +79,11 @@ export function deckHttp(fetcher: Fetch, csrf: () => string | null, timeoutMs: n
       clearTimeout(timer);
     }
   };
-  return { get: (path) => call(path), post: (path, body) => call(path, body) };
+  return {
+    get: (path) => call('GET', path),
+    post: (path, body, headers) => call('POST', path, body, headers),
+    del: (path, headers) => call('DELETE', path, undefined, headers),
+  };
 }
 
 /** The text for a failure: the deck's fixed text, else a plain sentence. */

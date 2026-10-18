@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { DeckArtifact } from '../gen';
 import type { ArtifactActions, ArtifactFilter } from './actions';
+import { artifactKey, useHiddenArtifacts } from './DeleteArtifact';
 
 export type ListState =
   | { readonly kind: 'loading' }
@@ -31,5 +32,16 @@ export function useArtifactList(
       live = false;
     };
   }, [actions, station, session, q, refresh, retry]);
-  return state;
+  // An artifact that the owner deleted is hidden at once, before the next read (R13 P5a).
+  const hidden = useHiddenArtifacts();
+  return useMemo(
+    () =>
+      state.kind === 'ok' && hidden.size > 0
+        ? {
+            kind: 'ok',
+            items: state.items.filter((a) => !hidden.has(artifactKey(a.station_id, a.artifact_id))),
+          }
+        : state,
+    [state, hidden],
+  );
 }

@@ -343,6 +343,8 @@ describe('the Displays page', () => {
     tailnet: {} as never,
     displays: {} as DisplayActions,
     desktop: {} as never,
+    capture: {} as never,
+    deletion: {} as never,
   } as SettingsEnv;
 
   test('the first render has the add form with the cost text and waits for the list', () => {
@@ -433,6 +435,8 @@ describe('send to wall', () => {
       tailnet: {} as never,
       displays: {} as DisplayActions,
       desktop: {} as never,
+      capture: {} as never,
+      deletion: {} as never,
     } as SettingsEnv;
     expect(
       renderToStaticMarkup(
@@ -482,6 +486,8 @@ describe('the Desktop panel', () => {
       tailnet: {} as never,
       displays: {} as DisplayActions,
       desktop: {} as never,
+      capture: {} as never,
+      deletion: {} as never,
       ...acts,
     }) as SettingsEnv;
   const withInfo = (desktop: DesktopInfo | undefined): StationView =>

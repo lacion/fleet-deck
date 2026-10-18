@@ -731,6 +731,8 @@ describe('the Settings link (DL-172)', () => {
     },
     displays: {} as never,
     desktop: {} as never,
+    capture: {} as never,
+    deletion: {} as never,
   };
 
   test('the sidebar and More show it for the owner login only', () => {
