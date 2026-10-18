@@ -100,14 +100,14 @@ fn a_minimal_setup_without_deck_or_station_config_is_ok() {
             "{text}"
         );
         assert!(
-            text.trim_end().ends_with("doctor: 8 ok, 1 warn, 0 fail")
-                || text.trim_end().ends_with("doctor: 7 ok, 2 warn, 0 fail"),
+            text.trim_end().ends_with("doctor: 9 ok, 1 warn, 0 fail")
+                || text.trim_end().ends_with("doctor: 8 ok, 2 warn, 0 fail"),
             "{text}"
         );
     }
     #[cfg(not(target_os = "linux"))]
     assert!(
-        text.trim_end().ends_with("doctor: 7 ok, 1 warn, 0 fail"),
+        text.trim_end().ends_with("doctor: 8 ok, 1 warn, 0 fail"),
         "{text}"
     );
 }

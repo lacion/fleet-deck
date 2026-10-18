@@ -1,0 +1,11 @@
+#!/bin/bash
+# Fleet Deck (installed by `fleetdeck omarchy install`): runs at login.
+# It always ends with exit 0, so Omarchy never reports a Fleet Deck problem
+# as "Hook failed". A problem goes to stderr.
+if ! command -v fleetdeck >/dev/null 2>&1; then
+  echo "Fleet Deck: fleetdeck is not on PATH." >&2
+  exit 0
+fi
+fleetdeck service start || echo "Fleet Deck: fleetdeck service start failed." >&2
+fleetdeck omarchy theme-sync || echo "Fleet Deck: fleetdeck omarchy theme-sync failed." >&2
+exit 0

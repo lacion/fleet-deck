@@ -1,0 +1,13 @@
+#!/bin/bash
+# Fleet Deck (installed by `fleetdeck omarchy install`): runs after an Omarchy update.
+# It always ends with exit 0, so Omarchy never reports a Fleet Deck problem
+# as "Hook failed". A problem goes to stderr.
+if ! command -v fleetdeck >/dev/null 2>&1; then
+  echo "Fleet Deck: fleetdeck is not on PATH." >&2
+  exit 0
+fi
+if ! fleetdeck doctor --brief; then
+  omarchy-notification-send --app-name "Fleet Deck" -u normal "Fleet Deck" "Fleet Deck: doctor found a problem after the Omarchy update" \
+    || echo "Fleet Deck: the notification could not be sent." >&2
+fi
+exit 0

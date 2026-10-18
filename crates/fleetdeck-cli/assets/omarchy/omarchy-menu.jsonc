@@ -1,0 +1,6 @@
+// Fleet Deck rows (installed by `fleetdeck omarchy install`).
+{
+  "fleet": {"icon": "", "label": "Fleet"},
+  "fleet.board": {"icon": "", "label": "Open the board", "action": "fleetdeck desktop open"},
+  "fleet.crash": {"icon": "", "label": "Diagnose the last crash", "action": "fleetdeck desktop crash --last"}
+}

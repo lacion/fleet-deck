@@ -3,14 +3,17 @@
 mod auth;
 mod cli;
 mod cli_desktop;
+mod cli_omarchy;
 mod confine;
 mod deck;
 mod deck_provision;
 mod desktop_feed;
 mod desktop_open;
 mod doctor;
+mod doctor_omarchy;
 mod invite;
 mod notify;
+mod omarchy;
 mod pairing;
 #[cfg_attr(not(test), allow(dead_code))]
 mod provision; // wired by P8 T3b
@@ -129,7 +132,8 @@ fn run(cli: Cli, restart: &restart::RestartHandle) -> anyhow::Result<ExitCode> {
         Command::Open { elevate: false } => done(runtime()?.block_on(auth::open(&dirs))),
         Command::Open { elevate: true } => done(runtime()?.block_on(auth::elevate(&dirs))),
         Command::Desktop(command) => done(runtime()?.block_on(desktop_main(command, &dirs))),
-        Command::Doctor => Ok(runtime()?.block_on(doctor::run(&dirs, &env))),
+        Command::Doctor { brief } => Ok(runtime()?.block_on(doctor::run(&dirs, &env, *brief))),
+        Command::Omarchy(command) => runtime()?.block_on(omarchy::run(&dirs, command)),
         Command::Settings { command } => done(runtime()?.block_on(settings::run(&dirs, command))),
         Command::Tailnet { command } => {
             done(runtime()?.block_on(tailnet::run(&dirs, &env, command)))

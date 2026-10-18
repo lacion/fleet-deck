@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 
 use crate::cli_desktop::DesktopCommand;
+use crate::cli_omarchy::OmarchyCommand;
 
 /// Fleet Deck v2: one deck drives agent sessions on many stations.
 #[derive(Debug, Parser)]
@@ -52,7 +53,11 @@ pub enum Command {
         command: Option<StationCommand>,
     },
     /// Check the local setup and say what is wrong (read-only).
-    Doctor,
+    Doctor {
+        /// Print only the `warn` and `fail` lines and the final line.
+        #[arg(long)]
+        brief: bool,
+    },
     /// Read and change the settings of the running deck or station through
     /// its owner-only local socket.
     Settings {
@@ -75,6 +80,10 @@ pub enum Command {
     /// Feed the desktop shell (Omarchy bar) and open the board from it.
     #[command(subcommand)]
     Desktop(DesktopCommand),
+    /// Install, remove or check the Omarchy integration (plugin, hooks, theme
+    /// template, hotkeys).
+    #[command(subcommand)]
+    Omarchy(OmarchyCommand),
     /// Run the deck, the station, or both as a service that starts at boot or login.
     Service {
         #[command(subcommand)]
