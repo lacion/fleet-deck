@@ -106,22 +106,30 @@ async fn run(shared: Arc<Shared>, mut shutdown: watch::Receiver<bool>) {
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut running: HashSet<StationId> = HashSet::new();
     let mut jobs: JoinSet<StationId> = JoinSet::new();
+    // A pass starts at deck start, on a board change and on the tick. The end
+    // of a job only clears its running mark: starting again there would loop
+    // at database speed while nothing is pending (P5a PRE-PR r1, finding 2).
+    let mut start = true;
     loop {
         if *shutdown.borrow() {
             break;
         }
-        start_passes(&shared, &mut running, &mut jobs).await;
+        if start {
+            start_passes(&shared, &mut running, &mut jobs).await;
+        }
         tokio::select! {
             result = board.changed() => {
                 if result.is_err() {
                     break;
                 }
+                start = true;
             }
-            _ = tick.tick() => {}
+            _ = tick.tick() => start = true,
             Some(done) = jobs.join_next(), if !jobs.is_empty() => {
                 if let Ok(station) = done {
                     running.remove(&station);
                 }
+                start = false;
             }
             result = shutdown.changed() => {
                 if result.is_err() || *shutdown.borrow() {
