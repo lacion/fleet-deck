@@ -127,6 +127,9 @@ pub(super) async fn act(
         let id = action_id.unwrap_or_default();
         return super::intake_recording::record(ctx, control, admitted, id, monitor, seconds).await;
     }
+    if let Err(e) = owner_close_allowed(&control.params().negotiated, &action) {
+        return failed(e);
+    }
     let allowed = gate(ctx);
     // The owner `preview_close` finds the previews of the deck of this link.
     let deck_fp = matches!(action, DesktopAction::PreviewClose { .. })
@@ -158,5 +161,51 @@ pub(super) async fn station_info(ctx: &StationLink, control: &Control) -> Option
             tracing::debug!(code = e.code, "station.info has no desktop");
             None
         }
+    }
+}
+
+/// An owner `preview_close` needs the agent desktop tools on this link too:
+/// a deck that reconnected without them closes nothing. Other actions pass.
+fn owner_close_allowed(
+    negotiated: &fleetdeck_proto::version::Negotiated,
+    action: &DesktopAction,
+) -> Result<(), Fail> {
+    if matches!(action, DesktopAction::PreviewClose { .. })
+        && !negotiated.has(fleetdeck_proto::version::feature::DESKTOP_MCP)
+    {
+        return Err(Fail::new(
+            desktop::code::UNSUPPORTED,
+            "This link has no agent desktop tools.",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod owner_close_tests {
+    use fleetdeck_proto::version::{Negotiated, PROTO_MAX, feature};
+
+    use super::*;
+
+    fn with(features: &[&str]) -> Negotiated {
+        Negotiated {
+            version: PROTO_MAX,
+            features: features.iter().map(|f| (*f).to_owned()).collect(),
+        }
+    }
+
+    #[test]
+    fn an_owner_preview_close_needs_the_agent_desktop_tools_on_the_link() {
+        let close = DesktopAction::PreviewClose {
+            window_id: "0123456789abcdef0123456789abcdef".to_owned(),
+        };
+        let e = owner_close_allowed(&with(&[feature::DESKTOP]), &close).unwrap_err();
+        assert_eq!(e.code, desktop::code::UNSUPPORTED);
+        assert!(
+            owner_close_allowed(&with(&[feature::DESKTOP, feature::DESKTOP_MCP]), &close).is_ok()
+        );
+        let other = DesktopAction::ScreenDnd { on: true };
+        assert!(owner_close_allowed(&with(&[feature::DESKTOP]), &other).is_ok());
     }
 }
