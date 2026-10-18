@@ -10,6 +10,14 @@ use std::time::{Duration, Instant};
 
 use super::*;
 
+/// True under nextest, which runs each test in its own process. These tests
+/// reap every zombie child of the test process, so under `cargo test` (one
+/// process, many test threads) they could take the exit status of another
+/// test's child: they do nothing there.
+fn isolated() -> bool {
+    std::env::var_os("NEXTEST").is_some()
+}
+
 fn become_subreaper() {
     rustix::process::set_child_subreaper(Some(rustix::process::getpid()))
         .expect("set the child subreaper");
@@ -41,6 +49,9 @@ fn wait_until(limit: Duration, mut done: impl FnMut() -> bool) -> bool {
 
 #[test]
 fn reap_orphans_except_spares_the_kept_child_and_reaps_the_others() {
+    if !isolated() {
+        return;
+    }
     become_subreaper();
     let mut kept = Command::new("sh")
         .args(["-c", "exit 3"])
@@ -67,6 +78,9 @@ fn reap_orphans_except_spares_the_kept_child_and_reaps_the_others() {
 
 #[test]
 fn reap_orphans_except_none_reaps_every_zombie_child() {
+    if !isolated() {
+        return;
+    }
     become_subreaper();
     start_orphan();
     assert!(
@@ -81,6 +95,9 @@ fn reap_orphans_except_none_reaps_every_zombie_child() {
 
 #[tokio::test]
 async fn the_periodic_reaper_reaps_orphans_while_the_provider_runs_and_spares_it() {
+    if !isolated() {
+        return;
+    }
     become_subreaper();
     // The provider starts an orphan, keeps running, then ends with code 3.
     let mut provider = tokio::process::Command::new("sh")
