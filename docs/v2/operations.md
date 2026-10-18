@@ -327,14 +327,14 @@ Delete an artifact:
 
 ### 7.5 The Omarchy desktop integration (R13 P4)
 
-This section covers the Omarchy integration of a station. The design is in `design/omarchy-p4.md`. The built version is recorded in DL-235. The live smoke on the owner's Omarchy machines is not done yet (`make desktop-smoke` prints the list).
+This section covers the Omarchy integration of a station. The design is in `design/omarchy-p4.md`. The built version is recorded in DL-235. The management of the integration from the board is recorded in DL-243: see the part "Omarchy from the board". The live smoke on the owner's Omarchy machines is not done yet (`make desktop-smoke` prints the list).
 
 What the integration gives you on the desktop of the station:
 
 - **A bar widget and a panel.** The widget shows the number of working sessions and, when a session needs you, the number of those sessions with a warning sign. The widget is dim when the deck is down or sends no data. A left click opens the panel. A right click opens the board. A middle click shows the wall window.
 - **Notifications.** A new request that needs you shows a notification with the title "<callsign> needs you". The text is "<Kind> on <station>", where Kind is Approval or Question. A click opens the board at that request. A notification never answers a request.
 - **Hotkeys.** See the table below.
-- **The screensaver.** The screensaver text shows the number of sessions that need you, the counts of the other states and the usage. It is off by default. The install records it only with the option `--screensaver`. This version has no board path that turns it on (open item).
+- **The screensaver.** The screensaver text shows the number of sessions that need you, the counts of the other states and the usage. It is off by default. The install records it only with the option `--screensaver`. You turn it on and off on the board: see the part "Omarchy from the board".
 - **The theme sync.** The station sends the colors of the Omarchy theme to the deck each time the theme changes.
 - **The crash diagnosis.** The Omarchy menu has the rows "Fleet", "Open the board" and "Diagnose the last crash". The last row starts one supervised session that investigates the newest crash that systemd-coredump recorded.
 
@@ -364,7 +364,7 @@ The list does not show while the choice is "Off" and no station has sent a palet
 #### How the install happens
 
 - For a station that P8 provisioned (section 15), the bootstrap runs the install at the first login of the user, with `fleetdeck omarchy install --yes`. The step has no question. You do nothing on the machine.
-- **Open item (DL-235 item b): no board path installs the Omarchy integration on a station that P8 did not provision.** The command `fleetdeck omarchy install` does the install, but this version has no board button that starts it for an existing station. The gap is a product gap. It is not an instruction to log in to the machine.
+- For a station that P8 did not provision, press **Install** on the Omarchy card of that station (DL-243; see the part "Omarchy from the board"). You do nothing on the machine.
 
 The install writes only these files:
 
@@ -385,6 +385,104 @@ The install also does these things:
 The install follows no link. It keeps a file that a person changed. `fleetdeck omarchy uninstall` removes only what the install wrote. `fleetdeck omarchy status` reports each file as `ok`, `changed` or `missing`. It also reports "Hyprland line missing" when the managed line is not in place.
 
 The install does not edit `hyprland.lua` when the file is a link, is not a regular file or belongs to another user. It prints the line instead.
+
+#### Omarchy from the board
+
+This part shows how to manage the Omarchy integration of a station from the board. You do not log in to the station. The contract is `design/omarchy-admin.md`. The built version is recorded in DL-243. The PRE-PR review and the live smoke on the owner's Omarchy machines are not done yet (`make desktop-smoke` prints the list).
+
+Where the card is:
+
+1. Open Settings, then the station tab of the station.
+2. Find the card "Omarchy" below the setting fields of the tab.
+
+The card shows only for a station that is connected to the deck. A station of an older build shows the text "This station's build cannot manage Omarchy from the board." An older deck shows no card. When the board cannot read the state, the card shows "The Omarchy state could not be read." and the button "Retry".
+
+What each line means:
+
+| Line | Meaning |
+| --- | --- |
+| `Omarchy <version>` | The Omarchy version of the station. `Omarchy (version unknown)` means that Omarchy is there but its version file is missing or empty. `Omarchy was not found on this station.` means that the station has no Omarchy. Then only the provisioning lines and **Retry provisioning** can show. |
+| `Integration: installed` | The install record exists and every installed file is as written. |
+| `Integration: not installed` | There is no install record. |
+| `Integration: installed, <n> files changed or missing` | A person changed a file, or a file is gone. |
+| `Plugin: on` or `Plugin: off` | Whether the plugin `fleetdeck.fleet` is enabled. |
+| `Hyprland line: present` or `Hyprland line: missing` | Whether the managed line is in `hyprland.lua`. |
+| `Screensaver: on` | The station writes the screensaver text. |
+| `Screensaver: off` | The station does not write the screensaver text. |
+| `Screensaver: off, but the screensaver file still holds the Fleet Deck text (press Turn the screensaver off again)` | The screensaver is off, but the file is not the original. |
+| `Screensaver: on, but blocked: the original screensaver that Fleet Deck kept differs from the current file.` | The station cannot make the first write. See "The screensaver" below. |
+| `Update the integration first: press Install, then wait two minutes.` | The integration is outdated. See "Update the integration first" below. |
+| `Provisioning: <phase>` | The phase of the bootstrap of section 15: `validated`, `service`, `paired`, `link`, `integration` or `complete`. The word `unknown` means that the station could not read its state file. |
+| `Provisioning stopped: <cause>` | The bootstrap stopped with a code. The cause is the text of the table in section 15.3. For a code that the table does not list, the card shows the code. |
+| `Provisioning is running` | The bootstrap runs now. |
+| `Provisioning did not finish` | The state has no code, no bootstrap runs, and the phase is not `complete`. A limit, a stop or a restart ended the last run. |
+| `Last retry: running`, `complete`, `stopped with an error`, `timed out` or `failed` | The end of the last **Retry provisioning** since the station started. |
+| `Working…` | An action runs on the station. |
+
+The buttons:
+
+| Button | The card shows it when | What the station runs |
+| --- | --- | --- |
+| **Install** | The integration is not installed, or it has changed or missing files, or it is outdated. | `fleetdeck omarchy install --yes`, limit 60 seconds. |
+| **Uninstall** | The integration is installed and not outdated. | `fleetdeck omarchy uninstall`, limit 60 seconds. |
+| **Turn the screensaver on** | The integration is installed and not outdated, and the screensaver is off. | `fleetdeck omarchy screensaver on`, limit 15 seconds. |
+| **Turn the screensaver off** | The integration is installed and not outdated, and the screensaver is on or the file still holds the Fleet Deck text. | `fleetdeck omarchy screensaver off`, limit 15 seconds. |
+| **Use the current screensaver as the original** | The screensaver is blocked. | `fleetdeck omarchy screensaver rebaseline`, limit 15 seconds. |
+| **Retry provisioning** | See "Retry provisioning" below. | The provisioning bootstrap of section 15, limit 10 minutes. |
+
+Each button asks the board to confirm that it is you. The dialog "Confirm it is you" names "Omarchy integration". A sign-in that is not the owner's cannot use the card. The board sends only the name of the action. It sends no argument, path or command. The station runs a fixed list of words as your own user, one action at a time. While an action runs, the buttons are off.
+
+When an action fails, the card shows a fixed text. Below it, the card shows the message of the station as plain text:
+
+| Text | Meaning |
+| --- | --- |
+| The installer refused: some files were changed. | A file that a person changed stops the install. The installer keeps that file and its existing conflict rules. The message names the files. |
+| The uninstall did not finish. | The uninstall stopped. The message gives the reason. |
+| The screensaver change was refused. | The change did not happen. The message gives the reason. |
+| Update the integration first: press Install, then wait two minutes. | The integration is outdated. |
+| The station did not finish in time. | The command passed its limit. The station ended it. |
+| The command printed too much output. | The station ended the command. |
+| The command failed. | The command did not start, or it ended in an unexpected way. |
+| This action needs your confirmation. | The deck did not get a valid confirmation. |
+| Another Omarchy action is running on this station. | The station runs another action. Wait, then press the button again. |
+| Omarchy was not found on this station. | The station has no Omarchy. |
+| Provisioning cannot be retried from the board in this state. | **Retry provisioning** is not allowed in this state. |
+
+Another command of the station can hold the Omarchy lock. The command then waits 10 seconds and ends with the message "Another Omarchy change is running." The board shows the text of the install or screensaver refusal above that message, not the "busy" text (DL-243 open item b). Wait a moment and press the button again.
+
+##### Install and uninstall
+
+**Install** runs the install of "How the install happens" with `--yes`: it asks no question. Press it on a station that P8 did not provision, or to repair changed or missing files. The installer never replaces a file that a person changed. A conflict stops the install before any write.
+
+**Uninstall** removes only what the install wrote. It also turns the screensaver off, as **Turn the screensaver off** does, and keeps the original screensaver file. The install record goes last.
+
+##### The screensaver
+
+The screensaver is off after the install. **Turn the screensaver on** sets the switch in the install record. The station runs one short step every 60 seconds while Omarchy is there and an install record exists. A step writes the screensaver text when the text changed. The first text appears within one minute. The text is the one that the item "The screensaver" at the start of this section describes.
+
+Before the first write, the station keeps the original screensaver file. The kept original is `<config home>/omarchy/branding/screensaver.txt.fleetdeck-backup`. No action deletes or overwrites a kept original. The board does not show this path. You never need it.
+
+**Turn the screensaver off** puts the original back, when the screensaver file still holds the last text that Fleet Deck wrote. When there was no original, it removes the written file. When a person changed the file after the last write, it keeps that file. The kept original stays on the disk.
+
+"Blocked" means that the station found a kept original that differs from the current screensaver file. The station writes nothing then. Press **Use the current screensaver as the original**. The station renames the kept original to `screensaver.txt.fleetdeck-backup.<unix seconds>` in the same folder, with `-1`, `-2` and so on when that name exists. It deletes nothing. The switch stays as it is. The next step takes a new kept original from the current file and writes the text.
+
+##### Update the integration first
+
+The card calls the integration outdated in these cases: the install record has the older version 1; an installed plugin file differs from the file of this build; or the record was converted less than 120 seconds ago. While the integration is outdated, the station refuses the screensaver actions and **Uninstall**. The card shows **Install** and no other integration button.
+
+1. Press **Install**. The install converts the record and adopts each file that equals the file of this build.
+2. Wait two minutes. The card then shows the screensaver buttons and **Uninstall** again.
+
+##### Retry provisioning
+
+The card shows **Retry provisioning** when both of these are true:
+
+- The phase is `paired`, `link` or `integration`.
+- The line "Provisioning stopped" shows, or no bootstrap runs. The second case is the line "Provisioning did not finish".
+
+The station answers at once and runs the bootstrap in the background, with a limit of 10 minutes. The card shows "Provisioning is running" and reads the state every 5 seconds, for at most 10 minutes. A stop with a code runs the bootstrap again with its retry flag, which clears the code. A run that did not finish continues from its saved state. A restart of the station ends a retry that runs. Press the button again after the restart.
+
+A state in an earlier phase (`validated` or `service`) cannot be repaired from the board. The same is true for `complete`: it needs no retry. The card shows no button then. A terminal state before the station is linked to this deck (for example `file_invalid`, `release_untrusted`, `paired_elsewhere` or `fingerprint_mismatch`) has no board path yet, because the board cannot reach that station. Its repair is a new provisioning file at the first setup of the machine (section 15.1).
 
 #### The hotkeys
 
@@ -1088,7 +1186,7 @@ After the one first login, every step happens on the board or on your own deck m
 
 ### 15.3 Terminal states
 
-A terminal state stops the bootstrap. The bootstrap keeps the code and does not clear it at the next login. Each state needs a repair. This version has no board path for these repairs. This is an open item (DL-234). It is not an instruction to log in to the machine.
+A terminal state stops the bootstrap. The bootstrap keeps the code and does not clear it at the next login. Each state needs a repair. For a station that is linked to this deck, use **Retry provisioning** on its Omarchy card (see the part "Omarchy from the board" in section 7.5). A state before the station is linked to this deck has no board path yet, because the board cannot reach that station: its repair is a new provisioning file at the first setup of the machine (section 15.1). This is an open item (DL-243 item c). It is not an instruction to log in to the machine.
 
 | Code | Cause |
 | --- | --- |
