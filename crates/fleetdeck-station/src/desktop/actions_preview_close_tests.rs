@@ -28,12 +28,6 @@ async fn an_owner_preview_close_without_a_deck_is_not_found_and_runs_no_program(
     )
     .await
     .unwrap_err();
-    assert_eq!(
-        act_err(e),
-        (
-            "desktop_window_not_found",
-            "No window opened by this grant matches that handle.".into()
-        )
-    );
+    assert_eq!(act_err(e), ("not_found", "The window is gone.".into()));
     assert!(rig.calls().is_empty());
 }

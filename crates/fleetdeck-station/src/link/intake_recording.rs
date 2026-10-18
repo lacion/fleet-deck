@@ -189,6 +189,7 @@ pub(super) async fn record(
     match desktop::service().screen_record(request).await {
         Ok(mut result) => {
             super::intake_desktop::stamp(ctx, &mut result.info);
+            super::intake_desktop::stamp_previews(control, &mut result.info);
             ok(result)
         }
         Err(e) => failed(e),

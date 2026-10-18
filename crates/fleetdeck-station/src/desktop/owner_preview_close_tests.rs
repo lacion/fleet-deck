@@ -62,7 +62,14 @@ fn closes(rig: &Rig) -> usize {
         .count()
 }
 
-fn not_found(e: Fail) -> bool {
+/// The owner path answers the station `not_found`, which the deck maps to
+/// the owner's not-found answer.
+fn owner_not_found(e: Fail) -> bool {
+    act_err(e) == ("not_found", "The window is gone.".to_owned())
+}
+
+/// The coordinator path keeps `desktop_window_not_found` (§11.1).
+fn coordinator_not_found(e: Fail) -> bool {
     act_err(e) == ("desktop_window_not_found", NOT_FOUND_TEXT.to_owned())
 }
 
@@ -90,7 +97,7 @@ async fn an_owner_closes_a_preview_that_an_agent_opened_after_the_identity_check
     .await;
     // The handle is gone: a second close finds nothing.
     let e = owner_close(&rig, Some(DECK), &handle).await.unwrap_err();
-    assert!(not_found(e));
+    assert!(owner_not_found(e));
     assert_eq!(closes(&rig), 1);
 }
 
@@ -122,13 +129,13 @@ async fn an_unknown_handle_a_handle_of_another_deck_and_a_call_without_a_deck_ar
     let e = owner_close(&rig, Some(DECK), &"0".repeat(32))
         .await
         .unwrap_err();
-    assert!(not_found(e));
+    assert!(owner_not_found(e));
     let e = owner_close(&rig, Some(OTHER_DECK), &handle)
         .await
         .unwrap_err();
-    assert!(not_found(e));
+    assert!(owner_not_found(e));
     let e = owner_close(&rig, None, &handle).await.unwrap_err();
-    assert!(not_found(e));
+    assert!(owner_not_found(e));
     assert_eq!(closes(&rig), 0);
     assert!(rig.desktop.events.preview(&handle).is_some());
 }
@@ -155,7 +162,7 @@ async fn a_coordinator_close_still_needs_its_own_ownership() {
         extras(),
     );
     let e = rig.desktop.act(&on, action, admitted).await.unwrap_err();
-    assert!(not_found(e));
+    assert!(coordinator_not_found(e));
     assert_eq!(closes(&rig), 0);
 }
 
