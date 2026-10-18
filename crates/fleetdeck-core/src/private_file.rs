@@ -14,7 +14,10 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path};
 
 use ring::rand::{SecureRandom, SystemRandom};
-use rustix::fs::{AtFlags, FileType, Mode, OFlags, fstat, fsync, linkat, open, openat, unlinkat};
+use rustix::fs::{
+    AtFlags, FileType, FlockOperation, Mode, OFlags, flock, fstat, fsync, linkat, open, openat,
+    renameat, unlinkat,
+};
 use rustix::io::Errno;
 use rustix::process::geteuid;
 
@@ -63,6 +66,17 @@ pub fn check_new_private(path: &Path) -> Result<(), PrivateWriteError> {
 /// [`check_new_private`] that checks only the directories from `root` down
 /// (a test gives its own private root).
 fn check_new_below(root: &Path, path: &Path) -> Result<(), PrivateWriteError> {
+    check_parent_below(root, path)?;
+    match fs::symlink_metadata(path) {
+        Ok(_) => Err(PrivateWriteError::Exists),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(PrivateWriteError::Io(e)),
+    }
+}
+
+/// Rules 1 to 3 of [`check_new_private`]: the path and its directories, from
+/// `root` down. It does not look at `path` itself.
+fn check_parent_below(root: &Path, path: &Path) -> Result<(), PrivateWriteError> {
     let parent = parent_of(path).ok_or(PrivateWriteError::Unsafe)?;
     if !parent.starts_with(root) {
         return Err(PrivateWriteError::Unsafe);
@@ -82,11 +96,7 @@ fn check_new_below(root: &Path, path: &Path) -> Result<(), PrivateWriteError> {
             return Err(PrivateWriteError::Unsafe);
         }
     }
-    match fs::symlink_metadata(path) {
-        Ok(_) => Err(PrivateWriteError::Exists),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(PrivateWriteError::Io(e)),
-    }
+    Ok(())
 }
 
 /// The parent of an absolute path whose components after the root are all
@@ -162,6 +172,143 @@ fn write_new_below(
     removed.map_err(io::Error::from)?;
     fsync(&dir).map_err(io::Error::from)?;
     Ok(())
+}
+
+/// Replaces the private file `path` with `bytes` (mode 0600), or creates it.
+///
+/// The checks of [`check_new_private`] on the directories apply (the parent
+/// is owned by the effective user and has mode 0700). An existing
+/// destination must be a regular file, not a link, owned by the effective
+/// user, with no group or other bits; else `Unsafe`. The new content goes
+/// into the exclusive 0600 temporary leaf `<temp_prefix><32 hex>.tmp`, is
+/// synced, replaces the destination with `renameat`, and the parent is
+/// synced. Every error path removes the temporary leaf (best effort).
+///
+/// # Errors
+/// [`PrivateWriteError`]: `Unsafe` for a refused path or destination, `Io`.
+pub fn replace_private(
+    path: &Path,
+    bytes: &[u8],
+    temp_prefix: &str,
+) -> Result<(), PrivateWriteError> {
+    replace_private_below(Path::new("/"), path, bytes, temp_prefix)
+}
+
+/// [`replace_private`] that checks only the directories from `root` down
+/// (a caller that owns its private root, such as a test, gives it).
+///
+/// # Errors
+/// As [`replace_private`].
+pub fn replace_private_below(
+    root: &Path,
+    path: &Path,
+    bytes: &[u8],
+    temp_prefix: &str,
+) -> Result<(), PrivateWriteError> {
+    check_parent_below(root, path)?;
+    let (Some(parent), Some(leaf)) = (path.parent(), path.file_name()) else {
+        return Err(PrivateWriteError::Unsafe);
+    };
+    check_destination(path)?;
+    let dir = open(
+        parent,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(io::Error::from)?;
+    let temp = format!("{temp_prefix}{}.tmp", random_hex()?);
+    let fd = openat(
+        &dir,
+        temp.as_str(),
+        OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::RUSR | Mode::WUSR,
+    )
+    .map_err(io::Error::from)?;
+    let published: Result<(), PrivateWriteError> = (|| {
+        let mut file = File::from(fd);
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        renameat(&dir, temp.as_str(), &dir, leaf).map_err(io::Error::from)?;
+        Ok(())
+    })();
+    if published.is_err() {
+        // After a successful rename the temporary name no longer exists.
+        let _ = unlinkat(&dir, temp.as_str(), AtFlags::empty());
+    }
+    published?;
+    fsync(&dir).map_err(io::Error::from)?;
+    Ok(())
+}
+
+/// An existing destination of [`replace_private`] is a regular file of the
+/// effective user with no group or other bits, and not a link.
+fn check_destination(path: &Path) -> Result<(), PrivateWriteError> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) => {
+            if !meta.file_type().is_file()
+                || meta.uid() != geteuid().as_raw()
+                || meta.mode() & 0o077 != 0
+            {
+                return Err(PrivateWriteError::Unsafe);
+            }
+            Ok(())
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(PrivateWriteError::Io(e)),
+    }
+}
+
+/// Takes the exclusive non-blocking lock of the private file `path`.
+///
+/// The file is created with mode 0600 when it is absent. The directory rules
+/// of [`replace_private`] apply. An existing file must be a regular file of
+/// the effective user with no group or other bits (it is opened with
+/// `O_NOFOLLOW`). `Ok(None)` means that another holder has the lock. The
+/// returned file holds the lock until it is dropped.
+///
+/// # Errors
+/// [`PrivateWriteError`]: `Unsafe` for a refused path or file, `Io`.
+pub fn try_lock_private(path: &Path) -> Result<Option<File>, PrivateWriteError> {
+    try_lock_private_below(Path::new("/"), path)
+}
+
+/// [`try_lock_private`] that checks only the directories from `root` down.
+///
+/// # Errors
+/// As [`try_lock_private`].
+pub fn try_lock_private_below(root: &Path, path: &Path) -> Result<Option<File>, PrivateWriteError> {
+    check_parent_below(root, path)?;
+    let (Some(parent), Some(leaf)) = (path.parent(), path.file_name()) else {
+        return Err(PrivateWriteError::Unsafe);
+    };
+    let dir = open(
+        parent,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(io::Error::from)?;
+    let fd = match openat(
+        &dir,
+        leaf,
+        OFlags::CREATE | OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::RUSR | Mode::WUSR,
+    ) {
+        Ok(fd) => fd,
+        Err(Errno::LOOP) => return Err(PrivateWriteError::Unsafe),
+        Err(e) => return Err(PrivateWriteError::Io(e.into())),
+    };
+    let st = fstat(&fd).map_err(io::Error::from)?;
+    if FileType::from_raw_mode(st.st_mode) != FileType::RegularFile
+        || st.st_uid != geteuid().as_raw()
+        || st.st_mode & 0o077 != 0
+    {
+        return Err(PrivateWriteError::Unsafe);
+    }
+    match flock(&fd, FlockOperation::NonBlockingLockExclusive) {
+        Ok(()) => Ok(Some(File::from(fd))),
+        Err(Errno::WOULDBLOCK) => Ok(None),
+        Err(e) => Err(PrivateWriteError::Io(e.into())),
+    }
 }
 
 /// 32 lowercase hex digits of 16 random bytes.
@@ -431,6 +578,138 @@ mod tests {
         assert!(matches!(r, Err(PrivateReadError::Unsafe)), "{r:?}");
         let r = read_private(Path::new("in.toml"), 16);
         assert!(matches!(r, Err(PrivateReadError::Unsafe)), "{r:?}");
+    }
+
+    fn replace(root: &Path, path: &Path, bytes: &[u8]) -> Result<(), PrivateWriteError> {
+        replace_private_below(root, path, bytes, ".state.")
+    }
+
+    #[test]
+    fn replace_creates_a_new_file_with_mode_0600() {
+        let root = private_root();
+        let path = root.path().join("state.json");
+        replace(root.path(), &path, b"one").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"one");
+        assert_eq!(fs::metadata(&path).unwrap().mode() & 0o777, 0o600);
+    }
+
+    #[test]
+    fn replace_replaces_a_private_file_and_leaves_no_temp() {
+        let root = private_root();
+        let path = root.path().join("state.json");
+        replace(root.path(), &path, b"one").unwrap();
+        replace(root.path(), &path, b"two").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"two");
+        assert_eq!(fs::metadata(&path).unwrap().mode() & 0o777, 0o600);
+        let names: Vec<_> = fs::read_dir(root.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names.len(), 1, "{names:?}");
+    }
+
+    #[test]
+    fn replace_refuses_a_destination_that_others_can_read() {
+        let root = private_root();
+        let path = root.path().join("state.json");
+        fs::write(&path, b"old").unwrap();
+        chmod(&path, 0o644);
+        let r = replace(root.path(), &path, b"new");
+        assert!(matches!(r, Err(PrivateWriteError::Unsafe)), "{r:?}");
+        assert_eq!(fs::read(&path).unwrap(), b"old");
+    }
+
+    #[test]
+    fn replace_refuses_a_symlink_and_leaves_its_target() {
+        let root = private_root();
+        let target = root.path().join("target.json");
+        fs::write(&target, b"old").unwrap();
+        chmod(&target, 0o600);
+        let path = root.path().join("state.json");
+        symlink(&target, &path).unwrap();
+        let r = replace(root.path(), &path, b"new");
+        assert!(matches!(r, Err(PrivateWriteError::Unsafe)), "{r:?}");
+        assert_eq!(fs::read(&target).unwrap(), b"old");
+        assert_eq!(fs::read_link(&path).unwrap(), target);
+        let dangling = root.path().join("dangling.json");
+        symlink(root.path().join("nowhere"), &dangling).unwrap();
+        let r = replace(root.path(), &dangling, b"new");
+        assert!(matches!(r, Err(PrivateWriteError::Unsafe)), "{r:?}");
+    }
+
+    #[test]
+    fn replace_refuses_a_directory_as_destination() {
+        let root = private_root();
+        let path = root.path().join("state.json");
+        fs::create_dir(&path).unwrap();
+        let r = replace(root.path(), &path, b"new");
+        assert!(matches!(r, Err(PrivateWriteError::Unsafe)), "{r:?}");
+    }
+
+    #[test]
+    fn replace_refuses_a_parent_that_is_not_private() {
+        let root = private_root();
+        chmod(root.path(), 0o755);
+        let path = root.path().join("state.json");
+        let r = replace(root.path(), &path, b"new");
+        assert!(matches!(r, Err(PrivateWriteError::Unsafe)), "{r:?}");
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn the_public_replace_refuses_a_path_below_tmp() {
+        let dir = tempfile::Builder::new().tempdir_in("/tmp").unwrap();
+        chmod(dir.path(), 0o700);
+        let r = replace_private(&dir.path().join("state.json"), b"data", ".state.");
+        assert!(matches!(r, Err(PrivateWriteError::Unsafe)), "{r:?}");
+    }
+
+    #[test]
+    fn a_lock_is_taken_once_and_released_on_drop() {
+        let root = private_root();
+        let path = root.path().join("x.lock");
+        let first = try_lock_private_below(root.path(), &path).unwrap();
+        assert!(first.is_some());
+        assert_eq!(fs::metadata(&path).unwrap().mode() & 0o777, 0o600);
+        let second = try_lock_private_below(root.path(), &path).unwrap();
+        assert!(second.is_none());
+        drop(first);
+        let third = try_lock_private_below(root.path(), &path).unwrap();
+        assert!(third.is_some());
+    }
+
+    #[test]
+    fn a_lock_file_that_others_can_read_is_unsafe() {
+        let root = private_root();
+        let path = root.path().join("x.lock");
+        fs::write(&path, b"").unwrap();
+        chmod(&path, 0o644);
+        let r = try_lock_private_below(root.path(), &path);
+        assert!(matches!(r, Err(PrivateWriteError::Unsafe)), "{r:?}");
+    }
+
+    #[test]
+    fn a_lock_file_that_is_a_symlink_is_unsafe() {
+        let root = private_root();
+        let real = root.path().join("real");
+        fs::write(&real, b"").unwrap();
+        chmod(&real, 0o600);
+        let path = root.path().join("x.lock");
+        symlink(&real, &path).unwrap();
+        let r = try_lock_private_below(root.path(), &path);
+        assert!(matches!(r, Err(PrivateWriteError::Unsafe)), "{r:?}");
+    }
+
+    #[test]
+    fn a_lock_in_a_parent_that_is_not_private_is_unsafe() {
+        let root = private_root();
+        chmod(root.path(), 0o755);
+        let r = try_lock_private_below(root.path(), &root.path().join("x.lock"));
+        assert!(matches!(r, Err(PrivateWriteError::Unsafe)), "{r:?}");
+        let tmp = tempfile::Builder::new().tempdir_in("/tmp").unwrap();
+        chmod(tmp.path(), 0o700);
+        let r = try_lock_private(&tmp.path().join("x.lock"));
+        assert!(matches!(r, Err(PrivateWriteError::Unsafe)), "{r:?}");
     }
 
     #[test]

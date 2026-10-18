@@ -12,6 +12,8 @@ mod doctor;
 mod invite;
 mod notify;
 mod pairing;
+#[cfg_attr(not(test), allow(dead_code))]
+mod provision; // wired by P8 T3b
 mod restart;
 mod service;
 mod settings;

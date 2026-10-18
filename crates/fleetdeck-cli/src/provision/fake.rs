@@ -1,0 +1,431 @@
+//! A scripted fake of [`Effects`] with a virtual clock: `sleep` advances the
+//! clock and never waits. The state files are real files in a private
+//! temporary root.
+
+#![allow(clippy::unwrap_used, clippy::expect_used, dead_code)]
+
+use std::collections::{HashMap, VecDeque};
+use std::io;
+use std::os::unix::fs::DirBuilderExt;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+use fleetdeck_proto::event::ProviderKind;
+use fleetdeck_proto::link::{StationProvider, VersionStatus};
+
+use super::effects::{
+    BoxFuture, Build, CallError, ConfigState, Effects, JoinOutcome, RootFile, ServiceState,
+    StationView, Terminal,
+};
+use super::release::{DESKTOP_PATH, HOOK_PATH, MANIFEST_PATH};
+use super::sha256_hex;
+use super::state::{self, ProvisionState};
+
+pub const DECK_FP: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+pub const OTHER_FP: &str = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+pub const STATION_FP: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+pub const STATION_FP_2: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+pub const HOOK_BYTES: &[u8] = b"#!/bin/sh\nexit 0\n";
+pub const DESKTOP_BYTES: &[u8] = b"[Desktop Entry]\nNoDisplay=true\n";
+
+/// What `join` does the next time.
+#[derive(Debug, Clone, Copy)]
+pub enum JoinStep {
+    /// The deck pairs.
+    Paired,
+    /// A failure code; nothing is paired.
+    Code(&'static str),
+    /// A failure code after the deck committed the pairing.
+    CodeCommitted(&'static str),
+}
+
+pub struct Station {
+    pub fingerprint: String,
+    pub up_at: Duration,
+    pub paired: Option<String>,
+    pub link_script: VecDeque<bool>,
+    pub link_default: bool,
+    pub build: Build,
+    pub binary_sha256: String,
+    pub providers: Option<Vec<StationProvider>>,
+    pub probe_errors: u32,
+    /// One edit of the station per answer without a probe (before it is built).
+    pub edits: VecDeque<Edit>,
+    /// The error of a call while the station is not up.
+    pub down_error: CallError,
+}
+
+pub type Edit = Box<dyn FnOnce(&mut Station) + Send>;
+
+pub struct Fake {
+    pub dir: tempfile::TempDir,
+    base: Instant,
+    pub clock: Mutex<Duration>,
+    pub calls: Mutex<Vec<String>>,
+    pub sleeps: Mutex<Vec<Duration>>,
+    pub stderr: Mutex<Vec<String>>,
+    pub notices: Mutex<Vec<String>>,
+    pub provision: Mutex<Result<Vec<u8>, Terminal>>,
+    pub files: Mutex<HashMap<PathBuf, io::Result<RootFile>>>,
+    pub own_sha256: Mutex<Option<String>>,
+    pub build: Mutex<Build>,
+    pub config: Mutex<ConfigState>,
+    pub service: Mutex<ServiceState>,
+    pub station: Mutex<Station>,
+    pub joins: Mutex<VecDeque<JoinStep>>,
+    pub join_args: Mutex<Vec<(String, u16, String, String)>>,
+    pub install: Mutex<VecDeque<io::Result<i32>>>,
+    pub status: Mutex<VecDeque<io::Result<i32>>>,
+    pub dir_error: Mutex<bool>,
+}
+
+pub fn build() -> Build {
+    Build {
+        version: "2.0.0".to_owned(),
+        commit: "abc1234".to_owned(),
+        release: true,
+    }
+}
+
+pub fn binary_sha() -> String {
+    sha256_hex(b"binary")
+}
+
+pub fn provider(
+    instance: &str,
+    version: Option<&str>,
+    auth: &str,
+    st: VersionStatus,
+) -> StationProvider {
+    StationProvider {
+        instance: instance.into(),
+        provider: ProviderKind::Claude,
+        version: version.map(str::to_owned),
+        auth: auth.to_owned(),
+        capabilities: None,
+        version_status: st,
+    }
+}
+
+pub fn manifest_json() -> String {
+    format!(
+        r#"{{"version":1,"release_version":"2.0.0","commit":"abc1234","package_sha256":"{p}","binary_sha256":"{b}","hooks":{{"provision_first_login_sha256":"{h}","autostart_desktop_sha256":"{d}"}}}}"#,
+        p = sha256_hex(b"package"),
+        b = binary_sha(),
+        h = sha256_hex(HOOK_BYTES),
+        d = sha256_hex(DESKTOP_BYTES),
+    )
+}
+
+pub fn root_file(bytes: &[u8], mode: u32) -> RootFile {
+    RootFile {
+        bytes: bytes.to_vec(),
+        uid: 0,
+        mode,
+        symlink: false,
+        parent_uid: 0,
+        parent_mode: 0o755,
+    }
+}
+
+/// A provisioning file for the default deck.
+pub fn file_text(name: &str) -> Vec<u8> {
+    format!(
+        "version = 1\ndeck = \"deck.example.ts.net:7421\"\ndeck_fingerprint = \"{DECK_FP}\"\nname = \"{name}\"\n"
+    )
+    .into_bytes()
+}
+
+impl Fake {
+    /// A machine where the whole bootstrap succeeds on the first try.
+    pub fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let mut files = HashMap::new();
+        files.insert(
+            PathBuf::from(MANIFEST_PATH),
+            Ok(root_file(manifest_json().as_bytes(), 0o444)),
+        );
+        files.insert(PathBuf::from(HOOK_PATH), Ok(root_file(HOOK_BYTES, 0o755)));
+        files.insert(
+            PathBuf::from(DESKTOP_PATH),
+            Ok(root_file(DESKTOP_BYTES, 0o644)),
+        );
+        Self {
+            dir,
+            base: Instant::now(),
+            clock: Mutex::new(Duration::ZERO),
+            calls: Mutex::new(Vec::new()),
+            sleeps: Mutex::new(Vec::new()),
+            stderr: Mutex::new(Vec::new()),
+            notices: Mutex::new(Vec::new()),
+            provision: Mutex::new(Ok(file_text("laptop"))),
+            files: Mutex::new(files),
+            own_sha256: Mutex::new(Some(binary_sha())),
+            build: Mutex::new(build()),
+            config: Mutex::new(ConfigState::Absent),
+            service: Mutex::new(ServiceState::Absent),
+            station: Mutex::new(Station {
+                fingerprint: STATION_FP.to_owned(),
+                up_at: Duration::ZERO,
+                paired: None,
+                link_script: VecDeque::new(),
+                link_default: true,
+                build: build(),
+                binary_sha256: binary_sha(),
+                providers: Some(Vec::new()),
+                probe_errors: 0,
+                edits: VecDeque::new(),
+                down_error: CallError::Unavailable,
+            }),
+            joins: Mutex::new(VecDeque::from([JoinStep::Paired])),
+            join_args: Mutex::new(Vec::new()),
+            install: Mutex::new(VecDeque::new()),
+            status: Mutex::new(VecDeque::new()),
+            dir_error: Mutex::new(false),
+        }
+    }
+
+    pub fn state(&self) -> Option<ProvisionState> {
+        state::load(&state::state_path(&self.station_dir())).unwrap()
+    }
+
+    pub fn state_file(&self) -> PathBuf {
+        state::state_path(&self.station_dir())
+    }
+
+    pub fn log(&self, entry: impl Into<String>) {
+        self.calls.lock().unwrap().push(entry.into());
+    }
+
+    pub fn count(&self, entry: &str) -> usize {
+        self.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| *c == entry)
+            .count()
+    }
+
+    pub fn lines(&self) -> Vec<String> {
+        self.stderr.lock().unwrap().clone()
+    }
+
+    pub fn elapsed(&self) -> Duration {
+        *self.clock.lock().unwrap()
+    }
+
+    pub fn push_join(&self, step: JoinStep) {
+        self.joins.lock().unwrap().push_back(step);
+    }
+
+    pub fn set_join(&self, steps: &[JoinStep]) {
+        *self.joins.lock().unwrap() = steps.iter().copied().collect();
+    }
+
+    pub fn set_paired(&self, deck: Option<&str>) {
+        self.station.lock().unwrap().paired = deck.map(str::to_owned);
+    }
+
+    pub fn set_file(&self, path: &str, file: io::Result<RootFile>) {
+        self.files.lock().unwrap().insert(PathBuf::from(path), file);
+    }
+
+    pub fn edit_file(&self, path: &str, edit: impl FnOnce(&mut RootFile)) {
+        let mut files = self.files.lock().unwrap();
+        let file = files.get_mut(Path::new(path)).unwrap().as_mut().unwrap();
+        edit(file);
+    }
+}
+
+impl Effects for Fake {
+    fn station_dir(&self) -> PathBuf {
+        self.dir.path().join("station")
+    }
+
+    fn trust_root(&self) -> PathBuf {
+        self.dir.path().to_path_buf()
+    }
+
+    fn ensure_station_dir(&self) -> io::Result<()> {
+        if *self.dir_error.lock().unwrap() {
+            return Err(io::Error::other("no directory"));
+        }
+        match std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(self.station_dir())
+        {
+            Err(e) if e.kind() != io::ErrorKind::AlreadyExists => Err(e),
+            _ => Ok(()),
+        }
+    }
+
+    fn now(&self) -> Instant {
+        self.base + *self.clock.lock().unwrap()
+    }
+
+    fn sleep(&self, d: Duration) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            *self.clock.lock().unwrap() += d;
+            self.sleeps.lock().unwrap().push(d);
+        })
+    }
+
+    fn read_provision(&self, _path: &Path) -> Result<Vec<u8>, Terminal> {
+        self.provision.lock().unwrap().clone()
+    }
+
+    fn root_file(&self, path: &Path) -> io::Result<RootFile> {
+        match self.files.lock().unwrap().get(path) {
+            Some(Ok(file)) => Ok(file.clone()),
+            Some(Err(e)) => Err(io::Error::new(e.kind(), "scripted")),
+            None => Err(io::ErrorKind::NotFound.into()),
+        }
+    }
+
+    fn own_binary_sha256(&self) -> io::Result<String> {
+        self.own_sha256
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| io::Error::other("unreadable"))
+    }
+
+    fn build(&self) -> Build {
+        self.build.lock().unwrap().clone()
+    }
+
+    fn station_config(&self) -> ConfigState {
+        self.config.lock().unwrap().clone()
+    }
+
+    fn create_station_config(&self, name: &str) -> io::Result<()> {
+        self.log(format!("create_config:{name}"));
+        *self.config.lock().unwrap() = ConfigState::Named(name.to_owned());
+        Ok(())
+    }
+
+    fn service(&self) -> ServiceState {
+        *self.service.lock().unwrap()
+    }
+
+    fn install_service(&self) -> io::Result<()> {
+        self.log("install_service");
+        *self.service.lock().unwrap() = ServiceState::Matching { active: true };
+        Ok(())
+    }
+
+    fn start_service(&self) -> io::Result<()> {
+        self.log("start_service");
+        *self.service.lock().unwrap() = ServiceState::Matching { active: true };
+        Ok(())
+    }
+
+    fn fingerprint(&self, probe: bool) -> BoxFuture<'_, Result<StationView, CallError>> {
+        Box::pin(async move {
+            self.log(if probe {
+                "fingerprint:probe"
+            } else {
+                "fingerprint"
+            });
+            let now = *self.clock.lock().unwrap();
+            let mut st = self.station.lock().unwrap();
+            if now < st.up_at {
+                return Err(st.down_error);
+            }
+            if probe && st.probe_errors > 0 {
+                st.probe_errors -= 1;
+                return Err(CallError::Timeout);
+            }
+            let link_up = if probe {
+                st.link_default
+            } else {
+                if let Some(edit) = st.edits.pop_front() {
+                    edit(&mut st);
+                }
+                let default = st.link_default;
+                st.link_script.pop_front().unwrap_or(default)
+            };
+            Ok(StationView {
+                fingerprint: st.fingerprint.clone(),
+                paired_deck: st.paired.clone(),
+                link_up,
+                build: st.build.clone(),
+                binary_sha256: st.binary_sha256.clone(),
+                providers: if probe { st.providers.clone() } else { None },
+            })
+        })
+    }
+
+    fn join(
+        &self,
+        host: &str,
+        port: u16,
+        deck_fingerprint: &str,
+        name: &str,
+    ) -> BoxFuture<'_, JoinOutcome> {
+        let args = (
+            host.to_owned(),
+            port,
+            deck_fingerprint.to_owned(),
+            name.to_owned(),
+        );
+        Box::pin(async move {
+            self.log("join");
+            let deck = args.2.clone();
+            self.join_args.lock().unwrap().push(args);
+            let step = self.joins.lock().unwrap().pop_front();
+            match step.expect("an unscripted join") {
+                JoinStep::Paired => {
+                    self.station.lock().unwrap().paired = Some(deck);
+                    JoinOutcome::Paired
+                }
+                JoinStep::Code(code) => JoinOutcome::Code(code.to_owned()),
+                JoinStep::CodeCommitted(code) => {
+                    self.station.lock().unwrap().paired = Some(deck);
+                    JoinOutcome::Code(code.to_owned())
+                }
+            }
+        })
+    }
+
+    fn omarchy_install(&self) -> BoxFuture<'_, io::Result<i32>> {
+        Box::pin(async move {
+            self.log("omarchy_install");
+            self.install.lock().unwrap().pop_front().unwrap_or(Ok(0))
+        })
+    }
+
+    fn omarchy_status(&self) -> BoxFuture<'_, io::Result<i32>> {
+        Box::pin(async move {
+            self.log("omarchy_status");
+            self.status.lock().unwrap().pop_front().unwrap_or(Ok(0))
+        })
+    }
+
+    fn notify(&self, grouped_fingerprint: &str) {
+        self.notices
+            .lock()
+            .unwrap()
+            .push(grouped_fingerprint.to_owned());
+    }
+
+    fn progress(&self, line: &str) {
+        self.stderr.lock().unwrap().push(line.to_owned());
+    }
+}
+
+/// One run of the bootstrap against the fake.
+pub async fn go(fake: &Fake, retry: bool) -> super::run::Exit {
+    super::run::run(fake, Path::new("/provision.toml"), retry).await
+}
+
+/// Writes the state file as it is given (a test of the file rules).
+pub fn write_state(fake: &Fake, bytes: &[u8], mode: u32) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    fake.ensure_station_dir().unwrap();
+    let path = fake.state_file();
+    std::fs::write(&path, bytes).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+    path
+}
