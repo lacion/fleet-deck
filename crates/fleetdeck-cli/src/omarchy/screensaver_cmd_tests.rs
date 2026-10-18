@@ -186,17 +186,39 @@ fn screensaver_restore_does_nothing_when_no_text_was_written() {
 }
 
 #[test]
-fn screensaver_restore_with_a_missing_backup_keeps_the_file_and_clears_the_cache() {
+fn screensaver_restore_with_a_missing_backup_is_an_error_and_changes_no_field() {
     let (dir, home) = home();
     let mut record = written(&home, &dir, Some("mine\n"));
     let ours = read(screensaver_file(&dir));
     std::fs::remove_file(backup_file(&dir)).unwrap();
-    restore(&home, &mut record).unwrap();
+    let before = record.clone();
+    let e = restore(&home, &mut record).unwrap_err();
+    assert!(e.to_string().contains("the backup is missing"), "{e}");
     assert_eq!(read(screensaver_file(&dir)), ours);
+    assert_eq!(record, before);
+    // The backup comes back: the same record restores.
+    std::fs::write(backup_file(&dir), "mine\n").unwrap();
+    restore(&home, &mut record).unwrap();
+    assert_eq!(read(screensaver_file(&dir)), "mine\n");
+    assert_eq!(record.screensaver.restored, Some(Restored::Backup));
     assert_eq!(record.screensaver.last_written_sha256, None);
-    assert_eq!(record.screensaver.backup_sha256, None);
-    assert!(!record.screensaver.had_original);
-    assert_eq!(record.screensaver.restored, None);
+}
+
+#[test]
+fn screensaver_off_with_a_missing_backup_fails_and_a_second_off_restores() {
+    let (dir, home) = home();
+    let record = written(&home, &dir, Some("mine\n"));
+    let ours = read(screensaver_file(&dir));
+    std::fs::remove_file(backup_file(&dir)).unwrap();
+    assert_eq!(code(off(&home, W).unwrap()), fail());
+    assert_eq!(record::load(&home).unwrap().unwrap(), record);
+    assert_eq!(read(screensaver_file(&dir)), ours);
+    std::fs::write(backup_file(&dir), "mine\n").unwrap();
+    assert_eq!(code(off(&home, W).unwrap()), ok());
+    assert_eq!(read(screensaver_file(&dir)), "mine\n");
+    let record = record::load(&home).unwrap().unwrap();
+    assert!(!record.screensaver.enabled);
+    assert_eq!(record.screensaver.restored, Some(Restored::Backup));
 }
 
 #[test]

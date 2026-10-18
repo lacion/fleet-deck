@@ -390,3 +390,37 @@ fn omarchy_screensaver_a_failed_restore_keeps_the_record_and_uninstall_stays_inc
     assert_eq!(c, 0, "{o}{e}");
     assert_eq!(text(file(&rig)), "original\n");
 }
+
+#[test]
+fn omarchy_screensaver_off_with_a_missing_backup_fails_and_a_second_off_restores() {
+    let rig = Rig::new();
+    install_on(&rig);
+    original(&rig, "original\n");
+    let (c, _, e) = tick(&rig);
+    assert_eq!(c, 0, "{e}");
+    let written = text(file(&rig));
+    let kept = text(backup(&rig));
+    std::fs::remove_file(backup(&rig)).unwrap();
+    let before = rig.record()["screensaver"].clone();
+
+    let (c, _, e) = code(&rig, &["omarchy", "screensaver", "off"]);
+    assert_eq!(c, 1);
+    assert!(
+        e.contains("fleetdeck: the screensaver could not be restored: the backup is missing"),
+        "{e}"
+    );
+    assert_eq!(rig.record()["screensaver"], before);
+    assert_eq!(text(file(&rig)), written);
+
+    // Uninstall keeps the record too.
+    let (c, o, e) = code(&rig, &["omarchy", "uninstall"]);
+    assert_eq!(c, 1, "{o}{e}");
+    assert!(rig.fd_dir().join("omarchy-install.json").exists());
+    assert_eq!(rig.record()["screensaver"], before);
+
+    // The backup comes back: a second `off` restores.
+    std::fs::write(backup(&rig), kept).unwrap();
+    let (c, o, e) = code(&rig, &["omarchy", "screensaver", "off"]);
+    assert_eq!(c, 0, "{o}{e}");
+    assert_eq!(text(file(&rig)), "original\n");
+}

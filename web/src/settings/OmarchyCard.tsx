@@ -12,6 +12,8 @@ import {
   type OmarchyAction,
   type OmarchyActions,
   type OmarchyStatus,
+  POLL_LIMIT_MS,
+  POLL_MS,
   pollRetry,
   READ_ERROR_TEXT,
   runAction,
@@ -31,7 +33,87 @@ type ViewProps = {
   readonly onRetryRead: () => void;
 };
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+/** The background read of a mounted card: every 15 s. */
+export const REFRESH_MS = 15_000;
+
+/** A sleep that `cancel` ends at once: no timer stays after the card is gone. */
+export function makeSleeper(): {
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly cancel: () => void;
+} {
+  const pending = new Set<() => void>();
+  return {
+    sleep: (ms) =>
+      new Promise<void>((resolve) => {
+        const end = () => {
+          clearTimeout(id);
+          pending.delete(end);
+          resolve();
+        };
+        const id = setTimeout(end, ms);
+        pending.add(end);
+      }),
+    cancel: () => {
+      for (const end of [...pending]) end();
+    },
+  };
+}
+
+/** Something runs on the station: an action, or the provisioning. */
+export const stationBusy = (status: OmarchyStatus): boolean =>
+  status.running !== null || (status.provision !== null && status.provision.bootstrap_running);
+
+export type WatchEnv = {
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly now: () => number;
+  /** True when the card is gone: the watch ends. */
+  readonly stopped: () => boolean;
+  /** True while an action call or another read of the card runs: no read starts. */
+  readonly paused: () => boolean;
+  /** The status that the card shows, or `null`. */
+  readonly known: () => OmarchyStatus | null;
+  /** The number of the last change of the card: a read that a change overtook is dropped. */
+  readonly turn: () => number;
+  readonly onStatus: (status: OmarchyStatus) => void;
+};
+
+/**
+ * Reads the status of a mounted card until `stopped()`. A tick of 5 s decides: a read is due every
+ * 15 s, or every 5 s while the shown status has a running action or a running provisioning (at
+ * most 10 min from the first such tick). No read starts while `paused()`. A failed read keeps
+ * the last state. A read that a change of the card overtook is dropped.
+ */
+export async function watchStatus(
+  actions: OmarchyActions,
+  station: string,
+  env: WatchEnv,
+): Promise<void> {
+  let lastRead = env.now();
+  let fastSince: number | null = null;
+  while (!env.stopped()) {
+    await env.sleep(POLL_MS);
+    if (env.stopped()) return;
+    const known = env.known();
+    const t = env.now();
+    let every = REFRESH_MS;
+    if (known !== null && stationBusy(known)) {
+      fastSince ??= t;
+      if (t - fastSince < POLL_LIMIT_MS) every = POLL_MS;
+    } else {
+      fastSince = null;
+    }
+    if (t - lastRead < every || env.paused()) continue;
+    lastRead = t;
+    const turn = env.turn();
+    try {
+      const status = await actions.status(station);
+      if (env.stopped()) return;
+      if (env.turn() === turn && !env.paused()) env.onStatus(status);
+    } catch {
+      // A failed background read keeps the last state.
+    }
+  }
+}
 
 /** The card for a state. No card for an older deck (404). */
 export function OmarchyView({ state, busy, failure, onAct, onRetryRead }: ViewProps) {
@@ -109,25 +191,35 @@ export function OmarchyCard({ station, actions, ask, initial }: Props) {
   const [failure, setFailure] = useState<Failure | null>(null);
   const turn = useRef(0);
   const alive = useRef(true);
+  const shown = useRef<CardState>(initial ?? { kind: 'loading' });
+  const acting = useRef(false);
+  const sleeper = useRef(makeSleeper());
   useEffect(() => {
     alive.current = true;
+    const timers = sleeper.current;
     return () => {
       alive.current = false;
+      timers.cancel();
     };
+  }, []);
+
+  const put = useCallback((next: CardState) => {
+    shown.current = next;
+    setState(next);
   }, []);
 
   const load = useCallback(() => {
     const mine = ++turn.current;
-    setState({ kind: 'loading' });
+    put({ kind: 'loading' });
     actions.status(station).then(
       (status) => {
-        if (mine === turn.current) setState({ kind: 'ready', status });
+        if (mine === turn.current) put({ kind: 'ready', status });
       },
       (e: unknown) => {
-        if (mine === turn.current) setState(stateOfReadError(e));
+        if (mine === turn.current) put(stateOfReadError(e));
       },
     );
-  }, [actions, station]);
+  }, [actions, station, put]);
   useEffect(() => {
     if (initial === undefined) load();
     return () => {
@@ -135,29 +227,56 @@ export function OmarchyCard({ station, actions, ask, initial }: Props) {
     };
   }, [load, initial]);
 
-  const show = (status: OmarchyStatus) => setState({ kind: 'ready', status });
+  useEffect(() => {
+    let dead = false;
+    void watchStatus(actions, station, {
+      sleep: sleeper.current.sleep,
+      now: Date.now,
+      stopped: () => dead,
+      paused: () =>
+        acting.current ||
+        shown.current.kind === 'loading' ||
+        shown.current.kind === 'hidden' ||
+        shown.current.kind === 'unsupported',
+      known: () => (shown.current.kind === 'ready' ? shown.current.status : null),
+      turn: () => turn.current,
+      onStatus: (status) => put({ kind: 'ready', status }),
+    });
+    return () => {
+      dead = true;
+      sleeper.current.cancel();
+    };
+  }, [actions, station, put]);
+
+  const show = (status: OmarchyStatus) => put({ kind: 'ready', status });
 
   const act = async (action: OmarchyAction) => {
-    setFailure(null);
-    setBusy(true);
-    const mine = ++turn.current;
-    const end = await runAction(actions, station, action, ask);
-    if (!alive.current) return;
-    setBusy(false);
-    if (end.kind === 'cancelled') return;
-    if (end.kind === 'failed') {
-      if (end.status !== null) show(end.status);
-      setFailure({ text: end.text, message: end.message });
-      return;
-    }
-    show(end.status);
-    if (end.kind === 'started') {
-      await pollRetry(actions, station, {
-        sleep,
-        now: Date.now,
-        stopped: () => !alive.current || mine !== turn.current,
-        onStatus: show,
-      });
+    if (acting.current) return;
+    acting.current = true;
+    try {
+      setFailure(null);
+      setBusy(true);
+      const mine = ++turn.current;
+      const end = await runAction(actions, station, action, ask);
+      if (!alive.current) return;
+      setBusy(false);
+      if (end.kind === 'cancelled') return;
+      if (end.kind === 'failed') {
+        if (end.status !== null) show(end.status);
+        setFailure({ text: end.text, message: end.message });
+        return;
+      }
+      show(end.status);
+      if (end.kind === 'started') {
+        await pollRetry(actions, station, {
+          sleep: sleeper.current.sleep,
+          now: Date.now,
+          stopped: () => !alive.current || mine !== turn.current,
+          onStatus: show,
+        });
+      }
+    } finally {
+      acting.current = false;
     }
   };
 

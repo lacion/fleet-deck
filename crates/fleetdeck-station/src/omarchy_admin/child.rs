@@ -3,7 +3,8 @@
 //! A child runs in its own process group with stdin on `/dev/null`. The
 //! station reads stdout up to 64 KiB and stderr up to 16 KiB, both at the
 //! same time. A longer output or the time limit kills the whole group
-//! (`SIGKILL`) and reaps the child. A dropped run kills the group too.
+//! (`SIGKILL`) and reaps the child. A normal exit and a dropped run kill the
+//! group too, so a subprocess that a tool left behind does not stay alive.
 
 use std::ffi::OsString;
 use std::io;
@@ -103,6 +104,9 @@ pub async fn run(spec: &Spec<'_>) -> io::Result<RunResult> {
     };
     match tokio::time::timeout(spec.limit, work).await {
         Ok(Ok((status, stdout, stderr))) => {
+            // A subprocess that the tool left behind must not outlive the
+            // action: the direct child is reaped, the rest of the group dies.
+            guard.kill();
             guard.0 = None;
             Ok(exit(status, stdout, stderr))
         }
