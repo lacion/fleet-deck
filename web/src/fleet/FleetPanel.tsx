@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { repoName, repoNames, stationName } from '../board/fleet';
 import type { DeckSession, GrantView, StationView, TaskView } from '../gen';
+import { useSettings } from '../settings/context';
+import { useFleetElevation } from '../spawn/useFleetElevation';
 import {
   type FleetActions,
   type FleetResult,
@@ -14,6 +16,7 @@ import {
   sameIntent,
   taskStatus,
 } from './fleet';
+import { GrantDesktop } from './GrantDesktop';
 
 type Props = {
   readonly actions: FleetActions | undefined;
@@ -55,6 +58,8 @@ export function FleetPanel({ actions, sessions, stations }: Props) {
   const [tasks, setTasks] = useState<readonly TaskView[]>([]);
   const [grants, setGrants] = useState<readonly GrantView[]>([]);
   const sends = useRef<SendRecord | null>(null);
+  const settingsEnv = useSettings();
+  const { ask: askElevation, node: elevationNode } = useFleetElevation(settingsEnv);
   const [, redraw] = useState(0);
   useEffect(() => {
     if (actions === undefined) return undefined;
@@ -367,10 +372,22 @@ export function FleetPanel({ actions, sessions, stations }: Props) {
                   Renew
                 </button>
               ) : null}
+              {g.desktop_cap === undefined ? null : (
+                <GrantDesktop
+                  grant={g}
+                  stations={stations}
+                  actions={actions}
+                  ask={settingsEnv === undefined ? undefined : askElevation}
+                  onChanged={() => {
+                    void actions.grants().then(setGrants);
+                  }}
+                />
+              )}
             </li>
           ))}
         </ul>
       )}
+      {elevationNode}
     </section>
   );
 }

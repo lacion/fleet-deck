@@ -19,7 +19,7 @@ export function TargetStations({ stations, ownId, picked, onChange }: Props) {
   const choices = targetChoices(stations, ownId);
   return (
     <fieldset className="fd-spawn-fleet">
-      <legend>Target stations</legend>
+      <legend>Grant stations</legend>
       <label className="fd-spawn-opt">
         <input type="checkbox" checked disabled />
         This station (always)
@@ -41,8 +41,8 @@ export function TargetStations({ stations, ownId, picked, onChange }: Props) {
         </label>
       ))}
       <p className="fd-note">
-        The coordinator can act on sessions of these stations. Each one needs a current link with
-        coordinator v2.
+        This one list bounds every class of the grant: the coordinator can act on sessions, desktops
+        and screenshots of these stations only. Each one needs a current link with coordinator v2.
       </p>
     </fieldset>
   );

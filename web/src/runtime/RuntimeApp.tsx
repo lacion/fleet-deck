@@ -174,7 +174,14 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       !guest && scopeText.split(' ').includes('drive')
         ? fleetActions(
             (path) => connection.get(path),
-            (path, body) => connection.post(path, body),
+            (path, body, headers) =>
+              headers === undefined
+                ? connection.post(path, body)
+                : deckHttp(
+                    (p, init) => fetch(p, init),
+                    () => connection.getSnapshot().login?.csrf ?? null,
+                    SETTINGS_WAIT_MS,
+                  ).post(path, body, headers),
           )
         : undefined,
     [connection, scopeText, guest],

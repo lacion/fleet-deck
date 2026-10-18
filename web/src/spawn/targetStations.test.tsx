@@ -26,14 +26,14 @@ describe('the target stations of a coordinator grant (ADR-006 Creation)', () => 
     const html = renderToStaticMarkup(
       <TargetStations stations={stations} ownId="station-a" picked={[]} onChange={() => {}} />,
     );
-    expect(html).toContain('Target stations');
+    expect(html).toContain('Grant stations');
     expect(html).toContain('This station (always)');
     expect(html).toContain('Beta');
     expect(html).toContain('Gamma');
     // The own station has only the fixed row; nothing else is checked.
     expect(html.match(/checked=""/g)?.length).toBe(1);
     expect(html).toContain(
-      'The coordinator can act on sessions of these stations. Each one needs a current link with coordinator v2.',
+      'This one list bounds every class of the grant: the coordinator can act on sessions, desktops and screenshots of these stations only. Each one needs a current link with coordinator v2.',
     );
   });
 
