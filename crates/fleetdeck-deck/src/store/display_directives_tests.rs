@@ -109,6 +109,19 @@ impl Rig {
         .unwrap();
     }
 
+    async fn sender(&self, d: &str) -> (String, String) {
+        let d = d.to_owned();
+        call(&self.s.inner.db, move |conn| {
+            Ok(conn.query_row(
+                "SELECT sender_kind, sender_id FROM display_directives WHERE display_id = ?1",
+                [d],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?)
+        })
+        .await
+        .unwrap()
+    }
+
     async fn rows(&self, d: &str) -> i64 {
         let d = d.to_owned();
         call(&self.s.inner.db, move |conn| {
@@ -319,22 +332,40 @@ async fn the_scope_is_the_ceiling_narrowed_by_the_valid_filter() {
 }
 
 #[tokio::test]
-async fn a_station_and_a_coordinator_sender_are_not_granted_and_store_nothing() {
+async fn a_coordinator_sender_is_not_granted_and_stores_nothing() {
     let r = rig().await;
     let d = r.display(&[&r.a]).await;
-    for sender in [
-        DirectiveSender::Station(r.a.clone()),
-        DirectiveSender::Coordinator {
-            grant_id: "g1".to_owned(),
-        },
-    ] {
-        let out =
-            r.s.display_directive_set(d.clone(), sender, DirectiveBody::mission())
-                .await;
-        assert!(matches!(out, Err(DirectiveError::NotGranted)), "{out:?}");
-    }
+    let out =
+        r.s.display_directive_set(
+            d.clone(),
+            DirectiveSender::Coordinator {
+                grant_id: "g1".to_owned(),
+            },
+            DirectiveBody::mission(),
+        )
+        .await;
+    assert!(matches!(out, Err(DirectiveError::NotGranted)), "{out:?}");
     assert_eq!(r.rows(&d).await, 0);
     assert_eq!(r.read(&d).await.0, 0);
+}
+
+#[tokio::test]
+async fn a_station_sender_stores_its_id_and_the_row_reads_back() {
+    let r = rig().await;
+    let d = r.display(&[&r.a]).await;
+    let view =
+        r.s.display_directive_set(
+            d.clone(),
+            DirectiveSender::Station(r.a.clone()),
+            focus(&r.a, "s1"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(view.generation, 1);
+    assert_eq!(r.read(&d).await, (1, focus(&r.a, "s1")));
+    let (kind, id) = r.sender(&d).await;
+    assert_eq!(kind, "station");
+    assert_eq!(id, r.a.as_str());
 }
 
 #[tokio::test]
@@ -343,7 +374,7 @@ async fn a_stored_row_of_another_sender_or_of_a_bad_format_reads_mission() {
     let d = r.display(&[&r.a]).await;
     r.set(&d, focus(&r.a, "s1")).await.unwrap();
     r.sql(
-        "UPDATE display_directives SET sender_kind = 'station' WHERE display_id = ?1",
+        "UPDATE display_directives SET sender_kind = 'coordinator' WHERE display_id = ?1",
         &d,
     )
     .await;

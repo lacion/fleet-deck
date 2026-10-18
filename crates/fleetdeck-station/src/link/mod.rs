@@ -81,6 +81,34 @@ impl<'a> DeckSlot<'a> {
     }
 }
 
+/// Holds the deck control of a link in the summary cell for as long as the
+/// link serves, when the link negotiated `desktop_shell.v1` (R13 P4 task E).
+struct ShellSlot<'a> {
+    cell: &'a crate::fleet_summary::SummaryCell,
+    token: Option<u64>,
+}
+
+impl<'a> ShellSlot<'a> {
+    fn new(cell: &'a crate::fleet_summary::SummaryCell, control: &Control) -> Self {
+        let shell = control
+            .params()
+            .negotiated
+            .has(fleetdeck_proto::version::feature::DESKTOP_SHELL);
+        Self {
+            cell,
+            token: shell.then(|| cell.set_deck(control.clone())),
+        }
+    }
+}
+
+impl Drop for ShellSlot<'_> {
+    fn drop(&mut self) {
+        if let Some(token) = self.token {
+            self.cell.clear_deck(token);
+        }
+    }
+}
+
 impl Drop for DeckSlot<'_> {
     fn drop(&mut self) {
         if let Some(token) = self.token {
@@ -123,6 +151,9 @@ pub async fn serve(ctx: Arc<StationLink>, link: LiveLink) -> Closing {
     // The artifact authorization of a later phase asks the deck over this
     // control (FG-12); it needs `fleet_git.homes.v1`.
     let _summary_up = ctx.summary.link_up();
+    // `display.directive` of the local wall op goes over this control when
+    // the link negotiated `desktop_shell.v1` (R13 P4 task E).
+    let _shell = ShellSlot::new(&ctx.summary, &control);
     // `station fingerprint` reports `link_up` from this (R13 P8): ready after
     // the deck acknowledged the first snapshot or an `events.replay` was
     // accepted on this connection.

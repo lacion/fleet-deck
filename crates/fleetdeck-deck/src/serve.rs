@@ -252,6 +252,9 @@ impl RunningDeck {
         let board_settings = deck_settings.clone();
         let live_cell = crate::live::LiveCell::new(live);
         let board_live = live_cell.clone();
+        if node.link().desktop_live.set(live_cell.clone()).is_err() {
+            tracing::warn!("the live settings of the link were already set");
+        }
         let tailnet_start: SharedStart = Arc::default();
         // The state cell of the certificate task: the Board and the task
         // share it (DL-190).

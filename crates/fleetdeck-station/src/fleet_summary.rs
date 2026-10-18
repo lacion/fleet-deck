@@ -6,9 +6,11 @@
 //! `seq`. The local socket op `fleet_summary` holds a request until `seq`
 //! grows (see `local_summary`). Nothing here is ever written to disk.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
+use fleetdeck_link::control::Control;
 use fleetdeck_proto::fleet_summary::FleetSummary;
 use tokio::sync::watch;
 
@@ -46,6 +48,11 @@ pub struct SummaryCell {
     state: Mutex<State>,
     /// The value of `seq`, for the waiters.
     wake: watch::Sender<u64>,
+    /// The control of the current deck link that negotiated
+    /// `desktop_shell.v1` (R13 P4 task E): the local wall op sends
+    /// `display.directive` over it.
+    deck: Mutex<Option<(u64, Control)>>,
+    next_token: AtomicU64,
 }
 
 impl Default for SummaryCell {
@@ -60,7 +67,36 @@ impl SummaryCell {
         Self {
             state: Mutex::default(),
             wake: watch::channel(0).0,
+            deck: Mutex::default(),
+            next_token: AtomicU64::new(0),
         }
+    }
+
+    /// Stores the control of a deck link with `desktop_shell.v1` and returns
+    /// its token. A later link replaces it.
+    pub fn set_deck(&self, control: Control) -> u64 {
+        let token = self.next_token.fetch_add(1, Ordering::Relaxed);
+        *self.deck.lock().unwrap_or_else(PoisonError::into_inner) = Some((token, control));
+        token
+    }
+
+    /// Clears the deck control, but only when the slot still holds `token`:
+    /// the end of an older link does not clear a newer one.
+    pub fn clear_deck(&self, token: u64) {
+        let mut slot = self.deck.lock().unwrap_or_else(PoisonError::into_inner);
+        if slot.as_ref().is_some_and(|(t, _)| *t == token) {
+            *slot = None;
+        }
+    }
+
+    /// The control of the current deck link that has `desktop_shell.v1`.
+    #[must_use]
+    pub fn deck(&self) -> Option<Control> {
+        self.deck
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(|(_, c)| c.clone())
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {

@@ -1,7 +1,8 @@
 //! `display.directive` and `station.palette` from a fake station (R13 P4
 //! task A, feature `desktop_shell.v1`, decision P4-6): the rows use `admin`,
-//! which every paired station holds. No scope is added to a station. Until
-//! tasks E and F1 build the handlers, the deck answers `unsupported`.
+//! which every paired station holds. No scope is added to a station. Task E
+//! built `display.directive` (see `display_directive_station.rs`); until task
+//! F1 builds `station.palette`, the deck answers `unsupported` to it.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -36,25 +37,30 @@ async fn a_paired_station_gets_no_new_scope() {
 }
 
 #[tokio::test]
-async fn a_station_call_to_the_two_rows_passes_the_scope_check_and_gets_the_stub_answer() {
+async fn a_station_call_to_the_two_rows_passes_the_scope_check() {
     let mut f = fixture().await;
     let station = f.connect().await;
-    for (method, text) in [
+    for (method, params, expected, text) in [
+        // The params are not a wall request: the deck parses them.
         (
             "display.directive",
-            "The deck does not serve display.directive in this build.",
+            json!({}),
+            "invalid_params",
+            "The wall request is not valid.",
         ),
         (
             "station.palette",
+            json!({}),
+            "unsupported",
             "The deck does not serve station.palette in this build.",
         ),
     ] {
-        let o = tokio::time::timeout(T, station.control.request(method, None, json!({})))
+        let o = tokio::time::timeout(T, station.control.request(method, None, params))
             .await
             .expect("answer")
             .unwrap();
         let (c, message) = refused(o);
-        assert_eq!(c, "unsupported", "{method}");
+        assert_eq!(c, expected, "{method}");
         assert_eq!(message, text, "{method}");
     }
 }

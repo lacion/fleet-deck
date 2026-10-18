@@ -9,6 +9,7 @@ mod deck;
 mod deck_provision;
 mod desktop_feed;
 mod desktop_open;
+mod desktop_wall;
 mod doctor;
 mod doctor_omarchy;
 mod invite;
@@ -176,6 +177,15 @@ async fn desktop_main(
         cli_desktop::DesktopCommand::Open { target, request } => {
             desktop_open::run(dirs, target.as_deref(), request.as_deref()).await
         }
+        cli_desktop::DesktopCommand::Wall { command } => match command {
+            cli_desktop::WallCommand::Next => {
+                desktop_wall::directive(dirs, desktop_wall::NEXT_NEEDS_YOU).await
+            }
+            cli_desktop::WallCommand::Mode {
+                command: cli_desktop::WallModeCommand::Next,
+            } => desktop_wall::directive(dirs, desktop_wall::NEXT_MODE).await,
+            cli_desktop::WallCommand::Show => desktop_wall::show().await,
+        },
     }
 }
 

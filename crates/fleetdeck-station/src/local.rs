@@ -108,6 +108,10 @@ pub enum LocalRequest {
         #[serde(default)]
         probe_providers: bool,
     },
+    /// `fleetdeck desktop wall next|mode next` (R13 P4 task E): sends
+    /// `display.directive` with this intent (`next_needs_you` or
+    /// `next_mode`) for each wall display of this station.
+    WallDirective { intent: String },
 }
 
 pub use fleetdeck_core::localsock::InvitationText;
@@ -193,6 +197,11 @@ pub enum LocalResponse {
         build: crate::local_fingerprint::BuildIdentity,
         binary_sha256: String,
         providers: Option<Vec<fleetdeck_proto::link::StationProvider>>,
+    },
+    /// The answer to [`LocalRequest::WallDirective`]: one result for each
+    /// wall display of this station; empty when the station has no wall.
+    WallDirective {
+        results: Vec<crate::local_wall::WallResult>,
     },
     /// A provisioning op that failed, with its stable code (`unavailable`,
     /// `binary_unreadable`).
@@ -518,6 +527,9 @@ async fn handle(
         }
         LocalRequest::StationFingerprint { probe_providers } => {
             return crate::local_fingerprint::fingerprint(manager, node, probe_providers).await;
+        }
+        LocalRequest::WallDirective { intent } => {
+            return crate::local_wall::wall_directive(manager, node, intent).await;
         }
         LocalRequest::Drain { timeout_ms } => {
             return match manager
