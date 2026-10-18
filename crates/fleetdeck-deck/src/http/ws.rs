@@ -33,9 +33,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use axum::Json;
+use axum::extract::rejection::QueryRejection;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Extension, State};
-use axum::http::StatusCode;
+use axum::extract::{Extension, Query, State};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use fleetdeck_proto::board::{
     BOARD_PROTOCOL, BoardClientMessage, BoardServerMessage, DeckSession, MAX_SUBSCRIPTIONS,
@@ -45,6 +46,7 @@ use fleetdeck_proto::{EventEnvelope, IncarnationId, StationId};
 use tokio::sync::broadcast::error::RecvError;
 
 use super::Board;
+use super::artifact_projection::{project_events, video_aware_socket};
 use super::guard::ApiError;
 use super::read_routes::{member_sessions, member_stations};
 use crate::link::DeckLink;
@@ -132,18 +134,26 @@ pub async fn ticket(
     }
 }
 
-/// `GET /api/ws`.
+/// `GET /api/ws`. A socket that declares `artifacts_video.v1` (the header
+/// `X-FleetDeck-Features` or the query parameter `features=`) gets the kind
+/// `video` in `artifact.published` events; any other socket gets `other`.
 pub async fn upgrade(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
+    headers: HeaderMap,
+    query: Result<Query<Vec<(String, String)>>, QueryRejection>,
     ws: WebSocketUpgrade,
 ) -> Response {
+    // A query that does not parse declares nothing: the socket gets the
+    // legacy shape, which every board reads.
+    let query = query.map(|Query(q)| q).unwrap_or_default();
+    let video = video_aware_socket(&headers, &query);
     ws.max_message_size(MAX_CLIENT_MESSAGE)
         .max_frame_size(MAX_CLIENT_MESSAGE)
         .on_upgrade(move |socket| async move {
             let socket_id = board.store.new_socket_id();
             let store = board.store.clone();
-            if let Err(e) = Session::new(board, principal, socket, socket_id)
+            if let Err(e) = Session::new(board, principal, socket, socket_id, video)
                 .run()
                 .await
             {
@@ -186,6 +196,9 @@ struct Session {
     subs: BTreeMap<SessionKey, Sub>,
     /// The effective scope of a display at its last view (R13 §5D item 17).
     scope: Option<EffectiveScope>,
+    /// The socket declared `artifacts_video.v1` (R13 P5b): without it the
+    /// timeline events show kind `other` for a video.
+    video: bool,
 }
 
 /// The board view: the paired stations and every card. A free function
@@ -233,7 +246,13 @@ fn key(c: &DeckSession) -> SessionKey {
 }
 
 impl Session {
-    fn new(board: Arc<Board>, principal: Principal, socket: WebSocket, socket_id: u64) -> Self {
+    fn new(
+        board: Arc<Board>,
+        principal: Principal,
+        socket: WebSocket,
+        socket_id: u64,
+        video: bool,
+    ) -> Self {
         Self {
             board,
             principal,
@@ -243,6 +262,7 @@ impl Session {
             stations: Vec::new(),
             subs: BTreeMap::new(),
             scope: None,
+            video,
         }
     }
 
@@ -452,7 +472,10 @@ impl Session {
                 out.entry(k).or_default().push(e.clone());
             }
         }
-        for (k, events) in out {
+        for (k, mut events) in out {
+            if !self.video {
+                project_events(&mut events);
+            }
             self.send(&BoardServerMessage::TimelineEvents {
                 station_id: k.station_id,
                 session_id: k.session_id,
@@ -529,11 +552,14 @@ impl Session {
         let Some(cursor) = self.subs.get(k).map(|s| s.cursor) else {
             return Ok(());
         };
-        let events = self
+        let mut events = self
             .board
             .store
             .timeline_after(k.station_id.clone(), k.session_id.clone(), cursor)
             .await?;
+        if !self.video {
+            project_events(&mut events);
+        }
         if let (Some(last), Some(sub)) = (events.last(), self.subs.get_mut(k)) {
             sub.cursor = last.station_seq;
         }

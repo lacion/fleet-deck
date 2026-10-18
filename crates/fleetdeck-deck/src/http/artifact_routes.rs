@@ -41,6 +41,7 @@ use fleetdeck_proto::artifacts::{
 use serde::Deserialize;
 
 use super::Board;
+use super::artifact_projection::{project_detail, project_list, project_published, video_aware};
 use super::guard::{ApiError, owner_only};
 use crate::store::artifacts::NewShare;
 use crate::store::auth::{random_token, secret_hash};
@@ -79,12 +80,14 @@ pub struct ListParams {
     pub q: Option<String>,
 }
 
-/// `GET /api/artifacts`: the index, newest first.
+/// `GET /api/artifacts`: the index, newest first. A request without
+/// `X-FleetDeck-Features: artifacts_video.v1` sees kind `video` as `other`.
 ///
 /// # Errors
 /// 404 `unknown_station`.
 pub async fn list(
     State(board): State<Arc<Board>>,
+    headers: HeaderMap,
     Query(p): Query<ListParams>,
 ) -> Result<Json<Vec<DeckArtifact>>, ApiError> {
     let station = match p.station.as_deref().filter(|s| !s.is_empty()) {
@@ -93,13 +96,15 @@ pub async fn list(
     };
     let session = p.session.filter(|s| !s.is_empty()).map(SessionId::from);
     let q = p.q.filter(|q| !q.trim().is_empty());
-    Ok(Json(
-        board
-            .store
-            .artifacts(station, session, q)
-            .await
-            .map_err(db)?,
-    ))
+    let mut artifacts = board
+        .store
+        .artifacts(station, session, q)
+        .await
+        .map_err(db)?;
+    if !video_aware(&headers) {
+        project_list(&mut artifacts);
+    }
+    Ok(Json(artifacts))
 }
 
 pub(super) async fn indexed(
@@ -118,12 +123,14 @@ pub(super) async fn indexed(
 /// `GET /api/artifacts/{station}/{id}`: the index row, every version and
 /// the owner's shares. A connected station refreshes the version list; a
 /// version that the deck knows only from its event has no files and size 0
-/// until a station answers.
+/// until a station answers. A request without `artifacts_video.v1` sees kind
+/// `other` and no recording provenance.
 ///
 /// # Errors
 /// 404 `unknown_station`, `unknown_artifact`.
 pub async fn get(
     State(board): State<Arc<Board>>,
+    headers: HeaderMap,
     Path((station, id)): Path<(String, String)>,
 ) -> Result<Json<DeckArtifactDetail>, ApiError> {
     let rec = station_of(&board, &station).await?;
@@ -178,18 +185,23 @@ pub async fn get(
         .map_err(db)?;
     // A deletion during the refresh: nothing of the artifact is answered.
     live_artifact(&board, &rec.station_id, &id).await?;
-    Ok(Json(DeckArtifactDetail {
+    let mut detail = DeckArtifactDetail {
         artifact,
         versions,
         shares,
-    }))
+    };
+    if !video_aware(&headers) {
+        project_detail(&mut detail);
+    }
+    Ok(Json(detail))
 }
 
 fn author_of(principal: &Principal) -> String {
     principal.actor().chars().take(MAX_AUTHOR_CHARS).collect()
 }
 
-/// `POST /api/artifacts/publish`.
+/// `POST /api/artifacts/publish`. A request without `artifacts_video.v1`
+/// gets the legacy projection in the answer; the index keeps the real kind.
 ///
 /// # Errors
 /// 400 `invalid_body` and the station's codes; 404 `unknown_station`; 409
@@ -197,6 +209,7 @@ fn author_of(principal: &Principal) -> String {
 pub async fn publish(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
+    headers: HeaderMap,
     body: Result<Json<ArtifactPublishRequest>, JsonRejection>,
 ) -> Result<Json<ArtifactPublished>, ApiError> {
     let result = async {
@@ -242,7 +255,13 @@ pub async fn publish(
             .detail(e.code),
     };
     board.store.audit_or_log(row).await;
-    result.map(Json)
+    let aware = video_aware(&headers);
+    result.map(|mut published| {
+        if !aware {
+            project_published(&mut published);
+        }
+        Json(published)
+    })
 }
 
 /// The origin that a share URL starts with: the request's own `Origin` (the

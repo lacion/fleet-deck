@@ -465,7 +465,10 @@ impl DeckStore {
                 )
             };
         };
-        if matches!(artifact.kind, ArtifactKind::Image | ArtifactKind::Pdf) {
+        if matches!(
+            artifact.kind,
+            ArtifactKind::Image | ArtifactKind::Pdf | ArtifactKind::Video
+        ) {
             return no(
                 RejectCode::InvalidCommand,
                 "only text artifacts can be read",
