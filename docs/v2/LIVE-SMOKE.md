@@ -499,4 +499,100 @@ Result:
 | --- | --- | --- | --- | --- |
 | (not run) | | | | The live smoke of P5b-2 is open (DL-241 item c). |
 
+### P7 agent keyboard and pointer input (DL-245)
+
+The contract is `docs/v2/design/omarchy-p7.md` (sections 15 and 16). The owner guide is `docs/v2/operations.md` section 7.8. This smoke is required before you rely on agent input. P7 is built, but it stays experimental and off by default until this smoke passes and you accept what it shows. Do it on the owner's Omarchy machines after the P6 smoke passed. The coordinator runs on one station (it can be a machine with no desktop). The input acts on a second station that has a Hyprland desktop and `wtype`. Use the server with the wall display as the second station, and the laptop as the first. Item 9 needs a station whose desktop also runs your board: it uses the laptop.
+
+Every step is a board step. No step asks you to run a command or to edit a file on a station. You give the coordinator its work in its chat on the board. A value that the board cannot show is marked "no board path yet". It is an open item, not an instruction. Use dummy content only. Do not test with a real approval or a real secret. The smoke must not approve a real dangerous operation.
+
+> **Caution:** the coordinator types and presses keys on a real desktop. The focus can change after Fleet Deck checks it, so a key can reach another window. Keep every other window on the second station harmless while you run this smoke. Keep one board open on another device (for example a phone), because the deck signs out the boards of the machine where the agent types (item 9).
+
+Set up:
+
+1. Do the set-up steps 1 to 3 of the P6 smoke: the Deck tab ("Fleet control" and "Desktop control"), the station tab of the coordinator station ("Fleet control on this station"), and the station tab of the second station ("Fleet control on this station", "Desktop control" and "Desktop screenshots", with "Screenshot monitors" empty).
+2. Leave "Allow agent desktop input" off on the station tab of the second station. Item 2 turns it on.
+3. Choose a dummy web page that the second station serves on `localhost`. It must have a text field that has the focus when the page loads, a button that only changes a line of text on the page, and a link to the address of your board. Give its address to the coordinator in the items.
+4. After you upgrade a deck to this version, every board login ends once (the migration V37). Sign in again.
+5. Open the Desktop panel of the second station. Write the "Omarchy" version that the panel shows.
+
+Items:
+
+1. **The grant with the allowance.**
+   1. Open "New session". Choose the coordinator station, a provider instance and a directory. Select "Coordinator".
+   2. In the group "Fleet control", turn on "Desktop: show notifications and previews on grant stations, close its own previews, and show its work on walls". Expect no input switch yet.
+   3. Turn on "Screenshots: capture a whole monitor of a grant station and read its own screenshots". Expect the switch "Allow keyboard input and pointer movement in this agent's previews" to show. Turn "Desktop" off and on. Expect the input switch to go off and to hide when you turn "Desktop" off.
+   4. Turn on the input switch. Expect the line "Scope: this caller's preview windows" (fixed text, no selector), the fields "Input action limit" with 100 and "Typed character limit" with 20000, and the note "While an agent types on a station, every board signed in on that station is signed out. Keep this board on another device."
+   5. Expect the red disclosure: "This agent can type, press keys and move the pointer in preview windows opened for it on the grant stations. Keyboard input can activate buttons and submit forms. Focus can change after Fleet Deck checks it, so input may reach another window, including an owner board window. Board detection is incomplete. Agents run as your OS user. Pointer clicks and unrestricted window input are unavailable. This feature is experimental until its live smoke passes."
+   6. In the group "Grant stations", select the second station. Start the session. Expect the dialog "Confirm it is you" with the text "This change needs it: Fleet control." (the board asks nothing when it still holds a recent sign-in).
+   7. In the "Coordinator grants" list of the "Mail and tasks" panel, find the grant. Expect "input actions 0 of 100, typed characters 0 of 20000" in its line.
+2. **The station setting.**
+   1. Ask the coordinator to open the dummy page as a preview on the second station. Expect a window and a `window_id`.
+   2. With "Allow agent desktop input" still off, ask the coordinator to type the word "hello" in that preview. Expect a refusal and no letter in the field. Write the code and the text in the result.
+   3. On the station tab of the second station, turn on "Allow agent desktop input". Expect the board to ask for a recent sign-in. Expect the text of the setting: "Allows explicitly authorized coordinator grants to use keyboard input and pointer movement on this station. Turning this off stops new input and requests interruption of active input; already sent input cannot be undone."
+3. **Text and keys.**
+   1. Ask the coordinator to type "hello" in the preview. Expect the notification "Fleet Deck is sending keyboard input for <callsign> to an agent preview." on the screen of the second station, before the letters appear. Expect "hello" in the text field, and a result `done` with no echo of the text.
+   2. Expect "input actions 1 of 100, typed characters 5 of 20000" on the grant row, and the line "type_text on <station>: done" in "Desktop operations".
+   3. Ask for the key `Shift+Tab`, then `Tab`, then `Return`. Expect that each press shows the notification first. Expect the dummy button to react to `Return` when it has the focus. Write which key did what.
+   4. Ask for the chords `Alt+Tab`, `F5` and `CTRL+A`. Expect `invalid_params` for each, no notification and no change on the screen.
+   5. Ask for a text with a new line. Expect `invalid_params`.
+4. **The `wtype` behavior (record).**
+   1. Write the version of `wtype` and of Hyprland and Chromium in the result (no board path yet to read them).
+   2. Ask the coordinator to type each of these texts, one call each, in the text field. Write for each whether the field shows exactly the text: a text that starts with a dash, for example `-n --help`; a text with quotes and a backslash; an accented text, for example `café`; a text with a combining accent; a non-Latin text, for example `Привет`; an emoji.
+   3. Ask for a text of 2,000 characters. Write the time from the notification to the result, and whether the field shows all the characters.
+   4. Write the keyboard layout of the station if the board shows it (no board path yet). Write whether the accented and non-Latin texts follow it.
+   5. Write whether a modifier stays pressed after a call. Ask for the key `Shift+a`, then for the key `a`. Write whether the field shows `Aa` or `AA`.
+5. **The focus (record).**
+   1. Ask for a text while the preview is a tiled window, and again while it is a floating window. Write whether the text always lands in the preview.
+   2. Open a second preview, and ask for a text in the first one. Write whether the first one gets the text and whether it gets the focus.
+   3. Do the same with the preview on a second monitor, and on a workspace that is not the visible one. Write what the coordinator reports each time. Write any letter that reached a window that is not the preview.
+   4. Write whether the Hyprland setting makes the focus follow the pointer. Write whether a pointer movement changes the focus (item 6).
+   5. Ask the coordinator to open a dialog or an overlay on the preview (a page that opens a dialog), and then to type. Write the result.
+6. **The pointer (record).**
+   1. Ask the coordinator for the desktop information of the second station. Write the size and the scale of each monitor.
+   2. Ask it to move the pointer to the point 10, 10 of the preview. Expect the notification "Fleet Deck is moving the pointer for <callsign> in an agent preview." and a result `done`. Write where the pointer stands, and that no click happened.
+   3. Do it for the bottom right point of the preview, then for one point outside the preview. Expect `input_destination_unavailable` with the text "The pointer destination is not available inside this preview." for the point outside, and no movement.
+   4. On a monitor with a scale other than 1 (for example 1.5 or 2), ask for the points 0, 0 and the last point in each direction. Write how far the pointer is from the expected point, in logical coordinates. The coordinates are not screenshot pixels.
+   5. Do the same on a monitor that is left of or above the first monitor (a negative origin), and on a rotated monitor if there is one. Write the result.
+   6. Put the preview where a layer surface of the level `top` or `overlay` (for example the status bar) covers a part of it. Ask for a point under that surface. Expect `input_destination_unavailable`. Ask for a point of the same preview that no layer covers. Expect `done`. Write both results. The wallpaper lies below windows, so it must never refuse a point.
+   7. Place a second window over a part of the preview. Ask for a point under it. Expect `input_destination_unavailable`.
+7. **The board barrier (record).**
+   1. Ask the coordinator to open the address of your board as a preview. Ask it to type. A station that dials the deck knows the host of the deck from its pairing record and marks a preview that it launches on that host. Expect `input_board_forbidden` with the text "Fleet Deck board and wall windows cannot receive agent input." for such a station. A station that the deck dials knows no deck host. Write which of the two cases this station is, and what the call answers.
+   2. In the dummy page, ask the coordinator to press `Tab` until the link to the board has the focus, then `Return`. Write whether the preview now shows the board, and what the next input call answers (`input_board_forbidden`, `focus_changed` or `done`). Expect that a title with "Fleet Deck" is refused.
+   3. Write the case that you can find where a board page in a preview does not have "Fleet Deck" in its title and the input goes on. This is the accepted false negative of the contract. It is a result to write, not a failure to fix.
+   4. Ask the coordinator to type in a wall window of the second station by a made-up `window_id`. Expect `desktop_window_not_found` with the text "No window opened by this grant matches that handle." The coordinator has no handle for a wall.
+8. **The limits and the stop.**
+   1. Select "Change limits" on the grant row. Expect "Input action limit" and "Typed character limit" with the values of the grant, and the other limits of the grant.
+   2. Set "Input action limit" to the number that the grant has used. Select "Save". Expect no confirmation dialog. Ask for a key. Expect `input_cap_reached` with the text "This grant has used its input action limit." Expect that the use does not change.
+   3. Raise the limit and select "Save". Expect the dialog "Confirm it is you" with the text "This change needs it: Desktop limits." Cancel it and expect no change. Do it again and confirm. Ask for a key and expect `done`.
+   4. Set "Typed character limit" to 3 and ask for a text of 4 characters. Expect `input_characters_reached` with the text "This grant has used its typed-character limit." Write the use on the grant row.
+   5. Ask for a long text (2,000 characters). While it runs, open the Desktop panel of the second station and, in "Agent previews", select "Close" next to the preview. Expect the input to stop and the coordinator to report an error. Write the code and how many characters arrived.
+   6. Open a new preview. Ask for a long text. While it runs, turn off "Allow agent desktop input" on the station tab. Expect the input to stop. Turn it on again.
+   7. Ask for a long text. While it runs, select "Revoke" on the grant row. A running input does not see a revoke: it can finish. Write what happened. Ask for another key. Expect an error and no input.
+   8. Start a second grant like item 1. On the Deck tab, turn off "Desktop control". Ask for a key. Expect `desktop_control_off` with the text "Desktop control is off on this deck." Turn it on again.
+   9. In the Desktop panel, turn on "Do not disturb". Ask for a key. Write whether the notification shows, and whether the input goes on. Turn "Do not disturb" off again.
+   10. A notification that fails cannot be caused from the board (no board path yet). The unit tests cover it.
+9. **The board sign-out (record).**
+   1. Use a station whose desktop also runs your board in a browser: the laptop. Start a new coordinator grant with the allowance. Select the laptop as the coordinator station and as the grant station. Turn on "Allow agent desktop input" on its station tab.
+   2. Keep the board open on another device (a phone). Keep the board open on the laptop too.
+   3. Ask the coordinator to open the dummy page as a preview on the laptop and to type "hello".
+   4. Expect the board on the laptop to show the sign-in page with the line "You were signed out because an agent typed on the station where this board is open." Expect the board on the other device to stay signed in. Write the time between the typing and the sign-out.
+   5. On the laptop, try to sign in at once. Expect the line "An agent is typing on this station. Sign in again in a minute." and no login. Write the time after which the sign-in works again. Expect about 65 seconds after the input ended (5 seconds and then 60 seconds).
+   6. From the board on the other device, revoke the grant. Expect it to work (a board on another address is not signed out).
+   7. Write whether the deck sees the laptop through its own address. When you reach the deck through a proxy or a VPN that the station does not report, write whether the laptop board is signed out. The contract expects that it is not (open item DL-245 h), and that a deck behind a proxy signs out every board.
+   8. Write what the page where a member joins shows when a sign-in is blocked (expect a generic error, DL-245 item g).
+10. **The tools of each provider.**
+    1. Ask a Claude coordinator and a Codex coordinator which desktop tools they have. Expect `key_press`, `type_text` and `pointer_move` next to the P6 tools, and no `pointer_click` and no `scroll`.
+    2. Start a coordinator with "Desktop" and "Screenshots" on and the input switch off. Expect no input tool in its list, and no input text on its grant row.
+    3. Write the provider versions, and whether a provider asked you to approve a tool in its own terminal.
+11. **The click and the other windows.**
+    1. Ask the coordinator to click, to scroll, and to type in a window that it did not open. Expect that it has no such tool, or `desktop_window_not_found`. Write the answer.
+
+Record the other items of section 15 of the contract that you can test from the board in the same run. Write "no board path yet" for an item that needs you at the machine (the physical keyboard or pointer while the agent types, several seats, and a real notification failure).
+
+Result:
+
+| Date | Machines | `wtype` / Hyprland / Chromium versions | Items | Result |
+| --- | --- | --- | --- | --- |
+| (not run) | | | | The live smoke of P7 is open (DL-245 item c). Do not rely on agent input before it passes. |
+
 <!-- desktop-smoke:end -->

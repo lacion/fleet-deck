@@ -799,6 +799,139 @@ A refused call charges nothing. A call that is accepted and then fails keeps its
 - Installing `wf-recorder` has no board path yet.
 - Agent recordings: the live smoke is not done.
 
+### 7.8 Agent keyboard and pointer input (R13 P7)
+
+This section covers the tools `key_press`, `type_text` and `pointer_move` of a coordinator session. The contract is `design/omarchy-p7.md`. The built version is recorded in DL-245. The PRE-PR review, the end-to-end proofs (task P) and the live smoke on the owner's Omarchy machine are not done yet (`make desktop-smoke` prints the list). This feature is experimental and off by default. No grant has input unless you opt in, and the station setting is off until you turn it on. Do not rely on it before the live smoke passes.
+
+> **Caution:** an agent with this allowance can type, press keys and move the pointer in its preview windows, without a prompt from you. Fleet Deck checks the focus before it sends the input, but the focus can change after the check. The board shows this disclosure in red: "This agent can type, press keys and move the pointer in preview windows opened for it on the grant stations. Keyboard input can activate buttons and submit forms. Focus can change after Fleet Deck checks it, so input may reach another window, including an owner board window. Board detection is incomplete. Agents run as your OS user. Pointer clicks and unrestricted window input are unavailable. This feature is experimental until its live smoke passes."
+
+#### What it allows and what it does not
+
+- The target is a preview window that this coordinator opened with `preview_open` on a grant station. The agent names it with the `window_id` that `preview_open` returned. It cannot name a window that you opened, a preview of another grant, a wall or a board window. All these give the same answer, `desktop_window_not_found`.
+- A new grant does not use the previews of an older grant. A renewal keeps the grant, so it keeps its previews.
+- There is no pointer click, no scroll, no drag, no held key and no scope for every window. The tool list of the agent does not show them.
+- The tools do not isolate the agent from other programs. The agent runs as your user. A key can press a button and send a form. The result `done` means that the tool finished. It does not mean that the page did what the agent wanted.
+
+| Tool | What it does |
+| --- | --- |
+| `key_press` | Presses one key, with `Ctrl`, `Shift` or both before it (in that order). The key is one lower-case letter or digit, or one of `Return`, `Tab`, `Escape`, `BackSpace`, `Delete`, `Insert`, `Home`, `End`, `PageUp`, `PageDown`, `Left`, `Right`, `Up`, `Down` and `Space`. There is no `Alt`, no `Super` and no function key. |
+| `type_text` | Types 1 to 2,000 characters (at most 8,000 bytes of UTF-8), exactly as given. A text has no control character, so it has no new line and no tab. Fleet Deck does not add a Return, and it does not trim the text. |
+| `pointer_move` | Moves the pointer to the point x, y of the preview. Both are whole numbers from 0 to 32,767, in logical coordinates from the top-left corner of the preview window. They are not screenshot pixels. It does not click. |
+
+A pointer point is refused when it is outside the preview, when another window covers it, when a panel on the `top` or `overlay` layer covers it, and when the preview is hidden. A wallpaper does not refuse a point. The station does not move a point into the window. Depending on the focus setting of Hyprland, a moved pointer can also change the focus.
+
+#### Turn it on
+
+The input switch needs the classes `desktop` and `capture` in the same grant.
+
+1. On the board, open "New session". Choose a station, a provider instance and a directory. Select "Coordinator". The import field must be empty.
+2. In the group "Fleet control", turn on the switch "Desktop: show notifications and previews on grant stations, close its own previews, and show its work on walls" and the switch "Screenshots: capture a whole monitor of a grant station and read its own screenshots". The input switch shows only while both are on. When you turn one of them off, the board turns the input switch off too.
+3. Turn on "Allow keyboard input and pointer movement in this agent's previews". The board shows the fixed line "Scope: this caller's preview windows". There is no other scope to select. It also shows the two limits "Input action limit" and "Typed character limit", the red disclosure above, and this note: "While an agent types on a station, every board signed in on that station is signed out. Keep this board on another device."
+4. Set the two limits (see "Limits and Change limits" below). In the group "Grant stations", select the stations where the agent can type. The station of the new session is always in the list.
+5. Start the session. The board asks you to confirm that it is you. The dialog "Confirm it is you" shows the text "This change needs it: Fleet control." The elevated confirmation of the grant covers the input allowance.
+6. Open Settings and the station tab of each station where the agent types. Turn on "Allow agent desktop input". The board asks for a recent sign-in when you turn it on. Turning it off needs none. The text of the setting is: "Allows explicitly authorized coordinator grants to use keyboard input and pointer movement on this station. Turning this off stops new input and requests interruption of active input; already sent input cannot be undone."
+
+A grant that exists before this version has no input allowance. A renewal never adds it. To add input, start a new coordinator. The start fails with `unsupported` when the station of the coordinator or a grant station has no link, or lacks the link feature `desktop_input_mcp.v1`. The tools show in the tool list of the agent only when the grant has the allowance and the station negotiated the feature at the start. The tool list does not change later.
+
+An input action works only while every gate is on. All the gates of section 7.6 apply: "Fleet control" and "Desktop control" on the Deck tab, and "Fleet control on this station" on the station of the coordinator. On the station where the action runs, these settings must be on: "Fleet control on this station", "Desktop control", "Desktop screenshots" and "Allow agent desktop input". The monitor of the preview must be allowed by "Screenshot monitors". The station of the coordinator can have no desktop and no input setting. The station where the action runs reads its own settings live. Turn a switch off and the next action stops. The deck setting "Desktop control" is the kill switch of all input.
+
+#### What the station shows
+
+- Before each new input action, the station shows a notification with the title "Fleet Deck". For a key or a text, the text is "Fleet Deck is sending keyboard input for <callsign> to an agent preview." For a pointer movement, it is "Fleet Deck is moving the pointer for <callsign> in an agent preview." The agent cannot change these texts. They show no key, no text, no point, no page title and no address.
+- When the notification fails, the station does not focus the window and does not send input. The station does not turn off do-not-disturb for it. A notification does not use the notification rate of the agent.
+- After the notification, the station focuses the preview window once. It checks the authority and the window again, and then it starts the input. If one check fails, the input does not start. The notification and the focus change have already happened then.
+- A station runs one input action at a time. A second action gets `busy` at once. There is no queue.
+- A duplicate request or a status question does not show a notification.
+
+#### The sign-out of the boards on the target machine
+
+Fleet Deck cannot prove that a key never reaches a board window. So the deck signs out the board sessions on the machine where the agent types. Then a stray key cannot approve anything on a board of that machine.
+
+- The deck takes the addresses of the machine of the target station: the address of its link, the addresses that the station reports, and, for the station of the deck itself, the loopback and own addresses of the deck. It stores them with the operation, and it deletes every login of yours and every member login that was last seen from one of these addresses. It does this before the input starts, whatever the age of the login. It also ends the sockets of these logins.
+- While the input runs, for 5 seconds after it ends and then for 60 seconds more, a board request from one of these addresses gets the answer `signed_out_for_input`, and the deck deletes its login. The board shows the sign-in page with this line: "You were signed out because an agent typed on the station where this board is open."
+- In the same time, a sign-in from one of these addresses is refused with `sign_in_blocked_for_input` and gets no cookie. The board shows: "An agent is typing on this station. Sign in again in a minute." Wait a minute and sign in again with your own credentials.
+- A deleted login never works again. An old window with an old cookie cannot send a late approval. Items that were waiting are not sent again after the new sign-in.
+- The audit has one row `board.signed_out_for_input` for each deleted login, with the kind of login and the operation. It holds no address and no text.
+- The first time that you run this version, every login of yours and of the members ends once. Each browser signs in again once.
+
+What to do:
+
+- Keep a board open on another device while an agent types. On the station where the agent types, the board cannot act until the sign-out time ends. From another device you can revoke the grant, stop it or close the preview.
+- Do not keep a board signed in on a station while an agent types on it.
+- A deck behind a proxy sees every board with the address of the proxy. Then every board is signed out during input. This is on purpose (the deck fails closed). Use the direct tailnet address of the deck.
+- A browser on the target machine that reaches the deck through an address that the station does not report (a proxy or a VPN) keeps its login. The sign-out protects the decisions that go through this deck only.
+- The page where a member joins shows a generic error for `sign_in_blocked_for_input` (open item).
+
+#### Limits and Change limits
+
+Each grant counts its use for its whole life. Renewal does not reset the counts. A count is not given back when a request fails, ends with an unknown result, or when a tool is missing.
+
+| Limit | Default | Range | What it counts |
+| --- | --- | --- | --- |
+| "Input action limit" | 100 | 0 to 5000 | Each accepted key, text or pointer movement. It also uses one desktop action. |
+| "Typed character limit" | 20,000 | 0 to 1,000,000 | Each character of an accepted text (Unicode scalar values). A key and a pointer movement use none. |
+
+A limit at 0 refuses every new action of that kind. It does not mean no limit. Input does not use the screenshot, recording or image read limits. A grant also has rates: 20 new input actions in 60 seconds for each grant, and 20 for each coordinator session over all its grants. Input also counts in the shared rate of 30 new actions in 60 seconds (see section 7.6). A rate refusal is not an accepted action.
+
+The grant row in the "Coordinator grants" list of the "Mail and tasks" panel shows the use only for a grant with input, for example "input actions 12 of 100, typed characters 340 of 20000". To change the limits:
+
+1. Select "Change limits" on the grant row. The button shows only for your owner login, and not for a revoked grant.
+2. Change "Input action limit" or "Typed character limit". These two fields show only for a grant with input.
+3. Select "Save". A lower limit needs no confirmation. A higher limit asks you to confirm that it is you (the label is "Desktop limits"). When you cancel the dialog, nothing changes.
+
+A limit below the current use stops further actions. It does not change the use. Select "Desktop operations" on the grant row to see the newest operations. A line has the tool, the station, the state and the code, for example "type_text on <station>: done". It never has the text, the key or the point. A line that ends with "— unresolved" has no final answer (see section 7.6). Fleet Deck never sends an input action again. Look at the preview before you ask for more input.
+
+#### Stop it
+
+- Select "Revoke" on the grant row. A revoked grant is final. An input action that has not passed its last check stops. An input that already started can finish.
+- Turn off "Fleet control" or "Desktop control" on the Deck tab. Turn off "Allow agent desktop input" or another setting of the station (see "Turn it on"). The next action is refused. A setting of the station also ends an input that runs. An input that runs does not see a deck setting or a revoke: it can finish.
+- Close the preview. Open the Desktop panel of the station and find the section "Agent previews". Select "Close" next to the preview. This closing does not wait for the input action, and it ends a running input.
+- When the station ends an input that runs, it stops the tool. It does not send Escape, BackSpace or an undo key, and it does not return the focus or the pointer.
+
+What Fleet Deck cannot do: input that Fleet Deck already sent cannot be taken back. A short interval stays open between the last check of the station and the first key. The checks cannot make the authority, the focus and the delivery of the keys one step. An input that already started can finish before the station sees a stop.
+
+#### Where the text goes
+
+- The text of `type_text` goes only to a private pipe of the program `wtype`. It is never in a command line, an environment variable, a file that Fleet Deck writes, a log, an audit row, an error or a result. The row of an operation holds the length only.
+- The program `wtype` writes a keymap of the characters that it types into a temporary file. It removes the name of the file at once. Only programs of your user can reach it, and they can already read the text from the memory of the station. This is the one accepted exception of the contract.
+- The agent gets an empty result for `done`. It gets no echo of the text, the key or the point, no window title, no address and no screenshot. The text stays in the conversation of the provider of the agent. Fleet Deck does not control that.
+
+#### The refusals, in your words
+
+The agent sees the code and the fixed text. A message that says "some input may already have been sent" means that the input started.
+
+| Code | Text | What it means |
+| --- | --- | --- |
+| `not_granted` | "This grant does not allow this desktop operation." | The grant does not have the class that the tool needs. |
+| `input_not_allowed` | "This grant does not allow desktop input." | The grant has the class `input`, but not the allowance, or the allowance is not valid. |
+| `input_cap_reached` | "This grant has used its input action limit." | "Input action limit" is used up. |
+| `input_characters_reached` | "This grant has used its typed-character limit." | "Typed character limit" is used up. |
+| `desktop_cap_reached` | "This grant has used its desktop action limit." | "Desktop action limit" is used up. |
+| `rate_limited` | "This grant's desktop rate limit has been reached. Try again later." | A rate of the grant or of the session is used up. |
+| `busy` | "The desktop operation cannot start because its capacity limit is in use." | Another input action runs on the station, or the grant has no free slot. |
+| `desktop_window_not_found` | "No window opened by this grant matches that handle." | The handle is unknown, foreign or closed. |
+| `screen_locked` | "The screen is locked or its lock state is unknown." | The station does not type on a locked screen. |
+| `input_board_forbidden` | "Fleet Deck board and wall windows cannot receive agent input." | The preview looks like a board or a wall window (its class, its title or the address of the deck), or it was opened on an address of the deck. |
+| `input_tool_missing` | "The keyboard input tool wtype is not installed on the target station." | Keys and text need `wtype`. Pointer movement does not. |
+| `input_destination_unavailable` | "The pointer destination is not available inside this preview." | The point is outside the preview, covered, or the preview is hidden. |
+| `input_focus_unknown` | "The preview's input focus could not be verified. Input was not started." | The station could not read or set the focus, so it sent nothing. |
+| `focus_changed` | "The preview no longer has focus. Input stopped; some input may already have been sent." | Another window had the focus. |
+| `input_interrupted` | "Input was interrupted. Some input may already have been sent. Do not retry automatically." | A close, a setting of the station, the link, or a check of the window that failed, ended the input. |
+| `input_failed` | "The input tool failed. Some input may already have been sent. Do not retry automatically." | `wtype` or the pointer command failed. |
+| `input_timeout` | "Input did not finish in time. Some input may already have been sent. Do not retry automatically." | The tool ran past its limit (15 seconds for `wtype`). |
+
+The deck and the station also answer with the codes `fleet_control_off`, `desktop_control_off`, `desktop_forbidden`, `authority_lost` and `authority_unknown`. Their texts are in section 7.6. When the deck cannot know the result, the agent gets the code `desktop_timeout` and this text: "The input outcome is unknown. Inspect the preview before issuing another input request." The state is `unknown`. Look at the preview before you ask for more input.
+
+`fleetdeck doctor` shows whether `wtype` is installed on the machine where it runs. On an Omarchy machine the line is `ok desktop-input: wtype found` or `warn desktop-input: wtype not found: agent keyboard input and text fail until it is installed`. A machine without Omarchy has no line. The `warn` is not a failure. This version has no board view of the doctor lines (see section 7.5), so a check of a remote station has no board path yet. A station without `wtype` refuses keys and text with `input_tool_missing`. Installing `wtype` has no board path yet.
+
+#### Open items
+
+- The PRE-PR review, the end-to-end proofs (task P) and the live smoke are not done (see `docs/v2/LIVE-SMOKE.md`). Do not rely on agent input before the smoke passes.
+- Installing `wtype`, and reading the `desktop-input` line of a remote station, have no board path yet.
+- The pointer click and the scope for every window are not built.
+- The page where a member joins shows a generic error when the sign-in is blocked for input.
+- A browser on the target machine that uses an address that the station does not report is not signed out.
+
 ## 8. Back up
 
 - The station event log (`station.db`) is the source of truth for sessions. The deck database (`deck.db`) is the source of truth for mail, plans, tasks, routing and settings.
