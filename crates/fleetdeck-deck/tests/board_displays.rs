@@ -385,6 +385,12 @@ async fn the_guard_refuses_a_display_on_every_row_without_the_display_marker() {
             unrouted.push(api.name);
             continue;
         }
+        // A HEAD answer has no body: only the status shows the refusal.
+        if api.method == axum::http::Method::HEAD {
+            assert_eq!(r.status, 403, "{}", api.name);
+            refused += 1;
+            continue;
+        }
         assert_eq!(
             (r.status, r.code()),
             (403, "display_read_only"),
