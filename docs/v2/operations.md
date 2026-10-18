@@ -265,7 +265,7 @@ The station resumes the native session with the permission mode that you select 
 
 A coordinator session can read the fleet, send mail and drive the sessions that it starts (ADR-006). The station keeps coordinator calls in a durable outbox (DL-218).
 
-**Current limit:** the station gives the grant credential only to a provider version that the opt-in coordinator live smoke test (ADR-006 §8.5) verified (`fleetdeck_providers::coordinator::VERIFIED` in `crates/fleetdeck-providers/src/coordinator.rs`, DL-219). Claude 2.1.296 and later is verified. A Codex coordinator start fails with `handoff_unverified`, and so does a start on a station where any Claude instance has an older or unknown version.
+**Current limit:** the station gives the grant credential only to a provider version that the opt-in coordinator live smoke test (ADR-006 §8.5) verified (`fleetdeck_providers::coordinator::VERIFIED` in `crates/fleetdeck-providers/src/coordinator.rs`, DL-219). Claude 2.1.296 and later and Codex 0.160.0 and later are verified. A start fails with `handoff_unverified` on a station where any instance of the chosen provider has an older or unknown version.
 
 > **Caution:** A coordinator drives other sessions without a prompt from you. Revoke its grant when the work is done.
 
@@ -603,7 +603,7 @@ Run `fleetdeck doctor` first. It changes nothing. It prints one line for each ch
 - The approval round trip from the board to an agent across a real LAN between two hosts; `make perf` measures loopback only (7-4).
 - The live smoke tests against the real `claude` and `codex` CLIs: `make smoke-live` (opt-in, network, a small number of tokens; [LIVE-SMOKE.md](./LIVE-SMOKE.md)).
 - A real GitHub Actions run of `.github/workflows/v2.yml` (it runs `make check`; this repository never pushes).
-- The coordinator live smoke of ADR-006 §8.5 for Codex: until it records a verified context handoff, a Codex coordinator start fails with `handoff_unverified` (§7.2). Run it again for each new Claude version.
+- The coordinator live smoke of ADR-006 §8.5: run it again for each new Claude or Codex version before you add that version to the verified list (§7.2).
 - Fleet Git (§13) on real machines: a push and a land with the SSH agent or the credential helper of a service, a real Taildrive share and mount, and a look at the new board sections on a real screen (the end-to-end tests ran at the phone viewport only).
 
 ## 13. Fleet Git
