@@ -17,7 +17,7 @@ fn strings(items: &[&str]) -> Vec<String> {
 async fn fence_go_live_is_false_after_a_revoke_while_the_entry_is_pending() {
     let reg = Arc::new(Registry::default());
     let t = owner(&reg, "h1", "10.0.0.1");
-    let waiters = reg.revoke(&strings(&["h1"]), &[]);
+    let (waiters, _) = reg.revoke(&strings(&["h1"]), &[]);
     assert_eq!(waiters.len(), 1);
     assert!(t.is_revoked());
     // The row still exists, and the entry is still refused.
@@ -61,7 +61,7 @@ async fn fence_a_live_relay_ends_on_a_revoke_and_the_waiter_sees_it() {
         tokio::time::sleep(Duration::from_millis(30)).await;
         relay_reg.remove(&relay_ticket);
     });
-    let waiters = reg.revoke(&strings(&["h1"]), &[]);
+    let (waiters, _) = reg.revoke(&strings(&["h1"]), &[]);
     assert_eq!(waiters.len(), 1);
     assert!(wait_all(waiters, Duration::from_secs(5)).await);
     relay.await.unwrap();
@@ -73,7 +73,7 @@ async fn fence_wait_all_is_false_when_a_relay_does_not_end_in_time() {
     let reg = Arc::new(Registry::default());
     let t = owner(&reg, "h1", "10.0.0.1");
     assert!(reg.go_live(&t, || true));
-    let waiters = reg.revoke(&strings(&["h1"]), &[]);
+    let (waiters, _) = reg.revoke(&strings(&["h1"]), &[]);
     assert!(!wait_all(waiters.clone(), Duration::from_millis(50)).await);
     // The relay ends later: a new wait is true.
     reg.remove(&t);
@@ -94,13 +94,17 @@ fn fence_revoke_takes_the_entries_of_a_session_or_of_an_address_only() {
     assert!(reg.go_live(&a, || true));
     assert!(reg.go_live(&b, || true));
     assert!(reg.go_live(&c, || true));
-    let waiters = reg.revoke(&strings(&["h1"]), &strings(&["10.0.0.2"]));
+    let (waiters, hit) = reg.revoke(&strings(&["h1"]), &strings(&["10.0.0.2"]));
     assert_eq!(waiters.len(), 2);
+    assert_eq!(hit.len(), 2);
+    assert!(hit.contains(&(SessionKind::Owner, "h1".to_owned())));
+    assert!(hit.contains(&(SessionKind::Member, "h2".to_owned())));
     assert!(a.is_revoked());
     assert!(b.is_revoked());
     assert!(!c.is_revoked());
     // A revoke of nothing touches nothing.
-    assert!(reg.revoke(&[], &[]).is_empty());
+    let (none, hit) = reg.revoke(&[], &[]);
+    assert!(none.is_empty() && hit.is_empty());
 }
 
 #[test]
@@ -108,8 +112,43 @@ fn fence_two_sockets_of_one_session_are_both_revoked() {
     let reg = Arc::new(Registry::default());
     let a = reg.register("h1", SessionKind::Owner, SocketKind::Board, "10.0.0.1");
     let b = reg.register("h1", SessionKind::Owner, SocketKind::Shell, "10.0.0.1");
-    assert_eq!(reg.revoke(&strings(&["h1"]), &[]).len(), 2);
+    let (waiters, hit) = reg.revoke(&strings(&["h1"]), &[]);
+    assert_eq!(waiters.len(), 2);
+    // The one session is named once.
+    assert_eq!(hit, [(SessionKind::Owner, "h1".to_owned())]);
     assert!(a.is_revoked() && b.is_revoked());
+}
+
+#[test]
+fn fence_sessions_at_names_each_session_of_the_addresses_once() {
+    let reg = Arc::new(Registry::default());
+    let _a = reg.register("h1", SessionKind::Owner, SocketKind::Board, "10.0.0.1");
+    let _b = reg.register("h1", SessionKind::Owner, SocketKind::Shell, "10.0.0.1");
+    let _c = reg.register("h2", SessionKind::Member, SocketKind::Board, "10.0.0.2");
+    let _d = reg.register("h3", SessionKind::Owner, SocketKind::Board, "10.0.0.3");
+    let mut found = reg.sessions_at(&strings(&["10.0.0.1", "10.0.0.2"]));
+    found.sort_by(|x, y| x.1.cmp(&y.1));
+    assert_eq!(
+        found,
+        [
+            (SessionKind::Owner, "h1".to_owned()),
+            (SessionKind::Member, "h2".to_owned())
+        ]
+    );
+    assert!(reg.sessions_at(&[]).is_empty());
+    assert!(reg.sessions_at(&strings(&["10.9.9.9"])).is_empty());
+}
+
+#[test]
+fn fence_sessions_at_sees_a_pending_entry() {
+    let reg = Arc::new(Registry::default());
+    let t = owner(&reg, "h1", "10.0.0.1");
+    assert_eq!(reg.entries()[0].state, SocketState::Pending);
+    assert_eq!(
+        reg.sessions_at(&strings(&["10.0.0.1"])),
+        [(SessionKind::Owner, "h1".to_owned())]
+    );
+    drop(t);
 }
 
 #[tokio::test]

@@ -49,6 +49,16 @@ fn target_without_input() -> Vec<String> {
     .to_vec()
 }
 
+/// True when `needle` stands in `text` as a whole token: no letter or digit
+/// touches it on either side.
+fn has_token(text: &str, needle: &str) -> bool {
+    text.match_indices(needle).any(|(at, _)| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + needle.len()..].chars().next();
+        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+    })
+}
+
 fn assert_no_request(w: &World) {
     assert!(w.fake.log().is_empty(), "{:?}", w.fake.log());
 }
@@ -179,6 +189,15 @@ async fn the_input_policy_is_asked_with_the_input_purpose_and_every_flag_must_be
     assert_eq!(w.fake.count("desktop.act"), 1);
 }
 
+#[test]
+fn a_coordinate_inside_an_identifier_is_not_a_token() {
+    assert!(!has_token("ab7351cd", "7351"));
+    assert!(!has_token("7351ab", "7351"));
+    assert!(has_token("{\"x\":7351,\"y\":1}", "7351"));
+    assert!(has_token("7351", "7351"));
+    assert!(has_token("ab7351cd 7351", "7351"));
+}
+
 #[tokio::test]
 async fn a_done_input_is_charged_sent_once_and_leaves_no_text_in_the_rows() {
     let w = input_world(10, 100).await;
@@ -264,8 +283,6 @@ async fn a_done_input_is_charged_sent_once_and_leaves_no_text_in_the_rows() {
     for sentinel in [
         SENTINEL_TEXT,
         SENTINEL_CHORD,
-        "7351",
-        "2468",
         "req-key-1",
         "req-text-1",
         "req-move-1",
@@ -273,6 +290,15 @@ async fn a_done_input_is_charged_sent_once_and_leaves_no_text_in_the_rows() {
         assert!(
             !everything.contains(sentinel),
             "{sentinel} leaked: {everything}"
+        );
+    }
+    // The coordinates are digits, and the rows hold random identifiers (64
+    // hex characters for a station, 26 for a grant): a coordinate counts as
+    // leaked only as a whole token, never inside an identifier.
+    for coordinate in ["7351", "2468"] {
+        assert!(
+            !has_token(&everything, coordinate),
+            "{coordinate} leaked: {everything}"
         );
     }
     // A duplicate replays the state and sends nothing, charging nothing.

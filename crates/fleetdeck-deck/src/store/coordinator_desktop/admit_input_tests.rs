@@ -397,17 +397,174 @@ async fn the_attempted_input_step_writes_the_snapshot_and_signs_the_addresses_ou
     // Another tool is never an input step, and a failed step signs nobody out.
     let other = new_op(&gid, &ctx, "n1", OpTool::Notify);
     s.desktop_admit(other, now).await.unwrap();
+    // (An address that no operation exposes: the sign-in is not refused.)
     let victim = s
-        .create_login_at(LoginMethod::Password, Some("10.0.0.5"))
+        .create_login_at(LoginMethod::Password, Some("10.0.0.7"))
         .await
         .unwrap();
     let got = s
-        .desktop_op_attempted_input("op-n1", &addrs, now + 30)
+        .desktop_op_attempted_input("op-n1", &["10.0.0.7".to_owned()], now + 30)
         .await
         .unwrap();
     assert!(got.is_none());
     assert!(s.login_session(&victim.cookie).await.unwrap().is_some());
     assert_eq!(times(&s, "op-n1").await, (None, None, None));
+}
+
+/// The two sessions of a share: the invite token, and the share row.
+async fn board_share(s: &DeckStore, uses: u32) -> fleetdeck_core::Secret<String> {
+    use fleetdeck_proto::share::{ShareKind, ShareRole, Steering};
+    let new = crate::store::shares::NewShareRow {
+        kind: ShareKind::Board,
+        target: String::new(),
+        role: ShareRole::Collaborator,
+        steering: Steering::Open,
+        expires_in_days: None,
+        uses: Some(uses),
+        history: false,
+    };
+    s.create_share(new).await.unwrap().token
+}
+
+async fn session_counts(s: &DeckStore) -> (i64, i64) {
+    call(&s.inner.db, |conn| {
+        let owner = conn.query_row("SELECT COUNT(*) FROM login_sessions", [], |r| r.get(0))?;
+        let member = conn.query_row("SELECT COUNT(*) FROM member_sessions", [], |r| r.get(0))?;
+        Ok((owner, member))
+    })
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_sign_in_that_comes_after_the_attempted_step_is_refused_and_inserts_nothing() {
+    use crate::store::DeckError;
+
+    let (det, s) = store().await;
+    let (gid, ctx) = input_grant(&s, 10, 100).await;
+    let now = t0(&det);
+    let Admission::Accepted(row) = s.desktop_admit(key(&gid, &ctx, "k1"), now).await.unwrap()
+    else {
+        panic!("expected Accepted");
+    };
+    // The order login, then input: the new session is deleted by rule 1.
+    let before = s
+        .create_login_at(LoginMethod::Password, Some("10.0.0.5"))
+        .await
+        .unwrap();
+    let invite = board_share(&s, 1).await;
+    let addrs = vec!["10.0.0.5".to_owned()];
+    let signed = s
+        .desktop_op_attempted_input(&row.operation_id, &addrs, now + 10)
+        .await
+        .unwrap()
+        .expect("the row was prepared");
+    assert_eq!(signed.len(), 1);
+    assert!(s.login_session(&before.cookie).await.unwrap().is_none());
+    assert_eq!(session_counts(&s).await, (0, 0));
+
+    // The order input, then login: the exposure is read in the transaction
+    // that would insert the session, so nothing is inserted.
+    let owner = s
+        .create_login_at(LoginMethod::Password, Some("10.0.0.5"))
+        .await;
+    assert!(matches!(owner, Err(DeckError::SignInBlocked)), "{owner:?}");
+    let link = s.create_login_at(LoginMethod::Link, Some("10.0.0.5")).await;
+    assert!(matches!(link, Err(DeckError::SignInBlocked)), "{link:?}");
+    let member = s.join_at(&invite, "Ann", Some("10.0.0.5")).await;
+    assert!(
+        matches!(member, Err(DeckError::SignInBlocked)),
+        "{member:?}"
+    );
+    assert_eq!(session_counts(&s).await, (0, 0));
+
+    // A refused join costs no invite use and creates no member: the one use
+    // of the invite still serves a join from another address.
+    let ok = s.join_at(&invite, "Ann", Some("10.0.0.9")).await.unwrap();
+    assert!(ok.is_some(), "the invite keeps its use after a refusal");
+    // No address (an old call), and another address, are never refused.
+    s.create_login_at(LoginMethod::Password, Some("10.0.0.9"))
+        .await
+        .unwrap();
+    s.create_login_at(LoginMethod::Password, None)
+        .await
+        .unwrap();
+    assert_eq!(session_counts(&s).await, (2, 1));
+
+    // The exposure and the tail end: the address signs in again.
+    det.advance(std::time::Duration::from_secs(200));
+    s.invalidate_exposure();
+    s.create_login_at(LoginMethod::Password, Some("10.0.0.5"))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn the_attempted_step_deletes_the_sessions_of_the_sockets_at_the_snapshot_addresses() {
+    use crate::board_fence::{SessionKind, SocketKind};
+
+    let (det, s) = store().await;
+    let (gid, ctx) = input_grant(&s, 10, 100).await;
+    let now = t0(&det);
+    let Admission::Accepted(row) = s.desktop_admit(key(&gid, &ctx, "k1"), now).await.unwrap()
+    else {
+        panic!("expected Accepted");
+    };
+    // Two sessions whose last address is elsewhere; each has a socket at the
+    // snapshot address, one live and one pending. A third has a socket
+    // elsewhere only.
+    let mut cookies = Vec::new();
+    for _ in 0..3 {
+        let login = s
+            .create_login_at(LoginMethod::Password, Some("10.0.0.9"))
+            .await
+            .unwrap();
+        cookies.push(login);
+    }
+    let mut hashes = Vec::new();
+    for login in &cookies {
+        hashes.push(
+            s.login_session(&login.cookie)
+                .await
+                .unwrap()
+                .unwrap()
+                .session_hash,
+        );
+    }
+    let reg = s.registry();
+    let live = reg.register(
+        &hashes[0],
+        SessionKind::Owner,
+        SocketKind::Board,
+        "10.0.0.5",
+    );
+    assert!(reg.go_live(&live, || true));
+    let _pending = reg.register(
+        &hashes[1],
+        SessionKind::Owner,
+        SocketKind::Shell,
+        "10.0.0.5",
+    );
+    let _away = reg.register(
+        &hashes[2],
+        SessionKind::Owner,
+        SocketKind::Board,
+        "10.0.0.8",
+    );
+    let addrs = vec!["10.0.0.5".to_owned()];
+    let signed = s
+        .desktop_op_attempted_input(&row.operation_id, &addrs, now + 10)
+        .await
+        .unwrap()
+        .expect("the row was prepared");
+    let mut got: Vec<String> = signed.into_iter().map(|x| x.session_hash).collect();
+    got.sort();
+    let mut want = vec![hashes[0].clone(), hashes[1].clone()];
+    want.sort();
+    assert_eq!(got, want);
+    assert!(s.login_session(&cookies[0].cookie).await.unwrap().is_none());
+    assert!(s.login_session(&cookies[1].cookie).await.unwrap().is_none());
+    assert!(s.login_session(&cookies[2].cookie).await.unwrap().is_some());
 }
 
 #[tokio::test]

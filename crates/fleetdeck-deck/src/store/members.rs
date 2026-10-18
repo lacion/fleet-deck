@@ -17,6 +17,7 @@ use fleetdeck_proto::share::{MAX_DISPLAY_NAME_CHARS, ShareKind, ShareRole, Steer
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::auth::{SESSION_MAX_MS, random_token, secret_hash};
+use super::board_fence::exposed_in_tx;
 use super::{DeckError, DeckStore, Result, call, new_id};
 
 /// The id of a member.
@@ -320,7 +321,8 @@ impl DeckStore {
     /// `last_addr_seen_at`, R13 P7 §7.6).
     ///
     /// # Errors
-    /// As [`Self::join`].
+    /// As [`Self::join`]; [`DeckError::SignInBlocked`] when `addr` is exposed to
+    /// an input operation (the transaction inserts nothing, the invite keeps its use).
     pub async fn join_at(
         &self,
         token: &Secret<String>,
@@ -338,6 +340,13 @@ impl DeckStore {
         let found = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             tx.execute("DELETE FROM member_sessions WHERE expires_at <= ?1", [now])?;
+            // Before the invite update, so a refusal costs no invite use; the
+            // exposure is read in the transaction that inserts the session,
+            // serialized with the attempted transaction of an input
+            // operation (§7.6 rule 2).
+            if exposed_in_tx(&tx, addr.as_deref(), now)? {
+                return Err(DeckError::SignInBlocked);
+            }
             let share_id: Option<String> = tx
                 .query_row(
                     "UPDATE invites SET uses_left = uses_left - 1

@@ -101,7 +101,7 @@ async fn execute(
     };
     link.store.invalidate_exposure();
     audit_signed_out(&link.store, &signed_out, id).await;
-    if !revoke_before_dispatch(&link.store, &signed_out, &addrs).await {
+    if !revoke_before_dispatch(&link.store, &signed_out, &addrs, id).await {
         return finish(link, id, OpOutcome::Failed(code::INPUT_INTERRUPTED)).await;
     }
     let sent =
