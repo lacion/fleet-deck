@@ -494,6 +494,7 @@ impl RunningStation {
     pub async fn stop(self) {
         tracing::info!("station stopping");
         let _ = self.shutdown.send(true);
+        crate::desktop::service().shutdown_recordings();
         let _ = self.server.await;
         let _ = self.assist.await;
         let _ = self.rescan.await;

@@ -31,6 +31,8 @@ pub mod events;
 pub mod info;
 pub mod profile;
 pub mod quiet;
+#[doc(hidden)]
+pub mod recording;
 pub mod run;
 
 use std::sync::{Arc, Mutex, PoisonError};
@@ -116,6 +118,8 @@ pub struct Desktop {
     limits: Mutex<deadline::Limits>,
     /// The one screenshot slot of the station (R13 P5a).
     capture: capture::CaptureSlot,
+    /// The recordings that run now (R13 P5b).
+    recordings: recording::Registry,
     /// The executable of the `shim-exec` launch of `grim`; `None` is the
     /// running executable. A test of another crate sets it.
     shim_exe: Option<std::path::PathBuf>,
@@ -132,6 +136,7 @@ impl Desktop {
             cache: Mutex::new(None),
             limits: Mutex::new(deadline::Limits::default()),
             capture: capture::CaptureSlot::default(),
+            recordings: recording::Registry::default(),
             shim_exe: None,
         }
     }

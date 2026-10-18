@@ -156,7 +156,17 @@ pub struct Recorder {
     exit: oneshot::Receiver<Exit>,
 }
 
-impl Recorder {
+/// A cloneable control handle of a [`Recorder`]: the same three commands,
+/// from any task, while one task waits in [`Recorder::exited`]. After the
+/// recorder ended a command goes into a closed channel and does nothing. The
+/// recorder discards when the [`Recorder`] and every control handle are
+/// dropped without [`Recorder::exited`].
+#[derive(Clone)]
+pub struct RecorderCtl {
+    cmd: Sender<Cmd>,
+}
+
+impl RecorderCtl {
     /// Save: `SIGINT` to the group, the grace, then `SIGKILL`.
     pub fn owner_stop(&self) {
         // A send error means the supervisor is gone: the child is reaped.
@@ -171,6 +181,31 @@ impl Recorder {
     /// Moves the lease expiry to `until` when that is later.
     pub fn renew(&self, until: BootInstant) {
         drop(self.cmd.send(Cmd::Renew(until)));
+    }
+}
+
+impl Recorder {
+    /// A control handle that sends to the same recorder.
+    #[must_use]
+    pub fn ctl(&self) -> RecorderCtl {
+        RecorderCtl {
+            cmd: self.cmd.clone(),
+        }
+    }
+
+    /// Save: `SIGINT` to the group, the grace, then `SIGKILL`.
+    pub fn owner_stop(&self) {
+        self.ctl().owner_stop();
+    }
+
+    /// Discard: `SIGKILL` to the group at once.
+    pub fn discard(&self) {
+        self.ctl().discard();
+    }
+
+    /// Moves the lease expiry to `until` when that is later.
+    pub fn renew(&self, until: BootInstant) {
+        self.ctl().renew(until);
     }
 
     /// Waits for the end: after the reap and after both drains finished.
