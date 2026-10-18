@@ -30,6 +30,23 @@ pub struct CoordinatorSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub answer_cap: Option<u32>,
+    /// The desktop action budget of a grant with `desktop` or `capture`
+    /// (R13 P6 §8.1). Board → deck only, like `stations`: the deck reads it
+    /// in `owner_start` and clears it before the start command goes to a
+    /// station.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub desktop_cap: Option<u32>,
+    /// The screenshot budget of a grant with `capture` (R13 P6 §8.1).
+    /// Board → deck only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub capture_cap: Option<u32>,
+    /// The image-read byte budget of a grant with `capture` (R13 P6 §8.1).
+    /// Board → deck only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub image_byte_cap: Option<u64>,
     /// The target stations that the owner picked (ADR-006 §"Creation"),
     /// besides the coordinator's own station. Board → deck only: the deck
     /// reads it in `owner_start` and clears it before the start command goes

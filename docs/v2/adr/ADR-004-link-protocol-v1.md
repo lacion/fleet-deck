@@ -134,6 +134,8 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `display_changes.v1` | `files.display_changes` (R13 §5D item 13, DL-222; protected change statistics and patches for a wall display) |
 | `desktop_capture.v1` | `desktop.capture_status`, and `desktop.act` with the `screen_capture` action (R13 P5a, `omarchy-p5a.md` §2; the owner screenshot of a station monitor and its durable result lookup) |
 | `artifacts_delete.v1` | `artifacts.delete` (R13 P5a, `omarchy-p5a.md` §3; station artifact deletion) |
+| `desktop_mcp.v1` | `coordinator.desktop_call`, `coordinator.desktop_query`, `desktop.authority_check`, `desktop.policy_now`, `desktop.coordinator_read`, the `coordinator` context of a desktop authority, the `preview_close` desktop action, and the P6 extension of `coordinator.policy_now` (R13 P6, `omarchy-p6.md` §5; the coordinator desktop tools) |
+| `capture_mcp.v1` | The screenshot variants of the `desktop_mcp.v1` methods and the `coordinator` caller of a capture (R13 P6, `omarchy-p6.md` §4.6, §4.9; the coordinator screenshot tools and the bounded image read; needs `desktop_mcp.v1`) |
 | `desktop_shell.v1` | `fleet.summary`, `display.directive`, `station.palette` (R13 P4, `omarchy-p4.md` §3.1; the fleet summary the deck sends to a station, the wall hotkeys and the Omarchy theme palette of the desktop shell) |
 | `pair_request.v1` | The pair-channel frames `pair_request`, `pair_pending`, `pair_approved` and `pair_resume` (DL-178, §10): a station asks a deck to pair without an invitation and the owner approves on the board |
 
@@ -347,6 +349,7 @@ Per link (these values replace §2.7 "at most 256 open streams"):
 | `link.rotate_key` | `KeyRotationEnvelope` | `rotation` | receiver |
 | `shell.open`, `shell.resize`, `shell.close`, `shell.handover`, `shell.release` | `ShellEnvelope` | `change` | station |
 | `coordinator.call` | `CoordinatorCallEnvelope` | `call` | deck |
+| `coordinator.desktop_call` | `CoordinatorDesktopCallEnvelope` | `call` | deck |
 
 - **Holder** is the node that decides the command in one transaction, keeps its receipt, and whose database incarnation `target_incarnation` names. Every node's database (station.db and deck.db) has an incarnation id; a reset database gets a new one. The `hello` of Revision 2 carries the sender's incarnation (new field `incarnation`), so each side knows the value to target.
 - `target_incarnation` is optional only in `CommandEnvelope`, and only on the station-local socket (PLAN §6.4, DL-038). Over the link it is required for every envelope.
@@ -466,6 +469,11 @@ close             { reason, detail }
 | `coordinator.call` | station → deck | coordinate | `coordinator.v1` | yes |
 | `coordinator.authority_check` | station → deck | coordinate | `coordinator.v2` | no |
 | `coordinator.policy_now` | deck → station | read | `coordinator.v2` | no |
+| `coordinator.desktop_call` | station → deck | coordinate | `desktop_mcp.v1` | yes |
+| `coordinator.desktop_query` | station → deck | coordinate | `desktop_mcp.v1` | no |
+| `desktop.authority_check` | station → deck | coordinate | `desktop_mcp.v1` | no |
+| `desktop.policy_now` | deck → station | read | `desktop_mcp.v1` | no |
+| `desktop.coordinator_read` | deck → station | read | `desktop_mcp.v1` | no |
 | `fleet_git.projects_set` | deck → station | admin | `fleet_git.v1` | no |
 | `fleet_git.push_now` | deck → station | drive | `fleet_git.v1` | no |
 | `project.ensure_home` | deck → station | admin | `fleet_git.homes.v1` | no |

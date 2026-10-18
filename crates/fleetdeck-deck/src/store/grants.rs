@@ -9,6 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use fleetdeck_proto::command::GrantScope;
+use fleetdeck_proto::coordinator_desktop_text::limits;
 use fleetdeck_proto::mutation::{CommandAuthority, CoordinatorBinding};
 use fleetdeck_proto::{ProviderInstanceId, SessionId, StationId};
 use rusqlite::{Connection, OptionalExtension, Row, params};
@@ -54,13 +55,21 @@ pub enum GrantClass {
     Manage,
     /// Answer approvals and questions (fleet control).
     Answer,
+    /// The coordinator desktop tools: notify, preview, wall directives
+    /// (R13 P6 §2.1; fleet control, OD-3).
+    Desktop,
+    /// The coordinator screenshot tools (R13 P6 §2.1; fleet control, OD-3).
+    Capture,
 }
 
 impl GrantClass {
-    /// True for the classes of fleet control (ADR-008 §2).
+    /// True for the classes of fleet control (ADR-008 §2, R13 P6 OD-3).
     #[must_use]
     pub fn is_fleet_control(self) -> bool {
-        matches!(self, Self::Inspect | Self::Manage | Self::Answer)
+        matches!(
+            self,
+            Self::Inspect | Self::Manage | Self::Answer | Self::Desktop | Self::Capture
+        )
     }
 
     /// True for the classes that change something; a session that holds an
@@ -102,6 +111,14 @@ pub struct NewGrant {
     pub scope: GrantScope,
     /// The lifetime answer cap; `None` without the `answer` class.
     pub answer_cap: Option<u32>,
+    /// The desktop action cap (R13 P6 §8.1); `None` without the `desktop` or
+    /// `capture` class. `create_grant` fills the default 300.
+    pub desktop_cap: Option<u32>,
+    /// The screenshot cap; `None` without the `capture` class (default 20).
+    pub capture_cap: Option<u32>,
+    /// The image-read byte cap; `None` without the `capture` class (default
+    /// 64 MiB).
+    pub image_byte_cap: Option<u64>,
 }
 
 impl NewGrant {
@@ -121,6 +138,9 @@ impl NewGrant {
             start_command_id: None,
             scope: GrantScope::Lineage,
             answer_cap: None,
+            desktop_cap: None,
+            capture_cap: None,
+            image_byte_cap: None,
         }
     }
 }
@@ -150,6 +170,21 @@ pub struct Grant {
     pub answer_cap: Option<u32>,
     /// The answers that the grant made, for good (never pruned).
     pub answer_used: u32,
+    /// The desktop action cap (R13 P6 §8.1); `None` without the `desktop` or
+    /// `capture` class.
+    pub desktop_cap: Option<u32>,
+    /// The desktop actions that the grant made, for good.
+    pub desktop_used: u32,
+    /// The screenshot cap; `None` without the `capture` class.
+    pub capture_cap: Option<u32>,
+    /// The screenshots that the grant made, for good.
+    pub capture_used: u32,
+    /// The image-read byte cap; `None` without the `capture` class.
+    pub image_byte_cap: Option<u64>,
+    /// The image bytes that the grant reserved, for good.
+    pub image_byte_used: u64,
+    /// The distinct well-formed mutation attempts, for good (§8.1).
+    pub desktop_attempts: u32,
 }
 
 impl Grant {
@@ -176,7 +211,8 @@ impl Grant {
 pub(crate) const GRANT_COLUMNS: &str = "grant_id, station_id, session_id, classes, stations, \
     spawn_cap, spawn_used, max_modes, idle_ttl_ms, created_at, expires_at, state, revoked_reason, \
     bound_generation, bound_native_id, bound_provider_instance, binding_id, last_used_at, \
-    scope, answer_cap, answer_used";
+    scope, answer_cap, answer_used, desktop_cap, desktop_used, capture_cap, capture_used, \
+    image_byte_cap, image_byte_used, desktop_attempts";
 
 fn state_of(text: &str) -> GrantState {
     match text {
@@ -209,6 +245,13 @@ pub(crate) fn grant_row(r: &Row<'_>) -> rusqlite::Result<(Grant, String, String,
     let scope: String = r.get(18)?;
     let answer_cap: Option<i64> = r.get(19)?;
     let answer_used: i64 = r.get(20)?;
+    let desktop_cap: Option<i64> = r.get(21)?;
+    let desktop_used: i64 = r.get(22)?;
+    let capture_cap: Option<i64> = r.get(23)?;
+    let capture_used: i64 = r.get(24)?;
+    let image_byte_cap: Option<i64> = r.get(25)?;
+    let image_byte_used: i64 = r.get(26)?;
+    let desktop_attempts: i64 = r.get(27)?;
     Ok((
         Grant {
             grant_id,
@@ -234,6 +277,13 @@ pub(crate) fn grant_row(r: &Row<'_>) -> rusqlite::Result<(Grant, String, String,
             },
             answer_cap: answer_cap.map(|c| u32::try_from(c).unwrap_or(0)),
             answer_used: u32::try_from(answer_used).unwrap_or(u32::MAX),
+            desktop_cap: desktop_cap.map(|c| u32::try_from(c).unwrap_or(0)),
+            desktop_used: u32::try_from(desktop_used).unwrap_or(u32::MAX),
+            capture_cap: capture_cap.map(|c| u32::try_from(c).unwrap_or(0)),
+            capture_used: u32::try_from(capture_used).unwrap_or(u32::MAX),
+            image_byte_cap: image_byte_cap.map(|c| u64::try_from(c).unwrap_or(0)),
+            image_byte_used: u64::try_from(image_byte_used).unwrap_or(u64::MAX),
+            desktop_attempts: u32::try_from(desktop_attempts).unwrap_or(u32::MAX),
         },
         r.get(3)?,
         r.get(4)?,
@@ -281,6 +331,41 @@ pub(crate) fn caller_grant(
     .transpose()
 }
 
+/// The rules of the desktop caps of a new grant (R13 P6 §8.1), the same for
+/// the board request and for `create_grant`: the class rule first, then the
+/// range, then the multiple. The text is fixed and shows no value.
+///
+/// # Errors
+/// The fixed text of the first rule that fails.
+pub fn check_desktop_caps(
+    classes: &BTreeSet<GrantClass>,
+    desktop_cap: Option<u32>,
+    capture_cap: Option<u32>,
+    image_byte_cap: Option<u64>,
+) -> std::result::Result<(), &'static str> {
+    let capture = classes.contains(&GrantClass::Capture);
+    let desktop = capture || classes.contains(&GrantClass::Desktop);
+    if desktop_cap.is_some() && !desktop {
+        return Err("desktop_cap needs the desktop or capture class");
+    }
+    if (capture_cap.is_some() || image_byte_cap.is_some()) && !capture {
+        return Err("capture_cap and image_byte_cap need the capture class");
+    }
+    if desktop_cap.is_some_and(|c| c > limits::DESKTOP_CAP_MAX) {
+        return Err("desktop_cap is 0 to 5000");
+    }
+    if capture_cap.is_some_and(|c| c > limits::CAPTURE_CAP_MAX) {
+        return Err("capture_cap is 0 to 5000");
+    }
+    if image_byte_cap.is_some_and(|c| c > limits::IMAGE_BYTE_CAP_MAX) {
+        return Err("image_byte_cap is 0 to 1073741824");
+    }
+    if image_byte_cap.is_some_and(|c| c % limits::IMAGE_BYTE_CAP_UNIT != 0) {
+        return Err("image_byte_cap is a multiple of 1048576");
+    }
+    Ok(())
+}
+
 impl DeckStore {
     /// Stores an owner-authorized grant (ADR-006 §4). The limits are
     /// checked here: cap ≤ 50, idle TTL ≤ 24 h, lifetime ≤ 7 days.
@@ -314,6 +399,25 @@ impl DeckStore {
             None if answers => grant.answer_cap = Some(DEFAULT_ANSWER_CAP),
             _ => {}
         }
+        // The desktop caps (R13 P6 §8.1).
+        check_desktop_caps(
+            &grant.classes,
+            grant.desktop_cap,
+            grant.capture_cap,
+            grant.image_byte_cap,
+        )
+        .map_err(|m| DeckError::Invalid(m.to_owned()))?;
+        if grant.classes.contains(&GrantClass::Desktop)
+            || grant.classes.contains(&GrantClass::Capture)
+        {
+            grant.desktop_cap.get_or_insert(limits::DESKTOP_CAP_DEFAULT);
+        }
+        if grant.classes.contains(&GrantClass::Capture) {
+            grant.capture_cap.get_or_insert(limits::CAPTURE_CAP_DEFAULT);
+            grant
+                .image_byte_cap
+                .get_or_insert(limits::IMAGE_BYTE_CAP_DEFAULT);
+        }
         let now = self.now_ms();
         let grant_id: String = new_id(self.inner.ids.as_ref());
         let (stored, changed) = call(&self.inner.db, move |conn| {
@@ -335,8 +439,10 @@ impl DeckStore {
             tx.execute(
                 "INSERT INTO tokens (grant_id, station_id, session_id, classes, stations,
                      spawn_cap, max_modes, idle_ttl_ms, created_at, expires_at, state,
-                     start_command_id, scope, answer_cap)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active', ?11, ?12, ?13)",
+                     start_command_id, scope, answer_cap, desktop_cap, capture_cap,
+                     image_byte_cap)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active', ?11, ?12, ?13,
+                     ?14, ?15, ?16)",
                 params![
                     grant_id,
                     grant.station_id.as_str(),
@@ -354,7 +460,11 @@ impl DeckStore {
                     } else {
                         "lineage"
                     },
-                    grant.answer_cap
+                    grant.answer_cap,
+                    grant.desktop_cap,
+                    grant.capture_cap,
+                    // SQLite integers are signed 64-bit; the cap is at most 1 GiB.
+                    grant.image_byte_cap.and_then(|c| i64::try_from(c).ok())
                 ],
             )?;
             let stored = get_grant(&tx, &grant_id)?
@@ -546,3 +656,7 @@ impl DeckStore {
         .await
     }
 }
+
+#[cfg(test)]
+#[path = "grants_desktop_tests.rs"]
+mod desktop_tests;

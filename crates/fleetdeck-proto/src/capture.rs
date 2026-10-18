@@ -116,6 +116,8 @@ pub enum CaptureKind {
 #[ts(export_to = "capture/")]
 pub enum CaptureCaller {
     Owner,
+    /// R13 P6 §4.7: a coordinator session with a `capture` grant.
+    Coordinator,
 }
 
 /// The immutable provenance of a screenshot artifact version.
@@ -127,9 +129,18 @@ pub struct CaptureProvenance {
     pub monitor: String,
     pub kind: CaptureKind,
     pub caller: CaptureCaller,
-    /// Always `null` in P5a.
-    #[ts(type = "null")]
+    /// `null` for an owner capture; the stable ID of the coordinator's
+    /// station for a coordinator capture (R13 P6 §4.7). Always serialized.
+    #[ts(type = "string | null")]
     pub caller_station: Option<String>,
+    /// The coordinator session (R13 P6); omitted for an owner capture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub caller_session: Option<String>,
+    /// The grant of the coordinator (R13 P6); omitted for an owner capture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub caller_grant_id: Option<String>,
     /// Station Unix ms at capture start.
     #[ts(type = "number")]
     pub at: i64,
@@ -247,6 +258,8 @@ mod tests {
             kind: CaptureKind::Screenshot,
             caller: CaptureCaller::Owner,
             caller_station: None,
+            caller_session: None,
+            caller_grant_id: None,
             at: 7,
         };
         let v = serde_json::to_value(&p).unwrap();
@@ -255,6 +268,55 @@ mod tests {
         assert_eq!(v["kind"], "screenshot");
         assert_eq!(v["caller"], "owner");
         assert_eq!(serde_json::from_value::<CaptureProvenance>(v).unwrap(), p);
+    }
+
+    /// The bytes of an owner provenance, written down from the struct before
+    /// the coordinator fields existed: an owner capture must not change.
+    #[test]
+    fn an_owner_provenance_serializes_to_its_pinned_bytes() {
+        let owner = concat!(
+            r#"{"capture_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","station_id":"st","#,
+            r#""monitor":"DP-1","kind":"screenshot","caller":"owner","#,
+            r#""caller_station":null,"at":7}"#
+        );
+        let p = CaptureProvenance {
+            capture_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+            station_id: "st".into(),
+            monitor: "DP-1".into(),
+            kind: CaptureKind::Screenshot,
+            caller: CaptureCaller::Owner,
+            caller_station: None,
+            caller_session: None,
+            caller_grant_id: None,
+            at: 7,
+        };
+        assert_eq!(serde_json::to_string(&p).unwrap(), owner);
+        assert_eq!(serde_json::from_str::<CaptureProvenance>(owner).unwrap(), p);
+    }
+
+    #[test]
+    fn a_coordinator_provenance_names_the_caller_station_session_and_grant() {
+        let p = CaptureProvenance {
+            capture_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+            station_id: "st".into(),
+            monitor: "DP-1".into(),
+            kind: CaptureKind::Screenshot,
+            caller: CaptureCaller::Coordinator,
+            caller_station: Some("st-c".into()),
+            caller_session: Some("01J0000000000000000000000S".into()),
+            caller_grant_id: Some("g1".into()),
+            at: 7,
+        };
+        let v = serde_json::to_value(&p).unwrap();
+        assert_eq!(v["caller"], "coordinator");
+        assert_eq!(v["caller_station"], "st-c");
+        assert_eq!(v["caller_session"], "01J0000000000000000000000S");
+        assert_eq!(v["caller_grant_id"], "g1");
+        assert_eq!(serde_json::from_value::<CaptureProvenance>(v).unwrap(), p);
+        assert_eq!(
+            serde_json::to_value(CaptureCaller::Coordinator).unwrap(),
+            "coordinator"
+        );
     }
 
     #[test]

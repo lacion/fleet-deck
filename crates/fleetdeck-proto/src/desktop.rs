@@ -175,6 +175,12 @@ pub enum DesktopAction {
     ScreenCapture {
         monitor: String,
     },
+    /// R13 P6 §4.5: close a coordinator preview by its opaque `window_id`
+    /// (needs `desktop_mcp.v1`; a coordinator authority only). The hash of
+    /// the action covers the handle; the deck never learns the address.
+    PreviewClose {
+        window_id: String,
+    },
 }
 
 /// The action of the owner's HTTP relay (R13 §6D item 6): the closed list of
@@ -235,6 +241,11 @@ pub enum DesktopActBody {
 pub struct DesktopActResult {
     /// The window address of `wall_open` and `browser_open`.
     pub address: Option<String>,
+    /// The opaque handle of a coordinator preview (`preview_open`, R13 P6
+    /// §4.5); the station sends `address: None` then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub window_id: Option<String>,
     /// The fresh info after the action.
     pub info: DesktopInfo,
     /// The screenshot result; required for a `screen_capture` success.
@@ -284,6 +295,65 @@ mod tests {
             }
         );
         assert_eq!(serde_json::to_string(&b).unwrap(), json);
+    }
+
+    #[test]
+    fn preview_close_has_its_wire_form_and_is_not_an_owner_body() {
+        let json = r#"{"action":"preview_close","window_id":"ab12"}"#;
+        let a: DesktopAction = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            a,
+            DesktopAction::PreviewClose {
+                window_id: "ab12".into()
+            }
+        );
+        assert_eq!(serde_json::to_string(&a).unwrap(), json);
+        // The owner's HTTP body does not offer it.
+        assert!(serde_json::from_str::<DesktopActBody>(json).is_err());
+        assert!(
+            serde_json::from_str::<DesktopAction>(
+                r#"{"action":"preview_close","window_id":"a","address":"0x1"}"#
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn an_act_result_skips_an_absent_window_id() {
+        let info: DesktopInfo = serde_json::from_str(
+            r#"{"kind":"omarchy","omarchy_version":null,"monitors":[],"locked":null,
+            "dnd":null,"idle_inhibited":null,"walls":[],
+            "allowed":{"desktop":true,"capture":false,"input":false},
+            "tools":{"wtype":false,"pointer":false,"recorder":false,"grim":true,
+                     "chromium":false,"notify_send":false}}"#,
+        )
+        .unwrap();
+        let mut result = DesktopActResult {
+            address: None,
+            window_id: None,
+            info,
+            capture: None,
+            info_fresh: None,
+        };
+        let v = serde_json::to_value(&result).unwrap();
+        assert!(!v.as_object().unwrap().contains_key("window_id"));
+        result.window_id = Some("w1".into());
+        let v = serde_json::to_value(&result).unwrap();
+        assert_eq!(v["window_id"], "w1");
+        assert_eq!(v["address"], serde_json::Value::Null);
+        assert_eq!(
+            serde_json::from_value::<DesktopActResult>(v).unwrap(),
+            result
+        );
+        // An old result without the key parses.
+        let mut old = serde_json::to_value(&result).unwrap();
+        old.as_object_mut().unwrap().remove("window_id");
+        assert_eq!(
+            serde_json::from_value::<DesktopActResult>(old)
+                .unwrap()
+                .window_id,
+            None
+        );
     }
 
     #[test]

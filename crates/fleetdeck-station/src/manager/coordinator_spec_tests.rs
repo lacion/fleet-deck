@@ -23,6 +23,9 @@ pub(super) fn coordinator_spec() -> fleetdeck_proto::command::CoordinatorSpec {
         },
         scope: fleetdeck_proto::command::GrantScope::Lineage,
         answer_cap: None,
+        desktop_cap: None,
+        capture_cap: None,
+        image_byte_cap: None,
         stations: Vec::new(),
     }
 }

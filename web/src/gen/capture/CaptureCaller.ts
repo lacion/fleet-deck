@@ -3,4 +3,4 @@
 /**
  * Who asked for a capture.
  */
-export type CaptureCaller = "owner";
+export type CaptureCaller = "owner" | "coordinator";

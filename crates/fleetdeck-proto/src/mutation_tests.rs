@@ -54,6 +54,17 @@ pub(crate) fn sample(method: &str) -> Value {
                    "op": {"op": "send", "to": {"station": "alpha", "session_id": s},
                           "text": "hi", "delivery": "follow_up"}}),
         ),
+        "coordinator.desktop_call" => {
+            let mut v = with(
+                "call",
+                json!({"tool": "notify", "arguments": {"request_id": "r", "title": "t",
+                       "body": "b"}}),
+            );
+            v["caller"] = json!(s);
+            v["binding"] = json!({"binding_id": "b", "grant_id": "g", "generation": 1,
+                "provider_instance": "claude", "native_id": "n"});
+            v
+        }
         _ => {
             let op = method.rsplit('.').next().unwrap_or_default();
             let command = match op {
@@ -144,7 +155,7 @@ fn every_mutating_method_parses_its_envelope_and_names_its_method() {
             count += 1;
         }
     }
-    assert_eq!(count, 38);
+    assert_eq!(count, 39);
 }
 
 #[test]

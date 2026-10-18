@@ -9,14 +9,18 @@ use axum::Json;
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use fleetdeck_proto::StationId;
+use fleetdeck_proto::coordinator_desktop_text::{code as desktop_code, text as desktop_text};
 use fleetdeck_proto::orchestration::GrantView;
+use fleetdeck_proto::version::feature;
 
 use super::Board;
 use super::fleet_routes::{LIST_PAGE, audited};
 use super::guard::ApiError;
 use super::settings_routes::is_elevated;
 use crate::store::auth::LoginSession;
-use crate::store::{AuditResult, Grant, GrantClass, GrantState, LinkV2, NewAudit, Principal};
+use crate::store::{
+    AuditResult, Grant, GrantClass, GrantState, LinkFeature, LinkV2, NewAudit, Principal,
+};
 
 /// The most stations that one grant names (its own station included).
 pub const MAX_GRANT_STATIONS: usize = 16;
@@ -31,6 +35,8 @@ fn view(g: Grant) -> GrantView {
             GrantClass::Inspect => "inspect",
             GrantClass::Manage => "manage",
             GrantClass::Answer => "answer",
+            GrantClass::Desktop => "desktop",
+            GrantClass::Capture => "capture",
         }
         .to_owned()
     };
@@ -52,6 +58,13 @@ fn view(g: Grant) -> GrantView {
         revoked_reason: g.revoked_reason,
         expires_at: g.expires_at,
         last_used_at: g.last_used_at,
+        // A used counter is shown only with its own cap (R13 P6 §8.1).
+        desktop_cap: g.desktop_cap,
+        desktop_used: g.desktop_cap.map(|_| g.desktop_used),
+        capture_cap: g.capture_cap,
+        capture_used: g.capture_cap.map(|_| g.capture_used),
+        image_byte_cap: g.image_byte_cap,
+        image_byte_used: g.image_byte_cap.map(|_| g.image_byte_used),
     }
 }
 
@@ -213,13 +226,17 @@ pub const CONTROL_SKILL: &str = include_str!("../control_skill.md");
 /// grant (the fleet scope, or the class `inspect`, `manage` or `answer`) or a
 /// grant with a station other than its own needs the owner's elevation in the
 /// same request, and every station of the grant must have negotiated
-/// `coordinator.v2` on their current link (ADR-008 section 3).
+/// `coordinator.v2` on their current link (ADR-008 section 3). The classes
+/// `desktop` and `capture` are fleet control: besides that, the caller's link
+/// and every other station of the grant need the features of R13 P6 §5.1
+/// (the caller's own desktop is checked when a call names it). The three desktop
+/// caps are read from the spec and never go on to a station.
 ///
 /// # Errors
 /// 400 `invalid_grant` for an unknown class, no class, an unknown station, more
-/// than 16 stations, an answer cap out of range or without the `answer` class,
-/// or a limit out of range; 400 `elevation_required`; 409 `unsupported`; 500
-/// for a database error.
+/// than 16 stations, an answer cap or a desktop cap out of range or without
+/// its class, or a limit out of range; 400 `elevation_required`; 409
+/// `unsupported`; 500 for a database error.
 pub(super) async fn owner_start(
     board: &Board,
     station: &fleetdeck_proto::StationId,
@@ -230,6 +247,13 @@ pub(super) async fn owner_start(
     let invalid = |m: String| ApiError::new(StatusCode::BAD_REQUEST, "invalid_grant", m);
     // The board-to-deck list never goes on to a station.
     let targets = std::mem::take(&mut spec.stations);
+    // The desktop caps are read here and never go on to a station either
+    // (R13 P6 item 18 of decision O12-4).
+    let (desktop_cap, capture_cap, image_byte_cap) = (
+        spec.desktop_cap.take(),
+        spec.capture_cap.take(),
+        spec.image_byte_cap.take(),
+    );
     let mut classes = std::collections::BTreeSet::new();
     for name in &spec.classes {
         let class: GrantClass = serde_json::from_value(serde_json::Value::String(name.clone()))
@@ -260,6 +284,9 @@ pub(super) async fn owner_start(
     grant.classes = classes;
     grant.scope = spec.scope;
     grant.answer_cap = spec.answer_cap;
+    grant.desktop_cap = desktop_cap;
+    grant.capture_cap = capture_cap;
+    grant.image_byte_cap = image_byte_cap;
     grant.start_command_id = Some(command_id.to_string());
     if spec.idle_ttl_ms > 0 {
         grant.idle_ttl_ms = i64::try_from(spec.idle_ttl_ms).unwrap_or(i64::MAX);
@@ -282,6 +309,14 @@ pub(super) async fn owner_start(
             }
             _ => {}
         }
+        // The desktop caps, before the elevation, like the answer cap.
+        crate::store::grants::check_desktop_caps(
+            &grant.classes,
+            grant.desktop_cap,
+            grant.capture_cap,
+            grant.image_byte_cap,
+        )
+        .map_err(|m| invalid(m.to_owned()))?;
         if !is_elevated(board, session, elevation) {
             return Err(ApiError::new(
                 StatusCode::BAD_REQUEST,
@@ -299,6 +334,7 @@ pub(super) async fn owner_start(
                 ));
             }
         }
+        desktop_features(board, station, &grant.classes, &grant.stations)?;
     }
     let g = board.store.create_grant(grant).await.map_err(|e| match e {
         crate::store::DeckError::Invalid(m) => invalid(m),
@@ -339,6 +375,64 @@ pub(super) async fn owner_start(
         text: CONTROL_SKILL.to_owned(),
     };
     Ok(())
+}
+
+/// The features that a `desktop` or `capture` grant needs now (R13 P6 §5.1,
+/// §10): the caller's link has the caller features, and every other station
+/// of the grant has the target features. The caller's own station is a target
+/// only when a call names it, and that call is checked at call time, so a
+/// headless coordinator station stays supported (§2.3). A missing feature or
+/// link is 409 `unsupported`.
+fn desktop_features(
+    board: &Board,
+    caller: &StationId,
+    classes: &std::collections::BTreeSet<GrantClass>,
+    stations: &std::collections::BTreeSet<StationId>,
+) -> Result<(), ApiError> {
+    let capture = classes.contains(&GrantClass::Capture);
+    if !capture && !classes.contains(&GrantClass::Desktop) {
+        return Ok(());
+    }
+    let mut on_caller = vec![
+        feature::COORDINATOR,
+        feature::COORDINATOR_V2,
+        feature::DESKTOP_MCP,
+    ];
+    let mut on_target = vec![
+        feature::COORDINATOR_V2,
+        feature::DESKTOP,
+        feature::DESKTOP_AUTHORITY,
+        feature::DESKTOP_MCP,
+    ];
+    if capture {
+        on_caller.push(feature::CAPTURE_MCP);
+        on_target.extend([
+            feature::DESKTOP_CAPTURE,
+            feature::ARTIFACTS_DELETE,
+            feature::CAPTURE_MCP,
+        ]);
+    }
+    let has_all = |station: &StationId, wanted: &[&str]| {
+        wanted
+            .iter()
+            .all(|f| board.store.link_feature(station, f) == LinkFeature::Negotiated)
+    };
+    let ready = has_all(caller, &on_caller)
+        && stations
+            .iter()
+            .filter(|s| *s != caller)
+            .all(|s| has_all(s, &on_target));
+    if ready {
+        Ok(())
+    } else {
+        Err(ApiError::new(
+            StatusCode::CONFLICT,
+            desktop_code::UNSUPPORTED,
+            desktop_text(desktop_code::UNSUPPORTED)
+                .unwrap_or(desktop_code::UNSUPPORTED)
+                .to_owned(),
+        ))
+    }
 }
 
 fn view_classes(classes: &std::collections::BTreeSet<GrantClass>) -> Vec<String> {

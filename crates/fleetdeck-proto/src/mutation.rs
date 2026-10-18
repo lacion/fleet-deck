@@ -11,6 +11,7 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::command::{CommandEnvelope, Reject, RejectCode, SessionSpec, UserInput, admit};
+use crate::coordinator_desktop_wire::CoordinatorDesktopCallEnvelope;
 use crate::event::ProviderKind;
 use crate::ids::{CommandId, IncarnationId, ProviderInstanceId, RequestId, SessionId, StationId};
 use crate::orchestration::{MailGroup, TaskState};
@@ -122,6 +123,12 @@ pub const ENVELOPES: &[EnvelopeKind] = &[
     EnvelopeKind {
         methods: &["coordinator.call"],
         params: "CoordinatorCallEnvelope",
+        payload: "call",
+        holder: Holder::Deck,
+    },
+    EnvelopeKind {
+        methods: &["coordinator.desktop_call"],
+        params: "CoordinatorDesktopCallEnvelope",
         payload: "call",
         holder: Holder::Deck,
     },
@@ -441,6 +448,10 @@ pub struct AuthorityAnswer {
 #[ts(export_to = "mutation/")]
 pub struct PolicyNow {
     pub caller_session: SessionId,
+    /// The binding that the deck expects (R13 P6 §5.6); `desktop_mcp.v1` only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub binding: Option<CoordinatorBinding>,
 }
 
 /// The answer to [`PolicyNow`].
@@ -452,6 +463,11 @@ pub struct PolicyNowAnswer {
     pub fleet_control: bool,
     /// The caller session still holds its binding.
     pub bound: bool,
+    /// The expected binding equals the current one (R13 P6 §5.6); only with
+    /// a `binding` in the request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub binding_matches: Option<bool>,
 }
 
 /// The binding facts of a coordinator session: the deck checks them
@@ -575,6 +591,7 @@ pub enum Mutation {
     Configure(StationConfigureEnvelope),
     RotateKey(KeyRotationEnvelope),
     Coordinator(CoordinatorCallEnvelope),
+    DesktopCall(CoordinatorDesktopCallEnvelope),
     Shell(ShellEnvelope),
 }
 
@@ -602,6 +619,7 @@ impl Mutation {
             "StationConfigureEnvelope" => Self::Configure(decode(method, params)?),
             "KeyRotationEnvelope" => Self::RotateKey(decode(method, params)?),
             "ShellEnvelope" => Self::Shell(decode(method, params)?),
+            "CoordinatorDesktopCallEnvelope" => Self::DesktopCall(decode(method, params)?),
             _ => Self::Coordinator(decode(method, params)?),
         };
         if parsed.method() != method {
@@ -626,6 +644,7 @@ impl Mutation {
             Self::Configure(_) => "station.configure",
             Self::RotateKey(_) => "link.rotate_key",
             Self::Coordinator(_) => "coordinator.call",
+            Self::DesktopCall(_) => "coordinator.desktop_call",
             Self::Shell(e) => e.change.method(),
         }
     }
@@ -637,6 +656,7 @@ impl Mutation {
             Self::Configure(e) => &e.command_id,
             Self::RotateKey(e) => &e.command_id,
             Self::Coordinator(e) => &e.command_id,
+            Self::DesktopCall(e) => &e.command_id,
             Self::Shell(e) => &e.command_id,
         }
     }
@@ -649,6 +669,7 @@ impl Mutation {
             Self::Configure(e) => (Some(&e.target_incarnation), e.retry_until),
             Self::RotateKey(e) => (Some(&e.target_incarnation), e.retry_until),
             Self::Coordinator(e) => (Some(&e.target_incarnation), e.retry_until),
+            Self::DesktopCall(e) => (Some(&e.target_incarnation), e.retry_until),
             Self::Shell(e) => (Some(&e.target_incarnation), e.retry_until),
         };
         admit(target, retry_until, now, incarnation)
@@ -662,6 +683,7 @@ impl Mutation {
             Self::Configure(e) => serde_json::to_string(&e.change),
             Self::RotateKey(e) => serde_json::to_string(&e.rotation),
             Self::Coordinator(e) => serde_json::to_string(&e.call),
+            Self::DesktopCall(e) => serde_json::to_string(&e.call),
             Self::Shell(e) => serde_json::to_string(&e.change),
         };
         payload.unwrap_or_default()

@@ -757,6 +757,8 @@ pub fn migrations() -> Migrations<'static> {
         M::up(super::desktop_captures::SQL),
         // V33 (R13 P4 task F1): the Omarchy palette of each station.
         M::up(super::station_palettes::SQL),
+        // V34 (R13 P6 task F1): grant caps, coordinator desktop ledger.
+        M::up(super::coordinator_desktop::schema::SQL),
     ])
 }
 

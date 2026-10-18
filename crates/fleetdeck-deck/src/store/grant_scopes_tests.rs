@@ -217,6 +217,13 @@ fn a_grant_is_in_effect_only_while_active_inside_its_lifetime_and_not_idle() {
         scope: fleetdeck_proto::command::GrantScope::Lineage,
         answer_cap: None,
         answer_used: 0,
+        desktop_cap: None,
+        desktop_used: 0,
+        capture_cap: None,
+        capture_used: 0,
+        image_byte_cap: None,
+        image_byte_used: 0,
+        desktop_attempts: 0,
     };
     assert!(in_effect(&base, 10_000));
     assert!(!in_effect(&base, 10_001));

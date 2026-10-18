@@ -425,6 +425,8 @@ impl Desktop {
                 kind: CaptureKind::Screenshot,
                 caller: CaptureCaller::Owner,
                 caller_station: None,
+                caller_session: None,
+                caller_grant_id: None,
                 at,
             },
         };
@@ -503,6 +505,7 @@ impl Desktop {
         };
         DesktopActResult {
             address: None,
+            window_id: None,
             info,
             capture: Some(CaptureResult {
                 capture_id: req.capture_id.clone(),

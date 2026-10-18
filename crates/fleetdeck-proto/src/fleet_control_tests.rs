@@ -28,6 +28,9 @@ fn lineage_spec() -> CoordinatorSpec {
         },
         scope: GrantScope::Lineage,
         answer_cap: None,
+        desktop_cap: None,
+        capture_cap: None,
+        image_byte_cap: None,
         stations: Vec::new(),
     }
 }
@@ -267,6 +270,7 @@ fn the_authority_check_and_policy_types_round_trip_and_reject_unknown_fields() {
     let answer = PolicyNowAnswer {
         fleet_control: true,
         bound: false,
+        binding_matches: None,
     };
     let text = serde_json::to_string(&answer).unwrap();
     assert_eq!(

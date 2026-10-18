@@ -272,6 +272,7 @@ impl Desktop {
         let info = self.fresh_info(&ctx, gate, true).await?;
         Ok(DesktopActResult {
             address,
+            window_id: None,
             info,
             capture: None,
             info_fresh: None,

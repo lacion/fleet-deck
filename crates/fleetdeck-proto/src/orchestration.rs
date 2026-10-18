@@ -386,6 +386,31 @@ pub struct GrantView {
     pub generation: Option<u32>,
     pub expires_at: i64,
     pub last_used_at: Option<i64>,
+    /// R13 P6 §8.1: the desktop action budget. `Some` only for a grant with
+    /// `desktop` or `capture`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub desktop_cap: Option<u32>,
+    /// The desktop actions used; `Some` only with `desktop_cap`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub desktop_used: Option<u32>,
+    /// The screenshot budget of a grant with `capture`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub capture_cap: Option<u32>,
+    /// The screenshots used; `Some` only with `capture_cap`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub capture_used: Option<u32>,
+    /// The image-read byte budget of a grant with `capture`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub image_byte_cap: Option<u64>,
+    /// The image bytes charged; `Some` only with `image_byte_cap`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub image_byte_used: Option<u64>,
 }
 
 #[cfg(test)]

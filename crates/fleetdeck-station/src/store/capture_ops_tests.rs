@@ -47,6 +47,8 @@ fn new_artifact(id: &str, size: u64) -> NewCaptureArtifact {
             kind: CaptureKind::Screenshot,
             caller: CaptureCaller::Owner,
             caller_station: None,
+            caller_session: None,
+            caller_grant_id: None,
             at: 7,
         },
     }

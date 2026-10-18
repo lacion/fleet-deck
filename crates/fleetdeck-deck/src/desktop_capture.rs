@@ -156,6 +156,8 @@ pub fn provenance_of(
         kind: CaptureKind::Screenshot,
         caller: CaptureCaller::Owner,
         caller_station: None,
+        caller_session: None,
+        caller_grant_id: None,
         at: published.version.created_at,
     }
 }
@@ -340,6 +342,7 @@ async fn after_station(
     };
     Ok(Reply::Done(Box::new(DesktopActResult {
         address: None,
+        window_id: None,
         info,
         capture: Some(CaptureResult {
             capture_id: capture_id.to_owned(),
@@ -380,6 +383,7 @@ async fn answer_row(
             };
             Ok(Reply::Done(Box::new(DesktopActResult {
                 address: None,
+                window_id: None,
                 info,
                 capture: Some(CaptureResult {
                     capture_id: id,

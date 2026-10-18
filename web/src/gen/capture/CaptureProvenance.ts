@@ -7,9 +7,18 @@ import type { CaptureKind } from "./CaptureKind";
  */
 export type CaptureProvenance = { capture_id: string, station_id: string, monitor: string, kind: CaptureKind, caller: CaptureCaller, 
 /**
- * Always `null` in P5a.
+ * `null` for an owner capture; the stable ID of the coordinator's
+ * station for a coordinator capture (R13 P6 §4.7). Always serialized.
  */
-caller_station: null, 
+caller_station: string | null, 
+/**
+ * The coordinator session (R13 P6); omitted for an owner capture.
+ */
+caller_session?: string, 
+/**
+ * The grant of the coordinator (R13 P6); omitted for an owner capture.
+ */
+caller_grant_id?: string, 
 /**
  * Station Unix ms at capture start.
  */
