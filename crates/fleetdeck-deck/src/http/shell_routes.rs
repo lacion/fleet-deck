@@ -39,6 +39,7 @@ use serde_json::{Value, json};
 use super::Board;
 use super::guard::ApiError;
 use super::ws::CLOSE_LOGIN_ENDED;
+use crate::board_fence::{self, Ticket};
 use crate::link::streams::DeckStream;
 use crate::store::{AuditResult, NewAudit, Principal, StationRecord};
 
@@ -228,6 +229,7 @@ pub async fn attach(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
     Path((name, shell_id)): Path<(String, String)>,
+    ticket: Option<Extension<Ticket>>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
     owner_only(&principal)?;
@@ -248,25 +250,73 @@ pub async fn attach(
     Ok(ws
         .max_message_size(MAX_INPUT_MESSAGE)
         .max_frame_size(MAX_INPUT_MESSAGE)
-        .on_upgrade(move |socket| relay(board, principal, socket, stream))
+        .on_upgrade(move |socket| {
+            let fence = ticket.map(|Extension(t)| t);
+            relay(board, principal, socket, stream, fence)
+        })
         .into_response())
 }
 
-/// Copies bytes both ways until either side ends or the caller's login
-/// ends.
+/// The close of a socket whose session was signed out (R13 P7 §7.6).
+fn signed_out_close() -> Message {
+    Message::Close(Some(CloseFrame {
+        code: CLOSE_LOGIN_ENDED,
+        reason: fleetdeck_proto::coordinator_desktop_text::code::SIGNED_OUT_FOR_INPUT.into(),
+    }))
+}
+
+/// Returns when the socket is revoked; never for a socket without an entry.
+async fn revoked(ticket: Option<&Ticket>) {
+    match ticket {
+        Some(t) => t.revoked().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Admits the socket (R13 P7 §7.6: before any byte), runs the relay, and
+/// leaves the registry when the relay can no longer forward a byte.
 async fn relay(
     board: Arc<Board>,
     principal: Principal,
     mut socket: WebSocket,
-    mut stream: DeckStream,
+    stream: DeckStream,
+    fence: Option<Ticket>,
 ) {
+    if let Some(t) = &fence
+        && !board_fence::admit_socket(&board.store, t).await
+    {
+        let _ = socket.send(signed_out_close()).await;
+        let _ = stream.handle.close(stream.id).await;
+        board.store.registry().remove(t);
+        return;
+    }
+    copy(&board, &principal, socket, stream, fence.as_ref()).await;
+    if let Some(t) = &fence {
+        board.store.registry().remove(t);
+    }
+}
+
+/// Copies bytes both ways until either side ends or the caller's login
+/// ends. A revoked socket forwards no further frame, either way.
+async fn copy(
+    board: &Board,
+    principal: &Principal,
+    mut socket: WebSocket,
+    mut stream: DeckStream,
+    fence: Option<&Ticket>,
+) {
+    let is_revoked = || fence.is_some_and(Ticket::is_revoked);
     let mut recheck = tokio::time::interval(board.ws_recheck);
     recheck.tick().await;
     loop {
         tokio::select! {
+            () = revoked(fence) => {
+                let _ = socket.send(signed_out_close()).await;
+                break;
+            }
             _ = recheck.tick() => {
                 // A database error counts as an ended login (fail closed).
-                if !board.store.principal_alive(&principal).await.unwrap_or(false) {
+                if !board.store.principal_alive(principal).await.unwrap_or(false) {
                     let _ = socket.send(Message::Close(Some(CloseFrame {
                         code: CLOSE_LOGIN_ENDED,
                         reason: "login ended".into(),
@@ -276,6 +326,10 @@ async fn relay(
             }
             event = stream.events.recv() => match event {
                 Some(DataEvent::Data { bytes, .. }) => {
+                    if is_revoked() {
+                        let _ = socket.send(signed_out_close()).await;
+                        break;
+                    }
                     let n = bytes.len();
                     if socket.send(Message::Binary(bytes.into())).await.is_err() {
                         break;
@@ -290,11 +344,17 @@ async fn relay(
             },
             message = socket.recv() => match message {
                 Some(Ok(Message::Binary(bytes))) => {
+                    if is_revoked() {
+                        break;
+                    }
                     if stream.handle.write(stream.id, bytes.to_vec()).await.is_err() {
                         break;
                     }
                 }
                 Some(Ok(Message::Text(text))) => {
+                    if is_revoked() {
+                        break;
+                    }
                     let bytes = text.as_str().as_bytes().to_vec();
                     if stream.handle.write(stream.id, bytes).await.is_err() {
                         break;

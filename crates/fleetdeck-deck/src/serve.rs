@@ -190,6 +190,17 @@ impl RunningDeck {
         let clock: SharedClock = Arc::new(SystemClock);
         let ids: SharedIds = Arc::new(UlidSource::new(Arc::clone(&clock)));
         let store = DeckStore::open(&dirs.deck_db(), clock, ids).await?;
+        // These two calls need only the store. They run before the link node
+        // and the board server start, so the exposure rows are final before
+        // any board request or station link is accepted (R13 P7 §7.6).
+        // A screenshot row that a crash left before its send is unknown (P5a §6.2).
+        if let Err(e) = store.captures_prepared_to_unknown().await {
+            tracing::warn!(error = %e, "the unsent screenshot rows could not be closed");
+        }
+        // A desktop operation that a crash left unfinished is closed (P6 §7.2).
+        if let Err(e) = store.desktop_ops_recover(store.now_ms()).await {
+            tracing::warn!(error = %e, "the unfinished desktop operations could not be closed");
+        }
         let settings_path = dirs.deck_config();
         let StartOptions {
             overrides,
@@ -197,6 +208,9 @@ impl RunningDeck {
             local_station,
             certificate_check,
         } = options;
+        // The store and `Board.local_station` share one cell: `fleetdeck up`
+        // sets it after the pairing (R13 P7 §7.6, the local station).
+        store.share_local_station(Arc::clone(&local_station));
         let deck_settings = crate::http::settings_routes::DeckSettings {
             writer: Arc::new(SettingsWriter::<DeckHolder>::new(
                 &settings_path,
@@ -472,14 +486,6 @@ impl RunningDeck {
         );
         let artifact_deletions =
             crate::artifact_deletions::spawn(store.clone(), Arc::clone(node.link()), rx.clone());
-        // A screenshot row that a crash left before its send is unknown (P5a §6.2).
-        if let Err(e) = store.captures_prepared_to_unknown().await {
-            tracing::warn!(error = %e, "the unsent screenshot rows could not be closed");
-        }
-        // A desktop operation that a crash left unfinished is closed (P6 §7.2).
-        if let Err(e) = store.desktop_ops_recover(store.now_ms()).await {
-            tracing::warn!(error = %e, "the unfinished desktop operations could not be closed");
-        }
         let desktop_captures =
             crate::desktop_capture::spawn(store.clone(), Arc::clone(node.link()), rx.clone());
         let scheduler = crate::scheduler::spawn(store.clone(), Arc::clone(node.link()), rx);

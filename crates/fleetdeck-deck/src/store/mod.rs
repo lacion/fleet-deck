@@ -22,6 +22,7 @@ pub mod artifacts;
 mod assist;
 pub mod audit;
 pub mod auth;
+pub mod board_fence;
 pub mod branch_map;
 pub mod chat;
 pub mod commands;
@@ -264,6 +265,9 @@ struct Inner {
     /// The last snapshot that each station applied, in this deck process
     /// (the wake rule reads it, R13 §5E item 6).
     snapshot_marks: Mutex<BTreeMap<StationId, SnapshotMark>>,
+    /// The board sign-out on the target machine (R13 P7 §7.6): the socket
+    /// registry, the cache of the exposed addresses and the local station.
+    fence: crate::board_fence::FenceState,
 }
 
 /// The last snapshot batch that the read model applied for a station: the
@@ -391,6 +395,7 @@ impl DeckStore {
                 scope_dirty: Mutex::default(),
                 scope_changes: watch::channel(0).0,
                 snapshot_marks: Mutex::default(),
+                fence: crate::board_fence::FenceState::default(),
             }),
         };
         // Deck start (grant stations design §2.3 item 8): end every stale

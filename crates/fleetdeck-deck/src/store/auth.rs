@@ -296,11 +296,25 @@ impl DeckStore {
         .await
     }
 
-    /// Starts a login session.
+    /// Starts a login session that has no recorded address.
     ///
     /// # Errors
     /// A database error.
     pub async fn create_login(&self, method: LoginMethod) -> Result<NewLogin> {
+        self.create_login_at(method, None).await
+    }
+
+    /// Starts a login session and records the canonical address of the
+    /// sign-in request (`last_addr` and `last_addr_seen_at`, R13 P7 §7.6).
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn create_login_at(
+        &self,
+        method: LoginMethod,
+        addr: Option<&str>,
+    ) -> Result<NewLogin> {
+        let addr = addr.map(str::to_owned);
         let cookie = random_hex()?;
         let csrf = random_hex()?;
         let hash = secret_hash(&cookie);
@@ -314,9 +328,10 @@ impl DeckStore {
             )?;
             conn.execute(
                 "INSERT INTO login_sessions
-                 (session_hash, csrf_token, method, created_at, last_seen, expires_at)
-                 VALUES (?1, ?2, ?3, ?4, ?4, ?5)",
-                params![hash, stored, method.as_str(), now, expires_at],
+                 (session_hash, csrf_token, method, created_at, last_seen, expires_at,
+                  last_addr, last_addr_seen_at)
+                 VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, CASE WHEN ?6 IS NULL THEN NULL ELSE ?4 END)",
+                params![hash, stored, method.as_str(), now, expires_at, addr],
             )?;
             Ok(())
         })

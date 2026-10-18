@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use super::Board;
 use super::admission::{Attempt, FlowLimiter, PeerAddr, busy, request_source, too_many_attempts};
 use super::guard::{ApiError, COOKIE, DISPLAY_COOKIE, owner_only};
+use crate::board_fence;
 use crate::local_auth::login_url;
 use crate::store::auth::{LOGIN_LINK_TTL_MS, SESSION_MAX_MS};
 use crate::store::{
@@ -145,6 +146,7 @@ async fn login(
     method: LoginMethod,
     attempt: Attempt,
     valid: Result<bool, ApiError>,
+    addr: Option<String>,
 ) -> Response {
     let now = board.store.now_ms();
     let refused = |detail: &str| {
@@ -155,7 +157,7 @@ async fn login(
     match valid {
         Ok(true) => {
             attempt.succeeded();
-            match board.store.create_login(method).await {
+            match board.store.create_login_at(method, addr.as_deref()).await {
                 Ok(login) => {
                     board
                         .store
@@ -263,6 +265,11 @@ pub async fn password(
     Json(body): Json<PasswordLogin>,
 ) -> Response {
     const AUDIT: Audit = ("auth.login", "password");
+    let peer_ip = board_fence::peer_ip(&peer);
+    if let Err(e) = board_fence::sign_in_check(&board.store, peer_ip).await {
+        return e.into_response();
+    }
+    let addr = peer_ip.map(board_fence::addr::canonical);
     let ip = request_source(peer);
     let attempt = match start_attempt(&board, &board.limiter.password, ip, AUDIT, "anonymous").await
     {
@@ -271,7 +278,15 @@ pub async fn password(
     };
     match verify_password(&board, attempt, AUDIT, "anonymous", body.password).await {
         Ok((attempt, valid)) => {
-            login(&board, AUDIT, LoginMethod::Password, attempt, Ok(valid)).await
+            login(
+                &board,
+                AUDIT,
+                LoginMethod::Password,
+                attempt,
+                Ok(valid),
+                addr,
+            )
+            .await
         }
         Err(e) => e.into_response(),
     }
@@ -284,6 +299,11 @@ pub async fn link(
     Json(body): Json<LinkLogin>,
 ) -> Response {
     const AUDIT: Audit = ("auth.link", "login_link");
+    let peer_ip = board_fence::peer_ip(&peer);
+    if let Err(e) = board_fence::sign_in_check(&board.store, peer_ip).await {
+        return e.into_response();
+    }
+    let addr = peer_ip.map(board_fence::addr::canonical);
     let ip = request_source(peer);
     let attempt =
         match start_attempt(&board, &board.limiter.login_link, ip, AUDIT, "anonymous").await {
@@ -295,7 +315,7 @@ pub async fn link(
         .redeem_login_link(&Secret::new(body.token))
         .await
         .map_err(ApiError::internal);
-    login(&board, AUDIT, LoginMethod::Link, attempt, valid).await
+    login(&board, AUDIT, LoginMethod::Link, attempt, valid, addr).await
 }
 
 /// What a member's share covers, for the session view and the join answer.
@@ -358,6 +378,11 @@ pub async fn join(
 ) -> Response {
     const ACTION: &str = "auth.join";
     const AUDIT: Audit = (ACTION, "member_join");
+    let peer_ip = board_fence::peer_ip(&peer);
+    if let Err(e) = board_fence::sign_in_check(&board.store, peer_ip).await {
+        return e.into_response();
+    }
+    let addr = peer_ip.map(board_fence::addr::canonical);
     let ip = request_source(peer);
     let attempt =
         match start_attempt(&board, &board.limiter.member_join, ip, AUDIT, "anonymous").await {
@@ -366,7 +391,11 @@ pub async fn join(
         };
     let joined = board
         .store
-        .join(&Secret::new(body.token), &body.display_name)
+        .join_at(
+            &Secret::new(body.token),
+            &body.display_name,
+            addr.as_deref(),
+        )
         .await;
     match joined {
         Ok(Some(login)) => {
@@ -435,9 +464,11 @@ pub async fn join(
 /// the audit row.
 ///
 /// # Errors
-/// 403 `owner_only`; 429 `too_many_requests`; 500 `internal`.
+/// 403 `owner_only`, `sign_in_blocked_for_input` (R13 P7 §7.6); 429
+/// `too_many_requests`; 500 `internal`.
 pub async fn device_link(
     State(board): State<Arc<Board>>,
+    peer: Option<Extension<PeerAddr>>,
     Extension(principal): Extension<Principal>,
 ) -> Result<Json<DeviceLink>, ApiError> {
     const ACTION: &str = "auth.device_link";
@@ -450,6 +481,7 @@ pub async fn device_link(
             .await;
         return Err(e);
     }
+    board_fence::sign_in_check(&board.store, board_fence::peer_ip(&peer)).await?;
     let now = board.store.now_ms();
     if !board.device_links.reserve(now) {
         return Err(ApiError::new(
