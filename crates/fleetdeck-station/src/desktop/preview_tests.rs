@@ -567,3 +567,141 @@ async fn an_owner_preview_has_one_start_check_and_no_second_one() {
     rig.desktop.act(&on, action, admitted).await.unwrap();
     assert_eq!(rig.calls_of("chromium").len(), 1);
 }
+
+/// Answers `Ok` until the check number `fail_from` (counted from 0), then
+/// `authority_lost`. At each check it records the state of the fake
+/// compositor: the `clients` reads, the `closewindow` and the
+/// `movetoworkspacesilent` writes that happened before.
+struct Marks {
+    fail_from: usize,
+    calls: std::sync::atomic::AtomicUsize,
+    seen: std::sync::Mutex<Vec<(usize, usize, usize)>>,
+    dir: std::path::PathBuf,
+}
+
+#[async_trait::async_trait]
+impl super::coordinator::DispatchCheck for Marks {
+    async fn check(
+        &self,
+        _phase: fleetdeck_proto::coordinator_desktop_wire::AuthorityPhase,
+        _read: Option<&fleetdeck_proto::coordinator_desktop_wire::ProtectedRead>,
+    ) -> Result<(), Fail> {
+        let count = |log: &str, word: &str| {
+            std::fs::read_to_string(self.dir.join(log))
+                .unwrap_or_default()
+                .lines()
+                .filter(|l| *l == word)
+                .count()
+        };
+        self.seen.lock().unwrap().push((
+            count("reads.log", "clients"),
+            count("calls.log", "closewindow"),
+            count("calls.log", "movetoworkspacesilent"),
+        ));
+        if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < self.fail_from {
+            Ok(())
+        } else {
+            Err(super::coordinator::lost())
+        }
+    }
+}
+
+fn marks(rig: &Rig, fail_from: usize) -> std::sync::Arc<Marks> {
+    std::sync::Arc::new(Marks {
+        fail_from,
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        seen: std::sync::Mutex::new(Vec::new()),
+        dir: rig.dir.path().to_owned(),
+    })
+}
+
+async fn close_with(
+    rig: &Rig,
+    h: &Harness,
+    n: u64,
+    handle: &str,
+    check: std::sync::Arc<Marks>,
+) -> Result<DesktopActResult, Fail> {
+    let action = A::PreviewClose {
+        window_id: handle.to_owned(),
+    };
+    let admitted = coordinated(h, &action, n, &ctx(), check, open_gates(), extras());
+    rig.desktop.act(&on, action, admitted).await
+}
+
+#[tokio::test]
+async fn a_withdrawn_authority_after_the_client_lookup_closes_no_window() {
+    let rig = Rig::new(Opts::default());
+    let h = Harness::new();
+    let handle = open(&rig, &h, 1, &ctx(), "http://localhost:3000/")
+        .await
+        .unwrap()
+        .window_id
+        .unwrap();
+    let check = marks(&rig, 1);
+    let e = close_with(&rig, &h, 2, &handle, check.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(act_err(e).0, "authority_lost");
+    assert_eq!(closes(&rig), 0);
+    let seen = check.seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 2);
+    // The second check is after the `clients` lookup, before any write.
+    assert_eq!(seen[1].0, seen[0].0 + 1);
+    assert_eq!((seen[0].1, seen[1].1), (0, 0));
+    // The preview stays open and registered.
+    assert!(rig.desktop.events.preview(&handle).is_some());
+}
+
+#[tokio::test]
+async fn the_close_order_is_lookup_then_check_then_closewindow() {
+    let rig = Rig::new(Opts::default());
+    let h = Harness::new();
+    let handle = open(&rig, &h, 1, &ctx(), "http://localhost:3000/")
+        .await
+        .unwrap()
+        .window_id
+        .unwrap();
+    let check = marks(&rig, usize::MAX);
+    close_with(&rig, &h, 2, &handle, check.clone())
+        .await
+        .unwrap();
+    let seen = check.seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[1].0, seen[0].0 + 1, "the lookup is before the check");
+    assert_eq!(seen[1].1, 0, "the check is before closewindow");
+    assert_eq!(closes(&rig), 1);
+}
+
+#[tokio::test]
+async fn a_withdrawn_authority_before_the_move_leaves_the_opened_window() {
+    let rig = Rig::new(Opts::default());
+    let h = Harness::new();
+    let action = A::BrowserOpen {
+        url: "http://localhost:3000/".to_owned(),
+        monitor: Some("HDMI-A-1".to_owned()),
+        session: None,
+    };
+    // The checks: the start, the spawn, then the move to the workspace.
+    let check = marks(&rig, 2);
+    let admitted = coordinated(
+        &h,
+        &action,
+        1,
+        &ctx(),
+        check.clone(),
+        open_gates(),
+        extras(),
+    );
+    let e = rig.desktop.act(&on, action, admitted).await.unwrap_err();
+    assert_eq!(act_err(e).0, "authority_lost");
+    assert_eq!(check.seen.lock().unwrap().len(), 3);
+    // The browser runs, nothing moved it and nothing closed it.
+    assert_eq!(rig.calls_of("chromium").len(), 1);
+    assert_eq!(closes(&rig), 0);
+    assert!(
+        rig.calls_of("hyprctl")
+            .iter()
+            .all(|c| !c.args.iter().any(|a| a == "movetoworkspacesilent"))
+    );
+}

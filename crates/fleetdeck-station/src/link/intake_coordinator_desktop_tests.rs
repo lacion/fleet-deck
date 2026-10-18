@@ -724,3 +724,32 @@ async fn the_cap_is_716800_bytes_and_one_byte_more_is_too_large() {
     let e = t.rd(&s, file_read(&over, 1, 0, cap)).await.unwrap_err();
     assert_eq!(e.code, "invalid_params");
 }
+
+#[tokio::test]
+async fn a_monitor_that_leaves_the_allowlist_during_the_check_releases_no_data() {
+    let t = setup().await;
+    let bytes = vec![5_u8; 64];
+    let artifact = t.commit(CAPTURE, true, &bytes).await;
+    for read in [file_read(&artifact, 1, 0, 64), capture_read(CAPTURE)] {
+        // The monitor is allowed when the work runs; the owner narrows the
+        // list while the authority check is blocked.
+        let s = Settings::new();
+        s.set(|l| l.monitors = vec!["DP-1".to_owned()]);
+        let shared = Arc::clone(&s.0);
+        let check = Check::new(Ok(()), move || {
+            shared.lock().unwrap().monitors = vec!["HDMI-A-1".to_owned()];
+        });
+        let e = t.read_with_check(&s, &*check, read).await.unwrap_err();
+        assert_eq!(
+            pair(&e),
+            ("forbidden", "This monitor is not allowed for screenshots.")
+        );
+    }
+    // An empty list allows every monitor; a list with the monitor too.
+    for monitors in [vec![], vec!["DP-1".to_owned()]] {
+        let s = Settings::new();
+        s.set(|l| l.monitors = monitors);
+        assert!(t.rd(&s, file_read(&artifact, 1, 0, 64)).await.is_ok());
+        assert!(t.rd(&s, capture_read(CAPTURE)).await.is_ok());
+    }
+}

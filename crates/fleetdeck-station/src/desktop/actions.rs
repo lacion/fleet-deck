@@ -429,6 +429,8 @@ impl Cx<'_> {
             })
             .await?;
         if let Some(workspace) = target {
+            // A refusal leaves the opened window: it is visible already (§6.4).
+            self.recheck_write().await?;
             let moved = self
                 .dispatch(&[
                     "movetoworkspacesilent",
@@ -703,8 +705,23 @@ impl Cx<'_> {
             self.events.forget(&record.address);
             return Err(Fail::new(code::NOT_FOUND, "The window is gone."));
         }
+        // A coordinator close checks the authority again at the write itself
+        // (§6.3): no other await between this check and the dispatch.
+        self.recheck_write().await?;
         self.dispatch(&["closewindow", &format!("address:{}", record.address)])
             .await
+    }
+
+    /// The check right before a compositor write of a coordinator action
+    /// (§6.3). An owner or wall action has no coordinator context and runs
+    /// no check here.
+    async fn recheck_write(&self) -> Result<(), Fail> {
+        if self.start.coordinator().is_some() {
+            self.start
+                .check_phase(AuthorityPhase::Execute, self.env)
+                .await?;
+        }
+        Ok(())
     }
 }
 

@@ -23,7 +23,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 use tokio::task::JoinSet;
 
 use super::bindings::{Auth, Binding, Bindings, Caller};
-use super::desktop_forward::{DesktopRequest, McpToolResult, p6_error};
+use super::desktop_forward::{DesktopRequest, McpToolResult, Rechecked, p6_error};
 use super::jsonrpc::{self, Answer};
 
 /// The deck side of a tool call: the station forwards an authorized call
@@ -146,10 +146,16 @@ pub(super) async fn answer_message(
     if msg.is_array() {
         return MessageOutcome::Batch;
     }
+    // A P6 result reaches the agent only after the caller policy and the
+    // binding are checked again (R13 P6 §4.9).
+    let forward = Rechecked {
+        inner: shared.forward.as_ref(),
+        bindings: &shared.bindings,
+    };
     match jsonrpc::answer(
         msg,
         binding,
-        shared.forward.as_ref(),
+        &forward,
         shared.fleet.as_deref(),
         shared.bindings.fleet_control(),
     )
