@@ -7,6 +7,7 @@ import type { DesktopActions, DisplayActions } from '../displays/actions';
 import type { CaptureActions } from '../desktop/capture';
 import type { TailnetActions } from '../tailnet/api';
 import type { SettingsActions } from './actions';
+import type { OmarchyActions } from './omarchy';
 
 export type SettingsEnv = {
   readonly settings: SettingsActions;
@@ -18,6 +19,8 @@ export type SettingsEnv = {
   /** The owner screenshot and the artifact deletion (R13 P5a). */
   readonly capture: CaptureActions;
   readonly deletion: DeleteActions;
+  /** The Omarchy card of a station tab (Omarchy admin task D); absent in tests that need none. */
+  readonly omarchy?: OmarchyActions;
 };
 
 const Context = createContext<SettingsEnv | undefined>(undefined);
