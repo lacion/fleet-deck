@@ -10,6 +10,7 @@ pub mod activity_routes;
 pub mod admission;
 pub mod archive_routes;
 pub mod artifact_delete;
+mod artifact_projection;
 pub mod artifact_routes;
 mod artifact_share_check;
 pub mod assets;

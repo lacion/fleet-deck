@@ -29,10 +29,10 @@ use fleetdeck_proto::link::Scope;
 use fleetdeck_proto::recording::{
     ActiveRecording, RecordingCaptureStatus, project_legacy, valid_seconds,
 };
-use fleetdeck_proto::version::feature;
 use serde::Deserialize;
 
 use super::Board;
+use super::artifact_projection::video_aware;
 use super::desktop_capture_routes::{header_id_or, invalid_id};
 use super::desktop_routes::{ctx, refused, relay_error, station_id};
 use super::guard::{ApiError, owner_only};
@@ -41,9 +41,6 @@ use crate::desktop_capture::recording::{self, RecordOptions, RecordingError};
 use crate::desktop_relay::RelayError;
 use crate::store::Principal;
 use crate::store::desktop_recordings::RecordingRow;
-
-/// The header with which a board declares the features it understands.
-pub const FEATURES_HEADER: &str = "X-FleetDeck-Features";
 
 /// The largest body of the stop route: `{}`.
 const MAX_STOP_BODY: usize = 1024;
@@ -61,18 +58,6 @@ pub fn routes() -> Router<Arc<Board>> {
 fn recording_error(e: RecordingError) -> ApiError {
     let (status, code, text) = e.http();
     ApiError::new(status, code, text)
-}
-
-/// True when the request declares `artifacts_video.v1` (a comma or space
-/// separated token list; the other tokens do not matter).
-#[must_use]
-pub fn video_aware(headers: &HeaderMap) -> bool {
-    headers
-        .get_all(FEATURES_HEADER)
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .flat_map(|v| v.split([',', ' ', '\t']))
-        .any(|token| token == feature::ARTIFACTS_VIDEO)
 }
 
 /// The legacy projection of the artifact of a status (§14.6-§14.9).
@@ -251,37 +236,7 @@ async fn stop(
 
 #[cfg(test)]
 mod tests {
-    use axum::http::HeaderValue;
-
     use super::*;
-
-    fn with(values: &[&str]) -> HeaderMap {
-        let mut h = HeaderMap::new();
-        for v in values {
-            h.append(FEATURES_HEADER, HeaderValue::from_str(v).unwrap());
-        }
-        h
-    }
-
-    #[test]
-    fn only_the_token_artifacts_video_declares_the_video_feature() {
-        assert!(video_aware(&with(&["artifacts_video.v1"])));
-        assert!(video_aware(&with(&[
-            "desktop_capture.v1, artifacts_video.v1"
-        ])));
-        assert!(video_aware(&with(&["a.v1 artifacts_video.v1 b.v1"])));
-        assert!(video_aware(&with(&["a.v1", "artifacts_video.v1"])));
-        for none in [
-            vec![],
-            vec![""],
-            vec!["artifacts_video"],
-            vec!["artifacts_video.v2"],
-            vec!["xartifacts_video.v1"],
-            vec!["desktop_recording.v1"],
-        ] {
-            assert!(!video_aware(&with(&none)), "{none:?}");
-        }
-    }
 
     #[test]
     fn the_duration_is_a_whole_number_from_1_to_120() {

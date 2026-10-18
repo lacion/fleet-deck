@@ -9,6 +9,11 @@
 //! its cursor is older than the retained history or ahead of the head, and
 //! for `session.snapshot`.
 //!
+//! A link without `artifacts_video.v1` gets each `artifact.published` event
+//! with kind `video` as `other` (R13 P5b, design `omarchy-p5b.md` §14,
+//! O12-15). The projection happens at send time on the copy that the pump
+//! holds; the stored event never changes.
+//!
 //! [`Stream::delivered`] is the highest `station_seq` sent on this link (an
 //! event or a snapshot watermark). An `ack` above it is a protocol error.
 
@@ -17,10 +22,13 @@ use std::sync::{Arc, OnceLock};
 
 use fleetdeck_link::control::Control;
 use fleetdeck_link::methods::code;
-use fleetdeck_proto::IncarnationId;
+use fleetdeck_proto::artifacts::ArtifactKind;
+use fleetdeck_proto::event::{Event, EventBody};
 use fleetdeck_proto::link::{
     ControlFrame, Outcome, SessionSnapshot, StreamMode, StreamStart, WireError,
 };
+use fleetdeck_proto::version::feature;
+use fleetdeck_proto::{EventEnvelope, IncarnationId};
 use tokio::task::JoinHandle;
 
 use super::ready::ReadyHandle;
@@ -42,6 +50,16 @@ pub enum Start {
     },
     /// The deck asked for a snapshot.
     Snapshot,
+}
+
+/// The legacy shape of an event for a link without `artifacts_video.v1`: the
+/// kind `video` of an `artifact.published` event becomes `other`.
+fn project_legacy_event(envelope: &mut EventEnvelope) {
+    if let EventBody::Known(Event::ArtifactPublished { artifact_kind, .. }) = &mut envelope.event
+        && *artifact_kind == ArtifactKind::Video
+    {
+        *artifact_kind = ArtifactKind::Other;
+    }
 }
 
 /// The stream pump of one link. Dropping it stops the pump.
@@ -258,8 +276,16 @@ impl Pump {
         events: Vec<fleetdeck_proto::EventEnvelope>,
     ) -> Result<u64, PumpError> {
         let incarnation = self.incarnation();
-        for envelope in events {
+        let video = self
+            .control
+            .params()
+            .negotiated
+            .has(feature::ARTIFACTS_VIDEO);
+        for mut envelope in events {
             let seq = envelope.station_seq;
+            if !video {
+                project_legacy_event(&mut envelope);
+            }
             self.control
                 .send(ControlFrame::Event {
                     incarnation: incarnation.clone(),
