@@ -109,4 +109,80 @@ describe('captureActions', () => {
     const down = make(() => json({ error: 'owner_only', message: 'no' }, 403));
     await expect(down.actions.features()).rejects.toBeInstanceOf(DeckError);
   });
+
+  test('record posts screen_record with the seconds and the ID header, with the time limit', async () => {
+    const { io, seen } = http(() =>
+      json({ address: null, info: { monitors: [] }, capture: { capture_id: 'C1', published } }),
+    );
+    const limits: number[] = [];
+    const actions = captureActions(io, io, (ms) => {
+      limits.push(ms);
+      return io;
+    });
+    const r = await actions.record('my station', 'DP-1', 30, 'C1');
+    expect(r.kind).toBe('done');
+    expect(limits).toEqual([75_000]);
+    expect(seen[0]?.url).toBe('/api/stations/my%20station/desktop/act');
+    expect(JSON.parse(String(seen[0]?.init.body))).toEqual({
+      action: 'screen_record',
+      monitor: 'DP-1',
+      seconds: 30,
+    });
+    const headers = (seen[0]?.init.headers ?? {}) as Record<string, string>;
+    expect(headers[CAPTURE_ID_HEADER]).toBe('C1');
+  });
+
+  test('record without a transport for the time limit uses the capture transport', async () => {
+    const { actions, seen } = make(() => json({ capture_id: 'C1', state: 'pending' }, 202));
+    expect(await actions.record('s', 'DP-1', 5, 'C1')).toEqual({
+      kind: 'pending',
+      captureId: 'C1',
+    });
+    expect(seen.length).toBe(1);
+  });
+
+  test('status keeps a valid recording progress and drops an invalid one', async () => {
+    const good = make(() =>
+      json({
+        state: 'pending',
+        capture_id: 'C1',
+        recording: { phase: 'recording', requested_seconds: 30, started_at: 1, elapsed_ms: 2 },
+      }),
+    );
+    const s = await good.actions.status('s', 'C1');
+    expect(s.recording?.phase).toBe('recording');
+    const bad = make(() =>
+      json({ state: 'pending', capture_id: 'C1', recording: { phase: 'dancing' } }),
+    );
+    expect((await bad.actions.status('s', 'C1')).recording).toBeUndefined();
+  });
+
+  test('active reads idle and active, and rejects another body', async () => {
+    const idle = make(() => json({ state: 'idle' }));
+    expect(await idle.actions.active('my station')).toEqual({ state: 'idle' });
+    expect(idle.seen[0]?.url).toBe('/api/stations/my%20station/desktop/recording');
+    expect(idle.seen[0]?.init.method).toBe('GET');
+    const live = make(() =>
+      json({
+        state: 'active',
+        capture_id: 'C1',
+        status: { state: 'pending', capture_id: 'C1' },
+      }),
+    );
+    const a = await live.actions.active('s');
+    expect(a.state === 'active' && a.capture_id).toBe('C1');
+    const bad = make(() => json({ state: 'active' }));
+    await expect(bad.actions.active('s')).rejects.toThrow('invalid');
+  });
+
+  test('stop posts an empty object to the stop route of the capture', async () => {
+    const { actions, seen } = make(() =>
+      json({ state: 'failed', capture_id: 'C1', error: 'e', message: 'm' }),
+    );
+    const s = await actions.stop('my station', 'C 1');
+    expect(s.state).toBe('failed');
+    expect(seen[0]?.url).toBe('/api/stations/my%20station/desktop/captures/C%201/stop');
+    expect(seen[0]?.init.method).toBe('POST');
+    expect(JSON.parse(String(seen[0]?.init.body))).toEqual({});
+  });
 });

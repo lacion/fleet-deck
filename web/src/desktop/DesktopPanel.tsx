@@ -9,6 +9,7 @@ import { useSettings } from '../settings/context';
 import { describe } from '../settings/http';
 import { useCapture } from './CapturePanel';
 import { LinkForm, NotifyForm, type Run, WallOpenForm, WorkspaceForm } from './DesktopForms';
+import { useRecording } from './RecordPanel';
 
 type Confirm = { readonly text: string; readonly body: DesktopActBody; readonly done: string };
 
@@ -28,6 +29,7 @@ export function DesktopPanel({ station }: { readonly station: StationView }) {
   const [address, setAddress] = useState<string | null>(null);
   const shown = info ?? desktop;
   const capture = useCapture(station, shown, busy);
+  const record = useRecording(station, shown, busy, capture.deck);
   if (env === undefined) return null;
   if (shown === undefined) {
     return station.info === null ? null : (
@@ -105,7 +107,7 @@ export function DesktopPanel({ station }: { readonly station: StationView }) {
               {m.refresh_hz} Hz{m.focused ? ' · focused' : ''} · {screenText(m.dpms_on)}
             </span>
             <span className="fd-desk-buttons">
-              {capture.button(m.name)}
+              {capture.button(m.name, record.active)}
               <button
                 type="button"
                 className="fd-ghost fd-sm"
@@ -131,11 +133,14 @@ export function DesktopPanel({ station }: { readonly station: StationView }) {
                 Screen off
               </button>
             </span>
+            {record.controls(m.name, capture.active)}
           </li>
         ))}
       </ul>
       {capture.reason === null ? null : <p className="fd-note">{capture.reason}</p>}
+      {record.reason === null ? null : <p className="fd-note">{record.reason}</p>}
       {capture.block}
+      {record.block}
       <div className="fd-desk-buttons">
         <button
           type="button"

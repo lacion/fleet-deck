@@ -16,6 +16,7 @@ import {
   UNKNOWN_TEXT,
   WAITING_TEXT,
 } from './flow';
+import { startOff } from './recording';
 
 export const FEATURE = 'desktop_capture.v1';
 /** The board waits this long for the image (§7.1). */
@@ -189,7 +190,12 @@ const storageOrNull = (): Storage | null => {
 };
 
 export type CaptureUi = {
-  readonly button: (monitorName: string) => ReactNode;
+  /** `slotActive`: a recording runs on the station; Screenshot is off meanwhile (shared busy state). */
+  readonly button: (monitorName: string, slotActive?: boolean) => ReactNode;
+  /** A screenshot runs on the station. */
+  readonly active: boolean;
+  /** The `/api/features` list of the deck: `undefined` while it loads, `null` for an old deck. */
+  readonly deck: readonly string[] | null | undefined;
   readonly reason: string | null;
   readonly block: ReactNode;
 };
@@ -248,11 +254,17 @@ export function useCapture(
       ? null
       : (info.monitors.map((m) => reasonOf(m.name).reason).find((r) => r !== null) ?? null);
   return {
-    button: (monitorName) => (
+    active,
+    deck,
+    button: (monitorName, slotActive = false) => (
       <button
         type="button"
         className="fd-ghost fd-sm"
-        disabled={busy || flow === null || !reasonOf(monitorName).enabled}
+        disabled={startOff({
+          busy: busy || flow === null,
+          slotActive,
+          enabled: reasonOf(monitorName).enabled,
+        })}
         onClick={() => void flow?.start(monitorName)}
       >
         Screenshot
