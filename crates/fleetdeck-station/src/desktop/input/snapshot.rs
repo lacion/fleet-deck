@@ -189,15 +189,25 @@ fn layer_of(v: &Value) -> Option<Rect> {
     })
 }
 
-/// The layer surfaces of `hyprctl -j layers`: `{monitor: {levels: {n:
-/// [surface…]}}}`. `None` when any part is malformed.
+/// The layer levels above normal windows (`top` 2 and `overlay` 3). The
+/// `background` 0 and `bottom` 1 levels lie below every window: a wallpaper
+/// covers the whole monitor there and never takes the pointer from a preview.
+const ABOVE_WINDOWS: [&str; 2] = ["2", "3"];
+
+/// The layer surfaces above windows of `hyprctl -j layers`: `{monitor:
+/// {levels: {n: [surface…]}}}`. Every level is checked for its form; only the
+/// `top` and `overlay` surfaces are returned. `None` when any part is
+/// malformed.
 pub(crate) fn parse_layers(out: &str) -> Option<Vec<Rect>> {
     let root: Value = serde_json::from_str(out).ok()?;
     let mut rects = Vec::new();
     for monitor in root.as_object()?.values() {
-        for level in monitor.get("levels")?.as_object()?.values() {
-            for surface in level.as_array()? {
-                rects.push(layer_of(surface)?);
+        for (level, surfaces) in monitor.get("levels")?.as_object()? {
+            for surface in surfaces.as_array()? {
+                let rect = layer_of(surface)?;
+                if ABOVE_WINDOWS.contains(&level.as_str()) {
+                    rects.push(rect);
+                }
             }
         }
     }

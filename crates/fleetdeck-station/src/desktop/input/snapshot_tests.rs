@@ -161,12 +161,15 @@ fn a_monitor_that_is_not_readable_fails_the_whole_list() {
 }
 
 #[test]
-fn layers_are_read_from_every_level_and_malformed_data_fails() {
+fn only_top_and_overlay_layers_count_and_malformed_data_fails() {
+    // A wallpaper on the background level covers the whole monitor; it lies
+    // below every window and must not refuse a pointer point in a preview.
     let layers = json!({
         "DP-1": {"levels": {
-            "0": [{"address": "0x1", "x": 0, "y": 0, "w": 100, "h": 20, "namespace": "bar"}],
-            "1": [],
-            "2": [{"x": 5, "y": 5, "w": 1, "h": 1}]
+            "0": [{"address": "0x1", "x": 0, "y": 0, "w": 3840, "h": 2160, "namespace": "wallpaper"}],
+            "1": [{"x": 0, "y": 0, "w": 3840, "h": 2160}],
+            "2": [{"x": 5, "y": 5, "w": 1, "h": 1}],
+            "3": [{"x": 9, "y": 9, "w": 2, "h": 2}]
         }},
         "HDMI-A-1": {"levels": {"0": []}}
     });
