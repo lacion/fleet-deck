@@ -154,3 +154,54 @@ fn omarchy_screensaver_uninstall_keeps_a_file_that_the_user_changed() {
     );
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "mine now\n");
 }
+
+#[test]
+fn omarchy_screensaver_reinstall_keeps_an_edit_that_an_old_backup_would_lose() {
+    let rig = Rig::new();
+    let branding = rig.omarchy_dir().join("branding");
+    std::fs::create_dir_all(&branding).unwrap();
+    let file = branding.join("screensaver.txt");
+    let backup = branding.join("screensaver.txt.fleetdeck-backup");
+    std::fs::write(&file, "original\n").unwrap();
+    let o = rig.run(&["omarchy", "install", "--yes", "--screensaver"]);
+    assert_eq!(o.status.code(), Some(0), "{}{}", out(&o), err(&o));
+    fake_station(&rig);
+    let mut job = rig
+        .command(&["desktop", "screensaver-run"])
+        .spawn()
+        .unwrap();
+    let started = Instant::now();
+    while rig.record()["screensaver"]["last_written_sha256"].is_null() {
+        assert!(started.elapsed() < Duration::from_secs(20), "no write");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    job.kill().unwrap();
+    job.wait().unwrap();
+    assert_eq!(std::fs::read_to_string(&backup).unwrap(), "original\n");
+
+    // The user edits the file; uninstall keeps the edit and the backup.
+    std::fs::write(&file, "mine now\n").unwrap();
+    let o = rig.run(&["omarchy", "uninstall"]);
+    assert_eq!(o.status.code(), Some(0), "{}{}", out(&o), err(&o));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "mine now\n");
+    assert_eq!(std::fs::read_to_string(&backup).unwrap(), "original\n");
+
+    // A new install with the switch on: the job must not overwrite the edit.
+    let o = rig.run(&["omarchy", "install", "--yes", "--screensaver"]);
+    assert_eq!(o.status.code(), Some(0), "{}{}", out(&o), err(&o));
+    let o = rig
+        .command(&["desktop", "screensaver-run"])
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(0), "{}{}", out(&o), err(&o));
+    assert!(
+        err(&o).contains(
+            "fleetdeck: an old screensaver backup exists and differs from the current file; \
+             the screensaver stays off."
+        ),
+        "{}",
+        err(&o)
+    );
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "mine now\n");
+    assert_eq!(std::fs::read_to_string(&backup).unwrap(), "original\n");
+}

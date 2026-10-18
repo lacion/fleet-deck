@@ -4,8 +4,9 @@
 //! summary of the local station into `<omarchy>/branding/screensaver.txt`
 //! every 60 seconds, and writes only when the text changed. The first write
 //! copies the original file to `screensaver.txt.fleetdeck-backup` (an
-//! exclusive create; an existing backup is never replaced). `omarchy
-//! uninstall` calls [`restore`].
+//! exclusive create; an existing backup is never replaced, and the job
+//! writes over a file only when that file is identical to an existing
+//! backup). `omarchy uninstall` calls [`restore`].
 //!
 //! The text is ASCII only (any other character is `?`), at most 40 lines of
 //! 100 columns, and every line ends with `\n`.
@@ -193,51 +194,80 @@ fn enabled(home: &Home) -> anyhow::Result<Option<Record>> {
     Ok(record::load(home)?.filter(|r| r.screensaver.enabled))
 }
 
+/// The line when an old backup blocks the first write.
+const OLD_BACKUP: &str = "fleetdeck: an old screensaver backup exists and differs from the current file; the screensaver stays off.";
+
+/// A backup that exists is never replaced. It is accepted only when it is
+/// byte-identical to the current file. Records `had_original` and
+/// `backup_sha256` then; `false` when the backup differs.
+fn accept_backup(record: &mut Record, current: &[u8], backup: &[u8]) -> bool {
+    if current != backup {
+        return false;
+    }
+    record.screensaver.had_original = true;
+    record.screensaver.backup_sha256 = Some(sha256_hex(backup));
+    true
+}
+
 /// The backup before the first write. Records `had_original` and
-/// `backup_sha256`, and saves the record.
-fn first_write(home: &Home, record: &mut Record) -> anyhow::Result<()> {
+/// `backup_sha256`, and saves the record. `Ok(false)` when an old backup
+/// exists and differs from the current file (or there is no current file):
+/// nothing is written or changed then.
+fn first_write(home: &Home, record: &mut Record) -> anyhow::Result<bool> {
     let file = rel(Base::Omarchy, FILE);
     let backup = rel(Base::Omarchy, BACKUP);
-    let shown = home.abs(&file).display().to_string();
-    match home.read(&file)? {
-        None => {
+    let shown = home.abs(&backup).display().to_string();
+    let current = home.read(&file)?;
+    let old = home.read(&backup)?;
+    match (current, old) {
+        (None, None) => {
             record.screensaver.had_original = false;
             record.screensaver.backup_sha256 = None;
         }
-        Some(original) => {
-            if home.create_new(&backup, &original.bytes, 0o644)? {
-                record.screensaver.backup_sha256 = Some(sha256_hex(&original.bytes));
-            } else {
-                // A backup that exists is never replaced.
-                let Some(kept) = home.read(&backup)? else {
-                    anyhow::bail!("the backup of {shown} disappeared");
-                };
-                record.screensaver.backup_sha256 = Some(sha256_hex(&kept.bytes));
+        (None, Some(_)) => return Ok(false),
+        (Some(current), Some(old)) => {
+            if !accept_backup(record, &current.bytes, &old.bytes) {
+                return Ok(false);
             }
-            record.screensaver.had_original = true;
+        }
+        (Some(current), None) => {
+            if home.create_new(&backup, &current.bytes, 0o644)? {
+                record.screensaver.backup_sha256 = Some(sha256_hex(&current.bytes));
+                record.screensaver.had_original = true;
+            } else {
+                // A backup appeared meanwhile; it is never replaced.
+                let Some(old) = home.read(&backup)? else {
+                    anyhow::bail!("the backup {shown} disappeared");
+                };
+                if !accept_backup(record, &current.bytes, &old.bytes) {
+                    return Ok(false);
+                }
+            }
         }
     }
     record::save(home, record)?;
-    Ok(())
+    Ok(true)
 }
 
 /// One cycle: write `text` when it differs from the last written text.
-fn write_if_changed(home: &Home, record: &mut Record, text: &str) -> anyhow::Result<()> {
+/// `Ok(false)` when an old backup blocks the first write (the job ends).
+fn write_if_changed(home: &Home, record: &mut Record, text: &str) -> anyhow::Result<bool> {
     let hash = sha256_hex(text.as_bytes());
     if record.screensaver.last_written_sha256.as_deref() == Some(hash.as_str()) {
-        return Ok(());
+        return Ok(true);
     }
-    if record.screensaver.last_written_sha256.is_none() {
-        first_write(home, record)?;
+    if record.screensaver.last_written_sha256.is_none() && !first_write(home, record)? {
+        return Ok(false);
     }
     home.write(&rel(Base::Omarchy, FILE), text.as_bytes(), 0o644)?;
     record.screensaver.last_written_sha256 = Some(hash);
     record::save(home, record)?;
-    Ok(())
+    Ok(true)
 }
 
 /// The loop of the job. It ends with `Ok` when the record is gone or
-/// `screensaver.enabled` is false at the start of a cycle.
+/// `screensaver.enabled` is false at the start of a cycle, or when an old
+/// backup blocks the first write (one line on stderr).
 ///
 /// # Errors
 /// The record cannot be read or is not valid.
@@ -265,8 +295,13 @@ where
         let Some(mut record) = enabled(home)? else {
             return Ok(());
         };
-        if let Err(e) = write_if_changed(home, &mut record, &text) {
-            warn(&format!("{e:#}"));
+        match write_if_changed(home, &mut record, &text) {
+            Ok(true) => {}
+            Ok(false) => {
+                eprintln!("{OLD_BACKUP}");
+                return Ok(());
+            }
+            Err(e) => warn(&format!("{e:#}")),
         }
         tokio::time::sleep(cycle).await;
     }

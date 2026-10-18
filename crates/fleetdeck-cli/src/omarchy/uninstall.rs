@@ -11,7 +11,6 @@ use super::record::{self, Record, rel, sha256_hex};
 use super::{TOOL_LIMIT, hyprland, omarchy_env, open_home, screensaver, set_summary, tool};
 
 const DISABLE: &str = "omarchy plugin disable fleetdeck.fleet";
-const SUMMARY_OFF: &str = "fleetdeck settings set --station fleet_summary false";
 
 fn warn(text: &str) {
     eprintln!("fleetdeck: warning: {text}");
@@ -72,7 +71,8 @@ fn remove_files(home: &Home, record: &Record) -> Vec<record::FileEntry> {
 ///
 /// # Errors
 /// The config home cannot be opened, or the record is not valid, or the
-/// record cannot be written or removed.
+/// record cannot be written or removed. Exit 1 (no error) when
+/// `fleet_summary` could not be turned off: the record stays.
 pub async fn run(dirs: &NodeDirs) -> anyhow::Result<ExitCode> {
     let home = open_home()?;
     let Some(mut record) = record::load(&home)? else {
@@ -110,11 +110,13 @@ pub async fn run(dirs: &NodeDirs) -> anyhow::Result<ExitCode> {
     if record.fleet_summary_set_by_install {
         match set_summary(dirs, false).await {
             Ok(_) => record.fleet_summary_set_by_install = false,
-            Err(_) => warn(&format!(
-                "the station is not running or did not accept the change, so fleet_summary stays on; run: {SUMMARY_OFF}"
-            )),
+            Err(_) => warn(
+                "the station is not running or did not accept the change, so fleet_summary stays on; run uninstall again when the station runs.",
+            ),
         }
     }
+    // The setting that install turned on is still on: the record stays.
+    let pending = record.fleet_summary_set_by_install;
 
     screensaver::restore(&home, &mut record);
 
@@ -124,12 +126,19 @@ pub async fn run(dirs: &NodeDirs) -> anyhow::Result<ExitCode> {
     record.menu_file_written = record
         .entry(Base::Omarchy, super::assets::MENU_PATH)
         .is_some();
-    if record.files.is_empty() {
+    if record.files.is_empty() && !pending {
         home.remove(Path::new(record::RECORD_PATH))?;
         println!("Fleet Deck is removed from Omarchy.");
     } else {
         record::save(&home, &record)?;
-        println!("Some files stay; the record stays with them.");
+        if !record.files.is_empty() {
+            println!("Some files stay; the record stays with them.");
+        }
     }
-    Ok(ExitCode::SUCCESS)
+    // A pending revocation is an incomplete teardown.
+    Ok(if pending {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    })
 }

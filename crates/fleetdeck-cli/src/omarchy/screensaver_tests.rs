@@ -369,31 +369,80 @@ fn screensaver_job_without_an_original_records_no_backup() {
     assert!(record.screensaver.last_written_sha256.is_some());
 }
 
-#[test]
-fn screensaver_job_an_existing_backup_is_never_replaced() {
-    let (dir, home) = home();
-    let (_bin, env) = no_tools();
-    put_original(&dir, "newer original\n");
-    std::fs::write(backup_file(&dir), "older backup\n").unwrap();
-    enable(&home);
+/// Runs the job until it ends by itself or the second fetch; returns the
+/// number of fetches.
+fn run_job_two_cycles(home: &Home, env: &ChildEnv) -> usize {
     let calls = Cell::new(0);
     let fetch = || {
         calls.set(calls.get() + 1);
         if calls.get() == 2 {
-            disable(&home);
+            disable(home);
         }
         std::future::ready(None)
     };
-    runtime().block_on(job(&home, &env, SHORT, fetch)).unwrap();
+    runtime().block_on(job(home, env, SHORT, fetch)).unwrap();
+    calls.get()
+}
+
+#[test]
+fn screensaver_job_an_old_backup_that_differs_stops_the_job_and_changes_nothing() {
+    let (dir, home) = home();
+    let (_bin, env) = no_tools();
+    put_original(&dir, "newer original\n");
+    std::fs::write(backup_file(&dir), "older backup\n").unwrap();
+    let before = enable(&home);
+    // The job ends at the first cycle; the switch is not turned off here.
+    assert_eq!(run_job_two_cycles(&home, &env), 1);
+    assert_eq!(
+        std::fs::read_to_string(screensaver_file(&dir)).unwrap(),
+        "newer original\n"
+    );
     assert_eq!(
         std::fs::read_to_string(backup_file(&dir)).unwrap(),
         "older backup\n"
     );
+    assert_eq!(record::load(&home).unwrap().unwrap(), before);
+}
+
+#[test]
+fn screensaver_job_an_old_backup_without_a_current_file_writes_nothing() {
+    let (dir, home) = home();
+    let (_bin, env) = no_tools();
+    std::fs::create_dir_all(backup_file(&dir).parent().unwrap()).unwrap();
+    std::fs::write(backup_file(&dir), "older backup\n").unwrap();
+    let before = enable(&home);
+    assert_eq!(run_job_two_cycles(&home, &env), 1);
+    assert!(!screensaver_file(&dir).exists());
+    assert_eq!(
+        std::fs::read_to_string(backup_file(&dir)).unwrap(),
+        "older backup\n"
+    );
+    assert_eq!(record::load(&home).unwrap().unwrap(), before);
+}
+
+#[test]
+fn screensaver_job_an_old_backup_that_is_identical_to_the_file_goes_on() {
+    let (dir, home) = home();
+    let (_bin, env) = no_tools();
+    put_original(&dir, "same\n");
+    std::fs::write(backup_file(&dir), "same\n").unwrap();
+    enable(&home);
+    assert_eq!(run_job_two_cycles(&home, &env), 2);
+    assert_eq!(
+        std::fs::read_to_string(backup_file(&dir)).unwrap(),
+        "same\n"
+    );
+    let written = std::fs::read_to_string(screensaver_file(&dir)).unwrap();
+    assert_eq!(written, "Fleet Deck: no data\n");
     let record = record::load(&home).unwrap().unwrap();
     assert!(record.screensaver.had_original);
     assert_eq!(
         record.screensaver.backup_sha256.as_deref(),
-        Some(sha256_hex(b"older backup\n").as_str())
+        Some(sha256_hex(b"same\n").as_str())
+    );
+    assert_eq!(
+        record.screensaver.last_written_sha256.as_deref(),
+        Some(sha256_hex(written.as_bytes()).as_str())
     );
 }
 
