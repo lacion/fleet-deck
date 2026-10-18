@@ -227,6 +227,25 @@ describe('the transport', () => {
     expect(headers['X-CSRF-Token']).toBe('csrf-1');
   });
 
+  test('every request declares the video feature and keeps the caller headers', async () => {
+    const seen: RequestInit[] = [];
+    const http = deckHttp(
+      async (_path, init) => {
+        seen.push(init);
+        return new Response('{}', { status: 200 });
+      },
+      () => null,
+      1000,
+    );
+    await http.get('/api/a');
+    await http.post('/api/b', {}, { 'X-Other': '1' });
+    await http.del('/api/c');
+    const sent = seen.map((init) => init.headers as Record<string, string>);
+    expect(sent).toHaveLength(3);
+    for (const headers of sent) expect(headers['X-FleetDeck-Features']).toBe('artifacts_video.v1');
+    expect(sent.map((h) => h['X-Other'])).toEqual([undefined, '1', undefined]);
+  });
+
   test('a body that is not JSON keeps the status text', async () => {
     const http = deckHttp(
       async () => new Response('<html>', { status: 502 }),
