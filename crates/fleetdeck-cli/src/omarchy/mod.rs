@@ -8,10 +8,12 @@
 //! is never echoed.
 
 pub mod assets;
+pub mod digits;
 pub mod fsx;
 pub mod hyprland;
 pub mod install;
 pub mod record;
+pub mod screensaver;
 pub mod status;
 pub mod theme_sync;
 pub mod uninstall;

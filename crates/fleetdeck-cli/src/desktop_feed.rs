@@ -30,7 +30,7 @@ const UNKNOWN: &str = r#"{"v":1,"deck":"unknown"}"#;
 
 /// What one call to the station gave.
 #[derive(Debug)]
-enum Answer {
+pub(crate) enum Answer {
     Summary {
         seq: u64,
         link_up: bool,
@@ -41,12 +41,12 @@ enum Answer {
     Failed,
 }
 
-async fn ask(path: &Path, after: u64) -> Answer {
+pub(crate) async fn ask(path: &Path, after: u64, limit: Duration) -> Answer {
     let call = async {
         let mut client = LocalClient::connect(path).await?;
         client.call(&LocalRequest::FleetSummary { after }).await
     };
-    match tokio::time::timeout(CALL_LIMIT, call).await {
+    match tokio::time::timeout(limit, call).await {
         Ok(Ok(LocalResponse::FleetSummary {
             seq,
             link,
@@ -83,7 +83,7 @@ async fn ask(path: &Path, after: u64) -> Answer {
 /// The summary with the corrections of §3.3: `deck` is `down` when the link
 /// is down, `unknown` when the summary is stale, else `up`; `age_s` and
 /// `resets_in_s` move by the seconds that the station held the summary.
-fn corrected(mut summary: FleetSummary, link_up: bool, held_s: u64) -> FleetSummary {
+pub(crate) fn corrected(mut summary: FleetSummary, link_up: bool, held_s: u64) -> FleetSummary {
     summary.deck = if !link_up {
         DeckState::Down
     } else if held_s > STALE_AFTER_S {
@@ -153,7 +153,7 @@ pub async fn run(dirs: &NodeDirs, notify: bool) -> anyhow::Result<()> {
     // After a failure the station may have restarted, so its `seq` too.
     let mut after = 0;
     loop {
-        match ask(&path, after).await {
+        match ask(&path, after, CALL_LIMIT).await {
             Answer::Summary {
                 seq,
                 link_up,

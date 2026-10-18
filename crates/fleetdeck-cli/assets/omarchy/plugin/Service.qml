@@ -6,6 +6,7 @@ import "Model.js" as Model
 // The feed of the bar widget. It runs `fleetdeck desktop feed --notify`, reads
 // one JSON line at a time, bounds each line with Model.parse and keeps the
 // bounded summary. A non-zero exit restarts the feed after 5 s. Exit 0 is final.
+// A second process runs the ambient screensaver job with the same restart rule.
 // The Process and SplitParser types are the ones of the reference plugin; the
 // live smoke of omarchy-p4.md section 5 confirms them on the owner machines.
 Item {
@@ -40,6 +41,24 @@ Item {
       if (exitCode !== 0) {
         root.summary = Model.unknownState()
         restartTimer.start()
+      }
+    }
+  }
+
+  Timer {
+    id: screensaverTimer
+    interval: 5000
+    repeat: false
+    onTriggered: screensaver.running = true
+  }
+
+  Process {
+    id: screensaver
+    running: true
+    command: ["fleetdeck", "desktop", "screensaver-run"]
+    onExited: function(exitCode) {
+      if (exitCode !== 0) {
+        screensaverTimer.start()
       }
     }
   }

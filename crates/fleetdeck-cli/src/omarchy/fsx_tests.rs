@@ -145,3 +145,43 @@ fn a_file_that_is_not_regular_is_refused() {
         FsError::Unsafe(_)
     ));
 }
+
+#[test]
+fn create_new_makes_the_file_once_and_never_replaces_it() {
+    let (dir, home) = home();
+    assert!(
+        home.create_new(Path::new("a/b/once"), b"one", 0o644)
+            .unwrap()
+    );
+    assert_eq!(mode(&dir.path().join("a/b/once")), 0o644);
+    assert_eq!(mode(&dir.path().join("a/b")), 0o755);
+    assert!(
+        !home
+            .create_new(Path::new("a/b/once"), b"two", 0o644)
+            .unwrap()
+    );
+    assert_eq!(std::fs::read(dir.path().join("a/b/once")).unwrap(), b"one");
+    let names: Vec<_> = std::fs::read_dir(dir.path().join("a/b"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names, vec![std::ffi::OsString::from("once")]);
+}
+
+#[test]
+fn create_new_follows_no_link_at_the_leaf_or_above_it() {
+    let (dir, home) = home();
+    let outside = tempfile::Builder::new().prefix("out").tempdir().unwrap();
+    let target = outside.path().join("victim");
+    std::fs::write(&target, "keep").unwrap();
+    symlink(&target, dir.path().join("leaf")).unwrap();
+    assert!(!home.create_new(Path::new("leaf"), b"new", 0o644).unwrap());
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
+    symlink(outside.path(), dir.path().join("plugins")).unwrap();
+    assert!(matches!(
+        home.create_new(Path::new("plugins/f"), b"x", 0o644)
+            .unwrap_err(),
+        FsError::Unsafe(_)
+    ));
+    assert!(!outside.path().join("f").exists());
+}
