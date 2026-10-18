@@ -1,6 +1,6 @@
 # P7: coordinator keyboard input and pointer movement
 
-- **Status:** proposed contract (architect, 2026-10-18), from the advisor answer `advisor-p7-answer.md` against v2 HEAD `0eeeb149`. The architect accepts the recommendations P7-OD1 to P7-OD7 as architect decisions (O12-23; the owner may change any of them) and adds the deck approval barrier of §7.6. DESIGN REVIEW required before implementation; PRE-PR required before merge; live smoke required before operational reliance (the feature stays experimental and off by default until then).
+- **Status:** proposed contract (architect, 2026-10-18), from the advisor answer `advisor-p7-answer.md` against v2 HEAD `0eeeb149`. The architect accepts the recommendations P7-OD1 to P7-OD7 as architect decisions (O12-23; the owner may change any of them) and adds the board fence of §7.6 (revision 2: DESIGN REVIEW round 1 FAIL with 3 BLOCKER on the first barrier and 1 MAJOR on the `wtype` keymap file, report `adv-omarchy-p7-design-r1-report.md`). DESIGN REVIEW required before implementation; PRE-PR required before merge; live smoke required before operational reliance (the feature stays experimental and off by default until then).
 - **Parent:** `omarchy.md` §§7.4, 7.5, 11, 13 and 14.
 - **Prerequisite:** accepted and built P6, `omarchy-p6.md`, including subsequent authority fixes recorded in DL-242.
 - **Scope:** coordinator tools `key_press`, `type_text` and `pointer_move`, targeting caller-owned P6 preview windows through opaque `window_id` handles.
@@ -37,7 +37,7 @@ P7 must not describe these tools as an isolation boundary against agents running
 
 ## 2. Owner decisions
 
-The architect accepts each recommendation below as an architect decision (O12-23, 2026-10-18), as for P6 (O12-1) and P5b (O12-6). The owner may replace any of them. P7-OD1 is accepted only together with the deck approval barrier of §7.6, which does not depend on window detection.
+The architect accepts each recommendation below as an architect decision (O12-23, 2026-10-18), as for P6 (O12-1) and P5b (O12-6). The owner may replace any of them. P7-OD1 is accepted only together with the board fence of §7.6, which does not depend on window detection.
 
 | ID | Owner decision needed | Recommendation |
 |---|---|---|
@@ -438,6 +438,8 @@ Write the validated UTF-8 bytes to a private stdin pipe and close it. Do not use
 
 `wtype` supports stdin and emits virtual-keyboard events using its own keymap. Its interface provides neither a P6-window target nor confirmation of application text insertion. Exact behavior must be verified against the installed version. [wtype source](https://github.com/atx/wtype/blob/master/main.c)
 
+**The `wtype` keymap file (architect decision, answer to DESIGN REVIEW round 1 MAJOR):** upstream `wtype` builds a keymap for the characters it types and passes it to the compositor through a file that it creates with `mkstemp` in `/tmp`, unlinks at once, and then writes through its descriptor. The keymap lists the distinct characters, so the file content is derived from the typed text. The architect accepts this as the one exception to the rule of §8.1: the file has no name once unlinked (before any data is written), lives only while `wtype` runs, and is readable only through the descriptors of `wtype` and the compositor, which processes of the same UID can already reach. The same UID can also read the text from the memory of the station and of `wtype`, so the exception adds no new reader. Fleet Deck writes no typed text to any file, argv, environment or log itself. The live smoke records the installed `wtype` version.
+
 No fallback to argv is permitted if stdin support is unavailable.
 
 ### 5.3 Pointer coordinates
@@ -745,15 +747,30 @@ Owner preview close must not wait behind the input slot. Closing invalidates/can
 
 P7 introduces no continuation lease. A remote gate change after the final execute check may remain unobserved until notification, disconnect or process completion. Under **P7-OD7**, the bounded invocation may already have sent input and may finish before cancellation is observed.
 
-### 7.6 Deck approval barrier (architect addition)
+### 7.6 Board fence on the target machine (architect addition, revision 2)
 
-The window checks of §7.2 cannot prove that keystrokes never reach a board window (a focus change after the final check, a preview that shows the board). The deck therefore adds a barrier that does not depend on the window: an owner decision that a keystroke in a board window could produce is refused while agent input runs.
+The window checks of §7.2 cannot prove that keystrokes never reach a board window (a focus change after the final check, a preview that shows the board, keyboard navigation). Synthetic input reaches only the desktop of the target station. So the board sessions at risk are the owner board sessions whose browser runs on that machine. Revision 1 refused decisions during a 5 s window; DESIGN REVIEW round 1 showed that a delayed request, a deck restart and an uncovered owner action (a composer `!` command) pass such a window. Revision 2 fences the sessions instead of the time.
 
-- **Input window:** from the moment the deck marks a P7 input operation `attempted` until 5 s after the deck records its terminal or uncertain result (for an uncertain result, 5 s after the deck gives up waiting). The deck keeps one fleet-wide count of open input windows in memory, and the start time of the last close. A deck restart starts with no open window, because no input operation survives a restart as `attempted` without a result (§11 makes it `unknown`, which closes the window at that moment plus 5 s).
-- **Refused decisions:** while any input window is open, the deck refuses with `input_active` every owner decision that answers a pending request or that grants authority: the answer to an agent's permission request or question (allow, deny, answer), the approval and the denial of a pairing request, the approval of a display pairing, a grant start that needs the elevation, a cap increase, a station or deck setting change that needs the elevation, and `POST /api/auth/elevate`. A denial is refused too, so that a typed key cannot pick between allow and deny. The exact handlers are listed by the code map before the build.
-- **Not refused:** reads, revocation, the owner stop of a recording, the owner close of a preview, and the cancellation of an agent's work, so that the owner can always stop an agent while it types.
-- **Board text:** the board shows `An agent is typing on a station. Try again in a few seconds.` and keeps the pending item. It does not retry by itself.
-- **Limit:** the barrier protects decisions that go through this deck. It does not stop keystrokes from reaching other applications in the owner's session (P7-OD1).
+**Machine addresses.** For each target station with `desktop_input_mcp.v1`, the deck keeps the set of its machine addresses:
+- the peer address of the station's current link (IPv4 or IPv6, without the port);
+- the addresses that the station reports in its `desktop.info` answer as `host_addresses`: at most 16 IPv4/IPv6 addresses of its up interfaces, loopback and link-local excluded; the deck ignores the field from a station without the feature and caps it at 16;
+- when the target is the deck's own local station (the station of `fleetdeck up`, the same machine): also every loopback address and every address of the deck's own interfaces.
+
+**Exposure.** A target station is *exposed* from the commit that marks an input operation of it `attempted` until 5 s after the deck records that operation's terminal result; for an uncertain result, until `attempted_at` + the input deadline of §10 + 5 s. Exposure is computed from the durable operation rows (`attempted_at`, `finished_at`, state), so a deck restart rebuilds it before the deck accepts any board request (the board API starts after the recovery of §11).
+
+**Fencing.** A board login session becomes *fenced* (a durable column `input_fenced_at` on the login session row, written in its own transaction):
+1. at the start of exposure, for every owner login session that has a live board connection (WebSocket) whose peer address is a machine address of the exposed target, or whose last board request in the past 24 h came from such an address (the deck records `last_addr` and `last_seen_at` on the login session at each authenticated board request and WebSocket connect, at most once per 10 s per session); the deck writes these flags before it dispatches the input operation;
+2. during exposure and for 60 s after it, on any authenticated board request or WebSocket connect from a machine address of the exposed target, before the request is handled.
+
+**What a fenced session can do.** Reads, `POST /api/auth/elevate`, `POST /api/auth/logout`, grant revocation, the owner stop of a recording, the owner close of a preview, the stop or interrupt of a session run, and the cancel of an agent's pending work. Every other mutating board request and WebSocket command (approvals, denials and answers, prompts and `!` commands, starts, settings, grants, pairing, artifacts, Fleet Git actions, schedules, mail and tasks, and any route added later) is refused with `input_fenced` before it is handled. The list of allowed actions is closed: a new route is refused for a fenced session unless this list names it.
+
+**Unfence.** A successful elevation (`POST /api/auth/elevate` with the owner password) on that login session clears `input_fenced_at`, unless the session is inside a current exposure (rule 2 would fence it again at once, so the deck answers the elevation with `input_fenced` and keeps the flag). The agent does not know the owner password; `type_text` of a password by an agent that learned it is outside this contract.
+
+**Board.** On `input_fenced`, the board shows `An agent typed on the station where this board is open. Confirm it is you to continue.` and opens the elevation dialog with the label `Agent input`. The pending item stays; the board does not repeat the request by itself.
+
+**Not fenced:** board sessions on other machines; the wall and display principals (they have no owner mutations); the local socket of the station.
+
+**Residual (P7-OD1):** a browser on the target machine that reaches the deck through an address the deck does not know (for example, through a proxy or a VPN that the station does not report) is not fenced. `operations.md` will say: do not keep a board signed in on a station while an agent types on it. The fence protects decisions that go through this deck only.
 
 ## 8. Execution, disclosure and results
 
@@ -1068,7 +1085,7 @@ New codes:
 | `input_focus_unknown` | `The preview's input focus could not be verified. Input was not started.` |
 | `focus_changed` | `The preview no longer has focus. Input stopped; some input may already have been sent.` |
 | `input_interrupted` | `Input was interrupted. Some input may already have been sent. Do not retry automatically.` |
-| `input_active` (board API, §7.6) | `An agent is typing on a station. Try again in a few seconds.` |
+| `input_fenced` (board API, §7.6) | `An agent typed on the station where this board is open. Confirm it is you to continue.` |
 | `input_failed` | `The input tool failed. Some input may already have been sent. Do not retry automatically.` |
 | `input_timeout` | `Input did not finish in time. Some input may already have been sent. Do not retry automatically.` |
 
