@@ -136,6 +136,14 @@ pub enum Command {
         #[arg(long)]
         retry: bool,
     },
+    /// Copies the provisioning file from a supported medium (P8): the
+    /// installer runs it; it is not a user command.
+    #[command(hide = true)]
+    ProvisionImport {
+        /// The absolute path of the provisioning file on the medium.
+        #[arg(long)]
+        source: PathBuf,
+    },
 }
 
 /// `fleetdeck service` (design service.md §3).

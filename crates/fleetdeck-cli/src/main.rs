@@ -18,6 +18,7 @@ mod notify;
 mod omarchy;
 mod pairing;
 mod provision;
+mod provision_import;
 mod restart;
 mod service;
 mod settings;
@@ -152,6 +153,9 @@ fn run(cli: Cli, restart: &restart::RestartHandle) -> anyhow::Result<ExitCode> {
             let effects = provision::real::RealEffects::new(dirs.clone(), env.clone(), ctx);
             let exit = runtime()?.block_on(provision::run::run(&effects, file, *retry));
             Ok(ExitCode::from(exit.code()))
+        }
+        Command::ProvisionImport { source } => {
+            provision_import::run(source, &env).map(|()| ExitCode::SUCCESS)
         }
         Command::Station { .. }
         | Command::Shim { .. }
