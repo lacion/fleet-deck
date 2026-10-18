@@ -383,6 +383,9 @@ async fn a_coordinator_start_on_the_shim_host_binds_after_session_started() {
         desktop_cap: None,
         capture_cap: None,
         image_byte_cap: None,
+        allow_recording: false,
+        recording_cap: None,
+        recording_second_cap: None,
         stations: Vec::new(),
     }));
     rig.next += 1;

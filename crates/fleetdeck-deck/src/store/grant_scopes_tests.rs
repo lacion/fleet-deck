@@ -224,6 +224,10 @@ fn a_grant_is_in_effect_only_while_active_inside_its_lifetime_and_not_idle() {
         image_byte_cap: None,
         image_byte_used: 0,
         desktop_attempts: 0,
+        recording_cap: 0,
+        recording_used: 0,
+        recording_second_cap: 0,
+        recording_second_used: 0,
     };
     assert!(in_effect(&base, 10_000));
     assert!(!in_effect(&base, 10_001));

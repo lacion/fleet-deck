@@ -349,14 +349,36 @@ fn the_status_structs_skip_absent_fields_and_round_trip() {
         at: Some(5),
         error: None,
         message: None,
+        requested_seconds: None,
+        duration_ms: None,
+        stop_reason: None,
     };
     let v = serde_json::to_value(&committed).unwrap();
     assert_eq!(v["artifact"]["version"], 1);
     assert_eq!(v["state"], "committed");
     assert!(v.get("error").is_none());
+    // A screenshot status has none of the recording fields (R13 P5b-2).
+    for key in ["requested_seconds", "duration_ms", "stop_reason"] {
+        assert!(v.get(key).is_none(), "{key}");
+    }
     assert_eq!(
         serde_json::from_value::<CoordinatorCaptureStatus>(v).unwrap(),
         committed
+    );
+    // A recording status carries the three extra fields.
+    let recording = CoordinatorCaptureStatus {
+        requested_seconds: Some(30),
+        duration_ms: Some(12_345),
+        stop_reason: Some(crate::recording::StopReason::OwnerStop),
+        ..committed
+    };
+    let v = serde_json::to_value(&recording).unwrap();
+    assert_eq!(v["requested_seconds"], 30);
+    assert_eq!(v["duration_ms"], 12_345);
+    assert_eq!(v["stop_reason"], "owner_stop");
+    assert_eq!(
+        serde_json::from_value::<CoordinatorCaptureStatus>(v).unwrap(),
+        recording
     );
     for state in ["unknown", "pending", "deleted", "committed", "failed"] {
         let s: CaptureState = serde_json::from_value(json!(state)).unwrap();
@@ -393,4 +415,114 @@ fn an_image_answer_round_trips() {
         serde_json::from_value::<CaptureImageAnswer>(v).unwrap(),
         answer
     );
+}
+
+fn record(seconds: u32) -> DesktopCall {
+    DesktopCall::RecordMonitor(RecordMonitorArguments {
+        request_id: "req_1".into(),
+        station: Some("st-1".into()),
+        monitor: "DP-1".into(),
+        seconds,
+    })
+}
+
+#[test]
+fn record_monitor_serializes_as_its_tool_and_refuses_unknown_fields() {
+    let call = record(30);
+    let v = serde_json::to_value(&call).unwrap();
+    assert_eq!(
+        v,
+        json!({"tool": "record_monitor", "arguments": {
+            "request_id": "req_1", "station": "st-1", "monitor": "DP-1", "seconds": 30}})
+    );
+    assert_eq!(serde_json::from_value::<DesktopCall>(v).unwrap(), call);
+    // The station is optional and is not written when absent.
+    let no_station = DesktopCall::RecordMonitor(RecordMonitorArguments {
+        request_id: "r".into(),
+        station: None,
+        monitor: "DP-1".into(),
+        seconds: 1,
+    });
+    let v = serde_json::to_value(&no_station).unwrap();
+    assert!(v["arguments"].get("station").is_none());
+    assert_eq!(
+        serde_json::from_value::<DesktopCall>(v).unwrap(),
+        no_station
+    );
+    // Unknown fields and the missing required fields are refused.
+    for bad in [
+        json!({"tool": "record_monitor", "arguments": {
+            "request_id": "r", "monitor": "DP-1", "seconds": 5, "extra": 1}}),
+        json!({"tool": "record_monitor", "arguments": {"request_id": "r", "monitor": "DP-1"}}),
+        json!({"tool": "record_monitor", "arguments": {"request_id": "r", "seconds": 5}}),
+        json!({"tool": "record_monitor", "arguments": {"monitor": "DP-1", "seconds": 5}}),
+        json!({"tool": "record_monitor", "arguments": {
+            "request_id": "r", "monitor": "DP-1", "seconds": -1}}),
+        json!({"tool": "record_demo", "arguments": {
+            "request_id": "r", "monitor": "DP-1", "seconds": 5}}),
+    ] {
+        assert!(
+            serde_json::from_value::<DesktopCall>(bad.clone()).is_err(),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn record_monitor_validation_names_the_field_and_bounds_the_seconds() {
+    assert_eq!(record(1).validate(), Ok(()));
+    assert_eq!(record(120).validate(), Ok(()));
+    assert_eq!(record(0).validate(), Err(ArgError { field: "seconds" }));
+    assert_eq!(record(121).validate(), Err(ArgError { field: "seconds" }));
+    assert_eq!(
+        record(u32::MAX).validate(),
+        Err(ArgError { field: "seconds" })
+    );
+    let with = |f: fn(&mut RecordMonitorArguments)| {
+        let DesktopCall::RecordMonitor(mut a) = record(5) else {
+            unreachable!()
+        };
+        f(&mut a);
+        DesktopCall::RecordMonitor(a).validate()
+    };
+    assert_eq!(with(|_| {}), Ok(()));
+    assert_eq!(
+        with(|a| a.request_id = String::new()),
+        Err(ArgError {
+            field: "request_id"
+        })
+    );
+    assert_eq!(
+        with(|a| a.request_id = "a b".into()),
+        Err(ArgError {
+            field: "request_id"
+        })
+    );
+    assert_eq!(
+        with(|a| a.request_id = "x".repeat(65)),
+        Err(ArgError {
+            field: "request_id"
+        })
+    );
+    assert_eq!(
+        with(|a| a.station = Some("bad station".into())),
+        Err(ArgError { field: "station" })
+    );
+    assert_eq!(
+        with(|a| a.station = Some("s".repeat(129))),
+        Err(ArgError { field: "station" })
+    );
+    assert_eq!(
+        with(|a| a.monitor = String::new()),
+        Err(ArgError { field: "monitor" })
+    );
+    assert_eq!(
+        with(|a| a.monitor = "DP 1".into()),
+        Err(ArgError { field: "monitor" })
+    );
+    assert_eq!(
+        with(|a| a.monitor = "m".repeat(65)),
+        Err(ArgError { field: "monitor" })
+    );
+    assert_eq!(with(|a| a.monitor = "eDP-1.2_x".into()), Ok(()));
 }

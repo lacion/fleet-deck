@@ -243,3 +243,20 @@ fn the_handler_deadline_is_100_s_for_a_preview_and_40_s_for_the_others() {
     assert_eq!(handler_ms(Tool::Notify), 40_000);
     assert_eq!(handler_ms(Tool::WindowClose), 40_000);
 }
+
+#[test]
+fn record_monitor_has_no_handler_yet_and_builds_as_unsupported() {
+    use fleetdeck_proto::coordinator_desktop::RecordMonitorArguments;
+    let record = DesktopCall::RecordMonitor(RecordMonitorArguments {
+        request_id: "r5".into(),
+        station: None,
+        monitor: "DP-1".into(),
+        seconds: 30,
+    });
+    assert!(!served(&record));
+    assert_eq!(shape(&record), None);
+    assert!(matches!(
+        build(&record, "coord-1", &session()),
+        Err(c) if c == code::DESKTOP_UNSUPPORTED
+    ));
+}

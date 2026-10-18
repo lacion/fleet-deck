@@ -12,7 +12,9 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use fleetdeck_proto::StationId;
-use fleetdeck_proto::coordinator_desktop_text::{code as desktop_code, text as desktop_text};
+use fleetdeck_proto::coordinator_desktop_text::{
+    code as desktop_code, limits, text as desktop_text,
+};
 use fleetdeck_proto::orchestration::GrantView;
 use fleetdeck_proto::version::feature;
 
@@ -45,6 +47,7 @@ fn view(g: Grant) -> GrantView {
         }
         .to_owned()
     };
+    let recording = g.recording_cap > 0;
     GrantView {
         classes: g.classes.iter().map(class).collect(),
         stations: g.stations.into_iter().collect(),
@@ -70,6 +73,12 @@ fn view(g: Grant) -> GrantView {
         capture_used: g.capture_cap.map(|_| g.capture_used),
         image_byte_cap: g.image_byte_cap,
         image_byte_used: g.image_byte_cap.map(|_| g.image_byte_used),
+        // The recording fields show only for a non-zero recording cap
+        // (R13 P5b-2 §13.2): a screenshot-only grant has none.
+        recording_cap: recording.then_some(g.recording_cap),
+        recording_used: recording.then_some(g.recording_used),
+        recording_second_cap: recording.then_some(g.recording_second_cap),
+        recording_second_used: recording.then_some(g.recording_second_used),
     }
 }
 
@@ -393,6 +402,10 @@ pub(super) async fn owner_start(
         spec.capture_cap.take(),
         spec.image_byte_cap.take(),
     );
+    // The recording opt-in and caps (R13 P5b-2 §13.2) are read here too.
+    let allow_recording = std::mem::take(&mut spec.allow_recording);
+    let (recording_cap, recording_second_cap) =
+        (spec.recording_cap.take(), spec.recording_second_cap.take());
     let mut classes = std::collections::BTreeSet::new();
     for name in &spec.classes {
         let class: GrantClass = serde_json::from_value(serde_json::Value::String(name.clone()))
@@ -426,6 +439,28 @@ pub(super) async fn owner_start(
     grant.desktop_cap = desktop_cap;
     grant.capture_cap = capture_cap;
     grant.image_byte_cap = image_byte_cap;
+    // The recording rules, for every request (a recording flag on a grant
+    // without the `capture` class is refused even when the grant is not
+    // fleet control): the class, the opt-in, the ranges; then the defaults.
+    if allow_recording && !grant.classes.contains(&GrantClass::Capture) {
+        return Err(invalid(
+            "allow_recording needs the capture class".to_owned(),
+        ));
+    }
+    if !allow_recording && (recording_cap.is_some() || recording_second_cap.is_some()) {
+        return Err(invalid("recording caps need allow_recording".to_owned()));
+    }
+    if allow_recording {
+        grant.recording_cap = recording_cap.unwrap_or(limits::RECORDING_CAP_DEFAULT);
+        grant.recording_second_cap =
+            recording_second_cap.unwrap_or(limits::RECORDING_SECOND_CAP_DEFAULT);
+    }
+    crate::store::grants::check_recording_caps(
+        &grant.classes,
+        grant.recording_cap,
+        grant.recording_second_cap,
+    )
+    .map_err(|m| invalid(m.to_owned()))?;
     grant.start_command_id = Some(command_id.to_string());
     if spec.idle_ttl_ms > 0 {
         grant.idle_ttl_ms = i64::try_from(spec.idle_ttl_ms).unwrap_or(i64::MAX);
@@ -473,7 +508,13 @@ pub(super) async fn owner_start(
                 ));
             }
         }
-        desktop_features(board, station, &grant.classes, &grant.stations)?;
+        desktop_features(
+            board,
+            station,
+            &grant.classes,
+            &grant.stations,
+            allow_recording,
+        )?;
     }
     let g = board.store.create_grant(grant).await.map_err(|e| match e {
         crate::store::DeckError::Invalid(m) => invalid(m),
@@ -527,6 +568,7 @@ fn desktop_features(
     caller: &StationId,
     classes: &std::collections::BTreeSet<GrantClass>,
     stations: &std::collections::BTreeSet<StationId>,
+    recording: bool,
 ) -> Result<(), ApiError> {
     let capture = classes.contains(&GrantClass::Capture);
     if !capture && !classes.contains(&GrantClass::Desktop) {
@@ -550,6 +592,12 @@ fn desktop_features(
             feature::ARTIFACTS_DELETE,
             feature::CAPTURE_MCP,
         ]);
+    }
+    // R13 P5b-2: a recording allowance also needs `capture_recording_mcp.v1`
+    // on the caller's link and on every other station of the grant.
+    if recording {
+        on_caller.push(feature::CAPTURE_RECORDING_MCP);
+        on_target.push(feature::CAPTURE_RECORDING_MCP);
     }
     let has_all = |station: &StationId, wanted: &[&str]| {
         wanted

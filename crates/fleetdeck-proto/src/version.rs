@@ -189,6 +189,11 @@ pub mod feature {
     /// video and `Range` contract.
     pub const ARTIFACTS_VIDEO: &str = "artifacts_video.v1";
 
+    /// R13 P5b-2: the coordinator recording tool `record_monitor`, the grant
+    /// fields of a recording allowance and the recording status projection
+    /// (needs `desktop_recording.v1` and `capture_mcp.v1`).
+    pub const CAPTURE_RECORDING_MCP: &str = "capture_recording_mcp.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -238,6 +243,7 @@ pub mod feature {
         CAPTURE_MCP,
         DESKTOP_RECORDING,
         ARTIFACTS_VIDEO,
+        CAPTURE_RECORDING_MCP,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

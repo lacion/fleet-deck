@@ -13,6 +13,7 @@ use ts_rs::TS;
 
 use crate::desktop::DesktopKind;
 use crate::display_directive::{ArtifactRef, SessionRef};
+use crate::recording::StopReason;
 
 /// A tool argument that failed validation: the name of the field only,
 /// never its value.
@@ -123,6 +124,19 @@ pub struct ScreenshotArguments {
     pub monitor: String,
 }
 
+/// `record_monitor` arguments (R13 P5b-2 §13.1). `seconds` is 1 to 120.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "coordinator_desktop/")]
+pub struct RecordMonitorArguments {
+    pub request_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub station: Option<String>,
+    pub monitor: String,
+    pub seconds: u32,
+}
+
 /// `desktop_action_status` and `capture_status` arguments.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
@@ -155,6 +169,7 @@ pub enum DesktopCall {
     PreviewOpen(PreviewOpenArguments),
     WindowClose(WindowCloseArguments),
     Screenshot(ScreenshotArguments),
+    RecordMonitor(RecordMonitorArguments),
 }
 
 /// A read tool of a coordinator (the payload of `coordinator.desktop_query`).
@@ -280,6 +295,16 @@ impl DesktopCall {
                 check_request(&a.request_id)?;
                 check_station(a.station.as_ref())?;
                 check_monitor(&a.monitor)
+            }
+            Self::RecordMonitor(a) => {
+                check_request(&a.request_id)?;
+                check_station(a.station.as_ref())?;
+                check_monitor(&a.monitor)?;
+                if (1..=120).contains(&a.seconds) {
+                    Ok(())
+                } else {
+                    Err(bad("seconds"))
+                }
             }
         }
     }
@@ -430,6 +455,19 @@ pub struct CoordinatorCaptureStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub message: Option<String>,
+    /// R13 P5b-2 §13.4: the requested recording seconds; recordings only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub requested_seconds: Option<u32>,
+    /// R13 P5b-2 §13.4: the saved recording duration in milliseconds;
+    /// recordings only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub duration_ms: Option<u64>,
+    /// R13 P5b-2 §13.4: the fixed stop reason; recordings only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub stop_reason: Option<StopReason>,
 }
 
 /// The metadata block of `read_capture_image` (§4.9).

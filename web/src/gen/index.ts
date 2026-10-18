@@ -140,6 +140,7 @@ export * from "./coordinator_desktop/NotifyArguments";
 export * from "./coordinator_desktop/PolicyPurpose";
 export * from "./coordinator_desktop/PreviewOpenArguments";
 export * from "./coordinator_desktop/ProtectedRead";
+export * from "./coordinator_desktop/RecordMonitorArguments";
 export * from "./coordinator_desktop/ScreenshotArguments";
 export * from "./coordinator_desktop/StatusArguments";
 export * from "./coordinator_desktop/WallContent";

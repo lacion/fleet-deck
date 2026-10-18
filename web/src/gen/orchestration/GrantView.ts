@@ -43,4 +43,21 @@ image_byte_cap?: number,
 /**
  * The image bytes charged; `Some` only with `image_byte_cap`.
  */
-image_byte_used?: number, };
+image_byte_used?: number, 
+/**
+ * R13 P5b-2 §13.2: the recording count budget. `Some` only for a grant
+ * with a non-zero recording cap.
+ */
+recording_cap?: number, 
+/**
+ * The recordings used; `Some` only with `recording_cap`.
+ */
+recording_used?: number, 
+/**
+ * The recording seconds budget; `Some` only with `recording_cap`.
+ */
+recording_second_cap?: number, 
+/**
+ * The recording seconds charged; `Some` only with `recording_cap`.
+ */
+recording_second_used?: number, };

@@ -181,6 +181,7 @@ impl Wall<'_> {
             target_station: target.clone(),
             action_hash: None,
             resource: json!({ "display_id": self.args.display_id }),
+            seconds: None,
         };
         self.link
             .store

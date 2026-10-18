@@ -23,6 +23,7 @@ pub enum OpTool {
     PreviewOpen,
     WindowClose,
     Screenshot,
+    RecordMonitor,
 }
 
 impl OpTool {
@@ -34,6 +35,7 @@ impl OpTool {
             Self::PreviewOpen => "preview_open",
             Self::WindowClose => "window_close",
             Self::Screenshot => "screenshot",
+            Self::RecordMonitor => "record_monitor",
         }
     }
 
@@ -44,6 +46,7 @@ impl OpTool {
             "preview_open" => Self::PreviewOpen,
             "window_close" => Self::WindowClose,
             "screenshot" => Self::Screenshot,
+            "record_monitor" => Self::RecordMonitor,
             _ => return None,
         })
     }
@@ -132,6 +135,9 @@ pub struct NewOp {
     pub action_hash: Option<String>,
     /// Validated identifiers only (§7.2).
     pub resource: serde_json::Value,
+    /// The requested recording seconds (1 to 120); `None` for any other
+    /// tool (R13 P5b-2).
+    pub seconds: Option<u32>,
 }
 
 /// A stored operation.
@@ -156,6 +162,8 @@ pub struct DesktopOp {
     pub charged: Charges,
     pub created_at: i64,
     pub updated_at: i64,
+    /// The requested recording seconds; `None` for any other tool.
+    pub seconds: Option<u32>,
 }
 
 /// The answer of the admission transaction.
@@ -195,7 +203,7 @@ pub fn request_key(request_id: &str) -> String {
 
 const COLUMNS: &str = "operation_id, grant_id, request_key, payload_hash, tool, class, \
     binding_id, generation, caller_station, caller_session, target_station, action_hash, \
-    resource, state, result, code, charged, created_at, updated_at";
+    resource, state, result, code, charged, created_at, updated_at, seconds";
 
 /// A row as the database holds it, before the text is decoded.
 struct Raw {
@@ -218,6 +226,7 @@ struct Raw {
     charged: String,
     created_at: i64,
     updated_at: i64,
+    seconds: Option<i64>,
 }
 
 impl Raw {
@@ -242,6 +251,7 @@ impl Raw {
             charged: r.get(16)?,
             created_at: r.get(17)?,
             updated_at: r.get(18)?,
+            seconds: r.get(19)?,
         })
     }
 
@@ -261,6 +271,11 @@ impl Raw {
                 .map(serde_json::from_str)
                 .transpose()?,
             charged: serde_json::from_str(&self.charged)?,
+            seconds: self
+                .seconds
+                .map(u32::try_from)
+                .transpose()
+                .map_err(|_| corrupt("seconds"))?,
             operation_id: self.operation_id,
             grant_id: self.grant_id,
             request_key: self.request_key,

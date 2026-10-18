@@ -51,6 +51,10 @@ pub mod code {
     pub const STATION_UNREACHABLE: &str = "station_unreachable";
     /// §11.2: desktop control is off on this deck.
     pub const DESKTOP_CONTROL_OFF: &str = "desktop_control_off";
+    /// R13 P5b §16: the grant used its recording count.
+    pub const RECORDING_CAP_REACHED: &str = "recording_cap_reached";
+    /// R13 P5b §16: the grant used its recording seconds.
+    pub const RECORDING_SECONDS_REACHED: &str = "recording_seconds_reached";
 }
 
 /// The exact text of an error code of §11.1, or of a relay code of §11.2.
@@ -106,6 +110,8 @@ pub fn text(code: &str) -> Option<&'static str> {
         code::DESKTOP_TIMEOUT => "The station did not answer in time; the action may have run.",
         code::STATION_UNREACHABLE => "The station is not connected.",
         code::DESKTOP_CONTROL_OFF => "Desktop control is off on this deck.",
+        code::RECORDING_CAP_REACHED => "This grant has used its recording limit.",
+        code::RECORDING_SECONDS_REACHED => "This grant has used its recording time limit.",
         _ => return None,
     })
 }
@@ -162,6 +168,15 @@ pub mod limits {
     /// §4.9: the largest serialized MCP tool result, in bytes (1 MiB; the
     /// control frame limit is the same number).
     pub const MCP_RESULT_MAX_BYTES: u64 = 1_048_576;
+    /// R13 P5b-2 §13.2: the default `recording_cap` of a recording grant.
+    pub const RECORDING_CAP_DEFAULT: u32 = 5;
+    /// R13 P5b-2 §13.2: the highest `recording_cap`.
+    pub const RECORDING_CAP_MAX: u32 = 5000;
+    /// R13 P5b-2 §13.2: the default `recording_second_cap` of a recording
+    /// grant.
+    pub const RECORDING_SECOND_CAP_DEFAULT: u32 = 600;
+    /// R13 P5b-2 §13.2: the highest `recording_second_cap`.
+    pub const RECORDING_SECOND_CAP_MAX: u32 = 600_000;
 }
 
 /// The total deadlines of §9, in milliseconds, from entry to the named
@@ -212,13 +227,16 @@ pub mod deadline_ms {
     pub const IMAGE_DECK: u64 = 65_000;
     /// §9 row "Caller MCP image response, including encoding".
     pub const IMAGE_MCP: u64 = 70_000;
+    /// R13 P5b-2 §13.5: the caller MCP response deadline of `record_monitor`
+    /// is `seconds * 1000 + RECORD_MCP_EXTRA`.
+    pub const RECORD_MCP_EXTRA: u64 = 45_000;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const CODES: [&str; 36] = [
+    const CODES: [&str; 38] = [
         code::NOT_BOUND,
         code::NOT_GRANTED,
         code::BINDING_STALE,
@@ -255,6 +273,8 @@ mod tests {
         code::DESKTOP_TIMEOUT,
         code::STATION_UNREACHABLE,
         code::DESKTOP_CONTROL_OFF,
+        code::RECORDING_CAP_REACHED,
+        code::RECORDING_SECONDS_REACHED,
     ];
 
     #[test]
@@ -412,6 +432,14 @@ mod tests {
                 code::DESKTOP_CONTROL_OFF,
                 "Desktop control is off on this deck.",
             ),
+            (
+                code::RECORDING_CAP_REACHED,
+                "This grant has used its recording limit.",
+            ),
+            (
+                code::RECORDING_SECONDS_REACHED,
+                "This grant has used its recording time limit.",
+            ),
         ] {
             assert_eq!(text(c), Some(t), "{c}");
         }
@@ -434,6 +462,12 @@ mod tests {
         let base64 = limits::IMAGE_MAX_BYTES.div_ceil(3) * 4;
         assert_eq!(base64, 955_736);
         assert!(base64 < limits::MCP_RESULT_MAX_BYTES);
+        // §13.2: the recording defaults are inside their ranges.
+        assert_eq!(limits::RECORDING_CAP_DEFAULT, 5);
+        assert_eq!(limits::RECORDING_CAP_MAX, 5000);
+        assert_eq!(limits::RECORDING_SECOND_CAP_DEFAULT, 600);
+        assert_eq!(limits::RECORDING_SECOND_CAP_MAX, 600_000);
+        assert_eq!(deadline_ms::RECORD_MCP_EXTRA, 45_000);
         // §9: every MCP deadline is above its deck deadline.
         const {
             assert!(deadline_ms::AUTHORITY_CHECK >= deadline_ms::CALLER_POLICY);

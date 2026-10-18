@@ -264,6 +264,7 @@ async fn the_recent_operations_are_the_newest_fifty_with_no_resource_result_or_h
             target_station: r.f.station.clone(),
             action_hash: Some("ACTION-HASH-SENTINEL".to_owned()),
             resource: json!({"window_id": "RESOURCE-SENTINEL"}),
+            seconds: None,
         };
         // A minute apart: the rolling rates never fill.
         let at = now + i64::from(i) * 61_000;

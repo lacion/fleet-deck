@@ -142,9 +142,9 @@ fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admi
         "INSERT INTO coordinator_desktop_ops
          (operation_id, grant_id, request_key, payload_hash, tool, class, binding_id,
           generation, caller_station, caller_session, target_station, action_hash, resource,
-          state, result, code, charged, created_at, updated_at)
+          state, result, code, charged, created_at, updated_at, seconds)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'prepared', NULL, NULL,
-                 ?14, ?15, ?15)",
+                 ?14, ?15, ?15, ?16)",
         params![
             op.operation_id,
             op.grant_id,
@@ -161,6 +161,7 @@ fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admi
             serde_json::to_string(&op.resource)?,
             serde_json::to_string(&charged)?,
             now,
+            op.seconds,
         ],
     )?;
     tx.execute(
@@ -197,6 +198,7 @@ fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admi
         charged,
         created_at: now,
         updated_at: now,
+        seconds: op.seconds,
     }))
 }
 

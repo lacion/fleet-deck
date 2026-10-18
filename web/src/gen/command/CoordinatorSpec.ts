@@ -39,6 +39,22 @@ capture_cap?: number,
  */
 image_byte_cap?: number, 
 /**
+ * R13 P5b-2 §13.2: the explicit opt-in to monitor recordings. Board →
+ * deck only: the deck reads it in `owner_start` and clears it before
+ * the start command goes to a station.
+ */
+allow_recording?: boolean, 
+/**
+ * The recording count budget of a grant with `allow_recording`. Board
+ * → deck only.
+ */
+recording_cap?: number, 
+/**
+ * The recording seconds budget of a grant with `allow_recording`.
+ * Board → deck only.
+ */
+recording_second_cap?: number, 
+/**
  * The target stations that the owner picked (ADR-006 §"Creation"),
  * besides the coordinator's own station. Board → deck only: the deck
  * reads it in `owner_start` and clears it before the start command goes

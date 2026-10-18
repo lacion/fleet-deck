@@ -149,6 +149,9 @@ async fn a_station_without_v2_gets_no_fleet_control_grant_and_a_lineage_start_ke
         desktop_cap: None,
         capture_cap: None,
         image_byte_cap: None,
+        allow_recording: false,
+        recording_cap: None,
+        recording_second_cap: None,
         stations: Vec::new(),
     };
     let recorded = r#"{"grant_id":"g","classes":["read","mail"],"idle_ttl_ms":1,"expires_at":2,"control_skill":{"version":"1","text":"t"}}"#;
