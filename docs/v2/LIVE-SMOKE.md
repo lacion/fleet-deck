@@ -169,7 +169,7 @@ These items watch the desktop of the machine, on your own screen. No item asks y
 
 Set up:
 
-1. The integration is installed by the first login of P8 (see the P8 provisioning smoke, item 5, and `docs/v2/operations.md` section 15). A station that P8 did not provision has no board path for the install (DL-235 item b). Do the smoke on a machine that P8 provisioned.
+1. The integration is installed by the first login of P8 (see the P8 provisioning smoke, item 5, and `docs/v2/operations.md` section 15). On a station that P8 did not provision, install the integration from the board: see the part "Omarchy from the board (DL-243)" below.
 2. Open the board and go to Settings, then the station tab of the station. Turn on "Desktop control" if it is off. The board asks for a recent sign-in.
 3. On the same tab, turn on "Fleet summary for the desktop shell". The board asks for a recent sign-in. The install can already have turned it on.
 4. Go to the deck settings. Turn on "Desktop control" if it is off.
@@ -224,7 +224,7 @@ Items:
    3. Open the board. Expect a new supervised session. Expect its first message to name the process, PID, binary, signal and time of the newest crash.
    4. If the answer is "Add your home directory to allowed_roots to diagnose a crash.", change "Allowed folders" on the station tab. The board asks for a recent sign-in.
 10. **The screensaver.**
-    1. The board has no switch for the screensaver yet (DL-235 item f). The install turns it on only with `--screensaver`. Write in the result whether it is on.
+    1. Turn the screensaver on from the board: see the part "Omarchy from the board (DL-243)" below. Write in the result whether it is on.
     2. If it is on, start the Omarchy screensaver. Expect the large `FLEET` word, the number of sessions that need you, the counts and the usage line.
     3. Write the width, the height and the centering that you see.
 11. **The wall hotkeys.**
@@ -240,13 +240,59 @@ Items:
     1. On the server, with a bound wall: the widget, the notification and its click, "Open the board", `SUPER + ALT + N` and `SUPER + ALT + M` all work (items 2, 7, 11, 12).
     2. On the laptop, with no bound wall: press `SUPER + ALT + N`. Expect the answer "This station has no wall display bound to it." (`not_bound`). It shows on the terminal only.
     3. The theme reaches the board (item 6). The screensaver works when it is on (item 10).
-    4. The removal and the new install have no board path yet. Write that in the result.
+    4. The removal and the new install are board steps: see the part "Omarchy from the board (DL-243)" below.
 
 Result:
 
 | Date | Machines | Omarchy versions | Items | Result |
 | --- | --- | --- | --- | --- |
 | (not run) | | | | The live smoke of P4 on the owner's Omarchy machines is open (DL-235 item a). |
+
+### Omarchy from the board (DL-243)
+
+The contract is `docs/v2/design/omarchy-admin.md` revision 5. The owner guide is `docs/v2/operations.md` section 7.5, part "Omarchy from the board". Do this smoke on the owner's Omarchy machines: the server and the laptop.
+
+Every step is a board step. No step asks you to run a command or to edit a file on a station. Where a step looks at the screen of a machine, you start the Omarchy screensaver and watch the screen (no command, no file edit). The board checks are the lines of the card. A value that the board cannot show is marked "no board path yet". It is an open item, not an instruction.
+
+Set up:
+
+1. Use a station that P8 did not provision, with no Fleet Deck integration installed. The items 1 to 5 use it.
+2. Open the board and go to Settings, then the station tab of the station. Find the card "Omarchy".
+3. Each button asks "Confirm it is you" with the text "This change needs it: Omarchy integration." The board asks nothing when it still holds a recent sign-in.
+
+Items:
+
+1. **Install on a station that P8 did not provision.**
+   1. Expect the line "Integration: not installed" and the button **Install**.
+   2. Press **Install** and confirm. Expect "Working…" while the install runs (up to 60 seconds).
+   3. Expect "Integration: installed", "Plugin: on" and "Hyprland line: present".
+   4. Expect the buttons **Uninstall** and **Turn the screensaver on**, and no **Install**.
+   5. Look at the bar of the machine. Expect the Fleet Deck widget (see the P4 item 2). Write what the card and the bar show.
+2. **Turn the screensaver on.**
+   1. Press **Turn the screensaver on** and confirm. Expect "Screensaver: on" and the button **Turn the screensaver off**.
+   2. Wait one minute.
+   3. Start the Omarchy screensaver on that machine and watch its screen. Expect the Fleet Deck text: the large `FLEET` word, the number of sessions that need you, the counts and the usage line.
+3. **Turn the screensaver off.**
+   1. Press **Turn the screensaver off** and confirm. Expect "Screensaver: off" and the button **Turn the screensaver on**.
+   2. Start the Omarchy screensaver again and watch the screen. Expect the original screensaver back, not the Fleet Deck text.
+4. **Turn it on again.**
+   1. Press **Turn the screensaver on** and confirm. Wait one minute.
+   2. Start the Omarchy screensaver and watch the screen. Expect the Fleet Deck text again.
+5. **Uninstall.**
+   1. Press **Uninstall** and confirm. Expect "Working…" and then "Integration: not installed". Expect no screensaver line.
+   2. Start the Omarchy screensaver and watch the screen. Expect the original screensaver, not the Fleet Deck text.
+   3. Expect the button **Install** again. The kept original needs no check: the card does not show its path.
+6. **Retry provisioning on a station with `integration_failed`.**
+   1. Use a station whose card shows "Provisioning stopped: The Omarchy integration install or its status check did not succeed." Expect the button **Retry provisioning**.
+   2. Press it and confirm. Expect "Provisioning is running" and then, within about 10 minutes, a new state. The card reads the state by itself every 5 seconds.
+   3. On success, expect "Provisioning: complete" and "Last retry: complete". When the bootstrap stops again, expect "Last retry: stopped with an error" and the same stop line.
+   4. Write what the card shows at the end.
+
+Result:
+
+| Date | Machines | Omarchy versions | Items | Result |
+| --- | --- | --- | --- | --- |
+| (not run) | | | | The live smoke of the Omarchy management from the board is open (DL-243 item d). |
 
 ### P6 coordinator desktop tools (DL-237)
 
