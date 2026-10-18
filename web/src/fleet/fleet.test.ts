@@ -232,6 +232,24 @@ describe('desktop usage and operations (R13 P6)', () => {
       }),
     ).toBe('read, image reads 0 of 64 MiB: active');
   });
+  test('grantStatus appends the recording usage only with recording_cap', () => {
+    const base = { ...grant, classes: ['read', 'capture'], capture_cap: 20, capture_used: 1 };
+    expect(grantStatus(base)).toBe('read, capture, screenshots 1 of 20: active');
+    expect(
+      grantStatus({
+        ...base,
+        recording_cap: 5,
+        recording_used: 2,
+        recording_second_cap: 600,
+        recording_second_used: 120,
+      }),
+    ).toBe(
+      'read, capture, screenshots 1 of 20, recordings 2 of 5, recording time 120 s of 600 s: active',
+    );
+    expect(grantStatus({ ...base, recording_cap: 0 })).toBe(
+      'read, capture, screenshots 1 of 20, recordings 0 of 0, recording time 0 s of 0 s: active',
+    );
+  });
   test('caps posts the body, and the header only when an elevation is given', async () => {
     const posts: { path: string; body: unknown; headers: unknown }[] = [];
     const a = fleetActions(

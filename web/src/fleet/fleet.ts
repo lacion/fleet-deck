@@ -133,7 +133,11 @@ export function grantStatus(g: GrantView): string {
     g.image_byte_cap === undefined
       ? ''
       : `, image reads ${mib(g.image_byte_used)} of ${mib(g.image_byte_cap)} MiB`;
-  return `${g.classes.join(', ')}${spawn}${desktop}${capture}${image}: ${state}`;
+  const recording =
+    g.recording_cap === undefined
+      ? ''
+      : `, recordings ${g.recording_used ?? 0} of ${g.recording_cap}, recording time ${g.recording_second_used ?? 0} s of ${g.recording_second_cap ?? 0} s`;
+  return `${g.classes.join(', ')}${spawn}${desktop}${capture}${image}${recording}: ${state}`;
 }
 
 /** MiB of a byte count with at most one decimal and no trailing `.0`. */

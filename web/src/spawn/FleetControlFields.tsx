@@ -6,6 +6,8 @@ import {
   fleetOn,
   imageBudgetProblem,
   MAX_ANSWER_CAP,
+  recordingCapProblem,
+  recordingSecondsProblem,
 } from './fleetControl';
 
 type Props = {
@@ -44,6 +46,8 @@ const DESKTOP_NOTE =
   'Opening a preview runs web content as your user on that station, and the page can make network requests.';
 const CAPTURE_NOTE =
   'This agent can capture the whole selected monitor, including other applications, notifications and private information visible there. Screenshots are stored as artifacts. Images the agent reads are sent to its provider conversation. Deleting an artifact does not remove downloaded copies or provider conversations.';
+const RECORDING_NOTE =
+  'This agent can record the whole selected monitor for up to 120 seconds at a time, including other applications, notifications and private information visible there. Recordings are stored as video artifacts. The agent gets only a reference to each recording, never the video.';
 const DESKTOP_GATE_NOTE =
   'Desktop and screenshot tools work only while the deck settings Fleet control and Desktop control are on, and on stations that allow them.';
 
@@ -88,11 +92,28 @@ export function FleetControlFields({ fleet, onChange }: Props) {
           <input
             type="checkbox"
             checked={fleet[s.key]}
-            onChange={(event) => onChange({ ...fleet, [s.key]: event.target.checked })}
+            onChange={(event) =>
+              onChange({
+                ...fleet,
+                [s.key]: event.target.checked,
+                // Recordings need screenshots: turning capture off turns them off too.
+                ...(s.key === 'capture' && !event.target.checked ? { recording: false } : {}),
+              })
+            }
           />
           {s.text}
         </label>
       ))}
+      {fleet.capture ? (
+        <label className="fd-spawn-opt">
+          <input
+            type="checkbox"
+            checked={fleet.recording}
+            onChange={(event) => onChange({ ...fleet, recording: event.target.checked })}
+          />
+          Allow monitor recordings
+        </label>
+      ) : null}
       {fleet.answer ? (
         <LimitInput
           label="Answer limit"
@@ -129,8 +150,27 @@ export function FleetControlFields({ fleet, onChange }: Props) {
           />
         </>
       ) : null}
+      {fleet.capture && fleet.recording ? (
+        <>
+          <LimitInput
+            label="Recording limit"
+            value={fleet.recordingCap}
+            max={MAX_ANSWER_CAP}
+            problem={recordingCapProblem(fleet)}
+            onChange={(recordingCap) => onChange({ ...fleet, recordingCap })}
+          />
+          <LimitInput
+            label="Recording time limit (seconds)"
+            value={fleet.recordingSeconds}
+            max={600000}
+            problem={recordingSecondsProblem(fleet)}
+            onChange={(recordingSeconds) => onChange({ ...fleet, recordingSeconds })}
+          />
+        </>
+      ) : null}
       {fleet.desktop ? <p className="fd-note">{DESKTOP_NOTE}</p> : null}
       {fleet.capture ? <p className="fd-note">{CAPTURE_NOTE}</p> : null}
+      {fleet.capture && fleet.recording ? <p className="fd-note">{RECORDING_NOTE}</p> : null}
       {fleet.desktop || fleet.capture ? <p className="fd-note">{DESKTOP_GATE_NOTE}</p> : null}
       {fleetOn(fleet) ? (
         <p className="fd-note">

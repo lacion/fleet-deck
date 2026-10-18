@@ -13,6 +13,12 @@ export type FleetControl = {
   readonly captureCap: string;
   /** The image read budget in MiB. */
   readonly imageMib: string;
+  /** Allow monitor recordings (only meaningful while `capture` is on). */
+  readonly recording: boolean;
+  /** The recording count limit. */
+  readonly recordingCap: string;
+  /** The recording time limit in seconds. */
+  readonly recordingSeconds: string;
 };
 
 export const NO_FLEET: FleetControl = {
@@ -26,6 +32,9 @@ export const NO_FLEET: FleetControl = {
   desktopCap: '300',
   captureCap: '20',
   imageMib: '64',
+  recording: false,
+  recordingCap: '5',
+  recordingSeconds: '600',
 };
 
 /** The largest answer limit that the deck accepts. */
@@ -46,6 +55,7 @@ export function answerCapProblem(f: FleetControl): string | null {
 
 const MAX_DESKTOP_CAP = 5000;
 const MAX_IMAGE_MIB = 1024;
+const MAX_RECORDING_SECONDS = 600_000;
 const MIB = 1_048_576;
 
 const wholeUpTo = (text: string, max: number): boolean => {
@@ -74,10 +84,29 @@ export function imageBudgetProblem(f: FleetControl): string | null {
   return 'The image read budget is a whole number of MiB from 0 to 1024.';
 }
 
-/** The first problem of the limit inputs (answer, desktop, screenshot, image budget), or null. */
+/** The problem of the recording limit, or null (checked when `capture` and `recording` are on). */
+export function recordingCapProblem(f: FleetControl): string | null {
+  if (!(f.capture && f.recording)) return null;
+  if (wholeUpTo(f.recordingCap, MAX_DESKTOP_CAP)) return null;
+  return 'The recording limit is a whole number from 0 to 5000.';
+}
+
+/** The problem of the recording time limit, or null (checked when `capture` and `recording` are on). */
+export function recordingSecondsProblem(f: FleetControl): string | null {
+  if (!(f.capture && f.recording)) return null;
+  if (wholeUpTo(f.recordingSeconds, MAX_RECORDING_SECONDS)) return null;
+  return 'The recording time limit is a whole number of seconds from 0 to 600000.';
+}
+
+/** The first problem of the limit inputs (answer, desktop, screenshot, image budget, recording), or null. */
 export function fleetProblem(f: FleetControl): string | null {
   return (
-    answerCapProblem(f) ?? desktopCapProblem(f) ?? captureCapProblem(f) ?? imageBudgetProblem(f)
+    answerCapProblem(f) ??
+    desktopCapProblem(f) ??
+    captureCapProblem(f) ??
+    imageBudgetProblem(f) ??
+    recordingCapProblem(f) ??
+    recordingSecondsProblem(f)
   );
 }
 
@@ -95,6 +124,9 @@ export function grantFields(
   desktop_cap?: number;
   capture_cap?: number;
   image_byte_cap?: number;
+  allow_recording?: boolean;
+  recording_cap?: number;
+  recording_second_cap?: number;
   stations?: string[];
 } {
   return {
@@ -115,6 +147,13 @@ export function grantFields(
       ? {
           capture_cap: Number(f.captureCap.trim()),
           image_byte_cap: Number(f.imageMib.trim()) * MIB,
+        }
+      : {}),
+    ...(f.capture && f.recording
+      ? {
+          allow_recording: true,
+          recording_cap: Number(f.recordingCap.trim()),
+          recording_second_cap: Number(f.recordingSeconds.trim()),
         }
       : {}),
     ...(targets.length > 0 ? { stations: [...targets] } : {}),
