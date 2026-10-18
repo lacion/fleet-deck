@@ -14,6 +14,8 @@ import { settingsActions } from '../settings/actions';
 import { tailnetActions } from '../tailnet/api';
 import { desktopActions, displayActions } from '../displays/actions';
 import { deckHttp } from '../settings/http';
+import { captureActions } from '../desktop/capture';
+import { deleteActions } from '../artifacts/DeleteArtifact';
 import type { FleetExtras, SessionKey } from '../gen';
 import { sessionActions } from '../session/commands';
 import { shellActions } from '../shell/shell';
@@ -45,6 +47,9 @@ const ARTIFACT_WAIT_MS = 25_000;
 const INTEGRATION_WAIT_MS = 80_000;
 /** The deck waits up to 15 s for a station; the settings calls wait a little longer. */
 const SETTINGS_WAIT_MS = 20_000;
+// R13 P5a (design §7.1): the screenshot POST waits 45 s; the lookups and the deletions 15 s.
+const CAPTURE_WAIT_MS = 45_000;
+const LOOKUP_WAIT_MS = 15_000;
 
 export function RuntimeApp({ connection }: { readonly connection: Connection }) {
   const state = useSyncExternalStore(
@@ -247,12 +252,17 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       () => connection.getSnapshot().login?.csrf ?? null,
       SETTINGS_WAIT_MS,
     );
+    const csrf = () => connection.getSnapshot().login?.csrf ?? null;
+    const captureIo = deckHttp((path, init) => fetch(path, init), csrf, CAPTURE_WAIT_MS);
+    const lookupIo = deckHttp((path, init) => fetch(path, init), csrf, LOOKUP_WAIT_MS);
     return {
       settings: settingsActions(io),
       accounts: accountActions(io),
       tailnet: tailnetActions(io),
       displays: displayActions(io),
       desktop: desktopActions(io),
+      capture: captureActions(captureIo, lookupIo),
+      deletion: deleteActions(lookupIo),
     };
   }, [connection, owner, canAdmin, guest]);
   const filesFor = useMemo(

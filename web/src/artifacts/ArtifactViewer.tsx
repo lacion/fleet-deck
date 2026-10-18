@@ -3,6 +3,13 @@ import { Markdown } from '../chat/Markdown';
 import type { DeckArtifactDetail } from '../gen';
 import { ArrowDown, Icon, Link as LinkIcon } from '../ui/icons';
 import { type ArtifactActions, rawPath } from './actions';
+import {
+  CONFIRM_TEXT,
+  DELETE_LABEL,
+  type DeletionView,
+  stateText,
+  useDeletion,
+} from './DeleteArtifact';
 import { fileName, KIND_LABEL } from './kinds';
 import { SendToWall } from '../wall/SendToWall';
 import { ShareDialog } from './ShareDialog';
@@ -76,7 +83,29 @@ type ViewProps = {
   /** The "back" control: a button in the panel, a link in the page. */
   readonly onBack?: (() => void) | undefined;
   readonly onShare: () => void;
+  /** The owner's "Delete artifact"; absent: no control (R13 P5a). */
+  readonly deletion?: DeletionView | undefined;
 };
+
+/** The confirmation, the error or the pending text of a deletion. */
+function DeletionNotes({ deletion }: { readonly deletion: DeletionView }) {
+  const { phase } = deletion;
+  if (phase.kind === 'confirm') {
+    return (
+      <div className="fd-disp-confirm" role="alertdialog" aria-label="Confirm">
+        <p>{CONFIRM_TEXT}</p>
+        <button type="button" className="fd-primary" onClick={deletion.onConfirm}>
+          Confirm
+        </button>
+        <button type="button" className="fd-ghost" onClick={deletion.onCancel}>
+          Cancel
+        </button>
+      </div>
+    );
+  }
+  if (phase.kind === 'error') return <Failed text={phase.text} />;
+  return null;
+}
 
 /** The viewer without data calls: the toolbar and the body of one state. */
 export function ArtifactViewerView({
@@ -86,6 +115,7 @@ export function ArtifactViewerView({
   onVersion,
   onBack,
   onShare,
+  deletion,
 }: ViewProps) {
   const back =
     variant === 'page' ? (
@@ -168,9 +198,22 @@ export function ArtifactViewerView({
             Share…
           </button>
         ) : null}
+        {deletion === undefined ||
+        (deletion.phase.kind !== 'idle' && deletion.phase.kind !== 'error') ? null : (
+          <button type="button" className="fd-ghost fd-sm fd-art-action" onClick={deletion.onBegin}>
+            {DELETE_LABEL}
+          </button>
+        )}
       </div>
+      {deletion === undefined ? null : <DeletionNotes deletion={deletion} />}
       <div className="fd-art-body" data-kind={artifact.kind}>
-        <Body ready={ready} />
+        {deletion?.phase.kind === 'hidden' ? (
+          <p role="status" className="fd-note fd-art-state">
+            {stateText(deletion.phase.state)}
+          </p>
+        ) : (
+          <Body ready={ready} />
+        )}
       </div>
     </section>
   );
@@ -201,6 +244,11 @@ export function ArtifactViewer({
   const [sharing, setSharing] = useState(false);
   const data = useViewer(actions, station, id, version, reload);
   const detail: DeckArtifactDetail | null = data.kind === 'ok' ? data.value.detail : null;
+  // The owner's delete: a deletion that finishes at once leaves the viewer for the list.
+  const { view: deletion, node: elevationNode } = useDeletion(station, id, actions.canShare, () => {
+    if (variant === 'panel') onBack?.();
+    else window.location.hash = '#/artifacts';
+  });
   return (
     <>
       <ArtifactViewerView
@@ -210,7 +258,9 @@ export function ArtifactViewer({
         onVersion={onVersion}
         onBack={onBack}
         onShare={() => setSharing(true)}
+        deletion={deletion}
       />
+      {elevationNode}
       {sharing && detail !== null ? (
         <ShareDialog
           station={station}
