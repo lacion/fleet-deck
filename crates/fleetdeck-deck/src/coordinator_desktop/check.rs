@@ -1,6 +1,6 @@
 //! `desktop.authority_check` (R13 P6 §5.6, §5.7, decision O12-9 item 12, Q2,
 //! Q3): the target station asks right before the effect of an action, before
-//! the import of a screenshot, or before it returns the data of a protected
+//! the import of a screenshot or a recording, or before it returns the data of a protected
 //! read, whether the authority still holds. The deck answers from its own
 //! state and from the live policy of the caller station, in the order of
 //! ADR-008 section 6.2 (local, policy, local), and fails closed.
@@ -128,7 +128,10 @@ async fn action(
     if op.target_station != *station
         || op.action_hash.as_deref() != Some(check.action_hash.as_str())
         || op.state != OpState::Attempted
-        || (check.phase == AuthorityPhase::Import && op.tool != OpTool::Screenshot)
+        // Only a capture imports: a screenshot, or a recording (R13 P5b-2
+        // §7.6: the station asks for import authority before its import).
+        || (check.phase == AuthorityPhase::Import
+            && !matches!(op.tool, OpTool::Screenshot | OpTool::RecordMonitor))
     {
         return Err(AuthorityReason::AuthorityLost);
     }

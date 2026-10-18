@@ -75,6 +75,25 @@ async fn the_import_phase_is_valid_for_a_screenshot_operation_only() {
     );
 }
 
+/// A recording imports too (R13 P5b-2 §7.6): the station asks for import
+/// authority before the import of a coordinator recording.
+#[tokio::test]
+async fn the_import_phase_is_valid_for_a_recording_operation() {
+    let w = world_with(&BOTH, |g| {
+        g.recording_cap = 5;
+        g.recording_second_cap = 600;
+    })
+    .await;
+    let mut op = w.new_op("op-rec", OpTool::RecordMonitor, "H4", &w.station());
+    op.class = fleetdeck_deck::store::coordinator_desktop::OpClass::Capture;
+    op.seconds = Some(2);
+    w.attempted(op).await;
+    let v = w.check(payload("op-rec", "H4", "import")).await;
+    assert_eq!(v, json!({"valid": true, "reason": null}));
+    let v = w.check(payload("op-rec", "H4", "execute")).await;
+    assert_eq!(v, json!({"valid": true, "reason": null}));
+}
+
 #[tokio::test]
 async fn an_unknown_operation_a_wrong_hash_a_wrong_station_and_a_wrong_state_are_lost() {
     let w = world().await;
