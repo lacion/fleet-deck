@@ -3351,3 +3351,33 @@ Owner review: pending.
 - Decision: the fixes `ffa6bd33` (O12-14) and `c2412777` (O12-16) are accepted. P6 is accepted.
 - Open items: the live smoke on the owner's Omarchy machines and the opt-in Claude and Codex smoke (§15 test 38); no board path to close a preview that an agent opened (product gap); the WS delivery of a coordinator wall makes two policy round trips per batch (performance); the owner may still change OD-1 to OD-7.
 
+## DL-239: R13 P5b-1 built (owner monitor recordings, video artifacts, Range playback) (architect, 2026-10-20)
+
+- Context: the contract is `docs/v2/design/omarchy-p5b.md`. It passed the adversary DESIGN REVIEW in round 2 (O12-6, O12-7). P5b-1 is the owner recording from the Desktop panel, the recording stop, the `video` artifact kind and byte-range playback. P5b-2 (agent recording) is not part of this entry and is not built. The end-to-end proofs of task P1 are in progress when this entry is written.
+- What was built, in these tasks. Each merge is on v2:
+  - Task E1, `3b30228f`: `GET` and `HEAD` with one byte range for MP4 artifacts on the raw route and on the public share and view routes. The ETag and `If-Range` rules, the fixed texts of the range errors, bounded station reads from the requested offset, cache slices, and the check of the tombstone and of the read authority before each chunk.
+  - Task E2, `fabdf204`: the structural MP4 validator (one H.264 track, no audio, bounded boxes and samples, no fragments, no external data).
+  - Task E3, `6c022274`: the recorder launcher. `shim-exec` puts the output file on FD 3 and sets the file size limit. The owned supervisor, the boot clock for suspend detection, and the durable removal of a folder tree.
+  - Task F, `99c1511a`: the foundation. The wire types, the features `desktop_recording.v1` and `artifacts_video.v1`, the action `screen_record`, the stop reasons, the link methods `desktop.capture_active`, `desktop.capture_stop`, `desktop.capture_policy_now` and `desktop.capture_lease`, the migrations and the stubs.
+  - Task S2, `bfd03944`: the station records. The recording operation rows, the stop latch, the commit of the video artifact in one transaction, the generalized import, the durable cleanup and the start recovery with the orphan scan.
+  - Task K1, `8ec08375`, with the lease scope fix `9e5d8cfd`: the deck control. The start, the owner stop, the active recording, the continuation lease handler, the live policy query and the status.
+  - Task K2, `9cbfbd67`: the projection. A board or a peer that does not declare `artifacts_video.v1` gets `kind: "other"` and no recording data, on every list, get, publish, event and snapshot path. An agent read of a video artifact is refused.
+  - Task S1, `9054bc89`: the station recording operation. The start, the lease client, the one-second watchdog, the stop triggers, the finalize, the validation and the import.
+  - Task W2, `cb24d5be`: the board viewer for video (a native `<video>` on the version-pinned raw route) and the declaration of `artifacts_video.v1`.
+  - Task W1, `ab7aa11d`, with the fix `20f8b74b`: the Desktop panel. The duration field, "Record", the permanent disclosure, the live phase, "Stop recording", "Check result" and the discovery of an active recording after a reload.
+  - Task P2 (this change): the documents. This entry, the status lines, `operations.md` section 7.7, the rows of `PARITY.md` and `SECURITY-CHECKLIST.md`, and the P5b part of `LIVE-SMOKE.md`.
+  - Task P1 (end-to-end proofs) is in progress and is not part of this entry.
+- Decisions. Each line is one record. The full text is in `omarchy-r12-decisions.md` of the architect's brief folder (`~/fleetdeck-briefs`):
+  - O12-6: the P5b contract. The owner decisions OD-1 to OD-6 are accepted as recommended: option A with P5b-1 first, save only on duration end or owner stop, the limits of sections 8 and 10 with the 512 MiB peak reservation, an explicit recording opt-in for agents, one whole monitor with no audio, and a recording that survives the board but ends with the initiating login.
+  - O12-7: DESIGN REVIEW round 1 fixes. Durable removal (unlink, remove emptied folders, `fsync` every parent before the cleanup counts as done), the start scan of orphan entries, and the closed list of stop reasons with the rule that the first discard reason wins.
+  - O12-10: the build decisions of the code map. The owner stop route pushes at once and the deck switch and login end ride on the next one-second lease answer. `*.mp4` published in the ordinary way stays `Other`, and only the trusted recording import makes a `Video`. The migration V34 is not changed.
+  - O12-15: S2 accepted. Extra refusals in the recording commit, `recording_fail` stores the given reason, and the cleanup of a failed operation uses it.
+  - O12-17: K1 accepted. The scope of `desktop.capture_lease` is `admin`, because the deck grants a paired station only `admin`.
+  - O12-18: K2 and S1 accepted. The deck and the station project the video kind per link. The watchdog and the renewals run through the finalize, and the commit guard decides a late race. A real `shim-exec` with `wf-recorder` is not tested here: it is the live smoke.
+- Open items:
+  - a. The PRE-PR review of P5b-1 is pending.
+  - b. The real-recorder smoke (retained FD and finalization with `wf-recorder` 0.5.0 as the baseline) on the owner's Omarchy machine is required before the feature is relied on (`omarchy-p5b.md` section 18). The list is in `docs/v2/LIVE-SMOKE.md` (`make desktop-smoke`).
+  - c. The 180 s limit of a video response is not enforced while a client stops reading. It needs a connection write timeout.
+  - d. P5b-2 (agent recording) is not built.
+  - e. The owner may change OD-1 to OD-6 (`omarchy-p5b.md` section 2).
+- Next: the end-to-end proofs (task P1); the PRE-PR review of P5b-1; the owner reads the new rows of `SECURITY-CHECKLIST.md` (DL-158); the real-recorder smoke on the Omarchy machine.

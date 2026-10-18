@@ -334,4 +334,71 @@ Result:
 | --- | --- | --- | --- | --- |
 | (not run) | | | | The live smoke of P6 on the owner's Omarchy machines, and the opt-in Claude and Codex smoke, are open (DL-237 item b). |
 
+### P5b owner recordings (DL-239)
+
+The contract is `docs/v2/design/omarchy-p5b.md` (section 17, test 52, and section 18). The owner guide is `docs/v2/operations.md` section 7.7. The supported baseline of the recorder is `wf-recorder 0.5.0`. The code starts it through the hidden `shim-exec` command, with the output file on FD 3. Newer releases are not supported until a test shows that they work. Do this smoke on the owner's Omarchy machine, on a station with a Hyprland desktop.
+
+Every step is a board step. No step asks you to run a command or to edit a file on a station. A value that the board cannot show is marked "no board path yet". It is an open item, not an instruction.
+
+Set up:
+
+1. Open the board and go to Settings, then the Deck tab. Turn on "Desktop control" if it is off.
+2. Go to the station tab of the station. Turn on "Desktop control" and "Desktop screenshots". The board asks for a recent sign-in. Sign in again when it asks.
+3. Leave "Screenshot monitors" empty. An empty list allows every monitor.
+4. Open the station card and open the Desktop panel. Each monitor must show "Duration (seconds)" with the value 30, a "Record" button and the disclosure "Records the whole selected monitor, including other applications, notifications and private information visible there. No audio is recorded. The recording is stored as an ordinary artifact until deleted."
+5. If "Record" is off, read the reason line. "The recording tool wf-recorder is not installed." means that the tool is missing. Installing it has no board path yet.
+
+Items:
+
+1. **A short recording.**
+   1. Enter 10 in "Duration (seconds)" for one monitor. Press "Record".
+   2. Expect "Preparing recording", then "Recording". "Record" and "Screenshot" must be off for every monitor of the station while it runs.
+   3. After about 10 seconds, expect "Stopping recording" or "Saving recording", and then the link "Open the recording".
+   4. Open the link. The viewer shows the line `Desktop recording · <station name>/<monitor> · <time>` above the player. The artifact title is `Desktop recording · <station name>/<monitor>`, and its kind is "Video".
+   5. Press play. Expect video of the monitor with no audio. Expect that the video did not start by itself.
+   6. Write the monitor size and the file size in the result.
+2. **Stop at about 5 seconds.**
+   1. Enter 10 and press "Record". After about 5 seconds of "Recording", press "Stop recording".
+   2. Expect "Stopping recording", "Saving recording" and then "Open the recording".
+   3. Open it. Expect a clip of about 5 seconds. The viewer line ends with "requested 10 s, saved <n> s".
+3. **The screenshot switch during a recording.**
+   1. Enter 30 and press "Record". Wait for "Recording".
+   2. Go to the station tab of the station. Turn off "Desktop screenshots". The board asks for no sign-in.
+   3. Go back to the Desktop panel. Expect, within a few seconds, the text "The recording was interrupted before it was saved."
+   4. Open the artifact list. Expect no new recording artifact.
+   5. Turn on "Desktop screenshots" again. The board asks for a recent sign-in.
+4. **The lock during a recording.**
+   1. Do this item only on a machine where you can unlock the screen yourself. The board has no way to unlock a screen (no board path yet).
+   2. Enter 30 and press "Record". Wait for "Recording".
+   3. In the Desktop panel press "Lock the screen" and confirm.
+   4. Expect, within a few seconds, the text "The screen is locked or its lock state is unknown." Expect no new recording artifact.
+   5. Unlock the screen.
+5. **Play and seek.**
+   1. Record 30 seconds. Open the recording.
+   2. Press play. Drag the position control to the middle of the clip. Expect that the video goes on from there with no long wait.
+   3. Press "Download". Expect a file that a media player opens.
+   4. Write the browser name and version in the result.
+6. **Delete it.**
+   1. Open the recording and press "Delete artifact". Confirm. The board asks for a recent sign-in.
+   2. Expect "Deleted." The recording leaves the artifact list.
+7. **Open it on the wall.**
+   1. Record 10 seconds again. Open the recording.
+   2. Open a wall display that is bound to the station (the form "Open a wall" in the Desktop panel), if none is open.
+   3. In the viewer press "Send to wall…", choose the display and press "Send".
+   4. Expect the wall to show the card "Open this artifact on your own device" and no video.
+   5. Delete this recording (item 6).
+8. **The real recorder: retained FD and finalization (required).** This item is required before you rely on recordings (DL-239 item b, `omarchy-p5b.md` section 18). The unit tests use a fake recorder.
+   1. Enter 120 in "Duration (seconds)". Press "Record".
+   2. Wait the whole time. Do not press "Stop recording". Expect "Recording" for about 2 minutes, then "Saving recording", and then "Open the recording". The text "The recording tool failed." or "The recording file could not be verified." means that the retained FD or the finalization does not work with this `wf-recorder`. Write the text in the result and stop here.
+   3. Open the recording. Press play and seek to the end. Expect a clip of about 120 seconds that plays in the browser. The viewer line shows both lengths only when they differ by more than 1 second.
+   4. Write the `wf-recorder` version in the result (no board path yet to read it). Write the size of the file.
+   5. The board shows no process list. Whether a recorder process stays on the station after the recording has no board path yet. Write "no board path yet" in the result for this check.
+   6. Delete the recording (item 6).
+
+Result:
+
+| Date | `wf-recorder` version | Items | Result |
+| --- | --- | --- | --- |
+| (not run) | | | The live smoke of P5b-1, and the real-recorder item 8, are open (DL-239 item b). |
+
 <!-- desktop-smoke:end -->
