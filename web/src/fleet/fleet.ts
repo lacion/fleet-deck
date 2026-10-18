@@ -21,10 +21,16 @@ export type FleetActions = {
   revoke(grantId: string): Promise<FleetResult>;
   /** Renews an idle-expired grant (ADR-006 test 25b). */
   renew(grantId: string): Promise<FleetResult>;
-  /** Changes the desktop limits of a grant (R13 P6); `elevation` is needed when a value grows. */
+  /** Changes the desktop and recording limits of a grant (R13 P6); `elevation` is needed when a value grows. */
   caps(
     grantId: string,
-    caps: { desktop_cap?: number; capture_cap?: number; image_byte_cap?: number },
+    caps: {
+      desktop_cap?: number;
+      capture_cap?: number;
+      image_byte_cap?: number;
+      recording_cap?: number;
+      recording_second_cap?: number;
+    },
     elevation?: string,
   ): Promise<FleetResult>;
   /** The recent desktop operations of a grant, newest first (R13 P6). */

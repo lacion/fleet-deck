@@ -237,6 +237,123 @@ async fn a_cap_change_has_an_audit_row_with_the_old_and_the_new_caps() {
     assert_eq!(refused_rows, vec![Some("elevation_required".to_owned())]);
 }
 
+/// A grant of the rig that allows 5 recordings of 600 seconds in all.
+async fn recording_grant(r: &Rig) -> String {
+    let f = &r.f;
+    bound_edit(
+        f,
+        &f.station,
+        "coord-rec",
+        &[GrantClass::Desktop, GrantClass::Capture],
+        |g| {
+            g.recording_cap = 5;
+            g.recording_second_cap = 600;
+        },
+    )
+    .await
+    .grant_id
+}
+
+async fn caps_of(r: &Rig, grant_id: &str, body: Value, elevation: Option<&str>) -> Http {
+    let mut headers = refs(&r.h);
+    if let Some(token) = elevation {
+        headers.push((ELEVATION, token));
+    }
+    r.c.post(&caps_path(grant_id), &headers, body).await
+}
+
+#[tokio::test]
+async fn a_recording_increase_needs_the_elevation_and_a_decrease_does_not() {
+    let r = rig().await;
+    let gid = recording_grant(&r).await;
+    let up = caps_of(&r, &gid, json!({"recording_cap": 6}), None).await;
+    expect(&up, 400, "elevation_required");
+    let g = r.f.store.grant(gid.clone()).await.unwrap().unwrap();
+    assert_eq!(g.recording_cap, 5, "nothing changed");
+    let token = elevate(&r.c, &r.h).await;
+    let up = caps_of(
+        &r,
+        &gid,
+        json!({"recording_cap": 7, "recording_second_cap": 900}),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(up.status, 200, "{}", up.body);
+    assert_eq!(up.body["recording_cap"], 7);
+    assert_eq!(up.body["recording_second_cap"], 900);
+    assert_eq!(up.body["recording_used"], 0);
+    assert_eq!(up.body["recording_second_used"], 0);
+    let down = caps_of(&r, &gid, json!({"recording_second_cap": 60}), None).await;
+    assert_eq!(down.status, 200, "{}", down.body);
+    assert_eq!(down.body["recording_second_cap"], 60);
+    assert_eq!(down.body["recording_cap"], 7);
+}
+
+#[tokio::test]
+async fn a_recording_limit_on_a_grant_without_recordings_is_invalid() {
+    let r = rig().await;
+    let token = elevate(&r.c, &r.h).await;
+    let resp = r.caps(json!({"recording_cap": 1}), Some(&token)).await;
+    expect(&resp, 400, "invalid_grant");
+    assert!(
+        resp.body
+            .to_string()
+            .contains("recording limits need a grant that allows recordings"),
+        "{}",
+        resp.body
+    );
+    let gid = recording_grant(&r).await;
+    let resp = caps_of(&r, &gid, json!({"recording_cap": 5001}), Some(&token)).await;
+    expect(&resp, 400, "invalid_grant");
+    assert!(
+        resp.body.to_string().contains("recording_cap is 0 to 5000"),
+        "{}",
+        resp.body
+    );
+}
+
+#[tokio::test]
+async fn the_audit_row_of_a_recording_grant_holds_the_recording_caps() {
+    let r = rig().await;
+    let gid = recording_grant(&r).await;
+    let resp = caps_of(&r, &gid, json!({"recording_cap": 2}), None).await;
+    assert_eq!(resp.status, 200, "{}", resp.body);
+    let rows: Vec<_> =
+        r.f.store
+            .audit_log(50)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.action == "coordinator.grant_caps")
+            .collect();
+    assert_eq!(rows.len(), 1);
+    let detail: Value = serde_json::from_str(rows[0].detail.as_deref().unwrap()).unwrap();
+    assert_eq!(detail["old"]["recording_cap"], 5);
+    assert_eq!(detail["new"]["recording_cap"], 2);
+    assert_eq!(detail["old"]["recording_second_cap"], 600);
+    assert_eq!(detail["new"]["recording_second_cap"], 600);
+    // The grant of the other tests has no recording keys in its audit row.
+    let resp = r.caps(json!({"desktop_cap": 50}), None).await;
+    assert_eq!(resp.status, 200, "{}", resp.body);
+    let rows: Vec<_> =
+        r.f.store
+            .audit_log(50)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|e| {
+                e.action == "coordinator.grant_caps" && e.target.as_deref() == Some(&*r.grant_id)
+            })
+            .collect();
+    assert_eq!(rows.len(), 1);
+    let detail: Value = serde_json::from_str(rows[0].detail.as_deref().unwrap()).unwrap();
+    assert!(detail["old"].get("recording_cap").is_none(), "{detail}");
+    assert!(
+        detail["new"].get("recording_second_cap").is_none(),
+        "{detail}"
+    );
+}
+
 fn context(r: &Rig) -> CoordinatorContext {
     CoordinatorContext {
         grant_id: r.grant_id.clone(),
