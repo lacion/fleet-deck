@@ -795,10 +795,11 @@ The handler rejects capture purpose without `capture_mcp.v1`.
   operation_id: string;
   action_hash: string;
   phase: "execute" | "import" | "read";
+  read?: ProtectedRead;   // required for phase "read", absent otherwise
 }
 ```
 
-For phase `read`, `operation_id` is the `read_id` and `action_hash` is the `read_hash` of §5.7. For phases `execute` and `import`, they are the action operation ID and the §5.4 action hash.
+`ProtectedRead` is the closed `read` union of §5.7. For phase `read`, `operation_id` is the `read_id`, `action_hash` is the `read_hash` of §5.7, and `read` is the read object that the target is about to run, exactly as the target parsed it. A `read` field with phase `execute` or `import`, or a missing `read` with phase `read`, is malformed and fails closed. For phases `execute` and `import`, they are the action operation ID and the §5.4 action hash.
 
 The authenticated requesting station is the target. It cannot supply or substitute that identity.
 
@@ -864,7 +865,17 @@ One request is one read and one chunk. A `capture_file` read has offset 0 and th
 }
 ```
 
-The deck sends `read_hash`; the target does not recompute it. The target passes it unchanged to `desktop.authority_check` with `operation_id = read_id` and `phase = "read"`. The deck finds the temporary read permit by `read_id` and recomputes the hash from the permit, the authenticated requesting station and the current link. Any difference gives `valid: false` with `authority_lost`. The `"kind": "read"` field keeps a read hash apart from every action hash.
+The deck sends `read_hash`; the target does not recompute it. The target passes it unchanged to `desktop.authority_check` with `operation_id = read_id`, `phase = "read"` and the `read` object that it is about to run. The target runs only that same parsed object after a `valid: true` answer.
+
+Before the deck consumes the permit, it checks all of these, in this order:
+
+1. A permit with this `read_id` exists, is not used and is not expired.
+2. The authenticated requesting station is the permit's target station.
+3. The link on which the check arrived is the link stored in the permit (the link that carried the read).
+4. The received `read` object, serialized with the canonical rules, is byte-equal to the permit's read object.
+5. The hash recomputed from the permit, that station and that link equals the received `action_hash`.
+
+Any failure gives `valid: false` with `authority_lost` and consumes the permit, so a changed read cannot be tried again with the same `read_id`. The `"kind": "read"` field keeps a read hash apart from every action hash.
 
 `read_id` is 128 random bits in lowercase hex (32 characters), unique per read. A permit authorizes exactly one `authority_check` with phase `read` and one answer; a second use is refused.
 
