@@ -144,6 +144,11 @@ impl std::fmt::Debug for Exit {
     }
 }
 
+/// The last check before the child starts (see [`spawn_with`]): the thread
+/// of the recorder runs it immediately before `Command::spawn`. `Err(cause)`
+/// starts nothing; the recorder then ends with that cause and no status.
+pub type SpawnGuard = Box<dyn FnOnce() -> Result<(), StopCause> + Send>;
+
 enum Cmd {
     OwnerStop,
     Discard,
@@ -233,9 +238,15 @@ fn failed() -> Fail {
 /// Starts the recorder through the shim of this executable (`fleetdeck
 /// shim-exec`, see [`spawn_with`]). The recorder writes into `output`.
 ///
+/// `guard` runs on the recorder thread immediately before the child starts.
+///
 /// # Errors
 /// `invalid_params` for `seconds` outside 1..=120; `recording_failed` when
 /// the executable, the descriptor, a thread or the child cannot be started.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the arguments of spawn_with without the launch"
+)]
 pub fn spawn(
     env: &ChildEnv,
     program: &Path,
@@ -244,6 +255,7 @@ pub fn spawn(
     output: &File,
     d: Deadlines,
     clocks: Arc<dyn Clocks>,
+    guard: SpawnGuard,
 ) -> Result<Recorder, Fail> {
     let exe = std::env::current_exe().map_err(|e| {
         tracing::warn!(kind = ?e.kind(), "cannot find the station executable");
@@ -258,11 +270,16 @@ pub fn spawn(
         output,
         d,
         clocks,
+        guard,
     )
 }
 
 /// [`spawn`] with an explicit launch: production passes
 /// [`Launch::ShimExec`]; tests of the station crate pass `Launch::Direct`.
+///
+/// The thread of the recorder runs `guard` as its last step before the child
+/// starts: when it answers `Err(cause)` no process starts, and
+/// [`Recorder::exited`] answers `Exit { status: None, cause: Some(cause), .. }`.
 ///
 /// # Errors
 /// As [`spawn`].
@@ -279,6 +296,7 @@ pub fn spawn_with(
     output: &File,
     d: Deadlines,
     clocks: Arc<dyn Clocks>,
+    guard: SpawnGuard,
 ) -> Result<Recorder, Fail> {
     let args = argv(monitor, seconds)?;
     let stdin = output.try_clone().map_err(|e| {
@@ -292,7 +310,7 @@ pub fn spawn_with(
     let thread = std::thread::Builder::new()
         .name("record-supervisor".into())
         .spawn(move || {
-            let exit = supervise(cmd, d, &*clocks, &cmd_rx, &ready_tx);
+            let exit = supervise(cmd, d, &*clocks, &cmd_rx, &ready_tx, guard);
             if let Some(exit) = exit {
                 // The handle is gone when nobody waits for the exit.
                 drop(exit_tx.send(exit));
@@ -506,16 +524,22 @@ impl Plan {
     }
 }
 
-/// Starts the child, runs the timers until it ends, reaps it, kills what is
-/// left of its group and finishes the drains. Returns `None` when the child
-/// did not start (the failure went to `ready`).
+/// Runs `guard`, starts the child, runs the timers until it ends, reaps it,
+/// kills what is left of its group and finishes the drains. Returns `None`
+/// when the child did not start (the failure went to `ready`). A guard that
+/// refuses starts nothing and answers an exit with its cause.
 fn supervise(
     mut cmd: Command,
     d: Deadlines,
     clocks: &dyn Clocks,
     rx: &Receiver<Cmd>,
     ready: &Sender<Result<(), Fail>>,
+    guard: SpawnGuard,
 ) -> Option<Exit> {
+    // The guard is the last step before the spawn: nothing comes between.
+    if let Err(cause) = guard() {
+        return refused(cause, ready);
+    }
     let mut child = match cmd.spawn() {
         Ok(child) => child,
         Err(e) => {
@@ -558,6 +582,22 @@ fn supervise(
         xfsz,
         stderr_tail,
         drain_timed_out,
+    })
+}
+
+/// The exit of a launch that the guard refused: no child, no status.
+fn refused(cause: StopCause, ready: &Sender<Result<(), Fail>>) -> Option<Exit> {
+    if ready.send(Ok(())).is_err() {
+        // The caller is gone: nobody waits for this exit.
+        return None;
+    }
+    Some(Exit {
+        status: None,
+        cause: Some(cause),
+        escalated: false,
+        xfsz: false,
+        stderr_tail: Vec::new(),
+        drain_timed_out: false,
     })
 }
 

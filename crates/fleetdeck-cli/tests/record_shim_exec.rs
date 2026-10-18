@@ -148,6 +148,7 @@ async fn the_supervisor_starts_the_recorder_through_the_real_shim_exec() {
         &output,
         deadlines,
         Arc::new(SystemClocks),
+        Box::new(|| Ok(())),
     )
     .unwrap();
     let exit = recorder.exited().await;

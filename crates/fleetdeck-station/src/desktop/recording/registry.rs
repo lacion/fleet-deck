@@ -19,6 +19,9 @@ type Key = (String, String);
 #[derive(Default)]
 pub(crate) struct Registry {
     live: Mutex<HashMap<Key, Arc<Latch>>>,
+    /// What a test holds still (never in a production build).
+    #[cfg(test)]
+    pub(crate) hooks: super::rig_tests::Hooks,
 }
 
 /// Removes its recording from the registry when it is dropped.
@@ -117,15 +120,23 @@ impl Desktop {
             latch.stop(save, reason).await;
             return Ok(StopOutcome::Live);
         }
-        Ok(
-            match store
-                .recording_latch(deck_fp, capture_id, save, reason)
-                .await?
-            {
-                Some(_) => StopOutcome::Latched,
-                None => StopOutcome::NotRunning,
-            },
-        )
+        #[cfg(test)]
+        self.recordings.hooks.wait_after_miss().await;
+        let held = store
+            .recording_latch(deck_fp, capture_id, save, reason)
+            .await?;
+        if held.is_none() {
+            return Ok(StopOutcome::NotRunning);
+        }
+        // The operation may have registered after the lookup above. The
+        // store latch is written now, so the operation reads it at its next
+        // store read; and when it is registered already, its memory latch
+        // (the one that the launch guard reads) is set here too.
+        if let Some(latch) = self.recordings.get(deck_fp, capture_id) {
+            latch.stop(save, reason).await;
+            return Ok(StopOutcome::Live);
+        }
+        Ok(StopOutcome::Latched)
     }
 
     /// Orderly shutdown: latches `station_shutdown` and discards every live

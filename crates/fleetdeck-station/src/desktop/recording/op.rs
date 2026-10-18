@@ -23,7 +23,7 @@
 
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 use std::time::{Duration, Instant};
 
 use fleetdeck_proto::artifacts::ArtifactPublished;
@@ -35,6 +35,7 @@ use fleetdeck_proto::recording::{
 use rustix::fs::{CWD, Mode, OFlags};
 use tokio::task::JoinHandle;
 
+use super::guard::LeaseGuard;
 use super::latch::Latch;
 use super::lease::{Lease, Verdict};
 use super::probe::{self, Snapshot};
@@ -80,7 +81,7 @@ impl Stage {
     }
 
     /// A stop before the recorder started.
-    fn cancelled(reason: StopReason) -> Self {
+    pub(super) fn cancelled(reason: StopReason) -> Self {
         Self::new(
             Fail::new(code::RECORDING_CANCELLED, text::RECORDING_CANCELLED),
             reason,
@@ -348,8 +349,18 @@ impl Desktop {
             }
             Begin::Started => {}
         }
+        // The registry entry, with the memory latch that the launch guard
+        // reads, exists before the last store read of the stop (step 5): a
+        // `capture_stop` either finds the entry or wrote its store latch
+        // before that read.
         let latch = Latch::new(store.clone(), &req.deck_fp, &req.capture_id);
+        #[cfg(test)]
+        self.recordings.hooks.wait_before_insert().await;
         let _live = self.recordings.insert(&latch);
+        #[cfg(test)]
+        if let Some(gate) = self.recordings.hooks.phase() {
+            latch.hold_phase_write(gate);
+        }
         let lease = Lease::new(
             Arc::clone(&req.link),
             &req.capture_id,
@@ -484,6 +495,10 @@ impl Run<'_> {
             Some(Verdict::Discard(reason)) => return Err(Stage::discard(reason, false)),
             None => return Err(Stage::discard(StopReason::LeaseDenied, false)),
         };
+        // From the first lease to the commit the operation keeps its own
+        // expiry; it outlives the recorder thread (§6.4).
+        let armed =
+            LeaseGuard::new(until, Arc::clone(&req.params.clocks)).arm(Arc::clone(self.latch));
         // 5
         self.check_not_stopped().await?;
         left(self.deadline).map_err(|f| Stage::new(f, StopReason::Deadline))?;
@@ -496,11 +511,13 @@ impl Run<'_> {
             monitor: req.monitor.clone(),
             seconds: req.seconds,
         };
-        let start = authority::Start::new(req.admitted.clone(), &action);
+        let start = Arc::new(authority::Start::new(req.admitted.clone(), &action));
         within(self.deadline, start.begin(&self.ctx.env))
             .await
             .map_err(|f| Stage::new(f, StopReason::LeaseDenied))?;
-        // 6
+        // 6: the last checks run on the thread of the recorder, right before
+        // the child starts (the stop may arrive while the launch is queued).
+        let (guard, refusal) = self.launch_guard(start, Arc::clone(armed.guard()));
         let deadlines = Deadlines {
             duration: Duration::from_secs(u64::from(req.seconds)),
             total: self.deadline.saturating_duration_since(Instant::now()),
@@ -524,6 +541,7 @@ impl Run<'_> {
                 staging.file(),
                 deadlines,
                 clocks,
+                guard,
             );
             (result, staging)
         })
@@ -534,9 +552,18 @@ impl Run<'_> {
             tracing::warn!(code = e.code, "cannot start the recorder");
             failed(recording_failed())
         })?;
+        // A guard that refused started no process: the stage says why.
+        if let Some(stage) = refusal
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+        {
+            return Err(stage);
+        }
         let ctl = recorder.ctl();
         self.latch.attach(ctl.clone());
-        self.latch.mark_recording(self.store.now_ms()).await;
+        // The supervision starts before any bookkeeping await (§7.4): a
+        // store that does not answer never delays a trigger.
         let tasks = Tasks {
             watch: Watch {
                 desktop: Arc::clone(self.desktop),
@@ -553,11 +580,19 @@ impl Run<'_> {
                 started: Instant::now(),
             }
             .spawn(),
-            renewals: self.lease.spawn_renewals(ctl, Arc::clone(self.latch)),
+            renewals: self.lease.spawn_renewals(
+                ctl,
+                Arc::clone(self.latch),
+                Arc::clone(armed.guard()),
+            ),
         };
-        // 7
-        let exit = recorder.exited().await;
-        self.finalize(staging, exit, tasks).await
+        // 7: the phase write runs beside the wait for the recorder; its
+        // failure is logged and stops nothing.
+        let ((), exit) = tokio::join!(
+            self.latch.mark_recording(self.store.now_ms()),
+            recorder.exited()
+        );
+        self.finalize(staging, exit, tasks, armed).await
     }
 
     /// A stop that was asked for before the recorder started: the operation

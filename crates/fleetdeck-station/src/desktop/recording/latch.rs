@@ -15,7 +15,8 @@ use crate::store::capture_ops::StopIntent;
 #[derive(Default)]
 struct State {
     ctl: Option<RecorderCtl>,
-    saved: bool,
+    /// The reason of the first save request.
+    saved: Option<StopReason>,
     discard: Option<StopReason>,
 }
 
@@ -30,6 +31,10 @@ pub(crate) struct Latch {
     /// The phase that was written last (0 none, 1 stopping, 2 finalizing);
     /// the lock orders the writes.
     phase: tokio::sync::Mutex<u8>,
+    /// A test holds the phase write of `mark_recording` here (a write that
+    /// does not return).
+    #[cfg(test)]
+    phase_gate: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
 }
 
 impl Latch {
@@ -41,7 +46,18 @@ impl Latch {
             state: Mutex::new(State::default()),
             ceiling: AtomicBool::new(false),
             phase: tokio::sync::Mutex::new(0),
+            #[cfg(test)]
+            phase_gate: Mutex::new(None),
         })
+    }
+
+    /// Tests: the phase write of `mark_recording` waits for a permit.
+    #[cfg(test)]
+    pub(crate) fn hold_phase_write(&self, gate: Arc<tokio::sync::Semaphore>) {
+        *self
+            .phase_gate
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(gate);
     }
 
     fn state(&self) -> std::sync::MutexGuard<'_, State> {
@@ -66,7 +82,7 @@ impl Latch {
         };
         if discard.is_some() {
             ctl.discard();
-        } else if saved {
+        } else if saved.is_some() {
             ctl.owner_stop();
         }
     }
@@ -74,6 +90,15 @@ impl Latch {
     /// The first discard reason asked for, if any.
     pub(crate) fn first_discard(&self) -> Option<StopReason> {
         self.state().discard
+    }
+
+    /// The reason of the first stop of any kind that was asked for (a
+    /// discard first, else a save), if any. It reads memory only: every
+    /// trigger sets it before it writes the store (§7.1), so the launch
+    /// guard can read it with no await.
+    pub(crate) fn first_stop(&self) -> Option<StopReason> {
+        let state = self.state();
+        state.discard.or(state.saved)
     }
 
     pub(crate) fn mark_ceiling(&self) {
@@ -99,11 +124,11 @@ impl Latch {
     }
 
     /// Save: sends the graceful stop unless a discard was asked for.
-    fn save_now(&self) {
+    fn save_now(&self, reason: StopReason) {
         let ctl = {
             let mut state = self.state();
-            let first = !state.saved;
-            state.saved = true;
+            let first = state.saved.is_none();
+            state.saved.get_or_insert(reason);
             if first && state.discard.is_none() {
                 state.ctl.clone()
             } else {
@@ -125,7 +150,7 @@ impl Latch {
         reason: StopReason,
     ) -> Option<(StopIntent, StopReason)> {
         if save {
-            self.save_now();
+            self.save_now(reason);
         } else {
             self.discard_now(reason);
         }
@@ -177,6 +202,8 @@ impl Latch {
     /// unless a later phase was already written (then only the start time).
     pub(crate) async fn mark_recording(&self, started_at: i64) {
         let phase = self.phase.lock().await;
+        #[cfg(test)]
+        self.wait_phase_gate().await;
         let now = match *phase {
             0 => RecordingPhase::Recording,
             1 => RecordingPhase::Stopping,
@@ -188,6 +215,21 @@ impl Latch {
             .await
         {
             tracing::warn!(error = %e, "cannot record the recording phase");
+        }
+    }
+
+    /// Tests: waits here, with the phase lock held, while a gate is set.
+    #[cfg(test)]
+    async fn wait_phase_gate(&self) {
+        let gate = self
+            .phase_gate
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if let Some(gate) = gate
+            && let Ok(permit) = gate.acquire().await
+        {
+            permit.forget();
         }
     }
 

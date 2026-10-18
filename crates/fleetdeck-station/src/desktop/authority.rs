@@ -451,6 +451,25 @@ impl Start {
         }
     }
 
+    /// The start permit, read again with no await and no remote call: the
+    /// connection is still the current one, the wall deadline and the
+    /// monotonic [`START_LIMIT`] have not passed. The recorder thread calls
+    /// it immediately before the spawn (R13 P5b §6.1); the remote and quiet
+    /// hours checks already ran in [`Start::begin`].
+    ///
+    /// # Errors
+    /// `forbidden` (connection), `failed` (expired).
+    pub fn still_valid(&self) -> Result<(), Fail> {
+        match &*self.admitted.0 {
+            Kind::Checked(c) => {
+                Self::connection_current(c)?;
+                Self::within_start_limits(c)
+            }
+            #[cfg(test)]
+            Kind::Open => Ok(()),
+        }
+    }
+
     /// The coordinator context of the action, if it has one.
     #[must_use]
     pub fn coordinator(&self) -> Option<&CoordinatorContext> {
@@ -486,14 +505,24 @@ impl Start {
             gates()?;
         }
         // The last checks come right before the spawn, in one step.
-        if !(c.conn.current)() {
-            return Err(refused());
-        }
+        Self::connection_current(c)?;
         // The deadlines bound the start only (§6.3, §9): a later phase of an
         // action that started does not check them.
         if phase == AuthorityPhase::Import {
             return Ok(());
         }
+        Self::within_start_limits(c)
+    }
+
+    fn connection_current(c: &Checked) -> Result<(), Fail> {
+        if (c.conn.current)() {
+            Ok(())
+        } else {
+            Err(refused())
+        }
+    }
+
+    fn within_start_limits(c: &Checked) -> Result<(), Fail> {
         if (c.time.wall)() > c.deadline_ms
             || (c.time.mono)().saturating_duration_since(c.received) > START_LIMIT
         {

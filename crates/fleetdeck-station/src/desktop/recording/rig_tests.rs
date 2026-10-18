@@ -30,6 +30,116 @@ use crate::media::mp4_fixture::Mp4Fixture;
 use crate::store::Store;
 use crate::store::capture_ops::{CaptureState, RecordingRow};
 
+/// The points where a test holds a step of the operation still: the launch
+/// guard (it runs on the thread of the recorder) and the phase write. The
+/// registry of the desktop carries them in a test build only.
+#[derive(Default)]
+pub(crate) struct Hooks {
+    launch: Mutex<Option<Arc<Block>>>,
+    phase: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
+    before_insert: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
+    after_miss: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
+}
+
+/// Waits for one permit of `gate`, when there is a gate.
+async fn pass(gate: Option<Arc<tokio::sync::Semaphore>>) {
+    if let Some(gate) = gate {
+        gate.acquire().await.unwrap().forget();
+    }
+}
+
+impl Hooks {
+    /// The next launch guard waits in the returned block until it is opened.
+    pub(crate) fn hold_launch(&self) -> Arc<Block> {
+        let block = Block::new();
+        *self.launch.lock().unwrap() = Some(Arc::clone(&block));
+        block
+    }
+
+    /// The phase write waits until a permit is added to the returned gate.
+    pub(crate) fn hold_phase_write(&self) -> Arc<tokio::sync::Semaphore> {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        *self.phase.lock().unwrap() = Some(Arc::clone(&gate));
+        gate
+    }
+
+    /// The operation waits for a permit just before it registers itself.
+    pub(crate) fn hold_before_insert(&self) -> Arc<tokio::sync::Semaphore> {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        *self.before_insert.lock().unwrap() = Some(Arc::clone(&gate));
+        gate
+    }
+
+    /// A stop that found no live recording waits for a permit before it
+    /// writes the store latch.
+    pub(crate) fn hold_after_miss(&self) -> Arc<tokio::sync::Semaphore> {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        *self.after_miss.lock().unwrap() = Some(Arc::clone(&gate));
+        gate
+    }
+
+    pub(super) async fn wait_before_insert(&self) {
+        let gate = self.before_insert.lock().unwrap().clone();
+        pass(gate).await;
+    }
+
+    pub(super) async fn wait_after_miss(&self) {
+        let gate = self.after_miss.lock().unwrap().clone();
+        pass(gate).await;
+    }
+
+    pub(super) fn launch(&self) -> Option<Arc<Block>> {
+        self.launch.lock().unwrap().clone()
+    }
+
+    pub(super) fn phase(&self) -> Option<Arc<tokio::sync::Semaphore>> {
+        self.phase.lock().unwrap().clone()
+    }
+}
+
+/// A thread that waits in [`Block::wait`] until a test opens the block.
+pub(crate) struct Block {
+    /// `(reached, open)`.
+    state: Mutex<(bool, bool)>,
+    changed: std::sync::Condvar,
+}
+
+impl Block {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new((false, false)),
+            changed: std::sync::Condvar::new(),
+        })
+    }
+
+    /// The waiting thread: says that it is here, then waits for `open`.
+    pub(super) fn wait(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.0 = true;
+        self.changed.notify_all();
+        while !state.1 {
+            state = self.changed.wait(state).unwrap();
+        }
+    }
+
+    /// Lets the waiting thread go on.
+    pub(crate) fn open(&self) {
+        self.state.lock().unwrap().1 = true;
+        self.changed.notify_all();
+    }
+
+    /// Waits until a thread is in [`Block::wait`].
+    pub(crate) async fn reached(&self) {
+        for _ in 0..1000 {
+            if self.state.lock().unwrap().0 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("no thread reached the block");
+    }
+}
+
 pub(crate) const ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 pub(crate) const ID2: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 
