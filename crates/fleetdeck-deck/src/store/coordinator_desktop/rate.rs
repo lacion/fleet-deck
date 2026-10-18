@@ -14,6 +14,7 @@ pub(super) const SCREENSHOT: &str = "screenshot";
 pub(super) const QUERY: &str = "query";
 pub(super) const IMAGE: &str = "image";
 pub(super) const NOTIFY: &str = "notify";
+pub(super) const INPUT: &str = "input";
 
 /// Rows older than this (milliseconds before `t`) are deleted when a row is
 /// added.

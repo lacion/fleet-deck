@@ -6,7 +6,7 @@ use rusqlite::params;
 
 use super::rate;
 use crate::store::grants::{
-    GrantClass, GrantState, check_desktop_caps, check_recording_caps, get_grant,
+    GrantClass, GrantState, check_desktop_caps, check_input_grant, check_recording_caps, get_grant,
 };
 use crate::store::{DeckStore, Result, call};
 
@@ -25,6 +25,9 @@ pub struct CapsChange {
     pub image_byte_cap: Option<u64>,
     pub recording_cap: Option<u32>,
     pub recording_second_cap: Option<u32>,
+    /// R13 P7 §9.1: the input count and the typed-character caps.
+    pub input_cap: Option<u32>,
+    pub input_character_cap: Option<u32>,
 }
 
 /// Why a cap change was refused.
@@ -32,9 +35,9 @@ pub struct CapsChange {
 pub enum CapsError {
     /// No such grant, or the grant is revoked.
     NotFound,
-    /// The new caps break a rule of [`check_desktop_caps`] or of
-    /// [`check_recording_caps`], or the grant has no recording allowance; the
-    /// fixed text.
+    /// The new caps break a rule of [`check_desktop_caps`], of
+    /// [`check_recording_caps`] or of [`check_input_grant`], or the grant has
+    /// no recording or input allowance; the fixed text.
     Invalid(&'static str),
     /// A cap would grow and the owner did not elevate (§2.2).
     ElevationRequired,
@@ -141,6 +144,14 @@ impl DeckStore {
                     "recording limits need a grant that allows recordings",
                 )));
             }
+            // The same rule for the input limits (R13 P7 §3.1).
+            if (change.input_cap.is_some() || change.input_character_cap.is_some())
+                && !grant.allow_input
+            {
+                return Ok(Err(CapsError::Invalid(
+                    "input limits need a grant that allows input",
+                )));
+            }
             let desktop_new = change.desktop_cap.or(grant.desktop_cap);
             let capture_new = change.capture_cap.or(grant.capture_cap);
             let image_new = change.image_byte_cap.or(grant.image_byte_cap);
@@ -156,17 +167,32 @@ impl DeckStore {
             if let Err(text) = check_recording_caps(&grant.classes, recording_new, second_new) {
                 return Ok(Err(CapsError::Invalid(text)));
             }
+            let input_new = change.input_cap.unwrap_or(grant.input_cap);
+            let input_character_new = change
+                .input_character_cap
+                .unwrap_or(grant.input_character_cap);
+            if let Err(text) = check_input_grant(
+                &grant.classes,
+                grant.allow_input,
+                grant.input_scope,
+                (input_new, input_character_new),
+            ) {
+                return Ok(Err(CapsError::Invalid(text)));
+            }
             let increased = desktop_new.unwrap_or(0) > grant.desktop_cap.unwrap_or(0)
                 || capture_new.unwrap_or(0) > grant.capture_cap.unwrap_or(0)
                 || image_new.unwrap_or(0) > grant.image_byte_cap.unwrap_or(0)
                 || recording_new > grant.recording_cap
-                || second_new > grant.recording_second_cap;
+                || second_new > grant.recording_second_cap
+                || input_new > grant.input_cap
+                || input_character_new > grant.input_character_cap;
             if increased && !allow_increase {
                 return Ok(Err(CapsError::ElevationRequired));
             }
             tx.execute(
                 "UPDATE tokens SET desktop_cap = ?2, capture_cap = ?3, image_byte_cap = ?4,
-                 recording_cap = ?5, recording_second_cap = ?6
+                 recording_cap = ?5, recording_second_cap = ?6, input_cap = ?7,
+                 input_character_cap = ?8
                  WHERE grant_id = ?1",
                 params![
                     grant_id,
@@ -175,7 +201,9 @@ impl DeckStore {
                     // SQLite integers are signed 64-bit; the cap is at most 1 GiB.
                     image_new.and_then(|c| i64::try_from(c).ok()),
                     recording_new,
-                    second_new
+                    second_new,
+                    input_new,
+                    input_character_new
                 ],
             )?;
             tx.commit()?;

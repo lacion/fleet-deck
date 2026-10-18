@@ -8,6 +8,7 @@
 
 mod admit;
 mod budget;
+mod input;
 mod list;
 mod ops;
 mod rate;
@@ -19,6 +20,8 @@ pub use ops::{
     Admission, Charges, DesktopOp, NewOp, OpClass, OpOutcome, OpState, OpTool, request_key,
 };
 
+#[cfg(test)]
+mod admit_input_tests;
 #[cfg(test)]
 mod admit_record_tests;
 #[cfg(test)]
