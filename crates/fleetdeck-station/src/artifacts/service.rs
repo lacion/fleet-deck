@@ -356,8 +356,10 @@ impl ArtifactService {
     /// `artifacts.list`.
     ///
     /// # Errors
-    /// `internal`.
+    /// `internal`; the error of the startup recovery of the captures (an
+    /// artifact read waits for it, design `omarchy-p5b.md` §5.4 step 8).
     pub async fn list(&self, query: ArtifactListQuery) -> Result<ArtifactList, ArtifactError> {
+        self.ensure_recovered().await?;
         let artifacts = self
             .store
             .artifacts_of(query.session_id)
@@ -382,8 +384,9 @@ impl ArtifactService {
     /// `artifacts.get`.
     ///
     /// # Errors
-    /// `unknown_artifact` or `internal`.
+    /// `unknown_artifact` or `internal`; the error of the startup recovery.
     pub async fn get(&self, query: ArtifactGetQuery) -> Result<ArtifactDetail, ArtifactError> {
+        self.ensure_recovered().await?;
         let (artifact, versions) = self.detail(&query.artifact_id).await?;
         let wanted = query.version.unwrap_or(artifact.latest_version);
         let version = versions
@@ -406,8 +409,10 @@ impl ArtifactService {
     /// `artifacts.file`: one chunk of one file of a version.
     ///
     /// # Errors
-    /// `unknown_artifact`, `not_found`, `invalid_params` or `internal`.
+    /// `unknown_artifact`, `not_found`, `invalid_params` or `internal`; the
+    /// error of the startup recovery.
     pub async fn file(&self, query: ArtifactFileQuery) -> Result<ArtifactFile, ArtifactError> {
+        self.ensure_recovered().await?;
         let (_, versions) = self.detail(&query.artifact_id).await?;
         let version = versions
             .iter()

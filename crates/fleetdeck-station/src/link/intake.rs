@@ -554,7 +554,7 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
         | "files.coordinator_diff" => file_method(ctx, &req.method, req.params).await,
         "artifacts.publish" | "artifacts.list" | "artifacts.get" | "artifacts.file"
         | "artifacts.delete" => {
-            intake_artifacts::artifact_method(ctx, &req.method, req.params).await
+            intake_artifacts::artifact_method(ctx, control, &req.method, req.params).await
         }
         "settings.get" | "settings.set" | "settings.secret_set" | "station.restart" => {
             crate::settings_svc::call(&ctx.manager, &ctx.shells, &req.method, req.params).await
