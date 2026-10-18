@@ -7,6 +7,8 @@
 //! in flight; a request has a 5 s deadline. A successful answer moves the
 //! recorder's lease expiry to `boot(request start) + 6 s`; the expiry itself
 //! runs on the recorder thread, so an awaited request cannot postpone it.
+//! The operation keeps its own copy of the expiry in [`LeaseGuard`], which
+//! outlives the recorder (the import and the commit).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -20,6 +22,7 @@ use fleetdeck_proto::recording::{
 use tokio::task::JoinHandle;
 
 use super::Timing;
+use super::guard::LeaseGuard;
 use super::latch::Latch;
 use crate::media::clock::{BootInstant, Clocks, SuspendWatch};
 use crate::media::recorder::RecorderCtl;
@@ -181,11 +184,13 @@ impl Lease {
     }
 
     /// The renewal task: a `record` request every period (never two at once),
-    /// each answer applied at once. It ends after a discard.
+    /// each answer applied at once, to the recorder and to the operation
+    /// guard. It ends after a discard.
     pub(crate) fn spawn_renewals(
         self: &Arc<Self>,
         ctl: RecorderCtl,
         latch: Arc<Latch>,
+        guard: Arc<LeaseGuard>,
     ) -> JoinHandle<()> {
         let lease = Arc::clone(self);
         tokio::spawn(async move {
@@ -193,9 +198,15 @@ impl Lease {
                 let began = tokio::time::Instant::now();
                 let answered = lease.request(LeasePhase::Record).await;
                 match answered.verdict {
-                    Some(Verdict::Continue) => ctl.renew(lease.until(answered.started)),
+                    Some(Verdict::Continue) => {
+                        let until = lease.until(answered.started);
+                        guard.renew(until);
+                        ctl.renew(until);
+                    }
                     Some(Verdict::Save) => {
-                        ctl.renew(lease.until(answered.started));
+                        let until = lease.until(answered.started);
+                        guard.renew(until);
+                        ctl.renew(until);
                         latch.stop(true, StopReason::OwnerStop).await;
                     }
                     Some(Verdict::Discard(reason)) => {

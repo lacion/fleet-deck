@@ -2,7 +2,8 @@
 //! §7.3, §7.6, §9.3, §9.4): what the exit of the recorder means, the checks
 //! of the finished file on the retained descriptor, the `import` lease, the
 //! import and the commit. Any discard on this way is latched first, so the
-//! first discard reason wins and the commit refuses it.
+//! first discard reason wins and the commit refuses it. The lease guard of
+//! the operation watches the expiry until the commit returns (§6.4).
 
 use std::sync::Arc;
 
@@ -10,6 +11,7 @@ use fleetdeck_proto::artifacts::{ArtifactPublished, MAX_TITLE_CHARS};
 use fleetdeck_proto::capture::{CaptureCaller, CaptureKind, CaptureProvenance, code, text};
 use fleetdeck_proto::recording::{LeasePhase, RecordingMeta, StopReason};
 
+use super::guard::{Armed, LeaseGuard};
 use super::lease::Verdict;
 use super::op::{Run, Stage, Tasks, join_failed, left};
 use super::{check_gates, probe};
@@ -135,6 +137,7 @@ impl Run<'_> {
         mut staging: Staging,
         exit: Exit,
         tasks: Tasks,
+        armed: Armed,
     ) -> Result<ArtifactPublished, Stage> {
         let req = self.req;
         let save = match self.judge_exit(&exit) {
@@ -169,7 +172,11 @@ impl Run<'_> {
         self.in_time().await?;
         let answered = self.lease.request(LeasePhase::Import).await;
         match answered.verdict {
-            Some(Verdict::Continue | Verdict::Save) => {}
+            Some(Verdict::Continue | Verdict::Save) => {
+                // The import lease moves the expiry of the operation: the
+                // recorder is gone, so only the guard holds it now.
+                armed.guard().renew(self.lease.until(answered.started));
+            }
             Some(Verdict::Discard(reason)) => return Err(self.discard_late(reason, false).await),
             None => return Err(self.discard_late(StopReason::LeaseDenied, false).await),
         }
@@ -201,7 +208,8 @@ impl Run<'_> {
         imported.map_err(failed)?;
         drop(back);
         self.check_latch().await?;
-        let published = self.commit(save, &checked).await?;
+        let published = self.commit(save, &checked, armed.guard()).await?;
+        drop(armed);
         drop(tasks);
         // The staging goes durably; its bytes stay reserved until then.
         finish_staging(
@@ -220,6 +228,7 @@ impl Run<'_> {
         &self,
         save: StopReason,
         checked: &Checked,
+        lease: &LeaseGuard,
     ) -> Result<ArtifactPublished, Stage> {
         let req = self.req;
         let title: String = format!(
@@ -259,6 +268,11 @@ impl Run<'_> {
                 text::RECORDING_PUBLISH_FAILED,
             )
         };
+        // The last check before the transaction, with no await between: a
+        // lease that ran out (or a suspend) discards instead of committing.
+        if !lease.valid() {
+            return Err(self.discard_late(StopReason::LeaseExpired, false).await);
+        }
         match self
             .store
             .recording_commit(&req.deck_fp, &req.capture_id, new, checked.len)

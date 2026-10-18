@@ -19,6 +19,9 @@ type Key = (String, String);
 #[derive(Default)]
 pub(crate) struct Registry {
     live: Mutex<HashMap<Key, Arc<Latch>>>,
+    /// What a test holds still (never in a production build).
+    #[cfg(test)]
+    pub(crate) hooks: super::rig_tests::Hooks,
 }
 
 /// Removes its recording from the registry when it is dropped.

@@ -81,6 +81,7 @@ impl Rig {
             &self.output,
             d,
             clocks,
+            Box::new(|| Ok(())),
         )
         .unwrap()
     }
@@ -420,6 +421,7 @@ fn a_program_that_cannot_start_is_a_failure() {
         &rig.output,
         quiet(),
         real(),
+        Box::new(|| Ok(())),
     );
     assert_eq!(result.err().map(|e| e.code), Some("recording_failed"));
 }
@@ -445,4 +447,71 @@ async fn a_process_outside_the_group_that_holds_stderr_ends_the_wait_after_two_s
     assert!(took >= Duration::from_millis(1900), "{took:?}");
     assert!(took < Duration::from_secs(3), "{took:?}");
     assert!(format!("{exit:?}").contains("drain_timed_out: true"));
+}
+
+#[tokio::test]
+async fn a_guard_that_refuses_starts_no_process_and_ends_with_its_cause() {
+    for cause in [StopCause::Discard, StopCause::LeaseExpired] {
+        let mut rig = Rig::new();
+        let recorder = spawn_with(
+            &Launch::Direct,
+            &rig.env(&[]),
+            &rig.program,
+            "DP-1",
+            60,
+            &rig.output,
+            quiet(),
+            real(),
+            Box::new(move || Err(cause)),
+        )
+        .unwrap();
+        let exit = recorder.exited().await;
+        assert_eq!(exit.cause, Some(cause), "{exit:?}");
+        assert!(exit.status.is_none(), "{exit:?}");
+        assert!(!exit.escalated && !exit.xfsz && !exit.drain_timed_out);
+        // The program never ran: it wrote nothing and made no PID file.
+        assert_eq!(rig.contents(), "");
+        assert!(!rig.dir.path().join("pid").exists());
+    }
+}
+
+#[tokio::test]
+async fn the_guard_runs_once_on_the_thread_of_the_recorder_before_the_child() {
+    let mut rig = Rig::new();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let pid_file = rig.dir.path().join("pid");
+    let recorder = spawn_with(
+        &Launch::Direct,
+        &rig.env(&[]),
+        &rig.program,
+        "DP-1",
+        60,
+        &rig.output,
+        quiet(),
+        real(),
+        Box::new(move || {
+            // The child has not started: its PID file does not exist yet.
+            tx.send((
+                std::thread::current().name().map(str::to_owned),
+                pid_file.exists(),
+            ))
+            .unwrap();
+            Ok(())
+        }),
+    )
+    .unwrap();
+    let (name, existed) = rx.recv().unwrap();
+    assert_eq!(name.as_deref(), Some("record-supervisor"));
+    assert!(!existed);
+    // The script made its PID file: its INT trap is set.
+    for _ in 0..200 {
+        if rig.dir.path().join("pid").exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    recorder.owner_stop();
+    let exit = recorder.exited().await;
+    assert_eq!(exit.cause, Some(StopCause::OwnerStop), "{exit:?}");
+    assert!(rig.contents().starts_with("started"));
 }

@@ -7,6 +7,8 @@
 //! - [`supervisor`]: the one-second watchdog of a running recording (live
 //!   gates, lock, monitor, size, free space, link).
 //! - [`lease`]: the continuation lease client (`desktop.capture_lease`).
+//! - [`guard`]: the lease expiry of the operation (alive until the commit)
+//!   and the launch guard (the last checks, on the thread of the recorder).
 //! - [`latch`]: the stop latch of one recording and its stop actions.
 //! - [`probe`]: the light desktop probe of the watchdog and of
 //!   `desktop.capture_policy_now`.
@@ -31,6 +33,7 @@ use crate::desktop::authority::Admitted;
 use crate::media::clock::Clocks;
 
 mod finish;
+mod guard;
 mod latch;
 mod lease;
 mod op;
@@ -165,6 +168,8 @@ pub(crate) fn fail_for(reason: StopReason, ceiling: bool) -> Fail {
     Fail::new(c, code_text(c))
 }
 
+#[cfg(test)]
+mod guard_tests;
 #[cfg(test)]
 mod latch_tests;
 #[cfg(test)]
