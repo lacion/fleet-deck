@@ -107,6 +107,70 @@ fn confirm(yes: bool) -> anyhow::Result<()> {
     }
 }
 
+/// Step 3, the write part. `after_prompt` runs first (the test seam of the
+/// time after the question). Every target is checked again just before its
+/// publish: a new file is created without replacing a name (a file that
+/// appeared meanwhile is a conflict and stops the run); a recorded file is
+/// replaced only when it still has the recorded hash, else it is kept.
+/// `Ok(false)` when a conflict stopped the run.
+fn publish(
+    home: &Home,
+    record: &mut Record,
+    items: &[Item],
+    after_prompt: impl FnOnce(),
+) -> anyhow::Result<bool> {
+    after_prompt();
+    for item in items {
+        let asset = item.asset;
+        match item.plan {
+            Plan::Create => {
+                if !home.create_new(&item.rel, asset.text.as_bytes(), asset.mode)? {
+                    eprintln!("fleetdeck: conflict: {}", item.abs.display());
+                    return Ok(false);
+                }
+                upsert_written(record, asset);
+            }
+            Plan::Replace => {
+                let recorded = record.entry(asset.base, asset.path).map(|e| &e.sha256);
+                let unchanged = match (home.read(&item.rel)?, recorded) {
+                    (Some(data), Some(hash)) => &sha256_hex(&data.bytes) == hash,
+                    _ => false,
+                };
+                if unchanged {
+                    home.write(&item.rel, asset.text.as_bytes(), asset.mode)?;
+                    upsert_written(record, asset);
+                } else {
+                    println!("kept (changed): {}", item.abs.display());
+                }
+            }
+            Plan::Adopt => record.upsert(FileEntry {
+                path: asset.path.to_owned(),
+                base: asset.base,
+                sha256: sha256_hex(asset.text.as_bytes()),
+                existed_before: true,
+            }),
+            Plan::Keep => println!("kept (changed): {}", item.abs.display()),
+            Plan::SkipMenu | Plan::Conflict => {}
+        }
+        record.menu_file_written = record.entry(Base::Omarchy, MENU_PATH).is_some();
+        record::save(home, record)?;
+    }
+    Ok(true)
+}
+
+/// Records a file that this install wrote.
+fn upsert_written(record: &mut Record, asset: &Asset) {
+    let existed_before = record
+        .entry(asset.base, asset.path)
+        .is_some_and(|e| e.existed_before);
+    record.upsert(FileEntry {
+        path: asset.path.to_owned(),
+        base: asset.base,
+        sha256: sha256_hex(asset.text.as_bytes()),
+        existed_before,
+    });
+}
+
 /// `fleetdeck omarchy install`.
 ///
 /// # Errors
@@ -171,32 +235,8 @@ pub async fn run(dirs: &NodeDirs, yes: bool, screensaver: bool) -> anyhow::Resul
 
     // 3. Write each file; the record follows each one.
     record.fleetdeck_version = fleetdeck_core::build::version().to_owned();
-    for item in &items {
-        let asset = item.asset;
-        match item.plan {
-            Plan::Create | Plan::Replace => {
-                home.write(&item.rel, asset.text.as_bytes(), asset.mode)?;
-                let existed_before = record
-                    .entry(asset.base, asset.path)
-                    .is_some_and(|e| e.existed_before);
-                record.upsert(FileEntry {
-                    path: asset.path.to_owned(),
-                    base: asset.base,
-                    sha256: sha256_hex(asset.text.as_bytes()),
-                    existed_before,
-                });
-            }
-            Plan::Adopt => record.upsert(FileEntry {
-                path: asset.path.to_owned(),
-                base: asset.base,
-                sha256: sha256_hex(asset.text.as_bytes()),
-                existed_before: true,
-            }),
-            Plan::Keep => println!("kept (changed): {}", item.abs.display()),
-            Plan::SkipMenu | Plan::Conflict => {}
-        }
-        record.menu_file_written = record.entry(Base::Omarchy, MENU_PATH).is_some();
-        record::save(&home, &record)?;
+    if !publish(&home, &mut record, &items, || {})? {
+        return Ok(ExitCode::from(1));
     }
 
     // 4. Rescan the plugins; enable the plugin once.
@@ -271,3 +311,7 @@ pub async fn run(dirs: &NodeDirs, yes: bool, screensaver: bool) -> anyhow::Resul
     println!("Fleet Deck is installed for Omarchy.");
     Ok(ExitCode::SUCCESS)
 }
+
+#[cfg(test)]
+#[path = "install_tests.rs"]
+mod tests;

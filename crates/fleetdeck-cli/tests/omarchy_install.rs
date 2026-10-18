@@ -499,3 +499,47 @@ fn omarchy_uninstall_without_a_record_changes_nothing() {
     assert_eq!(o.status.code(), Some(0));
     assert!(out(&o).contains("Nothing to remove"), "{}", out(&o));
 }
+
+#[test]
+fn omarchy_uninstall_with_the_station_down_keeps_the_record_until_summary_is_off() {
+    let mut rig = Rig::new();
+    rig.station(false);
+    assert_eq!(rig.install().status.code(), Some(0));
+    assert_eq!(rig.record()["fleet_summary_set_by_install"], true);
+    // The station goes away: its socket file is removed.
+    std::fs::remove_file(rig.root().join("data/station/station.sock")).unwrap();
+    let o = rig.run(&["omarchy", "uninstall"]);
+    assert_eq!(o.status.code(), Some(1), "{}{}", out(&o), err(&o));
+    assert!(
+        err(&o).contains(
+            "fleetdeck: warning: the station is not running or did not accept the change, \
+             so fleet_summary stays on; run uninstall again when the station runs."
+        ),
+        "{}",
+        err(&o)
+    );
+    // The files are gone; the record stays with the pending flag.
+    assert!(!rig.omarchy_dir().join(MANIFEST).exists());
+    let record = rig.record();
+    assert_eq!(record["files"].as_array().unwrap().len(), 0);
+    assert_eq!(record["fleet_summary_set_by_install"], true);
+    assert!(rig.summary(), "the setting was not changed");
+
+    // The station runs again. `status` reads the summary and reports no file
+    // problem.
+    rig.station(true);
+    let o = rig.run(&["omarchy", "status", "--json"]);
+    assert_eq!(o.status.code(), Some(0), "{}{}", out(&o), err(&o));
+    let v: Value = serde_json::from_str(out(&o).trim()).unwrap();
+    assert_eq!(v["installed"], true);
+    assert_eq!(v["summary"], "on");
+    assert_eq!(v["files"], json!([]));
+
+    // A later uninstall with the station up turns the setting off and removes
+    // the record.
+    let o = rig.run(&["omarchy", "uninstall"]);
+    assert_eq!(o.status.code(), Some(0), "{}{}", out(&o), err(&o));
+    assert_eq!(rig.sets(), [false]);
+    assert!(!rig.summary());
+    assert!(!rig.fd_dir().join("omarchy-install.json").exists());
+}
