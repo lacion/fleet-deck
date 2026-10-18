@@ -559,6 +559,9 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
         "settings.get" | "settings.set" | "settings.secret_set" | "station.restart" => {
             crate::settings_svc::call(&ctx.manager, &ctx.shells, &req.method, req.params).await
         }
+        "omarchy.status" | "omarchy.act" => {
+            crate::omarchy_admin::call(&req.method, req.params).await
+        }
         "shell.list" => ok(ctx.shells.list()),
         "session.list" => match store.snapshot().await {
             Ok(s) => ok(s.sessions),

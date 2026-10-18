@@ -194,6 +194,10 @@ pub mod feature {
     /// (needs `desktop_recording.v1` and `capture_mcp.v1`).
     pub const CAPTURE_RECORDING_MCP: &str = "capture_recording_mcp.v1";
 
+    /// Omarchy management from the board: `omarchy.status`, `omarchy.act`
+    /// (design `omarchy-admin.md`).
+    pub const OMARCHY_ADMIN: &str = "omarchy_admin.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -244,6 +248,7 @@ pub mod feature {
         DESKTOP_RECORDING,
         ARTIFACTS_VIDEO,
         CAPTURE_RECORDING_MCP,
+        OMARCHY_ADMIN,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

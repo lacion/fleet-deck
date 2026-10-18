@@ -78,6 +78,7 @@ use crate::native::{
     HomeState, ImportState, KnownSession, NativeHome, NativePreview, NativePreviewQuery,
     NativeSession, NativeSessionList, NativeSessionsQuery, TranscriptPin,
 };
+use crate::omarchy_admin as oa;
 use crate::orchestration::{
     AssignOutcome, AssignRequest, GrantView, GroupMailRequest, MailRequest, MailView,
     TaskCompletion, TaskRequest, TaskView, TaskWaitAnswer,
@@ -443,6 +444,15 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         SettingsChange::export_all(&cfg),
         SettingsSaved::export_all(&cfg),
         SecretSet::export_all(&cfg),
+        oa::OmarchyAction::export_all(&cfg),
+        oa::OmarchyActParams::export_all(&cfg),
+        oa::OmarchyPresence::export_all(&cfg),
+        oa::OmarchyInstall::export_all(&cfg),
+        oa::OmarchyScreensaver::export_all(&cfg),
+        oa::ProvisionView::export_all(&cfg),
+        oa::OmarchyStatus::export_all(&cfg),
+        oa::ActOutcome::export_all(&cfg),
+        oa::OmarchyActResult::export_all(&cfg),
         acc::AccountKind::export_all(&cfg),
         acc::AccountMethod::export_all(&cfg),
         acc::AccountStatus::export_all(&cfg),

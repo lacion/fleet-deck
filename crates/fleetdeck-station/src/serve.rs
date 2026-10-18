@@ -242,6 +242,9 @@ pub struct RunningStation {
     prune: tokio::task::JoinHandle<()>,
     /// The sampler of the per-session load (R13 §10).
     loads: tokio::task::JoinHandle<()>,
+    /// The screensaver tick of the Omarchy service (a finished task when the
+    /// service is off).
+    omarchy_tick: tokio::task::JoinHandle<()>,
     /// The Fleet Git writer, push trigger task, push loop (FG-2) and cleanup loop (FG-3).
     fleet_git: Vec<tokio::task::JoinHandle<()>>,
 }
@@ -401,6 +404,7 @@ impl RunningStation {
             crate::resources::resources_sessions::SESSION_LOAD_EVERY,
             rx.clone(),
         ));
+        let omarchy_tick = crate::omarchy_admin::start(dirs, &station_dir, rx.clone());
         let assist_task = tokio::spawn(crate::assist::watch::run(
             assist,
             Arc::clone(&manager),
@@ -485,6 +489,7 @@ impl RunningStation {
             rescan,
             prune,
             loads,
+            omarchy_tick,
             fleet_git,
         })
     }
@@ -500,6 +505,7 @@ impl RunningStation {
         let _ = self.rescan.await;
         let _ = self.prune.await;
         let _ = self.loads.await;
+        let _ = self.omarchy_tick.await;
         for mut task in self.fleet_git {
             if tokio::time::timeout(FLEET_GIT_STOP_WAIT, &mut task)
                 .await
