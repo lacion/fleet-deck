@@ -1,6 +1,6 @@
 # P5a: owner screenshots and artifact deletion (revision 11)
 
-- **Status:** proposed (revision 11, 2026-10-18). Not implemented. Accepted by the architect as written (O11-1, O11-2) from the advisor answer on the P5/P8 DESIGN REVIEW round 1. The adversary DESIGN REVIEW round 3 (last) reviews this annex before the P5a code.
+- **Status:** built on v2 (DL-233); PRE-PR review pending. Revision 11 (2026-10-18), accepted by the owner with the round 3 fix `aced66e8` (O11-4).
 - **Parent:** [omarchy.md](./omarchy.md) (§6.5A, §6.5B, §11, §13). This annex overrides §6.3, §6.4, §6.5, §6.5A and §7 where they differ. DL-230 items 1-4 stay binding and unchanged.
 - **Sibling:** [omarchy-p8.md](./omarchy-p8.md) (provisioning).
 - **Scope of P5a:** one owner action, a monitor screenshot from the board Desktop panel, and the owner deletion of any artifact. Recordings (P5b) and the MCP tools (P6) are not in P5a.

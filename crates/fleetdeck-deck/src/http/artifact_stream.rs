@@ -1,6 +1,7 @@
 //! The cache fill and the streaming of the artifact files (NV-01).
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::{Body, Bytes};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
@@ -14,13 +15,37 @@ use fleetdeck_proto::artifacts::{
     MAX_CHUNK_BYTES,
 };
 use futures_util::future::BoxFuture;
+use tokio::time::Instant;
 
-use super::common::{ask, ask_on, control_of, db, file_headers, live_artifact, not_found};
+use super::common::{
+    ask, ask_on, control_of, db, file_headers, live_artifact, not_found, unknown_artifact,
+};
 use super::{ApiError, Board, MAX_CACHED_VERSION_BYTES, StationRecord};
 use crate::store::DeckStore;
 
+/// The total time of one station-backed fetch of a capture file: all the
+/// `artifacts.file` requests and the cache fill together. The per-request
+/// limit of [`ask_on`] stays (R13 P5a contract 7.4).
+const CAPTURE_FETCH_TOTAL: Duration = Duration::from_secs(60);
+
+/// The deadline of a fetch that began at `started`: set for a capture
+/// version, `None` for an ordinary artifact (R13 P5a contract 7.4).
+fn fetch_deadline(version: &ArtifactVersion, started: Instant, total: Duration) -> Option<Instant> {
+    version.capture.as_ref().map(|_| started + total)
+}
+
+/// The answer of every route when the station does not answer in time.
+fn timeout_error() -> ApiError {
+    ApiError::new(
+        StatusCode::GATEWAY_TIMEOUT,
+        "timeout",
+        "the station did not answer in time",
+    )
+}
+
 /// One chunk of a file: its bytes, and whether it is the last one (`eof` or
-/// no bytes).
+/// no bytes). With a `deadline`, the request ends with the timeout answer
+/// when the deadline passes.
 async fn read_chunk(
     control: &Control,
     name: &str,
@@ -28,8 +53,9 @@ async fn read_chunk(
     version: u32,
     path: &str,
     offset: u64,
+    deadline: Option<Instant>,
 ) -> Result<(Vec<u8>, bool), ApiError> {
-    let chunk: ArtifactFile = ask_on(
+    let request = ask_on(
         control,
         name,
         "artifacts.file",
@@ -40,8 +66,18 @@ async fn read_chunk(
             offset: Some(offset),
             length: None,
         }),
-    )
-    .await?;
+    );
+    let chunk: ArtifactFile = match deadline {
+        Some(at) => {
+            if Instant::now() >= at {
+                return Err(timeout_error());
+            }
+            tokio::time::timeout_at(at, request)
+                .await
+                .map_err(|_| timeout_error())??
+        }
+        None => request.await?,
+    };
     let part = STANDARD
         .decode(&chunk.data_base64)
         .map_err(|e| ApiError::new(StatusCode::BAD_GATEWAY, "station_error", e.to_string()))?;
@@ -75,28 +111,47 @@ async fn fetch_detail(
     Ok(detail)
 }
 
+/// 404 `unknown_artifact` when the identity has a tombstone (the check of
+/// `live_artifact`, for a caller that holds the store and not the board).
+async fn live_in(
+    store: &DeckStore,
+    station: &StationId,
+    artifact_id: &str,
+) -> Result<(), ApiError> {
+    match store
+        .tombstone(station.clone(), artifact_id.to_owned())
+        .await
+        .map_err(db)?
+    {
+        None => Ok(()),
+        Some(_) => Err(unknown_artifact()),
+    }
+}
+
 /// Reads every file of one version from the station into the cache. The
 /// caller checked that the version is not larger than
-/// [`MAX_CACHED_VERSION_BYTES`].
+/// [`MAX_CACHED_VERSION_BYTES`]. The `deadline` bounds the whole fill.
 async fn fill_cache(
-    board: &Board,
+    store: &DeckStore,
+    control: &Control,
     rec: &StationRecord,
     artifact_id: &str,
     version: u32,
     files: &[String],
+    deadline: Option<Instant>,
 ) -> Result<(), ApiError> {
-    let control = control_of(board, rec)?;
     for path in files {
         let mut bytes = Vec::new();
         loop {
-            live_artifact(board, &rec.station_id, artifact_id).await?;
+            live_in(store, &rec.station_id, artifact_id).await?;
             let (part, last) = read_chunk(
-                &control,
+                control,
                 &rec.name,
                 artifact_id,
                 version,
                 path,
                 bytes.len() as u64,
+                deadline,
             )
             .await?;
             bytes.extend_from_slice(&part);
@@ -112,8 +167,7 @@ async fn fill_cache(
                 break;
             }
         }
-        board
-            .store
+        store
             .put_artifact_file(
                 rec.station_id.clone(),
                 artifact_id.to_owned(),
@@ -168,6 +222,7 @@ pub(crate) async fn ensure_cached(
     artifact_id: &str,
     version: u32,
 ) -> Result<Cache, ApiError> {
+    let started = Instant::now();
     let meta = version_meta(board, rec, artifact_id, version).await?;
     if meta.size > MAX_CACHED_VERSION_BYTES {
         return Ok(Cache::Stream);
@@ -180,7 +235,18 @@ pub(crate) async fn ensure_cached(
     if cached.contains(&version) {
         return Ok(Cache::Cached);
     }
-    fill_cache(board, rec, artifact_id, version, &meta.files).await?;
+    let deadline = fetch_deadline(&meta, started, CAPTURE_FETCH_TOTAL);
+    let control = control_of(board, rec)?;
+    fill_cache(
+        &board.store,
+        &control,
+        rec,
+        artifact_id,
+        version,
+        &meta.files,
+        deadline,
+    )
+    .await?;
     // The cache write refuses a tombstoned identity inside its transaction;
     // the result of a fill that lost the race is not served (R13 P5a A4).
     live_artifact(board, &rec.station_id, artifact_id).await?;
@@ -212,6 +278,9 @@ struct Remote {
     name: String,
     version: u32,
     path: String,
+    /// The end of the total fetch limit of a capture file; `None` for an
+    /// ordinary artifact.
+    deadline: Option<Instant>,
 }
 
 /// A check that runs before each chunk of a served file leaves the deck
@@ -263,6 +332,7 @@ fn chunked(state: Chunks, headers: HeaderMap) -> Response {
                         r.version,
                         &r.path,
                         s.fetched,
+                        r.deadline,
                     )
                     .await
                 }
@@ -367,6 +437,7 @@ pub(crate) async fn stream_with(
     headers: HeaderMap,
     gate: Option<Gate>,
 ) -> Result<Response, ApiError> {
+    let started = Instant::now();
     live_artifact(board, &rec.station_id, artifact_id).await?;
     let listed = board
         .store
@@ -374,15 +445,17 @@ pub(crate) async fn stream_with(
         .await
         .map_err(db)?
         .into_iter()
-        .any(|v| v.version == version && v.files.iter().any(|f| f == path));
-    if !listed {
+        .find(|v| v.version == version && v.files.iter().any(|f| f == path));
+    let Some(listed) = listed else {
         return Err(not_found(
             "not_found",
             format!("`{path}` is not a file of this version"),
         ));
-    }
+    };
+    let deadline = fetch_deadline(&listed, started, CAPTURE_FETCH_TOTAL);
     let control = control_of(board, rec)?;
-    let (part, last) = read_chunk(&control, &rec.name, artifact_id, version, path, 0).await?;
+    let (part, last) =
+        read_chunk(&control, &rec.name, artifact_id, version, path, 0, deadline).await?;
     live_artifact(board, &rec.station_id, artifact_id).await?;
     if let Some(gate) = &gate
         && !gate().await
@@ -399,6 +472,7 @@ pub(crate) async fn stream_with(
                 name: rec.name.clone(),
                 version,
                 path: path.to_owned(),
+                deadline,
             }),
             fetched: part.len() as u64,
             eof: last,
@@ -413,3 +487,7 @@ pub(crate) async fn stream_with(
 #[cfg(test)]
 #[path = "artifact_stream_tests.rs"]
 mod stream_tests;
+
+#[cfg(test)]
+#[path = "artifact_stream_capture_tests.rs"]
+mod capture_tests;

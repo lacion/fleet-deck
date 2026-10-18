@@ -1,7 +1,7 @@
 # Fleet Deck v2 checks. `make check` is the one acceptance command (goal-mode
 # reviewers may run `make check` and `cargo test`, but not other cargo tools).
 # It is offline: see tools/check.sh for the one-time cache fill.
-.PHONY: check check-spikes test test-web test-lint ts-types smoke-live package-check perf codex-schema-diff board-repro release-build
+.PHONY: check check-spikes test test-web test-lint ts-types smoke-live package-check perf codex-schema-diff board-repro release-build desktop-smoke
 # Every check of the M2 goal: fmt, clippy, nextest, deny, TS-types drift,
 # web typecheck + lint + test + build, and every recorded replay (G13).
 check:
@@ -38,6 +38,11 @@ smoke-live:
 # mcp-bridge`, with a control round. A pass sets `BRIDGE_VERIFIED`.
 smoke-live-bridge:
 	FD_LIVE_SMOKE=1 cargo test -p fleetdeck-cli --test live_bridge -- --ignored --nocapture --test-threads=1
+# The live smoke list of the desktop (R13 P5a, DL-233): prints the section
+# between the two markers of docs/v2/LIVE-SMOKE.md. It runs nothing else; every
+# step is a board step.
+desktop-smoke:
+	@sed -n '/<!-- desktop-smoke:begin -->/,/<!-- desktop-smoke:end -->/{//!p;}' docs/v2/LIVE-SMOKE.md
 # Packaging (M3 7-5, DL-400): static checks of dist-workspace.toml, the
 # systemd and launchd units and the container file, plus the offline smoke
 # test of the built binary. Also part of `make check` (workspace tests).
