@@ -17,6 +17,7 @@
 
 pub mod activity;
 pub mod archive;
+pub mod artifact_tombstones;
 pub mod artifacts;
 mod assist;
 pub mod audit;

@@ -48,8 +48,10 @@ use crate::store::{AuditResult, NewAudit, Principal, StationRecord};
 pub(super) mod common;
 #[path = "artifact_stream.rs"]
 pub(super) mod stream;
-use common::{ask, bad, db, file_response, not_found, ok_path, station_of};
-use stream::{Cache, ensure_cached, stream_file};
+use common::{
+    ask, bad, db, file_headers, live_artifact, not_found, ok_path, station_of, unknown_artifact,
+};
+use stream::{Cache, ensure_cached, serve_cached, stream_file};
 
 /// The longest the deck waits for one answer of a station.
 pub const STATION_WAIT: Duration = Duration::from_secs(20);
@@ -102,7 +104,7 @@ async fn indexed(board: &Board, rec: &StationRecord, id: &str) -> Result<DeckArt
         .artifact(rec.station_id.clone(), id.to_owned())
         .await
         .map_err(db)?
-        .ok_or_else(|| not_found("unknown_artifact", format!("unknown artifact `{id}`")))
+        .ok_or_else(unknown_artifact)
 }
 
 /// `GET /api/artifacts/{station}/{id}`: the index row, every version and
@@ -119,6 +121,7 @@ pub async fn get(
     let rec = station_of(&board, &station).await?;
     let artifact = indexed(&board, &rec, &id).await?;
     if board.link.control_for(&rec.station_id).is_some() {
+        live_artifact(&board, &rec.station_id, &id).await?;
         let fresh: Result<ArtifactDetail, ApiError> = ask(
             &board,
             &rec,
@@ -162,9 +165,11 @@ pub async fn get(
         .collect();
     let shares = board
         .store
-        .shares_of(rec.station_id.clone(), id)
+        .shares_of(rec.station_id.clone(), id.clone())
         .await
         .map_err(db)?;
+    // A deletion during the refresh: nothing of the artifact is answered.
+    live_artifact(&board, &rec.station_id, &id).await?;
     Ok(Json(DeckArtifactDetail {
         artifact,
         versions,
@@ -190,9 +195,10 @@ pub async fn raw(
     if ensure_cached(&board, &rec, &id, version).await? == Cache::Stream {
         return stream_file(&board, &rec, &id, version, &path).await;
     }
+    live_artifact(&board, &rec.station_id, &id).await?;
     let bytes = board
         .store
-        .cached_artifact_file(rec.station_id.clone(), id, version, path.clone())
+        .cached_artifact_file(rec.station_id.clone(), id.clone(), version, path.clone())
         .await
         .map_err(db)?
         .ok_or_else(|| {
@@ -201,7 +207,14 @@ pub async fn raw(
                 format!("`{path}` is not a file of this version"),
             )
         })?;
-    Ok(file_response(&path, bytes))
+    Ok(serve_cached(
+        &board.store,
+        &rec.station_id,
+        &id,
+        file_headers(&path),
+        bytes,
+        None,
+    ))
 }
 
 fn author_of(principal: &Principal) -> String {
@@ -295,6 +308,7 @@ async fn version_to_pin(
     // The bytes go into the deck cache now: the link works while the
     // station is off. A version over the cache limit is streamed instead.
     ensure_cached(board, rec, &artifact.artifact_id, version).await?;
+    live_artifact(board, &rec.station_id, &artifact.artifact_id).await?;
     Ok(version)
 }
 
@@ -351,7 +365,8 @@ pub async fn share(
                 expires_at,
             })
             .await
-            .map_err(db)?;
+            .map_err(db)?
+            .ok_or_else(unknown_artifact)?;
         Ok(ShareLink {
             url: format!("{}/a/{token}/", base_url(&board, &headers)),
             share_id: row.share_id,
@@ -458,7 +473,8 @@ pub async fn view(
             expires_at,
         })
         .await
-        .map_err(db)?;
+        .map_err(db)?
+        .ok_or_else(unknown_artifact)?;
     if let Err(e) = board.store.prune_view_links().await {
         tracing::debug!(error = %e, "view links not pruned");
     }
@@ -539,6 +555,12 @@ async fn public_file(board: &Board, token: &str, path: &str) -> Response {
     let Some((version, cache)) = served_version(board, &row).await else {
         return gone();
     };
+    if live_artifact(board, &row.station_id, &row.artifact_id)
+        .await
+        .is_err()
+    {
+        return gone();
+    }
     let versions = board
         .store
         .artifact_versions(row.station_id.clone(), row.artifact_id.clone())
@@ -572,7 +594,14 @@ async fn public_file(board: &Board, token: &str, path: &str) -> Response {
             else {
                 return gone();
             };
-            file_response(wanted, bytes)
+            serve_cached(
+                &board.store,
+                &row.station_id,
+                &row.artifact_id,
+                file_headers(wanted),
+                bytes,
+                None,
+            )
         }
         Cache::Stream => {
             let Ok(Some(rec)) = board.store.station(row.station_id.clone()).await else {

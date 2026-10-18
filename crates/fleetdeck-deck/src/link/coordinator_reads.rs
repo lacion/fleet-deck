@@ -115,9 +115,45 @@ pub(crate) async fn run(ctx: &DeckLink, read: StationRead) -> Outcome {
             Err(r) => rejected(r),
         };
     }
-    match shaped(&control, read).await {
+    // An artifact read checks the tombstone before the station call and
+    // again before the answer (R13 P5a A4).
+    let artifact = match &read.shape {
+        ReadShape::Artifact { artifact_id, .. } => {
+            Some((read.station.clone(), artifact_id.clone()))
+        }
+        _ => None,
+    };
+    if let Some((station, id)) = &artifact
+        && let Some(reject) = artifact_gone(ctx, station, id).await
+    {
+        return rejected(reject);
+    }
+    let answer = shaped(&control, read).await;
+    if let Some((station, id)) = &artifact
+        && let Some(reject) = artifact_gone(ctx, station, id).await
+    {
+        return rejected(reject);
+    }
+    match answer {
         Ok(v) => Outcome::Ok(v),
         Err(r) => rejected(r),
+    }
+}
+
+/// The refusal for an artifact that has a tombstone (or whose tombstone
+/// lookup failed), else `None`.
+async fn artifact_gone(ctx: &DeckLink, station: &StationId, artifact_id: &str) -> Option<Reject> {
+    match ctx
+        .store
+        .tombstone(station.clone(), artifact_id.to_owned())
+        .await
+    {
+        Ok(None) => None,
+        Ok(Some(_)) => Some(refusal(
+            RejectCode::UnknownRequest,
+            "no such artifact on a station of the grant",
+        )),
+        Err(e) => Some(station_error(e)),
     }
 }
 

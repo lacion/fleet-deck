@@ -2,6 +2,7 @@
 //! station links, the command router and outbox, auth and audit, and the
 //! board API.
 
+pub mod artifact_deletions;
 pub mod cert_task;
 pub mod desktop_relay;
 pub mod elevation;

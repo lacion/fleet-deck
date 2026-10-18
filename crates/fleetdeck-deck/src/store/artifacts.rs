@@ -13,7 +13,22 @@ use fleetdeck_proto::event::{Event, EventBody};
 use fleetdeck_proto::{EventEnvelope, SessionId, StationId};
 use rusqlite::{OptionalExtension, Transaction, params};
 
+use super::artifact_tombstones::tombstoned;
 use super::{DeckError, DeckStore, Result, call, to_i64};
+
+/// An SQL condition that holds when the artifact of the row that `$a` names
+/// has no tombstone (R13 P5a A4): every read adds it.
+macro_rules! not_tombstoned {
+    ($a:literal) => {
+        concat!(
+            "NOT EXISTS (SELECT 1 FROM artifact_tombstones x WHERE x.station_id = ",
+            $a,
+            ".station_id AND x.artifact_id = ",
+            $a,
+            ".artifact_id)"
+        )
+    };
+}
 
 /// Stores or advances the index row of an `artifact.published` event; other
 /// events do nothing. The latest version never goes down.
@@ -31,6 +46,9 @@ pub(super) fn record_artifact(
     else {
         return Ok(());
     };
+    if tombstoned(tx, station.as_str(), artifact_id)? {
+        return Ok(());
+    }
     tx.execute(
         "INSERT INTO artifacts (station_id, artifact_id, session_id, title, kind,
              latest_version, updated_at)
@@ -174,8 +192,10 @@ impl DeckStore {
                  WHERE (?1 IS NULL OR a.station_id = ?1)
                    AND (?2 IS NULL OR a.session_id = ?2)
                    AND (?3 IS NULL OR a.title LIKE ?3 ESCAPE '\\')
+                   AND {}
                  ORDER BY a.updated_at DESC, a.artifact_id DESC
-                 LIMIT 1000"
+                 LIMIT 1000",
+                not_tombstoned!("a")
             ))?;
             let rows = stmt
                 .query_map(
@@ -203,7 +223,10 @@ impl DeckStore {
     ) -> Result<Option<DeckArtifact>> {
         call(&self.inner.db, move |conn| {
             conn.query_row(
-                &format!("{INDEX_SELECT} WHERE a.station_id = ?1 AND a.artifact_id = ?2"),
+                &format!(
+                    "{INDEX_SELECT} WHERE a.station_id = ?1 AND a.artifact_id = ?2 AND {}",
+                    not_tombstoned!("a")
+                ),
                 params![station.as_str(), artifact_id],
                 index_row,
             )
@@ -233,7 +256,12 @@ impl DeckStore {
             a.updated_at,
         );
         call(&self.inner.db, move |conn| {
-            conn.execute(
+            let tx = conn.transaction()?;
+            // A tombstoned identity is never restored (R13 P5a A4).
+            if tombstoned(&tx, station.as_str(), &artifact_id)? {
+                return Ok(());
+            }
+            tx.execute(
                 "INSERT INTO artifacts (station_id, artifact_id, session_id, title, kind,
                      latest_version, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -254,6 +282,7 @@ impl DeckStore {
                     at
                 ],
             )?;
+            tx.commit()?;
             Ok(())
         })
         .await
@@ -269,10 +298,12 @@ impl DeckStore {
         artifact_id: String,
     ) -> Result<Vec<ArtifactVersion>> {
         call(&self.inner.db, move |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT version, size, sha256, files, created_at FROM artifact_versions
-                 WHERE station_id = ?1 AND artifact_id = ?2 ORDER BY version",
-            )?;
+            let mut stmt = conn.prepare(concat!(
+                "SELECT version, size, sha256, files, created_at FROM artifact_versions v
+                     WHERE station_id = ?1 AND artifact_id = ?2 AND ",
+                not_tombstoned!("v"),
+                " ORDER BY version"
+            ))?;
             let rows = stmt
                 .query_map(params![station.as_str(), artifact_id], |r| {
                     Ok((
@@ -313,6 +344,9 @@ impl DeckStore {
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             for v in versions {
+                if tombstoned(&tx, station.as_str(), &v.artifact_id)? {
+                    continue;
+                }
                 tx.execute(
                     "INSERT OR IGNORE INTO artifact_versions
                          (station_id, artifact_id, version, size, sha256, files, created_at)
@@ -348,8 +382,12 @@ impl DeckStore {
         call(&self.inner.db, move |conn| {
             Ok(conn
                 .query_row(
-                    "SELECT bytes FROM artifact_cache
-                     WHERE station_id = ?1 AND artifact_id = ?2 AND version = ?3 AND path = ?4",
+                    concat!(
+                        "SELECT bytes FROM artifact_cache c
+                         WHERE station_id = ?1 AND artifact_id = ?2 AND version = ?3
+                           AND path = ?4 AND ",
+                        not_tombstoned!("c")
+                    ),
                     params![station.as_str(), artifact_id, version, path],
                     |r| r.get(0),
                 )
@@ -402,22 +440,29 @@ impl DeckStore {
         bytes: Vec<u8>,
     ) -> Result<()> {
         call(&self.inner.db, move |conn| {
-            conn.execute(
+            let tx = conn.transaction()?;
+            // The check and the write share one transaction (R13 P5a A4).
+            if tombstoned(&tx, station.as_str(), &artifact_id)? {
+                return Ok(());
+            }
+            tx.execute(
                 "INSERT OR REPLACE INTO artifact_cache
                      (station_id, artifact_id, version, path, bytes)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![station.as_str(), artifact_id, version, path, bytes],
             )?;
+            tx.commit()?;
             Ok(())
         })
         .await
     }
 
-    /// Stores a share. The token itself is never stored.
+    /// Stores a share. The token itself is never stored. `None`: the
+    /// artifact is tombstoned and nothing was stored (R13 P5a A4).
     ///
     /// # Errors
     /// A database error.
-    pub async fn create_artifact_share(&self, new: NewShare) -> Result<ShareRow> {
+    pub async fn create_artifact_share(&self, new: NewShare) -> Result<Option<ShareRow>> {
         let now = self.now_ms();
         let id = share_id_of(&new.token_hash);
         let row = ShareRow {
@@ -432,8 +477,12 @@ impl DeckStore {
             revoked_at: None,
             views: 0,
         };
-        call(&self.inner.db, move |conn| {
-            conn.execute(
+        let stored = call(&self.inner.db, move |conn| {
+            let tx = conn.transaction()?;
+            if tombstoned(&tx, new.station_id.as_str(), &new.artifact_id)? {
+                return Ok(false);
+            }
+            tx.execute(
                 "INSERT INTO artifact_shares (token_hash, share_id, station_id, artifact_id,
                      version, kind, created_by, created_at, expires_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -449,10 +498,11 @@ impl DeckStore {
                     new.expires_at
                 ],
             )?;
-            Ok(())
+            tx.commit()?;
+            Ok(true)
         })
         .await?;
-        Ok(row)
+        Ok(stored.then_some(row))
     }
 
     /// The share of a token hash (any state).
@@ -463,7 +513,11 @@ impl DeckStore {
         call(&self.inner.db, move |conn| {
             Ok(conn
                 .query_row(
-                    &format!("SELECT {SHARE_COLUMNS} FROM artifact_shares WHERE token_hash = ?1"),
+                    &format!(
+                        "SELECT {SHARE_COLUMNS} FROM artifact_shares s
+                         WHERE token_hash = ?1 AND {}",
+                        not_tombstoned!("s")
+                    ),
                     [token_hash],
                     share_row,
                 )
@@ -484,9 +538,10 @@ impl DeckStore {
     ) -> Result<Vec<ShareView>> {
         call(&self.inner.db, move |conn| {
             let mut stmt = conn.prepare(&format!(
-                "SELECT {SHARE_COLUMNS} FROM artifact_shares
-                 WHERE station_id = ?1 AND artifact_id = ?2 AND kind = 'share'
-                 ORDER BY created_at DESC, share_id"
+                "SELECT {SHARE_COLUMNS} FROM artifact_shares s
+                 WHERE station_id = ?1 AND artifact_id = ?2 AND kind = 'share' AND {}
+                 ORDER BY created_at DESC, share_id",
+                not_tombstoned!("s")
             ))?;
             let rows = stmt
                 .query_map(params![station.as_str(), artifact_id], share_row)?
@@ -550,7 +605,11 @@ impl DeckStore {
     pub async fn count_share_view(&self, token_hash: String) -> Result<()> {
         call(&self.inner.db, move |conn| {
             conn.execute(
-                "UPDATE artifact_shares SET views = views + 1 WHERE token_hash = ?1",
+                concat!(
+                    "UPDATE artifact_shares SET views = views + 1
+                     WHERE token_hash = ?1 AND ",
+                    not_tombstoned!("artifact_shares")
+                ),
                 [token_hash],
             )?;
             Ok(())

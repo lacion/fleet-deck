@@ -136,6 +136,10 @@ fn session_exists(conn: &Connection, s: &SessionRef) -> Result<bool> {
 }
 
 fn artifact_exists(conn: &Connection, a: &ArtifactRef) -> Result<bool> {
+    // A tombstoned artifact does not exist for a wall (R13 P5a A4).
+    if crate::store::artifact_tombstones::tombstoned(conn, a.station_id.as_str(), &a.artifact_id)? {
+        return Ok(false);
+    }
     let latest: Option<i64> = conn
         .query_row(
             "SELECT latest_version FROM artifacts WHERE station_id = ?1 AND artifact_id = ?2",
