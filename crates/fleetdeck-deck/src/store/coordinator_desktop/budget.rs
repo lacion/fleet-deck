@@ -132,9 +132,10 @@ impl DeckStore {
             if grant.state == GrantState::Revoked {
                 return Ok(Err(CapsError::NotFound));
             }
+            // A grant whose recording limit is 0 has no allowance: the board
+            // hides its recording limits, and only a new grant brings them back.
             if (change.recording_cap.is_some() || change.recording_second_cap.is_some())
                 && grant.recording_cap == 0
-                && grant.recording_second_cap == 0
             {
                 return Ok(Err(CapsError::Invalid(
                     "recording limits need a grant that allows recordings",

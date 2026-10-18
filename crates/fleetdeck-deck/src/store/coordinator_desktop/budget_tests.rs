@@ -543,6 +543,33 @@ async fn a_recording_key_on_a_grant_without_the_allowance_is_invalid() {
     assert_eq!((g.recording_cap, g.recording_second_cap), (0, 0));
 }
 
+/// A recording limit of 0 ends the allowance: a later raise is refused, also
+/// while the time limit is above 0.
+#[tokio::test]
+async fn a_recording_limit_of_zero_ends_the_allowance() {
+    let (_det, s) = store().await;
+    let gid = used_recording_grant(&s).await;
+    let got = s
+        .desktop_caps_update(&gid, recording_change(Some(0), None), false)
+        .await
+        .unwrap();
+    assert_eq!(got, Ok(CapsChanged { increased: false }));
+    for change in [
+        recording_change(Some(5), None),
+        recording_change(None, Some(700)),
+    ] {
+        let got = s.desktop_caps_update(&gid, change, true).await.unwrap();
+        assert_eq!(
+            got,
+            Err(CapsError::Invalid(
+                "recording limits need a grant that allows recordings"
+            ))
+        );
+    }
+    let g = s.grant(gid).await.unwrap().unwrap();
+    assert_eq!((g.recording_cap, g.recording_second_cap), (0, 600));
+}
+
 #[tokio::test]
 async fn a_recording_cap_out_of_range_is_invalid_with_the_fixed_text() {
     let (_det, s) = store().await;
