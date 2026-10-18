@@ -441,7 +441,16 @@ async fn a_target_station_outside_the_grant_is_not_granted() {
 #[tokio::test]
 async fn a_record_monitor_row_keeps_its_seconds_and_reads_back() {
     let (det, s) = store().await;
-    let (gid, ctx) = both(&s).await;
+    let (gid, ctx) = grant(
+        &s,
+        "coord",
+        &[GrantClass::Desktop, GrantClass::Capture],
+        |g| {
+            g.recording_cap = 5;
+            g.recording_second_cap = 600;
+        },
+    )
+    .await;
     let now = t0(&det);
     let mut op = new_op(&gid, &ctx, "rec", OpTool::RecordMonitor);
     op.class = OpClass::Capture;

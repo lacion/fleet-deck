@@ -207,6 +207,10 @@ async fn each_deck_local_loss_is_a_discard_with_its_reason() {
                 }
                 StopReason::Deadline => f.det.advance(Duration::from_secs(66)),
                 StopReason::CoordinatorAuthorityLost => {
+                    // A coordinator row takes the coordinator branch, which
+                    // also needs fleet control on (R13 P5b-2): its context
+                    // here does not parse, so the grant is lost.
+                    f.store.set_fleet_control(true);
                     conn.execute("UPDATE desktop_captures SET coordinator = '{}' WHERE capture_id = ?1", [id.as_str()]).unwrap();
                 }
                 _ => {

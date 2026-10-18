@@ -20,6 +20,8 @@ pub use ops::{
 };
 
 #[cfg(test)]
+mod admit_record_tests;
+#[cfg(test)]
 mod admit_tests;
 #[cfg(test)]
 mod budget_tests;

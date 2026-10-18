@@ -4,7 +4,7 @@
 
 use axum::http::StatusCode;
 use fleetdeck_proto::capture::{code, text};
-use fleetdeck_proto::coordinator_desktop_text::code as cd_code;
+use fleetdeck_proto::coordinator_desktop_text::{code as cd_code, text as cd_text};
 
 use crate::desktop_relay::RelayError;
 use crate::store::AuditResult;
@@ -161,6 +161,29 @@ impl RecordingError {
             (code::RECORDING_FAILED, text::RECORDING_FAILED),
             |(_, stored, fixed)| (stored, fixed),
         )
+    }
+
+    /// As [`Self::fixed`]; a coordinator recording also keeps the coordinator
+    /// terminal codes of §7.5 that are not recording codes (`authority_lost`,
+    /// `authority_unknown`, `desktop_read_timeout`) with the text of P6.
+    #[must_use]
+    pub fn fixed_for(
+        coordinator: bool,
+        station_code: &str,
+        message: &str,
+    ) -> (&'static str, &'static str) {
+        if coordinator {
+            for passed in [
+                cd_code::AUTHORITY_LOST,
+                cd_code::AUTHORITY_UNKNOWN,
+                cd_code::DESKTOP_READ_TIMEOUT,
+            ] {
+                if station_code == passed {
+                    return (passed, cd_text(passed).unwrap_or_default());
+                }
+            }
+        }
+        Self::fixed(station_code, message)
     }
 
     /// The error of a stored `failed` row.

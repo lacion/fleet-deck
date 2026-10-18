@@ -374,7 +374,10 @@ async fn the_caller_and_the_target_stations_need_their_features_but_the_callers_
     assert_eq!(c.store.grants(20).await.unwrap().len(), stored + 2);
 }
 
-const RECORDING_KEYS: [&str; 3] = ["allow_recording", "recording_cap", "recording_second_cap"];
+/// The two caps never go on to a station; the flag `allow_recording` goes on
+/// only with `capture_recording_mcp.v1` on the caller's link (R13 P5b-2,
+/// decision O12-22).
+const RECORDING_KEYS: [&str; 2] = ["recording_cap", "recording_second_cap"];
 
 #[tokio::test]
 async fn the_recording_opt_in_follows_the_rules_of_the_brief_and_refuses_before_anything_is_stored()
@@ -467,6 +470,8 @@ async fn a_recording_grant_gets_the_defaults_or_the_given_caps_and_the_station_n
     for key in RECORDING_KEYS {
         assert!(sent.get(key).is_none(), "{key}: {sent}");
     }
+    // The caller's link negotiated the feature: the flag goes on.
+    assert_eq!(sent["allow_recording"], true, "{sent}");
     let g = c.store.grants(10).await.unwrap().remove(0);
     assert_eq!(
         (
@@ -489,6 +494,7 @@ async fn a_recording_grant_gets_the_defaults_or_the_given_caps_and_the_station_n
         for key in RECORDING_KEYS {
             assert!(sent.get(key).is_none(), "{key}: {sent}");
         }
+        assert_eq!(sent["allow_recording"], true, "{sent}");
         let g = c.store.grants(10).await.unwrap().remove(0);
         assert_eq!((g.recording_cap, g.recording_second_cap), (cap, seconds));
         given.push(g.grant_id);
@@ -507,8 +513,11 @@ async fn a_recording_grant_gets_the_defaults_or_the_given_caps_and_the_station_n
         START,
         start_body("w6", json!({"classes": ["capture"]}), Some(&token)),
     );
-    let (r, _) = tokio::join!(call, Fixture::answer(&mut station, accepted));
+    let (r, req) = tokio::join!(call, Fixture::answer(&mut station, accepted));
     assert_eq!(r.status, 200, "{}", r.body);
+    // A grant without the opt-in never sends the flag.
+    let sent = req.params["command"]["spec"]["coordinator"].clone();
+    assert!(sent.get("allow_recording").is_none(), "{sent}");
     let shot = c.store.grants(10).await.unwrap().remove(0);
     assert_eq!((shot.recording_cap, shot.recording_second_cap), (0, 0));
     let list = get(&c, &h, "/api/coordinator/grants").await;

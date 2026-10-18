@@ -245,18 +245,35 @@ fn the_handler_deadline_is_100_s_for_a_preview_and_40_s_for_the_others() {
 }
 
 #[test]
-fn record_monitor_has_no_handler_yet_and_builds_as_unsupported() {
-    use fleetdeck_proto::coordinator_desktop::RecordMonitorArguments;
+fn record_monitor_is_served_and_builds_as_a_recording() {
+    use fleetdeck_proto::coordinator_desktop::{RecordMonitorArguments, ScreenshotArguments};
     let record = DesktopCall::RecordMonitor(RecordMonitorArguments {
         request_id: "r5".into(),
         station: None,
         monitor: "DP-1".into(),
         seconds: 30,
     });
-    assert!(!served(&record));
-    assert_eq!(shape(&record), None);
-    assert!(matches!(
-        build(&record, "coord-1", &session()),
-        Err(c) if c == code::DESKTOP_UNSUPPORTED
-    ));
+    assert!(served(&record));
+    assert_eq!(shape(&record), Some((Tool::RecordMonitor, None)));
+    let built = build(&record, "coord-1", &session()).unwrap();
+    assert_eq!(built.op_tool, OpTool::RecordMonitor);
+    assert_eq!(
+        built.action,
+        DesktopAction::ScreenRecord {
+            monitor: "DP-1".into(),
+            seconds: 30
+        }
+    );
+    assert_eq!(built.seconds, Some(30));
+    assert_eq!(built.monitor.as_deref(), Some("DP-1"));
+    assert_eq!(built.resource, json!({"monitor": "DP-1", "seconds": 30}));
+    assert_eq!(built.window_id, None);
+    // The handler time is `seconds` plus 40 s; the other tools keep theirs.
+    assert_eq!(call_handler_ms(Tool::RecordMonitor, &record), 70_000);
+    let shot = DesktopCall::Screenshot(ScreenshotArguments {
+        request_id: "r6".into(),
+        station: None,
+        monitor: "DP-1".into(),
+    });
+    assert_eq!(call_handler_ms(Tool::Screenshot, &shot), 40_000);
 }

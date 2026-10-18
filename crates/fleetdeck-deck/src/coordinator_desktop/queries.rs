@@ -152,8 +152,8 @@ pub(super) async fn status(
         .desktop_op_by_key(&begun.ctx.grant_id, &key)
         .await
     {
-        // A screenshot row is invisible to this tool.
-        Ok(Some(op)) if op.tool == OpTool::Screenshot => {
+        // A screenshot row and a recording row are invisible to this tool.
+        Ok(Some(op)) if matches!(op.tool, OpTool::Screenshot | OpTool::RecordMonitor) => {
             Ok(status_without_op(&args.request_id, None))
         }
         Ok(Some(op)) => Ok(status_of(&args.request_id, &op)),

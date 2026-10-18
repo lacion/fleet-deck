@@ -186,6 +186,44 @@ pub(crate) async fn audit_capture(
         .await;
 }
 
+/// Writes one `desktop.capture` row of kind `recording` for `row`: an owner
+/// recording as the actor `owner`, a coordinator recording as the actor
+/// `coordinator` with its caller and grant (R13 P5b-2 §15). The stage
+/// `terminal` is written as the stage `outcome` for a coordinator recording.
+pub(crate) async fn audit_row(
+    store: &DeckStore,
+    row: &RecordingRow,
+    result: AuditResult,
+    f: CaptureAudit<'_>,
+) {
+    let station = &row.capture.station_id;
+    let Some(coordinator) = row.capture.coordinator.as_deref() else {
+        audit_capture(store, station, result, f).await;
+        return;
+    };
+    let stage = if f.stage == "terminal" {
+        "outcome"
+    } else {
+        f.stage
+    };
+    let reason = f.stop_reason.map(reason_str);
+    crate::coordinator_desktop::recording_stage(
+        store,
+        (coordinator, station),
+        result,
+        &crate::coordinator_desktop::RecordingStage {
+            capture_id: f.capture_id,
+            monitor: f.monitor,
+            seconds: f.seconds,
+            stage,
+            code: f.code,
+            stop_reason: reason.as_deref(),
+            artifact: f.artifact.filter(|a| plain_id(a)),
+        },
+    )
+    .await;
+}
+
 /// Writes the terminal `desktop.capture` row of a recording once: the row is
 /// marked first, so a later call (a recovery pass after an answer) writes
 /// nothing. `code` is `ok` or the failure code.
@@ -213,9 +251,9 @@ pub(crate) async fn audit_terminal(
     } else {
         AuditResult::Failed
     };
-    audit_capture(
+    audit_row(
         store,
-        &station,
+        row,
         result,
         CaptureAudit {
             capture_id: &row.capture.capture_id,

@@ -1,17 +1,20 @@
-//! The provenance of an owner recording and its indexing (R13 P5b-1 task K1,
-//! design `omarchy-p5b.md` §4.2, §5.2, §11.1; decision O12-10 item 22).
+//! The provenance of a recording and its indexing (R13 P5b-1 task K1, R13
+//! P5b-2 task Q-K; design `omarchy-p5b.md` §4.2, §5.2, §11.1, §13.4; decision
+//! O12-10 item 22).
 //!
 //! The deck builds the provenance itself. The metadata that the station
 //! reports is accepted only when it holds the checks of
 //! [`recording_provenance`]; else it is an indexing failure. A recording is
-//! never indexed with the provenance of an owner screenshot.
+//! never indexed with the provenance of an owner screenshot, and a row with a
+//! `coordinator` value is never indexed with an owner provenance.
 
 use fleetdeck_proto::StationId;
 use fleetdeck_proto::artifacts::ArtifactPublished;
 use fleetdeck_proto::capture::{CaptureCaller, CaptureKind, CaptureProvenance, CaptureStatus};
+use fleetdeck_proto::coordinator_desktop_wire::CoordinatorContext;
 use fleetdeck_proto::recording::{RecordingMeta, StopReason, valid_dimensions};
 
-use super::{CaptureAudit, audit_capture, audit_terminal};
+use super::{CaptureAudit, audit_row, audit_terminal};
 use crate::store::desktop_captures::{CaptureState, Completed};
 use crate::store::desktop_recordings::{OperationKind, RecordingRow};
 use crate::store::{AuditResult, DeckError, DeckStore};
@@ -33,21 +36,27 @@ fn meta_ok(row: &RecordingRow, meta: &RecordingMeta) -> bool {
         && valid_dimensions(meta.width, meta.height)
 }
 
-/// The immutable provenance of an owner recording, built by the deck: `at` is
-/// the creation time of the station's version, the caller is the owner, and
-/// the metadata is the station's `RecordingMeta` when it holds the checks.
+/// The immutable provenance of a recording, built by the deck: `at` is the
+/// creation time of the station's version, and the metadata is the station's
+/// `RecordingMeta` when it holds the checks.
 ///
-/// `None` is an indexing failure: a row that is not an owner recording (a
-/// screenshot, or a row with a `coordinator` value), a missing or invalid
-/// `RecordingMeta` in the reported provenance, or a reported provenance of
-/// another capture, monitor or kind.
+/// A row without a `coordinator` value is an owner recording: the caller is
+/// the owner. A row with a `coordinator` value is a coordinator recording:
+/// the caller fields come from the stored `CoordinatorContext`, and the
+/// station must report `caller: coordinator` with the same caller station,
+/// caller session and grant ID (R13 P5b-2 §13.4).
+///
+/// `None` is an indexing failure: a row that is not a recording (a
+/// screenshot), a `coordinator` value that does not parse, a missing or
+/// invalid `RecordingMeta` in the reported provenance, or a reported
+/// provenance of another capture, monitor, kind or caller.
 #[must_use]
 pub fn recording_provenance(
     station: &StationId,
     row: &RecordingRow,
     published: &ArtifactPublished,
 ) -> Option<CaptureProvenance> {
-    if row.kind != OperationKind::Recording || row.capture.coordinator.is_some() {
+    if row.kind != OperationKind::Recording {
         return None;
     }
     let reported = published.version.capture.as_ref()?;
@@ -61,7 +70,7 @@ pub fn recording_provenance(
     if !meta_ok(row, &meta) {
         return None;
     }
-    Some(CaptureProvenance {
+    let mut provenance = CaptureProvenance {
         capture_id: row.capture.capture_id.clone(),
         station_id: station.as_str().to_owned(),
         monitor: row.capture.monitor.clone(),
@@ -72,7 +81,23 @@ pub fn recording_provenance(
         caller_grant_id: None,
         at: published.version.created_at,
         recording: Some(meta),
-    })
+    };
+    if let Some(raw) = row.capture.coordinator.as_deref() {
+        let ctx: CoordinatorContext = serde_json::from_str(raw).ok()?;
+        provenance.caller = CaptureCaller::Coordinator;
+        provenance.caller_station = Some(ctx.caller_station.to_string());
+        provenance.caller_session = Some(ctx.caller_session.to_string());
+        provenance.caller_grant_id = Some(ctx.grant_id);
+        // The station reports the caller that the record holds.
+        let same = reported.caller == provenance.caller
+            && reported.caller_station == provenance.caller_station
+            && reported.caller_session == provenance.caller_session
+            && reported.caller_grant_id == provenance.caller_grant_id;
+        if !same {
+            return None;
+        }
+    }
+    Some(provenance)
 }
 
 /// What [`index`] did.
@@ -98,9 +123,9 @@ pub(super) async fn index(
     let id = row.capture.capture_id.clone();
     let Some(provenance) = recording_provenance(&station, row, &published) else {
         if row.capture.state != CaptureState::Committed {
-            audit_capture(
+            audit_row(
                 store,
-                &station,
+                row,
                 AuditResult::Failed,
                 CaptureAudit {
                     capture_id: &id,
@@ -178,7 +203,11 @@ pub(crate) async fn reconcile(
             index(store, row, published).await;
         }
         CaptureStatus::Failed { error, message, .. } => {
-            let (stored, fixed) = super::RecordingError::fixed(&error, &message);
+            // A coordinator recording also stores the coordinator terminal
+            // codes of §7.5 (`authority_lost`, `authority_unknown`,
+            // `desktop_read_timeout`).
+            let coordinator = row.capture.coordinator.is_some();
+            let (stored, fixed) = super::RecordingError::fixed_for(coordinator, &error, &message);
             store
                 .capture_failed(station, id, stored.to_owned(), fixed.to_owned())
                 .await?;
@@ -211,3 +240,7 @@ pub(crate) async fn reconcile(
 #[cfg(test)]
 #[path = "provenance_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "provenance_coordinator_tests.rs"]
+mod coordinator_tests;

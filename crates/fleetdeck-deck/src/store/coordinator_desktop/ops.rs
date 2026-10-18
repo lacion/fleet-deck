@@ -113,11 +113,24 @@ impl OpState {
     }
 }
 
-/// What an operation charged to its grant, stored as JSON in `charged`.
+/// What an operation charged to its grant, stored as JSON in `charged`. A
+/// recording also stores `recording` and `recording_seconds` in that JSON
+/// (see [`StoredCharges`]); a read of the column ignores them, and the
+/// recording counters of a row come from its tool and its `seconds`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Charges {
     pub desktop: u32,
     pub capture: u32,
+}
+
+/// The JSON of the `charged` column (R13 P5b-2 §13.2): the [`Charges`] and
+/// the two recording counters, which are 0 for every other tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub(super) struct StoredCharges {
+    pub desktop: u32,
+    pub capture: u32,
+    pub recording: u32,
+    pub recording_seconds: u32,
 }
 
 /// An operation before the admission transaction stores it.

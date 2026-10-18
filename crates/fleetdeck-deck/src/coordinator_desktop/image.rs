@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use fleetdeck_proto::artifacts::ArtifactFile;
+use fleetdeck_proto::capture::CaptureKind;
 use fleetdeck_proto::coordinator_desktop::{CaptureImageAnswer, CaptureImageMeta, ImageArguments};
 use fleetdeck_proto::coordinator_desktop_text::{code, deadline_ms, limits, text};
 use fleetdeck_proto::coordinator_desktop_wire::{
@@ -106,10 +107,17 @@ fn is_callers(row: &CaptureRow, ctx: &CoordinatorContext) -> bool {
         .coordinator
         .as_deref()
         .and_then(|c| serde_json::from_str::<CoordinatorContext>(c).ok());
+    // Only a screenshot passes: a recording artifact is `unknown_artifact`,
+    // also when it is small (R13 P5b-2 §13.4).
+    let screenshot = row
+        .published
+        .as_ref()
+        .and_then(|p| p.version.capture.as_ref())
+        .is_some_and(|c| c.kind == CaptureKind::Screenshot);
     !row.deleted
         && row.state == CaptureState::Committed
         && row.indexed
-        && row.published.is_some()
+        && screenshot
         && owner.is_some_and(|c| {
             c.grant_id == ctx.grant_id
                 && c.caller_station == ctx.caller_station

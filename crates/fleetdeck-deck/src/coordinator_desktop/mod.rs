@@ -2,8 +2,8 @@
 //! `desktop_mcp.v1`; `docs/v2/design/omarchy-p6.md` §5, §6; decisions
 //! O12-4, O12-9).
 //!
-//! - [`desktop_call`] serves `notify`, `preview_open`, `window_close` and
-//!   `screenshot` ([`calls`], [`capture`]); [`desktop_query`] serves
+//! - [`desktop_call`] serves `notify`, `preview_open`, `window_close`,
+//!   `screenshot` and `record_monitor` ([`calls`], [`capture`], [`record`]); [`desktop_query`] serves
 //!   `desktop_info` and `desktop_action_status` ([`queries`]),
 //!   `capture_status` ([`capture_status`]) and `read_capture_image`
 //!   ([`image`]); [`authority_check`] answers the dispatch authority check of
@@ -33,6 +33,7 @@ mod permits;
 mod policy;
 mod queries;
 mod reads;
+mod record;
 mod relay;
 mod wall;
 
@@ -49,8 +50,9 @@ use fleetdeck_proto::link::{Outcome, WireError};
 use serde_json::Value;
 
 // The shared pieces that tasks T3 and T5 use.
+pub(crate) use audit::{RecordingStage, recording_stage};
 #[allow(unused_imports)]
-pub(crate) use authorize::{Authorized, Tool, authorize};
+pub(crate) use authorize::{Authorized, Tool, authorize, recording_pass};
 #[allow(unused_imports)]
 pub(crate) use policy::{caller_policy, target_policy};
 #[allow(unused_imports)]
@@ -149,6 +151,17 @@ pub(super) fn reply_err(error: &str, operation_id: Option<&str>) -> Outcome {
         error: error.to_owned(),
         message: text(error).unwrap_or_default().to_owned(),
         operation_id: operation_id.map(str::to_owned),
+        capture_id: None,
+    })
+}
+
+/// The reply of a refusal with a fixed text other than the text of its code
+/// (R13 P5b-2 §16: a recording that finds the capture allowance used).
+pub(super) fn reply_err_text(error: &str, message: &str) -> Outcome {
+    reply(&DesktopReply::Err {
+        error: error.to_owned(),
+        message: message.to_owned(),
+        operation_id: None,
         capture_id: None,
     })
 }

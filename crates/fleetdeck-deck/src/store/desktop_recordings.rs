@@ -107,6 +107,20 @@ pub struct NewRecording {
     pub link_epoch: String,
 }
 
+/// What [`DeckStore::recording_prepare_coordinator`] stores (R13 P5b-2): a
+/// coordinator recording has no owner login; its `coordinator` column holds
+/// the compact JSON of the `CoordinatorContext`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewCoordinatorRecording {
+    pub station: StationId,
+    pub capture_id: String,
+    pub action_hash: String,
+    pub monitor: String,
+    pub seconds: u32,
+    pub coordinator: String,
+    pub link_epoch: String,
+}
+
 /// The wire string of a stop reason (snake case).
 #[must_use]
 pub fn reason_str(r: StopReason) -> String {
@@ -119,6 +133,18 @@ pub fn reason_str(r: StopReason) -> String {
 fn parse_reason(s: &str) -> Result<StopReason> {
     serde_json::from_value(serde_json::Value::String(s.to_owned()))
         .map_err(|_| DeckError::Corrupt(format!("stop reason {s}")))
+}
+
+/// The fields of a new recording row, owner or coordinator.
+struct Fresh {
+    station: StationId,
+    capture_id: String,
+    action_hash: String,
+    monitor: String,
+    seconds: u32,
+    owner_login: Option<String>,
+    coordinator: Option<String>,
+    link_epoch: String,
 }
 
 /// The recording columns of one row.
@@ -180,6 +206,42 @@ impl DeckStore {
     /// # Errors
     /// A database error.
     pub async fn recording_prepare(&self, new: NewRecording) -> Result<Prepared> {
+        self.prepare_recording(Fresh {
+            station: new.station,
+            capture_id: new.capture_id,
+            action_hash: new.action_hash,
+            monitor: new.monitor,
+            seconds: new.seconds,
+            owner_login: Some(new.owner_login),
+            coordinator: None,
+            link_epoch: new.link_epoch,
+        })
+        .await
+    }
+
+    /// As [`Self::recording_prepare`] for a coordinator recording: no owner
+    /// login, and the `coordinator` column is set.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn recording_prepare_coordinator(
+        &self,
+        new: NewCoordinatorRecording,
+    ) -> Result<Prepared> {
+        self.prepare_recording(Fresh {
+            station: new.station,
+            capture_id: new.capture_id,
+            action_hash: new.action_hash,
+            monitor: new.monitor,
+            seconds: new.seconds,
+            owner_login: None,
+            coordinator: Some(new.coordinator),
+            link_epoch: new.link_epoch,
+        })
+        .await
+    }
+
+    async fn prepare_recording(&self, new: Fresh) -> Result<Prepared> {
         let now = self.now_ms();
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
@@ -193,8 +255,8 @@ impl DeckStore {
             tx.execute(
                 "INSERT INTO desktop_captures
                      (station_id, capture_id, action_hash, state, monitor, created_at, updated_at,
-                      operation_kind, requested_seconds, owner_login, link_epoch)
-                 VALUES (?1, ?2, ?3, 'prepared', ?4, ?5, ?5, 'recording', ?6, ?7, ?8)",
+                      operation_kind, requested_seconds, owner_login, link_epoch, coordinator)
+                 VALUES (?1, ?2, ?3, 'prepared', ?4, ?5, ?5, 'recording', ?6, ?7, ?8, ?9)",
                 params![
                     new.station.as_str(),
                     new.capture_id,
@@ -203,7 +265,8 @@ impl DeckStore {
                     now,
                     new.seconds,
                     new.owner_login,
-                    new.link_epoch
+                    new.link_epoch,
+                    new.coordinator
                 ],
             )?;
             tx.commit()?;
