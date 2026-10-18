@@ -182,7 +182,7 @@ These surfaces are new in v2 and have no v0 feature. Each row gives the four pro
 
 ## Omarchy management from the board (Omarchy admin, DL-243)
 
-These surfaces are new in v2 and have no v0 feature. Each row gives the four proofs: the behavior, the tests by file, the failure behavior and the exposure (and the version where the surface has one). Design: `docs/v2/design/omarchy-admin.md` revision 5. All rows are built: task A (CLI, `87a50e04`), task B (station, `2442fd02`), task C (deck, `621a99e1`) and task D (board, `707bbcf0`). The PRE-PR review is pending (DL-243 item a). The live smoke is pending (DL-243 item d; the list is in `docs/v2/LIVE-SMOKE.md`, `make desktop-smoke`). Test paths are in `crates/fleetdeck-cli/` unless a path is given.
+These surfaces are new in v2 and have no v0 feature. Each row gives the four proofs: the behavior, the tests by file, the failure behavior and the exposure (and the version where the surface has one). Design: `docs/v2/design/omarchy-admin.md` revision 5. All rows are built: task A (CLI, `87a50e04`), task B (station, `2442fd02`), task C (deck, `621a99e1`) and task D (board, `707bbcf0`). The PRE-PR review passed in round 3 (DL-244). The live smoke is pending (DL-243 item d; the list is in `docs/v2/LIVE-SMOKE.md`, `make desktop-smoke`). Test paths are in `crates/fleetdeck-cli/` unless a path is given.
 
 | Surface | v2 | Tests | Fail-open and exposure proof (R9.2) |
 | --- | --- | --- | --- |

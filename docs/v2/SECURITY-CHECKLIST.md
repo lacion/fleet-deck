@@ -167,7 +167,7 @@ The number is the decision (DL-241) and the row. Design: `docs/v2/design/omarchy
 
 ### Omarchy management from the board (Omarchy admin, DL-243)
 
-The number is the decision (DL-243) and the row. Design: `docs/v2/design/omarchy-admin.md` revision 5 (DESIGN REVIEW round 4, no BLOCKER). All rows are built (merges `87a50e04`, `2442fd02`, `621a99e1`, `707bbcf0`). The PRE-PR review is pending (DL-243 item a). The live smoke is pending (DL-243 item d; the list is `make desktop-smoke`). Residual risk: an elevated owner (or a stolen elevated board session within its 10 minutes of elevation) can install or remove the integration and retry provisioning on any linked station. This is the same power as the station settings route. Test paths are in `crates/fleetdeck-station/src/omarchy_admin/` for the station, `crates/fleetdeck-cli/` for the CLI and `crates/fleetdeck-deck/` for the deck.
+The number is the decision (DL-243) and the row. Design: `docs/v2/design/omarchy-admin.md` revision 5 (DESIGN REVIEW round 4, no BLOCKER). All rows are built (merges `87a50e04`, `2442fd02`, `621a99e1`, `707bbcf0`). The PRE-PR review passed in round 3 (DL-244). The live smoke is pending (DL-243 item d; the list is `make desktop-smoke`). Residual risk: an elevated owner (or a stolen elevated board session within its 10 minutes of elevation) can install or remove the integration and retry provisioning on any linked station. This is the same power as the station settings route. Test paths are in `crates/fleetdeck-station/src/omarchy_admin/` for the station, `crates/fleetdeck-cli/` for the CLI and `crates/fleetdeck-deck/` for the deck.
 
 | DL | Surface | Where | Risk | Proof |
 | --- | --- | --- | --- | --- |

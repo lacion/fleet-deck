@@ -3454,3 +3454,9 @@ Owner review: pending.
 - PRE-PR round 1: three MAJOR findings fixed (the child group after a normal exit, a missing backup keeps the restore metadata, the card refreshes every 15 s).
 - PRE-PR round 2: the station kills the process group of a child before it reaps the leader (no group ID reuse); the card sends its status reads and actions one at a time.
 - Next: the PRE-PR review; the owner reads the new rows of `SECURITY-CHECKLIST.md` (DL-158); the live smoke on the Omarchy machines.
+
+## DL-244: Omarchy management from the board accepted after the PRE-PR review (architect, 2026-10-18)
+
+- Context: the adversary PRE-PR review of DL-243 ran 3 rounds. Round 1: three MAJOR (a subprocess that a tool left behind outlived the action; a missing screensaver backup completed a restore; the card did not refresh background changes), fixed `3fe525f6`. Round 2: one BLOCKER (the group kill came after the leader was reaped, so the group ID could be reused) and one MAJOR (an action could overlap a status read of the card), fixed `7df1411d`. Round 3: PASS, no findings.
+- Decision: the fixes are accepted: the station waits for the leader without reaping it (`waitid` with `NOWAIT`), kills the process group, then reaps the leader; a missing backup is a restore error that keeps the state for a retry; the card refreshes every 15 s (5 s while an action or a bootstrap runs) and sends its reads and actions one at a time. Omarchy management from the board is accepted.
+- Open items: DL-243 items b, c, d and e. DL-243 item a is closed by this entry.
