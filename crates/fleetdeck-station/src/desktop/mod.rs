@@ -116,6 +116,9 @@ pub struct Desktop {
     limits: Mutex<deadline::Limits>,
     /// The one screenshot slot of the station (R13 P5a).
     capture: capture::CaptureSlot,
+    /// The executable of the `shim-exec` launch of `grim`; `None` is the
+    /// running executable. A test of another crate sets it.
+    shim_exe: Option<std::path::PathBuf>,
 }
 
 impl Desktop {
@@ -129,7 +132,23 @@ impl Desktop {
             cache: Mutex::new(None),
             limits: Mutex::new(deadline::Limits::default()),
             capture: capture::CaptureSlot::default(),
+            shim_exe: None,
         }
+    }
+
+    /// The same adapter with another `shim-exec` executable for `grim`.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_shim_exe(mut self, exe: std::path::PathBuf) -> Self {
+        self.shim_exe = Some(exe);
+        self
+    }
+
+    /// The `shim-exec` executable that was set, if any.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn shim_exe(&self) -> Option<&std::path::Path> {
+        self.shim_exe.as_deref()
     }
 
     /// An adapter for the environment of this process.
