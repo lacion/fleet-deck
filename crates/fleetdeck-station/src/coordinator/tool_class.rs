@@ -20,6 +20,11 @@ pub enum ToolClass {
     Desktop,
     /// The coordinator screenshot tools (R13 P6 §2.1; fleet control, OD-3).
     Capture,
+    /// Station-internal (R13 P5b-2 §13.5): the grant has the explicit
+    /// recording allowance. The start adds it to the binding classes only
+    /// when the spec has `allow_recording` and the `capture` class.
+    /// [`ToolClass::parse`] never returns it, so a deck grant cannot name it.
+    Recording,
     /// The session's own tools (`publish_artifact`, `set_focus`,
     /// `ask_coordinator`; DL-165). Every binding has it; no grant names
     /// it ([`ToolClass::parse`] never returns it).
@@ -27,8 +32,9 @@ pub enum ToolClass {
 }
 
 impl ToolClass {
-    /// The grant class name of a class: the inverse of [`Self::parse`]
-    /// (`own` is no grant class and is never stored).
+    /// The class name: the inverse of [`Self::parse`] for a grant class.
+    /// `own` is no grant class and is never stored; `recording` is stored
+    /// but is no grant class (see [`Self::from_stored`]).
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
@@ -41,6 +47,7 @@ impl ToolClass {
             Self::Answer => "answer",
             Self::Desktop => "desktop",
             Self::Capture => "capture",
+            Self::Recording => "recording",
             Self::Own => "own",
         }
     }
@@ -62,6 +69,16 @@ impl ToolClass {
             "capture" => Self::Capture,
             _ => return None,
         })
+    }
+
+    /// The class of a stored name: a grant class, or the station-internal
+    /// `recording` (R13 P5b-2). `own` is never stored and fails closed.
+    #[must_use]
+    pub fn from_stored(name: &str) -> Option<Self> {
+        match name {
+            "recording" => Some(Self::Recording),
+            other => Self::parse(other),
+        }
     }
 
     /// The fleet-control classes (ADR-008 §2, R13 P6 OD-3).
@@ -124,5 +141,18 @@ mod tests {
         for name in ["input", "Desktop", "desktops", "own", "", "screenshot"] {
             assert_eq!(ToolClass::parse(name), None, "{name}");
         }
+    }
+
+    #[test]
+    fn the_recording_class_is_internal_and_gives_no_fleet_control() {
+        let class = ToolClass::Recording;
+        assert_eq!(class.name(), "recording");
+        // A grant never names it; only the stored form reads it back.
+        assert_eq!(ToolClass::parse("recording"), None);
+        assert_eq!(ToolClass::from_stored("recording"), Some(class));
+        assert_eq!(ToolClass::from_stored("capture"), Some(ToolClass::Capture));
+        assert_eq!(ToolClass::from_stored("own"), None);
+        assert!(!class.is_fleet_control());
+        assert!(!class.is_mutating());
     }
 }

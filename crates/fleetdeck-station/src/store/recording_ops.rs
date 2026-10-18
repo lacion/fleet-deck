@@ -23,6 +23,7 @@ use std::collections::HashSet;
 
 use fleetdeck_proto::artifacts::ArtifactKind;
 use fleetdeck_proto::capture::CaptureKind;
+use fleetdeck_proto::coordinator_desktop_wire::CoordinatorContext;
 use fleetdeck_proto::recording::{PEAK_RESERVATION, RECORDING_FILE, RecordingPhase, StopReason};
 use rusqlite::{OptionalExtension, params};
 use serde_json::Value;
@@ -74,6 +75,10 @@ pub struct RecordingBegin<'a> {
     pub seconds: u32,
     /// The `local_desktop_epoch` of the link that started the recording.
     pub link_epoch: &'a str,
+    /// The coordinator context of a coordinator recording (R13 P5b-2 §13.3),
+    /// stored as JSON in `capture_ops.coordinator`; `None` for an owner
+    /// recording.
+    pub coordinator: Option<&'a CoordinatorContext>,
     pub now: i64,
 }
 
@@ -220,6 +225,7 @@ impl Store {
         let (action_hash, monitor) = (b.action_hash.to_owned(), b.monitor.to_owned());
         let (artifact_id, link_epoch) = (b.artifact_id.to_owned(), b.link_epoch.to_owned());
         let (seconds, now) = (b.seconds, b.now);
+        let coordinator = b.coordinator.map(serde_json::to_string).transpose()?;
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             if let Some(row) = read_op(&tx, &deck_fp, &capture_id)? {
@@ -246,9 +252,9 @@ impl Store {
                 "INSERT INTO capture_ops
                      (deck_fp, capture_id, action_hash, state, monitor, artifact_id,
                       reserved_bytes, started_at, updated_at, operation_kind,
-                      requested_seconds, link_epoch, phase)
+                      requested_seconds, link_epoch, phase, coordinator)
                  VALUES (?1, ?2, ?3, 'running', ?4, ?5, ?6, ?7, ?7, 'recording', ?8, ?9,
-                         'preparing')",
+                         'preparing', ?10)",
                 params![
                     deck_fp,
                     capture_id,
@@ -258,7 +264,8 @@ impl Store {
                     to_i64(PEAK_RESERVATION)?,
                     now,
                     i64::from(seconds),
-                    link_epoch
+                    link_epoch,
+                    coordinator
                 ],
             )?;
             tx.commit()?;

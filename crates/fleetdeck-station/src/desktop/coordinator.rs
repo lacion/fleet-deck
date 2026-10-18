@@ -179,6 +179,15 @@ pub fn validate<'a>(
     {
         return Err(refusal());
     }
+    // R13 P5b-2: a coordinator recording needs the three recording features
+    // on the link, else the existing refusal.
+    if matches!(action, DesktopAction::ScreenRecord { .. })
+        && !(negotiated.has(feature::DESKTOP_RECORDING)
+            && negotiated.has(feature::ARTIFACTS_VIDEO)
+            && negotiated.has(feature::CAPTURE_RECORDING_MCP))
+    {
+        return Err(refusal());
+    }
     let fields = [
         ctx.grant_id.as_str(),
         ctx.binding_id.as_str(),
@@ -197,7 +206,8 @@ pub fn validate<'a>(
         }
         DesktopAction::BrowserOpen { .. }
         | DesktopAction::PreviewClose { .. }
-        | DesktopAction::ScreenCapture { .. } => {}
+        | DesktopAction::ScreenCapture { .. }
+        | DesktopAction::ScreenRecord { .. } => {}
         _ => return Err(refusal()),
     }
     Ok(ctx)
@@ -378,3 +388,7 @@ pub fn preview_owner(deck_fp: &str, ctx: &CoordinatorContext) -> PreviewOwner {
         caller_session: ctx.caller_session.to_string(),
     }
 }
+
+#[cfg(test)]
+#[path = "coordinator_recording_tests.rs"]
+mod recording_tests;

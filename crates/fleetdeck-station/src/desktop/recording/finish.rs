@@ -8,15 +8,16 @@
 use std::sync::Arc;
 
 use fleetdeck_proto::artifacts::{ArtifactPublished, MAX_TITLE_CHARS};
-use fleetdeck_proto::capture::{CaptureCaller, CaptureKind, CaptureProvenance, code, text};
+use fleetdeck_proto::capture::{CaptureKind, CaptureProvenance, code, text};
 use fleetdeck_proto::recording::{LeasePhase, RecordingMeta, StopReason};
 
 use super::guard::{Armed, LeaseGuard};
 use super::lease::Verdict;
 use super::op::{Run, Stage, Tasks, join_failed, left};
-use super::{check_gates, probe};
+use super::{check_gates, coordinated, probe};
 use crate::artifacts::capture_import::{CaptureFileKind, import_capture};
 use crate::desktop::Fail;
+use crate::desktop::authority::Start;
 use crate::desktop::capture::{Staging, finish_staging};
 use crate::media::mp4::{self, Mp4Info, Mp4Limits};
 use crate::media::recorder::{Exit, StopCause};
@@ -138,6 +139,7 @@ impl Run<'_> {
         exit: Exit,
         tasks: Tasks,
         armed: Armed,
+        start: &Start,
     ) -> Result<ArtifactPublished, Stage> {
         let req = self.req;
         let save = match self.judge_exit(&exit) {
@@ -181,6 +183,16 @@ impl Run<'_> {
             None => return Err(self.discard_late(StopReason::LeaseDenied, false).await),
         }
         self.check_latch().await?;
+        // A coordinator recording also asks for fresh authority in the
+        // `import` phase (P5b §13.3, P6 §6.3); a refusal discards.
+        if coordinated::before_import(req.coordinator.as_ref(), start, &self.ctx.env)
+            .await
+            .is_err()
+        {
+            return Err(self
+                .discard_late(StopReason::CoordinatorAuthorityLost, false)
+                .await);
+        }
         self.recheck_local().await?;
         self.in_time().await?;
         // The import from the retained descriptor.
@@ -238,6 +250,8 @@ impl Run<'_> {
         .chars()
         .take(MAX_TITLE_CHARS)
         .collect();
+        let (caller, caller_station, caller_session, caller_grant_id) =
+            coordinated::caller(req.coordinator.as_ref());
         let new = NewCaptureArtifact {
             artifact_id: self.artifact_id.to_owned(),
             title,
@@ -248,10 +262,10 @@ impl Run<'_> {
                 station_id: req.station_id.clone(),
                 monitor: req.monitor.clone(),
                 kind: CaptureKind::Recording,
-                caller: CaptureCaller::Owner,
-                caller_station: None,
-                caller_session: None,
-                caller_grant_id: None,
+                caller,
+                caller_station,
+                caller_session,
+                caller_grant_id,
                 at: self.at,
                 recording: Some(RecordingMeta {
                     requested_seconds: req.seconds,

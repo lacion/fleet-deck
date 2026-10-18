@@ -119,6 +119,29 @@ fn a_binding_round_trips_through_its_row() {
 }
 
 #[test]
+fn the_recording_allowance_survives_the_row_and_an_old_row_reads_without_it() {
+    let mut b = binding("b1", "g1", BindingState::Active);
+    b.classes.insert(ToolClass::Capture);
+    b.classes.insert(ToolClass::Recording);
+    let r = BindingRow::from_binding("d".repeat(64), "shim-1".to_owned(), &b, Some(9), 3);
+    assert_eq!(
+        r.classes,
+        "[\"read\",\"inspect\",\"capture\",\"recording\"]"
+    );
+    let back = r.to_binding().unwrap();
+    assert_eq!(back.classes, b.classes);
+    assert!(back.classes.contains(&ToolClass::Recording));
+    // An old row holds no `recording`: it reads without the allowance.
+    let old = BindingRow {
+        classes: "[\"read\",\"capture\"]".to_owned(),
+        ..r
+    };
+    let back = old.to_binding().unwrap();
+    assert!(back.classes.contains(&ToolClass::Capture));
+    assert!(!back.classes.contains(&ToolClass::Recording));
+}
+
+#[test]
 fn a_row_with_a_damaged_column_does_not_parse() {
     let good = row("d1", "a", "b1", "g1", BindingState::Active);
     for (column, bad) in [

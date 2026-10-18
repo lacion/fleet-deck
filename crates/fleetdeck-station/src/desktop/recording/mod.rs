@@ -23,6 +23,7 @@ use std::time::Duration;
 
 use fleetdeck_proto::capture::{code, text};
 use fleetdeck_proto::coordinator_desktop_text::text as p6_text;
+use fleetdeck_proto::coordinator_desktop_wire::CoordinatorContext;
 use fleetdeck_proto::recording::StopReason;
 
 use super::capture::{Allowed, Launch};
@@ -32,6 +33,7 @@ use crate::artifacts::capture_import::DurableFs;
 use crate::desktop::authority::Admitted;
 use crate::media::clock::Clocks;
 
+mod coordinated;
 mod finish;
 mod guard;
 mod latch;
@@ -123,6 +125,10 @@ pub struct RecordRequest {
     pub link: Arc<dyn DeckLink>,
     /// The `local_desktop_epoch` of that link.
     pub link_epoch: String,
+    /// The coordinator that the recording runs for (R13 P5b-2 §13.3); `None`
+    /// for an owner recording. It is the context of the authority: the
+    /// action hash covers it.
+    pub coordinator: Option<CoordinatorContext>,
     pub params: RecordParams,
 }
 
@@ -168,6 +174,18 @@ pub(crate) fn fail_for(reason: StopReason, ceiling: bool) -> Fail {
     Fail::new(c, code_text(c))
 }
 
+/// The failure of an automatic stop of a coordinator recording: the
+/// coordinator terminal code of the reason (§7.5). A reason without a
+/// coordinator code (`owner_login_ended`) keeps the owner code.
+pub(crate) fn fail_for_coordinator(reason: StopReason, ceiling: bool) -> Fail {
+    match reason.coordinator_code(ceiling) {
+        Some(c) => Fail::new(c, code_text(c)),
+        None => fail_for(reason, ceiling),
+    }
+}
+
+#[cfg(test)]
+mod coordinated_tests;
 #[cfg(test)]
 mod guard_tests;
 #[cfg(test)]

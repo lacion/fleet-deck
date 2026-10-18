@@ -18,7 +18,8 @@
 //! 1. the pending artifact deletions finish;
 //! 2. a `running` operation becomes `failed`: `capture_interrupted` for a
 //!    screenshot, `recording_interrupted` (also as the stop reason) for a
-//!    recording;
+//!    recording; a coordinator recording (its row has a context) gets the
+//!    code `authority_unknown` and the same stop reason (§7.5);
 //! 3. the staging folder and the uncommitted destination folder of every
 //!    `failed` operation are removed durably, then its reservation is freed;
 //! 4. the staging copy of a `committed` operation that still holds a
@@ -44,6 +45,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fleetdeck_proto::capture::{CaptureKind, code, text};
+use fleetdeck_proto::coordinator_desktop_text::{code as p6_code, text as p6_text};
 use fleetdeck_proto::recording::{RECORDING_FILE, StopReason};
 use rustix::fs::{AtFlags, CWD, Dir, FileType, Mode, OFlags};
 
@@ -490,6 +492,24 @@ impl ArtifactService {
         self.scan_orphans(&fs).await
     }
 
+    /// Whether the operation row holds a coordinator context (R13 P5b-2
+    /// §13.3): `capture_ops.coordinator` is set.
+    async fn is_coordinated(&self, op: &CaptureOp) -> Result<bool, ArtifactError> {
+        let (deck_fp, capture_id) = (op.deck_fp.clone(), op.capture_id.clone());
+        self.store
+            .db()
+            .call(move |conn| {
+                Ok(conn.query_row(
+                    "SELECT coordinator IS NOT NULL FROM capture_ops
+                     WHERE deck_fp = ?1 AND capture_id = ?2",
+                    rusqlite::params![deck_fp, capture_id],
+                    |r| r.get::<_, bool>(0),
+                )?)
+            })
+            .await
+            .map_err(internal)
+    }
+
     /// A `running` operation found at the start becomes `failed`.
     async fn interrupt(&self, op: &CaptureOp) -> Result<(), ArtifactError> {
         let result = match op.kind {
@@ -504,12 +524,24 @@ impl ArtifactService {
                     .await
             }
             CaptureKind::Recording => {
+                // §7.5: a crash found at startup is `recording_interrupted`
+                // for the owner and `authority_unknown` for a coordinator
+                // recording (its row keeps the context); the stop reason is
+                // `recording_interrupted` for both.
+                let (code, text) = if self.is_coordinated(op).await? {
+                    (
+                        p6_code::AUTHORITY_UNKNOWN,
+                        p6_text(p6_code::AUTHORITY_UNKNOWN).unwrap_or(text::RECORDING_INTERRUPTED),
+                    )
+                } else {
+                    (code::RECORDING_INTERRUPTED, text::RECORDING_INTERRUPTED)
+                };
                 self.store
                     .recording_fail(
                         &op.deck_fp,
                         &op.capture_id,
-                        code::RECORDING_INTERRUPTED,
-                        text::RECORDING_INTERRUPTED,
+                        code,
+                        text,
                         StopReason::RecordingInterrupted,
                     )
                     .await

@@ -22,7 +22,8 @@ pub const REASON_ROTATED: &str = "rotated";
 
 impl BindingRow {
     /// The row of a binding. `Own` is never stored (every binding has it);
-    /// `classes` is a JSON array of grant class names, `scope` the JSON of
+    /// `classes` is a JSON array of class names (the grant classes and the
+    /// station-internal `recording`, R13 P5b-2), `scope` the JSON of
     /// the scope and `control_skill` the JSON string of the text. A
     /// binding that is not `Pending` or `Active` gives an `ended` row.
     #[must_use]
@@ -70,13 +71,14 @@ impl BindingRow {
     ///
     /// # Errors
     /// The name of the column that does not parse: invalid JSON, an unknown
-    /// class name, or a stored `own`.
+    /// class name, or a stored `own`. An old row has no `recording`, so it
+    /// reads without the recording allowance.
     pub fn to_binding(&self) -> std::result::Result<Binding, String> {
         let names: Vec<String> =
             serde_json::from_str(&self.classes).map_err(|_| "classes".to_owned())?;
         let mut classes = BTreeSet::new();
         for name in &names {
-            classes.insert(ToolClass::parse(name).ok_or_else(|| "classes".to_owned())?);
+            classes.insert(ToolClass::from_stored(name).ok_or_else(|| "classes".to_owned())?);
         }
         classes.insert(ToolClass::Own);
         let scope: GrantScope =

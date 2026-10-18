@@ -122,7 +122,10 @@ pub(super) fn prepare(
 /// The refusal of a coordinator start that is not a new child.
 const NOT_NEW_CHILD: &str = "a coordinator session starts only as a new direct child";
 
-/// The tool classes of a grant, with the session's own tools (DL-165).
+/// The tool classes of a grant, with the session's own tools (DL-165). The
+/// station-internal `recording` class (R13 P5b-2 §13.5) is added only when
+/// the spec has `allow_recording` and the `capture` class; a spec that names
+/// `recording` itself is refused as an unknown class.
 fn grant_classes(
     coordinator: &CoordinatorSpec,
 ) -> Result<std::collections::BTreeSet<ToolClass>, String> {
@@ -133,6 +136,9 @@ fn grant_classes(
         .collect::<Result<_, _>>()?;
     // A coordinator session has the session's own tools too (DL-165).
     classes.insert(ToolClass::Own);
+    if coordinator.allow_recording && classes.contains(&ToolClass::Capture) {
+        classes.insert(ToolClass::Recording);
+    }
     Ok(classes)
 }
 
@@ -518,3 +524,7 @@ opens in Fleet Deck. To show a page or a document to the owner, call publish_art
 cannot write files (for example in dontAsk mode), pass the page as `content` with a `name` such as \
 report.html. To update a page, publish again with its artifact_id. `set_focus` sets the one line (at most 120 characters) on your card. \
 `ask_coordinator` asks the coordinator of your task a question. The tools need no credential.";
+
+#[cfg(test)]
+#[path = "coordinator_start_recording_tests.rs"]
+mod recording_tests;

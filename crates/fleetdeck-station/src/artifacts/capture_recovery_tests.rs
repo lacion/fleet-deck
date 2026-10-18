@@ -14,7 +14,9 @@ use std::sync::Arc;
 
 use fleetdeck_proto::artifacts::{ArtifactFileQuery, ArtifactGetQuery, ArtifactListQuery};
 use fleetdeck_proto::capture::{CaptureCaller, CaptureKind, CaptureProvenance, code, text};
+use fleetdeck_proto::coordinator_desktop_wire::CoordinatorContext;
 use fleetdeck_proto::recording::{PEAK_RESERVATION, RecordingMeta, RecordingPhase, StopReason};
+use fleetdeck_proto::{SessionId, StationId};
 
 use super::{CaptureFileKind, DurableFs, SyncFs, import_capture};
 use crate::artifacts::capture_import::tests::{FP, Recorder, Rig, rig};
@@ -53,6 +55,7 @@ async fn begin(r: &Rig, id: &str) -> String {
             artifact_id: &artifact,
             seconds: 5,
             link_epoch: "epoch",
+            coordinator: None,
             now: 5,
         })
         .await
@@ -148,6 +151,62 @@ async fn a_running_recording_becomes_recording_interrupted_and_its_trees_go() {
     assert!(r.store.garbage_list().await.unwrap().is_empty());
     // The restart changes nothing more.
     r.service.ensure_recovered().await.unwrap();
+}
+
+/// A running recording row of a coordinator (its context is stored).
+async fn begin_coordinated(r: &Rig, id: &str) -> String {
+    let context = CoordinatorContext {
+        grant_id: "grant-1".to_owned(),
+        binding_id: "binding-1".to_owned(),
+        generation: 3,
+        caller_station: StationId::new("01HZZZZZZZZZZZZZZZZZZZZZZA"),
+        caller_session: SessionId::new("01HZZZZZZZZZZZZZZZZZZZZZZB"),
+        caller_label: "bold-fox".to_owned(),
+    };
+    let artifact = format!("art-{id}");
+    let begin = r
+        .store
+        .recording_begin(RecordingBegin {
+            deck_fp: FP,
+            capture_id: id,
+            action_hash: "h",
+            monitor: "DP-1",
+            artifact_id: &artifact,
+            seconds: 5,
+            link_epoch: "epoch",
+            coordinator: Some(&context),
+            now: 5,
+        })
+        .await
+        .unwrap();
+    assert_eq!(begin, Begin::Started);
+    artifact
+}
+
+#[tokio::test]
+async fn a_running_coordinator_recording_becomes_authority_unknown_and_its_trees_go() {
+    let r = rig().await;
+    let artifact = begin_coordinated(&r, A).await;
+    // An owner recording beside it keeps `recording_interrupted`.
+    let owner_artifact = begin(&r, B).await;
+    put_staging(&r, A, b"half a clip");
+    put_destination(&r, &artifact, b"half a clip");
+    r.service.ensure_recovered().await.unwrap();
+    let row = r.store.recording_get(FP, A).await.unwrap().unwrap();
+    assert_eq!(row.op.state, CaptureState::Failed);
+    assert_eq!(row.op.code.as_deref(), Some("authority_unknown"));
+    assert_eq!(
+        row.op.message.as_deref(),
+        fleetdeck_proto::coordinator_desktop_text::text("authority_unknown")
+    );
+    assert_eq!(row.stop_reason, Some(StopReason::RecordingInterrupted));
+    assert_eq!(row.op.reserved_bytes, 0);
+    assert!(!r.captures.join(A).exists());
+    assert!(!r.root.join(&artifact).exists());
+    let owner = r.store.recording_get(FP, B).await.unwrap().unwrap();
+    assert_eq!(owner.op.code.as_deref(), Some(code::RECORDING_INTERRUPTED));
+    assert_eq!(owner.stop_reason, Some(StopReason::RecordingInterrupted));
+    assert!(!r.root.join(&owner_artifact).exists());
 }
 
 #[tokio::test]
@@ -276,6 +335,7 @@ async fn garbage_counts_in_the_quota_until_its_durable_removal_finishes() {
             artifact_id: "art-a",
             seconds: 5,
             link_epoch: "epoch",
+            coordinator: None,
             now: 5,
         })
         .await

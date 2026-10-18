@@ -37,6 +37,7 @@ fn request<'a>(id: &'a str, hash: &'a str, artifact: &'a str) -> RecordingBegin<
         artifact_id: artifact,
         seconds: 5,
         link_epoch: "epoch-1",
+        coordinator: None,
         now: 10,
     }
 }
