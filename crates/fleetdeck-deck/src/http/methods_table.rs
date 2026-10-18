@@ -189,6 +189,23 @@ pub const API: &[ApiMethod] = &[
         Some(Scope::Admin),
         true,
     ),
+    // Omarchy management of a station (design `omarchy-admin.md` section 4):
+    // `admin`, and both handlers also require the owner's board login; the
+    // action also needs the owner's elevation.
+    m(
+        "station.omarchy_status",
+        Method::GET,
+        "/api/stations/{station}/omarchy",
+        Some(Scope::Admin),
+        false,
+    ),
+    m(
+        "station.omarchy_act",
+        Method::POST,
+        "/api/stations/{station}/omarchy",
+        Some(Scope::Admin),
+        true,
+    ),
     m(
         "stations.workspaces",
         Method::GET,

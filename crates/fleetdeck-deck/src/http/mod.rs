@@ -43,6 +43,7 @@ pub mod history_routes;
 pub mod methods;
 pub mod native_routes;
 pub mod not_built;
+pub mod omarchy_routes;
 pub mod pairing_routes;
 pub mod palette_routes;
 pub mod paste_routes;
@@ -176,6 +177,10 @@ pub fn router(board: Arc<Board>) -> Router {
         .route(
             "/api/stations/{station}/settings",
             get(settings_routes::station_get).post(settings_routes::station_set),
+        )
+        .route(
+            "/api/stations/{station}/omarchy",
+            get(omarchy_routes::status).post(omarchy_routes::act),
         )
         .route(
             "/api/secrets/stations/{station}/settings",
