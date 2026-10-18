@@ -563,8 +563,9 @@ async fn after_the_commit_no_unsynced_entry_can_take_the_png_away() {
         .artifact_id;
     assert_eq!(
         rec.count(),
-        5,
-        "the PNG, 1/, the id folder, artifacts/, data"
+        7,
+        "the PNG, 1/, the id folder, artifacts/, data; then the durable staging \
+         removal: the staging folder and captures/"
     );
     // The fault hook: drop everything that was not synced.
     rec.drop_unsynced(&t.s.data);

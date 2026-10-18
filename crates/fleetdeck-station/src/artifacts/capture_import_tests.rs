@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use fleetdeck_proto::capture::{CaptureCaller, CaptureKind, CaptureProvenance, code, text};
 use fleetdeck_testkit::Det;
 
-use super::{DurableFs, SyncFs, discard, import_png};
+use super::{DurableFs, SyncFs, discard_durable, import_png};
 use crate::artifacts::ArtifactService;
 use crate::desktop::Fail;
 use crate::desktop::capture::MAX_PNG_BYTES;
@@ -278,7 +278,7 @@ fn a_failed_sync_is_a_failed_import_and_discard_removes_the_partial_folder() {
         let r = import_png(&root, ID, &mut source(b"png"), 3, &rec, &open_room);
         assert_eq!(fail_of(r), publish_failed(), "sync {at}");
         assert_eq!(rec.count(), at + 1, "no sync runs after the failed one");
-        discard(&root, ID).unwrap();
+        discard_durable(&root, ID, &SyncFs).unwrap();
         assert!(!root.join(ID).exists());
         assert!(root.exists());
     }
@@ -405,7 +405,7 @@ async fn the_captures_folder_is_next_to_the_artifacts_root() {
 async fn a_crash_before_the_file_move_fails_the_row_and_removes_the_staging() {
     let r = rig().await;
     start(&r, ID, "ART1").await;
-    let staging = Staging::create(&r.captures, ID).unwrap();
+    let staging = Staging::create(&r.captures, ID, "capture.png").unwrap();
     drop(staging);
     assert!(r.captures.join(ID).exists());
     r.service.ensure_recovered().await.unwrap();
@@ -460,7 +460,7 @@ async fn a_crash_after_the_commit_loses_nothing_and_a_repeat_never_runs_again() 
         .await
         .unwrap();
     // The staging of the same capture was not removed before the crash.
-    drop(Staging::create(&r.captures, ID).unwrap());
+    drop(Staging::create(&r.captures, ID, "capture.png").unwrap());
     r.service.ensure_recovered().await.unwrap();
     assert_eq!(
         std::fs::read(r.root.join("ART1/1/capture.png")).unwrap(),
@@ -519,7 +519,7 @@ async fn a_refused_write_in_the_middle_of_the_copy_is_disk_full_and_the_reservat
     let held = r.store.capture_get(FP, ID).await.unwrap().unwrap();
     assert_eq!(held.state, CaptureState::Failed);
     assert_eq!(held.reserved_bytes, MAX_PNG_BYTES);
-    discard(&r.root, "ART1").unwrap();
+    discard_durable(&r.root, "ART1", &SyncFs).unwrap();
     assert!(!r.root.join("ART1").exists());
     r.store.capture_cleaned(FP, ID).await.unwrap();
     let freed = r.store.capture_get(FP, ID).await.unwrap().unwrap();

@@ -1,33 +1,29 @@
-//! The private staging file of one screenshot (design §5.2, §5.3 items 3
-//! and 4):
+//! The private staging file of one capture (design §5.2, §5.3 items 3 and 4;
+//! R13 P5b §9.2):
 //!
 //! ```text
 //! <captures>/                 0700
 //! <captures>/<capture_id>/    0700
-//! <captures>/<capture_id>/capture.png   0600
+//! <captures>/<capture_id>/<file name>   0600   (capture.png or capture.mp4)
 //! ```
 //!
 //! Every step works relative to a directory descriptor and follows no link.
-//! The station keeps the descriptor of the file and never reopens the PNG by
-//! its path.
+//! The station keeps the descriptor of the file and never reopens it by its
+//! path. The removal is durable ([`Staging::remove`]).
 
-use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::os::fd::OwnedFd;
-use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 use fleetdeck_proto::capture::{code, text, valid_capture_id};
 use ring::digest;
-use rustix::fs::{AtFlags, CWD, Dir, FileType, Mode, OFlags};
+use rustix::fs::{CWD, Mode, OFlags};
 
 use super::COPY_BUFFER;
 use crate::desktop::{Fail, code as desktop_code, profile};
-
-/// The name of the staging file.
-const FILE_NAME: &str = "capture.png";
+use crate::media::durable::{DurableFs, remove_tree_durable};
 
 const DIR_FLAGS: OFlags = OFlags::RDONLY
     .union(OFlags::DIRECTORY)
@@ -84,25 +80,37 @@ fn open_root(captures_root: &Path, create: bool) -> Result<Option<OwnedFd>, rust
 }
 
 impl Staging {
-    /// Makes `<captures_root>/<capture_id>/capture.png`.
+    /// Makes `<captures_root>/<capture_id>/<file_name>`; `file_name` is one
+    /// plain name (`capture.png` or `capture.mp4`).
     ///
     /// # Errors
     /// `invalid_params` for a capture ID that is not a ULID; `capture_failed`
-    /// when `captures_root` or the ID directory is a link, a non-directory or
-    /// exists, or when the file is not a fresh regular file of this user with
-    /// one link.
-    pub(crate) fn create(captures_root: &Path, capture_id: &str) -> Result<Self, Fail> {
+    /// when `file_name` is not one plain name, when `captures_root` or the ID
+    /// directory is a link, a non-directory or exists, or when the file is
+    /// not a fresh regular file of this user with one link.
+    pub(crate) fn create(
+        captures_root: &Path,
+        capture_id: &str,
+        file_name: &str,
+    ) -> Result<Self, Fail> {
         if !valid_capture_id(capture_id) {
             return Err(Fail::new(
                 desktop_code::INVALID_PARAMS,
                 "The capture ID is not valid.",
             ));
         }
+        let plain = !file_name.is_empty()
+            && !file_name.contains(['/', '\0'])
+            && file_name != "."
+            && file_name != "..";
+        if !plain {
+            return Err(failed());
+        }
         let root = open_root(captures_root, true)
             .map_err(|_| failed())?
             .ok_or_else(failed)?;
         rustix::fs::mkdirat(&root, capture_id, Mode::from_raw_mode(0o700)).map_err(|_| failed())?;
-        match Self::make_file(&root, capture_id) {
+        match Self::make_file(&root, capture_id, file_name) {
             Ok(staging) => Ok(staging),
             Err(fail) => {
                 if profile::remove_in(&root, capture_id).is_err() {
@@ -116,9 +124,9 @@ impl Staging {
         }
     }
 
-    fn make_file(root: &OwnedFd, capture_id: &str) -> Result<Self, Fail> {
+    fn make_file(root: &OwnedFd, capture_id: &str, file_name: &str) -> Result<Self, Fail> {
         let dir = open_dir(root, Path::new(capture_id)).map_err(|_| failed())?;
-        let fd = rustix::fs::openat(&dir, FILE_NAME, FILE_FLAGS, Mode::from_raw_mode(0o600))
+        let fd = rustix::fs::openat(&dir, file_name, FILE_FLAGS, Mode::from_raw_mode(0o600))
             .map_err(|_| failed())?;
         let file = File::from(fd);
         let meta = file.metadata().map_err(|_| failed())?;
@@ -140,7 +148,7 @@ impl Staging {
         &self.dir
     }
 
-    /// The retained descriptor of the PNG.
+    /// The retained descriptor of the staging file.
     pub(crate) fn file(&mut self) -> &mut File {
         &mut self.file
     }
@@ -187,80 +195,28 @@ impl Staging {
         if same { Ok(()) } else { Err(failed()) }
     }
 
-    /// Removes `<captures_root>/<capture_id>/` with its content. A missing
-    /// directory is fine.
+    /// Removes `<captures_root>/<capture_id>/` with its content, durably: the
+    /// files are unlinked, each emptied folder is synced and removed, and
+    /// `captures_root` is synced at the end (design §5.3). A missing folder or
+    /// `captures_root` is already removed.
     ///
     /// # Errors
     /// `capture_failed` when `captures_root` or the entry is a link or not a
-    /// directory, or the removal fails.
-    pub(crate) fn remove(captures_root: &Path, capture_id: &str) -> Result<(), Fail> {
-        profile::remove(captures_root, capture_id).map_err(|_| failed())
-    }
-
-    /// Removes every entry below `captures_root` (the startup recovery). A
-    /// link is removed itself and never followed. A failure writes a warning
-    /// with the error kind and the other entries go on. A missing
-    /// `captures_root` is silent.
-    pub(crate) fn remove_all(captures_root: &Path) {
+    /// directory, or the removal or a sync fails. After an error the removal
+    /// is not finished.
+    pub(crate) fn remove(
+        captures_root: &Path,
+        capture_id: &str,
+        fs: &dyn DurableFs,
+    ) -> Result<(), Fail> {
         let root = match open_root(captures_root, false) {
             Ok(Some(root)) => root,
-            Ok(None) => return,
-            Err(e) => {
-                warn_kind(&std::io::Error::from(e));
-                return;
-            }
+            Ok(None) => return Ok(()),
+            Err(_) => return Err(failed()),
         };
-        let entries = match list(&root) {
-            Ok(entries) => entries,
-            Err(e) => {
-                warn_kind(&e);
-                return;
-            }
-        };
-        for (name, is_dir) in entries {
-            let result = if is_dir {
-                match name.to_str() {
-                    Some(plain) => profile::remove_in(&root, plain).map_err(|e| match e {
-                        profile::ProfileError::NotPlain => {
-                            std::io::Error::from(std::io::ErrorKind::InvalidInput)
-                        }
-                        profile::ProfileError::Io(e) => e,
-                    }),
-                    None => Err(std::io::Error::from(std::io::ErrorKind::InvalidInput)),
-                }
-            } else {
-                rustix::fs::unlinkat(&root, &name, AtFlags::empty()).map_err(std::io::Error::from)
-            };
-            if let Err(e) = result {
-                warn_kind(&e);
-            }
-        }
+        remove_tree_durable(&root, capture_id, fs).map_err(|e| {
+            tracing::warn!(kind = ?e.kind(), "cannot remove a capture staging folder");
+            failed()
+        })
     }
-}
-
-fn warn_kind(e: &std::io::Error) {
-    tracing::warn!(kind = ?e.kind(), "cannot remove a capture staging entry");
-}
-
-/// The entries of `root` with a flag for a directory; a link is not one.
-fn list(root: &OwnedFd) -> std::io::Result<Vec<(OsString, bool)>> {
-    let mut entries = Vec::new();
-    for entry in Dir::read_from(root)? {
-        let entry = entry?;
-        let raw = entry.file_name().to_bytes();
-        if raw == b"." || raw == b".." {
-            continue;
-        }
-        let name = OsStr::from_bytes(raw).to_owned();
-        let is_dir = match entry.file_type() {
-            FileType::Directory => true,
-            FileType::Unknown => {
-                let stat = rustix::fs::statat(root, &name, AtFlags::SYMLINK_NOFOLLOW)?;
-                FileType::from_raw_mode(stat.st_mode) == FileType::Directory
-            }
-            _ => false,
-        };
-        entries.push((name, is_dir));
-    }
-    Ok(entries)
 }

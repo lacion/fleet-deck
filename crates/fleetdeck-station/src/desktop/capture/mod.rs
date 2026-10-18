@@ -4,7 +4,9 @@
 //!
 //! - [`run`]: `grim -t png -s 1 -l 6 -o <monitor> -` through `shim-exec`.
 //! - [`png`]: the structural check of the output.
-//! - [`stage`]: `<captures>/<capture_id>/capture.png`, mode 0600.
+//! - [`stage`]: `<captures>/<capture_id>/capture.png` (or `capture.mp4`), mode
+//!   0600, and its durable removal.
+//! - [`cleanup`]: the durable cleanup of a failed or committed operation.
 //! - [`budget`]: the one-capture slot, the free-space check, the monitor
 //!   limits.
 //! - [`op`]: `desktop.act` with `screen_capture`, from the slot to the
@@ -13,6 +15,7 @@
 use std::time::Duration;
 
 mod budget;
+mod cleanup;
 mod coordinator;
 mod op;
 mod png;
@@ -23,6 +26,7 @@ pub use op::{ADMISSION, Allowed, Params, Request};
 pub use run::{Launch, capture_png};
 
 pub(crate) use budget::{CaptureSlot, check_monitor, room};
+pub(crate) use cleanup::{cleanup_failed, finish_staging};
 pub(crate) use coordinator::capture_gate;
 #[cfg(test)]
 pub(crate) use png::PngInfo;

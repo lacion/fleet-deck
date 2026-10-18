@@ -12,14 +12,19 @@
 //!   reservation after its files are removed.
 //! - [`Store::capture_lookup`] reads a row with its artifact for the answer
 //!   of a repeated request and of `desktop.capture_status`.
+//!
+//! R13 P5b adds the recording rows (`recording_ops.rs`, the same table) and
+//! the garbage accounting: the quota counts the committed capture bytes, every
+//! reservation and every `capture_garbage` row.
 
 use std::path::PathBuf;
 
 use fleetdeck_proto::artifacts::{
     AUTHOR_OWNER, Artifact, ArtifactKind, ArtifactVersion, MAX_AUTHOR_CHARS,
 };
-use fleetdeck_proto::capture::{CaptureCaller, CaptureProvenance};
+use fleetdeck_proto::capture::{CaptureCaller, CaptureKind, CaptureProvenance};
 use fleetdeck_proto::coordinator_desktop_wire::CoordinatorContext;
+use fleetdeck_proto::recording::RecordingMeta;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::artifact_deletions::tombstoned;
@@ -27,8 +32,13 @@ use super::artifacts::{CommitError, Committed, Staged, StagedFile, load_artifact
 use super::{Result, Store, StoreError, call, to_i64, to_u64};
 use crate::desktop::capture::{CAPTURE_QUOTA, MAX_PNG_BYTES};
 
-/// The one file of a capture version.
+/// The one file of a screenshot version.
 pub const CAPTURE_FILE: &str = "capture.png";
+
+#[path = "recording_ops.rs"]
+mod recording;
+
+pub use recording::{GarbageArea, RecordingBegin, RecordingRow, ScanSets, StopIntent};
 
 /// The state of a `capture_ops` row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +65,8 @@ pub struct CaptureOp {
     pub deck_fp: String,
     pub capture_id: String,
     pub action_hash: String,
+    /// `screenshot` for every row before R13 P5b.
+    pub kind: CaptureKind,
     pub state: CaptureState,
     pub monitor: String,
     pub artifact_id: String,
@@ -126,10 +138,19 @@ type RawOp = (
     i64,
     i64,
     i64,
+    String,
 );
 
 const COLUMNS: &str = "deck_fp, capture_id, action_hash, state, monitor, artifact_id, sha256,
-                       code, message, reserved_bytes, started_at, updated_at";
+                       code, message, reserved_bytes, started_at, updated_at, operation_kind";
+
+fn parse_kind(text: &str) -> Result<CaptureKind> {
+    match text {
+        "screenshot" => Ok(CaptureKind::Screenshot),
+        "recording" => Ok(CaptureKind::Recording),
+        other => Err(StoreError::Corrupt(format!("capture kind {other}"))),
+    }
+}
 
 fn raw_op(r: &rusqlite::Row<'_>) -> rusqlite::Result<RawOp> {
     Ok((
@@ -145,6 +166,7 @@ fn raw_op(r: &rusqlite::Row<'_>) -> rusqlite::Result<RawOp> {
         r.get(9)?,
         r.get(10)?,
         r.get(11)?,
+        r.get(12)?,
     ))
 }
 
@@ -162,11 +184,13 @@ fn finish_op(raw: RawOp) -> Result<CaptureOp> {
         reserved,
         started_at,
         updated_at,
+        kind,
     ) = raw;
     Ok(CaptureOp {
         deck_fp,
         capture_id,
         action_hash,
+        kind: parse_kind(&kind)?,
         state: CaptureState::parse(&state)?,
         monitor,
         artifact_id,
@@ -190,6 +214,18 @@ fn read_op(conn: &Connection, deck_fp: &str, capture_id: &str) -> Result<Option<
     .transpose()
 }
 
+/// The accounted capture bytes (design `omarchy-p5b.md` §8): the committed
+/// capture sizes, every reservation that a row still holds and every
+/// `capture_garbage` row that is not yet removed.
+fn accounted(conn: &Connection) -> Result<u64> {
+    let sum = |sql: &str| -> Result<u64> { to_u64(conn.query_row(sql, [], |r| r.get(0))?) };
+    let committed =
+        sum("SELECT COALESCE(SUM(size), 0) FROM artifact_versions WHERE capture IS NOT NULL")?;
+    let reserved = sum("SELECT COALESCE(SUM(reserved_bytes), 0) FROM capture_ops")?;
+    let garbage = sum("SELECT COALESCE(SUM(bytes), 0) FROM capture_garbage")?;
+    Ok(committed.saturating_add(reserved).saturating_add(garbage))
+}
+
 impl Store {
     /// A new artifact ID for a capture, from the station ULID source.
     #[must_use]
@@ -200,9 +236,10 @@ impl Store {
     /// Decides a capture request in one transaction. A row with another
     /// action hash is a conflict; a row with the same hash is returned and
     /// nothing changes; otherwise the quota is checked (the committed
-    /// capture bytes, the reservations of every row that still holds one and
-    /// the new reservation of [`MAX_PNG_BYTES`] must stay within [`CAPTURE_QUOTA`])
-    /// and a `running` row that holds the reservation is inserted.
+    /// capture bytes, the reservations of every row that still holds one, the
+    /// bytes of the garbage that is not yet removed and the new reservation of
+    /// [`MAX_PNG_BYTES`] must stay within [`CAPTURE_QUOTA`]) and a `running`
+    /// row that holds the reservation is inserted.
     ///
     /// # Errors
     /// A database error.
@@ -251,25 +288,15 @@ impl Store {
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             if let Some(row) = read_op(&tx, &deck_fp, &capture_id)? {
-                return Ok(if row.action_hash == action_hash {
-                    Begin::Existing(row)
-                } else {
-                    Begin::Conflict
-                });
+                return Ok(
+                    if row.action_hash == action_hash && row.kind == CaptureKind::Screenshot {
+                        Begin::Existing(row)
+                    } else {
+                        Begin::Conflict
+                    },
+                );
             }
-            let committed: i64 = tx.query_row(
-                "SELECT COALESCE(SUM(size), 0) FROM artifact_versions WHERE capture IS NOT NULL",
-                [],
-                |r| r.get(0),
-            )?;
-            let reserved: i64 = tx.query_row(
-                "SELECT COALESCE(SUM(reserved_bytes), 0) FROM capture_ops",
-                [],
-                |r| r.get(0),
-            )?;
-            let used = to_u64(committed)?
-                .saturating_add(to_u64(reserved)?)
-                .saturating_add(MAX_PNG_BYTES);
+            let used = accounted(&tx)?.saturating_add(MAX_PNG_BYTES);
             if used > CAPTURE_QUOTA {
                 return Ok(Begin::Quota);
             }
@@ -312,7 +339,14 @@ impl Store {
         let now = self.now();
         let (deck_fp, capture_id) = (deck_fp.to_owned(), capture_id.to_owned());
         call(&self.inner.db, move |conn| {
-            Ok(commit(conn, &deck_fp, &capture_id, &new, now))
+            Ok(commit(
+                conn,
+                &deck_fp,
+                &capture_id,
+                &new,
+                now,
+                &CommitSpec::screenshot(),
+            ))
         })
         .await?
     }
@@ -378,8 +412,9 @@ impl Store {
     }
 
     /// The operations that the startup recovery handles, oldest first: the
-    /// `running` ones, and the `failed` ones that still hold a reservation
-    /// (their files are not removed yet).
+    /// `running` ones, and the `failed` and `committed` ones that still hold a
+    /// reservation (their files are not removed yet; a committed recording
+    /// holds the bytes of its staging copy until it is removed durably).
     ///
     /// # Errors
     /// A database error.
@@ -387,7 +422,7 @@ impl Store {
         call(&self.inner.db, move |conn| {
             let mut stmt = conn.prepare(&format!(
                 "SELECT {COLUMNS} FROM capture_ops WHERE state = 'running'
-                    OR (state = 'failed' AND reserved_bytes > 0)
+                    OR (state IN ('failed', 'committed') AND reserved_bytes > 0)
                  ORDER BY started_at, capture_id"
             ))?;
             let rows = stmt
@@ -479,14 +514,47 @@ fn author_of(provenance: &CaptureProvenance) -> Result<String> {
     }
 }
 
+/// What differs between the commit of a screenshot and of a recording.
+struct CommitSpec<'a> {
+    kind: ArtifactKind,
+    file: &'static str,
+    operation: CaptureKind,
+    /// What the row keeps reserved after the commit: 0 for a screenshot, the
+    /// bytes of the staging copy for a recording.
+    reserved: u64,
+    /// The recording metadata that the row stores; `None` for a screenshot.
+    recording: Option<&'a RecordingMeta>,
+}
+
+impl CommitSpec<'_> {
+    fn screenshot() -> Self {
+        Self {
+            kind: ArtifactKind::Image,
+            file: CAPTURE_FILE,
+            operation: CaptureKind::Screenshot,
+            reserved: 0,
+            recording: None,
+        }
+    }
+}
+
+fn kind_text(kind: CaptureKind) -> &'static str {
+    match kind {
+        CaptureKind::Screenshot => "screenshot",
+        CaptureKind::Recording => "recording",
+    }
+}
+
 /// The commit transaction. The inner result carries the domain errors; the
-/// outer one is for the database.
+/// outer one is for the database. A recording commit also refuses a row
+/// whose stop intent is `discard` (design §7.5, §7.6).
 fn commit(
     conn: &mut Connection,
     deck_fp: &str,
     capture_id: &str,
     new: &NewCaptureArtifact,
     now: i64,
+    spec: &CommitSpec<'_>,
 ) -> std::result::Result<Committed, CommitError> {
     let tx = conn.transaction().map_err(StoreError::from)?;
     if tombstoned(&tx, &new.artifact_id).map_err(StoreError::from)? {
@@ -496,15 +564,15 @@ fn commit(
     let manifest = Staged {
         dir: PathBuf::new(),
         files: vec![StagedFile {
-            path: CAPTURE_FILE.to_owned(),
+            path: spec.file.to_owned(),
             size: new.size,
             sha256: new.sha256.clone(),
         }],
     }
     .manifest_sha256();
-    let files = vec![CAPTURE_FILE.to_owned()];
+    let files = vec![spec.file.to_owned()];
     let provenance = serde_json::to_string(&new.provenance).map_err(StoreError::from)?;
-    let kind = ArtifactKind::Image;
+    let kind = spec.kind;
     let author = author_of(&new.provenance)?;
     tx.execute(
         "INSERT INTO artifacts (artifact_id, session_id, title, kind, latest_version,
@@ -529,16 +597,41 @@ fn commit(
         ],
     )
     .map_err(StoreError::from)?;
+    let meta = spec.recording;
+    let stop_reason = meta
+        .map(|m| recording::reason_text(m.stop_reason))
+        .transpose()?;
+    let duration = meta.map(|m| to_i64(m.duration_ms)).transpose()?;
     let changed = tx
         .execute(
             "UPDATE capture_ops
-             SET state = 'committed', sha256 = ?3, reserved_bytes = 0, updated_at = ?4
-             WHERE deck_fp = ?1 AND capture_id = ?2 AND state = 'running'",
-            params![deck_fp, capture_id, new.sha256, now],
+             SET state = 'committed', sha256 = ?3, reserved_bytes = ?4, updated_at = ?5,
+                 stop_reason = COALESCE(?6, stop_reason),
+                 ended_at = COALESCE(?7, ended_at), duration_ms = COALESCE(?8, duration_ms),
+                 width = COALESCE(?9, width), height = COALESCE(?10, height)
+             WHERE deck_fp = ?1 AND capture_id = ?2 AND state = 'running'
+               AND operation_kind = ?11 AND stop_intent <> 'discard'",
+            params![
+                deck_fp,
+                capture_id,
+                new.sha256,
+                to_i64(spec.reserved)?,
+                now,
+                stop_reason,
+                meta.map(|_| now),
+                duration,
+                meta.map(|m| m.width),
+                meta.map(|m| m.height),
+                kind_text(spec.operation)
+            ],
         )
         .map_err(StoreError::from)?;
     if changed != 1 {
-        return Err(StoreError::Corrupt(format!("capture {capture_id} is not running")).into());
+        return Err(StoreError::Corrupt(format!(
+            "capture {capture_id} is not a running {} that may commit",
+            kind_text(spec.operation)
+        ))
+        .into());
     }
     tx.commit().map_err(StoreError::from)?;
     Ok(Committed {

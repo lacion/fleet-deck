@@ -37,12 +37,13 @@ use fleetdeck_proto::desktop::{DesktopActResult, DesktopAction, DesktopInfo, Mon
 use rustix::fs::{CWD, Mode, OFlags};
 
 use super::{
-    Launch, MAX_PNG_BYTES, Staging, capture_png, check_monitor, check_png, coordinator, room,
+    Launch, MAX_PNG_BYTES, Staging, capture_png, check_monitor, check_png, cleanup_failed,
+    coordinator, finish_staging, room,
 };
 use crate::artifacts::ArtifactService;
-use crate::artifacts::capture_import::{DurableFs, discard, import_png};
+use crate::artifacts::capture_import::{DurableFs, import_png};
 use crate::desktop::{Ctx, Desktop, Fail, args, authority, code as desktop_code, deadline, quiet};
-use crate::store::capture_ops::{Begin, CaptureOp, Lookup, NewCaptureArtifact};
+use crate::store::capture_ops::{Begin, CAPTURE_FILE, CaptureOp, Lookup, NewCaptureArtifact};
 
 /// The time limit of the admission (step 4).
 pub const ADMISSION: Duration = Duration::from_secs(5);
@@ -316,7 +317,15 @@ impl Desktop {
                 .await),
             Err(stage) => {
                 if stage.cleanup {
-                    cleanup(&req, &artifact_id, &stage.fail).await;
+                    cleanup_failed(
+                        &req.service,
+                        &req.deck_fp,
+                        &req.capture_id,
+                        &artifact_id,
+                        &stage.fail,
+                        Arc::clone(&req.params.fs),
+                    )
+                    .await;
                 }
                 Err(stage.fail)
             }
@@ -337,7 +346,7 @@ impl Desktop {
     ) -> Result<ArtifactPublished, Stage> {
         // 7
         let captures = req.service.captures_dir();
-        let mut staging = Staging::create(&captures, &req.capture_id)?;
+        let mut staging = Staging::create(&captures, &req.capture_id, CAPTURE_FILE)?;
         // 8
         left(deadline)?;
         req.admitted.local_gates()?;
@@ -486,13 +495,15 @@ impl Desktop {
                 }
             }
         };
-        let captures = req.service.captures_dir();
-        let id = req.capture_id.clone();
-        match tokio::task::spawn_blocking(move || Staging::remove(&captures, &id)).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => tracing::warn!(code = e.code, "cannot remove the screenshot staging"),
-            Err(e) => tracing::warn!(error = %e, "cannot remove the screenshot staging"),
-        }
+        // The staging goes durably; a screenshot reserved nothing at its commit.
+        finish_staging(
+            &req.service,
+            &req.deck_fp,
+            &req.capture_id,
+            Arc::clone(&req.params.fs),
+            false,
+        )
+        .await;
         Ok(published)
     }
 
@@ -586,49 +597,4 @@ async fn within<T>(
     tokio::time::timeout(limit, fut)
         .await
         .map_err(|_| timeout_fail())?
-}
-
-/// A failure after step 6: the row becomes `failed` and keeps its
-/// reservation, then the staging and the partial artifact folder go, and only
-/// when both removals worked the reservation is freed. A removal that fails
-/// leaves the reservation (the quota counts it) and the startup recovery
-/// retries it. A crash between the steps leaves a `failed` row with a
-/// reservation, which the recovery handles in the same way.
-async fn cleanup(req: &Request, artifact_id: &str, fail: &Fail) {
-    let store = req.service.store();
-    // When the row cannot be recorded it stays `running` with its files: the
-    // startup recovery handles both.
-    if let Err(e) = store
-        .capture_fail(&req.deck_fp, &req.capture_id, fail.code, &fail.message)
-        .await
-    {
-        tracing::warn!(error = %e, "cannot record the failed screenshot");
-        return;
-    }
-    let (captures, id) = (req.service.captures_dir(), req.capture_id.clone());
-    let (root, artifact) = (req.service.root().to_path_buf(), artifact_id.to_owned());
-    let removed = tokio::task::spawn_blocking(move || {
-        let staging = Staging::remove(&captures, &id);
-        let folder = discard(&root, &artifact);
-        (staging, folder)
-    })
-    .await;
-    match removed {
-        Ok((Ok(()), Ok(()))) => {}
-        Ok((staging, folder)) => {
-            tracing::warn!(
-                staging = ?staging.err().map(|e| e.code),
-                folder = ?folder.err().map(|e| e.kind()),
-                "the screenshot cleanup did not finish; the next start retries"
-            );
-            return;
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "the screenshot cleanup ended abnormally");
-            return;
-        }
-    }
-    if let Err(e) = store.capture_cleaned(&req.deck_fp, &req.capture_id).await {
-        tracing::warn!(error = %e, "cannot free the reservation of the failed screenshot");
-    }
 }
