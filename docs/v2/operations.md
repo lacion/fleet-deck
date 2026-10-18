@@ -540,7 +540,7 @@ This section covers the owner recording of a monitor. The contract is `design/om
 
 1. Open Settings, then the Deck tab. Turn on "Desktop control" if it is off.
 2. Open the station tab of the station. Turn on "Desktop control" and "Desktop screenshots". The board asks for a recent sign-in. Sign in again when it asks.
-3. Leave "Screenshot monitors" empty to allow every monitor, or enter the monitor names. One setting and one list cover screenshots and recordings. When "Desktop screenshots" is off, the panel line for a recording says "Desktop recordings are off on this station. Turn them on in Settings."
+3. Leave "Screenshot monitors" empty to allow every monitor, or enter the monitor names. One setting and one list cover screenshots and recordings. When "Desktop screenshots" is off, the panel line for a recording says "Desktop screenshots are off on this station. Recordings need them. Turn them on in Settings."
 4. The station and the deck must both be a version that supports recordings. The recording tool `wf-recorder` must be on the `PATH` of the desktop. Installing `wf-recorder` on a station has no board path yet. This is an open item.
 
 If Record is off, read the reason line in the Desktop panel. The reason is one of these texts:
@@ -548,7 +548,7 @@ If Record is off, read the reason line in the Desktop panel. The reason is one o
 - "This deck does not support monitor recordings."
 - "This station does not support monitor recordings."
 - "The recording tool wf-recorder is not installed."
-- "Desktop recordings are off on this station. Turn them on in Settings."
+- "Desktop screenshots are off on this station. Recordings need them. Turn them on in Settings."
 - "This monitor is not allowed for recordings."
 
 #### Record a monitor

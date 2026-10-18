@@ -40,7 +40,7 @@ export const REASONS = {
   deck: 'This deck does not support monitor recordings.',
   station: 'This station does not support monitor recordings.',
   recorder: 'The recording tool wf-recorder is not installed.',
-  off: 'Desktop recordings are off on this station. Turn them on in Settings.',
+  off: 'Desktop screenshots are off on this station. Recordings need them. Turn them on in Settings.',
   monitor: 'This monitor is not allowed for recordings.',
 } as const;
 
