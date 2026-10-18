@@ -104,9 +104,11 @@ pub(super) async fn act(
         let id = action_id.unwrap_or_default();
         return super::intake_capture::capture(ctx, control, admitted, id, monitor, None).await;
     }
-    // R13 P5b task F: the recording is a stub until task S1.
-    if matches!(action, DesktopAction::ScreenRecord { .. }) {
-        return super::intake_recording::refused();
+    // R13 P5b: the owner recording has its own operation; its capture ID is
+    // the `action_id` that was just consumed.
+    if let DesktopAction::ScreenRecord { monitor, seconds } = action {
+        let id = action_id.unwrap_or_default();
+        return super::intake_recording::record(ctx, control, admitted, id, monitor, seconds).await;
     }
     let allowed = gate(ctx);
     match desktop::service().act(&allowed, action, admitted).await {

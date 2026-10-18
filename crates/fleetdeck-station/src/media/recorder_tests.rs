@@ -236,6 +236,28 @@ async fn a_discard_kills_at_once_without_the_grace() {
 }
 
 #[tokio::test]
+async fn a_control_handle_of_another_task_discards_while_exited_waits() {
+    let rig = Rig::new();
+    let recorder = rig.start(&[], quiet(), real());
+    let ctl = recorder.ctl();
+    let started = Instant::now();
+    let other = tokio::spawn(async move {
+        tokio::time::sleep(ms(300)).await;
+        ctl.discard();
+        ctl
+    });
+    let exit = recorder.exited().await;
+    assert_eq!(exit.cause, Some(StopCause::Discard));
+    assert!(!exit.escalated);
+    assert!(started.elapsed() < ms(2500));
+    // A handle that outlives the recorder does nothing and does not panic.
+    let ctl = other.await.unwrap();
+    ctl.owner_stop();
+    ctl.discard();
+    ctl.renew(boot_now());
+}
+
+#[tokio::test]
 async fn a_discard_after_an_owner_stop_wins_and_escalates_at_once() {
     let rig = Rig::new();
     let recorder = rig.start(&[("FAKE_IGNORE_INT", "1")], quiet(), real());

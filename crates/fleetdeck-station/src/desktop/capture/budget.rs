@@ -2,18 +2,19 @@
 //! space of the staging disk, the monitor size.
 
 use std::os::fd::OwnedFd;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 use fleetdeck_proto::capture::{code, text};
 use fleetdeck_proto::desktop::MonitorInfo;
 
 use super::{FREE_RESERVE, MAX_DIMENSION, MAX_PIXELS};
 use crate::desktop::Fail;
+use crate::desktop::recording::Holder;
 
 /// The one capture slot of a station. A second capture does not wait.
 #[derive(Debug, Default)]
 pub(crate) struct CaptureSlot {
-    taken: AtomicBool,
+    held: Mutex<Option<Holder>>,
 }
 
 /// Holds the slot until it is dropped.
@@ -23,26 +24,43 @@ pub(crate) struct SlotGuard<'a> {
 }
 
 impl CaptureSlot {
-    /// Takes the slot.
+    /// Takes the slot for a screenshot.
     ///
     /// # Errors
     /// `busy` when a capture holds it.
     pub(crate) fn try_take(&self) -> Result<SlotGuard<'_>, Fail> {
-        if self
-            .taken
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-        {
-            Ok(SlotGuard { slot: self })
-        } else {
-            Err(Fail::new(code::BUSY, text::BUSY))
+        self.try_take_for(Holder::Screenshot)
+    }
+
+    /// Takes the slot for `holder`.
+    ///
+    /// # Errors
+    /// `busy` when a capture holds it.
+    pub(crate) fn try_take_for(&self, holder: Holder) -> Result<SlotGuard<'_>, Fail> {
+        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        if held.is_some() {
+            return Err(Fail::new(code::BUSY, text::BUSY));
         }
+        *held = Some(holder);
+        Ok(SlotGuard { slot: self })
+    }
+
+    /// Who holds the slot now.
+    pub(crate) fn holder(&self) -> Option<Holder> {
+        self.held
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 }
 
 impl Drop for SlotGuard<'_> {
     fn drop(&mut self) {
-        self.slot.taken.store(false, Ordering::Release);
+        *self
+            .slot
+            .held
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = None;
     }
 }
 

@@ -18,6 +18,12 @@ use super::{Fail, code};
 pub struct RawMonitor {
     pub info: MonitorInfo,
     pub active_workspace: Option<i64>,
+    /// The position of the monitor in the layout (internal: the recording
+    /// probe compares it; it never leaves the station).
+    pub x: i64,
+    pub y: i64,
+    /// The `transform` of the monitor (0 to 7), internal like `x` and `y`.
+    pub transform: u32,
 }
 
 fn argv(parts: &[&str]) -> Vec<String> {
@@ -70,6 +76,9 @@ fn parse_monitor(v: &Value) -> Option<RawMonitor> {
             .get("activeWorkspace")
             .and_then(|w| w.get("id"))
             .and_then(Value::as_i64),
+        x: v.get("x").and_then(Value::as_i64).unwrap_or(0),
+        y: v.get("y").and_then(Value::as_i64).unwrap_or(0),
+        transform: number("transform"),
     })
 }
 
@@ -119,6 +128,12 @@ async fn running(runner: &Runner<'_>, name: &str) -> Option<bool> {
         1 => Some(false),
         _ => None,
     }
+}
+
+/// Whether `hyprlock` of this user runs: `None` when that cannot be told
+/// (an unknown lock state is never "unlocked").
+pub(crate) async fn locked(runner: &Runner<'_>) -> Option<bool> {
+    running(runner, "hyprlock").await
 }
 
 /// Omarchy turns idle off by stopping `hypridle`: inhibited when no
