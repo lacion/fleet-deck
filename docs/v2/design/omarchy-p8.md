@@ -1,6 +1,6 @@
 # P8: provisioning (revision 11)
 
-- **Status:** built on v2 (DL-234); production acceptance waits for the owner's release task. PRE-PR review: all 3 rounds used (P8-13 to P8-18); the trust boundary of §5.2 (P8-17) waits for the owner's acceptance; the last fix `1f84d4df` (the user-manager environment) is not re-reviewed. Revision 11 (2026-10-18) was accepted by the architect as written (O11-1, O11-2) from the advisor answer on the P5/P8 DESIGN REVIEW round 1, and by the owner (O11-4).
+- **Status:** built on v2 (DL-234); production acceptance waits for the owner's release task. PRE-PR review: all 3 rounds used (P8-13 to P8-18); the owner accepted the trust boundary of §5.2 (P8-17) and the last fix `1f84d4df` (the user-manager environment) without a further review (DL-236, 2026-10-20). P8 is accepted except the production acceptance. Revision 11 (2026-10-18) was accepted by the architect as written (O11-1, O11-2) from the advisor answer on the P5/P8 DESIGN REVIEW round 1, and by the owner (O11-4).
 - **Parent:** [omarchy.md](./omarchy.md) (§9, §9A, §9B). This annex overrides §9 and §9A where they differ. DL-230 items 3 and 4 stay binding and unchanged.
 - **Sibling:** [omarchy-p5a.md](./omarchy-p5a.md).
 - **Code references:** each `file:line` points to the code at `c00eea8f`.

@@ -3301,3 +3301,11 @@ Owner review: pending.
   - e. The intermittent test `fleetdeck-cli::fleet_git_api fetch_route_stamps_fetched_at` (P4-24). It is not P4 code.
   - f. No board path turns the screensaver on. P8 runs `omarchy install --yes` without `--screensaver`.
 - Next: the PRE-PR review of P4; the owner reads the new rows of `SECURITY-CHECKLIST.md` (DL-158); the live smoke on the Omarchy machines.
+
+## DL-236: Owner accepts the P8 trust boundary and the last P8 fix (owner, 2026-10-20)
+
+- Context: the R13 P8 PRE-PR review used all 3 rounds (P8-13 to P8-18). Its last blocker (a program that runs as the owner's user can fake the station socket) cannot be closed by a local check, because such a program can also trace the user's processes and replace `provision.toml`. The last fix, `1f84d4df` (the user-level systemd manager must export the owner's `HOME` and `XDG_*` folders to the station service), has a regression test but no review round.
+- Decision:
+  1. The owner accepts the trust boundary of `docs/v2/design/omarchy-p8.md` §5.2 (P8-17): P8 protects against a tampered medium or package, not against code that already runs as the owner's user. The peer check of the station socket stays as defense in depth.
+  2. The owner accepts `1f84d4df` without a further review.
+- Consequence: P8 is accepted. Its production acceptance still waits for the owner's release task (the pinned package and its SHA-256, the trusted release file, the installer image step).
