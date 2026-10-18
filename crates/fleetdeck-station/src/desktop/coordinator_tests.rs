@@ -712,3 +712,81 @@ async fn an_info_over_a_limit_is_too_large_and_never_cut() {
     info.monitors = monitors_of(&base, 64, |i| format!("{i:02}{}", "m".repeat(300)));
     assert_eq!(pair(&check(&info).unwrap_err()), expect);
 }
+
+// ------------------------------------------------ the deadlines bound the start
+
+#[tokio::test]
+async fn the_import_check_does_not_apply_the_start_deadlines() {
+    let env = ChildEnv::empty();
+    let action = A::ScreenCapture {
+        monitor: "DP-1".into(),
+    };
+    // 11 s after receipt on both clocks: the wall deadline and START_LIMIT
+    // are past.
+    let late = |h: &Harness| {
+        h.wall.fetch_add(11_000, Ordering::SeqCst);
+        h.advance_mono(11_000);
+    };
+    let h = Harness::new();
+    let admitted = coordinated(
+        &h,
+        &action,
+        1,
+        &ctx(),
+        FakeCheck::ok(),
+        open_gates(),
+        extras(),
+    );
+    let start = Start::new(admitted, &action);
+    start.begin(&env).await.unwrap();
+    late(&h);
+    start
+        .check_phase(AuthorityPhase::Import, &env)
+        .await
+        .unwrap();
+    // The execute sequence keeps its deadlines.
+    let e = start
+        .check_phase(AuthorityPhase::Execute, &env)
+        .await
+        .unwrap_err();
+    assert_eq!(act_err(e).0, "failed");
+    // A withdrawn authority still fails the import check, with its code.
+    let h = Harness::new();
+    let lost_check = FakeCheck::answering(Err(lost()));
+    let admitted = coordinated(&h, &action, 2, &ctx(), lost_check, open_gates(), extras());
+    let start = Start::new(admitted, &action);
+    late(&h);
+    let e = start
+        .check_phase(AuthorityPhase::Import, &env)
+        .await
+        .unwrap_err();
+    assert_eq!(act_err(e).0, "authority_lost");
+    // The gates and the connection are still checked for the import.
+    let h = Harness::new();
+    let off: Gates = Arc::new(|| Err(fleet_off()));
+    let admitted = coordinated(&h, &action, 3, &ctx(), FakeCheck::ok(), off, extras());
+    let start = Start::new(admitted, &action);
+    late(&h);
+    let e = start
+        .check_phase(AuthorityPhase::Import, &env)
+        .await
+        .unwrap_err();
+    assert_eq!(e, fleet_off());
+    let h = Harness::new();
+    let admitted = coordinated(
+        &h,
+        &action,
+        4,
+        &ctx(),
+        FakeCheck::ok(),
+        open_gates(),
+        extras(),
+    );
+    let start = Start::new(admitted, &action);
+    h.current.store(false, Ordering::SeqCst);
+    let e = start
+        .check_phase(AuthorityPhase::Import, &env)
+        .await
+        .unwrap_err();
+    assert!(refused(&e));
+}

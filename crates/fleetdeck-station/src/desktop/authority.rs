@@ -489,6 +489,11 @@ impl Start {
         if !(c.conn.current)() {
             return Err(refused());
         }
+        // The deadlines bound the start only (§6.3, §9): a later phase of an
+        // action that started does not check them.
+        if phase == AuthorityPhase::Import {
+            return Ok(());
+        }
         if (c.time.wall)() > c.deadline_ms
             || (c.time.mono)().saturating_duration_since(c.received) > START_LIMIT
         {

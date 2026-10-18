@@ -480,3 +480,90 @@ async fn a_preview_needs_a_window_record_of_its_address() {
     assert_eq!(act_err(e), ("not_found", "The window is gone.".into()));
     assert!(events.preview("handle").is_none());
 }
+
+// ------------------------------------------------ the check before the spawn
+
+/// Answers the first check, then the second as given; it records what the
+/// station had done when each check ran.
+struct Twice {
+    second: Result<(), Fail>,
+    calls: std::sync::atomic::AtomicUsize,
+    seen: std::sync::Mutex<Vec<(bool, usize)>>,
+    runtime: std::path::PathBuf,
+    dir: std::path::PathBuf,
+}
+
+#[async_trait::async_trait]
+impl super::coordinator::DispatchCheck for Twice {
+    async fn check(
+        &self,
+        _phase: fleetdeck_proto::coordinator_desktop_wire::AuthorityPhase,
+        _read: Option<&fleetdeck_proto::coordinator_desktop_wire::ProtectedRead>,
+    ) -> Result<(), Fail> {
+        let log = std::fs::read_to_string(self.dir.join("calls.log")).unwrap_or_default();
+        let chromium = log.lines().filter(|l| *l == "== chromium").count();
+        let folder = self.runtime.join("fleetdeck").is_dir();
+        self.seen.lock().unwrap().push((folder, chromium));
+        if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            Ok(())
+        } else {
+            self.second.clone()
+        }
+    }
+}
+
+fn twice(rig: &Rig, second: Result<(), Fail>) -> std::sync::Arc<Twice> {
+    std::sync::Arc::new(Twice {
+        second,
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        seen: std::sync::Mutex::new(Vec::new()),
+        runtime: rig.runtime.clone(),
+        dir: rig.dir.path().to_owned(),
+    })
+}
+
+async fn open_with(rig: &Rig, check: std::sync::Arc<Twice>) -> Result<DesktopActResult, Fail> {
+    let action = A::BrowserOpen {
+        url: "http://localhost:3000/".to_owned(),
+        monitor: None,
+        session: None,
+    };
+    let h = Harness::new();
+    let admitted = coordinated(&h, &action, 1, &ctx(), check, open_gates(), extras());
+    rig.desktop.act(&on, action, admitted).await
+}
+
+#[tokio::test]
+async fn a_coordinator_preview_checks_again_right_before_the_browser_spawn() {
+    let rig = Rig::new(Opts::default());
+    let check = twice(&rig, Ok(()));
+    open_with(&rig, check.clone()).await.unwrap();
+    // The first check is before the profile folder; the second is after it
+    // and before the browser started.
+    assert_eq!(*check.seen.lock().unwrap(), [(false, 0), (true, 0)]);
+    assert_eq!(rig.calls_of("chromium").len(), 1);
+}
+
+#[tokio::test]
+async fn a_withdrawn_authority_at_the_second_check_spawns_no_browser() {
+    let rig = Rig::new(Opts::default());
+    let check = twice(&rig, Err(super::coordinator::lost()));
+    let e = open_with(&rig, check.clone()).await.unwrap_err();
+    assert_eq!(act_err(e).0, "authority_lost");
+    assert_eq!(*check.seen.lock().unwrap(), [(false, 0), (true, 0)]);
+    assert!(rig.calls_of("chromium").is_empty());
+}
+
+#[tokio::test]
+async fn an_owner_preview_has_one_start_check_and_no_second_one() {
+    let rig = Rig::new(Opts::default());
+    let h = Harness::new();
+    let action = A::BrowserOpen {
+        url: "http://localhost:3000/".to_owned(),
+        monitor: None,
+        session: None,
+    };
+    let admitted = h.admitted(&action, 1);
+    rig.desktop.act(&on, action, admitted).await.unwrap();
+    assert_eq!(rig.calls_of("chromium").len(), 1);
+}

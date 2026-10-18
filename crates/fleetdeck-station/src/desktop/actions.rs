@@ -10,6 +10,7 @@ use std::time::Duration;
 use fleetdeck_core::ChildEnv;
 use fleetdeck_proto::SessionId;
 use fleetdeck_proto::coordinator_desktop_text::{code as p6_code, text as p6_text};
+use fleetdeck_proto::coordinator_desktop_wire::AuthorityPhase;
 use fleetdeck_proto::desktop::{DesktopAction, DesktopKind, Urgency};
 use ring::rand::{SecureRandom, SystemRandom};
 use tokio::sync::OwnedMutexGuard;
@@ -279,6 +280,13 @@ impl Cx<'_> {
                 code::FAILED,
                 "The window events of this desktop are not available.",
             ));
+        }
+        // A coordinator preview checks the authority again right before the
+        // spawn (§6.3): no await follows this check before the program starts.
+        if spec.kind == Kind::Preview && self.start.coordinator().is_some() {
+            self.start
+                .check_phase(AuthorityPhase::Execute, self.env)
+                .await?;
         }
         let rx = self.events.register(Record {
             signature: String::new(),
