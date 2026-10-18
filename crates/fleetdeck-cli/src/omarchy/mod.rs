@@ -166,6 +166,9 @@ pub async fn run(dirs: &NodeDirs, command: &OmarchyCommand) -> anyhow::Result<Ex
 }
 
 #[cfg(test)]
+#[path = "assets_qml_tests.rs"]
+mod assets_qml_tests;
+#[cfg(test)]
 #[path = "fsx_tests.rs"]
 mod fsx_tests;
 #[cfg(test)]

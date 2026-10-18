@@ -44,14 +44,47 @@ pub const MENU_PATH: &str = "extensions/omarchy-menu.jsonc";
 pub const HYPR_PATH: &str = "omarchy/hypr.lua";
 
 /// The files, in the order of the install.
-// TODO(task D): add Widget.qml, Panel.qml, Service.qml, Model.js and
-// i18n/en.json of the plugin folder `plugins/fleetdeck.fleet/` here.
 pub const FILES: &[Asset] = &[
     Asset {
         base: Base::Omarchy,
         path: "plugins/fleetdeck.fleet/manifest.json",
         mode: 0o644,
         text: include_str!("../../assets/omarchy/plugin/manifest.json"),
+        only_if_absent: false,
+    },
+    Asset {
+        base: Base::Omarchy,
+        path: "plugins/fleetdeck.fleet/Widget.qml",
+        mode: 0o644,
+        text: include_str!("../../assets/omarchy/plugin/Widget.qml"),
+        only_if_absent: false,
+    },
+    Asset {
+        base: Base::Omarchy,
+        path: "plugins/fleetdeck.fleet/Panel.qml",
+        mode: 0o644,
+        text: include_str!("../../assets/omarchy/plugin/Panel.qml"),
+        only_if_absent: false,
+    },
+    Asset {
+        base: Base::Omarchy,
+        path: "plugins/fleetdeck.fleet/Service.qml",
+        mode: 0o644,
+        text: include_str!("../../assets/omarchy/plugin/Service.qml"),
+        only_if_absent: false,
+    },
+    Asset {
+        base: Base::Omarchy,
+        path: "plugins/fleetdeck.fleet/Model.js",
+        mode: 0o644,
+        text: include_str!("../../assets/omarchy/plugin/Model.js"),
+        only_if_absent: false,
+    },
+    Asset {
+        base: Base::Omarchy,
+        path: "plugins/fleetdeck.fleet/i18n/en.json",
+        mode: 0o644,
+        text: include_str!("../../assets/omarchy/plugin/i18n/en.json"),
         only_if_absent: false,
     },
     Asset {

@@ -29,6 +29,36 @@ fn the_file_list_has_the_paths_and_modes_of_the_annex() {
                 0o644,
                 false
             ),
+            (
+                Base::Omarchy,
+                "plugins/fleetdeck.fleet/Widget.qml",
+                0o644,
+                false
+            ),
+            (
+                Base::Omarchy,
+                "plugins/fleetdeck.fleet/Panel.qml",
+                0o644,
+                false
+            ),
+            (
+                Base::Omarchy,
+                "plugins/fleetdeck.fleet/Service.qml",
+                0o644,
+                false
+            ),
+            (
+                Base::Omarchy,
+                "plugins/fleetdeck.fleet/Model.js",
+                0o644,
+                false
+            ),
+            (
+                Base::Omarchy,
+                "plugins/fleetdeck.fleet/i18n/en.json",
+                0o644,
+                false
+            ),
             (Base::Omarchy, "hooks/post-boot.d/fleetdeck", 0o755, false),
             (Base::Omarchy, "hooks/post-update.d/fleetdeck", 0o755, false),
             (Base::Omarchy, "hooks/theme-set.d/fleetdeck", 0o755, false),
@@ -202,8 +232,13 @@ fn the_manifest_passes_the_validate_rules() {
             && !file.starts_with('/')
             && !file.split('/').any(|part| part == ".." || part.is_empty());
         assert!(safe, "{file}");
-        // TODO(task D): check that each entry point file exists in FILES
-        // once task D adds the QML files.
+        assert!(
+            FILES
+                .iter()
+                .any(|a| a.base == Base::Omarchy
+                    && a.path == format!("plugins/fleetdeck.fleet/{file}")),
+            "entry point {file} is not in FILES"
+        );
     }
     assert!(
         [
