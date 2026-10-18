@@ -12,7 +12,7 @@ use fleetdeck_link::Control;
 use fleetdeck_proto::StationId;
 use fleetdeck_proto::artifacts::{
     ArtifactDetail, ArtifactFile, ArtifactFileQuery, ArtifactGetQuery, ArtifactVersion,
-    MAX_CHUNK_BYTES,
+    MAX_CHUNK_BYTES, content_type_of,
 };
 use futures_util::future::BoxFuture;
 use tokio::time::Instant;
@@ -20,6 +20,7 @@ use tokio::time::Instant;
 use super::common::{
     ask, ask_on, control_of, db, file_headers, live_artifact, not_found, unknown_artifact,
 };
+use super::range::{VIDEO_LIFETIME, VIDEO_MIME};
 use super::{ApiError, Board, MAX_CACHED_VERSION_BYTES, StationRecord};
 use crate::store::DeckStore;
 
@@ -28,9 +29,18 @@ use crate::store::DeckStore;
 /// limit of [`ask_on`] stays (R13 P5a contract 7.4).
 const CAPTURE_FETCH_TOTAL: Duration = Duration::from_secs(60);
 
-/// The deadline of a fetch that began at `started`: set for a capture
+/// The deadline of a fetch that began at `started`: the video lifetime for a
+/// version whose main file is `video/mp4` (R13 P5b contract 10, chosen by the
+/// content type and not by the capture flag), `total` for another capture
 /// version, `None` for an ordinary artifact (R13 P5a contract 7.4).
 fn fetch_deadline(version: &ArtifactVersion, started: Instant, total: Duration) -> Option<Instant> {
+    if version
+        .files
+        .first()
+        .is_some_and(|f| content_type_of(f) == VIDEO_MIME)
+    {
+        return Some(started + VIDEO_LIFETIME);
+    }
     version.capture.as_ref().map(|_| started + total)
 }
 

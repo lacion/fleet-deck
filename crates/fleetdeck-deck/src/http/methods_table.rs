@@ -293,6 +293,13 @@ pub const API: &[ApiMethod] = &[
         false,
     ),
     m(
+        "artifacts.raw_head",
+        Method::HEAD,
+        "/api/artifacts/{station}/{id}/{version}/raw/{*path}",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
         "artifacts.view",
         Method::POST,
         "/api/artifacts/{station}/{id}/view",
