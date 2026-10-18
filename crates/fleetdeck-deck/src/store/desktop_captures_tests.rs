@@ -133,7 +133,9 @@ fn a_v31_database_migrates_to_v32_and_keeps_its_cache_rows() {
         )
         .unwrap();
     assert_eq!(before, 0);
-    migrations.to_latest(&mut conn).unwrap();
+    // V32 only: a later migration (V33, the station palettes of P4) must not
+    // turn this into a test of the whole list.
+    migrations.to_version(&mut conn, 32).unwrap();
     let user_version: i64 = conn
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .unwrap();
