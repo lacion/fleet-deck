@@ -405,6 +405,9 @@ pub fn policy_now_answer(
     PolicyNowAnswer {
         fleet_control: policy.allow_fleet_control(),
         bound: bindings.holds_grant(&query.caller_session),
-        binding_matches: None,
+        binding_matches: query
+            .binding
+            .as_ref()
+            .map(|b| bindings.binding_matches(&query.caller_session, b)),
     }
 }

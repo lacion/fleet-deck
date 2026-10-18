@@ -12,6 +12,7 @@ use fleetdeck_core::secret::Secret;
 use fleetdeck_proto::SessionId;
 use fleetdeck_proto::command::GrantScope;
 use fleetdeck_proto::event::ProviderKind;
+use fleetdeck_proto::mutation::CoordinatorBinding;
 use ring::rand::{SecureRandom, SystemRandom};
 use tokio::sync::Semaphore;
 
@@ -256,6 +257,23 @@ impl Bindings {
         self.lock().values().any(|e| {
             let b = &e.binding;
             &b.session_id == session_id && b.state == BindingState::Active && !b.is_fleet_only()
+        })
+    }
+
+    /// True when the session holds an active binding that equals `expected`
+    /// in its binding ID, grant, generation, provider instance and native ID
+    /// (R13 P6 §5.6: `binding_matches` of `coordinator.policy_now`).
+    #[must_use]
+    pub fn binding_matches(&self, session: &SessionId, expected: &CoordinatorBinding) -> bool {
+        self.lock().values().any(|e| {
+            let b = &e.binding;
+            &b.session_id == session
+                && b.state == BindingState::Active
+                && b.binding_id == expected.binding_id
+                && b.grant_id == expected.grant_id
+                && b.generation == expected.generation
+                && b.provider_instance == expected.provider_instance.as_str()
+                && b.native_id.as_deref() == Some(expected.native_id.as_str())
         })
     }
 

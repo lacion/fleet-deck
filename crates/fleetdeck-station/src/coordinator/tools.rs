@@ -184,6 +184,8 @@ impl Tool {
     pub fn granted(&self, classes: &BTreeSet<ToolClass>) -> bool {
         self.classes.iter().all(|c| classes.contains(c))
             || (self.name == "ask_coordinator" && classes.contains(&ToolClass::Own))
+            || (self.name == "desktop_info"
+                && (classes.contains(&ToolClass::Desktop) || classes.contains(&ToolClass::Capture)))
     }
 
     /// Whether the station's own session tools answer this call: an `Own`
@@ -204,6 +206,7 @@ pub fn tool(name: &str) -> Option<&'static Tool> {
     TOOLS
         .iter()
         .chain(super::fleet_tools::FLEET_TOOLS)
+        .chain(super::desktop_tools::DESKTOP_TOOLS)
         .find(|t| t.name == name)
 }
 
@@ -212,6 +215,7 @@ pub fn catalog(classes: &BTreeSet<ToolClass>) -> Value {
     let tools: Vec<Value> = TOOLS
         .iter()
         .chain(super::fleet_tools::FLEET_TOOLS)
+        .chain(super::desktop_tools::DESKTOP_TOOLS)
         .filter(|t| t.granted(classes))
         .map(|t| json!({"name": t.name, "description": t.description, "inputSchema": (t.schema)()}))
         .collect();
@@ -234,6 +238,11 @@ pub fn to_op(
     let op = match tool {
         "list_sessions" | "wait_task" | "wait_tasks" => return Ok(None),
         t if super::fleet_tools::is_query(t) => return Ok(None),
+        // The P6 tools never become a `CoordinatorOp` (they use their own
+        // forwarder).
+        t if super::desktop_tools::is_desktop(t) => {
+            return Err("forbidden: the grant has no such tool".to_owned());
+        }
         "resume_session" | "rename_session" | "set_mode" | "move_to_project"
         | "start_in_project" | "answer_request" | "land_session" | "move_session" => {
             return super::fleet_tools::op(tool, args).map(Some);

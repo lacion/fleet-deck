@@ -8,6 +8,8 @@
 
 pub mod bindings;
 pub mod bridge;
+pub mod desktop_forward;
+pub mod desktop_tools;
 pub mod fence;
 pub mod fleet_tools;
 pub mod forward;
@@ -29,6 +31,12 @@ pub use ingress::{FleetTools, Forward, Ingress, Limits};
 pub use outbox::CallOutbox;
 pub use socket::BridgeSocket;
 
+#[cfg(test)]
+#[path = "desktop_forward_tests.rs"]
+mod desktop_forward_tests;
+#[cfg(test)]
+#[path = "desktop_tools_tests.rs"]
+mod desktop_tools_tests;
 #[cfg(test)]
 #[path = "fleet_control_tests.rs"]
 mod fleet_control_tests;

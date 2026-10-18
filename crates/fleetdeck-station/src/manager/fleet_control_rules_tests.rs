@@ -424,6 +424,76 @@ fn policy_now_answers_the_live_setting_and_whether_the_caller_is_bound() {
     assert!(!ask("coord-1", &policy(true)).bound);
 }
 
+// R13 P6 §5.6: `binding_matches` of `coordinator.policy_now`.
+#[test]
+fn policy_now_compares_the_expected_binding_only_when_the_request_has_one() {
+    use fleetdeck_proto::ProviderInstanceId;
+    use fleetdeck_proto::mutation::CoordinatorBinding;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = Policy::from_config(&test_config(tmp.path(), "allow_fleet_control = true\n"));
+    let bindings = Bindings::default();
+    let session: SessionId = "coord-1".into();
+    bindings.insert(
+        "d1".to_owned(),
+        coordinator_binding(&session, &[ToolClass::Desktop], BindingState::Active),
+    );
+    let held = CoordinatorBinding {
+        binding_id: "coord-1:g9".to_owned(),
+        grant_id: "g9".to_owned(),
+        generation: 1,
+        provider_instance: ProviderInstanceId("claude".to_owned()),
+        native_id: "native-9".to_owned(),
+    };
+    let ask = |who: &SessionId, binding: Option<CoordinatorBinding>| {
+        policy_now_answer(
+            &policy,
+            &bindings,
+            &PolicyNow {
+                caller_session: who.clone(),
+                binding,
+            },
+        )
+    };
+    // The equal binding matches.
+    let answer = ask(&session, Some(held.clone()));
+    assert_eq!(answer.binding_matches, Some(true));
+    assert!(answer.fleet_control && answer.bound);
+    // Each field that differs gives a mismatch.
+    let mut other = vec![];
+    let mut v = held.clone();
+    v.binding_id = "coord-1:g8".to_owned();
+    other.push(v);
+    let mut v = held.clone();
+    v.grant_id = "g8".to_owned();
+    other.push(v);
+    let mut v = held.clone();
+    v.generation = 2;
+    other.push(v);
+    let mut v = held.clone();
+    v.provider_instance = ProviderInstanceId("codex".to_owned());
+    other.push(v);
+    let mut v = held.clone();
+    v.native_id = "native-8".to_owned();
+    other.push(v);
+    for expected in other {
+        let answer = ask(&session, Some(expected.clone()));
+        assert_eq!(answer.binding_matches, Some(false), "{expected:?}");
+        assert!(answer.bound, "the old fields do not change");
+    }
+    // Another session does not hold that binding.
+    assert_eq!(
+        ask(&"coord-2".into(), Some(held.clone())).binding_matches,
+        Some(false)
+    );
+    // A request without a binding answers as before: no `binding_matches` key.
+    let plain = serde_json::to_string(&ask(&session, None)).unwrap();
+    assert_eq!(plain, r#"{"fleet_control":true,"bound":true}"#);
+    // An ended binding does not match.
+    bindings.revoke_session(&session);
+    assert_eq!(ask(&session, Some(held)).binding_matches, Some(false));
+}
+
 // ADR-008 §3: the live value reaches the intake gate with each publish.
 #[tokio::test]
 async fn a_publish_updates_the_live_setting_that_the_intake_reads() {
