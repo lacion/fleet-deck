@@ -107,7 +107,7 @@ pub(super) fn parse_request(name: &str, args: Value) -> Option<DesktopRequest> {
     let tagged = json!({"tool": name, "arguments": args});
     if matches!(
         name,
-        "wall_show" | "notify" | "preview_open" | "window_close" | "screenshot"
+        "wall_show" | "notify" | "preview_open" | "window_close" | "screenshot" | "record_monitor"
     ) {
         let call: DesktopCall = serde_json::from_value(tagged).ok()?;
         call.validate().ok()?;
@@ -124,9 +124,15 @@ impl DesktopRequest {
     fn is_capture(&self) -> bool {
         matches!(
             self,
-            Self::Call(DesktopCall::Screenshot(_))
+            Self::Call(DesktopCall::Screenshot(_) | DesktopCall::RecordMonitor(_))
                 | Self::Query(DesktopQuery::CaptureStatus(_) | DesktopQuery::ReadCaptureImage(_))
         )
+    }
+
+    /// Whether the tool needs `capture_recording_mcp.v1` on the link (R13
+    /// P5b-2 §14 item 13).
+    fn is_recording(&self) -> bool {
+        matches!(self, Self::Call(DesktopCall::RecordMonitor(_)))
     }
 
     /// The MCP deadline of the tool (§9), in milliseconds.
@@ -137,8 +143,7 @@ impl DesktopRequest {
             ) => deadline_ms::ACTION_MCP,
             Self::Call(DesktopCall::PreviewOpen(_)) => deadline_ms::PREVIEW_MCP,
             Self::Call(DesktopCall::Screenshot(_)) => deadline_ms::SCREENSHOT_MCP,
-            // R13 P5b-2 §13.5: `seconds + 45` s. The tool is not in the
-            // catalog yet (task Q-S), so no call reaches this arm.
+            // R13 P5b-2 §13.5: `seconds + 45` s.
             Self::Call(DesktopCall::RecordMonitor(a)) => u64::from(a.seconds)
                 .saturating_mul(1000)
                 .saturating_add(deadline_ms::RECORD_MCP_EXTRA),
@@ -306,7 +311,9 @@ impl LinkForward {
             return unknown();
         }
         let supported = link.transport.has_feature(feature::DESKTOP_MCP)
-            && (!request.is_capture() || link.transport.has_feature(feature::CAPTURE_MCP));
+            && (!request.is_capture() || link.transport.has_feature(feature::CAPTURE_MCP))
+            && (!request.is_recording()
+                || link.transport.has_feature(feature::CAPTURE_RECORDING_MCP));
         if !supported {
             return p6_error(code::DESKTOP_UNSUPPORTED, None, None);
         }
@@ -412,3 +419,7 @@ impl Forward for Rechecked<'_> {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "desktop_forward_recording_tests.rs"]
+mod recording_tests;

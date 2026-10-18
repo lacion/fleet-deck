@@ -107,9 +107,14 @@ pub(super) async fn act(
         Err(e) => return failed(e),
     };
     let deck_fp = control.params().peer.to_string();
-    let capture = matches!(action, DesktopAction::ScreenCapture { .. });
+    let capture = matches!(
+        action,
+        DesktopAction::ScreenCapture { .. } | DesktopAction::ScreenRecord { .. }
+    );
     let monitor = match &action {
-        DesktopAction::ScreenCapture { monitor } => Some(monitor.clone()),
+        DesktopAction::ScreenCapture { monitor } | DesktopAction::ScreenRecord { monitor, .. } => {
+            Some(monitor.clone())
+        }
         _ => None,
     };
     let live = live_of(ctx);
@@ -136,6 +141,21 @@ pub(super) async fn act(
             admitted,
             given.action_id,
             monitor,
+            Some(coordinator),
+        )
+        .await;
+    }
+    // R13 P5b-2: a coordinator recording has the recording operation with
+    // the context; `validate` allowed it only on a link with the three
+    // recording features.
+    if let DesktopAction::ScreenRecord { monitor, seconds } = action {
+        return super::intake_recording::record_for(
+            ctx,
+            control,
+            admitted,
+            given.action_id,
+            monitor,
+            seconds,
             Some(coordinator),
         )
         .await;

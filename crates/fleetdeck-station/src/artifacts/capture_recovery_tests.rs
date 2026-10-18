@@ -53,6 +53,7 @@ async fn begin(r: &Rig, id: &str) -> String {
             artifact_id: &artifact,
             seconds: 5,
             link_epoch: "epoch",
+            coordinator: None,
             now: 5,
         })
         .await
@@ -276,6 +277,7 @@ async fn garbage_counts_in_the_quota_until_its_durable_removal_finishes() {
             artifact_id: "art-a",
             seconds: 5,
             link_epoch: "epoch",
+            coordinator: None,
             now: 5,
         })
         .await

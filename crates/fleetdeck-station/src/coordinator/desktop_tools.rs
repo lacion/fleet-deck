@@ -1,7 +1,9 @@
 //! The nine coordinator desktop and capture tools of R13 P6
-//! (`docs/v2/design/omarchy-p6.md` §3). The input schemas are the normative
-//! bundle of §3, byte for byte; each tool gets its schema with the shared
-//! `$defs` copied into its root (a mechanical expansion).
+//! (`docs/v2/design/omarchy-p6.md` §3) and `record_monitor` of R13 P5b-2
+//! (`docs/v2/design/omarchy-p5b.md` §13.1). The input schemas are the
+//! normative bundle of §3, byte for byte; each tool gets its schema with the
+//! shared `$defs` copied into its root (a mechanical expansion).
+//! `record_monitor` has the schema of P5b §13.1 as written, with no `$defs`.
 
 use serde_json::Value;
 
@@ -195,6 +197,40 @@ const BUNDLE: &str = r##"
 }
 "##;
 
+/// The §13.1 schema of `record_monitor` of P5b, byte for byte.
+const RECORD_MONITOR: &str = r#"
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request_id", "monitor", "seconds"],
+  "properties": {
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "station": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "monitor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 120
+    }
+  }
+}
+"#;
+
 /// The schema of tool `name`: `schemas[name]` with the bundle's `$defs`
 /// copied into its root. The bundle is a constant and a test parses it, so a
 /// parse failure cannot reach a release build.
@@ -235,6 +271,10 @@ fn screenshot() -> Value {
     schema("screenshot")
 }
 
+fn record_monitor() -> Value {
+    serde_json::from_str(RECORD_MONITOR).unwrap_or(Value::Null)
+}
+
 fn capture_status() -> Value {
     schema("capture_status")
 }
@@ -243,8 +283,11 @@ fn read_capture_image() -> Value {
     schema("read_capture_image")
 }
 
-/// The nine P6 tools, in the order of `tools/list`. `desktop_info` is also
-/// given by the `capture` class (see `Tool::granted`).
+/// The nine P6 tools and `record_monitor`, in the order of `tools/list`.
+/// `desktop_info` is also given by the `capture` class (see
+/// `Tool::granted`). `record_monitor` needs the `capture` class and the
+/// station-internal `recording` class, which a start adds only for a spec
+/// with `allow_recording` (P5b §13.2, §13.5).
 pub const DESKTOP_TOOLS: &[Tool] = &[
     Tool {
         name: "desktop_info",
@@ -289,6 +332,12 @@ pub const DESKTOP_TOOLS: &[Tool] = &[
         schema: screenshot,
     },
     Tool {
+        name: "record_monitor",
+        classes: &[ToolClass::Capture, ToolClass::Recording],
+        description: "Record one monitor of a grant station for 1 to 120 seconds. The recording is saved as a video artifact; this tool returns its reference, never the video.",
+        schema: record_monitor,
+    },
+    Tool {
         name: "capture_status",
         classes: &[ToolClass::Capture],
         description: "Read the state of one of your screenshot requests by its request_id.",
@@ -302,8 +351,12 @@ pub const DESKTOP_TOOLS: &[Tool] = &[
     },
 ];
 
-/// True for one of the nine P6 tool names.
+/// True for one of the nine P6 tool names or `record_monitor`.
 #[must_use]
 pub fn is_desktop(name: &str) -> bool {
     DESKTOP_TOOLS.iter().any(|t| t.name == name)
 }
+
+#[cfg(test)]
+#[path = "desktop_tools_recording_tests.rs"]
+mod recording_tests;

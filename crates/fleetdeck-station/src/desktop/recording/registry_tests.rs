@@ -51,6 +51,7 @@ async fn a_stop_without_a_live_handle_writes_the_latch() {
             artifact_id: "ART",
             seconds: 5,
             link_epoch: "e",
+            coordinator: None,
             now: 1,
         })
         .await

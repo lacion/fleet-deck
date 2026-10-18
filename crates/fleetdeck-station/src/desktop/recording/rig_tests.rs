@@ -487,6 +487,7 @@ impl T {
             station_name: "srv".to_owned(),
             link: Arc::clone(&self.peer) as Arc<dyn DeckLink>,
             link_epoch: "epoch-1".to_owned(),
+            coordinator: None,
             params: RecordParams {
                 launch: Launch::Direct,
                 fs,

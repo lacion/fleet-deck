@@ -40,7 +40,7 @@ use super::latch::Latch;
 use super::lease::{Lease, Verdict};
 use super::probe::{self, Snapshot};
 use super::supervisor::Watch;
-use super::{Holder, RecordRequest, check_gates, fail_for};
+use super::{Holder, RecordRequest, check_gates, fail_for, fail_for_coordinator};
 use crate::desktop::capture::{Staging, cleanup_failed};
 use crate::desktop::run::resolve;
 use crate::desktop::{Ctx, Desktop, Fail, args, authority, code as desktop_code, deadline, quiet};
@@ -64,6 +64,10 @@ pub(super) struct Stage {
     pub fail: Fail,
     pub cleanup: bool,
     pub reason: StopReason,
+    /// `Some(ceiling)` when `fail` is the terminal code of `reason` (an
+    /// automatic stop); a coordinator recording then replaces it with the
+    /// coordinator code ([`Stage::for_coordinator`]).
+    pub derived: Option<bool>,
 }
 
 impl Stage {
@@ -72,12 +76,38 @@ impl Stage {
             fail,
             cleanup: true,
             reason,
+            derived: None,
         }
     }
 
     /// An automatic stop: the owner terminal code of the reason.
     pub(super) fn discard(reason: StopReason, ceiling: bool) -> Self {
-        Self::new(fail_for(reason, ceiling), reason)
+        Self {
+            derived: Some(ceiling),
+            ..Self::new(fail_for(reason, ceiling), reason)
+        }
+    }
+
+    /// The operation deadline before the recorder: an owner keeps `fail`; a
+    /// coordinator gets the coordinator code of `deadline`.
+    pub(super) fn deadline(fail: Fail) -> Self {
+        Self {
+            derived: Some(false),
+            ..Self::new(fail, StopReason::Deadline)
+        }
+    }
+
+    /// The stage of a coordinator recording: an automatic stop gets the
+    /// coordinator terminal code of its reason (§7.5); every other failure
+    /// keeps its own code.
+    pub(super) fn for_coordinator(self) -> Self {
+        match self.derived {
+            Some(ceiling) => Self {
+                fail: fail_for_coordinator(self.reason, ceiling),
+                ..self
+            },
+            None => self,
+        }
     }
 
     /// A stop before the recorder started.
@@ -94,6 +124,7 @@ impl Stage {
             fail,
             cleanup: false,
             reason,
+            derived: None,
         }
     }
 }
@@ -125,8 +156,8 @@ fn not_found() -> Fail {
 }
 
 /// The wire code of a stored code (every code that the operation stores).
-fn static_code(stored: Option<&str>) -> &'static str {
-    const KNOWN: [&str; 21] = [
+pub(super) fn static_code(stored: Option<&str>) -> &'static str {
+    const KNOWN: [&str; 22] = [
         code::BUSY,
         code::DISK_FULL,
         code::CAPTURE_QUOTA,
@@ -148,6 +179,8 @@ fn static_code(stored: Option<&str>) -> &'static str {
         desktop_code::AUTHORITY_LOST,
         desktop_code::AUTHORITY_UNKNOWN,
         "desktop_not_found",
+        // The coordinator terminal code of the deadline (§7.5).
+        "desktop_read_timeout",
     ];
     match stored.and_then(|s| KNOWN.iter().find(|k| **k == s)) {
         Some(known) => known,
@@ -330,6 +363,7 @@ impl Desktop {
                 artifact_id: &artifact_id,
                 seconds: req.seconds,
                 link_epoch: &req.link_epoch,
+                coordinator: req.coordinator.as_ref(),
                 now: store.now_ms(),
             })
             .await
@@ -385,6 +419,13 @@ impl Desktop {
                 .record_answer(&req, &ctx, &gate, info, published, deadline)
                 .await),
             Err(stage) => {
+                // A coordinator recording ends with the coordinator codes
+                // of §7.5; the row stores the same code.
+                let stage = if req.coordinator.is_some() {
+                    stage.for_coordinator()
+                } else {
+                    stage
+                };
                 if stage.cleanup {
                     run.fail(&stage).await;
                 }
@@ -505,7 +546,7 @@ impl Run<'_> {
         .arm();
         // 5
         self.check_not_stopped().await?;
-        left(self.deadline).map_err(|f| Stage::new(f, StopReason::Deadline))?;
+        left(self.deadline).map_err(Stage::deadline)?;
         req.admitted
             .local_gates()
             .map_err(|f| Stage::new(f, StopReason::PolicyOff))?;
@@ -516,12 +557,17 @@ impl Run<'_> {
             seconds: req.seconds,
         };
         let start = Arc::new(authority::Start::new(req.admitted.clone(), &action));
+        // A coordinator recording shows its fixed disclosure first (P5b
+        // §13.3); a failure refuses the recording and nothing is spawned.
+        within(self.deadline, self.disclose())
+            .await
+            .map_err(failed)?;
         within(self.deadline, start.begin(&self.ctx.env))
             .await
             .map_err(|f| Stage::new(f, StopReason::LeaseDenied))?;
         // 6: the last checks run on the thread of the recorder, right before
         // the child starts (the stop may arrive while the launch is queued).
-        let (guard, refusal) = self.launch_guard(start, Arc::clone(armed.guard()));
+        let (guard, refusal) = self.launch_guard(Arc::clone(&start), Arc::clone(armed.guard()));
         let deadlines = Deadlines {
             duration: Duration::from_secs(u64::from(req.seconds)),
             total: self.deadline.saturating_duration_since(Instant::now()),
@@ -596,7 +642,7 @@ impl Run<'_> {
             self.latch.mark_recording(self.store.now_ms()),
             recorder.exited()
         );
-        self.finalize(staging, exit, tasks, armed).await
+        self.finalize(staging, exit, tasks, armed, &start).await
     }
 
     /// A stop that was asked for before the recorder started: the operation
