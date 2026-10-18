@@ -8,7 +8,9 @@ use std::sync::Arc;
 use fleetdeck_proto::coordinator_desktop_text::{code, limits};
 use rusqlite::{Transaction, params};
 
-use super::ops::{self, Admission, Charges, DesktopOp, NewOp, OpClass, OpState, OpTool};
+use super::ops::{
+    self, Admission, Charges, DesktopOp, NewOp, OpClass, OpState, OpTool, StoredCharges,
+};
 use super::rate;
 use crate::store::grant_scopes::expire_idle;
 use crate::store::grants::{GrantClass, GrantState, get_grant};
@@ -23,11 +25,13 @@ fn refuse(code: &'static str) -> Result<Admission> {
 }
 
 /// The code of a stored refusal as a constant. A stored refusal is only
-/// ever one of the two budget codes.
+/// ever one of the budget codes.
 fn stored_code(text: &str) -> Result<&'static str> {
     match text {
         code::DESKTOP_CAP_REACHED => Ok(code::DESKTOP_CAP_REACHED),
         code::CAPTURE_CAP_REACHED => Ok(code::CAPTURE_CAP_REACHED),
+        code::RECORDING_CAP_REACHED => Ok(code::RECORDING_CAP_REACHED),
+        code::RECORDING_SECONDS_REACHED => Ok(code::RECORDING_SECONDS_REACHED),
         _ => Err(DeckError::Corrupt(
             "a stored desktop refusal has an unknown code".to_owned(),
         )),
@@ -115,9 +119,11 @@ fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admi
     // 5. The rates. A refusal charges nothing.
     let grant_scope = format!("grant:{}", op.grant_id);
     let session_scope = format!("session:{}/{}", ctx.caller_station, ctx.caller_session);
+    // A recording shares the screenshot bucket (R13 P5b-2 §13.2).
+    let capturing = matches!(op.tool, OpTool::Screenshot | OpTool::RecordMonitor);
     let limited = rate::count(&tx, &grant_scope, rate::MUTATION, now)?
         >= limits::MUTATIONS_PER_WINDOW
-        || (op.tool == OpTool::Screenshot
+        || (capturing
             && rate::count(&tx, &grant_scope, rate::SCREENSHOT, now)?
                 >= limits::SCREENSHOTS_PER_WINDOW)
         || (op.tool == OpTool::Notify
@@ -126,17 +132,47 @@ fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admi
         return refuse(code::RATE_LIMITED);
     }
     // 6. The budgets (a cap of `None` is 0). A refusal is stored.
-    let screenshot = op.tool == OpTool::Screenshot;
+    let recording = op.tool == OpTool::RecordMonitor;
+    // The seconds of a recording are always set (the call layer builds them
+    // from the validated argument).
+    let seconds = match (recording, op.seconds) {
+        (true, Some(seconds)) => seconds,
+        (true, None) => {
+            return Err(DeckError::Invalid(
+                "a recording operation has no seconds".to_owned(),
+            ));
+        }
+        (false, _) => 0,
+    };
     if grant.desktop_used >= grant.desktop_cap.unwrap_or(0) {
         return refuse_stored(tx, &op, code::DESKTOP_CAP_REACHED, now);
     }
-    if screenshot && grant.capture_used >= grant.capture_cap.unwrap_or(0) {
+    if capturing && grant.capture_used >= grant.capture_cap.unwrap_or(0) {
         return refuse_stored(tx, &op, code::CAPTURE_CAP_REACHED, now);
+    }
+    if recording && grant.recording_used.saturating_add(1) > grant.recording_cap {
+        return refuse_stored(tx, &op, code::RECORDING_CAP_REACHED, now);
+    }
+    if recording && grant.recording_second_used.saturating_add(seconds) > grant.recording_second_cap
+    {
+        return refuse_stored(tx, &op, code::RECORDING_SECONDS_REACHED, now);
     }
     // 7. Accept.
     let charged = Charges {
         desktop: 1,
-        capture: u32::from(screenshot),
+        capture: u32::from(capturing),
+    };
+    // Only a recording stores its two counters in the JSON (§13.2); the other
+    // tools keep the JSON that they always had.
+    let stored_charges = if recording {
+        serde_json::to_string(&StoredCharges {
+            desktop: charged.desktop,
+            capture: charged.capture,
+            recording: 1,
+            recording_seconds: seconds,
+        })?
+    } else {
+        serde_json::to_string(&charged)?
     };
     tx.execute(
         "INSERT INTO coordinator_desktop_ops
@@ -159,19 +195,27 @@ fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admi
             op.target_station.as_str(),
             op.action_hash,
             serde_json::to_string(&op.resource)?,
-            serde_json::to_string(&charged)?,
+            stored_charges,
             now,
             op.seconds,
         ],
     )?;
     tx.execute(
         "UPDATE tokens SET desktop_used = desktop_used + 1, capture_used = capture_used + ?2,
-             desktop_attempts = desktop_attempts + 1, last_used_at = ?3
+             desktop_attempts = desktop_attempts + 1, last_used_at = ?3,
+             recording_used = recording_used + ?4,
+             recording_second_used = recording_second_used + ?5
          WHERE grant_id = ?1",
-        params![op.grant_id, charged.capture, now],
+        params![
+            op.grant_id,
+            charged.capture,
+            now,
+            u32::from(recording),
+            seconds
+        ],
     )?;
     rate::charge(&tx, &grant_scope, rate::MUTATION, now)?;
-    if screenshot {
+    if capturing {
         rate::charge(&tx, &grant_scope, rate::SCREENSHOT, now)?;
     }
     if op.tool == OpTool::Notify {

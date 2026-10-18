@@ -544,6 +544,15 @@ pub(super) async fn owner_start(
                 .detail(format!("stations={named}")),
         )
         .await;
+    // R13 P5b-2 (decision O12-22, §14 item 13): the flag goes on to the
+    // caller station only when its link negotiated
+    // `capture_recording_mcp.v1`; the two caps never go on. A station that
+    // lacks the feature never sees the flag.
+    spec.allow_recording = allow_recording
+        && board
+            .store
+            .link_feature(station, feature::CAPTURE_RECORDING_MCP)
+            == LinkFeature::Negotiated;
     spec.grant_id = g.grant_id;
     spec.idle_ttl_ms = u64::try_from(g.idle_ttl_ms).unwrap_or(0);
     spec.expires_at = g.expires_at;

@@ -15,7 +15,7 @@ use fleetdeck_proto::StationId;
 use fleetdeck_proto::coordinator_desktop_wire::CoordinatorContext;
 use serde_json::{Map, Value, json};
 
-use crate::store::coordinator_desktop::Charges;
+use crate::store::coordinator_desktop::{Charges, DesktopOp, OpTool};
 use crate::store::{AuditResult, DeckStore, NewAudit};
 
 /// The stage of the row written when an operation is accepted.
@@ -117,4 +117,74 @@ pub(super) async fn write_required(
     row: NewAudit,
 ) -> Result<(), crate::store::DeckError> {
     store.audit(row).await
+}
+
+/// The extra keys of a recording row (R13 P5b-2 §15): the kind, the
+/// requested seconds and the counters that the acceptance charged.
+pub(super) fn recording_extras(op: &DesktopOp) -> Vec<(&'static str, Value)> {
+    let seconds = op.seconds.unwrap_or(0);
+    vec![
+        ("kind", json!("recording")),
+        ("seconds", json!(seconds)),
+        (
+            "charged",
+            json!({
+                "desktop": op.charged.desktop,
+                "capture": op.charged.capture,
+                "recording": u32::from(op.tool == OpTool::RecordMonitor),
+                "recording_seconds": seconds,
+            }),
+        ),
+    ]
+}
+
+/// What the recording module writes for a coordinator recording (the
+/// started, outcome and indexing rows of `desktop_recording`).
+pub(crate) struct RecordingStage<'a> {
+    pub capture_id: &'a str,
+    pub monitor: &'a str,
+    pub seconds: Option<u32>,
+    /// `started`, `outcome` or `indexing_failed`.
+    pub stage: &'static str,
+    /// `ok` or a failure code.
+    pub code: &'a str,
+    pub stop_reason: Option<&'a str>,
+    pub artifact: Option<&'a str>,
+}
+
+/// Writes one `desktop.capture` row of kind `recording` of a coordinator
+/// recording: actor `coordinator`, the caller and the grant of the stored
+/// `coordinator` context. A context that does not parse writes no row and
+/// logs the failure.
+pub(crate) async fn recording_stage(
+    store: &DeckStore,
+    (coordinator, target): (&str, &StationId),
+    result: AuditResult,
+    f: &RecordingStage<'_>,
+) {
+    let Ok(ctx) = serde_json::from_str::<CoordinatorContext>(coordinator) else {
+        tracing::warn!("coordinator recording audit: the stored context does not parse");
+        return;
+    };
+    let facts = Facts {
+        action: CAPTURE,
+        ctx: &ctx,
+        target,
+        operation_id: Some(f.capture_id),
+        window_id: None,
+        monitor: Some(f.monitor),
+    };
+    let mut extra: Vec<(&'static str, Value)> = vec![("kind", json!("recording"))];
+    if let Some(seconds) = f.seconds {
+        extra.push(("seconds", json!(seconds)));
+    }
+    if let Some(reason) = f.stop_reason {
+        extra.push(("stop_reason", json!(reason)));
+    }
+    if let Some(artifact) = f.artifact {
+        extra.push(("artifact_id", json!(artifact)));
+    }
+    let code = (f.code != "ok").then_some(f.code);
+    let row = facts.row_with(f.stage, result, code, None, &extra);
+    write_or_log(store, row).await;
 }

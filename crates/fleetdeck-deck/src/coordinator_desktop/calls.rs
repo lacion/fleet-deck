@@ -23,8 +23,8 @@ use super::authorize::{Authorized, Tool, authorize, store_error, switches};
 use super::policy::{caller_policy, target_policy};
 use super::queries::status_of;
 use super::relay::{self, Ran};
-use super::{capture, capture_status, wall};
-use super::{reply_err, reply_ok};
+use super::{capture, capture_status, record, wall};
+use super::{reply_err, reply_err_text, reply_ok};
 use crate::link::DeckLink;
 use crate::store::AuditResult;
 use crate::store::coordinator_desktop::{
@@ -40,6 +40,9 @@ fn sha256_hex(text: &str) -> String {
         .collect()
 }
 
+/// The text of `capture_cap_reached` for a recording (R13 P5b-2 §16).
+const RECORDING_CAPTURE_LIMIT: &str = "This grant has used its capture limit.";
+
 /// The checked call: the typed action and what the operation row and the audit
 /// row may hold.
 struct Built {
@@ -51,6 +54,8 @@ struct Built {
     resource: Value,
     window_id: Option<String>,
     monitor: Option<String>,
+    /// The requested seconds of a recording (R13 P5b-2).
+    seconds: Option<u32>,
 }
 
 /// The handler deadline of a tool (§9).
@@ -62,10 +67,21 @@ fn handler_ms(tool: Tool) -> u64 {
     }
 }
 
+/// The handler deadline of a call: a recording has its `seconds` plus the
+/// handler time of the other actions (R13 P5b-2 §10); any other call has the
+/// deadline of its tool.
+fn call_handler_ms(tool: Tool, call: &DesktopCall) -> u64 {
+    match call {
+        DesktopCall::RecordMonitor(a) => {
+            u64::from(a.seconds) * 1_000 + deadline_ms::ACTION_DECK_HANDLER
+        }
+        _ => handler_ms(tool),
+    }
+}
+
 /// The tool and the target argument of a call. Every tool of
-/// `coordinator.desktop_call` is served (`wall_show` by [`super::wall`])
-/// except `record_monitor` (R13 P5b-2 task Q-F stub): it has no handler yet
-/// and answers `desktop_unsupported`.
+/// `coordinator.desktop_call` is served (`wall_show` by [`super::wall`],
+/// `record_monitor` by [`super::record`]).
 fn shape(call: &DesktopCall) -> Option<(Tool, Option<&str>)> {
     match call {
         DesktopCall::Notify(a) => Some((Tool::Notify, a.station.as_deref())),
@@ -73,7 +89,7 @@ fn shape(call: &DesktopCall) -> Option<(Tool, Option<&str>)> {
         DesktopCall::WindowClose(a) => Some((Tool::WindowClose, a.station.as_deref())),
         DesktopCall::Screenshot(a) => Some((Tool::Screenshot, a.station.as_deref())),
         DesktopCall::WallShow(a) => Some((Tool::WallShow, a.station.as_deref())),
-        DesktopCall::RecordMonitor(_) => None,
+        DesktopCall::RecordMonitor(a) => Some((Tool::RecordMonitor, a.station.as_deref())),
     }
 }
 
@@ -111,6 +127,7 @@ fn build(
                 resource: json!({}),
                 window_id: None,
                 monitor: None,
+                seconds: None,
             })
         }
         DesktopCall::PreviewOpen(a) => {
@@ -130,6 +147,7 @@ fn build(
                     .map_or_else(|| json!({}), |m| json!({ "monitor": m })),
                 window_id: None,
                 monitor: a.monitor.clone(),
+                seconds: None,
             })
         }
         DesktopCall::WindowClose(a) => Ok(Built {
@@ -142,6 +160,7 @@ fn build(
             resource: json!({ "window_id": a.window_id }),
             window_id: Some(a.window_id.clone()),
             monitor: None,
+            seconds: None,
         }),
         DesktopCall::Screenshot(a) => Ok(Built {
             op_tool: OpTool::Screenshot,
@@ -153,8 +172,22 @@ fn build(
             resource: json!({ "monitor": a.monitor }),
             window_id: None,
             monitor: Some(a.monitor.clone()),
+            seconds: None,
         }),
-        DesktopCall::WallShow(_) | DesktopCall::RecordMonitor(_) => Err(code::DESKTOP_UNSUPPORTED),
+        DesktopCall::RecordMonitor(a) => Ok(Built {
+            op_tool: OpTool::RecordMonitor,
+            action: DesktopAction::ScreenRecord {
+                monitor: a.monitor.clone(),
+                seconds: a.seconds,
+            },
+            request_id: a.request_id.clone(),
+            args: serde_json::to_value(a).map_err(invalid)?,
+            resource: json!({ "monitor": a.monitor, "seconds": a.seconds }),
+            window_id: None,
+            monitor: Some(a.monitor.clone()),
+            seconds: Some(a.seconds),
+        }),
+        DesktopCall::WallShow(_) => Err(code::DESKTOP_UNSUPPORTED),
     }
 }
 
@@ -174,7 +207,7 @@ fn action_name(tool: Tool) -> &'static str {
     match tool {
         Tool::Notify => "desktop.notify",
         Tool::PreviewOpen => "desktop.preview_open",
-        Tool::Screenshot => audit::CAPTURE,
+        Tool::Screenshot | Tool::RecordMonitor => audit::CAPTURE,
         _ => "desktop.window_close",
     }
 }
@@ -207,6 +240,11 @@ impl Call<'_> {
             .facts(None)
             .row(audit::REFUSED, AuditResult::Refused, Some(refusal), None);
         audit::write_or_log(&self.link.store, row).await;
+        // R13 P5b-2 §16: a recording that finds the shared capture allowance
+        // used has its own text; the screenshot text does not change.
+        if self.tool == Tool::RecordMonitor && refusal == code::CAPTURE_CAP_REACHED {
+            return reply_err_text(refusal, RECORDING_CAPTURE_LIMIT);
+        }
         reply_err(refusal, None)
     }
 
@@ -226,9 +264,12 @@ impl Call<'_> {
             deadline,
         )
         .await?;
-        // Only a screenshot asks for the capture purpose and a monitor.
+        // Only a screenshot and a recording ask for the capture purpose and a
+        // monitor.
         let (purpose, monitor) = match (self.tool, self.built) {
-            (Tool::Screenshot, Some(built)) => (PolicyPurpose::Capture, built.monitor.as_deref()),
+            (Tool::Screenshot | Tool::RecordMonitor, Some(built)) => {
+                (PolicyPurpose::Capture, built.monitor.as_deref())
+            }
             _ => (PolicyPurpose::Desktop, None),
         };
         target_policy(self.link, self.auth.route(), purpose, monitor, deadline).await
@@ -254,7 +295,7 @@ impl Call<'_> {
                 Some(ctx),
             )),
             resource: built.resource.clone(),
-            seconds: None,
+            seconds: built.seconds,
         };
         self.link
             .store
@@ -267,9 +308,18 @@ impl Call<'_> {
     /// and the reply.
     async fn run(&self, built: &Built, op: &DesktopOp, deadline: Instant) -> Outcome {
         let id = op.operation_id.as_str();
-        let attempt =
-            self.facts(Some(id))
-                .row(audit::ATTEMPT, AuditResult::Ok, None, Some(op.charged));
+        let extra = if self.tool == Tool::RecordMonitor {
+            audit::recording_extras(op)
+        } else {
+            Vec::new()
+        };
+        let attempt = self.facts(Some(id)).row_with(
+            audit::ATTEMPT,
+            AuditResult::Ok,
+            None,
+            Some(op.charged),
+            &extra,
+        );
         // No operation starts without its decision record (§12).
         if let Err(e) = audit::write_required(&self.link.store, attempt).await {
             tracing::warn!(error = %e, "coordinator desktop audit");
@@ -291,6 +341,18 @@ impl Call<'_> {
                 monitor,
             };
             return capture::run_screenshot(self.link, self.auth, op, shot, deadline).await;
+        }
+        // A recording has its own send: the capture record, the lease and
+        // the indexing.
+        if let (Tool::RecordMonitor, Some(monitor), Some(seconds)) =
+            (self.tool, built.monitor.as_deref(), built.seconds)
+        {
+            let rec = record::Rec {
+                request_id: &built.request_id,
+                monitor,
+                seconds,
+            };
+            return record::run_recording(self.link, self.auth, op, rec, deadline).await;
         }
         match relay::execute(self.link, self.auth, id, &built.action, deadline).await {
             Ran::Stopped(stop) => reply_err(stop, Some(id)),
@@ -332,7 +394,7 @@ pub(super) async fn run(
     let Some((tool, station_arg)) = shape(&call) else {
         return reply_err(code::DESKTOP_UNSUPPORTED, None);
     };
-    let deadline = started + Duration::from_millis(handler_ms(tool));
+    let deadline = started + Duration::from_millis(call_handler_ms(tool, &call));
     let auth = match authorize(link, station, &caller, &binding, tool, station_arg).await {
         Ok(auth) => auth,
         Err(refusal) => return reply_err(refusal, None),
@@ -364,8 +426,10 @@ pub(super) async fn run(
     }
     match this.admit(&built).await {
         Err(refusal) => this.refuse(refusal).await,
-        // A screenshot replays as its capture state (§4.8).
-        Ok(Admission::Existing(op)) if op.tool == OpTool::Screenshot => {
+        // A screenshot and a recording replay as their capture state (§4.8).
+        Ok(Admission::Existing(op))
+            if matches!(op.tool, OpTool::Screenshot | OpTool::RecordMonitor) =>
+        {
             capture_status::replay(link, &built.request_id, &op).await
         }
         Ok(Admission::Existing(op)) => {

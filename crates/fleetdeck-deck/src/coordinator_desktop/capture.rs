@@ -43,7 +43,7 @@ pub(super) struct Shot<'a> {
 
 /// How the send ended: the final state with the text to answer when it is
 /// not the fixed text of the code, or a stop before any change.
-enum End {
+pub(super) enum End {
     Final {
         outcome: OpOutcome,
         /// True when this call made the first transition of the operation.
@@ -68,7 +68,7 @@ fn waits(deadline: Instant) -> Waits {
 
 /// Ends the operation and logs a failed write (the real outcome is answered
 /// anyway; start recovery fixes a row that stays open).
-async fn end(
+pub(super) async fn end(
     link: &DeckLink,
     operation_id: &str,
     outcome: OpOutcome,
@@ -94,7 +94,12 @@ async fn end(
 
 /// The capture record of a failure that happened before the send (or that the
 /// station reported for sure): `failed` with `code` and its fixed text.
-async fn mark_failed(link: &DeckLink, station: &StationId, id: &str, stored: (&str, &str)) {
+pub(super) async fn mark_failed(
+    link: &DeckLink,
+    station: &StationId,
+    id: &str,
+    stored: (&str, &str),
+) {
     let marked = link
         .store
         .capture_failed(
@@ -110,7 +115,7 @@ async fn mark_failed(link: &DeckLink, station: &StationId, id: &str, stored: (&s
 }
 
 /// A failure before the send: the record and the operation fail together.
-async fn fail_before_send(
+pub(super) async fn fail_before_send(
     link: &DeckLink,
     (station, id): (&StationId, &str),
     refusal: &'static str,
@@ -260,7 +265,7 @@ async fn indexed(
 }
 
 /// The final state of a send that the station did not answer with a result.
-fn after_error(sent: CallError) -> Result<OpOutcome, (String, String)> {
+pub(super) fn after_error(sent: CallError) -> Result<OpOutcome, (String, String)> {
     match sent {
         CallError::Relay(RelayError::Timeout | RelayError::Unreachable) => Ok(OpOutcome::Unknown),
         CallError::Relay(e) => Ok(OpOutcome::Failed(e.http().1)),

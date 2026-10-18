@@ -21,8 +21,8 @@ use crate::link::desktop_authority::{Route, resolve};
 use crate::store::coordinator_desktop::{OpClass, OpTool};
 use crate::store::{Grant, GrantClass, GrantState, LinkFeature};
 
-/// The nine tools of §3. The variants of the tools of tasks T3 and T5 are not
-/// built yet.
+/// The nine tools of §3 and `record_monitor` (R13 P5b-2 §13.1). The variants
+/// of the tools of tasks T3 and T5 are not built yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub(crate) enum Tool {
@@ -32,6 +32,7 @@ pub(crate) enum Tool {
     WindowClose,
     DesktopActionStatus,
     Screenshot,
+    RecordMonitor,
     CaptureStatus,
     ReadCaptureImage,
     DesktopInfo,
@@ -48,9 +49,10 @@ impl Tool {
             | Self::PreviewOpen
             | Self::WindowClose
             | Self::DesktopActionStatus => Some(OpClass::Desktop),
-            Self::Screenshot | Self::CaptureStatus | Self::ReadCaptureImage => {
-                Some(OpClass::Capture)
-            }
+            Self::Screenshot
+            | Self::RecordMonitor
+            | Self::CaptureStatus
+            | Self::ReadCaptureImage => Some(OpClass::Capture),
             Self::DesktopInfo => None,
         }
     }
@@ -65,6 +67,7 @@ impl Tool {
             Self::PreviewOpen => Some(OpTool::PreviewOpen),
             Self::WindowClose => Some(OpTool::WindowClose),
             Self::Screenshot => Some(OpTool::Screenshot),
+            Self::RecordMonitor => Some(OpTool::RecordMonitor),
             Self::DesktopActionStatus
             | Self::CaptureStatus
             | Self::ReadCaptureImage
@@ -144,8 +147,9 @@ pub(super) fn switches(link: &DeckLink) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// The features of the caller link (§5.1).
-fn caller_features(capture: bool) -> Vec<&'static str> {
+/// The features of the caller link (§5.1); a recording also needs
+/// `capture_recording_mcp.v1` (R13 P5b-2 §13.1).
+fn caller_features(capture: bool, recording: bool) -> Vec<&'static str> {
     let mut wanted = vec![
         feature::COORDINATOR,
         feature::COORDINATOR_V2,
@@ -154,7 +158,31 @@ fn caller_features(capture: bool) -> Vec<&'static str> {
     if capture {
         wanted.push(feature::CAPTURE_MCP);
     }
+    if recording {
+        wanted.push(feature::CAPTURE_RECORDING_MCP);
+    }
     wanted
+}
+
+/// The features that a recording needs on the target link besides the
+/// capture set (R13 P5b-2 §13.1).
+const RECORDING_TARGET: [&str; 3] = [
+    feature::DESKTOP_RECORDING,
+    feature::ARTIFACTS_VIDEO,
+    feature::CAPTURE_RECORDING_MCP,
+];
+
+/// The target link has the recording features: `station_unreachable`
+/// without a link, `desktop_unsupported` when a link lacks one.
+fn recording_ready(link: &DeckLink, target: &StationId) -> Result<(), &'static str> {
+    for f in RECORDING_TARGET {
+        match link.store.link_feature(target, f) {
+            LinkFeature::Down => return Err(code::STATION_UNREACHABLE),
+            LinkFeature::Without => return Err(code::DESKTOP_UNSUPPORTED),
+            LinkFeature::Negotiated => {}
+        }
+    }
+    Ok(())
 }
 
 /// The features of the target link (§5.1).
@@ -261,6 +289,10 @@ pub(super) async fn begin(
             if !grant.classes.contains(&needs(class)) {
                 return Err(code::NOT_GRANTED);
             }
+            // A recording needs the explicit allowance (R13 P5b-2 §13.2).
+            if tool == Tool::RecordMonitor && grant.recording_cap == 0 {
+                return Err(code::NOT_GRANTED);
+            }
             class
         }
         None if grant.classes.contains(&GrantClass::Desktop) => OpClass::Desktop,
@@ -272,7 +304,7 @@ pub(super) async fn begin(
         return Err(code::NOT_GRANTED);
     }
     // 5a. The features of the caller link.
-    for f in caller_features(class == OpClass::Capture) {
+    for f in caller_features(class == OpClass::Capture, tool == Tool::RecordMonitor) {
         if link.store.link_feature(caller_station, f) != LinkFeature::Negotiated {
             return Err(code::DESKTOP_UNSUPPORTED);
         }
@@ -317,6 +349,9 @@ pub(crate) async fn authorize(
     // 5b. The target link and its features; no desktop epoch is
     // `station_unreachable`.
     target_ready(link, &begun.target, begun.class)?;
+    if tool == Tool::RecordMonitor {
+        recording_ready(link, &begun.target)?;
+    }
     let route = resolve(link, &link.store, &begun.target).map_err(|_| code::STATION_UNREACHABLE)?;
     Ok(Authorized {
         grant: begun.grant,
@@ -368,6 +403,34 @@ pub(super) async fn local_pass(link: &DeckLink, held: &Held<'_>) -> Result<Grant
         return Err(code::NOT_GRANTED);
     }
     target_ready(link, held.target, held.class)?;
+    Ok(grant)
+}
+
+/// The deck-local pass of a coordinator recording (R13 P5b-2 §6.3, §13.2):
+/// [`local_pass`] for the capture class, the recording allowance of the grant
+/// (`recording_cap > 0`) and the recording features of the target link.
+/// Returns the grant as it is now.
+///
+/// # Errors
+/// The code of the first check that fails.
+pub(crate) async fn recording_pass(
+    link: &DeckLink,
+    ctx: &CoordinatorContext,
+    target: &StationId,
+) -> Result<Grant, &'static str> {
+    let held = Held {
+        grant_id: &ctx.grant_id,
+        binding_id: &ctx.binding_id,
+        generation: ctx.generation,
+        caller: &ctx.caller_station,
+        target,
+        class: OpClass::Capture,
+    };
+    let grant = local_pass(link, &held).await?;
+    if grant.recording_cap == 0 {
+        return Err(code::NOT_GRANTED);
+    }
+    recording_ready(link, target)?;
     Ok(grant)
 }
 

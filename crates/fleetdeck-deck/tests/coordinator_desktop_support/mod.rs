@@ -672,3 +672,7 @@ pub fn stations(more: &[&str]) -> BTreeSet<StationId> {
 mod capture;
 #[allow(unused_imports)]
 pub use capture::*;
+
+mod record;
+#[allow(unused_imports)]
+pub use record::*;

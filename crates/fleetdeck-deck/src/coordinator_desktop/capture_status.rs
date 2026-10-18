@@ -39,6 +39,15 @@ use crate::store::desktop_captures::{CaptureRow, CaptureState};
 pub(super) const PENDING_INDEXING: &str =
     "The screenshot was saved on the station. The artifact list is still updating.";
 
+/// What `pending` says when the station saved the recording and the deck has
+/// not indexed it yet (R13 P5b-2 §16).
+pub(super) const PENDING_INDEXING_RECORDING: &str =
+    "The recording was saved on the station. The artifact list is still updating.";
+
+/// What `unknown` says for a recording (R13 P5b-2 §16).
+pub(super) const UNKNOWN_RECORDING: &str =
+    "The recording result is unknown. Check the artifact list before starting another recording.";
+
 /// A state without a result: `pending`, `unknown` or `deleted` of a capture.
 /// `unknown` carries the fixed text of §11.3.
 pub(super) fn plain(
@@ -88,6 +97,39 @@ pub(super) fn committed(
     status
 }
 
+/// The `committed` state of an indexed recording (R13 P5b-2 §13.4): the
+/// capture fields, the requested seconds, and the saved duration and the
+/// stop reason of the provenance that the deck stored. Never bytes, a path
+/// or a token.
+pub(super) fn committed_recording(
+    request_id: &str,
+    station: &StationId,
+    row: (&str, &str),
+    (published, seconds): (&ArtifactPublished, Option<u32>),
+) -> CoordinatorCaptureStatus {
+    let mut status = committed(request_id, station, row, published);
+    status.requested_seconds = seconds;
+    if let Some(meta) = published
+        .version
+        .capture
+        .as_ref()
+        .and_then(|c| c.recording.as_ref())
+    {
+        status.duration_ms = Some(meta.duration_ms);
+        status.stop_reason = Some(meta.stop_reason);
+    }
+    status
+}
+
+/// `status` with the requested seconds of a recording.
+pub(super) fn with_seconds(
+    mut status: CoordinatorCaptureStatus,
+    seconds: Option<u32>,
+) -> CoordinatorCaptureStatus {
+    status.requested_seconds = seconds;
+    status
+}
+
 /// The `failed` state: the public code and its fixed text.
 fn failed(
     request_id: &str,
@@ -120,14 +162,57 @@ pub(super) fn failure_of(stored: Option<&str>, message: Option<&str>) -> (String
     )
 }
 
+/// The public code and the fixed text of a stored failure of a recording: a
+/// recording code keeps its recording text, a code of §11 keeps the text of
+/// §11 (`authority_lost`, `authority_unknown`, `desktop_read_timeout`), and
+/// anything else is `recording_failed`.
+pub(super) fn recording_failure_of(
+    stored: Option<&str>,
+    message: Option<&str>,
+) -> (String, String) {
+    let stored = stored.unwrap_or(capture::code::RECORDING_FAILED);
+    let message = message.unwrap_or(capture::text::RECORDING_FAILED);
+    if let Some((e, _, _)) = crate::desktop_recording::RecordingError::from_station(stored, message)
+    {
+        let (_, public, fixed) = e.http();
+        return (public.to_owned(), fixed.to_owned());
+    }
+    if let Some(known) = known_code(stored) {
+        return (known.to_owned(), text(known).unwrap_or_default().to_owned());
+    }
+    (
+        capture::code::RECORDING_FAILED.to_owned(),
+        capture::text::RECORDING_FAILED.to_owned(),
+    )
+}
+
 /// The state of `op` for the caller. `row` is the deck capture record of the
 /// operation. A missing record is read from the operation itself (a screenshot
-/// that stopped before its record was written).
+/// that stopped before its record was written). A recording answers the same
+/// states with its own texts and its recording fields.
 pub(super) fn state_of(
     request_id: &str,
     op: &DesktopOp,
     row: Option<&CaptureRow>,
 ) -> CoordinatorCaptureStatus {
+    if op.tool == OpTool::RecordMonitor {
+        let status = state_of_kind(request_id, op, row, true);
+        return with_seconds(status, op.seconds);
+    }
+    state_of_kind(request_id, op, row, false)
+}
+
+fn state_of_kind(
+    request_id: &str,
+    op: &DesktopOp,
+    row: Option<&CaptureRow>,
+    recording: bool,
+) -> CoordinatorCaptureStatus {
+    let (unknown_text, pending_text) = if recording {
+        (UNKNOWN_RECORDING, PENDING_INDEXING_RECORDING)
+    } else {
+        (capture::text::UNKNOWN, PENDING_INDEXING)
+    };
     let station = &op.target_station;
     let id = op.operation_id.as_str();
     let Some(row) = row else {
@@ -136,13 +221,7 @@ pub(super) fn state_of(
                 let c = op.code.as_deref().unwrap_or(code::DESKTOP_FAILED);
                 failed(request_id, station, id, (c, text(c).unwrap_or_default()))
             }
-            OpState::Unknown => plain(
-                request_id,
-                station,
-                id,
-                State::Unknown,
-                Some(capture::text::UNKNOWN),
-            ),
+            OpState::Unknown => plain(request_id, station, id, State::Unknown, Some(unknown_text)),
             _ => plain(request_id, station, id, State::Pending, None),
         };
     };
@@ -150,27 +229,29 @@ pub(super) fn state_of(
         return plain(request_id, station, id, State::Deleted, None);
     }
     match (row.state, row.indexed, &row.published) {
+        (CaptureState::Committed, true, Some(published)) if recording => committed_recording(
+            request_id,
+            station,
+            (id, row.monitor.as_str()),
+            (published, op.seconds),
+        ),
         (CaptureState::Committed, true, Some(published)) => {
             committed(request_id, station, (id, row.monitor.as_str()), published)
         }
         (CaptureState::Failed, _, _) => {
-            let (error, message) = failure_of(row.code.as_deref(), row.message.as_deref());
+            let (error, message) = if recording {
+                recording_failure_of(row.code.as_deref(), row.message.as_deref())
+            } else {
+                failure_of(row.code.as_deref(), row.message.as_deref())
+            };
             failed(request_id, station, id, (&error, &message))
         }
-        (CaptureState::Unknown, _, _) => plain(
-            request_id,
-            station,
-            id,
-            State::Unknown,
-            Some(capture::text::UNKNOWN),
-        ),
-        (CaptureState::Committed, _, _) => plain(
-            request_id,
-            station,
-            id,
-            State::Pending,
-            Some(PENDING_INDEXING),
-        ),
+        (CaptureState::Unknown, _, _) => {
+            plain(request_id, station, id, State::Unknown, Some(unknown_text))
+        }
+        (CaptureState::Committed, _, _) => {
+            plain(request_id, station, id, State::Pending, Some(pending_text))
+        }
         _ => plain(request_id, station, id, State::Pending, None),
     }
 }
@@ -285,7 +366,12 @@ async fn ask_station(
     if let Ok(CaptureStatus::Committed { capture_id, .. }) = serde_json::from_value(value)
         && capture_id == op.operation_id
     {
-        status.message = Some(PENDING_INDEXING.to_owned());
+        let text = if op.tool == OpTool::RecordMonitor {
+            PENDING_INDEXING_RECORDING
+        } else {
+            PENDING_INDEXING
+        };
+        status.message = Some(text.to_owned());
     }
     Ok(status)
 }
@@ -330,7 +416,7 @@ pub(super) async fn status(
         .await
     {
         // A request of another kind is the same as no request.
-        Ok(op) => op.filter(|op| op.tool == OpTool::Screenshot),
+        Ok(op) => op.filter(|op| matches!(op.tool, OpTool::Screenshot | OpTool::RecordMonitor)),
         Err(e) => return failed_query(link, who, store_error(&e)).await,
     };
     let Some(op) = op else {

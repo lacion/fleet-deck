@@ -680,21 +680,20 @@ async fn a_third_mutation_of_a_grant_in_flight_is_busy_and_the_slots_are_release
     assert_eq!(w.call("c4", close("r4", WINDOW)).await["status"], "ok");
 }
 
-/// R13 P5b-2 task Q-F: `record_monitor` is a valid call that no handler
-/// serves yet. It answers `desktop_unsupported`, sends nothing to a station
-/// and charges nothing.
+/// R13 P5b-2 task Q-K: a grant of the `desktop` class only has no recording:
+/// `record_monitor` is a served call that answers `not_granted`, sends nothing
+/// to a station and charges nothing.
 #[tokio::test]
-async fn record_monitor_is_refused_as_unsupported_and_charges_nothing() {
+async fn record_monitor_without_the_capture_class_is_refused_and_charges_nothing() {
     let w = world().await;
-    let env = w.call_env(
-        "c1",
-        json!({"tool": "record_monitor", "arguments": {
-            "request_id": "rec-1", "monitor": "DP-1", "seconds": 30}}),
-    );
-    let Outcome::Err(e) = w.call_raw(Some("c1"), env).await else {
-        panic!("a wire error");
-    };
-    assert_eq!(e.code, "desktop_unsupported");
+    let reply = w
+        .call(
+            "c1",
+            json!({"tool": "record_monitor", "arguments": {
+                "request_id": "rec-1", "monitor": "DP-1", "seconds": 30}}),
+        )
+        .await;
+    assert_eq!(code(&reply), "not_granted");
     assert_eq!(w.fake.count("desktop.act"), 0);
     assert!(
         w.f.store
