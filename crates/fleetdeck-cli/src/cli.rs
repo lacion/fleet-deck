@@ -373,6 +373,15 @@ pub enum StationCommand {
         #[command(subcommand)]
         command: UpgradeCommand,
     },
+    /// Print the link key fingerprint of the running station (P8).
+    Fingerprint {
+        /// Print the full answer of the station as one JSON line.
+        #[arg(long)]
+        json: bool,
+        /// Probe every provider again in the running station.
+        #[arg(long, requires = "json")]
+        probe_providers: bool,
+    },
 }
 
 /// `fleetdeck station upgrade` (M3 7-3, DL-128).

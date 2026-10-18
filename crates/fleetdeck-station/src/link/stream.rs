@@ -12,8 +12,8 @@
 //! [`Stream::delivered`] is the highest `station_seq` sent on this link (an
 //! event or a snapshot watermark). An `ack` above it is a protocol error.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use fleetdeck_link::control::Control;
 use fleetdeck_link::methods::code;
@@ -46,6 +46,8 @@ pub struct Stream {
     store: Store,
     control: Control,
     delivered: Arc<AtomicU64>,
+    /// The watermark of the first snapshot sent on this link (R13 P8).
+    first_snapshot: Arc<OnceLock<u64>>,
     task: Option<JoinHandle<()>>,
     /// Set on a link with `coordinator.v1`: snapshots carry the binding
     /// projection (ADR-006 §6.1).
@@ -67,6 +69,7 @@ impl Stream {
             store,
             control,
             delivered: Arc::new(AtomicU64::new(0)),
+            first_snapshot: Arc::new(OnceLock::new()),
             task: None,
             coordinator: None,
         }
@@ -86,6 +89,13 @@ impl Stream {
         self.delivered.load(Ordering::Acquire)
     }
 
+    /// The watermark of the first snapshot that went out on this link; set
+    /// before its first frame is sent. `None` until a snapshot starts.
+    #[must_use]
+    pub fn first_snapshot(&self) -> Option<u64> {
+        self.first_snapshot.get().copied()
+    }
+
     /// Stops the current pump (if any) and starts a new one that first
     /// answers the request `reply` with a [`StreamStart`].
     pub fn restart(&mut self, start: Start, reply: u64) {
@@ -96,6 +106,7 @@ impl Stream {
             store: self.store.clone(),
             control: self.control.clone(),
             delivered: Arc::clone(&self.delivered),
+            first_snapshot: Arc::clone(&self.first_snapshot),
             coordinator: self.coordinator.clone(),
         };
         self.task = Some(tokio::spawn(async move {
@@ -110,6 +121,7 @@ struct Pump {
     store: Store,
     control: Control,
     delivered: Arc<AtomicU64>,
+    first_snapshot: Arc<OnceLock<u64>>,
     coordinator: Option<crate::coordinator::Bindings>,
 }
 
@@ -234,6 +246,8 @@ impl Pump {
     async fn send_snapshot(&self, snapshot: crate::store::Snapshot) -> Result<u64, PumpError> {
         let incarnation = snapshot.incarnation;
         let watermark = snapshot.watermark;
+        // Before the first frame: the deck cannot acknowledge it earlier.
+        let _ = self.first_snapshot.set(watermark);
         // The binding projection right after the summaries were read.
         let coordinator = self
             .coordinator

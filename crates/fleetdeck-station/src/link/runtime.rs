@@ -328,6 +328,7 @@ impl StationNode {
                 paste_dir,
                 fleet_git,
                 summary: Arc::default(),
+                ready: Arc::default(),
             }),
             invitations,
             listening: tokio::sync::Mutex::default(),
