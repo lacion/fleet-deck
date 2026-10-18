@@ -14,6 +14,7 @@ use super::{RECOVERY_TICK, STATUS_WAIT, ask_status, audit_indexing_failed, prove
 use crate::desktop_relay::RelayCtx;
 use crate::link::DeckLink;
 use crate::store::desktop_captures::{CaptureRow, CaptureState, UNKNOWN_AFTER_MS};
+use crate::store::desktop_recordings::OperationKind;
 use crate::store::{DeckError, DeckStore};
 
 /// Applies a station status to a row (§6.3, decision 8). A committed result
@@ -28,6 +29,14 @@ pub async fn reconcile(
     status: CaptureStatus,
 ) -> Result<(), DeckError> {
     let station = row.station_id.clone();
+    // A recording has its own provenance, failure codes and audit rows.
+    if let Some(recording) = store
+        .recording_get(station.clone(), row.capture_id.clone())
+        .await?
+        && recording.kind == OperationKind::Recording
+    {
+        return crate::desktop_recording::reconcile(store, &recording, status).await;
+    }
     match status {
         CaptureStatus::Committed { published, .. } => {
             // The provenance comes from the row: a row with a `coordinator`

@@ -344,6 +344,21 @@ pub const API: &[ApiMethod] = &[
         Some(Scope::Admin),
         false,
     ),
+    // The active recording and the owner stop (R13 P5b-1): `admin`, owner only.
+    m(
+        "desktop.recording_get",
+        Method::GET,
+        "/api/stations/{station}/desktop/recording",
+        Some(Scope::Admin),
+        false,
+    ),
+    m(
+        "desktop.capture_stop",
+        Method::POST,
+        "/api/stations/{station}/desktop/captures/{capture_id}/stop",
+        Some(Scope::Admin),
+        true,
+    ),
     // The features of this deck build (R13 P5a): owner only.
     m(
         "deck.features",

@@ -491,7 +491,12 @@ async fn the_features_route_and_the_info_features_follow_the_negotiation() {
     let (r, ()) = tokio::join!(ask, answer);
     assert_eq!(
         r.body["features"],
-        json!([feature::DESKTOP_CAPTURE, feature::ARTIFACTS_DELETE])
+        json!([
+            feature::DESKTOP_CAPTURE,
+            feature::ARTIFACTS_DELETE,
+            feature::DESKTOP_RECORDING,
+            feature::ARTIFACTS_VIDEO
+        ])
     );
     // A station that leaves out `desktop_capture.v1`.
     let (f2, mut station2, c2, h2) = setup_without(&[feature::DESKTOP_CAPTURE]).await;
@@ -506,7 +511,14 @@ async fn the_features_route_and_the_info_features_follow_the_negotiation() {
             .unwrap();
     };
     let (r, ()) = tokio::join!(ask, answer);
-    assert_eq!(r.body["features"], json!([feature::ARTIFACTS_DELETE]));
+    assert_eq!(
+        r.body["features"],
+        json!([
+            feature::ARTIFACTS_DELETE,
+            feature::DESKTOP_RECORDING,
+            feature::ARTIFACTS_VIDEO
+        ])
+    );
     // And one that leaves out both.
     let (f3, mut station3, c3, h3) =
         setup_without(&[feature::DESKTOP_CAPTURE, feature::ARTIFACTS_DELETE]).await;
@@ -521,12 +533,21 @@ async fn the_features_route_and_the_info_features_follow_the_negotiation() {
             .unwrap();
     };
     let (r, ()) = tokio::join!(ask, answer);
-    assert_eq!(r.body["features"], json!([]));
+    assert_eq!(
+        r.body["features"],
+        json!([feature::DESKTOP_RECORDING, feature::ARTIFACTS_VIDEO])
+    );
     // The kept station info is stamped too.
     let kept = f2.store.station_info(&f2.station);
     assert!(kept.is_none_or(|(i, _)| {
-        i.desktop
-            .is_none_or(|d| d.features == [feature::ARTIFACTS_DELETE])
+        i.desktop.is_none_or(|d| {
+            d.features
+                == [
+                    feature::ARTIFACTS_DELETE,
+                    feature::DESKTOP_RECORDING,
+                    feature::ARTIFACTS_VIDEO,
+                ]
+        })
     }));
 }
 

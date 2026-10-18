@@ -24,14 +24,16 @@ use share_support::*;
 
 const SENTINEL: &str = "SENTINEL-TEXT-4711";
 
-/// The info as the deck keeps and returns it: the fake link negotiated the two
-/// P5a features, and the deck stamps them (R13 P5a task E).
+/// The info as the deck keeps and returns it: the fake link negotiated the
+/// P5a and P5b features, and the deck stamps them (R13 P5a task E, P5b K1).
 fn stamped(
     mut info: fleetdeck_proto::desktop::DesktopInfo,
 ) -> fleetdeck_proto::desktop::DesktopInfo {
     info.features = vec![
         feature::DESKTOP_CAPTURE.to_owned(),
         feature::ARTIFACTS_DELETE.to_owned(),
+        feature::DESKTOP_RECORDING.to_owned(),
+        feature::ARTIFACTS_VIDEO.to_owned(),
     ];
     info
 }

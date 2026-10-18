@@ -25,6 +25,7 @@ use fleetdeck_proto::desktop::{DesktopActBody, DesktopInfo};
 
 use super::Board;
 use super::desktop_capture_routes;
+use super::desktop_recording_routes;
 use super::guard::{ApiError, owner_only};
 use super::settings_routes::owner;
 use crate::desktop_relay::{self, RelayCtx, RelayError, is_loopback_origin};
@@ -177,6 +178,11 @@ async fn act(
     // A screenshot has its own relay (R13 P5a): `desktop_capture_routes`.
     if let DesktopActBody::ScreenCapture { monitor } = body {
         return desktop_capture_routes::act(&board, &principal, id, &headers, monitor).await;
+    }
+    // A recording has its own relay too (R13 P5b-1): `desktop_recording_routes`.
+    if let DesktopActBody::ScreenRecord { monitor, seconds } = body {
+        return desktop_recording_routes::act(&board, &principal, id, &headers, monitor, seconds)
+            .await;
     }
     let needs_origin = matches!(
         body,

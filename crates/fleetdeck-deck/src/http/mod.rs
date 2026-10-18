@@ -19,6 +19,7 @@ pub mod auth_routes;
 pub mod body_deadline;
 pub mod command_routes;
 pub mod desktop_capture_routes;
+pub mod desktop_recording_routes;
 pub mod desktop_routes;
 pub mod display_artifact;
 pub mod display_bodies;
@@ -578,6 +579,7 @@ pub fn router(board: Arc<Board>) -> Router {
         .merge(display_artifact::routes())
         .merge(desktop_routes::routes())
         .merge(desktop_capture_routes::routes())
+        .merge(desktop_recording_routes::routes())
         .merge(palette_routes::routes())
         .merge(features_routes::routes())
         .route_layer(middleware::from_fn_with_state(
