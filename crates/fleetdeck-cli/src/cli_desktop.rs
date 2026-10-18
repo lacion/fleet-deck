@@ -20,6 +20,12 @@ pub enum DesktopCommand {
         #[arg(long)]
         request: Option<String>,
     },
+    /// Start a supervised session that diagnoses the last crash on this machine.
+    Crash {
+        /// Use the newest crash that systemd-coredump recorded.
+        #[arg(long, required = true)]
+        last: bool,
+    },
     /// The hotkeys of the wall display that is bound to this station.
     Wall {
         #[command(subcommand)]

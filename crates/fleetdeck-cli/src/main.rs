@@ -7,6 +7,7 @@ mod cli_omarchy;
 mod confine;
 mod deck;
 mod deck_provision;
+mod desktop_crash;
 mod desktop_feed;
 mod desktop_open;
 mod desktop_wall;
@@ -177,6 +178,7 @@ async fn desktop_main(
         cli_desktop::DesktopCommand::Open { target, request } => {
             desktop_open::run(dirs, target.as_deref(), request.as_deref()).await
         }
+        cli_desktop::DesktopCommand::Crash { last: _ } => desktop_crash::run(dirs).await,
         cli_desktop::DesktopCommand::Wall { command } => match command {
             cli_desktop::WallCommand::Next => {
                 desktop_wall::directive(dirs, desktop_wall::NEXT_NEEDS_YOU).await
