@@ -3,7 +3,8 @@
 //!
 //! One line per check: `ok   <check>: <detail>`, `warn <check>: <detail>` or
 //! `fail <check>: <detail>`, then `doctor: N ok, N warn, N fail`. The exit
-//! code is 1 when a check failed. No check changes anything.
+//! code is 1 when a check failed. No check changes anything. With `--brief`
+//! only the `warn` and `fail` lines and the final line are printed.
 
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -27,24 +28,28 @@ const BOARD_TIMEOUT: Duration = Duration::from_secs(2);
 const VERSION_LINE_MAX: usize = 200;
 
 #[derive(Default)]
-struct Report {
+pub(crate) struct Report {
     ok: u32,
     warn: u32,
     fail: u32,
+    /// Print only `warn` and `fail` lines.
+    brief: bool,
 }
 
 impl Report {
-    fn ok(&mut self, check: &str, detail: impl std::fmt::Display) {
+    pub(crate) fn ok(&mut self, check: &str, detail: impl std::fmt::Display) {
         self.ok += 1;
-        println!("ok   {check}: {detail}");
+        if !self.brief {
+            println!("ok   {check}: {detail}");
+        }
     }
 
-    fn warn(&mut self, check: &str, detail: impl std::fmt::Display) {
+    pub(crate) fn warn(&mut self, check: &str, detail: impl std::fmt::Display) {
         self.warn += 1;
         println!("warn {check}: {detail}");
     }
 
-    fn fail(&mut self, check: &str, detail: impl std::fmt::Display) {
+    pub(crate) fn fail(&mut self, check: &str, detail: impl std::fmt::Display) {
         self.fail += 1;
         println!("fail {check}: {detail}");
     }
@@ -62,8 +67,11 @@ enum Loaded<T> {
 }
 
 /// `fleetdeck doctor`.
-pub async fn run(dirs: &NodeDirs, env: &Env) -> ExitCode {
-    let mut report = Report::default();
+pub async fn run(dirs: &NodeDirs, env: &Env, brief: bool) -> ExitCode {
+    let mut report = Report {
+        brief,
+        ..Report::default()
+    };
     check_data_dirs(&mut report, dirs);
     let station = load_station(&mut report, dirs, env);
     let deck = load_deck(&mut report, dirs);
@@ -75,6 +83,7 @@ pub async fn run(dirs: &NodeDirs, env: &Env) -> ExitCode {
         check_board(&mut report, &deck).await;
     }
     check_v1_plugin(&mut report, env);
+    crate::doctor_omarchy::check(&mut report, env).await;
     println!(
         "doctor: {} ok, {} warn, {} fail",
         report.ok, report.warn, report.fail

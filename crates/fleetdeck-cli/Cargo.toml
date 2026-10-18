@@ -20,8 +20,8 @@ fleetdeck-link = { path = "../fleetdeck-link" }
 fleetdeck-providers = { path = "../fleetdeck-providers" }
 anyhow.workspace = true
 clap.workspace = true
-# Non-echoing invitation prompt (G12).
-rustix = { workspace = true, features = ["termios"] }
+# Non-echoing invitation prompt (G12); `fs` for the no-follow installer writes (R13 P4 C).
+rustix = { workspace = true, features = ["termios", "fs"] }
 ring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
