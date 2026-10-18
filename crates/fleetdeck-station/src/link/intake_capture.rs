@@ -39,6 +39,14 @@ fn service(ctx: &StationLink) -> Result<&ArtifactService, Fail> {
         .ok_or_else(|| Fail::new(desktop::code::UNSUPPORTED, NO_ARTIFACTS))
 }
 
+/// The executable of the `shim-exec` launch: the one of the adapter, else the
+/// running executable.
+fn shim_exe(desktop: &desktop::Desktop) -> std::io::Result<std::path::PathBuf> {
+    desktop
+        .shim_exe()
+        .map_or_else(std::env::current_exe, |p| Ok(p.to_path_buf()))
+}
+
 /// `desktop.act` with `screen_capture`: `capture_id` is the `action_id` that
 /// `authority::admit` consumed. `coordinator` is the context of a coordinator
 /// capture (R13 P6); the action hash covers it.
@@ -60,7 +68,7 @@ pub(super) async fn capture(
         Ok(s) => s.clone(),
         Err(e) => return failed(e),
     };
-    let exe = match std::env::current_exe() {
+    let exe = match shim_exe(&desktop::service()) {
         Ok(exe) => exe,
         Err(e) => {
             tracing::warn!(kind = ?e.kind(), "cannot find the station executable");
@@ -170,5 +178,65 @@ pub(super) async fn status(
             Outcome::Err(WireError::new("internal", e.to_string()))
         }
         Err(_) => failed(Fail::new(desktop::code::FAILED, STATUS_TIMED_OUT)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
+    use fleetdeck_core::ChildEnv;
+
+    use super::*;
+    use crate::desktop::capture::{Launch, capture_png};
+    use crate::desktop::fake::{Grim, grim};
+
+    #[test]
+    fn the_shim_exe_of_the_adapter_is_the_exe_of_the_launch_else_the_running_one() {
+        let plain = desktop::Desktop::with_env(ChildEnv::empty());
+        assert_eq!(shim_exe(&plain).unwrap(), std::env::current_exe().unwrap());
+
+        // A script that records its argv, drops `--parent <pid>` and the `--`,
+        // and runs the rest, as `shim-exec` does.
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("shim.sh");
+        let log = dir.path().join("argv.log");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nfor a in \"$@\"; do echo \"$a\"; done > {}\n\
+                 [ \"$1\" = shim-exec ] && [ \"$2\" = --parent ] || exit 3\n\
+                 shift 3; [ \"$1\" = -- ] || exit 4; shift; exec \"$@\"\n",
+                log.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let set = desktop::Desktop::with_env(ChildEnv::empty()).with_shim_exe(script.clone());
+        let exe = shim_exe(&set).unwrap();
+        assert_eq!(exe, script);
+
+        let env = grim(dir.path(), &Grim::Bytes(b"png"));
+        let mut out = tempfile::tempfile().unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let got = capture_png(
+            &env,
+            &Launch::ShimExec { exe },
+            "DP-1",
+            &mut out,
+            1024,
+            deadline,
+            &|_| Ok(()),
+        );
+        assert_eq!(got.unwrap(), 3);
+        let argv = std::fs::read_to_string(&log).unwrap();
+        let lines: Vec<&str> = argv.lines().collect();
+        assert_eq!(&lines[..2], ["shim-exec", "--parent"]);
+        assert_eq!(lines[3], "--");
+        assert!(lines[4].ends_with("/bin/grim"), "{argv}");
+        assert_eq!(
+            &lines[5..],
+            ["-t", "png", "-s", "1", "-l", "6", "-o", "DP-1", "-"]
+        );
     }
 }
