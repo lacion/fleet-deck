@@ -456,7 +456,8 @@ export class FakeDeck {
         ...(reply.status === 204 ? {} : { body: JSON.stringify(reply.body) }),
       });
     });
-    await page.routeWebSocket('**/api/ws', (ws) => {
+    // The board adds `?features=` to the socket URL (R13 P5b §14); a glob must match the query too.
+    await page.routeWebSocket(/\/api\/ws(\?|$)/, (ws) => {
       this.sockets.push(ws);
       this.subscribed.set(ws, new Set());
       ws.onMessage((data) => {

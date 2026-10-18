@@ -32,7 +32,8 @@ export class Phone {
     // The help overlay opens once on the first live board; this person has seen it.
     await context.addInitScript(() => localStorage.setItem('fd-help-seen', '1'));
     const phone = new Phone(context, await context.newPage(), deck);
-    await context.routeWebSocket('**/api/ws', (ws) => {
+    // The board adds `?features=` to the socket URL (R13 P5b §14); a glob must match the query too.
+    await context.routeWebSocket(/\/api\/ws(\?|$)/, (ws) => {
       const server = ws.connectToServer();
       phone.sockets.add(ws);
       ws.onClose(() => {

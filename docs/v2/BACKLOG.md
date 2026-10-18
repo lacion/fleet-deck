@@ -56,6 +56,7 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 - **Status:** later. Needs a design first.
 - **Done (2026-10-16):** design `docs/v2/design/native-sessions.md` (revision 6); the station lists and previews the sessions of its provider homes with the trust checks; the board dialog "Browse sessions on this station" with "Continue it"; a verified entry sends an import pin, and the station fails a changed transcript closed (feature `import_pin.v1`). Adversary PRE-PR: PASS in round 2.
 - **Open:** an unpinned import keeps a best-effort Codex child-thread check (a timeout or a busy history worker lets it go on).
+- **Done (2026-10-16, `008339c3`):** the child-thread check fails closed when the history worker is busy or the check times out.
 
 ## B8. `!` shell commands in a session are sent as chat text (owner report, 2026-10-16)
 
@@ -65,6 +66,7 @@ Open items that are not designed or scheduled yet. Each item gets a design or a 
 - **Status:** design in progress (command execution: adversary DESIGN REVIEW before code).
 - **Done (2026-10-16):** DL-196, design `docs/v2/design/bang-commands.md` (revision 10). Claude: the station runs the command and gives the result to the model with the next prompt; Codex: native `thread/shellCommand`; the shell card, Stop, "Release the folder", the folder stays busy until the command settles; CLI `!` records show as shell items in the imported history. Adversary PRE-PR: PASS in round 3.
 - **Open:** (1) results that the 64 KiB budget of one prompt defers stay attachable on the station, but the board removes their chips, so they never reach the model; (2) an Interrupt after a Codex `thread/shellCommand` was sent but before its turn started only stores the cancel; the command runs to its end; (3) no recorded live Codex fixture of `!pwd` yet (the tests use the fake app-server).
+- **Done (2026-10-16):** items 1 and 2 in `008339c3` (every named shell result reaches the model; Stop before a Codex shell turn); item 3 in `9a04594d` (a live smoke test of a Codex `!` command, passed with Codex 0.162.1).
 
 ## B9. Verified launch directory for every start (hardening, from the B7 review, 2026-10-16)
 
