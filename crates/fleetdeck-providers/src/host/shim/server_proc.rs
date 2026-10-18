@@ -194,3 +194,121 @@ pub(super) fn group_members(leader: u32) -> Option<u32> {
 pub(super) fn reap_orphans() {
     while let Ok(Some(_)) = rustix::process::waitpid(None, rustix::process::WaitOptions::NOHANG) {}
 }
+
+/// How often the shim reaps the ended orphans while the provider runs.
+pub(super) const REAP_EVERY: Duration = Duration::from_secs(5);
+
+/// While the provider runs, reaps the ended orphans that came back to the
+/// subreaper shim, every `every`, on a blocking thread. It ends when
+/// `exited` is set (the exit path then reaps with [`reap_orphans`]). The
+/// provider (`provider`) is never reaped here: its status belongs to tokio.
+pub(super) async fn reap_while_running(
+    provider: u32,
+    every: Duration,
+    mut exited: watch::Receiver<bool>,
+) {
+    let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            _ = exited.wait_for(|e| *e) => return,
+            _ = tick.tick() => {}
+        }
+        if let Err(e) =
+            tokio::task::spawn_blocking(move || reap_orphans_except(Some(provider))).await
+        {
+            tracing::warn!(error = %e, "the periodic reaping did not run");
+        }
+    }
+}
+
+/// Reaps the ended children of the shim, except `keep` (the provider: tokio
+/// takes its status). It never calls `waitpid(None)`: only a child that
+/// `/proc` shows as a zombie is waited for, by its pid. A child that
+/// vanished meanwhile (`ECHILD`, no `/proc` entry) is fine. A no-op on
+/// platforms without `/proc`.
+#[cfg(target_os = "linux")]
+pub(super) fn reap_orphans_except(keep: Option<u32>) {
+    for pid in zombie_children().into_iter().filter(|p| Some(*p) != keep) {
+        let Some(target) = i32::try_from(pid)
+            .ok()
+            .and_then(rustix::process::Pid::from_raw)
+        else {
+            continue;
+        };
+        match rustix::process::waitpid(Some(target), rustix::process::WaitOptions::NOHANG) {
+            Ok(_) | Err(rustix::io::Errno::CHILD) => {}
+            Err(e) => tracing::warn!(pid, error = %e, "cannot reap an orphan"),
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(super) fn reap_orphans_except(_keep: Option<u32>) {}
+
+/// The children of this process that are zombies now.
+#[cfg(target_os = "linux")]
+fn zombie_children() -> Vec<u32> {
+    child_pids()
+        .into_iter()
+        .filter(|pid| matches!(stat_state_ppid(*pid), Some(('Z', _))))
+        .collect()
+}
+
+/// The children of this process: the `children` file of every thread, or,
+/// when no thread has one (a kernel without `CONFIG_PROC_CHILDREN`), the
+/// processes in `/proc` whose parent is this process.
+#[cfg(target_os = "linux")]
+fn child_pids() -> Vec<u32> {
+    let mut listed = false;
+    let mut pids = Vec::new();
+    if let Ok(tasks) = std::fs::read_dir("/proc/self/task") {
+        for task in tasks.flatten() {
+            // A thread that ended meanwhile has no file: skip it.
+            if let Ok(text) = std::fs::read_to_string(task.path().join("children")) {
+                listed = true;
+                pids.extend(
+                    text.split_whitespace()
+                        .filter_map(|p| p.parse::<u32>().ok()),
+                );
+            }
+        }
+    }
+    if listed {
+        return pids;
+    }
+    let me = std::process::id();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return pids;
+    };
+    for entry in entries.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|n| n.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if matches!(stat_state_ppid(pid), Some((_, ppid)) if ppid == me) {
+            pids.push(pid);
+        }
+    }
+    pids
+}
+
+/// The state (field 3) and the parent pid (field 4) of `/proc/<pid>/stat`.
+/// The command name (field 2) is in parentheses and may hold spaces, so the
+/// parse starts after the last `)`. `None` when the entry is gone.
+#[cfg(target_os = "linux")]
+fn stat_state_ppid(pid: u32) -> Option<(char, u32)> {
+    let text = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let rest = text.get(text.rfind(')')? + 1..)?;
+    let mut fields = rest.split_whitespace();
+    let state = fields.next()?.chars().next()?;
+    let ppid = fields.next()?.parse().ok()?;
+    Some((state, ppid))
+}
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "server_proc_tests.rs"]
+mod tests;

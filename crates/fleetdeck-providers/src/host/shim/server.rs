@@ -42,7 +42,9 @@ mod process;
 mod secrets;
 
 pub use process::{ExecOptions, exec_provider, exec_provider_with};
-use process::{bind, group_members, reap_orphans, signal_group, spawn_provider};
+use process::{
+    REAP_EVERY, bind, group_members, reap_orphans, reap_while_running, signal_group, spawn_provider,
+};
 
 /// The largest `output` frame payload.
 const OUTPUT_CHUNK: usize = 64 * 1024;
@@ -370,6 +372,13 @@ impl Shim {
         tokio::spawn(Arc::clone(&self).drain_stderr(stderr));
         tokio::spawn(Arc::clone(&self).write_stdin(stdin));
         tokio::spawn(Arc::clone(&self).accept(listener));
+        // Orphans that the provider's tools leave behind come back to this
+        // subreaper shim: reap them while the provider runs.
+        tokio::spawn(reap_while_running(
+            self.pid(),
+            REAP_EVERY,
+            self.exited.subscribe(),
+        ));
         let status = child.wait().await;
         self.exited.send_replace(true);
         self.on_exit(status, eof_rx).await;
