@@ -36,6 +36,7 @@ mod coordinator_query_reads;
 pub mod desktop_captures;
 pub mod display_directive_schema;
 pub mod display_directives;
+pub mod display_directives_coordinator;
 pub mod display_directives_station;
 #[cfg(test)]
 mod display_gen_tests;

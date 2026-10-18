@@ -16,17 +16,20 @@
 //!   live batch whose events are all dropped sends no frame.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use fleetdeck_proto::EventEnvelope;
 use fleetdeck_proto::board::{BoardServerMessage, DeckSession, SessionKey, StationView};
 
 use super::{Session, WsError};
+use crate::coordinator_desktop::effective_scope;
 use crate::http::display_view::{display_cards, display_stations, in_scope};
+use crate::link::DeckLink;
 use crate::local::station_view;
 use crate::store::activity::display_timeline::DisplayBatch;
 use crate::store::display_directives::EffectiveScope;
 use crate::store::displays::DisplayLogin;
-use crate::store::{DeckStore, LiveEvents, Principal};
+use crate::store::{LiveEvents, Principal};
 
 /// What a display view holds: the stations, the cards and the scope.
 type DisplayView = (Vec<StationView>, Vec<DeckSession>, Option<EffectiveScope>);
@@ -35,7 +38,8 @@ type DisplayView = (Vec<StationView>, Vec<DeckSession>, Option<EffectiveScope>);
 /// effective scope, and that scope. The data is read first and the scope
 /// last, right before the filter, so a scope that narrowed during the reads
 /// is applied. A display that no longer exists gets an empty view.
-pub(super) async fn view(store: &DeckStore, d: &DisplayLogin) -> Result<DisplayView, WsError> {
+pub(super) async fn view(link: &DeckLink, d: &DisplayLogin) -> Result<DisplayView, WsError> {
+    let store = &link.store;
     let stations: Vec<StationView> = store
         .stations()
         .await?
@@ -43,7 +47,7 @@ pub(super) async fn view(store: &DeckStore, d: &DisplayLogin) -> Result<DisplayV
         .map(|st| station_view(st, store))
         .collect();
     let sessions = store.sessions().await?;
-    let Some(scope) = store.display_scope(d.display_id.clone()).await? else {
+    let Some(scope) = effective_scope(link, &d.display_id).await? else {
         return Ok((Vec::new(), Vec::new(), None));
     };
     let cards = display_cards(&sessions, &scope);
@@ -55,11 +59,12 @@ pub(super) async fn view(store: &DeckStore, d: &DisplayLogin) -> Result<DisplayV
 /// session exists, its station is in the scope and its repository matches a
 /// repository filter.
 pub(super) async fn authorized(
-    store: &DeckStore,
+    link: &DeckLink,
     display_id: &str,
     k: &SessionKey,
 ) -> Result<bool, WsError> {
-    let Some(scope) = store.display_scope(display_id.to_owned()).await? else {
+    let store = &link.store;
+    let Some(scope) = effective_scope(link, display_id).await? else {
         return Ok(false);
     };
     if !scope.stations.contains(&k.station_id) {
@@ -92,7 +97,8 @@ impl Session {
         let Some(id) = self.display_id() else {
             return Ok(());
         };
-        if self.board.store.display_scope(id).await? != self.scope {
+        let link = Arc::clone(&self.board.link);
+        if effective_scope(&link, &id).await? != self.scope {
             self.delta(version).await?;
         }
         Ok(())
@@ -104,8 +110,8 @@ impl Session {
         let Some(id) = self.display_id() else {
             return Ok(());
         };
-        let store = self.board.store.clone();
-        if !authorized(&store, &id, k).await? {
+        let link = Arc::clone(&self.board.link);
+        if !authorized(&link, &id, k).await? {
             self.subs.remove(k);
             return Ok(());
         }

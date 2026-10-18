@@ -21,6 +21,7 @@ use super::Board;
 use super::account_routes::body_error;
 use super::guard::ApiError;
 use super::settings_routes::owner;
+use crate::coordinator_desktop::effective_directive;
 use crate::store::display_directives::{DirectiveError, DirectiveSender};
 use crate::store::{AuditResult, NewAudit, Principal};
 
@@ -162,9 +163,7 @@ async fn read(
             "only a wall display login does this",
         ));
     };
-    board
-        .store
-        .display_directive(login.display_id)
+    effective_directive(&board.link, &login.display_id)
         .await
         .map_err(ApiError::internal)?
         .map(Json)

@@ -47,7 +47,7 @@ impl From<rusqlite::Error> for DirectiveError {
 /// The stored `body` of a row (R2 Q1 B): the validated directive and the
 /// expanded session references.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct Stored {
+pub(in crate::store) struct Stored {
     pub directive: DirectiveBody,
     pub refs: Vec<SessionRef>,
 }
@@ -83,7 +83,7 @@ fn batch_id_ok(id: &str) -> bool {
 ///
 /// # Errors
 /// A fixed text for the first problem.
-pub(super) fn check_shape(body: &DirectiveBody) -> std::result::Result<(), &'static str> {
+pub(in crate::store) fn check_shape(body: &DirectiveBody) -> std::result::Result<(), &'static str> {
     if let Some(filter) = body.filter() {
         check_filter(filter)?;
     }
@@ -160,7 +160,7 @@ fn inside(ceiling: &BTreeSet<&StationId>, station: &StationId) -> bool {
 /// # Errors
 /// [`DirectiveError::OutsideCeiling`] for a station outside the ceiling;
 /// [`DirectiveError::Invalid`] for a reference that does not exist.
-pub(super) fn check_references(
+pub(in crate::store) fn check_references(
     conn: &Connection,
     ceiling: &[StationId],
     body: &DirectiveBody,
@@ -207,7 +207,7 @@ pub(super) fn check_references(
 }
 
 /// The live re-check of a stored directive: true when it still holds.
-pub(super) fn still_valid(
+pub(in crate::store) fn still_valid(
     conn: &Connection,
     ceiling: &[StationId],
     directive: &DirectiveBody,

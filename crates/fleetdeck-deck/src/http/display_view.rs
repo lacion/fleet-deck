@@ -17,6 +17,7 @@ use fleetdeck_proto::{SessionId, StationId};
 
 use super::Board;
 use super::guard::ApiError;
+use crate::coordinator_desktop::effective_scope;
 use crate::store::DisplayLogin;
 use crate::store::display_directives::EffectiveScope;
 
@@ -218,9 +219,7 @@ pub async fn scope_of(board: &Arc<Board>, d: &DisplayLogin) -> Result<EffectiveS
     {
         return Err(ended());
     }
-    board
-        .store
-        .display_scope(d.display_id.clone())
+    effective_scope(&board.link, &d.display_id)
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(ended)

@@ -12,6 +12,7 @@ use fleetdeck_proto::{IncarnationId, SessionSummary, StationId};
 use fleetdeck_testkit::Det;
 
 use super::{DirectiveError, DirectiveSender, EffectiveScope};
+use crate::store::display_directives_coordinator::CoordinatorSender;
 use crate::store::displays::{DisplayChange, NewDisplay};
 use crate::store::stations::NewStation;
 use crate::store::{DeckStore, call};
@@ -338,9 +339,12 @@ async fn a_coordinator_sender_is_not_granted_and_stores_nothing() {
     let out =
         r.s.display_directive_set(
             d.clone(),
-            DirectiveSender::Coordinator {
-                grant_id: "g1".to_owned(),
-            },
+            DirectiveSender::Coordinator(CoordinatorSender::new(
+                "g1".to_owned(),
+                1,
+                r.a.clone(),
+                "c1".into(),
+            )),
             DirectiveBody::mission(),
         )
         .await;

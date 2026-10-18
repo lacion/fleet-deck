@@ -23,7 +23,7 @@ use super::authorize::{Authorized, Tool, authorize, store_error, switches};
 use super::policy::{caller_policy, target_policy};
 use super::queries::status_of;
 use super::relay::{self, Ran};
-use super::{capture, capture_status};
+use super::{capture, capture_status, wall};
 use super::{reply_err, reply_ok};
 use crate::link::DeckLink;
 use crate::store::AuditResult;
@@ -62,19 +62,19 @@ fn handler_ms(tool: Tool) -> u64 {
     }
 }
 
-/// The tool and the target argument of a call that this task serves; `None`
-/// for the tools of tasks T3 and T5.
+/// The tool and the target argument of a call. Every tool of
+/// `coordinator.desktop_call` is served (`wall_show` by [`super::wall`]).
 fn shape(call: &DesktopCall) -> Option<(Tool, Option<&str>)> {
     match call {
         DesktopCall::Notify(a) => Some((Tool::Notify, a.station.as_deref())),
         DesktopCall::PreviewOpen(a) => Some((Tool::PreviewOpen, a.station.as_deref())),
         DesktopCall::WindowClose(a) => Some((Tool::WindowClose, a.station.as_deref())),
         DesktopCall::Screenshot(a) => Some((Tool::Screenshot, a.station.as_deref())),
-        DesktopCall::WallShow(_) => None,
+        DesktopCall::WallShow(a) => Some((Tool::WallShow, a.station.as_deref())),
     }
 }
 
-/// Whether this task serves the call (the others keep the stub).
+/// Whether the call has a handler.
 pub(super) fn served(call: &DesktopCall) -> bool {
     shape(call).is_some()
 }
@@ -158,7 +158,7 @@ fn build(
 /// The payload hash of §7.1: the lowercase hex SHA-256 of the compact JSON of
 /// the validated arguments without `request_id`, with `station` set to the
 /// target.
-fn payload_hash(mut args: Value, target: &StationId) -> String {
+pub(super) fn payload_hash(mut args: Value, target: &StationId) -> String {
     if let Some(object) = args.as_object_mut() {
         object.remove("request_id");
         object.insert("station".to_owned(), json!(target));
@@ -312,7 +312,7 @@ impl Call<'_> {
     }
 }
 
-/// One `notify`, `preview_open` or `window_close` call after step 1.
+/// One call after step 1 (`wall_show` goes on in [`super::wall`]).
 pub(super) async fn run(
     link: &DeckLink,
     station: &StationId,
@@ -333,6 +333,10 @@ pub(super) async fn run(
         Ok(auth) => auth,
         Err(refusal) => return reply_err(refusal, None),
     };
+    // A wall directive sends no `desktop.act`: it has its own path.
+    if let DesktopCall::WallShow(args) = &call {
+        return wall::run(link, &auth, &binding, args, deadline).await;
+    }
     let built = match build(&call, &auth.ctx().caller_label, &caller) {
         Ok(built) => built,
         Err(refusal) => {
