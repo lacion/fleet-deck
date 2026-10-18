@@ -17,8 +17,8 @@ use std::path::{Component, Path, PathBuf};
 
 use ring::rand::{SecureRandom, SystemRandom};
 use rustix::fs::{
-    AtFlags, FileType, Mode, OFlags, fchmod, fstat, fsync, mkdirat, open, openat, renameat, statat,
-    unlinkat,
+    AtFlags, FileType, Mode, OFlags, RenameFlags, fchmod, fstat, fsync, mkdirat, open, openat,
+    renameat, renameat_with, statat, unlinkat,
 };
 use rustix::io::Errno;
 use rustix::process::geteuid;
@@ -325,6 +325,65 @@ impl Home {
         match unlinkat(&dir, leaf, AtFlags::empty()) {
             Ok(()) => {}
             Err(Errno::NOENT) => return Ok(false),
+            Err(e) => return Err(e.into()),
+        }
+        fsync(&dir)?;
+        Ok(true)
+    }
+
+    /// Opens the lock file `rel` without following a link, and returns its
+    /// descriptor. With `create`, the missing directories (0755) and the
+    /// file (0600) are made. `Ok(None)` when the directory or the file is
+    /// missing and `create` is false.
+    ///
+    /// # Errors
+    /// [`FsError::Unsafe`] for a link, a file that is not regular or not
+    /// yours, and a link above it; `Io`.
+    pub fn open_lock(&self, rel: &Path, create: bool) -> Result<Option<OwnedFd>, FsError> {
+        let (parent, leaf) = Self::split(rel)?;
+        let Some(dir) = self.dir(parent, create)? else {
+            return Ok(None);
+        };
+        let mut flags = OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        if create {
+            flags |= OFlags::CREATE;
+        }
+        let fd = match openat(&dir, leaf, flags, mode_of(0o600)) {
+            Ok(fd) => fd,
+            Err(Errno::NOENT) => return Ok(None),
+            Err(e) => return Err(self.map_open(e, rel)),
+        };
+        let stat = fstat(&fd)?;
+        if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile
+            || stat.st_uid != geteuid().as_raw()
+        {
+            return Err(self.unsafe_at(rel));
+        }
+        Ok(Some(fd))
+    }
+
+    /// Renames the file `from` to `to` in the same directory, and never
+    /// replaces a file (`RENAME_NOREPLACE`). `Ok(false)` when `to` exists:
+    /// nothing is changed then.
+    ///
+    /// # Errors
+    /// [`FsError::Unsafe`] for a link above the files; `Io` (also a missing
+    /// `from`, and a file system without `RENAME_NOREPLACE`).
+    pub fn rename_new(&self, from: &Path, to: &Path) -> Result<bool, FsError> {
+        let (parent, from_leaf) = Self::split(from)?;
+        let (to_parent, to_leaf) = Self::split(to)?;
+        if parent != to_parent {
+            return Err(FsError::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "both names must be in the same directory",
+            )));
+        }
+        let dir = self
+            .dir(parent, false)?
+            .ok_or_else(|| self.unsafe_at(parent))?;
+        match renameat_with(&dir, from_leaf, &dir, to_leaf, RenameFlags::NOREPLACE) {
+            Ok(()) => {}
+            Err(Errno::EXIST) => return Ok(false),
             Err(e) => return Err(e.into()),
         }
         fsync(&dir)?;

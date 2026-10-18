@@ -186,14 +186,15 @@ fn every_looked_up_key_exists_and_every_key_is_used() {
 }
 
 #[test]
-fn the_process_commands_are_the_feeds_and_the_screensaver_job() {
+fn the_process_commands_are_the_feeds_and_there_is_no_screensaver_process() {
     assert_eq!(
         command_arrays(text("Service.qml")),
-        vec![
-            vec!["fleetdeck", "desktop", "feed", "--notify"],
-            vec!["fleetdeck", "desktop", "screensaver-run"],
-        ]
+        vec![vec!["fleetdeck", "desktop", "feed", "--notify"]]
     );
+    let service = text("Service.qml");
+    assert!(!service.contains("screensaver"), "the station runs it now");
+    assert_eq!(service.matches("Process {").count(), 1);
+    assert_eq!(service.matches("Timer {").count(), 1);
     assert_eq!(
         command_arrays(text("Panel.qml")),
         vec![vec!["fleetdeck", "desktop", "feed"]]

@@ -13,6 +13,7 @@ use fleetdeck_station::desktop::run::on_path;
 
 use super::assets::{Asset, Base, FILES, HYPR_PATH, MENU_PATH, menu_rows};
 use super::fsx::Home;
+use super::lock::{self, Take};
 use super::record::{self, FileEntry, Record, rel, sha256_hex};
 use super::{TOOL_LIMIT, hyprland, omarchy_env, open_home, set_summary, tool};
 
@@ -25,7 +26,9 @@ const SUMMARY_ON: &str = "fleetdeck settings set --station fleet_summary true";
 enum Plan {
     /// No file exists: write it.
     Create,
-    /// An identical file exists that the record does not name: adopt it.
+    /// A file exists with the bytes of this build's asset: adopt it. The
+    /// record gets the right hash (a file that the record does not name is
+    /// also recorded).
     Adopt,
     /// A recorded file that is as recorded: write the new content.
     Replace,
@@ -70,6 +73,7 @@ fn classify(home: &Home, record: &Record) -> anyhow::Result<Vec<Item>> {
             (Some(_), None) if asset.only_if_absent => Plan::SkipMenu,
             (Some(data), None) if data.bytes == asset.text.as_bytes() => Plan::Adopt,
             (Some(_), None) => Plan::Conflict,
+            (Some(data), Some(_)) if data.bytes == asset.text.as_bytes() => Plan::Adopt,
             (Some(data), Some(entry)) if sha256_hex(&data.bytes) == entry.sha256 => Plan::Replace,
             (Some(_), Some(_)) => Plan::Keep,
         };
@@ -143,12 +147,19 @@ fn publish(
                     println!("kept (changed): {}", item.abs.display());
                 }
             }
-            Plan::Adopt => record.upsert(FileEntry {
-                path: asset.path.to_owned(),
-                base: asset.base,
-                sha256: sha256_hex(asset.text.as_bytes()),
-                existed_before: true,
-            }),
+            Plan::Adopt => {
+                // A recorded file keeps its `existed_before`; only its hash
+                // is repaired. An unrecorded file counts as existing before.
+                let existed_before = record
+                    .entry(asset.base, asset.path)
+                    .is_none_or(|e| e.existed_before);
+                record.upsert(FileEntry {
+                    path: asset.path.to_owned(),
+                    base: asset.base,
+                    sha256: sha256_hex(asset.text.as_bytes()),
+                    existed_before,
+                });
+            }
             Plan::Keep => println!("kept (changed): {}", item.abs.display()),
             Plan::SkipMenu | Plan::Conflict => {}
         }
@@ -187,7 +198,18 @@ pub async fn run(dirs: &NodeDirs, yes: bool, screensaver: bool) -> anyhow::Resul
     let line = hyprland::line_for(&hypr_abs).ok_or_else(|| {
         anyhow!("the config path holds characters that Lua cannot take; change nothing.")
     })?;
+    let _guard = match lock::take(&home, lock::WAIT, true)? {
+        Take::Held(guard) => guard,
+        Take::Busy | Take::NoLockFile => {
+            eprintln!("{}", lock::BUSY);
+            return Ok(ExitCode::from(1));
+        }
+    };
     let mut record = record::load(&home)?.unwrap_or_default();
+    if record.v == 1 {
+        record.v = 2;
+        record.converted_at = Some(record::now_ms());
+    }
     let items = classify(&home, &record)?;
 
     // 3 (first part). A conflict refuses before the question and before any write.
@@ -279,7 +301,7 @@ pub async fn run(dirs: &NodeDirs, yes: bool, screensaver: bool) -> anyhow::Resul
         )),
     }
 
-    // 6. The screensaver switch (the job is task G).
+    // 6. The screensaver switch (the station runs the ticks).
     if screensaver {
         record.screensaver.enabled = true;
     }

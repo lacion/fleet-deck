@@ -26,7 +26,7 @@ pub enum DesktopCommand {
         #[arg(long, required = true)]
         last: bool,
     },
-    /// Write the fleet summary into the Omarchy screensaver text, once a minute.
+    /// Old entry of the screensaver job: print a line and exit 0.
     #[command(hide = true)]
     ScreensaverRun,
     /// The hotkeys of the wall display that is bound to this station.

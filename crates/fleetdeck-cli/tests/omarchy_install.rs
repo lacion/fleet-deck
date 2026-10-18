@@ -21,6 +21,18 @@ use rig::{HOOKS, MANIFEST, Rig, WAIT, err, mode, out, sleep_path};
 
 // ---- install ----
 
+/// A refused install changes nothing, except that it made the Omarchy lock
+/// file (the lock is taken before the file list is known).
+fn only_the_lock_file(rig: &Rig) {
+    let names: Vec<_> = std::fs::read_dir(rig.fd_dir())
+        .map(|d| d.map(|e| e.unwrap().file_name()).collect())
+        .unwrap_or_default();
+    assert!(
+        names.is_empty() || names == [std::ffi::OsString::from("omarchy.lock")],
+        "{names:?}"
+    );
+}
+
 #[test]
 fn omarchy_install_writes_the_files_the_record_and_runs_the_commands() {
     let mut rig = Rig::new();
@@ -41,7 +53,8 @@ fn omarchy_install_writes_the_files_the_record_and_runs_the_commands() {
     assert_eq!(mode(&rig.fd_dir().join("omarchy/hypr.lua")), 0o644);
     assert_eq!(mode(&rig.fd_dir().join("omarchy-install.json")), 0o600);
     let record = rig.record();
-    assert_eq!(record["v"], 1);
+    assert_eq!(record["v"], 2);
+    assert!(record["converted_at"].is_null(), "a fresh install");
     assert_eq!(record["files"].as_array().unwrap().len(), 12);
     assert_eq!(record["files"][0]["path"], MANIFEST);
     assert_eq!(record["files"][0]["base"], "omarchy");
@@ -149,7 +162,7 @@ fn omarchy_install_refuses_a_conflicting_file_before_any_write() {
         err(&o)
     );
     assert!(!rig.omarchy_dir().join(MANIFEST).exists());
-    assert!(!rig.fd_dir().exists());
+    only_the_lock_file(&rig);
     assert_eq!(
         std::fs::read_to_string(&hook).unwrap(),
         "#!/bin/bash\necho theirs\n"
@@ -295,7 +308,7 @@ fn omarchy_install_without_a_terminal_and_without_yes_fails() {
         out(&o)
     );
     assert!(!rig.omarchy_dir().exists());
-    assert!(!rig.fd_dir().exists());
+    only_the_lock_file(&rig);
 }
 
 #[test]
@@ -329,7 +342,7 @@ fn omarchy_install_refuses_a_symlink_parent_and_changes_nothing() {
     );
     assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
     assert!(!rig.omarchy_dir().join(HOOKS[0]).exists());
-    assert!(!rig.fd_dir().exists());
+    only_the_lock_file(&rig);
 }
 
 #[test]
@@ -416,7 +429,8 @@ fn omarchy_status_without_a_record_is_not_installed_with_exit_1() {
     assert_eq!(
         v,
         json!({"installed": false, "files": [], "plugin_enabled": false,
-               "summary": "unknown", "hyprland_line": "missing"})
+               "summary": "unknown", "hyprland_line": "missing",
+               "record_version": null, "outdated": false, "screensaver": null})
     );
 }
 

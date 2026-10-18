@@ -1,16 +1,14 @@
-//! Tests of the ambient screensaver (R13 P4 task G, `omarchy-p4.md` §3.8).
+//! Tests of the ambient screensaver (R13 P4 task G, `omarchy-p4.md` §3.8;
+//! the tick, `on`, `off` and `rebaseline` of `omarchy-admin.md` §3.4 to §3.7).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, reason = "test code")]
 
-use std::cell::Cell;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 
 use serde_json::{Value, json};
 
 use super::*;
-
-const SHORT: Duration = Duration::from_millis(5);
 
 fn summary_json(needs_you: u32, items: Value, usage: Value) -> Value {
     json!({
@@ -25,7 +23,7 @@ fn item(session: &str, callsign: Value, kind: &str, age_s: u32) -> Value {
            "callsign": callsign, "kind": kind, "age_s": age_s})
 }
 
-fn summary(needs_you: u32, items: Value, usage: Value) -> FleetSummary {
+pub(super) fn summary(needs_you: u32, items: Value, usage: Value) -> FleetSummary {
     serde_json::from_value(summary_json(needs_you, items, usage)).unwrap()
 }
 
@@ -33,7 +31,7 @@ fn usage(label: &str, pct: u32, resets: Value) -> Value {
     json!({"label": label, "pct": pct, "resets_in_s": resets})
 }
 
-fn fleet() -> Vec<String> {
+pub(super) fn fleet() -> Vec<String> {
     vec!["FLEET DECK".to_owned()]
 }
 
@@ -42,35 +40,35 @@ fn lines(text: &str) -> Vec<&str> {
     text.lines().collect()
 }
 
-fn home() -> (tempfile::TempDir, Home) {
+pub(super) fn home() -> (tempfile::TempDir, Home) {
     let dir = tempfile::Builder::new().prefix("ss").tempdir().unwrap();
     let home = Home::open(dir.path()).unwrap();
     (dir, home)
 }
 
-fn enable(home: &Home) -> Record {
+/// Makes the lock file (the install does it), and saves `record`.
+pub(super) fn install(home: &Home, record: &Record) {
+    drop(lock::take(home, Duration::ZERO, true).unwrap());
+    record::save(home, record).unwrap();
+}
+
+/// A version 2 record with the switch on.
+pub(super) fn enable(home: &Home) -> Record {
     let mut record = Record::new();
     record.screensaver.enabled = true;
-    record::save(home, &record).unwrap();
+    install(home, &record);
     record
 }
 
-/// Turns the switch of the record off; the other fields stay.
-fn disable(home: &Home) {
-    let mut record = record::load(home).unwrap().unwrap();
-    record.screensaver.enabled = false;
-    record::save(home, &record).unwrap();
-}
-
-fn screensaver_file(dir: &tempfile::TempDir) -> std::path::PathBuf {
+pub(super) fn screensaver_file(dir: &tempfile::TempDir) -> std::path::PathBuf {
     dir.path().join("omarchy").join(FILE)
 }
 
-fn backup_file(dir: &tempfile::TempDir) -> std::path::PathBuf {
+pub(super) fn backup_file(dir: &tempfile::TempDir) -> std::path::PathBuf {
     dir.path().join("omarchy").join(BACKUP)
 }
 
-fn put_original(dir: &tempfile::TempDir, text: &str) {
+pub(super) fn put_original(dir: &tempfile::TempDir, text: &str) {
     let path = screensaver_file(dir);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, text).unwrap();
@@ -86,6 +84,22 @@ fn fake_omarchy(dir: &Path, body: &str) {
     let path = dir.join("omarchy");
     std::fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// No wait: the lock is free or the command fails at once.
+pub(super) const W: Duration = Duration::ZERO;
+
+/// The exit code as text (`ExitCode` has no equality).
+pub(super) fn code(code: ExitCode) -> String {
+    format!("{code:?}")
+}
+
+pub(super) fn ok() -> String {
+    code(ExitCode::SUCCESS)
+}
+
+pub(super) fn fail() -> String {
+    code(ExitCode::from(1))
 }
 
 // ---- the render ----
@@ -272,67 +286,90 @@ fn screensaver_banner_falls_back_to_fleet_deck() {
     assert_eq!(rt.block_on(banner(&tool_env(empty.path()))), ["FLEET DECK"]);
 }
 
-// ---- the job ----
+// ---- the tick ----
 
-fn runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
+/// One tick with `summary` (and no banner but the fallback).
+pub(super) fn tick(home: &Home, summary: Option<&FleetSummary>) -> String {
+    code(tick_with(home, summary, &fleet()).unwrap())
 }
 
-fn no_tools() -> (tempfile::TempDir, ChildEnv) {
-    let bin = tempfile::Builder::new().prefix("bin").tempdir().unwrap();
-    let env = tool_env(bin.path());
-    (bin, env)
+pub(super) fn read(path: std::path::PathBuf) -> String {
+    std::fs::read_to_string(path).unwrap()
 }
 
 #[test]
-fn screensaver_job_exits_at_once_without_a_record_or_when_disabled() {
-    let (_dir, home) = home();
-    let (_bin, env) = no_tools();
-    let calls = Cell::new(0);
-    let fetch = || {
-        calls.set(calls.get() + 1);
-        std::future::ready(None)
-    };
-    runtime().block_on(job(&home, &env, SHORT, fetch)).unwrap();
-    let mut record = Record::new();
-    record::save(&home, &record).unwrap();
-    runtime().block_on(job(&home, &env, SHORT, fetch)).unwrap();
-    record.screensaver.enabled = false;
-    record::save(&home, &record).unwrap();
-    runtime().block_on(job(&home, &env, SHORT, fetch)).unwrap();
-    assert_eq!(calls.get(), 0);
-}
-
-#[test]
-fn screensaver_job_first_write_makes_the_backup_and_records_the_hashes() {
+fn screensaver_tick_does_nothing_without_a_lock_file_a_record_or_when_off() {
     let (dir, home) = home();
-    let (_bin, env) = no_tools();
+    // No lock file at all.
+    assert_eq!(tick(&home, None), ok());
+    assert!(!screensaver_file(&dir).exists());
+    // A lock file, no record.
+    drop(lock::take(&home, Duration::ZERO, true).unwrap());
+    assert_eq!(tick(&home, None), ok());
+    assert!(!screensaver_file(&dir).exists());
+    // A record with the switch off.
+    let record = Record::new();
+    install(&home, &record);
+    assert_eq!(tick(&home, None), ok());
+    assert!(!screensaver_file(&dir).exists());
+    assert_eq!(record::load(&home).unwrap().unwrap(), record);
+}
+
+#[test]
+fn screensaver_tick_writes_only_with_version_2_and_the_switch_on() {
+    let (dir, home) = home();
+    let mut record = Record::new();
+    record.v = 1;
+    record.screensaver.enabled = true;
+    install(&home, &record);
+    assert_eq!(tick(&home, None), ok());
+    assert!(!screensaver_file(&dir).exists(), "version 1 writes nothing");
+    assert_eq!(record::load(&home).unwrap().unwrap(), record);
+    record.v = 2;
+    record::save(&home, &record).unwrap();
+    assert_eq!(tick(&home, None), ok());
+    assert_eq!(read(screensaver_file(&dir)), "Fleet Deck: no data\n");
+}
+
+#[test]
+fn screensaver_tick_with_an_invalid_record_writes_nothing_and_exits_0() {
+    let (dir, home) = home();
+    enable(&home);
+    std::fs::write(dir.path().join(record::RECORD_PATH), "{ not json").unwrap();
+    assert_eq!(tick(&home, None), ok());
+    assert!(!screensaver_file(&dir).exists());
+}
+
+#[test]
+fn screensaver_tick_with_the_lock_held_writes_nothing() {
+    let (dir, home) = home();
+    let before = enable(&home);
+    let guard = lock::take(&home, Duration::ZERO, false).unwrap();
+    assert!(matches!(guard, Take::Held(_)));
+    assert_eq!(tick(&home, None), ok());
+    assert!(!screensaver_file(&dir).exists());
+    assert_eq!(record::load(&home).unwrap().unwrap(), before);
+    drop(guard);
+    assert_eq!(tick(&home, None), ok());
+    assert!(screensaver_file(&dir).exists());
+}
+
+#[test]
+fn screensaver_tick_first_write_makes_the_backup_and_records_the_hashes() {
+    let (dir, home) = home();
     put_original(&dir, "my own screensaver\n");
     enable(&home);
     let s = summary(1, json!([]), Value::Null);
-    let calls = Cell::new(0);
-    let fetch = || {
-        calls.set(calls.get() + 1);
-        if calls.get() == 2 {
-            disable(&home);
-        }
-        std::future::ready(Some(s.clone()))
-    };
-    runtime().block_on(job(&home, &env, SHORT, fetch)).unwrap();
-    assert_eq!(
-        std::fs::read_to_string(backup_file(&dir)).unwrap(),
-        "my own screensaver\n"
-    );
-    let written = std::fs::read_to_string(screensaver_file(&dir)).unwrap();
+    assert_eq!(tick(&home, Some(&s)), ok());
+    assert_eq!(read(backup_file(&dir)), "my own screensaver\n");
+    let written = read(screensaver_file(&dir));
     assert!(written.starts_with("FLEET DECK\n"), "{written}");
     let mode = |p: std::path::PathBuf| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode(backup_file(&dir)), 0o644);
     assert_eq!(mode(screensaver_file(&dir)), 0o644);
     let record = record::load(&home).unwrap().unwrap();
     assert!(record.screensaver.had_original);
+    assert!(!record.screensaver.first_write_refused);
     assert_eq!(
         record.screensaver.backup_sha256.as_deref(),
         Some(sha256_hex(b"my own screensaver\n").as_str())
@@ -344,24 +381,11 @@ fn screensaver_job_first_write_makes_the_backup_and_records_the_hashes() {
 }
 
 #[test]
-fn screensaver_job_without_an_original_records_no_backup() {
+fn screensaver_tick_without_an_original_records_no_backup() {
     let (dir, home) = home();
-    let (_bin, env) = no_tools();
     enable(&home);
-    let calls = Cell::new(0);
-    let fetch = || {
-        calls.set(calls.get() + 1);
-        if calls.get() == 1 {
-            return std::future::ready(None);
-        }
-        disable(&home);
-        std::future::ready(None)
-    };
-    runtime().block_on(job(&home, &env, SHORT, fetch)).unwrap();
-    assert_eq!(
-        std::fs::read_to_string(screensaver_file(&dir)).unwrap(),
-        "Fleet Deck: no data\n"
-    );
+    assert_eq!(tick(&home, None), ok());
+    assert_eq!(read(screensaver_file(&dir)), "Fleet Deck: no data\n");
     assert!(!backup_file(&dir).exists());
     let record = record::load(&home).unwrap().unwrap();
     assert!(!record.screensaver.had_original);
@@ -369,73 +393,53 @@ fn screensaver_job_without_an_original_records_no_backup() {
     assert!(record.screensaver.last_written_sha256.is_some());
 }
 
-/// Runs the job until it ends by itself or the second fetch; returns the
-/// number of fetches.
-fn run_job_two_cycles(home: &Home, env: &ChildEnv) -> usize {
-    let calls = Cell::new(0);
-    let fetch = || {
-        calls.set(calls.get() + 1);
-        if calls.get() == 2 {
-            disable(home);
-        }
-        std::future::ready(None)
-    };
-    runtime().block_on(job(home, env, SHORT, fetch)).unwrap();
-    calls.get()
-}
-
 #[test]
-fn screensaver_job_an_old_backup_that_differs_stops_the_job_and_changes_nothing() {
+fn screensaver_tick_an_old_backup_that_differs_is_refused_and_recorded() {
     let (dir, home) = home();
-    let (_bin, env) = no_tools();
     put_original(&dir, "newer original\n");
     std::fs::write(backup_file(&dir), "older backup\n").unwrap();
-    let before = enable(&home);
-    // The job ends at the first cycle; the switch is not turned off here.
-    assert_eq!(run_job_two_cycles(&home, &env), 1);
-    assert_eq!(
-        std::fs::read_to_string(screensaver_file(&dir)).unwrap(),
-        "newer original\n"
-    );
-    assert_eq!(
-        std::fs::read_to_string(backup_file(&dir)).unwrap(),
-        "older backup\n"
-    );
-    assert_eq!(record::load(&home).unwrap().unwrap(), before);
+    enable(&home);
+    assert_eq!(tick(&home, None), ok(), "a refusal still exits 0");
+    assert_eq!(read(screensaver_file(&dir)), "newer original\n");
+    assert_eq!(read(backup_file(&dir)), "older backup\n");
+    let record = record::load(&home).unwrap().unwrap();
+    assert!(record.screensaver.first_write_refused);
+    assert!(record.screensaver.enabled, "the switch stays on");
+    assert!(record.screensaver.last_written_sha256.is_none());
+    assert!(!record.screensaver.had_original);
 }
 
 #[test]
-fn screensaver_job_an_old_backup_without_a_current_file_writes_nothing() {
+fn screensaver_tick_an_old_backup_without_a_current_file_writes_nothing() {
     let (dir, home) = home();
-    let (_bin, env) = no_tools();
     std::fs::create_dir_all(backup_file(&dir).parent().unwrap()).unwrap();
     std::fs::write(backup_file(&dir), "older backup\n").unwrap();
-    let before = enable(&home);
-    assert_eq!(run_job_two_cycles(&home, &env), 1);
+    enable(&home);
+    assert_eq!(tick(&home, None), ok());
     assert!(!screensaver_file(&dir).exists());
-    assert_eq!(
-        std::fs::read_to_string(backup_file(&dir)).unwrap(),
-        "older backup\n"
+    assert_eq!(read(backup_file(&dir)), "older backup\n");
+    assert!(
+        record::load(&home)
+            .unwrap()
+            .unwrap()
+            .screensaver
+            .first_write_refused
     );
-    assert_eq!(record::load(&home).unwrap().unwrap(), before);
 }
 
 #[test]
-fn screensaver_job_an_old_backup_that_is_identical_to_the_file_goes_on() {
+fn screensaver_tick_an_old_backup_that_is_identical_to_the_file_goes_on() {
     let (dir, home) = home();
-    let (_bin, env) = no_tools();
     put_original(&dir, "same\n");
     std::fs::write(backup_file(&dir), "same\n").unwrap();
     enable(&home);
-    assert_eq!(run_job_two_cycles(&home, &env), 2);
-    assert_eq!(
-        std::fs::read_to_string(backup_file(&dir)).unwrap(),
-        "same\n"
-    );
-    let written = std::fs::read_to_string(screensaver_file(&dir)).unwrap();
+    assert_eq!(tick(&home, None), ok());
+    assert_eq!(read(backup_file(&dir)), "same\n");
+    let written = read(screensaver_file(&dir));
     assert_eq!(written, "Fleet Deck: no data\n");
     let record = record::load(&home).unwrap().unwrap();
     assert!(record.screensaver.had_original);
+    assert!(!record.screensaver.first_write_refused);
     assert_eq!(
         record.screensaver.backup_sha256.as_deref(),
         Some(sha256_hex(b"same\n").as_str())
@@ -447,35 +451,41 @@ fn screensaver_job_an_old_backup_that_is_identical_to_the_file_goes_on() {
 }
 
 #[test]
-fn screensaver_job_writes_only_when_the_text_changed() {
+fn screensaver_tick_a_later_first_write_clears_the_refusal() {
     let (dir, home) = home();
-    let (_bin, env) = no_tools();
+    put_original(&dir, "current\n");
+    std::fs::write(backup_file(&dir), "older\n").unwrap();
+    enable(&home);
+    assert_eq!(tick(&home, None), ok());
+    assert!(
+        record::load(&home)
+            .unwrap()
+            .unwrap()
+            .screensaver
+            .first_write_refused
+    );
+    // The user makes the file identical to the kept backup.
+    std::fs::write(screensaver_file(&dir), "older\n").unwrap();
+    assert_eq!(tick(&home, None), ok());
+    let record = record::load(&home).unwrap().unwrap();
+    assert!(!record.screensaver.first_write_refused);
+    assert!(record.screensaver.last_written_sha256.is_some());
+}
+
+#[test]
+fn screensaver_tick_writes_only_when_the_text_changed() {
+    let (dir, home) = home();
     enable(&home);
     let a = summary(1, json!([]), Value::Null);
     let b = summary(2, json!([]), Value::Null);
-    let calls = Cell::new(0);
-    let fetch = || {
-        let n = calls.get() + 1;
-        calls.set(n);
-        let path = screensaver_file(&dir);
-        match n {
-            // The same summary again: the marker must stay.
-            2 => std::fs::write(&path, "MARK\n").unwrap(),
-            // A changed summary: the file is written again.
-            4 => {
-                assert_eq!(std::fs::read_to_string(&path).unwrap(), "MARK\n");
-            }
-            5 => disable(&home),
-            _ => {}
-        }
-        std::future::ready(Some(match n {
-            1..=3 => a.clone(),
-            _ => b.clone(),
-        }))
-    };
-    runtime().block_on(job(&home, &env, SHORT, fetch)).unwrap();
-    assert_eq!(calls.get(), 5);
-    let text = std::fs::read_to_string(screensaver_file(&dir)).unwrap();
+    assert_eq!(tick(&home, Some(&a)), ok());
+    std::fs::write(screensaver_file(&dir), "MARK\n").unwrap();
+    // The same summary again: the marker must stay.
+    assert_eq!(tick(&home, Some(&a)), ok());
+    assert_eq!(read(screensaver_file(&dir)), "MARK\n");
+    // A changed summary: the file is written again.
+    assert_eq!(tick(&home, Some(&b)), ok());
+    let text = read(screensaver_file(&dir));
     assert_ne!(text, "MARK\n");
     assert_eq!(
         lines(&text)[2..7],
@@ -483,96 +493,25 @@ fn screensaver_job_writes_only_when_the_text_changed() {
     );
 }
 
-// ---- the restore ----
-
-fn written_record(
-    home: &Home,
-    dir: &tempfile::TempDir,
-    original: Option<&str>,
-    text: &str,
-) -> Record {
-    let mut record = enable(home);
-    let file = screensaver_file(dir);
-    if let Some(original) = original {
-        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        std::fs::write(backup_file(dir), original).unwrap();
-        record.screensaver.had_original = true;
-        record.screensaver.backup_sha256 = Some(sha256_hex(original.as_bytes()));
+#[test]
+fn screensaver_tick_never_deletes_the_backup() {
+    let (dir, home) = home();
+    put_original(&dir, "mine\n");
+    enable(&home);
+    let a = summary(1, json!([]), Value::Null);
+    let b = summary(2, json!([]), Value::Null);
+    for s in [None, Some(&a), Some(&b)] {
+        assert_eq!(tick(&home, s), ok());
+        assert_eq!(read(backup_file(&dir)), "mine\n");
     }
-    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-    std::fs::write(&file, text).unwrap();
-    record.screensaver.last_written_sha256 = Some(sha256_hex(text.as_bytes()));
-    record
 }
 
-#[test]
-fn screensaver_restore_with_an_original_puts_the_backup_back() {
-    let (dir, home) = home();
-    let mut record = written_record(&home, &dir, Some("mine\n"), "ours\n");
-    restore(&home, &mut record);
-    assert_eq!(
-        std::fs::read_to_string(screensaver_file(&dir)).unwrap(),
-        "mine\n"
-    );
-    assert!(!backup_file(&dir).exists());
-    assert_eq!(record.screensaver, Screensaver::default());
-}
-
-#[test]
-fn screensaver_restore_without_an_original_removes_the_written_file() {
-    let (dir, home) = home();
-    let mut record = written_record(&home, &dir, None, "ours\n");
-    restore(&home, &mut record);
-    assert!(!screensaver_file(&dir).exists());
-    assert_eq!(record.screensaver, Screensaver::default());
-}
-
-#[test]
-fn screensaver_restore_keeps_a_file_that_the_user_changed() {
-    let (dir, home) = home();
-    let mut record = written_record(&home, &dir, Some("mine\n"), "ours\n");
-    std::fs::write(screensaver_file(&dir), "edited by the user\n").unwrap();
-    restore(&home, &mut record);
-    assert_eq!(
-        std::fs::read_to_string(screensaver_file(&dir)).unwrap(),
-        "edited by the user\n"
-    );
-    assert_eq!(
-        std::fs::read_to_string(backup_file(&dir)).unwrap(),
-        "mine\n"
-    );
-    assert_eq!(
-        record.screensaver,
-        Screensaver::default(),
-        "reset after a kept file"
-    );
-}
-
-#[test]
-fn screensaver_restore_does_nothing_when_the_screensaver_was_not_on() {
-    let (dir, home) = home();
-    let mut record = written_record(&home, &dir, Some("mine\n"), "ours\n");
-    record.screensaver.enabled = false;
-    let before = record.clone();
-    restore(&home, &mut record);
-    assert_eq!(
-        std::fs::read_to_string(screensaver_file(&dir)).unwrap(),
-        "ours\n"
-    );
-    assert_eq!(record, before);
-}
-
-#[test]
-fn screensaver_restore_refuses_to_follow_a_link() {
-    let (dir, home) = home();
-    let mut record = written_record(&home, &dir, Some("mine\n"), "ours\n");
-    let outside = tempfile::Builder::new().prefix("out").tempdir().unwrap();
-    std::fs::write(outside.path().join("victim"), "keep").unwrap();
-    std::fs::remove_file(screensaver_file(&dir)).unwrap();
-    std::os::unix::fs::symlink(outside.path().join("victim"), screensaver_file(&dir)).unwrap();
-    restore(&home, &mut record);
-    assert_eq!(
-        std::fs::read_to_string(outside.path().join("victim")).unwrap(),
-        "keep"
-    );
+/// An installed record with the screensaver written once over `original`.
+pub(super) fn written(home: &Home, dir: &tempfile::TempDir, original: Option<&str>) -> Record {
+    if let Some(original) = original {
+        put_original(dir, original);
+    }
+    enable(home);
+    assert_eq!(tick(home, None), ok());
+    record::load(home).unwrap().unwrap()
 }
