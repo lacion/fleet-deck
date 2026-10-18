@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use fleetdeck_link::control::Control;
 use fleetdeck_proto::fleet_summary::FleetSummary;
+use fleetdeck_proto::palette::StationPalette;
 use tokio::sync::watch;
 
 /// The stored summary and the counters, under one lock.
@@ -53,6 +54,9 @@ pub struct SummaryCell {
     /// `display.directive` over it.
     deck: Mutex<Option<(u64, Control)>>,
     next_token: AtomicU64,
+    /// The Omarchy theme palette of this machine (R13 P4 task F1): in
+    /// memory only, never written to disk. The deck gets it at each link up.
+    palette: Mutex<Option<StationPalette>>,
 }
 
 impl Default for SummaryCell {
@@ -69,7 +73,22 @@ impl SummaryCell {
             wake: watch::channel(0).0,
             deck: Mutex::default(),
             next_token: AtomicU64::new(0),
+            palette: Mutex::default(),
         }
+    }
+
+    /// Keeps `palette` in memory; a later one replaces it.
+    pub fn set_palette(&self, palette: StationPalette) {
+        *self.palette.lock().unwrap_or_else(PoisonError::into_inner) = Some(palette);
+    }
+
+    /// The palette that the last `palette_set` op stored, if any.
+    #[must_use]
+    pub fn palette(&self) -> Option<StationPalette> {
+        self.palette
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Stores the control of a deck link with `desktop_shell.v1` and returns
@@ -196,6 +215,18 @@ mod tests {
             usage: None,
             stations: Vec::new(),
         }
+    }
+
+    #[test]
+    fn the_palette_is_kept_in_memory_and_a_later_one_replaces_it() {
+        let cell = SummaryCell::new();
+        assert_eq!(cell.palette(), None);
+        let a = crate::local_palette::tests::sample("#000000");
+        let b = crate::local_palette::tests::sample("#ffffff");
+        cell.set_palette(a.clone());
+        assert_eq!(cell.palette(), Some(a));
+        cell.set_palette(b.clone());
+        assert_eq!(cell.palette(), Some(b));
     }
 
     #[test]

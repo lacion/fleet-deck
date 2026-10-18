@@ -112,6 +112,12 @@ pub enum LocalRequest {
     /// `display.directive` with this intent (`next_needs_you` or
     /// `next_mode`) for each wall display of this station.
     WallDirective { intent: String },
+    /// `fleetdeck omarchy theme-sync` (R13 P4 task F1): keeps the Omarchy
+    /// theme palette in memory and sends it to the deck as
+    /// `station.palette`.
+    PaletteSet {
+        palette: fleetdeck_proto::palette::StationPalette,
+    },
 }
 
 pub use fleetdeck_core::localsock::InvitationText;
@@ -202,6 +208,11 @@ pub enum LocalResponse {
     /// wall display of this station; empty when the station has no wall.
     WallDirective {
         results: Vec<crate::local_wall::WallResult>,
+    },
+    /// The answer to [`LocalRequest::PaletteSet`]: the station keeps the
+    /// palette; `sent` is true when the deck answered ok.
+    PaletteStored {
+        sent: bool,
     },
     /// A provisioning op that failed, with its stable code (`unavailable`,
     /// `binary_unreadable`).
@@ -530,6 +541,9 @@ async fn handle(
         }
         LocalRequest::WallDirective { intent } => {
             return crate::local_wall::wall_directive(manager, node, intent).await;
+        }
+        LocalRequest::PaletteSet { palette } => {
+            return crate::local_palette::palette_set(node, palette).await;
         }
         LocalRequest::Drain { timeout_ms } => {
             return match manager

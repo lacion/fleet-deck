@@ -87,6 +87,7 @@ pub mod session_moves_steps;
 pub mod shares;
 pub mod slug_reservations;
 pub mod station_machines;
+pub mod station_palettes;
 pub mod stations;
 pub mod wake_seen;
 

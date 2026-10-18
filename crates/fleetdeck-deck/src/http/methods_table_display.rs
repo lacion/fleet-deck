@@ -45,6 +45,21 @@ pub(super) const API_DISPLAY: &[ApiMethod] = &[
     )
     .display(),
     m(
+        "displays.self_palette",
+        Method::GET,
+        "/api/displays/self/palette",
+        Some(Scope::Read),
+        false,
+    )
+    .display(),
+    m(
+        "stations.palette",
+        Method::GET,
+        "/api/stations/{station}/palette",
+        Some(Scope::Read),
+        false,
+    ),
+    m(
         "desktop.show",
         Method::GET,
         "/api/stations/{station}/desktop",

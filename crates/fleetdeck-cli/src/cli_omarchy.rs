@@ -25,4 +25,6 @@ pub enum OmarchyCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Send the Omarchy theme palette of this machine to the deck.
+    ThemeSync,
 }

@@ -260,6 +260,7 @@ impl DeckStore {
             if let Some(rec) = &found {
                 super::fleet::block_unlisted_tasks(&tx, &rec.station_id, &BTreeSet::new(), now)?;
                 super::review::delete_station(&tx, &rec.station_id)?;
+                super::station_palettes::delete_station(&tx, &rec.station_id)?;
                 tx.execute(
                     "DELETE FROM stations WHERE station_id = ?1",
                     [rec.station_id.as_str()],
