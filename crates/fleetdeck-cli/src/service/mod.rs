@@ -8,6 +8,7 @@
 //! or PowerShell.
 
 mod commands;
+pub mod inspect;
 mod launchd;
 mod path;
 mod program;

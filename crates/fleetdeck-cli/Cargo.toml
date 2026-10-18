@@ -26,6 +26,8 @@ ring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+# The explicit `name` of station.toml and its first write (P8 T3b).
+toml.workspace = true
 tracing.workspace = true
 
 # Landlock confinement of worktree and clone provisioning (B9, DL-200); Linux only.
@@ -42,8 +44,6 @@ rustls.workspace = true
 rusqlite.workspace = true
 rusqlite_migration.workspace = true
 tempfile.workspace = true
-# The packaging checks parse dist-workspace.toml and Cargo.toml (7-5).
-toml.workspace = true
 
 [lints]
 workspace = true

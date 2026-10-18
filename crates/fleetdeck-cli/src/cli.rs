@@ -125,6 +125,17 @@ pub enum Command {
         #[arg(long)]
         socket: PathBuf,
     },
+    /// The first-login bootstrap of a provisioned station (P8): the hook of
+    /// the package runs it; it is not a user command.
+    #[command(hide = true)]
+    ProvisionBootstrap {
+        /// The absolute path of the provisioning file.
+        #[arg(long)]
+        file: PathBuf,
+        /// Clear a retained terminal error first.
+        #[arg(long)]
+        retry: bool,
+    },
 }
 
 /// `fleetdeck service` (design service.md §3).

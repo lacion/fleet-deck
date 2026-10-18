@@ -66,7 +66,13 @@ pub fn check_new_private(path: &Path) -> Result<(), PrivateWriteError> {
 /// [`check_new_private`] that checks only the directories from `root` down
 /// (a test gives its own private root).
 fn check_new_below(root: &Path, path: &Path) -> Result<(), PrivateWriteError> {
-    check_parent_below(root, path)?;
+    check_new_rule(root, path, false)
+}
+
+/// [`check_new_below`] with the parent rule: `shared` allows a parent that
+/// others can read (mode 0755), else the parent must be 0700.
+fn check_new_rule(root: &Path, path: &Path, shared: bool) -> Result<(), PrivateWriteError> {
+    check_parent_rule(root, path, shared)?;
     match fs::symlink_metadata(path) {
         Ok(_) => Err(PrivateWriteError::Exists),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -77,6 +83,11 @@ fn check_new_below(root: &Path, path: &Path) -> Result<(), PrivateWriteError> {
 /// Rules 1 to 3 of [`check_new_private`]: the path and its directories, from
 /// `root` down. It does not look at `path` itself.
 fn check_parent_below(root: &Path, path: &Path) -> Result<(), PrivateWriteError> {
+    check_parent_rule(root, path, false)
+}
+
+/// [`check_parent_below`] with the parent rule of [`check_new_rule`].
+fn check_parent_rule(root: &Path, path: &Path, shared: bool) -> Result<(), PrivateWriteError> {
     let parent = parent_of(path).ok_or(PrivateWriteError::Unsafe)?;
     if !parent.starts_with(root) {
         return Err(PrivateWriteError::Unsafe);
@@ -87,7 +98,9 @@ fn check_parent_below(root: &Path, path: &Path) -> Result<(), PrivateWriteError>
         if !meta.is_dir() {
             return Err(PrivateWriteError::Unsafe);
         }
-        let ok = if dir == parent {
+        let ok = if dir == parent && shared {
+            meta.uid() == euid && meta.mode() & 0o022 == 0
+        } else if dir == parent {
             meta.uid() == euid && meta.mode() & 0o777 == 0o700
         } else {
             (meta.uid() == 0 || meta.uid() == euid) && meta.mode() & 0o022 == 0
@@ -139,7 +152,47 @@ fn write_new_below(
     bytes: &[u8],
     temp_prefix: &str,
 ) -> Result<(), PrivateWriteError> {
-    check_new_below(root, path)?;
+    write_new_rule(root, path, bytes, temp_prefix, false)
+}
+
+/// Creates the file `path` with mode 0600 and the content `bytes`, like
+/// [`write_new_private`], in a parent that other users can read: the parent
+/// is owned by the effective user and has no group or other write bit (mode
+/// 0755 passes). The ancestors, the temporary leaf, the no-replace publish
+/// and the syncs are the same.
+///
+/// # Errors
+/// As [`write_new_private`], with the parent rule above.
+pub fn write_new_shared_parent(
+    path: &Path,
+    bytes: &[u8],
+    temp_prefix: &str,
+) -> Result<(), PrivateWriteError> {
+    write_new_shared_below(Path::new("/"), path, bytes, temp_prefix)
+}
+
+/// [`write_new_shared_parent`] that checks only the directories from `root`
+/// down (a test gives its own root).
+///
+/// # Errors
+/// As [`write_new_shared_parent`].
+pub fn write_new_shared_below(
+    root: &Path,
+    path: &Path,
+    bytes: &[u8],
+    temp_prefix: &str,
+) -> Result<(), PrivateWriteError> {
+    write_new_rule(root, path, bytes, temp_prefix, true)
+}
+
+fn write_new_rule(
+    root: &Path,
+    path: &Path,
+    bytes: &[u8],
+    temp_prefix: &str,
+    shared: bool,
+) -> Result<(), PrivateWriteError> {
+    check_new_rule(root, path, shared)?;
     let (Some(parent), Some(leaf)) = (path.parent(), path.file_name()) else {
         return Err(PrivateWriteError::Unsafe);
     };
@@ -373,6 +426,10 @@ pub fn read_private(path: &Path, max: u64) -> Result<Vec<u8>, PrivateReadError> 
     }
     Ok(bytes)
 }
+
+#[cfg(test)]
+#[path = "private_file_shared_tests.rs"]
+mod shared_tests;
 
 #[cfg(test)]
 mod tests {

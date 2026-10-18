@@ -4,6 +4,7 @@
 //! wires the hidden command.
 
 pub mod effects;
+pub mod real;
 pub mod release;
 pub mod retry;
 pub mod run;
