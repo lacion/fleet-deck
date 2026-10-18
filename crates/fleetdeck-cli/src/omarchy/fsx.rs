@@ -274,6 +274,44 @@ impl Home {
         Ok(())
     }
 
+    /// Creates `rel` with `bytes` and the permission bits `mode`, only when
+    /// it does not exist (`O_CREAT | O_EXCL | O_NOFOLLOW`), and makes the
+    /// missing directories. `Ok(false)` when the name is taken (also by a
+    /// link): nothing is changed then.
+    ///
+    /// # Errors
+    /// [`FsError::Unsafe`] for a link or a foreign owner above the file;
+    /// `Io`. A failed write removes the file that this call created.
+    pub fn create_new(&self, rel: &Path, bytes: &[u8], mode: u32) -> Result<bool, FsError> {
+        let (parent, leaf) = Self::split(rel)?;
+        let dir = self
+            .dir(parent, true)?
+            .ok_or_else(|| self.unsafe_at(parent))?;
+        let fd = match openat(
+            &dir,
+            leaf,
+            OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            mode_of(mode),
+        ) {
+            Ok(fd) => fd,
+            Err(Errno::EXIST) => return Ok(false),
+            Err(e) => return Err(e.into()),
+        };
+        let written: Result<(), FsError> = (|| {
+            fchmod(&fd, mode_of(mode))?;
+            let mut file = File::from(fd);
+            file.write_all(bytes)?;
+            file.sync_all()?;
+            Ok(())
+        })();
+        if let Err(e) = written {
+            let _ = unlinkat(&dir, leaf, AtFlags::empty());
+            return Err(e);
+        }
+        fsync(&dir)?;
+        Ok(true)
+    }
+
     /// Removes the file `rel`. `Ok(false)` when it does not exist. A link is
     /// removed as a link (never followed).
     ///

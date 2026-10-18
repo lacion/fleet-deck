@@ -8,7 +8,7 @@ use fleetdeck_core::paths::NodeDirs;
 use super::assets::{Base, HYPR_PATH};
 use super::fsx::Home;
 use super::record::{self, Record, rel, sha256_hex};
-use super::{TOOL_LIMIT, hyprland, omarchy_env, open_home, set_summary, tool};
+use super::{TOOL_LIMIT, hyprland, omarchy_env, open_home, screensaver, set_summary, tool};
 
 const DISABLE: &str = "omarchy plugin disable fleetdeck.fleet";
 const SUMMARY_OFF: &str = "fleetdeck settings set --station fleet_summary false";
@@ -116,7 +116,7 @@ pub async fn run(dirs: &NodeDirs) -> anyhow::Result<ExitCode> {
         }
     }
 
-    // TODO(task G): restore the screensaver here (`omarchy-p4.md` §3.8).
+    screensaver::restore(&home, &mut record);
 
     record.files = kept;
     record.hyprland_line = record::HyprlandLine::default();

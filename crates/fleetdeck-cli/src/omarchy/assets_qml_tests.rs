@@ -186,10 +186,13 @@ fn every_looked_up_key_exists_and_every_key_is_used() {
 }
 
 #[test]
-fn the_process_commands_are_the_two_feed_arrays() {
+fn the_process_commands_are_the_feeds_and_the_screensaver_job() {
     assert_eq!(
         command_arrays(text("Service.qml")),
-        vec![vec!["fleetdeck", "desktop", "feed", "--notify"]]
+        vec![
+            vec!["fleetdeck", "desktop", "feed", "--notify"],
+            vec!["fleetdeck", "desktop", "screensaver-run"],
+        ]
     );
     assert_eq!(
         command_arrays(text("Panel.qml")),

@@ -183,6 +183,7 @@ async fn desktop_main(
             desktop_open::run(dirs, target.as_deref(), request.as_deref()).await
         }
         cli_desktop::DesktopCommand::Crash { last: _ } => desktop_crash::run(dirs).await,
+        cli_desktop::DesktopCommand::ScreensaverRun => omarchy::screensaver::run(dirs).await,
         cli_desktop::DesktopCommand::Wall { command } => match command {
             cli_desktop::WallCommand::Next => {
                 desktop_wall::directive(dirs, desktop_wall::NEXT_NEEDS_YOU).await
