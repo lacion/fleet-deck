@@ -20,4 +20,30 @@ pub enum DesktopCommand {
         #[arg(long)]
         request: Option<String>,
     },
+    /// The hotkeys of the wall display that is bound to this station.
+    Wall {
+        #[command(subcommand)]
+        command: WallCommand,
+    },
+}
+
+/// `fleetdeck desktop wall <command>` (R13 P4 task E).
+#[derive(Debug, Subcommand)]
+pub enum WallCommand {
+    /// Show the next session that needs you on the wall.
+    Next,
+    /// Change the mode of the wall.
+    Mode {
+        #[command(subcommand)]
+        command: WallModeCommand,
+    },
+    /// Show the wall window, or go back to the previous workspace.
+    Show,
+}
+
+/// `fleetdeck desktop wall mode <command>`.
+#[derive(Debug, Subcommand)]
+pub enum WallModeCommand {
+    /// Go to the next mode: mission, focus on a request, ambient.
+    Next,
 }

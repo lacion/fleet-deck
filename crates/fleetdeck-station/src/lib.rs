@@ -55,6 +55,9 @@ pub mod local_fingerprint;
 /// The local socket op `fleet_summary` (R13 P4).
 pub mod local_summary;
 
+/// The local socket op `wall_directive` (R13 P4 task E).
+pub mod local_wall;
+
 /// The SHA-256 of the running binary (R13 P8).
 pub mod binary_hash;
 

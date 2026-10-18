@@ -26,7 +26,7 @@
 pub mod coordinator_git_reads;
 mod coordinator_reads;
 pub mod desktop_authority;
-mod display_directive;
+pub(crate) mod display_directive;
 pub mod fleet_git_artifacts;
 pub mod fleet_git_sync;
 mod info;
@@ -40,7 +40,7 @@ pub mod streams;
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use fleetdeck_link::control::{Control, Inbound};
 use fleetdeck_link::methods::code;
@@ -89,6 +89,10 @@ pub struct DeckLink {
     /// The radar notices and the radar wake (FG-7, `fleet_git_radar`).
     pub radar_state: Arc<crate::fleet_git_radar::RadarState>,
     pub radar_kick: Arc<crate::fleet_git_radar::RadarKick>,
+    /// The live settings of the deck, for `display.directive` (R13 P4 task
+    /// E): the handler reads `desktop_control` here at each call. Empty until
+    /// `serve` sets it once; an empty cell counts as `desktop_control` off.
+    pub desktop_live: OnceLock<crate::live::LiveCell>,
 }
 
 impl DeckLink {
@@ -106,6 +110,7 @@ impl DeckLink {
             move_kick: Arc::default(),
             radar_state: Arc::default(),
             radar_kick: Arc::default(),
+            desktop_live: OnceLock::new(),
         }
     }
 
