@@ -521,6 +521,119 @@ The tools do not isolate the agent from other programs. Agents and the station r
 - No image larger than 700 KiB.
 - No error text with a value that the agent supplied, and no raw request ID. The deck and its audit store only identifiers and fixed codes.
 
+### 7.7 Monitor recordings (R13 P5b)
+
+This section covers the owner recording of a monitor. The contract is `design/omarchy-p5b.md`. The built version is recorded in DL-239. The PRE-PR review, the end-to-end proofs (task P1) and the live smoke on the owner's Omarchy machine are not done yet (`make desktop-smoke` prints the list). The real-recorder smoke is required before you rely on this feature. Agent recordings (P5b-2) are not built.
+
+> **Caution:** a recording shows the whole monitor, with other applications, notifications and private information. The recording is an ordinary artifact until you delete it. Fleet Deck does not isolate the recording from other programs that run as your user on the station.
+
+#### What a recording is
+
+- One whole monitor. The tool is `wf-recorder`. There is no region, no window and no audio.
+- The cursor appears as the recorder normally shows it.
+- The file is an MP4 with one H.264 video track, at most 30 frames each second.
+- The duration is a whole number from 1 to 120 seconds. The recorder needs a short time to start, so the saved clip can be shorter than the duration that you asked for.
+- The Desktop panel shows this disclosure under every Record control: "Records the whole selected monitor, including other applications, notifications and private information visible there. No audio is recorded. The recording is stored as an ordinary artifact until deleted."
+- A recording needs no confirmation and no recent sign-in. Only the setting that allows it needs one (see "Turn it on").
+
+#### Turn it on
+
+1. Open Settings, then the Deck tab. Turn on "Desktop control" if it is off.
+2. Open the station tab of the station. Turn on "Desktop control" and "Desktop screenshots". The board asks for a recent sign-in. Sign in again when it asks.
+3. Leave "Screenshot monitors" empty to allow every monitor, or enter the monitor names. One setting and one list cover screenshots and recordings. When "Desktop screenshots" is off, the panel line for a recording says "Desktop recordings are off on this station. Turn them on in Settings."
+4. The station and the deck must both be a version that supports recordings. The recording tool `wf-recorder` must be on the `PATH` of the desktop. Installing `wf-recorder` on a station has no board path yet. This is an open item.
+
+If Record is off, read the reason line in the Desktop panel. The reason is one of these texts:
+
+- "This deck does not support monitor recordings."
+- "This station does not support monitor recordings."
+- "The recording tool wf-recorder is not installed."
+- "Desktop recordings are off on this station. Turn them on in Settings."
+- "This monitor is not allowed for recordings."
+
+#### Record a monitor
+
+1. Open the station card and open the Desktop panel.
+2. Find the monitor. Each monitor has a field "Duration (seconds)" with the value 30, the button "Record" and the disclosure.
+3. Enter a whole number from 1 to 120. For any other value the panel shows "Recording duration must be a whole number from 1 to 120 seconds." and it sends nothing.
+4. Press "Record".
+5. Read the phase in the panel. The phase text is one of these:
+   - "Preparing recording": the station checks its settings and the monitor, reserves disk space and starts the tool.
+   - "Recording": the tool records the monitor.
+   - "Stopping recording": the duration ended or you pressed "Stop recording". The station waits at most 3 seconds for the tool to end.
+   - "Saving recording": the station checks the file and saves it as an artifact.
+6. When the recording is saved, the panel shows the link "Open the recording".
+
+While a recording or a screenshot runs on the station, "Record" and "Screenshot" are off for every monitor of that station. The station runs one capture at a time. The board never sends the start again. It polls the result every 2 seconds for the duration plus 45 seconds. After that time the panel shows "The recording result is unknown. Check the artifact list before starting another recording." with the button "Check result". "Check result" asks the station one more time.
+
+If you reload the board, or open the panel on a second tab, the panel asks the deck for the active recording and shows its phase again. Closing or reloading the board does not stop a recording. When the station saved the file and the deck is still updating its list, the panel shows "The recording was saved on the station. The artifact list is still updating."
+
+#### Stop a recording
+
+1. Press "Stop recording" in the Desktop panel. The button shows whenever the board knows the recording. It works also when the station setting is off.
+2. The station keeps the part that it already recorded and saves it as a normal recording. The panel shows "Stopping recording", then "Saving recording".
+3. If you press it before the tool starts, the station saves nothing. The panel shows "The recording was stopped before it started."
+
+Another owner login can stop the recording, also from another tab.
+
+#### Where the recording goes
+
+- The recording is an artifact of the kind Video. Its title is `Desktop recording · <station name>/<monitor>`. It is in the artifact list.
+- The viewer plays it with the native controls of the browser. It does not start by itself and it does not loop. You can seek: the browser asks the deck only for the part that it needs. Above the player the viewer shows `Desktop recording · <station>/<monitor> · <time>`. When the saved length and the requested length differ by more than 1 second, the line also shows both lengths.
+- If the browser cannot play the file, the viewer shows "This browser cannot play this video." with "Download" and "Retry". "Retry" loads the bytes again and does nothing else. The "Download" action of the toolbar also works.
+- To remove the recording, open it and press "Delete artifact" (see section 7.4).
+- The wall does not play video. A wall that shows a recording shows the card "Open this artifact on your own device".
+- The deck reads the video from the station in parts. It can keep a complete copy in its cache only when the file is 64 MiB or smaller. When the station is offline and the deck has no cached copy, the video cannot play.
+- An agent cannot read a video artifact through its tools.
+
+#### When a recording is discarded
+
+The station discards the recording and keeps no file when a safety rule fails. The panel then shows a text from the table. Only the end of the duration and "Stop recording" save a recording. A rule that fails after you pressed "Stop recording" still discards the recording.
+
+| What happened | What the panel shows |
+| --- | --- |
+| You turned off "Desktop control" or "Desktop screenshots" on the station, or the monitor is no longer in "Screenshot monitors". The station sees it within 1 second. | "The recording was interrupted before it was saved." |
+| You turned off "Desktop control" on the Deck tab, or the sign-in that started the recording ended (sign-out, revoke or expiry). The station sees it with a check of the deck, in 6 seconds at most. | "The recording was interrupted before it was saved." |
+| The screen locks, or the lock state is unknown. The station sees it within 2 seconds. | "The screen is locked or its lock state is unknown." |
+| The monitor goes away, its size or rotation changes, or the desktop session restarts. The station sees it within 2 seconds. | "The target of the desktop action was not found." |
+| The link between the deck and the station closes, the deck sends an answer that is not valid, or the station hears nothing from the deck for 6 seconds (a cut network, a stopped deck). | "The recording was interrupted before it was saved." |
+| The station shuts down, or it stopped without warning and started again. The start of the station removes the files that the stop left. | "The recording was interrupted before it was saved." |
+| You delete the artifact before the station saved it. | "The recording was interrupted before it was saved." |
+| The file reaches 256 MiB. | "The recording exceeds 256 MiB." |
+| The tool cannot write the file, or the tool ends by itself, also without an error. | "The recording tool failed." |
+| The free space on the station falls below the reserve of 2 GiB. | "The station has too little free space for a capture." |
+| The whole operation passes the duration plus 30 seconds. | "The station did not answer in time; the action may have run." |
+
+Two more failures can come after a normal stop. The station checks the structure of the MP4 file before it saves it. A bad file gives "The recording file could not be verified." A failure to save the artifact gives "The recording could not be saved as an artifact." Neither leaves an artifact.
+
+A discard removes the files in a durable way. The station removes each file and each emptied folder, and it syncs the parent folders. It counts the space as free only after that. The start of the station finds and removes files that no operation owns. The station never resumes or saves a recording after a restart.
+
+When the board shows "The recording result is unknown", the recording can exist. Look in the artifact list before you start another one.
+
+#### Limits
+
+| Limit | Value |
+| --- | --- |
+| Duration | 1 to 120 seconds |
+| File size | 256 MiB |
+| Disk reservation for one recording | 512 MiB (the staging file and the copy that the station saves) |
+| All captures of one station | 4 GiB, screenshots and recordings together. The station never deletes an artifact for you. It refuses a new capture with "This capture would exceed the station's 4 GiB capture limit. Delete some captures first." |
+| Free space on the station | 2 GiB must stay free, plus the 512 MiB of the recording |
+| Captures at the same time on one station | 1, shared by screenshots and recordings. The text is "A capture is already running." |
+| Monitor size | Each side from 2 to 8192 pixels and even, at most 16,777,216 pixels. Another size gives "The monitor exceeds the recording size limit or has unsupported dimensions." |
+
+#### What an older board or deck shows
+
+- An older board does not declare the video feature. The deck then sends the recording as a file of the kind "File", with no recording line and no player. You can still download the MP4. An older board has no Record control.
+- An older deck does not support recordings. The panel shows "This deck does not support monitor recordings." and sends no recording request.
+- An older station gets no recording request. The panel shows "This station does not support monitor recordings." Its screenshots work as before.
+
+#### Open items
+
+- The real-recorder smoke on the owner's Omarchy machine is not done (see `docs/v2/LIVE-SMOKE.md`). Do not rely on recordings before it passes.
+- The deck does not end a video response when a client stops reading. The 180 second limit needs a connection write timeout (DL-239 item c).
+- Installing `wf-recorder` has no board path yet.
+
 ## 8. Back up
 
 - The station event log (`station.db`) is the source of truth for sessions. The deck database (`deck.db`) is the source of truth for mail, plans, tasks, routing and settings.
