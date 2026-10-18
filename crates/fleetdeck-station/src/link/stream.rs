@@ -23,6 +23,7 @@ use fleetdeck_proto::link::{
 };
 use tokio::task::JoinHandle;
 
+use super::ready::ReadyHandle;
 use crate::store::{ReadResult, Store, StoreError};
 
 /// Events read from the log per step.
@@ -35,6 +36,9 @@ pub enum Start {
     Replay {
         incarnation: Option<IncarnationId>,
         after: u64,
+        /// The station accepted the cursor as an acknowledgement. The link
+        /// is ready only if the stream then really replays (R13 P8).
+        acknowledged: bool,
     },
     /// The deck asked for a snapshot.
     Snapshot,
@@ -48,6 +52,8 @@ pub struct Stream {
     delivered: Arc<AtomicU64>,
     /// The watermark of the first snapshot sent on this link (R13 P8).
     first_snapshot: Arc<OnceLock<u64>>,
+    /// The readiness of this link, marked by a replay that is chosen.
+    ready: Option<ReadyHandle>,
     task: Option<JoinHandle<()>>,
     /// Set on a link with `coordinator.v1`: snapshots carry the binding
     /// projection (ADR-006 §6.1).
@@ -70,6 +76,7 @@ impl Stream {
             control,
             delivered: Arc::new(AtomicU64::new(0)),
             first_snapshot: Arc::new(OnceLock::new()),
+            ready: None,
             task: None,
             coordinator: None,
         }
@@ -81,6 +88,11 @@ impl Stream {
     pub fn with_coordinator(mut self, bindings: crate::coordinator::Bindings) -> Self {
         self.coordinator = Some(bindings);
         self
+    }
+
+    /// Gives the stream the readiness handle of this link.
+    pub fn set_ready(&mut self, ready: ReadyHandle) {
+        self.ready = Some(ready);
     }
 
     /// The highest `station_seq` sent on this link.
@@ -107,6 +119,7 @@ impl Stream {
             control: self.control.clone(),
             delivered: Arc::clone(&self.delivered),
             first_snapshot: Arc::clone(&self.first_snapshot),
+            ready: self.ready.clone(),
             coordinator: self.coordinator.clone(),
         };
         self.task = Some(tokio::spawn(async move {
@@ -122,6 +135,7 @@ struct Pump {
     control: Control,
     delivered: Arc<AtomicU64>,
     first_snapshot: Arc<OnceLock<u64>>,
+    ready: Option<ReadyHandle>,
     coordinator: Option<crate::coordinator::Bindings>,
 }
 
@@ -142,6 +156,13 @@ impl Pump {
         // Subscribe before the first read, so no commit is missed.
         let mut head = self.store.subscribe();
         head.borrow_and_update();
+        let acknowledged = matches!(
+            start,
+            Start::Replay {
+                acknowledged: true,
+                ..
+            }
+        );
         let first = match self.first_batch(&start).await {
             Ok(first) => first,
             Err(e) => {
@@ -153,6 +174,11 @@ impl Pump {
         let mut cursor = match first {
             First::Replay { after, events } => {
                 self.answer(reply, StreamMode::Replay, after).await?;
+                // The replay is chosen and reported: an accepted cursor
+                // makes the link ready. A snapshot never does here.
+                if acknowledged && let Some(ready) = &self.ready {
+                    ready.mark_ready();
+                }
                 self.send_events(after, events).await?
             }
             First::Snapshot => {
@@ -185,7 +211,10 @@ impl Pump {
     }
 
     async fn first_batch(&self, start: &Start) -> Result<First, StoreError> {
-        let Start::Replay { incarnation, after } = start else {
+        let Start::Replay {
+            incarnation, after, ..
+        } = start
+        else {
             return Ok(First::Snapshot);
         };
         if incarnation.as_ref() != Some(self.store.incarnation()) {

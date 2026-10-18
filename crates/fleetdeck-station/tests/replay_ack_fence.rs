@@ -360,3 +360,165 @@ async fn a_replay_of_another_incarnation_or_above_the_head_acknowledges_nothing(
         assert_eq!(f.pending_sends().await, Some(0), "{params:?}");
     }
 }
+
+// ---- R13 P8: `link_up` turns true only after the replay is chosen ----
+
+impl Fixture {
+    fn deck_up(&self) -> bool {
+        self.ctx.ready.is_up(&self.deck_node.identity.fingerprint())
+    }
+
+    async fn wait_deck_up(&self, up: bool) {
+        let deadline = tokio::time::Instant::now() + T;
+        while self.deck_up() != up {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the link did not turn up={up}"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+}
+
+/// The reply of `events.replay`: the stream mode and its start.
+async fn replay_reply(deck: &Control, params: ReplayParams) -> Value {
+    let o = tokio::time::timeout(
+        T,
+        deck.request("events.replay", None, serde_json::to_value(params).unwrap()),
+    )
+    .await
+    .expect("response")
+    .unwrap();
+    match o {
+        Outcome::Ok(v) => v,
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The deck side reads frames up to `SnapshotEnd`; returns its watermark.
+async fn snapshot_watermark(deck: &mut LiveLink) -> u64 {
+    loop {
+        match tokio::time::timeout(T, deck.inbound.recv())
+            .await
+            .expect("a snapshot")
+        {
+            Some(Inbound::Frame(f)) => {
+                if let ControlFrame::SnapshotEnd { watermark, .. } = *f {
+                    return watermark;
+                }
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+}
+
+async fn deck_ack(f: &Fixture, deck: &Control, station_seq: u64) {
+    deck.send(ControlFrame::Ack {
+        incarnation: f.inc(),
+        station_seq,
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_replay_that_really_replays_makes_the_link_ready() {
+    let mut f = fixture().await;
+    let deck = f.connect().await;
+    assert!(!f.deck_up(), "a new link is not ready");
+    let reply = replay_reply(
+        &deck.control,
+        ReplayParams {
+            incarnation: Some(f.inc()),
+            after: f.head,
+        },
+    )
+    .await;
+    assert_eq!(reply["mode"], "replay", "{reply}");
+    f.wait_deck_up(true).await;
+}
+
+#[tokio::test]
+async fn a_replay_of_another_incarnation_does_not_make_the_link_ready() {
+    let mut f = fixture().await;
+    let mut deck = f.connect().await;
+    let reply = replay_reply(
+        &deck.control,
+        ReplayParams {
+            incarnation: Some("an-old-database".into()),
+            after: f.head,
+        },
+    )
+    .await;
+    assert_eq!(reply["mode"], "snapshot", "{reply}");
+    let watermark = snapshot_watermark(&mut deck).await;
+    tokio::time::sleep(QUIET).await;
+    assert!(!f.deck_up(), "a snapshot is not an accepted replay");
+    // The ack of the snapshot watermark makes the link ready.
+    deck_ack(&f, &deck.control, watermark).await;
+    f.wait_deck_up(true).await;
+}
+
+#[tokio::test]
+async fn a_replay_cursor_below_the_pruned_history_waits_for_the_snapshot_ack() {
+    let mut f = fixture().await;
+    let mut deck = f.connect().await;
+    // The deck acknowledged the whole log; the log is old and then pruned.
+    let key = fleetdeck_station::store::peers::key_hex(&f.deck_node.identity.public_key());
+    f.store.ack(key, f.head).await.unwrap();
+    f._det.advance(Duration::from_secs(8 * 24 * 3600));
+    let run: NewEvent = Event::RunStarted {
+        author: None,
+        input_id: None,
+        run_id: "run-2".into(),
+        input_summary: "again".to_owned(),
+        origin: RunOrigin::Board,
+        input_text: None,
+    }
+    .into();
+    f.store.append("coord-1".into(), vec![run]).await.unwrap();
+    let report = f.store.prune().await.unwrap();
+    assert_eq!(report.pruned_through, f.head, "{report:?}");
+
+    // The cursor is below `pruned_through`: the station accepts it as an ack,
+    // but the stream turns it into a snapshot.
+    let reply = replay_reply(
+        &deck.control,
+        ReplayParams {
+            incarnation: Some(f.inc()),
+            after: 1,
+        },
+    )
+    .await;
+    assert_eq!(reply["mode"], "snapshot", "{reply}");
+    let watermark = snapshot_watermark(&mut deck).await;
+    tokio::time::sleep(QUIET).await;
+    assert!(
+        !f.deck_up(),
+        "not ready before the snapshot is acknowledged"
+    );
+    // An ack below the watermark does not count; the watermark does.
+    deck_ack(&f, &deck.control, watermark - 1).await;
+    tokio::time::sleep(QUIET).await;
+    assert!(!f.deck_up(), "an ack below the snapshot watermark");
+    deck_ack(&f, &deck.control, watermark).await;
+    f.wait_deck_up(true).await;
+}
+
+#[tokio::test]
+async fn a_disconnect_clears_the_readiness() {
+    let mut f = fixture().await;
+    let deck = f.connect().await;
+    replay_reply(
+        &deck.control,
+        ReplayParams {
+            incarnation: Some(f.inc()),
+            after: f.head,
+        },
+    )
+    .await;
+    f.wait_deck_up(true).await;
+    deck.control.close("done", "the deck leaves");
+    drop(deck);
+    f.wait_deck_up(false).await;
+}
