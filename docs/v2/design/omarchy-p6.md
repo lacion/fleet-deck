@@ -391,7 +391,7 @@ Use the built typed `Notify` action and fixed `notify-send` argv with `--` termi
 - Urgency is `low` or `normal`; `critical` is refused.
 - Strip markup with the existing helper.
 - Reject control characters after stripping.
-- Prefix the title with the authenticated generated callsign and `": "`.
+- Prefix the title with the authenticated generated callsign and `": "` (the `caller_label` of §5.4). The deck builds the final prefixed and truncated title before it hashes the `Notify` action, so the target receives and the hash covers the final text (decision O12-4).
 - Truncate the final prefixed title to 80 scalars and body to 300 scalars.
 - Reject an empty final title.
 - No click action, board route, executable or notification replacement ID is accepted.
@@ -410,7 +410,7 @@ Apply the existing URL validation:
 - Existing host, bracketed IPv6 and port grammar.
 - No user information or alternate URL scheme.
 
-Add the coordinator restriction from the parent: the initial host must be exactly `localhost`, `127.0.0.1`, `[::1]`, or the selected target station’s authenticated advertised tailnet hostname. Hostname comparison is case-insensitive; suffix matches and caller-supplied aliases do not qualify. No DNS lookup grants permission.
+Add the coordinator restriction from the parent (decision O12-4: the deck checks the URL grammar; the target checks the host list with its live tailnet status at execution, and refuses with `invalid_arguments`): the initial host must be exactly `localhost`, `127.0.0.1`, `[::1]`, or the selected target station’s authenticated advertised tailnet hostname. Hostname comparison is case-insensitive; suffix matches and caller-supplied aliases do not qualify. No DNS lookup grants permission.
 
 The URL is interpreted on the **target** station. Do not rewrite a caller-local URL into another station’s origin.
 
@@ -738,8 +738,11 @@ Add an optional `coordinator` field to `DesktopAuthority`, omitted for owner and
   generation: number;
   caller_station: string;
   caller_session: string;
+  caller_label: string;
 }
 ```
+
+`caller_label` (decision O12-4) is the deck's generated callsign of the caller session when it is 1 to 32 characters from `[a-z0-9-]`, otherwise the caller session ID. The target refuses a label longer than 64 characters or with a character outside `[A-Za-z0-9_-]` as malformed. The target uses it only for the fixed screenshot disclosure of §4.6. The hash covers it.
 
 The window handle of a close is in the typed action (`preview_close`, §4.5), not in this context.
 
