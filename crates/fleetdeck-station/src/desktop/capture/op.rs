@@ -32,13 +32,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use fleetdeck_proto::artifacts::{ArtifactPublished, MAX_TITLE_CHARS};
-use fleetdeck_proto::capture::{
-    CaptureCaller, CaptureKind, CaptureProvenance, CaptureResult, code, text,
-};
+use fleetdeck_proto::capture::{CaptureKind, CaptureProvenance, CaptureResult, code, text};
 use fleetdeck_proto::desktop::{DesktopActResult, DesktopAction, DesktopInfo, MonitorInfo};
 use rustix::fs::{CWD, Mode, OFlags};
 
-use super::{Launch, MAX_PNG_BYTES, Staging, capture_png, check_monitor, check_png, room};
+use super::{
+    Launch, MAX_PNG_BYTES, Staging, capture_png, check_monitor, check_png, coordinator, room,
+};
 use crate::artifacts::ArtifactService;
 use crate::artifacts::capture_import::{DurableFs, discard, import_png};
 use crate::desktop::{Ctx, Desktop, Fail, args, authority, code as desktop_code, deadline, quiet};
@@ -48,7 +48,7 @@ use crate::store::capture_ops::{Begin, CaptureOp, Lookup, NewCaptureArtifact};
 pub const ADMISSION: Duration = Duration::from_secs(5);
 
 /// The text of `forbidden` when screenshots are off.
-const OFF: &str = "Desktop screenshots are off on this station.";
+pub(super) const OFF: &str = "Desktop screenshots are off on this station.";
 /// The text of `forbidden` for a monitor outside the allowlist.
 const MONITOR_NOT_ALLOWED: &str = "This monitor is not allowed for screenshots.";
 /// The text of `not_found` for a deleted screenshot.
@@ -143,7 +143,7 @@ fn not_found() -> Fail {
 
 /// The wire code of a stored code (every code that the operation stores).
 fn static_code(stored: Option<&str>) -> &'static str {
-    const KNOWN: [&str; 16] = [
+    const KNOWN: [&str; 18] = [
         code::BUSY,
         code::DISK_FULL,
         code::CAPTURE_QUOTA,
@@ -160,6 +160,8 @@ fn static_code(stored: Option<&str>) -> &'static str {
         desktop_code::NOT_FOUND,
         desktop_code::CONFLICT,
         desktop_code::FAILED,
+        desktop_code::AUTHORITY_LOST,
+        desktop_code::AUTHORITY_UNKNOWN,
     ];
     match stored.and_then(|s| KNOWN.iter().find(|k| **k == s)) {
         Some(known) => known,
@@ -170,7 +172,7 @@ fn static_code(stored: Option<&str>) -> &'static str {
     }
 }
 
-fn check_gates(allowed: &Allowed, monitor: &str) -> Result<(), Fail> {
+pub(super) fn check_gates(allowed: &Allowed, monitor: &str) -> Result<(), Fail> {
     if !(allowed.desktop && allowed.capture) {
         return Err(Fail::new(desktop_code::FORBIDDEN, OFF));
     }
@@ -250,6 +252,7 @@ impl Desktop {
         // 2
         let _slot = self.capture.try_take()?;
         // 3
+        req.admitted.local_gates()?;
         check_gates(&(req.allowed)(), &req.monitor)?;
         let allowed = Arc::clone(&req.allowed);
         let gate = move || allowed().desktop;
@@ -277,12 +280,13 @@ impl Desktop {
         let store = req.service.store();
         let artifact_id = store.capture_artifact_id();
         let begin = store
-            .capture_begin(
+            .capture_begin_with(
                 &req.deck_fp,
                 &req.capture_id,
                 &req.action_hash,
                 &req.monitor,
                 &artifact_id,
+                req.admitted.coordinator(),
                 store.now_ms(),
             )
             .await
@@ -336,11 +340,18 @@ impl Desktop {
         let mut staging = Staging::create(&captures, &req.capture_id)?;
         // 8
         left(deadline)?;
+        req.admitted.local_gates()?;
         check_gates(&(req.allowed)(), &req.monitor)?;
         let action = DesktopAction::ScreenCapture {
             monitor: req.monitor.clone(),
         };
         let start = authority::Start::new(req.admitted.clone(), &action);
+        // A coordinator capture shows its disclosure first (§4.6).
+        within(
+            deadline,
+            coordinator::before_grim(&start, &ctx.env, gate, &req.monitor),
+        )
+        .await?;
         within(deadline, start.begin(&ctx.env)).await?;
         // 9
         let (env, launch, monitor) = (
@@ -392,6 +403,7 @@ impl Desktop {
         staging = back;
         // 11
         left(deadline)?;
+        within(deadline, coordinator::before_import(&start, &ctx.env)).await?;
         let (root, id, fs) = (
             req.service.root().to_path_buf(),
             artifact_id.to_owned(),
@@ -406,6 +418,8 @@ impl Desktop {
         imported?;
         drop(back);
         // 12
+        let (caller, caller_station, caller_session, caller_grant_id) =
+            coordinator::caller(start.coordinator());
         let title: String = format!(
             "Desktop capture \u{b7} {}/{}",
             req.station_name, req.monitor
@@ -423,10 +437,10 @@ impl Desktop {
                 station_id: req.station_id.clone(),
                 monitor: req.monitor.clone(),
                 kind: CaptureKind::Screenshot,
-                caller: CaptureCaller::Owner,
-                caller_station: None,
-                caller_session: None,
-                caller_grant_id: None,
+                caller,
+                caller_station,
+                caller_session,
+                caller_grant_id,
                 at,
             },
         };

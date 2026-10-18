@@ -29,13 +29,15 @@ use std::time::{Duration, Instant};
 use fleetdeck_core::ChildEnv;
 use fleetdeck_core::identity::Fingerprint;
 use fleetdeck_link::control::Control;
-use fleetdeck_link::desktop_authority::action_hash;
+use fleetdeck_link::desktop_authority::action_hash_for;
 use fleetdeck_link::methods::code as link_code;
+use fleetdeck_proto::coordinator_desktop_wire::{AuthorityPhase, CoordinatorContext};
 use fleetdeck_proto::desktop::DesktopAction;
 use fleetdeck_proto::desktop_authority::{
     AUTHORITY_REFUSED, CLOCK_SKEW_MS, DesktopAuthority, MAX_USED_IDS,
 };
 
+use super::coordinator::{DispatchCheck, Extras, Gates};
 use super::quiet::{self, QuietHours};
 use super::{Fail, code};
 
@@ -176,6 +178,7 @@ impl Registry {
 static REGISTRY: LazyLock<Mutex<Registry>> =
     LazyLock::new(|| Mutex::new(Registry::new(MAX_USED_IDS)));
 
+#[derive(Clone)]
 struct Checked {
     conn: Conn,
     time: Time,
@@ -185,6 +188,15 @@ struct Checked {
     hash: String,
     station_node: String,
     quiet: Option<QuietHours>,
+    /// The coordinator that the action runs for (R13 P6 §5.4); the hash
+    /// covers it.
+    coordinator: Option<CoordinatorContext>,
+    /// The remote check right before the effect (§6.3 item 4).
+    remote: Option<Arc<dyn DispatchCheck>>,
+    /// The live local gates of the action, read again after the remote check.
+    gates: Option<Gates>,
+    /// What the target needs of the authenticated link.
+    extras: Option<Extras>,
 }
 
 enum Kind {
@@ -209,6 +221,84 @@ impl Admitted {
     #[cfg(test)]
     pub(crate) fn open() -> Self {
         Self(Arc::new(Kind::Open))
+    }
+
+    /// The same authorization with the checks of a coordinator action (R13
+    /// P6 §6.3): the remote dispatch check, the live local gates and the
+    /// link extras. Intake calls it right after [`admit`] for an authority
+    /// that carries a coordinator. A test value stays open.
+    #[must_use]
+    pub fn coordinated(self, remote: Arc<dyn DispatchCheck>, gates: Gates, extras: Extras) -> Self {
+        match &*self.0 {
+            Kind::Checked(c) => {
+                let mut c = (**c).clone();
+                c.remote = Some(remote);
+                c.gates = Some(gates);
+                c.extras = Some(extras);
+                Self(Arc::new(Kind::Checked(Box::new(c))))
+            }
+            #[cfg(test)]
+            Kind::Open => self,
+        }
+    }
+
+    /// The coordinator context of the authority, if it has one.
+    #[must_use]
+    pub fn coordinator(&self) -> Option<&CoordinatorContext> {
+        match &*self.0 {
+            Kind::Checked(c) => c.coordinator.as_ref(),
+            #[cfg(test)]
+            Kind::Open => None,
+        }
+    }
+
+    /// The live local gates of a coordinator action, read now. `Ok` for an
+    /// action without gates.
+    ///
+    /// # Errors
+    /// The failure of the first gate that is off.
+    pub fn local_gates(&self) -> Result<(), Fail> {
+        match &*self.0 {
+            Kind::Checked(c) => c.gates.as_ref().map_or(Ok(()), |gates| gates()),
+            #[cfg(test)]
+            Kind::Open => Ok(()),
+        }
+    }
+
+    fn extras(&self) -> Option<&Extras> {
+        match &*self.0 {
+            Kind::Checked(c) => c.extras.as_ref(),
+            #[cfg(test)]
+            Kind::Open => None,
+        }
+    }
+
+    /// A coordinator authorization with the hash of `action` that accepts
+    /// every connection check, with the given remote check, gates and link
+    /// extras (tests of the coordinator actions outside this module).
+    #[cfg(test)]
+    pub(crate) fn open_coordinated(
+        action: &DesktopAction,
+        node: &str,
+        coordinator: CoordinatorContext,
+        remote: Arc<dyn DispatchCheck>,
+        gates: Gates,
+        extras: Extras,
+    ) -> Self {
+        let hash = action_hash_for(action, node, Some(&coordinator));
+        Self(Arc::new(Kind::Checked(Box::new(Checked {
+            conn: Conn::new(None, Arc::new(|| true), Arc::new(|| true), Arc::new(|_| {})),
+            time: Time::system(),
+            received: Instant::now(),
+            deadline_ms: i64::MAX,
+            hash,
+            station_node: node.to_owned(),
+            quiet: None,
+            coordinator: Some(coordinator),
+            remote: Some(remote),
+            gates: Some(gates),
+            extras: Some(extras),
+        }))))
     }
 }
 
@@ -262,7 +352,7 @@ pub(super) fn admit_with(
     if now.abs_diff(authority.deck_now_ms) > CLOCK_SKEW_MS.unsigned_abs() {
         return Err(Fail::new(code::FORBIDDEN, SKEW_REFUSED));
     }
-    let hash = action_hash(action, station_node);
+    let hash = action_hash_for(action, station_node, authority.coordinator.as_ref());
     if hash != authority.action_hash {
         return Err(refused());
     }
@@ -298,6 +388,10 @@ pub(super) fn admit_with(
         hash: authority.action_hash,
         station_node: station_node.to_owned(),
         quiet,
+        coordinator: authority.coordinator,
+        remote: None,
+        gates: None,
+        extras: None,
     })))))
 }
 
@@ -315,7 +409,7 @@ impl Start {
     #[must_use]
     pub fn new(admitted: Admitted, action: &DesktopAction) -> Self {
         let ran_hash = match &*admitted.0 {
-            Kind::Checked(c) => action_hash(action, &c.station_node),
+            Kind::Checked(c) => action_hash_for(action, &c.station_node, c.coordinator.as_ref()),
             #[cfg(test)]
             Kind::Open => String::new(),
         };
@@ -335,7 +429,7 @@ impl Start {
             return Ok(());
         }
         match &*self.admitted.0 {
-            Kind::Checked(c) => self.check(c, env).await?,
+            Kind::Checked(c) => self.check(c, env, AuthorityPhase::Execute).await?,
             #[cfg(test)]
             Kind::Open => {}
         }
@@ -343,7 +437,33 @@ impl Start {
         Ok(())
     }
 
-    async fn check(&self, c: &Checked, env: &ChildEnv) -> Result<(), Fail> {
+    /// The same sequence as [`Start::begin`] for a later phase of a
+    /// coordinator action (the screenshot `Import`, R13 P6 §6.3): it checks
+    /// every time, with no `begun` short cut.
+    ///
+    /// # Errors
+    /// As [`Start::begin`], and `authority_lost` or `authority_unknown`.
+    pub async fn check_phase(&self, phase: AuthorityPhase, env: &ChildEnv) -> Result<(), Fail> {
+        match &*self.admitted.0 {
+            Kind::Checked(c) => self.check(c, env, phase).await,
+            #[cfg(test)]
+            Kind::Open => Ok(()),
+        }
+    }
+
+    /// The coordinator context of the action, if it has one.
+    #[must_use]
+    pub fn coordinator(&self) -> Option<&CoordinatorContext> {
+        self.admitted.coordinator()
+    }
+
+    /// The deck fingerprint and the tailnet name of a coordinator action.
+    #[must_use]
+    pub fn link_extras(&self) -> Option<&Extras> {
+        self.admitted.extras()
+    }
+
+    async fn check(&self, c: &Checked, env: &ChildEnv, phase: AuthorityPhase) -> Result<(), Fail> {
         if self.ran_hash != c.hash {
             return Err(refused());
         }
@@ -357,9 +477,22 @@ impl Start {
                 return Err(Fail::new(code::FAILED, QUIET_ACTIVE));
             }
         }
+        // A coordinator action: the remote check, then the live local gates
+        // read after that await. No other await follows before the spawn.
+        if let Some(remote) = &c.remote {
+            remote.check(phase, None).await?;
+        }
+        if let Some(gates) = &c.gates {
+            gates()?;
+        }
         // The last checks come right before the spawn, in one step.
         if !(c.conn.current)() {
             return Err(refused());
+        }
+        // The deadlines bound the start only (§6.3, §9): a later phase of an
+        // action that started does not check them.
+        if phase == AuthorityPhase::Import {
+            return Ok(());
         }
         if (c.time.wall)() > c.deadline_ms
             || (c.time.mono)().saturating_duration_since(c.received) > START_LIMIT

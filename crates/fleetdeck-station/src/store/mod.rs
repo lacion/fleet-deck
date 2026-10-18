@@ -31,6 +31,7 @@ pub mod assist;
 pub mod auto_continue;
 pub mod capture_ops;
 pub mod coordinator_outbox;
+pub mod desktop_ops;
 pub mod effects;
 pub mod git_cleanup;
 pub mod git_state;

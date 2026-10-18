@@ -509,8 +509,10 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
             accounts(ctx, m, req.params).await
         }
         "coordinator.policy_now" => intake_policy::policy_now(ctx, req.params),
-        "desktop.policy_now" => intake_coordinator_desktop::policy_now(req.params),
-        "desktop.coordinator_read" => intake_coordinator_desktop::coordinator_read(req.params),
+        "desktop.policy_now" => intake_coordinator_desktop::policy_now(ctx, control, req.params),
+        "desktop.coordinator_read" => {
+            intake_coordinator_desktop::coordinator_read(ctx, control, req.params).await
+        }
         "session.history" => history_method(ctx, req.params).await,
         "session.subagent" => subagent_method(ctx, req.params).await,
         "station.native_sessions" => intake_native::sessions(ctx, req.params).await,
