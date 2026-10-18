@@ -9,6 +9,8 @@ import { RestartDialog, RestartOverlay, type RestartView, SecretDialog, waitStep
 import { useElevation } from './elevation';
 import { relaySecret, tryRestart, trySave, UNSUPPORTED_TEXT } from './flow';
 import { describe } from './http';
+import { OmarchyCard } from './OmarchyCard';
+import type { OmarchyActions } from './omarchy';
 import { asInstances, changedKeys, changesOf, labelOf, type Values } from './model';
 import { SettingsFields } from './SettingsFields';
 
@@ -37,6 +39,8 @@ type Props = {
   readonly list?: ListWorkspaces | undefined;
   readonly sessions?: readonly DeckSession[] | undefined;
   readonly initial?: InitialTab;
+  /** The Omarchy calls; the card shows only on a live station tab when this is set. */
+  readonly omarchy?: OmarchyActions | undefined;
 };
 
 export function Notice({
@@ -116,7 +120,16 @@ type SecretState = {
   readonly error: string | null;
 };
 
-export function SettingsTab({ stationId, name, actions, live, list, sessions, initial }: Props) {
+export function SettingsTab({
+  stationId,
+  name,
+  actions,
+  live,
+  list,
+  sessions,
+  initial,
+  omarchy,
+}: Props) {
   const target = useMemo<Target>(
     () => (stationId === null ? DECK : { kind: 'station', id: stationId }),
     [stationId],
@@ -415,6 +428,9 @@ export function SettingsTab({ stationId, name, actions, live, list, sessions, in
           onSave={() => void save()}
         />
       )}
+      {live && omarchy !== undefined && stationId !== null ? (
+        <OmarchyCard station={name} actions={omarchy} ask={ask} />
+      ) : null}
       {secret === null ? null : (
         <SecretDialog
           title={secret.name === null ? 'Add a variable' : `Replace ${secret.name}`}

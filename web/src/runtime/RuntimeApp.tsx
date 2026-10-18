@@ -14,6 +14,7 @@ import { settingsActions } from '../settings/actions';
 import { tailnetActions } from '../tailnet/api';
 import { desktopActions, displayActions } from '../displays/actions';
 import { deckHttp } from '../settings/http';
+import { omarchyActions } from '../settings/omarchy';
 import { captureActions } from '../desktop/capture';
 import { deleteActions } from '../artifacts/DeleteArtifact';
 import type { FleetExtras, SessionKey } from '../gen';
@@ -51,6 +52,8 @@ const SETTINGS_WAIT_MS = 20_000;
 // R13 P5a (design §7.1): the screenshot POST waits 45 s; the lookups and the deletions 15 s.
 const CAPTURE_WAIT_MS = 45_000;
 const LOOKUP_WAIT_MS = 15_000;
+// Omarchy admin: the deck waits up to 75 s for an action (design §4); the board waits a little longer.
+const OMARCHY_WAIT_MS = 90_000;
 
 export function RuntimeApp({ connection }: { readonly connection: Connection }) {
   const state = useSyncExternalStore(
@@ -282,6 +285,7 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
         deckHttp((path, init) => fetch(path, init), csrf, ms),
       ),
       deletion: deleteActions(lookupIo),
+      omarchy: omarchyActions(deckHttp((path, init) => fetch(path, init), csrf, OMARCHY_WAIT_MS)),
     };
   }, [connection, owner, canAdmin, guest]);
   const filesFor = useMemo(

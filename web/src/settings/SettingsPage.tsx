@@ -114,6 +114,7 @@ export function SettingsPage({ route, stations, navigate, live, list, sessions }
           name={station.name}
           actions={env.settings}
           live={live && station.reachable}
+          omarchy={env.omarchy}
           list={list}
           sessions={sessions}
         />
