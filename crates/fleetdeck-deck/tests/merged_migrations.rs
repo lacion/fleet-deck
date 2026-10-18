@@ -2,7 +2,8 @@
 //! database made by v2 is at version 25 (v2's display migration); the merged
 //! list keeps v2's V1 to V25 and appends the five Fleet Git migrations as V26
 //! to V30, and R13 P5a adds V31 (the artifact tombstones). The station list
-//! is Fleet Git's list (32 entries); a station database made by v2 is at
+//! is Fleet Git's list (32 entries) and R13 P5a V33 (the artifact
+//! deletions); a station database made by v2 is at
 //! version 27.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -12,7 +13,7 @@ use rusqlite::Connection;
 const DECK_V2_LAST: usize = 25;
 const DECK_LATEST: i64 = 31;
 const STATION_V2_LAST: usize = 27;
-const STATION_LATEST: i64 = 32;
+const STATION_LATEST: i64 = 33;
 
 fn user_version(conn: &Connection) -> i64 {
     conn.pragma_query_value(None, "user_version", |r| r.get(0))
@@ -126,7 +127,7 @@ fn a_fresh_deck_database_and_a_migrated_one_have_the_same_schema() {
     assert_eq!(schema_of(&fresh), schema_of(&migrated));
 }
 
-/// A station database at v2's last version (27) migrates to 32, and a fresh
+/// A station database at v2's last version (27) migrates to 33, and a fresh
 /// one has the same schema.
 #[test]
 fn a_station_database_at_v2_last_version_migrates_to_the_merged_list() {
