@@ -623,7 +623,7 @@ describe('RequestCard', () => {
     const html = markup(REQUEST);
     expect(html).toContain('lab-box asks to join this deck');
     expect(html).toContain(
-      'The command on lab-box printed a code. Check that it is the same as this code:',
+      'Compare all 16 groups with the fingerprint shown on the new machine. Approve only if every group matches.',
     );
     expect(html).toContain(
       '<code class="fd-fingerprint">0123 4567 89ab cdef 0123 4567 89ab cdef 0123 4567 89ab cdef 0123 4567 89ab cdef</code>',

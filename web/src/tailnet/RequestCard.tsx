@@ -32,7 +32,11 @@ export function RequestCard({
   return (
     <article className="fd-pair-request" aria-label={`Pair request ${name}`}>
       <h4>{name} asks to join this deck</h4>
-      <p>The command on {name} printed a code. Check that it is the same as this code:</p>
+      {/* P8 §1: the exact instruction; the new machine shows the same 16 groups. */}
+      <p>
+        Compare all 16 groups with the fingerprint shown on the new machine. Approve only if every
+        group matches.
+      </p>
       <div className="fd-add-fingerprint">
         <code className="fd-fingerprint">{groupFingerprint(request.station_fingerprint)}</code>
       </div>
