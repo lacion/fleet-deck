@@ -2,8 +2,9 @@
 //!
 //! A link is *ready* when the deck acknowledged the first snapshot of this
 //! connection (an `ack` at or above its watermark; an empty snapshot has
-//! watermark 0), or when the station accepted an `events.replay` of this
-//! connection. The state belongs to one connection: [`ReadyGuard`] removes
+//! watermark 0), or when the stream really replays after an accepted
+//! `events.replay` of this connection (a cursor that the stream turns into a
+//! snapshot does not count). The state belongs to one connection: [`ReadyGuard`] removes
 //! it when the link ends. The coordinator acknowledgement watermark cannot
 //! serve: it does not tell "no acknowledgement" from the acknowledgement of
 //! sequence zero.
@@ -61,12 +62,36 @@ pub struct ReadyGuard {
     id: u64,
 }
 
-impl ReadyGuard {
-    /// Marks this link ready.
+/// A clonable handle to the readiness flag of one link. It does not keep the
+/// link alive: after the guard dropped, a call changes nothing.
+#[derive(Debug, Clone)]
+pub struct ReadyHandle {
+    ready: Arc<LinkReady>,
+    id: u64,
+}
+
+impl ReadyHandle {
+    /// Marks the link ready.
     pub fn mark_ready(&self) {
         if let Some(link) = self.ready.lock().links.get_mut(&self.id) {
             link.1 = true;
         }
+    }
+}
+
+impl ReadyGuard {
+    /// A handle to the readiness flag of this link.
+    #[must_use]
+    pub fn handle(&self) -> ReadyHandle {
+        ReadyHandle {
+            ready: Arc::clone(&self.ready),
+            id: self.id,
+        }
+    }
+
+    /// Marks this link ready.
+    pub fn mark_ready(&self) {
+        self.handle().mark_ready();
     }
 
     /// An `ack` of `station_seq` was accepted. `first_snapshot` is the
@@ -136,6 +161,22 @@ mod tests {
         let guard = ready.open(fp(1));
         guard.mark_ready();
         assert!(ready.is_up(&fp(1)));
+    }
+
+    #[test]
+    fn a_handle_marks_the_same_link_ready_and_cannot_outlive_it() {
+        let ready = Arc::new(LinkReady::default());
+        let guard = ready.open(fp(1));
+        let handle = guard.handle();
+        let clone = handle.clone();
+        assert!(!ready.is_up(&fp(1)));
+        clone.mark_ready();
+        assert!(ready.is_up(&fp(1)));
+        drop(guard);
+        assert!(!ready.is_up(&fp(1)));
+        // A late call after the guard dropped does not bring the link back.
+        handle.mark_ready();
+        assert!(!ready.is_up(&fp(1)));
     }
 
     #[test]

@@ -167,9 +167,10 @@ pub async fn serve(ctx: Arc<StationLink>, link: LiveLink) -> Closing {
         crate::local_palette::resend(&ctx.summary, &control);
     }
     // `station fingerprint` reports `link_up` from this (R13 P8): ready after
-    // the deck acknowledged the first snapshot or an `events.replay` was
-    // accepted on this connection.
+    // the deck acknowledged the first snapshot or the stream really replays
+    // after an accepted `events.replay` on this connection.
     let ready = ctx.ready.open(peer.fingerprint());
+    stream.set_ready(ready.handle());
     let _deck = DeckSlot::new(
         &ctx.fleet_git,
         &control,
@@ -195,7 +196,6 @@ pub async fn serve(ctx: Arc<StationLink>, link: LiveLink) -> Closing {
                     &mut stream,
                     data.as_ref(),
                     coordinator,
-                    &ready,
                     req,
                 )
                 .await;
@@ -223,7 +223,6 @@ pub async fn serve(ctx: Arc<StationLink>, link: LiveLink) -> Closing {
     control.closed().await
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn request(
     ctx: &Arc<StationLink>,
     control: &Control,
@@ -231,7 +230,6 @@ async fn request(
     stream: &mut Stream,
     data: Option<&fleetdeck_link::data::Data>,
     coordinator: u64,
-    ready: &ready::ReadyGuard,
     req: InboundRequest,
 ) {
     match req.method.as_str() {
@@ -261,17 +259,18 @@ async fn request(
                 // acknowledges the events through `after`. A replay that
                 // sends nothing still lifts the lifecycle fence.
                 let store = ctx.manager.store();
-                if p.incarnation.as_ref() == Some(store.incarnation())
+                let acknowledged = p.incarnation.as_ref() == Some(store.incarnation())
                     && p.after <= store.head()
-                    && store.ack(key_hex(peer), p.after).await.is_ok()
-                {
+                    && store.ack(key_hex(peer), p.after).await.is_ok();
+                if acknowledged {
                     ctx.coordinator.acknowledged(coordinator, p.after);
-                    ready.mark_ready();
                 }
+                // The link turns ready in the stream, only if it replays.
                 stream.restart(
                     Start::Replay {
                         incarnation: p.incarnation,
                         after: p.after,
+                        acknowledged,
                     },
                     req.id,
                 );
