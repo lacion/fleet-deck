@@ -325,6 +325,99 @@ Delete an artifact:
 
 "Deleted" means removed from the active Fleet Deck stores. It is not a secure erase of database pages or backups. Downloaded copies and provider conversations stay.
 
+### 7.5 The Omarchy desktop integration (R13 P4)
+
+This section covers the Omarchy integration of a station. The design is in `design/omarchy-p4.md`. The built version is recorded in DL-235. The live smoke on the owner's Omarchy machines is not done yet (`make desktop-smoke` prints the list).
+
+What the integration gives you on the desktop of the station:
+
+- **A bar widget and a panel.** The widget shows the number of working sessions and, when a session needs you, the number of those sessions with a warning sign. The widget is dim when the deck is down or sends no data. A left click opens the panel. A right click opens the board. A middle click shows the wall window.
+- **Notifications.** A new request that needs you shows a notification with the title "<callsign> needs you". The text is "<Kind> on <station>", where Kind is Approval or Question. A click opens the board at that request. A notification never answers a request.
+- **Hotkeys.** See the table below.
+- **The screensaver.** The screensaver text shows the number of sessions that need you, the counts of the other states and the usage. It is off by default. The install records it only with the option `--screensaver`. This version has no board path that turns it on (open item).
+- **The theme sync.** The station sends the colors of the Omarchy theme to the deck each time the theme changes.
+- **The crash diagnosis.** The Omarchy menu has the rows "Fleet", "Open the board" and "Diagnose the last crash". The last row starts one supervised session that investigates the newest crash that systemd-coredump recorded.
+
+The widget, the panel and the notifications show only counts, station names, callsigns and request kinds. They show no session title, no tool name and no chat text. The panel has no approval control. You answer a request on the board.
+
+#### Turn on the fleet summary
+
+The deck sends the fleet summary to a station only when you turn it on for that station.
+
+1. Open Settings, then the station tab of the station.
+2. Turn on "Fleet summary for the desktop shell". The board asks for a recent sign-in. Sign in again when it asks.
+3. Wait a few seconds. The deck then sends the first summary, and the widget of the station shows the counts.
+
+The station keeps the summary in memory only. A program that runs as you on the machine of the station can read it from the local socket. Turn the setting off to stop the summary. The deck then sends no new summary, and the widget shows no data.
+
+The install also turns this setting on, but only when the station is running at that time. Otherwise the setting stays off. Turn it on on the board.
+
+#### Choose the Omarchy theme on the board
+
+1. Open the board preferences: the theme row at the foot of the sidebar. On a phone, open the More page.
+2. Open the list "Use the Omarchy theme of". The list has "Off" and the stations that have sent a palette.
+3. Select a station. The board shows the colors of the Omarchy theme of that station and reads them again every 60 seconds.
+4. Select "Off" to return to the normal theme.
+
+The list does not show while the choice is "Off" and no station has sent a palette. The choice is kept in this browser only. A wall display that is bound to a station uses the palette of that station by itself.
+
+#### How the install happens
+
+- For a station that P8 provisioned (section 15), the bootstrap runs the install at the first login of the user, with `fleetdeck omarchy install --yes`. The step has no question. You do nothing on the machine.
+- **Open item (DL-235 item b): no board path installs the Omarchy integration on a station that P8 did not provision.** The command `fleetdeck omarchy install` does the install, but this version has no board button that starts it for an existing station. The gap is a product gap. It is not an instruction to log in to the machine.
+
+The install writes only these files:
+
+- The plugin folder `fleetdeck.fleet` in the Omarchy config folder.
+- The three hook files `post-boot`, `post-update` and `theme-set`.
+- The theme template.
+- The file `hypr.lua` in the Fleet Deck config folder.
+- The install record.
+- The menu rows. The install writes them only when the Omarchy menu file does not exist. Otherwise it prints them.
+
+The install also does these things:
+
+- It adds one managed line to the Hyprland file `hyprland.lua`.
+- It asks the Omarchy shell to rescan its plugins.
+- It enables the plugin once, in the right section of the bar.
+- It turns on the station setting "Fleet summary for the desktop shell".
+
+The install follows no link. It keeps a file that a person changed. `fleetdeck omarchy uninstall` removes only what the install wrote. `fleetdeck omarchy status` reports each file as `ok`, `changed` or `missing`. It also reports "Hyprland line missing" when the managed line is not in place.
+
+The install does not edit `hyprland.lua` when the file is a link, is not a regular file or belongs to another user. It prints the line instead.
+
+#### The hotkeys
+
+The installed file `hypr.lua` binds four keys. The binding runs with the session `PATH`, so `fleetdeck` must be on that `PATH`.
+
+| Keys | Description in the Omarchy key list | Action |
+| --- | --- | --- |
+| `SUPER + CTRL + F` | Fleet Deck panel | Opens the panel of the plugin `fleetdeck.fleet`. |
+| `SUPER + ALT + W` | Fleet Deck wall | `fleetdeck desktop wall show`: focuses the wall window. When the wall is already on the active workspace, it goes back to the previous workspace. |
+| `SUPER + ALT + N` | Fleet Deck: next session that needs you on the wall | `fleetdeck desktop wall next`: shows the next session that needs you on the wall of this station. |
+| `SUPER + ALT + M` | Fleet Deck: next wall mode | `fleetdeck desktop wall mode next`: changes the mode of the wall, in the order mission, focus on a request, ambient. |
+
+`SUPER + ALT + N` and `SUPER + ALT + M` need the deck setting "Desktop control" on, and a wall display that is bound to this station. Without "Desktop control" the deck answers "Desktop control is off on the deck." Without a bound wall it answers "This station has no wall display bound to it." For the setting, see section 7.4. `SUPER + ALT + W` needs neither: it works on the window of this machine only. With no wall window it prints "No Fleet Deck wall window is open."
+
+The panel keys are `j` and `k` or the arrow keys to move, `Enter` to open the board at the selected request, `w` to show the next session on the wall, and `Esc` to close.
+
+#### What `fleetdeck doctor` reports
+
+`fleetdeck doctor` has two Omarchy lines:
+
+| Line | Meaning |
+| --- | --- |
+| `ok omarchy: no Omarchy on this machine` | The machine is not an Omarchy machine. |
+| `ok omarchy: Omarchy <version>; the integration is not installed (run fleetdeck omarchy install)` | Omarchy is present and the install was not made. |
+| `ok omarchy: installed, no drift` | Every installed file is as written. |
+| `warn omarchy: <n> changed or missing files (run fleetdeck omarchy status)` | A person changed a file, or a file is gone. |
+| `warn omarchy: the install record is not valid (run fleetdeck omarchy status)` | The install record cannot be read. |
+| `warn omarchy-sudo: passwordless sudo is on for this user` | Omarchy has an active passwordless sudo grant for this user. Agents run as this user. |
+| `ok omarchy-sudo: off` | No passwordless sudo grant is active. |
+| `warn omarchy-sudo: could not check` | The check timed out (5 seconds) or did not start. |
+
+There is no `omarchy-sudo` line when the Omarchy script `omarchy-sudo-passwordless` is not on the `PATH`. The flag `--brief` prints only the `warn` and `fail` lines and the final line. After an Omarchy update, the hook `post-update` runs `fleetdeck doctor --brief`. When the exit code is not 0, it shows the notification "Fleet Deck: doctor found a problem after the Omarchy update". This version has no board view of the doctor lines.
+
 ## 8. Back up
 
 - The station event log (`station.db`) is the source of truth for sessions. The deck database (`deck.db`) is the source of truth for mail, plans, tasks, routing and settings.
