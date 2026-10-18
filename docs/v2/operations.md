@@ -675,3 +675,56 @@ The recovery depends on the credential. Do these four steps in order:
 2. Inspect and remove unauthorized Tailscale nodes. Revoking the auth key does **not** deauthorize nodes that are already enrolled with it ([Tailscale auth-key documentation](https://tailscale.com/docs/features/access-control/auth-keys)).
 3. Replace the exposed LUKS passphrase or keyslot credential. If an attacker also had a disk or header copy, a credential replacement alone does not protect that copy. Require a disk-key replacement or a reinstall.
 4. If a wrong Fleet Deck fingerprint was approved, remove that station from the deck. Removing the medium or revoking a Tailscale auth key does not revoke the Fleet Deck enrollment.
+
+## 15. Provision a new Omarchy station (P8)
+
+This section gives the owner steps to add a new Omarchy machine as a station. The design is in `design/omarchy-p8.md`. The built version is recorded in DL-234.
+
+> **Note:** the production use of this procedure waits for the release task of the owner. That task supplies the pinned `fleetdeck-bin` package, its SHA-256, the trusted manifest `/etc/fleetdeck-provision-release.json` and the installer image step. Until then, the bootstrap on a real machine stops with `release_untrusted`.
+
+After the one first login, every step happens on the board or on your own deck machine. You do not log in to the new station again.
+
+### 15.1 Steps
+
+1. On the deck machine, make the provisioning file:
+
+   ```sh
+   fleetdeck deck provision-file <name> --deck <tailnet name>:7421 --out <private folder>/provision.toml
+   ```
+
+   - The folder must be yours and must have mode 0700. A folder below `/tmp` is refused.
+   - The command prints "Provisioning file written." on stderr.
+   - The command refuses an output path that already exists.
+2. Put the file on a supported medium (section 14.1) as `fleetdeck/provision.toml`.
+3. Install the machine with the trusted installer image of the owner's release task. The image installs the pinned package and the trusted manifest. The image also copies the file into the config folder of the user. It does this with the hidden command `fleetdeck provision-import`. The image runs this command, not you.
+4. At the first login, the hook `/usr/lib/fleetdeck/provision-first-login` starts the bootstrap `fleetdeck provision-bootstrap`. A notification "Fleet Deck pairing" shows the text "Approve this station fingerprint on the board:" and the fingerprint of the new station. The fingerprint has 16 groups of four characters.
+5. On the board, open Stations and select "Add station". Select "A computer on my tailnet". In the list "Can be added", select "Add" on the row of the new machine. The board asks for a recent sign-in for "Accept a new station for 10 minutes". The pairing window is then open.
+   - Do not run the command that the board shows for the machine. The new station asks by itself.
+   - The request card shows "<name> asks to join this deck". Compare all 16 groups with the fingerprint in the notification on the new machine.
+   - Approve only if every group matches. Select "Yes, the codes match. Add <name>". The board asks for a recent sign-in for "Pair station <name>".
+6. The bootstrap waits for the link. Then it checks the providers and installs the Omarchy integration. The station appears on the board.
+
+### 15.2 A refused or cancelled pairing
+
+- If you select "No, refuse", or the pairing is cancelled or revoked, the station asks again after 600 seconds. Open the pairing window again on the board (step 5). The new request card shows the same fingerprint.
+- If the window is closed or ended, the station asks again after 30 seconds. Open the window on the board. The request arrives by itself.
+- A request needs an open window and your approval of the exact fingerprint. A repeated request gives nothing to anyone else.
+
+### 15.3 Terminal states
+
+A terminal state stops the bootstrap. The bootstrap keeps the code and does not clear it at the next login. Each state needs a repair. This version has no board path for these repairs. This is an open item (DL-234). It is not an instruction to log in to the machine.
+
+| Code | Cause |
+| --- | --- |
+| `paired_elsewhere` | The station is already paired with a deck that has another fingerprint. |
+| `station_identity_changed` | The station key is not the key that the bootstrap saved first. |
+| `config_changed` | The provisioning file changed after the pairing started. |
+| `release_untrusted` | The trusted manifest or an installed hook file is missing, is not owned by root, or does not match its hash. |
+| `build_mismatch` | The running build or the binary of the station does not match the trusted manifest. |
+| `service_conflict` | The station service that is installed has another binary or another data folder. |
+| `provider_probe_failed` | The station reports a configured provider as `broken` or `unknown`, or without a version. |
+| `integration_failed` | The Omarchy integration install or its status check did not succeed. |
+
+### 15.4 Cloned machines
+
+Do not clone an initialized machine. Each machine needs its own medium credentials and its own provisioning (section 14.5). Two machines that start from one clean medium get two different fingerprints.
