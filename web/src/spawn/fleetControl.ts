@@ -19,6 +19,12 @@ export type FleetControl = {
   readonly recordingCap: string;
   /** The recording time limit in seconds. */
   readonly recordingSeconds: string;
+  /** Allow keyboard input and pointer movement (only meaningful while `desktop` and `capture` are on). */
+  readonly input: boolean;
+  /** The input action limit. */
+  readonly inputCap: string;
+  /** The typed character limit. */
+  readonly inputChars: string;
 };
 
 export const NO_FLEET: FleetControl = {
@@ -35,6 +41,9 @@ export const NO_FLEET: FleetControl = {
   recording: false,
   recordingCap: '5',
   recordingSeconds: '600',
+  input: false,
+  inputCap: '100',
+  inputChars: '20000',
 };
 
 /** The largest answer limit that the deck accepts. */
@@ -56,6 +65,7 @@ export function answerCapProblem(f: FleetControl): string | null {
 const MAX_DESKTOP_CAP = 5000;
 const MAX_IMAGE_MIB = 1024;
 const MAX_RECORDING_SECONDS = 600_000;
+const MAX_INPUT_CHARS = 1_000_000;
 const MIB = 1_048_576;
 
 const wholeUpTo = (text: string, max: number): boolean => {
@@ -98,7 +108,26 @@ export function recordingSecondsProblem(f: FleetControl): string | null {
   return 'The recording time limit is a whole number of seconds from 0 to 600000.';
 }
 
-/** The first problem of the limit inputs (answer, desktop, screenshot, image budget, recording), or null. */
+/** True when the input opt-in is effective: the switch, with `desktop` and `capture` on. */
+export function inputOn(f: FleetControl): boolean {
+  return f.input && f.desktop && f.capture;
+}
+
+/** The problem of the input action limit, or null (checked when the input opt-in is on). */
+export function inputCapProblem(f: FleetControl): string | null {
+  if (!inputOn(f)) return null;
+  if (wholeUpTo(f.inputCap, MAX_DESKTOP_CAP)) return null;
+  return 'The input action limit is a whole number from 0 to 5000.';
+}
+
+/** The problem of the typed character limit, or null (checked when the input opt-in is on). */
+export function inputCharsProblem(f: FleetControl): string | null {
+  if (!inputOn(f)) return null;
+  if (wholeUpTo(f.inputChars, MAX_INPUT_CHARS)) return null;
+  return 'The typed character limit is a whole number from 0 to 1000000.';
+}
+
+/** The first problem of the limit inputs (answer, desktop, screenshot, image budget, recording, input), or null. */
 export function fleetProblem(f: FleetControl): string | null {
   return (
     answerCapProblem(f) ??
@@ -106,7 +135,9 @@ export function fleetProblem(f: FleetControl): string | null {
     captureCapProblem(f) ??
     imageBudgetProblem(f) ??
     recordingCapProblem(f) ??
-    recordingSecondsProblem(f)
+    recordingSecondsProblem(f) ??
+    inputCapProblem(f) ??
+    inputCharsProblem(f)
   );
 }
 
@@ -127,6 +158,10 @@ export function grantFields(
   allow_recording?: boolean;
   recording_cap?: number;
   recording_second_cap?: number;
+  allow_input?: boolean;
+  input_scope?: 'own_windows';
+  input_cap?: number;
+  input_character_cap?: number;
   stations?: string[];
 } {
   return {
@@ -154,6 +189,14 @@ export function grantFields(
           allow_recording: true,
           recording_cap: Number(f.recordingCap.trim()),
           recording_second_cap: Number(f.recordingSeconds.trim()),
+        }
+      : {}),
+    ...(inputOn(f)
+      ? {
+          allow_input: true,
+          input_scope: 'own_windows' as const,
+          input_cap: Number(f.inputCap.trim()),
+          input_character_cap: Number(f.inputChars.trim()),
         }
       : {}),
     ...(targets.length > 0 ? { stations: [...targets] } : {}),

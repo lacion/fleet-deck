@@ -73,6 +73,8 @@ describe('the limits form', () => {
       imageMib: '64',
       recordingCap: '0',
       recordingSeconds: '0',
+      inputCap: '0',
+      inputChars: '0',
     });
     expect(limitValues(recGrant)).toMatchObject({ recordingCap: '5', recordingSeconds: '600' });
     expect(limitValues({ ...grant, image_byte_cap: 1_572_864 }).imageMib).toBe('1.5');
@@ -276,6 +278,114 @@ describe('the save flow', () => {
     expect(await saveLimits(grant, { ...same, imageMib: '128' }, a, k.ask)).toBeNull();
     expect(k.labels.length).toBe(1);
     expect(a.calls).toEqual([]);
+  });
+});
+
+/** A grant with the input opt-in: 100 actions and 20,000 characters, 7 and 300 used. */
+const inputGrant: GrantView = {
+  ...grant,
+  classes: ['read', 'mail', 'drive', 'desktop', 'capture'],
+  allow_input: true,
+  input_scope: 'own_windows',
+  input_cap: 100,
+  input_used: 7,
+  input_character_cap: 20_000,
+  input_character_used: 300,
+};
+
+describe('the input limits (R13 P7 §9.1)', () => {
+  const asker = (answer: string | null) => {
+    const labels: (readonly string[] | undefined)[] = [];
+    return {
+      labels,
+      ask: async (l?: readonly string[]) => {
+        labels.push(l);
+        return answer;
+      },
+    };
+  };
+  const show = (g: GrantView) =>
+    renderToStaticMarkup(
+      <LimitsForm
+        grant={g}
+        values={limitValues(g)}
+        busy={false}
+        onChange={() => {}}
+        onSave={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+
+  test('the two inputs show only for a grant with input_cap, prefilled', () => {
+    const plain = show(grant);
+    expect(plain).not.toContain('Input action limit');
+    expect(plain).not.toContain('Typed character limit');
+    const out = show(inputGrant);
+    expect(out).toContain('Input action limit');
+    expect(out).toContain('Typed character limit');
+    expect(out).toContain('value="100"');
+    expect(out).toContain('value="20000"');
+  });
+
+  test('the values come from the grant, the body has the keys only for an input grant', () => {
+    expect(limitValues(inputGrant)).toMatchObject({ inputCap: '100', inputChars: '20000' });
+    expect(limitCaps(grant, limitValues(grant))).not.toHaveProperty('input_cap');
+    expect(limitCaps(grant, limitValues(grant))).not.toHaveProperty('input_character_cap');
+    expect(limitCaps(inputGrant, limitValues(inputGrant))).toEqual({
+      desktop_cap: 300,
+      capture_cap: 20,
+      image_byte_cap: 67_108_864,
+      input_cap: 100,
+      input_character_cap: 20_000,
+    });
+  });
+
+  test('the problems name the two ranges', () => {
+    const v = limitValues(inputGrant);
+    expect(limitProblems(inputGrant, { ...v, inputCap: '5001' })).toEqual([
+      'The input action limit is a whole number from 0 to 5000.',
+    ]);
+    expect(limitProblems(inputGrant, { ...v, inputChars: '1000001' })).toEqual([
+      'The typed character limit is a whole number from 0 to 1000000.',
+    ]);
+    expect(limitProblems(inputGrant, { ...v, inputCap: '5000', inputChars: '1000000' })).toEqual(
+      [],
+    );
+    expect(limitProblems(inputGrant, { ...v, inputCap: 'x', inputChars: '' })).toHaveLength(2);
+  });
+
+  test('raises is true only when an input value is higher than the grant', () => {
+    const v = limitValues(inputGrant);
+    expect(raises(inputGrant, limitCaps(inputGrant, v))).toBe(false);
+    expect(raises(inputGrant, limitCaps(inputGrant, { ...v, inputCap: '10' }))).toBe(false);
+    expect(raises(inputGrant, limitCaps(inputGrant, { ...v, inputChars: '1' }))).toBe(false);
+    expect(raises(inputGrant, limitCaps(inputGrant, { ...v, inputCap: '101' }))).toBe(true);
+    expect(raises(inputGrant, limitCaps(inputGrant, { ...v, inputChars: '20001' }))).toBe(true);
+  });
+
+  test('a decrease does not ask and an increase asks Desktop limits', async () => {
+    const v = limitValues(inputGrant);
+    const a = actions();
+    const k = asker('code');
+    await saveLimits(inputGrant, { ...v, inputCap: '10', inputChars: '5' }, a, k.ask);
+    expect(k.labels).toEqual([]);
+    expect(a.calls[0]).toEqual({
+      grantId: 'g1',
+      caps: {
+        desktop_cap: 300,
+        capture_cap: 20,
+        image_byte_cap: 67_108_864,
+        input_cap: 10,
+        input_character_cap: 5,
+      },
+      elevation: undefined,
+    });
+    const b = actions();
+    const j = asker('code-3');
+    await saveLimits(inputGrant, { ...v, inputChars: '20001' }, b, j.ask);
+    expect(j.labels).toEqual([['Desktop limits']]);
+    expect(b.calls[0]?.elevation).toBe('code-3');
+    expect(b.calls[0]?.caps).toMatchObject({ input_cap: 100, input_character_cap: 20_001 });
   });
 });
 

@@ -30,6 +30,8 @@ export type FleetActions = {
       image_byte_cap?: number;
       recording_cap?: number;
       recording_second_cap?: number;
+      input_cap?: number;
+      input_character_cap?: number;
     },
     elevation?: string,
   ): Promise<FleetResult>;
@@ -143,7 +145,11 @@ export function grantStatus(g: GrantView): string {
     g.recording_cap === undefined
       ? ''
       : `, recordings ${g.recording_used ?? 0} of ${g.recording_cap}, recording time ${g.recording_second_used ?? 0} s of ${g.recording_second_cap ?? 0} s`;
-  return `${g.classes.join(', ')}${spawn}${desktop}${capture}${image}${recording}: ${state}`;
+  const input =
+    g.input_cap === undefined
+      ? ''
+      : `, input actions ${g.input_used ?? 0} of ${g.input_cap}, typed characters ${g.input_character_used ?? 0} of ${g.input_character_cap ?? 0}`;
+  return `${g.classes.join(', ')}${spawn}${desktop}${capture}${image}${recording}${input}: ${state}`;
 }
 
 /** MiB of a byte count with at most one decimal and no trailing `.0`. */

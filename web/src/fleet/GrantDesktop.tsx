@@ -9,6 +9,8 @@ import {
   desktopCapProblem,
   type FleetControl,
   imageBudgetProblem,
+  inputCapProblem,
+  inputCharsProblem,
   NO_FLEET,
   recordingCapProblem,
   recordingSecondsProblem,
@@ -25,6 +27,8 @@ export type LimitValues = {
   readonly imageMib: string;
   readonly recordingCap: string;
   readonly recordingSeconds: string;
+  readonly inputCap: string;
+  readonly inputChars: string;
 };
 
 /** The values of a grant, as the form shows them. */
@@ -35,6 +39,8 @@ export function limitValues(g: GrantView): LimitValues {
     imageMib: mib(g.image_byte_cap),
     recordingCap: String(g.recording_cap ?? 0),
     recordingSeconds: String(g.recording_second_cap ?? 0),
+    inputCap: String(g.input_cap ?? 0),
+    inputChars: String(g.input_character_cap ?? 0),
   };
 }
 
@@ -45,6 +51,7 @@ function asFleet(g: GrantView, v: LimitValues): FleetControl {
     desktop: true,
     capture: g.capture_cap !== undefined,
     recording: g.recording_cap !== undefined,
+    input: g.input_cap !== undefined,
     ...v,
   };
 }
@@ -58,6 +65,8 @@ export function limitProblems(g: GrantView, v: LimitValues): readonly string[] {
     imageBudgetProblem(f),
     recordingCapProblem(f),
     recordingSecondsProblem(f),
+    inputCapProblem(f),
+    inputCharsProblem(f),
   ].filter((p): p is string => p !== null);
 }
 
@@ -67,6 +76,8 @@ type Caps = {
   image_byte_cap?: number;
   recording_cap?: number;
   recording_second_cap?: number;
+  input_cap?: number;
+  input_character_cap?: number;
 };
 
 /** The `caps` body of the form values: one value for each limit that the grant has. */
@@ -83,6 +94,12 @@ export function limitCaps(g: GrantView, v: LimitValues): Caps {
           recording_cap: Number(v.recordingCap.trim()),
           recording_second_cap: Number(v.recordingSeconds.trim()),
         }),
+    ...(g.input_cap === undefined
+      ? {}
+      : {
+          input_cap: Number(v.inputCap.trim()),
+          input_character_cap: Number(v.inputChars.trim()),
+        }),
   };
 }
 
@@ -93,7 +110,9 @@ export function raises(g: GrantView, caps: Caps): boolean {
     (caps.capture_cap ?? 0) > (g.capture_cap ?? 0) ||
     (caps.image_byte_cap ?? 0) > (g.image_byte_cap ?? 0) ||
     (caps.recording_cap ?? 0) > (g.recording_cap ?? 0) ||
-    (caps.recording_second_cap ?? 0) > (g.recording_second_cap ?? 0)
+    (caps.recording_second_cap ?? 0) > (g.recording_second_cap ?? 0) ||
+    (caps.input_cap ?? 0) > (g.input_cap ?? 0) ||
+    (caps.input_character_cap ?? 0) > (g.input_character_cap ?? 0)
   );
 }
 
@@ -182,6 +201,24 @@ export function LimitsForm({ grant, values, busy, onChange, onSave, onCancel }: 
             max={600000}
             problem={recordingSecondsProblem(f)}
             onChange={(recordingSeconds) => onChange({ ...values, recordingSeconds })}
+          />
+        </>
+      )}
+      {grant.input_cap === undefined ? null : (
+        <>
+          <LimitInput
+            label="Input action limit"
+            value={values.inputCap}
+            max={5000}
+            problem={inputCapProblem(f)}
+            onChange={(inputCap) => onChange({ ...values, inputCap })}
+          />
+          <LimitInput
+            label="Typed character limit"
+            value={values.inputChars}
+            max={1000000}
+            problem={inputCharsProblem(f)}
+            onChange={(inputChars) => onChange({ ...values, inputChars })}
           />
         </>
       )}

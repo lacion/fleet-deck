@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
-import { Connection, IDLE_MS, TIMEOUT_MS } from './connection';
+import {
+  Connection,
+  IDLE_MS,
+  SIGN_IN_BLOCKED_FOR_INPUT_TEXT,
+  SIGNED_OUT_FOR_INPUT_TEXT,
+  type Socket,
+  TIMEOUT_MS,
+} from './connection';
 import { RuntimeApp } from './RuntimeApp';
 import { sessionKey } from './state';
 import { card, envelope, FakeEnvironment, key, loginView, settle } from './testing';
@@ -420,5 +427,102 @@ describe('deck connection runtime', () => {
     env.latest().drop();
     expect(render()).toContain('Cached data is read-only');
     expect(render()).toContain('initial');
+  });
+});
+
+describe('the sign-out of agent input (R13 P7 §7.6, §13)', () => {
+  const OUT = 'You were signed out because an agent typed on the station where this board is open.';
+  const BLOCKED = 'An agent is typing on this station. Sign in again in a minute.';
+  const render = (c: Connection) =>
+    renderToStaticMarkup(createElement(RuntimeApp, { connection: c }));
+  const signedOut = () =>
+    Response.json({ error: 'signed_out_for_input', message: 'ignored deck text' }, { status: 401 });
+
+  test('the texts are exact', () => {
+    expect(SIGNED_OUT_FOR_INPUT_TEXT).toBe(OUT);
+    expect(SIGN_IN_BLOCKED_FOR_INPUT_TEXT).toBe(BLOCKED);
+  });
+
+  test('a 401 signed_out_for_input of a request shows the sign-in page with the line above the form', async () => {
+    const { env, connection } = await fixture();
+    env.reply = async () => signedOut();
+    await expect(connection.get('/api/tasks')).rejects.toThrow();
+    const state = connection.getSnapshot();
+    expect(state.auth).toBe('anonymous');
+    expect(state.login).toBeNull();
+    expect(state.error).toBe(OUT);
+    expect(env.timers.size).toBe(0);
+    const html = render(connection);
+    expect(html).toContain('Owner password');
+    expect(html).toContain(`<p role="alert">${OUT}</p>`);
+    expect(html.indexOf(OUT)).toBeLessThan(html.indexOf('<form'));
+    expect(html.split(OUT)).toHaveLength(2);
+  });
+
+  test('a 401 signed_out_for_input of a post does the same and never retries', async () => {
+    const { env, connection } = await fixture();
+    env.reply = async () => signedOut();
+    await expect(connection.post('/api/mail', {})).rejects.toThrow();
+    expect(connection.getSnapshot().error).toBe(OUT);
+    const count = env.requests.length;
+    env.advance(60_000);
+    await settle();
+    expect(env.requests).toHaveLength(count);
+  });
+
+  test('a 401 of a request without that code does not sign the board out', async () => {
+    const { env, connection } = await fixture();
+    env.reply = async () => Response.json({ error: 'other', message: 'no' }, { status: 401 });
+    await expect(connection.get('/api/tasks')).rejects.toThrow();
+    expect(connection.getSnapshot().auth).toBe('authenticated');
+    connection.stop();
+  });
+
+  test('a socket closed with 4401 and the reason shows the same line', async () => {
+    const { env, connection } = await fixture();
+    const socket: Socket = env.latest();
+    socket.onclose?.({ code: 4401, reason: 'signed_out_for_input' });
+    const state = connection.getSnapshot();
+    expect(state.auth).toBe('anonymous');
+    expect(state.error).toBe(OUT);
+    expect(env.timers.size).toBe(0);
+    expect(render(connection)).toContain(OUT);
+  });
+
+  test('a socket closed with 4401 and no such reason keeps the login-ended line', async () => {
+    const { env, connection } = await fixture();
+    env.latest().drop(4401);
+    expect(connection.getSnapshot().error).toBe('Your login ended. Log in again.');
+  });
+
+  test('a sign-in answered 403 sign_in_blocked_for_input shows its line and does not retry', async () => {
+    const env = new FakeEnvironment();
+    const c = new Connection(env);
+    env.reply = async () => Response.json({ message: 'Not logged in' }, { status: 401 });
+    c.start();
+    await settle();
+    env.reply = async () =>
+      Response.json({ error: 'sign_in_blocked_for_input', message: 'ignored' }, { status: 403 });
+    await c.login('not-retained');
+    expect(c.getSnapshot().auth).toBe('anonymous');
+    expect(c.getSnapshot().error).toBe(BLOCKED);
+    expect(env.timers.size).toBe(0);
+    const count = env.requests.length;
+    env.advance(60_000);
+    await settle();
+    expect(env.requests).toHaveLength(count);
+    const html = render(c);
+    expect(html).toContain(`<p role="alert">${BLOCKED}</p>`);
+    expect(html.indexOf(BLOCKED)).toBeLessThan(html.indexOf('<form'));
+    expect(html.split(BLOCKED)).toHaveLength(2);
+  });
+
+  test('a plain 401 of the session check shows no line', async () => {
+    const env = new FakeEnvironment();
+    const c = new Connection(env);
+    env.reply = async () => Response.json({ message: 'Not logged in' }, { status: 401 });
+    c.start();
+    await settle();
+    expect(c.getSnapshot().error).toBeNull();
   });
 });

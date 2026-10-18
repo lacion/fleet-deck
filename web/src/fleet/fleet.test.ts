@@ -206,6 +206,23 @@ describe('desktop usage and operations (R13 P6)', () => {
     expires_at: 10,
     last_used_at: null,
   };
+  test('grantStatus appends the input usage only for a grant with input_cap', () => {
+    expect(grantStatus({ ...grant, desktop_cap: 300, desktop_used: 4 })).not.toContain('input');
+    expect(
+      grantStatus({
+        ...grant,
+        desktop_cap: 300,
+        desktop_used: 4,
+        allow_input: true,
+        input_cap: 100,
+        input_used: 7,
+        input_character_cap: 20_000,
+        input_character_used: 300,
+      }),
+    ).toBe(
+      'read, desktop, capture, desktop actions 4 of 300, input actions 7 of 100, typed characters 300 of 20000: active',
+    );
+  });
   test('grantStatus appends the usage of each limit that is present', () => {
     expect(grantStatus({ ...grant, desktop_cap: 300, desktop_used: 4 })).toBe(
       'read, desktop, capture, desktop actions 4 of 300: active',
