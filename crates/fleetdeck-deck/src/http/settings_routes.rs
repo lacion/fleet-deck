@@ -217,6 +217,20 @@ pub(super) async fn station_call(
     method: &str,
     params: Value,
 ) -> Result<(StationRecord, Outcome), ApiError> {
+    station_call_wait(board, name, method, params, SETTINGS_WAIT).await
+}
+
+/// [`station_call`] with the longest wait `wait` for the answer.
+///
+/// # Errors
+/// 404 `unknown_station`; 409 `station_unreachable`; 504 `timeout`.
+pub(super) async fn station_call_wait(
+    board: &Board,
+    name: &str,
+    method: &str,
+    params: Value,
+    wait: Duration,
+) -> Result<(StationRecord, Outcome), ApiError> {
     let rec = board
         .store
         .find_station(name.to_owned())
@@ -240,7 +254,7 @@ pub(super) async fn station_call(
         .link
         .control_for(&rec.station_id)
         .ok_or_else(unreachable)?;
-    let outcome = tokio::time::timeout(SETTINGS_WAIT, control.request(method, None, params))
+    let outcome = tokio::time::timeout(wait, control.request(method, None, params))
         .await
         .map_err(|_| {
             ApiError::new(
