@@ -109,11 +109,15 @@ async fn a_recording_becomes_one_video_artifact_with_its_provenance() {
     let mut want: Vec<&str> = ARGV.to_vec();
     want.push("--");
     assert_eq!(log.lines().collect::<Vec<_>>(), want);
-    // The leases: start first, import last, `record` between, in sequence.
+    // The leases: start first, then `record` renewals, and one import
+    // request that was answered before the commit. Renewals go on while the
+    // recording finalizes, so `record` may come after `import`.
     let phases = t.peer.phases();
     assert_eq!(phases[0], LeasePhase::Start);
-    assert_eq!(*phases.last().unwrap(), LeasePhase::Import);
-    assert!(t.peer.count(LeasePhase::Record) >= 1);
+    let first_record = phases.iter().position(|p| *p == LeasePhase::Record);
+    let import = phases.iter().position(|p| *p == LeasePhase::Import);
+    assert!(first_record.is_some());
+    assert!(first_record < import, "{phases:?}");
     assert_eq!(t.peer.count(LeasePhase::Import), 1);
     let seq: Vec<u64> = t
         .peer

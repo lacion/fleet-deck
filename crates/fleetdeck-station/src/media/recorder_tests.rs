@@ -440,8 +440,12 @@ async fn a_process_outside_the_group_that_holds_stderr_ends_the_wait_after_two_s
         .trim()
         .parse::<i32>()
         .unwrap();
-    // Stop the straggler by its PID, never by name.
-    rustix::process::kill_process(Pid::from_raw(pid).unwrap(), Signal::KILL).unwrap();
+    // Stop the straggler by its PID, never by name. It may be gone already
+    // (the recorded PID can be the wrapper of `setsid`): ESRCH is success.
+    match rustix::process::kill_process(Pid::from_raw(pid).unwrap(), Signal::KILL) {
+        Ok(()) | Err(rustix::io::Errno::SRCH) => {}
+        Err(e) => panic!("cannot stop the straggler: {e}"),
+    }
     assert!(exit.drain_timed_out, "{exit:?}");
     assert!(exit.status.unwrap().success());
     assert!(took >= Duration::from_millis(1900), "{took:?}");

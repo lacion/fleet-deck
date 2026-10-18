@@ -349,7 +349,13 @@ impl Desktop {
             }
             Begin::Started => {}
         }
+        // The registry entry, with the memory latch that the launch guard
+        // reads, exists before the last store read of the stop (step 5): a
+        // `capture_stop` either finds the entry or wrote its store latch
+        // before that read.
         let latch = Latch::new(store.clone(), &req.deck_fp, &req.capture_id);
+        #[cfg(test)]
+        self.recordings.hooks.wait_before_insert().await;
         let _live = self.recordings.insert(&latch);
         #[cfg(test)]
         if let Some(gate) = self.recordings.hooks.phase() {

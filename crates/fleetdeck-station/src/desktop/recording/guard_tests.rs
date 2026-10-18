@@ -101,6 +101,47 @@ async fn a_stop_while_the_launch_is_queued_starts_no_recorder() {
 }
 
 #[tokio::test]
+async fn a_stop_that_missed_the_registry_and_writes_its_latch_late_is_seen_by_the_launch_guard() {
+    // The stop looks the recording up before it registers itself, so it
+    // finds nothing; its store write comes after the operation did its last
+    // store read and reached the launch. The memory latch must still be set.
+    let t = T::new().await;
+    let hooks = &t.desktop().recordings.hooks;
+    let before_insert = hooks.hold_before_insert();
+    let after_miss = hooks.hold_after_miss();
+    let block = hooks.hold_launch();
+    let run = t.start(ID, "DP-1", 5);
+    for _ in 0..400 {
+        if t.row(ID).await.is_some() {
+            break;
+        }
+        tokio::time::sleep(ms(10)).await;
+    }
+    let desktop = std::sync::Arc::clone(t.desktop());
+    let store = t.store().clone();
+    let stop = tokio::spawn(async move {
+        desktop
+            .stop_recording(&store, FP, ID, StopReason::OwnerStop)
+            .await
+    });
+    // The stop is past its lookup and waits before the store write.
+    tokio::time::sleep(ms(200)).await;
+    before_insert.add_permits(1);
+    // The operation registered, read the store (no latch yet) and queued.
+    block.reached().await;
+    after_miss.add_permits(1);
+    assert_eq!(
+        stop.await.unwrap().unwrap(),
+        super::registry::StopOutcome::Live
+    );
+    block.open();
+    assert_eq!(err(run.await.unwrap()).0, code::RECORDING_CANCELLED);
+    t.assert_discarded(ID, code::RECORDING_CANCELLED, StopReason::OwnerStop)
+        .await;
+    assert_eq!(t.recorder_runs(), 0);
+}
+
+#[tokio::test]
 async fn a_start_permit_that_expires_while_the_launch_is_queued_starts_no_recorder() {
     let t = T::new().await;
     let h = Harness::new();

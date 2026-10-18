@@ -37,6 +37,15 @@ use crate::store::capture_ops::{CaptureState, RecordingRow};
 pub(crate) struct Hooks {
     launch: Mutex<Option<Arc<Block>>>,
     phase: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
+    before_insert: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
+    after_miss: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
+}
+
+/// Waits for one permit of `gate`, when there is a gate.
+async fn pass(gate: Option<Arc<tokio::sync::Semaphore>>) {
+    if let Some(gate) = gate {
+        gate.acquire().await.unwrap().forget();
+    }
 }
 
 impl Hooks {
@@ -52,6 +61,31 @@ impl Hooks {
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
         *self.phase.lock().unwrap() = Some(Arc::clone(&gate));
         gate
+    }
+
+    /// The operation waits for a permit just before it registers itself.
+    pub(crate) fn hold_before_insert(&self) -> Arc<tokio::sync::Semaphore> {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        *self.before_insert.lock().unwrap() = Some(Arc::clone(&gate));
+        gate
+    }
+
+    /// A stop that found no live recording waits for a permit before it
+    /// writes the store latch.
+    pub(crate) fn hold_after_miss(&self) -> Arc<tokio::sync::Semaphore> {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        *self.after_miss.lock().unwrap() = Some(Arc::clone(&gate));
+        gate
+    }
+
+    pub(super) async fn wait_before_insert(&self) {
+        let gate = self.before_insert.lock().unwrap().clone();
+        pass(gate).await;
+    }
+
+    pub(super) async fn wait_after_miss(&self) {
+        let gate = self.after_miss.lock().unwrap().clone();
+        pass(gate).await;
     }
 
     pub(super) fn launch(&self) -> Option<Arc<Block>> {
