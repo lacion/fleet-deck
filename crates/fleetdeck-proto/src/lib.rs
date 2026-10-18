@@ -16,6 +16,7 @@ pub mod capability;
 pub mod capture;
 pub mod command;
 pub mod conflicts;
+pub mod coordinator_spec;
 pub mod desktop;
 pub mod desktop_authority;
 pub mod display;

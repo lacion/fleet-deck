@@ -34,6 +34,7 @@ pub mod join;
 pub mod live;
 pub mod methods;
 mod methods_table;
+mod methods_table_tail;
 pub mod mux;
 pub mod net;
 pub mod node;

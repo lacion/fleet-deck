@@ -46,6 +46,9 @@ mod intake_fleet_git;
 // R13 P4: `fleet.summary` (a stub until task B2).
 #[path = "intake_summary.rs"]
 mod intake_summary;
+// R13 P6: `coordinator.policy_now`.
+#[path = "intake_policy.rs"]
+mod intake_policy;
 use crate::store::{Caller, DecideError, StoreError, peers};
 pub(super) use intake_fleet_git::{PauseGuard, move_export, move_prepare};
 
@@ -426,21 +429,6 @@ async fn branch_method(ctx: &StationLink, method: &str, params: serde_json::Valu
     result.unwrap_or_else(|e| Outcome::Err(WireError::new(e.code, e.message)))
 }
 
-/// `coordinator.policy_now` (ADR-008 §6.2): the live fleet-control policy of
-/// this station for the deck: the live setting `allow_fleet_control`, and
-/// whether the caller session still holds a binding of a grant here.
-fn policy_now(ctx: &StationLink, params: serde_json::Value) -> Outcome {
-    let query: fleetdeck_proto::mutation::PolicyNow = match serde_json::from_value(params) {
-        Ok(q) => q,
-        Err(e) => return bad_params(e),
-    };
-    ok(crate::manager::fleet_control::policy_now_answer(
-        &ctx.manager.policy(),
-        ctx.manager.coordinator_bindings(),
-        &query,
-    ))
-}
-
 /// Answers a request that is not `events.replay` or `session.snapshot`
 /// (the stream handles those).
 pub(super) async fn handle(
@@ -516,7 +504,7 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
         m if crate::integrations::Integrations::serves_accounts(m) => {
             accounts(ctx, m, req.params).await
         }
-        "coordinator.policy_now" => policy_now(ctx, req.params),
+        "coordinator.policy_now" => intake_policy::policy_now(ctx, req.params),
         "session.history" => history_method(ctx, req.params).await,
         "session.subagent" => subagent_method(ctx, req.params).await,
         "station.native_sessions" => intake_native::sessions(ctx, req.params).await,
