@@ -18,6 +18,7 @@ fn installed(rig: &Rig) {
     if rig.ctx.platform == Platform::Systemd {
         exec_start(rig, &expected_argv(&rig.ctx));
         environment(rig, &rendered_environment(&rig.ctx), "", "");
+        manager(rig, &own_manager(&rig.ctx));
     } else {
         plist(rig, &expected_argv(&rig.ctx));
     }
@@ -90,6 +91,24 @@ fn environment(rig: &Rig, assignments: &[String], files: &str, unset: &str) {
             shown.join(" ")
         )),
     );
+}
+
+/// The answer of `systemctl --user show-environment`.
+fn manager(rig: &Rig, text: &str) {
+    rig.fake
+        .always("systemctl", &["--user", "show-environment"], ok(text));
+}
+
+/// A user manager that exports the same folders as the bootstrap.
+fn own_manager(ctx: &Context) -> String {
+    let mut text = format!("HOME={}\nPATH=/usr/bin\n", ctx.home.display());
+    if let Some(v) = &ctx.xdg_data_home {
+        text.push_str(&format!("XDG_DATA_HOME={v}\n"));
+    }
+    if let Some(v) = &ctx.xdg_config_home {
+        text.push_str(&format!("XDG_CONFIG_HOME={v}\n"));
+    }
+    text
 }
 
 /// Writes the plist of an install whose program arguments are `argv`.
@@ -480,5 +499,27 @@ fn a_launchd_plist_with_another_environment_is_a_conflict() {
     });
     assert_eq!(inspected(&rig), ServiceInspect::Conflict);
     plist_edited(&rig, |t| t.replace("EnvironmentVariables", "Other"));
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+}
+
+#[test]
+fn a_user_manager_that_exports_other_folders_is_a_conflict() {
+    let rig = Rig::systemd();
+    installed(&rig);
+    active(&rig, true);
+    assert_eq!(inspected(&rig), ServiceInspect::Matching { active: true });
+    // The manager exports another data folder; the unit is unchanged.
+    let home = rig.ctx.home.display().to_string();
+    manager(&rig, &format!("HOME={home}\nXDG_DATA_HOME=/other\n"));
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+    // Another HOME.
+    manager(&rig, "HOME=/elsewhere\nPATH=/usr/bin\n");
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+    // No answer from the manager.
+    rig.fake.always(
+        "systemctl",
+        &["--user", "show-environment"],
+        crate::service::fake::fail(1, ""),
+    );
     assert_eq!(inspected(&rig), ServiceInspect::Conflict);
 }

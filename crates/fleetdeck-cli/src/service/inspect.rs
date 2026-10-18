@@ -216,6 +216,35 @@ fn systemd_environment_matches(ctx: &Context, deps: &dyn Deps) -> bool {
         .map(|(name, value)| format!("{name}={value}"))
         .collect();
     found.into_iter().collect::<BTreeSet<_>>() == expected
+        && manager_environment_matches(ctx, deps, &expected)
+}
+
+/// The user manager exports its own environment to every unit (P8 PRE-PR
+/// round 3): `HOME`, `XDG_DATA_HOME` and `XDG_CONFIG_HOME` there must be
+/// ours, unless the unit sets the variable itself. Else the service would
+/// resolve other data and config folders than the bootstrap.
+fn manager_environment_matches(ctx: &Context, deps: &dyn Deps, unit: &BTreeSet<String>) -> bool {
+    let args = ["--user".to_owned(), "show-environment".to_owned()];
+    let Some(out) = query(deps, "systemctl", &args).filter(|out| out.success()) else {
+        return false;
+    };
+    let home = ctx.home.to_string_lossy().into_owned();
+    let ours = [
+        ("HOME", Some(home.as_str())),
+        ("XDG_DATA_HOME", ctx.xdg_data_home.as_deref()),
+        ("XDG_CONFIG_HOME", ctx.xdg_config_home.as_deref()),
+    ];
+    ours.iter().all(|(name, want)| {
+        let prefix = format!("{name}=");
+        if unit.iter().any(|a| a.starts_with(&prefix)) {
+            return true;
+        }
+        let have = out
+            .stdout
+            .lines()
+            .find_map(|l| l.strip_prefix(prefix.as_str()));
+        have == *want
+    })
 }
 
 /// Undoes the escaping of the plist writer (the five entities).
