@@ -336,15 +336,6 @@ async fn the_envelope_checks_have_their_codes_and_the_wire_errors_are_only_malfo
         };
         assert_eq!(e.code, "invalid_params");
     }
-    // The tool of another task keeps the stub.
-    let wall = json!({"tool": "wall_show", "arguments": {"request_id": "r1", "display_id": "d",
-        "content": {"kind": "session", "session": {"station_id": "s", "session_id": "x"}}}});
-    for call in [wall] {
-        let Outcome::Err(e) = w.call_raw(Some("c8"), w.call_env("c8", call)).await else {
-            panic!("the stub");
-        };
-        assert_eq!(e.code, "desktop_unsupported");
-    }
     w.fake.quiet(Duration::from_millis(100), NO_REQUEST).await;
 }
 

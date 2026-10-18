@@ -158,7 +158,7 @@ fn a_close_names_the_window_handle_and_nothing_else() {
 }
 
 #[test]
-fn the_tools_of_other_tasks_are_not_served() {
+fn every_tool_of_the_call_method_is_served_wall_show_included() {
     use fleetdeck_proto::coordinator_desktop::{
         ScreenshotArguments, WallContent, WallShowArguments,
     };
@@ -183,7 +183,7 @@ fn the_tools_of_other_tasks_are_not_served() {
         },
         pin: false,
     });
-    assert!(!served(&wall));
+    assert!(served(&wall));
 }
 
 #[test]

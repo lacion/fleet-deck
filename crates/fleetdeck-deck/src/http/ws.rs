@@ -47,6 +47,7 @@ use tokio::sync::broadcast::error::RecvError;
 use super::Board;
 use super::guard::ApiError;
 use super::read_routes::{member_sessions, member_stations};
+use crate::link::DeckLink;
 use crate::local::station_view;
 use crate::store::auth::{random_token, secret_hash};
 use crate::store::display_directives::EffectiveScope;
@@ -191,11 +192,12 @@ struct Session {
 /// (not a method of [`Session`]): the socket inside a session is not
 /// `Sync`, so no `&Session` may live across an await.
 async fn view(
-    store: &DeckStore,
+    link: &DeckLink,
     principal: &Principal,
 ) -> Result<(Vec<StationView>, Vec<DeckSession>, Option<EffectiveScope>), WsError> {
+    let store = &link.store;
     if let Principal::Display(d) = principal {
-        return display::view(store, d).await;
+        return display::view(link, d).await;
     }
     let stations: Vec<StationView> = store
         .stations()
@@ -289,7 +291,7 @@ impl Session {
             self.close(CLOSE_LOGIN_ENDED, "login ended").await;
             return Ok(());
         }
-        let (stations, sessions, scope) = view(&self.board.store, &self.principal).await?;
+        let (stations, sessions, scope) = view(&self.board.link, &self.principal).await?;
         self.scope = scope;
         self.cards = sessions.iter().map(|c| (key(c), c.clone())).collect();
         self.stations.clone_from(&stations);
@@ -377,7 +379,7 @@ impl Session {
             self.close(CLOSE_LOGIN_ENDED, "login ended").await;
             return Err(WsError::Send(axum::Error::new("the member login ended")));
         }
-        let (stations, sessions, scope) = view(&self.board.store, &self.principal).await?;
+        let (stations, sessions, scope) = view(&self.board.link, &self.principal).await?;
         let mut next: BTreeMap<SessionKey, DeckSession> =
             sessions.into_iter().map(|c| (key(&c), c)).collect();
         let changed: Vec<DeckSession> = next
@@ -584,8 +586,8 @@ impl Session {
                     return self.error("too_many_subscriptions", &detail).await;
                 }
                 let visible = if let Principal::Display(d) = &self.principal {
-                    let (store, id) = (self.board.store.clone(), d.display_id.clone());
-                    display::authorized(&store, &id, &k).await?
+                    let (link, id) = (Arc::clone(&self.board.link), d.display_id.clone());
+                    display::authorized(&link, &id, &k).await?
                 } else {
                     self.may_see(&k)
                 };

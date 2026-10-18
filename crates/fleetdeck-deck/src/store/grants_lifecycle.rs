@@ -9,6 +9,9 @@ use fleetdeck_proto::{SessionId, StationId};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::Result;
+use super::display_directives_coordinator::{
+    invalidate_ended_binding, invalidate_stale_generation,
+};
 use super::grant_scopes::sync_coordinate_scopes;
 use super::grants::{GrantState, get_grant};
 
@@ -120,6 +123,7 @@ fn apply_bound(
                 session.0
             ],
         )?;
+        invalidate_stale_generation(tx, &b.grant_id, b.generation)?;
     }
     Ok(())
 }
@@ -145,6 +149,7 @@ fn apply_ended(
            AND state != 'revoked'",
         params![station.as_str(), binding_id, generation, state, reason],
     )?;
+    invalidate_ended_binding(tx, station, binding_id, generation)?;
     Ok(())
 }
 

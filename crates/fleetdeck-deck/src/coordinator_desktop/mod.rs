@@ -12,8 +12,8 @@
 //!   policy round trips, [`relay`] the one send of a mutation, [`permits`] and
 //!   [`reads`] the protected read, [`audit`] the audit rows and [`limits`] the
 //!   in-flight slots.
-//! - `wall_show` keeps answering `desktop_unsupported` until its own task
-//!   (T5).
+//! - `wall_show` stores a coordinator directive ([`wall`]); [`directive`]
+//!   holds the live delivery checks of that directive for the displays.
 //!
 //! Every handler answers `Outcome::Ok(DesktopReply)`. A malformed envelope, a
 //! frame command ID that differs from the envelope's, and an unknown method
@@ -25,6 +25,7 @@ mod calls;
 mod capture;
 mod capture_status;
 mod check;
+mod directive;
 mod envelope;
 mod image;
 mod limits;
@@ -33,6 +34,7 @@ mod policy;
 mod queries;
 mod reads;
 mod relay;
+mod wall;
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -53,6 +55,8 @@ pub(crate) use authorize::{Authorized, Tool, authorize};
 pub(crate) use policy::{caller_policy, target_policy};
 #[allow(unused_imports)]
 pub(crate) use reads::coordinator_read;
+
+pub(crate) use directive::{effective_directive, effective_scope};
 
 use crate::link::DeckLink;
 use envelope::Stop;

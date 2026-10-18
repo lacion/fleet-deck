@@ -38,6 +38,7 @@ use super::artifact_routes::stream::{
 };
 use super::display_view::{in_scope, scope_of};
 use super::guard::ApiError;
+use crate::coordinator_desktop::effective_directive;
 use crate::store::{DisplayLogin, Principal};
 
 /// The `{*path}` segment that names the one file of the version.
@@ -139,9 +140,7 @@ async fn authorize(
     target: &ArtifactRef,
 ) -> Result<(), ApiError> {
     let read = || async {
-        board
-            .store
-            .display_directive(login.display_id.clone())
+        effective_directive(&board.link, &login.display_id)
             .await
             .map_err(ApiError::internal)?
             .ok_or_else(|| {

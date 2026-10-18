@@ -27,6 +27,7 @@ use fleetdeck_proto::StationId;
 use fleetdeck_proto::link::Scope;
 use rusqlite::{Connection, Transaction, params};
 
+use super::display_directives_coordinator::invalidate_coordinator_directives;
 use super::grants::{GRANT_COLUMNS, Grant, GrantState, finish, grant_row};
 use super::{AuditResult, DeckStore, Inner, NewAudit, Result, call};
 
@@ -119,6 +120,7 @@ fn end_stale(tx: &Connection, now: i64) -> Result<Vec<(String, &'static str)>> {
              WHERE grant_id = ?1 AND state = 'active'",
             params![g.grant_id, reason],
         )?;
+        invalidate_coordinator_directives(tx, &g.grant_id)?;
         ended.push((g.grant_id, reason));
     }
     Ok(ended)
@@ -137,6 +139,7 @@ pub(super) fn expire_idle(
          WHERE grant_id = ?1 AND state = 'active'",
         [grant_id],
     )?;
+    invalidate_coordinator_directives(&tx, grant_id)?;
     let changed = sync_coordinate_scopes(&tx, now)?;
     tx.commit()?;
     inner.note_scope_changes(changed);

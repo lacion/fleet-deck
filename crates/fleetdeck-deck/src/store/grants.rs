@@ -15,6 +15,7 @@ use fleetdeck_proto::{ProviderInstanceId, SessionId, StationId};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 
+use super::display_directives_coordinator::invalidate_coordinator_directives;
 use super::grant_scopes::sync_coordinate_scopes;
 pub(super) use super::grants_lifecycle::{apply_projection, record_lifecycle, renew_generation};
 use super::{DeckError, DeckStore, Result, call, new_id};
@@ -593,6 +594,7 @@ impl DeckStore {
                  WHERE grant_id = ?1 AND state != 'revoked'",
                 params![grant_id, reason],
             )?;
+            invalidate_coordinator_directives(&tx, &grant_id)?;
             let changed = sync_coordinate_scopes(&tx, now)?;
             tx.commit()?;
             Ok((n == 1, changed))
