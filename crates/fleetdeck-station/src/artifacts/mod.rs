@@ -8,6 +8,7 @@
 //! session's own `publish_artifact` MCP tool ([`fleet`]).
 
 pub mod bundle;
+mod delete;
 pub mod fleet;
 pub mod service;
 pub mod stage;
@@ -33,6 +34,9 @@ impl ArtifactError {
     }
 }
 
+#[cfg(test)]
+#[path = "delete_tests.rs"]
+mod delete_tests;
 #[cfg(test)]
 #[path = "owner_tests.rs"]
 mod owner_tests;

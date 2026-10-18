@@ -408,6 +408,11 @@ impl SessionManager {
             root,
             private,
         );
+        // R13 P5a: finish the artifact deletions that a crash left pending.
+        // This function is synchronous, so the cleanup runs as a task; every
+        // read already refuses a tombstoned id, so no request waits for it.
+        let cleanup = service.clone();
+        tokio::spawn(async move { cleanup.finish_pending_deletions().await });
         let _ = self.artifacts.set(service);
     }
 
