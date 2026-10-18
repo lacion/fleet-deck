@@ -619,6 +619,7 @@ impl Run<'_> {
                 desktop: Arc::clone(self.desktop),
                 latch: Arc::clone(self.latch),
                 allowed: Arc::clone(&req.allowed),
+                admitted: req.admitted.clone(),
                 monitor: req.monitor.clone(),
                 base: self.base.clone(),
                 file: watch_file,

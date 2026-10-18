@@ -425,3 +425,71 @@ async fn the_row_of_a_refused_coordinator_recording_keeps_its_context() {
         CaptureState::Failed
     );
 }
+
+/// A coordinator recording of 60 s whose gates follow `fleet` (the live
+/// `allow_fleet_control` of the target).
+fn long_run(
+    t: &T,
+    fleet: &Arc<AtomicBool>,
+) -> tokio::task::JoinHandle<Result<DesktopActResult, Fail>> {
+    let flag = Arc::clone(fleet);
+    let gates: Gates = Arc::new(move || {
+        if flag.load(Ordering::SeqCst) {
+            Ok(())
+        } else {
+            Err(fleet_off())
+        }
+    });
+    let desktop = Arc::clone(t.desktop());
+    let req = coordinated(t, 60, FakeCheck::ok(), gates);
+    tokio::spawn(async move { desktop.screen_record(req).await })
+}
+
+#[tokio::test]
+async fn fleet_control_going_off_during_a_coordinator_recording_discards_within_two_seconds() {
+    let t = T::new().await;
+    let fleet = Arc::new(AtomicBool::new(true));
+    let run = long_run(&t, &fleet);
+    t.until_recording(ID).await;
+    let off = std::time::Instant::now();
+    fleet.store(false, Ordering::SeqCst);
+    let result = tokio::time::timeout(std::time::Duration::from_secs(2), run)
+        .await
+        .expect("the recording did not stop within 2 s")
+        .unwrap();
+    assert!(off.elapsed() < std::time::Duration::from_secs(2));
+    // The coordinator code of `policy_off` is `authority_lost`.
+    assert_eq!(err(result).0, "authority_lost");
+    t.assert_discarded(ID, "authority_lost", StopReason::PolicyOff)
+        .await;
+}
+
+#[tokio::test]
+async fn fleet_control_staying_on_does_not_stop_a_coordinator_recording() {
+    let t = T::new().await;
+    let fleet = Arc::new(AtomicBool::new(true));
+    let run = long_run(&t, &fleet);
+    t.until_recording(ID).await;
+    // Past several watchdog passes the recording still runs.
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    assert!(!run.is_finished());
+    t.desktop()
+        .stop_recording(t.store(), FP, ID, StopReason::OwnerStop)
+        .await
+        .unwrap();
+    assert!(run.await.unwrap().is_ok());
+}
+
+#[tokio::test]
+async fn an_owner_recording_has_no_fleet_control_gate_in_its_watchdog() {
+    let t = T::new().await;
+    let run = t.start(ID, "DP-1", 60);
+    t.until_recording(ID).await;
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    assert!(!run.is_finished());
+    t.desktop()
+        .stop_recording(t.store(), FP, ID, StopReason::OwnerStop)
+        .await
+        .unwrap();
+    assert!(run.await.unwrap().is_ok());
+}

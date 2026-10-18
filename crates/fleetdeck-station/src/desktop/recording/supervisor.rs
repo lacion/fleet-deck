@@ -18,6 +18,7 @@ use super::lease::DeckLink;
 use super::probe::{self, Snapshot};
 use super::{RoomCheck, Timing, check_gates};
 use crate::desktop::Desktop;
+use crate::desktop::authority::Admitted;
 use crate::desktop::capture::Allowed;
 
 /// What the watchdog needs.
@@ -25,6 +26,10 @@ pub(crate) struct Watch {
     pub desktop: Arc<Desktop>,
     pub latch: Arc<Latch>,
     pub allowed: Arc<dyn Fn() -> Allowed + Send + Sync>,
+    /// The authority of the recording: a coordinator recording also reads
+    /// its live gates every pass, which include the target's
+    /// `allow_fleet_control` (§7.4). An owner recording has none.
+    pub admitted: Admitted,
     pub monitor: String,
     /// The first probe: the monitor as the recording started.
     pub base: Snapshot,
@@ -48,7 +53,9 @@ pub(crate) enum Found {
 impl Watch {
     /// The checks that need no await: gates, link, size, free space.
     fn quick(&self) -> Found {
-        if check_gates(&(self.allowed)(), &self.monitor).is_err() {
+        if self.admitted.local_gates().is_err()
+            || check_gates(&(self.allowed)(), &self.monitor).is_err()
+        {
             return Found::Stop {
                 reason: StopReason::PolicyOff,
                 ceiling: false,
