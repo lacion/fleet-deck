@@ -1386,5 +1386,3 @@ Before merge:
 3. Record remaining live-smoke limitations without claiming production acceptance.
 
 The focused authority/exposure review used the repository’s [security-audit skill](../../../.agents/skills/security-audit/SKILL.md).
-
-Codex session ID: 01a14d3e-b9ef-77e0-b3fc-3433fbf06bb4
