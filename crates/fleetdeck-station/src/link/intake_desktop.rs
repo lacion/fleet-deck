@@ -25,7 +25,7 @@ fn gate(ctx: &StationLink) -> impl Fn() -> bool + Send + Sync + use<> {
 }
 
 /// The live P5a gates in the info that leaves the station (P5a-2).
-fn stamp(ctx: &StationLink, info: &mut DesktopInfo) {
+pub(super) fn stamp(ctx: &StationLink, info: &mut DesktopInfo) {
     let policy = ctx.manager.policy();
     info.allowed.capture = policy.allow_desktop() && policy.allow_desktop_capture();
     info.allowed.capture_monitors = policy.capture_monitors().to_vec();
@@ -80,10 +80,17 @@ pub(super) async fn act(
     // The authority check comes before anything reads the desktop. It consumes
     // the `action_id`; the start check runs before the first program.
     let station_node = ctx.node.identity.fingerprint();
+    let action_id = given.as_ref().map(|a| a.action_id.clone());
     let admitted = match authority::admit(control, &station_node, given, &action) {
         Ok(admitted) => admitted,
         Err(e) => return failed(e),
     };
+    // R13 P5a: the screenshot has its own operation; its capture ID is the
+    // `action_id` that was just consumed.
+    if let DesktopAction::ScreenCapture { monitor } = action {
+        let id = action_id.unwrap_or_default();
+        return super::intake_capture::capture(ctx, control, admitted, id, monitor).await;
+    }
     let allowed = gate(ctx);
     match desktop::service().act(&allowed, action, admitted).await {
         Ok(mut result) => {

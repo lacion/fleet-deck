@@ -126,7 +126,7 @@ fn artifact_of(r: &rusqlite::Row<'_>) -> rusqlite::Result<(Artifact, String)> {
 const ARTIFACT_COLUMNS: &str =
     "artifact_id, session_id, title, kind, latest_version, author, created_at, updated_at";
 
-fn load_artifact(conn: &Connection, id: &str) -> Result<Option<Artifact>> {
+pub(super) fn load_artifact(conn: &Connection, id: &str) -> Result<Option<Artifact>> {
     let row = conn
         .query_row(
             &format!("SELECT {ARTIFACT_COLUMNS} FROM artifacts WHERE artifact_id = ?1"),
@@ -142,7 +142,10 @@ fn load_artifact(conn: &Connection, id: &str) -> Result<Option<Artifact>> {
     .transpose()
 }
 
-fn version_of(r: &rusqlite::Row<'_>) -> rusqlite::Result<(ArtifactVersion, String)> {
+/// A version row before its JSON columns (`files`, `capture`) are parsed.
+type RawVersion = (ArtifactVersion, String, Option<String>);
+
+fn version_of(r: &rusqlite::Row<'_>) -> rusqlite::Result<RawVersion> {
     let files: String = r.get(4)?;
     Ok((
         ArtifactVersion {
@@ -155,17 +158,19 @@ fn version_of(r: &rusqlite::Row<'_>) -> rusqlite::Result<(ArtifactVersion, Strin
             capture: None,
         },
         files,
+        r.get(6)?,
     ))
 }
 
-const VERSION_COLUMNS: &str = "artifact_id, version, size, sha256, files, created_at";
+const VERSION_COLUMNS: &str = "artifact_id, version, size, sha256, files, created_at, capture";
 
-fn finish_version((mut v, files): (ArtifactVersion, String)) -> Result<ArtifactVersion> {
+fn finish_version((mut v, files, capture): RawVersion) -> Result<ArtifactVersion> {
     v.files = serde_json::from_str(&files)?;
+    v.capture = capture.map(|c| serde_json::from_str(&c)).transpose()?;
     Ok(v)
 }
 
-fn load_versions(conn: &Connection, id: &str) -> Result<Vec<ArtifactVersion>> {
+pub(super) fn load_versions(conn: &Connection, id: &str) -> Result<Vec<ArtifactVersion>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT {VERSION_COLUMNS} FROM artifact_versions WHERE artifact_id = ?1 ORDER BY version"
     ))?;

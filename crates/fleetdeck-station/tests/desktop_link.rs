@@ -560,7 +560,7 @@ async fn desktop_allowed_capture_monitors_equal_the_policy_list_on_every_path() 
 }
 
 #[tokio::test]
-async fn a_desktop_screen_capture_act_is_a_stub_that_runs_no_program() {
+async fn a_desktop_screen_capture_act_without_an_artifact_directory_runs_no_program() {
     let _turn = ONE_AT_A_TIME.lock().await;
     let mut f = fixture_with(capture_policy(true, true, &["DP-1"])).await;
     let fake = FakeDesktop::install().await;
@@ -571,6 +571,8 @@ async fn a_desktop_screen_capture_act_is_a_stub_that_runs_no_program() {
     let (code, message) =
         refused(call(&deck, "desktop.act", authorized(&f, &deck, &action, 1)).await);
     assert_eq!(code, "unsupported");
-    assert_eq!(message, "This station cannot take screenshots yet.");
+    // R13 P5a task D2: the screenshot has its own operation; this fixture
+    // has no artifact directory, so the station refuses before any program.
+    assert_eq!(message, "this station has no artifact directory");
     assert_eq!(fake.calls(), "", "no program ran");
 }

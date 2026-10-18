@@ -35,6 +35,8 @@ pub struct ArtifactService {
     pub(super) root: PathBuf,
     /// The private paths of the station: never published (DL-173).
     private: Arc<PrivatePaths>,
+    /// Set when the startup recovery of the captures finished (R13 P5a).
+    pub(super) capture_ready: Arc<tokio::sync::OnceCell<()>>,
 }
 
 fn internal(e: impl std::fmt::Display) -> ArtifactError {
@@ -107,7 +109,20 @@ impl ArtifactService {
             policy,
             root,
             private,
+            capture_ready: Arc::new(tokio::sync::OnceCell::new()),
         }
+    }
+
+    /// `<station data>/artifacts`.
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// The station store.
+    #[must_use]
+    pub fn store(&self) -> &Store {
+        &self.store
     }
 
     /// The root and the relative path of a publish request.
