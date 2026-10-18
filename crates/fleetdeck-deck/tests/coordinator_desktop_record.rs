@@ -7,6 +7,8 @@
 
 mod common;
 mod coordinator_desktop_support;
+#[path = "coordinator_desktop_record/delivery.rs"]
+mod delivery;
 #[path = "coordinator_desktop_record/lease.rs"]
 mod lease;
 

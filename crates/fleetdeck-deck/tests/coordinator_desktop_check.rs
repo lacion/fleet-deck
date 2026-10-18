@@ -94,6 +94,30 @@ async fn the_import_phase_is_valid_for_a_recording_operation() {
     assert_eq!(v, json!({"valid": true, "reason": null}));
 }
 
+/// PRE-PR r1 finding 1: an idle-expired grant fails both phases before the
+/// grant sweep runs.
+#[tokio::test]
+async fn an_idle_expired_grant_fails_the_execute_and_import_checks() {
+    let w = world_with(&BOTH, |g| {
+        g.recording_cap = 5;
+        g.recording_second_cap = 600;
+        g.idle_ttl_ms = 10_000;
+    })
+    .await;
+    let mut op = w.new_op("op-rec", OpTool::RecordMonitor, "H4", &w.station());
+    op.class = fleetdeck_deck::store::coordinator_desktop::OpClass::Capture;
+    op.seconds = Some(2);
+    w.attempted(op).await;
+    for phase in ["execute", "import"] {
+        let v = w.check(payload("op-rec", "H4", phase)).await;
+        assert_eq!(v, json!({"valid": true, "reason": null}), "{phase}");
+    }
+    w.f.det.advance(Duration::from_secs(11));
+    for phase in ["execute", "import"] {
+        is(&w.check(payload("op-rec", "H4", phase)).await, LOST);
+    }
+}
+
 #[tokio::test]
 async fn an_unknown_operation_a_wrong_hash_a_wrong_station_and_a_wrong_state_are_lost() {
     let w = world().await;
