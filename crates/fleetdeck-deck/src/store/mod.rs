@@ -32,6 +32,7 @@ mod coordinator_git;
 pub(crate) mod coordinator_ops;
 pub mod coordinator_query;
 mod coordinator_query_reads;
+pub mod desktop_captures;
 pub mod display_directive_schema;
 pub mod display_directives;
 #[cfg(test)]
@@ -573,7 +574,10 @@ impl DeckStore {
     }
 
     /// Keeps the `station.info` answer of `station` for the board.
-    pub fn set_station_info(&self, station: &StationId, info: StationInfo) {
+    pub fn set_station_info(&self, station: &StationId, mut info: StationInfo) {
+        if let Some(desktop) = info.desktop.as_mut() {
+            crate::desktop_capture::stamp_features(self, station, desktop);
+        }
         let at = self.now_ms();
         let changed = {
             let mut infos = self
@@ -598,8 +602,9 @@ impl DeckStore {
     pub fn update_station_desktop(
         &self,
         station: &StationId,
-        desktop: fleetdeck_proto::desktop::DesktopInfo,
+        mut desktop: fleetdeck_proto::desktop::DesktopInfo,
     ) {
+        crate::desktop_capture::stamp_features(self, station, &mut desktop);
         let changed = {
             let mut infos = self
                 .inner

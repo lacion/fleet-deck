@@ -18,11 +18,13 @@ use axum::Router;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, Extension, Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use fleetdeck_proto::StationId;
-use fleetdeck_proto::desktop::{DesktopActBody, DesktopActResult, DesktopInfo};
+use fleetdeck_proto::desktop::{DesktopActBody, DesktopInfo};
 
 use super::Board;
+use super::desktop_capture_routes;
 use super::guard::{ApiError, owner_only};
 use super::settings_routes::owner;
 use crate::desktop_relay::{self, RelayCtx, RelayError, is_loopback_origin};
@@ -44,12 +46,12 @@ pub fn routes() -> Router<Arc<Board>> {
         )
 }
 
-fn relay_error(e: RelayError) -> ApiError {
+pub(super) fn relay_error(e: RelayError) -> ApiError {
     let (status, code) = e.http();
     ApiError::new(status, code, e.message())
 }
 
-fn ctx(board: &Board) -> RelayCtx {
+pub(super) fn ctx(board: &Board) -> RelayCtx {
     RelayCtx {
         store: board.store.clone(),
         link: Arc::clone(&board.link),
@@ -57,7 +59,7 @@ fn ctx(board: &Board) -> RelayCtx {
     }
 }
 
-async fn station_id(board: &Board, name: &str) -> Result<StationId, ApiError> {
+pub(super) async fn station_id(board: &Board, name: &str) -> Result<StationId, ApiError> {
     board
         .store
         .find_station(name.to_owned())
@@ -118,7 +120,12 @@ async fn show(
 }
 
 /// A request that stops before the relay: one audit row.
-async fn refused(board: &Board, principal: &Principal, id: &str, e: ApiError) -> ApiError {
+pub(super) async fn refused(
+    board: &Board,
+    principal: &Principal,
+    id: &str,
+    e: ApiError,
+) -> ApiError {
     board
         .store
         .audit_or_log(
@@ -141,7 +148,7 @@ async fn act(
     Path(station): Path<String>,
     headers: HeaderMap,
     body: Result<Json<DesktopActBody>, JsonRejection>,
-) -> Result<Json<DesktopActResult>, ApiError> {
+) -> Result<Response, ApiError> {
     // The owner check comes before the body is read.
     owner(
         &board,
@@ -167,6 +174,10 @@ async fn act(
             return Err(refused(&board, &principal, id.as_str(), e).await);
         }
     };
+    // A screenshot has its own relay (R13 P5a): `desktop_capture_routes`.
+    if let DesktopActBody::ScreenCapture { monitor } = body {
+        return desktop_capture_routes::act(&board, &principal, id, &headers, monitor).await;
+    }
     let needs_origin = matches!(
         body,
         DesktopActBody::WallOpen { .. } | DesktopActBody::WallReload { .. }
@@ -188,7 +199,7 @@ async fn act(
     };
     desktop_relay::act_body(&ctx(&board), id, body, origin.as_deref())
         .await
-        .map(Json)
+        .map(|result| Json(result).into_response())
         .map_err(relay_error)
 }
 

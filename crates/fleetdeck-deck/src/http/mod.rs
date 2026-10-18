@@ -18,6 +18,7 @@ pub mod assist_routes;
 pub mod auth_routes;
 pub mod body_deadline;
 pub mod command_routes;
+pub mod desktop_capture_routes;
 pub mod desktop_routes;
 pub mod display_artifact;
 pub mod display_bodies;
@@ -28,6 +29,7 @@ pub mod display_routes;
 pub mod display_view;
 pub mod endpoints;
 pub mod execution_routes;
+pub mod features_routes;
 pub mod file_routes;
 pub mod fleet_answers_routes;
 pub mod fleet_git_pref_routes;
@@ -566,6 +568,8 @@ pub fn router(board: Arc<Board>) -> Router {
         .merge(display_changes::routes())
         .merge(display_artifact::routes())
         .merge(desktop_routes::routes())
+        .merge(desktop_capture_routes::routes())
+        .merge(features_routes::routes())
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&board),
             guard::guard,

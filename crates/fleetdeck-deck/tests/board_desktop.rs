@@ -24,6 +24,18 @@ use share_support::*;
 
 const SENTINEL: &str = "SENTINEL-TEXT-4711";
 
+/// The info as the deck keeps and returns it: the fake link negotiated the two
+/// P5a features, and the deck stamps them (R13 P5a task E).
+fn stamped(
+    mut info: fleetdeck_proto::desktop::DesktopInfo,
+) -> fleetdeck_proto::desktop::DesktopInfo {
+    info.features = vec![
+        feature::DESKTOP_CAPTURE.to_owned(),
+        feature::ARTIFACTS_DELETE.to_owned(),
+    ];
+    info
+}
+
 #[tokio::test]
 async fn an_owner_action_reaches_the_station_with_a_bound_authority() {
     let (f, mut station, c, h) = setup().await;
@@ -94,13 +106,13 @@ async fn a_success_updates_only_the_cached_desktop_data() {
     .await;
     assert_eq!(r.status, 200, "{}", r.body);
     let (now, _) = f.store.station_info(&f.station).unwrap();
-    assert_eq!(now.desktop, Some(info()));
+    assert_eq!(now.desktop, Some(stamped(info())));
     assert_eq!(
         (now.name.as_str(), now.head, now.live_sessions),
         ("fake", 7, 2)
     );
     let mut same = cached;
-    same.desktop = Some(info());
+    same.desktop = Some(stamped(info()));
     assert_eq!(now, same);
 }
 
@@ -447,7 +459,7 @@ async fn the_info_route_asks_for_a_cached_read_and_the_relay_can_ask_for_a_fresh
         req
     };
     let (got, req) = tokio::join!(ask, answer);
-    assert_eq!(got.unwrap(), info());
+    assert_eq!(got.unwrap(), stamped(info()));
     assert_eq!(req.params, json!({ "fresh": true }));
     // The station timeout text is a timeout; a read writes no audit row.
     let ask = fleetdeck_deck::desktop_relay::info(&ctx, f.station.clone(), false);

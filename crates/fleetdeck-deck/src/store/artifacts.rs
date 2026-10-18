@@ -14,6 +14,7 @@ use fleetdeck_proto::{EventEnvelope, SessionId, StationId};
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::artifact_tombstones::tombstoned;
+use super::desktop_captures::{CAPTURE_CACHE_LIMIT, cache_put_tx};
 use super::{DeckError, DeckStore, Result, call, to_i64};
 
 /// An SQL condition that holds when the artifact of the row that `$a` names
@@ -70,6 +71,75 @@ pub(super) fn record_artifact(
             e.at,
         ],
     )?;
+    Ok(())
+}
+
+/// The index row of a relayed publish, inside the caller's transaction. A
+/// tombstoned identity is never restored (R13 P5a A4).
+///
+/// # Errors
+/// A database error.
+pub(crate) fn note_artifact_tx(
+    tx: &Transaction<'_>,
+    station: &StationId,
+    a: &fleetdeck_proto::artifacts::Artifact,
+) -> Result<()> {
+    if tombstoned(tx, station.as_str(), &a.artifact_id)? {
+        return Ok(());
+    }
+    tx.execute(
+        "INSERT INTO artifacts (station_id, artifact_id, session_id, title, kind,
+             latest_version, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT (station_id, artifact_id) DO UPDATE SET
+             title = CASE WHEN excluded.latest_version >= latest_version
+                          THEN excluded.title ELSE title END,
+             kind = CASE WHEN excluded.latest_version >= latest_version
+                         THEN excluded.kind ELSE kind END,
+             latest_version = MAX(latest_version, excluded.latest_version),
+             updated_at = MAX(updated_at, excluded.updated_at)",
+        params![
+            station.as_str(),
+            a.artifact_id,
+            a.session_id.as_ref().map(SessionId::as_str),
+            a.title,
+            a.kind.as_str(),
+            a.latest_version,
+            a.updated_at
+        ],
+    )?;
+    Ok(())
+}
+
+/// Version metadata, inside the caller's transaction. The `capture` column
+/// is never written here: only the capture path sets it.
+///
+/// # Errors
+/// A database error.
+pub(crate) fn put_artifact_versions_tx(
+    tx: &Transaction<'_>,
+    station: &StationId,
+    versions: &[ArtifactVersion],
+) -> Result<()> {
+    for v in versions {
+        if tombstoned(tx, station.as_str(), &v.artifact_id)? {
+            continue;
+        }
+        tx.execute(
+            "INSERT OR IGNORE INTO artifact_versions
+                 (station_id, artifact_id, version, size, sha256, files, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                station.as_str(),
+                v.artifact_id,
+                v.version,
+                to_i64(v.size)?,
+                v.sha256,
+                serde_json::to_string(&v.files)?,
+                v.created_at
+            ],
+        )?;
+    }
     Ok(())
 }
 
@@ -247,41 +317,10 @@ impl DeckStore {
         station: StationId,
         a: &fleetdeck_proto::artifacts::Artifact,
     ) -> Result<()> {
-        let (artifact_id, session, title, kind, latest, at) = (
-            a.artifact_id.clone(),
-            a.session_id.clone(),
-            a.title.clone(),
-            a.kind,
-            a.latest_version,
-            a.updated_at,
-        );
+        let a = a.clone();
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
-            // A tombstoned identity is never restored (R13 P5a A4).
-            if tombstoned(&tx, station.as_str(), &artifact_id)? {
-                return Ok(());
-            }
-            tx.execute(
-                "INSERT INTO artifacts (station_id, artifact_id, session_id, title, kind,
-                     latest_version, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                 ON CONFLICT (station_id, artifact_id) DO UPDATE SET
-                     title = CASE WHEN excluded.latest_version >= latest_version
-                                  THEN excluded.title ELSE title END,
-                     kind = CASE WHEN excluded.latest_version >= latest_version
-                                 THEN excluded.kind ELSE kind END,
-                     latest_version = MAX(latest_version, excluded.latest_version),
-                     updated_at = MAX(updated_at, excluded.updated_at)",
-                params![
-                    station.as_str(),
-                    artifact_id,
-                    session.as_ref().map(SessionId::as_str),
-                    title,
-                    kind.as_str(),
-                    latest,
-                    at
-                ],
-            )?;
+            note_artifact_tx(&tx, &station, &a)?;
             tx.commit()?;
             Ok(())
         })
@@ -299,7 +338,7 @@ impl DeckStore {
     ) -> Result<Vec<ArtifactVersion>> {
         call(&self.inner.db, move |conn| {
             let mut stmt = conn.prepare(concat!(
-                "SELECT version, size, sha256, files, created_at FROM artifact_versions v
+                "SELECT version, size, sha256, files, created_at, capture FROM artifact_versions v
                      WHERE station_id = ?1 AND artifact_id = ?2 AND ",
                 not_tombstoned!("v"),
                 " ORDER BY version"
@@ -312,11 +351,12 @@ impl DeckStore {
                         r.get::<_, String>(2)?,
                         r.get::<_, String>(3)?,
                         r.get::<_, i64>(4)?,
+                        r.get::<_, Option<String>>(5)?,
                     ))
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             rows.into_iter()
-                .map(|(version, size, sha256, files, created_at)| {
+                .map(|(version, size, sha256, files, created_at, capture)| {
                     Ok(ArtifactVersion {
                         artifact_id: artifact_id.clone(),
                         version,
@@ -324,7 +364,7 @@ impl DeckStore {
                         sha256,
                         files: serde_json::from_str(&files)?,
                         created_at,
-                        capture: None,
+                        capture: capture.map(|c| serde_json::from_str(&c)).transpose()?,
                     })
                 })
                 .collect()
@@ -343,25 +383,7 @@ impl DeckStore {
     ) -> Result<()> {
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
-            for v in versions {
-                if tombstoned(&tx, station.as_str(), &v.artifact_id)? {
-                    continue;
-                }
-                tx.execute(
-                    "INSERT OR IGNORE INTO artifact_versions
-                         (station_id, artifact_id, version, size, sha256, files, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                    params![
-                        station.as_str(),
-                        v.artifact_id,
-                        v.version,
-                        to_i64(v.size)?,
-                        v.sha256,
-                        serde_json::to_string(&v.files)?,
-                        v.created_at
-                    ],
-                )?;
-            }
+            put_artifact_versions_tx(&tx, &station, &versions)?;
             tx.commit()?;
             Ok(())
         })
@@ -379,8 +401,9 @@ impl DeckStore {
         version: u32,
         path: String,
     ) -> Result<Option<Vec<u8>>> {
+        let now = self.now_ms();
         call(&self.inner.db, move |conn| {
-            Ok(conn
+            let bytes: Option<Vec<u8>> = conn
                 .query_row(
                     concat!(
                         "SELECT bytes FROM artifact_cache c
@@ -391,7 +414,16 @@ impl DeckStore {
                     params![station.as_str(), artifact_id, version, path],
                     |r| r.get(0),
                 )
-                .optional()?)
+                .optional()?;
+            if bytes.is_some() {
+                // The capture cache evicts by this time (R13 P5a).
+                conn.execute(
+                    "UPDATE artifact_cache SET last_used_at = ?5
+                     WHERE station_id = ?1 AND artifact_id = ?2 AND version = ?3 AND path = ?4",
+                    params![station.as_str(), artifact_id, version, path, now],
+                )?;
+            }
+            Ok(bytes)
         })
         .await
     }
@@ -427,7 +459,9 @@ impl DeckStore {
         .await
     }
 
-    /// Caches the bytes of one file of a version.
+    /// Caches the bytes of one file of a version. A file of a capture
+    /// version is a capture row and the capture rows stay within
+    /// [`CAPTURE_CACHE_LIMIT`] (R13 P5a).
     ///
     /// # Errors
     /// A database error.
@@ -439,17 +473,45 @@ impl DeckStore {
         path: String,
         bytes: Vec<u8>,
     ) -> Result<()> {
+        self.put_artifact_file_with_limit(
+            station,
+            artifact_id,
+            version,
+            path,
+            bytes,
+            CAPTURE_CACHE_LIMIT,
+        )
+        .await
+    }
+
+    /// [`Self::put_artifact_file`] with another capture-cache limit (a test
+    /// makes it small).
+    ///
+    /// # Errors
+    /// A database error.
+    #[doc(hidden)]
+    pub async fn put_artifact_file_with_limit(
+        &self,
+        station: StationId,
+        artifact_id: String,
+        version: u32,
+        path: String,
+        bytes: Vec<u8>,
+        limit: u64,
+    ) -> Result<()> {
+        let now = self.now_ms();
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             // The check and the write share one transaction (R13 P5a A4).
             if tombstoned(&tx, station.as_str(), &artifact_id)? {
                 return Ok(());
             }
-            tx.execute(
-                "INSERT OR REPLACE INTO artifact_cache
-                     (station_id, artifact_id, version, path, bytes)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![station.as_str(), artifact_id, version, path, bytes],
+            cache_put_tx(
+                &tx,
+                (station.as_str(), &artifact_id, version, &path),
+                &bytes,
+                now,
+                limit,
             )?;
             tx.commit()?;
             Ok(())

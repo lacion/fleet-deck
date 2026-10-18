@@ -81,6 +81,38 @@ pub(crate) struct Route {
     epoch: String,
 }
 
+impl Route {
+    /// The authenticated node fingerprint of the station on this link.
+    pub(crate) fn station_node(&self) -> &str {
+        &self.station_node
+    }
+
+    /// True when this link negotiated `feature`.
+    pub(crate) fn negotiated(&self, feature: &str) -> bool {
+        self.control.params().negotiated.has(feature)
+    }
+}
+
+/// Why a call failed, before the mapping to a [`RelayError`]: the capture
+/// path reads the wire code itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CallError {
+    /// A failure of the link or a malformed answer.
+    Relay(RelayError),
+    /// The error answer of the station.
+    Wire { code: String, message: String },
+}
+
+impl CallError {
+    /// The relay error of [`map_wire`] for a wire answer.
+    pub(crate) fn into_relay(self) -> RelayError {
+        match self {
+            Self::Relay(e) => e,
+            Self::Wire { code, message } => map_wire(&code, &message),
+        }
+    }
+}
+
 /// Picks the link of `station` for a desktop call.
 ///
 /// # Errors
@@ -123,7 +155,9 @@ pub(crate) fn resolve(
 /// Makes the authority of `action` and sends `desktop.act`.
 ///
 /// `quiet_hours` is the interval of the display of a wake; the station
-/// refuses when its own local time is inside it.
+/// refuses when its own local time is inside it. `action_id` is the id of the
+/// authority; `None` mints a new one (only a screenshot passes its capture
+/// id).
 ///
 /// # Errors
 /// See [`map_wire`]; [`RelayError::Timeout`] after the deck wait;
@@ -134,17 +168,33 @@ pub(crate) async fn send_act(
     action: &DesktopAction,
     quiet_hours: Option<String>,
     waits: Waits,
+    action_id: Option<String>,
 ) -> Result<DesktopActResult, RelayError> {
+    send_act_raw(store, route, action, quiet_hours, waits, action_id)
+        .await
+        .map_err(CallError::into_relay)
+}
+
+/// [`send_act`] with the unmapped error: the screenshot path reads the code
+/// of an error answer.
+pub(crate) async fn send_act_raw(
+    store: &DeckStore,
+    route: &Route,
+    action: &DesktopAction,
+    quiet_hours: Option<String>,
+    waits: Waits,
+    action_id: Option<String>,
+) -> Result<DesktopActResult, CallError> {
     let authority = issue(
         action,
         &route.station_node,
-        store.new_command_id().as_str().to_owned(),
+        action_id.unwrap_or_else(|| store.new_command_id().as_str().to_owned()),
         route.epoch.clone(),
         store.now_ms(),
         quiet_hours,
     );
     let params = with_authority(action, &authority);
-    request(&route.control, "desktop.act", params, waits.of(action)).await
+    request_raw(&route.control, "desktop.act", params, waits.of(action)).await
 }
 
 /// Sends `desktop.info`.
@@ -167,14 +217,30 @@ async fn request<T: serde::de::DeserializeOwned>(
     params: serde_json::Value,
     wait: Duration,
 ) -> Result<T, RelayError> {
+    request_raw(control, method, params, wait)
+        .await
+        .map_err(CallError::into_relay)
+}
+
+async fn request_raw<T: serde::de::DeserializeOwned>(
+    control: &Control,
+    method: &str,
+    params: serde_json::Value,
+    wait: Duration,
+) -> Result<T, CallError> {
     let outcome = tokio::time::timeout(wait, control.request(method, None, params))
         .await
-        .map_err(|_| RelayError::Timeout)?
-        .map_err(|_| RelayError::Unreachable)?;
+        .map_err(|_| CallError::Relay(RelayError::Timeout))?
+        .map_err(|_| CallError::Relay(RelayError::Unreachable))?;
     match outcome {
         // A parse error is not logged: the answer could hold desktop data.
-        Outcome::Ok(v) => serde_json::from_value(v).map_err(|_| RelayError::Failed),
-        Outcome::Err(e) => Err(map_wire(&e.code, &e.message)),
+        Outcome::Ok(v) => {
+            serde_json::from_value(v).map_err(|_| CallError::Relay(RelayError::Failed))
+        }
+        Outcome::Err(e) => Err(CallError::Wire {
+            code: e.code,
+            message: e.message,
+        }),
     }
 }
 

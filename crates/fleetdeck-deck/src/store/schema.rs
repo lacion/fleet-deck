@@ -753,6 +753,8 @@ pub fn migrations() -> Migrations<'static> {
         M::up(super::fleet_git_schema::MOVES_SQL),
         // V31 (R13 P5a A4): the permanent artifact tombstones.
         M::up(super::artifact_tombstones::SQL),
+        // V32 (R13 P5a task E): the owner screenshots, `store/desktop_captures.rs`.
+        M::up(super::desktop_captures::SQL),
     ])
 }
 

@@ -153,6 +153,8 @@ pub struct RunningDeck {
     fleet_summary: tokio::task::JoinHandle<()>,
     /// The station deletion retries of the artifacts (R13 P5a).
     artifact_deletions: tokio::task::JoinHandle<()>,
+    /// The recovery of the owner screenshots (R13 P5a).
+    desktop_captures: tokio::task::JoinHandle<()>,
     /// The audit log prune (NV-11).
     maintenance: tokio::task::JoinHandle<()>,
     /// The sender and poller of the home attempts (FG-5).
@@ -467,6 +469,8 @@ impl RunningDeck {
         );
         let artifact_deletions =
             crate::artifact_deletions::spawn(store.clone(), Arc::clone(node.link()), rx.clone());
+        let desktop_captures =
+            crate::desktop_capture::spawn(store.clone(), Arc::clone(node.link()), rx.clone());
         let scheduler = crate::scheduler::spawn(store.clone(), Arc::clone(node.link()), rx);
         Ok(Self {
             node,
@@ -480,6 +484,7 @@ impl RunningDeck {
             wake,
             fleet_summary,
             artifact_deletions,
+            desktop_captures,
             maintenance,
             homes,
             land,
@@ -515,6 +520,7 @@ impl RunningDeck {
         let _ = self.wake.await;
         let _ = self.fleet_summary.await;
         let _ = self.artifact_deletions.await;
+        let _ = self.desktop_captures.await;
         let _ = self.maintenance.await;
         let _ = self.homes.await;
         for task in self.land {
