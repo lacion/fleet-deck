@@ -150,7 +150,7 @@ The number is the decision (DL-239) and the row. Design: `docs/v2/design/omarchy
 
 ### Agent monitor recordings (R13 P5b-2, DL-241)
 
-The number is the decision (DL-241) and the row. Design: `docs/v2/design/omarchy-p5b.md` section 13. All rows are built. The PRE-PR review of P5b-2 is pending (DL-241 item a). The end-to-end proofs (task Q-P1) are pending (DL-241 item b). The live smoke of P5b-2 and the real-recorder smoke of P5b-1 are pending (DL-241 item c; the list is `make desktop-smoke`). An agent recording shows the whole monitor and runs as the owner's user. These rows do not claim isolation from other programs of that user.
+The number is the decision (DL-241) and the row. Design: `docs/v2/design/omarchy-p5b.md` section 13. All rows are built. The PRE-PR review of P5b-2 is pending (DL-241 item a). The end-to-end proofs (task Q-P1, `crates/fleetdeck-deck/tests/p5b2_end_to_end.rs`) pass (DL-241 item b). The live smoke of P5b-2 and the real-recorder smoke of P5b-1 are pending (DL-241 item c; the list is `make desktop-smoke`). An agent recording shows the whole monitor and runs as the owner's user. These rows do not claim isolation from other programs of that user.
 
 | DL | Surface | Where | Risk | Proof |
 | --- | --- | --- | --- | --- |

@@ -3399,7 +3399,8 @@ Owner review: pending.
   - Task Q-K, `8e4c7b9f`: the deck. The authorization of a call, the charges at acceptance, the shared capture rate, the run of the recording and its status, the coordinator branch of the lease, and the coordinator recording provenance.
   - Fix `156ee9a5`, found by the architect after the merge of Q-K: a defect at the seam of Q-K and Q-S. The station asks the deck for the `import` authority check before it imports a coordinator recording. The deck refused that check for every tool except the screenshot, so every agent recording would have been discarded. A `record_monitor` operation now passes the `import` phase like a screenshot. The test is `crates/fleetdeck-deck/tests/coordinator_desktop_check.rs` `the_import_phase_is_valid_for_a_recording_operation`.
   - Task Q-P2 (this change): the documents. This entry, the status lines, `operations.md` section 7.7 (the part "Agent recordings (P5b-2)"), the rows of `PARITY.md` and `SECURITY-CHECKLIST.md`, and the P5b-2 part of `LIVE-SMOKE.md`.
-  - Task Q-P1 (end-to-end proofs, `crates/fleetdeck-deck/tests/p5b2_end_to_end.rs`) is pending and is not part of this entry.
+  - Fix `506f9787`, found in the review of Q-P2: a grant without the allowance got `not_granted`. It now gets the contract code `recording_not_allowed`.
+  - Task Q-P1, `73fbc5c7`: the end-to-end proofs over real links, `crates/fleetdeck-deck/tests/p5b2_end_to_end.rs` (12 tests). When the target link closes during a recording, the agent call answers `desktop_timeout` (the deck cannot know the outcome); the capture recovery then gives `capture_status` the station code `authority_unknown` (architect decision).
 - Decisions. Each line is one record. The full text is in `omarchy-r12-decisions.md` of the architect's brief folder (`~/fleetdeck-briefs`):
   - O12-6 (OD-4): an agent can record only with an explicit, elevated opt-in. Existing grants get zero recording caps and stay screenshot-only.
   - O12-10 item 32: the migration V34 is not changed. V36 rebuilds `coordinator_desktop_ops` (create, copy, drop, rename) to add `record_monitor` to the `tool` check and the column `seconds`.
@@ -3412,9 +3413,9 @@ Owner review: pending.
   - The deck wait for the station is `seconds` plus 35 seconds. The caller MCP deadline is `seconds` plus 45 seconds.
 - Open items:
   - a. The PRE-PR review of P5b-2 is pending.
-  - b. The end-to-end proofs (task Q-P1) are pending.
+  - b. Done: the end-to-end proofs (task Q-P1) pass.
   - c. The real-recorder smoke of P5b-1 (`omarchy-p5b.md` section 18) is still required. The P5b-2 live smoke (`docs/v2/LIVE-SMOKE.md`, `make desktop-smoke`) is also pending.
   - d. The board has no form to change the recording limits of an existing grant, and the deck has no route for it yet. The "Change limits" form covers the three P6 limits only (no board path yet).
   - e. The owner may change OD-1 to OD-6 (`omarchy-p5b.md` section 2).
   - f. The tombstone reason `artifact_deleted` in the coordinator branch of the lease has no test of its own.
-- Next: the end-to-end proofs (task Q-P1); the PRE-PR review of P5b-2; the real-recorder smoke and the P5b-2 live smoke on the Omarchy machines; the owner reads the new rows of `SECURITY-CHECKLIST.md` (DL-158).
+- Next: the PRE-PR review of P5b-2; the real-recorder smoke and the P5b-2 live smoke on the Omarchy machines; the owner reads the new rows of `SECURITY-CHECKLIST.md` (DL-158).
