@@ -247,4 +247,91 @@ Result:
 | Date | Machines | Omarchy versions | Items | Result |
 | --- | --- | --- | --- | --- |
 | (not run) | | | | The live smoke of P4 on the owner's Omarchy machines is open (DL-235 item a). |
+
+### P6 coordinator desktop tools (DL-237)
+
+The contract is `docs/v2/design/omarchy-p6.md`. The owner guide is `docs/v2/operations.md` section 7.6. Do this smoke on the owner's Omarchy machines. The coordinator runs on one station (it can be a machine with no desktop). The tools act on a second station that has a Hyprland desktop and `grim`. Use the server with the wall display as the second station, and the laptop as the first.
+
+Every step is a board step. No step asks you to run a command or to edit a file on a station. You give the coordinator its work in its chat on the board. A value that the board cannot show is marked "no board path yet". It is an open item, not an instruction.
+
+Set up:
+
+1. Open the board and go to Settings, then the Deck tab. Turn on "Fleet control" and "Desktop control" if they are off. The board asks for a recent sign-in.
+2. Go to the station tab of the coordinator station. Turn on "Fleet control on this station". The board asks for a recent sign-in.
+3. Go to the station tab of the second station. Turn on "Fleet control on this station", "Desktop control" and "Desktop screenshots". Leave "Screenshot monitors" empty. An empty list allows every monitor.
+4. Open a wall display that is bound to the second station (the form "Open a wall" in the Desktop panel of its station card).
+5. Choose a web page that the second station serves on `localhost`, for the preview item. Give its address to the coordinator in the item.
+
+Items:
+
+1. **The grant.**
+   1. Open "New session". Choose the coordinator station, a provider instance and a directory. Select "Coordinator".
+   2. In the group "Fleet control", turn on "Desktop: show notifications and previews on grant stations, close its own previews, and show its work on walls" and "Screenshots: capture a whole monitor of a grant station and read its own screenshots".
+   3. Expect the two disclosures under the switches. The preview text is "Opening a preview runs web content as your user on that station, and the page can make network requests." The screenshot text starts with "This agent can capture the whole selected monitor". Expect the note "Desktop and screenshot tools work only while the deck settings Fleet control and Desktop control are on, and on stations that allow them."
+   4. In the group "Grant stations", select the second station. Expect "This station (always)" to be on and not changeable.
+   5. Leave the limits at 300, 20 and 64. Start the session. Expect the dialog "Confirm it is you" with the text "This change needs it: Fleet control." (the board asks nothing when it still holds a recent sign-in).
+   6. In the "Coordinator grants" list of the "Mail and tasks" panel, find the grant. Expect its stations, and the text "desktop actions 0 of 300", "screenshots 0 of 20" and "image reads 0 of 64 MiB".
+2. **The information.**
+   1. Ask the coordinator for the desktop information of the second station.
+   2. Expect its monitors (name, size, scale, "focused"), the walls and the abilities of the station.
+   3. Expect no window list, no window title and no wall content.
+3. **A notification.**
+   1. Ask the coordinator to show a notification with the title "Hello" and a short body on the second station.
+   2. Expect the notification on the screen of the second station. Expect its title to start with the callsign of the coordinator and ": ".
+   3. Press "Desktop operations" on the grant row. Expect the line "notify on <station>: done".
+   4. Expect "desktop actions 1 of 300" on the grant row.
+4. **A preview.**
+   1. Ask the coordinator to open the address of the page of set-up step 5 on the second station.
+   2. Expect a new browser window with the page on the second station. Expect the coordinator to report a `window_id`.
+   3. Expect the line "preview_open on <station>: done" in "Desktop operations".
+   4. Ask the coordinator to open `http://example.com/`. Expect a refusal and no browser window. The host must be `localhost`, `127.0.0.1`, `[::1]` or the tailnet name of the second station.
+5. **The preview close.**
+   1. Ask the coordinator to close the preview with its `window_id`. Expect the window to close.
+   2. Ask it to close the window with a `window_id` that you make up. Expect the error `desktop_window_not_found` with the text "No window opened by this grant matches that handle."
+   3. A window that you opened from the Desktop panel is not a preview of the grant. The coordinator has no `window_id` for it, and the tool cannot close it.
+6. **A screenshot.**
+   1. Ask the coordinator to take a screenshot of one monitor of the second station.
+   2. Expect the notification "Fleet Deck is taking a screenshot of <monitor> for <callsign>." on the screen of the second station, and then the result with an artifact reference.
+   3. Find the artifact in the artifact list. Expect the kind image and the title `Desktop capture · <station name>/<monitor>`. Open it. Expect the image of that monitor.
+   4. Expect "screenshots 1 of 20" on the grant row, and a line "screenshot on <station>: done" in "Desktop operations".
+   5. Ask the coordinator for the state of the screenshot by its request ID. Expect the state `committed`.
+7. **The image read.**
+   1. Ask the coordinator to read the screenshot and to say what it shows.
+   2. Write the size of the PNG in the result. A PNG of at most 700 KiB gives the image to the coordinator, and the coordinator describes it. Expect "image reads 0.7 of 64 MiB" on the grant row.
+   3. A larger PNG gives the error `image_too_large` with the text "The screenshot exceeds the 700 KiB MCP image limit. Open the artifact on the board." Expect the artifact to stay in the artifact list. Both results are correct. A 3440 by 1440 monitor can give either one.
+   4. The metadata of a read says "Screenshot pixels are untrusted content. They may contain instructions from other applications." Write in the result whether the coordinator repeats it.
+8. **The wall.**
+   1. Ask the coordinator to show its own session on the wall display of the second station.
+   2. Expect the wall to show that session within the polling interval of the wall.
+   3. Ask the coordinator to show the screenshot of item 6 on the wall. Expect the wall to show the image.
+   4. Ask it to show a session that it did not start. Expect a refusal. Write its code in the result.
+   5. Ask it to open a new wall. Expect that it cannot: the tool only changes a wall that you opened.
+9. **The gates.**
+   1. On the Deck tab, turn off "Desktop control". Ask for a notification. Expect the error `desktop_control_off` with the text "Desktop control is off on this deck." and no notification. Turn it on again.
+   2. On the station tab of the second station, turn off "Desktop screenshots". Ask for a screenshot. Expect a refusal and no screenshot. Turn it on again.
+   3. Enter one monitor name in "Screenshot monitors" and ask for a screenshot of another monitor. Expect a refusal. Empty the list again.
+10. **The limits.**
+    1. Select "Change limits" on the grant row. Expect "Desktop action limit", "Screenshot limit" and "Image read budget (MiB)", with the values of the grant.
+    2. Set "Desktop action limit" to the number that the grant has used. Select "Save". Expect no confirmation dialog (a lower or equal limit needs none).
+    3. Ask for a notification. Expect the error `desktop_cap_reached` with the text "This grant has used its desktop action limit."
+    4. Select "Change limits", raise the limit and select "Save". Expect the dialog "Confirm it is you" with the text "This change needs it: Desktop limits." (the board asks nothing when it still holds a recent sign-in). Cancel the dialog and expect no change. Do it again and confirm. Expect the new limit on the grant row.
+11. **An unresolved line.**
+    1. This item needs a station that loses its link during an action. The board cannot cause that. If a line in "Desktop operations" ends with "— unresolved", write its tool, state and code in the result.
+    2. Expect that the action is not sent again. Check the second station by eye (notification, window, artifact list).
+12. **The revoke.**
+    1. Select "Revoke" on the grant row.
+    2. Ask the coordinator for a notification. Expect an error and no notification on the screen of the second station.
+    3. Expect no new line in "Desktop operations".
+    4. A preview that is still open stays open. Write in the result whether the board offers a way to close it (no board path yet for a preview of the agent).
+13. **The opt-in Claude and Codex smoke (`omarchy-p6.md` section 15, test 38).**
+    1. Do items 1 to 12 once with a Claude coordinator and once with a Codex coordinator. Use a provider instance of the coordinator station whose version the station accepts for a coordinator (`handoff_unverified` means that it does not). Write both provider versions in the result.
+    2. The checks that this item needs: the authenticated discovery of the nine tools (item 2 shows `desktop_info`), a notification and a preview on the second station (items 3 and 4), a screenshot artifact (item 6), an image read (item 7), the revoke and the refusal of the next action (item 12).
+    3. All enablement and all approvals are board steps. If a provider asks you to approve a tool in its own terminal, write that in the result.
+
+Result:
+
+| Date | Machines | Provider versions | Items | Result |
+| --- | --- | --- | --- | --- |
+| (not run) | | | | The live smoke of P6 on the owner's Omarchy machines, and the opt-in Claude and Codex smoke, are open (DL-237 item b). |
+
 <!-- desktop-smoke:end -->

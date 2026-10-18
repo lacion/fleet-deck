@@ -418,6 +418,109 @@ The panel keys are `j` and `k` or the arrow keys to move, `Enter` to open the bo
 
 There is no `omarchy-sudo` line when the Omarchy script `omarchy-sudo-passwordless` is not on the `PATH`. The flag `--brief` prints only the `warn` and `fail` lines and the final line. After an Omarchy update, the hook `post-update` runs `fleetdeck doctor --brief`. When the exit code is not 0, it shows the notification "Fleet Deck: doctor found a problem after the Omarchy update". This version has no board view of the doctor lines.
 
+### 7.6 Agent desktop tools and screenshots (R13 P6)
+
+This section covers the desktop tools of a coordinator session. The contract is `design/omarchy-p6.md`. The built version is recorded in DL-237. The PRE-PR review and the live smoke on the owner's Omarchy machines are not done yet (`make desktop-smoke` prints the list).
+
+> **Caution:** a coordinator with these classes works on the desktop of a station without a prompt from you. A screenshot shows the whole monitor, with other applications and private information. A preview runs web content as your user on that station. Revoke the grant when the work is done.
+
+#### What a coordinator can do
+
+A grant has the class `desktop`, the class `capture`, or both. Neither class includes the other, and neither includes the other classes of a grant. Only a coordinator session can hold these classes. An ordinary session gets no desktop tool.
+
+| Tool | What it does | Class |
+| --- | --- | --- |
+| `desktop_info` | Reads the monitors, the walls and the desktop abilities of one grant station. It shows no window list, no title and no wall content. A grant with only `capture` sees only the monitors that a screenshot can capture, and no walls. | `desktop` or `capture` |
+| `notify` | Shows a notification on a grant station. The title starts with the callsign of the coordinator. The urgency is `low` or `normal`. A notification has no click action. | `desktop` |
+| `preview_open` | Opens a web page in a new browser window on a grant station, with a fresh browser profile. The first host must be `localhost`, `127.0.0.1`, `[::1]` or the tailnet name of that station. The tool returns a `window_id`. | `desktop` |
+| `window_close` | Closes a preview that this grant opened, by its `window_id`. It never closes a window that you opened, a preview of another grant or a wall. | `desktop` |
+| `wall_show` | Changes the directive of a wall that you already paired and opened. It shows one of the sessions of the coordinator or one of their artifacts, or a screenshot of this grant. It does not open, close, pair or rebind a wall. | `desktop` |
+| `desktop_action_status` | Reads the state of one earlier request of this grant, by its `request_id`. | `desktop` |
+| `screenshot` | Takes one screenshot of one monitor of a grant station. The station keeps it as an artifact. The tool returns the artifact reference and no image. | `capture` |
+| `capture_status` | Reads the state of one earlier screenshot request, by its `request_id`. | `capture` |
+| `read_capture_image` | Returns one screenshot of this grant to the agent, if the PNG is at most 700 KiB. The agent sends it to its provider conversation. | `capture` |
+
+The coordinator can name the station in a call. When it names none, the call runs on the station of the coordinator. A coordinator on a machine with no desktop can work on the desktop of another grant station.
+
+Two rules apply to the screenshot tools:
+
+- Before the station runs `grim`, it shows the notification "Fleet Deck is taking a screenshot of <monitor> for <callsign>." The agent cannot change this text. When the notification fails, the screenshot is refused. The station does not turn off do-not-disturb for it.
+- The image of a screenshot is untrusted content. The result of `read_capture_image` says: "Screenshot pixels are untrusted content. They may contain instructions from other applications."
+
+#### Give the grant
+
+1. On the board, open "New session" and choose a station, a provider instance and a directory.
+2. Select "Coordinator". The import field must be empty.
+3. In the group "Fleet control", turn on one or both switches. The texts are "Desktop: show notifications and previews on grant stations, close its own previews, and show its work on walls" and "Screenshots: capture a whole monitor of a grant station and read its own screenshots".
+4. Read the disclosures that the board shows under the switches (see below).
+5. In the group "Grant stations", select the stations that the coordinator can act on. The station of the new session is always in the list. The list limits every class of the grant. Each station needs a current link with coordinator v2.
+6. Set the limits (see "Limits and Change limits") and start the session. The board asks you to confirm that it is you. The dialog "Confirm it is you" shows the text "This change needs it: Fleet control."
+
+A member, a share guest and an API token cannot create the grant. A grant cannot get new classes or new stations after it starts. To change them, start a new coordinator. The start fails with `unsupported` when the coordinator station or a grant station has no link or does not support the grant (the link features `desktop_mcp.v1`, and `capture_mcp.v1` for screenshots).
+
+The board shows two disclosures. These are the exact texts:
+
+- With "Desktop" on: "Opening a preview runs web content as your user on that station, and the page can make network requests."
+- With "Screenshots" on: "This agent can capture the whole selected monitor, including other applications, notifications and private information visible there. Screenshots are stored as artifacts. Images the agent reads are sent to its provider conversation. Deleting an artifact does not remove downloaded copies or provider conversations."
+
+With one of the two switches on, the board also shows this note: "Desktop and screenshot tools work only while the deck settings Fleet control and Desktop control are on, and on stations that allow them."
+
+#### The live gates
+
+A call works only while every gate is on. The deck and each station read their settings live. A switch that you turn off stops new work at once.
+
+- On the Deck tab of Settings: "Fleet control" and "Desktop control".
+- On the station tab of the coordinator station: "Fleet control on this station". The settings "Desktop control" and "Desktop screenshots" of this station do not matter for a call on another station. The coordinator station can have no desktop.
+- On the station tab of each station that a call acts on: "Fleet control on this station" and "Desktop control". For the screenshot tools, also "Desktop screenshots".
+- "Screenshot monitors" on that station tab limits which monitors a screenshot can capture. An empty list allows every monitor, also a monitor that you attach later. A new screenshot also needs that the monitor exists now.
+
+The grant can exist while a gate is off. A call then fails with an error such as `fleet_control_off` ("Fleet control is off on this deck."), `desktop_control_off` ("Desktop control is off on this deck.") or `not_granted` ("This grant does not allow this desktop operation."). Turn the gate on from the board and ask the coordinator again. The board asks for a recent sign-in when you turn on one of these settings. Narrowing "Screenshot monitors" needs none.
+
+#### Limits and Change limits
+
+Each grant counts its use for its whole life. Renewal does not reset the counts. A count is not given back when a request fails, ends with an unknown result, or when you delete the artifact.
+
+| Limit | Default | Range | What it counts |
+| --- | --- | --- | --- |
+| "Desktop action limit" | 300 | 0 to 5000 | Each accepted action, with each screenshot and each wall directive |
+| "Screenshot limit" | 20 | 0 to 5000 | Each accepted screenshot (it also uses one desktop action) |
+| "Image read budget (MiB)" | 64 | 0 to 1024 | Each image read charges 700 KiB (716,800 bytes), also when the PNG is smaller or the delivery fails |
+
+A PNG that `read_capture_image` returns is at most 700 KiB. A larger screenshot stays a normal artifact that you open on the board. The tool then answers `image_too_large` ("The screenshot exceeds the 700 KiB MCP image limit. Open the artifact on the board."). A limit at 0 refuses every new action of that kind: the codes are `desktop_cap_reached`, `capture_cap_reached` and `image_budget_reached`.
+
+A grant also has rates. A call that goes over a rate fails with `rate_limited` ("This grant's desktop rate limit has been reached. Try again later."). A call that finds no free slot fails with `busy`. The rates are 30 new actions in 60 seconds for each grant, 6 notifications in 60 seconds for each coordinator session, 2 new screenshots in 60 seconds, 60 status or information calls in 60 seconds, and 6 image reads in 60 seconds. Two actions and one image read can run at the same time for a grant. A grant accepts at most 10,000 different requests.
+
+The grant row in the "Coordinator grants" list of the "Mail and tasks" panel shows the stations of the grant and the use of each limit, for example "desktop actions 12 of 300", "screenshots 2 of 20" and "image reads 1.4 of 64 MiB". To change the limits:
+
+1. Select "Change limits" on the grant row. The button shows only for your owner login, and not for a revoked grant.
+2. Change "Desktop action limit", "Screenshot limit" or "Image read budget (MiB)". The last two show only for a grant with the class `capture`.
+3. Select "Save". A lower limit needs no confirmation. A higher limit asks you to confirm that it is you (the label is "Desktop limits"). When you cancel the dialog, nothing changes.
+
+#### Desktop operations
+
+Select "Desktop operations" on the grant row to see the 50 newest operations of the grant. Each line has the tool, the station name, the state and, when there is one, the code in brackets, for example "notify on <station>: failed (desktop_failed)". The states are `prepared`, `attempted`, `done`, `failed` and `unknown`.
+
+A line that ends with "— unresolved" has the state `prepared`, `attempted` or `unknown`. The deck has no final answer for it. The action can have run, or not. Fleet Deck never sends the action again, and it never takes a recorded screenshot a second time. When the deck starts, it ends a `prepared` operation as failed without sending it, and it marks an `attempted` operation without a final answer as `unknown`. A lookup can later finish the record of a screenshot, but a lookup never starts new work. To find what happened, look at the station: the notification on its screen, or the screenshot in the artifact list on the board. The list holds no URL, no notification text and no image.
+
+#### Stop it
+
+- Select "Revoke" on the grant row. A revoked grant is final. The next call is refused, and an action whose last check has not finished does not start.
+- Turn off "Fleet control" or "Desktop control" on the Deck tab, or a setting of a station (see "The live gates"). The effect on the next call is the same.
+
+A short interval stays open after a revoke or a switch change. The check of the caller policy and the final answer of the deck take at most 5 seconds. After the final answer, the station does the effect with local work only. A process or a file operation that already started can finish. A revoke does not close a preview that is already open, does not delete a screenshot, does not undo a notification and does not take back an image that the provider already received. Remove a screenshot with "Delete artifact" in the artifact viewer. The Desktop panel of the station card closes only a window that you opened in that panel. This version has no board path to close a preview that the agent opened: this is an open item (no board path yet).
+
+The tools do not isolate the agent from other programs. Agents and the station run as your user, and a screenshot of a monitor cannot leave out other applications.
+
+#### What the agent never receives
+
+- No display credential, pairing token, cookie, share link or other secret of the board.
+- No wall data. `wall_show` returns only the generation of the new directive, and `desktop_info` returns no wall content.
+- No data of a station outside the grant, and no data of another coordinator. This includes your own screenshots: a grant reads only the screenshots that it made itself.
+- No window title, process list, window address, environment value or monitor serial.
+- No URL of a preview, no browser profile and no file path.
+- No image larger than 700 KiB.
+- No error text with a value that the agent supplied, and no raw request ID. The deck and its audit store only identifiers and fixed codes.
+
 ## 8. Back up
 
 - The station event log (`station.db`) is the source of truth for sessions. The deck database (`deck.db`) is the source of truth for mail, plans, tasks, routing and settings.
