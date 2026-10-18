@@ -6,7 +6,7 @@ import type { GrantView, StationView, TaskView } from '../gen';
 import { commandId } from '../session/commands';
 
 type Get = (path: string) => Promise<unknown>;
-type Post = (path: string, body: unknown) => Promise<unknown>;
+type Post = (path: string, body: unknown, headers?: Record<string, string>) => Promise<unknown>;
 
 export type FleetTarget = { readonly stationId: string; readonly sessionId: string };
 
@@ -21,6 +21,25 @@ export type FleetActions = {
   revoke(grantId: string): Promise<FleetResult>;
   /** Renews an idle-expired grant (ADR-006 test 25b). */
   renew(grantId: string): Promise<FleetResult>;
+  /** Changes the desktop limits of a grant (R13 P6); `elevation` is needed when a value grows. */
+  caps(
+    grantId: string,
+    caps: { desktop_cap?: number; capture_cap?: number; image_byte_cap?: number },
+    elevation?: string,
+  ): Promise<FleetResult>;
+  /** The recent desktop operations of a grant, newest first (R13 P6). */
+  desktopOps(grantId: string): Promise<readonly DesktopOpRow[]>;
+};
+
+/** One recent desktop operation of a grant (`GET .../desktop-ops`). */
+export type DesktopOpRow = {
+  readonly operation_id: string;
+  readonly tool: string;
+  readonly target_station: string;
+  readonly state: string;
+  readonly code: string | null;
+  readonly created_at: number;
+  readonly updated_at: number;
 };
 
 /** One target of a mail send: its session ref and where the mail goes. */
@@ -106,7 +125,36 @@ export function grantList(v: unknown): readonly GrantView[] {
 export function grantStatus(g: GrantView): string {
   const spawn = g.classes.includes('spawn') ? `, spawned ${g.spawn_used} of ${g.spawn_cap}` : '';
   const state = g.state === 'active' && g.generation === null ? 'waiting for its session' : g.state;
-  return `${g.classes.join(', ')}${spawn}: ${state}`;
+  const desktop =
+    g.desktop_cap === undefined ? '' : `, desktop actions ${g.desktop_used} of ${g.desktop_cap}`;
+  const capture =
+    g.capture_cap === undefined ? '' : `, screenshots ${g.capture_used} of ${g.capture_cap}`;
+  const image =
+    g.image_byte_cap === undefined
+      ? ''
+      : `, image reads ${mib(g.image_byte_used)} of ${mib(g.image_byte_cap)} MiB`;
+  return `${g.classes.join(', ')}${spawn}${desktop}${capture}${image}: ${state}`;
+}
+
+/** MiB of a byte count with at most one decimal and no trailing `.0`. */
+export function mib(bytes: number | undefined): string {
+  return ((bytes ?? 0) / 1_048_576).toFixed(1).replace(/\.0$/, '');
+}
+
+/** The rows of a `GET .../desktop-ops` answer; anything malformed is no row. */
+export function desktopOpList(v: unknown): readonly DesktopOpRow[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter(
+    (r): r is DesktopOpRow =>
+      record(r) &&
+      typeof r['operation_id'] === 'string' &&
+      typeof r['tool'] === 'string' &&
+      typeof r['target_station'] === 'string' &&
+      typeof r['state'] === 'string' &&
+      (r['code'] === null || typeof r['code'] === 'string') &&
+      typeof r['created_at'] === 'number' &&
+      typeof r['updated_at'] === 'number',
+  );
 }
 
 /**
@@ -191,6 +239,27 @@ export function fleetActions(get: Get, post: Post, newId: () => string = command
         return { ok: true, text: 'Renewal sent; the grant is active when its station confirms.' };
       } catch (error) {
         return failed('Grant not renewed', error);
+      }
+    },
+    caps: async (grantId, caps, elevation) => {
+      try {
+        await post(
+          `/api/coordinator/grants/${encodeURIComponent(grantId)}/caps`,
+          caps,
+          elevation === undefined ? undefined : { 'x-fleetdeck-elevation': elevation },
+        );
+        return { ok: true, text: 'Limits changed.' };
+      } catch (error) {
+        return failed('Change limits', error);
+      }
+    },
+    desktopOps: async (grantId) => {
+      try {
+        return desktopOpList(
+          await get(`/api/coordinator/grants/${encodeURIComponent(grantId)}/desktop-ops`),
+        );
+      } catch {
+        return [];
       }
     },
   };

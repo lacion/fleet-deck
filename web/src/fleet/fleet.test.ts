@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { TaskView } from '../gen';
 import { station } from '../testing/fleet';
 import {
+  desktopOpList,
   fleetActions,
   grantList,
   grantStations,
@@ -187,6 +188,113 @@ describe('coordinator grants', () => {
       ok: false,
       text: 'Grant not renewed: 409 not_renewable',
     });
+  });
+});
+
+describe('desktop usage and operations (R13 P6)', () => {
+  const grant = {
+    grant_id: 'g1',
+    station_id: 'st',
+    session_id: 'coord-1',
+    classes: ['read', 'desktop', 'capture'],
+    stations: ['st'],
+    spawn_cap: 0,
+    spawn_used: 0,
+    state: 'active',
+    revoked_reason: null,
+    generation: 1,
+    expires_at: 10,
+    last_used_at: null,
+  };
+  test('grantStatus appends the usage of each limit that is present', () => {
+    expect(grantStatus({ ...grant, desktop_cap: 300, desktop_used: 4 })).toBe(
+      'read, desktop, capture, desktop actions 4 of 300: active',
+    );
+    expect(
+      grantStatus({
+        ...grant,
+        desktop_cap: 300,
+        desktop_used: 4,
+        capture_cap: 20,
+        capture_used: 2,
+        image_byte_cap: 67_108_864,
+        image_byte_used: 1_572_864,
+      }),
+    ).toBe(
+      'read, desktop, capture, desktop actions 4 of 300, screenshots 2 of 20, image reads 1.5 of 64 MiB: active',
+    );
+    expect(
+      grantStatus({
+        ...grant,
+        classes: ['read'],
+        image_byte_cap: 67_108_864,
+        image_byte_used: 0,
+      }),
+    ).toBe('read, image reads 0 of 64 MiB: active');
+  });
+  test('caps posts the body, and the header only when an elevation is given', async () => {
+    const posts: { path: string; body: unknown; headers: unknown }[] = [];
+    const a = fleetActions(
+      async () => [],
+      async (path, body, headers) => {
+        posts.push({ path, body, headers });
+        return {};
+      },
+    );
+    expect(await a.caps('g/1', { desktop_cap: 5 })).toEqual({ ok: true, text: 'Limits changed.' });
+    expect(await a.caps('g/1', { desktop_cap: 9, capture_cap: 1 }, 'code-1')).toEqual({
+      ok: true,
+      text: 'Limits changed.',
+    });
+    expect(posts).toEqual([
+      { path: '/api/coordinator/grants/g%2F1/caps', body: { desktop_cap: 5 }, headers: undefined },
+      {
+        path: '/api/coordinator/grants/g%2F1/caps',
+        body: { desktop_cap: 9, capture_cap: 1 },
+        headers: { 'x-fleetdeck-elevation': 'code-1' },
+      },
+    ]);
+  });
+  test('a refused caps call says so', async () => {
+    const bad = fleetActions(
+      async () => [],
+      async () => {
+        throw new Error('400 elevation_required');
+      },
+    );
+    expect(await bad.caps('g1', { desktop_cap: 5 })).toEqual({
+      ok: false,
+      text: 'Change limits: 400 elevation_required',
+    });
+  });
+  const row = {
+    operation_id: 'o1',
+    tool: 'notify',
+    target_station: 'st',
+    state: 'done',
+    code: null,
+    created_at: 2,
+    updated_at: 3,
+  };
+  test('desktopOps reads the rows and drops anything malformed', async () => {
+    const paths: string[] = [];
+    const a = fleetActions(
+      async (path) => {
+        paths.push(path);
+        return [row, { nope: 1 }, 'x', { ...row, state: 3 }, { ...row, code: 5 }];
+      },
+      async () => ({}),
+    );
+    expect(await a.desktopOps('g/1')).toEqual([row]);
+    expect(paths).toEqual(['/api/coordinator/grants/g%2F1/desktop-ops']);
+    expect(desktopOpList({})).toEqual([]);
+    const down = fleetActions(
+      async () => {
+        throw new Error('down');
+      },
+      async () => ({}),
+    );
+    expect(await down.desktopOps('g1')).toEqual([]);
   });
 });
 

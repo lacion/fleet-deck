@@ -14,10 +14,10 @@ import { CloneAccess } from './CloneAccess';
 import { FleetControlFields } from './FleetControlFields';
 import { TargetStations } from './TargetStations';
 import {
-  answerCapProblem,
   type FleetControl,
   fleetElevation,
   fleetOn,
+  fleetProblem,
   grantFields,
   NO_FLEET,
   showFleetFields,
@@ -249,7 +249,7 @@ export function SpawnForm({
   const targetIds = pickedTargets.filter(
     (id) => id !== stationId && stations.some((s) => s.station_id === id),
   );
-  const fleetBad = coordinator && fleetOn(fleet) && answerCapProblem(fleet) !== null;
+  const fleetBad = coordinator && fleetOn(fleet) && fleetProblem(fleet) !== null;
   const cloneReady =
     place !== 'clone' || importId.trim() !== '' || (cloneUrl !== '' && cloneName.trim() !== '');
   const hasTarget = auto
