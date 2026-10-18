@@ -451,8 +451,10 @@ fn restore_step(
     }
     if screensaver.had_original {
         let Some(original) = home.read(&backup)? else {
-            eprintln!("fleetdeck: warning: the backup is missing, so {shown} was kept");
-            return Ok(None);
+            return Err(FsError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "the backup is missing",
+            )));
         };
         home.write(&file, &original.bytes, 0o644)?;
         println!("Screensaver: restored {shown}");
@@ -471,9 +473,11 @@ fn restore_step(
 /// the written file is removed when there was no original. Only after that
 /// the cache fields are cleared, and `restored` is set. On an error no field
 /// of the record changes, one line goes to stderr, and the error is returned.
+/// A missing backup, when there was an original, is such an error: the record
+/// keeps what a later restore needs.
 ///
 /// # Errors
-/// A file cannot be read, written or removed.
+/// A file cannot be read, written or removed, or the backup is missing.
 pub fn restore(home: &Home, record: &mut Record) -> anyhow::Result<()> {
     let Some(written) = record.screensaver.last_written_sha256.clone() else {
         return Ok(());

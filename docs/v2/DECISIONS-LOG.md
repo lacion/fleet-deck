@@ -3451,4 +3451,5 @@ Owner review: pending.
   - d. The live smoke on the owner's Omarchy machines is not done. The list is in `docs/v2/LIVE-SMOKE.md`, part "Omarchy from the board (DL-243)" (`make desktop-smoke`).
   - e. An install that the installer refuses because a file was changed (`install_refused`) has no board repair: the card shows the conflicting files, and their repair needs the files on the station (no board path yet).
   - The card line after a restored screensaver file changed (an owner edit, or one late write of an older job during an upgrade) is neutral (`Screensaver: off. The screensaver file changed after Fleet Deck restored it; the original is kept as a backup.`), and **Turn the screensaver off** shows only while the screensaver is on (architect fix after the docs review).
+- PRE-PR round 1: three MAJOR findings fixed (the child group after a normal exit, a missing backup keeps the restore metadata, the card refreshes every 15 s).
 - Next: the PRE-PR review; the owner reads the new rows of `SECURITY-CHECKLIST.md` (DL-158); the live smoke on the Omarchy machines.

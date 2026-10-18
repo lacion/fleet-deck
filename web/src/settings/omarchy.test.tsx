@@ -20,7 +20,7 @@ import {
   runAction,
   stateOfReadError,
 } from './omarchy';
-import { OmarchyView } from './OmarchyCard';
+import { makeSleeper, OmarchyView, REFRESH_MS, type WatchEnv, watchStatus } from './OmarchyCard';
 import { SettingsTab } from './SettingsTab';
 import { view } from './fixtures';
 
@@ -494,6 +494,125 @@ describe('pollRetry', () => {
       },
     });
     expect(calls.length).toBe(1);
+  });
+});
+
+describe('watchStatus (the refresh of a mounted card)', () => {
+  type Reply = OmarchyStatus | Error;
+  /** A clock that moves when the watch sleeps (one tick is 5 s); `at` is the time of each read. */
+  const watch = async (
+    first: OmarchyStatus,
+    replies: Reply[],
+    stop: { reads?: number; ticks?: number },
+    env: Partial<WatchEnv> = {},
+  ) => {
+    let t = 0;
+    let ticks = 0;
+    const at: number[] = [];
+    let done = 0;
+    let halted = false;
+    const seen: OmarchyStatus[] = [];
+    let shown = first;
+    const actions: OmarchyActions = {
+      status: async () => {
+        at.push(t);
+        done += 1;
+        const next = replies.shift();
+        if (next === undefined || next instanceof Error) throw next ?? new Error('down');
+        return next;
+      },
+      act: async () => result(),
+    };
+    await watchStatus(actions, 'alpha', {
+      sleep: async (ms) => {
+        t += ms;
+        ticks += 1;
+        // The watch ends at the first tick after the last wanted read.
+        halted = done >= (stop.reads ?? 1e9) || ticks >= (stop.ticks ?? 1e9);
+      },
+      now: () => t,
+      stopped: () => halted,
+      paused: () => false,
+      known: () => shown,
+      turn: () => 0,
+      onStatus: (s) => seen.push((shown = s)),
+      ...env,
+    });
+    return { at, seen, shown: () => shown };
+  };
+  const blocked = withScreensaver({ enabled: true, blocked: 'differs' });
+
+  test('an idle card reads every 15 s', async () => {
+    const r = await watch(status(), [status(), status()], { reads: 2 });
+    expect(r.at).toEqual([REFRESH_MS, 2 * REFRESH_MS]);
+  });
+
+  test('a blocked state that appears in a later read is shown with its button', async () => {
+    const r = await watch(status(), [status(), blocked], { reads: 2 });
+    const html = card({ kind: 'ready', status: r.shown() });
+    expect(html).toContain('Screensaver: on, but blocked');
+    expect(html).toContain('>Use the current screensaver as the original</button>');
+    expect(html).not.toContain('disabled');
+  });
+
+  test('outdated that turns false enables the buttons', async () => {
+    const outdated = withInstall({ outdated: true });
+    expect(labels(outdated)).toEqual(['Install']);
+    const r = await watch(outdated, [status()], { reads: 1 });
+    expect(labels(r.shown())).toContain('Uninstall');
+    expect(card({ kind: 'ready', status: r.shown() })).not.toContain('Update the integration');
+  });
+
+  test('a card mounted while a retry runs polls every 5 s, then every 15 s', async () => {
+    const retry = status({ running: 'provision_retry' });
+    const r = await watch(retry, [retry, retry, status(), status()], { reads: 4 });
+    expect(r.at).toEqual([5_000, 10_000, 15_000, 30_000]);
+    const boot = withProvision({ bootstrap_running: true });
+    expect((await watch(boot, [boot, boot, boot], { reads: 3 })).at).toEqual([
+      5_000, 10_000, 15_000,
+    ]);
+  });
+
+  test('the 5 s poll ends after 10 min', async () => {
+    const retry = status({ running: 'install' });
+    const r = await watch(
+      retry,
+      Array.from({ length: 121 }, () => retry),
+      { reads: 121 },
+    );
+    expect(r.at[119]).toBe(POLL_LIMIT_MS);
+    expect(r.at[120]).toBe(POLL_LIMIT_MS + REFRESH_MS);
+  });
+
+  test('a failed read keeps the last state and the watch goes on', async () => {
+    const r = await watch(status(), [new Error('down'), blocked], { reads: 2 });
+    expect(r.at).toEqual([5_000 * 3, 5_000 * 6]);
+    expect(r.seen).toEqual([blocked]);
+  });
+
+  test('no read starts while paused; a read that a change overtook is dropped', async () => {
+    const paused = await watch(status(), [status()], { ticks: 20 }, { paused: () => true });
+    expect(paused.at).toEqual([]);
+    let n = 0;
+    const overtaken = await watch(status(), [status()], { reads: 1 }, { turn: () => n++ });
+    expect(overtaken.at.length).toBe(1);
+    expect(overtaken.seen).toEqual([]);
+  });
+
+  test('the unmount stops every timer: cancel ends a pending sleep at once', async () => {
+    const sleeper = makeSleeper();
+    let gone = false;
+    const env = { now: Date.now, paused: () => false, known: () => null, turn: () => 0 };
+    const done = watchStatus(fake({}).actions, 'alpha', {
+      ...env,
+      sleep: sleeper.sleep,
+      stopped: () => gone,
+      onStatus: () => {},
+    });
+    gone = true;
+    sleeper.cancel();
+    await done;
+    sleeper.cancel();
   });
 });
 

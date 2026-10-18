@@ -93,6 +93,37 @@ async fn omarchy_runner_kills_the_group_at_the_limit_and_on_too_much_output() {
 }
 
 #[tokio::test]
+async fn omarchy_runner_kills_a_subprocess_left_behind_after_a_normal_exit() {
+    // The background `sleep` keeps no pipe of the station, so the run ends at
+    // the exit of the shell. The shell leads the group, so its pid is the pgid.
+    let r = run_sh(
+        "sleep 30 >/dev/null 2>&1 </dev/null & echo $$; exit 0",
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap();
+    let RunResult::Exit { code, stdout, .. } = r else {
+        panic!("no exit");
+    };
+    assert_eq!(code, Some(0));
+    let pgid: i32 = String::from_utf8(stdout).unwrap().trim().parse().unwrap();
+    let pgid = rustix::process::Pid::from_raw(pgid).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    loop {
+        match rustix::process::test_kill_process_group(pgid) {
+            Err(rustix::io::Errno::SRCH) => break,
+            other => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the group is still alive: {other:?}"
+                );
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn omarchy_runner_reports_a_program_that_does_not_start() {
     let env = Vec::new();
     let r = child::run(&Spec {
