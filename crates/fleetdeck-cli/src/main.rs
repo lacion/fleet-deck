@@ -15,8 +15,7 @@ mod invite;
 mod notify;
 mod omarchy;
 mod pairing;
-#[cfg_attr(not(test), allow(dead_code))]
-mod provision; // wired by P8 T3b
+mod provision;
 mod restart;
 mod service;
 mod settings;
@@ -146,6 +145,12 @@ fn run(cli: Cli, restart: &restart::RestartHandle) -> anyhow::Result<ExitCode> {
             })
             .await?
         })),
+        Command::ProvisionBootstrap { file, retry } => {
+            let ctx = service::Context::detect(&dirs, &env, cli.data_dir.is_some())?;
+            let effects = provision::real::RealEffects::new(dirs.clone(), env.clone(), ctx);
+            let exit = runtime()?.block_on(provision::run::run(&effects, file, *retry));
+            Ok(ExitCode::from(exit.code()))
+        }
         Command::Station { .. }
         | Command::Shim { .. }
         | Command::ShimExec { .. }
