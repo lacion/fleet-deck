@@ -3408,7 +3408,7 @@ Owner review: pending.
 - Facts of the built version:
   - A recording charges, at acceptance and in one step, one desktop action, one capture, one recording and the requested seconds. No early stop, failure, cancellation, deletion or timeout gives a charge back. Renewal and restart do not reset the counters.
   - A screenshot and a recording share the capture limit and the rate of 2 new captures in 60 seconds. A recording that meets an exhausted capture limit gets `capture_cap_reached` with the text "This grant has used its capture limit."
-  - A grant without the allowance gets `not_granted` ("This grant does not allow this desktop operation."). The code does not use the name `recording_not_allowed` of the contract section 16.
+  - A grant with the class `capture` but without the allowance gets `recording_not_allowed` ("This grant does not allow monitor recordings.", contract section 16). A grant without the class `capture` gets `not_granted`.
   - The deck wait for the station is `seconds` plus 35 seconds. The caller MCP deadline is `seconds` plus 45 seconds.
 - Open items:
   - a. The PRE-PR review of P5b-2 is pending.

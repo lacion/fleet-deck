@@ -51,6 +51,8 @@ pub mod code {
     pub const STATION_UNREACHABLE: &str = "station_unreachable";
     /// §11.2: desktop control is off on this deck.
     pub const DESKTOP_CONTROL_OFF: &str = "desktop_control_off";
+    /// R13 P5b §16: the grant has no recording allowance.
+    pub const RECORDING_NOT_ALLOWED: &str = "recording_not_allowed";
     /// R13 P5b §16: the grant used its recording count.
     pub const RECORDING_CAP_REACHED: &str = "recording_cap_reached";
     /// R13 P5b §16: the grant used its recording seconds.
@@ -110,6 +112,7 @@ pub fn text(code: &str) -> Option<&'static str> {
         code::DESKTOP_TIMEOUT => "The station did not answer in time; the action may have run.",
         code::STATION_UNREACHABLE => "The station is not connected.",
         code::DESKTOP_CONTROL_OFF => "Desktop control is off on this deck.",
+        code::RECORDING_NOT_ALLOWED => "This grant does not allow monitor recordings.",
         code::RECORDING_CAP_REACHED => "This grant has used its recording limit.",
         code::RECORDING_SECONDS_REACHED => "This grant has used its recording time limit.",
         _ => return None,
@@ -236,7 +239,7 @@ pub mod deadline_ms {
 mod tests {
     use super::*;
 
-    const CODES: [&str; 38] = [
+    const CODES: [&str; 39] = [
         code::NOT_BOUND,
         code::NOT_GRANTED,
         code::BINDING_STALE,
@@ -273,6 +276,7 @@ mod tests {
         code::DESKTOP_TIMEOUT,
         code::STATION_UNREACHABLE,
         code::DESKTOP_CONTROL_OFF,
+        code::RECORDING_NOT_ALLOWED,
         code::RECORDING_CAP_REACHED,
         code::RECORDING_SECONDS_REACHED,
     ];
@@ -431,6 +435,10 @@ mod tests {
             (
                 code::DESKTOP_CONTROL_OFF,
                 "Desktop control is off on this deck.",
+            ),
+            (
+                code::RECORDING_NOT_ALLOWED,
+                "This grant does not allow monitor recordings.",
             ),
             (
                 code::RECORDING_CAP_REACHED,

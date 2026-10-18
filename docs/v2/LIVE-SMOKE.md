@@ -444,7 +444,7 @@ Items:
 7. **A session without the allowance has no recording tool.**
    1. Start a second coordinator session with "Screenshots" on and "Allow monitor recordings" off. Look at the grant line. Expect no text about recordings.
    2. Ask the coordinator which desktop tools it has. Expect `screenshot`, `capture_status` and `read_capture_image`, and no `record_monitor`.
-   3. Ask it to record a monitor. Expect that it has no such tool, or that the call is refused with `not_granted`.
+   3. Ask it to record a monitor. Expect that it has no such tool, or that the call is refused with `recording_not_allowed`.
    4. Revoke this grant and the grant of item 6.
 
 Result:

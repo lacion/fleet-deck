@@ -685,7 +685,7 @@ The refusals, in your words (the agent sees the code and the fixed text):
 
 | Code | Text | What it means |
 | --- | --- | --- |
-| `not_granted` | "This grant does not allow this desktop operation." | The grant has no recording allowance, or "Recording limit" is 0. |
+| `recording_not_allowed` | "This grant does not allow monitor recordings." | The grant has no recording allowance, or "Recording limit" is 0. |
 | `recording_cap_reached` | "This grant has used its recording limit." | The grant made as many recordings as "Recording limit". |
 | `recording_seconds_reached` | "This grant has used its recording time limit." | The requested seconds would go over "Recording time limit (seconds)". |
 | `capture_cap_reached` | "This grant has used its capture limit." | "Screenshot limit" is used up. A recording needs one capture. |

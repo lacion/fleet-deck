@@ -49,7 +49,7 @@ async fn a_grant_without_the_allowance_and_a_missing_feature_are_refused_before_
     let w = world_with(&BOTH, |_| {}).await;
     w.fake.set(rec_station(RecSpec::of(&w, 30)));
     let r = w.call("c1", record_call("r1", 30, None)).await;
-    assert_eq!(code(&r), "not_granted");
+    assert_eq!(code(&r), "recording_not_allowed");
     assert_eq!(counters(&w).await, (0, 0, 0, 0));
     assert_eq!(w.fake.count("desktop.act"), 0);
     // A grant of the desktop class only has no recording either.

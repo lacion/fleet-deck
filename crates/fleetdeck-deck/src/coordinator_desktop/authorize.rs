@@ -291,7 +291,7 @@ pub(super) async fn begin(
             }
             // A recording needs the explicit allowance (R13 P5b-2 §13.2).
             if tool == Tool::RecordMonitor && grant.recording_cap == 0 {
-                return Err(code::NOT_GRANTED);
+                return Err(code::RECORDING_NOT_ALLOWED);
             }
             class
         }
@@ -428,7 +428,7 @@ pub(crate) async fn recording_pass(
     };
     let grant = local_pass(link, &held).await?;
     if grant.recording_cap == 0 {
-        return Err(code::NOT_GRANTED);
+        return Err(code::RECORDING_NOT_ALLOWED);
     }
     recording_ready(link, target)?;
     Ok(grant)
