@@ -410,3 +410,51 @@ fn remove_client(root: &Path, address: &str) {
     )
     .unwrap();
 }
+
+/// What the fake `grim` does after it logged its argv.
+pub enum Grim<'a> {
+    /// Writes these bytes to stdout and exits 0.
+    Bytes(&'a [u8]),
+    /// Writes this many zero bytes to stdout and exits 0.
+    Zeros(u64),
+    /// Stalls without output.
+    Stall,
+    /// Writes these bytes to stdout, then 1 MiB to stderr, and exits 0.
+    Flood(&'a [u8]),
+    /// Exits with this code.
+    Exit(i32),
+    /// Starts a sleeping child in its group, writes its pid to
+    /// `<dir>/child.pid` and stalls.
+    StallWithChild,
+}
+
+/// A `PATH` folder `<dir>/bin` with a fake `grim` that logs its argv, one
+/// argument per line, to `<dir>/grim.log`. Returns the environment that
+/// resolves it.
+pub fn grim(dir: &Path, mode: &Grim<'_>) -> ChildEnv {
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let d = dir.display();
+    let action = match mode {
+        Grim::Bytes(bytes) => {
+            std::fs::write(dir.join("grim.out"), bytes).unwrap();
+            format!("/bin/cat {d}/grim.out")
+        }
+        Grim::Zeros(n) => format!("/bin/head -c {n} /dev/zero"),
+        Grim::Stall => "exec /bin/sleep 30".to_owned(),
+        Grim::Flood(bytes) => {
+            std::fs::write(dir.join("grim.out"), bytes).unwrap();
+            format!("/bin/cat {d}/grim.out\n/bin/head -c 1048576 /dev/zero >&2")
+        }
+        Grim::Exit(code) => format!("exit {code}"),
+        Grim::StallWithChild => format!("/bin/sleep 30 &\necho $! > {d}/child.pid\nwait"),
+    };
+    write_script(
+        &bin,
+        "grim",
+        &format!("{{ for a in \"$@\"; do echo \"$a\"; done; }} >> {d}/grim.log\n{action}"),
+    );
+    let mut env = ChildEnv::empty();
+    env.set("PATH", &bin).unwrap();
+    env
+}

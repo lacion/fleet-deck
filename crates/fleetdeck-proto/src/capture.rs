@@ -28,7 +28,7 @@ pub mod text {
         "This capture would exceed the station's 4 GiB capture limit. Delete some captures first.";
     pub const CAPTURE_TOO_LARGE: &str = "The screenshot exceeds 32 MiB.";
     pub const CAPTURE_DIMENSIONS: &str = "The monitor exceeds the screenshot size limit.";
-    pub const CAPTURE_FAILED: &str = "The screenshot program failed.";
+    pub const CAPTURE_FAILED: &str = "The screenshot tool failed.";
     pub const CAPTURE_PUBLISH_FAILED: &str = "The screenshot could not be saved as an artifact.";
     pub const SCREEN_LOCKED: &str = "The screen is locked or its lock state is unknown.";
     pub const CAPTURE_ID_CONFLICT: &str = "This capture ID was used for another request.";
@@ -210,7 +210,7 @@ mod tests {
                 },
                 serde_json::json!({
                     "state":"failed","capture_id":id,
-                    "error":"capture_failed","message":"The screenshot program failed."
+                    "error":"capture_failed","message":"The screenshot tool failed."
                 }),
             ),
             (
