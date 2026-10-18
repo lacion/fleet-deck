@@ -3388,3 +3388,33 @@ Owner review: pending.
 - Decision: the fixes `391ac06d` (O12-20) and `5a887a51` (O12-21) are accepted: one lease decision under one lock with a permanent failure flag; a launch guard on the recorder thread right before the spawn; a pending stop handed over in memory before any await; supervision before bookkeeping. P5b-1 is accepted.
 - Open items: the real `wf-recorder` and `shim-exec` retained-FD and finalization smoke on the owner's Omarchy machine (required before relying on recordings); the 180 s video response lifetime is not enforced while a client stops reading; the intermittent test `desktop::recording::op_tests::a_stop_before_the_spawn_is_cancelled_and_no_recorder_runs` (a 500 ms test timing under load); P5b-2 (agent recording) in progress.
 
+
+## DL-241: R13 P5b-2 built (agent monitor recordings: `record_monitor`) (architect, 2026-10-18)
+
+- Context: the contract is `docs/v2/design/omarchy-p5b.md` section 13 (with sections 7.5, 14, 15, 17 and 18). P5b-1 (owner recordings) is accepted (DL-240). P5b-2 lets a coordinator with the class `capture` and an explicit recording allowance record one monitor of a grant station for 1 to 120 seconds with the tool `record_monitor`. The agent gets a reference to the video artifact, never the video.
+- What was built, in these merges on v2:
+  - Task Q-F, `bebcf7fa`: the foundation. The tool `record_monitor` and its closed schema, the feature `capture_recording_mcp.v1`, the grant fields `recording_cap`, `recording_used`, `recording_second_cap` and `recording_second_used` with the rules of the opt-in (the class `capture`, the defaults 5 and 600, the ranges 0 to 5000 and 0 to 600000), the codes `recording_cap_reached` and `recording_seconds_reached`, the migration V36, and the stubs.
+  - Task Q-S, `85402881`: the station. The tool list (only for a grant with the opt-in and the negotiated feature), the forward of the call with the deadline `seconds` plus 45 seconds, the fixed notification before the recorder, the execute and import authority checks, the coordinator provenance, and the fleet-control gate in the watchdog.
+  - Task Q-W, `1df25781`: the board. The switch **Allow monitor recordings**, the fields **Recording limit** and **Recording time limit (seconds)**, the disclosure note, and the recording usage on the grant row.
+  - Task Q-K, `8e4c7b9f`: the deck. The authorization of a call, the charges at acceptance, the shared capture rate, the run of the recording and its status, the coordinator branch of the lease, and the coordinator recording provenance.
+  - Fix `156ee9a5`, found by the architect after the merge of Q-K: a defect at the seam of Q-K and Q-S. The station asks the deck for the `import` authority check before it imports a coordinator recording. The deck refused that check for every tool except the screenshot, so every agent recording would have been discarded. A `record_monitor` operation now passes the `import` phase like a screenshot. The test is `crates/fleetdeck-deck/tests/coordinator_desktop_check.rs` `the_import_phase_is_valid_for_a_recording_operation`.
+  - Task Q-P2 (this change): the documents. This entry, the status lines, `operations.md` section 7.7 (the part "Agent recordings (P5b-2)"), the rows of `PARITY.md` and `SECURITY-CHECKLIST.md`, and the P5b-2 part of `LIVE-SMOKE.md`.
+  - Task Q-P1 (end-to-end proofs, `crates/fleetdeck-deck/tests/p5b2_end_to_end.rs`) is pending and is not part of this entry.
+- Decisions. Each line is one record. The full text is in `omarchy-r12-decisions.md` of the architect's brief folder (`~/fleetdeck-briefs`):
+  - O12-6 (OD-4): an agent can record only with an explicit, elevated opt-in. Existing grants get zero recording caps and stay screenshot-only.
+  - O12-10 item 32: the migration V34 is not changed. V36 rebuilds `coordinator_desktop_ops` (create, copy, drop, rename) to add `record_monitor` to the `tool` check and the column `seconds`.
+  - O12-22: the deck sends the flag `allow_recording` to the caller station only when its link negotiated `capture_recording_mcp.v1`. The two caps never go to a station. Older peers never see the flag.
+  - The station-internal class `recording`: the station adds it at start only for a spec with `allow_recording` and the class `capture`. It is never a deck grant class, and a deck that sends it is refused.
+- Facts of the built version:
+  - A recording charges, at acceptance and in one step, one desktop action, one capture, one recording and the requested seconds. No early stop, failure, cancellation, deletion or timeout gives a charge back. Renewal and restart do not reset the counters.
+  - A screenshot and a recording share the capture limit and the rate of 2 new captures in 60 seconds. A recording that meets an exhausted capture limit gets `capture_cap_reached` with the text "This grant has used its capture limit."
+  - A grant without the allowance gets `not_granted` ("This grant does not allow this desktop operation."). The code does not use the name `recording_not_allowed` of the contract section 16.
+  - The deck wait for the station is `seconds` plus 35 seconds. The caller MCP deadline is `seconds` plus 45 seconds.
+- Open items:
+  - a. The PRE-PR review of P5b-2 is pending.
+  - b. The end-to-end proofs (task Q-P1) are pending.
+  - c. The real-recorder smoke of P5b-1 (`omarchy-p5b.md` section 18) is still required. The P5b-2 live smoke (`docs/v2/LIVE-SMOKE.md`, `make desktop-smoke`) is also pending.
+  - d. The board has no form to change the recording limits of an existing grant, and the deck has no route for it yet. The "Change limits" form covers the three P6 limits only (no board path yet).
+  - e. The owner may change OD-1 to OD-6 (`omarchy-p5b.md` section 2).
+  - f. The tombstone reason `artifact_deleted` in the coordinator branch of the lease has no test of its own.
+- Next: the end-to-end proofs (task Q-P1); the PRE-PR review of P5b-2; the real-recorder smoke and the P5b-2 live smoke on the Omarchy machines; the owner reads the new rows of `SECURITY-CHECKLIST.md` (DL-158).

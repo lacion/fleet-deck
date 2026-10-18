@@ -523,7 +523,7 @@ The tools do not isolate the agent from other programs. Agents and the station r
 
 ### 7.7 Monitor recordings (R13 P5b)
 
-This section covers the owner recording of a monitor. The contract is `design/omarchy-p5b.md`. The built version is recorded in DL-239. The PRE-PR review, the end-to-end proofs (task P1) and the live smoke on the owner's Omarchy machine are not done yet (`make desktop-smoke` prints the list). The real-recorder smoke is required before you rely on this feature. Agent recordings (P5b-2) are not built.
+This section covers the owner recording of a monitor. The contract is `design/omarchy-p5b.md`. The built version is recorded in DL-239. The PRE-PR review, the end-to-end proofs (task P1) and the live smoke on the owner's Omarchy machine are not done yet (`make desktop-smoke` prints the list). The real-recorder smoke is required before you rely on this feature. Agent recordings (P5b-2) are built (DL-241): see the part "Agent recordings (P5b-2)".
 
 > **Caution:** a recording shows the whole monitor, with other applications, notifications and private information. The recording is an ordinary artifact until you delete it. Fleet Deck does not isolate the recording from other programs that run as your user on the station.
 
@@ -628,11 +628,78 @@ When the board shows "The recording result is unknown", the recording can exist.
 - An older deck does not support recordings. The panel shows "This deck does not support monitor recordings." and sends no recording request.
 - An older station gets no recording request. The panel shows "This station does not support monitor recordings." Its screenshots work as before.
 
+#### Agent recordings (P5b-2)
+
+This part covers the tool `record_monitor` of a coordinator session. The contract is section 13 of `design/omarchy-p5b.md`. The built version is recorded in DL-241. The PRE-PR review, the end-to-end proofs (task Q-P1) and the live smoke are not done yet (`make desktop-smoke` prints the list). The real-recorder smoke of section 7.7 is also required.
+
+> **Caution:** an agent with this allowance records a whole monitor of a grant station without a prompt from you. A recording shows other applications, notifications and private information. The agent gets only a reference, but the video is an ordinary artifact that you and other artifact readers can open until you delete it. Revoke the grant when the work is done.
+
+What it allows:
+
+- One whole monitor of a grant station, with no audio, for 1 to 120 seconds each time. The file is the same kind of MP4 as an owner recording (see "What a recording is").
+- Only a grant with the class `capture` and the explicit allowance can do it. The class `capture` alone does not allow it. A grant that exists before this version has no allowance and stays screenshot-only. Renewal never adds the allowance.
+- The coordinator can name the station in a call. When it names none, the call runs on the station of the coordinator.
+- The board shows this disclosure when you turn the allowance on: "This agent can record the whole selected monitor for up to 120 seconds at a time, including other applications, notifications and private information visible there. Recordings are stored as video artifacts. The agent gets only a reference to each recording, never the video."
+
+Give the allowance:
+
+1. On the board, open "New session". Choose a station, a provider instance and a directory. Select "Coordinator". The import field must be empty.
+2. In the group "Fleet control", turn on the switch "Screenshots: capture a whole monitor of a grant station and read its own screenshots". The switch "Allow monitor recordings" shows only while the screenshots switch is on. When you turn screenshots off, the board turns the recordings switch off too.
+3. Turn on "Allow monitor recordings".
+4. Set the two limits that then show. "Recording limit" counts the recordings of the grant. The default is 5 and the range is 0 to 5000. "Recording time limit (seconds)" counts the requested seconds of all recordings of the grant. The default is 600 and the range is 0 to 600000. A value outside the range shows a message and blocks the start.
+5. Read the disclosure under the switches. In the group "Grant stations", select the stations that the agent can record. Set the other limits (see "Limits and Change limits" in section 7.6).
+6. Start the session. The board asks you to confirm that it is you. The dialog "Confirm it is you" shows the text "This change needs it: Fleet control." The elevated confirmation of the grant covers the allowance.
+
+The start fails with `unsupported` when the coordinator station or a grant station has no link or lacks the feature `capture_recording_mcp.v1`. The deck, the station of the coordinator and every other grant station must be a version that supports it. An older station cannot be in a grant with the allowance. A call on a station that has a link but lacks the recording features gets `desktop_unsupported` ("This station's build has no desktop control."), and a call on a station with no link gets `station_unreachable` ("The station is not connected."). All the live gates of section 7.6 apply to a recording: "Fleet control" and "Desktop control" on the Deck tab, and, on the station that records, "Fleet control on this station", "Desktop control", "Desktop screenshots" and the list "Screenshot monitors".
+
+What the station shows:
+
+- Before the station starts the recorder, it shows this notification: "Fleet Deck is recording <monitor> for <callsign> for up to <seconds> seconds." The agent cannot change the text. When the notification fails, the station refuses the recording and no recorder starts. The station does not turn off do-not-disturb for it.
+- The station records one capture at a time. While an agent recording runs, a second capture on that station is refused with "A capture is already running." When the Desktop panel of the station knows the recording, "Record" and "Screenshot" are off for every monitor of the station.
+
+What the agent gets:
+
+- The tool `record_monitor` is in the tool list of the agent only when the grant has the allowance and the station negotiated the feature. A screenshot-only session has no recording tool.
+- A saved recording returns the request identity, the station, the reference to the video artifact, the monitor, the size and the hash, the start time, the requested and the saved length, and the fixed stop reason.
+- The agent never gets the video bytes, a frame, a thumbnail, a file path, a share link or a token. `read_capture_image` refuses a recording with the answer for an unknown artifact. No tool of the agent reads a video or stops a recording.
+- You play the video in the artifact viewer, as for an owner recording (see "Where the recording goes"). The deck builds the provenance of the artifact itself. It records the caller station, the caller session and the grant, and never the provenance of an owner recording.
+
+The grant row in the "Coordinator grants" list shows the recording use only while "Recording limit" is above 0. For example: "recordings 1 of 5, recording time 10 s of 600 s". This version has no board form to change the recording limits of a grant that already exists, and the deck has no route for it yet. This is an open item (no board path yet). To get other limits, start a new coordinator. The "Change limits" form of section 7.6 changes only the three P6 limits.
+
+Stop an agent recording:
+
+- Open the Desktop panel of the station that records. The panel asks the deck for the active recording and shows its phase. Press "Stop recording". The station keeps the part that it already recorded and saves it as a normal recording. The agent then gets the artifact reference with the stop reason `owner_stop`.
+- Select "Revoke" on the grant row. The station sees the revoke with the next check of the deck, in 6 seconds at most, discards the recording and keeps no file. The agent gets `authority_lost`. When the station already saved the file before the revoke, the artifact stays in the artifact list and the agent does not get its reference.
+- Turn off "Fleet control" or "Desktop control" on the Deck tab, or a setting of the station (see "The live gates" in section 7.6 and "When a recording is discarded"). The recording is discarded and the agent gets `authority_lost`. When the deck cannot check its authority, the agent gets `authority_unknown`.
+- Turn off "Desktop control" or "Desktop screenshots" on the station, or turn off "Fleet control on this station". The station discards the recording within 2 seconds.
+
+The discard table of "When a recording is discarded" applies to an agent recording. The agent sees the fixed code and text of the matching row, for example `screen_locked` ("The screen is locked or its lock state is unknown."). The deck waits for the station at most the requested seconds plus 35 seconds. The call of the agent ends after the requested seconds plus 45 seconds.
+
+The charges:
+
+- At the moment the deck accepts the call, it charges in one step: one desktop action, one capture, one recording and the requested seconds.
+- Fleet Deck gives no charge back. An early stop, a refusal by the station, a cancel, an artifact that you delete, a time out and an unknown result all keep the charge. Renewal and a restart of a deck or station do not reset a count.
+- A screenshot and a recording use the same capture limit ("Screenshot limit"). They also share the rate of 2 new captures in 60 seconds for the grant.
+
+The refusals, in your words (the agent sees the code and the fixed text):
+
+| Code | Text | What it means |
+| --- | --- | --- |
+| `not_granted` | "This grant does not allow this desktop operation." | The grant has no recording allowance, or "Recording limit" is 0. |
+| `recording_cap_reached` | "This grant has used its recording limit." | The grant made as many recordings as "Recording limit". |
+| `recording_seconds_reached` | "This grant has used its recording time limit." | The requested seconds would go over "Recording time limit (seconds)". |
+| `capture_cap_reached` | "This grant has used its capture limit." | "Screenshot limit" is used up. A recording needs one capture. |
+| `desktop_cap_reached` | "This grant has used its desktop action limit." | "Desktop action limit" is used up. |
+| `rate_limited` | "This grant's desktop rate limit has been reached. Try again later." | The grant made 2 captures in 60 seconds. |
+
+A refused call charges nothing. A call that is accepted and then fails keeps its charge.
+
 #### Open items
 
 - The real-recorder smoke on the owner's Omarchy machine is not done (see `docs/v2/LIVE-SMOKE.md`). Do not rely on recordings before it passes.
 - The deck does not end a video response when a client stops reading. The 180 second limit needs a connection write timeout (DL-239 item c).
 - Installing `wf-recorder` has no board path yet.
+- Agent recordings: the PRE-PR review, the end-to-end proofs (task Q-P1) and the live smoke are not done. The board has no form to change the recording limits of an existing grant (no board path yet).
 
 ## 8. Back up
 

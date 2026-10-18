@@ -401,4 +401,56 @@ Result:
 | --- | --- | --- | --- |
 | (not run) | | | The live smoke of P5b-1, and the real-recorder item 8, are open (DL-239 item b). |
 
+### P5b-2 agent recordings (DL-241)
+
+The contract is `docs/v2/design/omarchy-p5b.md` section 13 (section 17, test 52, and section 18). The owner guide is `docs/v2/operations.md` section 7.7, part "Agent recordings (P5b-2)". Do this smoke on the owner's Omarchy machines after the P5b-1 item 8 (the real recorder) passed. The coordinator runs on the first station (it can be a machine with no desktop). The recording is on a second station that has a Hyprland desktop, `grim` and `wf-recorder`. Use the server with the wall display as the second station, and the laptop as the first.
+
+Every step is a board step. No step asks you to run a command or to edit a file on a station. You give the coordinator its work in its chat on the board. A value that the board cannot show is marked "no board path yet". It is an open item, not an instruction.
+
+Set up:
+
+1. Do the set-up steps 1 to 3 of the P6 smoke: the Deck tab ("Fleet control" and "Desktop control"), the station tab of the coordinator station ("Fleet control on this station"), and the station tab of the second station ("Fleet control on this station", "Desktop control" and "Desktop screenshots", with "Screenshot monitors" empty).
+2. Open the board and go to the Desktop panel of the second station. Each monitor must show "Record". If "Record" is off, read the reason line (see the P5b-1 set-up).
+
+Items:
+
+1. **The grant with the allowance.**
+   1. Open "New session". Choose the coordinator station, a provider instance and a directory. Select "Coordinator".
+   2. In the group "Fleet control", turn on "Screenshots: capture a whole monitor of a grant station and read its own screenshots". Expect the switch "Allow monitor recordings" to show. Turn the screenshots switch off and on: expect the recordings switch to go off and to hide.
+   3. Turn on "Allow monitor recordings". Expect the fields "Recording limit" with 5 and "Recording time limit (seconds)" with 600, and this note: "This agent can record the whole selected monitor for up to 120 seconds at a time, including other applications, notifications and private information visible there. Recordings are stored as video artifacts. The agent gets only a reference to each recording, never the video."
+   4. In the group "Grant stations", select the second station. Start the session. Expect the dialog "Confirm it is you" with the text "This change needs it: Fleet control." (the board asks nothing when it still holds a recent sign-in).
+   5. In the "Coordinator grants" list of the "Mail and tasks" panel, find the grant. Expect the text "recordings 0 of 5, recording time 0 s of 600 s" in its line.
+2. **A recording of a monitor of another station.**
+   1. Ask the coordinator to record 10 seconds of one monitor of the second station.
+   2. Expect the notification "Fleet Deck is recording <monitor> for <callsign> for up to 10 seconds." on the screen of the second station. Expect it before the recording starts, and not later.
+   3. Wait about 10 seconds. Expect the coordinator to report a result with an artifact reference, the monitor, the size and the saved length. Expect no video, no image and no file path in the result.
+   4. Write the monitor size, the file size and the saved length in the result.
+3. **Play it.**
+   1. Find the recording in the artifact list. Expect the kind "Video". Open it.
+   2. Press play. Expect video of the monitor with no audio, and no autostart. Seek to the middle and expect that it goes on from there.
+   3. Ask the coordinator to read the artifact as an image. Expect a refusal (the artifact is unknown to the tool). A recording never reaches the agent.
+4. **The grant row.**
+   1. Look at the grant line after item 2. Expect "recordings 1 of 5, recording time 10 s of 600 s". A recording also uses one desktop action and one capture: expect "desktop actions 1 of 300" and "screenshots 1 of 20".
+5. **Stop an agent recording.**
+   1. Ask the coordinator to record 60 seconds of one monitor. Expect the notification of item 2.
+   2. Open the Desktop panel of the second station. Expect its phase "Recording" and the button "Stop recording" within a few seconds. Reload the board and expect the same.
+   3. After about 10 seconds press "Stop recording". Expect "Stopping recording", "Saving recording" and then the saved recording.
+   4. Open the recording in the artifact list. Expect a clip of about 10 seconds. Ask the coordinator for the state of the recording. Expect the stop reason `owner_stop`.
+6. **Revoke during a recording.**
+   1. Ask the coordinator to record 60 seconds. After about 10 seconds select "Revoke" on the grant row.
+   2. Expect the recording to end within about 6 seconds. Expect the coordinator to report `authority_lost`.
+   3. Open the artifact list. Expect no new recording artifact.
+   4. Look at the grant line. Expect the revoked state. Expect "recordings 3 of 5, recording time 130 s of 600 s": the stopped recording and the revoked recording keep their charge (no refund).
+7. **A session without the allowance has no recording tool.**
+   1. Start a second coordinator session with "Screenshots" on and "Allow monitor recordings" off. Look at the grant line. Expect no text about recordings.
+   2. Ask the coordinator which desktop tools it has. Expect `screenshot`, `capture_status` and `read_capture_image`, and no `record_monitor`.
+   3. Ask it to record a monitor. Expect that it has no such tool, or that the call is refused with `not_granted`.
+   4. Revoke this grant and the grant of item 6.
+
+Result:
+
+| Date | Machines | `wf-recorder` version | Items | Result |
+| --- | --- | --- | --- | --- |
+| (not run) | | | | The live smoke of P5b-2 is open (DL-241 item c). |
+
 <!-- desktop-smoke:end -->
