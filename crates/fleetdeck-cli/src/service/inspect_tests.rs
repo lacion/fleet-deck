@@ -4,6 +4,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use super::*;
+use crate::service::Platform;
 use crate::service::fake::ok;
 use crate::service::program;
 use crate::service::tests::Rig;
@@ -14,6 +15,52 @@ fn installed(rig: &Rig) {
     rig.put_installed(Kind::Station);
     let root = Kind::Station.root(&rig.ctx.dirs);
     program::ensure(&root, &rig.ctx.exe, "1.2.3", "01aaa").unwrap();
+    if rig.ctx.platform == Platform::Systemd {
+        exec_start(rig, &expected_argv(&rig.ctx));
+    } else {
+        plist(rig, &expected_argv(&rig.ctx));
+    }
+}
+
+/// The answer of `systemctl --user show <unit> -p ExecStart --value` for one
+/// entry that runs `argv`.
+fn exec_line(argv: &[String]) -> String {
+    format!(
+        "{{ path={} ; argv[]={} ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }}\n",
+        argv[0],
+        argv.join(" ")
+    )
+}
+
+fn exec_start(rig: &Rig, argv: &[String]) {
+    rig.fake.always(
+        "systemctl",
+        &["--user", "show", "fleetdeck-station.service"],
+        ok(&exec_line(argv)),
+    );
+}
+
+/// Writes the plist of an install whose program arguments are `argv`.
+fn plist(rig: &Rig, argv: &[String]) {
+    let path = rig.file(Kind::Station);
+    let text =
+        crate::service::launchd::render(&rig.ctx, Kind::Station, Path::new(&argv[0])).unwrap();
+    // Replace the whole array by the given arguments.
+    let (head, tail) = text.split_once("<array>\n").unwrap();
+    let (_, tail) = tail.split_once("    </array>").unwrap();
+    let items: String = argv
+        .iter()
+        .map(|a| format!("        <string>{}</string>\n", escape(a)))
+        .collect();
+    std::fs::write(path, format!("{head}<array>\n{items}    </array>{tail}")).unwrap();
+}
+
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 fn active(rig: &Rig, yes: bool) {
@@ -117,4 +164,134 @@ fn sha256_file_is_the_lowercase_digest() {
         crate::provision::sha256_hex(&vec![b'a'; 200_000])
     );
     assert!(sha256_file(&dir.path().join("missing")).is_err());
+}
+
+#[test]
+fn a_changed_exec_start_with_the_right_marker_is_a_conflict() {
+    let rig = Rig::systemd();
+    installed(&rig);
+    active(&rig, true);
+    assert_eq!(inspected(&rig), ServiceInspect::Matching { active: true });
+    // Another program, same marker and same arguments.
+    let mut argv = expected_argv(&rig.ctx);
+    argv[0] = "/tmp/other/fleetdeck".to_owned();
+    exec_start(&rig, &argv);
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+    // Another subcommand.
+    let mut argv = expected_argv(&rig.ctx);
+    *argv.last_mut().unwrap() = "deck".to_owned();
+    exec_start(&rig, &argv);
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+    // `path=` differs from `argv[0]`.
+    let argv = expected_argv(&rig.ctx);
+    let line = exec_line(&argv).replacen(&format!("path={}", argv[0]), "path=/bin/sh", 1);
+    rig.fake.always(
+        "systemctl",
+        &["--user", "show", "fleetdeck-station.service"],
+        ok(&line),
+    );
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+}
+
+#[test]
+fn a_different_data_dir_argument_is_a_conflict() {
+    let mut rig = Rig::systemd();
+    rig.ctx.data_dir_flag = true;
+    installed(&rig);
+    active(&rig, true);
+    assert_eq!(inspected(&rig), ServiceInspect::Matching { active: true });
+    let mut argv = expected_argv(&rig.ctx);
+    let at = argv.iter().position(|a| a == "--data-dir").unwrap();
+    argv[at + 1] = "/somewhere/else".to_owned();
+    exec_start(&rig, &argv);
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+    // No `--data-dir` although we use one.
+    let argv: Vec<String> = expected_argv(&rig.ctx)
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| *i != at && *i != at + 1)
+        .map(|(_, a)| a)
+        .collect();
+    exec_start(&rig, &argv);
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+    // A `--data-dir` although we use none.
+    let rig = Rig::systemd();
+    installed(&rig);
+    active(&rig, true);
+    let mut argv = expected_argv(&rig.ctx);
+    argv.splice(1..1, ["--data-dir".to_owned(), rig.data()]);
+    exec_start(&rig, &argv);
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+}
+
+#[test]
+fn a_missing_failed_or_multiple_exec_start_is_a_conflict() {
+    let rig = Rig::systemd();
+    installed(&rig);
+    active(&rig, true);
+    let line = exec_line(&expected_argv(&rig.ctx));
+    for answer in [
+        ok(""),
+        ok("not a line\n"),
+        ok(&format!("{line}{line}")),
+        ok(&line.replace(" ; ignore_errors=no", "")),
+        crate::service::fake::fail(1, "no unit"),
+    ] {
+        rig.fake.always(
+            "systemctl",
+            &["--user", "show", "fleetdeck-station.service"],
+            answer,
+        );
+        assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+    }
+    rig.fake.always(
+        "systemctl",
+        &["--user", "show", "fleetdeck-station.service"],
+        Err(crate::service::runner::RunError::Start("none".to_owned())),
+    );
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+}
+
+#[test]
+fn a_launchd_plist_is_compared_by_its_program_arguments() {
+    let mut rig = Rig::launchd();
+    rig.ctx.data_dir_flag = true;
+    installed(&rig);
+    rig.fake.always(
+        "launchctl",
+        &["print", "gui/1000/dev.fleetdeck.station"],
+        ok("state = running\n"),
+    );
+    assert_eq!(inspected(&rig), ServiceInspect::Matching { active: true });
+    // The plist that the install renders matches too.
+    let root = Kind::Station.root(&rig.ctx.dirs);
+    let text =
+        crate::service::launchd::render(&rig.ctx, Kind::Station, &root.join("current")).unwrap();
+    std::fs::write(rig.file(Kind::Station), text).unwrap();
+    assert_eq!(inspected(&rig), ServiceInspect::Matching { active: true });
+    // Another program, another data directory, no arguments array.
+    let good = expected_argv(&rig.ctx);
+    let mut other = good.clone();
+    other[0] = "/tmp/other/fleetdeck".to_owned();
+    plist(&rig, &other);
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+    let mut other = good.clone();
+    let at = other.iter().position(|a| a == "--data-dir").unwrap();
+    other[at + 1] = "/somewhere/else".to_owned();
+    plist(&rig, &other);
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+    rig.put_installed(Kind::Station);
+    assert_eq!(inspected(&rig), ServiceInspect::Conflict);
+}
+
+#[test]
+fn the_plist_scanner_unescapes_the_five_entities() {
+    let text = "<key>ProgramArguments</key>\n    <array>\n        <string>/a&amp;b</string>\n        <string>&lt;&gt;&quot;&apos;</string>\n    </array>\n";
+    assert_eq!(
+        plist_arguments(text).unwrap(),
+        ["/a&b".to_owned(), "<>\"'".to_owned()]
+    );
+    assert!(
+        plist_arguments("<key>ProgramArguments</key><array><integer>1</integer></array>").is_none()
+    );
 }

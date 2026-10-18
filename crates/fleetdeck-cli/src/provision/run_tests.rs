@@ -42,6 +42,7 @@ async fn a_first_run_does_every_step_in_order() {
             "fingerprint:probe",
             "omarchy_install",
             "omarchy_status",
+            "fingerprint",
         ]
     );
     let text = grouped(STATION_FP);
@@ -294,5 +295,48 @@ async fn the_retry_clears_the_error_in_the_file_before_the_sequence() {
     assert_eq!(
         fake.state().unwrap().error.as_deref(),
         Some("service_conflict")
+    );
+}
+
+#[tokio::test]
+async fn the_lock_is_held_while_a_terminal_condition_is_saved() {
+    use std::sync::{Arc, Mutex};
+
+    let fake = Fake::new();
+    fake.edit_file(super::release::HOOK_PATH, |f| f.bytes.push(b'#'));
+    let root = fake.trust_root();
+    let lock = lock_path(&fake.station_dir());
+    let state_file = fake.state_file();
+    type Seen = Vec<(String, bool, Option<String>)>;
+    let seen: Arc<Mutex<Seen>> = Arc::default();
+    let record = Arc::clone(&seen);
+    fake.progress_hooks
+        .lock()
+        .unwrap()
+        .push(Box::new(move |line| {
+            // The terminal line comes after the save of the state.
+            let held = try_lock_private_below(&root, &lock).unwrap().is_none();
+            let error = std::fs::read(&state_file)
+                .ok()
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .filter(|text| text.contains("release_untrusted"))
+                .map(|_| "release_untrusted".to_owned());
+            record.lock().unwrap().push((line.to_owned(), held, error));
+        }));
+    assert_eq!(go(&fake, false).await, Exit::Terminal);
+    let seen = seen.lock().unwrap().clone();
+    assert_eq!(
+        seen,
+        [(
+            "provision: validated: release_untrusted".to_owned(),
+            true,
+            Some("release_untrusted".to_owned())
+        )]
+    );
+    // After the run the lock is free.
+    assert!(
+        try_lock_private_below(&fake.trust_root(), &lock_path(&fake.station_dir()))
+            .unwrap()
+            .is_some()
     );
 }

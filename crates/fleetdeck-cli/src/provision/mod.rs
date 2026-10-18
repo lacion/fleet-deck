@@ -8,6 +8,7 @@ pub mod real;
 pub mod release;
 pub mod retry;
 pub mod run;
+mod run_checks;
 pub mod state;
 
 #[cfg(test)]
@@ -63,6 +64,7 @@ mod tests {
             ("release.rs", include_str!("release.rs")),
             ("retry.rs", include_str!("retry.rs")),
             ("run.rs", include_str!("run.rs")),
+            ("run_checks.rs", include_str!("run_checks.rs")),
             ("state.rs", include_str!("state.rs")),
         ] {
             // `eprint` is also forbidden: stderr goes through `progress`.

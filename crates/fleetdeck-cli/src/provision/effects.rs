@@ -178,6 +178,9 @@ pub trait Effects {
     /// The binary cannot be read.
     fn own_binary_sha256(&self) -> io::Result<String>;
     fn build(&self) -> Build;
+    /// The SHA-256 of the binary that the checked manifest names. The calls to
+    /// the station trust only a process that runs this binary.
+    fn set_trusted_binary(&self, sha256: &str);
 
     fn station_config(&self) -> ConfigState;
     /// Creates the station configuration privately, with no replace.
@@ -207,8 +210,9 @@ pub trait Effects {
 
     /// `omarchy install --yes` (60 s limit): the exit code.
     fn omarchy_install(&self) -> BoxFuture<'_, io::Result<i32>>;
-    /// `omarchy status`: the exit code.
-    fn omarchy_status(&self) -> BoxFuture<'_, io::Result<i32>>;
+    /// `omarchy status --json` (60 s limit): the exit code and the stdout
+    /// (at most 64 KiB).
+    fn omarchy_status_json(&self) -> BoxFuture<'_, io::Result<(i32, Vec<u8>)>>;
 
     /// The first-login notification with the grouped fingerprint.
     fn notify(&self, grouped_fingerprint: &str);

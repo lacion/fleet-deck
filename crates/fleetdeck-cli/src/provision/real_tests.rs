@@ -311,11 +311,11 @@ async fn no_station_socket_is_unavailable() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("station.sock");
     assert_eq!(
-        ask_fingerprint(&path, false).await,
+        ask_fingerprint(&path, false, Some(FP)).await,
         Err(CallError::Unavailable)
     );
     assert_eq!(
-        ask_fingerprint(&path, true).await,
+        ask_fingerprint(&path, true, Some(FP)).await,
         Err(CallError::Unavailable)
     );
 }
@@ -374,7 +374,8 @@ async fn a_join_without_a_station_socket_is_failed_and_a_bad_pin_is_invalid() {
             "deck.example.ts.net".to_owned(),
             7421,
             FP,
-            "laptop".to_owned()
+            "laptop".to_owned(),
+            Some(FP)
         )
         .await,
         code("failed")
@@ -385,9 +386,241 @@ async fn a_join_without_a_station_socket_is_failed_and_a_bad_pin_is_invalid() {
             "deck.example.ts.net".to_owned(),
             7421,
             "xyz",
-            "laptop".to_owned()
+            "laptop".to_owned(),
+            Some(FP)
         )
         .await,
         code("invalid_request")
     );
+}
+
+// ---- the process behind the socket ----
+
+/// A `/proc` that answers from a script.
+struct FakeProc {
+    exe: io::Result<String>,
+    /// The start times, one per call; the last repeats.
+    starts: Mutex<Vec<io::Result<u64>>>,
+}
+
+fn kind(e: &io::Result<String>) -> io::Result<String> {
+    match e {
+        Ok(text) => Ok(text.clone()),
+        Err(e) => Err(io::Error::new(e.kind(), "scripted")),
+    }
+}
+
+impl FakeProc {
+    fn new(exe: &str, starts: &[u64]) -> Self {
+        Self {
+            exe: Ok(exe.to_owned()),
+            starts: Mutex::new(starts.iter().map(|s| Ok(*s)).collect()),
+        }
+    }
+}
+
+impl ProcReader for FakeProc {
+    fn exe_sha256(&self, _pid: u32) -> io::Result<String> {
+        kind(&self.exe)
+    }
+
+    fn start_time(&self, _pid: u32) -> io::Result<u64> {
+        let mut starts = self.starts.lock().unwrap();
+        if starts.len() > 1 {
+            return starts.remove(0);
+        }
+        match starts.first() {
+            Some(Ok(start)) => Ok(*start),
+            _ => Err(io::Error::from(io::ErrorKind::NotFound)),
+        }
+    }
+}
+
+const TRUSTED: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const OTHER: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+
+#[test]
+fn the_start_time_is_field_22_counted_from_the_last_bracket() {
+    let stat = "123 (name with ) and (brackets) S 1 123 123 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 1 0 987654 1000 2 18446744073709551615";
+    assert_eq!(parse_start_time(stat), Some(987_654));
+    assert_eq!(parse_start_time("1 (x) S 1"), None);
+    assert_eq!(parse_start_time("no bracket"), None);
+    assert_eq!(parse_start_time(&stat.replace("987654", "abc")), None);
+    // The real `/proc` of this process has a start time.
+    assert!(RealProc.start_time(std::process::id()).is_ok());
+}
+
+#[test]
+fn the_peer_check_accepts_only_the_trusted_process_of_the_same_user() {
+    let proc = FakeProc::new(TRUSTED, &[7]);
+    let cred = |uid, pid| Ok::<_, io::Error>((uid, pid));
+    let peer = verify_peer(&proc, 1000, Some(TRUSTED), cred(1000, Some(42)));
+    assert_eq!(peer, Some(Peer { pid: 42, start: 7 }));
+    // Another executable.
+    let other = FakeProc::new(OTHER, &[7]);
+    assert!(verify_peer(&other, 1000, Some(TRUSTED), cred(1000, Some(42))).is_none());
+    // Another user.
+    assert!(verify_peer(&proc, 1000, Some(TRUSTED), cred(1001, Some(42))).is_none());
+    // No process id.
+    assert!(verify_peer(&proc, 1000, Some(TRUSTED), cred(1000, None)).is_none());
+    // No credentials.
+    let none = Err(io::Error::from(io::ErrorKind::Unsupported));
+    assert!(verify_peer(&proc, 1000, Some(TRUSTED), none).is_none());
+    // No trusted hash.
+    assert!(verify_peer(&proc, 1000, None, cred(1000, Some(42))).is_none());
+    // The executable or the start time cannot be read.
+    let unreadable = FakeProc {
+        exe: Err(io::Error::from(io::ErrorKind::PermissionDenied)),
+        starts: Mutex::new(vec![Ok(7)]),
+    };
+    assert!(verify_peer(&unreadable, 1000, Some(TRUSTED), cred(1000, Some(42))).is_none());
+    let no_start = FakeProc {
+        exe: Ok(TRUSTED.to_owned()),
+        starts: Mutex::new(vec![Err(io::Error::from(io::ErrorKind::NotFound))]),
+    };
+    assert!(verify_peer(&no_start, 1000, Some(TRUSTED), cred(1000, Some(42))).is_none());
+}
+
+#[test]
+fn a_changed_start_time_is_not_the_same_process() {
+    let peer = Peer { pid: 42, start: 7 };
+    assert!(still_peer(&FakeProc::new(TRUSTED, &[7]), peer));
+    assert!(!still_peer(&FakeProc::new(TRUSTED, &[8]), peer));
+    let gone = FakeProc {
+        exe: Ok(TRUSTED.to_owned()),
+        starts: Mutex::new(vec![Err(io::Error::from(io::ErrorKind::NotFound))]),
+    };
+    assert!(!still_peer(&gone, peer));
+}
+
+/// A station on `path` that answers one request with `response`.
+async fn serve_one(path: &Path, response: LocalResponse) -> tokio::task::JoinHandle<()> {
+    let listener = fleetdeck_core::localsock::bind(path).await.unwrap();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let (read, mut write) = stream.into_split();
+        let mut reader = tokio::io::BufReader::new(read);
+        let _ = fleetdeck_core::localsock::read_line(&mut reader).await;
+        let _ = fleetdeck_core::localsock::send(&mut write, &response).await;
+    })
+}
+
+fn euid() -> u32 {
+    rustix::process::geteuid().as_raw()
+}
+
+#[tokio::test]
+async fn a_fingerprint_call_needs_the_verified_process_before_and_after_the_answer() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("station.sock");
+    let server = serve_one(&path, good(&[FEATURE], FP, None)).await;
+    let proc = FakeProc::new(TRUSTED, &[7]);
+    let view = ask_fingerprint_with(&path, false, Some(TRUSTED), euid(), &proc)
+        .await
+        .unwrap();
+    assert_eq!(view.fingerprint, FP);
+    server.await.unwrap();
+
+    // A different hash: the request is never sent (the answer is not read).
+    let path = dir.path().join("hash.sock");
+    let server = serve_one(&path, good(&[FEATURE], FP, None)).await;
+    let proc = FakeProc::new(OTHER, &[7]);
+    assert_eq!(
+        ask_fingerprint_with(&path, false, Some(TRUSTED), euid(), &proc).await,
+        Err(CallError::Invalid)
+    );
+    server.abort();
+
+    // Another user.
+    let path = dir.path().join("uid.sock");
+    let server = serve_one(&path, good(&[FEATURE], FP, None)).await;
+    let proc = FakeProc::new(TRUSTED, &[7]);
+    assert_eq!(
+        ask_fingerprint_with(&path, false, Some(TRUSTED), euid() + 1, &proc).await,
+        Err(CallError::Invalid)
+    );
+    server.abort();
+
+    // No trusted hash.
+    let path = dir.path().join("none.sock");
+    let server = serve_one(&path, good(&[FEATURE], FP, None)).await;
+    assert_eq!(
+        ask_fingerprint_with(&path, false, None, euid(), &proc).await,
+        Err(CallError::Invalid)
+    );
+    server.abort();
+
+    // The process changed while it answered.
+    let path = dir.path().join("start.sock");
+    let server = serve_one(&path, good(&[FEATURE], FP, None)).await;
+    let proc = FakeProc::new(TRUSTED, &[7, 8]);
+    assert_eq!(
+        ask_fingerprint_with(&path, false, Some(TRUSTED), euid(), &proc).await,
+        Err(CallError::Invalid)
+    );
+    server.await.unwrap();
+}
+
+async fn join(path: &Path, trusted: Option<&str>, uid: u32, proc: &FakeProc) -> JoinOutcome {
+    ask_join_with(
+        path,
+        "deck.example.ts.net".to_owned(),
+        7421,
+        (FP, "laptop".to_owned()),
+        (trusted, uid, proc),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_join_needs_the_verified_process_and_gives_build_mismatch_otherwise() {
+    let dir = tempfile::tempdir().unwrap();
+    let code = |c: &str| JoinOutcome::Code(c.to_owned());
+    let paired = || LocalResponse::TailnetPaired {
+        device: "deck".to_owned(),
+        deck: FP.to_owned(),
+    };
+    let path = dir.path().join("ok.sock");
+    let server = serve_one(&path, paired()).await;
+    let proc = FakeProc::new(TRUSTED, &[7]);
+    assert_eq!(
+        join(&path, Some(TRUSTED), euid(), &proc).await,
+        JoinOutcome::Paired
+    );
+    server.await.unwrap();
+
+    let path = dir.path().join("hash.sock");
+    let server = serve_one(&path, paired()).await;
+    let proc = FakeProc::new(OTHER, &[7]);
+    assert_eq!(
+        join(&path, Some(TRUSTED), euid(), &proc).await,
+        code("build_mismatch")
+    );
+    server.abort();
+
+    let path = dir.path().join("uid.sock");
+    let server = serve_one(&path, paired()).await;
+    let proc = FakeProc::new(TRUSTED, &[7]);
+    assert_eq!(
+        join(&path, Some(TRUSTED), euid() + 1, &proc).await,
+        code("build_mismatch")
+    );
+    server.abort();
+
+    let path = dir.path().join("none.sock");
+    let server = serve_one(&path, paired()).await;
+    assert_eq!(
+        join(&path, None, euid(), &proc).await,
+        code("build_mismatch")
+    );
+    server.abort();
+
+    let path = dir.path().join("start.sock");
+    let server = serve_one(&path, paired()).await;
+    let proc = FakeProc::new(TRUSTED, &[7, 9]);
+    assert_eq!(
+        join(&path, Some(TRUSTED), euid(), &proc).await,
+        code("build_mismatch")
+    );
+    server.await.unwrap();
 }
