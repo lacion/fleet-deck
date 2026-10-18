@@ -48,6 +48,19 @@ docker run -d --name fleetdeck-station -v fleetdeck-data:/data fleetdeck-station
 
 > **Caution:** a paired deck can run code as the station's OS user (PLAN §6.8). A container or a dedicated OS user limits what an agent can reach.
 
+## Omarchy provisioning files
+
+`packaging/omarchy/` holds two files of the Omarchy provisioning design (`docs/v2/design/omarchy-p8.md` section 5.1):
+
+| File | Installed at | Owner and mode |
+|---|---|---|
+| `provision-first-login` | `/usr/lib/fleetdeck/provision-first-login` | `root:root` `0755` |
+| `fleetdeck-provision.desktop` | `/etc/xdg/autostart/fleetdeck-provision.desktop` | `root:root` `0644` |
+
+- The XDG autostart entry starts the hook at the login of the user. The hook runs `fleetdeck provision-bootstrap --file <provision.toml>` when `${XDG_CONFIG_HOME:-$HOME/.config}/fleetdeck/provision.toml` exists. It does nothing when the file does not exist.
+- The hook never installs a package and never downloads code.
+- The archive only carries the two files. The trusted installer image (the release task of the owner, design section 5.4) installs the package and the release manifest.
+
 ## Owner steps
 
 These steps need tools or hosts that the build machine of M3 does not have (DL-400):
