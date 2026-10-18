@@ -1,6 +1,6 @@
 # P7: coordinator keyboard input and pointer movement
 
-- **Status:** proposed contract (architect, 2026-10-18), from the advisor answer `advisor-p7-answer.md` against v2 HEAD `0eeeb149`. The architect accepts the recommendations P7-OD1 to P7-OD7 as architect decisions (O12-23; the owner may change any of them) and adds the board fence of §7.6 (revision 2: DESIGN REVIEW round 1 FAIL with 3 BLOCKER on the first barrier and 1 MAJOR on the `wtype` keymap file, report `adv-omarchy-p7-design-r1-report.md`). DESIGN REVIEW required before implementation; PRE-PR required before merge; live smoke required before operational reliance (the feature stays experimental and off by default until then).
+- **Status:** proposed contract (architect, 2026-10-18), from the advisor answer `advisor-p7-answer.md` against v2 HEAD `0eeeb149`. The architect accepts the recommendations P7-OD1 to P7-OD7 as architect decisions (O12-23; the owner may change any of them) and adds the board sign-out of §7.6 (revision 2: DESIGN REVIEW round 1 FAIL with 3 BLOCKER on the first barrier and 1 MAJOR on the `wtype` keymap file; revision 3: round 2 FAIL with 2 BLOCKER on the fence and its unfence; reports `adv-omarchy-p7-design-r1-report.md`, `adv-omarchy-p7-design-r2-report.md`). DESIGN REVIEW required before implementation; PRE-PR required before merge; live smoke required before operational reliance (the feature stays experimental and off by default until then).
 - **Parent:** `omarchy.md` §§7.4, 7.5, 11, 13 and 14.
 - **Prerequisite:** accepted and built P6, `omarchy-p6.md`, including subsequent authority fixes recorded in DL-242.
 - **Scope:** coordinator tools `key_press`, `type_text` and `pointer_move`, targeting caller-owned P6 preview windows through opaque `window_id` handles.
@@ -37,7 +37,7 @@ P7 must not describe these tools as an isolation boundary against agents running
 
 ## 2. Owner decisions
 
-The architect accepts each recommendation below as an architect decision (O12-23, 2026-10-18), as for P6 (O12-1) and P5b (O12-6). The owner may replace any of them. P7-OD1 is accepted only together with the board fence of §7.6, which does not depend on window detection.
+The architect accepts each recommendation below as an architect decision (O12-23, 2026-10-18), as for P6 (O12-1) and P5b (O12-6). The owner may replace any of them. P7-OD1 is accepted only together with the board sign-out of §7.6, which does not depend on window detection.
 
 | ID | Owner decision needed | Recommendation |
 |---|---|---|
@@ -747,30 +747,40 @@ Owner preview close must not wait behind the input slot. Closing invalidates/can
 
 P7 introduces no continuation lease. A remote gate change after the final execute check may remain unobserved until notification, disconnect or process completion. Under **P7-OD7**, the bounded invocation may already have sent input and may finish before cancellation is observed.
 
-### 7.6 Board fence on the target machine (architect addition, revision 2)
+### 7.6 Board sign-out on the target machine (architect addition, revision 3)
 
-The window checks of §7.2 cannot prove that keystrokes never reach a board window (a focus change after the final check, a preview that shows the board, keyboard navigation). Synthetic input reaches only the desktop of the target station. So the board sessions at risk are the owner board sessions whose browser runs on that machine. Revision 1 refused decisions during a 5 s window; DESIGN REVIEW round 1 showed that a delayed request, a deck restart and an uncovered owner action (a composer `!` command) pass such a window. Revision 2 fences the sessions instead of the time.
+The window checks of §7.2 cannot prove that keystrokes never reach a board window (a focus change after the final check, a preview that shows the board, keyboard navigation). Synthetic input reaches only the desktop of the target station, so the browser sessions at risk are those that run on that machine. History: revision 1 refused decisions during a 5 s window (round 1: a delayed request, a restart and a composer `!` command pass it); revision 2 fenced the session and let an elevation unfence it (round 2: a request sent while fenced becomes valid again after the unfence; approver members were not covered). Revision 3 signs such sessions out: a deleted session can never make a request valid again, and the human signs in again with their own credentials.
 
-**Machine addresses.** For each target station with `desktop_input_mcp.v1`, the deck keeps the set of its machine addresses:
-- the peer address of the station's current link (IPv4 or IPv6, without the port);
-- the addresses that the station reports in its `desktop.info` answer as `host_addresses`: at most 16 IPv4/IPv6 addresses of its up interfaces, loopback and link-local excluded; the deck ignores the field from a station without the feature and caps it at 16;
-- when the target is the deck's own local station (the station of `fleetdeck up`, the same machine): also every loopback address and every address of the deck's own interfaces.
+**Browser sessions.** Both kinds of board browser session: the owner login sessions and the member sessions (approver and other members). The wall and display principals are not browser board sessions with mutations and are not affected.
 
-**Exposure.** A target station is *exposed* from the commit that marks an input operation of it `attempted` until 5 s after the deck records that operation's terminal result; for an uncertain result, until `attempted_at` + the input deadline of §10 + 5 s. Exposure is computed from the durable operation rows (`attempted_at`, `finished_at`, state), so a deck restart rebuilds it before the deck accepts any board request (the board API starts after the recovery of §11).
+**Address form.** Every address is kept and compared in canonical form: an IPv4-mapped IPv6 address becomes its IPv4 address; IPv6 in its compressed lowercase form; no port, no zone.
 
-**Fencing.** A board login session becomes *fenced* (a durable column `input_fenced_at` on the login session row, written in its own transaction):
-1. at the start of exposure, for every owner login session that has a live board connection (WebSocket) whose peer address is a machine address of the exposed target, or whose last board request in the past 24 h came from such an address (the deck records `last_addr` and `last_seen_at` on the login session at each authenticated board request and WebSocket connect, at most once per 10 s per session); the deck writes these flags before it dispatches the input operation;
-2. during exposure and for 60 s after it, on any authenticated board request or WebSocket connect from a machine address of the exposed target, before the request is handled.
+**Machine addresses of a target.** For each target station with `desktop_input_mcp.v1`, the set of:
+- the peer address of the station's current link;
+- the `host_addresses` that the station reports in its `desktop.info` answer: at most 16 addresses of its up interfaces, loopback and link-local excluded (ignored from a station without the feature; capped at 16);
+- when the target is the deck's own local station (the station of `fleetdeck up`, the same machine): every loopback address and every address of the deck's own interfaces.
 
-**What a fenced session can do.** Reads, `POST /api/auth/elevate`, `POST /api/auth/logout`, grant revocation, the owner stop of a recording, the owner close of a preview, the stop or interrupt of a session run, and the cancel of an agent's pending work. Every other mutating board request and WebSocket command (approvals, denials and answers, prompts and `!` commands, starts, settings, grants, pairing, artifacts, Fleet Git actions, schedules, mail and tasks, and any route added later) is refused with `input_fenced` before it is handled. The list of allowed actions is closed: a new route is refused for a fenced session unless this list names it.
+**Durable snapshot.** In the transaction that marks an input operation `attempted`, the deck stores the machine-address set of its target in the new operation column `exposure_addrs` (a JSON array of canonical strings, at most 40 entries). Exposure and sign-out use this snapshot, never the live link state, so a disconnect or a deck restart cannot change it.
 
-**Unfence.** A successful elevation (`POST /api/auth/elevate` with the owner password) on that login session clears `input_fenced_at`, unless the session is inside a current exposure (rule 2 would fence it again at once, so the deck answers the elevation with `input_fenced` and keeps the flag). The agent does not know the owner password; `type_text` of a password by an agent that learned it is outside this contract.
+**Exposure.** An operation is *exposing* from its `attempted` commit until 5 s after its terminal result (`finished_at`), and, for an uncertain result, until `attempted_at` + the input deadline of §10 + 5 s. A deck restart rebuilds the exposing operations from the durable rows before the board API accepts a request (the recovery of §11 runs before the HTTP listener starts).
 
-**Board.** On `input_fenced`, the board shows `An agent typed on the station where this board is open. Confirm it is you to continue.` and opens the elevation dialog with the label `Agent input`. The pending item stays; the board does not repeat the request by itself.
+**Last address of a session.** The deck records `last_addr` (canonical) and `last_seen_at` on the session row (owner login session and member session) at each authenticated board request and WebSocket connect, at most once per 10 s per session. The address is the immediate TCP peer of the board connection.
 
-**Not fenced:** board sessions on other machines; the wall and display principals (they have no owner mutations); the local socket of the station.
+**Sign-out.**
+1. In the `attempted` transaction (before the dispatch), the deck deletes every owner login session and every member session whose `last_addr` is in the snapshot and whose `last_seen_at` is within the past 24 h, and closes their live WebSocket connections. It also deletes every session that has a live board connection from an address in the snapshot.
+2. While any operation is exposing, and for 60 s after its exposure ends, an authenticated board request or WebSocket connect from an address in that operation's snapshot deletes its session before the request is handled and answers 401 `signed_out_for_input`. A sign-in (owner password, owner code, member credentials) from such an address in that time succeeds, but its new session is deleted by the next request under this rule; the sign-in answer itself carries `input_active: true` so that the board shows why.
+3. Deleted sessions stay deleted: the cookie and the CSRF token of a deleted session are refused for good (the existing session lookup), so a request that an agent caused and that arrives late is refused whatever the time.
+- Audit: one row `board.signed_out_for_input` per deleted session, with the session kind and the operation ID, never an address list or typed text.
 
-**Residual (P7-OD1):** a browser on the target machine that reaches the deck through an address the deck does not know (for example, through a proxy or a VPN that the station does not report) is not fenced. `operations.md` will say: do not keep a board signed in on a station while an agent types on it. The fence protects decisions that go through this deck only.
+**Board.** On 401 `signed_out_for_input` (or a closed WebSocket with that reason), the board shows the sign-in page with the line `You were signed out because an agent typed on the station where this board is open.` Pending items are not repeated by themselves after the new sign-in.
+
+**Owner lock-out (accepted):** while an agent types on a station, a board on that same machine cannot act; the owner revokes, stops or closes from another device (or after the 60 s tail). A deck behind a proxy sees every board with the proxy's address, so every board is signed out during input (fail closed); `operations.md` states this and recommends the direct tailnet address.
+
+**Residual (P7-OD1):** a browser on the target machine that reaches the deck through an address not in the snapshot (a proxy or VPN that the station does not report, a NAT shared with another machine is the opposite case and signs out too much) keeps its session. `operations.md` will say: do not keep a board signed in on a station while an agent types on it. The sign-out protects decisions that go through this deck only.
+
+**Migration (deck):** `coordinator_desktop_ops` gains `exposure_addrs TEXT` (NULL for non-input operations), and `attempted_at INTEGER`, `finished_at INTEGER` when the table lacks equivalent columns (the code map decides whether existing columns already hold these times; no existing column is changed); the owner login session table and the member session table gain `last_addr TEXT` and `last_seen_at INTEGER` (NULL for existing rows: such a session has no address until its next request, and rule 2 still applies to that request). One new migration number after the latest deck migration; never edit an earlier one.
+
+**Tests:** a session with a live connection from the target address is deleted before the dispatch; a delayed approval with the old cookie after exposure is refused; an approver member on the target address is signed out; a restart during exposure and during the 60 s tail; a sign-in during the tail is signed out at its next request; IPv4-mapped IPv6 and IPv6 canonical comparison; a session on another address is untouched; the audit row.
 
 ## 8. Execution, disclosure and results
 
@@ -1085,7 +1095,7 @@ New codes:
 | `input_focus_unknown` | `The preview's input focus could not be verified. Input was not started.` |
 | `focus_changed` | `The preview no longer has focus. Input stopped; some input may already have been sent.` |
 | `input_interrupted` | `Input was interrupted. Some input may already have been sent. Do not retry automatically.` |
-| `input_fenced` (board API, §7.6) | `An agent typed on the station where this board is open. Confirm it is you to continue.` |
+| `signed_out_for_input` (board API, 401, §7.6) | `You were signed out because an agent typed on the station where this board is open.` |
 | `input_failed` | `The input tool failed. Some input may already have been sent. Do not retry automatically.` |
 | `input_timeout` | `Input did not finish in time. Some input may already have been sent. Do not retry automatically.` |
 
