@@ -312,6 +312,22 @@ impl DeckStore {
         token: &Secret<String>,
         display_name: &str,
     ) -> Result<Option<NewMemberLogin>> {
+        self.join_at(token, display_name, None).await
+    }
+
+    /// [`Self::join`] that records the canonical address of the sign-in
+    /// request on the new member session (`last_addr` and
+    /// `last_addr_seen_at`, R13 P7 §7.6).
+    ///
+    /// # Errors
+    /// As [`Self::join`].
+    pub async fn join_at(
+        &self,
+        token: &Secret<String>,
+        display_name: &str,
+        addr: Option<&str>,
+    ) -> Result<Option<NewMemberLogin>> {
+        let addr = addr.map(str::to_owned);
         let name = check_display_name(display_name)?;
         let invite_hash = secret_hash(token.expose());
         let cookie = format!("fdmem1_{}", random_token()?);
@@ -376,9 +392,10 @@ impl DeckStore {
             let expires_at = share_expires.min(now.saturating_add(SESSION_MAX_MS));
             tx.execute(
                 "INSERT INTO member_sessions
-                 (session_hash, member_id, share_id, csrf_token, created_at, expires_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![cookie_hash, member, share_id, csrf, now, expires_at],
+                 (session_hash, member_id, share_id, csrf_token, created_at, expires_at,
+                  last_addr, last_addr_seen_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CASE WHEN ?7 IS NULL THEN NULL ELSE ?5 END)",
+                params![cookie_hash, member, share_id, csrf, now, expires_at, addr],
             )?;
             let grant = load_grant(&tx, &cookie_hash, now)?
                 .ok_or_else(|| DeckError::Corrupt("a new member login is gone".to_owned()))?;

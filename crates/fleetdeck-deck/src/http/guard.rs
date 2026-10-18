@@ -34,7 +34,9 @@ use fleetdeck_core::secret::ct_eq;
 use serde_json::json;
 
 use super::Board;
+use super::admission::PeerAddr;
 use super::methods::{self, ApiMethod};
+use crate::board_fence::{self, SocketKind};
 use crate::store::auth::secret_hash;
 use crate::store::{AuditResult, NewAudit, Principal};
 
@@ -516,6 +518,24 @@ pub async fn guard(
     let query = req.uri().query().map(str::to_owned);
     match check(&board, api, req.headers(), query.as_deref()).await {
         Ok(Some(principal)) => {
+            // R13 P7 §7.6 rule 2: the one place that signs out a browser
+            // session on a machine where an agent types. It runs for every
+            // authenticated request and socket upgrade, mutating or not.
+            let peer = req.extensions().get::<PeerAddr>().copied();
+            let socket = methods::is_socket(api.name).then(|| {
+                if api.name == methods::WS_METHOD {
+                    SocketKind::Board
+                } else {
+                    SocketKind::Shell
+                }
+            });
+            match board_fence::guard_rule(&board.store, &principal, peer, socket).await {
+                Ok(Some(ticket)) => {
+                    req.extensions_mut().insert(ticket);
+                }
+                Ok(None) => {}
+                Err(e) => return e.into_response(),
+            }
             req.extensions_mut().insert(principal);
             next.run(req).await
         }

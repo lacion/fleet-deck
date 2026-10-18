@@ -49,6 +49,7 @@ use super::Board;
 use super::artifact_projection::{project_events, video_aware_socket};
 use super::guard::ApiError;
 use super::read_routes::{member_sessions, member_stations};
+use crate::board_fence::{self, Ticket};
 use crate::link::DeckLink;
 use crate::local::station_view;
 use crate::store::auth::{random_token, secret_hash};
@@ -140,6 +141,7 @@ pub async fn ticket(
 pub async fn upgrade(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
+    ticket: Option<Extension<Ticket>>,
     headers: HeaderMap,
     query: Result<Query<Vec<(String, String)>>, QueryRejection>,
     ws: WebSocketUpgrade,
@@ -150,17 +152,44 @@ pub async fn upgrade(
     let video = video_aware_socket(&headers, &query);
     ws.max_message_size(MAX_CLIENT_MESSAGE)
         .max_frame_size(MAX_CLIENT_MESSAGE)
-        .on_upgrade(move |socket| async move {
+        .on_upgrade(move |mut socket| async move {
+            let fence = ticket.map(|Extension(t)| t);
+            // R13 P7 §7.6: a socket of a signed-out session never starts.
+            if let Some(t) = &fence
+                && !board_fence::admit_socket(&board.store, t).await
+            {
+                let frame = CloseFrame {
+                    code: CLOSE_LOGIN_ENDED,
+                    reason: SIGNED_OUT_REASON.into(),
+                };
+                let _ = socket.send(Message::Close(Some(frame))).await;
+                board.store.registry().remove(t);
+                return;
+            }
             let socket_id = board.store.new_socket_id();
             let store = board.store.clone();
-            if let Err(e) = Session::new(board, principal, socket, socket_id, video)
-                .run()
-                .await
-            {
+            let mut session = Session::new(board, principal, socket, socket_id, video);
+            session.fence.clone_from(&fence);
+            if let Err(e) = session.run().await {
                 tracing::debug!(error = %e, "board socket");
             }
             store.presence_leave(socket_id);
+            if let Some(t) = &fence {
+                store.registry().remove(t);
+            }
         })
+}
+
+/// The close reason of a socket of a signed-out session (R13 P7 §7.6).
+const SIGNED_OUT_REASON: &str =
+    fleetdeck_proto::coordinator_desktop_text::code::SIGNED_OUT_FOR_INPUT;
+
+/// Returns when the socket is revoked; never for a socket without an entry.
+async fn revoked(ticket: Option<&Ticket>) {
+    match ticket {
+        Some(t) => t.revoked().await,
+        None => std::future::pending().await,
+    }
 }
 
 /// Why a socket ended.
@@ -175,6 +204,10 @@ enum WsError {
     /// A display did not take a message in time (R13 §5A): the socket ends.
     #[error("a display socket send timed out")]
     SendTimeout,
+    /// The login was signed out because an agent typed on this machine
+    /// (R13 P7 §7.6): the socket ends.
+    #[error("the login was signed out for input")]
+    SignedOut,
 }
 
 /// One timeline subscription.
@@ -199,6 +232,9 @@ struct Session {
     /// The socket declared `artifacts_video.v1` (R13 P5b): without it the
     /// timeline events show kind `other` for a video.
     video: bool,
+    /// The entry of this socket in the board-fence registry (R13 P7 §7.6);
+    /// `None` for a token or a display.
+    fence: Option<Ticket>,
 }
 
 /// The board view: the paired stations and every card. A free function
@@ -263,10 +299,16 @@ impl Session {
             subs: BTreeMap::new(),
             scope: None,
             video,
+            fence: None,
         }
     }
 
     async fn send(&mut self, m: &BoardServerMessage) -> Result<(), WsError> {
+        // Every frame to the board passes here: a revoked socket sends none.
+        if self.fence.as_ref().is_some_and(Ticket::is_revoked) {
+            self.close(CLOSE_LOGIN_ENDED, SIGNED_OUT_REASON).await;
+            return Err(WsError::SignedOut);
+        }
         let text = serde_json::to_string(m)?;
         if matches!(self.principal, Principal::Display(_)) {
             // A display that does not read must not hold the socket (R13 §5A).
@@ -329,12 +371,17 @@ impl Session {
         };
         let mut recheck = tokio::time::interval(every);
         recheck.tick().await;
+        let fence = self.fence.clone();
         let mut sweep = tokio::time::interval(Duration::from_secs(
             fleetdeck_proto::share::PRESENCE_HEARTBEAT_S,
         ));
         sweep.tick().await;
         loop {
             tokio::select! {
+                () = revoked(fence.as_ref()) => {
+                    self.close(CLOSE_LOGIN_ENDED, SIGNED_OUT_REASON).await;
+                    return Ok(());
+                }
                 changed = board_rx.changed() => {
                     if changed.is_err() {
                         return Ok(());

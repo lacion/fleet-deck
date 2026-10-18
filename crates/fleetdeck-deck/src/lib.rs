@@ -3,6 +3,7 @@
 //! board API.
 
 pub mod artifact_deletions;
+pub mod board_fence;
 pub mod cert_task;
 mod coordinator_desktop;
 pub mod desktop_capture;

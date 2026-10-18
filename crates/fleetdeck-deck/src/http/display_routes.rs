@@ -33,6 +33,7 @@ use super::auth_routes::{Audit, limit_refusal, named_cookie, start_attempt};
 use super::display_bodies::{BindingBody, parse_pair_body};
 use super::guard::{ApiError, DISPLAY_COOKIE, PENDING_COOKIE, cookie, owner_only};
 use super::settings_routes::{is_elevated, owner};
+use crate::board_fence;
 use crate::store::auth::LoginSession;
 use crate::store::displays::{
     DISPLAY_MAX_MS, DisplayChange, NewDisplay, check_quiet_hours, clean_name,
@@ -145,6 +146,9 @@ async fn pair_start(
     body: axum::body::Bytes,
 ) -> Response {
     const ACTION: &str = "display.pair_start";
+    if let Err(e) = board_fence::sign_in_check(&board.store, board_fence::peer_ip(&peer)).await {
+        return e.into_response();
+    }
     let ip = request_source(peer);
     let source = ip.to_string();
     let refused = |detail: &'static str| {
@@ -490,6 +494,9 @@ async fn redeem_link(
     body: Result<Json<LinkRedeem>, JsonRejection>,
 ) -> Response {
     const AUDIT: Audit = ("display.link_redeem", "display_link");
+    if let Err(e) = board_fence::sign_in_check(&board.store, board_fence::peer_ip(&peer)).await {
+        return e.into_response();
+    }
     let Json(body) = match body {
         Ok(b) => b,
         Err(e) => return body_error(&e).into_response(),
