@@ -3452,4 +3452,5 @@ Owner review: pending.
   - e. An install that the installer refuses because a file was changed (`install_refused`) has no board repair: the card shows the conflicting files, and their repair needs the files on the station (no board path yet).
   - The card line after a restored screensaver file changed (an owner edit, or one late write of an older job during an upgrade) is neutral (`Screensaver: off. The screensaver file changed after Fleet Deck restored it; the original is kept as a backup.`), and **Turn the screensaver off** shows only while the screensaver is on (architect fix after the docs review).
 - PRE-PR round 1: three MAJOR findings fixed (the child group after a normal exit, a missing backup keeps the restore metadata, the card refreshes every 15 s).
+- PRE-PR round 2: the station kills the process group of a child before it reaps the leader (no group ID reuse); the card sends its status reads and actions one at a time.
 - Next: the PRE-PR review; the owner reads the new rows of `SECURITY-CHECKLIST.md` (DL-158); the live smoke on the Omarchy machines.

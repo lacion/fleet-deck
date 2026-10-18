@@ -93,6 +93,15 @@ async fn omarchy_runner_kills_the_group_at_the_limit_and_on_too_much_output() {
 }
 
 #[tokio::test]
+async fn omarchy_runner_reports_the_exit_code_after_the_group_kill_and_reap() {
+    let r = run_sh("exit 3", Duration::from_secs(5)).await.unwrap();
+    let RunResult::Exit { code, .. } = r else {
+        panic!("no exit");
+    };
+    assert_eq!(code, Some(3));
+}
+
+#[tokio::test]
 async fn omarchy_runner_kills_a_subprocess_left_behind_after_a_normal_exit() {
     // The background `sleep` keeps no pipe of the station, so the run ends at
     // the exit of the shell. The shell leads the group, so its pid is the pgid.

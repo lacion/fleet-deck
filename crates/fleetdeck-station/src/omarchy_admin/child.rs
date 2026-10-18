@@ -12,7 +12,7 @@ use std::path::Path;
 use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
 
-use rustix::process::{Pid, Signal, kill_process_group};
+use rustix::process::{Pid, Signal, WaitId, WaitIdOptions, kill_process_group, waitid};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 
@@ -22,6 +22,9 @@ pub const STDOUT_CAP: usize = 64 * 1024;
 pub const STDERR_CAP: usize = 16 * 1024;
 /// The longest wait for the reap of a killed child.
 const REAP_WAIT: Duration = Duration::from_secs(5);
+
+/// The pause between two checks for the exit of the leader.
+const POLL_EXIT: Duration = Duration::from_millis(20);
 
 /// How one child ended.
 #[derive(Debug)]
@@ -99,16 +102,23 @@ pub async fn run(spec: &Spec<'_>) -> io::Result<RunResult> {
             read_capped(stdout, STDOUT_CAP),
             read_capped(stderr, STDERR_CAP)
         )?;
-        let status = child.wait().await.map_err(|_| Overflow::Wait)?;
-        Ok::<_, Overflow>((status, out, err))
+        // The leader must stay unreaped here (see the normal-exit branch).
+        wait_exited(pgid).await?;
+        Ok::<_, Overflow>((out, err))
     };
     match tokio::time::timeout(spec.limit, work).await {
-        Ok(Ok((status, stdout, stderr))) => {
+        Ok(Ok((stdout, stderr))) => {
             // A subprocess that the tool left behind must not outlive the
-            // action: the direct child is reaped, the rest of the group dies.
+            // action. The kill comes before the reap: an unreaped leader
+            // keeps its process id, so the group id is still its own. After
+            // the reap another process group could own the number.
             guard.kill();
+            let status = child.wait().await;
             guard.0 = None;
-            Ok(exit(status, stdout, stderr))
+            match status {
+                Ok(status) => Ok(exit(status, stdout, stderr)),
+                Err(_) => Err(io::Error::other("the child could not be awaited")),
+            }
         }
         Ok(Err(Overflow::TooLarge)) => {
             stop(&guard, &mut child).await;
@@ -133,6 +143,22 @@ fn exit(status: ExitStatus, stdout: Vec<u8>, stderr: Vec<u8>) -> RunResult {
         code: status.code(),
         stdout,
         stderr,
+    }
+}
+
+/// Waits until the leader `pid` has exited, and does not reap it (`NOWAIT`).
+/// The state is polled every 20 ms.
+async fn wait_exited(pid: Pid) -> Result<(), Overflow> {
+    loop {
+        match waitid(
+            WaitId::Pid(pid),
+            WaitIdOptions::EXITED | WaitIdOptions::NOWAIT | WaitIdOptions::NOHANG,
+        ) {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) | Err(rustix::io::Errno::INTR) => {}
+            Err(_) => return Err(Overflow::Wait),
+        }
+        tokio::time::sleep(POLL_EXIT).await;
     }
 }
 

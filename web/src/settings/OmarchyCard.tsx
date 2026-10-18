@@ -1,7 +1,7 @@
 // Omarchy admin task D (design `docs/v2/design/omarchy-admin.md` §5): the Omarchy card on the
 // station tab of Settings. It shows the state of Omarchy on the station and runs the actions
 // (install, uninstall, the screensaver, retry provisioning). Each action asks the elevation first.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon, RefreshCw } from '../ui/icons';
 import type { ElevationAsk } from './elevation';
 import {
@@ -56,6 +56,29 @@ export function makeSleeper(): {
     cancel: () => {
       for (const end of [...pending]) end();
     },
+  };
+}
+
+/** The one request gate of a card: a promise chain that never rejects. */
+export type Gate = { current: Promise<void> };
+
+/**
+ * The calls of `actions` through `gate`: every status read and every action of the card is sent
+ * after the one before it has ended, so the station never runs two children of the card at once.
+ * A failed call rejects for its own caller only; the chain goes on.
+ */
+export function gateActions(actions: OmarchyActions, gate: Gate): OmarchyActions {
+  const through = <T,>(call: () => Promise<T>): Promise<T> => {
+    const result = gate.current.then(call);
+    gate.current = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
+  return {
+    status: (station) => through(() => actions.status(station)),
+    act: (station, action, elevation) => through(() => actions.act(station, action, elevation)),
   };
 }
 
@@ -185,7 +208,7 @@ type Props = {
   readonly initial?: CardState;
 };
 
-export function OmarchyCard({ station, actions, ask, initial }: Props) {
+export function OmarchyCard({ station, actions: direct, ask, initial }: Props) {
   const [state, setState] = useState<CardState>(initial ?? { kind: 'loading' });
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
@@ -194,6 +217,9 @@ export function OmarchyCard({ station, actions, ask, initial }: Props) {
   const shown = useRef<CardState>(initial ?? { kind: 'loading' });
   const acting = useRef(false);
   const sleeper = useRef(makeSleeper());
+  const gate = useRef<Promise<void>>(Promise.resolve());
+  // Every call of the card goes through the one gate (status reads and actions).
+  const actions = useMemo(() => gateActions(direct, gate), [direct]);
   useEffect(() => {
     alive.current = true;
     const timers = sleeper.current;
