@@ -1,3 +1,4 @@
+import { FEATURES_HEADER, VIDEO_FEATURES } from '../artifacts/video';
 import type { AuthView } from './state';
 
 export class ApiError extends Error {
@@ -22,7 +23,8 @@ export async function request(
   body?: unknown,
   csrf?: string | null,
 ): Promise<unknown> {
-  const headers: Record<string, string> = {};
+  // R13 P5b §14: the board reads `kind: "video"`. The header grants no authority.
+  const headers: Record<string, string> = { [FEATURES_HEADER]: VIDEO_FEATURES };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (csrf) headers['X-CSRF-Token'] = csrf;
   const response = await fetcher(path, {

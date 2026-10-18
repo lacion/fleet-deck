@@ -1,3 +1,4 @@
+import { VIDEO_FEATURES } from '../artifacts/video';
 import type { BoardClientMessage, SessionKey } from '../gen';
 import { ApiError, authView, type Fetch, request } from './api';
 import { clearAuthoringState } from './authoringState';
@@ -28,13 +29,19 @@ export type Environment = {
 };
 export const IDLE_MS = 5 * 60_000;
 export const TIMEOUT_MS = 10_000;
+/** The live connection URL. A browser WebSocket sends no custom header: the declaration of the
+ * board goes in the query (R13 P5b §14). */
+export function socketUrl(base: string): URL {
+  const url = new URL('/api/ws', base);
+  url.protocol = 'wss:';
+  url.searchParams.set('features', VIDEO_FEATURES);
+  return url;
+}
 export function browserEnvironment(): Environment {
   return {
     fetch: (path, init) => fetch(path, init),
     socket: () => {
-      const url = new URL('/api/ws', window.location.href);
-      url.protocol = 'wss:';
-      const native = new WebSocket(url);
+      const native = new WebSocket(socketUrl(window.location.href));
       const port: Socket = {
         onopen: null,
         onmessage: null,

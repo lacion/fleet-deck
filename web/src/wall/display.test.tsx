@@ -500,3 +500,34 @@ describe('the wall for a display login', () => {
     expect(html).toContain('CPU load 0.5 on 4 cores');
   });
 });
+
+describe('a video artifact on the wall', () => {
+  test('it is the card and its bytes are never read', async () => {
+    let pulls = 0;
+    let stopped = 0;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull() {
+          pulls += 1;
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const res = new Response(body, { status: 200, headers: { 'content-type': 'video/mp4' } });
+    const state = await successState(res, '/u', () => {
+      stopped += 1;
+    });
+    expect(state).toEqual({ kind: 'card' });
+    expect(stopped).toBe(1);
+    expect(pulls).toBe(0);
+    expect(CARD_TEXT).toBe('Open this artifact on your own device');
+  });
+
+  test('the deck refusal of a video is the card too', async () => {
+    const refusal = new Response(JSON.stringify({ error: 'not_displayable', message: 'x' }), {
+      status: 409,
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(await failureState(refusal)).toEqual({ kind: 'card' });
+  });
+});

@@ -2,6 +2,7 @@
 // details of an error answer (`keys`, `would_stop`); these pages need them. The rules are the same
 // as `integrationHttp`: the cookie, the CSRF token read at call time, no cache, no redirect, one
 // time limit. A request body can hold a secret: it is sent and dropped, never stored or logged.
+import { FEATURES_HEADER, VIDEO_FEATURES } from '../artifacts/video';
 import { ApiError, type Fetch } from '../runtime/api';
 
 const record = (v: unknown): v is Record<string, unknown> =>
@@ -61,7 +62,7 @@ export function deckHttp(fetcher: Fetch, csrf: () => string | null, timeoutMs: n
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const token = csrf();
-      const headers: Record<string, string> = { ...extra };
+      const headers: Record<string, string> = { ...extra, [FEATURES_HEADER]: VIDEO_FEATURES };
       if (body !== undefined) headers['Content-Type'] = 'application/json';
       if (token !== null) headers['X-CSRF-Token'] = token;
       const response = await fetcher(path, {

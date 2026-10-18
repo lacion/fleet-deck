@@ -13,7 +13,9 @@ import {
 import { fileName, KIND_LABEL } from './kinds';
 import { SendToWall } from '../wall/SendToWall';
 import { ShareDialog } from './ShareDialog';
-import { mainFile, type ViewerData, type ViewerReady, useViewer } from './viewer';
+import { provenanceLine } from './video';
+import { VideoView } from './VideoView';
+import { mainFile, type ViewerData, type ViewerReady, useViewer, versionRow } from './viewer';
 
 /** The permissions of the frame. No `allow-same-origin`: the page gets an opaque origin (DL-165). */
 export const FRAME_SANDBOX = 'allow-scripts allow-popups allow-forms allow-modals';
@@ -65,6 +67,26 @@ function Body({ ready }: { readonly ready: ViewerReady }) {
       <p className="fd-note fd-art-state">
         This file type has no preview. Use Download to open it.
       </p>
+    );
+  }
+  if (kind === 'video') {
+    // The video needs no view link: the player reads the version-pinned raw route (R13 P5b §12).
+    const main = mainFile(detail, ready.version);
+    if (main === undefined) {
+      return (
+        <Failed text="This version has no files yet. The station has not sent them to the deck." />
+      );
+    }
+    const { station_id: station, artifact_id: id, station_name: stationName } = detail.artifact;
+    const url = rawPath(station, id, ready.version, main);
+    return (
+      <VideoView
+        key={url}
+        url={url}
+        title={title}
+        provenance={provenanceLine(stationName, versionRow(detail, ready.version)?.capture)}
+        downloadName={fileName(main)}
+      />
     );
   }
   if (link.kind === 'loading') return <Loading what="Opening the artifact…" />;

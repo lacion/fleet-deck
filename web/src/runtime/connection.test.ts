@@ -325,6 +325,7 @@ describe('deck connection runtime', () => {
     expect(req?.init.headers).toEqual({
       'Content-Type': 'application/json',
       'X-CSRF-Token': 'test-csrf',
+      'X-FleetDeck-Features': 'artifacts_video.v1',
     });
     expect(connection.getSnapshot().auth).toBe('anonymous');
     let resolve: ((response: Response) => void) | undefined;
