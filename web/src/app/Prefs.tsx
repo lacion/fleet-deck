@@ -1,6 +1,8 @@
 import { Icon, type LucideIcon, Monitor, Moon, Rows3, Sun } from '../ui/icons';
 import { useDensity } from '../ui/density';
+import type { StationView } from '../gen';
 import { type ThemeChoice, useTheme } from '../ui/theme';
+import { type GetPalette, OmarchyThemeSelect } from './OmarchyTheme';
 
 const THEMES: readonly {
   readonly choice: ThemeChoice;
@@ -13,7 +15,15 @@ const THEMES: readonly {
 ];
 
 /** The theme choice and the compact cards switch (sidebar footer and the More page). */
-export function PrefsRow() {
+export function PrefsRow({
+  stations = [],
+  getPalette,
+}: {
+  /** The stations of the snapshot. */
+  readonly stations?: readonly StationView[] | undefined;
+  /** Set for the owner's login: the row then has the Omarchy select. */
+  readonly getPalette?: GetPalette | undefined;
+} = {}) {
   const [theme, setTheme] = useTheme();
   const [density, setDensity] = useDensity();
   const compact = density === 'compact';
@@ -44,6 +54,9 @@ export function PrefsRow() {
       >
         <Icon of={Rows3} size={14} />
       </button>
+      {getPalette === undefined ? null : (
+        <OmarchyThemeSelect stations={stations} getPalette={getPalette} />
+      )}
     </div>
   );
 }

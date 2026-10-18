@@ -20,6 +20,7 @@ import {
   Workflow,
 } from '../ui/icons';
 import { canShare, usePeople } from '../sharing/context';
+import type { StationView } from '../gen';
 import type { Chrome } from './chrome';
 import { DeviceLinkDialog } from './DeviceLinkDialog';
 import { Page } from '../ui/page';
@@ -27,6 +28,8 @@ import { PrefsRow } from './Prefs';
 
 type Props = {
   readonly stationCount: number;
+  /** The stations of the snapshot (the Omarchy select of the Prefs row). */
+  readonly stations?: readonly StationView[] | undefined;
   readonly terminalCount: number;
   readonly chrome?: Chrome | undefined;
   readonly onPalette?: (() => void) | undefined;
@@ -34,7 +37,14 @@ type Props = {
 };
 
 /** The phone's "More" page: the pages that have no place in the bottom bar. */
-export function More({ stationCount, terminalCount, chrome, onPalette, onHelp }: Props) {
+export function More({
+  stationCount,
+  stations = [],
+  terminalCount,
+  chrome,
+  onPalette,
+  onHelp,
+}: Props) {
   const [addingDevice, setAddingDevice] = useState(false);
   const projectsLink = useIntegrations()?.actions.canAdmin === true;
   const settingsLink = useSettings() !== undefined;
@@ -143,7 +153,7 @@ export function More({ stationCount, terminalCount, chrome, onPalette, onHelp }:
           )}
         </ul>
       </nav>
-      <PrefsRow />
+      <PrefsRow stations={stations} getPalette={chrome?.getPalette} />
       {chrome?.addDevice === undefined ? null : (
         <button type="button" className="fd-ghost fd-sm" onClick={() => setAddingDevice(true)}>
           <Icon of={Smartphone} size={14} /> Add a device
