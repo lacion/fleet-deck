@@ -26,6 +26,9 @@ pub(super) fn coordinator_spec() -> fleetdeck_proto::command::CoordinatorSpec {
         desktop_cap: None,
         capture_cap: None,
         image_byte_cap: None,
+        allow_recording: false,
+        recording_cap: None,
+        recording_second_cap: None,
         stations: Vec::new(),
     }
 }

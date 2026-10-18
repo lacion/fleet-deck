@@ -411,6 +411,23 @@ pub struct GrantView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub image_byte_used: Option<u64>,
+    /// R13 P5b-2 §13.2: the recording count budget. `Some` only for a grant
+    /// with a non-zero recording cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub recording_cap: Option<u32>,
+    /// The recordings used; `Some` only with `recording_cap`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub recording_used: Option<u32>,
+    /// The recording seconds budget; `Some` only with `recording_cap`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub recording_second_cap: Option<u32>,
+    /// The recording seconds charged; `Some` only with `recording_cap`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub recording_second_used: Option<u32>,
 }
 
 #[cfg(test)]

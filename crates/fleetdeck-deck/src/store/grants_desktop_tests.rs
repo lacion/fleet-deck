@@ -244,3 +244,97 @@ fn the_cap_check_names_no_value() {
     let err = check_desktop_caps(&classes, Some(123_456), None, None).unwrap_err();
     assert!(!err.contains("123456"));
 }
+
+#[tokio::test]
+async fn a_grant_has_zero_recording_caps_unless_it_asks_and_the_row_reads_back() {
+    let s = store().await;
+    // The default of `NewGrant` and a screenshot-only grant: zero.
+    assert_eq!(
+        (
+            new_grant(&[GrantClass::Capture]).recording_cap,
+            new_grant(&[GrantClass::Capture]).recording_second_cap
+        ),
+        (0, 0)
+    );
+    let shot = s
+        .create_grant(new_grant(&[GrantClass::Capture]))
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            shot.recording_cap,
+            shot.recording_used,
+            shot.recording_second_cap,
+            shot.recording_second_used
+        ),
+        (0, 0, 0, 0)
+    );
+    // A recording grant keeps its caps, and its counters start at zero.
+    let mut rec = new_grant(&[GrantClass::Capture]);
+    rec.session_id = SessionId::from("coord-2");
+    rec.recording_cap = limits::RECORDING_CAP_MAX;
+    rec.recording_second_cap = limits::RECORDING_SECOND_CAP_MAX;
+    let rec = s.create_grant(rec).await.unwrap();
+    assert_eq!(
+        (
+            rec.recording_cap,
+            rec.recording_used,
+            rec.recording_second_cap,
+            rec.recording_second_used
+        ),
+        (5000, 0, 600_000, 0)
+    );
+    assert_eq!(s.grant(rec.grant_id.clone()).await.unwrap().unwrap(), rec);
+}
+
+#[tokio::test]
+async fn the_recording_cap_rules_refuse_with_the_fixed_texts_class_first_then_range() {
+    let s = store().await;
+    let with = |classes: &[GrantClass], edit: fn(&mut NewGrant)| {
+        let mut g = new_grant(classes);
+        edit(&mut g);
+        g
+    };
+    let class = "recording caps need the capture class";
+    for classes in [
+        &[GrantClass::Read][..],
+        &[GrantClass::Desktop][..],
+        &[GrantClass::Inspect][..],
+    ] {
+        assert_eq!(
+            invalid(&s, with(classes, |g| g.recording_cap = 1)).await,
+            class
+        );
+        assert_eq!(
+            invalid(&s, with(classes, |g| g.recording_second_cap = 1)).await,
+            class
+        );
+    }
+    // The class rule comes before the range.
+    assert_eq!(
+        invalid(&s, with(&[GrantClass::Desktop], |g| g.recording_cap = 9999)).await,
+        class
+    );
+    assert_eq!(
+        invalid(&s, with(&[GrantClass::Capture], |g| g.recording_cap = 5001)).await,
+        "recording_cap is 0 to 5000"
+    );
+    assert_eq!(
+        invalid(
+            &s,
+            with(&[GrantClass::Capture], |g| g.recording_second_cap = 600_001)
+        )
+        .await,
+        "recording_second_cap is 0 to 600000"
+    );
+    assert!(s.grants(10).await.unwrap().is_empty());
+}
+
+#[test]
+fn the_recording_cap_check_names_no_value() {
+    let classes = BTreeSet::from([GrantClass::Capture]);
+    let err = check_recording_caps(&classes, 123_456, 0).unwrap_err();
+    assert!(!err.contains("123456"));
+    assert_eq!(check_recording_caps(&classes, 0, 0), Ok(()));
+    assert_eq!(check_recording_caps(&classes, 5000, 600_000), Ok(()));
+}

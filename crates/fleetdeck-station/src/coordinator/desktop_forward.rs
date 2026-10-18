@@ -137,6 +137,11 @@ impl DesktopRequest {
             ) => deadline_ms::ACTION_MCP,
             Self::Call(DesktopCall::PreviewOpen(_)) => deadline_ms::PREVIEW_MCP,
             Self::Call(DesktopCall::Screenshot(_)) => deadline_ms::SCREENSHOT_MCP,
+            // R13 P5b-2 §13.5: `seconds + 45` s. The tool is not in the
+            // catalog yet (task Q-S), so no call reaches this arm.
+            Self::Call(DesktopCall::RecordMonitor(a)) => u64::from(a.seconds)
+                .saturating_mul(1000)
+                .saturating_add(deadline_ms::RECORD_MCP_EXTRA),
             Self::Query(DesktopQuery::DesktopInfo(_)) => deadline_ms::INFO_MCP,
             Self::Query(DesktopQuery::DesktopActionStatus(_)) => deadline_ms::STATUS_MCP,
             Self::Query(DesktopQuery::CaptureStatus(_)) => deadline_ms::CAPTURE_LOOKUP_MCP,

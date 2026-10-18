@@ -761,6 +761,9 @@ pub fn migrations() -> Migrations<'static> {
         M::up(super::coordinator_desktop::schema::SQL),
         // V35 (R13 P5b task F): the recording columns of `desktop_captures`.
         M::up(super::desktop_recordings::SQL),
+        // V36 (R13 P5b-2 task Q-F): the recording caps of a grant and the
+        // rebuild of `coordinator_desktop_ops` (`record_monitor`, `seconds`).
+        M::up(super::coordinator_recording_schema::SQL),
     ])
 }
 

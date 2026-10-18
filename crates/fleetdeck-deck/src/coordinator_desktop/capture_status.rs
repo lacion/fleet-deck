@@ -60,6 +60,9 @@ pub(super) fn plain(
         at: None,
         error: None,
         message: message.map(str::to_owned),
+        requested_seconds: None,
+        duration_ms: None,
+        stop_reason: None,
     }
 }
 
@@ -206,6 +209,9 @@ fn unknown(request_id: &str) -> CoordinatorCaptureStatus {
         at: None,
         error: None,
         message: None,
+        requested_seconds: None,
+        duration_ms: None,
+        stop_reason: None,
     }
 }
 

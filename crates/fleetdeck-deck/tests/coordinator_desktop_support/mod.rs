@@ -533,6 +533,7 @@ impl World {
             target_station: target.clone(),
             action_hash: Some(hash.to_owned()),
             resource: json!({}),
+            seconds: None,
         }
     }
 

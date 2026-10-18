@@ -47,6 +47,22 @@ pub struct CoordinatorSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub image_byte_cap: Option<u64>,
+    /// R13 P5b-2 §13.2: the explicit opt-in to monitor recordings. Board →
+    /// deck only: the deck reads it in `owner_start` and clears it before
+    /// the start command goes to a station.
+    #[serde(default, skip_serializing_if = "is_false")]
+    #[ts(optional, as = "Option<bool>")]
+    pub allow_recording: bool,
+    /// The recording count budget of a grant with `allow_recording`. Board
+    /// → deck only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub recording_cap: Option<u32>,
+    /// The recording seconds budget of a grant with `allow_recording`.
+    /// Board → deck only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub recording_second_cap: Option<u32>,
     /// The target stations that the owner picked (ADR-006 §"Creation"),
     /// besides the coordinator's own station. Board → deck only: the deck
     /// reads it in `owner_start` and clears it before the start command goes
@@ -55,6 +71,12 @@ pub struct CoordinatorSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[ts(optional, as = "Option<Vec<StationId>>")]
     pub stations: Vec<StationId>,
+}
+
+/// The serde skip rule of `allow_recording`.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// The reach of a coordinator grant (ADR-008 §2, §3).

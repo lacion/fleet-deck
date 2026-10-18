@@ -120,6 +120,11 @@ pub struct NewGrant {
     /// The image-read byte cap; `None` without the `capture` class (default
     /// 64 MiB).
     pub image_byte_cap: Option<u64>,
+    /// The recording count cap (R13 P5b-2 §13.2); 0 is no recording
+    /// allowance. A non-zero cap needs the `capture` class.
+    pub recording_cap: u32,
+    /// The recording seconds cap; 0 is no recording allowance.
+    pub recording_second_cap: u32,
 }
 
 impl NewGrant {
@@ -142,6 +147,8 @@ impl NewGrant {
             desktop_cap: None,
             capture_cap: None,
             image_byte_cap: None,
+            recording_cap: 0,
+            recording_second_cap: 0,
         }
     }
 }
@@ -186,6 +193,15 @@ pub struct Grant {
     pub image_byte_used: u64,
     /// The distinct well-formed mutation attempts, for good (§8.1).
     pub desktop_attempts: u32,
+    /// The recording count cap (R13 P5b-2 §13.2); 0 for a grant without the
+    /// recording allowance.
+    pub recording_cap: u32,
+    /// The recordings that the grant made, for good.
+    pub recording_used: u32,
+    /// The recording seconds cap; 0 for a grant without the allowance.
+    pub recording_second_cap: u32,
+    /// The recording seconds that the grant charged, for good.
+    pub recording_second_used: u32,
 }
 
 impl Grant {
@@ -213,7 +229,8 @@ pub(crate) const GRANT_COLUMNS: &str = "grant_id, station_id, session_id, classe
     spawn_cap, spawn_used, max_modes, idle_ttl_ms, created_at, expires_at, state, revoked_reason, \
     bound_generation, bound_native_id, bound_provider_instance, binding_id, last_used_at, \
     scope, answer_cap, answer_used, desktop_cap, desktop_used, capture_cap, capture_used, \
-    image_byte_cap, image_byte_used, desktop_attempts";
+    image_byte_cap, image_byte_used, desktop_attempts, recording_cap, recording_used, \
+    recording_second_cap, recording_second_used";
 
 fn state_of(text: &str) -> GrantState {
     match text {
@@ -253,6 +270,10 @@ pub(crate) fn grant_row(r: &Row<'_>) -> rusqlite::Result<(Grant, String, String,
     let image_byte_cap: Option<i64> = r.get(25)?;
     let image_byte_used: i64 = r.get(26)?;
     let desktop_attempts: i64 = r.get(27)?;
+    let recording_cap: i64 = r.get(28)?;
+    let recording_used: i64 = r.get(29)?;
+    let recording_second_cap: i64 = r.get(30)?;
+    let recording_second_used: i64 = r.get(31)?;
     Ok((
         Grant {
             grant_id,
@@ -285,6 +306,10 @@ pub(crate) fn grant_row(r: &Row<'_>) -> rusqlite::Result<(Grant, String, String,
             image_byte_cap: image_byte_cap.map(|c| u64::try_from(c).unwrap_or(0)),
             image_byte_used: u64::try_from(image_byte_used).unwrap_or(u64::MAX),
             desktop_attempts: u32::try_from(desktop_attempts).unwrap_or(u32::MAX),
+            recording_cap: u32::try_from(recording_cap).unwrap_or(0),
+            recording_used: u32::try_from(recording_used).unwrap_or(u32::MAX),
+            recording_second_cap: u32::try_from(recording_second_cap).unwrap_or(0),
+            recording_second_used: u32::try_from(recording_second_used).unwrap_or(u32::MAX),
         },
         r.get(3)?,
         r.get(4)?,
@@ -367,6 +392,31 @@ pub fn check_desktop_caps(
     Ok(())
 }
 
+/// The rules of the recording caps of a new grant (R13 P5b-2 §13.2), the same
+/// for the board request and for `create_grant`: the class rule first (a
+/// non-zero cap needs the `capture` class), then the ranges. The text is
+/// fixed and shows no value.
+///
+/// # Errors
+/// The fixed text of the first rule that fails.
+pub fn check_recording_caps(
+    classes: &BTreeSet<GrantClass>,
+    recording_cap: u32,
+    recording_second_cap: u32,
+) -> std::result::Result<(), &'static str> {
+    if (recording_cap != 0 || recording_second_cap != 0) && !classes.contains(&GrantClass::Capture)
+    {
+        return Err("recording caps need the capture class");
+    }
+    if recording_cap > limits::RECORDING_CAP_MAX {
+        return Err("recording_cap is 0 to 5000");
+    }
+    if recording_second_cap > limits::RECORDING_SECOND_CAP_MAX {
+        return Err("recording_second_cap is 0 to 600000");
+    }
+    Ok(())
+}
+
 impl DeckStore {
     /// Stores an owner-authorized grant (ADR-006 §4). The limits are
     /// checked here: cap ≤ 50, idle TTL ≤ 24 h, lifetime ≤ 7 days.
@@ -408,6 +458,12 @@ impl DeckStore {
             grant.image_byte_cap,
         )
         .map_err(|m| DeckError::Invalid(m.to_owned()))?;
+        check_recording_caps(
+            &grant.classes,
+            grant.recording_cap,
+            grant.recording_second_cap,
+        )
+        .map_err(|m| DeckError::Invalid(m.to_owned()))?;
         if grant.classes.contains(&GrantClass::Desktop)
             || grant.classes.contains(&GrantClass::Capture)
         {
@@ -441,9 +497,9 @@ impl DeckStore {
                 "INSERT INTO tokens (grant_id, station_id, session_id, classes, stations,
                      spawn_cap, max_modes, idle_ttl_ms, created_at, expires_at, state,
                      start_command_id, scope, answer_cap, desktop_cap, capture_cap,
-                     image_byte_cap)
+                     image_byte_cap, recording_cap, recording_second_cap)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active', ?11, ?12, ?13,
-                     ?14, ?15, ?16)",
+                     ?14, ?15, ?16, ?17, ?18)",
                 params![
                     grant_id,
                     grant.station_id.as_str(),
@@ -465,7 +521,9 @@ impl DeckStore {
                     grant.desktop_cap,
                     grant.capture_cap,
                     // SQLite integers are signed 64-bit; the cap is at most 1 GiB.
-                    grant.image_byte_cap.and_then(|c| i64::try_from(c).ok())
+                    grant.image_byte_cap.and_then(|c| i64::try_from(c).ok()),
+                    grant.recording_cap,
+                    grant.recording_second_cap
                 ],
             )?;
             let stored = get_grant(&tx, &grant_id)?

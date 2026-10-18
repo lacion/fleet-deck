@@ -172,6 +172,7 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         cd::PreviewOpenArguments::export_all(&cfg),
         cd::WindowCloseArguments::export_all(&cfg),
         cd::ScreenshotArguments::export_all(&cfg),
+        cd::RecordMonitorArguments::export_all(&cfg),
         cd::StatusArguments::export_all(&cfg),
         cd::ImageArguments::export_all(&cfg),
         cd::DesktopCall::export_all(&cfg),

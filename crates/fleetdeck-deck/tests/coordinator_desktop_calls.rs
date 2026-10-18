@@ -679,3 +679,44 @@ async fn a_third_mutation_of_a_grant_in_flight_is_busy_and_the_slots_are_release
     w.fake.set(standard());
     assert_eq!(w.call("c4", close("r4", WINDOW)).await["status"], "ok");
 }
+
+/// R13 P5b-2 task Q-F: `record_monitor` is a valid call that no handler
+/// serves yet. It answers `desktop_unsupported`, sends nothing to a station
+/// and charges nothing.
+#[tokio::test]
+async fn record_monitor_is_refused_as_unsupported_and_charges_nothing() {
+    let w = world().await;
+    let env = w.call_env(
+        "c1",
+        json!({"tool": "record_monitor", "arguments": {
+            "request_id": "rec-1", "monitor": "DP-1", "seconds": 30}}),
+    );
+    let Outcome::Err(e) = w.call_raw(Some("c1"), env).await else {
+        panic!("a wire error");
+    };
+    assert_eq!(e.code, "desktop_unsupported");
+    assert_eq!(w.fake.count("desktop.act"), 0);
+    assert!(
+        w.f.store
+            .desktop_ops_recent(&w.b.grant_id, 5)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let g =
+        w.f.store
+            .grant(w.b.grant_id.clone())
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(
+        (
+            g.desktop_used,
+            g.capture_used,
+            g.desktop_attempts,
+            g.recording_used
+        ),
+        (0, 0, 0, 0)
+    );
+    w.fake.quiet(Duration::from_millis(100), NO_REQUEST).await;
+}

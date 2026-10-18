@@ -373,3 +373,262 @@ async fn the_caller_and_the_target_stations_need_their_features_but_the_callers_
     no_request(&mut station, Duration::from_millis(200)).await;
     assert_eq!(c.store.grants(20).await.unwrap().len(), stored + 2);
 }
+
+const RECORDING_KEYS: [&str; 3] = ["allow_recording", "recording_cap", "recording_second_cap"];
+
+#[tokio::test]
+async fn the_recording_opt_in_follows_the_rules_of_the_brief_and_refuses_before_anything_is_stored()
+{
+    let mut f = fixture().await;
+    let mut station = f.connect().await;
+    let c = board(Arc::clone(&f.ctx)).await;
+    set_password(&c).await;
+    let h = owner(&c).await;
+    let token = elevate(&c, &h).await;
+    // The class rule, the opt-in rule and the ranges, with or without the
+    // elevation, in this order.
+    let cases = [
+        (
+            json!({"classes": ["desktop"], "allow_recording": true}),
+            "allow_recording needs the capture class",
+        ),
+        (
+            json!({"classes": ["read"], "allow_recording": true, "recording_cap": 1}),
+            "allow_recording needs the capture class",
+        ),
+        (
+            json!({"classes": ["capture"], "recording_cap": 1}),
+            "recording caps need allow_recording",
+        ),
+        (
+            json!({"classes": ["capture"], "recording_second_cap": 60}),
+            "recording caps need allow_recording",
+        ),
+        (
+            json!({"classes": ["capture"], "allow_recording": false, "recording_cap": 0}),
+            "recording caps need allow_recording",
+        ),
+        (
+            json!({"classes": ["capture"], "allow_recording": true, "recording_cap": 5001}),
+            "recording_cap is 0 to 5000",
+        ),
+        (
+            json!({"classes": ["capture"], "allow_recording": true,
+                "recording_second_cap": 600_001}),
+            "recording_second_cap is 0 to 600000",
+        ),
+    ];
+    for (spec, text) in cases {
+        for elevation in [None, Some(token.as_str())] {
+            let r = post(&c, &h, START, start_body("r1", spec.clone(), elevation)).await;
+            expect(&r, 400, "invalid_grant");
+            assert!(r.body.to_string().contains(text), "{text}: {}", r.body);
+        }
+    }
+    // A valid recording grant still needs the owner's elevation.
+    let r = post(
+        &c,
+        &h,
+        START,
+        start_body(
+            "r2",
+            json!({"classes": ["capture"], "allow_recording": true}),
+            None,
+        ),
+    )
+    .await;
+    expect(&r, 400, "elevation_required");
+    no_request(&mut station, Duration::from_millis(200)).await;
+    assert!(c.store.grants(10).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_recording_grant_gets_the_defaults_or_the_given_caps_and_the_station_never_sees_them() {
+    let mut f = fixture().await;
+    let mut station = f.connect().await;
+    let c = board(Arc::clone(&f.ctx)).await;
+    set_password(&c).await;
+    let h = owner(&c).await;
+    let token = elevate(&c, &h).await;
+    // `allow_recording` alone: the defaults 5 and 600.
+    let call = post(
+        &c,
+        &h,
+        START,
+        start_body(
+            "w1",
+            json!({"classes": ["capture"], "allow_recording": true}),
+            Some(&token),
+        ),
+    );
+    let (r, req) = tokio::join!(call, Fixture::answer(&mut station, accepted));
+    assert_eq!(r.status, 200, "{}", r.body);
+    let sent = req.params["command"]["spec"]["coordinator"].clone();
+    for key in RECORDING_KEYS {
+        assert!(sent.get(key).is_none(), "{key}: {sent}");
+    }
+    let g = c.store.grants(10).await.unwrap().remove(0);
+    assert_eq!(
+        (
+            g.recording_cap,
+            g.recording_used,
+            g.recording_second_cap,
+            g.recording_second_used
+        ),
+        (5, 0, 600, 0)
+    );
+    // Given caps are kept, with the range limits and zero.
+    let mut given = Vec::new();
+    for (id, cap, seconds) in [("w2", 5000, 600_000), ("w3", 0, 0), ("w4", 7, 90)] {
+        let spec = json!({"classes": ["desktop", "capture"], "allow_recording": true,
+            "recording_cap": cap, "recording_second_cap": seconds});
+        let call = post(&c, &h, START, start_body(id, spec, Some(&token)));
+        let (r, req) = tokio::join!(call, Fixture::answer(&mut station, accepted));
+        assert_eq!(r.status, 200, "{}", r.body);
+        let sent = req.params["command"]["spec"]["coordinator"].clone();
+        for key in RECORDING_KEYS {
+            assert!(sent.get(key).is_none(), "{key}: {sent}");
+        }
+        let g = c.store.grants(10).await.unwrap().remove(0);
+        assert_eq!((g.recording_cap, g.recording_second_cap), (cap, seconds));
+        given.push(g.grant_id);
+    }
+    // One explicit cap: the other one takes its default.
+    let spec = json!({"classes": ["capture"], "allow_recording": true, "recording_cap": 2});
+    let call = post(&c, &h, START, start_body("w5", spec, Some(&token)));
+    let (r, _) = tokio::join!(call, Fixture::answer(&mut station, accepted));
+    assert_eq!(r.status, 200, "{}", r.body);
+    let g = c.store.grants(10).await.unwrap().remove(0);
+    assert_eq!((g.recording_cap, g.recording_second_cap), (2, 600));
+    // A screenshot-only grant has zero caps and no recording field in the view.
+    let call = post(
+        &c,
+        &h,
+        START,
+        start_body("w6", json!({"classes": ["capture"]}), Some(&token)),
+    );
+    let (r, _) = tokio::join!(call, Fixture::answer(&mut station, accepted));
+    assert_eq!(r.status, 200, "{}", r.body);
+    let shot = c.store.grants(10).await.unwrap().remove(0);
+    assert_eq!((shot.recording_cap, shot.recording_second_cap), (0, 0));
+    let list = get(&c, &h, "/api/coordinator/grants").await;
+    let grants = list.body.as_array().unwrap();
+    assert_eq!(grants.len(), 6);
+    let view_of = |id: &str| {
+        grants
+            .iter()
+            .find(|g| g["grant_id"] == id)
+            .unwrap_or_else(|| panic!("no grant {id}"))
+    };
+    let shot_view = view_of(&shot.grant_id);
+    for key in [
+        "recording_cap",
+        "recording_used",
+        "recording_second_cap",
+        "recording_second_used",
+    ] {
+        assert!(shot_view.get(key).is_none(), "{key}: {shot_view}");
+    }
+    let defaults = c
+        .store
+        .grants(10)
+        .await
+        .unwrap()
+        .into_iter()
+        .last()
+        .unwrap();
+    let defaults_view = view_of(&defaults.grant_id);
+    assert_eq!(defaults_view["recording_cap"], 5);
+    assert_eq!(defaults_view["recording_used"], 0);
+    assert_eq!(defaults_view["recording_second_cap"], 600);
+    assert_eq!(defaults_view["recording_second_used"], 0);
+    // A recording grant with caps of zero shows no recording field either.
+    let zero_view = view_of(&given[1]);
+    assert!(zero_view.get("recording_cap").is_none(), "{zero_view}");
+    assert!(zero_view.get("recording_used").is_none(), "{zero_view}");
+    assert_eq!(view_of(&given[0])["recording_second_cap"], 600_000);
+    assert_eq!(view_of(&given[2])["recording_cap"], 7);
+}
+
+#[tokio::test]
+async fn a_recording_grant_needs_capture_recording_mcp_on_the_caller_and_on_every_other_station() {
+    let mut f = fixture().await;
+    let mut station = f.connect().await;
+    let c = board(Arc::clone(&f.ctx)).await;
+    set_password(&c).await;
+    let h = owner(&c).await;
+    let token = elevate(&c, &h).await;
+    let ask = |id: &str, spec: Value| post(&c, &h, START, start_body(id, spec, Some(&token)));
+    let refused = |r: &Http, what: &str| {
+        expect(r, 409, "unsupported");
+        assert!(
+            r.body.to_string().contains(UNSUPPORTED),
+            "{what}: {}",
+            r.body
+        );
+    };
+    let recording = json!({"classes": ["capture"], "allow_recording": true});
+    // A second live link of the caller with the screenshot features only.
+    let mut caller = vec![
+        feature::COORDINATOR.to_owned(),
+        feature::COORDINATOR_V2.to_owned(),
+        feature::DESKTOP_MCP.to_owned(),
+        feature::CAPTURE_MCP.to_owned(),
+    ];
+    f.store.set_link_features(&f.station, 98, caller.clone());
+    refused(
+        &ask("m1", recording.clone()).await,
+        "caller without capture_recording_mcp",
+    );
+    // The screenshot-only grant of the same caller is not affected.
+    let (r, _) = tokio::join!(
+        ask("m2", json!({"classes": ["capture"]})),
+        Fixture::answer(&mut station, accepted)
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+    caller.push(feature::CAPTURE_RECORDING_MCP.to_owned());
+    f.store.set_link_features(&f.station, 98, caller);
+    let (r, _) = tokio::join!(
+        ask("m3", recording.clone()),
+        Fixture::answer(&mut station, accepted)
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+    f.store.clear_link_features(&f.station, 98);
+    let stored = c.store.grants(10).await.unwrap().len();
+
+    // A target station with the screenshot features only is refused for a
+    // recording grant, and accepted once it has the recording feature.
+    let mut target = target_features();
+    target.extend(
+        [
+            feature::DESKTOP_CAPTURE,
+            feature::ARTIFACTS_DELETE,
+            feature::CAPTURE_MCP,
+        ]
+        .map(str::to_owned),
+    );
+    let alpha = extra(&f.store, "alpha", target.clone()).await;
+    let with_target = json!({"classes": ["capture"], "allow_recording": true,
+        "stations": [alpha]});
+    refused(
+        &ask("n1", with_target.clone()).await,
+        "target without capture_recording_mcp",
+    );
+    let (r, _) = tokio::join!(
+        ask("n2", json!({"classes": ["capture"], "stations": [alpha]})),
+        Fixture::answer(&mut station, accepted)
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+    target.push(feature::CAPTURE_RECORDING_MCP.to_owned());
+    let beta = extra(&f.store, "beta", target).await;
+    let (r, _) = tokio::join!(
+        ask(
+            "n3",
+            json!({"classes": ["capture"], "allow_recording": true, "stations": [beta]})
+        ),
+        Fixture::answer(&mut station, accepted)
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+    no_request(&mut station, Duration::from_millis(200)).await;
+    assert_eq!(c.store.grants(20).await.unwrap().len(), stored + 2);
+}

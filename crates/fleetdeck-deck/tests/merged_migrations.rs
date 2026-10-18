@@ -4,7 +4,8 @@
 //! to V30, and R13 P5a adds V31 (the artifact tombstones) and V32 (the owner
 //! screenshots); R13 P4 adds V33 (the station palettes); R13 P6 adds V34 (the
 //! grant caps and the coordinator desktop ledger); R13 P5b adds V35 (the
-//! recording columns of the owner captures). The station list is Fleet Git's
+//! recording columns of the owner captures) and R13 P5b-2 adds V36 (the
+//! recording caps of a grant and the rebuilt coordinator ledger). The station list is Fleet Git's
 //! list (32 entries), R13 P5a V33 (the artifact deletions) and V34 (the
 //! capture operations), R13 P6 V35 (the coordinator desktop operations) and
 //! R13 P5b V36 (the recording columns and the capture garbage); a station
@@ -15,7 +16,7 @@
 use rusqlite::Connection;
 
 const DECK_V2_LAST: usize = 25;
-const DECK_LATEST: i64 = 35;
+const DECK_LATEST: i64 = 36;
 const STATION_V2_LAST: usize = 27;
 const STATION_LATEST: i64 = 36;
 
@@ -431,6 +432,158 @@ fn migration_v35_keeps_a_deck_capture_row_as_a_screenshot() {
     assert!(
         conn.execute("UPDATE desktop_captures SET audited_terminal = 2", [])
             .is_err()
+    );
+}
+
+/// R13 P5b-2 task Q-F: V35 to V36 gives an existing grant four zero recording
+/// counters, keeps an existing operation row through the table rebuild (with
+/// `seconds` `NULL`), and accepts `record_monitor` and `seconds` 1 to 120 only.
+#[test]
+fn migration_v36_keeps_a_grant_at_zero_recording_caps_and_an_op_row_through_the_rebuild() {
+    let migrations = fleetdeck_deck::store::schema::migrations();
+    let mut conn = Connection::open_in_memory().unwrap();
+    migrations.to_version(&mut conn, 35).unwrap();
+    assert_eq!(user_version(&conn), 35);
+    conn.execute(
+        "INSERT INTO tokens (grant_id, station_id, session_id, classes, stations, spawn_cap,
+             max_modes, idle_ttl_ms, created_at, expires_at, state)
+         VALUES ('g1', 'st-1', 'se-1', '[\"capture\"]', '[\"st-1\"]', 3, '{}', 60000, 1, 2,
+             'active')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO coordinator_desktop_ops (operation_id, grant_id, request_key,
+             payload_hash, tool, class, binding_id, generation, caller_station,
+             caller_session, target_station, action_hash, resource, state, result, code,
+             charged, created_at, updated_at)
+         VALUES ('op1', 'g1', 'k1', 'h', 'screenshot', 'capture', 'b', 4, 'st-1', 'se-1',
+             'st-2', 'ah', '{\"monitor\":\"DP-1\"}', 'done', '{\"x\":1}', NULL,
+             '{\"desktop\":1,\"capture\":1}', 10, 11)",
+        [],
+    )
+    .unwrap();
+
+    migrations.to_latest(&mut conn).unwrap();
+    assert_eq!(user_version(&conn), DECK_LATEST);
+    // The existing grant reads zero recording caps and counters.
+    let zeros: (i64, i64, i64, i64) = conn
+        .query_row(
+            "SELECT recording_cap, recording_used, recording_second_cap, recording_second_used
+             FROM tokens WHERE grant_id = 'g1'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(zeros, (0, 0, 0, 0));
+    for bad in [
+        "recording_cap = 5001",
+        "recording_cap = -1",
+        "recording_used = -1",
+        "recording_second_cap = 600001",
+        "recording_second_used = -1",
+    ] {
+        let sql = format!("UPDATE tokens SET {bad} WHERE grant_id = 'g1'");
+        assert!(conn.execute(&sql, []).is_err(), "{bad}");
+    }
+    for ok in ["recording_cap = 5000", "recording_second_cap = 600000"] {
+        let sql = format!("UPDATE tokens SET {ok} WHERE grant_id = 'g1'");
+        assert_eq!(conn.execute(&sql, []).unwrap(), 1, "{ok}");
+    }
+    // The existing operation row survived the rebuild, with `seconds` NULL.
+    type Op = (
+        String,
+        String,
+        String,
+        i64,
+        String,
+        String,
+        i64,
+        i64,
+        Option<i64>,
+    );
+    let op: Op = conn
+        .query_row(
+            "SELECT tool, state, result, generation, target_station, charged, created_at,
+                 updated_at, seconds
+             FROM coordinator_desktop_ops WHERE operation_id = 'op1'",
+            [],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                    r.get(7)?,
+                    r.get(8)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        op,
+        (
+            "screenshot".to_owned(),
+            "done".to_owned(),
+            "{\"x\":1}".to_owned(),
+            4,
+            "st-2".to_owned(),
+            "{\"desktop\":1,\"capture\":1}".to_owned(),
+            10,
+            11,
+            None
+        )
+    );
+    // The state index came back, and the old name is gone.
+    assert_eq!(
+        count(
+            &conn,
+            "SELECT count(*) FROM sqlite_master
+             WHERE name = 'coordinator_desktop_ops_state' AND tbl_name = 'coordinator_desktop_ops'"
+        ),
+        1
+    );
+    assert_eq!(
+        count(
+            &conn,
+            "SELECT count(*) FROM sqlite_master WHERE name = 'coordinator_desktop_ops_new'"
+        ),
+        0
+    );
+    // The rebuilt table takes `record_monitor` with 1 to 120 seconds, and the
+    // old checks still hold. One request key for each grant still holds.
+    let insert = |id: &str, tool: &str, seconds: Option<i64>| {
+        conn.execute(
+            "INSERT INTO coordinator_desktop_ops (operation_id, grant_id, request_key,
+                 payload_hash, tool, class, binding_id, generation, caller_station,
+                 caller_session, target_station, resource, state, charged, created_at,
+                 updated_at, seconds)
+             VALUES (?1, 'g1', ?1, 'h', ?2, 'capture', 'b', 1, 'st-1', 'se-1', 'st-1', '{}',
+                 'prepared', '{}', 1, 1, ?3)",
+            rusqlite::params![id, tool, seconds],
+        )
+    };
+    assert!(insert("r1", "record_monitor", Some(1)).is_ok());
+    assert!(insert("r2", "record_monitor", Some(120)).is_ok());
+    assert!(insert("r3", "record_monitor", Some(0)).is_err());
+    assert!(insert("r4", "record_monitor", Some(121)).is_err());
+    assert!(insert("r5", "notify", None).is_ok());
+    assert!(insert("r6", "record_demo", Some(5)).is_err());
+    assert!(insert("op1", "notify", None).is_err());
+    assert!(
+        conn.execute(
+            "INSERT INTO coordinator_desktop_ops (operation_id, grant_id, request_key,
+                 payload_hash, tool, class, binding_id, generation, caller_station,
+                 caller_session, target_station, resource, state, charged, created_at,
+                 updated_at)
+             VALUES ('dup', 'g1', 'k1', 'h', 'notify', 'desktop', 'b', 1, 's', 's', 's', '{}',
+                 'prepared', '{}', 1, 1)",
+            [],
+        )
+        .is_err()
     );
 }
 

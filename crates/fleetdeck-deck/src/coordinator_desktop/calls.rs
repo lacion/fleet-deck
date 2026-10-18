@@ -63,7 +63,9 @@ fn handler_ms(tool: Tool) -> u64 {
 }
 
 /// The tool and the target argument of a call. Every tool of
-/// `coordinator.desktop_call` is served (`wall_show` by [`super::wall`]).
+/// `coordinator.desktop_call` is served (`wall_show` by [`super::wall`])
+/// except `record_monitor` (R13 P5b-2 task Q-F stub): it has no handler yet
+/// and answers `desktop_unsupported`.
 fn shape(call: &DesktopCall) -> Option<(Tool, Option<&str>)> {
     match call {
         DesktopCall::Notify(a) => Some((Tool::Notify, a.station.as_deref())),
@@ -71,6 +73,7 @@ fn shape(call: &DesktopCall) -> Option<(Tool, Option<&str>)> {
         DesktopCall::WindowClose(a) => Some((Tool::WindowClose, a.station.as_deref())),
         DesktopCall::Screenshot(a) => Some((Tool::Screenshot, a.station.as_deref())),
         DesktopCall::WallShow(a) => Some((Tool::WallShow, a.station.as_deref())),
+        DesktopCall::RecordMonitor(_) => None,
     }
 }
 
@@ -151,7 +154,7 @@ fn build(
             window_id: None,
             monitor: Some(a.monitor.clone()),
         }),
-        DesktopCall::WallShow(_) => Err(code::DESKTOP_UNSUPPORTED),
+        DesktopCall::WallShow(_) | DesktopCall::RecordMonitor(_) => Err(code::DESKTOP_UNSUPPORTED),
     }
 }
 
@@ -251,6 +254,7 @@ impl Call<'_> {
                 Some(ctx),
             )),
             resource: built.resource.clone(),
+            seconds: None,
         };
         self.link
             .store

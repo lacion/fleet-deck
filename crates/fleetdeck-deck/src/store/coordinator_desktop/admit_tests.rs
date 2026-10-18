@@ -92,6 +92,7 @@ pub(super) fn new_op(grant_id: &str, ctx: &CoordinatorContext, name: &str, tool:
         target_station: StationId::from("alpha"),
         action_hash: None,
         resource: serde_json::json!({"display": "d-1"}),
+        seconds: None,
     }
 }
 
@@ -435,4 +436,51 @@ async fn a_target_station_outside_the_grant_is_not_granted() {
     let got = s.desktop_admit(op, t0(&det)).await.unwrap();
     assert_eq!(rejected(got), (code::NOT_GRANTED, false));
     assert_untouched(&s, &gid).await;
+}
+
+#[tokio::test]
+async fn a_record_monitor_row_keeps_its_seconds_and_reads_back() {
+    let (det, s) = store().await;
+    let (gid, ctx) = both(&s).await;
+    let now = t0(&det);
+    let mut op = new_op(&gid, &ctx, "rec", OpTool::RecordMonitor);
+    op.class = OpClass::Capture;
+    op.seconds = Some(45);
+    let Admission::Accepted(row) = s.desktop_admit(op, now).await.unwrap() else {
+        panic!("expected Accepted");
+    };
+    assert_eq!(row.tool, OpTool::RecordMonitor);
+    assert_eq!(row.tool.as_str(), "record_monitor");
+    assert_eq!(row.seconds, Some(45));
+    let back = s.desktop_op(&row.operation_id).await.unwrap().unwrap();
+    assert_eq!(back, row);
+    // Another tool has no seconds.
+    let Admission::Accepted(other) = s
+        .desktop_admit(new_op(&gid, &ctx, "n1", OpTool::Notify), now)
+        .await
+        .unwrap()
+    else {
+        panic!("expected Accepted");
+    };
+    assert_eq!(other.seconds, None);
+    assert_eq!(
+        s.desktop_op(&other.operation_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .seconds,
+        None
+    );
+    // The column takes only 1 to 120.
+    let bad = call(&s.inner.db, |conn| {
+        Ok(conn
+            .execute(
+                "UPDATE coordinator_desktop_ops SET seconds = 121 WHERE operation_id = 'op-rec'",
+                [],
+            )
+            .is_err())
+    })
+    .await
+    .unwrap();
+    assert!(bad);
 }

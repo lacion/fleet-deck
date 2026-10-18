@@ -152,6 +152,9 @@ fn spec() -> CoordinatorSpec {
         desktop_cap: None,
         capture_cap: None,
         image_byte_cap: None,
+        allow_recording: false,
+        recording_cap: None,
+        recording_second_cap: None,
         stations: Vec::new(),
     }
 }
@@ -199,6 +202,10 @@ fn a_grant_view_writes_the_p6_counters_only_when_set() {
         capture_used: None,
         image_byte_cap: None,
         image_byte_used: None,
+        recording_cap: None,
+        recording_used: None,
+        recording_second_cap: None,
+        recording_second_used: None,
     };
     let v = serde_json::to_value(&view).unwrap();
     for key in [
@@ -208,6 +215,10 @@ fn a_grant_view_writes_the_p6_counters_only_when_set() {
         "capture_used",
         "image_byte_cap",
         "image_byte_used",
+        "recording_cap",
+        "recording_used",
+        "recording_second_cap",
+        "recording_second_used",
     ] {
         assert!(!v.as_object().unwrap().contains_key(key), "{key}");
     }
@@ -218,5 +229,69 @@ fn a_grant_view_writes_the_p6_counters_only_when_set() {
     let v = serde_json::to_value(&view).unwrap();
     assert_eq!(v["desktop_used"], 2);
     assert_eq!(v["image_byte_used"], 716_800);
+    assert_eq!(serde_json::from_value::<GrantView>(v).unwrap(), view);
+}
+
+#[test]
+fn the_recording_fields_of_the_spec_are_written_only_when_set_and_parse_back() {
+    // A screenshot-only spec has no recording field (P6 bytes unchanged).
+    let none = serde_json::to_value(spec()).unwrap();
+    for key in ["allow_recording", "recording_cap", "recording_second_cap"] {
+        assert!(!none.as_object().unwrap().contains_key(key), "{key}");
+    }
+    let allowed = CoordinatorSpec {
+        allow_recording: true,
+        recording_cap: Some(5),
+        recording_second_cap: Some(600),
+        ..spec()
+    };
+    let v = serde_json::to_value(&allowed).unwrap();
+    assert_eq!(v["allow_recording"], true);
+    assert_eq!(v["recording_cap"], 5);
+    assert_eq!(v["recording_second_cap"], 600);
+    assert_eq!(
+        serde_json::from_value::<CoordinatorSpec>(v).unwrap(),
+        allowed
+    );
+    // `allow_recording: false` is the default and is not written either.
+    let v = serde_json::to_value(CoordinatorSpec {
+        allow_recording: false,
+        ..allowed
+    })
+    .unwrap();
+    assert!(!v.as_object().unwrap().contains_key("allow_recording"));
+}
+
+#[test]
+fn a_grant_view_writes_the_recording_counters_only_when_set() {
+    let view = GrantView {
+        grant_id: "g".into(),
+        station_id: "s".into(),
+        session_id: "x".into(),
+        classes: vec!["capture".into()],
+        stations: vec!["s".into()],
+        spawn_cap: 3,
+        spawn_used: 0,
+        state: "active".into(),
+        revoked_reason: None,
+        generation: None,
+        expires_at: 1,
+        last_used_at: None,
+        desktop_cap: None,
+        desktop_used: None,
+        capture_cap: None,
+        capture_used: None,
+        image_byte_cap: None,
+        image_byte_used: None,
+        recording_cap: Some(5),
+        recording_used: Some(1),
+        recording_second_cap: Some(600),
+        recording_second_used: Some(30),
+    };
+    let v = serde_json::to_value(&view).unwrap();
+    assert_eq!(v["recording_cap"], 5);
+    assert_eq!(v["recording_used"], 1);
+    assert_eq!(v["recording_second_cap"], 600);
+    assert_eq!(v["recording_second_used"], 30);
     assert_eq!(serde_json::from_value::<GrantView>(v).unwrap(), view);
 }
