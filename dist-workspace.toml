@@ -40,6 +40,9 @@ include = [
     "packaging/launchd/dev.fleetdeck.station.plist",
     "packaging/launchd/dev.fleetdeck.deck.plist",
     "packaging/container/Containerfile",
+    # The Omarchy first-login hook and its autostart entry (P8, section 5.1).
+    "packaging/omarchy/provision-first-login",
+    "packaging/omarchy/fleetdeck-provision.desktop",
 ]
 # DL-192: a release build sets `FLEETDECK_RELEASE=1`, so that `fleetdeck
 # --version` prints `2.0.0` and not `2.0.0-dev.<date>+<commit>`. This cargo-dist

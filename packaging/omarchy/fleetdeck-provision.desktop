@@ -1,0 +1,11 @@
+# The package installs this file root:root 0644 at
+# /etc/xdg/autostart/fleetdeck-provision.desktop (docs/v2/design/omarchy-p8.md,
+# section 5.1).
+[Desktop Entry]
+Type=Application
+Name=Fleet Deck provisioning
+Comment=Finish the provisioning of this Fleet Deck station at the first login.
+Exec=/usr/lib/fleetdeck/provision-first-login
+NoDisplay=true
+Terminal=false
+X-GNOME-Autostart-enabled=true
