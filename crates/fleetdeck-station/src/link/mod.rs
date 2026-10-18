@@ -101,6 +101,13 @@ impl<'a> ShellSlot<'a> {
     }
 }
 
+impl ShellSlot<'_> {
+    /// True when the link negotiated `desktop_shell.v1`.
+    fn active(&self) -> bool {
+        self.token.is_some()
+    }
+}
+
 impl Drop for ShellSlot<'_> {
     fn drop(&mut self) {
         if let Some(token) = self.token {
@@ -153,7 +160,12 @@ pub async fn serve(ctx: Arc<StationLink>, link: LiveLink) -> Closing {
     let _summary_up = ctx.summary.link_up();
     // `display.directive` of the local wall op goes over this control when
     // the link negotiated `desktop_shell.v1` (R13 P4 task E).
-    let _shell = ShellSlot::new(&ctx.summary, &control);
+    let shell = ShellSlot::new(&ctx.summary, &control);
+    // The stored palette of `theme-sync` goes to the deck once at each link
+    // up (R13 P4 task F1).
+    if shell.active() {
+        crate::local_palette::resend(&ctx.summary, &control);
+    }
     // `station fingerprint` reports `link_up` from this (R13 P8): ready after
     // the deck acknowledged the first snapshot or an `events.replay` was
     // accepted on this connection.

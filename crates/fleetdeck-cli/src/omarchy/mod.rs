@@ -13,6 +13,7 @@ pub mod hyprland;
 pub mod install;
 pub mod record;
 pub mod status;
+pub mod theme_sync;
 pub mod uninstall;
 
 use std::path::PathBuf;
@@ -162,6 +163,7 @@ pub async fn run(dirs: &NodeDirs, command: &OmarchyCommand) -> anyhow::Result<Ex
         }
         OmarchyCommand::Uninstall => uninstall::run(dirs).await,
         OmarchyCommand::Status { json } => status::run(dirs, *json).await,
+        OmarchyCommand::ThemeSync => theme_sync::run(dirs).await,
     }
 }
 

@@ -2,7 +2,7 @@
 //! database made by v2 is at version 25 (v2's display migration); the merged
 //! list keeps v2's V1 to V25 and appends the five Fleet Git migrations as V26
 //! to V30, and R13 P5a adds V31 (the artifact tombstones) and V32 (the owner
-//! screenshots). The station list
+//! screenshots); R13 P4 adds V33 (the station palettes). The station list
 //! is Fleet Git's list (32 entries), R13 P5a V33 (the artifact deletions)
 //! and V34 (the capture operations); a station database made by v2 is at
 //! version 27.
@@ -12,7 +12,7 @@
 use rusqlite::Connection;
 
 const DECK_V2_LAST: usize = 25;
-const DECK_LATEST: i64 = 32;
+const DECK_LATEST: i64 = 33;
 const STATION_V2_LAST: usize = 27;
 const STATION_LATEST: i64 = 34;
 
@@ -110,6 +110,55 @@ fn a_deck_database_at_v2_last_version_migrates_to_the_merged_list() {
         )
         .unwrap();
     assert_eq!(git, "{}");
+}
+
+/// R13 P4 task F1: V32 to V33 adds the station palette table and keeps every
+/// row of the older tables.
+#[test]
+fn migration_v33_adds_the_station_palettes_and_keeps_the_rows() {
+    let migrations = fleetdeck_deck::store::schema::migrations();
+    let mut conn = Connection::open_in_memory().unwrap();
+    migrations.to_version(&mut conn, 32).unwrap();
+    assert_eq!(user_version(&conn), 32);
+    let n = count(
+        &conn,
+        "SELECT count(*) FROM sqlite_master WHERE name = 'station_palettes'",
+    );
+    assert_eq!(n, 0, "no palette table at V32");
+    conn.execute(
+        "INSERT INTO displays (display_id, name, ceiling, created_at, auth_generation)
+         VALUES ('d1', 'Wall', 'view', 1, 7)",
+        [],
+    )
+    .unwrap();
+
+    migrations.to_latest(&mut conn).unwrap();
+    assert_eq!(user_version(&conn), 33);
+    assert_eq!(count(&conn, "SELECT count(*) FROM displays"), 1);
+    assert_eq!(count(&conn, "SELECT count(*) FROM station_palettes"), 0);
+    conn.execute(
+        "INSERT INTO station_palettes (station_id, mode, colors, updated_at)
+         VALUES ('st-1', 'dark', '{}', 5)",
+        [],
+    )
+    .unwrap();
+    // The table is STRICT, with one row for each station.
+    assert!(
+        conn.execute(
+            "INSERT INTO station_palettes (station_id, mode, colors, updated_at)
+             VALUES ('st-1', 'light', '{}', 6)",
+            [],
+        )
+        .is_err()
+    );
+    assert!(
+        conn.execute(
+            "INSERT INTO station_palettes (station_id, mode, colors, updated_at)
+             VALUES ('st-2', 'dark', '{}', 'text')",
+            [],
+        )
+        .is_err()
+    );
 }
 
 /// A fresh deck database and a migrated one have the same schema.

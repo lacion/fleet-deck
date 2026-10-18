@@ -52,6 +52,9 @@ pub mod local;
 /// The local socket op `station.fingerprint` (R13 P8).
 pub mod local_fingerprint;
 
+/// The local socket op `palette_set` (R13 P4 task F1).
+pub mod local_palette;
+
 /// The local socket op `fleet_summary` (R13 P4).
 pub mod local_summary;
 

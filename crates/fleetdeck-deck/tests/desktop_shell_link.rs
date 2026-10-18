@@ -1,8 +1,8 @@
 //! `display.directive` and `station.palette` from a fake station (R13 P4
 //! task A, feature `desktop_shell.v1`, decision P4-6): the rows use `admin`,
 //! which every paired station holds. No scope is added to a station. Task E
-//! built `display.directive` (see `display_directive_station.rs`); until task
-//! F1 builds `station.palette`, the deck answers `unsupported` to it.
+//! built `display.directive` (see `display_directive_station.rs`) and task F1
+//! built `station.palette` (see `station_palette.rs`).
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -51,8 +51,8 @@ async fn a_station_call_to_the_two_rows_passes_the_scope_check() {
         (
             "station.palette",
             json!({}),
-            "unsupported",
-            "The deck does not serve station.palette in this build.",
+            "invalid_params",
+            "The palette is not valid.",
         ),
     ] {
         let o = tokio::time::timeout(T, station.control.request(method, None, params))

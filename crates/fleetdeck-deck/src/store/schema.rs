@@ -755,6 +755,8 @@ pub fn migrations() -> Migrations<'static> {
         M::up(super::artifact_tombstones::SQL),
         // V32 (R13 P5a task E): the owner screenshots, `store/desktop_captures.rs`.
         M::up(super::desktop_captures::SQL),
+        // V33 (R13 P4 task F1): the Omarchy palette of each station.
+        M::up(super::station_palettes::SQL),
     ])
 }
 

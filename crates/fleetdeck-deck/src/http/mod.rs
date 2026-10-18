@@ -42,6 +42,7 @@ pub mod methods;
 pub mod native_routes;
 pub mod not_built;
 pub mod pairing_routes;
+pub mod palette_routes;
 pub mod paste_routes;
 pub mod people_routes;
 pub mod placement_routes;
@@ -569,6 +570,7 @@ pub fn router(board: Arc<Board>) -> Router {
         .merge(display_artifact::routes())
         .merge(desktop_routes::routes())
         .merge(desktop_capture_routes::routes())
+        .merge(palette_routes::routes())
         .merge(features_routes::routes())
         .route_layer(middleware::from_fn_with_state(
             Arc::clone(&board),
