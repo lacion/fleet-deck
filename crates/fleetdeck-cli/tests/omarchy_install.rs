@@ -42,12 +42,12 @@ fn omarchy_install_writes_the_files_the_record_and_runs_the_commands() {
     assert_eq!(mode(&rig.fd_dir().join("omarchy-install.json")), 0o600);
     let record = rig.record();
     assert_eq!(record["v"], 1);
-    assert_eq!(record["files"].as_array().unwrap().len(), 7);
+    assert_eq!(record["files"].as_array().unwrap().len(), 12);
     assert_eq!(record["files"][0]["path"], MANIFEST);
     assert_eq!(record["files"][0]["base"], "omarchy");
     assert_eq!(record["files"][0]["existed_before"], false);
     assert_eq!(record["files"][0]["sha256"].as_str().unwrap().len(), 64);
-    assert_eq!(record["files"][5]["base"], "fleetdeck");
+    assert_eq!(record["files"][10]["base"], "fleetdeck");
     assert_eq!(record["plugin_enabled"], true);
     assert_eq!(record["fleet_summary_set_by_install"], true);
     assert_eq!(record["menu_file_written"], true);
@@ -170,7 +170,7 @@ fn omarchy_install_adopts_an_identical_file() {
     assert_eq!(rig.install().status.code(), Some(0));
     assert_eq!(std::fs::read(&hook).unwrap(), text);
     let record = rig.record();
-    assert_eq!(record["files"][1]["existed_before"], true);
+    assert_eq!(record["files"][6]["existed_before"], true);
 }
 
 #[test]
@@ -194,7 +194,7 @@ fn omarchy_install_never_writes_an_existing_menu_file() {
     assert!(out(&o).contains("\"fleet.board\""), "{}", out(&o));
     let record = rig.record();
     assert_eq!(record["menu_file_written"], false);
-    assert_eq!(record["files"].as_array().unwrap().len(), 6);
+    assert_eq!(record["files"].as_array().unwrap().len(), 11);
     let o = rig.run(&["omarchy", "uninstall"]);
     assert_eq!(o.status.code(), Some(0));
     assert_eq!(std::fs::read_to_string(&menu).unwrap(), "// mine\n{\n}\n");
@@ -389,7 +389,7 @@ fn omarchy_install_the_record_after_an_interrupted_install() {
     child.kill().unwrap();
     child.wait().unwrap();
     let record = rig.record();
-    assert_eq!(record["files"].as_array().unwrap().len(), 7);
+    assert_eq!(record["files"].as_array().unwrap().len(), 12);
     assert_eq!(record["plugin_enabled"], false);
     assert_eq!(record["fleet_summary_set_by_install"], false);
     // The status sees a consistent install.
