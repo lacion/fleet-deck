@@ -53,6 +53,8 @@ pub struct StationLink {
     /// The Fleet Git runtime: traits, config digest, deck control and the
     /// Git options of a clone (FG-5, FG-6, FG-11).
     pub fleet_git: Arc<crate::fleet_git_runtime::FleetGitRuntime>,
+    /// The last fleet summary of the deck and the live link count (R13 P4).
+    pub summary: Arc<crate::fleet_summary::SummaryCell>,
 }
 
 /// Holds the deck control of a link in the Fleet Git runtime for as long as
@@ -117,6 +119,7 @@ pub async fn serve(ctx: Arc<StationLink>, link: LiveLink) -> Closing {
     );
     // The artifact authorization of a later phase asks the deck over this
     // control (FG-12); it needs `fleet_git.homes.v1`.
+    let _summary_up = ctx.summary.link_up();
     let _deck = DeckSlot::new(
         &ctx.fleet_git,
         &control,

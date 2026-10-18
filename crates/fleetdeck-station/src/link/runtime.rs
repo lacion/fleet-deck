@@ -327,6 +327,7 @@ impl StationNode {
                 coordinator: forward,
                 paste_dir,
                 fleet_git,
+                summary: Arc::default(),
             }),
             invitations,
             listening: tokio::sync::Mutex::default(),

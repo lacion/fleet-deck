@@ -9,6 +9,8 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 
+use crate::cli_desktop::DesktopCommand;
+
 /// Fleet Deck v2: one deck drives agent sessions on many stations.
 #[derive(Debug, Parser)]
 #[command(
@@ -70,6 +72,9 @@ pub enum Command {
         #[arg(long)]
         elevate: bool,
     },
+    /// Feed the desktop shell (Omarchy bar) and open the board from it.
+    #[command(subcommand)]
+    Desktop(DesktopCommand),
     /// Run the deck, the station, or both as a service that starts at boot or login.
     Service {
         #[command(subcommand)]

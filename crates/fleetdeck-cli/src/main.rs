@@ -2,11 +2,15 @@
 
 mod auth;
 mod cli;
+mod cli_desktop;
 mod confine;
 mod deck;
 mod deck_provision;
+mod desktop_feed;
+mod desktop_open;
 mod doctor;
 mod invite;
+mod notify;
 mod pairing;
 mod restart;
 mod service;
@@ -121,6 +125,7 @@ fn run(cli: Cli, restart: &restart::RestartHandle) -> anyhow::Result<ExitCode> {
         Command::Up(args) => done(runtime()?.block_on(up::up(&dirs, &env, args, restart))),
         Command::Open { elevate: false } => done(runtime()?.block_on(auth::open(&dirs))),
         Command::Open { elevate: true } => done(runtime()?.block_on(auth::elevate(&dirs))),
+        Command::Desktop(command) => done(runtime()?.block_on(desktop_main(command, &dirs))),
         Command::Doctor => Ok(runtime()?.block_on(doctor::run(&dirs, &env))),
         Command::Settings { command } => done(runtime()?.block_on(settings::run(&dirs, command))),
         Command::Tailnet { command } => {
@@ -147,6 +152,19 @@ fn run(cli: Cli, restart: &restart::RestartHandle) -> anyhow::Result<ExitCode> {
 
 fn exit_code(code: i32) -> ExitCode {
     ExitCode::from(u8::try_from(code).unwrap_or(1))
+}
+
+/// The desktop commands (R13 P4 task B2).
+async fn desktop_main(
+    command: &cli_desktop::DesktopCommand,
+    dirs: &fleetdeck_core::paths::NodeDirs,
+) -> anyhow::Result<()> {
+    match command {
+        cli_desktop::DesktopCommand::Feed { notify } => desktop_feed::run(dirs, *notify).await,
+        cli_desktop::DesktopCommand::Open { target, request } => {
+            desktop_open::run(dirs, target.as_deref(), request.as_deref()).await
+        }
+    }
 }
 
 /// The deck commands (P3-6b).

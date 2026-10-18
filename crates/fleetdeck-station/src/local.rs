@@ -96,6 +96,10 @@ pub enum LocalRequest {
     /// `fleetdeck settings secret --station`: stores a secret and points
     /// the config to it. `Debug` hides the value; nothing logs the request.
     SettingsSecret { secret: SecretSet, revision: String },
+    /// `fleetdeck desktop feed|open` (R13 P4): the last fleet summary of the
+    /// deck. The station holds the request until `seq` is above `after` or
+    /// 25 seconds pass.
+    FleetSummary { after: u64 },
 }
 
 pub use fleetdeck_core::localsock::InvitationText;
@@ -160,6 +164,16 @@ pub enum LocalResponse {
         code: String,
         message: String,
     },
+    /// The answer to [`LocalRequest::FleetSummary`]: `link` is `up` or `down`
+    /// (the live deck link), `held_s` the seconds since the summary arrived.
+    FleetSummary {
+        seq: u64,
+        link: String,
+        held_s: u64,
+        summary: Option<fleetdeck_proto::fleet_summary::FleetSummary>,
+    },
+    /// [`LocalRequest::FleetSummary`] when the setting `fleet_summary` is off.
+    FleetSummaryOff {},
     /// The station could not decide the request (bad line, database error).
     Error {
         message: String,
@@ -474,6 +488,9 @@ async fn handle(
         LocalRequest::SettingsGet
         | LocalRequest::SettingsSet { .. }
         | LocalRequest::SettingsSecret { .. } => return settings(manager, request).await,
+        LocalRequest::FleetSummary { after } => {
+            return crate::local_summary::fleet_summary(manager, node, after).await;
+        }
         LocalRequest::Drain { timeout_ms } => {
             return match manager
                 .drain(std::time::Duration::from_millis(timeout_ms))
