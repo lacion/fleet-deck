@@ -5,6 +5,9 @@ import {
   type FleetControl,
   fleetOn,
   imageBudgetProblem,
+  inputCapProblem,
+  inputCharsProblem,
+  inputOn,
   MAX_ANSWER_CAP,
   recordingCapProblem,
   recordingSecondsProblem,
@@ -50,6 +53,13 @@ const RECORDING_NOTE =
   'This agent can record the whole selected monitor for up to 120 seconds at a time, including other applications, notifications and private information visible there. Recordings are stored as video artifacts. The agent gets only a reference to each recording, never the video.';
 const DESKTOP_GATE_NOTE =
   'Desktop and screenshot tools work only while the deck settings Fleet control and Desktop control are on, and on stations that allow them.';
+
+const INPUT_TEXT = "Allow keyboard input and pointer movement in this agent's previews";
+const INPUT_DISCLOSURE =
+  'This agent can type, press keys and move the pointer in preview windows opened for it on the grant stations. Keyboard input can activate buttons and submit forms. Focus can change after Fleet Deck checks it, so input may reach another window, including an owner board window. Board detection is incomplete. Agents run as your OS user. Pointer clicks and unrestricted window input are unavailable. This feature is experimental until its live smoke passes.';
+const INPUT_SCOPE = "Scope: this caller's preview windows";
+const INPUT_SIGN_OUT_NOTE =
+  'While an agent types on a station, every board signed in on that station is signed out. Keep this board on another device.';
 
 type LimitProps = {
   readonly label: string;
@@ -98,6 +108,10 @@ export function FleetControlFields({ fleet, onChange }: Props) {
                 [s.key]: event.target.checked,
                 // Recordings need screenshots: turning capture off turns them off too.
                 ...(s.key === 'capture' && !event.target.checked ? { recording: false } : {}),
+                // Input needs previews and screenshots: turning either off turns it off too.
+                ...((s.key === 'capture' || s.key === 'desktop') && !event.target.checked
+                  ? { input: false }
+                  : {}),
               })
             }
           />
@@ -112,6 +126,16 @@ export function FleetControlFields({ fleet, onChange }: Props) {
             onChange={(event) => onChange({ ...fleet, recording: event.target.checked })}
           />
           Allow monitor recordings
+        </label>
+      ) : null}
+      {fleet.desktop && fleet.capture ? (
+        <label className="fd-spawn-opt">
+          <input
+            type="checkbox"
+            checked={fleet.input}
+            onChange={(event) => onChange({ ...fleet, input: event.target.checked })}
+          />
+          {INPUT_TEXT}
         </label>
       ) : null}
       {fleet.answer ? (
@@ -168,9 +192,34 @@ export function FleetControlFields({ fleet, onChange }: Props) {
           />
         </>
       ) : null}
+      {inputOn(fleet) ? (
+        <>
+          <p className="fd-note">{INPUT_SCOPE}</p>
+          <LimitInput
+            label="Input action limit"
+            value={fleet.inputCap}
+            max={MAX_ANSWER_CAP}
+            problem={inputCapProblem(fleet)}
+            onChange={(inputCap) => onChange({ ...fleet, inputCap })}
+          />
+          <LimitInput
+            label="Typed character limit"
+            value={fleet.inputChars}
+            max={1000000}
+            problem={inputCharsProblem(fleet)}
+            onChange={(inputChars) => onChange({ ...fleet, inputChars })}
+          />
+        </>
+      ) : null}
       {fleet.desktop ? <p className="fd-note">{DESKTOP_NOTE}</p> : null}
       {fleet.capture ? <p className="fd-note">{CAPTURE_NOTE}</p> : null}
       {fleet.capture && fleet.recording ? <p className="fd-note">{RECORDING_NOTE}</p> : null}
+      {inputOn(fleet) ? (
+        <>
+          <p className="fd-note fd-fleet-failed">{INPUT_DISCLOSURE}</p>
+          <p className="fd-note">{INPUT_SIGN_OUT_NOTE}</p>
+        </>
+      ) : null}
       {fleet.desktop || fleet.capture ? <p className="fd-note">{DESKTOP_GATE_NOTE}</p> : null}
       {fleetOn(fleet) ? (
         <p className="fd-note">

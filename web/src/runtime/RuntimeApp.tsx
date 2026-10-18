@@ -30,7 +30,11 @@ import type { Outcome } from '../session/commands';
 import type { Watch } from '../terminal/handover';
 import { archived } from '../ui/archive';
 import { clearAuthoringState } from './authoringState';
-import type { Connection } from './connection';
+import {
+  type Connection,
+  SIGN_IN_BLOCKED_FOR_INPUT_TEXT,
+  SIGNED_OUT_FOR_INPUT_TEXT,
+} from './connection';
 import { deviceLinkAction } from './deviceLink';
 import { viewsActions } from './views';
 import { ReviewProvider } from '../review/context';
@@ -421,10 +425,17 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
     );
   }
   if (state.login === null) {
+    // R13 P7 §7.6: the sign-out lines of agent input show above the form.
+    const inputLine =
+      state.error === SIGNED_OUT_FOR_INPUT_TEXT || state.error === SIGN_IN_BLOCKED_FOR_INPUT_TEXT
+        ? state.error
+        : null;
+    const belowLine = inputLine === null ? state.error || logoutError : logoutError;
     return (
       <main className="fd-login">
         <h1>Fleet Deck</h1>
         <p>Log in to your deck. Login is required on loopback, LAN, and the tailnet.</p>
+        {inputLine === null ? null : <p role="alert">{inputLine}</p>}
         {state.auth === 'checking' ? <p role="status">Connecting to the deck…</p> : null}
         <form
           onSubmit={(event) => {
@@ -451,7 +462,7 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
         <p>
           Or run <code>fleetdeck open</code> on the deck machine for a one-time login link.
         </p>
-        {state.error || logoutError ? <p role="alert">{state.error ?? logoutError}</p> : null}
+        {belowLine ? <p role="alert">{belowLine}</p> : null}
       </main>
     );
   }

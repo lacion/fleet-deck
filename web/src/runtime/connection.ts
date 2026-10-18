@@ -15,7 +15,7 @@ import {
 export type Socket = {
   onopen: (() => void) | null;
   onmessage: ((event: { data: string }) => void) | null;
-  onclose: ((event: { code: number }) => void) | null;
+  onclose: ((event: { code: number; reason?: string }) => void) | null;
   onerror: (() => void) | null;
   send(data: string): void;
   close(): void;
@@ -27,6 +27,13 @@ export type Environment = {
   schedule: (fn: () => void, ms: number) => Cancel;
   random: () => number;
 };
+/** R13 P7 §7.6, §13: the board's lines after the deck signs it out for agent input. */
+export const SIGNED_OUT_FOR_INPUT_TEXT =
+  'You were signed out because an agent typed on the station where this board is open.';
+export const SIGN_IN_BLOCKED_FOR_INPUT_TEXT =
+  'An agent is typing on this station. Sign in again in a minute.';
+const SIGNED_OUT_FOR_INPUT = 'signed_out_for_input';
+const SIGN_IN_BLOCKED_FOR_INPUT = 'sign_in_blocked_for_input';
 export const IDLE_MS = 5 * 60_000;
 export const TIMEOUT_MS = 10_000;
 /** The live connection URL. A browser WebSocket sends no custom header: the declaration of the
@@ -52,7 +59,7 @@ export function browserEnvironment(): Environment {
       };
       native.onopen = () => port.onopen?.();
       native.onmessage = (event) => port.onmessage?.({ data: String(event.data) });
-      native.onclose = (event) => port.onclose?.({ code: event.code });
+      native.onclose = (event) => port.onclose?.({ code: event.code, reason: event.reason });
       native.onerror = () => port.onerror?.();
       return port;
     },
@@ -140,6 +147,9 @@ export class Connection {
     const cancel = this.env.schedule(() => controller.abort(), timeoutMs);
     try {
       return await request(this.env.fetch, path, controller.signal);
+    } catch (error) {
+      this.signedOutByInput(error);
+      throw error;
     } finally {
       cancel();
     }
@@ -151,6 +161,9 @@ export class Connection {
     const cancel = this.env.schedule(() => controller.abort(), timeoutMs);
     try {
       return await request(this.env.fetch, path, controller.signal, body, this.state.login?.csrf);
+    } catch (error) {
+      this.signedOutByInput(error);
+      throw error;
     } finally {
       cancel();
     }
@@ -172,6 +185,12 @@ export class Connection {
     const socket = this.socket;
     this.socket = null;
     socket?.close();
+  }
+  /** A 401 `signed_out_for_input` of any request ends the login at once. It never retries. */
+  private signedOutByInput(error: unknown) {
+    if (error instanceof ApiError && error.status === 401 && error.code === SIGNED_OUT_FOR_INPUT) {
+      this.anonymous(SIGNED_OUT_FOR_INPUT_TEXT);
+    }
   }
   private anonymous(error: string | null) {
     this.cancelTransport();
@@ -199,8 +218,19 @@ export class Connection {
       this.open(gen);
     } catch (error) {
       if (gen !== this.generation || !this.running) return;
+      const code = error instanceof ApiError ? error.code : null;
+      const status = error instanceof ApiError ? error.status : null;
+      if (code === SIGNED_OUT_FOR_INPUT) {
+        this.anonymous(SIGNED_OUT_FOR_INPUT_TEXT);
+        return;
+      }
+      if (code === SIGN_IN_BLOCKED_FOR_INPUT) {
+        // No automatic retry: the owner signs in again after a minute.
+        this.anonymous(SIGN_IN_BLOCKED_FOR_INPUT_TEXT);
+        return;
+      }
       const message = error instanceof Error ? error.message : 'Connection failed';
-      if (error instanceof ApiError && error.status === 401) {
+      if (status === 401) {
         this.anonymous(path === '/api/auth/session' ? null : message);
       } else if (body !== undefined) {
         // A password or a one-time token is never retained or retried.
@@ -225,10 +255,15 @@ export class Connection {
     socket.onerror = () => {
       if (current()) this.reconnect('The deck connection failed');
     };
-    socket.onclose = ({ code }) => {
+    socket.onclose = ({ code, reason }) => {
       if (!current()) return;
-      if (code === 4401) this.anonymous('Your login ended. Log in again.');
-      else this.reconnect('The deck connection ended');
+      if (code === 4401) {
+        this.anonymous(
+          reason === SIGNED_OUT_FOR_INPUT
+            ? SIGNED_OUT_FOR_INPUT_TEXT
+            : 'Your login ended. Log in again.',
+        );
+      } else this.reconnect('The deck connection ended');
     };
     socket.onmessage = ({ data }) => {
       if (!current()) return;

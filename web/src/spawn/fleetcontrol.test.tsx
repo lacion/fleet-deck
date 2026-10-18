@@ -11,6 +11,9 @@ import {
   grantFields,
   fleetProblem,
   imageBudgetProblem,
+  inputCapProblem,
+  inputCharsProblem,
+  inputOn,
   NO_FLEET,
   recordingCapProblem,
   recordingSecondsProblem,
@@ -454,5 +457,163 @@ describe('FleetControlFields', () => {
     recording?.onChange({ target: { checked: false } });
     expect(calls[0]).toMatchObject({ capture: false, recording: false });
     expect(calls[1]).toMatchObject({ capture: true, recording: false });
+  });
+});
+
+describe('the input opt-in (R13 P7 §3.4, §9.1)', () => {
+  const INPUT = "Allow keyboard input and pointer movement in this agent's previews";
+  const DISCLOSURE =
+    'This agent can type, press keys and move the pointer in preview windows opened for it on the grant stations. Keyboard input can activate buttons and submit forms. Focus can change after Fleet Deck checks it, so input may reach another window, including an owner board window. Board detection is incomplete. Agents run as your OS user. Pointer clicks and unrestricted window input are unavailable. This feature is experimental until its live smoke passes.';
+  const SCOPE = "Scope: this caller's preview windows";
+  const SIGN_OUT =
+    'While an agent types on a station, every board signed in on that station is signed out. Keep this board on another device.';
+  const on = { ...NO_FLEET, desktop: true, capture: true, input: true };
+  const html = (fleet: FleetControl) =>
+    renderToStaticMarkup(<FleetControlFields fleet={fleet} onChange={() => {}} />).replaceAll(
+      '&#x27;',
+      "'",
+    );
+
+  test('the defaults are off, 100 actions and 20000 characters', () => {
+    expect(NO_FLEET.input).toBe(false);
+    expect(NO_FLEET.inputCap).toBe('100');
+    expect(NO_FLEET.inputChars).toBe('20000');
+  });
+
+  test('the switch shows only while both desktop and capture are on', () => {
+    expect(html(NO_FLEET)).not.toContain(INPUT);
+    expect(html({ ...NO_FLEET, desktop: true })).not.toContain(INPUT);
+    expect(html({ ...NO_FLEET, capture: true })).not.toContain(INPUT);
+    expect(html({ ...NO_FLEET, desktop: true, capture: true })).toContain(INPUT);
+  });
+
+  test('input off shows no limit, scope, disclosure or sign-out note', () => {
+    const out = html({ ...NO_FLEET, desktop: true, capture: true });
+    for (const hidden of [
+      'Input action limit',
+      'Typed character limit',
+      SCOPE,
+      DISCLOSURE,
+      SIGN_OUT,
+    ]) {
+      expect(out).not.toContain(hidden);
+    }
+  });
+
+  test('input on shows the scope, the two limits, the red disclosure and the sign-out note', () => {
+    const out = html(on);
+    expect(out).toContain(SCOPE);
+    expect(out).toContain('Input action limit');
+    expect(out).toContain('Typed character limit');
+    expect(out).toContain('value="100"');
+    expect(out).toContain('value="20000"');
+    expect(out).toContain(`<p class="fd-note fd-fleet-failed">${DISCLOSURE}</p>`);
+    expect(out).toContain(`<p class="fd-note">${SIGN_OUT}</p>`);
+  });
+
+  test('a bad value shows its problem as an alert', () => {
+    const out = html({ ...on, inputCap: '5001', inputChars: '1000001' });
+    expect(out).toContain(
+      '<p class="fd-note" role="alert">The input action limit is a whole number from 0 to 5000.</p>',
+    );
+    expect(out).toContain(
+      '<p class="fd-note" role="alert">The typed character limit is a whole number from 0 to 1000000.</p>',
+    );
+  });
+
+  test('the problems check the ranges, and only while the opt-in is on', () => {
+    expect(inputCapProblem(on)).toBeNull();
+    expect(inputCharsProblem(on)).toBeNull();
+    for (const ok of ['0', '5000']) expect(inputCapProblem({ ...on, inputCap: ok })).toBeNull();
+    for (const bad of ['5001', '-1', '1.5', '', 'x']) {
+      expect(inputCapProblem({ ...on, inputCap: bad })).toBe(
+        'The input action limit is a whole number from 0 to 5000.',
+      );
+    }
+    for (const ok of ['0', '1000000']) {
+      expect(inputCharsProblem({ ...on, inputChars: ok })).toBeNull();
+    }
+    for (const bad of ['1000001', '-1', '1.5', '', 'x']) {
+      expect(inputCharsProblem({ ...on, inputChars: bad })).toBe(
+        'The typed character limit is a whole number from 0 to 1000000.',
+      );
+    }
+    const off = { ...NO_FLEET, inputCap: 'x', inputChars: 'x' };
+    expect(inputCapProblem(off)).toBeNull();
+    expect(inputCharsProblem(off)).toBeNull();
+    expect(fleetProblem({ ...on, inputCap: 'x' })).toBe(
+      'The input action limit is a whole number from 0 to 5000.',
+    );
+    expect(fleetProblem({ ...on, inputChars: 'x' })).toBe(
+      'The typed character limit is a whole number from 0 to 1000000.',
+    );
+    expect(fleetProblem(on)).toBeNull();
+  });
+
+  test('grantFields adds the input fields only with the opt-in, desktop and capture', () => {
+    const plain = grantFields({ ...NO_FLEET, desktop: true, capture: true });
+    expect(plain).not.toHaveProperty('allow_input');
+    expect(plain).not.toHaveProperty('input_scope');
+    expect(plain).not.toHaveProperty('input_cap');
+    expect(plain).not.toHaveProperty('input_character_cap');
+    // The switch alone, without desktop and capture, is not an opt-in.
+    expect(inputOn({ ...NO_FLEET, input: true, desktop: true })).toBe(false);
+    expect(grantFields({ ...NO_FLEET, input: true, desktop: true })).not.toHaveProperty(
+      'allow_input',
+    );
+    expect(grantFields(on)).toMatchObject({
+      allow_input: true,
+      input_scope: 'own_windows',
+      input_cap: 100,
+      input_character_cap: 20_000,
+    });
+    expect(grantFields({ ...on, inputCap: '0', inputChars: '5' })).toMatchObject({
+      input_cap: 0,
+      input_character_cap: 5,
+    });
+  });
+
+  test('the elevation label stays Fleet control', async () => {
+    const labels: (readonly string[] | undefined)[] = [];
+    const result = await fleetElevation(
+      { coordinator: true, importing: false, fleet: on },
+      async (l) => {
+        labels.push(l);
+        return 'code';
+      },
+    );
+    expect(result).toEqual({ ok: true, elevation: 'code' });
+    expect(labels).toEqual([['Fleet control']]);
+  });
+
+  test('turning desktop or capture off turns input off, and input changes only itself', () => {
+    const calls: FleetControl[] = [];
+    const tree = FleetControlFields({ fleet: on, onChange: (next) => calls.push(next) });
+    const boxes: { label: string; onChange: (e: { target: { checked: boolean } }) => void }[] = [];
+    const walk = (node: unknown): void => {
+      if (Array.isArray(node)) {
+        node.forEach(walk);
+        return;
+      }
+      if (typeof node !== 'object' || node === null) return;
+      const el = node as { type?: unknown; props?: Record<string, unknown> };
+      const kids = el.props?.['children'];
+      if (el.type === 'label' && Array.isArray(kids)) {
+        const input = kids.find(
+          (k): k is { props: { onChange: never } } =>
+            typeof k === 'object' && k !== null && (k as { type?: unknown }).type === 'input',
+        );
+        const text = kids.filter((k) => typeof k === 'string').join('');
+        if (input && text) boxes.push({ label: text, onChange: input.props.onChange });
+      }
+      walk(kids);
+    };
+    walk(tree);
+    boxes.find((b) => b.label.startsWith('Desktop:'))?.onChange({ target: { checked: false } });
+    boxes.find((b) => b.label.startsWith('Screenshots:'))?.onChange({ target: { checked: false } });
+    boxes.find((b) => b.label === INPUT)?.onChange({ target: { checked: false } });
+    expect(calls[0]).toMatchObject({ desktop: false, input: false });
+    expect(calls[1]).toMatchObject({ capture: false, recording: false, input: false });
+    expect(calls[2]).toMatchObject({ desktop: true, capture: true, input: false });
   });
 });
