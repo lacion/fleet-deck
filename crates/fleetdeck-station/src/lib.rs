@@ -49,8 +49,14 @@ pub mod link;
 /// The station-local control socket (M2 P2-7).
 pub mod local;
 
+/// The local socket op `station.fingerprint` (R13 P8).
+pub mod local_fingerprint;
+
 /// The local socket op `fleet_summary` (R13 P4).
 pub mod local_summary;
+
+/// The SHA-256 of the running binary (R13 P8).
+pub mod binary_hash;
 
 /// The session manager (PLAN §6.4, M2 P2-6).
 pub mod manager;

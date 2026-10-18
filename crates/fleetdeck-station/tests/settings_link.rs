@@ -185,6 +185,7 @@ impl Rig {
             coordinator: fleetdeck_station::coordinator::LinkForward::default(),
             paste_dir: None,
             summary: std::sync::Arc::default(),
+            ready: std::sync::Arc::default(),
             fleet_git: Arc::new(fleetdeck_station::fleet_git_runtime::FleetGitRuntime::new(
                 Arc::new(fleetdeck_station::workspace::GitOptions::isolated),
             )),

@@ -308,6 +308,8 @@ impl RunningStation {
         .await?;
         let host: Arc<dyn SessionHost> = Arc::new(DirectChildHost::new());
         let adapters = adapters_from_config(config, &host, Some(station_dir.join("raw")))?;
+        // The hash of the running binary for `station fingerprint` (R13 P8).
+        crate::binary_hash::start();
         let socket = local::socket_path(&station_dir);
         let listener = local::bind(&socket).await?;
         // The disk report measures the data directory (DL-193).

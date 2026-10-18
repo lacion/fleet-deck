@@ -16,6 +16,7 @@ mod restart;
 mod service;
 mod settings;
 mod station;
+mod station_fingerprint;
 mod tailnet;
 mod tailnet_join;
 mod up;
@@ -206,6 +207,7 @@ enum Local<'a> {
     Invite(std::net::SocketAddr),
     Join(&'a cli::JoinArgs),
     ForgetDeck,
+    Fingerprint { json: bool, probe_providers: bool },
 }
 
 fn station_local(command: Option<&StationCommand>) -> Option<Local<'_>> {
@@ -220,6 +222,13 @@ fn station_local(command: Option<&StationCommand>) -> Option<Local<'_>> {
         Some(StationCommand::Invite { listen }) => Local::Invite(*listen),
         Some(StationCommand::Join(input)) => Local::Join(input),
         Some(StationCommand::ForgetDeck) => Local::ForgetDeck,
+        Some(StationCommand::Fingerprint {
+            json,
+            probe_providers,
+        }) => Local::Fingerprint {
+            json: *json,
+            probe_providers: *probe_providers,
+        },
     })
 }
 
@@ -240,5 +249,9 @@ async fn local_main(
         Local::Invite(listen) => pairing::invite(dirs, listen).await,
         Local::Join(args) => pairing::join(dirs, env, args).await,
         Local::ForgetDeck => pairing::forget_deck(dirs).await,
+        Local::Fingerprint {
+            json,
+            probe_providers,
+        } => station_fingerprint::run(dirs, json, probe_providers).await,
     }
 }

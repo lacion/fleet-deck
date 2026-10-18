@@ -100,6 +100,14 @@ pub enum LocalRequest {
     /// deck. The station holds the request until `seq` is above `after` or
     /// 25 seconds pass.
     FleetSummary { after: u64 },
+    /// `fleetdeck station fingerprint` (R13 P8): the running identity, the
+    /// paired deck, the link readiness, the build and the binary hash.
+    /// `probe_providers` adds a fresh provider probe.
+    #[serde(rename = "station.fingerprint")]
+    StationFingerprint {
+        #[serde(default)]
+        probe_providers: bool,
+    },
 }
 
 pub use fleetdeck_core::localsock::InvitationText;
@@ -174,6 +182,23 @@ pub enum LocalResponse {
     },
     /// [`LocalRequest::FleetSummary`] when the setting `fleet_summary` is off.
     FleetSummaryOff {},
+    /// The answer to [`LocalRequest::StationFingerprint`]: `fingerprint` and
+    /// `paired_deck` are 64 lowercase hex; `link_up` is the readiness of the
+    /// current connection to `paired_deck`.
+    Fingerprint {
+        features: Vec<String>,
+        fingerprint: String,
+        paired_deck: Option<String>,
+        link_up: bool,
+        build: crate::local_fingerprint::BuildIdentity,
+        binary_sha256: String,
+        providers: Option<Vec<fleetdeck_proto::link::StationProvider>>,
+    },
+    /// A provisioning op that failed, with its stable code (`unavailable`,
+    /// `binary_unreadable`).
+    ProvisionError {
+        code: String,
+    },
     /// The station could not decide the request (bad line, database error).
     Error {
         message: String,
@@ -490,6 +515,9 @@ async fn handle(
         | LocalRequest::SettingsSecret { .. } => return settings(manager, request).await,
         LocalRequest::FleetSummary { after } => {
             return crate::local_summary::fleet_summary(manager, node, after).await;
+        }
+        LocalRequest::StationFingerprint { probe_providers } => {
+            return crate::local_fingerprint::fingerprint(manager, node, probe_providers).await;
         }
         LocalRequest::Drain { timeout_ms } => {
             return match manager

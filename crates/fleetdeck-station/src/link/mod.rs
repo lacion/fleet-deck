@@ -12,6 +12,7 @@
 
 mod intake;
 pub mod peers;
+pub mod ready;
 pub mod runtime;
 pub mod stream;
 
@@ -55,6 +56,8 @@ pub struct StationLink {
     pub fleet_git: Arc<crate::fleet_git_runtime::FleetGitRuntime>,
     /// The last fleet summary of the deck and the live link count (R13 P4).
     pub summary: Arc<crate::fleet_summary::SummaryCell>,
+    /// The connection-local readiness of the live links (R13 P8).
+    pub ready: Arc<ready::LinkReady>,
 }
 
 /// Holds the deck control of a link in the Fleet Git runtime for as long as
@@ -120,6 +123,10 @@ pub async fn serve(ctx: Arc<StationLink>, link: LiveLink) -> Closing {
     // The artifact authorization of a later phase asks the deck over this
     // control (FG-12); it needs `fleet_git.homes.v1`.
     let _summary_up = ctx.summary.link_up();
+    // `station fingerprint` reports `link_up` from this (R13 P8): ready after
+    // the deck acknowledged the first snapshot or an `events.replay` was
+    // accepted on this connection.
+    let ready = ctx.ready.open(peer.fingerprint());
     let _deck = DeckSlot::new(
         &ctx.fleet_git,
         &control,
@@ -145,6 +152,7 @@ pub async fn serve(ctx: Arc<StationLink>, link: LiveLink) -> Closing {
                     &mut stream,
                     data.as_ref(),
                     coordinator,
+                    &ready,
                     req,
                 )
                 .await;
@@ -156,6 +164,7 @@ pub async fn serve(ctx: Arc<StationLink>, link: LiveLink) -> Closing {
                 } => {
                     if ack(&ctx, &control, &peer, &stream, &incarnation, station_seq).await {
                         ctx.coordinator.acknowledged(coordinator, station_seq);
+                        ready.acked(station_seq, stream.first_snapshot());
                     }
                 }
                 // The control channel lets only `ack` reach a station.
@@ -171,6 +180,7 @@ pub async fn serve(ctx: Arc<StationLink>, link: LiveLink) -> Closing {
     control.closed().await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn request(
     ctx: &Arc<StationLink>,
     control: &Control,
@@ -178,6 +188,7 @@ async fn request(
     stream: &mut Stream,
     data: Option<&fleetdeck_link::data::Data>,
     coordinator: u64,
+    ready: &ready::ReadyGuard,
     req: InboundRequest,
 ) {
     match req.method.as_str() {
@@ -212,6 +223,7 @@ async fn request(
                     && store.ack(key_hex(peer), p.after).await.is_ok()
                 {
                     ctx.coordinator.acknowledged(coordinator, p.after);
+                    ready.mark_ready();
                 }
                 stream.restart(
                     Start::Replay {
