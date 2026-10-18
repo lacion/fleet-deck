@@ -1,9 +1,9 @@
 // DL-172: the sections and fields of a settings view. It shows the values it is given; the tab
 // keeps the edits and the state.
-import type { DeckSession, SettingsView } from '../gen';
+import type { DeckSession, MonitorInfo, SettingsView } from '../gen';
 import type { ListWorkspaces } from '../ui/FolderPicker';
 import { Field, FormGrid, Section } from '../ui/page';
-import { FieldEditor, GROUP_KINDS } from './FieldEditor';
+import { FieldEditor, GROUP_KINDS, MONITOR_KEY } from './FieldEditor';
 import { InstancesEditor } from './InstancesEditor';
 import { badgesOf, groupFields, shown, type Values } from './model';
 import { TrackersTable } from './TrackersTable';
@@ -16,6 +16,8 @@ export type FieldsProps = {
   readonly stationId: string | null;
   readonly list?: ListWorkspaces | undefined;
   readonly sessions?: readonly DeckSession[] | undefined;
+  /** The monitors that the station reports; `undefined` when it reports no desktop. */
+  readonly monitors?: readonly MonitorInfo[] | undefined;
   /** The ids of the provider logins that the station file has now. */
   readonly savedIds: readonly string[];
   readonly secretBlocked: string | null;
@@ -42,6 +44,7 @@ export function SettingsFields({
   stationId,
   list,
   sessions,
+  monitors,
   savedIds,
   secretBlocked,
   onSecret,
@@ -58,6 +61,9 @@ export function SettingsFields({
               const hint = (
                 <>
                   {meta.help}
+                  {meta.key === MONITOR_KEY && (monitors === undefined || monitors.length === 0)
+                    ? ' This station reports no monitors, so type the names.'
+                    : null}
                   <Badges items={badgesOf(meta, view.overrides)} />
                 </>
               );
@@ -81,6 +87,7 @@ export function SettingsFields({
                     stationId={stationId}
                     list={list}
                     sessions={sessions}
+                    monitors={monitors}
                     onChange={(next) => onEdit(meta.key, next)}
                   />
                 );
