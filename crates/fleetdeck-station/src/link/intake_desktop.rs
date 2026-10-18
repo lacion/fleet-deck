@@ -11,6 +11,7 @@ use fleetdeck_proto::desktop_authority::split_params;
 use fleetdeck_proto::link::{Outcome, WireError};
 
 use super::StationLink;
+use super::intake_coordinator_desktop::Given;
 use super::ok;
 use crate::desktop::{self, Fail, authority};
 
@@ -19,7 +20,7 @@ fn failed(e: Fail) -> Outcome {
 }
 
 /// The live `allow_desktop` of the station policy.
-fn gate(ctx: &StationLink) -> impl Fn() -> bool + Send + Sync + use<> {
+pub(super) fn gate(ctx: &StationLink) -> impl Fn() -> bool + Send + Sync + use<> {
     let manager = std::sync::Arc::clone(&ctx.manager);
     move || manager.policy().allow_desktop()
 }
@@ -81,15 +82,27 @@ pub(super) async fn act(
     // the `action_id`; the start check runs before the first program.
     let station_node = ctx.node.identity.fingerprint();
     let action_id = given.as_ref().map(|a| a.action_id.clone());
+    let action_hash = given.as_ref().map(|a| a.action_hash.clone());
+    let coordinator = given.as_ref().and_then(|a| a.coordinator.clone());
     let admitted = match authority::admit(control, &station_node, given, &action) {
         Ok(admitted) => admitted,
         Err(e) => return failed(e),
     };
+    // R13 P6: a coordinator authority, or `preview_close` (which only a
+    // coordinator may send), takes the coordinator path.
+    if coordinator.is_some() || matches!(action, DesktopAction::PreviewClose { .. }) {
+        let given = Given {
+            action_id: action_id.unwrap_or_default(),
+            action_hash: action_hash.unwrap_or_default(),
+            coordinator,
+        };
+        return super::intake_coordinator_desktop::act(ctx, control, admitted, action, given).await;
+    }
     // R13 P5a: the screenshot has its own operation; its capture ID is the
     // `action_id` that was just consumed.
     if let DesktopAction::ScreenCapture { monitor } = action {
         let id = action_id.unwrap_or_default();
-        return super::intake_capture::capture(ctx, control, admitted, id, monitor).await;
+        return super::intake_capture::capture(ctx, control, admitted, id, monitor, None).await;
     }
     let allowed = gate(ctx);
     match desktop::service().act(&allowed, action, admitted).await {

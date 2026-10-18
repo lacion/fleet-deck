@@ -9,11 +9,13 @@ use std::time::Duration;
 
 use fleetdeck_core::ChildEnv;
 use fleetdeck_proto::SessionId;
+use fleetdeck_proto::coordinator_desktop_text::{code as p6_code, text as p6_text};
 use fleetdeck_proto::desktop::{DesktopAction, DesktopKind, Urgency};
 use ring::rand::{SecureRandom, SystemRandom};
 use tokio::sync::OwnedMutexGuard;
 
 use super::authority::Start;
+use super::coordinator::{new_window_id, preview_host_ok, preview_owner, refusal};
 use super::detect::Found;
 use super::events::{Events, Kind, Record, preview_name, preview_parent, remove_preview_profile};
 use super::info::{self, RawMonitor};
@@ -116,8 +118,33 @@ impl Cx<'_> {
         Ok(list)
     }
 
-    /// Runs one action; the answer is the window address, when there is one.
-    pub(super) async fn perform(&self, action: DesktopAction) -> Result<Option<String>, Fail> {
+    /// Runs one action; the answer is the window address, when there is one,
+    /// and the preview handle of a coordinator preview (R13 P6 §4.4).
+    pub(super) async fn perform(
+        &self,
+        action: DesktopAction,
+    ) -> Result<(Option<String>, Option<String>), Fail> {
+        match action {
+            DesktopAction::BrowserOpen {
+                url,
+                monitor,
+                session,
+            } if self.start.coordinator().is_some() => {
+                self.preview_open(&url, monitor, session).await
+            }
+            DesktopAction::PreviewClose { window_id } if self.start.coordinator().is_some() => {
+                self.preview_close(&window_id).await.map(|()| (None, None))
+            }
+            other => self
+                .perform_owner(other)
+                .await
+                .map(|address| (address, None)),
+        }
+    }
+
+    /// The actions of the owner and the wake (and the refusals of the
+    /// rest); the answer is the window address, when there is one.
+    async fn perform_owner(&self, action: DesktopAction) -> Result<Option<String>, Fail> {
         match action {
             DesktopAction::ScreenPower { monitor, on } => {
                 if let Some(m) = &monitor {
@@ -231,24 +258,7 @@ impl Cx<'_> {
     }
 
     async fn notify(&self, title: &str, body: &str, urgency: Urgency) -> Result<(), Fail> {
-        let title = args::title(title)?;
-        let body = args::body(body);
-        let urgency = match urgency {
-            Urgency::Low => "--urgency=low",
-            Urgency::Normal => "--urgency=normal",
-            Urgency::Critical => "--urgency=critical",
-        };
-        let args = vec![
-            "--app-name=Fleet Deck".to_owned(),
-            urgency.to_owned(),
-            "--".to_owned(),
-            title,
-            body,
-        ];
-        self.runner()
-            .run_ok("notify-send", &args, CALL_TIMEOUT)
-            .await?;
-        Ok(())
+        send_notify(&self.runner(), title, body, urgency).await
     }
 
     /// The `chromium` command, through `uwsm-app --` when that is present.
@@ -417,6 +427,58 @@ impl Cx<'_> {
             }
         }
         Ok(address)
+    }
+
+    /// `preview_open` of a coordinator (R13 P6 §4.4): the host must be one
+    /// of the allowed hosts; the launch is the fresh-profile launch of the
+    /// owner; the answer is a station-made handle and never the address.
+    async fn preview_open(
+        &self,
+        url: &str,
+        monitor: Option<String>,
+        session: Option<SessionId>,
+    ) -> Result<(Option<String>, Option<String>), Fail> {
+        let (Some(ctx), Some(extras)) = (self.start.coordinator(), self.start.link_extras()) else {
+            return Err(refusal());
+        };
+        let valid = args::url(url)?;
+        if !preview_host_ok(valid, extras.tailnet_host.as_deref()) {
+            return Err(Fail::new(code::INVALID_PARAMS, "`url` is not valid"));
+        }
+        let address = self.browser(url, monitor, session).await?;
+        let window_id = new_window_id()?;
+        self.events
+            .register_preview(&window_id, preview_owner(&extras.deck_fp, ctx), &address)?;
+        Ok((None, Some(window_id)))
+    }
+
+    /// `preview_close` of a coordinator (R13 P6 §4.5): the handle must name
+    /// a preview of the same deck, grant, caller station and caller session.
+    async fn preview_close(&self, window_id: &str) -> Result<(), Fail> {
+        let (Some(ctx), Some(extras)) = (self.start.coordinator(), self.start.link_extras()) else {
+            return Err(refusal());
+        };
+        let owner = preview_owner(&extras.deck_fp, ctx);
+        let not_found = || {
+            Fail::new(
+                p6_code::DESKTOP_WINDOW_NOT_FOUND,
+                p6_text(p6_code::DESKTOP_WINDOW_NOT_FOUND).unwrap_or_default(),
+            )
+        };
+        let (found_owner, record) = self.events.preview(window_id).ok_or_else(not_found)?;
+        if found_owner != owner {
+            return Err(not_found());
+        }
+        // The remote check, then the record is read again: it must be the
+        // same one. The identity check of `close_window` follows.
+        self.start.begin(self.env).await?;
+        match self.events.preview(window_id) {
+            Some((o, r)) if o == owner && r == record => {}
+            _ => return Err(not_found()),
+        }
+        self.close_window(&record).await?;
+        self.events.wait_gone(&record.address, CLOSE_WAIT).await;
+        Ok(())
     }
 
     /// `$XDG_DATA_HOME` or `~/.local/share`, then `fleetdeck`.
@@ -630,6 +692,32 @@ impl Cx<'_> {
         self.dispatch(&["closewindow", &format!("address:{}", record.address)])
             .await
     }
+}
+
+/// `notify-send` with the fixed argv: the app name, the urgency, `--` and the
+/// checked title and body. The runner decides what runs before the program.
+pub(super) async fn send_notify(
+    runner: &Runner<'_>,
+    title: &str,
+    body: &str,
+    urgency: Urgency,
+) -> Result<(), Fail> {
+    let title = args::title(title)?;
+    let body = args::body(body);
+    let urgency = match urgency {
+        Urgency::Low => "--urgency=low",
+        Urgency::Normal => "--urgency=normal",
+        Urgency::Critical => "--urgency=critical",
+    };
+    let args = vec![
+        "--app-name=Fleet Deck".to_owned(),
+        urgency.to_owned(),
+        "--".to_owned(),
+        title,
+        body,
+    ];
+    runner.run_ok("notify-send", &args, CALL_TIMEOUT).await?;
+    Ok(())
 }
 
 fn not_plain() -> Fail {

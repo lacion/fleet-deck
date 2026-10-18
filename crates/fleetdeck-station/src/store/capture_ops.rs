@@ -15,8 +15,11 @@
 
 use std::path::PathBuf;
 
-use fleetdeck_proto::artifacts::{AUTHOR_OWNER, Artifact, ArtifactKind, ArtifactVersion};
-use fleetdeck_proto::capture::CaptureProvenance;
+use fleetdeck_proto::artifacts::{
+    AUTHOR_OWNER, Artifact, ArtifactKind, ArtifactVersion, MAX_AUTHOR_CHARS,
+};
+use fleetdeck_proto::capture::{CaptureCaller, CaptureProvenance};
+use fleetdeck_proto::coordinator_desktop_wire::CoordinatorContext;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::artifact_deletions::tombstoned;
@@ -212,9 +215,39 @@ impl Store {
         artifact_id: &str,
         now: i64,
     ) -> Result<Begin> {
+        self.capture_begin_with(
+            deck_fp,
+            capture_id,
+            action_hash,
+            monitor,
+            artifact_id,
+            None,
+            now,
+        )
+        .await
+    }
+
+    /// [`Store::capture_begin`] for an owner capture (`coordinator` is
+    /// `None`) or a coordinator capture (R13 P6 §4.7): the new row keeps the
+    /// JSON of the coordinator context, which holds the binding generation.
+    ///
+    /// # Errors
+    /// A database error.
+    #[allow(clippy::too_many_arguments, reason = "one row of one operation")]
+    pub async fn capture_begin_with(
+        &self,
+        deck_fp: &str,
+        capture_id: &str,
+        action_hash: &str,
+        monitor: &str,
+        artifact_id: &str,
+        coordinator: Option<&CoordinatorContext>,
+        now: i64,
+    ) -> Result<Begin> {
         let (deck_fp, capture_id) = (deck_fp.to_owned(), capture_id.to_owned());
         let (action_hash, monitor) = (action_hash.to_owned(), monitor.to_owned());
         let artifact_id = artifact_id.to_owned();
+        let coordinator = coordinator.map(serde_json::to_string).transpose()?;
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             if let Some(row) = read_op(&tx, &deck_fp, &capture_id)? {
@@ -243,8 +276,8 @@ impl Store {
             tx.execute(
                 "INSERT INTO capture_ops
                      (deck_fp, capture_id, action_hash, state, monitor, artifact_id,
-                      reserved_bytes, started_at, updated_at)
-                 VALUES (?1, ?2, ?3, 'running', ?4, ?5, ?6, ?7, ?7)",
+                      reserved_bytes, started_at, updated_at, coordinator)
+                 VALUES (?1, ?2, ?3, 'running', ?4, ?5, ?6, ?7, ?7, ?8)",
                 params![
                     deck_fp,
                     capture_id,
@@ -252,7 +285,8 @@ impl Store {
                     monitor,
                     artifact_id,
                     to_i64(MAX_PNG_BYTES)?,
-                    now
+                    now,
+                    coordinator
                 ],
             )?;
             tx.commit()?;
@@ -421,6 +455,30 @@ impl Store {
     }
 }
 
+/// The artifact author of a capture, from its provenance: `owner` for an
+/// owner capture; `coordinator:<first 16 characters of the caller
+/// station>/<caller session>` for a coordinator capture, cut to
+/// [`MAX_AUTHOR_CHARS`] characters (R13 P6 §4.7, decision O12-8).
+fn author_of(provenance: &CaptureProvenance) -> Result<String> {
+    match provenance.caller {
+        CaptureCaller::Owner => Ok(AUTHOR_OWNER.to_owned()),
+        CaptureCaller::Coordinator => {
+            let (Some(station), Some(session)) =
+                (&provenance.caller_station, &provenance.caller_session)
+            else {
+                return Err(StoreError::Corrupt(
+                    "a coordinator capture has no caller".to_owned(),
+                ));
+            };
+            let station: String = station.chars().take(16).collect();
+            Ok(format!("coordinator:{station}/{session}")
+                .chars()
+                .take(MAX_AUTHOR_CHARS)
+                .collect())
+        }
+    }
+}
+
 /// The commit transaction. The inner result carries the domain errors; the
 /// outer one is for the database.
 fn commit(
@@ -447,11 +505,12 @@ fn commit(
     let files = vec![CAPTURE_FILE.to_owned()];
     let provenance = serde_json::to_string(&new.provenance).map_err(StoreError::from)?;
     let kind = ArtifactKind::Image;
+    let author = author_of(&new.provenance)?;
     tx.execute(
         "INSERT INTO artifacts (artifact_id, session_id, title, kind, latest_version,
              author, created_at, updated_at)
          VALUES (?1, NULL, ?2, ?3, 1, ?4, ?5, ?5)",
-        params![new.artifact_id, new.title, kind.as_str(), AUTHOR_OWNER, now],
+        params![new.artifact_id, new.title, kind.as_str(), author, now],
     )
     .map_err(StoreError::from)?;
     // The version row refers to the artifact row, so it comes second.
@@ -492,7 +551,7 @@ fn commit(
             latest_version: 1,
             created_at: now,
             updated_at: now,
-            author: AUTHOR_OWNER.to_owned(),
+            author,
         },
         version: ArtifactVersion {
             artifact_id: new.artifact_id.clone(),

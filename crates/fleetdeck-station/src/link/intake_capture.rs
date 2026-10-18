@@ -7,9 +7,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fleetdeck_link::control::Control;
-use fleetdeck_link::desktop_authority::action_hash;
+use fleetdeck_link::desktop_authority::action_hash_for;
 use fleetdeck_proto::artifacts::ArtifactPublished;
 use fleetdeck_proto::capture::{CaptureStatus, CaptureStatusQuery, code, text, valid_capture_id};
+use fleetdeck_proto::coordinator_desktop_wire::CoordinatorContext;
 use fleetdeck_proto::desktop::DesktopAction;
 use fleetdeck_proto::link::{Outcome, WireError};
 
@@ -26,7 +27,7 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(5);
 /// The text of `failed` when the status lookup passes its deadline.
 const STATUS_TIMED_OUT: &str = "The screenshot status did not finish in time.";
 /// The text of `unsupported` for a station without an artifact directory.
-const NO_ARTIFACTS: &str = "this station has no artifact directory";
+pub(super) const NO_ARTIFACTS: &str = "this station has no artifact directory";
 
 fn failed(e: Fail) -> Outcome {
     Outcome::Err(WireError::new(e.code, e.message))
@@ -39,13 +40,15 @@ fn service(ctx: &StationLink) -> Result<&ArtifactService, Fail> {
 }
 
 /// `desktop.act` with `screen_capture`: `capture_id` is the `action_id` that
-/// `authority::admit` consumed.
+/// `authority::admit` consumed. `coordinator` is the context of a coordinator
+/// capture (R13 P6); the action hash covers it.
 pub(super) async fn capture(
     ctx: &StationLink,
     control: &Control,
     admitted: authority::Admitted,
     capture_id: String,
     monitor: String,
+    coordinator: Option<CoordinatorContext>,
 ) -> Outcome {
     if !valid_capture_id(&capture_id) {
         return failed(Fail::new(
@@ -88,7 +91,7 @@ pub(super) async fn capture(
         admitted,
         deck_fp: control.params().peer.to_string(),
         capture_id,
-        action_hash: action_hash(&action, &station_node),
+        action_hash: action_hash_for(&action, &station_node, coordinator.as_ref()),
         monitor,
         station_id: name.clone(),
         station_name: name,
@@ -108,7 +111,7 @@ pub(super) async fn capture(
 }
 
 /// The `CaptureStatus` of a lookup (design §2.4).
-fn status_of(capture_id: &str, lookup: Lookup) -> CaptureStatus {
+pub(super) fn status_of(capture_id: &str, lookup: Lookup) -> CaptureStatus {
     let capture_id = capture_id.to_owned();
     match lookup {
         Lookup::Unknown => CaptureStatus::Unknown { capture_id },

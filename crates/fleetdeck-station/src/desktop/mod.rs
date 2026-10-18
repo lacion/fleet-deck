@@ -10,6 +10,8 @@
 //! - [`info`]: `DesktopInfo`.
 //! - [`events`]: the window records from the Hyprland event socket.
 //! - [`authority`]: the dispatch authority of `desktop.act`.
+//! - [`coordinator`]: the remote dispatch check and the checks of a
+//!   coordinator desktop action (R13 P6).
 //! - [`deadline`]: the total deadlines.
 //! - [`quiet`]: the local UTC offset and the quiet hours.
 //!
@@ -21,6 +23,7 @@ pub mod args;
 pub mod authority;
 #[doc(hidden)]
 pub mod capture;
+pub mod coordinator;
 pub mod deadline;
 pub mod detect;
 pub mod env;
@@ -47,6 +50,10 @@ pub mod code {
     pub const NOT_FOUND: &str = "not_found";
     pub const CONFLICT: &str = "conflict";
     pub const FAILED: &str = "failed";
+    /// R13 P6: the deck withdrew the authority (O12-4 item 9).
+    pub const AUTHORITY_LOST: &str = "authority_lost";
+    /// R13 P6: the deck could not confirm the authority (O12-4 item 9).
+    pub const AUTHORITY_UNKNOWN: &str = "authority_unknown";
 }
 
 /// A refused or failed desktop call: a wire error code and a message that
@@ -268,11 +275,11 @@ impl Desktop {
             gate,
             start: &start,
         };
-        let address = cx.perform(action).await?;
+        let (address, window_id) = cx.perform(action).await?;
         let info = self.fresh_info(&ctx, gate, true).await?;
         Ok(DesktopActResult {
             address,
-            window_id: None,
+            window_id,
             info,
             capture: None,
             info_fresh: None,
@@ -299,11 +306,15 @@ pub fn install(desktop: Arc<Desktop>) {
 #[cfg(test)]
 mod authority_tests;
 #[cfg(test)]
+mod coordinator_tests;
+#[cfg(test)]
 mod detect_tests;
 #[cfg(test)]
 mod dispatch_tests;
 #[cfg(test)]
-mod fake;
+pub(crate) mod fake;
+#[cfg(test)]
+mod preview_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

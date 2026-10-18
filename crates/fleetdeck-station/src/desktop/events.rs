@@ -46,6 +46,20 @@ pub struct Record {
     pub launch_id: String,
 }
 
+/// Who opened a coordinator preview (R13 P6 §4.5). A renewal of a grant
+/// keeps the grant id; a new grant does not match.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewOwner {
+    pub deck_fp: String,
+    pub grant_id: String,
+    pub caller_station: String,
+    pub caller_session: String,
+}
+
+/// The most preview records that the station keeps; the 257th registration
+/// removes the oldest.
+pub const MAX_PREVIEWS: usize = 256;
+
 /// One event of the socket that the station uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
@@ -131,11 +145,23 @@ struct Pending {
     tx: oneshot::Sender<String>,
 }
 
+/// A coordinator preview: its owner and the window record at registration.
+struct PreviewEntry {
+    /// The order of registration (the oldest has the smallest).
+    seq: u64,
+    owner: PreviewOwner,
+    record: Record,
+}
+
 #[derive(Default)]
 struct State {
     signature: Option<String>,
     runtime_dir: Option<PathBuf>,
     records: HashMap<String, Record>,
+    /// The coordinator previews by window id. They live and end with the
+    /// window records: every place that clears the records clears them.
+    previews: HashMap<String, PreviewEntry>,
+    preview_seq: u64,
     /// Launches that wait for their window, by class.
     pending: HashMap<String, Pending>,
     task: Option<tokio::task::JoinHandle<()>>,
@@ -192,6 +218,7 @@ impl Events {
             task.abort();
         }
         st.records.clear();
+        st.previews.clear();
         st.signature = Some(signature.to_owned());
         st.runtime_dir = Some(runtime_dir.to_owned());
         self.inner.connected.send_replace(false);
@@ -257,6 +284,49 @@ impl Events {
         self.inner.lock().records.get(address).cloned()
     }
 
+    /// Registers the preview `window_id` for the window at `address`: a
+    /// copy of the record of that window and its owner. At most
+    /// [`MAX_PREVIEWS`] previews are kept; the oldest goes first.
+    ///
+    /// # Errors
+    /// `not_found` when no window record exists for `address`.
+    pub fn register_preview(
+        &self,
+        window_id: &str,
+        owner: PreviewOwner,
+        address: &str,
+    ) -> Result<(), Fail> {
+        let mut st = self.inner.lock();
+        let Some(record) = st.records.get(address).cloned() else {
+            return Err(Fail::new(code::NOT_FOUND, "The window is gone."));
+        };
+        if st.previews.len() >= MAX_PREVIEWS && !st.previews.contains_key(window_id) {
+            let oldest = st
+                .previews
+                .iter()
+                .min_by_key(|(_, p)| p.seq)
+                .map(|(id, _)| id.clone());
+            if let Some(id) = oldest {
+                st.previews.remove(&id);
+            }
+        }
+        st.preview_seq += 1;
+        let seq = st.preview_seq;
+        st.previews
+            .insert(window_id.to_owned(), PreviewEntry { seq, owner, record });
+        Ok(())
+    }
+
+    /// The owner and the window record of the preview `window_id`.
+    #[must_use]
+    pub fn preview(&self, window_id: &str) -> Option<(PreviewOwner, Record)> {
+        self.inner
+            .lock()
+            .previews
+            .get(window_id)
+            .map(|p| (p.owner.clone(), p.record.clone()))
+    }
+
     /// The wall record of `display_id`.
     #[must_use]
     pub fn wall(&self, display_id: &str) -> Option<Record> {
@@ -311,6 +381,7 @@ impl Inner {
     fn forget(&self, address: &str) {
         let (record, runtime_dir) = {
             let mut st = self.lock();
+            st.previews.retain(|_, p| p.record.address != address);
             (st.records.remove(address), st.runtime_dir.clone())
         };
         if let (Some(record), Some(runtime_dir)) = (record, runtime_dir)
@@ -339,7 +410,9 @@ impl Inner {
     }
 
     fn clear(&self) {
-        self.lock().records.clear();
+        let mut st = self.lock();
+        st.records.clear();
+        st.previews.clear();
     }
 }
 

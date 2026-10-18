@@ -13,6 +13,7 @@
 use std::time::Duration;
 
 mod budget;
+mod coordinator;
 mod op;
 mod png;
 mod run;
@@ -22,6 +23,7 @@ pub use op::{ADMISSION, Allowed, Params, Request};
 pub use run::{Launch, capture_png};
 
 pub(crate) use budget::{CaptureSlot, check_monitor, room};
+pub(crate) use coordinator::capture_gate;
 #[cfg(test)]
 pub(crate) use png::PngInfo;
 pub(crate) use png::check_png;
@@ -46,6 +48,8 @@ pub const GRIM_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[cfg(test)]
 mod budget_tests;
+#[cfg(test)]
+mod coordinator_tests;
 #[cfg(test)]
 mod op_tests;
 #[cfg(test)]
