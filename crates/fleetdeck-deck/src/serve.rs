@@ -476,6 +476,10 @@ impl RunningDeck {
         if let Err(e) = store.captures_prepared_to_unknown().await {
             tracing::warn!(error = %e, "the unsent screenshot rows could not be closed");
         }
+        // A desktop operation that a crash left unfinished is closed (P6 §7.2).
+        if let Err(e) = store.desktop_ops_recover(store.now_ms()).await {
+            tracing::warn!(error = %e, "the unfinished desktop operations could not be closed");
+        }
         let desktop_captures =
             crate::desktop_capture::spawn(store.clone(), Arc::clone(node.link()), rx.clone());
         let scheduler = crate::scheduler::spawn(store.clone(), Arc::clone(node.link()), rx);
