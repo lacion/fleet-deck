@@ -3309,3 +3309,38 @@ Owner review: pending.
   1. The owner accepts the trust boundary of `docs/v2/design/omarchy-p8.md` §5.2 (P8-17): P8 protects against a tampered medium or package, not against code that already runs as the owner's user. The peer check of the station socket stays as defense in depth.
   2. The owner accepts `1f84d4df` without a further review.
 - Consequence: P8 is accepted. Its production acceptance still waits for the owner's release task (the pinned package and its SHA-256, the trusted release file, the installer image step).
+
+## DL-237: R13 P6 built (coordinator desktop tools and screenshots) (architect, 2026-10-20)
+
+- Context: the adversary DESIGN REVIEW of `docs/v2/design/omarchy-p6.md` ended with a PASS in round 3 (O12-3). P6 gives a coordinator session nine MCP tools for the desktop of a grant station: information, notifications, previews, caller-owned window closing, wall directives, monitor screenshots and a bounded screenshot image read. A grant gets the classes `desktop` and `capture`, with the limits `desktop_cap`, `capture_cap` and `image_byte_cap`. The owner rule is remote first, so the board creates the grant, changes its limits and shows its operations.
+- What was built, in these tasks. Each merge is on v2:
+  - Task F0, `19ccd543`: pure pre-splits of seven large modules. No behavior change.
+  - Task F1, `1c2d9c76`: the foundation. The wire types, the features `desktop_mcp.v1` and `capture_mcp.v1`, the link methods `coordinator.desktop_call`, `coordinator.desktop_query`, `desktop.authority_check`, `desktop.policy_now` and `desktop.coordinator_read`, the grant classes and limits, the migrations, the coordinator action hash and the stubs.
+  - Task T4, `a814819c`: the caller station. The tool catalog, the argument checks, the forwarder and the MCP results.
+  - Task T1a, `25d41ef5`: the deck store. The operation ledger, the admission, the budgets, the rates and the recovery.
+  - Task T2, `d07230f3`: the target station. The coordinator authority, the dispatch check, the durable claims, the previews, the screenshot and the protected reads.
+  - Task T1b, `14a37451`: the deck handlers. The authorization, the live policies, `notify`, `preview_open`, `window_close`, `desktop_info`, the status tools, the authority check, the protected reads and the routes `POST /api/coordinator/grants/{id}/caps` and `GET /api/coordinator/grants/{id}/desktop-ops`.
+  - Task T6, `9a6bae24`: the board. The switches "Desktop: …" and "Screenshots: …", the limits, the disclosures, "Grant stations", the usage text of a grant, "Change limits" and "Desktop operations".
+  - Task T3, `a59b2266`: the deck screenshots. The call, the coordinator provenance, the recovery, `capture_status` and `read_capture_image`.
+  - Task T5, `54c71626`: `wall_show`, with live delivery authorization.
+  - Task T7b (this change): the documents. This entry, the status lines, `operations.md` section 7.6, the rows of `PARITY.md` and `SECURITY-CHECKLIST.md`, and the P6 part of `LIVE-SMOKE.md`.
+  - Task T7a (end-to-end proofs) runs in parallel and is not part of this entry.
+- Decisions. Each line is one record. The full text is in `omarchy-r12-decisions.md` of the architect's brief folder (`~/fleetdeck-briefs`):
+  - O12-1: the advisor answer is the P6 proposal (option A). The owner decisions OD-1 to OD-7 are accepted as recommended: coordinators only, the grant's target stations, the fleet-control kill switches, no `terminal_open`, pixels from the selected grant station, the §8 budgets, own-task wall references.
+  - O12-2: DESIGN REVIEW round 1 fixes. The MCP image limit is 716,800 bytes (one artifact chunk). A new `PreviewClose { window_id }` action. A hash for a protected read. No PID. Three MCP protocol versions are tested.
+  - O12-3: DESIGN REVIEW round 2 fix. `desktop.authority_check` carries the read object, and the deck checks it against the permit before it consumes the permit.
+  - O12-4: the open details of the code map: the default station, `caller_label`, the host list of `preview_open` at the target, the link ID of the read hash, one operation ID for the whole flow, status structs, the cap increase route, the feature check at creation and the cap fields that the deck removes before a start command.
+  - O12-5: the F1 worker answers (test counts, reused types, name tables, fixed cap texts, the target-feature check skips the caller's own station).
+  - O12-6: the P5b recordings contract (not part of P6).
+  - O12-7: P5b DESIGN REVIEW round 1 fixes (not part of P6).
+  - O12-8: the T2 worker answers. The coordinator capture author is `coordinator:<first 16 characters of the caller station>/<caller session>`. A claim with another hash or kind is `Seen`. The tailnet name comes from the Tailscale status.
+  - O12-9: the T1b worker answers (the caller grant lookup with idle expiry, bounded waits, one shared pool of 64 calls and permits, the audit encoding, a Down caller link is `desktop_unsupported`).
+  - O12-10: the P5b build decisions (not part of P6).
+  - O12-11: the T2 corrections. The screenshot import check skips the start deadlines. A coordinator preview checks again right before the browser spawn. Open item: no test of `LinkCheck` over a real control connection (timeout and wire error).
+  - O12-12: the T5 answers. The live delivery path checks the deck switches in both local passes, and an off switch gives `mission` for that response. Open item: a byte-serving test of a valid coordinator artifact directive.
+- Open items:
+  - a. The PRE-PR review of P6 is pending.
+  - b. The live smoke on the owner's Omarchy machines and the opt-in Claude and Codex smoke (`omarchy-p6.md` §15 test 38) are not done. The list is in `docs/v2/LIVE-SMOKE.md` (`make desktop-smoke`).
+  - c. The owner may change OD-1 to OD-7 (`omarchy-p6.md` §1).
+  - d. The end-to-end proofs (task T7a) are in progress when this entry is written. They include the two open items of O12-11 and O12-12.
+- Next: the PRE-PR review of P6; the owner reads the new rows of `SECURITY-CHECKLIST.md` (DL-158); the live smoke on the Omarchy machines.
