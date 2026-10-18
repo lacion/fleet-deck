@@ -666,3 +666,7 @@ pub const BOTH: [GrantClass; 2] = [GrantClass::Desktop, GrantClass::Capture];
 pub fn stations(more: &[&str]) -> BTreeSet<StationId> {
     more.iter().map(|s| StationId::from(*s)).collect()
 }
+
+mod capture;
+#[allow(unused_imports)]
+pub use capture::*;

@@ -2,16 +2,18 @@
 //! `desktop_mcp.v1`; `docs/v2/design/omarchy-p6.md` §5, §6; decisions
 //! O12-4, O12-9).
 //!
-//! - [`desktop_call`] serves `notify`, `preview_open` and `window_close`
-//!   ([`calls`]); [`desktop_query`] serves `desktop_info` and
-//!   `desktop_action_status` ([`queries`]); [`authority_check`] answers the
-//!   dispatch authority check of the target station ([`check`]).
+//! - [`desktop_call`] serves `notify`, `preview_open`, `window_close` and
+//!   `screenshot` ([`calls`], [`capture`]); [`desktop_query`] serves
+//!   `desktop_info` and `desktop_action_status` ([`queries`]),
+//!   `capture_status` ([`capture_status`]) and `read_capture_image`
+//!   ([`image`]); [`authority_check`] answers the dispatch authority check of
+//!   the target station ([`check`]).
 //! - [`envelope`] is step 1, [`authorize`] steps 2 to 6, [`policy`] the live
 //!   policy round trips, [`relay`] the one send of a mutation, [`permits`] and
 //!   [`reads`] the protected read, [`audit`] the audit rows and [`limits`] the
 //!   in-flight slots.
-//! - `wall_show`, `screenshot`, `capture_status` and `read_capture_image` keep
-//!   answering `desktop_unsupported` until their own tasks (T3, T5).
+//! - `wall_show` keeps answering `desktop_unsupported` until its own task
+//!   (T5).
 //!
 //! Every handler answers `Outcome::Ok(DesktopReply)`. A malformed envelope, a
 //! frame command ID that differs from the envelope's, and an unknown method
@@ -20,8 +22,11 @@
 mod audit;
 mod authorize;
 mod calls;
+mod capture;
+mod capture_status;
 mod check;
 mod envelope;
+mod image;
 mod limits;
 mod permits;
 mod policy;
@@ -144,6 +149,17 @@ pub(super) fn reply_err(error: &str, operation_id: Option<&str>) -> Outcome {
     })
 }
 
+/// The reply of a refusal or a failure of a screenshot: the code, a fixed
+/// text (a capture code keeps its own text, §11.3) and the capture ID.
+pub(super) fn reply_err_capture(error: &str, message: &str, capture_id: &str) -> Outcome {
+    reply(&DesktopReply::Err {
+        error: error.to_owned(),
+        message: message.to_owned(),
+        operation_id: None,
+        capture_id: Some(capture_id.to_owned()),
+    })
+}
+
 fn reply(body: &DesktopReply) -> Outcome {
     match serde_json::to_value(body) {
         Ok(v) => Outcome::Ok(v),
@@ -206,12 +222,6 @@ pub(crate) async fn desktop_query(
         Ok(env) => env,
         Err(stop) => return stopped(stop),
     };
-    if matches!(
-        env.query,
-        DesktopQuery::CaptureStatus(_) | DesktopQuery::ReadCaptureImage(_)
-    ) {
-        return unsupported();
-    }
     if let Err(stop) = envelope::check_query(&env, ctx.store.now_ms(), ctx.store.incarnation()) {
         return stopped(stop);
     }
@@ -225,7 +235,12 @@ pub(crate) async fn desktop_query(
     match query {
         DesktopQuery::DesktopInfo(args) => queries::info(ctx, &station, who, args, started).await,
         DesktopQuery::DesktopActionStatus(args) => queries::status(ctx, &station, who, args).await,
-        DesktopQuery::CaptureStatus(_) | DesktopQuery::ReadCaptureImage(_) => unsupported(),
+        DesktopQuery::CaptureStatus(args) => {
+            capture_status::status(ctx, &station, who, args, started).await
+        }
+        DesktopQuery::ReadCaptureImage(args) => {
+            image::read(ctx, &station, who, args, started).await
+        }
     }
 }
 

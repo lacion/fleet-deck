@@ -10,10 +10,10 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use super::errors::KNOWN;
-use super::{RECOVERY_TICK, STATUS_WAIT, ask_status, provenance_of};
+use super::{RECOVERY_TICK, STATUS_WAIT, ask_status, audit_indexing_failed, provenance_of};
 use crate::desktop_relay::RelayCtx;
 use crate::link::DeckLink;
-use crate::store::desktop_captures::{CaptureRow, UNKNOWN_AFTER_MS};
+use crate::store::desktop_captures::{CaptureRow, CaptureState, UNKNOWN_AFTER_MS};
 use crate::store::{DeckError, DeckStore};
 
 /// Applies a station status to a row (§6.3, decision 8). A committed result
@@ -30,7 +30,33 @@ pub async fn reconcile(
     let station = row.station_id.clone();
     match status {
         CaptureStatus::Committed { published, .. } => {
-            let provenance = provenance_of(&station, &row.capture_id, &row.monitor, &published);
+            // The provenance comes from the row: a row with a `coordinator`
+            // value is never indexed as an owner capture (R13 P6 §4.7).
+            let Ok(provenance) = provenance_of(
+                row.coordinator.as_deref(),
+                &station,
+                &row.capture_id,
+                &row.monitor,
+                &published,
+            ) else {
+                // The artifact is never indexed. The row stays `committed`
+                // and unindexed for the owner (the same row as any indexing
+                // failure); the audit row is written once, when the row
+                // first moves there.
+                if row.state != CaptureState::Committed {
+                    audit_indexing_failed(
+                        store,
+                        &station,
+                        &row.capture_id,
+                        row.coordinator.as_deref(),
+                    )
+                    .await;
+                }
+                store
+                    .capture_keep_published(station, row.capture_id.clone(), published)
+                    .await?;
+                return Ok(());
+            };
             store
                 .complete_capture(station, row.capture_id.clone(), published, provenance)
                 .await?;

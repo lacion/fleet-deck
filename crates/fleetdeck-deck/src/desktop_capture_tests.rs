@@ -195,6 +195,7 @@ fn row(state: CaptureState, indexed: bool, deleted: bool) -> CaptureRow {
         created_at: 1,
         updated_at: 1,
         deleted,
+        coordinator: None,
     }
 }
 

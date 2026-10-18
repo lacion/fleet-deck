@@ -159,7 +159,9 @@ fn a_close_names_the_window_handle_and_nothing_else() {
 
 #[test]
 fn the_tools_of_other_tasks_are_not_served() {
-    use fleetdeck_proto::coordinator_desktop::ScreenshotArguments;
+    use fleetdeck_proto::coordinator_desktop::{
+        ScreenshotArguments, WallContent, WallShowArguments,
+    };
     assert!(served(&notify("t", "", CoordUrgency::Normal)));
     assert!(served(&preview("http://localhost", None)));
     assert!(served(&close("w")));
@@ -168,7 +170,43 @@ fn the_tools_of_other_tasks_are_not_served() {
         station: None,
         monitor: "DP-1".into(),
     });
-    assert!(!served(&shot));
+    assert!(served(&shot));
+    let wall = DesktopCall::WallShow(WallShowArguments {
+        request_id: "r".into(),
+        station: None,
+        display_id: "d".into(),
+        content: WallContent::Session {
+            session: fleetdeck_proto::display_directive::SessionRef {
+                station_id: StationId::from("s"),
+                session_id: "x".into(),
+            },
+        },
+        pin: false,
+    });
+    assert!(!served(&wall));
+}
+
+#[test]
+fn a_screenshot_is_the_screen_capture_of_one_monitor_and_names_only_the_monitor() {
+    use fleetdeck_proto::coordinator_desktop::ScreenshotArguments;
+    let shot = DesktopCall::Screenshot(ScreenshotArguments {
+        request_id: "r4".into(),
+        station: None,
+        monitor: "DP-1".into(),
+    });
+    let b = built(&shot);
+    assert_eq!(
+        b.action,
+        DesktopAction::ScreenCapture {
+            monitor: "DP-1".into()
+        }
+    );
+    assert_eq!(b.op_tool, OpTool::Screenshot);
+    assert_eq!(b.resource, json!({"monitor": "DP-1"}));
+    assert_eq!(b.monitor.as_deref(), Some("DP-1"));
+    assert_eq!(shape(&shot), Some((Tool::Screenshot, None)));
+    assert_eq!(handler_ms(Tool::Screenshot), 40_000);
+    assert_eq!(action_name(Tool::Screenshot), "desktop.capture");
 }
 
 #[test]

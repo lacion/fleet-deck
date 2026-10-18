@@ -1,5 +1,6 @@
-//! The mutating tools `notify`, `preview_open` and `window_close` (R13 P6
-//! §4.3 to §4.5, §6.2, §7, decision O12-9 items 3 to 8). One call: authorize,
+//! The mutating tools `notify`, `preview_open`, `window_close` and
+//! `screenshot` (R13 P6 §4.3 to §4.6, §6.2, §7, decision O12-9 items 3 to 8;
+//! the screenshot send is in [`super::capture`]). One call: authorize,
 //! build the typed action, the caller and target policies, the one admission
 //! transaction, the audit row of the attempt, the send ([`super::relay`]), the
 //! audit row of the outcome, the reply.
@@ -22,6 +23,7 @@ use super::authorize::{Authorized, Tool, authorize, store_error, switches};
 use super::policy::{caller_policy, target_policy};
 use super::queries::status_of;
 use super::relay::{self, Ran};
+use super::{capture, capture_status};
 use super::{reply_err, reply_ok};
 use crate::link::DeckLink;
 use crate::store::AuditResult;
@@ -67,7 +69,8 @@ fn shape(call: &DesktopCall) -> Option<(Tool, Option<&str>)> {
         DesktopCall::Notify(a) => Some((Tool::Notify, a.station.as_deref())),
         DesktopCall::PreviewOpen(a) => Some((Tool::PreviewOpen, a.station.as_deref())),
         DesktopCall::WindowClose(a) => Some((Tool::WindowClose, a.station.as_deref())),
-        DesktopCall::WallShow(_) | DesktopCall::Screenshot(_) => None,
+        DesktopCall::Screenshot(a) => Some((Tool::Screenshot, a.station.as_deref())),
+        DesktopCall::WallShow(_) => None,
     }
 }
 
@@ -137,7 +140,18 @@ fn build(
             window_id: Some(a.window_id.clone()),
             monitor: None,
         }),
-        DesktopCall::WallShow(_) | DesktopCall::Screenshot(_) => Err(code::DESKTOP_UNSUPPORTED),
+        DesktopCall::Screenshot(a) => Ok(Built {
+            op_tool: OpTool::Screenshot,
+            action: DesktopAction::ScreenCapture {
+                monitor: a.monitor.clone(),
+            },
+            request_id: a.request_id.clone(),
+            args: serde_json::to_value(a).map_err(invalid)?,
+            resource: json!({ "monitor": a.monitor }),
+            window_id: None,
+            monitor: Some(a.monitor.clone()),
+        }),
+        DesktopCall::WallShow(_) => Err(code::DESKTOP_UNSUPPORTED),
     }
 }
 
@@ -157,6 +171,7 @@ fn action_name(tool: Tool) -> &'static str {
     match tool {
         Tool::Notify => "desktop.notify",
         Tool::PreviewOpen => "desktop.preview_open",
+        Tool::Screenshot => audit::CAPTURE,
         _ => "desktop.window_close",
     }
 }
@@ -208,14 +223,12 @@ impl Call<'_> {
             deadline,
         )
         .await?;
-        target_policy(
-            self.link,
-            self.auth.route(),
-            PolicyPurpose::Desktop,
-            None,
-            deadline,
-        )
-        .await
+        // Only a screenshot asks for the capture purpose and a monitor.
+        let (purpose, monitor) = match (self.tool, self.built) {
+            (Tool::Screenshot, Some(built)) => (PolicyPurpose::Capture, built.monitor.as_deref()),
+            _ => (PolicyPurpose::Desktop, None),
+        };
+        target_policy(self.link, self.auth.route(), purpose, monitor, deadline).await
     }
 
     /// Admits the call: the deck switches, then the one admission transaction.
@@ -266,6 +279,14 @@ impl Call<'_> {
                 tracing::warn!(error = %e, "coordinator desktop finish");
             }
             return reply_err(code::AUTHORITY_UNKNOWN, Some(id));
+        }
+        // A screenshot has its own send: the capture record and the indexing.
+        if let (Tool::Screenshot, Some(monitor)) = (self.tool, built.monitor.as_deref()) {
+            let shot = capture::Shot {
+                request_id: &built.request_id,
+                monitor,
+            };
+            return capture::run_screenshot(self.link, self.auth, op, shot, deadline).await;
         }
         match relay::execute(self.link, self.auth, id, &built.action, deadline).await {
             Ran::Stopped(stop) => reply_err(stop, Some(id)),
@@ -335,6 +356,10 @@ pub(super) async fn run(
     }
     match this.admit(&built).await {
         Err(refusal) => this.refuse(refusal).await,
+        // A screenshot replays as its capture state (§4.8).
+        Ok(Admission::Existing(op)) if op.tool == OpTool::Screenshot => {
+            capture_status::replay(link, &built.request_id, &op).await
+        }
         Ok(Admission::Existing(op)) => {
             reply_ok(serde_json::to_value(status_of(&built.request_id, &op)).unwrap_or(Value::Null))
         }
