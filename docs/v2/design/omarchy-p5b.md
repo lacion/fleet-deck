@@ -1,6 +1,6 @@
 # P5b: monitor recordings, video artifacts and playback
 
-- **Status:** proposed contract (2026-10-20, from the advisor answer `advisor-p5b-answer.md`). The architect accepts the recommendations OD-1 to OD-6 (decision O12-6; the owner may change any of them). Adversary DESIGN REVIEW: round 1 PASS with one MAJOR and one MINOR, both fixed (O12-7: durable removal, stop reasons §7.5); round 2 required.
+- **Status:** proposed contract (2026-10-20, from the advisor answer `advisor-p5b-answer.md`). The architect accepts the recommendations OD-1 to OD-6 (decision O12-6; the owner may change any of them). Adversary DESIGN REVIEW: round 1 PASS with one MAJOR and one MINOR, both fixed (O12-7: durable removal, stop reasons §7.5); round 2 PASS (2026-10-20; its one MINOR, the coordinator codes in §16, fixed). Accepted for implementation; PRE-PR review required before merge.
 - **Parent:** [omarchy.md](./omarchy.md), especially the deferred recording proposals in §6.5A.
 - **Prerequisites:** accepted [P5a](./omarchy-p5a.md); P5b-2 additionally requires accepted [P6](./omarchy-p6.md) and its completed implementation.
 - **P5b-1:** owner recording from the board Desktop panel, recording lifecycle and stop, the `video` artifact kind, and byte-range playback.
@@ -1230,17 +1230,21 @@ Preserve existing desktop/capture errors outside recording-specific paths. Exten
 | 416 | `range_not_satisfiable` | `The requested byte range is not satisfiable.` |
 | 502 | `station_error` | `The station returned invalid artifact data.` |
 | 504 | `timeout` | `The video data did not finish loading in time.` |
+| — | `authority_unknown` | `Desktop authority could not be checked. No further desktop work was started.` (P6 §11.1; coordinator delivery only) |
+| — | `authority_lost` | `Desktop authority was withdrawn before this operation could continue.` (P6 §11.1; coordinator delivery only) |
+| — | `desktop_read_timeout` | `The desktop data did not finish loading in time.` (P6 §11.1; coordinator delivery only) |
 
 Use the missing-tool text only when the executable is missing. Other unsupported recording capabilities use the second fixed text.
 
 A `416` includes `Content-Range: bytes */N`; its JSON error body has its own correct Content-Type and Content-Length.
 
-Automatic stops use fixed terminal codes:
+Automatic stops use the fixed terminal codes of the §7.5 table: the owner column for owner status and the board, the coordinator column for P5b-2 delivery to an agent. In short:
 
-- policy/grant loss: P6 `authority_lost` for coordinator delivery; owner status uses `recording_interrupted`;
-- missing/uncertain authority, link loss, shutdown or crash: `recording_interrupted`;
-- lock and missing target: existing fixed codes where definitively established;
-- resource and validation failures: the corresponding table code.
+- policy/grant loss: owner `recording_interrupted`; coordinator `authority_lost`;
+- missing/uncertain authority, link loss, shutdown or crash: owner `recording_interrupted`; coordinator `authority_unknown`;
+- the total operation deadline: owner `desktop_timeout`; coordinator `desktop_read_timeout`;
+- lock and missing target: existing fixed codes where definitively established (both);
+- resource and validation failures: the corresponding table code (both).
 
 Store the fixed stop reason separately for owner diagnostics/audit.
 
