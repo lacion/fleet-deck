@@ -16,10 +16,9 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
-use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::thread::JoinHandle;
-use std::time::Duration;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use fleetdeck_core::ChildEnv;
 use rustix::process::{Pid, Signal};
@@ -37,6 +36,8 @@ pub const MAX_SECONDS: u32 = 120;
 const POLL: Duration = Duration::from_millis(25);
 /// The size of one read of a pipe.
 const DRAIN_BUFFER: usize = 4096;
+/// The most time that `exited` waits for both drain threads, after the reap.
+const DRAIN_WAIT: Duration = Duration::from_secs(2);
 
 /// The `wf-recorder` argv of design §9.1, one element per token. The filter
 /// value is built from the integer `seconds`.
@@ -124,6 +125,10 @@ pub struct Exit {
     pub xfsz: bool,
     /// The first 16 KiB of stderr. Never shown, logged or returned.
     pub stderr_tail: Vec<u8>,
+    /// A drain thread was still reading after `DRAIN_WAIT` (a process outside
+    /// the group holds a pipe). The thread ends on its own; it holds only the
+    /// pipe read end and a bounded buffer, never the output file.
+    pub drain_timed_out: bool,
 }
 
 impl std::fmt::Debug for Exit {
@@ -134,6 +139,7 @@ impl std::fmt::Debug for Exit {
             .field("escalated", &self.escalated)
             .field("xfsz", &self.xfsz)
             .field("stderr_bytes", &self.stderr_tail.len())
+            .field("drain_timed_out", &self.drain_timed_out)
             .finish()
     }
 }
@@ -180,6 +186,7 @@ impl Recorder {
             escalated: false,
             xfsz: false,
             stderr_tail: Vec::new(),
+            drain_timed_out: false,
         })
     }
 }
@@ -350,15 +357,15 @@ fn drain_discard(mut pipe: ChildStdout) {
     }
 }
 
-/// Reads stderr to EOF, keeps the first `STDERR_KEEP` bytes and drops the
-/// rest.
-fn drain_keep(mut pipe: ChildStderr) -> Vec<u8> {
-    let mut kept: Vec<u8> = Vec::new();
+/// Reads stderr to EOF, keeps the first `STDERR_KEEP` bytes in `kept` and
+/// drops the rest.
+fn drain_keep(mut pipe: ChildStderr, kept: &Mutex<Vec<u8>>) {
     let mut buf = [0_u8; DRAIN_BUFFER];
     loop {
         match pipe.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => {
+                let mut kept = kept.lock().unwrap_or_else(PoisonError::into_inner);
                 let take = n.min(STDERR_KEEP - kept.len());
                 kept.extend_from_slice(&buf[..take]);
             }
@@ -366,33 +373,54 @@ fn drain_keep(mut pipe: ChildStderr) -> Vec<u8> {
             Err(_) => break,
         }
     }
-    kept
 }
 
-/// The two drain threads of a child.
+/// The two drain threads of a child. Each sends on its channel when it is
+/// done (a closed channel counts as done too).
 struct Drains {
-    stdout: JoinHandle<()>,
-    stderr: JoinHandle<Vec<u8>>,
+    stdout: Receiver<()>,
+    stderr: Receiver<()>,
+    kept: Arc<Mutex<Vec<u8>>>,
 }
 
 impl Drains {
     fn start(stdout: ChildStdout, stderr: ChildStderr) -> std::io::Result<Self> {
-        let out = std::thread::Builder::new()
+        let (out_tx, out_rx) = mpsc::channel();
+        let (err_tx, err_rx) = mpsc::channel();
+        let kept = Arc::new(Mutex::new(Vec::new()));
+        std::thread::Builder::new()
             .name("record-stdout".into())
-            .spawn(move || drain_discard(stdout))?;
-        let err = std::thread::Builder::new()
+            .spawn(move || {
+                drain_discard(stdout);
+                let _ = out_tx.send(());
+            })?;
+        let shared = Arc::clone(&kept);
+        std::thread::Builder::new()
             .name("record-stderr".into())
-            .spawn(move || drain_keep(stderr))?;
+            .spawn(move || {
+                drain_keep(stderr, &shared);
+                let _ = err_tx.send(());
+            })?;
         Ok(Self {
-            stdout: out,
-            stderr: err,
+            stdout: out_rx,
+            stderr: err_rx,
+            kept,
         })
     }
 
-    /// Waits for both threads; the kept stderr bytes.
-    fn finish(self) -> Vec<u8> {
-        drop(self.stdout.join());
-        self.stderr.join().unwrap_or_default()
+    /// Waits for both threads, at most `DRAIN_WAIT` in total. The kept
+    /// stderr bytes, and `true` when a thread was still reading at the end.
+    fn finish(self) -> (Vec<u8>, bool) {
+        let end = Instant::now() + DRAIN_WAIT;
+        let mut timed_out = false;
+        for done in [&self.stdout, &self.stderr] {
+            let left = end.saturating_duration_since(Instant::now());
+            if done.recv_timeout(left) == Err(RecvTimeoutError::Timeout) {
+                timed_out = true;
+            }
+        }
+        let kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+        (kept.clone(), timed_out)
     }
 }
 
@@ -484,7 +512,7 @@ fn supervise(
     // open: the group has no other use now.
     let leftover = signal_group(pid, Signal::KILL, false);
     let escalated = plan.escalated || (leftover && plan.interrupted.is_some());
-    let stderr_tail = drains.finish();
+    let (stderr_tail, drain_timed_out) = drains.finish();
     let xfsz = status.is_some_and(|s| {
         std::os::unix::process::ExitStatusExt::signal(&s) == Some(Signal::XFSZ.as_raw())
     });
@@ -494,6 +522,7 @@ fn supervise(
         escalated,
         xfsz,
         stderr_tail,
+        drain_timed_out,
     })
 }
 

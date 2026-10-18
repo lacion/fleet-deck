@@ -30,6 +30,11 @@ fi
 if [ -n "$FAKE_XFSZ" ]; then
   kill -XFSZ $$
 fi
+if [ -n "$FAKE_SETSID" ]; then
+  setsid sleep 30 &
+  echo "$!" > "$FAKE_SLEEP_PID_FILE"
+  exit 0
+fi
 echo "$$" > "$FAKE_PID_FILE"
 while :; do sleep 0.05; done
 "#;
@@ -57,6 +62,8 @@ impl Rig {
         let mut env = ChildEnv::empty();
         env.set("PATH", "/usr/bin:/bin").unwrap();
         env.set("FAKE_PID_FILE", self.dir.path().join("pid"))
+            .unwrap();
+        env.set("FAKE_SLEEP_PID_FILE", self.dir.path().join("sleep-pid"))
             .unwrap();
         for (name, value) in extra {
             env.set(name, value).unwrap();
@@ -169,7 +176,7 @@ async fn the_duration_timer_saves_with_sigint_and_no_escalation() {
     let exit = rig.start(&[], d, real()).exited().await;
     assert_eq!(exit.cause, Some(StopCause::Duration));
     assert!(exit.status.unwrap().success());
-    assert!(!exit.escalated && !exit.xfsz);
+    assert!(!exit.escalated && !exit.xfsz && !exit.drain_timed_out);
     assert!(started.elapsed() < Duration::from_secs(3));
     assert_eq!(rig.contents(), "started\nfinished\n");
 }
@@ -393,4 +400,27 @@ fn a_program_that_cannot_start_is_a_failure() {
         real(),
     );
     assert_eq!(result.err().map(|e| e.code), Some("recording_failed"));
+}
+
+#[tokio::test]
+async fn a_process_outside_the_group_that_holds_stderr_ends_the_wait_after_two_seconds() {
+    let rig = Rig::new();
+    let started = Instant::now();
+    let exit = rig
+        .start(&[("FAKE_SETSID", "1")], quiet(), real())
+        .exited()
+        .await;
+    let took = started.elapsed();
+    let pid = std::fs::read_to_string(rig.dir.path().join("sleep-pid"))
+        .unwrap()
+        .trim()
+        .parse::<i32>()
+        .unwrap();
+    // Stop the straggler by its PID, never by name.
+    rustix::process::kill_process(Pid::from_raw(pid).unwrap(), Signal::KILL).unwrap();
+    assert!(exit.drain_timed_out, "{exit:?}");
+    assert!(exit.status.unwrap().success());
+    assert!(took >= Duration::from_millis(1900), "{took:?}");
+    assert!(took < Duration::from_secs(3), "{took:?}");
+    assert!(format!("{exit:?}").contains("drain_timed_out: true"));
 }
