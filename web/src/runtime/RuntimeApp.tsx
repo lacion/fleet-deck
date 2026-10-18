@@ -277,7 +277,10 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       tailnet: tailnetActions(io),
       displays: displayActions(io),
       desktop: desktopActions(io),
-      capture: captureActions(captureIo, lookupIo),
+      // A recording POST waits `seconds + 45` s (R13 P5b §10): its own transport.
+      capture: captureActions(captureIo, lookupIo, (ms) =>
+        deckHttp((path, init) => fetch(path, init), csrf, ms),
+      ),
       deletion: deleteActions(lookupIo),
     };
   }, [connection, owner, canAdmin, guest]);
