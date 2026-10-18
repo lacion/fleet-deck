@@ -1,7 +1,8 @@
 //! The interruption of an input operation while `wtype` runs (R13 P7 §7.5).
 //!
 //! The observers: the preview record (a close, an event gap or a new
-//! compositor remove or change it), the live local gates, the link, and the
+//! compositor remove or change it), the live local gates, the live monitor
+//! coverage of the observed monitors, the link, and the
 //! active window (a poll at most once per 100 ms, one at a time). On a
 //! detected loss the stdin writer stops, the child group gets `SIGKILL`, the
 //! child is reaped and the fixed outcome is returned. The station never sends
@@ -35,6 +36,7 @@ impl Op<'_> {
         &self,
         runner: &Runner<'_>,
         child: &mut InputChild,
+        covered: &[String],
     ) -> Result<(), Fail> {
         let exit = {
             let limit = tokio::time::sleep(self.env.wtype_limit);
@@ -42,7 +44,7 @@ impl Op<'_> {
             tokio::select! {
                 status = child.wait() => Exit::Done(status),
                 () = &mut limit => Exit::Timeout,
-                lost = self.watch(runner) => Exit::Lost(lost),
+                lost = self.watch(runner, covered) => Exit::Lost(lost),
             }
         };
         match exit {
@@ -64,12 +66,13 @@ impl Op<'_> {
 
     /// Returns the failure of the first loss that it sees; it never returns
     /// otherwise.
-    async fn watch(&self, runner: &Runner<'_>) -> Fail {
+    async fn watch(&self, runner: &Runner<'_>, covered: &[String]) -> Fail {
         let mut next_poll = Instant::now() + POLL_EVERY;
         loop {
             tokio::time::sleep(TICK).await;
             if self.same_record().is_err()
                 || self.admitted.local_gates().is_err()
+                || self.covered_now(covered).is_err()
                 || !(self.env.link_alive)()
             {
                 return fail(p6_code::INPUT_INTERRUPTED);

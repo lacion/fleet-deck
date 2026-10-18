@@ -151,6 +151,27 @@ async fn the_policy_turned_off_during_the_input_stops_it() {
 }
 
 #[tokio::test]
+async fn a_monitor_list_that_excludes_the_preview_during_the_input_stops_it() {
+    let fx = Fx::new().await;
+    let mut probe = Probe::new(&fx);
+    let list = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let base = probe.live.clone();
+    let read = std::sync::Arc::clone(&list);
+    probe.live_now = Some(std::sync::Arc::new(move || {
+        let mut live = base.clone();
+        live.monitors = read.lock().unwrap().clone();
+        live
+    }));
+    let e = disturbed(&fx, &probe, &fx.text("typing"), || async move {
+        // The preview lies on DP-1 only: a list without it interrupts.
+        *list.lock().unwrap() = vec!["HDMI-A-1".to_owned()];
+    })
+    .await;
+    assert_eq!(e.code, "input_interrupted");
+    assert_killed_and_quiet(&fx).await;
+}
+
+#[tokio::test]
 async fn a_lost_link_during_the_input_stops_it() {
     let fx = Fx::new().await;
     let probe = Probe::new(&fx);

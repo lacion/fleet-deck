@@ -425,9 +425,10 @@ pub(crate) fn policy_answer(live: &Live, monitor: Option<&str>) -> DesktopPolicy
 }
 
 /// The answer of `desktop.policy_now` for the input purpose (R13 P7 §6.4).
-/// A null monitor is allowed only when the capture monitor list is empty (all
-/// monitors): the target checks the real monitor before any input. A named
-/// monitor follows the capture monitor rule.
+/// A null monitor is unresolved: the preview geometry belongs to the target,
+/// so the answer allows it and the target enforces the real monitor coverage
+/// before and during the input. A named monitor follows the capture monitor
+/// rule.
 pub(crate) fn input_policy_answer(live: &Live, monitor: Option<&str>) -> DesktopInputPolicyAnswer {
     DesktopInputPolicyAnswer {
         allow_fleet_control: live.fleet_control,
@@ -435,7 +436,7 @@ pub(crate) fn input_policy_answer(live: &Live, monitor: Option<&str>) -> Desktop
         allow_desktop_capture: live.capture,
         allow_desktop_input: live.desktop_input,
         monitor_allowed: match monitor {
-            None => live.monitors.is_empty(),
+            None => true,
             Some(m) => live.monitors.is_empty() || live.monitors.iter().any(|x| x == m),
         },
     }
