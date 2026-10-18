@@ -138,6 +138,8 @@ pub struct LineClient {
     reader: BufReader<tokio::net::unix::OwnedReadHalf>,
     writer: tokio::net::unix::OwnedWriteHalf,
     node: &'static str,
+    /// The credentials of the peer, read from the connected stream.
+    peer: Result<(u32, Option<u32>), io::ErrorKind>,
 }
 
 impl LineClient {
@@ -155,12 +157,31 @@ impl LineClient {
                 ),
             )
         })?;
+        let peer = stream
+            .peer_cred()
+            .map(|cred| {
+                (
+                    cred.uid(),
+                    cred.pid().and_then(|pid| u32::try_from(pid).ok()),
+                )
+            })
+            .map_err(|e| e.kind());
         let (read, writer) = stream.into_split();
         Ok(Self {
             reader: BufReader::new(read),
             writer,
             node,
+            peer,
         })
+    }
+
+    /// The user id and the process id (when the system gives one) of the
+    /// process on the other end of the socket.
+    ///
+    /// # Errors
+    /// The system gave no credentials for the connection.
+    pub fn peer_cred(&self) -> io::Result<(u32, Option<u32>)> {
+        self.peer.map_err(io::Error::from)
     }
 
     /// Sends one request and reads its response.
@@ -176,5 +197,25 @@ impl LineClient {
             )
         })?;
         serde_json::from_slice(&line).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+
+    #[tokio::test]
+    async fn the_client_reports_the_credentials_of_the_peer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("peer.sock");
+        let listener = bind(&path).await.unwrap();
+        let accept = tokio::spawn(async move { listener.accept().await.map(|(s, _)| s) });
+        let client = LineClient::connect(&path, "station").await.unwrap();
+        let _server = accept.await.unwrap().unwrap();
+        let (uid, pid) = client.peer_cred().unwrap();
+        assert_eq!(uid, rustix::process::getuid().as_raw());
+        assert_eq!(pid, Some(std::process::id()));
     }
 }

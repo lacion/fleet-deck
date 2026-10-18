@@ -4,6 +4,7 @@
 //! Stdout stays empty. Every stderr line goes through `Effects::progress`:
 //! `provision: <phase>: <code>` with fixed words, or a fixed text.
 
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -14,6 +15,7 @@ use fleetdeck_proto::link::VersionStatus;
 use super::effects::{Effects, JoinOutcome, ServiceState, StationView, Terminal};
 use super::release::{self, Manifest};
 use super::retry::{Action, SHORT, classify};
+use super::run_checks::{IntegrationStatus, build_matches};
 use super::sha256_hex;
 use super::state::{self, Phase, ProvisionState};
 use crate::station_fingerprint::grouped;
@@ -92,10 +94,33 @@ pub async fn run(effects: &dyn Effects, file: &Path, retry: bool) -> Exit {
         manifest: None,
         notified: false,
     };
+    // The guard stays until the function ends: `execute` and `finish` (the
+    // save of a terminal condition) both run under the lock.
+    let _lock = match run.lock() {
+        Ok(Some(lock)) => lock,
+        Ok(None) => return Exit::Busy,
+        Err(stop) => return run.finish(stop),
+    };
     match run.execute(file, retry).await {
         Ok(exit) => exit,
         Err(stop) => run.finish(stop),
     }
+}
+
+/// Where the run goes next in steps 9 to 13.
+enum Next {
+    Pair(StationView),
+    Link,
+    Providers,
+    Integration,
+    Final,
+}
+
+/// The last read of the station before `Complete`.
+enum Last {
+    Done,
+    Unpaired(StationView),
+    LinkDown,
 }
 
 /// `host:port` with brackets around an IPv6 address.
@@ -174,16 +199,17 @@ impl Run<'_> {
         Ok(Exit::Complete)
     }
 
+    /// Step 1: the lock. `None` when another instance holds it.
+    fn lock(&self) -> Result<Option<File>, Stop> {
+        self.effects
+            .ensure_station_dir()
+            .map_err(|_| Stop::Unexpected)?;
+        let lock = state::lock_path(&self.effects.station_dir());
+        try_lock_private_below(&self.root, &lock).map_err(|_| Stop::Unexpected)
+    }
+
     async fn execute(&mut self, file: &Path, retry: bool) -> Result<Exit, Stop> {
         let effects = self.effects;
-        // 1. The lock.
-        effects.ensure_station_dir().map_err(|_| Stop::Unexpected)?;
-        let lock = state::lock_path(&effects.station_dir());
-        let Some(_lock) =
-            try_lock_private_below(&self.root, &lock).map_err(|_| Stop::Unexpected)?
-        else {
-            return Ok(Exit::Busy);
-        };
         // 2. The provisioning file.
         let input = Self::read_input(effects, file)?;
         // 3. The state.
@@ -213,7 +239,9 @@ impl Run<'_> {
             }
         }
         // 5. The release prerequisite.
-        self.manifest = Some(release::check(effects, &effects.build())?);
+        let manifest = release::check(effects, &effects.build())?;
+        effects.set_trusted_binary(&manifest.binary_sha256);
+        self.manifest = Some(manifest);
         if self.state_mut()?.phase == Phase::Complete && self.complete_checks(&input).await? {
             return Ok(Exit::Complete);
         }
@@ -244,22 +272,67 @@ impl Run<'_> {
         let Ok(view) = self.effects.fingerprint(false).await else {
             return Ok(false);
         };
-        self.identity(&view)?;
-        match view.paired_deck.as_deref() {
-            Some(deck) if deck == input.file.deck_fingerprint => {}
-            Some(_) => return Err(Terminal::PAIRED_ELSEWHERE.into()),
-            None => return Ok(false),
+        if !self.check_view(input, &view)? {
+            return Ok(false);
         }
-        let status = self
+        let (code, bytes) = self
             .effects
-            .omarchy_status()
+            .omarchy_status_json()
             .await
             .map_err(|_| Stop::Unexpected)?;
-        if status != 0 {
+        let healthy = code == 0 && IntegrationStatus::parse(&bytes).is_some_and(|s| s.healthy());
+        if !healthy {
             self.integration().await?;
-            self.complete()?;
+            match self.last_read(input).await? {
+                Last::Done => {
+                    self.complete()?;
+                }
+                Last::Unpaired(_) | Last::LinkDown => return Ok(false),
+            }
         }
         Ok(true)
+    }
+
+    /// The checks of every answer of the station that the run reads: the
+    /// build and the key (`check_build_identity`), then the pairing. `true`
+    /// when the station is paired with the deck of the file; `false` when it
+    /// shows no pairing (the caller goes back to the pairing step).
+    fn check_view(&mut self, input: &Input, view: &StationView) -> Result<bool, Stop> {
+        self.check_build_identity(view)?;
+        match view.paired_deck.as_deref() {
+            Some(deck) if deck == input.file.deck_fingerprint => Ok(true),
+            Some(_) => Err(Terminal::PAIRED_ELSEWHERE.into()),
+            None => Ok(false),
+        }
+    }
+
+    /// The build and the binary hash are the manifest's; the station key is
+    /// the stored one.
+    fn check_build_identity(&mut self, view: &StationView) -> Result<(), Stop> {
+        let manifest = self.manifest.as_ref().ok_or(Stop::Unexpected)?;
+        if !build_matches(view, manifest) {
+            return Err(Terminal::BUILD_MISMATCH.into());
+        }
+        self.identity(view)
+    }
+
+    /// The read before `Complete`: the checks of every answer, and the link
+    /// up. A failed read is repeated after 30 s.
+    async fn last_read(&mut self, input: &Input) -> Result<Last, Stop> {
+        loop {
+            let Ok(view) = self.effects.fingerprint(false).await else {
+                self.effects.sleep(SHORT).await;
+                continue;
+            };
+            if !self.check_view(input, &view)? {
+                return Ok(Last::Unpaired(view));
+            }
+            return Ok(if view.link_up {
+                Last::Done
+            } else {
+                Last::LinkDown
+            });
+        }
     }
 
     /// The station key must be the stored one; the first one is stored.
@@ -295,23 +368,42 @@ impl Run<'_> {
         }
         self.set_phase(Phase::Service)?;
         // 7 and 8. The service and the station.
-        let mut view = self.station(true).await?;
-        // 9 and 10. The pairing and the link.
+        let view = self.station(true).await?;
+        // 9 to 13. An answer that shows no pairing goes back to step 9; a
+        // link that is down before the end goes back to step 10.
+        let mut next = Next::Pair(view);
         loop {
-            self.pair(input, view).await?;
-            self.set_phase(Phase::Paired)?;
-            match self.link(input).await? {
-                None => break,
-                Some(unpaired) => view = unpaired,
-            }
+            next = match next {
+                Next::Pair(view) => {
+                    self.pair(input, view).await?;
+                    self.set_phase(Phase::Paired)?;
+                    Next::Link
+                }
+                Next::Link => match self.link(input).await? {
+                    Some(unpaired) => Next::Pair(unpaired),
+                    None => {
+                        self.set_phase(Phase::Link)?;
+                        Next::Providers
+                    }
+                },
+                Next::Providers => match self.providers(input).await? {
+                    Some(unpaired) => Next::Pair(unpaired),
+                    None => {
+                        self.set_phase(Phase::Integration)?;
+                        Next::Integration
+                    }
+                },
+                Next::Integration => {
+                    self.integration().await?;
+                    Next::Final
+                }
+                Next::Final => match self.last_read(input).await? {
+                    Last::Done => return self.complete(),
+                    Last::Unpaired(view) => Next::Pair(view),
+                    Last::LinkDown => Next::Link,
+                },
+            };
         }
-        self.set_phase(Phase::Link)?;
-        // 11. The providers.
-        self.providers().await?;
-        self.set_phase(Phase::Integration)?;
-        // 12 and 13. The integration.
-        self.integration().await?;
-        self.complete()
     }
 
     /// Step 7.
@@ -359,15 +451,7 @@ impl Run<'_> {
     }
 
     fn accept(&mut self, view: &StationView) -> Result<(), Stop> {
-        let manifest = self.manifest.as_ref().ok_or(Stop::Unexpected)?;
-        if !view.build.release
-            || view.build.version != manifest.release_version
-            || view.build.commit != manifest.commit
-            || view.binary_sha256 != manifest.binary_sha256
-        {
-            return Err(Terminal::BUILD_MISMATCH.into());
-        }
-        self.identity(view)?;
+        self.check_build_identity(view)?;
         if !self.notified {
             self.notified = true;
             let text = grouped(&view.fingerprint);
@@ -426,11 +510,8 @@ impl Run<'_> {
             let deadline = self.effects.now() + LINK_WAIT;
             loop {
                 if let Ok(view) = self.effects.fingerprint(false).await {
-                    self.identity(&view)?;
-                    match view.paired_deck.as_deref() {
-                        Some(deck) if deck == input.file.deck_fingerprint => {}
-                        Some(_) => return Err(Terminal::PAIRED_ELSEWHERE.into()),
-                        None => return Ok(Some(view)),
+                    if !self.check_view(input, &view)? {
+                        return Ok(Some(view));
                     }
                     if view.link_up {
                         return Ok(None);
@@ -445,13 +526,17 @@ impl Run<'_> {
         }
     }
 
-    /// Step 11.
-    async fn providers(&mut self) -> Result<(), Stop> {
+    /// Step 11: `None` when the providers are checked; `Some` is an answer
+    /// that shows no pairing (back to step 9).
+    async fn providers(&mut self, input: &Input) -> Result<Option<StationView>, Stop> {
         loop {
             let Ok(view) = self.effects.fingerprint(true).await else {
                 self.effects.sleep(SHORT).await;
                 continue;
             };
+            if !self.check_view(input, &view)? {
+                return Ok(Some(view));
+            }
             let Some(providers) = view.providers else {
                 return Err(Terminal::PROVIDER_PROBE_FAILED.into());
             };
@@ -474,28 +559,42 @@ impl Run<'_> {
             if providers.is_empty() {
                 self.effects.progress("No providers are configured.");
             }
-            return Ok(());
+            return Ok(None);
         }
     }
 
-    /// Step 12.
+    /// Step 12: the install and the status, again every 30 s while the
+    /// plugin is not enabled (the Omarchy shell can answer late after the
+    /// first login).
     async fn integration(&mut self) -> Result<(), Stop> {
-        let installed = self
-            .effects
-            .omarchy_install()
-            .await
-            .map_err(|_| Stop::Unexpected)?;
-        if installed != 0 {
-            return Err(Terminal::INTEGRATION_FAILED.into());
+        loop {
+            let installed = self
+                .effects
+                .omarchy_install()
+                .await
+                .map_err(|_| Stop::Unexpected)?;
+            if installed != 0 {
+                return Err(Terminal::INTEGRATION_FAILED.into());
+            }
+            let (code, bytes) = self
+                .effects
+                .omarchy_status_json()
+                .await
+                .map_err(|_| Stop::Unexpected)?;
+            let status = IntegrationStatus::parse(&bytes)
+                .filter(|status| code == 0 && status.files_clean())
+                .ok_or(Terminal::INTEGRATION_FAILED)?;
+            if !status.plugin_enabled() {
+                self.line("integration", "plugin_not_enabled");
+                self.effects.sleep(SHORT).await;
+                continue;
+            }
+            // The owner's `hyprland.lua` can be a link or not ours (the P4
+            // fallback): not a failure of the bootstrap.
+            if status.hyprland_line_missing() {
+                self.line("integration", "hyprland_line_missing");
+            }
+            return Ok(());
         }
-        let status = self
-            .effects
-            .omarchy_status()
-            .await
-            .map_err(|_| Stop::Unexpected)?;
-        if status != 0 {
-            return Err(Terminal::INTEGRATION_FAILED.into());
-        }
-        Ok(())
     }
 }

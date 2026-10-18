@@ -52,11 +52,17 @@ pub struct Station {
     pub probe_errors: u32,
     /// One edit of the station per answer without a probe (before it is built).
     pub edits: VecDeque<Edit>,
+    /// One edit of the station per answer with a probe.
+    pub probe_edits: VecDeque<Edit>,
     /// The error of a call while the station is not up.
     pub down_error: CallError,
 }
 
 pub type Edit = Box<dyn FnOnce(&mut Station) + Send>;
+/// One answer of `omarchy status --json`: the exit code and the stdout.
+pub type StatusAnswer = (i32, Vec<u8>);
+/// A function that sees every stderr line.
+pub type ProgressHook = Box<dyn Fn(&str) + Send>;
 
 pub struct Fake {
     pub dir: tempfile::TempDir,
@@ -76,7 +82,9 @@ pub struct Fake {
     pub joins: Mutex<VecDeque<JoinStep>>,
     pub join_args: Mutex<Vec<(String, u16, String, String)>>,
     pub install: Mutex<VecDeque<io::Result<i32>>>,
-    pub status: Mutex<VecDeque<io::Result<i32>>>,
+    pub status: Mutex<VecDeque<io::Result<StatusAnswer>>>,
+    pub trusted: Mutex<Option<String>>,
+    pub progress_hooks: Mutex<Vec<ProgressHook>>,
     pub dir_error: Mutex<bool>,
 }
 
@@ -86,6 +94,30 @@ pub fn build() -> Build {
         commit: "abc1234".to_owned(),
         release: true,
     }
+}
+
+/// The answer of `omarchy status --json`: the exit code and the stdout.
+pub fn status_json(
+    code: i32,
+    installed: bool,
+    files: &[&str],
+    plugin: bool,
+    line: &str,
+) -> StatusAnswer {
+    let files: Vec<String> = files
+        .iter()
+        .map(|state| format!(r#"{{"path":"/home/u/.config/f","state":"{state}"}}"#))
+        .collect();
+    let text = format!(
+        r#"{{"installed":{installed},"files":[{}],"plugin_enabled":{plugin},"summary":"on","hyprland_line":"{line}"}}"#,
+        files.join(",")
+    );
+    (code, text.into_bytes())
+}
+
+/// Installed, every file ok, plugin enabled, Hyprland line present.
+pub fn healthy_status() -> StatusAnswer {
+    status_json(0, true, &["ok", "ok"], true, "ok")
 }
 
 pub fn binary_sha() -> String {
@@ -176,12 +208,15 @@ impl Fake {
                 providers: Some(Vec::new()),
                 probe_errors: 0,
                 edits: VecDeque::new(),
+                probe_edits: VecDeque::new(),
                 down_error: CallError::Unavailable,
             }),
             joins: Mutex::new(VecDeque::from([JoinStep::Paired])),
             join_args: Mutex::new(Vec::new()),
             install: Mutex::new(VecDeque::new()),
             status: Mutex::new(VecDeque::new()),
+            trusted: Mutex::new(None),
+            progress_hooks: Mutex::new(Vec::new()),
             dir_error: Mutex::new(false),
         }
     }
@@ -295,6 +330,10 @@ impl Effects for Fake {
         self.build.lock().unwrap().clone()
     }
 
+    fn set_trusted_binary(&self, sha256: &str) {
+        *self.trusted.lock().unwrap() = Some(sha256.to_owned());
+    }
+
     fn station_config(&self) -> ConfigState {
         self.config.lock().unwrap().clone()
     }
@@ -338,6 +377,9 @@ impl Effects for Fake {
                 return Err(CallError::Timeout);
             }
             let link_up = if probe {
+                if let Some(edit) = st.probe_edits.pop_front() {
+                    edit(&mut st);
+                }
                 st.link_default
             } else {
                 if let Some(edit) = st.edits.pop_front() {
@@ -396,10 +438,14 @@ impl Effects for Fake {
         })
     }
 
-    fn omarchy_status(&self) -> BoxFuture<'_, io::Result<i32>> {
+    fn omarchy_status_json(&self) -> BoxFuture<'_, io::Result<StatusAnswer>> {
         Box::pin(async move {
             self.log("omarchy_status");
-            self.status.lock().unwrap().pop_front().unwrap_or(Ok(0))
+            self.status
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| Ok(healthy_status()))
         })
     }
 
@@ -412,6 +458,9 @@ impl Effects for Fake {
 
     fn progress(&self, line: &str) {
         self.stderr.lock().unwrap().push(line.to_owned());
+        for hook in self.progress_hooks.lock().unwrap().iter() {
+            hook(line);
+        }
     }
 }
 
