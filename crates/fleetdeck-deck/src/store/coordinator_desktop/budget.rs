@@ -5,7 +5,9 @@ use fleetdeck_proto::coordinator_desktop_text::{code, limits};
 use rusqlite::params;
 
 use super::rate;
-use crate::store::grants::{GrantClass, GrantState, check_desktop_caps, get_grant};
+use crate::store::grants::{
+    GrantClass, GrantState, check_desktop_caps, check_recording_caps, get_grant,
+};
 use crate::store::{DeckStore, Result, call};
 
 /// A cap change that was written.
@@ -15,12 +17,24 @@ pub struct CapsChanged {
     pub increased: bool,
 }
 
+/// The caps that a change sets; `None` keeps the stored value.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CapsChange {
+    pub desktop_cap: Option<u32>,
+    pub capture_cap: Option<u32>,
+    pub image_byte_cap: Option<u64>,
+    pub recording_cap: Option<u32>,
+    pub recording_second_cap: Option<u32>,
+}
+
 /// Why a cap change was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CapsError {
     /// No such grant, or the grant is revoked.
     NotFound,
-    /// The new caps break a rule of [`check_desktop_caps`]; the fixed text.
+    /// The new caps break a rule of [`check_desktop_caps`] or of
+    /// [`check_recording_caps`], or the grant has no recording allowance; the
+    /// fixed text.
     Invalid(&'static str),
     /// A cap would grow and the owner did not elevate (§2.2).
     ElevationRequired,
@@ -97,8 +111,8 @@ impl DeckStore {
         .await
     }
 
-    /// Changes the caps of a grant (§2.2). A `None` argument keeps the stored
-    /// value. A decrease needs no elevation; an increase needs
+    /// Changes the caps of a grant (§2.2). A `None` field of the change keeps
+    /// the stored value. A decrease needs no elevation; an increase needs
     /// `allow_increase`. The counters never change here.
     ///
     /// # Errors
@@ -106,9 +120,7 @@ impl DeckStore {
     pub async fn desktop_caps_update(
         &self,
         grant_id: &str,
-        desktop_cap: Option<u32>,
-        capture_cap: Option<u32>,
-        image_byte_cap: Option<u64>,
+        change: CapsChange,
         allow_increase: bool,
     ) -> Result<std::result::Result<CapsChanged, CapsError>> {
         let grant_id = grant_id.to_owned();
@@ -120,29 +132,49 @@ impl DeckStore {
             if grant.state == GrantState::Revoked {
                 return Ok(Err(CapsError::NotFound));
             }
-            let desktop_new = desktop_cap.or(grant.desktop_cap);
-            let capture_new = capture_cap.or(grant.capture_cap);
-            let image_new = image_byte_cap.or(grant.image_byte_cap);
+            if (change.recording_cap.is_some() || change.recording_second_cap.is_some())
+                && grant.recording_cap == 0
+                && grant.recording_second_cap == 0
+            {
+                return Ok(Err(CapsError::Invalid(
+                    "recording limits need a grant that allows recordings",
+                )));
+            }
+            let desktop_new = change.desktop_cap.or(grant.desktop_cap);
+            let capture_new = change.capture_cap.or(grant.capture_cap);
+            let image_new = change.image_byte_cap.or(grant.image_byte_cap);
             if let Err(text) =
                 check_desktop_caps(&grant.classes, desktop_new, capture_new, image_new)
             {
                 return Ok(Err(CapsError::Invalid(text)));
             }
+            let recording_new = change.recording_cap.unwrap_or(grant.recording_cap);
+            let second_new = change
+                .recording_second_cap
+                .unwrap_or(grant.recording_second_cap);
+            if let Err(text) = check_recording_caps(&grant.classes, recording_new, second_new) {
+                return Ok(Err(CapsError::Invalid(text)));
+            }
             let increased = desktop_new.unwrap_or(0) > grant.desktop_cap.unwrap_or(0)
                 || capture_new.unwrap_or(0) > grant.capture_cap.unwrap_or(0)
-                || image_new.unwrap_or(0) > grant.image_byte_cap.unwrap_or(0);
+                || image_new.unwrap_or(0) > grant.image_byte_cap.unwrap_or(0)
+                || recording_new > grant.recording_cap
+                || second_new > grant.recording_second_cap;
             if increased && !allow_increase {
                 return Ok(Err(CapsError::ElevationRequired));
             }
             tx.execute(
-                "UPDATE tokens SET desktop_cap = ?2, capture_cap = ?3, image_byte_cap = ?4
+                "UPDATE tokens SET desktop_cap = ?2, capture_cap = ?3, image_byte_cap = ?4,
+                 recording_cap = ?5, recording_second_cap = ?6
                  WHERE grant_id = ?1",
                 params![
                     grant_id,
                     desktop_new,
                     capture_new,
                     // SQLite integers are signed 64-bit; the cap is at most 1 GiB.
-                    image_new.and_then(|c| i64::try_from(c).ok())
+                    image_new.and_then(|c| i64::try_from(c).ok()),
+                    recording_new,
+                    second_new
                 ],
             )?;
             tx.commit()?;

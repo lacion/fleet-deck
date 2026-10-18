@@ -36,6 +36,15 @@ const grant: GrantView = {
   image_byte_used: 0,
 };
 
+/** A grant that allows recordings: 5 recordings and 600 seconds, 1 and 30 used. */
+const recGrant: GrantView = {
+  ...grant,
+  recording_cap: 5,
+  recording_used: 1,
+  recording_second_cap: 600,
+  recording_second_used: 30,
+};
+
 const actions = (): FleetActions & {
   readonly calls: { grantId: string; caps: object; elevation: string | undefined }[];
 } => {
@@ -58,7 +67,14 @@ const actions = (): FleetActions & {
 
 describe('the limits form', () => {
   test('the values come from the grant, the image budget in MiB', () => {
-    expect(limitValues(grant)).toEqual({ desktopCap: '300', captureCap: '20', imageMib: '64' });
+    expect(limitValues(grant)).toEqual({
+      desktopCap: '300',
+      captureCap: '20',
+      imageMib: '64',
+      recordingCap: '0',
+      recordingSeconds: '0',
+    });
+    expect(limitValues(recGrant)).toMatchObject({ recordingCap: '5', recordingSeconds: '600' });
     expect(limitValues({ ...grant, image_byte_cap: 1_572_864 }).imageMib).toBe('1.5');
   });
 
@@ -87,6 +103,28 @@ describe('the limits form', () => {
     expect(html).toContain('value="64"');
   });
 
+  test('the two recording inputs show only for a grant with recording_cap', () => {
+    const show = (g: GrantView) =>
+      renderToStaticMarkup(
+        <LimitsForm
+          grant={g}
+          values={limitValues(g)}
+          busy={false}
+          onChange={() => {}}
+          onSave={() => {}}
+          onCancel={() => {}}
+        />,
+      );
+    const plain = show(grant);
+    expect(plain).not.toContain('Recording limit');
+    expect(plain).not.toContain('Recording time limit (seconds)');
+    const rec = show(recGrant);
+    expect(rec).toContain('Recording limit');
+    expect(rec).toContain('Recording time limit (seconds)');
+    expect(rec).toContain('value="5"');
+    expect(rec).toContain('value="600"');
+  });
+
   test('a grant with desktop only shows only the desktop limit', () => {
     const { capture_cap: _c, image_byte_cap: _i, ...rest } = grant;
     const only: GrantView = { ...rest, classes: ['read', 'desktop'] };
@@ -108,13 +146,30 @@ describe('the limits form', () => {
 
   test('the problems use the texts of the spawn form', () => {
     expect(limitProblems(grant, limitValues(grant))).toEqual([]);
-    expect(limitProblems(grant, { desktopCap: '5001', captureCap: 'x', imageMib: '1025' })).toEqual(
-      [
-        'The desktop action limit is a whole number from 0 to 5000.',
-        'The screenshot limit is a whole number from 0 to 5000.',
-        'The image read budget is a whole number of MiB from 0 to 1024.',
-      ],
+    expect(
+      limitProblems(grant, {
+        ...limitValues(grant),
+        desktopCap: '5001',
+        captureCap: 'x',
+        imageMib: '1025',
+      }),
+    ).toEqual([
+      'The desktop action limit is a whole number from 0 to 5000.',
+      'The screenshot limit is a whole number from 0 to 5000.',
+      'The image read budget is a whole number of MiB from 0 to 1024.',
+    ]);
+  });
+
+  test('the recording problems use the texts of the spawn form and only for a recording grant', () => {
+    const bad = { ...limitValues(recGrant), recordingCap: '5001', recordingSeconds: 'x' };
+    expect(limitProblems(recGrant, bad)).toEqual([
+      'The recording limit is a whole number from 0 to 5000.',
+      'The recording time limit is a whole number of seconds from 0 to 600000.',
+    ]);
+    expect(limitProblems(recGrant, { ...bad, recordingSeconds: '600001' })[1]).toBe(
+      'The recording time limit is a whole number of seconds from 0 to 600000.',
     );
+    expect(limitProblems(grant, bad)).toEqual([]);
   });
 });
 
@@ -132,10 +187,24 @@ describe('the save flow', () => {
   const same = limitValues(grant);
 
   test('the caps body has the image bytes as MiB x 1,048,576', () => {
-    expect(limitCaps(grant, { desktopCap: '1', captureCap: '2', imageMib: '1.5' })).toEqual({
+    expect(
+      limitCaps(grant, { ...same, desktopCap: '1', captureCap: '2', imageMib: '1.5' }),
+    ).toEqual({
       desktop_cap: 1,
       capture_cap: 2,
       image_byte_cap: 1_572_864,
+    });
+  });
+
+  test('the body holds the recording keys only for a recording grant', () => {
+    expect(limitCaps(grant, limitValues(grant))).not.toHaveProperty('recording_cap');
+    expect(limitCaps(grant, limitValues(grant))).not.toHaveProperty('recording_second_cap');
+    expect(limitCaps(recGrant, limitValues(recGrant))).toEqual({
+      desktop_cap: 300,
+      capture_cap: 20,
+      image_byte_cap: 67_108_864,
+      recording_cap: 5,
+      recording_second_cap: 600,
     });
   });
 
@@ -145,6 +214,36 @@ describe('the save flow', () => {
     expect(raises(grant, limitCaps(grant, { ...same, desktopCap: '301' }))).toBe(true);
     expect(raises(grant, limitCaps(grant, { ...same, captureCap: '21' }))).toBe(true);
     expect(raises(grant, limitCaps(grant, { ...same, imageMib: '65' }))).toBe(true);
+    const rec = limitValues(recGrant);
+    expect(raises(recGrant, limitCaps(recGrant, rec))).toBe(false);
+    expect(raises(recGrant, limitCaps(recGrant, { ...rec, recordingCap: '1' }))).toBe(false);
+    expect(raises(recGrant, limitCaps(recGrant, { ...rec, recordingCap: '6' }))).toBe(true);
+    expect(raises(recGrant, limitCaps(recGrant, { ...rec, recordingSeconds: '601' }))).toBe(true);
+  });
+
+  test('a recording decrease does not ask and a recording increase asks Desktop limits', async () => {
+    const rec = limitValues(recGrant);
+    const a = actions();
+    const k = asker('code');
+    await saveLimits(recGrant, { ...rec, recordingSeconds: '60' }, a, k.ask);
+    expect(k.labels).toEqual([]);
+    expect(a.calls[0]).toEqual({
+      grantId: 'g1',
+      caps: {
+        desktop_cap: 300,
+        capture_cap: 20,
+        image_byte_cap: 67_108_864,
+        recording_cap: 5,
+        recording_second_cap: 60,
+      },
+      elevation: undefined,
+    });
+    const b = actions();
+    const j = asker('code-2');
+    await saveLimits(recGrant, { ...rec, recordingCap: '6' }, b, j.ask);
+    expect(j.labels).toEqual([['Desktop limits']]);
+    expect(b.calls[0]?.elevation).toBe('code-2');
+    expect(b.calls[0]?.caps).toMatchObject({ recording_cap: 6, recording_second_cap: 600 });
   });
 
   test('a decrease sends at once with no elevation and does not ask', async () => {

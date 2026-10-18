@@ -664,7 +664,7 @@ What the agent gets:
 - The agent never gets the video bytes, a frame, a thumbnail, a file path, a share link or a token. `read_capture_image` refuses a recording with the answer for an unknown artifact. No tool of the agent reads a video or stops a recording.
 - You play the video in the artifact viewer, as for an owner recording (see "Where the recording goes"). The deck builds the provenance of the artifact itself. It records the caller station, the caller session and the grant, and never the provenance of an owner recording.
 
-The grant row in the "Coordinator grants" list shows the recording use only while "Recording limit" is above 0. For example: "recordings 1 of 5, recording time 10 s of 600 s". This version has no board form to change the recording limits of a grant that already exists, and the deck has no route for it yet. This is an open item (no board path yet). To get other limits, start a new coordinator. The "Change limits" form of section 7.6 changes only the three P6 limits.
+The grant row in the "Coordinator grants" list shows the recording use only while "Recording limit" is above 0. For example: "recordings 1 of 5, recording time 10 s of 600 s". To change the two recording limits of a grant, use "Change limits" on its row. A higher limit asks you to confirm that it is you; a lower limit does not. A limit below the current use stops further recordings. When you set "Recording limit" to 0, the row no longer shows the recording limits, and the grant cannot record again: start a new coordinator for that.
 
 Stop an agent recording:
 
@@ -699,7 +699,7 @@ A refused call charges nothing. A call that is accepted and then fails keeps its
 - The real-recorder smoke on the owner's Omarchy machine is not done (see `docs/v2/LIVE-SMOKE.md`). Do not rely on recordings before it passes.
 - The deck does not end a video response when a client stops reading. The 180 second limit needs a connection write timeout (DL-239 item c).
 - Installing `wf-recorder` has no board path yet.
-- Agent recordings: the live smoke is not done. The board has no form to change the recording limits of an existing grant (no board path yet).
+- Agent recordings: the live smoke is not done.
 
 ## 8. Back up
 

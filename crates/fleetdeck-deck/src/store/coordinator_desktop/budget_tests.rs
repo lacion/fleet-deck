@@ -135,7 +135,15 @@ async fn a_decrease_needs_no_elevation_and_keeps_the_values_that_are_none() {
         .unwrap();
     let before = s.grant(gid.clone()).await.unwrap().unwrap();
     let got = s
-        .desktop_caps_update(&gid, Some(100), None, Some(MIB), false)
+        .desktop_caps_update(
+            &gid,
+            CapsChange {
+                desktop_cap: Some(100),
+                image_byte_cap: Some(MIB),
+                ..CapsChange::default()
+            },
+            false,
+        )
         .await
         .unwrap();
     assert_eq!(got, Ok(CapsChanged { increased: false }));
@@ -168,12 +176,27 @@ async fn an_increase_without_elevation_is_refused_and_changes_nothing() {
     let before = s.grant(gid.clone()).await.unwrap().unwrap();
     // One cap grows while another shrinks: still an increase.
     let got = s
-        .desktop_caps_update(&gid, Some(400), Some(1), None, false)
+        .desktop_caps_update(
+            &gid,
+            CapsChange {
+                desktop_cap: Some(400),
+                capture_cap: Some(1),
+                ..CapsChange::default()
+            },
+            false,
+        )
         .await
         .unwrap();
     assert_eq!(got, Err(CapsError::ElevationRequired));
     let got = s
-        .desktop_caps_update(&gid, None, None, Some(65 * MIB), false)
+        .desktop_caps_update(
+            &gid,
+            CapsChange {
+                image_byte_cap: Some(65 * MIB),
+                ..CapsChange::default()
+            },
+            false,
+        )
         .await
         .unwrap();
     assert_eq!(got, Err(CapsError::ElevationRequired));
@@ -185,7 +208,16 @@ async fn an_increase_with_elevation_succeeds() {
     let (_det, s) = store().await;
     let (gid, _) = both(&s).await;
     let got = s
-        .desktop_caps_update(&gid, Some(400), Some(30), Some(128 * MIB), true)
+        .desktop_caps_update(
+            &gid,
+            CapsChange {
+                desktop_cap: Some(400),
+                capture_cap: Some(30),
+                image_byte_cap: Some(128 * MIB),
+                ..CapsChange::default()
+            },
+            true,
+        )
         .await
         .unwrap();
     assert_eq!(got, Ok(CapsChanged { increased: true }));
@@ -201,7 +233,14 @@ async fn a_cap_without_its_class_is_invalid_with_the_fixed_text() {
     let (_det, s) = store().await;
     let (gid, _) = grant(&s, "coord", &[GrantClass::Desktop], |_| {}).await;
     let got = s
-        .desktop_caps_update(&gid, None, Some(5), None, true)
+        .desktop_caps_update(
+            &gid,
+            CapsChange {
+                capture_cap: Some(5),
+                ..CapsChange::default()
+            },
+            true,
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -211,7 +250,14 @@ async fn a_cap_without_its_class_is_invalid_with_the_fixed_text() {
         ))
     );
     let got = s
-        .desktop_caps_update(&gid, Some(5001), None, None, true)
+        .desktop_caps_update(
+            &gid,
+            CapsChange {
+                desktop_cap: Some(5001),
+                ..CapsChange::default()
+            },
+            true,
+        )
         .await
         .unwrap();
     assert_eq!(got, Err(CapsError::Invalid("desktop_cap is 0 to 5000")));
@@ -223,7 +269,14 @@ async fn a_cap_without_its_class_is_invalid_with_the_fixed_text() {
 async fn a_missing_or_revoked_grant_is_not_found() {
     let (_det, s) = store().await;
     let got = s
-        .desktop_caps_update("no-such-grant", Some(1), None, None, true)
+        .desktop_caps_update(
+            "no-such-grant",
+            CapsChange {
+                desktop_cap: Some(1),
+                ..CapsChange::default()
+            },
+            true,
+        )
         .await
         .unwrap();
     assert_eq!(got, Err(CapsError::NotFound));
@@ -232,7 +285,14 @@ async fn a_missing_or_revoked_grant_is_not_found() {
         .await
         .unwrap();
     let got = s
-        .desktop_caps_update(&gid, Some(1), None, None, true)
+        .desktop_caps_update(
+            &gid,
+            CapsChange {
+                desktop_cap: Some(1),
+                ..CapsChange::default()
+            },
+            true,
+        )
         .await
         .unwrap();
     assert_eq!(got, Err(CapsError::NotFound));
@@ -365,4 +425,141 @@ async fn two_parallel_admissions_for_the_last_slot_accept_exactly_one() {
     let g = s.grant(gid).await.unwrap().unwrap();
     assert_eq!(g.desktop_used, g.desktop_cap.unwrap());
     assert_eq!(rows(&s, "coordinator_desktop_ops").await, 1);
+}
+
+/// A grant of both classes with the recording caps 5 and 600, and a used
+/// count of 2 recordings and 90 seconds.
+async fn used_recording_grant(s: &crate::store::DeckStore) -> String {
+    let (gid, _) = grant(
+        s,
+        "coord",
+        &[GrantClass::Desktop, GrantClass::Capture],
+        |g| {
+            g.recording_cap = 5;
+            g.recording_second_cap = 600;
+        },
+    )
+    .await;
+    let id = gid.clone();
+    call(&s.inner.db, move |conn| {
+        conn.execute(
+            "UPDATE tokens SET recording_used = 2, recording_second_used = 90 WHERE grant_id = ?1",
+            [id],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    gid
+}
+
+fn recording_change(cap: Option<u32>, seconds: Option<u32>) -> CapsChange {
+    CapsChange {
+        recording_cap: cap,
+        recording_second_cap: seconds,
+        ..CapsChange::default()
+    }
+}
+
+#[tokio::test]
+async fn a_recording_raise_needs_the_elevation_and_keeps_the_counters() {
+    let (_det, s) = store().await;
+    let gid = used_recording_grant(&s).await;
+    let before = s.grant(gid.clone()).await.unwrap().unwrap();
+    let got = s
+        .desktop_caps_update(&gid, recording_change(Some(6), None), false)
+        .await
+        .unwrap();
+    assert_eq!(got, Err(CapsError::ElevationRequired));
+    let got = s
+        .desktop_caps_update(&gid, recording_change(None, Some(601)), false)
+        .await
+        .unwrap();
+    assert_eq!(got, Err(CapsError::ElevationRequired));
+    assert_eq!(s.grant(gid.clone()).await.unwrap().unwrap(), before);
+    let got = s
+        .desktop_caps_update(&gid, recording_change(Some(50), Some(6000)), true)
+        .await
+        .unwrap();
+    assert_eq!(got, Ok(CapsChanged { increased: true }));
+    let g = s.grant(gid).await.unwrap().unwrap();
+    assert_eq!((g.recording_cap, g.recording_second_cap), (50, 6000));
+    assert_eq!(
+        (
+            g.desktop_used,
+            g.capture_used,
+            g.recording_used,
+            g.recording_second_used
+        ),
+        (
+            before.desktop_used,
+            before.capture_used,
+            before.recording_used,
+            before.recording_second_used
+        )
+    );
+    assert_eq!(
+        (g.desktop_cap, g.capture_cap, g.image_byte_cap),
+        (
+            before.desktop_cap,
+            before.capture_cap,
+            before.image_byte_cap
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_recording_decrease_needs_no_elevation_and_may_go_below_the_use() {
+    let (_det, s) = store().await;
+    let gid = used_recording_grant(&s).await;
+    let got = s
+        .desktop_caps_update(&gid, recording_change(Some(1), Some(30)), false)
+        .await
+        .unwrap();
+    assert_eq!(got, Ok(CapsChanged { increased: false }));
+    let g = s.grant(gid).await.unwrap().unwrap();
+    assert_eq!((g.recording_cap, g.recording_second_cap), (1, 30));
+    assert_eq!((g.recording_used, g.recording_second_used), (2, 90));
+}
+
+#[tokio::test]
+async fn a_recording_key_on_a_grant_without_the_allowance_is_invalid() {
+    let (_det, s) = store().await;
+    let (gid, _) = both(&s).await;
+    for change in [
+        recording_change(Some(1), None),
+        recording_change(None, Some(1)),
+        recording_change(Some(0), Some(0)),
+    ] {
+        let got = s.desktop_caps_update(&gid, change, true).await.unwrap();
+        assert_eq!(
+            got,
+            Err(CapsError::Invalid(
+                "recording limits need a grant that allows recordings"
+            ))
+        );
+    }
+    let g = s.grant(gid).await.unwrap().unwrap();
+    assert_eq!((g.recording_cap, g.recording_second_cap), (0, 0));
+}
+
+#[tokio::test]
+async fn a_recording_cap_out_of_range_is_invalid_with_the_fixed_text() {
+    let (_det, s) = store().await;
+    let gid = used_recording_grant(&s).await;
+    let got = s
+        .desktop_caps_update(&gid, recording_change(Some(5001), None), true)
+        .await
+        .unwrap();
+    assert_eq!(got, Err(CapsError::Invalid("recording_cap is 0 to 5000")));
+    let got = s
+        .desktop_caps_update(&gid, recording_change(None, Some(600_001)), true)
+        .await
+        .unwrap();
+    assert_eq!(
+        got,
+        Err(CapsError::Invalid("recording_second_cap is 0 to 600000"))
+    );
+    let g = s.grant(gid).await.unwrap().unwrap();
+    assert_eq!((g.recording_cap, g.recording_second_cap), (5, 600));
 }

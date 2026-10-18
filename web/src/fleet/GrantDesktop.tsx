@@ -10,6 +10,8 @@ import {
   type FleetControl,
   imageBudgetProblem,
   NO_FLEET,
+  recordingCapProblem,
+  recordingSecondsProblem,
 } from '../spawn/fleetControl';
 import { type DesktopOpRow, type FleetActions, type FleetResult, mib } from './fleet';
 
@@ -21,6 +23,8 @@ export type LimitValues = {
   readonly desktopCap: string;
   readonly captureCap: string;
   readonly imageMib: string;
+  readonly recordingCap: string;
+  readonly recordingSeconds: string;
 };
 
 /** The values of a grant, as the form shows them. */
@@ -29,6 +33,8 @@ export function limitValues(g: GrantView): LimitValues {
     desktopCap: String(g.desktop_cap ?? 0),
     captureCap: String(g.capture_cap ?? 0),
     imageMib: mib(g.image_byte_cap),
+    recordingCap: String(g.recording_cap ?? 0),
+    recordingSeconds: String(g.recording_second_cap ?? 0),
   };
 }
 
@@ -38,6 +44,7 @@ function asFleet(g: GrantView, v: LimitValues): FleetControl {
     ...NO_FLEET,
     desktop: true,
     capture: g.capture_cap !== undefined,
+    recording: g.recording_cap !== undefined,
     ...v,
   };
 }
@@ -45,12 +52,22 @@ function asFleet(g: GrantView, v: LimitValues): FleetControl {
 /** The problems of the form values, in the order of the inputs; empty when all are valid. */
 export function limitProblems(g: GrantView, v: LimitValues): readonly string[] {
   const f = asFleet(g, v);
-  return [desktopCapProblem(f), captureCapProblem(f), imageBudgetProblem(f)].filter(
-    (p): p is string => p !== null,
-  );
+  return [
+    desktopCapProblem(f),
+    captureCapProblem(f),
+    imageBudgetProblem(f),
+    recordingCapProblem(f),
+    recordingSecondsProblem(f),
+  ].filter((p): p is string => p !== null);
 }
 
-type Caps = { desktop_cap?: number; capture_cap?: number; image_byte_cap?: number };
+type Caps = {
+  desktop_cap?: number;
+  capture_cap?: number;
+  image_byte_cap?: number;
+  recording_cap?: number;
+  recording_second_cap?: number;
+};
 
 /** The `caps` body of the form values: one value for each limit that the grant has. */
 export function limitCaps(g: GrantView, v: LimitValues): Caps {
@@ -60,6 +77,12 @@ export function limitCaps(g: GrantView, v: LimitValues): Caps {
     ...(g.image_byte_cap === undefined
       ? {}
       : { image_byte_cap: Math.round(Number(v.imageMib.trim()) * MIB) }),
+    ...(g.recording_cap === undefined
+      ? {}
+      : {
+          recording_cap: Number(v.recordingCap.trim()),
+          recording_second_cap: Number(v.recordingSeconds.trim()),
+        }),
   };
 }
 
@@ -68,7 +91,9 @@ export function raises(g: GrantView, caps: Caps): boolean {
   return (
     (caps.desktop_cap ?? 0) > (g.desktop_cap ?? 0) ||
     (caps.capture_cap ?? 0) > (g.capture_cap ?? 0) ||
-    (caps.image_byte_cap ?? 0) > (g.image_byte_cap ?? 0)
+    (caps.image_byte_cap ?? 0) > (g.image_byte_cap ?? 0) ||
+    (caps.recording_cap ?? 0) > (g.recording_cap ?? 0) ||
+    (caps.recording_second_cap ?? 0) > (g.recording_second_cap ?? 0)
   );
 }
 
@@ -141,6 +166,24 @@ export function LimitsForm({ grant, values, busy, onChange, onSave, onCancel }: 
           problem={imageBudgetProblem(f)}
           onChange={(imageMib) => onChange({ ...values, imageMib })}
         />
+      )}
+      {grant.recording_cap === undefined ? null : (
+        <>
+          <LimitInput
+            label="Recording limit"
+            value={values.recordingCap}
+            max={5000}
+            problem={recordingCapProblem(f)}
+            onChange={(recordingCap) => onChange({ ...values, recordingCap })}
+          />
+          <LimitInput
+            label="Recording time limit (seconds)"
+            value={values.recordingSeconds}
+            max={600000}
+            problem={recordingSecondsProblem(f)}
+            onChange={(recordingSeconds) => onChange({ ...values, recordingSeconds })}
+          />
+        </>
       )}
       <div className="fd-fleet-actions">
         <button type="submit" disabled={busy || problems.length > 0}>

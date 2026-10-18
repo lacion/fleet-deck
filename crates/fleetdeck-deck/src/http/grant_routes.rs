@@ -24,7 +24,7 @@ use super::fleet_routes::{LIST_PAGE, audited};
 use super::guard::ApiError;
 use super::settings_routes::{is_elevated, owner};
 use crate::store::auth::LoginSession;
-use crate::store::coordinator_desktop::{CapsError, RecentOp};
+use crate::store::coordinator_desktop::{CapsChange, CapsError, RecentOp};
 use crate::store::{
     AuditResult, Grant, GrantClass, GrantState, LinkFeature, LinkV2, NewAudit, Principal,
 };
@@ -204,15 +204,24 @@ pub struct CapsBody {
     desktop_cap: Option<u32>,
     capture_cap: Option<u32>,
     image_byte_cap: Option<u64>,
+    recording_cap: Option<u32>,
+    recording_second_cap: Option<u32>,
 }
 
-/// The three caps of a grant as JSON, for the audit row.
+/// The caps of a grant as JSON, for the audit row. The two recording caps are
+/// in it only for a grant that allows recordings, so the row of any other
+/// grant keeps its exact JSON.
 fn caps_json(g: &Grant) -> serde_json::Value {
-    serde_json::json!({
+    let mut caps = serde_json::json!({
         "desktop_cap": g.desktop_cap,
         "capture_cap": g.capture_cap,
         "image_byte_cap": g.image_byte_cap,
-    })
+    });
+    if g.recording_cap > 0 || g.recording_second_cap > 0 {
+        caps["recording_cap"] = g.recording_cap.into();
+        caps["recording_second_cap"] = g.recording_second_cap.into();
+    }
+    caps
 }
 
 fn no_grant() -> ApiError {
@@ -221,7 +230,8 @@ fn no_grant() -> ApiError {
 
 /// `POST /api/coordinator/grants/{grant_id}/caps` (owner only, R13 P6 §2.2,
 /// decision O12-4 item 16): a decrease needs no elevation, an increase needs
-/// the elevation of the header `x-fleetdeck-elevation`. The counters never
+/// the elevation of the header `x-fleetdeck-elevation`. The caps are the
+/// three desktop limits and the two recording limits. The counters never
 /// change. The audit row `coordinator.grant_caps` holds the old and the new
 /// caps.
 ///
@@ -263,9 +273,13 @@ pub async fn caps(
             .store
             .desktop_caps_update(
                 &grant_id,
-                req.desktop_cap,
-                req.capture_cap,
-                req.image_byte_cap,
+                CapsChange {
+                    desktop_cap: req.desktop_cap,
+                    capture_cap: req.capture_cap,
+                    image_byte_cap: req.image_byte_cap,
+                    recording_cap: req.recording_cap,
+                    recording_second_cap: req.recording_second_cap,
+                },
                 is_elevated(&board, &session, token),
             )
             .await

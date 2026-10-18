@@ -236,10 +236,17 @@ async fn a_stored_refusal_replays_with_the_same_code_and_another_payload_conflic
         (code::DESKTOP_CAP_REACHED, true)
     );
     // The cap rises; the stored refusal still answers the same key.
-    s.desktop_caps_update(&gid, Some(10), None, None, true)
-        .await
-        .unwrap()
-        .unwrap();
+    s.desktop_caps_update(
+        &gid,
+        CapsChange {
+            desktop_cap: Some(10),
+            ..CapsChange::default()
+        },
+        true,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(
         rejected(s.desktop_admit(op.clone(), now + 1).await.unwrap()),
         (code::DESKTOP_CAP_REACHED, true)

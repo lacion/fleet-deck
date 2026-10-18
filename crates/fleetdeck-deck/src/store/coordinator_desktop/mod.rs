@@ -13,7 +13,7 @@ mod ops;
 mod rate;
 pub(super) mod schema;
 
-pub use budget::{CapsChanged, CapsError};
+pub use budget::{CapsChange, CapsChanged, CapsError};
 pub use list::RecentOp;
 pub use ops::{
     Admission, Charges, DesktopOp, NewOp, OpClass, OpOutcome, OpState, OpTool, request_key,
