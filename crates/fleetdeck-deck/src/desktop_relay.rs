@@ -299,7 +299,16 @@ async fn run_act(
     let route = resolve(&ctx.link, &ctx.store, station)?;
     // The deck stops issuing authorities at once when the switch turns off.
     control_on(ctx)?;
-    let result = send_act(&ctx.store, &route, action, quiet_hours, Waits::default()).await?;
+    let mut result = send_act(
+        &ctx.store,
+        &route,
+        action,
+        quiet_hours,
+        Waits::default(),
+        None,
+    )
+    .await?;
+    crate::desktop_capture::stamp_features(&ctx.store, station, &mut result.info);
     ctx.store
         .update_station_desktop(station, result.info.clone());
     Ok(result)
@@ -444,8 +453,8 @@ async fn plain_action(
             }
         }
         DesktopActBody::WindowClose { address } => DesktopAction::WindowClose { address },
-        DesktopActBody::ScreenCapture { .. } => return Err(RelayError::Unsupported),
-        DesktopActBody::WallOpen { .. }
+        DesktopActBody::ScreenCapture { .. }
+        | DesktopActBody::WallOpen { .. }
         | DesktopActBody::WallClose { .. }
         | DesktopActBody::WallReload { .. } => return Err(RelayError::Invalid),
     })
@@ -644,7 +653,8 @@ pub async fn info(
     control_on(ctx)?;
     let route = resolve(&ctx.link, &ctx.store, &station)?;
     control_on(ctx)?;
-    let info = send_info(&route, fresh, Waits::default()).await?;
+    let mut info = send_info(&route, fresh, Waits::default()).await?;
+    crate::desktop_capture::stamp_features(&ctx.store, &station, &mut info);
     ctx.store.update_station_desktop(&station, info.clone());
     Ok(info)
 }

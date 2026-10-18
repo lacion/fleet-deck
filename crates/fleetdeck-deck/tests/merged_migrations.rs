@@ -1,7 +1,8 @@
 //! The migration order after v2 merged into Fleet Git (DL-232). A deck
 //! database made by v2 is at version 25 (v2's display migration); the merged
 //! list keeps v2's V1 to V25 and appends the five Fleet Git migrations as V26
-//! to V30, and R13 P5a adds V31 (the artifact tombstones). The station list
+//! to V30, and R13 P5a adds V31 (the artifact tombstones) and V32 (the owner
+//! screenshots). The station list
 //! is Fleet Git's list (32 entries) and R13 P5a V33 (the artifact
 //! deletions); a station database made by v2 is at
 //! version 27.
@@ -11,7 +12,7 @@
 use rusqlite::Connection;
 
 const DECK_V2_LAST: usize = 25;
-const DECK_LATEST: i64 = 31;
+const DECK_LATEST: i64 = 32;
 const STATION_V2_LAST: usize = 27;
 const STATION_LATEST: i64 = 33;
 

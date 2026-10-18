@@ -329,6 +329,22 @@ pub const API: &[ApiMethod] = &[
         Some(Scope::Admin),
         false,
     ),
+    // The screenshot result lookup (R13 P5a): `admin`, owner only.
+    m(
+        "desktop.capture_get",
+        Method::GET,
+        "/api/stations/{station}/desktop/captures/{capture_id}",
+        Some(Scope::Admin),
+        false,
+    ),
+    // The features of this deck build (R13 P5a): owner only.
+    m(
+        "deck.features",
+        Method::GET,
+        "/api/features",
+        Some(Scope::Read),
+        false,
+    ),
     m(
         "files.session_diff",
         Method::GET,
