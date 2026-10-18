@@ -3248,3 +3248,56 @@ Owner review: pending.
   - c. The PRE-PR review of P8 is pending.
   - d. A terminal state of the bootstrap has no board path for its repair in this version (`operations.md` section 15.3).
 - Next: the PRE-PR review of P8; the owner reads the new rows of `SECURITY-CHECKLIST.md` (DL-158); the release task; the live smoke.
+
+## DL-235: R13 P4 built (the Omarchy desktop integration) (architect, 2026-10-20)
+
+- Context: the adversary DESIGN REVIEW of `docs/v2/design/omarchy-p4.md` ended with a PASS in round 3 (P4-5). P4 connects Fleet Deck to the Omarchy desktop: a bar widget and a panel, notifications, hotkeys, a screensaver, a theme sync and a crash diagnosis. The owner rule is remote first, so the board has a path for each station setting and each choice.
+- What was built, in these tasks. Each merge is on v2:
+  - Task A, `6c5cfb70`: the foundation. The feature `desktop_shell.v1`, the methods `fleet.summary`, `display.directive` and `station.palette`, the station setting `fleet_summary`, and the proto types.
+  - Task B1, `87281a34`: the deck builds and sends the fleet summary.
+  - Task B2, `a7d4d804`: the station keeps the summary in memory. The commands `fleetdeck desktop feed [--notify]` and `fleetdeck desktop open`.
+  - Task C, `94c00fd8` (guards fix `2536bfd3`): `fleetdeck omarchy install`, `uninstall` and `status`, the managed Hyprland line, and the `doctor` Omarchy lines and `--brief`.
+  - Task D, `621b206d`: the plugin files (bar widget, panel, service), `Model.js`, the hooks, `hypr.lua`, the menu rows and the theme template.
+  - Task E, `2d1052ee`: the hotkeys backend. The `Station` sender of `display.directive`, and `fleetdeck desktop wall next|mode next|show`.
+  - Task H, `0390a109`: `fleetdeck desktop crash --last`.
+  - Task F1, `6d0a672b` (fix `39bde7ae`): `fleetdeck omarchy theme-sync`, the method `station.palette` and the two palette routes.
+  - Task G, `6bea1017`: the ambient screensaver and the hidden command `fleetdeck desktop screensaver-run`.
+  - Task F2, `83c80cf1`: the board preference "Use the Omarchy theme of" and the wall palette.
+  - Test fix `dbc484ad`: a migration test stops at V32 (P4-24).
+  - Task I (this change): the documents: this entry, the status lines, `operations.md` section 7.5, the rows of `PARITY.md` and `SECURITY-CHECKLIST.md`, and the P4 part of `LIVE-SMOKE.md`.
+- Decisions. Each line is one record. The full text is in `r13-p23b-decisions.md` of the architect's brief folder:
+  - P4-1: the split into tasks A to I and D1 to D29. The new feature `desktop_shell.v1`. No `wall restore` in the hook `post-boot`. An adversary DESIGN REVIEW for tasks A, B1 and E.
+  - P4-2: the hotkey sender picks only sessions of the calling station. The display palette route joins the DESIGN REVIEW.
+  - P4-3: DESIGN REVIEW round 1 FAIL. The palette route and the free-form titles are fixed. The summary and the notifications carry no free-form text.
+  - P4-4: RE-REVIEW round 2. The usage label uses a closed scope mapping (`5 h`, `7 d`, `other`) and a checked instance id.
+  - P4-5: DESIGN REVIEW round 3 PASS. The annex is the build contract.
+  - P4-6: the two station-to-deck rows use `Scope::Admin`. No scope is added to any station.
+  - P4-7: the installer adds one managed Hyprland line and removes it again at uninstall. A file that it cannot edit gets a printed line, and `status` shows "Hyprland line missing".
+  - P4-8: the station keeps the summary in a cell of `StationLink`, with a live-link counter.
+  - P4-9: the request kinds `Command`, `FileChange` and `Tool` show as "Approval". `Question` shows as "Question". `--request` needs a session.
+  - P4-10: a setting that is off answers at once. The feed then waits 5 s.
+  - P4-11: the B1 choices are accepted. An item with an id outside the grammar is left out.
+  - P4-12: the intake test of task A becomes a link test. The B2 choices are accepted.
+  - P4-13: the installer answers of task C (doctor count strings, `newline_added`, folder removal order).
+  - P4-14: the C verification. A rerun keeps a changed file. A conflict refuses before the question. `uninstall` without a record exits 0.
+  - P4-15: the answers for the plugin files (core Quickshell types only, `Commons.Translations`).
+  - P4-16: the D verification. `Model.js` uses the real request kind words. The QML never ran here.
+  - P4-17: the E questions. The deck-control slot, the walls from the desktop info, and `live()` reads two senders.
+  - P4-18: the E rules. An out-of-cycle mode goes to mission. A deck link error is `deck_down`.
+  - P4-19: the E verification. A focus on a session of another station counts as no focus. `show` reports a failed `hyprctl`.
+  - P4-20: the H answers: error texts, field rules, the `allowed_roots` check.
+  - P4-21: the H verification. The 10 s limit has a unit test only.
+  - P4-22: the F1 verification. A deck store error is `protocol_error`. The display route compares the bound station and its presence in the scope. Fix `39bde7ae`: the palette upsert needs the station row.
+  - P4-23: the G answers: the service starts the job, an exclusive create, ASCII separators.
+  - P4-24: `make check` found an intermittent test and one real failure. The real failure is fixed.
+  - P4-25: the G verification. A failed restore warns and keeps the file.
+  - P4-26: the F2 answers: the owner board reads the palette, the select sits in the preference row, the wall hook reads the palette.
+  - P4-27: the F2 verification. The select hides when the choice is off and no station has a palette. All 1941 web tests pass. No browser check was done.
+- Open items:
+  - a. The live smoke on the owner's Omarchy machines is not done. The list is in `docs/v2/LIVE-SMOKE.md` (`make desktop-smoke`).
+  - b. No board path installs the Omarchy integration on a station that P8 did not provision. P8 runs `omarchy install --yes` at the first login. An existing station needs a local install today. This is a product gap.
+  - c. The QML ran only as text tests here, because this machine has no Quickshell.
+  - d. The PRE-PR review of P4 is pending.
+  - e. The intermittent test `fleetdeck-cli::fleet_git_api fetch_route_stamps_fetched_at` (P4-24). It is not P4 code.
+  - f. No board path turns the screensaver on. P8 runs `omarchy install --yes` without `--screensaver`.
+- Next: the PRE-PR review of P4; the owner reads the new rows of `SECURITY-CHECKLIST.md` (DL-158); the live smoke on the Omarchy machines.

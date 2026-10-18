@@ -161,5 +161,90 @@ Result:
 | --- | --- | --- | --- |
 | (not run) | | | The live smoke of P8 waits for the release task of the owner (DL-234 item b). |
 
-Task P4 I adds its items to this section later.
+### P4 Omarchy integration (DL-235)
+
+The contract is `docs/v2/design/omarchy-p4.md` section 5. The items 1 to 13 below are the 13 items of that section. A difference changes the asset files, not the Rust code. Do this smoke on the owner's Omarchy machines: the server with the wall display and the laptop.
+
+These items watch the desktop of the machine, on your own screen. No item asks you to run a command or to edit a file on a station. A value that the board cannot show is marked "no board path yet". It is an open item, not an instruction.
+
+Set up:
+
+1. The integration is installed by the first login of P8 (see the P8 provisioning smoke, item 5, and `docs/v2/operations.md` section 15). A station that P8 did not provision has no board path for the install (DL-235 item b). Do the smoke on a machine that P8 provisioned.
+2. Open the board and go to Settings, then the station tab of the station. Turn on "Desktop control" if it is off. The board asks for a recent sign-in.
+3. On the same tab, turn on "Fleet summary for the desktop shell". The board asks for a recent sign-in. The install can already have turned it on.
+4. Go to the deck settings. Turn on "Desktop control" if it is off.
+5. On the server, open a wall display that is bound to the station (the form "Open a wall" in the Desktop panel of the station card).
+6. Keep at least one session that needs you (an open approval or question) ready on the server.
+
+Items:
+
+1. **The Omarchy version.**
+   1. Find the Omarchy version of each machine the way you normally read it on that machine.
+   2. Compare it with `4.0.0.alpha` (commit `51bfd1d`). Write both versions in the result.
+   3. No board path shows this value yet.
+2. **The plugin and the bar widget.**
+   1. Look at the bar. Expect the Fleet Deck widget in the `right` section. Expect the text `<working> · ⚠<needs_you>` (the warning part only when a session needs you).
+   2. Expect the urgent color when a session needs you. In the board, answer the request. Expect the urgent color to go away.
+   3. Turn off "Fleet summary for the desktop shell" on the board. Expect the dim color in the widget. Turn it on again.
+   4. The widget shows live counts. This proves the Quickshell `Process` and the line reader.
+   5. Press the middle mouse button on the widget. This proves `Quickshell.execDetached` (item 11 checks the result).
+   6. Write in the result that `omarchy plugin validate` has no board path yet, and that the widget shows as proof.
+3. **The panel.**
+   1. Press the left mouse button on the widget. Expect the panel with the sessions that need you, the counts and the usage line.
+   2. Press `Esc`. Expect the panel to close.
+   3. Press `SUPER + CTRL + F`. Expect the same panel. Press `Esc`.
+   4. In the panel, press `j` and `k` to move. Press `Enter` on a request. Expect the browser to open the board at that request. Expect no approval control in the panel.
+4. **Hyprland rules and keys.**
+   1. Expect the wall window to have no border. This proves that the window rule matches the window class.
+   2. Open a preview window. Expect it to float at 1280 by 800.
+   3. Open the Omarchy key list. Expect the four Fleet Deck keys with their descriptions: "Fleet Deck panel", "Fleet Deck wall", "Fleet Deck: next session that needs you on the wall" and "Fleet Deck: next wall mode". Expect no collision with an Omarchy key.
+   4. Expect each key to work from the session `PATH`. This proves the managed line in `hyprland.lua`.
+5. **The hooks.**
+   1. Log out and log in. Expect the widget to show data without a manual start. This shows that the hook `post-boot` ran.
+   2. If the widget shows no data, write it in the result. The source copy shows only the hooks `post-update`, `theme-set` and `font-set`.
+   3. Change the Omarchy theme. Expect the board palette of item 6 to follow. This shows that the hook `theme-set` ran.
+6. **The theme.**
+   1. On the board, open the theme row at the foot of the sidebar (on a phone, the More page).
+   2. Open the list "Use the Omarchy theme of". Expect the station in the list after a theme change.
+   3. Select the station. Expect the board to show the colors of the Omarchy theme.
+   4. Switch the Omarchy theme again. Expect the board to follow within 60 seconds.
+   5. Open the wall display. Expect the wall to use the same colors.
+   6. Select "Off". Expect the normal theme.
+7. **Notifications.**
+   1. Make a new request that needs you on the server.
+   2. Expect a notification with the title "<callsign> needs you" and the text "<Kind> on <station>". Expect the application name "Fleet Deck".
+   3. Click the notification. Expect the browser to open the board at that request.
+   4. Write the result. If no notification shows, `busctl` or `jq` can be missing. No board path shows this yet.
+8. **Passwordless sudo.**
+   1. This check has no board path yet. Write the `omarchy-sudo` line of `fleetdeck doctor` as you see it on the machine.
+   2. Expect `warn` when Omarchy has an active passwordless sudo grant, and `ok` when it has none.
+9. **The crash diagnosis.**
+   1. Open the Omarchy menu. Expect the rows "Fleet", "Open the board" and "Diagnose the last crash".
+   2. Select "Diagnose the last crash". Expect a notification "A crash diagnosis session started".
+   3. Open the board. Expect a new supervised session. Expect its first message to name the process, PID, binary, signal and time of the newest crash.
+   4. If the answer is "Add your home directory to allowed_roots to diagnose a crash.", change "Allowed folders" on the station tab. The board asks for a recent sign-in.
+10. **The screensaver.**
+    1. The board has no switch for the screensaver yet (DL-235 item f). The install turns it on only with `--screensaver`. Write in the result whether it is on.
+    2. If it is on, start the Omarchy screensaver. Expect the large `FLEET` word, the number of sessions that need you, the counts and the usage line.
+    3. Write the width, the height and the centering that you see.
+11. **The wall hotkeys.**
+    1. Press `SUPER + ALT + W`. Expect the wall window to take focus. Press it again while the wall is on the active workspace. Expect the previous workspace.
+    2. Close the wall window. Press `SUPER + ALT + W`. Expect no change. The command prints "No Fleet Deck wall window is open." on the terminal only.
+    3. Press `SUPER + ALT + N`. Expect the wall to show the next session that needs you.
+    4. Press `SUPER + ALT + M`. Expect the next wall mode. The order is mission, focus on a request, ambient.
+12. **The menu rows.**
+    1. Open the Omarchy menu. Expect the group "Fleet" with its icon.
+    2. Select "Open the board". Expect the board in the browser.
+    3. Select "Diagnose the last crash". Expect the result of item 9.
+13. **End to end.**
+    1. On the server, with a bound wall: the widget, the notification and its click, "Open the board", `SUPER + ALT + N` and `SUPER + ALT + M` all work (items 2, 7, 11, 12).
+    2. On the laptop, with no bound wall: press `SUPER + ALT + N`. Expect the answer "This station has no wall display bound to it." (`not_bound`). It shows on the terminal only.
+    3. The theme reaches the board (item 6). The screensaver works when it is on (item 10).
+    4. The removal and the new install have no board path yet. Write that in the result.
+
+Result:
+
+| Date | Machines | Omarchy versions | Items | Result |
+| --- | --- | --- | --- | --- |
+| (not run) | | | | The live smoke of P4 on the owner's Omarchy machines is open (DL-235 item a). |
 <!-- desktop-smoke:end -->
