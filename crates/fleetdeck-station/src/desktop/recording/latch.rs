@@ -140,6 +140,16 @@ impl Latch {
         }
     }
 
+    /// The in-memory part of a stop (no await): a save or a discard, as the
+    /// latch rules say. `save` must fit `reason`.
+    pub(crate) fn signal(&self, save: bool, reason: StopReason) {
+        if save {
+            self.save_now(reason);
+        } else {
+            self.discard_now(reason);
+        }
+    }
+
     /// One stop trigger: the signal first, then the durable latch. `save`
     /// must fit `reason` (a save reason for a save). Answers what the row
     /// holds afterwards; `None` when the row is not a running recording or
@@ -149,11 +159,7 @@ impl Latch {
         save: bool,
         reason: StopReason,
     ) -> Option<(StopIntent, StopReason)> {
-        if save {
-            self.save_now(reason);
-        } else {
-            self.discard_now(reason);
-        }
+        self.signal(save, reason);
         let held = match self
             .store
             .recording_latch(&self.deck_fp, &self.capture_id, save, reason)

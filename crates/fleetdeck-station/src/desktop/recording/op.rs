@@ -497,8 +497,12 @@ impl Run<'_> {
         };
         // From the first lease to the commit the operation keeps its own
         // expiry; it outlives the recorder thread (§6.4).
-        let armed =
-            LeaseGuard::new(until, Arc::clone(&req.params.clocks)).arm(Arc::clone(self.latch));
+        let armed = LeaseGuard::new(
+            until,
+            Arc::clone(&req.params.clocks),
+            Arc::clone(self.latch),
+        )
+        .arm();
         // 5
         self.check_not_stopped().await?;
         left(self.deadline).map_err(|f| Stage::new(f, StopReason::Deadline))?;

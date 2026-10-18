@@ -12,7 +12,6 @@
 //!   call): the stop latch, the start permit, the live local gates and the
 //!   lease.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -29,51 +28,78 @@ use crate::media::recorder::{SpawnGuard, StopCause};
 /// How often the lease guard looks at the clocks.
 const PERIOD: Duration = Duration::from_millis(250);
 
-/// The lease expiry of one recording operation.
+/// What the one lock of the guard holds.
+struct State {
+    until: BootInstant,
+    /// A decision found the lease out: it stays out.
+    failed: bool,
+}
+
+/// The lease expiry of one recording operation. A renewal and a validity
+/// check are one serialized decision under one lock.
 pub(super) struct LeaseGuard {
-    until: Mutex<BootInstant>,
+    state: Mutex<State>,
     watch: SuspendWatch,
     clocks: Arc<dyn Clocks>,
-    /// A check found the lease out: it stays out.
-    out: AtomicBool,
+    latch: Arc<Latch>,
 }
 
 impl LeaseGuard {
     /// A guard for a lease that ends at `until`; the suspend watch starts
-    /// now.
-    pub(super) fn new(until: BootInstant, clocks: Arc<dyn Clocks>) -> Arc<Self> {
+    /// now. A decision that finds the lease out latches `lease_expired` in
+    /// `latch`.
+    pub(super) fn new(until: BootInstant, clocks: Arc<dyn Clocks>, latch: Arc<Latch>) -> Arc<Self> {
         Arc::new(Self {
-            until: Mutex::new(until),
+            state: Mutex::new(State {
+                until,
+                failed: false,
+            }),
             watch: SuspendWatch::start(&*clocks),
             clocks,
-            out: AtomicBool::new(false),
+            latch,
         })
     }
 
-    /// A successful renewal or import lease: the expiry moves to `until`
-    /// when that is later.
+    /// The one decision. It reads the boot clock under the lock; a lease
+    /// that is out (or after a suspend, or found out before) is out for
+    /// good, and the discard `lease_expired` is latched in memory. Else the
+    /// expiry moves to `extend` when that is later.
+    fn decide(&self, extend: Option<BootInstant>) -> bool {
+        let valid = {
+            let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+            let now = self.clocks.boot();
+            if state.failed || now >= state.until || self.watch.suspended_with(&*self.clocks) {
+                state.failed = true;
+                false
+            } else {
+                if let Some(until) = extend {
+                    state.until = state.until.max(until);
+                }
+                true
+            }
+        };
+        if !valid {
+            self.latch.discard_now(StopReason::LeaseExpired);
+        }
+        valid
+    }
+
+    /// A successful renewal or import lease. It extends the expiry only
+    /// when the lease is still in force; a renewal that arrives after the
+    /// deadline (or after a suspend) does not extend it: the lease is out.
     pub(super) fn renew(&self, until: BootInstant) {
-        let mut held = self.until.lock().unwrap_or_else(PoisonError::into_inner);
-        *held = (*held).max(until);
+        self.decide(Some(until));
     }
 
     /// True while the lease has not run out and no suspend was seen. It
     /// reads the clocks only. A lease that was found out stays out.
     pub(super) fn valid(&self) -> bool {
-        if self.out.load(Ordering::Acquire) {
-            return false;
-        }
-        let until = *self.until.lock().unwrap_or_else(PoisonError::into_inner);
-        let valid = self.clocks.boot() < until && !self.watch.suspended_with(&*self.clocks);
-        if !valid {
-            self.out.store(true, Ordering::Release);
-        }
-        valid
+        self.decide(None)
     }
 
     /// Starts the task of the guard. It ends after it latched the expiry;
     /// the returned handle ends it too when it is dropped.
-    pub(super) fn arm(self: &Arc<Self>, latch: Arc<Latch>) -> Armed {
+    pub(super) fn arm(self: &Arc<Self>) -> Armed {
         let guard = Arc::clone(self);
         let task = tokio::spawn(async move {
             let mut tick = tokio::time::interval(PERIOD);
@@ -82,7 +108,7 @@ impl LeaseGuard {
                 tick.tick().await;
                 if !guard.valid() {
                     // The signal to a running recorder goes out first.
-                    latch.stop(false, StopReason::LeaseExpired).await;
+                    guard.latch.stop(false, StopReason::LeaseExpired).await;
                     return;
                 }
             }

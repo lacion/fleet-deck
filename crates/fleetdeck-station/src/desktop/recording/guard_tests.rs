@@ -15,6 +15,7 @@ use fleetdeck_proto::desktop::{DesktopActResult, DesktopAction};
 use fleetdeck_proto::recording::{LeasePhase, StopReason};
 
 use super::guard::LeaseGuard;
+use super::latch::Latch;
 use super::rig_tests::{ID, Reply, T, err};
 use crate::artifacts::capture_import::tests::FP;
 use crate::artifacts::capture_import::{DurableFs, SyncFs};
@@ -23,7 +24,7 @@ use crate::desktop::authority::{EXPIRED, START_LIMIT};
 use crate::desktop::authority_tests::Harness;
 use crate::desktop::code as desktop_code;
 use crate::media::clock::Clocks;
-use crate::store::capture_ops::CaptureState;
+use crate::store::capture_ops::{CaptureState, StopIntent};
 
 fn ms(n: u64) -> Duration {
     Duration::from_millis(n)
@@ -100,17 +101,11 @@ async fn a_stop_while_the_launch_is_queued_starts_no_recorder() {
     }
 }
 
-#[tokio::test]
-async fn a_stop_that_missed_the_registry_and_writes_its_latch_late_is_seen_by_the_launch_guard() {
-    // The stop looks the recording up before it registers itself, so it
-    // finds nothing; its store write comes after the operation did its last
-    // store read and reached the launch. The memory latch must still be set.
-    let t = T::new().await;
-    let hooks = &t.desktop().recordings.hooks;
-    let before_insert = hooks.hold_before_insert();
-    let after_miss = hooks.hold_after_miss();
-    let block = hooks.hold_launch();
-    let run = t.start(ID, "DP-1", 5);
+/// The stop task runs; it leaves a pending stop in the registry (the
+/// operation did not register yet).
+async fn stop_that_misses_the_registry(
+    t: &T,
+) -> tokio::task::JoinHandle<Result<super::registry::StopOutcome, crate::store::StoreError>> {
     for _ in 0..400 {
         if t.row(ID).await.is_some() {
             break;
@@ -119,26 +114,93 @@ async fn a_stop_that_missed_the_registry_and_writes_its_latch_late_is_seen_by_th
     }
     let desktop = std::sync::Arc::clone(t.desktop());
     let store = t.store().clone();
-    let stop = tokio::spawn(async move {
+    tokio::spawn(async move {
         desktop
             .stop_recording(&store, FP, ID, StopReason::OwnerStop)
             .await
-    });
-    // The stop is past its lookup and waits before the store write.
-    tokio::time::sleep(ms(200)).await;
+    })
+}
+
+/// Waits until the registry holds the pending stop of the recording.
+async fn until_pending(t: &T) {
+    for _ in 0..400 {
+        if t.desktop().recordings.pending_stop(FP, ID).is_some() {
+            return;
+        }
+        tokio::time::sleep(ms(10)).await;
+    }
+    panic!("no pending stop");
+}
+
+#[tokio::test]
+async fn a_pending_stop_is_seen_by_the_launch_guard_before_the_stop_writes_its_latch() {
+    // (a) The stop is past its registry step and held before the store
+    // write. The operation registers (it takes the pending stop) and reaches
+    // the launch: no process starts.
+    let t = T::new().await;
+    let hooks = &t.desktop().recordings.hooks;
+    let before_insert = hooks.hold_before_insert();
+    let after_miss = hooks.hold_after_miss();
+    let block = hooks.hold_launch();
+    let run = t.start(ID, "DP-1", 5);
+    let stop = stop_that_misses_the_registry(&t).await;
+    until_pending(&t).await;
     before_insert.add_permits(1);
-    // The operation registered, read the store (no latch yet) and queued.
     block.reached().await;
+    block.open();
+    let (c, m) = err(run.await.unwrap());
+    assert_eq!(
+        (c, m.as_str()),
+        (
+            code::RECORDING_CANCELLED,
+            fleetdeck_proto::capture::text::RECORDING_CANCELLED
+        )
+    );
+    t.assert_discarded(ID, code::RECORDING_CANCELLED, StopReason::OwnerStop)
+        .await;
+    assert_eq!(t.recorder_runs(), 0);
+    assert!(!t.dir().join("recorder.pid").exists());
+    // The stop task goes on: the row is terminal now, and no pending stop
+    // is left.
     after_miss.add_permits(1);
     assert_eq!(
         stop.await.unwrap().unwrap(),
-        super::registry::StopOutcome::Live
+        super::registry::StopOutcome::NotRunning
     );
-    block.open();
+    assert_eq!(t.desktop().recordings.pending_count(), 0);
+}
+
+#[tokio::test]
+async fn a_stop_whose_write_committed_is_seen_by_the_launch_guard_before_its_next_step() {
+    // (b) The store write of the stop committed; the stop task is held
+    // before any later step. The operation registers and launches: no
+    // process starts.
+    let t = T::new().await;
+    let hooks = &t.desktop().recordings.hooks;
+    let before_insert = hooks.hold_before_insert();
+    let after_write = hooks.hold_after_write();
+    let run = t.start(ID, "DP-1", 5);
+    let stop = stop_that_misses_the_registry(&t).await;
+    for _ in 0..400 {
+        if t.row(ID).await.unwrap().stop_intent != StopIntent::None {
+            break;
+        }
+        tokio::time::sleep(ms(10)).await;
+    }
+    assert_eq!(t.row(ID).await.unwrap().stop_intent, StopIntent::Save);
+    // The operation registers: the stop is in its memory latch before its
+    // first read of the store.
+    before_insert.add_permits(1);
     assert_eq!(err(run.await.unwrap()).0, code::RECORDING_CANCELLED);
     t.assert_discarded(ID, code::RECORDING_CANCELLED, StopReason::OwnerStop)
         .await;
     assert_eq!(t.recorder_runs(), 0);
+    assert!(!t.dir().join("recorder.pid").exists());
+    after_write.add_permits(1);
+    assert_eq!(
+        stop.await.unwrap().unwrap(),
+        super::registry::StopOutcome::Latched
+    );
 }
 
 #[tokio::test]
@@ -220,20 +282,51 @@ async fn a_lease_that_runs_out_while_the_launch_is_queued_starts_no_recorder() {
 
 // The lease expiry of the operation.
 
-#[test]
-fn a_lease_guard_never_moves_back_and_stays_out_after_a_suspend() {
+/// A lease guard on the jumpy clocks, with the latch of a recording.
+fn lease_guard(
+    t: &T,
+    clocks: &std::sync::Arc<super::rig_tests::Jumpy>,
+    life: Duration,
+) -> (std::sync::Arc<LeaseGuard>, std::sync::Arc<Latch>) {
+    let latch = Latch::new(t.store().clone(), FP, ID);
+    let guard = LeaseGuard::new(clocks.boot().plus(life), clocks.clone(), latch.clone());
+    (guard, latch)
+}
+
+#[tokio::test]
+async fn a_lease_guard_never_moves_back_and_stays_out_after_a_suspend() {
+    let t = T::new().await;
     let clocks = super::rig_tests::Jumpy::new();
-    let g = LeaseGuard::new(clocks.boot().plus(ms(1500)), clocks.clone());
+    let (g, latch) = lease_guard(&t, &clocks, ms(1500));
     assert!(g.valid());
     g.renew(clocks.boot().plus(ms(60_000)));
     // An earlier expiry does not move it back.
     g.renew(clocks.boot().plus(ms(10)));
     std::thread::sleep(ms(30));
     assert!(g.valid());
+    assert_eq!(latch.first_discard(), None);
     // The boot clock runs ahead of the monotonic clock: a suspend.
     clocks.jump(5000);
     assert!(!g.valid());
+    assert_eq!(latch.first_discard(), Some(StopReason::LeaseExpired));
     // It stays out, also with a new expiry.
+    g.renew(clocks.boot().plus(ms(60_000)));
+    assert!(!g.valid());
+}
+
+#[tokio::test]
+async fn a_renewal_after_the_deadline_does_not_extend_the_lease() {
+    // The deadline passes with no tick of the guard in between (the guard is
+    // not armed), then a renewal arrives: the lease is out for good, the
+    // latch holds `lease_expired`, and the check before the commit refuses.
+    let t = T::new().await;
+    let clocks = super::rig_tests::Jumpy::new();
+    let (g, latch) = lease_guard(&t, &clocks, ms(50));
+    std::thread::sleep(ms(120));
+    g.renew(clocks.boot().plus(ms(60_000)));
+    assert_eq!(latch.first_discard(), Some(StopReason::LeaseExpired));
+    assert!(!g.valid());
+    // Also an import lease that comes later does not bring it back.
     g.renew(clocks.boot().plus(ms(60_000)));
     assert!(!g.valid());
 }
