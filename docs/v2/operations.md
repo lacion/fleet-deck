@@ -27,6 +27,10 @@ Only you may write the file (no group or other write bit). When a `[[provider_in
 | `allow_bypass_permissions` | `false` | Offer the mode that skips every permission check: Claude `bypassPermissions`, Codex `danger-full-access` (DL-177). Turning it on needs an elevation, and it applies after a station restart. |
 | `allow_fleet_control` | `false` | Lets coordinator sessions with a fleet-control grant (scope `fleet`, or the classes `inspect`, `manage`, `answer`) act on the sessions of this station and read their files, diffs and requests (ADR-008). A danger setting: turning it on needs an elevation. It applies at once and is read live, only on this station: off stops the calls of its own coordinators at intake, and every action of any coordinator on its sessions at the decision and right before the provider write (`authority_lost`). It does not revoke a grant. Run an `answer` grant only on trusted work. |
 | `allow_shell` / `max_shells` | `false` / `8` | The human shell (PLAN §6.8). |
+| `allow_desktop` | `false` | Board label "Desktop control". Lets the owner control the desktop of this machine through the fleet: screens, the wall, notifications and previews. A danger setting: turning it on needs an elevation. It is `Live`: it applies at once, and off stops new actions at once. |
+| `fleet_summary` | `false` | Board label "Fleet summary for the desktop shell". Sends a summary of the whole fleet (counts, the callsigns of sessions that need you, usage) to this station, for the Omarchy bar. Programs that run as you on this machine can read it. A danger setting: turning it on needs an elevation. It is `Live`. |
+| `allow_desktop_capture` | `false` | Board label "Desktop screenshots". Lets the owner take a screenshot of the monitors of this machine from the board. The station keeps each screenshot as an artifact. A danger setting: turning it on needs an elevation. It is `Live`: off stops new screenshots at once. |
+| `capture_monitors` | (empty) | Board label "Screenshot monitors". The monitors that a screenshot may capture, for example `DP-1`. An empty list allows every monitor. A danger setting: a change that widens the list (the list becomes empty, or it gets a new monitor) needs an elevation. A change that narrows the list does not. It is `Live`. |
 | `offline_approval_policy` | `wait` | What happens to an approval when no deck is reachable: `wait`, or `deny_after(<n>s)` (also `m` or `h`). |
 | `listen` | (empty) | Link listen addresses when the deck dials this station. |
 | `host` | `shim` on Linux, `direct` elsewhere (DL-199) | `direct`: the agents are children of the station and stop with it. `shim`: each agent runs under a `fleetdeck shim` process and survives a station restart or upgrade (ADR-005). |
@@ -287,6 +291,39 @@ A fleet-control grant lets a coordinator drive any session on its stations, star
 - The answer cap of a grant is 500 by default (0 to 5000). The deck counts only an accepted answer.
 
 Residual windows (ADR-008 §6.2). A revocation, or a switch that you turn off, stops every action whose provider write has not begun. Two short windows stay open. (a) Between a `valid` answer of `coordinator.authority_check` and the provider write inside the target station process: no wait for another process, a few milliseconds. (b) Between the `coordinator.policy_now` answer of the caller station and that `valid` answer: one deck step, at most the 5 s deadline of the check. No window comes from the propagation of a setting, because each switch is read live from its own process.
+
+### 7.4 Desktop control and owner screenshots (R13)
+
+To control the desktop of a station, turn on "Desktop control" in Settings, on the station tab of that station. The deck setting "Desktop control" must also be on.
+
+#### Owner screenshots and artifact deletion (R13 P5a)
+
+Take a screenshot:
+
+1. Open Settings, then the station tab of the station.
+2. Turn on "Desktop screenshots". The board asks for a recent sign-in. Sign in again when it asks.
+3. Leave "Screenshot monitors" empty to allow every monitor. To limit it, enter the monitor names. Widening the list needs a recent sign-in, and narrowing it does not.
+4. Open the station card and open the Desktop panel.
+5. Press "Screenshot" next to a monitor.
+6. If the button is off, read the reason line in the panel. The reason is one of these: the deck or the station does not support screenshots, `grim` is not installed, screenshots are off, or the monitor is not in the list.
+
+The screenshot appears in the Desktop panel as an image, with the link "Open the screenshot". It is also an artifact of the kind image in the artifact list. Its title is `Desktop capture · <station name>/<monitor>`.
+
+Limits:
+
+- A screenshot is a PNG of at most 32 MiB.
+- The station keeps at most 4 GiB of screenshots. Delete some screenshots when the station refuses a new one with the text "This capture would exceed the station's 4 GiB capture limit. Delete some captures first."
+- The deck keeps at most 256 MiB of screenshots in its cache. It evicts the least recently used file first, and the artifact stays valid.
+- The deck fetches a screenshot file for at most 60 seconds in total.
+
+Delete an artifact:
+
+1. Open the artifact in the viewer.
+2. Press "Delete artifact". The board shows the confirmation and asks for a recent sign-in.
+3. Confirm. The board shows "Deleted." when the station removed its copy.
+4. The board can show "Hidden on this deck. Waiting for station deletion." The deck hides the artifact at once. The station deletes its copy when its link is up. The board then shows "Deleted."
+
+"Deleted" means removed from the active Fleet Deck stores. It is not a secure erase of database pages or backups. Downloaded copies and provider conversations stay.
 
 ## 8. Back up
 

@@ -54,3 +54,65 @@ The prompt is `Reply with the single word pong. Do not use any tool.` Each step 
 `live_codex_shell_smoke`: 2026-10-16, pass on Linux (WSL2) with Codex 0.162.1.
 
 `live_bridge` (DL-194 §9.10): 2026-10-16, pass on Linux (WSL2) with Claude 2.1.301 and Codex 0.162.1, both control rounds included. `BRIDGE_VERIFIED` lists Claude 2.1.296 and Codex 0.162.1.
+
+<!-- desktop-smoke:begin -->
+## Desktop (R13)
+
+The desktop smoke list needs a real Hyprland desktop, a signed-in board and one station on that desktop. Run `make desktop-smoke` to print this list. The command runs nothing else.
+
+Every step is a board step. No step needs you at the station. The station can be a remote machine.
+
+### P5a: owner screenshots and artifact deletion (DL-233)
+
+The supported baseline of the screenshot tool is `grim 1.5.0`. The code calls `grim -t png -s 1 -l 6 -o <monitor> -`, and `grim` writes the PNG to its standard output.
+
+Set up:
+
+1. Open the board and go to Settings, then the station tab of the station.
+2. Turn on "Desktop control" if it is off.
+3. Turn on "Desktop screenshots". The board asks for a recent sign-in. Sign in again when it asks.
+4. Leave "Screenshot monitors" empty. An empty list allows every monitor.
+5. Open the station card. The Desktop panel must show a "Screenshot" button for each monitor.
+
+Items:
+
+1. **Each monitor.**
+   1. Press "Screenshot" for each monitor, one monitor at a time.
+   2. Expect an image in the Desktop panel and an "Open the screenshot" link.
+   3. Open the link. The viewer shows the same image.
+   4. Find the artifact in the artifact list. Its title is `Desktop capture · <station name>/<monitor>`.
+   5. Write the `grim` version of the station in the result.
+2. **A scaled monitor.**
+   1. Press "Screenshot" for a monitor with a scale other than 1.
+   2. Expect an image. Write the image size in the result.
+   3. The error "The monitor exceeds the screenshot size limit." is correct in one case only. One side is more than 8192 pixels, or the monitor has more than 16,777,216 pixels.
+3. **A monitor with DPMS off.**
+   1. Press "Screen off" for one monitor and confirm.
+   2. Press "Screenshot" for the same monitor.
+   3. Write the result in the table. The board must show an image or an error text within 45 seconds.
+   4. Turn the monitor on again from the Desktop panel.
+4. **The lock state (`hyprlock`).**
+   1. Check that the Desktop panel shows "Locked" as "off".
+   2. Press "Screenshot". Expect an image. This proves that `locked == Some(false)` on the real desktop.
+   3. Do not lock the screen of a remote station for this smoke. Two station tests cover the locked case: `a_locked_or_unknown_lock_state_before_the_capture_refuses_it` and `a_screen_that_locks_during_the_capture_discards_the_output`.
+5. **A stalled `grim`.**
+   1. The station kills a stalled `grim` and all its child processes as one group. The board cannot start a stall.
+   2. If one screenshot ends with an error, press "Screenshot" again at once.
+   3. Expect an image, and not the error "A capture is already running.". This shows that the station freed its capture slot.
+   4. The test `capture_through_shim_exec_kills_a_stalled_group_at_the_timeout` covers the group kill.
+6. **A remote station, from the board.**
+   1. Use a station that is on another machine.
+   2. Press "Screenshot" in its Desktop panel. Expect the image.
+   3. Find the artifact in the artifact list.
+   4. Open the artifact and press "Delete artifact". Confirm.
+   5. Expect "Deleted." The artifact leaves the artifact list.
+   6. The board can show "Hidden on this deck. Waiting for station deletion." In that case, wait. The station deletes its copy when its link is up. The board then shows "Deleted."
+
+Result:
+
+| Date | `grim` version | Items | Result |
+| --- | --- | --- | --- |
+| (not run) | | | The live smoke of P5a on the owner's Omarchy machine is open (DL-233 item d). |
+
+Task P4 I adds its items to this section later.
+<!-- desktop-smoke:end -->
