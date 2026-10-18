@@ -292,6 +292,8 @@ The desktop entry invokes the absolute hook path. The hook runs as the logged-in
 
 Bootstrap verifies the exact manifest build identity and the binary hash. The running station response must match the same build and hash. `fleetdeck --version` alone is not enough. The existing `build-info` already exposes the version, the commit and the release status. The existing service installation copies the binary into a service release directory. Reuse those facilities (`crates/fleetdeck-cli/src/main.rs:64`, `crates/fleetdeck-cli/src/service/program.rs:207`).
 
+**Trust boundary (P8-17).** P8 protects the bootstrap against a tampered medium and a tampered package. The package, the hook, the autostart entry and the release manifest are root-owned. The bootstrap checks the build and the binary hash of the station process before it trusts it. P8 does not protect against code that already runs as the logged-in user. Such code can replace the files of the user (for example `provision.toml`), trace the processes of the user, and answer on the station socket of the user from a process that it controls. The peer check of the station socket (the uid, the hash of `/proc/<pid>/exe` and the process start time) is a defense in depth against a stale or foreign station process. It is not a boundary against the user account. The owner accepted this boundary (decision P8-17).
+
 ### 5.3 Provider probe
 
 Remove the claim that the current `doctor` tests the installed service environment. It uses its own `ChildEnv::from_process()` (`crates/fleetdeck-cli/src/doctor.rs:274`).
