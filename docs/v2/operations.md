@@ -630,7 +630,7 @@ When the board shows "The recording result is unknown", the recording can exist.
 
 #### Agent recordings (P5b-2)
 
-This part covers the tool `record_monitor` of a coordinator session. The contract is section 13 of `design/omarchy-p5b.md`. The built version is recorded in DL-241. The end-to-end proofs (task Q-P1) pass. The PRE-PR review and the live smoke are not done yet (`make desktop-smoke` prints the list). The real-recorder smoke of section 7.7 is also required.
+This part covers the tool `record_monitor` of a coordinator session. The contract is section 13 of `design/omarchy-p5b.md`. The built version is recorded in DL-241. The end-to-end proofs (task Q-P1) pass, and the PRE-PR review passed (DL-242). The live smoke is not done yet (`make desktop-smoke` prints the list). The real-recorder smoke of section 7.7 is also required.
 
 > **Caution:** an agent with this allowance records a whole monitor of a grant station without a prompt from you. A recording shows other applications, notifications and private information. The agent gets only a reference, but the video is an ordinary artifact that you and other artifact readers can open until you delete it. Revoke the grant when the work is done.
 
@@ -699,7 +699,7 @@ A refused call charges nothing. A call that is accepted and then fails keeps its
 - The real-recorder smoke on the owner's Omarchy machine is not done (see `docs/v2/LIVE-SMOKE.md`). Do not rely on recordings before it passes.
 - The deck does not end a video response when a client stops reading. The 180 second limit needs a connection write timeout (DL-239 item c).
 - Installing `wf-recorder` has no board path yet.
-- Agent recordings: the PRE-PR review and the live smoke are not done. The board has no form to change the recording limits of an existing grant (no board path yet).
+- Agent recordings: the live smoke is not done. The board has no form to change the recording limits of an existing grant (no board path yet).
 
 ## 8. Back up
 

@@ -166,7 +166,7 @@ These surfaces are new in v2 and have no v0 feature. Each row gives the four pro
 
 ## Agent monitor recordings (R13 P5b-2, DL-241)
 
-These surfaces are new in v2 and have no v0 feature. Each row gives the four proofs: the behavior, the tests by file, the failure behavior and the exposure. Design: `docs/v2/design/omarchy-p5b.md` section 13. The rows of the tasks Q-F, Q-S, Q-W, Q-K and Q-P1, and of the fixes `156ee9a5` and `506f9787`, are built. The PRE-PR review of P5b-2 and the live smoke are pending (DL-241 items a to c; the list is in `docs/v2/LIVE-SMOKE.md`, `make desktop-smoke`). No unit test runs a real recorder: the real-recorder smoke of P5b-1 is still required.
+These surfaces are new in v2 and have no v0 feature. Each row gives the four proofs: the behavior, the tests by file, the failure behavior and the exposure. Design: `docs/v2/design/omarchy-p5b.md` section 13. The rows of the tasks Q-F, Q-S, Q-W, Q-K and Q-P1, and of the fixes `156ee9a5` and `506f9787`, are built. The PRE-PR review of P5b-2 passed in round 2 (DL-242). The live smoke is pending (DL-241 items a to c; the list is in `docs/v2/LIVE-SMOKE.md`, `make desktop-smoke`). No unit test runs a real recorder: the real-recorder smoke of P5b-1 is still required.
 
 | Surface | v2 | Tests | Fail-open and exposure proof (R9.2) |
 | --- | --- | --- | --- |
