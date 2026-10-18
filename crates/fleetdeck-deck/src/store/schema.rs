@@ -759,37 +759,11 @@ pub fn migrations() -> Migrations<'static> {
         M::up(super::station_palettes::SQL),
         // V34 (R13 P6 task F1): grant caps, coordinator desktop ledger.
         M::up(super::coordinator_desktop::schema::SQL),
+        // V35 (R13 P5b task F): the recording columns of `desktop_captures`.
+        M::up(super::desktop_recordings::SQL),
     ])
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn the_migrations_are_valid() {
-        super::migrations().validate().unwrap();
-    }
-
-    #[test]
-    fn an_existing_share_reads_history_off_after_v23() {
-        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
-        let migrations = super::migrations();
-        migrations.to_version(&mut conn, 22).unwrap();
-        conn.execute(
-            "INSERT INTO shares (share_id, kind, target, role, steering, expires_at, created_at)
-             VALUES ('sh1', 'board', '', 'viewer', 'open', 2, 1)",
-            [],
-        )
-        .unwrap();
-        migrations.to_latest(&mut conn).unwrap();
-        let history: i64 = conn
-            .query_row(
-                "SELECT history FROM shares WHERE share_id = 'sh1'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(history, 0);
-        // The column holds 0 or 1 only.
-        assert!(conn.execute("UPDATE shares SET history = 2", []).is_err());
-    }
-}
+#[path = "schema_tests.rs"]
+mod tests;

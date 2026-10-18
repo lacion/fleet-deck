@@ -3,4 +3,4 @@
 /**
  * The kind of a capture.
  */
-export type CaptureKind = "screenshot";
+export type CaptureKind = "screenshot" | "recording";

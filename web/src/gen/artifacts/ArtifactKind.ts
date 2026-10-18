@@ -3,4 +3,4 @@
 /**
  * What an artifact is, by its main file.
  */
-export type ArtifactKind = "html" | "markdown" | "image" | "svg" | "pdf" | "other";
+export type ArtifactKind = "html" | "markdown" | "image" | "svg" | "pdf" | "video" | "other";

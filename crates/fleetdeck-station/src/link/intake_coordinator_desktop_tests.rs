@@ -582,6 +582,7 @@ impl T {
                 caller_session: by.map(|c| c.caller_session.to_string()),
                 caller_grant_id: by.map(|c| c.grant_id.clone()),
                 at: 1,
+                recording: None,
             },
         };
         store.capture_commit(FP, capture_id, new).await.unwrap();

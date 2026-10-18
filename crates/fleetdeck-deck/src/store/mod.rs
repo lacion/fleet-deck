@@ -34,6 +34,7 @@ pub(crate) mod coordinator_ops;
 pub mod coordinator_query;
 mod coordinator_query_reads;
 pub mod desktop_captures;
+pub(crate) mod desktop_recordings;
 pub mod display_directive_schema;
 pub mod display_directives;
 pub mod display_directives_coordinator;

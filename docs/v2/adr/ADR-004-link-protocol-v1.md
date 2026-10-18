@@ -136,6 +136,8 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `artifacts_delete.v1` | `artifacts.delete` (R13 P5a, `omarchy-p5a.md` §3; station artifact deletion) |
 | `desktop_mcp.v1` | `coordinator.desktop_call`, `coordinator.desktop_query`, `desktop.authority_check`, `desktop.policy_now`, `desktop.coordinator_read`, the `coordinator` context of a desktop authority, the `preview_close` desktop action, and the P6 extension of `coordinator.policy_now` (R13 P6, `omarchy-p6.md` §5; the coordinator desktop tools) |
 | `capture_mcp.v1` | The screenshot variants of the `desktop_mcp.v1` methods and the `coordinator` caller of a capture (R13 P6, `omarchy-p6.md` §4.6, §4.9; the coordinator screenshot tools and the bounded image read; needs `desktop_mcp.v1`) |
+| `desktop_recording.v1` | `desktop.capture_active`, `desktop.capture_stop`, `desktop.capture_policy_now`, `desktop.capture_lease`, and `desktop.act` with the `screen_record` action (R13 P5b, `omarchy-p5b.md` §3; the owner monitor recording, its progress, active discovery, owner stop, live policy query and continuation leases; no envelope) |
+| `artifacts_video.v1` | The `video` artifact kind, the `recording` capture provenance and metadata, and the HTTP video and `Range` contract of the deck (R13 P5b, `omarchy-p5b.md` §3.1, §11, §14; a peer without it receives `kind: "other"` and no recording provenance) |
 | `desktop_shell.v1` | `fleet.summary`, `display.directive`, `station.palette` (R13 P4, `omarchy-p4.md` §3.1; the fleet summary the deck sends to a station, the wall hotkeys and the Omarchy theme palette of the desktop shell) |
 | `pair_request.v1` | The pair-channel frames `pair_request`, `pair_pending`, `pair_approved` and `pair_resume` (DL-178, §10): a station asks a deck to pair without an invitation and the owner approves on the board |
 
@@ -456,6 +458,10 @@ close             { reason, detail }
 | `desktop.act` | deck → station | drive | `desktop_authority.v1` | no |
 | `desktop.capture_status` | deck → station | admin | `desktop_capture.v1` | no |
 | `artifacts.delete` | deck → station | admin | `artifacts_delete.v1` | no |
+| `desktop.capture_active` | deck → station | admin | `desktop_recording.v1` | no |
+| `desktop.capture_stop` | deck → station | admin | `desktop_recording.v1` | no |
+| `desktop.capture_policy_now` | deck → station | read | `desktop_recording.v1` | no |
+| `desktop.capture_lease` | station → deck | read | `desktop_recording.v1` | no |
 | `files.display_changes` | deck → station | read | `display_changes.v1` | no |
 | `fleet.summary` | deck → station | read | `desktop_shell.v1` | no |
 | `approval.answer` | deck → station | approve | — | yes |

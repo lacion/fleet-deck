@@ -33,7 +33,7 @@ const fn p5a_row(name: &'static str, feature: &'static str) -> MethodSpec {
 use Callers::{DeckToStation, Either, StationToDeck};
 
 /// The last rows of [`crate::methods::METHODS`].
-pub(crate) const TAIL: [MethodSpec; 43] = [
+pub(crate) const TAIL: [MethodSpec; 47] = [
     // Desktop control on the station (R13 P3): the board gates it for the
     // owner; the station checks `allow_desktop` live.
     m(
@@ -55,6 +55,25 @@ pub(crate) const TAIL: [MethodSpec; 43] = [
     // R13 P5a: the screenshot result lookup and artifact deletion.
     p5a_row("desktop.capture_status", feature::DESKTOP_CAPTURE),
     p5a_row("artifacts.delete", feature::ARTIFACTS_DELETE),
+    // R13 P5b (`desktop_recording.v1`, no envelope, none mutating): the
+    // active recording, the owner stop and the live policy query go to the
+    // station; the continuation lease comes from it.
+    p5a_row("desktop.capture_active", feature::DESKTOP_RECORDING),
+    p5a_row("desktop.capture_stop", feature::DESKTOP_RECORDING),
+    m(
+        "desktop.capture_policy_now",
+        DeckToStation,
+        Scope::Read,
+        Some(feature::DESKTOP_RECORDING),
+        false,
+    ),
+    m(
+        "desktop.capture_lease",
+        StationToDeck,
+        Scope::Read,
+        Some(feature::DESKTOP_RECORDING),
+        false,
+    ),
     // Protected change statistics and patches for a wall display (R13 §5D).
     m(
         "files.display_changes",

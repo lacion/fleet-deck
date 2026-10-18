@@ -456,6 +456,8 @@ async fn plain_action(
             }
         }
         DesktopActBody::WindowClose { address } => DesktopAction::WindowClose { address },
+        // R13 P5b task F: the owner recording has its own start (task K1).
+        DesktopActBody::ScreenRecord { .. } => return Err(RelayError::Unsupported),
         DesktopActBody::ScreenCapture { .. }
         | DesktopActBody::WallOpen { .. }
         | DesktopActBody::WallClose { .. }

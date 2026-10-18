@@ -141,7 +141,7 @@ pub fn tools(env: &ChildEnv) -> DesktopTools {
     DesktopTools {
         wtype: on_path(env, "wtype"),
         pointer: on_path(env, "ydotool") || on_path(env, "wlrctl"),
-        recorder: on_path(env, "gpu-screen-recorder"),
+        recorder: on_path(env, "wf-recorder"),
         grim: on_path(env, "grim"),
         chromium: on_path(env, "chromium"),
         notify_send: on_path(env, "notify-send"),

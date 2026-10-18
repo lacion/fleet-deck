@@ -180,6 +180,15 @@ pub mod feature {
     /// R13 P6: the coordinator screenshot tools (needs `desktop_mcp.v1`).
     pub const CAPTURE_MCP: &str = "capture_mcp.v1";
 
+    /// R13 P5b: the owner recording action, recording status and progress,
+    /// active recording discovery, stop, live policy checks and continuation
+    /// leases.
+    pub const DESKTOP_RECORDING: &str = "desktop_recording.v1";
+
+    /// R13 P5b: the `video` artifact kind, recording provenance and the HTTP
+    /// video and `Range` contract.
+    pub const ARTIFACTS_VIDEO: &str = "artifacts_video.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -227,6 +236,8 @@ pub mod feature {
         ARTIFACTS_DELETE,
         DESKTOP_MCP,
         CAPTURE_MCP,
+        DESKTOP_RECORDING,
+        ARTIFACTS_VIDEO,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

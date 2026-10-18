@@ -2,7 +2,15 @@
 import { formatHash } from '../app/routes';
 import type { ArtifactKind } from '../gen';
 
-export const KINDS: readonly ArtifactKind[] = ['html', 'markdown', 'image', 'svg', 'pdf', 'other'];
+export const KINDS: readonly ArtifactKind[] = [
+  'html',
+  'markdown',
+  'image',
+  'svg',
+  'pdf',
+  'video',
+  'other',
+];
 
 export const KIND_LABEL: Record<ArtifactKind, string> = {
   html: 'HTML',
@@ -10,6 +18,7 @@ export const KIND_LABEL: Record<ArtifactKind, string> = {
   image: 'Image',
   svg: 'SVG',
   pdf: 'PDF',
+  video: 'Video',
   other: 'File',
 };
 

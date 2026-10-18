@@ -71,6 +71,7 @@ fn provenance(capture_id: &str) -> CaptureProvenance {
         caller_session: None,
         caller_grant_id: None,
         at: 5_000,
+        recording: None,
     }
 }
 

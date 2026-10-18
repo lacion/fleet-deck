@@ -37,6 +37,9 @@ mod intake_desktop;
 // R13 P5a: `desktop.act` with `screen_capture` and `desktop.capture_status`.
 #[path = "intake_capture.rs"]
 mod intake_capture;
+// R13 P5b: the recording methods (stubs until task S1).
+#[path = "intake_recording.rs"]
+mod intake_recording;
 // R13 P5a: the `artifacts.*` methods, with `artifacts.delete`.
 #[path = "intake_artifacts.rs"]
 mod intake_artifacts;
@@ -520,6 +523,7 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
         "desktop.info" => intake_desktop::info(ctx, req.params).await,
         "desktop.act" => intake_desktop::act(ctx, control, req.params).await,
         "desktop.capture_status" => intake_capture::status(ctx, control, req.params).await,
+        m if intake_recording::has(m) => intake_recording::call(ctx, control, m, req.params).await,
         "fleet_git.projects_set" => intake_fleet_git::snapshot(ctx, req.params).await,
         "fleet_git.share_verdict" => intake_fleet_git::share_verdict(ctx, req.params).await,
         "fleet_git.push_now" => intake_fleet_git::push_now(&ctx.manager, req.params).await,

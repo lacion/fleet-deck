@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::artifacts::ArtifactPublished;
+use crate::recording::RecordingMeta;
 
 /// The station wire codes; the HTTP `error` equals the code.
 pub mod code {
@@ -18,6 +19,17 @@ pub mod code {
     pub const SCREEN_LOCKED: &str = "screen_locked";
     pub const CAPTURE_ID_CONFLICT: &str = "capture_id_conflict";
     pub const CAPTURE_INTERRUPTED: &str = "capture_interrupted";
+    // R13 P5b recordings (design `omarchy-p5b.md` §16).
+    pub const RECORDING_DURATION: &str = "recording_duration";
+    pub const RECORDING_DIMENSIONS: &str = "recording_dimensions";
+    pub const RECORDING_TOO_LARGE: &str = "recording_too_large";
+    pub const RECORDING_FAILED: &str = "recording_failed";
+    pub const RECORDING_INVALID: &str = "recording_invalid";
+    pub const RECORDING_PUBLISH_FAILED: &str = "recording_publish_failed";
+    pub const RECORDING_CANCELLED: &str = "recording_cancelled";
+    pub const RECORDING_INTERRUPTED: &str = "recording_interrupted";
+    pub const NOT_RECORDING: &str = "not_recording";
+    pub const CAPTURE_ID_REQUIRED: &str = "capture_id_required";
 }
 
 /// The exact texts.
@@ -35,6 +47,23 @@ pub mod text {
     pub const CAPTURE_INTERRUPTED: &str = "The screenshot was interrupted before it was saved.";
     pub const UNKNOWN: &str = "The screenshot result is unknown. Check the artifact list before taking another screenshot.";
     pub const NO_GRIM: &str = "The screenshot tool grim is not installed.";
+    // R13 P5b recordings (design `omarchy-p5b.md` §16).
+    pub const RECORDING_DURATION: &str =
+        "Recording duration must be a whole number from 1 to 120 seconds.";
+    pub const RECORDING_DIMENSIONS: &str =
+        "The monitor exceeds the recording size limit or has unsupported dimensions.";
+    pub const RECORDING_TOO_LARGE: &str = "The recording exceeds 256 MiB.";
+    pub const RECORDING_FAILED: &str = "The recording tool failed.";
+    pub const RECORDING_INVALID: &str = "The recording file could not be verified.";
+    pub const RECORDING_PUBLISH_FAILED: &str = "The recording could not be saved as an artifact.";
+    pub const RECORDING_CANCELLED: &str = "The recording was stopped before it started.";
+    pub const RECORDING_INTERRUPTED: &str = "The recording was interrupted before it was saved.";
+    pub const NOT_RECORDING: &str = "This capture is not a recording.";
+    pub const CAPTURE_ID_REQUIRED: &str = "A recording needs a capture ID.";
+    /// The missing-tool text: only when the executable is missing.
+    pub const NO_RECORDER: &str = "The recording tool wf-recorder is not installed.";
+    /// Every other unsupported recording capability.
+    pub const RECORDING_UNSUPPORTED: &str = "This station does not support monitor recordings.";
 }
 
 /// The header of the board's capture ID.
@@ -108,6 +137,8 @@ pub struct CaptureStatusQuery {
 #[ts(export_to = "capture/")]
 pub enum CaptureKind {
     Screenshot,
+    /// R13 P5b: a monitor recording.
+    Recording,
 }
 
 /// Who asked for a capture.
@@ -144,6 +175,11 @@ pub struct CaptureProvenance {
     /// Station Unix ms at capture start.
     #[ts(type = "number")]
     pub at: i64,
+    /// R13 P5b: the metadata of a recording; omitted for a screenshot, so the
+    /// pinned owner screenshot bytes stay unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub recording: Option<RecordingMeta>,
 }
 
 #[cfg(test)]
@@ -261,6 +297,7 @@ mod tests {
             caller_session: None,
             caller_grant_id: None,
             at: 7,
+            recording: None,
         };
         let v = serde_json::to_value(&p).unwrap();
         assert_eq!(v["caller_station"], serde_json::Value::Null);
@@ -289,6 +326,7 @@ mod tests {
             caller_session: None,
             caller_grant_id: None,
             at: 7,
+            recording: None,
         };
         assert_eq!(serde_json::to_string(&p).unwrap(), owner);
         assert_eq!(serde_json::from_str::<CaptureProvenance>(owner).unwrap(), p);
@@ -306,6 +344,7 @@ mod tests {
             caller_session: Some("01J0000000000000000000000S".into()),
             caller_grant_id: Some("g1".into()),
             at: 7,
+            recording: None,
         };
         let v = serde_json::to_value(&p).unwrap();
         assert_eq!(v["caller"], "coordinator");

@@ -40,7 +40,7 @@ async function failure(response: Response): Promise<DeckError> {
 }
 
 export type DeckIo = {
-  get(path: string): Promise<unknown>;
+  get(path: string, headers?: Readonly<Record<string, string>>): Promise<unknown>;
   post(path: string, body: unknown, headers?: Readonly<Record<string, string>>): Promise<unknown>;
 };
 
@@ -80,7 +80,7 @@ export function deckHttp(fetcher: Fetch, csrf: () => string | null, timeoutMs: n
     }
   };
   return {
-    get: (path) => call('GET', path),
+    get: (path, headers) => call('GET', path, undefined, headers),
     post: (path, body, headers) => call('POST', path, body, headers),
     del: (path, headers) => call('DELETE', path, undefined, headers),
   };
