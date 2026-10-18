@@ -185,7 +185,7 @@ function screensaverLine(s: OmarchyScreensaver): string {
       : 'Screensaver: on, but blocked: the original screensaver that Fleet Deck kept differs from the current file.';
   }
   return s.file_restored === false
-    ? 'Screensaver: off, but the screensaver file still holds the Fleet Deck text (press Turn the screensaver off again)'
+    ? 'Screensaver: off. The screensaver file changed after Fleet Deck restored it; the original is kept as a backup.'
     : 'Screensaver: off';
 }
 
@@ -223,7 +223,7 @@ function integrationActions(install: OmarchyInstall, screensaver: OmarchyScreens
   if (ready) out.push('uninstall');
   if (ready && screensaver !== null) {
     if (!screensaver.enabled) out.push('screensaver_on');
-    if (screensaver.enabled || screensaver.file_restored === false) out.push('screensaver_off');
+    if (screensaver.enabled) out.push('screensaver_off');
     if (screensaver.blocked !== null) out.push('screensaver_rebaseline');
   }
   return out;

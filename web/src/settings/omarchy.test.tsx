@@ -130,7 +130,7 @@ describe('cardLines', () => {
       'Screensaver: on, but blocked: the original screensaver that Fleet Deck kept differs from the current file.',
     );
     expect(cardLines(withScreensaver({ enabled: false, file_restored: false }))).toContain(
-      'Screensaver: off, but the screensaver file still holds the Fleet Deck text (press Turn the screensaver off again)',
+      'Screensaver: off. The screensaver file changed after Fleet Deck restored it; the original is kept as a backup.',
     );
     expect(cardLines(withScreensaver({ enabled: false, file_restored: true }))).toContain(
       'Screensaver: off',
@@ -213,11 +213,10 @@ describe('buttons', () => {
     ]);
   });
 
-  test('the screensaver off but the file still holds the text: both buttons', () => {
+  test('the screensaver off and the restored file changed: no off button', () => {
     expect(labels(withScreensaver({ enabled: false, file_restored: false }))).toEqual([
       'Uninstall',
       'Turn the screensaver on',
-      'Turn the screensaver off',
     ]);
   });
 

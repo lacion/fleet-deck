@@ -409,7 +409,7 @@ What each line means:
 | `Hyprland line: present` or `Hyprland line: missing` | Whether the managed line is in `hyprland.lua`. |
 | `Screensaver: on` | The station writes the screensaver text. |
 | `Screensaver: off` | The station does not write the screensaver text. |
-| `Screensaver: off, but the screensaver file still holds the Fleet Deck text (press Turn the screensaver off again)` | The screensaver is off, but the file is not the original. |
+| `Screensaver: off. The screensaver file changed after Fleet Deck restored it; the original is kept as a backup.` | The screensaver is off, and the file is not the restored original any more (you edited it, or a job of an older build wrote it once during an upgrade). Fleet Deck does not change it again. The original stays in the backup. |
 | `Screensaver: on, but blocked: the original screensaver that Fleet Deck kept differs from the current file.` | The station cannot make the first write. See "The screensaver" below. |
 | `Update the integration first: press Install, then wait two minutes.` | The integration is outdated. See "Update the integration first" below. |
 | `Provisioning: <phase>` | The phase of the bootstrap of section 15: `validated`, `service`, `paired`, `link`, `integration` or `complete`. The word `unknown` means that the station could not read its state file. |
@@ -426,7 +426,7 @@ The buttons:
 | **Install** | The integration is not installed, or it has changed or missing files, or it is outdated. | `fleetdeck omarchy install --yes`, limit 60 seconds. |
 | **Uninstall** | The integration is installed and not outdated. | `fleetdeck omarchy uninstall`, limit 60 seconds. |
 | **Turn the screensaver on** | The integration is installed and not outdated, and the screensaver is off. | `fleetdeck omarchy screensaver on`, limit 15 seconds. |
-| **Turn the screensaver off** | The integration is installed and not outdated, and the screensaver is on or the file still holds the Fleet Deck text. | `fleetdeck omarchy screensaver off`, limit 15 seconds. |
+| **Turn the screensaver off** | The integration is installed and not outdated, and the screensaver is on. | `fleetdeck omarchy screensaver off`, limit 15 seconds. |
 | **Use the current screensaver as the original** | The screensaver is blocked. | `fleetdeck omarchy screensaver rebaseline`, limit 15 seconds. |
 | **Retry provisioning** | See "Retry provisioning" below. | The provisioning bootstrap of section 15, limit 10 minutes. |
 
