@@ -27,7 +27,7 @@ fn next_minute(w: &World) {
     w.f.det.advance(Duration::from_secs(61));
 }
 
-fn lease_answer(o: &Outcome) -> (LeaseDecision, Option<StopReason>) {
+pub(super) fn lease_answer(o: &Outcome) -> (LeaseDecision, Option<StopReason>) {
     let Outcome::Ok(v) = o else {
         panic!("a lease answer, got {o:?}");
     };
@@ -41,7 +41,7 @@ fn forbidden(o: &Outcome) -> bool {
 }
 
 /// A hook that runs `sql` on the deck database.
-fn sql(w: &World, sql: String) -> Step {
+pub(super) fn sql(w: &World, sql: String) -> Step {
     let store = w.f.store.clone();
     hook(move || {
         let (store, sql) = (store.clone(), sql.clone());
@@ -56,7 +56,7 @@ fn sql(w: &World, sql: String) -> Step {
 }
 
 /// Runs a recording with the lease script; the reply and the lease answers.
-async fn scripted(w: &World, steps: Vec<Step>, end: Final) -> (Value, Vec<Outcome>) {
+pub(super) async fn scripted(w: &World, steps: Vec<Step>, end: Final) -> (Value, Vec<Outcome>) {
     let answers = Answers::default();
     w.fake.set(script_station(steps, end, answers.clone()));
     let reply = w.call("c1", record_call("r1", 30, None)).await;
@@ -64,7 +64,7 @@ async fn scripted(w: &World, steps: Vec<Step>, end: Final) -> (Value, Vec<Outcom
     (reply, got)
 }
 
-const LOST: Final = Final::Err("authority_lost", "x");
+pub(super) const LOST: Final = Final::Err("authority_lost", "x");
 
 #[tokio::test]
 async fn a_valid_lease_continues_sets_the_start_once_and_audits_it_as_the_coordinator() {

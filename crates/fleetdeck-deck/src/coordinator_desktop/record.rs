@@ -27,7 +27,7 @@ use fleetdeck_proto::link::Outcome;
 use serde_json::Value;
 
 use super::audit::{self, Facts};
-use super::authorize::{Authorized, recording_pass};
+use super::authorize::{Authorized, delivery_pass, recording_pass};
 use super::capture::{End, after_error, end, fail_before_send, mark_failed};
 use super::capture_status::{
     PENDING_INDEXING_RECORDING, committed_recording, plain, stored_result, with_seconds,
@@ -375,6 +375,35 @@ pub(super) async fn run_recording(
         let extra = outcome_extras(op, &outcome);
         let row = facts.row_with(audit::OUTCOME, result, failure, None, &extra);
         audit::write_or_log(&link.store, row).await;
+    }
+    // The final authority check before a result is delivered (R13 P5b-2
+    // §13.4): the durable result stays, the caller gets no reference.
+    if matches!(outcome, OpOutcome::Done(_))
+        && let Err(refusal) = delivery_pass(link, auth.ctx(), auth.target()).await
+    {
+        let lost = if refusal == code::AUTHORITY_UNKNOWN {
+            code::AUTHORITY_UNKNOWN
+        } else {
+            code::AUTHORITY_LOST
+        };
+        let facts = Facts {
+            action: audit::CAPTURE,
+            ctx: auth.ctx(),
+            target: auth.target(),
+            operation_id: Some(id),
+            window_id: None,
+            monitor: Some(rec.monitor),
+        };
+        let row = facts.row_with(
+            audit::REFUSED,
+            AuditResult::Refused,
+            Some(lost),
+            None,
+            &[("stage", "delivery".into())],
+        );
+        audit::write_or_log(&link.store, row).await;
+        drop(slots);
+        return reply_err_capture(lost, text(lost).unwrap_or_default(), id);
     }
     drop(slots);
     match (outcome, failure) {

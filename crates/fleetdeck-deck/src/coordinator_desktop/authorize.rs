@@ -19,7 +19,7 @@ use fleetdeck_proto::{SessionId, StationId};
 use crate::link::DeckLink;
 use crate::link::desktop_authority::{Route, resolve};
 use crate::store::coordinator_desktop::{OpClass, OpTool};
-use crate::store::{Grant, GrantClass, GrantState, LinkFeature};
+use crate::store::{Grant, GrantClass, LinkFeature};
 
 /// The nine tools of §3 and `record_monitor` (R13 P5b-2 §13.1). The variants
 /// of the tools of tasks T3 and T5 are not built yet.
@@ -372,15 +372,14 @@ pub(super) struct Held<'a> {
     pub(super) class: OpClass,
 }
 
-/// The deck-local checks that a send and an authority check repeat (§6.2
-/// step 10): the switches, the grant (active, not expired, the same binding ID
-/// and generation, the caller, the target and the class), and the features of
-/// the target link. Returns the grant as it is now. A store error is
-/// `authority_unknown`.
+/// The deck-local grant checks, including the idle expiry (R13 P5b-2 PRE-PR
+/// r1): the switches, and the grant (in effect now, the same binding ID and
+/// generation, the caller, the target and the class). Returns the grant as it
+/// is now. A store error is `authority_unknown`.
 ///
 /// # Errors
 /// The code of the first check that fails.
-pub(super) async fn local_pass(link: &DeckLink, held: &Held<'_>) -> Result<Grant, &'static str> {
+pub(super) async fn grant_pass(link: &DeckLink, held: &Held<'_>) -> Result<Grant, &'static str> {
     switches(link)?;
     let grant = link
         .store
@@ -388,8 +387,7 @@ pub(super) async fn local_pass(link: &DeckLink, held: &Held<'_>) -> Result<Grant
         .await
         .map_err(|e| store_error(&e))?
         .ok_or(code::NOT_GRANTED)?;
-    if grant.state != GrantState::Active
-        || link.store.now_ms() > grant.expires_at
+    if !crate::store::grant_scopes::in_effect(&grant, link.store.now_ms())
         || grant.station_id != *held.caller
     {
         return Err(code::NOT_GRANTED);
@@ -402,8 +400,48 @@ pub(super) async fn local_pass(link: &DeckLink, held: &Held<'_>) -> Result<Grant
     if !classes.contains(&needs(held.class)) || !grant.stations.contains(held.target) {
         return Err(code::NOT_GRANTED);
     }
+    Ok(grant)
+}
+
+/// The deck-local checks that a send and an authority check repeat (§6.2
+/// step 10): the switches, the grant (active, not expired, not idle-expired,
+/// the same binding ID and generation, the caller, the target and the class),
+/// and the features of the target link. Returns the grant as it is now. A
+/// store error is `authority_unknown`.
+///
+/// # Errors
+/// The code of the first check that fails.
+pub(super) async fn local_pass(link: &DeckLink, held: &Held<'_>) -> Result<Grant, &'static str> {
+    let grant = grant_pass(link, held).await?;
     target_ready(link, held.target, held.class)?;
     Ok(grant)
+}
+
+/// The deck-local authority to deliver a recording result to its caller (R13
+/// P5b-2 §13.4): [`grant_pass`] for the capture class and the recording
+/// allowance of the grant. It makes no check of the target link: a reference
+/// needs no link to the target.
+///
+/// # Errors
+/// The code of the first check that fails.
+pub(super) async fn delivery_pass(
+    link: &DeckLink,
+    ctx: &CoordinatorContext,
+    target: &StationId,
+) -> Result<(), &'static str> {
+    let held = Held {
+        grant_id: &ctx.grant_id,
+        binding_id: &ctx.binding_id,
+        generation: ctx.generation,
+        caller: &ctx.caller_station,
+        target,
+        class: OpClass::Capture,
+    };
+    let grant = grant_pass(link, &held).await?;
+    if grant.recording_cap == 0 {
+        return Err(code::RECORDING_NOT_ALLOWED);
+    }
+    Ok(())
 }
 
 /// The deck-local pass of a coordinator recording (R13 P5b-2 §6.3, §13.2):
