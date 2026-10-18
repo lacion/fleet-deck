@@ -707,7 +707,17 @@ impl Cx<'_> {
         }
         // A coordinator close checks the authority again at the write itself
         // (§6.3): no other await between this check and the dispatch.
-        self.recheck_write().await?;
+        if self.start.coordinator().is_some() {
+            self.recheck_write().await?;
+            // The await can outlive the window: a close, an event gap or a
+            // new compositor clears its record, and a new window that reuses
+            // the address has another record. Only the same record closes.
+            if self.events.record(&record.address).as_ref() != Some(record)
+                || record.signature != self.found.signature
+            {
+                return Err(Fail::new(code::NOT_FOUND, "The window is gone."));
+            }
+        }
         self.dispatch(&["closewindow", &format!("address:{}", record.address)])
             .await
     }

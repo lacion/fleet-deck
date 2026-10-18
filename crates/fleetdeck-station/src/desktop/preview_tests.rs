@@ -705,3 +705,49 @@ async fn a_withdrawn_authority_before_the_move_leaves_the_opened_window() {
             .all(|c| !c.args.iter().any(|a| a == "movetoworkspacesilent"))
     );
 }
+
+/// Answers `Ok`, and at the second check clears the record of `address`, as
+/// a close, an event gap or a new compositor does while the check waits.
+struct Vanish {
+    calls: std::sync::atomic::AtomicUsize,
+    desktop: std::sync::Arc<super::Desktop>,
+    address: String,
+}
+
+#[async_trait::async_trait]
+impl super::coordinator::DispatchCheck for Vanish {
+    async fn check(
+        &self,
+        _phase: fleetdeck_proto::coordinator_desktop_wire::AuthorityPhase,
+        _read: Option<&fleetdeck_proto::coordinator_desktop_wire::ProtectedRead>,
+    ) -> Result<(), Fail> {
+        if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 1 {
+            self.desktop.events.forget(&self.address);
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn a_window_that_goes_away_during_the_check_at_the_write_is_not_closed() {
+    let rig = Rig::new(Opts::default());
+    let h = Harness::new();
+    let handle = open(&rig, &h, 1, &ctx(), "http://localhost:3000/")
+        .await
+        .unwrap()
+        .window_id
+        .unwrap();
+    let (_, record) = rig.desktop.events.preview(&handle).unwrap();
+    let check = std::sync::Arc::new(Vanish {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        desktop: rig.desktop.clone(),
+        address: record.address.clone(),
+    });
+    let action = A::PreviewClose {
+        window_id: handle.clone(),
+    };
+    let admitted = coordinated(&h, &action, 2, &ctx(), check, open_gates(), extras());
+    let e = rig.desktop.act(&on, action, admitted).await.unwrap_err();
+    assert_eq!(act_err(e), ("not_found", "The window is gone.".into()));
+    assert_eq!(closes(&rig), 0);
+}
