@@ -14,6 +14,7 @@ use fleetdeck_proto::event::Event;
 use fleetdeck_proto::{EventBody, SessionId};
 use rusqlite::{Connection, OptionalExtension, params};
 
+use super::artifact_deletions::tombstoned;
 use super::{NewEvent, Result, Store, StoreError, call, log, to_i64};
 
 /// The most suggestion rows that one session keeps (NV-02).
@@ -219,6 +220,9 @@ impl Store {
         artifact_id: String,
     ) -> Result<Option<(Artifact, Vec<ArtifactVersion>)>> {
         call(&self.inner.db, move |conn| {
+            if tombstoned(conn, &artifact_id)? {
+                return Ok(None);
+            }
             let Some(artifact) = load_artifact(conn, &artifact_id)? else {
                 return Ok(None);
             };
@@ -236,7 +240,9 @@ impl Store {
         call(&self.inner.db, move |conn| {
             let mut stmt = conn.prepare(&format!(
                 "SELECT {ARTIFACT_COLUMNS} FROM artifacts
-                 WHERE ?1 IS NULL OR session_id = ?1
+                 WHERE (?1 IS NULL OR session_id = ?1)
+                   AND NOT EXISTS (SELECT 1 FROM artifact_deletions d
+                                   WHERE d.artifact_id = artifacts.artifact_id)
                  ORDER BY updated_at DESC, artifact_id DESC"
             ))?;
             let rows = stmt
@@ -303,6 +309,13 @@ fn commit(
     now: i64,
 ) -> std::result::Result<(Committed, Option<u64>), CommitError> {
     let tx = conn.transaction().map_err(StoreError::from)?;
+    // A deleted artifact takes no new version (R13 P5a, A4): refused before
+    // any row or file changes.
+    if let Some(id) = &new.artifact_id
+        && tombstoned(&tx, id).map_err(StoreError::from)?
+    {
+        return Err(CommitError::UnknownArtifact(id.clone()));
+    }
     if let Some(session) = &new.session_id {
         let known: bool = tx
             .query_row(

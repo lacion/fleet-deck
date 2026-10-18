@@ -34,6 +34,9 @@ mod intake_native;
 // R13 P3: `desktop.info` and `desktop.act`.
 #[path = "intake_desktop.rs"]
 mod intake_desktop;
+// R13 P5a: the `artifacts.*` methods, with `artifacts.delete`.
+#[path = "intake_artifacts.rs"]
+mod intake_artifacts;
 // Fleet Git phase 1: `fleet_git.projects_set` and `fleet_git.push_now`.
 #[path = "intake_fleet_git.rs"]
 mod intake_fleet_git;
@@ -435,47 +438,6 @@ fn policy_now(ctx: &StationLink, params: serde_json::Value) -> Outcome {
     ))
 }
 
-/// The `artifacts.*` methods (R12, DL-165). A station without an artifact
-/// directory answers `unsupported`; a service error keeps its code.
-async fn artifact_method(ctx: &StationLink, method: &str, params: serde_json::Value) -> Outcome {
-    use crate::artifacts::ArtifactError;
-    use fleetdeck_proto::artifacts::code;
-    fn done<T: Serialize>(r: Result<T, ArtifactError>) -> Outcome {
-        match r {
-            Ok(v) => ok(v),
-            Err(e) => Outcome::Err(WireError::new(e.code, e.message)),
-        }
-    }
-    let Some(service) = ctx.manager.artifacts() else {
-        return Outcome::Err(WireError::new(
-            code::UNSUPPORTED,
-            "this station has no artifact directory",
-        ));
-    };
-    match method {
-        "artifacts.publish" => match serde_json::from_value(params) {
-            Ok(q) => done(service.publish(q).await),
-            Err(e) => bad_params(e),
-        },
-        "artifacts.list" => match serde_json::from_value(params) {
-            Ok(q) => done(service.list(q).await),
-            Err(e) => bad_params(e),
-        },
-        "artifacts.get" => match serde_json::from_value(params) {
-            Ok(q) => done(service.get(q).await),
-            Err(e) => bad_params(e),
-        },
-        "artifacts.file" => match serde_json::from_value(params) {
-            Ok(q) => done(service.file(q).await),
-            Err(e) => bad_params(e),
-        },
-        other => Outcome::Err(WireError::new(
-            NOT_IMPLEMENTED,
-            format!("`{other}` is not served by this station build"),
-        )),
-    }
-}
-
 /// Answers a request that is not `events.replay` or `session.snapshot`
 /// (the stream handles those).
 pub(super) async fn handle(
@@ -586,8 +548,9 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
         | "files.session_diff"
         | "files.display_changes"
         | "files.coordinator_diff" => file_method(ctx, &req.method, req.params).await,
-        "artifacts.publish" | "artifacts.list" | "artifacts.get" | "artifacts.file" => {
-            artifact_method(ctx, &req.method, req.params).await
+        "artifacts.publish" | "artifacts.list" | "artifacts.get" | "artifacts.file"
+        | "artifacts.delete" => {
+            intake_artifacts::artifact_method(ctx, &req.method, req.params).await
         }
         "settings.get" | "settings.set" | "settings.secret_set" | "station.restart" => {
             crate::settings_svc::call(&ctx.manager, &ctx.shells, &req.method, req.params).await

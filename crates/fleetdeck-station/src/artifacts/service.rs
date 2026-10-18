@@ -28,11 +28,11 @@ use crate::workspace::files::{open_root, private_root};
 /// The artifact service of one station.
 #[derive(Debug, Clone)]
 pub struct ArtifactService {
-    store: Store,
+    pub(super) store: Store,
     /// The live policy: each publish reads the current roots.
     policy: Arc<PolicyHub>,
     /// `<station data>/artifacts`.
-    root: PathBuf,
+    pub(super) root: PathBuf,
     /// The private paths of the station: never published (DL-173).
     private: Arc<PrivatePaths>,
 }

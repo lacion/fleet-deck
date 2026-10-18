@@ -24,6 +24,7 @@
 //!   effects, coordinator outbox rows and artifact suggestions stay for
 //!   [`HISTORY_RETENTION_MS`].
 
+pub mod artifact_deletions;
 pub mod artifacts;
 pub mod artifacts_state;
 pub mod assist;
@@ -63,6 +64,7 @@ mod schema_v29;
 mod schema_v30;
 mod schema_v31;
 mod schema_v32;
+mod schema_v33;
 pub mod session_files;
 pub mod session_holds;
 pub mod setup_runs;
