@@ -12,6 +12,7 @@ pub mod fake_deck;
 pub mod fake_desktop;
 pub mod mcp;
 mod proofs_exposure;
+pub mod recorder;
 mod station_b;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -308,6 +309,9 @@ pub struct World {
     pub grant_id: String,
     pub binding: CoordinatorBinding,
     pub mcp: Mcp,
+    /// The recording cap and the recording seconds cap of the grant, if the
+    /// world has the recording allowance.
+    recording: Option<(u32, u32)>,
 }
 
 /// What a world starts with.
@@ -316,6 +320,10 @@ pub struct Setup {
     pub b_without: Vec<&'static str>,
     /// Whether the grant exists (a test of the grant creation makes its own).
     pub grant: bool,
+    /// The recording cap and the recording seconds cap of the grant. `Some`
+    /// gives the grant the recording allowance and the binding the
+    /// `recording` class; `None` is a screenshot-only grant.
+    pub recording: Option<(u32, u32)>,
 }
 
 impl Default for Setup {
@@ -323,6 +331,7 @@ impl Default for Setup {
         Self {
             b_without: Vec::new(),
             grant: true,
+            recording: None,
         }
     }
 }
@@ -381,6 +390,7 @@ impl World {
                 url: String::new(),
                 token: String::new(),
             },
+            recording: setup.recording,
         };
         world.wait_linked(&setup.b_without).await;
         if setup.grant {
@@ -409,19 +419,26 @@ impl World {
         // The feature sets of both links are stored at the link start.
         let (store, b) = (self.deck().store.clone(), self.b_id.clone());
         let missing: Vec<&str> = without.to_vec();
+        let mut wanted = vec![feature::DESKTOP_MCP, feature::CAPTURE_MCP];
+        if self.recording.is_some() {
+            wanted.extend([
+                feature::DESKTOP_RECORDING,
+                feature::ARTIFACTS_VIDEO,
+                feature::CAPTURE_RECORDING_MCP,
+            ]);
+        }
         eventually("the features of the links", || {
-            let (store, b, missing) = (store.clone(), b.clone(), missing.clone());
+            let (store, b, missing, wanted) =
+                (store.clone(), b.clone(), missing.clone(), wanted.clone());
             async move {
-                [feature::DESKTOP_MCP, feature::CAPTURE_MCP]
-                    .iter()
-                    .all(|f| {
-                        let state = store.link_feature(&b, f);
-                        if missing.contains(f) {
-                            state == LinkFeature::Without
-                        } else {
-                            state == LinkFeature::Negotiated
-                        }
-                    })
+                wanted.iter().all(|f| {
+                    let state = store.link_feature(&b, f);
+                    if missing.contains(f) {
+                        state == LinkFeature::Without
+                    } else {
+                        state == LinkFeature::Negotiated
+                    }
+                })
             }
         })
         .await;
@@ -441,6 +458,10 @@ impl World {
         .into_iter()
         .collect();
         spec.stations = BTreeSet::from([self.a_id.clone(), self.b_id.clone()]);
+        if let Some((count, seconds)) = self.recording {
+            spec.recording_cap = count;
+            spec.recording_second_cap = seconds;
+        }
         // A second grant of another session keeps the `coordinate` scope of
         // both stations when the grant of the caller ends, so that a refusal
         // after a revocation is the answer of the handler and not the refusal
@@ -457,6 +478,17 @@ impl World {
             native_id: NATIVE_SENTINEL.to_owned(),
         };
         assert!(self.deck().store.bind_grant(binding.clone()).await.unwrap());
+        let mut classes: BTreeSet<ToolClass> = [
+            ToolClass::Read,
+            ToolClass::Mail,
+            ToolClass::Desktop,
+            ToolClass::Capture,
+        ]
+        .into_iter()
+        .collect();
+        if self.recording.is_some() {
+            classes.insert(ToolClass::Recording);
+        }
         let (token, digest) = mint().unwrap();
         self.a.node.coordinator_bindings().insert(
             digest,
@@ -467,14 +499,7 @@ impl World {
                 provider_instance: "claude".to_owned(),
                 native_id: Some(NATIVE_SENTINEL.to_owned()),
                 generation: 1,
-                classes: [
-                    ToolClass::Read,
-                    ToolClass::Mail,
-                    ToolClass::Desktop,
-                    ToolClass::Capture,
-                ]
-                .into_iter()
-                .collect(),
+                classes,
                 state: BindingState::Active,
                 control_skill: "skill".to_owned(),
                 scope: GrantScope::Lineage,

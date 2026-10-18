@@ -12,8 +12,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod common;
-#[path = "p5b_support/mp4.rs"]
-mod mp4;
 mod p6_support;
 mod settings_support;
 
@@ -159,44 +157,6 @@ async fn the_owner_sees_the_preview_of_an_agent_and_closes_it_on_the_board() {
     assert_eq!(again.status, 404, "{}", again.body);
 }
 
-/// The fake recorder of the P5b rig, put into the folder of a P6 rig: a
-/// `wf-recorder` that writes a clip to FD 3 and waits, and the `shim-exec`
-/// executable that moves stdin to FD 3 and runs the rest.
-fn add_recorder(root: &std::path::Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let write = |path: std::path::PathBuf, body: String| {
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-    };
-    let d = root.display();
-    write(
-        root.join("bin/wf-recorder"),
-        format!(
-            "[ -e /proc/self/fd/3 ] || exit 9\n\
-             trap 'exit 0' INT\n\
-             /bin/cat {d}/fixture.mp4 >&3\n\
-             while :; do /bin/sleep 0.05; done"
-        ),
-    );
-    write(
-        root.join("shim.sh"),
-        "[ \"$1\" = shim-exec ] && [ \"$2\" = --parent ] || exit 3\n\
-         shift 3\n\
-         while [ \"$1\" != -- ]; do\n\
-           case \"$1\" in\n\
-             --fsize) shift;;\n\
-             --stdin-fd3) exec 3<&0 </dev/null;;\n\
-             *) exit 4;;\n\
-           esac\n\
-           shift\n\
-         done\n\
-         shift\n\
-         exec /usr/bin/setsid \"$@\""
-            .to_owned(),
-    );
-    std::fs::write(root.join("fixture.mp4"), mp4::clip(3440, 1440, 1)).unwrap();
-}
-
 /// The owner recording answer lists the previews too (the recording path
 /// stamps them like every owner answer).
 #[tokio::test]
@@ -207,7 +167,7 @@ async fn the_owner_recording_answer_lists_the_previews_of_the_agents() {
         .as_str()
         .unwrap()
         .to_owned();
-    add_recorder(w.b.rig.dir.path());
+    p6_support::recorder::add_recorder(w.b.rig.dir.path());
     let (c, h) = w.deck().board().await;
     p6_support::board::enable_desktop(&c);
     let origin = format!("https://deck.tail1234.ts.net:{}", c.addr.port());
@@ -497,6 +457,7 @@ async fn a_target_without_desktop_mcp_cannot_be_a_grant_station() {
     let w = World::with(Setup {
         b_without: vec![feature::DESKTOP_MCP],
         grant: false,
+        ..Setup::default()
     })
     .await;
     let (c, h, elevation) = w.deck().board_elevated().await;
@@ -527,6 +488,7 @@ async fn a_target_without_desktop_mcp_cannot_be_a_grant_station() {
     let w = World::with(Setup {
         b_without: Vec::new(),
         grant: false,
+        ..Setup::default()
     })
     .await;
     let (c, h, elevation) = w.deck().board_elevated().await;
