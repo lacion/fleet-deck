@@ -3,18 +3,21 @@
 use std::sync::Arc;
 
 use axum::body::{Body, Bytes};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use fleetdeck_link::Control;
+use fleetdeck_proto::StationId;
 use fleetdeck_proto::artifacts::{
     ArtifactDetail, ArtifactFile, ArtifactFileQuery, ArtifactGetQuery, ArtifactVersion,
+    MAX_CHUNK_BYTES,
 };
 use futures_util::future::BoxFuture;
 
-use super::common::{ask, ask_on, control_of, db, file_headers, not_found};
+use super::common::{ask, ask_on, control_of, db, file_headers, live_artifact, not_found};
 use super::{ApiError, Board, MAX_CACHED_VERSION_BYTES, StationRecord};
+use crate::store::DeckStore;
 
 /// One chunk of a file: its bytes, and whether it is the last one (`eof` or
 /// no bytes).
@@ -53,6 +56,7 @@ async fn fetch_detail(
     artifact_id: &str,
     version: u32,
 ) -> Result<ArtifactDetail, ApiError> {
+    live_artifact(board, &rec.station_id, artifact_id).await?;
     let detail: ArtifactDetail = ask(
         board,
         rec,
@@ -85,6 +89,7 @@ async fn fill_cache(
     for path in files {
         let mut bytes = Vec::new();
         loop {
+            live_artifact(board, &rec.station_id, artifact_id).await?;
             let (part, last) = read_chunk(
                 &control,
                 &rec.name,
@@ -176,26 +181,155 @@ pub(crate) async fn ensure_cached(
         return Ok(Cache::Cached);
     }
     fill_cache(board, rec, artifact_id, version, &meta.files).await?;
+    // The cache write refuses a tombstoned identity inside its transaction;
+    // the result of a fill that lost the race is not served (R13 P5a A4).
+    live_artifact(board, &rec.station_id, artifact_id).await?;
     Ok(Cache::Cached)
 }
 
-/// What the body of a streamed file needs between two chunks.
+/// What the body of a served file needs between two chunks. One body type
+/// serves every byte path (owner `raw`, public `/a/{token}/...`, the display
+/// artifact route), from the cache or from the station (R13 P5a A4).
 struct Chunks {
-    control: Control,
-    name: String,
+    store: DeckStore,
+    station: StationId,
     artifact_id: String,
-    version: u32,
-    path: String,
-    offset: u64,
-    /// The first chunk, asked before the response left (NV-01).
-    first: Option<(Vec<u8>, bool)>,
+    /// The station read for a streamed body; `None` for a cached body.
+    remote: Option<Remote>,
+    /// The bytes that are read and not yet sent.
+    buf: Bytes,
+    /// The bytes that the station sent so far.
+    fetched: u64,
+    /// No more bytes come after `buf`.
+    eof: bool,
     done: bool,
     gate: Option<Gate>,
 }
 
-/// A check that runs before each chunk of a streamed file leaves the deck
+/// The station read of a streamed body.
+struct Remote {
+    control: Control,
+    name: String,
+    version: u32,
+    path: String,
+}
+
+/// A check that runs before each chunk of a served file leaves the deck
 /// (R13 §5D item 20): false stops the body.
 pub(crate) type Gate = Arc<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync>;
+
+fn cut(reason: impl std::fmt::Display) -> std::io::Error {
+    std::io::Error::other(reason.to_string())
+}
+
+impl Chunks {
+    /// False when the artifact has a tombstone, or when the lookup failed
+    /// (the check fails closed).
+    async fn live(&self) -> bool {
+        matches!(
+            self.store
+                .tombstone(self.station.clone(), self.artifact_id.clone())
+                .await,
+            Ok(None)
+        )
+    }
+}
+
+/// The body of a file in chunks of at most [`MAX_CHUNK_BYTES`]. Right before
+/// each chunk it asks for the tombstone (one indexed query) and runs the
+/// display [`Gate`] when there is one; a positive check ends the body with an
+/// error. A streamed body also checks the tombstone before each station read,
+/// so a pending deletion never reaches the bytes of the station.
+fn chunked(state: Chunks, headers: HeaderMap) -> Response {
+    let max = usize::try_from(MAX_CHUNK_BYTES).unwrap_or(usize::MAX);
+    let body = futures_util::stream::unfold(state, move |mut s| async move {
+        if s.done {
+            return None;
+        }
+        if s.buf.is_empty() {
+            if s.eof {
+                return None;
+            }
+            if !s.live().await {
+                s.done = true;
+                return Some((Err(cut("the artifact was deleted")), s));
+            }
+            let read = match &s.remote {
+                Some(r) => {
+                    read_chunk(
+                        &r.control,
+                        &r.name,
+                        &s.artifact_id,
+                        r.version,
+                        &r.path,
+                        s.fetched,
+                    )
+                    .await
+                }
+                None => return None,
+            };
+            match read {
+                Ok((part, last)) => {
+                    s.fetched += part.len() as u64;
+                    s.eof = last;
+                    s.buf = Bytes::from(part);
+                }
+                Err(e) => {
+                    s.done = true;
+                    return Some((Err(cut(format!("{}: {}", e.code, e.message))), s));
+                }
+            }
+            if s.buf.is_empty() {
+                return None;
+            }
+        }
+        // The authority of this moment, right before the chunk leaves
+        // (R13 §5D item 20; R13 P5a A4).
+        if !s.live().await {
+            s.done = true;
+            return Some((Err(cut("the artifact was deleted")), s));
+        }
+        if let Some(gate) = &s.gate
+            && !gate().await
+        {
+            s.done = true;
+            return Some((Err(cut("the display authority ended")), s));
+        }
+        let n = s.buf.len().min(max);
+        let chunk = s.buf.split_to(n);
+        Some((Ok::<_, std::io::Error>(chunk), s))
+    });
+    (StatusCode::OK, headers, Body::from_stream(body)).into_response()
+}
+
+/// Serves bytes that the deck holds (the cache) in chunks, with the checks of
+/// [`chunked`].
+pub(crate) fn serve_cached(
+    store: &DeckStore,
+    station: &StationId,
+    artifact_id: &str,
+    headers: HeaderMap,
+    bytes: Vec<u8>,
+    gate: Option<Gate>,
+) -> Response {
+    // The length is known: the answer keeps its `Content-Length`.
+    let mut headers = headers;
+    headers.insert(header::CONTENT_LENGTH, HeaderValue::from(bytes.len()));
+    chunked(
+        Chunks {
+            store: store.clone(),
+            station: station.clone(),
+            artifact_id: artifact_id.to_owned(),
+            remote: None,
+            buf: Bytes::from(bytes),
+            fetched: 0,
+            eof: true,
+            done: false,
+            gate,
+        },
+        headers,
+    )
+}
 
 /// Streams one file of a version from the station, chunk by chunk, without
 /// the cache (NV-01). The first chunk is asked before the response is
@@ -233,6 +367,7 @@ pub(crate) async fn stream_with(
     headers: HeaderMap,
     gate: Option<Gate>,
 ) -> Result<Response, ApiError> {
+    live_artifact(board, &rec.station_id, artifact_id).await?;
     let listed = board
         .store
         .artifact_versions(rec.station_id.clone(), artifact_id.to_owned())
@@ -247,62 +382,34 @@ pub(crate) async fn stream_with(
         ));
     }
     let control = control_of(board, rec)?;
-    let first = read_chunk(&control, &rec.name, artifact_id, version, path, 0).await?;
+    let (part, last) = read_chunk(&control, &rec.name, artifact_id, version, path, 0).await?;
+    live_artifact(board, &rec.station_id, artifact_id).await?;
     if let Some(gate) = &gate
         && !gate().await
     {
         return Err(not_found("unknown_artifact", "No such artifact."));
     }
-    let state = Chunks {
-        control,
-        name: rec.name.clone(),
-        artifact_id: artifact_id.to_owned(),
-        version,
-        path: path.to_owned(),
-        offset: 0,
-        first: Some(first),
-        done: false,
-        gate,
-    };
-    let body = futures_util::stream::unfold(state, |mut s| async move {
-        if s.done {
-            return None;
-        }
-        let (part, last) = match s.first.take() {
-            Some(chunk) => chunk,
-            None => match read_chunk(
-                &s.control,
-                &s.name,
-                &s.artifact_id,
-                s.version,
-                &s.path,
-                s.offset,
-            )
-            .await
-            {
-                Ok(chunk) => chunk,
-                Err(e) => {
-                    s.done = true;
-                    let cut = std::io::Error::other(format!("{}: {}", e.code, e.message));
-                    return Some((Err(cut), s));
-                }
-            },
-        };
-        if part.is_empty() {
-            return None;
-        }
-        // The authority of this moment, right before the chunk leaves
-        // (R13 §5D item 20).
-        if let Some(gate) = &s.gate
-            && !gate().await
-        {
-            s.done = true;
-            let cut = std::io::Error::other("the display authority ended");
-            return Some((Err(cut), s));
-        }
-        s.offset += part.len() as u64;
-        s.done = last;
-        Some((Ok::<_, std::io::Error>(Bytes::from(part)), s))
-    });
-    Ok((StatusCode::OK, headers, Body::from_stream(body)).into_response())
+    Ok(chunked(
+        Chunks {
+            store: board.store.clone(),
+            station: rec.station_id.clone(),
+            artifact_id: artifact_id.to_owned(),
+            remote: Some(Remote {
+                control,
+                name: rec.name.clone(),
+                version,
+                path: path.to_owned(),
+            }),
+            fetched: part.len() as u64,
+            eof: last,
+            buf: Bytes::from(part),
+            done: false,
+            gate,
+        },
+        headers,
+    ))
 }
+
+#[cfg(test)]
+#[path = "artifact_stream_tests.rs"]
+mod stream_tests;

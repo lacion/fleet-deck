@@ -25,7 +25,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::{Extension, Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::routing::get;
 use fleetdeck_proto::StationId;
 use fleetdeck_proto::artifacts::{ArtifactKind, content_type_of};
@@ -33,7 +33,9 @@ use fleetdeck_proto::display_directive::{ArtifactRef, DirectiveBody};
 
 use super::Board;
 use super::artifact_routes::common::ok_path;
-use super::artifact_routes::stream::{Cache, Gate, ensure_cached, stream_with, version_meta};
+use super::artifact_routes::stream::{
+    Cache, Gate, ensure_cached, serve_cached, stream_with, version_meta,
+};
 use super::display_view::{in_scope, scope_of};
 use super::guard::ApiError;
 use crate::store::{DisplayLogin, Principal};
@@ -239,14 +241,14 @@ async fn artifact(
         .map_err(failure)?;
     authorize(&board, &login, &target).await?;
     let headers = display_headers(&path);
-    if cache == Cache::Stream {
-        let gate: Gate = {
+    let gate: Gate = {
+        let (board, login, target) = (Arc::clone(&board), login.clone(), target.clone());
+        Arc::new(move || {
             let (board, login, target) = (Arc::clone(&board), login.clone(), target.clone());
-            Arc::new(move || {
-                let (board, login, target) = (Arc::clone(&board), login.clone(), target.clone());
-                Box::pin(async move { authorize(&board, &login, &target).await.is_ok() })
-            })
-        };
+            Box::pin(async move { authorize(&board, &login, &target).await.is_ok() })
+        })
+    };
+    if cache == Cache::Stream {
         return stream_with(
             &board,
             &rec,
@@ -270,9 +272,17 @@ async fn artifact(
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(miss)?;
-    // The authority of this moment, right before the bytes leave.
+    // The authority of this moment, right before the bytes leave; the body
+    // then checks it again before each chunk.
     authorize(&board, &login, &target).await?;
-    Ok((StatusCode::OK, headers, bytes).into_response())
+    Ok(serve_cached(
+        &board.store,
+        &rec.station_id,
+        &target.artifact_id,
+        headers,
+        bytes,
+        Some(gate),
+    ))
 }
 
 #[cfg(test)]

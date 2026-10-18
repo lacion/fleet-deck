@@ -313,6 +313,22 @@ pub const API: &[ApiMethod] = &[
         Some(Scope::Admin),
         true,
     ),
+    // The owner's deletion of an artifact (R13 P5a A4): `admin`, the owner's
+    // board login, the CSRF token and a fresh elevation.
+    m(
+        "artifacts.delete",
+        Method::DELETE,
+        "/api/artifacts/{station}/{id}",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "artifacts.deletion",
+        Method::GET,
+        "/api/artifacts/{station}/{id}/deletion",
+        Some(Scope::Admin),
+        false,
+    ),
     m(
         "files.session_diff",
         Method::GET,

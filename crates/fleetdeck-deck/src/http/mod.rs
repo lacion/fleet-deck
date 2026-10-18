@@ -9,6 +9,7 @@ pub mod account_secrets;
 pub mod activity_routes;
 pub mod admission;
 pub mod archive_routes;
+pub mod artifact_delete;
 pub mod artifact_routes;
 mod artifact_share_check;
 pub mod assets;
@@ -316,7 +317,14 @@ pub fn router(board: Arc<Board>) -> Router {
         )
         .route("/api/artifacts", get(artifact_routes::list))
         .route("/api/artifacts/publish", post(artifact_routes::publish))
-        .route("/api/artifacts/{station}/{id}", get(artifact_routes::get))
+        .route(
+            "/api/artifacts/{station}/{id}",
+            get(artifact_routes::get).delete(artifact_delete::delete),
+        )
+        .route(
+            "/api/artifacts/{station}/{id}/deletion",
+            get(artifact_delete::deletion),
+        )
         .route(
             "/api/artifacts/{station}/{id}/shares",
             post(artifact_routes::share),

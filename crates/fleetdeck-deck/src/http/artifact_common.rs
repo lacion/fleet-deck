@@ -5,8 +5,8 @@
 //! too.
 
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
-use axum::response::{IntoResponse, Response};
 use fleetdeck_link::Control;
+use fleetdeck_proto::StationId;
 use fleetdeck_proto::artifacts::{ArtifactKind, content_type_of};
 use fleetdeck_proto::link::Outcome;
 use serde::de::DeserializeOwned;
@@ -25,6 +25,30 @@ pub(crate) fn not_found(code: &'static str, message: impl Into<String>) -> ApiEr
 
 pub(crate) fn db(e: DeckError) -> ApiError {
     ApiError::internal(e)
+}
+
+/// 404 `unknown_artifact`: the answer for a missing or a deleted artifact.
+pub(crate) fn unknown_artifact() -> ApiError {
+    not_found("unknown_artifact", "No such artifact.")
+}
+
+/// 404 `unknown_artifact` when the identity has a tombstone (R13 P5a A4). A
+/// route calls it before it asks a station for the artifact, and again after
+/// a station read that fills the cache.
+pub(crate) async fn live_artifact(
+    board: &Board,
+    station: &StationId,
+    artifact_id: &str,
+) -> Result<(), ApiError> {
+    match board
+        .store
+        .tombstone(station.clone(), artifact_id.to_owned())
+        .await
+        .map_err(db)?
+    {
+        None => Ok(()),
+        Some(_) => Err(unknown_artifact()),
+    }
 }
 
 pub(crate) async fn station_of(board: &Board, name: &str) -> Result<StationRecord, ApiError> {
@@ -137,9 +161,4 @@ pub(crate) fn file_headers(path: &str) -> HeaderMap {
         );
     }
     headers
-}
-
-/// The response for one cached file.
-pub(crate) fn file_response(path: &str, bytes: Vec<u8>) -> Response {
-    (StatusCode::OK, file_headers(path), bytes).into_response()
 }
