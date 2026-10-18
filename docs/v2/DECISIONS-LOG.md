@@ -3474,15 +3474,15 @@ Owner review: pending.
   - Task S2, `ab9fc084`: the target execution. The preview resolution, the board barrier, the focus protocol, the stdin runner, the pointer, the interruption, the claims, the disclosure and the `desktop-input` line of `fleetdeck doctor`.
   - Fix `79584fc8`: the pointer check counts only the layers above windows (`top` and `overlay`).
   - Task D (this change): the documents. This entry, the status lines, the notes of the contract, the owner guide in `operations.md` (section 7.8), the rows of `PARITY.md` and `SECURITY-CHECKLIST.md` and the smoke part of `LIVE-SMOKE.md`.
-  - Task P (the end-to-end proofs) runs at the same time and is pending.
+  - Task P, `f3f421c6`: the end-to-end proofs over real links (`crates/fleetdeck-deck/tests/p7_end_to_end.rs`, 12 tests). After rule 1 the deleted session's next request answers `login_required`; the board shows the sign-out line from the socket close (architect answer).
 - Decisions (architect): P7-OD1 to P7-OD7 are accepted by the architect as architect decisions (O12-23), and the owner may change each of them. They are: `own_windows` only, as checked and best-effort targeting and not an isolation boundary (OD1); build before the live spike, with reliance withheld (OD2); input needs `input`, `desktop` and `capture` and an explicit elevated opt-in (OD3); a conservative key grammar (OD4); the limits of 100 input actions and 20,000 typed characters by default, with permanent charges (OD5); no approval for each call, but a fixed disclosure on the target station (OD6); one bounded `wtype` invocation or one `movecursor` dispatch for each call (OD7). The board sign-out of section 7.6 is an addition of the architect: the window checks cannot prove that a key never reaches a board window, so the deck signs out the board sessions of the machine of the target while an input operation runs.
 - Open items:
   - a. The PRE-PR review of P7 is pending.
-  - b. Task P (the end-to-end proofs through both real links) is pending.
+  - b. Done: the end-to-end proofs (task P) pass.
   - c. The live smoke on the owner's Omarchy machine is required before you rely on P7 (section 15 of the contract; the list is in `docs/v2/LIVE-SMOKE.md`, part "P7 agent keyboard and pointer input (DL-245)", `make desktop-smoke`). P7 stays experimental and off by default: no grant has input unless the owner opts in, and the station setting is off by default.
   - d. The pointer click and the `any` scope are not built. Each needs another reviewed contract.
   - e. The owner start answers a generic 400 `invalid_body`, not `input_scope_unsupported`, for an unknown `input_scope`. The board sends only `own_windows`.
   - f. An unknown outcome ends its exposure at the `finished_at` of the deck plus 5 s (and then the 60 s tail), not at `attempted_at` plus 50 s. This is safe because the handler of the station (30 s) ends before the deck stops its wait (35 s).
   - g. The member join page shows a generic error for `sign_in_blocked_for_input`.
   - h. A browser on the target machine that reaches the deck through an address that the station does not report (a proxy or a VPN) is not signed out (the residual of P7-OD1).
-- Next: task P; the PRE-PR review (high risk: the adversary agent); the live smoke on the owner's Omarchy machine; the owner reads the new rows of `SECURITY-CHECKLIST.md` (DL-158).
+- Next: the PRE-PR review (high risk: the adversary agent); the live smoke on the owner's Omarchy machine; the owner reads the new rows of `SECURITY-CHECKLIST.md` (DL-158).

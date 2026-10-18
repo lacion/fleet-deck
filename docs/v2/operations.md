@@ -801,7 +801,7 @@ A refused call charges nothing. A call that is accepted and then fails keeps its
 
 ### 7.8 Agent keyboard and pointer input (R13 P7)
 
-This section covers the tools `key_press`, `type_text` and `pointer_move` of a coordinator session. The contract is `design/omarchy-p7.md`. The built version is recorded in DL-245. The PRE-PR review, the end-to-end proofs (task P) and the live smoke on the owner's Omarchy machine are not done yet (`make desktop-smoke` prints the list). This feature is experimental and off by default. No grant has input unless you opt in, and the station setting is off until you turn it on. Do not rely on it before the live smoke passes.
+This section covers the tools `key_press`, `type_text` and `pointer_move` of a coordinator session. The contract is `design/omarchy-p7.md`. The built version is recorded in DL-245. The end-to-end proofs pass. The PRE-PR review and the live smoke on the owner's Omarchy machine are not done yet (`make desktop-smoke` prints the list). This feature is experimental and off by default. No grant has input unless you opt in, and the station setting is off until you turn it on. Do not rely on it before the live smoke passes.
 
 > **Caution:** an agent with this allowance can type, press keys and move the pointer in its preview windows, without a prompt from you. Fleet Deck checks the focus before it sends the input, but the focus can change after the check. The board shows this disclosure in red: "This agent can type, press keys and move the pointer in preview windows opened for it on the grant stations. Keyboard input can activate buttons and submit forms. Focus can change after Fleet Deck checks it, so input may reach another window, including an owner board window. Board detection is incomplete. Agents run as your OS user. Pointer clicks and unrestricted window input are unavailable. This feature is experimental until its live smoke passes."
 
@@ -926,7 +926,7 @@ The deck and the station also answer with the codes `fleet_control_off`, `deskto
 
 #### Open items
 
-- The PRE-PR review, the end-to-end proofs (task P) and the live smoke are not done (see `docs/v2/LIVE-SMOKE.md`). Do not rely on agent input before the smoke passes.
+- The PRE-PR review and the live smoke are not done (see `docs/v2/LIVE-SMOKE.md`). Do not rely on agent input before the smoke passes.
 - Installing `wtype`, and reading the `desktop-input` line of a remote station, have no board path yet.
 - The pointer click and the scope for every window are not built.
 - The page where a member joins shows a generic error when the sign-in is blocked for input.
