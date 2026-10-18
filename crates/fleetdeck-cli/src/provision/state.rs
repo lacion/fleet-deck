@@ -14,8 +14,9 @@ pub const MAX_BYTES: u64 = 16 * 1024;
 /// The prefix of the temporary leaf of a state write.
 const TEMP_PREFIX: &str = ".provision-state.";
 
-/// How far the bootstrap got.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// How far the bootstrap got. The order of the variants is the order of
+/// the sequence (`Ord`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
     Validated,

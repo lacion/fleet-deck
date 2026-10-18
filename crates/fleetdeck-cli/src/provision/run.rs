@@ -156,8 +156,13 @@ impl Run<'_> {
         self.state.as_mut().ok_or(Stop::Unexpected)
     }
 
+    /// Records progress. A rerun walks the steps again from the start, so
+    /// a phase never goes down here: a crash in a rerun keeps the furthest
+    /// phase (the config-change rule of step 4 depends on it). Only the
+    /// config-change restart of step 4 lowers the phase, directly.
     fn set_phase(&mut self, phase: Phase) -> Result<(), Stop> {
-        self.state_mut()?.phase = phase;
+        let state = self.state_mut()?;
+        state.phase = state.phase.max(phase);
         self.save()
     }
 

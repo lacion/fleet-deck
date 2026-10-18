@@ -160,3 +160,10 @@ async fn a_directory_that_cannot_be_prepared_is_exit_1() {
     assert_eq!(go(&fake, false).await, Exit::Unexpected);
     assert_eq!(fake.lines(), ["provision: validated: unexpected_error"]);
 }
+
+#[test]
+fn the_phases_are_ordered_as_the_sequence() {
+    use Phase::{Complete, Integration, Link, Paired, Service, Validated};
+    let order = [Validated, Service, Paired, Link, Integration, Complete];
+    assert!(order.windows(2).all(|w| w[0] < w[1]));
+}
