@@ -225,7 +225,7 @@ Directories are created with mode 0755. Every write is atomic: an exclusive temp
 -- Fleet Deck (installed by `fleetdeck omarchy install`). Reinstalling rewrites this file.
 o.window("^fleetdeck-wall-[A-Za-z0-9_-]+$", { border_size = 0 })
 o.window("^fleetdeck-preview-[A-Za-z0-9_-]+$", { float = true, size = { 1280, 800 } })
-o.bind("SUPER + CTRL + F", "Fleet Deck panel", { panel = "fleetdeck.fleet" })
+o.bind("SUPER + CTRL + F", "Fleet Deck panel", "omarchy-shell shell toggle fleetdeck.fleet")
 o.bind("SUPER + ALT + W", "Fleet Deck wall", "fleetdeck desktop wall show")
 o.bind("SUPER + ALT + N", "Fleet Deck: next session that needs you on the wall", "fleetdeck desktop wall next")
 o.bind("SUPER + ALT + M", "Fleet Deck: next wall mode", "fleetdeck desktop wall mode next")
@@ -355,7 +355,7 @@ The repository and the source copy cannot show these. The live smoke (`make desk
 
 1. The Omarchy version of both machines against `51bfd1d` (`4.0.0.alpha`).
 2. `omarchy plugin validate` on the installed plugin; the widget shows in the `right` section; hot reload; the Quickshell `Process` and line-reader API; `Quickshell.execDetached`; `keepLoaded` for the panel; the `Commons.Color` names used for the urgent and dim colors.
-3. The panel opens with `omarchy-shell shell toggle fleetdeck.fleet '{}'` and with the binding `{ panel = "fleetdeck.fleet" }`; `Esc` closes it.
+3. The panel opens with `omarchy-shell shell toggle fleetdeck.fleet '{}'` and with the binding (a command string: `omarchy-shell shell toggle fleetdeck.fleet`; the table form `{ panel = … }` is not used, because the `o.bind` helper of Omarchy 3.8 and of early 4.0.0.alpha builds does not know `panel` and passes the table to `hl.bind`, which refuses it: "dispatch must be a dispatcher or a lua function", owner report 2026-10-18); `Esc` closes it.
 4. Hypr Lua: the string argument of `o.window` matches the window **class**; the properties `border_size`, `float`, `size` are accepted; `o` is visible in a file loaded with `dofile` through `pcall` (the managed line, P4-7); the four keys do not collide with Omarchy defaults (`omarchy menu keybindings --print`); a command string in `o.bind` runs with a `PATH` that has `fleetdeck`.
 5. Hooks: `omarchy-hook post-boot` is called at login (the source copy shows only `post-update`, `theme-set`, `font-set`); the order and the arguments of `theme-set`.
 6. Theme: the value format of `{{ background }}` and the others (`#rrggbb`), the values of `{{ mode }}`, that a user template in `<omarchy>/themed/` renders to `current/theme/fleetdeck.json` on a theme switch.
