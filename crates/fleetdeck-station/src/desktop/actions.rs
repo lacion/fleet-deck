@@ -46,6 +46,7 @@ pub(super) fn name(action: &DesktopAction) -> &'static str {
         DesktopAction::BrowserOpen { .. } => "browser_open",
         DesktopAction::WindowClose { .. } => "window_close",
         DesktopAction::ScreenCapture { .. } => "screen_capture",
+        DesktopAction::ScreenRecord { .. } => "screen_record",
         DesktopAction::PreviewClose { .. } => "preview_close",
     }
 }
@@ -209,6 +210,11 @@ impl Cx<'_> {
             DesktopAction::ScreenCapture { .. } => Err(Fail::new(
                 code::UNSUPPORTED,
                 "This station cannot take screenshots yet.",
+            )),
+            // R13 P5b task F: a stub until the recording task (S1); no program runs.
+            DesktopAction::ScreenRecord { .. } => Err(Fail::new(
+                code::UNSUPPORTED,
+                fleetdeck_proto::capture::text::RECORDING_UNSUPPORTED,
             )),
             // R13 P6 task F1: a stub until task T2 resolves the handle in
             // the preview records. The same refusal as `WindowClose` of a

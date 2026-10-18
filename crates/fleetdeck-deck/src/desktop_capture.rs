@@ -167,6 +167,7 @@ pub fn owner_provenance(
         caller_session: None,
         caller_grant_id: None,
         at: published.version.created_at,
+        recording: None,
     }
 }
 

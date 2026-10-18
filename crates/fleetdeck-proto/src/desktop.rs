@@ -67,7 +67,7 @@ pub struct DesktopTools {
     pub wtype: bool,
     /// `ydotool` or `wlrctl`.
     pub pointer: bool,
-    /// `gpu-screen-recorder`.
+    /// `wf-recorder` (R13 P5b).
     pub recorder: bool,
     pub grim: bool,
     pub chromium: bool,
@@ -175,6 +175,12 @@ pub enum DesktopAction {
     ScreenCapture {
         monitor: String,
     },
+    /// R13 P5b: one H.264 MP4 recording of one monitor, 1 to 120 seconds
+    /// (needs `desktop_recording.v1`).
+    ScreenRecord {
+        monitor: String,
+        seconds: u32,
+    },
     /// R13 P6 §4.5: close a coordinator preview by its opaque `window_id`
     /// (needs `desktop_mcp.v1`; a coordinator authority only). The hash of
     /// the action covers the handle; the deck never learns the address.
@@ -232,6 +238,14 @@ pub enum DesktopActBody {
     /// R13 P5a: one PNG of one monitor (needs `desktop_capture.v1`).
     ScreenCapture {
         monitor: String,
+    },
+    /// R13 P5b: one H.264 MP4 recording of one monitor (needs
+    /// `desktop_recording.v1`). `seconds` is a JSON number so that the route
+    /// can answer a fraction or an out-of-range value with `recording_duration`.
+    ScreenRecord {
+        monitor: String,
+        #[ts(type = "number")]
+        seconds: serde_json::Number,
     },
 }
 

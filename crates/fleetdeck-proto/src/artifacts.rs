@@ -65,6 +65,9 @@ pub enum ArtifactKind {
     Image,
     Svg,
     Pdf,
+    /// R13 P5b: a trusted desktop recording (`capture.mp4`). Only the
+    /// recording import produces it; `of_path` never does.
+    Video,
     Other,
 }
 
@@ -97,6 +100,7 @@ impl ArtifactKind {
             Self::Image => "image",
             Self::Svg => "svg",
             Self::Pdf => "pdf",
+            Self::Video => "video",
             Self::Other => "other",
         }
     }
@@ -110,6 +114,7 @@ impl ArtifactKind {
             "image" => Self::Image,
             "svg" => Self::Svg,
             "pdf" => Self::Pdf,
+            "video" => Self::Video,
             "other" => Self::Other,
             _ => return None,
         })
@@ -459,6 +464,7 @@ mod tests {
             ("logo.svg", ArtifactKind::Svg),
             ("paper.pdf", ArtifactKind::Pdf),
             ("data.csv", ArtifactKind::Other),
+            ("capture.mp4", ArtifactKind::Other),
             ("README", ArtifactKind::Other),
             ("dir.html/file", ArtifactKind::Other),
         ] {
@@ -470,6 +476,7 @@ mod tests {
             ArtifactKind::Image,
             ArtifactKind::Svg,
             ArtifactKind::Pdf,
+            ArtifactKind::Video,
             ArtifactKind::Other,
         ] {
             assert_eq!(ArtifactKind::parse(kind.as_str()), Some(kind));

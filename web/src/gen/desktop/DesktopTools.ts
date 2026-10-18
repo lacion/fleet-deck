@@ -9,6 +9,6 @@ export type DesktopTools = { wtype: boolean,
  */
 pointer: boolean, 
 /**
- * `gpu-screen-recorder`.
+ * `wf-recorder` (R13 P5b).
  */
 recorder: boolean, grim: boolean, chromium: boolean, notify_send: boolean, };

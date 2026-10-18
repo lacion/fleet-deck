@@ -146,6 +146,7 @@ fn version(capture: bool) -> ArtifactVersion {
             caller_session: None,
             caller_grant_id: None,
             at: 1,
+            recording: None,
         }),
     }
 }

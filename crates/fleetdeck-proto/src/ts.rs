@@ -84,6 +84,7 @@ use crate::orchestration::{
 };
 use crate::palette::{PaletteColors, PaletteMode, StationPalette};
 use crate::plans::{DeckPlan, PlanMarkRequest, PlanStatus};
+use crate::recording as rec;
 use crate::resources::{
     CpuLoad, DiskSpace, MemoryUse, ResourceKind, ResourceWarning, SessionLoad, StationResources,
 };
@@ -291,6 +292,19 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         CaptureKind::export_all(&cfg),
         CaptureCaller::export_all(&cfg),
         CaptureProvenance::export_all(&cfg),
+        rec::StopReason::export_all(&cfg),
+        rec::RecordingPhase::export_all(&cfg),
+        rec::RecordingProgress::export_all(&cfg),
+        rec::RecordingMeta::export_all(&cfg),
+        rec::RecordingCaptureStatus::export_all(&cfg),
+        rec::ActiveRecording::export_all(&cfg),
+        rec::CaptureStopParams::export_all(&cfg),
+        rec::CapturePolicyNowParams::export_all(&cfg),
+        rec::CapturePolicyAnswer::export_all(&cfg),
+        rec::LeasePhase::export_all(&cfg),
+        rec::LeaseDecision::export_all(&cfg),
+        rec::CaptureLeaseRequest::export_all(&cfg),
+        rec::CaptureLeaseAnswer::export_all(&cfg),
         ArtifactListQuery::export_all(&cfg),
         ArtifactList::export_all(&cfg),
         ArtifactGetQuery::export_all(&cfg),

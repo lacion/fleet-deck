@@ -442,6 +442,7 @@ impl Desktop {
                 caller_session,
                 caller_grant_id,
                 at,
+                recording: None,
             },
         };
         let store = req.service.store();

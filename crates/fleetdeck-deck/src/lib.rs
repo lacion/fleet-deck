@@ -6,6 +6,7 @@ pub mod artifact_deletions;
 pub mod cert_task;
 mod coordinator_desktop;
 pub mod desktop_capture;
+mod desktop_recording;
 pub mod desktop_relay;
 pub mod elevation;
 pub mod fleet_git_homes;

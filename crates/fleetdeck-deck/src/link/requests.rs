@@ -52,6 +52,10 @@ pub(crate) async fn answer(
         "desktop.authority_check" => {
             crate::coordinator_desktop::authority_check(ctx, control, station, &req).await
         }
+        // R13 P5b (`desktop_recording.v1`).
+        "desktop.capture_lease" => {
+            crate::desktop_recording::lease(ctx, control, station, &req).await
+        }
         "fleet_git.artifact_authorize" => {
             super::fleet_git_artifacts::artifact_authorize(ctx, station, &req).await
         }

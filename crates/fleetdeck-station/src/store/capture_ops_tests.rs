@@ -50,6 +50,7 @@ fn new_artifact(id: &str, size: u64) -> NewCaptureArtifact {
             caller_session: None,
             caller_grant_id: None,
             at: 7,
+            recording: None,
         },
     }
 }

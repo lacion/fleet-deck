@@ -3,19 +3,21 @@
 //! list keeps v2's V1 to V25 and appends the five Fleet Git migrations as V26
 //! to V30, and R13 P5a adds V31 (the artifact tombstones) and V32 (the owner
 //! screenshots); R13 P4 adds V33 (the station palettes); R13 P6 adds V34 (the
-//! grant caps and the coordinator desktop ledger). The station list is Fleet
-//! Git's list (32 entries), R13 P5a V33 (the artifact deletions) and V34 (the
-//! capture operations), and R13 P6 V35 (the coordinator desktop operations);
-//! a station database made by v2 is at version 27.
+//! grant caps and the coordinator desktop ledger); R13 P5b adds V35 (the
+//! recording columns of the owner captures). The station list is Fleet Git's
+//! list (32 entries), R13 P5a V33 (the artifact deletions) and V34 (the
+//! capture operations), R13 P6 V35 (the coordinator desktop operations) and
+//! R13 P5b V36 (the recording columns and the capture garbage); a station
+//! database made by v2 is at version 27.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use rusqlite::Connection;
 
 const DECK_V2_LAST: usize = 25;
-const DECK_LATEST: i64 = 34;
+const DECK_LATEST: i64 = 35;
 const STATION_V2_LAST: usize = 27;
-const STATION_LATEST: i64 = 35;
+const STATION_LATEST: i64 = 36;
 
 fn user_version(conn: &Connection) -> i64 {
     conn.pragma_query_value(None, "user_version", |r| r.get(0))
@@ -362,7 +364,151 @@ fn migration_v35_keeps_a_capture_op_and_adds_the_desktop_ledger() {
     assert!(op("o1", "notify", "done").is_err());
 }
 
-/// A station database at v2's last version (27) migrates to 35, and a fresh
+/// R13 P5b task F: V34 to V35 keeps a screenshot row and reads it as a
+/// `screenshot` with the new columns at their defaults; the new checks hold.
+#[test]
+fn migration_v35_keeps_a_deck_capture_row_as_a_screenshot() {
+    let migrations = fleetdeck_deck::store::schema::migrations();
+    let mut conn = Connection::open_in_memory().unwrap();
+    migrations.to_version(&mut conn, 34).unwrap();
+    assert_eq!(user_version(&conn), 34);
+    conn.execute(
+        "INSERT INTO desktop_captures (station_id, capture_id, action_hash, state, monitor,
+             created_at, updated_at)
+         VALUES ('st-1', 'c1', 'h', 'committed', 'DP-1', 1, 2)",
+        [],
+    )
+    .unwrap();
+
+    migrations.to_latest(&mut conn).unwrap();
+    assert_eq!(user_version(&conn), DECK_LATEST);
+    type Row = (String, String, Option<i64>, Option<String>, String, i64);
+    let row: Row = conn
+        .query_row(
+            "SELECT operation_kind, state, requested_seconds, owner_login, stop_intent,
+                 audited_terminal
+             FROM desktop_captures WHERE capture_id = 'c1'",
+            [],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        row,
+        (
+            "screenshot".to_owned(),
+            "committed".to_owned(),
+            None,
+            None,
+            "none".to_owned(),
+            0
+        )
+    );
+    let insert = |id: &str, kind: &str, seconds: i64| {
+        conn.execute(
+            "INSERT INTO desktop_captures (station_id, capture_id, action_hash, state, monitor,
+                 created_at, updated_at, operation_kind, requested_seconds)
+             VALUES ('st-1', ?1, 'h', 'prepared', 'DP-1', 1, 1, ?2, ?3)",
+            rusqlite::params![id, kind, seconds],
+        )
+    };
+    assert!(insert("r1", "recording", 120).is_ok());
+    assert!(insert("r2", "recording", 0).is_err());
+    assert!(insert("r3", "recording", 121).is_err());
+    assert!(insert("r4", "video", 5).is_err());
+    assert!(
+        conn.execute("UPDATE desktop_captures SET stop_intent = 'later'", [])
+            .is_err()
+    );
+    assert!(
+        conn.execute("UPDATE desktop_captures SET audited_terminal = 2", [])
+            .is_err()
+    );
+}
+
+/// R13 P5b task F: V35 to V36 keeps a capture operation row as a
+/// `screenshot` with the new columns at their defaults; `capture_garbage`
+/// is empty and checks its own area.
+#[test]
+fn migration_v36_keeps_a_station_capture_op_as_a_screenshot() {
+    let migrations = fleetdeck_station::store::schema::migrations();
+    let mut conn = Connection::open_in_memory().unwrap();
+    migrations.to_version(&mut conn, 35).unwrap();
+    assert_eq!(user_version(&conn), 35);
+    conn.execute(
+        "INSERT INTO capture_ops (deck_fp, capture_id, action_hash, state, monitor,
+             artifact_id, reserved_bytes, started_at, updated_at)
+         VALUES ('fp', 'c1', 'h', 'committed', 'DP-1', 'a1', 100, 1, 2)",
+        [],
+    )
+    .unwrap();
+
+    migrations.to_latest(&mut conn).unwrap();
+    assert_eq!(user_version(&conn), STATION_LATEST);
+    type Row = (String, String, i64, Option<i64>, Option<String>, String);
+    let row: Row = conn
+        .query_row(
+            "SELECT operation_kind, state, reserved_bytes, requested_seconds, phase, stop_intent
+             FROM capture_ops WHERE capture_id = 'c1'",
+            [],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        row,
+        (
+            "screenshot".to_owned(),
+            "committed".to_owned(),
+            100,
+            None,
+            None,
+            "none".to_owned()
+        )
+    );
+    let insert = |id: &str, kind: &str, phase: Option<&str>| {
+        conn.execute(
+            "INSERT INTO capture_ops (deck_fp, capture_id, action_hash, state, monitor,
+                 artifact_id, reserved_bytes, started_at, updated_at, operation_kind, phase)
+             VALUES ('fp', ?1, 'h', 'running', 'DP-1', ?1, 0, 1, 1, ?2, ?3)",
+            rusqlite::params![id, kind, phase],
+        )
+    };
+    assert!(insert("r1", "recording", Some("finalizing")).is_ok());
+    assert!(insert("r2", "recording", Some("done")).is_err());
+    assert!(insert("r3", "video", None).is_err());
+    assert_eq!(count(&conn, "SELECT count(*) FROM capture_garbage"), 0);
+    let garbage = |area: &str, bytes: i64| {
+        conn.execute(
+            "INSERT INTO capture_garbage (area, name, bytes, found_at)
+             VALUES (?1, 'n', ?2, 1)",
+            rusqlite::params![area, bytes],
+        )
+    };
+    assert!(garbage("staging", 5).is_ok());
+    assert!(garbage("artifacts", -1).is_err());
+    assert!(garbage("elsewhere", 1).is_err());
+    // The key is the area and the name.
+    assert!(garbage("staging", 6).is_err());
+}
+
+/// A station database at v2's last version (27) migrates to 36, and a fresh
 /// one has the same schema.
 #[test]
 fn a_station_database_at_v2_last_version_migrates_to_the_merged_list() {

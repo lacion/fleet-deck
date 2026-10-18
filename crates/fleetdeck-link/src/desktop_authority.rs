@@ -22,7 +22,8 @@ pub fn target_monitor(action: &DesktopAction) -> Option<&str> {
         }
         DesktopAction::WorkspaceShow { monitor, .. }
         | DesktopAction::WallOpen { monitor, .. }
-        | DesktopAction::ScreenCapture { monitor } => Some(monitor),
+        | DesktopAction::ScreenCapture { monitor }
+        | DesktopAction::ScreenRecord { monitor, .. } => Some(monitor),
         _ => None,
     }
 }
@@ -68,7 +69,8 @@ fn target_monitor_of(action: &serde_json::Value) -> serde_json::Value {
     let name = action.get("action").and_then(|a| a.as_str());
     match name {
         Some(
-            "screen_power" | "browser_open" | "workspace_show" | "wall_open" | "screen_capture",
+            "screen_power" | "browser_open" | "workspace_show" | "wall_open" | "screen_capture"
+            | "screen_record",
         ) => action
             .get("monitor")
             .cloned()
@@ -228,6 +230,10 @@ mod tests {
             DesktopAction::PreviewClose {
                 window_id: "0123456789abcdef0123456789abcdef".into(),
             },
+            DesktopAction::ScreenRecord {
+                monitor: "DP-1".into(),
+                seconds: 30,
+            },
         ]
     }
 
@@ -290,6 +296,36 @@ mod tests {
         assert_eq!(auth.action_hash, action_hash(&a, "n"));
         assert_eq!(auth.quiet_hours.as_deref(), Some("22:00-07:00"));
         assert_eq!(auth.coordinator, None);
+    }
+
+    #[test]
+    fn a_screen_record_hash_is_pinned_and_binds_the_monitor_and_the_seconds() {
+        let a = DesktopAction::ScreenRecord {
+            monitor: "DP-1".into(),
+            seconds: 30,
+        };
+        assert_eq!(target_monitor(&a), Some("DP-1"));
+        let text = String::from_utf8(canonical_bytes(&a, "ff00")).unwrap();
+        assert_eq!(
+            text,
+            r#"{"action":{"action":"screen_record","monitor":"DP-1","seconds":30},"monitor":"DP-1","station":"ff00"}"#
+        );
+        let h = action_hash(&a, "ff00");
+        assert_eq!(
+            h,
+            "560838e4a8a8b8d512e09fbe7ffd4a855eada08755e0a61456482f10c6d635a0"
+        );
+        let other_seconds = DesktopAction::ScreenRecord {
+            monitor: "DP-1".into(),
+            seconds: 31,
+        };
+        let other_monitor = DesktopAction::ScreenRecord {
+            monitor: "DP-2".into(),
+            seconds: 30,
+        };
+        assert_ne!(h, action_hash(&other_seconds, "ff00"));
+        assert_ne!(h, action_hash(&other_monitor, "ff00"));
+        assert_ne!(h, action_hash(&a, "other"));
     }
 
     #[test]

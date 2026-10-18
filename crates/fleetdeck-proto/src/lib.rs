@@ -45,6 +45,7 @@ pub mod native;
 pub mod orchestration;
 pub mod palette;
 pub mod plans;
+pub mod recording;
 pub mod resources;
 pub mod review;
 pub mod session;
