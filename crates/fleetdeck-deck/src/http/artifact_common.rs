@@ -162,3 +162,15 @@ pub(crate) fn file_headers(path: &str) -> HeaderMap {
     }
     headers
 }
+
+/// The headers of a `200` or `206` answer of an MP4 file (R13 P5b E1): the
+/// headers of [`file_headers`], the range support, the strong `ETag` and the
+/// exact `Content-Length` of the body. No compression or transformation
+/// applies to these answers, so none of them sets `Content-Encoding`.
+pub(crate) fn video_headers(path: &str, etag: HeaderValue, length: u64) -> HeaderMap {
+    let mut headers = file_headers(path);
+    headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    headers.insert(header::ETAG, etag);
+    headers.insert(header::CONTENT_LENGTH, HeaderValue::from(length));
+    headers
+}

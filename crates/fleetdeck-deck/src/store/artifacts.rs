@@ -31,6 +31,9 @@ macro_rules! not_tombstoned {
     };
 }
 
+#[path = "artifact_cache_slice.rs"]
+mod cache_slice;
+
 /// Stores or advances the index row of an `artifact.published` event; other
 /// events do nothing. The latest version never goes down.
 pub(super) fn record_artifact(

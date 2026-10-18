@@ -17,6 +17,9 @@
 //!   serves from the cache and answers 404 for an unknown, revoked or
 //!   expired token.
 //!
+//! The raw route and the public file routes live in `artifact_public`; a
+//! version with one MP4 file is served with byte ranges by `artifact_range`.
+//!
 //! Every HTML or SVG answer carries `Content-Security-Policy: sandbox ...`,
 //! so the document has an opaque origin and cannot use the deck cookie or
 //! API. A public link reaches anyone who can reach the deck and holds the
@@ -28,8 +31,7 @@ use std::time::Duration;
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Path, Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::http::{HeaderMap, header};
 use fleetdeck_proto::SessionId;
 use fleetdeck_proto::artifacts::{
     ArtifactDetail, ArtifactGetQuery, ArtifactPublish, ArtifactPublishRequest, ArtifactPublished,
@@ -40,18 +42,20 @@ use serde::Deserialize;
 
 use super::Board;
 use super::guard::{ApiError, owner_only};
-use crate::store::artifacts::{NewShare, ShareRow};
+use crate::store::artifacts::NewShare;
 use crate::store::auth::{random_token, secret_hash};
 use crate::store::{AuditResult, NewAudit, Principal, StationRecord};
 
 #[path = "artifact_common.rs"]
 pub(super) mod common;
+#[path = "artifact_public.rs"]
+pub(super) mod public;
+#[path = "artifact_range.rs"]
+pub(super) mod range;
 #[path = "artifact_stream.rs"]
 pub(super) mod stream;
-use common::{
-    ask, bad, db, file_headers, live_artifact, not_found, ok_path, station_of, unknown_artifact,
-};
-use stream::{Cache, ensure_cached, serve_cached, stream_file};
+use common::{ask, bad, db, live_artifact, not_found, station_of, unknown_artifact};
+use stream::ensure_cached;
 
 /// The longest the deck waits for one answer of a station.
 pub const STATION_WAIT: Duration = Duration::from_secs(20);
@@ -98,7 +102,11 @@ pub async fn list(
     ))
 }
 
-async fn indexed(board: &Board, rec: &StationRecord, id: &str) -> Result<DeckArtifact, ApiError> {
+pub(super) async fn indexed(
+    board: &Board,
+    rec: &StationRecord,
+    id: &str,
+) -> Result<DeckArtifact, ApiError> {
     board
         .store
         .artifact(rec.station_id.clone(), id.to_owned())
@@ -175,46 +183,6 @@ pub async fn get(
         versions,
         shares,
     }))
-}
-
-/// `GET /api/artifacts/{station}/{id}/{version}/raw/{*path}`.
-///
-/// # Errors
-/// 400 `invalid_path`; 404 `unknown_station`, `unknown_artifact`,
-/// `not_found`; 409 `station_unreachable` (not cached and the station is
-/// not connected).
-pub async fn raw(
-    State(board): State<Arc<Board>>,
-    Path((station, id, version, path)): Path<(String, String, u32, String)>,
-) -> Result<Response, ApiError> {
-    if !ok_path(&path) {
-        return Err(bad("invalid_path", "a path has no `..`, NUL or `\\`"));
-    }
-    let rec = station_of(&board, &station).await?;
-    indexed(&board, &rec, &id).await?;
-    if ensure_cached(&board, &rec, &id, version).await? == Cache::Stream {
-        return stream_file(&board, &rec, &id, version, &path).await;
-    }
-    live_artifact(&board, &rec.station_id, &id).await?;
-    let bytes = board
-        .store
-        .cached_artifact_file(rec.station_id.clone(), id.clone(), version, path.clone())
-        .await
-        .map_err(db)?
-        .ok_or_else(|| {
-            not_found(
-                "not_found",
-                format!("`{path}` is not a file of this version"),
-            )
-        })?;
-    Ok(serve_cached(
-        &board.store,
-        &rec.station_id,
-        &id,
-        file_headers(&path),
-        bytes,
-        None,
-    ))
 }
 
 fn author_of(principal: &Principal) -> String {
@@ -482,179 +450,4 @@ pub async fn view(
         url: format!("/a/{token}/"),
         expires_at,
     }))
-}
-
-fn gone() -> Response {
-    (StatusCode::NOT_FOUND, "not found").into_response()
-}
-
-async fn share_of(board: &Board, token: &str) -> Option<(ShareRow, String)> {
-    if token.len() != 64 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return None;
-    }
-    let hash = secret_hash(token);
-    let row = board
-        .store
-        .share_by_hash(hash.clone())
-        .await
-        .ok()
-        .flatten()?;
-    row.live(board.store.now_ms()).then_some((row, hash))
-}
-
-/// The version that a share serves: its pinned version, or the newest one
-/// whose bytes the deck holds (a share of "the latest" prefers the newest
-/// version and reads it from the station when it can). A version over the
-/// cache limit is streamed while the station has a live link (NV-01); with
-/// no link it counts as a version that is not cached.
-async fn served_version(board: &Board, row: &ShareRow) -> Option<(u32, Cache)> {
-    let rec = board
-        .store
-        .station(row.station_id.clone())
-        .await
-        .ok()
-        .flatten();
-    let latest = board
-        .store
-        .artifact(row.station_id.clone(), row.artifact_id.clone())
-        .await
-        .ok()
-        .flatten()?
-        .latest_version;
-    let wanted = row.version.unwrap_or(latest);
-    if let Some(rec) = &rec {
-        match ensure_cached(board, rec, &row.artifact_id, wanted).await {
-            Ok(Cache::Stream) if board.link.control_for(&rec.station_id).is_some() => {
-                return Some((wanted, Cache::Stream));
-            }
-            Ok(_) => {}
-            Err(e) => tracing::debug!(code = e.code, "share version not read from the station"),
-        }
-    }
-    let cached = board
-        .store
-        .cached_versions(row.station_id.clone(), row.artifact_id.clone())
-        .await
-        .ok()?;
-    if cached.contains(&wanted) {
-        Some((wanted, Cache::Cached))
-    } else if row.version.is_none() {
-        cached.first().map(|v| (*v, Cache::Cached))
-    } else {
-        None
-    }
-}
-
-async fn public_file(board: &Board, token: &str, path: &str) -> Response {
-    if !ok_path(path) {
-        return gone();
-    }
-    let Some((row, hash)) = share_of(board, token).await else {
-        return gone();
-    };
-    let Some((version, cache)) = served_version(board, &row).await else {
-        return gone();
-    };
-    if live_artifact(board, &row.station_id, &row.artifact_id)
-        .await
-        .is_err()
-    {
-        return gone();
-    }
-    let versions = board
-        .store
-        .artifact_versions(row.station_id.clone(), row.artifact_id.clone())
-        .await
-        .unwrap_or_default();
-    let Some(files) = versions
-        .iter()
-        .find(|v| v.version == version)
-        .map(|v| &v.files)
-    else {
-        return gone();
-    };
-    let Some(main) = files.first() else {
-        return gone();
-    };
-    let wanted = if path.is_empty() { main.as_str() } else { path };
-    if !files.iter().any(|f| f == wanted) {
-        return gone();
-    }
-    let response = match cache {
-        Cache::Cached => {
-            let Ok(Some(bytes)) = board
-                .store
-                .cached_artifact_file(
-                    row.station_id.clone(),
-                    row.artifact_id.clone(),
-                    version,
-                    wanted.to_owned(),
-                )
-                .await
-            else {
-                return gone();
-            };
-            serve_cached(
-                &board.store,
-                &row.station_id,
-                &row.artifact_id,
-                file_headers(wanted),
-                bytes,
-                None,
-            )
-        }
-        Cache::Stream => {
-            let Ok(Some(rec)) = board.store.station(row.station_id.clone()).await else {
-                return gone();
-            };
-            match stream_file(board, &rec, &row.artifact_id, version, wanted).await {
-                Ok(response) => response,
-                Err(e) => {
-                    tracing::debug!(code = e.code, "shared file not streamed from the station");
-                    return gone();
-                }
-            }
-        }
-    };
-    // One view is one open of the document, not one of its files.
-    if wanted == main && row.kind == "share" {
-        if let Err(e) = board.store.count_share_view(hash).await {
-            tracing::error!(error = %e, "share view not counted");
-        }
-        board
-            .store
-            .audit_or_log(
-                NewAudit::new(
-                    format!("share:{}", row.share_id),
-                    "artifacts.share_view",
-                    AuditResult::Ok,
-                )
-                .target(format!("{}/{}", row.station_id, row.artifact_id))
-                .detail(format!("version {version}")),
-            )
-            .await;
-    }
-    response
-}
-
-/// `GET /a/{token}/{*path}`: public; the token is the credential.
-pub async fn public(
-    State(board): State<Arc<Board>>,
-    Path((token, path)): Path<(String, String)>,
-) -> Response {
-    public_file(&board, &token, &path).await
-}
-
-/// `GET /a/{token}/`: the main file of the shared version.
-pub async fn public_main(State(board): State<Arc<Board>>, Path(token): Path<String>) -> Response {
-    public_file(&board, &token, "").await
-}
-
-/// `GET /a/{token}`: adds the slash that relative links need.
-pub async fn public_slash(Path(token): Path<String>) -> Response {
-    if token.len() == 64 && token.bytes().all(|b| b.is_ascii_hexdigit()) {
-        Redirect::permanent(&format!("/a/{token}/")).into_response()
-    } else {
-        gone()
-    }
 }

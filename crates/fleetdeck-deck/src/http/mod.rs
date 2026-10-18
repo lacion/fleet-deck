@@ -350,7 +350,7 @@ pub fn router(board: Arc<Board>) -> Router {
         )
         .route(
             "/api/artifacts/{station}/{id}/{version}/raw/{*path}",
-            get(artifact_routes::raw),
+            get(artifact_routes::public::raw).head(artifact_routes::public::raw),
         )
         .route(
             "/api/projects",
@@ -590,9 +590,15 @@ pub fn router(board: Arc<Board>) -> Router {
         // policy (R13 §5E item 3, §5F item 3). `/display/` redirects.
         .route("/display", get(display_document::document))
         .route("/display/", get(display_document::redirect))
-        .route("/a/{token}", get(artifact_routes::public_slash))
-        .route("/a/{token}/", get(artifact_routes::public_main))
-        .route("/a/{token}/{*path}", get(artifact_routes::public))
+        .route("/a/{token}", get(artifact_routes::public::public_slash))
+        .route(
+            "/a/{token}/",
+            get(artifact_routes::public::public_main).head(artifact_routes::public::public_main),
+        )
+        .route(
+            "/a/{token}/{*path}",
+            get(artifact_routes::public::public).head(artifact_routes::public::public),
+        )
         // The OAuth return of Jira and Linear (DL-173, design section 2.3).
         // It is outside the guard on purpose: the provider redirect is a
         // cross-site navigation, so the SameSite=Strict login cookie is not
