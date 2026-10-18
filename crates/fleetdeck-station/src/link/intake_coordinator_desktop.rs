@@ -19,8 +19,8 @@ use fleetdeck_proto::artifacts::{ArtifactFileQuery, ArtifactGetQuery, ArtifactKi
 use fleetdeck_proto::capture::valid_capture_id;
 use fleetdeck_proto::coordinator_desktop_text::{code as p6_code, deadline_ms, limits};
 use fleetdeck_proto::coordinator_desktop_wire::{
-    AuthorityPhase, CoordinatorContext, CoordinatorRead, DesktopPolicyAnswer, DesktopPolicyNow,
-    PolicyPurpose, ProtectedRead,
+    AuthorityPhase, CoordinatorContext, CoordinatorRead, DesktopInputPolicyAnswer,
+    DesktopPolicyAnswer, DesktopPolicyNow, PolicyPurpose, ProtectedRead,
 };
 use fleetdeck_proto::desktop::{DesktopActResult, DesktopAction};
 use fleetdeck_proto::link::{Outcome, WireError};
@@ -302,6 +302,23 @@ pub(crate) fn policy_answer(live: &Live, monitor: Option<&str>) -> DesktopPolicy
     }
 }
 
+/// The answer of `desktop.policy_now` for the input purpose (R13 P7 §6.4).
+/// A null monitor is allowed only when the capture monitor list is empty (all
+/// monitors): the target checks the real monitor before any input. A named
+/// monitor follows the capture monitor rule.
+pub(crate) fn input_policy_answer(live: &Live, monitor: Option<&str>) -> DesktopInputPolicyAnswer {
+    DesktopInputPolicyAnswer {
+        allow_fleet_control: live.fleet_control,
+        allow_desktop: live.desktop,
+        allow_desktop_capture: live.capture,
+        allow_desktop_input: live.desktop_input,
+        monitor_allowed: match monitor {
+            None => live.monitors.is_empty(),
+            Some(m) => live.monitors.is_empty() || live.monitors.iter().any(|x| x == m),
+        },
+    }
+}
+
 /// `desktop.policy_now` (§5.5): the live policy of this station.
 pub(super) fn policy_now(
     ctx: &StationLink,
@@ -312,19 +329,33 @@ pub(super) fn policy_now(
         Ok(q) => q,
         Err(e) => return failed(bad_params(e)),
     };
-    if query.purpose == PolicyPurpose::Capture
-        && !control.params().negotiated.has(feature::CAPTURE_MCP)
-    {
-        return unsupported();
-    }
-    // R13 P7 task F: a stub until the station task answers the input purpose.
-    if query.purpose == PolicyPurpose::Input {
-        return unsupported();
-    }
-    ok(policy_answer(
+    let negotiated = &control.params().negotiated;
+    policy_reply(
         &Live::of(&ctx.manager.policy()),
-        query.monitor.as_deref(),
-    ))
+        &query,
+        negotiated.has(feature::CAPTURE_MCP),
+        negotiated.has(feature::DESKTOP_INPUT_MCP),
+    )
+}
+
+/// The reply of `desktop.policy_now` for the live settings `live`. The
+/// capture purpose needs `capture_mcp.v1` and the input purpose needs
+/// `desktop_input_mcp.v1` (R13 P7 §6.4): without it the answer is
+/// `unsupported`. The `desktop` and `capture` answers keep their P6 bytes.
+pub(crate) fn policy_reply(
+    live: &Live,
+    query: &DesktopPolicyNow,
+    capture_mcp: bool,
+    input_mcp: bool,
+) -> Outcome {
+    match query.purpose {
+        PolicyPurpose::Capture if !capture_mcp => unsupported(),
+        PolicyPurpose::Input if !input_mcp => unsupported(),
+        PolicyPurpose::Input => ok(input_policy_answer(live, query.monitor.as_deref())),
+        PolicyPurpose::Desktop | PolicyPurpose::Capture => {
+            ok(policy_answer(live, query.monitor.as_deref()))
+        }
+    }
 }
 
 // ------------------------------------------------------ coordinator_read
@@ -607,3 +638,7 @@ pub(super) async fn coordinator_read(
 #[cfg(test)]
 #[path = "intake_coordinator_desktop_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "intake_coordinator_desktop_input_tests.rs"]
+mod input_tests;

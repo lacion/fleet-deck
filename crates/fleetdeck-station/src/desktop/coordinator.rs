@@ -231,6 +231,8 @@ pub struct Live {
     pub fleet_control: bool,
     pub desktop: bool,
     pub capture: bool,
+    /// `allow_desktop_input` (R13 P7 §3.3).
+    pub desktop_input: bool,
     /// `capture_monitors`; empty means every monitor.
     pub monitors: Vec<String>,
 }
@@ -243,6 +245,7 @@ impl Live {
             fleet_control: policy.allow_fleet_control(),
             desktop: policy.allow_desktop(),
             capture: policy.allow_desktop_capture(),
+            desktop_input: policy.allow_desktop_input(),
             monitors: policy.capture_monitors().to_vec(),
         }
     }

@@ -164,3 +164,30 @@ async fn a_claim_survives_a_store_reopen() {
         Claim::Done(Some(json!({"window_id": "w"})))
     );
 }
+
+#[tokio::test]
+async fn the_three_input_kinds_are_claimed_once_and_bound_to_their_hash() {
+    let s = store().await;
+    for (n, kind) in ["input_key_press", "input_type_text", "input_pointer_move"]
+        .into_iter()
+        .enumerate()
+    {
+        let op = format!("op-{n}");
+        assert_eq!(claim(&s, FP, &op, "h1", kind).await, Claim::New, "{kind}");
+        let row = s.desktop_op_get(FP, &op).await.unwrap().unwrap();
+        assert_eq!((row.state.as_str(), row.kind.as_str()), ("claimed", kind));
+        // A repeat, with the same or a changed payload hash, never runs again.
+        assert_eq!(claim(&s, FP, &op, "h1", kind).await, Claim::Seen, "{kind}");
+        assert_eq!(claim(&s, FP, &op, "h2", kind).await, Claim::Seen, "{kind}");
+        s.desktop_op_finish(FP, &op, Ok(Some(json!({"state": "done"}))), 11)
+            .await
+            .unwrap();
+        // Only the same hash and kind get the stored result back.
+        assert_eq!(
+            claim(&s, FP, &op, "h1", kind).await,
+            Claim::Done(Some(json!({"state": "done"}))),
+            "{kind}"
+        );
+        assert_eq!(claim(&s, FP, &op, "h2", kind).await, Claim::Seen, "{kind}");
+    }
+}

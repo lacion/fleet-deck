@@ -33,7 +33,8 @@ pub struct DesktopOpRow {
     pub state: String,
     pub result: Option<serde_json::Value>,
     pub code: Option<String>,
-    /// `notify`, `preview_open` or `preview_close`.
+    /// `notify`, `preview_open`, `preview_close`, `input_key_press`,
+    /// `input_type_text` or `input_pointer_move`.
     pub kind: String,
     pub grant_id: String,
     pub caller_station: String,

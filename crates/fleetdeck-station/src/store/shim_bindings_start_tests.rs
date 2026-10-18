@@ -142,6 +142,35 @@ fn the_recording_allowance_survives_the_row_and_an_old_row_reads_without_it() {
 }
 
 #[test]
+fn the_input_allowance_survives_the_row_and_an_old_row_reads_without_it() {
+    let mut b = binding("b1", "g1", BindingState::Active);
+    for class in [
+        ToolClass::Desktop,
+        ToolClass::Capture,
+        ToolClass::Input,
+        ToolClass::InputEnabled,
+    ] {
+        b.classes.insert(class);
+    }
+    let r = BindingRow::from_binding("d".repeat(64), "shim-1".to_owned(), &b, Some(9), 3);
+    assert_eq!(
+        r.classes,
+        "[\"read\",\"inspect\",\"desktop\",\"capture\",\"input\",\"input_enabled\"]"
+    );
+    let back = r.to_binding().unwrap();
+    assert_eq!(back.classes, b.classes);
+    assert!(back.classes.contains(&ToolClass::InputEnabled));
+    // An old row holds no `input_enabled`: it reads without the allowance.
+    let old = BindingRow {
+        classes: "[\"read\",\"desktop\",\"capture\",\"input\"]".to_owned(),
+        ..r
+    };
+    let back = old.to_binding().unwrap();
+    assert!(back.classes.contains(&ToolClass::Input));
+    assert!(!back.classes.contains(&ToolClass::InputEnabled));
+}
+
+#[test]
 fn a_row_with_a_damaged_column_does_not_parse() {
     let good = row("d1", "a", "b1", "g1", BindingState::Active);
     for (column, bad) in [

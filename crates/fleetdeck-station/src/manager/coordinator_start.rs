@@ -14,7 +14,9 @@
 use std::ffi::OsString;
 
 use fleetdeck_proto::command::{CoordinatorSpec, GrantScope, SessionSpec};
+use fleetdeck_proto::coordinator_spec::InputScope;
 use fleetdeck_proto::event::ProviderKind;
+use fleetdeck_proto::version::feature;
 use fleetdeck_proto::{Event, SessionId};
 use fleetdeck_providers::coordinator::CoordinatorLaunch;
 use fleetdeck_providers::host::ProcessControl as _;
@@ -110,7 +112,7 @@ pub(super) fn prepare(
     let url = bindings
         .endpoint()
         .ok_or_else(|| "the coordinator endpoint does not listen".to_owned())?;
-    let classes = grant_classes(coordinator)?;
+    let classes = grant_classes(coordinator, deck_input_mcp(bindings))?;
     let handoff = Handoff::prepare(provider, &url).map_err(|e| e.to_string())?;
     bindings.insert(
         handoff.digest.clone(),
@@ -122,12 +124,25 @@ pub(super) fn prepare(
 /// The refusal of a coordinator start that is not a new child.
 const NOT_NEW_CHILD: &str = "a coordinator session starts only as a new direct child";
 
+/// Whether the current deck link negotiated `desktop_input_mcp.v1` (R13 P7
+/// §3.2). No deck link gives `false`.
+fn deck_input_mcp(bindings: &Bindings) -> bool {
+    bindings
+        .deck()
+        .is_some_and(|deck| deck.has_feature(feature::DESKTOP_INPUT_MCP))
+}
+
 /// The tool classes of a grant, with the session's own tools (DL-165). The
 /// station-internal `recording` class (R13 P5b-2 §13.5) is added only when
 /// the spec has `allow_recording` and the `capture` class; a spec that names
-/// `recording` itself is refused as an unknown class.
+/// `recording` itself is refused as an unknown class. The station-internal
+/// `input_enabled` class (R13 P7 §3.2) is added only when the spec has
+/// `allow_input` with the scope `own_windows`, the classes `desktop`,
+/// `capture` and `input`, and `input_mcp` (the deck link negotiated
+/// `desktop_input_mcp.v1` at the start); a spec that names it is refused too.
 fn grant_classes(
     coordinator: &CoordinatorSpec,
+    input_mcp: bool,
 ) -> Result<std::collections::BTreeSet<ToolClass>, String> {
     let mut classes: std::collections::BTreeSet<ToolClass> = coordinator
         .classes
@@ -138,6 +153,15 @@ fn grant_classes(
     classes.insert(ToolClass::Own);
     if coordinator.allow_recording && classes.contains(&ToolClass::Capture) {
         classes.insert(ToolClass::Recording);
+    }
+    if input_mcp
+        && coordinator.allow_input
+        && coordinator.input_scope == Some(InputScope::OwnWindows)
+        && [ToolClass::Desktop, ToolClass::Capture, ToolClass::Input]
+            .iter()
+            .all(|c| classes.contains(c))
+    {
+        classes.insert(ToolClass::InputEnabled);
     }
     Ok(classes)
 }
@@ -211,7 +235,7 @@ pub(super) fn prepare_bridge(
     let bridge = bindings
         .bridge()
         .ok_or_else(|| "the coordinator bridge does not listen".to_owned())?;
-    let classes = grant_classes(coordinator)?;
+    let classes = grant_classes(coordinator, deck_input_mcp(bindings))?;
     let handoff = Handoff::prepare_bridge(provider, &bridge).map_err(|e| e.to_string())?;
     let digest = handoff.digest.clone();
     Ok(BridgeStart {
@@ -528,3 +552,7 @@ report.html. To update a page, publish again with its artifact_id. `set_focus` s
 #[cfg(test)]
 #[path = "coordinator_start_recording_tests.rs"]
 mod recording_tests;
+
+#[cfg(test)]
+#[path = "coordinator_start_input_tests.rs"]
+mod input_tests;

@@ -25,6 +25,16 @@ pub enum ToolClass {
     /// when the spec has `allow_recording` and the `capture` class.
     /// [`ToolClass::parse`] never returns it, so a deck grant cannot name it.
     Recording,
+    /// The coordinator input tools (R13 P7 §3.1; fleet control, mutating).
+    /// It does not imply another class.
+    Input,
+    /// Station-internal (R13 P7 §3.2): the grant has the explicit input
+    /// allowance. The start adds it to the binding classes only when the spec
+    /// has `allow_input`, the scope `own_windows`, the classes `desktop`,
+    /// `capture` and `input`, and the deck link negotiated
+    /// `desktop_input_mcp.v1`. [`ToolClass::parse`] never returns it, so a
+    /// deck grant cannot name it.
+    InputEnabled,
     /// The session's own tools (`publish_artifact`, `set_focus`,
     /// `ask_coordinator`; DL-165). Every binding has it; no grant names
     /// it ([`ToolClass::parse`] never returns it).
@@ -34,7 +44,8 @@ pub enum ToolClass {
 impl ToolClass {
     /// The class name: the inverse of [`Self::parse`] for a grant class.
     /// `own` is no grant class and is never stored; `recording` is stored
-    /// but is no grant class (see [`Self::from_stored`]).
+    /// but is no grant class (see [`Self::from_stored`]); so is
+    /// `input_enabled`.
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
@@ -48,12 +59,14 @@ impl ToolClass {
             Self::Desktop => "desktop",
             Self::Capture => "capture",
             Self::Recording => "recording",
+            Self::Input => "input",
+            Self::InputEnabled => "input_enabled",
             Self::Own => "own",
         }
     }
 
     /// The class of a grant class name (`read`, `mail`, `drive`, `spawn`,
-    /// `inspect`, `manage`, `answer`, `desktop`, `capture`). Unknown names
+    /// `inspect`, `manage`, `answer`, `desktop`, `capture`, `input`). Unknown names
     /// fail closed.
     #[must_use]
     pub fn parse(name: &str) -> Option<Self> {
@@ -67,16 +80,19 @@ impl ToolClass {
             "answer" => Self::Answer,
             "desktop" => Self::Desktop,
             "capture" => Self::Capture,
+            "input" => Self::Input,
             _ => return None,
         })
     }
 
     /// The class of a stored name: a grant class, or the station-internal
-    /// `recording` (R13 P5b-2). `own` is never stored and fails closed.
+    /// `recording` (R13 P5b-2) or `input_enabled` (R13 P7). `own` is never
+    /// stored and fails closed.
     #[must_use]
     pub fn from_stored(name: &str) -> Option<Self> {
         match name {
             "recording" => Some(Self::Recording),
+            "input_enabled" => Some(Self::InputEnabled),
             other => Self::parse(other),
         }
     }
@@ -86,7 +102,12 @@ impl ToolClass {
     pub fn is_fleet_control(self) -> bool {
         matches!(
             self,
-            Self::Inspect | Self::Manage | Self::Answer | Self::Desktop | Self::Capture
+            Self::Inspect
+                | Self::Manage
+                | Self::Answer
+                | Self::Desktop
+                | Self::Capture
+                | Self::Input
         )
     }
 
@@ -102,6 +123,7 @@ impl ToolClass {
                 | Self::Answer
                 | Self::Desktop
                 | Self::Capture
+                | Self::Input
         )
     }
 }
@@ -115,6 +137,7 @@ mod tests {
         for (class, name) in [
             (ToolClass::Desktop, "desktop"),
             (ToolClass::Capture, "capture"),
+            (ToolClass::Input, "input"),
         ] {
             assert_eq!(class.name(), name);
             assert_eq!(ToolClass::parse(name), Some(class));
@@ -138,7 +161,16 @@ mod tests {
             assert_eq!(class.is_fleet_control(), fleet, "{class:?}");
             assert_eq!(class.is_mutating(), mutating, "{class:?}");
         }
-        for name in ["input", "Desktop", "desktops", "own", "", "screenshot"] {
+        for name in [
+            "input_enabled",
+            "InputEnabled",
+            "Input",
+            "Desktop",
+            "desktops",
+            "own",
+            "",
+            "screenshot",
+        ] {
             assert_eq!(ToolClass::parse(name), None, "{name}");
         }
     }
@@ -152,6 +184,20 @@ mod tests {
         assert_eq!(ToolClass::from_stored("recording"), Some(class));
         assert_eq!(ToolClass::from_stored("capture"), Some(ToolClass::Capture));
         assert_eq!(ToolClass::from_stored("own"), None);
+        assert!(!class.is_fleet_control());
+        assert!(!class.is_mutating());
+    }
+
+    #[test]
+    fn the_input_enabled_class_is_internal_and_gives_no_fleet_control() {
+        let class = ToolClass::InputEnabled;
+        assert_eq!(class.name(), "input_enabled");
+        // A grant never names it; only the stored form reads it back.
+        assert_eq!(ToolClass::parse("input_enabled"), None);
+        assert_eq!(ToolClass::parse("InputEnabled"), None);
+        assert_eq!(ToolClass::from_stored("input_enabled"), Some(class));
+        assert_eq!(ToolClass::from_stored("InputEnabled"), None);
+        assert_eq!(ToolClass::from_stored("input"), Some(ToolClass::Input));
         assert!(!class.is_fleet_control());
         assert!(!class.is_mutating());
     }
