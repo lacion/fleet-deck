@@ -1,11 +1,13 @@
 //! The Omarchy lines of `fleetdeck doctor` (R13 P4 task C, `omarchy-p4.md`
-//! §3.4): `omarchy` and `omarchy-sudo`. Read-only.
+//! §3.4): `omarchy` and `omarchy-sudo`; and, from R13 P7 (§8.1),
+//! `desktop-input`: whether `wtype` is found. Read-only.
 
 use std::time::Duration;
 
 use fleetdeck_core::paths::Env;
 use fleetdeck_station::desktop::code;
 use fleetdeck_station::desktop::detect::omarchy_root;
+use fleetdeck_station::desktop::run::on_path;
 
 use crate::doctor::Report;
 use crate::omarchy::fsx::Home;
@@ -14,11 +16,48 @@ use crate::omarchy::{self, record, status};
 /// The time limit of the sudo check.
 const SUDO_LIMIT: Duration = Duration::from_secs(5);
 
-/// The `omarchy` line and the `omarchy-sudo` line.
+/// The `omarchy` line, the `desktop-input` line and the `omarchy-sudo` line.
 pub async fn check(report: &mut Report, env: &Env) {
     let omarchy_env = omarchy::omarchy_env();
     check_install(report, env, &omarchy_env);
+    check_input(report, &omarchy_env);
     check_sudo(report, &omarchy_env).await;
+}
+
+/// What the `desktop-input` line found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputTool {
+    /// No Omarchy desktop on this machine: no line.
+    NoDesktop,
+    Found,
+    Missing,
+}
+
+/// Whether the keyboard tool of agent input (`wtype`) is on the `PATH` of an
+/// Omarchy machine.
+fn input_tool(omarchy_env: &fleetdeck_core::ChildEnv) -> InputTool {
+    if omarchy_root(omarchy_env).is_none() {
+        InputTool::NoDesktop
+    } else if on_path(omarchy_env, "wtype") {
+        InputTool::Found
+    } else {
+        InputTool::Missing
+    }
+}
+
+/// The `desktop-input` line (R13 P7 §8.1): a missing `wtype` is a warning,
+/// never a failure. Agent keyboard input and text need it; the pointer does
+/// not.
+fn check_input(report: &mut Report, omarchy_env: &fleetdeck_core::ChildEnv) {
+    const CHECK: &str = "desktop-input";
+    match input_tool(omarchy_env) {
+        InputTool::NoDesktop => {}
+        InputTool::Found => report.ok(CHECK, "wtype found"),
+        InputTool::Missing => report.warn(
+            CHECK,
+            "wtype not found: agent keyboard input and text fail until it is installed",
+        ),
+    }
 }
 
 fn check_install(report: &mut Report, env: &Env, omarchy_env: &fleetdeck_core::ChildEnv) {
@@ -73,3 +112,7 @@ async fn check_sudo(report: &mut Report, omarchy_env: &fleetdeck_core::ChildEnv)
         Err(_) => report.warn(CHECK, "could not check"),
     }
 }
+
+#[cfg(test)]
+#[path = "doctor_omarchy_input_tests.rs"]
+mod input_tests;

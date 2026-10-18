@@ -5,7 +5,8 @@
 //! - [`act`]: a coordinator authority of `desktop.act`, right after the
 //!   admission. It checks the context, claims the operation (`notify`,
 //!   `preview_open`, `preview_close`), reads the live gates and runs the
-//!   action with the remote dispatch check right before the effect.
+//!   action with the remote dispatch check right before the effect. An input
+//!   action (R13 P7) takes [`input_act`]: its claim is part of the protocol.
 //! - [`policy_now`]: `desktop.policy_now`, the live policy of this station.
 //! - [`coordinator_read`]: `desktop.coordinator_read`, one protected read:
 //!   the work first, then the remote check, then the live gates, then the
@@ -32,9 +33,13 @@ use super::ok;
 use crate::artifacts::{ArtifactError, ArtifactService};
 use crate::desktop::authority::Admitted;
 use crate::desktop::coordinator::{
-    DispatchCheck, Extras, Gates, LinkCheck, Live, check_live, claim_kind, map_info, p6_fail,
-    refusal, tailnet_host_of, validate,
+    DispatchCheck, Extras, Gates, LinkCheck, Live, check_live, check_live_input, claim_kind,
+    map_info, p6_fail, refusal, tailnet_host_of, validate,
 };
+use crate::desktop::input::Env;
+use crate::desktop::input::barrier::{host_of_url, is_deck_origin};
+use crate::desktop::input::claim::StoreClaim;
+use crate::desktop::input::grammar::is_input;
 use crate::desktop::{self, Desktop, Fail};
 use crate::store::Store;
 use crate::store::capture_ops::Lookup;
@@ -118,7 +123,13 @@ pub(super) async fn act(
         _ => None,
     };
     let live = live_of(ctx);
-    let gates: Gates = Arc::new(move || check_live(&live(), capture, monitor.as_deref()));
+    let input_live = Arc::clone(&live);
+    // R13 P7 §3.3: an input action has its own live gates.
+    let gates: Gates = if is_input(&action) {
+        Arc::new(move || check_live_input(&live()))
+    } else {
+        Arc::new(move || check_live(&live(), capture, monitor.as_deref()))
+    };
     let tailnet_host = if matches!(action, DesktopAction::BrowserOpen { .. }) {
         tailnet_host(ctx).await
     } else {
@@ -160,6 +171,19 @@ pub(super) async fn act(
         )
         .await;
     }
+    // R13 P7: an input action claims inside its protocol (§7.3 step 9).
+    if is_input(&action) {
+        return input_act(
+            ctx,
+            control,
+            admitted,
+            action,
+            &given,
+            &coordinator,
+            input_live,
+        )
+        .await;
+    }
     // The checks of `validate` leave only the three claimed kinds here.
     let Some(kind) = claim_kind(&action) else {
         return failed(refusal());
@@ -172,7 +196,105 @@ pub(super) async fn act(
         deck_fp: &deck_fp,
         gate: &allowed,
     };
+    // R13 P7 §7.2: a preview whose trusted launch URL names a known deck
+    // origin is marked, and never receives input.
+    let opened = match &action {
+        DesktopAction::BrowserOpen { url, .. } => Some(url.clone()),
+        _ => None,
+    };
     match run_claimed(&run, &given, &coordinator, kind, &gates, action, admitted).await {
+        Ok(mut result) => {
+            if let (Some(url), Some(window_id)) = (&opened, &result.window_id) {
+                mark_deck_origin(ctx.manager.store(), &desktop, url, window_id).await;
+            }
+            super::intake_desktop::stamp(ctx, &mut result.info);
+            ok(result)
+        }
+        Err(e) => failed(e),
+    }
+}
+
+/// The lower case hosts of the deck origins that this station knows from its
+/// pairing records (the address that it dials), for the board barrier (R13
+/// P7 §7.2). A station that is dialed by the deck knows none.
+async fn deck_hosts(store: &Store) -> Result<Vec<String>, Fail> {
+    let keys = store.paired_keys().await.map_err(|e| {
+        tracing::warn!(error = %e, "the paired decks cannot be read");
+        Fail::new(
+            desktop::code::FAILED,
+            "The station could not read the deck origins.",
+        )
+    })?;
+    let mut hosts: Vec<String> = keys
+        .iter()
+        .filter_map(|key| key.dial_url.as_deref())
+        .filter_map(host_of_url)
+        .collect();
+    hosts.sort();
+    hosts.dedup();
+    Ok(hosts)
+}
+
+/// Marks the preview `window_id` when its launch URL names a known deck
+/// origin. When the deck origins cannot be read, the preview is marked too:
+/// the barrier fails closed.
+async fn mark_deck_origin(store: &Store, desktop: &Desktop, url: &str, window_id: &str) {
+    let known = match deck_hosts(store).await {
+        Ok(hosts) => is_deck_origin(url, &hosts),
+        Err(_) => true,
+    };
+    if known {
+        desktop.mark_board_origin(window_id);
+    }
+}
+
+/// One input action (R13 P7 §7.3): the protocol claims the operation itself,
+/// after the checks of the desktop and before the disclosure. The claim ends
+/// with the fixed code of a failure, or `done` with an empty result.
+async fn input_act(
+    ctx: &StationLink,
+    control: &Control,
+    admitted: Admitted,
+    action: DesktopAction,
+    given: &Given,
+    coordinator: &CoordinatorContext,
+    live: Arc<dyn Fn() -> Live + Send + Sync>,
+) -> Outcome {
+    let Some(kind) = claim_kind(&action) else {
+        return failed(refusal());
+    };
+    let store = ctx.manager.store();
+    let deck_hosts = match deck_hosts(store).await {
+        Ok(hosts) => hosts,
+        Err(e) => return failed(e),
+    };
+    let link = control.clone();
+    let env = Env::new(
+        live,
+        Arc::new(move || link.is_current() && link.ended().is_none()),
+        deck_hosts,
+    );
+    let deck_fp = control.params().peer.to_string();
+    let claim = StoreClaim::new(
+        store,
+        &deck_fp,
+        &given.action_id,
+        &given.action_hash,
+        kind,
+        coordinator,
+    );
+    let allowed = super::intake_desktop::gate(ctx);
+    let desktop = desktop::service();
+    let run = desktop
+        .input(&allowed, action, admitted, &env, &claim)
+        .await;
+    claim
+        .finish(run.as_ref().err().map_or(Ok(()), |e| Err(e.code)))
+        .await;
+    if let Err(e) = run {
+        return failed(e);
+    }
+    match desktop.input_result(&allowed).await {
         Ok(mut result) => {
             super::intake_desktop::stamp(ctx, &mut result.info);
             ok(result)
@@ -642,3 +764,7 @@ mod tests;
 #[cfg(test)]
 #[path = "intake_coordinator_desktop_input_tests.rs"]
 mod input_tests;
+
+#[cfg(test)]
+#[path = "intake_coordinator_desktop_marks_tests.rs"]
+mod marks_tests;

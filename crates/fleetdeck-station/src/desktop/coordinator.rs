@@ -7,8 +7,8 @@
 //!   fails closed.
 //! - [`validate`]: the checks of the context and of the action kind that run
 //!   right after the admission (§6.3 item 1).
-//! - [`Live`] and [`check_live`]: the live local gates of an action or a
-//!   read (§2.3).
+//! - [`Live`], [`check_live`] and [`check_live_input`]: the live local gates
+//!   of an action or a read (§2.3; R13 P7 §3.3).
 //! - [`preview_host_ok`] and [`new_window_id`]: the preview of §4.4 and §4.5.
 
 use std::sync::Arc;
@@ -32,6 +32,7 @@ use ring::rand::{SecureRandom, SystemRandom};
 
 use super::capture::{Allowed, capture_gate};
 use super::events::PreviewOwner;
+use super::input::grammar;
 use super::{Fail, code};
 use crate::manager::Policy;
 
@@ -179,6 +180,10 @@ pub fn validate<'a>(
     {
         return Err(refusal());
     }
+    // R13 P7 §6.2: an input action needs `desktop_input_mcp.v1` on the link.
+    if grammar::is_input(action) && !negotiated.has(feature::DESKTOP_INPUT_MCP) {
+        return Err(refusal());
+    }
     // R13 P5b-2: a coordinator recording needs the three recording features
     // on the link, else the existing refusal.
     if matches!(action, DesktopAction::ScreenRecord { .. })
@@ -208,6 +213,11 @@ pub fn validate<'a>(
         | DesktopAction::PreviewClose { .. }
         | DesktopAction::ScreenCapture { .. }
         | DesktopAction::ScreenRecord { .. } => {}
+        // R13 P7 §6.2: the arguments of an input action are checked again
+        // with the proto validators.
+        DesktopAction::InputKeyPress { .. }
+        | DesktopAction::InputTypeText { .. }
+        | DesktopAction::InputPointerMove { .. } => grammar::check(action)?,
         _ => return Err(refusal()),
     }
     Ok(ctx)
@@ -221,6 +231,10 @@ pub fn claim_kind(action: &DesktopAction) -> Option<&'static str> {
         DesktopAction::Notify { .. } => Some("notify"),
         DesktopAction::BrowserOpen { .. } => Some("preview_open"),
         DesktopAction::PreviewClose { .. } => Some("preview_close"),
+        // R13 P7 §6.3: the input claims.
+        DesktopAction::InputKeyPress { .. } => Some("input_key_press"),
+        DesktopAction::InputTypeText { .. } => Some("input_type_text"),
+        DesktopAction::InputPointerMove { .. } => Some("input_pointer_move"),
         _ => None,
     }
 }
@@ -282,6 +296,39 @@ pub fn check_live(live: &Live, capture: bool, monitor: Option<&str>) -> Result<(
             monitors: live.monitors.clone(),
         },
         monitor,
+    )
+}
+
+/// The failure of `allow_desktop_input` off (R13 P7 §3.3 item 10).
+#[must_use]
+pub fn input_off() -> Fail {
+    Fail::new(code::FORBIDDEN, "Desktop input is off on this station.")
+}
+
+/// The live gates of an input action (R13 P7 §3.3 items 8 to 11), in this
+/// order: `allow_fleet_control`, `allow_desktop`, `allow_desktop_input`,
+/// `allow_desktop_capture`. The monitor rule of item 14 needs the preview and
+/// is checked by the input protocol.
+///
+/// # Errors
+/// `forbidden` with the text of the first gate that is off.
+pub fn check_live_input(live: &Live) -> Result<(), Fail> {
+    if !live.fleet_control {
+        return Err(fleet_off());
+    }
+    if !live.desktop {
+        return Err(Fail::forbidden());
+    }
+    if !live.desktop_input {
+        return Err(input_off());
+    }
+    capture_gate(
+        &Allowed {
+            desktop: live.desktop,
+            capture: live.capture,
+            monitors: Vec::new(),
+        },
+        None,
     )
 }
 

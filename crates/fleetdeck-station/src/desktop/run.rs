@@ -2,16 +2,19 @@
 //! a fixed executable name that is resolved on the desktop `PATH`, started
 //! with an argv `Vec<String>`. Never a shell, never a Hyprland `exec`, never
 //! a batch. Stdin is null; stdout is capped at 1 MiB and stderr at 16 KiB.
-//! The shape follows `integrations/exec.rs`.
+//! The shape follows `integrations/exec.rs`. The one exception is the input
+//! child of R13 P7 ([`Runner::prepare_input`], [`Runner::spawn_input`]): its
+//! own process group, a private stdin pipe, no stdout and no stderr.
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::process::Stdio;
+use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
 
 use fleetdeck_core::ChildEnv;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
+use tokio::task::JoinHandle;
 
 use super::authority::Start;
 use super::{Fail, Gate, code};
@@ -27,6 +30,10 @@ pub const MAX_STDERR: usize = 16 * 1024;
 /// How long the runner waits for the pipes after the program exited: a
 /// program that started a background process keeps them open.
 const PIPE_GRACE: Duration = Duration::from_millis(300);
+/// How long the runner waits for an input child after `SIGKILL` (R13 P7 §10).
+pub const REAP_LIMIT: Duration = Duration::from_secs(2);
+/// The usable UTF-8 locale of an input child (R13 P7 §8.1).
+const INPUT_LOCALE: &str = "C.UTF-8";
 
 /// What a program returned.
 #[derive(Debug)]
@@ -165,6 +172,159 @@ impl Runner<'_> {
             .stderr(Stdio::null())
             .kill_on_drop(false);
         cmd.spawn().map_err(|e| spawn_failed(program, &e))
+    }
+}
+
+/// An input program that is resolved and has its argv, and does not run yet
+/// (R13 P7 §7.3 step 8). The environment is the cleared desktop environment
+/// with an explicit UTF-8 locale.
+pub struct InputCommand {
+    program: String,
+    cmd: Command,
+}
+
+/// A running input child (R13 P7 §8.1): its own process group, a private
+/// stdin pipe that a task fills and closes, no stdout and no stderr. A drop
+/// stops the writer and kills the group.
+pub struct InputChild {
+    child: Child,
+    /// The process group to kill; `None` once the child was reaped.
+    group: Option<u32>,
+    writer: Option<JoinHandle<std::io::Result<()>>>,
+}
+
+impl InputChild {
+    /// Waits for the child (cancel safe).
+    ///
+    /// # Errors
+    /// The wait error.
+    pub async fn wait(&mut self) -> std::io::Result<ExitStatus> {
+        let status = self.child.wait().await?;
+        // The leader is reaped: stop anything that stayed in its group.
+        kill_group(self.group.take());
+        Ok(status)
+    }
+
+    /// The result of the stdin writer once the child ended: a closed pipe is
+    /// not an error (the child may stop reading), any other write error is.
+    ///
+    /// # Errors
+    /// The write error.
+    pub async fn writer_result(&mut self) -> std::io::Result<()> {
+        let Some(writer) = self.writer.take() else {
+            return Ok(());
+        };
+        match tokio::time::timeout(PIPE_GRACE, writer).await {
+            Ok(Ok(Err(e))) if e.kind() != std::io::ErrorKind::BrokenPipe => Err(e),
+            _ => Ok(()),
+        }
+    }
+
+    /// Stops the stdin writer, kills the process group and reaps the child
+    /// within [`REAP_LIMIT`]. `true` when the child was reaped.
+    pub async fn kill_and_reap(&mut self) -> bool {
+        if let Some(writer) = self.writer.take() {
+            writer.abort();
+        }
+        kill_group(self.group.take());
+        match tokio::time::timeout(REAP_LIMIT, self.child.wait()).await {
+            Ok(Ok(_)) => true,
+            Ok(Err(e)) => {
+                tracing::warn!(kind = ?e.kind(), "an input child cannot be reaped");
+                false
+            }
+            Err(_) => {
+                tracing::warn!("an input child was not reaped in time");
+                false
+            }
+        }
+    }
+}
+
+impl Drop for InputChild {
+    fn drop(&mut self) {
+        if let Some(writer) = self.writer.take() {
+            writer.abort();
+        }
+        kill_group(self.group.take());
+    }
+}
+
+/// `SIGKILL` to the process group `group` (the child is its leader).
+fn kill_group(group: Option<u32>) {
+    use rustix::process::{Pid, Signal};
+    let Some(pid) = group
+        .and_then(|g| i32::try_from(g).ok())
+        .filter(|p| *p > 1)
+        .and_then(Pid::from_raw)
+    else {
+        return;
+    };
+    match rustix::process::kill_process_group(pid, Signal::KILL) {
+        Ok(()) | Err(rustix::io::Errno::SRCH) => {}
+        Err(e) => tracing::warn!(error = %e, "cannot signal an input child group"),
+    }
+}
+
+impl Runner<'_> {
+    /// Resolves `program` and builds its command with the argv `args`; no
+    /// program starts. The environment is the cleared desktop environment and
+    /// `LC_ALL=C.UTF-8`.
+    ///
+    /// # Errors
+    /// `unsupported` when the program is not installed, `failed` when the
+    /// locale cannot be set.
+    pub fn prepare_input(&self, program: &str, args: &[String]) -> Result<InputCommand, Fail> {
+        let path = resolve(self.env, program).ok_or_else(|| not_installed(program))?;
+        let mut env = self.env.clone();
+        env.set("LC_ALL", INPUT_LOCALE)
+            .map_err(|_| Fail::new(code::FAILED, "the input environment is invalid"))?;
+        let mut cmd = Command::new(path);
+        cmd.args(args).env_clear().envs(env.iter());
+        Ok(InputCommand {
+            program: program.to_owned(),
+            cmd,
+        })
+    }
+
+    /// Starts a prepared input program without an await: the live gate, then
+    /// the spawn as the leader of its own process group, with null stdout and
+    /// stderr and a private stdin pipe when `stdin` is given (null otherwise).
+    /// A task writes the bytes and closes the pipe.
+    ///
+    /// # Errors
+    /// `forbidden` when the live gate is off, `unsupported` or `failed` when
+    /// the program cannot start.
+    pub fn spawn_input(
+        &self,
+        prepared: InputCommand,
+        stdin: Option<Vec<u8>>,
+    ) -> Result<InputChild, Fail> {
+        self.check()?;
+        let InputCommand { program, mut cmd } = prepared;
+        cmd.stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .kill_on_drop(true);
+        let mut child = cmd.spawn().map_err(|e| spawn_failed(&program, &e))?;
+        let group = child.id();
+        let writer = match (stdin, child.stdin.take()) {
+            (Some(bytes), Some(mut pipe)) => Some(tokio::spawn(async move {
+                pipe.write_all(&bytes).await?;
+                pipe.shutdown().await
+            })),
+            _ => None,
+        };
+        Ok(InputChild {
+            child,
+            group,
+            writer,
+        })
     }
 }
 

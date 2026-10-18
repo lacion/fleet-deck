@@ -12,6 +12,7 @@
 //! - [`authority`]: the dispatch authority of `desktop.act`.
 //! - [`coordinator`]: the remote dispatch check and the checks of a
 //!   coordinator desktop action (R13 P6).
+//! - [`input`]: the coordinator input tools of R13 P7 (keys, text, pointer).
 //! - [`deadline`]: the total deadlines.
 //! - [`quiet`]: the local UTC offset and the quiet hours.
 //!
@@ -29,6 +30,7 @@ pub mod detect;
 pub mod env;
 pub mod events;
 pub mod info;
+pub mod input;
 mod preview_close;
 pub mod profile;
 pub mod quiet;
@@ -134,6 +136,10 @@ pub struct Desktop {
     capture: capture::CaptureSlot,
     /// The recordings that run now (R13 P5b).
     recordings: recording::Registry,
+    /// The one input slot of the station (R13 P7).
+    input: input::InputSlot,
+    /// The previews whose launch URL named a deck origin (R13 P7 §7.2).
+    board_marks: input::barrier::Marks,
     /// The executable of the `shim-exec` launch of `grim`; `None` is the
     /// running executable. A test of another crate sets it.
     shim_exe: Option<std::path::PathBuf>,
@@ -151,6 +157,8 @@ impl Desktop {
             limits: Mutex::new(deadline::Limits::default()),
             capture: capture::CaptureSlot::default(),
             recordings: recording::Registry::default(),
+            input: input::InputSlot::default(),
+            board_marks: input::barrier::Marks::default(),
             shim_exe: None,
         }
     }
