@@ -3381,3 +3381,10 @@ Owner review: pending.
   - d. P5b-2 (agent recording) is not built.
   - e. The owner may change OD-1 to OD-6 (`omarchy-p5b.md` section 2).
 - Next: the end-to-end proofs (task P1); the PRE-PR review of P5b-1; the owner reads the new rows of `SECURITY-CHECKLIST.md` (DL-158); the real-recorder smoke on the Omarchy machine.
+
+## DL-240: R13 P5b-1 accepted after the PRE-PR review (architect, 2026-10-20)
+
+- Context: the adversary PRE-PR review of P5b-1 (DL-239) ran 3 rounds. Round 1 FAIL: 2 BLOCKER (a commit after lease expiry during finalization; a recorder launch after a stop that arrived before the spawn) and 1 MAJOR (the safety supervision started only after the phase write). Round 2: the supervision finding closed; the two blockers only partly fixed (a renewal after expiry erased it; a stop that missed the registry could still lose to the spawn). Round 3: PASS.
+- Decision: the fixes `391ac06d` (O12-20) and `5a887a51` (O12-21) are accepted: one lease decision under one lock with a permanent failure flag; a launch guard on the recorder thread right before the spawn; a pending stop handed over in memory before any await; supervision before bookkeeping. P5b-1 is accepted.
+- Open items: the real `wf-recorder` and `shim-exec` retained-FD and finalization smoke on the owner's Omarchy machine (required before relying on recordings); the 180 s video response lifetime is not enforced while a client stops reading; the intermittent test `desktop::recording::op_tests::a_stop_before_the_spawn_is_cancelled_and_no_recorder_runs` (a 500 ms test timing under load); P5b-2 (agent recording) in progress.
+
