@@ -462,3 +462,67 @@ async fn fence_a_session_records_its_address_and_a_touch_writes_it_again_only_wh
         (Some("10.0.0.3".to_owned()), Some(created))
     );
 }
+
+#[tokio::test]
+async fn fence_a_socket_that_registers_after_the_sweep_at_an_exposed_address_is_refused() {
+    let det = Det::new();
+    let st = store(&det).await;
+    let now = st.now_ms();
+    // The guard passed on a cached empty set, and another request moved the
+    // last address of the session elsewhere: the attempted transaction and
+    // both sweeps miss it.
+    assert!(st.exposed_addresses(now).await.unwrap().is_empty());
+    let login = st
+        .create_login_at(LoginMethod::Password, Some("10.0.0.9"))
+        .await
+        .unwrap();
+    let hash = st
+        .login_session(&login.cookie)
+        .await
+        .unwrap()
+        .unwrap()
+        .session_hash;
+    op(
+        &st,
+        "o1",
+        "type_text",
+        Some(now),
+        None,
+        Some(r#"["10.0.0.5"]"#),
+    )
+    .await;
+    // The registration comes after the sweep.
+    let late = st
+        .registry()
+        .register(&hash, SessionKind::Owner, SocketKind::Shell, "10.0.0.5");
+    assert!(!admit_socket(&st, &late).await);
+    assert!(late.is_revoked());
+    assert!(st.login_session(&login.cookie).await.unwrap().is_none());
+    let rows: Vec<_> = st
+        .audit_log(10)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.action == "board.signed_out_for_input")
+        .collect();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].detail.as_deref(), Some("rule=2 op=-"));
+    // A socket from an address that is not exposed is admitted.
+    let other = st
+        .create_login_at(LoginMethod::Password, Some("10.0.0.8"))
+        .await
+        .unwrap();
+    let other_hash = st
+        .login_session(&other.cookie)
+        .await
+        .unwrap()
+        .unwrap()
+        .session_hash;
+    let fine = st.registry().register(
+        &other_hash,
+        SessionKind::Owner,
+        SocketKind::Board,
+        "10.0.0.8",
+    );
+    assert!(admit_socket(&st, &fine).await);
+}

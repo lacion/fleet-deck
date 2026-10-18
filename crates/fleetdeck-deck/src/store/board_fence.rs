@@ -180,6 +180,21 @@ impl DeckStore {
         .await
     }
 
+    /// True when `addr` is exposed at `now`, read from the rows, never from
+    /// the cache of [`Self::exposed_addresses`] (the admission of a socket:
+    /// a read that begins after the registration sees every committed
+    /// attempted transaction whose sweep missed that socket).
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn addr_exposed_now(&self, addr: &str, now: i64) -> Result<bool> {
+        let addr = addr.to_owned();
+        call(&self.inner.db, move |conn| {
+            Ok(read_exposed(conn, now)?.contains(&addr))
+        })
+        .await
+    }
+
     /// Deletes one browser session. True when it existed.
     ///
     /// # Errors

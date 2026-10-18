@@ -93,6 +93,7 @@ struct TicketShared {
     id: u64,
     session_hash: String,
     kind: SessionKind,
+    addr: String,
     revoked: Arc<Signal>,
     done: Arc<Signal>,
     registry: Arc<Registry>,
@@ -115,6 +116,12 @@ impl Ticket {
     #[must_use]
     pub fn kind(&self) -> SessionKind {
         self.0.kind
+    }
+
+    /// The canonical peer address of the connection of this socket.
+    #[must_use]
+    pub fn addr(&self) -> &str {
+        &self.0.addr
     }
 
     /// True once a sign-out revoked this socket. A relay checks it before it
@@ -206,6 +213,7 @@ impl Registry {
             id,
             session_hash: session_hash.to_owned(),
             kind,
+            addr: addr.to_owned(),
             revoked,
             done,
             registry: Arc::clone(self),

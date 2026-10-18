@@ -316,15 +316,40 @@ pub(crate) async fn guard_rule(
 }
 
 /// The admission of a socket at `on_upgrade`: reads that the session row
-/// still exists (the lookup begins after the guard registered the socket),
-/// then makes the entry `Live` under the mutex of the registry. False: close
-/// the socket at once and never start the relay. A database error counts as
-/// a missing session (fail closed).
+/// still exists and that the address of the socket is not exposed (both
+/// reads begin after the guard registered the socket), then makes the entry
+/// `Live` under the mutex of the registry. A socket that registered after
+/// the sweep of an input operation, from an exposed address, is refused
+/// here and its session is deleted (§7.6 rule 2). False: close the socket
+/// at once and never start the relay. A database error counts as a missing
+/// session (fail closed).
 pub(crate) async fn admit_socket(store: &DeckStore, ticket: &Ticket) -> bool {
-    let exists = match store
-        .session_row_exists(ticket.kind(), ticket.session_hash())
-        .await
-    {
+    let (kind, hash) = (ticket.kind(), ticket.session_hash().to_owned());
+    let exposed = match store.addr_exposed_now(ticket.addr(), store.now_ms()).await {
+        Ok(exposed) => exposed,
+        Err(e) => {
+            tracing::warn!(error = %e, "the exposure of a socket could not be read; the socket is closed");
+            return false;
+        }
+    };
+    if exposed {
+        match store.end_session_of(kind, hash.clone()).await {
+            Ok(true) => {
+                let row = SignedOut {
+                    kind,
+                    session_hash: hash.clone(),
+                };
+                audit_rows(store, std::slice::from_ref(&row), 2, "-").await;
+            }
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, "the session of a refused socket could not be deleted")
+            }
+        }
+        drop(store.registry().revoke(std::slice::from_ref(&hash), &[]).0);
+        return false;
+    }
+    let exists = match store.session_row_exists(kind, &hash).await {
         Ok(exists) => exists,
         Err(e) => {
             tracing::warn!(error = %e, "the session of a socket could not be read; the socket is closed");
