@@ -30,6 +30,7 @@ use ring::rand::{SecureRandom, SystemRandom};
 use serde_json::Value;
 
 use super::bindings::{Bindings, Caller};
+use super::desktop_forward::{DesktopRequest, McpToolResult};
 use super::ingress::Forward;
 use super::tools::to_op;
 
@@ -51,6 +52,11 @@ pub trait Transport: Send + Sync {
         command_id: Option<&CommandId>,
         params: Value,
     ) -> Result<Outcome, String>;
+
+    /// Whether the link negotiated `feature`; a fake has none by default.
+    fn has_feature(&self, _feature: &str) -> bool {
+        false
+    }
 }
 
 #[async_trait]
@@ -64,6 +70,10 @@ impl Transport for Control {
         Control::request(self, method, command_id, params)
             .await
             .map_err(|e| e.to_string())
+    }
+
+    fn has_feature(&self, feature: &str) -> bool {
+        self.params().negotiated.has(feature)
     }
 }
 
@@ -119,7 +129,7 @@ fn ms(d: Duration) -> i64 {
     i64::try_from(d.as_millis()).unwrap_or(i64::MAX)
 }
 
-fn new_id(prefix: &str) -> Result<String, String> {
+pub(super) fn new_id(prefix: &str) -> Result<String, String> {
     let mut bytes = [0u8; 16];
     SystemRandom::new()
         .fill(&mut bytes)
@@ -128,7 +138,7 @@ fn new_id(prefix: &str) -> Result<String, String> {
     Ok(format!("{prefix}{hex}"))
 }
 
-fn binding(caller: &Caller) -> CoordinatorBinding {
+pub(super) fn binding(caller: &Caller) -> CoordinatorBinding {
     CoordinatorBinding {
         binding_id: caller.binding_id.clone(),
         grant_id: caller.grant_id.clone(),
@@ -386,6 +396,10 @@ impl LinkForward {
 
 #[async_trait]
 impl Forward for LinkForward {
+    async fn call_desktop(&self, caller: Caller, request: DesktopRequest) -> McpToolResult {
+        self.desktop(caller, request).await
+    }
+
     async fn call(&self, caller: Caller, tool: &str, args: Value) -> Result<Value, String> {
         if caller.grant_id.is_empty() {
             return match tool {

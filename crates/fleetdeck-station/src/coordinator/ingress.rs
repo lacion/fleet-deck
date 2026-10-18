@@ -23,6 +23,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 use tokio::task::JoinSet;
 
 use super::bindings::{Auth, Binding, Bindings, Caller};
+use super::desktop_forward::{DesktopRequest, McpToolResult, p6_error};
 use super::jsonrpc::{self, Answer};
 
 /// The deck side of a tool call: the station forwards an authorized call
@@ -31,6 +32,13 @@ use super::jsonrpc::{self, Answer};
 #[async_trait]
 pub trait Forward: Send + Sync {
     async fn call(&self, caller: Caller, tool: &str, args: Value) -> Result<Value, String>;
+
+    /// A P6 desktop or capture tool (R13 P6 §6.1): one forward to the deck
+    /// through the dedicated methods, never the outbox. A forwarder without
+    /// them answers `desktop_unsupported`.
+    async fn call_desktop(&self, _caller: Caller, _request: DesktopRequest) -> McpToolResult {
+        p6_error("desktop_unsupported", None, None)
+    }
 }
 
 /// The station side of the session's own tools (`publish_artifact`,

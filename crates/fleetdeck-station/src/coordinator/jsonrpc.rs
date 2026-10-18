@@ -2,9 +2,12 @@
 
 use serde_json::{Value, json};
 
+use fleetdeck_proto::coordinator_desktop_text::code;
+
 use super::bindings::{Binding, BindingState};
+use super::desktop_forward::{p6_error, parse_request};
 use super::ingress::{FleetTools, Forward};
-use super::tools;
+use super::{desktop_tools, tools};
 
 /// The MCP protocol versions that the station accepts. `2025-11-25` is
 /// the version that Claude 2.1.296 sends (DL-220); the station uses only
@@ -75,6 +78,25 @@ pub async fn answer(
                     &id,
                     tool_text("forbidden: the grant has no such tool", true),
                 ),
+                // A P6 desktop or capture tool (§6.1): bound, checked
+                // arguments, the live switch, then one forward through the
+                // P6 path. It never reaches `forward.call`, `fleet.call`,
+                // `to_op` or the outbox.
+                Some(tool) if desktop_tools::is_desktop(tool.name) => {
+                    let out = match (binding.state, binding.caller()) {
+                        (BindingState::Active, Some(caller)) => {
+                            match parse_request(tool.name, args) {
+                                None => p6_error(code::INVALID_PARAMS, None, None),
+                                Some(_) if !fleet_control => {
+                                    p6_error(code::NOT_GRANTED, None, None)
+                                }
+                                Some(request) => forward.call_desktop(caller, request).await,
+                            }
+                        }
+                        _ => p6_error(code::NOT_BOUND, None, None),
+                    };
+                    result(&id, out.to_value())
+                }
                 Some(tool) => match (binding.state, binding.caller()) {
                     // A fleet-control grant (a new tool, or an ADR-006 tool
                     // under such a grant) is never forwarded while the
