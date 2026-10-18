@@ -1,6 +1,6 @@
 # P6: coordinator desktop tools and monitor screenshots
 
-- **Status:** proposed contract (2026-10-20, from the advisor answer `advisor-p6-answer.md`; revised for DESIGN REVIEW round 1, decision O12-2). The architect accepts the recommendations OD-1 to OD-7 (decision O12-1; the owner may change any of them). Adversary DESIGN REVIEW required before implementation.
+- **Status:** proposed contract (2026-10-20, from the advisor answer `advisor-p6-answer.md`; revised for DESIGN REVIEW round 1, decision O12-2). The architect accepts the recommendations OD-1 to OD-7 (decision O12-1; the owner may change any of them). Adversary DESIGN REVIEW: round 1 FAIL (fixed, O12-2), round 2 one MAJOR (fixed, O12-3), round 3 PASS (2026-10-20). Accepted for implementation; PRE-PR review required before merge.
 - **Parent:** [omarchy.md](./omarchy.md), §§7.1–7.3, 7.5, 11 and 13.
 - **Prerequisites:** built P3 desktop relay and dispatch authority; built P5a screenshot, durable result, import, deletion and artifact paths.
 - **Authority model:** ADR-006 coordinator bindings and lifecycle, extended through ADR-008 grants.
