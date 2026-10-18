@@ -19,6 +19,8 @@
 mod actions;
 pub mod args;
 pub mod authority;
+#[doc(hidden)]
+pub mod capture;
 pub mod deadline;
 pub mod detect;
 pub mod env;
