@@ -69,7 +69,7 @@ async fn fence_revoke_before_dispatch_waits_for_a_live_relay() {
         session_hash: "h1".to_owned(),
     }];
     // The relay never ends: false after the wait.
-    let stuck = revoke_before_dispatch(&st, &rows, &[]).await;
+    let stuck = revoke_before_dispatch(&st, &rows, &[], "op1").await;
     assert!(!stuck);
     assert!(t.is_revoked());
     // A socket from a snapshot address is revoked too.
@@ -83,8 +83,68 @@ async fn fence_revoke_before_dispatch_waits_for_a_live_relay() {
         })
     };
     reg.remove(&t);
-    assert!(revoke_before_dispatch(&st, &[], &["10.0.0.5".to_owned()]).await);
+    assert!(revoke_before_dispatch(&st, &[], &["10.0.0.5".to_owned()], "op1").await);
     relay.await.unwrap();
+}
+
+#[tokio::test]
+async fn fence_revoke_before_dispatch_signs_out_the_session_of_a_socket_at_a_snapshot_address() {
+    use crate::store::LoginMethod;
+
+    let det = Det::new();
+    let st = store(&det).await;
+    let reg = st.registry();
+    // A session whose last address is elsewhere, with a socket that registered
+    // at a snapshot address after the attempted transaction, and a second
+    // socket of the same session at another address.
+    let login = st
+        .create_login_at(LoginMethod::Password, Some("10.0.0.9"))
+        .await
+        .unwrap();
+    let hash = st
+        .login_session(&login.cookie)
+        .await
+        .unwrap()
+        .unwrap()
+        .session_hash;
+    let at_snapshot = reg.register(&hash, SessionKind::Owner, SocketKind::Board, "10.0.0.5");
+    let elsewhere = reg.register(&hash, SessionKind::Owner, SocketKind::Shell, "10.0.0.9");
+    let bystander = st
+        .create_login_at(LoginMethod::Password, Some("10.0.0.8"))
+        .await
+        .unwrap();
+    let other = reg.register("h-other", SessionKind::Owner, SocketKind::Board, "10.0.0.8");
+
+    assert!(revoke_before_dispatch(&st, &[], &["10.0.0.5".to_owned()], "op-9").await);
+    assert!(st.login_session(&login.cookie).await.unwrap().is_none());
+    assert!(st.login_session(&bystander.cookie).await.unwrap().is_some());
+    assert!(at_snapshot.is_revoked());
+    // Every socket of the deleted session is revoked, not only the one at the
+    // snapshot address.
+    assert!(elsewhere.is_revoked());
+    assert!(!other.is_revoked());
+    // One audit row for the session, rule 1 and the operation.
+    let rows: Vec<_> = st
+        .audit_log(10)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.action == "board.signed_out_for_input")
+        .collect();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].detail.as_deref(), Some("rule=1 op=op-9"));
+    let target = rows[0].target.clone().unwrap();
+    assert_eq!(target, format!("owner:{}", &hash[..8]));
+    // A session that is gone already is not audited a second time.
+    assert!(revoke_before_dispatch(&st, &[], &["10.0.0.5".to_owned()], "op-9").await);
+    let again = st
+        .audit_log(10)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.action == "board.signed_out_for_input")
+        .count();
+    assert_eq!(again, 1);
 }
 
 #[tokio::test]

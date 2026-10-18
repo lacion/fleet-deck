@@ -165,6 +165,11 @@ async fn login(
                         .await;
                     logged_in(&login)
                 }
+                // An input began while the sign-in ran: no session, no cookie
+                // (§7.6 rule 2).
+                Err(DeckError::SignInBlocked) => {
+                    board_fence::sign_in_blocked_error().into_response()
+                }
                 Err(e) => ApiError::internal(e).into_response(),
             }
         }
@@ -368,7 +373,8 @@ async fn member_view(board: &Board, grant: &ShareGrant) -> Result<SessionView, A
 /// token nor the cookie goes to a log or to the audit row.
 ///
 /// # Errors
-/// 400 `invalid_display_name`; 401 `invalid_invite`; 409
+/// 400 `invalid_display_name`; 401 `invalid_invite`; 403
+/// `sign_in_blocked_for_input` (R13 P7 §7.6); 409
 /// `display_name_taken`; 429
 /// `too_many_attempts`; 500 `internal`.
 pub async fn join(
@@ -441,6 +447,11 @@ pub async fn join(
             // The invite was not judged: no failure.
             attempt.release();
             ApiError::new(StatusCode::BAD_REQUEST, "invalid_display_name", message).into_response()
+        }
+        Err(DeckError::SignInBlocked) => {
+            // The invite was not used and not judged: no failure.
+            attempt.release();
+            board_fence::sign_in_blocked_error().into_response()
         }
         Err(DeckError::NameTaken(_)) => {
             attempt.release();

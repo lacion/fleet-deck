@@ -232,14 +232,40 @@ impl Registry {
         true
     }
 
-    /// Sets `revoked` on every entry (pending or live) of a session in
-    /// `sessions` or with an address in `addrs`, under the mutex, and
-    /// returns their waiters. A pending entry has no relay: it signals
-    /// `done` at once, and [`Self::go_live`] refuses it from now on.
+    /// The sessions of every entry (pending or live) whose address is in
+    /// `addrs`, each session once, under the mutex. The attempted
+    /// transaction of an input operation deletes these sessions with the
+    /// sessions of the same addresses ([`crate::store::DeckStore::desktop_op_attempted_input`]).
     #[must_use]
-    pub fn revoke(&self, sessions: &[String], addrs: &[String]) -> Vec<Waiter> {
+    pub fn sessions_at(&self, addrs: &[String]) -> Vec<(SessionKind, String)> {
+        let map = self.lock();
+        let mut out: Vec<(SessionKind, String)> = Vec::new();
+        for entry in map.entries.values() {
+            if !addrs.contains(&entry.addr) {
+                continue;
+            }
+            let session = (entry.kind, entry.session_hash.clone());
+            if !out.contains(&session) {
+                out.push(session);
+            }
+        }
+        out
+    }
+
+    /// Sets `revoked` on every entry (pending or live) of a session in
+    /// `sessions` or with an address in `addrs`, under the mutex. Returns
+    /// their waiters and the session of every revoked entry (each session
+    /// once). A pending entry has no relay: it signals `done` at once, and
+    /// [`Self::go_live`] refuses it from now on.
+    #[must_use]
+    pub fn revoke(
+        &self,
+        sessions: &[String],
+        addrs: &[String],
+    ) -> (Vec<Waiter>, Vec<(SessionKind, String)>) {
         let map = self.lock();
         let mut waiters = Vec::new();
+        let mut hit_sessions: Vec<(SessionKind, String)> = Vec::new();
         for entry in map.entries.values() {
             let hit = sessions.contains(&entry.session_hash) || addrs.contains(&entry.addr);
             if !hit {
@@ -252,8 +278,12 @@ impl Registry {
             waiters.push(Waiter {
                 done: Arc::clone(&entry.done),
             });
+            let session = (entry.kind, entry.session_hash.clone());
+            if !hit_sessions.contains(&session) {
+                hit_sessions.push(session);
+            }
         }
-        waiters
+        (waiters, hit_sessions)
     }
 
     /// Removes the entry at the end of the socket and signals `done`. Call

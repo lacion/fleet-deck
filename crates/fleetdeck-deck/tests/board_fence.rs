@@ -6,6 +6,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod common;
+#[path = "board_fence/race.rs"]
+mod race;
 mod share_support;
 
 use std::collections::BTreeMap;
@@ -343,7 +345,7 @@ async fn a_board_socket_closes_with_4401_when_its_session_is_signed_out() {
         kind: SessionKind::Owner,
         session_hash: hash,
     }];
-    assert!(revoke_before_dispatch(&f.store, &rows, &[]).await);
+    assert!(revoke_before_dispatch(&f.store, &rows, &[], "op1").await);
     assert_eq!(ws.next().await.unwrap_err(), Some(4401));
 
     // An upgrade from an exposed address is refused before the socket.
@@ -354,7 +356,7 @@ async fn a_board_socket_closes_with_4401_when_its_session_is_signed_out() {
 }
 
 #[tokio::test]
-async fn a_socket_from_a_snapshot_address_closes_even_when_its_session_row_stays() {
+async fn a_socket_from_a_snapshot_address_closes_and_its_session_is_deleted() {
     let f = fixture().await;
     let c = board(Arc::clone(&f.ctx)).await;
     let (cookie, _) = c.login().await;
@@ -364,10 +366,16 @@ async fn a_socket_from_a_snapshot_address_closes_even_when_its_session_row_stays
         .await
         .unwrap();
     ws.next_of("snapshot").await;
-    assert!(revoke_before_dispatch(&f.store, &[], &["10.1.1.1".to_owned()]).await);
+    assert!(revoke_before_dispatch(&f.store, &[], &["10.1.1.1".to_owned()], "op1").await);
     ws.quiet(Duration::from_millis(300)).await;
-    assert!(revoke_before_dispatch(&f.store, &[], &["127.0.0.1".to_owned()]).await);
+    // The session of a socket at another address is untouched.
+    let read = [("Cookie", cookie.as_str())];
+    assert_eq!(c.get("/api/auth/session", &read).await.status, 200);
+    assert!(revoke_before_dispatch(&f.store, &[], &["127.0.0.1".to_owned()], "op1").await);
     assert_eq!(ws.next().await.unwrap_err(), Some(4401));
+    // The session of the revoked socket is deleted, not only the socket.
+    let r = c.get("/api/auth/session", &read).await;
+    assert_eq!((r.status, r.code()), (401, "login_required"), "{}", r.body);
 }
 
 // ---------------------------------------------------------------- shell
@@ -495,7 +503,7 @@ async fn a_shell_relay_ends_on_a_revoke_and_forwards_no_byte_after_it() {
     read_until(&mut ws, "up-42").await;
 
     // The revoke ends the relay before the dispatch.
-    assert!(revoke_before_dispatch(&c.store, &[], &["127.0.0.1".to_owned()]).await);
+    assert!(revoke_before_dispatch(&c.store, &[], &["127.0.0.1".to_owned()], "op1").await);
     let marker = root.join("typed-after-revoke");
     let _ =
         ws.0.send(Message::Binary(
@@ -523,9 +531,15 @@ async fn a_shell_relay_ends_on_a_revoke_and_forwards_no_byte_after_it() {
         assert_eq!(u16::from(frame.code), 4401);
         assert_eq!(frame.reason.as_str(), "signed_out_for_input");
     }
-    // The shell itself keeps running.
-    let r = c
+    // The revoke deleted the session of the socket. The shell itself keeps
+    // running: a new sign-in (no input is exposing the address) sees it.
+    let gone = c
         .get("/api/stations/alpha/shells", &[("Cookie", cookie.as_str())])
+        .await;
+    assert_eq!(gone.status, 401, "{}", gone.body);
+    let (again, _) = c.login().await;
+    let r = c
+        .get("/api/stations/alpha/shells", &[("Cookie", again.as_str())])
         .await;
     assert_eq!(r.status, 200, "{}", r.body);
     assert_eq!(r.body[0]["state"], "running");
@@ -695,7 +709,7 @@ async fn a_shell_attach_paused_before_the_upgrade_never_relays_a_byte() {
         session_hash: hash,
     }];
     // A pending socket has no relay: nothing to wait for.
-    assert!(revoke_before_dispatch(&f.store, &rows, &[]).await);
+    assert!(revoke_before_dispatch(&f.store, &rows, &[], "op1").await);
 
     // The station answers and has a byte ready.
     let data = station.data.as_ref().expect("a data channel");

@@ -69,7 +69,9 @@ fn read_exposed(conn: &Connection, now: i64) -> Result<HashSet<String>> {
 }
 
 /// Deletes every owner login session and member session whose `last_addr`
-/// is in `addrs` (whatever its age) and returns them. K1 calls it in the
+/// is in `addrs` (whatever its age), and every session of `sessions` (the
+/// sessions that the socket registry names for the same addresses,
+/// [`Registry::sessions_at`]), and returns them. K1 calls it in the
 /// transaction that marks an input operation `attempted` and writes its
 /// `exposure_addrs`; the audit rows follow the commit
 /// ([`crate::board_fence::audit_signed_out`]). `_now` is not used: no
@@ -77,24 +79,28 @@ fn read_exposed(conn: &Connection, now: i64) -> Result<HashSet<String>> {
 ///
 /// # Errors
 /// A database error.
-#[allow(
-    dead_code,
-    reason = "task K1 (the input dispatch) calls it; tests call it now"
-)]
 pub(crate) fn sign_out_in_tx(
     tx: &Transaction<'_>,
     addrs: &[String],
+    sessions: &[(SessionKind, String)],
     _now: i64,
 ) -> Result<Vec<SignedOut>> {
     let list = serde_json::to_string(addrs)?;
     let mut out = Vec::new();
     for kind in [SessionKind::Owner, SessionKind::Member] {
+        let hashes: Vec<&str> = sessions
+            .iter()
+            .filter(|(k, _)| *k == kind)
+            .map(|(_, hash)| hash.as_str())
+            .collect();
+        let hashes = serde_json::to_string(&hashes)?;
         let mut stmt = tx.prepare(&format!(
             "DELETE FROM {} WHERE last_addr IN (SELECT value FROM json_each(?1))
+                OR session_hash IN (SELECT value FROM json_each(?2))
              RETURNING session_hash",
             table(kind)
         ))?;
-        let rows = stmt.query_map([&list], |r| r.get::<_, String>(0))?;
+        let rows = stmt.query_map([&list, &hashes], |r| r.get::<_, String>(0))?;
         for hash in rows {
             out.push(SignedOut {
                 kind,
@@ -103,6 +109,22 @@ pub(crate) fn sign_out_in_tx(
         }
     }
     Ok(out)
+}
+
+/// True when `addr` is exposed at `now`, read inside `tx` (§7.6 rule 2, for
+/// the creation of a session): the same rows and windows as
+/// [`DeckStore::exposed_addresses`], never its cache. A session creation
+/// calls it in the transaction that inserts the session, so it is
+/// serialized with the attempted transaction of an input operation. No
+/// address is never exposed.
+///
+/// # Errors
+/// A database error.
+pub(crate) fn exposed_in_tx(tx: &Transaction<'_>, addr: Option<&str>, now: i64) -> Result<bool> {
+    let Some(addr) = addr else {
+        return Ok(false);
+    };
+    Ok(read_exposed(tx, now)?.contains(addr))
 }
 
 impl DeckStore {

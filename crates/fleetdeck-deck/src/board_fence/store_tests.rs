@@ -255,11 +255,20 @@ async fn member_session(st: &DeckStore, hash: &str, addr: Option<&str>, seen: Op
 }
 
 async fn sign_out(st: &DeckStore, addrs: &[&str]) -> Vec<SignedOut> {
+    sign_out_with(st, addrs, &[]).await
+}
+
+async fn sign_out_with(
+    st: &DeckStore,
+    addrs: &[&str],
+    sessions: &[(SessionKind, String)],
+) -> Vec<SignedOut> {
     let addrs: Vec<String> = addrs.iter().map(|s| (*s).to_owned()).collect();
+    let sessions = sessions.to_vec();
     st.db()
         .call(move |c| {
             let tx = c.transaction()?;
-            let out = sign_out_in_tx(&tx, &addrs, 0).map_err(|e| {
+            let out = sign_out_in_tx(&tx, &addrs, &sessions, 0).map_err(|e| {
                 fleetdeck_core::db::DbError::Sqlite(rusqlite::Error::ToSqlConversionFailure(
                     e.to_string().into(),
                 ))
@@ -322,6 +331,66 @@ async fn fence_sign_out_in_tx_deletes_owner_and_member_sessions_of_the_addresses
     );
     // No address, nothing to delete.
     assert!(sign_out(&st, &[]).await.is_empty());
+}
+
+#[tokio::test]
+async fn fence_sign_out_in_tx_deletes_the_given_sessions_whatever_their_last_address() {
+    let det = Det::new();
+    let st = store(&det).await;
+    // A session whose last address is elsewhere but that has a socket at a
+    // snapshot address: the registry names it.
+    let moved = st
+        .create_login_at(LoginMethod::Link, Some("10.0.0.9"))
+        .await
+        .unwrap();
+    let moved_hash = st
+        .login_session(&moved.cookie)
+        .await
+        .unwrap()
+        .unwrap()
+        .session_hash;
+    let bystander = st
+        .create_login_at(LoginMethod::Link, Some("10.0.0.8"))
+        .await
+        .unwrap();
+    member_session(&st, "mem-moved", Some("10.0.0.9"), Some(5)).await;
+    member_session(&st, "mem-safe", Some("10.0.0.9"), Some(5)).await;
+    let named = [
+        (SessionKind::Owner, moved_hash.clone()),
+        (SessionKind::Member, "mem-moved".to_owned()),
+        // A hash of the other kind does not delete a row of this kind.
+        (SessionKind::Owner, "mem-safe".to_owned()),
+    ];
+    let out = sign_out_with(&st, &["10.0.0.1"], &named).await;
+    assert_eq!(out.len(), 2, "{out:?}");
+    assert!(out.contains(&SignedOut {
+        kind: SessionKind::Owner,
+        session_hash: moved_hash
+    }));
+    assert!(out.contains(&SignedOut {
+        kind: SessionKind::Member,
+        session_hash: "mem-moved".to_owned()
+    }));
+    assert!(st.login_session(&moved.cookie).await.unwrap().is_none());
+    assert!(st.login_session(&bystander.cookie).await.unwrap().is_some());
+    assert!(
+        st.session_row_exists(SessionKind::Member, "mem-safe")
+            .await
+            .unwrap()
+    );
+    // A session that is both at an address and named is returned once.
+    let both = st
+        .create_login_at(LoginMethod::Link, Some("10.0.0.1"))
+        .await
+        .unwrap();
+    let both_hash = st
+        .login_session(&both.cookie)
+        .await
+        .unwrap()
+        .unwrap()
+        .session_hash;
+    let out = sign_out_with(&st, &["10.0.0.1"], &[(SessionKind::Owner, both_hash)]).await;
+    assert_eq!(out.len(), 1, "{out:?}");
 }
 
 #[tokio::test]

@@ -16,11 +16,15 @@
 //!   [`crate::store::DeckStore::invalidate_exposure`].
 //!
 //! The order of the input dispatch (K1): [`machine_addresses`] gives the
-//! snapshot; one transaction marks the operation `attempted`, writes its
-//! `exposure_addrs` and calls `sign_out_in_tx`; after the commit K1 calls
+//! snapshot; [`Registry::sessions_at`] names the sessions of the sockets at
+//! the snapshot addresses; one transaction marks the operation `attempted`,
+//! writes its `exposure_addrs` and calls `sign_out_in_tx` (the sessions of
+//! the snapshot addresses and the named sessions); after the commit K1 calls
 //! `invalidate_exposure`, [`audit_signed_out`] and [`revoke_before_dispatch`],
 //! and fails the operation with `input_interrupted` before any input when
-//! the last one returns false.
+//! the last one returns false. A session creation reads the exposure in the
+//! transaction that inserts the session (`exposed_in_tx`), so it is
+//! serialized with that transaction.
 
 pub mod addr;
 pub mod exposure;
@@ -136,18 +140,49 @@ fn machine_addresses_with(
     kept.into_iter().take(MAX_SNAPSHOT_ADDRESSES).collect()
 }
 
-/// Revokes the sockets of the deleted sessions and the sockets from `addrs`
-/// (the snapshot), then waits up to 2 s until every relay has ended. False
-/// when a relay did not end in time: the caller fails the operation with
+/// Revokes every socket of the deleted sessions and every socket from
+/// `addrs` (the snapshot). The session of each revoked socket that still
+/// exists (a session that has a socket at a snapshot address but another
+/// last address, or that a socket registered after the attempted
+/// transaction) is deleted right after, in a second delete outside the
+/// transaction, its other sockets are revoked, and it is audited like the
+/// others (`rule=1 op=<op_id>`). Then it waits up to 2 s until every relay
+/// has ended. False when a relay did not end in time, or when a session
+/// could not be deleted (fail closed): the caller fails the operation with
 /// `input_interrupted` before any input.
 pub async fn revoke_before_dispatch(
     store: &DeckStore,
     signed_out: &[SignedOut],
     addrs: &[String],
+    op_id: &str,
 ) -> bool {
     let sessions: Vec<String> = signed_out.iter().map(|s| s.session_hash.clone()).collect();
-    let waiters = store.registry().revoke(&sessions, addrs);
-    wait_all(waiters, REVOKE_WAIT).await
+    let (mut waiters, hit) = store.registry().revoke(&sessions, addrs);
+    let mut extra: Vec<SignedOut> = Vec::new();
+    let mut deleted_all = true;
+    for (kind, hash) in hit {
+        if sessions.contains(&hash) {
+            continue;
+        }
+        match store.end_session_of(kind, hash.clone()).await {
+            Ok(true) => extra.push(SignedOut {
+                kind,
+                session_hash: hash,
+            }),
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, "a session of a revoked socket could not be deleted");
+                deleted_all = false;
+            }
+        }
+    }
+    if !extra.is_empty() {
+        let hashes: Vec<String> = extra.iter().map(|s| s.session_hash.clone()).collect();
+        waiters.extend(store.registry().revoke(&hashes, &[]).0);
+        audit_rows(store, &extra, 1, op_id).await;
+    }
+    let ended = wait_all(waiters, REVOKE_WAIT).await;
+    ended && deleted_all
 }
 
 /// Writes the audit row of each session of `signed_out`, for rule 1 of the
@@ -194,7 +229,7 @@ fn signed_out_error() -> ApiError {
 }
 
 /// 403 `sign_in_blocked_for_input` with the text of §13.
-fn sign_in_blocked_error() -> ApiError {
+pub(crate) fn sign_in_blocked_error() -> ApiError {
     ApiError::new(
         StatusCode::FORBIDDEN,
         code::SIGN_IN_BLOCKED_FOR_INPUT,
@@ -263,7 +298,7 @@ pub(crate) async fn guard_rule(
             .await
             .map_err(ApiError::internal)?;
         // The sockets end on their own flag; this refusal does not wait.
-        drop(store.registry().revoke(std::slice::from_ref(&hash), &[]));
+        drop(store.registry().revoke(std::slice::from_ref(&hash), &[]).0);
         if existed {
             let row = SignedOut {
                 kind,

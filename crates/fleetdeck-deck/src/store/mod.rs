@@ -195,6 +195,10 @@ pub enum DeckError {
     /// `home_busy`.
     #[error("{}", .0.message)]
     HomeRefused(project_homes::HomeRefusal),
+    /// A browser session was not created because its address is exposed to
+    /// an input operation (R13 P7 §7.6 rule 2). Nothing was inserted.
+    #[error("sign-in is blocked while an agent types on the machine of this address")]
+    SignInBlocked,
 }
 
 impl From<rusqlite::Error> for DeckError {

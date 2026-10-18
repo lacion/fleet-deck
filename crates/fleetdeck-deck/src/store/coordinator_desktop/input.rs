@@ -25,7 +25,8 @@ impl DeckStore {
     /// send (R13 P7 §7.6): in one transaction the row gets its state,
     /// `attempted_at` and `exposure_addrs` (the JSON array of `addrs`, the
     /// machine addresses of the target), and every owner login session and
-    /// member session whose last address is in `addrs` is deleted. Returns
+    /// member session whose last address is in `addrs`, or that has a socket
+    /// at one of `addrs` in the registry, is deleted. Returns
     /// the deleted sessions; `None` when the row is not a `prepared` input
     /// operation (nothing changes then). The caller then clears the exposure
     /// cache, writes the audit rows and revokes the sockets
@@ -42,6 +43,11 @@ impl DeckStore {
         let operation_id = operation_id.to_owned();
         let addrs = addrs.to_vec();
         let snapshot = serde_json::to_string(&addrs)?;
+        // The sessions of the sockets (pending or live) at the snapshot
+        // addresses, whatever their last address: the transaction deletes
+        // them too. A socket that registers after this read is found by its
+        // address when the sockets are revoked.
+        let sessions = self.registry().sessions_at(&addrs);
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let n = tx.execute(
@@ -54,7 +60,7 @@ impl DeckStore {
             if n != 1 {
                 return Ok(None);
             }
-            let signed_out = sign_out_in_tx(&tx, &addrs, now)?;
+            let signed_out = sign_out_in_tx(&tx, &addrs, &sessions, now)?;
             tx.commit()?;
             Ok(Some(signed_out))
         })

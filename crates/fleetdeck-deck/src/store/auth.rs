@@ -21,6 +21,7 @@ use ring::rand::{SecureRandom, SystemRandom};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+use super::board_fence::exposed_in_tx;
 use super::displays::DisplayLogin;
 use super::members::{MemberId, ShareGrant};
 use super::{DeckError, DeckStore, Result, call};
@@ -308,7 +309,8 @@ impl DeckStore {
     /// sign-in request (`last_addr` and `last_addr_seen_at`, R13 P7 §7.6).
     ///
     /// # Errors
-    /// A database error.
+    /// [`DeckError::SignInBlocked`] when `addr` is exposed to an input operation
+    /// (nothing is inserted); a database error.
     pub async fn create_login_at(
         &self,
         method: LoginMethod,
@@ -322,17 +324,25 @@ impl DeckStore {
         let expires_at = now + SESSION_MAX_MS;
         let stored = csrf.clone();
         call(&self.inner.db, move |conn| {
-            conn.execute(
+            let tx = conn.transaction()?;
+            tx.execute(
                 "DELETE FROM login_sessions WHERE expires_at <= ?1 OR last_seen <= ?2",
                 params![now, now - SESSION_IDLE_MS],
             )?;
-            conn.execute(
+            // The exposure is read in the transaction that inserts the
+            // session: it is serialized with the attempted transaction of an
+            // input operation (§7.6 rule 2).
+            if exposed_in_tx(&tx, addr.as_deref(), now)? {
+                return Err(DeckError::SignInBlocked);
+            }
+            tx.execute(
                 "INSERT INTO login_sessions
                  (session_hash, csrf_token, method, created_at, last_seen, expires_at,
                   last_addr, last_addr_seen_at)
                  VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, CASE WHEN ?6 IS NULL THEN NULL ELSE ?4 END)",
                 params![hash, stored, method.as_str(), now, expires_at, addr],
             )?;
+            tx.commit()?;
             Ok(())
         })
         .await?;
