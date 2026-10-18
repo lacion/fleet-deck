@@ -29,14 +29,18 @@ const COUNT_CAP: usize = 4 * 1024;
 /// kept in memory, lost at a restart).
 static FETCHED: Mutex<Option<HashMap<String, i64>>> = Mutex::new(None);
 
-/// Notes that a fetch of the home `repo_dir` ended at `at_ms` (FG-10).
+/// Notes that a fetch of the home `repo_dir` ended at `at_ms` (FG-10). The
+/// stamp never goes back: a radar fetch that started before a manual fetch
+/// can end after it, and its older stamp must not replace the newer one.
 pub fn note_fetched(repo_dir: &Path, at_ms: i64) {
     let key = repo_dir.to_string_lossy().into_owned();
     FETCHED
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .get_or_insert_with(HashMap::new)
-        .insert(key, at_ms);
+        .entry(key)
+        .and_modify(|v| *v = (*v).max(at_ms))
+        .or_insert(at_ms);
 }
 
 fn fetched_at(repo_dir: &Path) -> Option<i64> {

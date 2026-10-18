@@ -349,3 +349,14 @@ async fn a_listing_past_its_time_limit_is_an_internal_error() {
     assert_eq!(refusal.code, code::INTERNAL);
     assert_eq!(refusal.text, "The branch list took more than 18 s.");
 }
+
+#[test]
+fn a_later_note_of_an_older_fetch_does_not_move_the_stamp_back() {
+    // A radar fetch that started first can end after a manual fetch.
+    let dir = PathBuf::from("/fetched-at-test/home-a");
+    note_fetched(&dir, 2_000);
+    note_fetched(&dir, 1_000);
+    assert_eq!(fetched_at(&dir), Some(2_000));
+    note_fetched(&dir, 3_000);
+    assert_eq!(fetched_at(&dir), Some(3_000));
+}
