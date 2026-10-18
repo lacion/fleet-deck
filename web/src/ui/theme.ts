@@ -26,12 +26,27 @@ const media = (): MediaQueryList | null =>
     ? window.matchMedia(QUERY)
     : null;
 
-/** Sets `data-theme` from the stored choice, then tells the page with `fd:theme`. */
+// R13 P4: an Omarchy palette (see `ui/palette.ts`) sets the mode of the page while it is applied.
+let override: 'light' | 'dark' | null = null;
+
+/** The mode that the page shows: the palette mode while one is applied, else the choice. */
+export function resolvedTheme(): 'light' | 'dark' {
+  if (override !== null) return override;
+  const light = current === 'light' || (current === 'system' && media()?.matches === true);
+  return light ? 'light' : 'dark';
+}
+
+/** Sets `data-theme` from the palette mode or the stored choice, then tells the page with `fd:theme`. */
 export function applyTheme(): void {
   if (typeof document === 'undefined') return;
-  const light = current === 'light' || (current === 'system' && media()?.matches === true);
-  document.documentElement.dataset['theme'] = light ? 'light' : 'dark';
+  document.documentElement.dataset['theme'] = resolvedTheme();
   window.dispatchEvent(new Event('fd:theme'));
+}
+
+/** A palette mode overrides the choice; `null` gives the choice back. */
+export function setThemeOverride(mode: 'light' | 'dark' | null): void {
+  override = mode;
+  applyTheme();
 }
 
 export function setTheme(choice: ThemeChoice): void {

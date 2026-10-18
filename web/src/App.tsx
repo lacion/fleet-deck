@@ -60,6 +60,7 @@ import { useNow } from './ui/useNow';
 import { useMarkRead } from './views/markRead';
 import { unreadOf } from './views/marks';
 import { usePeople } from './sharing/context';
+import { useOmarchyTheme } from './app/OmarchyTheme';
 import { GUEST_HIDDEN_ROUTES } from './sharing/member';
 import { ShareHost } from './sharing/ShareDialog';
 import { SharesPage } from './sharing/SharesPage';
@@ -176,6 +177,8 @@ export function App({
   settings,
 }: Props) {
   const [urlRoute, navigate] = useRoute(initialRoute);
+  // R13 P4: the palette of the chosen Omarchy station shows on every page.
+  useOmarchyTheme(chrome?.getPalette);
   // The phone's Back of a session goes back in the history only while the current entry is not the
   // first one of this board start.
   useEffect(() => {
@@ -643,6 +646,7 @@ export function App({
         return (
           <More
             stationCount={stations.length}
+            stations={stations}
             terminalCount={tabCount}
             chrome={chrome}
             onPalette={() => setPalette(true)}

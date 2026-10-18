@@ -12,6 +12,7 @@ import { WallPage } from '../wall/WallPage';
 import { expectedLaunch, withDisplayHeader } from './api';
 import { PairPage } from './PairPage';
 import { useDirective } from './useDirective';
+import { usePalette } from './usePalette';
 
 /** The actor of a display login is `display:<name>`. */
 export const isDisplayActor = (actor: string): boolean => actor.startsWith('display:');
@@ -34,6 +35,11 @@ function Wall({ connection }: { readonly connection: Connection }) {
   const get = useMemo(() => (path: string) => connection.get(path), [connection]);
   const generation = useDirective(get, route, navigate, () => {
     // The login ended or the display was revoked: ask again who this is (the pair page shows).
+    connection.stop();
+    connection.start();
+  });
+  // R13 P4: the palette of the bound station; a 401 ends the login the same way.
+  usePalette(get, () => {
     connection.stop();
     connection.start();
   });

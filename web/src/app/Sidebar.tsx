@@ -585,7 +585,7 @@ export function Sidebar({
       </div>
       {full ? (
         <div className="fd-sidebar-foot">
-          <PrefsRow />
+          <PrefsRow stations={stations} getPalette={chrome?.getPalette} />
           <div className="fd-sidebar-account">
             {settingsLink && !guest ? (
               <a

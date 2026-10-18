@@ -40,6 +40,7 @@ import { type PeopleEnv, PeopleProvider } from '../sharing/context';
 import { memberOf, writeStoredMember } from '../sharing/member';
 import { useOwnerShares } from '../sharing/ownerShares';
 import { peopleCalls, shareCalls } from '../sharing/people';
+import { stationPalettePath } from '../ui/palette';
 
 /** The deck waits up to 20 s for a station; the board waits a little longer. */
 const ARTIFACT_WAIT_MS = 25_000;
@@ -92,6 +93,14 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
     [connection, owner, canAdmin],
   );
   const ownerShares = useOwnerShares(sharing);
+  // R13 P4: the palette of a station is read with the owner's login only; the function is stable.
+  const getPalette = useMemo(
+    () =>
+      owner && canAdmin && !guest
+        ? (stationId: string) => connection.get(stationPalettePath(stationId))
+        : undefined,
+    [connection, owner, canAdmin, guest],
+  );
   const calls = useMemo(
     () =>
       peopleCalls(
@@ -462,6 +471,8 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
     version: state.login.deck_version,
     // DL-146: the deck answers 403 `owner_only` for a token login.
     addDevice: canAdmin ? addDevice : undefined,
+    // R13 P4: the Omarchy palette of a station is for the owner's login only.
+    getPalette,
   };
   return (
     <PeopleProvider value={people}>
