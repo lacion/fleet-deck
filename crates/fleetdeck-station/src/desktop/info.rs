@@ -206,5 +206,6 @@ pub async fn collect(env: &ChildEnv, found: &Found) -> Result<DesktopInfo, Fail>
         utc_offset_minutes: offset,
         offset_sampled_at: offset.map(|_| sampled_at),
         features: Vec::new(),
+        previews: Vec::new(),
     })
 }

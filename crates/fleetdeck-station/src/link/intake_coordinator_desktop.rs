@@ -96,7 +96,8 @@ pub(super) async fn act(
     action: DesktopAction,
     given: Given,
 ) -> Outcome {
-    // An owner or wake authority with `preview_close` has no coordinator.
+    // A wake authority with `preview_close` has no coordinator (the owner
+    // `preview_close` takes the owner path of `intake_desktop`).
     let coordinator = match validate(
         given.coordinator.as_ref(),
         &action,

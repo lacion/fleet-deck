@@ -28,12 +28,13 @@ use axum::http::StatusCode;
 use fleetdeck_link::desktop_authority::target_monitor;
 use fleetdeck_proto::StationId;
 use fleetdeck_proto::desktop::{DesktopActBody, DesktopActResult, DesktopAction, DesktopInfo};
+use fleetdeck_proto::version::feature;
 
 use crate::link::DeckLink;
 use crate::link::desktop_authority::{Waits, resolve, send_act, send_info};
 use crate::live::LiveCell;
 use crate::store::displays_binding::{BindError, check_monitor};
-use crate::store::{AuditResult, DeckError, DeckStore, NewAudit};
+use crate::store::{AuditResult, DeckError, DeckStore, LinkFeature, NewAudit};
 
 #[path = "desktop_relay_wall.rs"]
 mod wall;
@@ -456,6 +457,16 @@ async fn plain_action(
             }
         }
         DesktopActBody::WindowClose { address } => DesktopAction::WindowClose { address },
+        // R13 P6 follow-up: the owner closes a preview that an agent opened.
+        // It needs `desktop_mcp.v1` on every live link of the station.
+        DesktopActBody::PreviewClose { window_id } => {
+            match ctx.store.link_feature(station, feature::DESKTOP_MCP) {
+                LinkFeature::Down => return Err(RelayError::Unreachable),
+                LinkFeature::Without => return Err(RelayError::Unsupported),
+                LinkFeature::Negotiated => {}
+            }
+            DesktopAction::PreviewClose { window_id }
+        }
         // R13 P5b task F: the owner recording has its own start (task K1).
         DesktopActBody::ScreenRecord { .. } => return Err(RelayError::Unsupported),
         DesktopActBody::ScreenCapture { .. }

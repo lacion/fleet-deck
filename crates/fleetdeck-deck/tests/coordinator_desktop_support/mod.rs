@@ -197,6 +197,7 @@ pub fn info() -> DesktopInfo {
         utc_offset_minutes: Some(120),
         offset_sampled_at: Some(1),
         features: Vec::new(),
+        previews: Vec::new(),
     }
 }
 

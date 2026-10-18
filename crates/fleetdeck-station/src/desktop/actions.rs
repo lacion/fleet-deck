@@ -24,7 +24,7 @@ use super::run::{CALL_TIMEOUT, Runner, STARTUP_TIMEOUT, on_path};
 use super::{Fail, Gate, args, code, profile};
 
 /// How long a close waits for the `closewindow` event.
-const CLOSE_WAIT: Duration = Duration::from_secs(5);
+pub(super) const CLOSE_WAIT: Duration = Duration::from_secs(5);
 
 /// One lock per display: a wall action holds it from its first check to the
 /// end of the profile removal or the replacement launch (R13 §5C item 5).
@@ -85,6 +85,9 @@ pub(super) struct Cx<'a> {
     pub gate: Gate<'a>,
     /// The start check of the authority of this action.
     pub start: &'a Start,
+    /// The fingerprint of the deck link that carries an owner
+    /// `preview_close`; `None` for every other call.
+    pub deck_fp: Option<&'a str>,
 }
 
 impl Cx<'_> {
@@ -216,13 +219,11 @@ impl Cx<'_> {
                 code::UNSUPPORTED,
                 fleetdeck_proto::capture::text::RECORDING_UNSUPPORTED,
             )),
-            // R13 P6 task F1: a stub until task T2 resolves the handle in
-            // the preview records. The same refusal as `WindowClose` of a
-            // window that Fleet Deck did not open.
-            DesktopAction::PreviewClose { .. } => Err(Fail::new(
-                code::FORBIDDEN,
-                "Fleet Deck did not open this window.",
-            )),
+            // R13 P6 follow-up: the owner closes a preview that an agent
+            // opened (`desktop/preview_close.rs`).
+            DesktopAction::PreviewClose { window_id } => {
+                self.owner_preview_close(&window_id).await.map(|()| None)
+            }
         }
     }
 
@@ -463,8 +464,12 @@ impl Cx<'_> {
         }
         let address = self.browser(url, monitor, session).await?;
         let window_id = new_window_id()?;
-        self.events
-            .register_preview(&window_id, preview_owner(&extras.deck_fp, ctx), &address)?;
+        self.events.register_preview(
+            &window_id,
+            preview_owner(&extras.deck_fp, ctx),
+            &ctx.caller_label,
+            &address,
+        )?;
         Ok((None, Some(window_id)))
     }
 
@@ -695,7 +700,7 @@ impl Cx<'_> {
 
     /// Closes the window of `record` after a fresh `clients` check of the
     /// instance, the address and the class.
-    async fn close_window(&self, record: &Record) -> Result<(), Fail> {
+    pub(super) async fn close_window(&self, record: &Record) -> Result<(), Fail> {
         let clients = info::clients(&self.runner()).await?;
         let alive = record.signature == self.found.signature
             && clients

@@ -154,6 +154,7 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         dk::DesktopKind::export_all(&cfg),
         dk::MonitorInfo::export_all(&cfg),
         dk::WallWindow::export_all(&cfg),
+        dk::PreviewWindow::export_all(&cfg),
         dk::DesktopAllowed::export_all(&cfg),
         dk::DesktopTools::export_all(&cfg),
         dk::DesktopInfo::export_all(&cfg),

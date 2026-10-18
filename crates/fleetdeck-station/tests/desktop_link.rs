@@ -331,6 +331,34 @@ async fn an_action_needs_the_authority_of_this_connection() {
     assert_eq!(code, "forbidden");
 }
 
+/// What the deck sends for `action` with the `quiet_hours` of a wake.
+fn authorized_wake(f: &Fixture, deck: &LiveLink, action: &DesktopAction, n: u64) -> Value {
+    let mut v = authorized(f, deck, action, n);
+    v["authority"]["quiet_hours"] = json!("22:00-07:00");
+    v
+}
+
+#[tokio::test]
+async fn an_owner_preview_close_takes_the_owner_path_and_a_wake_one_is_refused() {
+    let _turn = ONE_AT_A_TIME.lock().await;
+    let mut f = fixture().await;
+    let deck = f.connect().await;
+    let action = DesktopAction::PreviewClose {
+        window_id: "0123456789abcdef0123456789abcdef".to_owned(),
+    };
+    // An owner authority reaches the desktop; this station has no desktop,
+    // so the action stops there (before, it was refused as not coordinator).
+    let (code, message) =
+        refused(call(&deck, "desktop.act", authorized(&f, &deck, &action, 1)).await);
+    assert_eq!(code, "unsupported");
+    assert_eq!(message, "This station has no desktop.");
+    // A wake authority (with `quiet_hours`) keeps the refusal.
+    let (code, message) =
+        refused(call(&deck, "desktop.act", authorized_wake(&f, &deck, &action, 2)).await);
+    assert_eq!(code, "forbidden");
+    assert_eq!(message, "The deck did not authorize this desktop action.");
+}
+
 #[tokio::test]
 async fn desktop_info_takes_fresh() {
     let _turn = ONE_AT_A_TIME.lock().await;

@@ -155,6 +155,7 @@ export * from "./desktop/DesktopInfoQuery";
 export * from "./desktop/DesktopKind";
 export * from "./desktop/DesktopTools";
 export * from "./desktop/MonitorInfo";
+export * from "./desktop/PreviewWindow";
 export * from "./desktop/Urgency";
 export * from "./desktop/WallWindow";
 export * from "./display/ArtifactRef";

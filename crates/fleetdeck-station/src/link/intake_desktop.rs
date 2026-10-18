@@ -32,8 +32,20 @@ pub(super) fn stamp(ctx: &StationLink, info: &mut DesktopInfo) {
     info.allowed.capture_monitors = policy.capture_monitors().to_vec();
 }
 
+/// The previews that agents opened for the deck of this link (R13 P6):
+/// only a link with `desktop_mcp.v1` lists them. They are never cached.
+pub(super) fn stamp_previews(control: &Control, info: &mut DesktopInfo) {
+    let params = control.params();
+    info.previews =
+        desktop::service().previews_for_link(&params.peer.to_string(), &params.negotiated);
+}
+
 /// `desktop.info`.
-pub(super) async fn info(ctx: &StationLink, params: serde_json::Value) -> Outcome {
+pub(super) async fn info(
+    ctx: &StationLink,
+    control: &Control,
+    params: serde_json::Value,
+) -> Outcome {
     let query: DesktopInfoQuery = match serde_json::from_value(params) {
         Ok(q) => q,
         Err(e) => {
@@ -49,6 +61,7 @@ pub(super) async fn info(ctx: &StationLink, params: serde_json::Value) -> Outcom
         return match desktop::service().info_fresh(&allowed).await {
             Ok(mut info) => {
                 stamp(ctx, &mut info);
+                stamp_previews(control, &mut info);
                 ok(info)
             }
             Err(e) => failed(e),
@@ -57,6 +70,7 @@ pub(super) async fn info(ctx: &StationLink, params: serde_json::Value) -> Outcom
     match desktop::service().info(&allowed).await {
         Ok(mut info) => {
             stamp(ctx, &mut info);
+            stamp_previews(control, &mut info);
             ok(info)
         }
         Err(e) => failed(e),
@@ -84,13 +98,16 @@ pub(super) async fn act(
     let action_id = given.as_ref().map(|a| a.action_id.clone());
     let action_hash = given.as_ref().map(|a| a.action_hash.clone());
     let coordinator = given.as_ref().and_then(|a| a.coordinator.clone());
+    // A wake authority carries `quiet_hours`; an owner authority does not.
+    let wake = given.as_ref().is_some_and(|a| a.quiet_hours.is_some());
     let admitted = match authority::admit(control, &station_node, given, &action) {
         Ok(admitted) => admitted,
         Err(e) => return failed(e),
     };
-    // R13 P6: a coordinator authority, or `preview_close` (which only a
-    // coordinator may send), takes the coordinator path.
-    if coordinator.is_some() || matches!(action, DesktopAction::PreviewClose { .. }) {
+    // R13 P6: a coordinator authority, or a `preview_close` of a wake
+    // authority (which that path refuses), takes the coordinator path. A
+    // `preview_close` of an owner authority takes the owner path below.
+    if coordinator.is_some() || (wake && matches!(action, DesktopAction::PreviewClose { .. })) {
         let given = Given {
             action_id: action_id.unwrap_or_default(),
             action_hash: action_hash.unwrap_or_default(),
@@ -111,9 +128,16 @@ pub(super) async fn act(
         return super::intake_recording::record(ctx, control, admitted, id, monitor, seconds).await;
     }
     let allowed = gate(ctx);
-    match desktop::service().act(&allowed, action, admitted).await {
+    // The owner `preview_close` finds the previews of the deck of this link.
+    let deck_fp = matches!(action, DesktopAction::PreviewClose { .. })
+        .then(|| control.params().peer.to_string());
+    match desktop::service()
+        .act_for_deck(&allowed, action, admitted, deck_fp)
+        .await
+    {
         Ok(mut result) => {
             stamp(ctx, &mut result.info);
+            stamp_previews(control, &mut result.info);
             ok(result)
         }
         Err(e) => failed(e),
@@ -122,11 +146,12 @@ pub(super) async fn act(
 
 /// The `desktop` field of `station.info`: present when a desktop is found,
 /// also with `allow_desktop` off.
-pub(super) async fn station_info(ctx: &StationLink) -> Option<DesktopInfo> {
+pub(super) async fn station_info(ctx: &StationLink, control: &Control) -> Option<DesktopInfo> {
     let allowed = gate(ctx);
     match desktop::service().info(&allowed).await {
         Ok(mut info) => {
             stamp(ctx, &mut info);
+            stamp_previews(control, &mut info);
             Some(info)
         }
         Err(e) => {
