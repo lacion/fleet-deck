@@ -2,7 +2,11 @@
 //! the do-not-disturb and the idle state, and the tools on the `PATH`.
 //! "Unknown is never zero": a value that cannot be read is `None`.
 
+use std::collections::BTreeSet;
+use std::net::{IpAddr, Ipv6Addr};
+
 use fleetdeck_core::ChildEnv;
+use fleetdeck_core::local_addrs::{LocalAddrs, local_addresses};
 use fleetdeck_proto::desktop::{
     DesktopAllowed, DesktopInfo, DesktopKind, DesktopTools, MonitorInfo,
 };
@@ -163,6 +167,41 @@ pub fn tools(env: &ChildEnv) -> DesktopTools {
     }
 }
 
+/// The most addresses of `DesktopInfo.host_addresses` (R13 P7 §7.6).
+pub const HOST_ADDRESSES_MAX: usize = 16;
+
+/// The canonical text of an address for `host_addresses`, or `None` for a
+/// loopback or link-local address (R13 P7 §7.6). An IPv4-mapped IPv6 address
+/// becomes its IPv4 address; IPv6 is lowercase and compressed.
+fn canonical_host_address(ip: IpAddr) -> Option<String> {
+    let ip = match ip {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(IpAddr::V6(v6), IpAddr::V4),
+        v4 @ IpAddr::V4(_) => v4,
+    };
+    let excluded = match ip {
+        IpAddr::V4(v4) => v4.is_loopback() || v4.is_link_local(),
+        IpAddr::V6(v6) => v6.is_loopback() || is_link_local_v6(v6),
+    };
+    (!excluded).then(|| ip.to_string())
+}
+
+/// `fe80::/10`.
+fn is_link_local_v6(ip: Ipv6Addr) -> bool {
+    ip.segments()[0] & 0xffc0 == 0xfe80
+}
+
+/// The `host_addresses` of the machine addresses `addrs`: loopback and
+/// link-local removed, canonical text, sorted, at most
+/// [`HOST_ADDRESSES_MAX`]. A family that cannot be read adds nothing, so both
+/// unreadable give an empty list.
+#[must_use]
+pub fn host_addresses(addrs: &LocalAddrs) -> Vec<String> {
+    let v4 = addrs.v4.iter().flatten().copied().map(IpAddr::V4);
+    let v6 = addrs.v6.iter().flatten().copied().map(IpAddr::V6);
+    let canonical: BTreeSet<String> = v4.chain(v6).filter_map(canonical_host_address).collect();
+    canonical.into_iter().take(HOST_ADDRESSES_MAX).collect()
+}
+
 /// Reads the info of the desktop. `allowed` and `walls` are placeholders:
 /// the caller sets the live values.
 ///
@@ -207,6 +246,11 @@ pub async fn collect(env: &ChildEnv, found: &Found) -> Result<DesktopInfo, Fail>
         offset_sampled_at: offset.map(|_| sampled_at),
         features: Vec::new(),
         previews: Vec::new(),
-        host_addresses: Vec::new(),
+        // The link step clears it for a link without `desktop_input_mcp.v1`.
+        host_addresses: host_addresses(&local_addresses()),
     })
 }
+
+#[cfg(test)]
+#[path = "info_host_tests.rs"]
+mod host_tests;

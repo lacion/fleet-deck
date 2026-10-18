@@ -296,6 +296,7 @@ fn live(monitors: &[&str]) -> Live {
         fleet_control: true,
         desktop: true,
         capture: true,
+        desktop_input: true,
         monitors: monitors.iter().map(|m| (*m).to_owned()).collect(),
     }
 }

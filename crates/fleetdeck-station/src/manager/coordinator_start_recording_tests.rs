@@ -19,7 +19,7 @@ fn spec(classes: &[&str], allow_recording: bool) -> CoordinatorSpec {
 #[test]
 fn the_recording_class_needs_the_flag_and_the_capture_class() {
     let has = |classes: &[&str], flag: bool| {
-        grant_classes(&spec(classes, flag))
+        grant_classes(&spec(classes, flag), false)
             .unwrap()
             .contains(&ToolClass::Recording)
     };
@@ -35,7 +35,7 @@ fn the_recording_class_needs_the_flag_and_the_capture_class() {
 #[test]
 fn a_spec_that_names_the_recording_class_is_refused_as_unknown() {
     for flag in [false, true] {
-        let err = grant_classes(&spec(&["capture", "recording"], flag)).unwrap_err();
+        let err = grant_classes(&spec(&["capture", "recording"], flag), false).unwrap_err();
         assert_eq!(err, "unknown grant class `recording`");
     }
 }

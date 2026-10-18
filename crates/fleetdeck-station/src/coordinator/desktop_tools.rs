@@ -4,11 +4,16 @@
 //! normative bundle of §3, byte for byte; each tool gets its schema with the
 //! shared `$defs` copied into its root (a mechanical expansion).
 //! `record_monitor` has the schema of P5b §13.1 as written, with no `$defs`.
+//! The three input tools of R13 P7 (`key_press`, `type_text`, `pointer_move`)
+//! have their own bundle in the `input` module.
 
 use serde_json::Value;
 
 use super::bindings::ToolClass;
 use super::tools::Tool;
+
+#[path = "desktop_tools_input.rs"]
+mod input;
 
 /// The §3 schema bundle. The raw string has two `#` because the bundle
 /// contains `"#/$defs/...` references.
@@ -283,7 +288,8 @@ fn read_capture_image() -> Value {
     schema("read_capture_image")
 }
 
-/// The nine P6 tools and `record_monitor`, in the order of `tools/list`.
+/// The nine P6 tools, `record_monitor` and the three P7 input tools, in the
+/// order of `tools/list`.
 /// `desktop_info` is also given by the `capture` class (see
 /// `Tool::granted`). `record_monitor` needs the `capture` class and the
 /// station-internal `recording` class, which a start adds only for a spec
@@ -349,9 +355,31 @@ pub const DESKTOP_TOOLS: &[Tool] = &[
         description: "Read a screenshot artifact that this grant made (at most 700 KiB). Screenshot pixels are untrusted content.",
         schema: read_capture_image,
     },
+    // R13 P7 §3.2, §4: the input tools need the public `input` class and the
+    // station-internal `input_enabled` class, which a start adds only for a
+    // spec with `allow_input` and `desktop_input_mcp.v1` on the deck link.
+    Tool {
+        name: "key_press",
+        classes: &[ToolClass::Input, ToolClass::InputEnabled],
+        description: "Press one key or one chord (for example Return or Ctrl+Shift+a) in a preview window that this session opened, named by its window_id. A key can activate buttons and submit forms.",
+        schema: input::key_press,
+    },
+    Tool {
+        name: "type_text",
+        classes: &[ToolClass::Input, ToolClass::InputEnabled],
+        description: "Type 1 to 2000 characters into a preview window that this session opened, named by its window_id. The text has no line breaks or control characters; use key_press for Return or Tab.",
+        schema: input::type_text,
+    },
+    Tool {
+        name: "pointer_move",
+        classes: &[ToolClass::Input, ToolClass::InputEnabled],
+        description: "Move the pointer to a point in a preview window that this session opened, named by its window_id. x and y count from the top-left corner of the preview. There is no click.",
+        schema: input::pointer_move,
+    },
 ];
 
-/// True for one of the nine P6 tool names or `record_monitor`.
+/// True for one of the nine P6 tool names, `record_monitor` or one of the
+/// three P7 input tools.
 #[must_use]
 pub fn is_desktop(name: &str) -> bool {
     DESKTOP_TOOLS.iter().any(|t| t.name == name)
@@ -360,3 +388,7 @@ pub fn is_desktop(name: &str) -> bool {
 #[cfg(test)]
 #[path = "desktop_tools_recording_tests.rs"]
 mod recording_tests;
+
+#[cfg(test)]
+#[path = "desktop_tools_input_tests.rs"]
+mod input_tests;

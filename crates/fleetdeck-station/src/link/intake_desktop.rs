@@ -33,11 +33,21 @@ pub(super) fn stamp(ctx: &StationLink, info: &mut DesktopInfo) {
 }
 
 /// The previews that agents opened for the deck of this link (R13 P6):
-/// only a link with `desktop_mcp.v1` lists them. They are never cached.
+/// only a link with `desktop_mcp.v1` lists them. They are never cached. The
+/// machine addresses leave only on a link with `desktop_input_mcp.v1`.
 pub(super) fn stamp_previews(control: &Control, info: &mut DesktopInfo) {
     let params = control.params();
     info.previews =
         desktop::service().previews_for_link(&params.peer.to_string(), &params.negotiated);
+    clear_host_addresses(&params.negotiated, info);
+}
+
+/// Only a link with `desktop_input_mcp.v1` gets `host_addresses` (R13 P7
+/// §7.6): the field is cleared for any other link.
+fn clear_host_addresses(negotiated: &fleetdeck_proto::version::Negotiated, info: &mut DesktopInfo) {
+    if !negotiated.has(fleetdeck_proto::version::feature::DESKTOP_INPUT_MCP) {
+        info.host_addresses.clear();
+    }
 }
 
 /// `desktop.info`.
@@ -207,5 +217,31 @@ mod owner_close_tests {
         );
         let other = DesktopAction::ScreenDnd { on: true };
         assert!(owner_close_allowed(&with(&[feature::DESKTOP]), &other).is_ok());
+    }
+
+    #[test]
+    fn host_addresses_leave_only_on_a_link_with_the_input_feature() {
+        use fleetdeck_proto::desktop::DesktopInfo;
+        let info = || {
+            let mut info: DesktopInfo = serde_json::from_str(
+                r#"{"kind":"omarchy","omarchy_version":null,"monitors":[],"locked":null,
+                "dnd":null,"idle_inhibited":null,"walls":[],
+                "allowed":{"desktop":true,"capture":false,"input":false},
+                "tools":{"wtype":false,"pointer":false,"recorder":false,"grim":true,
+                         "chromium":false,"notify_send":false}}"#,
+            )
+            .unwrap();
+            info.host_addresses = vec!["192.0.2.7".to_owned(), "2001:db8::1".to_owned()];
+            info
+        };
+        let mut without = info();
+        clear_host_addresses(
+            &with(&[feature::DESKTOP, feature::DESKTOP_MCP]),
+            &mut without,
+        );
+        assert!(without.host_addresses.is_empty());
+        let mut with_feature = info();
+        clear_host_addresses(&with(&[feature::DESKTOP_INPUT_MCP]), &mut with_feature);
+        assert_eq!(with_feature.host_addresses, ["192.0.2.7", "2001:db8::1"]);
     }
 }

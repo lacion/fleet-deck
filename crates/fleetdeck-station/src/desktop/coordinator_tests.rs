@@ -551,6 +551,7 @@ fn the_live_gates_have_their_codes_and_texts() {
         fleet_control: true,
         desktop: true,
         capture: true,
+        desktop_input: true,
         monitors: Vec::new(),
     };
     assert_eq!(check_live(&on, false, None), Ok(()));
@@ -609,6 +610,7 @@ fn live(monitors: &[&str]) -> Live {
         fleet_control: true,
         desktop: true,
         capture: true,
+        desktop_input: true,
         monitors: monitors.iter().map(|m| (*m).to_owned()).collect(),
     }
 }

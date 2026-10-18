@@ -80,6 +80,8 @@ pub struct Policy {
     allow_desktop: bool,
     /// `allow_desktop_capture` of `station.toml` (R13 P5a).
     allow_desktop_capture: bool,
+    /// `allow_desktop_input` of `station.toml` (R13 P7 §3.3).
+    allow_desktop_input: bool,
     /// `capture_monitors` of `station.toml` (R13 P5a); empty means every monitor.
     capture_monitors: Vec<String>,
     /// `fleet_summary` of `station.toml` (R13 P4): the deck may send the fleet summary.
@@ -155,6 +157,7 @@ impl Policy {
             allow_fleet_control: config.allow_fleet_control,
             allow_desktop: config.allow_desktop,
             allow_desktop_capture: config.allow_desktop_capture,
+            allow_desktop_input: config.allow_desktop_input,
             capture_monitors: config.capture_monitors.clone(),
             fleet_summary: config.fleet_summary,
             max_shells: config.max_shells,
@@ -237,6 +240,7 @@ impl Policy {
             allow_fleet_control: false,
             allow_desktop: false,
             allow_desktop_capture: false,
+            allow_desktop_input: false,
             capture_monitors: Vec::new(),
             fleet_summary: false,
             max_shells: DEFAULT_MAX_SHELLS,
@@ -387,6 +391,13 @@ impl Policy {
         self.allow_desktop_capture
     }
 
+    /// Whether authorized coordinator grants may type and move the pointer on
+    /// this station (R13 P7 §3.3). Read it live.
+    #[must_use]
+    pub fn allow_desktop_input(&self) -> bool {
+        self.allow_desktop_input
+    }
+
     /// The monitors that a screenshot may capture; empty means every monitor
     /// (R13 P5a). Read it live.
     #[must_use]
@@ -419,6 +430,13 @@ impl Policy {
     #[must_use]
     pub fn with_allow_desktop_capture(mut self, on: bool) -> Self {
         self.allow_desktop_capture = on;
+        self
+    }
+
+    /// The same policy with coordinator input on or off (R13 P7).
+    #[must_use]
+    pub fn with_allow_desktop_input(mut self, on: bool) -> Self {
+        self.allow_desktop_input = on;
         self
     }
 
@@ -627,6 +645,31 @@ mod tests {
             BTreeMap::new(),
         );
         assert_eq!(plain.clone_root(), canonical.join("projects"));
+    }
+
+    #[test]
+    fn allow_desktop_input_is_off_by_default_and_follows_a_live_reload() {
+        let root = tempfile::tempdir().unwrap();
+        let off = Policy::from_config(&test_config(root.path(), ""));
+        assert!(!off.allow_desktop_input());
+        let on_config = test_config(root.path(), "allow_desktop_input = true\n");
+        let on = Policy::from_config(&on_config);
+        assert!(on.allow_desktop_input());
+        // A live reload reads the value again, in both directions.
+        assert!(off.reconfigured(&on_config).allow_desktop_input());
+        assert!(
+            !on.reconfigured(&test_config(root.path(), ""))
+                .allow_desktop_input()
+        );
+        // The test policy and its builder.
+        let plain = Policy::new(
+            vec![root.path().to_path_buf()],
+            1,
+            OfflineApprovalPolicy::Wait,
+            BTreeMap::new(),
+        );
+        assert!(!plain.allow_desktop_input());
+        assert!(plain.with_allow_desktop_input(true).allow_desktop_input());
     }
 
     #[test]

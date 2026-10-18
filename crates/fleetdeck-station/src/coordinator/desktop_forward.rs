@@ -28,6 +28,8 @@ use super::ingress::Forward;
 
 /// How long a `coordinator.desktop_call` may still be accepted (§5.3).
 const CALL_RETRY_MS: i64 = 10_000;
+/// The MCP deadline of the three input tools (R13 P7 §10), in milliseconds.
+const INPUT_MCP_MS: u64 = 45_000;
 /// The first eight bytes of every PNG file.
 const PNG_SIGNATURE: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 /// The metadata notice of an image result (§4.9).
@@ -107,7 +109,15 @@ pub(super) fn parse_request(name: &str, args: Value) -> Option<DesktopRequest> {
     let tagged = json!({"tool": name, "arguments": args});
     if matches!(
         name,
-        "wall_show" | "notify" | "preview_open" | "window_close" | "screenshot" | "record_monitor"
+        "wall_show"
+            | "notify"
+            | "preview_open"
+            | "window_close"
+            | "screenshot"
+            | "record_monitor"
+            | "key_press"
+            | "type_text"
+            | "pointer_move"
     ) {
         let call: DesktopCall = serde_json::from_value(tagged).ok()?;
         call.validate().ok()?;
@@ -135,17 +145,27 @@ impl DesktopRequest {
         matches!(self, Self::Call(DesktopCall::RecordMonitor(_)))
     }
 
+    /// Whether the tool needs `desktop_input_mcp.v1` on the link (R13 P7
+    /// §6.1).
+    fn is_input(&self) -> bool {
+        matches!(
+            self,
+            Self::Call(
+                DesktopCall::KeyPress(_) | DesktopCall::TypeText(_) | DesktopCall::PointerMove(_)
+            )
+        )
+    }
+
     /// The MCP deadline of the tool (§9), in milliseconds.
     fn mcp_ms(&self) -> u64 {
         match self {
             Self::Call(
                 DesktopCall::WallShow(_) | DesktopCall::Notify(_) | DesktopCall::WindowClose(_),
             ) => deadline_ms::ACTION_MCP,
-            // R13 P7 §10: 45 s. The tools are not in the catalog yet (the
-            // station task), so no call reaches this arm.
+            // R13 P7 §10: the caller MCP response limit is 45 s.
             Self::Call(
                 DesktopCall::KeyPress(_) | DesktopCall::TypeText(_) | DesktopCall::PointerMove(_),
-            ) => deadline_ms::ACTION_MCP,
+            ) => INPUT_MCP_MS,
             Self::Call(DesktopCall::PreviewOpen(_)) => deadline_ms::PREVIEW_MCP,
             Self::Call(DesktopCall::Screenshot(_)) => deadline_ms::SCREENSHOT_MCP,
             // R13 P5b-2 §13.5: `seconds + 45` s.
@@ -318,7 +338,8 @@ impl LinkForward {
         let supported = link.transport.has_feature(feature::DESKTOP_MCP)
             && (!request.is_capture() || link.transport.has_feature(feature::CAPTURE_MCP))
             && (!request.is_recording()
-                || link.transport.has_feature(feature::CAPTURE_RECORDING_MCP));
+                || link.transport.has_feature(feature::CAPTURE_RECORDING_MCP))
+            && (!request.is_input() || link.transport.has_feature(feature::DESKTOP_INPUT_MCP));
         if !supported {
             return p6_error(code::DESKTOP_UNSUPPORTED, None, None);
         }
@@ -428,3 +449,7 @@ impl Forward for Rechecked<'_> {
 #[cfg(test)]
 #[path = "desktop_forward_recording_tests.rs"]
 mod recording_tests;
+
+#[cfg(test)]
+#[path = "desktop_forward_input_tests.rs"]
+mod input_tests;
