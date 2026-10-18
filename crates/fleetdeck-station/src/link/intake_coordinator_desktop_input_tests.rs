@@ -1,7 +1,7 @@
 //! R13 P7 §6.4: `desktop.policy_now` with the input purpose. The answer needs
 //! `desktop_input_mcp.v1`, follows the live settings, and a null monitor is
-//! allowed only for an empty capture monitor list. The P6 `desktop` and
-//! `capture` answers keep their bytes.
+//! unresolved, so it is allowed (the target enforces the real coverage). The
+//! P6 `desktop` and `capture` answers keep their bytes.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -80,10 +80,28 @@ fn each_flag_of_the_input_answer_follows_the_live_settings() {
 }
 
 #[test]
-fn a_null_monitor_is_allowed_only_for_an_empty_monitor_list() {
+fn a_null_monitor_is_unresolved_and_allowed_for_every_monitor_list() {
     assert!(input_policy_answer(&live(&[]), None).monitor_allowed);
-    assert!(!input_policy_answer(&live(&["DP-1"]), None).monitor_allowed);
-    assert!(!input_policy_answer(&live(&["DP-1", "DP-2"]), None).monitor_allowed);
+    assert!(input_policy_answer(&live(&["DP-1"]), None).monitor_allowed);
+    assert!(input_policy_answer(&live(&["DP-1", "DP-2"]), None).monitor_allowed);
+}
+
+#[test]
+fn a_configured_monitor_list_still_answers_an_input_query_with_a_null_monitor() {
+    // The deck asks with a null monitor; the answer over the link must not
+    // refuse every input when `capture_monitors` is set (PRE-PR r1 finding 5).
+    let q = query(PolicyPurpose::Input, None);
+    let v = answered(policy_reply(&live(&["DP-1"]), &q, true, true));
+    assert_eq!(
+        v,
+        json!({
+            "allow_fleet_control": true,
+            "allow_desktop": true,
+            "allow_desktop_capture": true,
+            "allow_desktop_input": true,
+            "monitor_allowed": true
+        })
+    );
 }
 
 #[test]

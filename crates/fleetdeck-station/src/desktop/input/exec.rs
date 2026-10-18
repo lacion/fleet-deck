@@ -16,7 +16,8 @@
 //! 14. check the authority for the injection;
 //! 15. read the active window (250 ms), the only await before the injection;
 //! 16. require the recorded preview and apply the barrier again;
-//! 17. read the synchronous gates and the age limits, with no await;
+//! 17. read the synchronous gates, the observed monitor coverage against the
+//!     live policy and the age limits, with no await;
 //! 18. spawn `wtype` or dispatch the pointer movement;
 //! 19. observe the end and the interruption, then the final focus;
 //! 20. the caller stores the result and never resends the operation.
@@ -55,6 +56,13 @@ enum Prepared {
         stdin: Option<Vec<u8>>,
     },
     Pointer,
+}
+
+/// What a survey observed: the global pointer point (a pointer movement only)
+/// and the names of the monitors that the preview overlaps.
+struct Surveyed {
+    point: Option<(i64, i64)>,
+    covered: Vec<String>,
 }
 
 /// One resolved input operation.
@@ -174,28 +182,41 @@ impl Op<'_> {
 
     /// Every monitor that the window covers must be permitted by the live
     /// `capture_monitors`; a window on no enabled monitor fails closed.
-    fn coverage(&self, snap: &Snapshot, client: &Client) -> Result<(), Fail> {
-        let covered = snap.covered(client);
+    /// Returns the names of the covered monitors that the snapshot observed.
+    fn coverage(&self, snap: &Snapshot, client: &Client) -> Result<Vec<String>, Fail> {
+        let covered: Vec<String> = snap
+            .covered(client)
+            .into_iter()
+            .map(|monitor| monitor.name.clone())
+            .collect();
         if covered.is_empty() {
             return Err(self.unreadable(TakeError::Malformed));
         }
+        self.covered_now(&covered)?;
+        Ok(covered)
+    }
+
+    /// Reads the live `capture_monitors` again: every observed monitor of
+    /// `covered` must still be permitted (an empty list permits all).
+    pub(super) fn covered_now(&self, covered: &[String]) -> Result<(), Fail> {
         let monitors = (self.env.live)().monitors;
-        for monitor in covered {
+        for name in covered {
             capture_gate(
                 &Allowed {
                     desktop: true,
                     capture: true,
                     monitors: monitors.clone(),
                 },
-                Some(&monitor.name),
+                Some(name),
             )?;
         }
         Ok(())
     }
 
     /// Steps 5 to 7 (and 13): the snapshot, the lock, the monitors, the
-    /// barrier and, for a pointer movement, the global point.
-    async fn survey(&self, runner: &Runner<'_>) -> Result<Option<(i64, i64)>, Fail> {
+    /// barrier and, for a pointer movement, the global point. Also returns
+    /// the monitors that the snapshot observed the preview on.
+    async fn survey(&self, runner: &Runner<'_>) -> Result<Surveyed, Fail> {
         let snap = snapshot::take(runner, self.pointer())
             .await
             .map_err(|e| self.unreadable(e))?;
@@ -208,7 +229,7 @@ impl Op<'_> {
                 capture_text::SCREEN_LOCKED,
             ));
         }
-        self.coverage(&snap, client)?;
+        let covered = self.coverage(&snap, client)?;
         let names = Names {
             class: &client.class,
             initial_class: &client.initial_class,
@@ -218,13 +239,14 @@ impl Op<'_> {
         if self.marked() || barrier::is_board(self.record.kind, &names, &self.env.deck_hosts) {
             return Err(fail(p6_code::INPUT_BOARD_FORBIDDEN));
         }
-        match self.plan {
-            Plan::Pointer { x, y } => snap
-                .destination(client, x, y)
-                .map(Some)
-                .ok_or_else(|| fail(p6_code::INPUT_DESTINATION_UNAVAILABLE)),
-            _ => Ok(None),
-        }
+        let point = match self.plan {
+            Plan::Pointer { x, y } => Some(
+                snap.destination(client, x, y)
+                    .ok_or_else(|| fail(p6_code::INPUT_DESTINATION_UNAVAILABLE))?,
+            ),
+            _ => None,
+        };
+        Ok(Surveyed { point, covered })
     }
 
     /// Step 8: the fixed command. A missing `wtype` is `input_tool_missing`.
@@ -272,10 +294,17 @@ impl Op<'_> {
         }
     }
 
-    /// Step 17: the synchronous gates, the link, the start deadlines, the
-    /// registry and the age limits. No await.
-    fn last_checks(&self, authority_at: Instant, focus_at: Instant) -> Result<(), Fail> {
+    /// Step 17: the synchronous gates, the observed monitor coverage against
+    /// the live policy, the link, the start deadlines, the registry and the
+    /// age limits. No await.
+    fn last_checks(
+        &self,
+        covered: &[String],
+        authority_at: Instant,
+        focus_at: Instant,
+    ) -> Result<(), Fail> {
         self.admitted.local_gates()?;
+        self.covered_now(covered)?;
         self.start.still_valid()?;
         if !(self.env.link_alive)() {
             return Err(unknown());
@@ -305,7 +334,7 @@ impl Op<'_> {
         self.check().await?;
         self.same_record()?;
         self.focus(&runner).await?;
-        let point = self.survey(&runner).await?;
+        let Surveyed { point, covered } = self.survey(&runner).await?;
         self.same_record()?;
         self.check().await?;
         let authority_at = (self.env.clock)();
@@ -315,11 +344,11 @@ impl Op<'_> {
         let focus_at = (self.env.clock)();
         self.judge(&active)?;
         // Step 17 and step 18: no await between them but the spawn itself.
-        self.last_checks(authority_at, focus_at)?;
+        self.last_checks(&covered, authority_at, focus_at)?;
         match prepared {
             Prepared::Wtype { cmd, stdin } => {
                 let mut child = runner.spawn_input(*cmd, stdin).map_err(spawn_fail)?;
-                self.supervise(&runner, &mut child).await?;
+                self.supervise(&runner, &mut child, &covered).await?;
             }
             Prepared::Pointer => {
                 let (x, y) = point.ok_or_else(|| fail(p6_code::INPUT_DESTINATION_UNAVAILABLE))?;

@@ -157,6 +157,10 @@ pub(super) struct Probe {
     pub check: Arc<CountedCheck>,
     pub gates: Option<Gates>,
     pub live: Live,
+    /// When set, the live settings that the protocol reads again at each
+    /// check (it replaces `live` for that read); a test changes them while
+    /// the call runs.
+    pub live_now: Option<Arc<dyn Fn() -> Live + Send + Sync>>,
     pub alive: Arc<AtomicBool>,
     pub deck_hosts: Vec<String>,
     pub clock: Option<Clock>,
@@ -176,6 +180,7 @@ impl Probe {
             check: fx.check(None, None),
             gates: None,
             live: all_on(),
+            live_now: None,
             alive: Arc::new(AtomicBool::new(true)),
             deck_hosts: Vec::new(),
             clock: None,
@@ -395,8 +400,12 @@ impl Fx {
             probe.extras.clone(),
         );
         let alive = Arc::clone(&probe.alive);
+        let read_live: Arc<dyn Fn() -> Live + Send + Sync> = probe
+            .live_now
+            .clone()
+            .unwrap_or_else(|| Arc::new(move || live.clone()));
         let mut env = Env::new(
-            Arc::new(move || live.clone()),
+            read_live,
             Arc::new(move || alive.load(Ordering::SeqCst)),
             probe.deck_hosts.clone(),
         );

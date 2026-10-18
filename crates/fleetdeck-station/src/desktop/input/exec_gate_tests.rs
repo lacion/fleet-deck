@@ -297,3 +297,71 @@ async fn the_start_lifetime_is_read_again_right_before_the_spawn() {
     assert_eq!(e.code, "failed");
     assert!(fx.calls_of("wtype").is_empty());
 }
+
+/// A live policy that a test changes while the call runs: the monitor list
+/// is read from `list` at each check.
+fn changing_monitors(probe: &mut Probe, list: &Arc<std::sync::Mutex<Vec<String>>>) {
+    let base = probe.live.clone();
+    let list = Arc::clone(list);
+    probe.live_now = Some(Arc::new(move || {
+        let mut live = base.clone();
+        live.monitors = list.lock().unwrap().clone();
+        live
+    }));
+}
+
+#[tokio::test]
+async fn a_monitor_list_that_excludes_the_preview_during_the_final_authority_check_stops_the_spawn()
+{
+    for kind in ["key", "text", "pointer"] {
+        let fx = Fx::new().await;
+        let mut probe = Probe::new(&fx);
+        let list = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        changing_monitors(&mut probe, &list);
+        // The preview lies on DP-1 only. The final authority check (the
+        // third) turns the list into one that excludes it.
+        probe.check = fx.check(
+            None,
+            Some(Box::new(move |k| {
+                if k == 3 {
+                    *list.lock().unwrap() = vec!["HDMI-A-1".to_owned()];
+                }
+            })),
+        );
+        let action = match kind {
+            "key" => fx.key("a"),
+            "text" => fx.text("x"),
+            _ => fx.pointer(1, 1),
+        };
+        let e = refused(&fx, &probe, &action).await;
+        assert_eq!(
+            pair(&e),
+            (
+                "forbidden",
+                "This monitor is not allowed for screenshots.".into()
+            ),
+            "{kind}"
+        );
+        assert!(fx.calls_of("wtype").is_empty(), "{kind}");
+        assert_eq!(fx.timeline().last().unwrap(), "hyprctl -j activewindow");
+    }
+}
+
+#[tokio::test]
+async fn a_monitor_list_that_still_holds_the_preview_after_the_final_check_lets_the_input_run() {
+    let fx = Fx::new().await;
+    let mut probe = Probe::new(&fx);
+    let list = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    changing_monitors(&mut probe, &list);
+    let hook_list = Arc::clone(&list);
+    probe.check = fx.check(
+        None,
+        Some(Box::new(move |k| {
+            if k == 3 {
+                *hook_list.lock().unwrap() = vec!["DP-1".to_owned()];
+            }
+        })),
+    );
+    fx.run(&fx.key("a"), &probe).await.unwrap();
+    assert_eq!(fx.calls_of("wtype").len(), 1);
+}
