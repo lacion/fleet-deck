@@ -149,14 +149,26 @@ impl DeckLink {
         station: &StationId,
         caller_session: &SessionId,
     ) -> Option<PolicyNowAnswer> {
-        let control = self.control_for(station)?;
-        let params = serde_json::to_value(PolicyNow {
+        let query = PolicyNow {
             caller_session: caller_session.clone(),
             binding: None,
-        })
-        .ok()?;
+        };
+        self.policy_now_with(station, query, POLICY_NOW_DEADLINE)
+            .await
+    }
+
+    /// [`DeckLink::policy_now`] with the request `query` (R13 P6 §5.6 sends
+    /// the expected binding) and the wait `timeout`.
+    pub(crate) async fn policy_now_with(
+        &self,
+        station: &StationId,
+        query: PolicyNow,
+        timeout: Duration,
+    ) -> Option<PolicyNowAnswer> {
+        let control = self.control_for(station)?;
+        let params = serde_json::to_value(query).ok()?;
         let outcome = tokio::time::timeout(
-            POLICY_NOW_DEADLINE,
+            timeout,
             control.request("coordinator.policy_now", None, params),
         )
         .await;

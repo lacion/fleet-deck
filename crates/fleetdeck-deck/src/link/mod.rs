@@ -93,6 +93,8 @@ pub struct DeckLink {
     /// E): the handler reads `desktop_control` here at each call. Empty until
     /// `serve` sets it once; an empty cell counts as `desktop_control` off.
     pub desktop_live: OnceLock<crate::live::LiveCell>,
+    /// The in-flight slots and the read permits of the P6 desktop tools.
+    pub(crate) coordinator_desktop: crate::coordinator_desktop::Shared,
 }
 
 impl DeckLink {
@@ -111,6 +113,7 @@ impl DeckLink {
             radar_state: Arc::default(),
             radar_kick: Arc::default(),
             desktop_live: OnceLock::new(),
+            coordinator_desktop: crate::coordinator_desktop::Shared::default(),
         }
     }
 

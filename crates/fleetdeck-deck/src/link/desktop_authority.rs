@@ -20,8 +20,9 @@
 use std::time::Duration;
 
 use fleetdeck_link::control::Control;
-use fleetdeck_link::desktop_authority::issue;
+use fleetdeck_link::desktop_authority::{issue, issue_coordinator};
 use fleetdeck_proto::StationId;
+use fleetdeck_proto::coordinator_desktop_wire::CoordinatorContext;
 use fleetdeck_proto::desktop::{DesktopActResult, DesktopAction, DesktopInfo, DesktopInfoQuery};
 use fleetdeck_proto::desktop_authority::with_authority;
 use fleetdeck_proto::link::Outcome;
@@ -90,6 +91,17 @@ impl Route {
     /// True when this link negotiated `feature`.
     pub(crate) fn negotiated(&self, feature: &str) -> bool {
         self.control.params().negotiated.has(feature)
+    }
+
+    /// The control channel of this link.
+    pub(crate) fn control(&self) -> &Control {
+        &self.control
+    }
+
+    /// The `Hello.desktop_epoch` of the station on this link (the link ID of
+    /// a protected read, R13 P6 §5.7).
+    pub(crate) fn epoch(&self) -> &str {
+        &self.epoch
     }
 }
 
@@ -192,6 +204,32 @@ pub(crate) async fn send_act_raw(
         route.epoch.clone(),
         store.now_ms(),
         quiet_hours,
+    );
+    let params = with_authority(action, &authority);
+    request_raw(&route.control, "desktop.act", params, waits.of(action)).await
+}
+
+/// Makes the coordinator authority of `action` (R13 P6 §5.4: the context is in
+/// the authority and in the hash; `operation_id` is the `action_id`) and sends
+/// `desktop.act`. Like [`send_act_raw`], with the unmapped error.
+///
+/// # Errors
+/// As [`send_act_raw`].
+pub(crate) async fn send_coordinator_act(
+    store: &DeckStore,
+    route: &Route,
+    action: &DesktopAction,
+    ctx: &CoordinatorContext,
+    operation_id: &str,
+    waits: Waits,
+) -> Result<DesktopActResult, CallError> {
+    let authority = issue_coordinator(
+        action,
+        &route.station_node,
+        operation_id.to_owned(),
+        route.epoch.clone(),
+        store.now_ms(),
+        ctx.clone(),
     );
     let params = with_authority(action, &authority);
     request_raw(&route.control, "desktop.act", params, waits.of(action)).await
