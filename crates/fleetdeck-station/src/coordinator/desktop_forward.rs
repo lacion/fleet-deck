@@ -9,6 +9,7 @@
 
 use std::time::Duration;
 
+use async_trait::async_trait;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use fleetdeck_proto::CommandId;
@@ -21,8 +22,9 @@ use fleetdeck_proto::link::Outcome;
 use fleetdeck_proto::version::feature;
 use serde_json::{Value, json};
 
-use super::bindings::Caller;
+use super::bindings::{Bindings, Caller};
 use super::forward::{LinkForward, binding, new_id};
+use super::ingress::Forward;
 
 /// How long a `coordinator.desktop_call` may still be accepted (§5.3).
 const CALL_RETRY_MS: i64 = 10_000;
@@ -324,6 +326,15 @@ impl LinkForward {
             Ok(Err(_)) => return unknown(),
             Ok(Ok(outcome)) => outcome,
         };
+        // The last gate before a result leaves this station (§4.9): the link
+        // must still exist and must not be fenced, whatever the answer is.
+        let held = match self.link() {
+            Some(current) => matches!(self.fenced(&current).await, Ok(false)),
+            None => false,
+        };
+        if !held {
+            return unknown();
+        }
         match outcome {
             Outcome::Err(_) => p6_error(code::DESKTOP_UNSUPPORTED, None, None),
             Outcome::Ok(value) => encode(&request, value),
@@ -365,6 +376,34 @@ impl LinkForward {
                 let value = serde_json::to_value(envelope).map_err(|e| e.to_string())?;
                 Ok(("coordinator.desktop_query", None, value))
             }
+        }
+    }
+}
+
+/// The forwarder of one message path of the ingress: it gives every P6 result
+/// to the agent only when the authority of the caller still holds after the
+/// forward (§4.9, §6.1). It rereads the live `allow_fleet_control` of this
+/// station and checks the original binding of the request against the current
+/// bindings (`binding_matches`). Any other call passes through unchanged.
+pub(super) struct Rechecked<'a> {
+    pub inner: &'a dyn Forward,
+    pub bindings: &'a Bindings,
+}
+
+#[async_trait]
+impl Forward for Rechecked<'_> {
+    async fn call(&self, caller: Caller, tool: &str, args: Value) -> Result<Value, String> {
+        self.inner.call(caller, tool, args).await
+    }
+
+    async fn call_desktop(&self, caller: Caller, request: DesktopRequest) -> McpToolResult {
+        let original = binding(&caller);
+        let session = caller.session_id.clone();
+        let result = self.inner.call_desktop(caller, request).await;
+        if self.bindings.fleet_control() && self.bindings.binding_matches(&session, &original) {
+            result
+        } else {
+            p6_error(code::AUTHORITY_LOST, None, None)
         }
     }
 }

@@ -284,11 +284,25 @@ async fn a_deck_restart_after_attempted_never_runs_the_action_a_second_time() {
     assert!(kept.contains(&state.as_str()), "{}", again.raw);
     // The status says `pending` while the record is open (§4.8): neither a
     // second run nor a new record.
-    let status = w
-        .mcp
-        .call("desktop_action_status", json!({"request_id": "n1"}))
-        .await
-        .ok();
+    // The link of the station to the new deck may still settle: the same
+    // tolerance as above, until the deadline.
+    let deadline = tokio::time::Instant::now() + T;
+    let status = loop {
+        let call = w
+            .mcp
+            .call("desktop_action_status", json!({"request_id": "n1"}))
+            .await;
+        if !call.is_error || tokio::time::Instant::now() > deadline {
+            break call.ok();
+        }
+        let code = call.code();
+        assert!(
+            code == "station_unreachable" || code == "authority_unknown",
+            "{}",
+            call.raw
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    };
     let state = status["state"].as_str().unwrap().to_owned();
     assert!(kept.contains(&state.as_str()), "{status}");
     assert_eq!(status["operation_id"], again.json()["operation_id"]);

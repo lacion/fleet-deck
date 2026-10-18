@@ -264,6 +264,56 @@ async fn a_stored_refusal_replays_with_the_same_code_and_another_payload_conflic
 }
 
 #[tokio::test]
+async fn a_replay_of_a_known_request_needs_the_grant_in_the_same_transaction() {
+    let (det, s) = store().await;
+    let (gid, ctx) = both(&s).await;
+    let now = t0(&det);
+    let op = new_op(&gid, &ctx, "r1", OpTool::Notify);
+    let Admission::Accepted(_) = s.desktop_admit(op.clone(), now).await.unwrap() else {
+        panic!("expected Accepted");
+    };
+    // Another generation: the stored row is not returned.
+    let mut stale = ctx.clone();
+    stale.generation = 2;
+    let mut replay = op.clone();
+    replay.ctx = stale;
+    let got = s.desktop_admit(replay, now + 1).await.unwrap();
+    assert_eq!(rejected(got), (code::BINDING_STALE, false));
+    // A revoked grant: not granted for the known key, nothing is returned.
+    s.revoke_grant(gid.clone(), "test".to_owned())
+        .await
+        .unwrap();
+    let got = s.desktop_admit(op, now + 2).await.unwrap();
+    assert_eq!(rejected(got), (code::NOT_GRANTED, false));
+    // Nothing was charged or stored by the refused replays.
+    let g = s.grant(gid).await.unwrap().unwrap();
+    assert_eq!((g.desktop_used, g.desktop_attempts), (1, 1));
+    assert_eq!(rows(&s, "coordinator_desktop_ops").await, 1);
+}
+
+#[tokio::test]
+async fn a_stored_refusal_is_not_replayed_to_a_grant_that_is_gone() {
+    let (det, s) = store().await;
+    let (gid, ctx) = grant(&s, "coord", &[GrantClass::Desktop], |g| {
+        g.desktop_cap = Some(0);
+    })
+    .await;
+    let now = t0(&det);
+    let op = new_op(&gid, &ctx, "r1", OpTool::Notify);
+    assert_eq!(
+        rejected(s.desktop_admit(op.clone(), now).await.unwrap()),
+        (code::DESKTOP_CAP_REACHED, true)
+    );
+    s.revoke_grant(gid.clone(), "test".to_owned())
+        .await
+        .unwrap();
+    assert_eq!(
+        rejected(s.desktop_admit(op, now + 1).await.unwrap()),
+        (code::NOT_GRANTED, false)
+    );
+}
+
+#[tokio::test]
 async fn a_revoked_grant_is_not_granted_and_nothing_is_charged() {
     let (det, s) = store().await;
     let (gid, ctx) = both(&s).await;

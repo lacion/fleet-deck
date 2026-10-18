@@ -1,6 +1,6 @@
 //! The admission transaction of a coordinator desktop mutation (R13 P6 §6.2
-//! step 9, §7.1, §8). One write transaction does the duplicate check, the
-//! grant recheck, the attempt budget, the rates, the budgets and the commit,
+//! step 9, §7.1, §8). One write transaction does the grant recheck, the
+//! duplicate check, the attempt budget, the rates, the budgets and the commit,
 //! in this order. No network await happens inside it.
 
 use std::sync::Arc;
@@ -63,24 +63,7 @@ fn needs(class: OpClass) -> GrantClass {
 }
 
 fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admission> {
-    // 1. The request key: the same payload replays, another one conflicts.
-    if let Some(row) = ops::find_by_key(&tx, &op.grant_id, &op.request_key)? {
-        return Ok(if row.payload_hash == op.payload_hash {
-            Admission::Existing(row)
-        } else {
-            Admission::Conflict
-        });
-    }
-    if let Some((hash, stored)) = ops::find_reject(&tx, &op.grant_id, &op.request_key)? {
-        if hash != op.payload_hash {
-            return Ok(Admission::Conflict);
-        }
-        return Ok(Admission::Rejected {
-            code: stored_code(&stored)?,
-            stored: true,
-        });
-    }
-    // 2. The grant, checked again in this transaction.
+    // 1. The grant, checked again in this transaction, also for a replay.
     let ctx = &op.ctx;
     let Some(grant) = get_grant(&tx, &op.grant_id)? else {
         return refuse(code::NOT_GRANTED);
@@ -107,11 +90,29 @@ fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admi
     if !grant.classes.contains(&needs(op.class)) || !grant.stations.contains(&op.target_station) {
         return refuse(code::NOT_GRANTED);
     }
-    // 3. The attempts of the grant.
+    // 3. The request key: the same payload replays, another one conflicts.
+    //    Only a grant that holds now sees a stored result (§6.2).
+    if let Some(row) = ops::find_by_key(&tx, &op.grant_id, &op.request_key)? {
+        return Ok(if row.payload_hash == op.payload_hash {
+            Admission::Existing(row)
+        } else {
+            Admission::Conflict
+        });
+    }
+    if let Some((hash, stored)) = ops::find_reject(&tx, &op.grant_id, &op.request_key)? {
+        if hash != op.payload_hash {
+            return Ok(Admission::Conflict);
+        }
+        return Ok(Admission::Rejected {
+            code: stored_code(&stored)?,
+            stored: true,
+        });
+    }
+    // 4. The attempts of the grant.
     if grant.desktop_attempts >= limits::ATTEMPTS_MAX {
         return refuse(code::REQUEST_BUDGET_REACHED);
     }
-    // 4. The rates. A refusal charges nothing.
+    // 5. The rates. A refusal charges nothing.
     let grant_scope = format!("grant:{}", op.grant_id);
     let session_scope = format!("session:{}/{}", ctx.caller_station, ctx.caller_session);
     let limited = rate::count(&tx, &grant_scope, rate::MUTATION, now)?
@@ -124,7 +125,7 @@ fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admi
     if limited {
         return refuse(code::RATE_LIMITED);
     }
-    // 5. The budgets (a cap of `None` is 0). A refusal is stored.
+    // 6. The budgets (a cap of `None` is 0). A refusal is stored.
     let screenshot = op.tool == OpTool::Screenshot;
     if grant.desktop_used >= grant.desktop_cap.unwrap_or(0) {
         return refuse_stored(tx, &op, code::DESKTOP_CAP_REACHED, now);
@@ -132,7 +133,7 @@ fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admi
     if screenshot && grant.capture_used >= grant.capture_cap.unwrap_or(0) {
         return refuse_stored(tx, &op, code::CAPTURE_CAP_REACHED, now);
     }
-    // 6. Accept.
+    // 7. Accept.
     let charged = Charges {
         desktop: 1,
         capture: u32::from(screenshot),

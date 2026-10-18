@@ -20,6 +20,7 @@ use serde_json::{Value, json};
 use super::bindings::{Bindings, Caller};
 use super::desktop_forward::{DesktopRequest, McpToolResult, p6_error, parse_request};
 use super::forward::{LinkForward, Transport};
+use super::ingress::Forward;
 use crate::store::{Store, StoreConfig};
 
 const DESKTOP: &str = "desktop_mcp.v1";
@@ -38,6 +39,9 @@ struct FakeDeck {
     features: Vec<&'static str>,
     mode: Mutex<Mode>,
     sent: Mutex<Vec<(String, Option<CommandId>, Value)>>,
+    /// Runs while the answer is in transit: after the request, before the
+    /// answer.
+    in_transit: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl FakeDeck {
@@ -46,7 +50,12 @@ impl FakeDeck {
             features: features.to_vec(),
             mode: Mutex::new(mode),
             sent: Mutex::default(),
+            in_transit: Mutex::default(),
         })
+    }
+
+    fn on_transit(&self, hook: impl Fn() + Send + Sync + 'static) {
+        *self.in_transit.lock().unwrap() = Some(Arc::new(hook));
     }
 
     fn sent(&self) -> Vec<(String, Option<CommandId>, Value)> {
@@ -67,8 +76,14 @@ impl Transport for FakeDeck {
             .unwrap()
             .push((method.to_owned(), command_id.cloned(), params));
         let mode = self.mode.lock().unwrap().clone();
+        let hook = self.in_transit.lock().unwrap().clone();
         match mode {
-            Mode::Reply(outcome) => Ok(outcome),
+            Mode::Reply(outcome) => {
+                if let Some(hook) = hook {
+                    hook();
+                }
+                Ok(outcome)
+            }
             Mode::Fail(e) => Err(e),
             Mode::Hang => std::future::pending().await,
         }
@@ -332,8 +347,9 @@ async fn without_a_link_a_feature_or_with_a_fence_nothing_is_sent() {
     assert_eq!(only_desktop.sent().len(), 1);
 }
 
-#[tokio::test]
-async fn a_fenced_link_sends_nothing_until_the_deck_acknowledges_the_lifecycle() {
+/// A store with one coordinator lifecycle event, and the sequence of that
+/// event: a link that did not acknowledge it is fenced.
+async fn fenced_store() -> (Store, u64) {
     use crate::store::{NewEvent, NewSession, OfflineApprovalPolicy};
     use fleetdeck_proto::Event;
     use fleetdeck_proto::event::ProviderKind;
@@ -369,6 +385,12 @@ async fn a_fenced_link_sends_nothing_until_the_deck_acknowledges_the_lifecycle()
         .await
         .unwrap();
     let watermark = appended[0].station_seq;
+    (store, watermark)
+}
+
+#[tokio::test]
+async fn a_fenced_link_sends_nothing_until_the_deck_acknowledges_the_lifecycle() {
+    let (store, watermark) = fenced_store().await;
     let forward = LinkForward::with_outbox(store, Bindings::default());
     let deck = FakeDeck::new(&[DESKTOP, CAPTURE], ok(json!({})));
     let serial = forward.connect_transport(deck.clone(), inc());
@@ -580,4 +602,127 @@ async fn an_image_above_the_cap_is_too_large() {
     let bytes = png(716_800);
     let r = read_image(image_mode(716_801, &hex(&bytes), &STANDARD.encode(&bytes))).await;
     assert_error(&r, code::IMAGE_TOO_LARGE);
+}
+
+/// The bindings of a station with the active binding of `caller()` and
+/// `allow_fleet_control` on.
+fn bound() -> Bindings {
+    use super::bindings::{Binding, BindingState};
+    let bindings = Bindings::default();
+    bindings.set_fleet_control(true);
+    let c = caller();
+    bindings.insert(
+        "digest-1".to_owned(),
+        Binding {
+            binding_id: c.binding_id,
+            grant_id: c.grant_id,
+            session_id: c.session_id,
+            provider_instance: c.provider_instance,
+            native_id: Some(c.native_id),
+            generation: c.generation,
+            classes: Default::default(),
+            scope: fleetdeck_proto::command::GrantScope::Lineage,
+            state: BindingState::Active,
+            control_skill: String::new(),
+        },
+    );
+    bindings
+}
+
+async fn rechecked_image(bindings: &Bindings, deck: &Arc<FakeDeck>, tool: &str) -> McpToolResult {
+    let forward = forward_with(deck);
+    let rechecked = super::desktop_forward::Rechecked {
+        inner: &forward,
+        bindings,
+    };
+    rechecked.call_desktop(caller(), request(tool)).await
+}
+
+#[tokio::test]
+async fn a_delayed_result_is_refused_when_fleet_control_turns_off_in_transit() {
+    for tool in ["read_capture_image", "notify", "desktop_info"] {
+        let (_, mode, _) = good(1000);
+        let mode = if tool == "read_capture_image" {
+            mode
+        } else {
+            ok(json!({"state": "done"}))
+        };
+        let deck = FakeDeck::new(&[DESKTOP, CAPTURE], mode);
+        let bindings = bound();
+        let live = bindings.clone();
+        deck.on_transit(move || live.set_fleet_control(false));
+        let r = rechecked_image(&bindings, &deck, tool).await;
+        assert_error(&r, code::AUTHORITY_LOST);
+        assert_eq!(r.content.len(), 1, "no image block: {r:?}");
+        assert_eq!(deck.sent().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn a_delayed_result_is_refused_when_the_binding_ends_or_changes_in_transit() {
+    use super::bindings::BindingState;
+    type Change = Box<dyn Fn(&Bindings) + Send + Sync>;
+    let changes: [Change; 3] = [
+        Box::new(|b| assert!(b.update("b-1", |x| x.generation += 1))),
+        Box::new(|b| assert!(b.update("b-1", |x| x.state = BindingState::Revoked))),
+        Box::new(|b| b.revoke_session(&"coord-1".into())),
+    ];
+    for change in changes {
+        let (_, mode, _) = good(1000);
+        let deck = FakeDeck::new(&[DESKTOP, CAPTURE], mode);
+        let bindings = bound();
+        let live = bindings.clone();
+        deck.on_transit(move || change(&live));
+        let r = rechecked_image(&bindings, &deck, "read_capture_image").await;
+        assert_error(&r, code::AUTHORITY_LOST);
+        assert_eq!(r.content.len(), 1, "no image block: {r:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_result_with_the_authority_unchanged_is_given_as_it_is() {
+    let (_, mode, _) = good(1000);
+    let deck = FakeDeck::new(&[DESKTOP, CAPTURE], mode.clone());
+    let bindings = bound();
+    let r = rechecked_image(&bindings, &deck, "read_capture_image").await;
+    assert!(!r.is_error, "{r:?}");
+    assert_eq!(r.content.len(), 2);
+    let direct = forward_with(&deck)
+        .desktop_within(caller(), request("read_capture_image"), None)
+        .await;
+    assert_eq!(r, direct);
+}
+
+#[tokio::test]
+async fn a_result_is_refused_when_the_link_ends_or_is_fenced_in_transit() {
+    // The link ends while the answer is in transit.
+    let (_, mode, _) = good(1000);
+    let deck = FakeDeck::new(&[DESKTOP, CAPTURE], mode);
+    let forward = Arc::new(LinkForward::with_clock(Arc::new(|| NOW)));
+    let serial = forward.connect_transport(deck.clone(), inc());
+    let ended = Arc::clone(&forward);
+    deck.on_transit(move || ended.disconnect(serial));
+    let r = forward
+        .desktop_within(caller(), request("read_capture_image"), None)
+        .await;
+    assert_error(&r, code::AUTHORITY_UNKNOWN);
+    assert_eq!(deck.sent().len(), 1);
+
+    // A new link that did not acknowledge the lifecycle: fenced.
+    let (store, watermark) = fenced_store().await;
+    let (_, mode, _) = good(1000);
+    let deck = FakeDeck::new(&[DESKTOP, CAPTURE], mode);
+    let forward = Arc::new(LinkForward::with_outbox(store, Bindings::default()));
+    let serial = forward.connect_transport(deck.clone(), inc());
+    forward.acknowledged(serial, watermark);
+    let again = Arc::clone(&forward);
+    let other = FakeDeck::new(&[DESKTOP, CAPTURE], ok(json!({})));
+    deck.on_transit(move || {
+        again.connect_transport(other.clone(), inc());
+    });
+    let r = forward
+        .desktop_within(caller(), request("read_capture_image"), None)
+        .await;
+    assert_error(&r, code::AUTHORITY_UNKNOWN);
+    assert_eq!(r.content.len(), 1);
 }

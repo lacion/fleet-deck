@@ -37,6 +37,7 @@ use crate::desktop::coordinator::{
 };
 use crate::desktop::{self, Desktop, Fail};
 use crate::store::Store;
+use crate::store::capture_ops::Lookup;
 use crate::store::desktop_ops::Claim;
 
 /// The text of `failed` when the claim of an operation cannot be written.
@@ -355,13 +356,15 @@ pub(crate) async fn read_with(
     req: &CoordinatorRead,
 ) -> Result<Value, Fail> {
     validate_read(req)?;
-    let data = reader.work(&req.read).await?;
+    let (data, monitor) = reader.work(&req.read).await?;
     check.check(AuthorityPhase::Read, Some(&req.read)).await?;
     let capture = matches!(
         req.read,
         ProtectedRead::CaptureStatus { .. } | ProtectedRead::CaptureFile { .. }
     );
-    check_live(&(reader.live)(), capture, None)?;
+    // A capture read checks the monitor of its capture against the live
+    // `capture_monitors`, read after the await (§2.3, §4.9).
+    check_live(&(reader.live)(), capture, monitor.as_deref())?;
     Ok(data)
 }
 
@@ -398,11 +401,15 @@ impl Reader<'_> {
     }
 
     /// Step 2: the read work. It returns the data to the caller of
-    /// [`read_with`], which gives it out only after the checks.
-    async fn work(&self, read: &ProtectedRead) -> Result<Value, Fail> {
+    /// [`read_with`], which gives it out only after the checks, and the
+    /// monitor of the capture (from its `capture_ops` row) for a capture
+    /// read; `None` for another read and for a capture without a row.
+    async fn work(&self, read: &ProtectedRead) -> Result<(Value, Option<String>), Fail> {
         match read {
-            ProtectedRead::Info => self.info().await,
-            ProtectedRead::ActionStatus { operation_id } => self.action_status(operation_id).await,
+            ProtectedRead::Info => Ok((self.info().await?, None)),
+            ProtectedRead::ActionStatus { operation_id } => {
+                Ok((self.action_status(operation_id).await?, None))
+            }
             ProtectedRead::CaptureStatus { capture_id } => self.capture_status(capture_id).await,
             ProtectedRead::CaptureFile {
                 artifact_id,
@@ -452,7 +459,7 @@ impl Reader<'_> {
         })
     }
 
-    async fn capture_status(&self, capture_id: &str) -> Result<Value, Fail> {
+    async fn capture_status(&self, capture_id: &str) -> Result<(Value, Option<String>), Fail> {
         let store = self.artifacts()?.store();
         let limit = Duration::from_millis(deadline_ms::CAPTURE_LOOKUP_STATION);
         let lookup = tokio::time::timeout(limit, store.capture_lookup(self.deck_fp, capture_id))
@@ -462,8 +469,16 @@ impl Reader<'_> {
                 tracing::warn!(error = %e, "the capture status cannot be read");
                 Fail::new(desktop::code::FAILED, READ_FAILED)
             })?;
-        serde_json::to_value(super::intake_capture::status_of(capture_id, lookup))
-            .map_err(|_| Fail::new(desktop::code::FAILED, READ_FAILED))
+        let monitor = match &lookup {
+            Lookup::Unknown => None,
+            Lookup::Running(op) | Lookup::Failed(op) | Lookup::Deleted(op) => {
+                Some(op.monitor.clone())
+            }
+            Lookup::Committed { op, .. } => Some(op.monitor.clone()),
+        };
+        let value = serde_json::to_value(super::intake_capture::status_of(capture_id, lookup))
+            .map_err(|_| Fail::new(desktop::code::FAILED, READ_FAILED))?;
+        Ok((value, monitor))
     }
 
     /// One capture file: a capture with coordinator provenance, kind
@@ -474,7 +489,7 @@ impl Reader<'_> {
         artifact_id: &str,
         version: u32,
         length: u64,
-    ) -> Result<Value, Fail> {
+    ) -> Result<(Value, Option<String>), Fail> {
         use fleetdeck_proto::capture::CaptureCaller;
         let service = self.artifacts()?;
         if version != 1 {
@@ -487,11 +502,9 @@ impl Reader<'_> {
             })
             .await
             .map_err(|e| artifact_fail(&e))?;
-        let coordinator_capture = detail
-            .version
-            .capture
-            .as_ref()
-            .is_some_and(|c| c.caller == CaptureCaller::Coordinator);
+        let provenance = detail.version.capture.as_ref();
+        let coordinator_capture =
+            provenance.is_some_and(|c| c.caller == CaptureCaller::Coordinator);
         let sole = detail.version.files == [crate::store::capture_ops::CAPTURE_FILE];
         if detail.artifact.kind != ArtifactKind::Image
             || detail.version.version != 1
@@ -500,6 +513,18 @@ impl Reader<'_> {
         {
             return Err(miss());
         }
+        // The monitor of the capture, from its `capture_ops` row. A capture
+        // without a row is a miss (no data).
+        let capture_id = provenance.map(|c| c.capture_id.clone()).unwrap_or_default();
+        let op = self
+            .store
+            .capture_get(self.deck_fp, &capture_id)
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = %e, "the capture operation cannot be read");
+                Fail::new(desktop::code::FAILED, READ_FAILED)
+            })?
+            .ok_or_else(miss)?;
         let size = detail.version.size;
         if length != size {
             return Err(p6_fail(p6_code::INVALID_PARAMS));
@@ -521,7 +546,9 @@ impl Reader<'_> {
         .await
         .map_err(|_| read_timeout())?
         .map_err(|e| artifact_fail(&e))?;
-        serde_json::to_value(file).map_err(|_| Fail::new(desktop::code::FAILED, READ_FAILED))
+        let value = serde_json::to_value(file)
+            .map_err(|_| Fail::new(desktop::code::FAILED, READ_FAILED))?;
+        Ok((value, Some(op.monitor)))
     }
 }
 
