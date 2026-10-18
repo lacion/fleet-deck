@@ -2,14 +2,18 @@ import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { FleetControlFields } from './FleetControlFields';
 import {
+  type FleetControl,
   answerCapProblem,
   captureCapProblem,
   desktopCapProblem,
   fleetElevation,
   fleetOn,
   grantFields,
+  fleetProblem,
   imageBudgetProblem,
   NO_FLEET,
+  recordingCapProblem,
+  recordingSecondsProblem,
   showFleetFields,
 } from './fleetControl';
 import { spawnActions } from './spawn';
@@ -100,6 +104,53 @@ describe('grantFields with desktop and capture (R13 P6)', () => {
       capture_cap: 20,
       image_byte_cap: 1_048_576,
     });
+  });
+});
+
+describe('the recording opt-in (R13 P5b-2)', () => {
+  const RC = 'The recording limit is a whole number from 0 to 5000.';
+  const RS = 'The recording time limit is a whole number of seconds from 0 to 600000.';
+  const on = { ...NO_FLEET, capture: true, recording: true };
+  test('the defaults are off, 5 and 600', () => {
+    expect(NO_FLEET.recording).toBe(false);
+    expect(NO_FLEET.recordingCap).toBe('5');
+    expect(NO_FLEET.recordingSeconds).toBe('600');
+  });
+  test('grantFields adds the opt-in only with capture and recording on', () => {
+    expect(grantFields({ ...NO_FLEET, capture: true })).not.toHaveProperty('allow_recording');
+    expect(grantFields({ ...NO_FLEET, recording: true })).toEqual({
+      classes: ['read', 'mail', 'drive'],
+    });
+    expect(grantFields({ ...on, recordingCap: '7', recordingSeconds: '90' })).toEqual({
+      classes: ['read', 'mail', 'drive', 'capture'],
+      desktop_cap: 300,
+      capture_cap: 20,
+      image_byte_cap: 67_108_864,
+      allow_recording: true,
+      recording_cap: 7,
+      recording_second_cap: 90,
+    });
+    expect(grantFields(on)).toMatchObject({ recording_cap: 5, recording_second_cap: 600 });
+  });
+  test('the problems are checked with capture and recording on, ranges 0-5000 and 0-600000', () => {
+    expect(recordingCapProblem({ ...NO_FLEET, recordingCap: 'x' })).toBeNull();
+    expect(recordingCapProblem({ ...on, recording: false, recordingCap: 'x' })).toBeNull();
+    expect(recordingCapProblem({ ...NO_FLEET, recording: true, recordingCap: 'x' })).toBeNull();
+    expect(recordingCapProblem(on)).toBeNull();
+    expect(recordingCapProblem({ ...on, recordingCap: '0' })).toBeNull();
+    expect(recordingCapProblem({ ...on, recordingCap: '5000' })).toBeNull();
+    for (const bad of ['5001', '-1', '1.5', '', 'x']) {
+      expect(recordingCapProblem({ ...on, recordingCap: bad })).toBe(RC);
+    }
+    expect(recordingSecondsProblem({ ...NO_FLEET, recordingSeconds: 'x' })).toBeNull();
+    expect(recordingSecondsProblem({ ...on, recordingSeconds: '600000' })).toBeNull();
+    expect(recordingSecondsProblem({ ...on, recordingSeconds: '0' })).toBeNull();
+    for (const bad of ['600001', '-1', '1.5', '', 'x']) {
+      expect(recordingSecondsProblem({ ...on, recordingSeconds: bad })).toBe(RS);
+    }
+    expect(fleetProblem({ ...on, recordingCap: 'x' })).toBe(RC);
+    expect(fleetProblem({ ...on, recordingSeconds: 'x' })).toBe(RS);
+    expect(fleetProblem(on)).toBeNull();
   });
 });
 
@@ -329,5 +380,79 @@ describe('FleetControlFields', () => {
     expect(out).toContain('The screenshot limit is a whole number from 0 to 5000.');
     expect(out).toContain('The image read budget is a whole number of MiB from 0 to 1024.');
     expect(out).toContain('role="alert"');
+  });
+
+  const REC = 'Allow monitor recordings';
+  const REC_NOTE =
+    'This agent can record the whole selected monitor for up to 120 seconds at a time, including other applications, notifications and private information visible there. Recordings are stored as video artifacts. The agent gets only a reference to each recording, never the video.';
+
+  test('the recording switch shows only while capture is on, with nothing else while off', () => {
+    for (const fleet of [NO_FLEET, { ...NO_FLEET, desktop: true }]) {
+      const out = html(fleet);
+      for (const hidden of [REC, 'Recording limit', 'Recording time limit (seconds)', REC_NOTE]) {
+        expect(out).not.toContain(hidden);
+      }
+    }
+    const out = html({ ...NO_FLEET, capture: true });
+    expect(out).toContain(REC);
+    for (const hidden of ['Recording limit', 'Recording time limit (seconds)', REC_NOTE]) {
+      expect(out).not.toContain(hidden);
+    }
+  });
+
+  test('recording on shows its two limits and the disclosure', () => {
+    const out = html({ ...NO_FLEET, capture: true, recording: true });
+    for (const text of [REC, 'Recording limit', 'Recording time limit (seconds)', REC_NOTE]) {
+      expect(out).toContain(text);
+    }
+  });
+
+  test('a bad recording value shows its problem as an alert', () => {
+    const out = html({
+      ...NO_FLEET,
+      capture: true,
+      recording: true,
+      recordingCap: '5001',
+      recordingSeconds: '600001',
+    });
+    expect(out).toContain('The recording limit is a whole number from 0 to 5000.');
+    expect(out).toContain(
+      'The recording time limit is a whole number of seconds from 0 to 600000.',
+    );
+    expect(out).toContain('role="alert"');
+  });
+
+  test('turning capture off turns recording off, and recording changes only itself', () => {
+    const calls: FleetControl[] = [];
+    const tree = FleetControlFields({
+      fleet: { ...NO_FLEET, capture: true, recording: true },
+      onChange: (next) => calls.push(next),
+    });
+    const boxes: { label: string; onChange: (e: { target: { checked: boolean } }) => void }[] = [];
+    const walk = (node: unknown): void => {
+      if (Array.isArray(node)) {
+        node.forEach(walk);
+        return;
+      }
+      if (typeof node !== 'object' || node === null) return;
+      const el = node as { type?: unknown; props?: Record<string, unknown> };
+      const kids = el.props?.['children'];
+      if (el.type === 'label' && Array.isArray(kids)) {
+        const input = kids.find(
+          (k): k is { props: { onChange: never } } =>
+            typeof k === 'object' && k !== null && (k as { type?: unknown }).type === 'input',
+        );
+        const text = kids.filter((k) => typeof k === 'string').join('');
+        if (input && text) boxes.push({ label: text, onChange: input.props.onChange });
+      }
+      walk(kids);
+    };
+    walk(tree);
+    const capture = boxes.find((b) => b.label.startsWith('Screenshots:'));
+    const recording = boxes.find((b) => b.label === REC);
+    capture?.onChange({ target: { checked: false } });
+    recording?.onChange({ target: { checked: false } });
+    expect(calls[0]).toMatchObject({ capture: false, recording: false });
+    expect(calls[1]).toMatchObject({ capture: true, recording: false });
   });
 });
