@@ -38,7 +38,10 @@ pub(super) fn meters(cards: &[DeckSession]) -> Vec<Meter> {
     for card in cards {
         let sum = &card.summary;
         let instance = sum.provider_instance.as_ref().map_or_else(
-            || sum.provider.map_or("unknown", provider_word).to_owned(),
+            || {
+                sum.provider
+                    .map_or_else(|| "unknown".to_owned(), provider_word)
+            },
             |i| i.as_str().to_owned(),
         );
         for limit in &sum.rate_limits {
@@ -82,13 +85,13 @@ pub(super) fn tightest(meters: &[Meter]) -> Option<&Meter> {
     meters.iter().find(|m| m.used_percent.is_some())
 }
 
-/// The serde word of a provider family.
-fn provider_word(kind: ProviderKind) -> &'static str {
-    match kind {
-        ProviderKind::Claude => "claude",
-        ProviderKind::Codex => "codex",
-        ProviderKind::Unknown => "unknown",
-    }
+/// The serde word of a provider family. Taken from serde, so the deck never
+/// branches on a provider name (the `layering` test).
+fn provider_word(kind: ProviderKind) -> String {
+    serde_json::to_value(kind)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "unknown".to_owned())
 }
 
 /// The fixed word of a window scope: `five_hour` is `5 h`, `seven_day` is
