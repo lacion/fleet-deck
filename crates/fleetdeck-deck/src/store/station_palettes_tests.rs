@@ -181,3 +181,17 @@ async fn the_palette_goes_with_its_station() {
     assert_eq!(s.station_palette(a).await.unwrap(), None);
     assert!(s.station_palette(b).await.unwrap().is_some());
 }
+
+#[tokio::test]
+async fn a_palette_of_a_station_that_is_not_paired_is_not_stored() {
+    let det = Det::new();
+    let s = DeckStore::open_in_memory(det.clock(), det.ids())
+        .await
+        .unwrap();
+    // The call of a station that `revoke_station` just removed.
+    let gone = StationId::from("st-gone".to_owned());
+    s.put_station_palette(gone.clone(), palette("aB", PaletteMode::Dark))
+        .await
+        .unwrap();
+    assert_eq!(s.station_palette(gone).await.unwrap(), None);
+}

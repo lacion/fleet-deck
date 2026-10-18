@@ -103,8 +103,11 @@ impl DeckStore {
         let mode = mode_name(palette.mode);
         call(&self.inner.db, move |conn| {
             conn.execute(
+                // Only while the station row exists: a call that races with
+                // `revoke_station` must not leave an orphan row.
                 "INSERT INTO station_palettes (station_id, mode, colors, updated_at)
-                 VALUES (?1, ?2, ?3, ?4)
+                 SELECT ?1, ?2, ?3, ?4
+                 WHERE EXISTS (SELECT 1 FROM stations WHERE station_id = ?1)
                  ON CONFLICT(station_id) DO UPDATE
                  SET mode = excluded.mode, colors = excluded.colors,
                      updated_at = excluded.updated_at",
