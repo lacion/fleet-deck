@@ -107,6 +107,8 @@ pub struct Desktop {
     walls: actions::WallLocks,
     cache: Mutex<Option<Cached>>,
     limits: Mutex<deadline::Limits>,
+    /// The one screenshot slot of the station (R13 P5a).
+    capture: capture::CaptureSlot,
 }
 
 impl Desktop {
@@ -119,6 +121,7 @@ impl Desktop {
             walls: actions::WallLocks::default(),
             cache: Mutex::new(None),
             limits: Mutex::new(deadline::Limits::default()),
+            capture: capture::CaptureSlot::default(),
         }
     }
 

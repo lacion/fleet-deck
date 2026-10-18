@@ -8,6 +8,7 @@
 //! session's own `publish_artifact` MCP tool ([`fleet`]).
 
 pub mod bundle;
+pub mod capture_import;
 mod delete;
 pub mod fleet;
 pub mod service;
