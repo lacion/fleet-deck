@@ -39,6 +39,7 @@ pub(crate) struct Hooks {
     phase: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
     before_insert: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
     after_miss: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
+    after_write: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
 }
 
 /// Waits for one permit of `gate`, when there is a gate.
@@ -70,12 +71,25 @@ impl Hooks {
         gate
     }
 
-    /// A stop that found no live recording waits for a permit before it
-    /// writes the store latch.
+    /// A stop that left a pending stop (no live recording) waits for a
+    /// permit before it writes the store latch.
     pub(crate) fn hold_after_miss(&self) -> Arc<tokio::sync::Semaphore> {
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
         *self.after_miss.lock().unwrap() = Some(Arc::clone(&gate));
         gate
+    }
+
+    /// A stop whose store write committed waits for a permit before any
+    /// later step.
+    pub(crate) fn hold_after_write(&self) -> Arc<tokio::sync::Semaphore> {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        *self.after_write.lock().unwrap() = Some(Arc::clone(&gate));
+        gate
+    }
+
+    pub(super) async fn wait_after_write(&self) {
+        let gate = self.after_write.lock().unwrap().clone();
+        pass(gate).await;
     }
 
     pub(super) async fn wait_before_insert(&self) {

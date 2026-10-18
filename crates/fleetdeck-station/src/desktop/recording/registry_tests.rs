@@ -6,7 +6,8 @@
 
 use fleetdeck_proto::recording::StopReason;
 
-use super::registry::StopOutcome;
+use super::latch::Latch;
+use super::registry::{PendingStop, StopOutcome};
 use super::rig_tests::{ID, ID2, T};
 use crate::artifacts::capture_import::tests::FP;
 use crate::store::capture_ops::{Begin, RecordingBegin, StopIntent};
@@ -109,4 +110,65 @@ async fn the_shutdown_with_nothing_running_does_nothing() {
     let t = T::new().await;
     t.desktop().shutdown_recordings();
     assert!(t.run(ID, "DP-1", 1).await.is_ok());
+}
+
+#[tokio::test]
+async fn a_pending_stop_follows_the_latch_rules_and_is_bounded() {
+    let t = T::new().await;
+    let reg = &t.desktop().recordings;
+    let save = PendingStop {
+        save: true,
+        reason: StopReason::OwnerStop,
+    };
+    let discard = PendingStop {
+        save: false,
+        reason: StopReason::DeckPolicy,
+    };
+    // A discard replaces a save, never the reverse; the first discard wins.
+    reg.stop_pending_or_live(FP, ID, save);
+    assert_eq!(reg.pending_stop(FP, ID), Some(save));
+    reg.stop_pending_or_live(FP, ID, discard);
+    assert_eq!(reg.pending_stop(FP, ID), Some(discard));
+    reg.stop_pending_or_live(FP, ID, save);
+    assert_eq!(reg.pending_stop(FP, ID), Some(discard));
+    reg.stop_pending_or_live(
+        FP,
+        ID,
+        PendingStop {
+            save: false,
+            reason: StopReason::PolicyOff,
+        },
+    );
+    assert_eq!(reg.pending_stop(FP, ID), Some(discard));
+    // At most 64 stay; the oldest goes.
+    for n in 0..70 {
+        reg.stop_pending_or_live(FP, &format!("cap-{n}"), save);
+    }
+    assert_eq!(reg.pending_count(), 64);
+    assert_eq!(reg.pending_stop(FP, ID), None);
+    assert_eq!(reg.pending_stop(FP, "cap-5"), None);
+    assert_eq!(reg.pending_stop(FP, "cap-6"), Some(save));
+    assert_eq!(reg.pending_stop(FP, "cap-69"), Some(save));
+}
+
+#[tokio::test]
+async fn a_recording_that_registers_takes_its_pending_stop() {
+    let t = T::new().await;
+    let reg = &t.desktop().recordings;
+    reg.stop_pending_or_live(
+        FP,
+        ID,
+        PendingStop {
+            save: false,
+            reason: StopReason::DeckPolicy,
+        },
+    );
+    let latch = Latch::new(t.store().clone(), FP, ID);
+    assert_eq!(latch.first_stop(), None);
+    let live = reg.insert(&latch);
+    assert_eq!(latch.first_discard(), Some(StopReason::DeckPolicy));
+    assert_eq!(reg.pending_count(), 0);
+    assert!(reg.get(FP, ID).is_some());
+    drop(live);
+    assert!(reg.get(FP, ID).is_none());
 }

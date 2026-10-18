@@ -3,8 +3,8 @@
 //! station-wide actions on them (the active one of a deck, a stop, the
 //! shutdown).
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use fleetdeck_proto::recording::StopReason;
 
@@ -15,10 +15,48 @@ use crate::store::{Store, StoreError};
 
 type Key = (String, String);
 
-/// The recordings that run now.
+/// How many stops without a live recording the registry keeps; the oldest
+/// goes first.
+const MAX_PENDING: usize = 64;
+
+/// A stop that came before its recording registered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PendingStop {
+    pub save: bool,
+    pub reason: StopReason,
+}
+
+enum Entry {
+    /// The recording runs: its memory latch.
+    Live(Arc<Latch>),
+    /// No recording yet: the stop that the recording gets when it registers.
+    Pending(PendingStop),
+}
+
+#[derive(Default)]
+struct Slots {
+    map: HashMap<Key, Entry>,
+    /// The keys of the pending stops, the oldest first.
+    pending: VecDeque<Key>,
+}
+
+impl Slots {
+    /// Takes out the pending stop of `key`, if there is one.
+    fn take_pending(&mut self, key: &Key) -> Option<PendingStop> {
+        let Some(Entry::Pending(stop)) = self.map.get(key) else {
+            return None;
+        };
+        let stop = *stop;
+        self.map.remove(key);
+        self.pending.retain(|k| k != key);
+        Some(stop)
+    }
+}
+
+/// The recordings that run now, and the stops that wait for a recording.
 #[derive(Default)]
 pub(crate) struct Registry {
-    live: Mutex<HashMap<Key, Arc<Latch>>>,
+    slots: Mutex<Slots>,
     /// What a test holds still (never in a production build).
     #[cfg(test)]
     pub(crate) hooks: super::rig_tests::Hooks,
@@ -31,14 +69,24 @@ pub(crate) struct Registered<'a> {
 }
 
 impl Registry {
-    fn map(&self) -> std::sync::MutexGuard<'_, HashMap<Key, Arc<Latch>>> {
-        self.live.lock().unwrap_or_else(PoisonError::into_inner)
+    fn slots(&self) -> MutexGuard<'_, Slots> {
+        self.slots.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Adds a recording; it stays until the guard is dropped.
+    /// Adds a recording; it stays until the guard is dropped. A stop that
+    /// waits for it is applied to its latch before it becomes live, under
+    /// the same lock.
     pub(crate) fn insert(&self, latch: &Arc<Latch>) -> Registered<'_> {
         let key = (latch.deck_fp().to_owned(), latch.capture_id().to_owned());
-        self.map().insert(key.clone(), Arc::clone(latch));
+        {
+            let mut slots = self.slots();
+            if let Some(stop) = slots.take_pending(&key) {
+                latch.signal(stop.save, stop.reason);
+            }
+            slots
+                .map
+                .insert(key.clone(), Entry::Live(Arc::clone(latch)));
+        }
         Registered {
             registry: self,
             key,
@@ -46,19 +94,102 @@ impl Registry {
     }
 
     pub(crate) fn get(&self, deck_fp: &str, capture_id: &str) -> Option<Arc<Latch>> {
-        self.map()
+        match self
+            .slots()
+            .map
             .get(&(deck_fp.to_owned(), capture_id.to_owned()))
-            .cloned()
+        {
+            Some(Entry::Live(latch)) => Some(Arc::clone(latch)),
+            _ => None,
+        }
     }
 
     fn all(&self) -> Vec<Arc<Latch>> {
-        self.map().values().cloned().collect()
+        self.slots()
+            .map
+            .values()
+            .filter_map(|entry| match entry {
+                Entry::Live(latch) => Some(Arc::clone(latch)),
+                Entry::Pending(_) => None,
+            })
+            .collect()
+    }
+
+    /// The memory half of a stop, in one step under the lock (no await). A
+    /// live recording gets the stop in its latch at once and is returned.
+    /// Without one, the stop waits as a pending stop (a discard replaces a
+    /// save, never the reverse; the oldest of more than [`MAX_PENDING`]
+    /// goes) and the answer is `None`.
+    fn stop_in_memory(
+        &self,
+        deck_fp: &str,
+        capture_id: &str,
+        stop: PendingStop,
+    ) -> Option<Arc<Latch>> {
+        let key = (deck_fp.to_owned(), capture_id.to_owned());
+        let mut slots = self.slots();
+        match slots.map.get_mut(&key) {
+            Some(Entry::Live(latch)) => {
+                latch.signal(stop.save, stop.reason);
+                return Some(Arc::clone(latch));
+            }
+            Some(Entry::Pending(held)) => {
+                if held.save && !stop.save {
+                    *held = stop;
+                }
+            }
+            None => {
+                if slots.pending.len() >= MAX_PENDING
+                    && let Some(oldest) = slots.pending.pop_front()
+                {
+                    slots.map.remove(&oldest);
+                }
+                slots.pending.push_back(key.clone());
+                slots.map.insert(key, Entry::Pending(stop));
+            }
+        }
+        None
+    }
+
+    /// Drops the pending stop of a recording (the store answered that the
+    /// row is not a running recording).
+    fn drop_pending(&self, deck_fp: &str, capture_id: &str) {
+        let key = (deck_fp.to_owned(), capture_id.to_owned());
+        self.slots().take_pending(&key);
+    }
+
+    /// The pending stop of a recording, if any (tests).
+    #[cfg(test)]
+    pub(crate) fn pending_stop(&self, deck_fp: &str, capture_id: &str) -> Option<PendingStop> {
+        match self
+            .slots()
+            .map
+            .get(&(deck_fp.to_owned(), capture_id.to_owned()))
+        {
+            Some(Entry::Pending(stop)) => Some(*stop),
+            _ => None,
+        }
+    }
+
+    /// How many pending stops there are (tests).
+    #[cfg(test)]
+    pub(crate) fn pending_count(&self) -> usize {
+        self.slots().pending.len()
+    }
+
+    /// Stops a recording in memory, as `stop_recording` does first (tests).
+    #[cfg(test)]
+    pub(crate) fn stop_pending_or_live(&self, deck_fp: &str, capture_id: &str, stop: PendingStop) {
+        drop(self.stop_in_memory(deck_fp, capture_id, stop));
     }
 }
 
 impl Drop for Registered<'_> {
     fn drop(&mut self) {
-        self.registry.map().remove(&self.key);
+        let mut slots = self.registry.slots();
+        if matches!(slots.map.get(&self.key), Some(Entry::Live(_))) {
+            slots.map.remove(&self.key);
+        }
     }
 }
 
@@ -116,7 +247,11 @@ impl Desktop {
         reason: StopReason,
     ) -> Result<StopOutcome, StoreError> {
         let save = reason.is_save();
-        if let Some(latch) = self.recordings.get(deck_fp, capture_id) {
+        // First, in memory and before any await: a live recording gets the
+        // stop in its latch; else the stop waits in the registry, and the
+        // recording that registers later applies it before it launches.
+        let stop = PendingStop { save, reason };
+        if let Some(latch) = self.recordings.stop_in_memory(deck_fp, capture_id, stop) {
             latch.stop(save, reason).await;
             return Ok(StopOutcome::Live);
         }
@@ -126,12 +261,14 @@ impl Desktop {
             .recording_latch(deck_fp, capture_id, save, reason)
             .await?;
         if held.is_none() {
+            self.recordings.drop_pending(deck_fp, capture_id);
             return Ok(StopOutcome::NotRunning);
         }
-        // The operation may have registered after the lookup above. The
-        // store latch is written now, so the operation reads it at its next
-        // store read; and when it is registered already, its memory latch
-        // (the one that the launch guard reads) is set here too.
+        #[cfg(test)]
+        self.recordings.hooks.wait_after_write().await;
+        // The operation may have registered meanwhile: it took the pending
+        // stop at its registration. Its latch gets the durable write and the
+        // phase here too.
         if let Some(latch) = self.recordings.get(deck_fp, capture_id) {
             latch.stop(save, reason).await;
             return Ok(StopOutcome::Live);
