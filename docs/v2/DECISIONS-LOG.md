@@ -3344,3 +3344,10 @@ Owner review: pending.
   - c. The owner may change OD-1 to OD-7 (`omarchy-p6.md` §1).
   - d. The end-to-end proofs (task T7a) are in progress when this entry is written. They include the two open items of O12-11 and O12-12.
 - Next: the PRE-PR review of P6; the owner reads the new rows of `SECURITY-CHECKLIST.md` (DL-158); the live smoke on the Omarchy machines.
+
+## DL-238: R13 P6 accepted after the PRE-PR review (architect, 2026-10-20)
+
+- Context: the adversary PRE-PR review of P6 (DL-237) ran 3 rounds. Round 1 FAIL: 2 BLOCKER (the target did not recheck the capture monitor before image bytes left; the caller station did not recheck its fleet-control setting, the binding and the link fence before a result reached the agent), 2 MAJOR (the preview-close check was not at the compositor write; a duplicate request id returned a stored result before the grant check), and a race in the restart test. Round 2: all five closed; one new BLOCKER (the window identity after the authority await at the close write). Round 3: PASS.
+- Decision: the fixes `ffa6bd33` (O12-14) and `c2412777` (O12-16) are accepted. P6 is accepted.
+- Open items: the live smoke on the owner's Omarchy machines and the opt-in Claude and Codex smoke (§15 test 38); no board path to close a preview that an agent opened (product gap); the WS delivery of a coordinator wall makes two policy round trips per batch (performance); the owner may still change OD-1 to OD-7.
+
