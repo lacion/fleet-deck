@@ -470,3 +470,64 @@ async fn an_attached_shell_socket_closes_after_a_logout_and_a_token_revocation()
     st.shutdown();
     node.shutdown();
 }
+
+/// Reads until the text holds `needle`, or for one second.
+async fn read_for(ws: &mut Ws, needle: &str) {
+    let mut seen = String::new();
+    let _ = tokio::time::timeout(Duration::from_secs(1), async {
+        while !seen.contains(needle) {
+            match ws.0.next().await {
+                Some(Ok(Message::Binary(b))) => seen.push_str(&String::from_utf8_lossy(&b)),
+                Some(Ok(_)) => {}
+                _ => break,
+            }
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn many_detached_sockets_free_their_data_stream_slots() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("projects");
+    std::fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    std::fs::create_dir_all(tmp.path().join("s")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("d")).unwrap();
+    let (node, board) = deck(&tmp.path().join("d")).await;
+    let st = station(&tmp.path().join("s"), root.clone(), true).await;
+    st.join(&node.invite().unwrap()).await.unwrap();
+    let (cookie, csrf) = board.login().await;
+    let o = Owner {
+        cookie,
+        csrf,
+        origin: board.origin(),
+    };
+    let r = change(
+        &board,
+        &o,
+        "sh-open-1",
+        json!({ "op": "open", "shell_id": "main", "cwd": root.to_str().unwrap(), "cols": 80, "rows": 24 }),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    let mut ws = attach(&board, &o, "main").await;
+    keys(&mut ws, "echo slot-$((40+2))\n").await;
+    read_until(&mut ws, "slot-42").await;
+    drop(ws);
+
+    // The link allows 64 data streams: 70 detached sockets on one link
+    // free their slots on both sides, or the later attach is refused.
+    for _ in 0..70 {
+        let mut ws = attach(&board, &o, "main").await;
+        read_for(&mut ws, "slot-42").await;
+        let _ = ws.0.close(None).await;
+    }
+    let mut ws = attach(&board, &o, "main").await;
+    keys(&mut ws, "echo after-$((40+3))\n").await;
+    read_until(&mut ws, "after-43").await;
+    let r = board.get("/api/stations/alpha/shells", &o.read()).await;
+    assert_eq!(r.body[0]["state"], "running", "{}", r.body);
+    st.shutdown();
+    node.shutdown();
+}
