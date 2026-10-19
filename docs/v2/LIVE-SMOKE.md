@@ -392,7 +392,7 @@ Set up:
 2. Go to the station tab of the station. Turn on "Desktop control" and "Desktop screenshots". The board asks for a recent sign-in. Sign in again when it asks.
 3. Leave "Screenshot monitors" empty. An empty list allows every monitor.
 4. Open the station card and open the Desktop panel. Each monitor must show "Duration (seconds)" with the value 30, a "Record" button and the disclosure "Records the whole selected monitor, including other applications, notifications and private information visible there. No audio is recorded. The recording is stored as an ordinary artifact until deleted."
-5. If "Record" is off, read the reason line. "The recording tool wf-recorder is not installed." means that the tool is missing. Installing it has no board path yet.
+5. If "Record" is off, read the reason line. "The recording tool wf-recorder is not installed." means that the tool is missing. Install it from the board (part "Install desktop tools from the board (DL-250)").
 
 Items:
 
@@ -437,7 +437,7 @@ Items:
    1. Enter 120 in "Duration (seconds)". Press "Record".
    2. Wait the whole time. Do not press "Stop recording". Expect "Recording" for about 2 minutes, then "Saving recording", and then "Open the recording". The text "The recording tool failed." or "The recording file could not be verified." means that the retained FD or the finalization does not work with this `wf-recorder`. Write the text in the result and stop here.
    3. Open the recording. Press play and seek to the end. Expect a clip of about 120 seconds that plays in the browser. The viewer line shows both lengths only when they differ by more than 1 second.
-   4. Write the `wf-recorder` version in the result (no board path yet to read it). Write the size of the file.
+   4. Write the `wf-recorder` version in the result (read it on the card "Desktop tools": it shows the package version when a package owns the program). Write the size of the file.
    5. The board shows no process list. Whether a recorder process stays on the station after the recording has no board path yet. Write "no board path yet" in the result for this check.
    6. Delete the recording (item 6).
 
@@ -536,10 +536,10 @@ Items:
    4. Ask for the chords `Alt+Tab`, `F5` and `CTRL+A`. Expect `invalid_params` for each, no notification and no change on the screen.
    5. Ask for a text with a new line. Expect `invalid_params`.
 4. **The `wtype` behavior (record).**
-   1. Write the version of `wtype` and of Hyprland and Chromium in the result (no board path yet to read them).
+   1. Write the version of `wtype` and of Hyprland and Chromium in the result (read them on the card "Desktop tools": it shows the package version when a package owns the program).
    2. Ask the coordinator to type each of these texts, one call each, in the text field. Write for each whether the field shows exactly the text: a text that starts with a dash, for example `-n --help`; a text with quotes and a backslash; an accented text, for example `café`; a text with a combining accent; a non-Latin text, for example `Привет`; an emoji.
    3. Ask for a text of 2,000 characters. Write the time from the notification to the result, and whether the field shows all the characters.
-   4. Write the keyboard layout of the station if the board shows it (no board path yet). Write whether the accented and non-Latin texts follow it.
+   4. Write the keyboard layout of the station (the card "Desktop tools" shows it). Write whether the accented and non-Latin texts follow it.
    5. Write whether a modifier stays pressed after a call. Ask for the key `Shift+a`, then for the key `a`. Write whether the field shows `Aa` or `AA`.
 5. **The focus (record).**
    1. Ask for a text while the preview is a tiled window, and again while it is a floating window. Write whether the text always lands in the preview.
@@ -637,7 +637,7 @@ Items:
    7. If the second station has no `wlrctl`, ask for a click and expect `input_click_tool_missing` with the text "The pointer click tool wlrctl is not installed on the target station." Write the result. There is no board path to remove `wlrctl` to cause it.
    8. Ask the coordinator of a grant without the click (the session of the P7 smoke) for a click. Expect that it has no `pointer_click` tool. Write the answer.
 4. **The click recording (record).**
-   1. Write the versions of Hyprland, Chromium and `wlrctl` in the result (no board path yet to read them).
+   1. Write the versions of Hyprland, Chromium and `wlrctl` in the result (read them on the card "Desktop tools": it shows the package version when a package owns the program).
    2. Write whether the Hyprland session and the Wayland socket of `wlrctl` are the same one. The board cannot show this. An ambiguous setup refuses with `input_click_tool_unsupported` and the text "The target desktop cannot use the configured pointer click tool." Write whether you got this text. There is no board path to cause it.
    3. Write where the pointer stands after a click. The board has no view of the pointer (no board path yet): look at the screen. Write whether the creation of the virtual pointer by `wlrctl` kept the cursor at the checked point.
    4. Ask for two clicks, one call each, on the button that counts clicks. Write whether the page counts one click or two for each call, whether it reads two calls as a double click, and whether the press and the release both reach the page.
@@ -715,7 +715,7 @@ Result:
 
 ### Board paths for the remaining owner actions (DL-249)
 
-The contract is `docs/v2/design/board-gaps.md` (BG-2, BG-3 and BG-4; BG-1 is not built and has no smoke). The owner guides are `docs/v2/operations.md` section 7.5 (part "Repair an installer conflict"), section 10 (part "Stop the processes of a lost run") and section 15.5. This smoke is required before you rely on these repairs. The PRE-PR reviews of BG-2, BG-3 and BG-4 are also pending (DL-249 item a).
+The contract is `docs/v2/design/board-gaps.md` (BG-2, BG-3 and BG-4; BG-1 has its own part below, DL-250). The owner guides are `docs/v2/operations.md` section 7.5 (part "Repair an installer conflict"), section 10 (part "Stop the processes of a lost run") and section 15.5. This smoke is required before you rely on these repairs. The PRE-PR reviews of BG-2, BG-3 and BG-4 are done (DL-249 item a).
 
 Every step is a board step. No step asks you to run a command or to edit a file on a station. A value that the board cannot show is marked "no board path yet". It is an open item, not an instruction. A step that needs a fault on a station has no board path to cause the fault. Use a station that already has the fault. When you have none, write "not run: no board path yet to cause the fault" in the result for that item. Use a machine and a session that hold nothing of value: a stop signals real processes, and a replacement moves real files.
 
@@ -789,5 +789,69 @@ Result:
 | (not run) | | | Installer conflict repair: open. |
 | (not run) | | | Stop of a lost run: open. |
 | (not run) | | | Setup reports and one setup retry: open. The live smoke of BG-2, BG-3 and BG-4 is open (DL-249 item d). Do not rely on these repairs before it passes. |
+
+### Install desktop tools from the board (DL-250)
+
+The contract is `docs/v2/design/board-gaps.md` section 2 (revisions 4 and 5). The owner guide is `docs/v2/operations.md` section 7.10. Do this smoke on the owner's Omarchy machines: the server and the laptop. It is required before you rely on the installation of the desktop tools. The PRE-PR review of BG-1 is also pending (DL-250 item a).
+
+Every step is a board step. No step asks you to run a command or to edit a file on a station. A value that the board cannot show is marked "no board path yet". It is an open item, not an instruction. Use a machine that holds nothing of value: the installation changes the packages of the machine as root.
+
+Set up:
+
+1. Use an Omarchy station that is linked to the deck. Open the board and go to Settings, then the station tab of the station. Find the card "Desktop tools" right after the card "Omarchy".
+2. Items 3 to 7 need a tool that is missing and that Fleet Deck can install, for example `wf-recorder`. Item 7 needs a second missing tool, for example `wtype`. The board has no way to remove a tool (no board path yet to remove a tool). Use a station where the tools are missing. When none is missing, write "not run: no board path yet to remove a tool" in the result for these items.
+3. Items 4 and 5 need `sudo` to ask for the station password. When the card shows "Passwordless sudo is enabled on this station.", `sudo` asks no password. Then write "not run: passwordless sudo is on" for the items 4 and 5 and go on with the other items.
+4. The station setting "Board terminals" (`allow_shell`) must be on. Have the station password of the user ready.
+5. The button **Open installation terminal** asks "Confirm it is you". The text says "This change needs it: Install desktop tools." The board asks nothing when it still holds a recent sign-in.
+
+Items:
+
+1. **Refresh diagnostics.**
+   1. Press **Refresh diagnostics**. Expect one line for each of the nine tools: `wtype`, `wf-recorder`, `wlrctl`, `grim`, `busctl`, `jq`, Hyprland, Chromium and `notify-send`.
+   2. For a tool that is present, expect "Present" and, when a package owns it, `· version <version> (package)`. For a tool that is missing, expect "Missing".
+   3. Expect the line "Keyboard layouts: <list>" with the layout that you use, the line "Fleet plugin: valid" (or "not installed" when the integration is not installed) and, when passwordless sudo is on, "Passwordless sudo is enabled on this station."
+   4. Write what the card shows. Write the versions that the card shows for `wtype`, `wf-recorder`, Hyprland, Chromium and `wlrctl`. Compare the nine lines with what you know of the machine. Write each difference.
+2. **Review the plan, then cancel.**
+   1. Press **Install desktop tools…**. Expect "Reading the install plan…" and then the plan: "To install: <tools>", "Already present: <tools>", the command `sudo pacman -S --needed --noconfirm <repository>/<name> …`, "Packages in the transaction:" with one line `<repository>/<name> <version>` for each package, and the confirmation "This opens a board terminal to install the listed packages as root. Review the transaction and enter your station password there if sudo asks."
+   2. Expect each line of the transaction to start with `core/` or `extra/`. Write each package and its version. Write a line that starts with another repository (this is a failure: the plan must be refused instead).
+   3. If `wlrctl` is missing, expect "Fleet Deck has no supported package source for wlrctl on this station." and no command for it.
+   4. Press **Cancel**. Expect the panel to close and no change on the card.
+3. **Install a missing tool.**
+   1. Press **Install desktop tools…** and then **Open installation terminal**. Confirm it is you.
+   2. Expect the panel "Installation terminal" with "Connecting…" or "Starting…", and then "Installing… Enter your station password in the terminal if sudo asks." Expect a row in "Installations" with the state "Running" and the button **Reattach**.
+   3. Expect the prompt of `sudo` in the terminal. Click the terminal and type the station password. Expect that nothing that you type shows. Press Enter.
+   4. Expect the output of `pacman` for the packages of the plan. Expect no question that waits for an answer: a conflict or a removal stops the transaction with the answer no.
+   5. When the run ends, expect "The package transaction finished." and, for each tool of the run, "<tool>: Installed. Desktop compatibility has not been verified." Expect the card to show the tool as "Present" with a package version, and the row in "Installations" to show "Finished" and **Show output**.
+   6. Write the lines of the panel and the version that the card shows. Write "no board path yet" for a check that the tool works with the compositor: the board does not prove it.
+4. **A wrong password.** Do this item at the start of an installation of a tool that is still missing (the second tool of the setup, or the same tool on another machine).
+   1. At the prompt of `sudo`, type a wrong password and press Enter. Expect `sudo` to say that the password is wrong and to ask again. Expect that nothing that you typed shows, also not in the new prompt.
+   2. Type the right password. Expect the install to go on.
+   3. Write whether any typed text showed in the terminal, in the output after a reattach (item 5) or in **Show output** after the end. Any typed text there is a failure.
+5. **Detach and reattach.**
+   1. While `sudo` waits for the password (or while `pacman` runs), press **Detach**. Expect the panel to close and the row in "Installations" to stay "Running".
+   2. Wait a few seconds. Press **Reattach** on the row. Expect the panel and the earlier output first (the prompt or the lines of `pacman`), then the live output.
+   3. Reload the browser tab, open the card again and press **Reattach**. Expect the same.
+   4. Finish the installation as in item 3. Write the result.
+6. **The result lines.**
+   1. After a finished installation, press **Show output** on its row. Expect the saved output and no way to type: input is not sent.
+   2. For a run that ended with an error, expect "The package transaction ended with code <n>." and the row "Ended with code <n>". The board has no way to cause an error (no board path yet). Write the result of a run that ended with an error, or "not run" when none did.
+   3. Write "no board path yet" for a run that ends in "The installed packages differ from the reviewed plan." and for a run in the state "Runner lost". The board has no way to cause them. The unit tests cover them.
+7. **A station restart during an installation.**
+   1. Start an installation of a second missing tool and stay at the prompt of `sudo`, or wait while `pacman` runs.
+   2. Restart the station from the board: in Settings, on the station tab, press the button "Restart <station name>…" and confirm. The board asks "Confirm it is you" for "Restart". Wait until the station is live again.
+   3. Open the card. Expect the row in "Installations" in the state "Running" (or "Finished" when the transaction ended during the restart). Press **Reattach**. Expect the saved output first.
+   4. If `sudo` still waits, type the password and finish the installation. Expect "The package transaction finished." and the tool as "Present". Expect that the station did not start a second installation by itself.
+   5. Write what the list and the panel showed after the restart.
+8. **The refusals.**
+   1. While an installation runs, press **Install desktop tools…** and then **Open installation terminal** on the same board, for a plan that has a tool. Expect "Another installation is running on this station."
+   2. Turn "Board terminals" off in the station settings (this change needs an elevation) and press **Open installation terminal**. Expect "Board terminals are disabled on this station. Enable them in station settings to install desktop tools." Turn the setting on again.
+   3. Open the card for a station of an older build, if you have one. Expect no card, or "This station's build cannot install desktop tools from the board." in the install panel.
+   4. Write "no board path yet" in the result for: a system configuration that root does not own (the plan is refused without names), a package from another repository, a database refresh between the plan and the install, a full disk, a network failure during the download, and the audit rows `station.maintenance` (the board has no view of the audit). The unit tests cover them.
+
+Result:
+
+| Date | Machines | Items | Result |
+| --- | --- | --- | --- |
+| (not run) | | | Install desktop tools from the board: open. The live smoke of BG-1 is open (DL-250 item b). Do not rely on the installation before it passes. |
 
 <!-- desktop-smoke:end -->

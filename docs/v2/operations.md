@@ -717,7 +717,7 @@ This section covers the owner recording of a monitor. The contract is `design/om
 1. Open Settings, then the Deck tab. Turn on "Desktop control" if it is off.
 2. Open the station tab of the station. Turn on "Desktop control" and "Desktop screenshots". The board asks for a recent sign-in. Sign in again when it asks.
 3. Leave "Screenshot monitors" empty to allow every monitor, or enter the monitor names. One setting and one list cover screenshots and recordings. When "Desktop screenshots" is off, the panel line for a recording says "Desktop screenshots are off on this station. Recordings need them. Turn them on in Settings."
-4. The station and the deck must both be a version that supports recordings. The recording tool `wf-recorder` must be on the `PATH` of the desktop. Installing `wf-recorder` on a station has no board path yet. This is an open item.
+4. The station and the deck must both be a version that supports recordings. The recording tool `wf-recorder` must be on the `PATH` of the desktop. If it is missing, install it from the board (section 7.10).
 
 If Record is off, read the reason line in the Desktop panel. The reason is one of these texts:
 
@@ -874,7 +874,7 @@ A refused call charges nothing. A call that is accepted and then fails keeps its
 
 - The real-recorder smoke on the owner's Omarchy machine is not done (see `docs/v2/LIVE-SMOKE.md`). Do not rely on recordings before it passes.
 - The deck does not end a video response when a client stops reading. The 180 second limit needs a connection write timeout (DL-239 item c).
-- Installing `wf-recorder` has no board path yet.
+- Installing `wf-recorder` is a board action now: see section 7.10.
 - Agent recordings: the live smoke is not done.
 
 ### 7.8 Agent keyboard and pointer input (R13 P7)
@@ -1000,12 +1000,12 @@ The agent sees the code and the fixed text. A message that says "some input may 
 
 The deck and the station also answer with the codes `fleet_control_off`, `desktop_control_off`, `desktop_forbidden`, `authority_lost` and `authority_unknown`. Their texts are in section 7.6. When the deck cannot know the result, the agent gets the code `desktop_timeout` and this text: "The input outcome is unknown. Inspect the preview before issuing another input request." The state is `unknown`. Look at the preview before you ask for more input.
 
-`fleetdeck doctor` shows whether `wtype` is installed on the machine where it runs. On an Omarchy machine the line is `ok desktop-input: wtype found` or `warn desktop-input: wtype not found: agent keyboard input and text fail until it is installed`. A machine without Omarchy has no line. The `warn` is not a failure. This version has no board view of the doctor lines (see section 7.5), so a check of a remote station has no board path yet. A station without `wtype` refuses keys and text with `input_tool_missing`. Installing `wtype` has no board path yet.
+`fleetdeck doctor` shows whether `wtype` is installed on the machine where it runs. On an Omarchy machine the line is `ok desktop-input: wtype found` or `warn desktop-input: wtype not found: agent keyboard input and text fail until it is installed`. A machine without Omarchy has no line. The `warn` is not a failure. This version has no board view of the doctor lines (see section 7.5). The card "Desktop tools" shows whether `wtype` is present on a remote station, and installs it (section 7.10). A station without `wtype` refuses keys and text with `input_tool_missing`.
 
 #### Open items
 
 - The PRE-PR review and the live smoke are not done (see `docs/v2/LIVE-SMOKE.md`). Do not rely on agent input before the smoke passes.
-- Installing `wtype`, and reading the `desktop-input` line of a remote station, have no board path yet.
+- Reading whether `wtype` is present on a remote station, and installing it, are board actions now: see section 7.10.
 - The pointer click and the input in other application windows are in §7.9 (P7b).
 - The page where a member joins shows a generic error when the sign-in is blocked for input.
 - A browser on the target machine that uses an address that the station does not report is not signed out.
@@ -1143,15 +1143,144 @@ When the deck cannot know the result of a click or of a call under the scope, th
 
 `window_list` also gives these codes from the station: `input_any_disabled`, `input_scope_not_allowed`, `input_not_allowed`, `screen_locked`, `busy`, `desktop_result_too_large`, `desktop_window_not_found`, `desktop_control_off` and `desktop_unsupported`. Another station error gives `desktop_failed`. A list that the station cannot finish because of a window change gives `desktop_failed` and no window.
 
-`fleetdeck doctor` shows whether `wlrctl` is installed on the machine where it runs. On an Omarchy machine the line is `ok desktop-click: wlrctl found; compatibility is not verified (live smoke pending)` or `warn desktop-click: wlrctl not found: agent pointer clicks fail until it is installed`. A machine without Omarchy has no line. The doctor never clicks and never runs `wlrctl`. The `warn` is not a failure. A check of a remote station has no board path yet. Installing `wlrctl` has no board path yet (there is no supported package source).
+`fleetdeck doctor` shows whether `wlrctl` is installed on the machine where it runs. On an Omarchy machine the line is `ok desktop-click: wlrctl found; compatibility is not verified (live smoke pending)` or `warn desktop-click: wlrctl not found: agent pointer clicks fail until it is installed`. A machine without Omarchy has no line. The doctor never clicks and never runs `wlrctl`. The `warn` is not a failure. The card "Desktop tools" shows whether `wlrctl` is present on a remote station (section 7.10). Installing `wlrctl` has no board path yet (there is no supported package source).
 
 #### Open items
 
 - The PRE-PR review and the live smoke are not done (see `docs/v2/LIVE-SMOKE.md`). Do not rely on clicks or on input in other windows before the smoke passes.
-- Installing `wlrctl`, and reading the `desktop-click` line of a remote station, have no board path yet.
+- Installing `wlrctl` has no board path yet (there is no supported package source). Reading whether it is present on a remote station is a board action now: see section 7.10.
 - The scope for other windows reaches terminals and signed-in browser windows. You decide if you accept this.
 - The right and middle buttons, a double click as one call, scrolling, dragging and held keys are not built.
 - The open items of section 7.8 about the member join page and about an address that the station does not report still apply.
+
+### 7.10 Install desktop tools from the board (BG-1)
+
+This part shows how to read the desktop tools of a station and how to install the missing ones. You do not log in to the station. The contract is `design/board-gaps.md` section 2 (revision 4 for the system configuration, revision 5 for the maintenance channel). The built version is recorded in DL-250. The PRE-PR review and the live smoke on the owner's Omarchy machines are not done yet (`make desktop-smoke` prints the list).
+
+Where the card is:
+
+1. Open Settings, then the station tab of the station.
+2. Find the card "Desktop tools" right after the card "Omarchy".
+
+The station must be connected to the deck. A station or a deck of an older build shows no card (the two features are `station_tools.v1` and `desktop_tool_install.v1`). When the station can show the facts but cannot install, the install panel shows "This station's build cannot install desktop tools from the board." When the board cannot read the facts, the card shows "The desktop tools could not be read." and the button **Refresh diagnostics**.
+
+#### What the card shows
+
+The card shows one line for each of these nine tools: `wtype`, `wf-recorder`, `wlrctl`, `grim`, `busctl`, `jq`, Hyprland, Chromium and `notify-send`. Each line has this form: `<name>: <status>`.
+
+| Status | Meaning |
+| --- | --- |
+| Present | The station finds the program on the `PATH` of the desktop, the same way as the desktop operation that needs it. |
+| Missing | The station does not find the program. |
+| Present (version unknown) | The program is there, but the station cannot ask the package database about it. |
+| The check timed out. / The check failed. | The check of this one tool did not finish. The other lines stay valid. |
+
+When a package of the system owns the program, the line adds `· version <version> (package)`. The version is the version of the package. The station never runs a program to ask for its version. When another package owns the program, or no package does, the line adds "A different program with this name is used on the desktop."
+
+The card also shows these lines:
+
+- "Keyboard layouts: <list>". The list holds the layout names only, without device names. The line can also say "Keyboard layouts are not available." or "Keyboard layouts could not be read."
+- "Fleet plugin: valid", "invalid", "not installed" or "unknown". It is the Omarchy check of the Fleet Deck plugin.
+- "Passwordless sudo is enabled on this station." The line shows only when the passwordless sudo of Omarchy is on. Then `sudo` asks no password in the installation terminal.
+
+The station sends facts only. The answer holds no path, no program output and no environment value. A fact does not prove that a tool works with your compositor. After an install, the panel says "Installed. Desktop compatibility has not been verified."
+
+**Refresh diagnostics** reads the facts again. The card also reads them when it opens. The buttons of the card are off while a read runs.
+
+#### Install desktop tools
+
+1. Press **Install desktop tools…**. The panel "Install desktop tools" shows "Reading the install plan…" and then the plan.
+2. Read the plan. A normal plan has these parts:
+   - "To install: <tools>" and, when there are any, "Already present: <tools>".
+   - The command, for example `sudo pacman -S --needed --noconfirm extra/wf-recorder`.
+   - "Packages in the transaction:" with one line `<repository>/<name> <version>` for each package, the dependencies included.
+   - The confirmation "This opens a board terminal to install the listed packages as root. Review the transaction and enter your station password there if sudo asks."
+3. Press **Open installation terminal**, or **Cancel**. The board asks "Confirm it is you" for "Install desktop tools".
+4. The installation terminal opens below the card (see "The installation terminal").
+
+The plan is valid for 2 minutes. It belongs to your sign-in and to the station. A second press of the button for the same plan is the same request: it never starts a second installation. Another request for the same plan, another sign-in or an expired plan gives "The plan changed or expired. Review the desktop tools again." Press **Install desktop tools…** again.
+
+The other states of the panel:
+
+| Text | Meaning |
+| --- | --- |
+| All installable desktop tools are present. | Nothing is missing that Fleet Deck can install. No terminal opens. |
+| The package transaction needs packages that Fleet Deck does not allow. Nothing was installed. | The plan is refused. Nothing was changed. |
+| Not allowed: <names> | The packages that caused the refusal (see below). |
+| Fleet Deck has no supported package source for wlrctl on this station. | `wlrctl` is not installable from the board (see "What Fleet Deck does not do"). |
+| Board terminals are disabled on this station. Enable them in station settings to install desktop tools. | The station setting `allow_shell` is off. Change it on the board, in Settings, on the station tab. This change needs an elevation (section 5). |
+| Another installation is running on this station. | The station runs one installation at a time. |
+| This request was already used for another plan. | The request belongs to another plan. Press **Install desktop tools…** again. |
+
+"Not allowed" means this. Only the packages of the list of Fleet Deck, from the repositories `core` and `extra`, can go into the transaction. Before the terminal opens, the station runs a dry run (`pacman -Sp`, without root) and reads the full list of packages. A package from another repository, a missing target or an output that the station cannot read refuses the whole plan. The list "Not allowed" names the packages. The plan is also refused, without names, when the root-owned configuration is not safe: `/etc/pacman.conf`, `/etc/pacman.d/mirrorlist`, `/etc` and `/etc/pacman.d` must be owned by root, with no write for group or other. The station checks the configuration, the hash of `/etc/pacman.conf` and the dry run again right before the terminal opens. A difference refuses the open.
+
+The command uses `--noconfirm`. A conflict or a removal prompt gets the answer no. A transaction that would remove or replace a package stops before it changes anything.
+
+#### The installation terminal
+
+The panel "Installation terminal" has a state line, a terminal and the button **Detach**. The state line shows "Connecting…", "Starting…" and then "Installing… Enter your station password in the terminal if sudo asks."
+
+1. When `sudo` asks for the password, click the terminal and type the station password of the user. The typed text is not shown. This is normal: the station turns the echo of the terminal off. Press Enter.
+2. When the password is wrong, `sudo` asks again. Type it again.
+3. Watch the output of `pacman`. The station keeps the last 256 KiB of it for a reattach.
+
+The password goes only through the terminal. Fleet Deck never stores it, never sends it in a request body and never writes it in the audit. The station sends your typed bytes to the process only while the installation runs. A typed byte after the end is dropped and never sent later.
+
+**Detach** closes the panel. It does not stop the installation. The panel has no control that stops the process (see "What Fleet Deck does not do").
+
+#### Installations and the result
+
+The list "Installations" shows the last 16 installations, newest first. Each row shows the date, the tools, the state and one button.
+
+| State | Button | Meaning |
+| --- | --- | --- |
+| Starting | **Reattach** | The station accepted the request and starts the runner. |
+| Running | **Reattach** | The installation runs. The terminal shows the output so far, then the live output. |
+| Finished | **Show output** | The package transaction ended with exit code 0. |
+| Ended with code `<n>` | **Show output** | The package transaction ended with another code. |
+| Runner lost | **Show output** | The runner ended without a result. |
+
+When the run ends, the panel shows one of these lines:
+
+- "The package transaction finished." Then the card reads the facts again. For each tool of the run, the panel shows "<tool>: Installed. Desktop compatibility has not been verified." or "The package transaction finished, but <tool> is still missing from the desktop PATH."
+- "The package transaction ended with code <n>." `pacman` or `sudo` failed, for example when `sudo` refused the password.
+- "The package transaction finished. The result could not be checked." The check of the installed versions gave no result.
+- "The installed packages differ from the reviewed plan." This second line shows when the installed packages after the exit are not the packages of the plan, in name or version. Read the output, then press **Refresh diagnostics**.
+- "The installation runner ended without a result. Check the desktop tools again." The runner stopped before it wrote a result. Press **Refresh diagnostics**. Fleet Deck cannot say what the transaction did.
+- "This installation is no longer listed." The station removed the record.
+
+**Show output** shows the saved output of an ended installation. It sends no input to the process.
+
+#### A board disconnect and a station restart
+
+The installation runs as a separate process of the user of the station. It does not belong to the board connection or to the station process.
+
+- A board disconnect, a closed browser tab or **Detach** does not stop it. Open the card again and press **Reattach** on the row.
+- A station restart does not stop it. After the restart, the list shows the run as Running, and **Reattach** connects again. The terminal gets the saved output first.
+- When the unit of the runner is gone and the run has no result, the list shows "Runner lost". An answer of the system that the station cannot read is never taken as proof: the state stays as it was.
+- The station never starts an installation again by itself. A request that the station already has gets its first answer, also after a restart.
+
+#### What Fleet Deck does not do
+
+- It installs no AUR package and never uses an AUR helper.
+- It never upgrades the system. The command has no `-y`: `-S --needed` does not refresh the package databases.
+- It uses no repository other than `core` and `extra` for a target. It never writes a pacman configuration. The configuration of the system, with its repositories and its hooks, is the root-owned policy of the machine.
+- It never stops, kills or restarts a running installation.
+- It never deletes a lock file, never uses `--overwrite` and never answers a pacman prompt with yes.
+- It never runs a command that the browser sent. The browser sends a plan ID, a request ID and a terminal size. The station chooses the packages from its own list.
+
+#### Audit
+
+The audit action `station.maintenance` has these rows: `stage=opened` (the request ID, the maintenance ID and the tool IDs), `stage=refused` (the code and the request ID) and `stage=completed` (the outcome, the exit code and the result of the check). The deck writes one `completed` row for each installation after the end, also when nobody looks at the board (a watcher reads the list every 10 seconds for at most 2 hours after the open). A read of the list on the board writes the row too. The rows hold the owner and the station, and never the content of the terminal.
+
+#### Open items
+
+- The PRE-PR review and the live smoke are not done (see `docs/v2/LIVE-SMOKE.md`, part "Install desktop tools from the board (DL-250)").
+- Installing `wlrctl` has no board path yet: it has no supported package source.
+- Another program can refresh the package databases between the dry run and the installation, for example while `sudo` waits for the password. The versions and the dependency choices can then differ from the plan. The targets still come from `core` and `extra`, and the transaction still cannot remove or replace a package. The check after the end compares the packages of the plan only.
+- Code that runs as the same user as the station can read the data of a run and can talk to its socket (P8-17).
+- After a restart of the deck, the row `completed` comes only from a later read of the list of installations.
+- The child process gets the variable `SHELL` from the terminal library.
 
 ## 8. Back up
 
