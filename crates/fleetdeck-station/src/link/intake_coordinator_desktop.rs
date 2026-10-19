@@ -20,8 +20,8 @@ use fleetdeck_proto::artifacts::{ArtifactFileQuery, ArtifactGetQuery, ArtifactKi
 use fleetdeck_proto::capture::valid_capture_id;
 use fleetdeck_proto::coordinator_desktop_text::{code as p6_code, deadline_ms, limits};
 use fleetdeck_proto::coordinator_desktop_wire::{
-    AuthorityPhase, CoordinatorContext, CoordinatorRead, DesktopInputPolicyAnswer,
-    DesktopPolicyAnswer, DesktopPolicyNow, PolicyPurpose, ProtectedRead,
+    AuthorityPhase, CoordinatorContext, CoordinatorRead, DesktopPolicyAnswer, DesktopPolicyNow,
+    PolicyPurpose, ProtectedRead,
 };
 use fleetdeck_proto::desktop::{DesktopActResult, DesktopAction};
 use fleetdeck_proto::link::{Outcome, WireError};
@@ -33,13 +33,14 @@ use super::ok;
 use crate::artifacts::{ArtifactError, ArtifactService};
 use crate::desktop::authority::Admitted;
 use crate::desktop::coordinator::{
-    DispatchCheck, Extras, Gates, LinkCheck, Live, check_live, check_live_input, claim_kind,
-    map_info, p6_fail, refusal, tailnet_host_of, validate,
+    DispatchCheck, Extras, Gates, LinkCheck, Live, check_live, check_live_gates, claim_kind,
+    input_gates_answer, input_policy_answer, map_info, p6_fail, refusal, tailnet_host_of, validate,
 };
 use crate::desktop::input::Env;
-use crate::desktop::input::barrier::{host_of_url, is_deck_origin};
+use crate::desktop::input::barrier::{deck_hosts, is_deck_origin};
 use crate::desktop::input::claim::StoreClaim;
-use crate::desktop::input::grammar::is_input;
+use crate::desktop::input::grammar::{is_any, is_click, is_input};
+use crate::desktop::input::list::{self, ListRead};
 use crate::desktop::{self, Desktop, Fail};
 use crate::store::Store;
 use crate::store::capture_ops::Lookup;
@@ -124,9 +125,11 @@ pub(super) async fn act(
     };
     let live = live_of(ctx);
     let input_live = Arc::clone(&live);
-    // R13 P7 §3.3: an input action has its own live gates.
+    // R13 P7 §3.3: an input action has its own live gates (R13 P7b §3.2: the
+    // gates of its scope and its click).
     let gates: Gates = if is_input(&action) {
-        Arc::new(move || check_live_input(&live()))
+        let (any, click) = (is_any(&action), is_click(&action));
+        Arc::new(move || check_live_gates(&live(), any, click))
     } else {
         Arc::new(move || check_live(&live(), capture, monitor.as_deref()))
     };
@@ -212,27 +215,6 @@ pub(super) async fn act(
         }
         Err(e) => failed(e),
     }
-}
-
-/// The lower case hosts of the deck origins that this station knows from its
-/// pairing records (the address that it dials), for the board barrier (R13
-/// P7 §7.2). A station that is dialed by the deck knows none.
-async fn deck_hosts(store: &Store) -> Result<Vec<String>, Fail> {
-    let keys = store.paired_keys().await.map_err(|e| {
-        tracing::warn!(error = %e, "the paired decks cannot be read");
-        Fail::new(
-            desktop::code::FAILED,
-            "The station could not read the deck origins.",
-        )
-    })?;
-    let mut hosts: Vec<String> = keys
-        .iter()
-        .filter_map(|key| key.dial_url.as_deref())
-        .filter_map(host_of_url)
-        .collect();
-    hosts.sort();
-    hosts.dedup();
-    Ok(hosts)
 }
 
 /// Marks the preview `window_id` when its launch URL names a known deck
@@ -424,24 +406,6 @@ pub(crate) fn policy_answer(live: &Live, monitor: Option<&str>) -> DesktopPolicy
     }
 }
 
-/// The answer of `desktop.policy_now` for the input purpose (R13 P7 §6.4).
-/// A null monitor is unresolved: the preview geometry belongs to the target,
-/// so the answer allows it and the target enforces the real monitor coverage
-/// before and during the input. A named monitor follows the capture monitor
-/// rule.
-pub(crate) fn input_policy_answer(live: &Live, monitor: Option<&str>) -> DesktopInputPolicyAnswer {
-    DesktopInputPolicyAnswer {
-        allow_fleet_control: live.fleet_control,
-        allow_desktop: live.desktop,
-        allow_desktop_capture: live.capture,
-        allow_desktop_input: live.desktop_input,
-        monitor_allowed: match monitor {
-            None => true,
-            Some(m) => live.monitors.is_empty() || live.monitors.iter().any(|x| x == m),
-        },
-    }
-}
-
 /// `desktop.policy_now` (§5.5): the live policy of this station.
 pub(super) fn policy_now(
     ctx: &StationLink,
@@ -458,31 +422,40 @@ pub(super) fn policy_now(
         &query,
         negotiated.has(feature::CAPTURE_MCP),
         negotiated.has(feature::DESKTOP_INPUT_MCP),
+        (
+            negotiated.has(feature::DESKTOP_CLICK_MCP),
+            negotiated.has(feature::DESKTOP_INPUT_ANY),
+        ),
     )
 }
 
 /// The reply of `desktop.policy_now` for the live settings `live`. The
 /// capture purpose needs `capture_mcp.v1` and the input purpose needs
-/// `desktop_input_mcp.v1` (R13 P7 §6.4): without it the answer is
-/// `unsupported`. The `desktop` and `capture` answers keep their P6 bytes.
+/// `desktop_input_mcp.v1` (R13 P7 §6.4); `input_click` needs
+/// `desktop_click_mcp.v1`, `input_any` needs `desktop_input_any.v1` and
+/// `input_any_click` both (R13 P7b §9.2, `features` is click, any): without
+/// them the answer is `unsupported`. The `desktop`, `capture` and `input`
+/// answers keep their bytes.
 pub(crate) fn policy_reply(
     live: &Live,
     query: &DesktopPolicyNow,
     capture_mcp: bool,
     input_mcp: bool,
+    features: (bool, bool),
 ) -> Outcome {
+    let (click_mcp, input_any) = features;
+    let monitor = query.monitor.as_deref();
     match query.purpose {
         PolicyPurpose::Capture if !capture_mcp => unsupported(),
         PolicyPurpose::Input if !input_mcp => unsupported(),
-        PolicyPurpose::Input => ok(input_policy_answer(live, query.monitor.as_deref())),
-        // R13 P7b task F stub: the three new purposes are answered by a later
-        // task; until then they are unsupported.
-        PolicyPurpose::InputClick | PolicyPurpose::InputAny | PolicyPurpose::InputAnyClick => {
-            unsupported()
-        }
-        PolicyPurpose::Desktop | PolicyPurpose::Capture => {
-            ok(policy_answer(live, query.monitor.as_deref()))
-        }
+        PolicyPurpose::Input => ok(input_policy_answer(live, monitor)),
+        PolicyPurpose::InputClick if !click_mcp => unsupported(),
+        PolicyPurpose::InputAny if !input_any => unsupported(),
+        PolicyPurpose::InputAnyClick if !(click_mcp && input_any) => unsupported(),
+        purpose @ (PolicyPurpose::InputClick
+        | PolicyPurpose::InputAny
+        | PolicyPurpose::InputAnyClick) => ok(input_gates_answer(live, monitor, purpose)),
+        PolicyPurpose::Desktop | PolicyPurpose::Capture => ok(policy_answer(live, monitor)),
     }
 }
 
@@ -514,7 +487,6 @@ pub(crate) fn validate_read(req: &CoordinatorRead) -> Result<(), Fail> {
                 offset,
                 ..
             } => id26(artifact_id) && *offset == 0,
-            // R13 P7b task F stub: the read has no fields; the work refuses.
             ProtectedRead::InputWindows => true,
         };
     if shape {
@@ -527,6 +499,8 @@ pub(crate) fn validate_read(req: &CoordinatorRead) -> Result<(), Fail> {
 /// What a read needs of the station.
 pub(crate) struct Reader<'a> {
     pub deck_fp: &'a str,
+    /// The live name of this station (the `station` of a `window_list`).
+    pub station: &'a str,
     pub desktop: &'a Arc<Desktop>,
     pub service: Option<&'a ArtifactService>,
     pub store: &'a Store,
@@ -542,6 +516,12 @@ pub(crate) async fn read_with(
     req: &CoordinatorRead,
 ) -> Result<Value, Fail> {
     validate_read(req)?;
+    // R13 P7b §6.1: the listing runs its checks in its own order.
+    if req.read == ProtectedRead::InputWindows {
+        let hosts = deck_hosts(reader.store).await?;
+        let source = ListRead::new(reader.desktop, reader.deck_fp, reader.station, reader.live);
+        return list::read(&source, &hosts, check, req).await;
+    }
     let (data, monitor) = reader.work(&req.read).await?;
     check.check(AuthorityPhase::Read, Some(&req.read)).await?;
     let capture = matches!(
@@ -603,7 +583,7 @@ impl Reader<'_> {
                 length,
                 ..
             } => self.capture_file(artifact_id, *version, *length).await,
-            // R13 P7b task F stub: a later task builds the listing.
+            // `read_with` serves it before this point.
             ProtectedRead::InputWindows => Err(p6_fail(p6_code::DESKTOP_UNSUPPORTED)),
         }
     }
@@ -753,8 +733,20 @@ pub(super) async fn coordinator_read(
     let deck_fp = control.params().peer.to_string();
     let desktop = desktop::service();
     let live = live_of(ctx);
+    // The live station name, as `station.info` reports it.
+    let station = match ctx.manager.policy().name() {
+        "" => ctx.name.clone(),
+        live => live.to_owned(),
+    };
+    // R13 P7b §6.1: the listing needs `desktop_input_any.v1` on the link.
+    if req.read == ProtectedRead::InputWindows
+        && !control.params().negotiated.has(feature::DESKTOP_INPUT_ANY)
+    {
+        return unsupported();
+    }
     let reader = Reader {
         deck_fp: &deck_fp,
+        station: &station,
         desktop: &desktop,
         service: ctx.manager.artifacts(),
         store: ctx.manager.store(),

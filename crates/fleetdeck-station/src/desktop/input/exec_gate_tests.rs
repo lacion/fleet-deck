@@ -17,6 +17,14 @@ use crate::desktop::coordinator::{
 };
 use crate::desktop::coordinator_tests::{ctx, negotiated};
 
+/// A legacy P7 action for the gates that do not depend on the variant.
+fn legacy() -> A {
+    A::InputKeyPress {
+        window_id: "0123456789abcdef0123456789abcdef".to_owned(),
+        chord: "a".to_owned(),
+    }
+}
+
 // -------------------------------------------------------- the admission
 
 #[test]
@@ -104,9 +112,9 @@ fn the_input_gates_are_read_in_the_order_of_the_contract_with_fixed_texts() {
     let off = |f: fn(&mut Live)| {
         let mut live = all_on();
         f(&mut live);
-        check_live_input(&live).unwrap_err()
+        check_live_input(&live, &legacy()).unwrap_err()
     };
-    assert_eq!(check_live_input(&all_on()), Ok(()));
+    assert_eq!(check_live_input(&all_on(), &legacy()), Ok(()));
     assert_eq!(off(|l| l.fleet_control = false), fleet_off());
     assert_eq!(off(|l| l.desktop = false), Fail::forbidden());
     assert_eq!(off(|l| l.desktop_input = false), input_off());
@@ -127,11 +135,11 @@ fn the_input_gates_are_read_in_the_order_of_the_contract_with_fixed_texts() {
     live.desktop = false;
     live.desktop_input = false;
     live.capture = false;
-    assert_eq!(check_live_input(&live), Err(fleet_off()));
+    assert_eq!(check_live_input(&live, &legacy()), Err(fleet_off()));
     live.fleet_control = true;
-    assert_eq!(check_live_input(&live), Err(Fail::forbidden()));
+    assert_eq!(check_live_input(&live, &legacy()), Err(Fail::forbidden()));
     live.desktop = true;
-    assert_eq!(check_live_input(&live), Err(input_off()));
+    assert_eq!(check_live_input(&live, &legacy()), Err(input_off()));
 }
 
 #[tokio::test]
@@ -152,11 +160,14 @@ async fn each_gate_that_is_off_stops_the_call_before_any_desktop_work() {
         (|l| l.desktop_input = false, input_off()),
         (
             |l| l.capture = false,
-            check_live_input(&{
-                let mut l = all_on();
-                l.capture = false;
-                l
-            })
+            check_live_input(
+                &{
+                    let mut l = all_on();
+                    l.capture = false;
+                    l
+                },
+                &legacy(),
+            )
             .unwrap_err(),
         ),
     ];

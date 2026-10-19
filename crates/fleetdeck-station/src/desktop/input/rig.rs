@@ -19,15 +19,16 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use fleetdeck_proto::coordinator_desktop_wire::{
-    AuthorityPhase, CoordinatorContext, ProtectedRead,
+    AuthorityPhase, CoordinatorContext, CoordinatorRead, ProtectedRead,
 };
 use fleetdeck_proto::desktop::DesktopAction as A;
 use serde_json::{Value, json};
 
+use super::list::{self, ListRead};
 use super::{Claimed, Claimer, Clock, Env};
 use crate::desktop::authority_tests::Harness;
 use crate::desktop::coordinator::{DispatchCheck, Extras, Gates, Live, check_live_input};
-use crate::desktop::coordinator_tests::{FakeCheck, coordinated, ctx, extras};
+use crate::desktop::coordinator_tests::{DECK, FakeCheck, coordinated, ctx, extras};
 use crate::desktop::events::Record;
 use crate::desktop::fake::{Call, Opts, Rig};
 use crate::desktop::tests::on;
@@ -89,6 +90,8 @@ pub(super) fn all_on() -> Live {
         desktop: true,
         capture: true,
         desktop_input: true,
+        desktop_click: true,
+        desktop_input_any: true,
         monitors: Vec::new(),
     }
 }
@@ -387,8 +390,8 @@ impl Fx {
         let n = self.next.fetch_add(1, Ordering::SeqCst);
         let live = probe.live.clone();
         let gates: Gates = probe.gates.clone().unwrap_or_else(|| {
-            let live = live.clone();
-            Arc::new(move || check_live_input(&live))
+            let (live, gated) = (live.clone(), action.clone());
+            Arc::new(move || check_live_input(&live, &gated))
         });
         let admitted = coordinated(
             &probe.harness,
@@ -442,6 +445,80 @@ impl Fx {
             window_id: self.window_id.clone(),
             x,
             y,
+        }
+    }
+
+    // ---------------------------------------------- ordinary windows (P7b)
+
+    /// One `window_list` read with the live settings `live` and the deck
+    /// check `check`; `context` is the coordinator of the read.
+    pub(super) async fn list(
+        &self,
+        live: &(dyn Fn() -> Live + Send + Sync),
+        check: &dyn DispatchCheck,
+        context: Option<CoordinatorContext>,
+    ) -> Result<Value, Fail> {
+        self.list_with(live, check, context, &[]).await
+    }
+
+    /// As [`Fx::list`], with the lower case deck hosts of the barrier.
+    pub(super) async fn list_with(
+        &self,
+        live: &(dyn Fn() -> Live + Send + Sync),
+        check: &dyn DispatchCheck,
+        context: Option<CoordinatorContext>,
+        deck_hosts: &[String],
+    ) -> Result<Value, Fail> {
+        let source = ListRead::new(self.desktop(), DECK, "target", live);
+        let req = CoordinatorRead {
+            read_id: "0".repeat(32),
+            read: ProtectedRead::InputWindows,
+            read_hash: "0".repeat(64),
+            context,
+        };
+        list::read(&source, deck_hosts, check, &req).await
+    }
+
+    /// A listing that the fake deck allows, for the context of the probe.
+    pub(super) async fn listing(&self) -> Value {
+        let live = all_on();
+        self.list(&move || live.clone(), &*FakeCheck::ok(), Some(ctx()))
+            .await
+            .unwrap()
+    }
+
+    /// The handle of the listed window at `(x, y)` of `listing`.
+    pub(super) fn handle_at(listing: &Value, x: i64, y: i64) -> String {
+        listing["windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["rect"]["x"] == x && w["rect"]["y"] == y)
+            .unwrap_or_else(|| panic!("no listed window at {x},{y}: {listing}"))["window_id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    /// The handle of the ordinary window `other_client()` (at 2000,100).
+    pub(super) async fn other_handle(&self) -> String {
+        Self::handle_at(&self.listing().await, 2000, 100)
+    }
+
+    /// A mapped window on workspace `ws`.
+    pub(super) fn window(address: &str, at: (i64, i64), size: (i64, i64), ws: i64) -> Value {
+        json!({
+            "address": address, "class": "kitty", "title": "plain",
+            "initialClass": "kitty", "initialTitle": "plain", "mapped": true,
+            "hidden": false, "at": [at.0, at.1], "size": [size.0, size.1],
+            "workspace": {"id": ws}, "focusHistoryID": 3
+        })
+    }
+
+    pub(super) fn input_any(&self, window_id: &str, chord: &str) -> A {
+        A::InputAnyKeyPress {
+            window_id: window_id.to_owned(),
+            chord: chord.to_owned(),
         }
     }
 }

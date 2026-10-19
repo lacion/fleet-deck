@@ -22,7 +22,8 @@ use fleetdeck_proto::coordinator_desktop::{
 use fleetdeck_proto::coordinator_desktop_text::{code as p6_code, deadline_ms, limits, text};
 use fleetdeck_proto::coordinator_desktop_wire::{
     AuthorityPhase, AuthorityReason, CoordinatorContext, DesktopAuthorityAnswer,
-    DesktopAuthorityCheck, ProtectedRead,
+    DesktopAuthorityCheck, DesktopInputGatesAnswer, DesktopInputPolicyAnswer, PolicyPurpose,
+    ProtectedRead,
 };
 use fleetdeck_proto::desktop::{DesktopAction, DesktopInfo, Urgency};
 use fleetdeck_proto::desktop_authority::AUTHORITY_REFUSED;
@@ -181,7 +182,13 @@ pub fn validate<'a>(
         return Err(refusal());
     }
     // R13 P7 §6.2: an input action needs `desktop_input_mcp.v1` on the link.
-    if grammar::is_input(action) && !negotiated.has(feature::DESKTOP_INPUT_MCP) {
+    // R13 P7b §4: the `any_window` variants also need `desktop_input_any.v1`
+    // and the click variants `desktop_click_mcp.v1`.
+    if grammar::is_input(action)
+        && !(negotiated.has(feature::DESKTOP_INPUT_MCP)
+            && (!grammar::is_any(action) || negotiated.has(feature::DESKTOP_INPUT_ANY))
+            && (!grammar::is_click(action) || negotiated.has(feature::DESKTOP_CLICK_MCP)))
+    {
         return Err(refusal());
     }
     // R13 P5b-2: a coordinator recording needs the three recording features
@@ -217,7 +224,13 @@ pub fn validate<'a>(
         // with the proto validators.
         DesktopAction::InputKeyPress { .. }
         | DesktopAction::InputTypeText { .. }
-        | DesktopAction::InputPointerMove { .. } => grammar::check(action)?,
+        | DesktopAction::InputPointerMove { .. }
+        | DesktopAction::InputAnyKeyPress { .. }
+        | DesktopAction::InputAnyTypeText { .. }
+        | DesktopAction::InputAnyPointerMove { .. } => grammar::check(action)?,
+        // R13 P7b task S2a: the click variants pass here and are refused with
+        // `desktop_unsupported` by the input protocol, after the gates.
+        DesktopAction::InputPointerClick { .. } | DesktopAction::InputAnyPointerClick { .. } => {}
         _ => return Err(refusal()),
     }
     Ok(ctx)
@@ -235,18 +248,28 @@ pub fn claim_kind(action: &DesktopAction) -> Option<&'static str> {
         DesktopAction::InputKeyPress { .. } => Some("input_key_press"),
         DesktopAction::InputTypeText { .. } => Some("input_type_text"),
         DesktopAction::InputPointerMove { .. } => Some("input_pointer_move"),
+        // R13 P7b §6.3: the broader and click claims (store V38).
+        DesktopAction::InputPointerClick { .. } => Some("input_pointer_click"),
+        DesktopAction::InputAnyKeyPress { .. } => Some("input_any_key_press"),
+        DesktopAction::InputAnyTypeText { .. } => Some("input_any_type_text"),
+        DesktopAction::InputAnyPointerMove { .. } => Some("input_any_pointer_move"),
+        DesktopAction::InputAnyPointerClick { .. } => Some("input_any_pointer_click"),
         _ => None,
     }
 }
 
 /// The live local settings that the gates read.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Live {
     pub fleet_control: bool,
     pub desktop: bool,
     pub capture: bool,
     /// `allow_desktop_input` (R13 P7 §3.3).
     pub desktop_input: bool,
+    /// `allow_desktop_click` (R13 P7b §3.2).
+    pub desktop_click: bool,
+    /// `allow_desktop_input_any` (R13 P7b §3.2).
+    pub desktop_input_any: bool,
     /// `capture_monitors`; empty means every monitor.
     pub monitors: Vec<String>,
 }
@@ -260,6 +283,8 @@ impl Live {
             desktop: policy.allow_desktop(),
             capture: policy.allow_desktop_capture(),
             desktop_input: policy.allow_desktop_input(),
+            desktop_click: policy.allow_desktop_click(),
+            desktop_input_any: policy.allow_desktop_input_any(),
             monitors: policy.capture_monitors().to_vec(),
         }
     }
@@ -306,13 +331,34 @@ pub fn input_off() -> Fail {
 }
 
 /// The live gates of an input action (R13 P7 §3.3 items 8 to 11), in this
-/// order: `allow_fleet_control`, `allow_desktop`, `allow_desktop_input`,
-/// `allow_desktop_capture`. The monitor rule of item 14 needs the preview and
-/// is checked by the input protocol.
+/// order: `allow_fleet_control`, `allow_desktop`, `allow_desktop_input`, for
+/// the `InputAny*` variants `allow_desktop_input_any` (R13 P7b §3.2), for the
+/// click variants `allow_desktop_click`, then `allow_desktop_capture`. The
+/// monitor rule of item 14 needs the preview and is checked by the input
+/// protocol.
 ///
 /// # Errors
-/// `forbidden` with the text of the first gate that is off.
-pub fn check_live_input(live: &Live) -> Result<(), Fail> {
+/// `forbidden` with the text of the first P7 gate that is off;
+/// `input_any_disabled` or `input_click_disabled` for a P7b gate.
+pub fn check_live_input(live: &Live, action: &DesktopAction) -> Result<(), Fail> {
+    check_live_gates(live, grammar::is_any(action), grammar::is_click(action))
+}
+
+/// The live gates of the `window_list` read: those of an `InputAny*` action
+/// without the click gate (R13 P7b §6.1).
+///
+/// # Errors
+/// As [`check_live_input`].
+pub fn check_live_window_list(live: &Live) -> Result<(), Fail> {
+    check_live_gates(live, true, false)
+}
+
+/// The gates of [`check_live_input`] for an action that is (`any`) one of the
+/// `InputAny*` variants and (`click`) one of the click variants.
+///
+/// # Errors
+/// As [`check_live_input`].
+pub fn check_live_gates(live: &Live, any: bool, click: bool) -> Result<(), Fail> {
     if !live.fleet_control {
         return Err(fleet_off());
     }
@@ -322,6 +368,12 @@ pub fn check_live_input(live: &Live) -> Result<(), Fail> {
     if !live.desktop_input {
         return Err(input_off());
     }
+    if any && !live.desktop_input_any {
+        return Err(p6_fail(p6_code::INPUT_ANY_DISABLED));
+    }
+    if click && !live.desktop_click {
+        return Err(p6_fail(p6_code::INPUT_CLICK_DISABLED));
+    }
     capture_gate(
         &Allowed {
             desktop: live.desktop,
@@ -330,6 +382,54 @@ pub fn check_live_input(live: &Live) -> Result<(), Fail> {
         },
         None,
     )
+}
+
+/// The answer of `desktop.policy_now` for the input purpose (R13 P7 §6.4).
+/// A null monitor is unresolved: the preview geometry belongs to the target,
+/// so the answer allows it and the target enforces the real monitor coverage
+/// before and during the input. A named monitor follows the capture monitor
+/// rule.
+#[must_use]
+pub fn input_policy_answer(live: &Live, monitor: Option<&str>) -> DesktopInputPolicyAnswer {
+    DesktopInputPolicyAnswer {
+        allow_fleet_control: live.fleet_control,
+        allow_desktop: live.desktop,
+        allow_desktop_capture: live.capture,
+        allow_desktop_input: live.desktop_input,
+        monitor_allowed: match monitor {
+            None => true,
+            Some(m) => live.monitors.is_empty() || live.monitors.iter().any(|x| x == m),
+        },
+    }
+}
+
+/// The answer of `desktop.policy_now` for the purposes `input_click`,
+/// `input_any` and `input_any_click` (R13 P7b §9.2): the five fields of
+/// [`input_policy_answer`] and the station gates that the purpose needs.
+#[must_use]
+pub fn input_gates_answer(
+    live: &Live,
+    monitor: Option<&str>,
+    purpose: PolicyPurpose,
+) -> DesktopInputGatesAnswer {
+    let five = input_policy_answer(live, monitor);
+    let click = matches!(
+        purpose,
+        PolicyPurpose::InputClick | PolicyPurpose::InputAnyClick
+    );
+    let any = matches!(
+        purpose,
+        PolicyPurpose::InputAny | PolicyPurpose::InputAnyClick
+    );
+    DesktopInputGatesAnswer {
+        allow_fleet_control: five.allow_fleet_control,
+        allow_desktop: five.allow_desktop,
+        allow_desktop_capture: five.allow_desktop_capture,
+        allow_desktop_input: five.allow_desktop_input,
+        monitor_allowed: five.monitor_allowed,
+        allow_desktop_click: click.then_some(live.desktop_click),
+        allow_desktop_input_any: any.then_some(live.desktop_input_any),
+    }
 }
 
 /// The `CoordinatorDesktopInfo` of a fresh desktop info (§4.1). The deck

@@ -337,3 +337,31 @@ fn the_edge_of_a_rectangle_is_outside_it() {
         h: 5
     }));
 }
+
+#[test]
+fn the_focus_history_and_the_special_workspace_are_read_without_failing() {
+    // `focusHistoryID` 0 is the focused window; another number or a missing
+    // field is not focused (and never a parse failure).
+    let mut first = client("0x1", (0, 0), (10, 10), 1);
+    first["focusHistoryID"] = json!(0);
+    let mut second = client("0x2", (0, 0), (10, 10), 1);
+    second["focusHistoryID"] = json!(2);
+    let third = client("0x3", (0, 0), (10, 10), 1);
+    let list = parse_clients(&json!([first, second, third]).to_string()).unwrap();
+    assert_eq!(
+        list.iter().map(|c| c.focused).collect::<Vec<_>>(),
+        [true, false, false]
+    );
+    // A monitor that shows a special workspace has its negative id; `0`, a
+    // missing field and a positive id are none.
+    let mut shown = monitor("A", 0, 0, 100, 100, 1.0, 0);
+    shown["specialWorkspace"] = json!({"id": -99, "name": "special:x"});
+    let mut none = monitor("B", 0, 0, 100, 100, 1.0, 0);
+    none["specialWorkspace"] = json!({"id": 0, "name": ""});
+    let missing = monitor("C", 0, 0, 100, 100, 1.0, 0);
+    let list = parse_monitors(&json!([shown, none, missing]).to_string()).unwrap();
+    assert_eq!(
+        list.iter().map(|m| m.special).collect::<Vec<_>>(),
+        [Some(-99), None, None]
+    );
+}

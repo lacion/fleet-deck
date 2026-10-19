@@ -5,12 +5,25 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::sync::Mutex;
+
+use async_trait::async_trait;
 use fleetdeck_proto::coordinator_desktop_text::code as p6_code;
-use fleetdeck_proto::coordinator_desktop_wire::{DesktopPolicyNow, PolicyPurpose};
+use fleetdeck_proto::coordinator_desktop_wire::{
+    AuthorityPhase, CoordinatorContext, CoordinatorRead, DesktopPolicyNow, PolicyPurpose,
+    ProtectedRead,
+};
 use fleetdeck_proto::link::Outcome;
+use fleetdeck_proto::{SessionId, StationId};
 use serde_json::{Value, json};
 
-use super::{Live, input_policy_answer, policy_answer, policy_reply};
+use super::read_with;
+use super::{DispatchCheck, Fail, Live, Reader, input_policy_answer, policy_answer, policy_reply};
+use crate::artifacts::capture_import::tests::{FP, rig as store_rig};
+use crate::desktop::fake::{Opts, Rig};
+
+/// No P7b feature negotiated.
+const NONE: (bool, bool) = (false, false);
 
 fn live(monitors: &[&str]) -> Live {
     Live {
@@ -18,6 +31,8 @@ fn live(monitors: &[&str]) -> Live {
         desktop: true,
         capture: true,
         desktop_input: true,
+        desktop_click: true,
+        desktop_input_any: true,
         monitors: monitors.iter().map(|m| (*m).to_owned()).collect(),
     }
 }
@@ -91,7 +106,7 @@ fn a_configured_monitor_list_still_answers_an_input_query_with_a_null_monitor() 
     // The deck asks with a null monitor; the answer over the link must not
     // refuse every input when `capture_monitors` is set (PRE-PR r1 finding 5).
     let q = query(PolicyPurpose::Input, None);
-    let v = answered(policy_reply(&live(&["DP-1"]), &q, true, true));
+    let v = answered(policy_reply(&live(&["DP-1"]), &q, true, true, NONE));
     assert_eq!(
         v,
         json!({
@@ -125,11 +140,11 @@ fn a_named_monitor_follows_the_capture_monitor_rule() {
 #[test]
 fn the_input_purpose_is_answered_only_with_the_input_feature() {
     let q = query(PolicyPurpose::Input, None);
-    let v = answered(policy_reply(&live(&[]), &q, true, true));
+    let v = answered(policy_reply(&live(&[]), &q, true, true, NONE));
     assert_eq!(v["allow_desktop_input"], true);
     assert_eq!(v["monitor_allowed"], true);
     for (capture, input) in [(true, false), (false, false)] {
-        let message = refused(policy_reply(&live(&[]), &q, capture, input));
+        let message = refused(policy_reply(&live(&[]), &q, capture, input, NONE));
         assert_eq!(
             message,
             fleetdeck_proto::coordinator_desktop_text::text(p6_code::DESKTOP_UNSUPPORTED).unwrap()
@@ -138,7 +153,7 @@ fn the_input_purpose_is_answered_only_with_the_input_feature() {
     // The capture feature alone does not answer the input purpose; the input
     // feature alone is enough for it.
     assert!(matches!(
-        policy_reply(&live(&[]), &q, false, true),
+        policy_reply(&live(&[]), &q, false, true, NONE),
         Outcome::Ok(_)
     ));
 }
@@ -150,6 +165,7 @@ fn the_p6_answers_keep_their_bytes() {
         &query(PolicyPurpose::Desktop, None),
         true,
         true,
+        NONE,
     ));
     assert_eq!(
         desktop,
@@ -165,6 +181,7 @@ fn the_p6_answers_keep_their_bytes() {
         &query(PolicyPurpose::Capture, Some("DP-2")),
         true,
         false,
+        NONE,
     ));
     assert_eq!(
         capture,
@@ -179,12 +196,229 @@ fn the_p6_answers_keep_their_bytes() {
     // needs nothing more.
     let q = query(PolicyPurpose::Capture, None);
     assert!(matches!(
-        policy_reply(&live(&[]), &q, false, true),
+        policy_reply(&live(&[]), &q, false, true, NONE),
         Outcome::Err(_)
     ));
     let q = query(PolicyPurpose::Desktop, None);
     assert!(matches!(
-        policy_reply(&live(&[]), &q, false, false),
+        policy_reply(&live(&[]), &q, false, false, NONE),
         Outcome::Ok(_)
     ));
+}
+
+#[test]
+fn the_p7b_purposes_need_their_features_and_answer_their_gates() {
+    // (purpose, click feature, any feature, answered)
+    let cases = [
+        (PolicyPurpose::InputClick, false, false, false),
+        (PolicyPurpose::InputClick, true, false, true),
+        (PolicyPurpose::InputClick, false, true, false),
+        (PolicyPurpose::InputAny, false, false, false),
+        (PolicyPurpose::InputAny, true, false, false),
+        (PolicyPurpose::InputAny, false, true, true),
+        (PolicyPurpose::InputAnyClick, false, false, false),
+        (PolicyPurpose::InputAnyClick, true, false, false),
+        (PolicyPurpose::InputAnyClick, false, true, false),
+        (PolicyPurpose::InputAnyClick, true, true, true),
+    ];
+    let unsupported =
+        fleetdeck_proto::coordinator_desktop_text::text(p6_code::DESKTOP_UNSUPPORTED).unwrap();
+    for (purpose, click, any, answered) in cases {
+        let q = query(purpose, None);
+        // The input and capture features do not matter for these purposes.
+        let reply = policy_reply(&live(&[]), &q, false, false, (click, any));
+        if answered {
+            assert!(matches!(reply, Outcome::Ok(_)), "{purpose:?} {click} {any}");
+        } else {
+            assert_eq!(refused(reply), unsupported, "{purpose:?} {click} {any}");
+        }
+    }
+}
+
+#[test]
+fn the_p7b_answers_have_the_five_fields_and_only_the_gates_of_the_purpose() {
+    let both = (true, true);
+    let click = answered(policy_reply(
+        &live(&["DP-1"]),
+        &query(PolicyPurpose::InputClick, None),
+        false,
+        false,
+        both,
+    ));
+    assert_eq!(
+        click,
+        json!({
+            "allow_fleet_control": true,
+            "allow_desktop": true,
+            "allow_desktop_capture": true,
+            "allow_desktop_input": true,
+            "monitor_allowed": true,
+            "allow_desktop_click": true
+        })
+    );
+    let any = answered(policy_reply(
+        &live(&["DP-1"]),
+        &query(PolicyPurpose::InputAny, Some("DP-2")),
+        false,
+        false,
+        both,
+    ));
+    assert_eq!(
+        any,
+        json!({
+            "allow_fleet_control": true,
+            "allow_desktop": true,
+            "allow_desktop_capture": true,
+            "allow_desktop_input": true,
+            "monitor_allowed": false,
+            "allow_desktop_input_any": true
+        })
+    );
+    let both_gates = answered(policy_reply(
+        &live(&[]),
+        &query(PolicyPurpose::InputAnyClick, None),
+        false,
+        false,
+        both,
+    ));
+    assert_eq!(both_gates["allow_desktop_click"], true);
+    assert_eq!(both_gates["allow_desktop_input_any"], true);
+}
+
+#[test]
+fn each_station_setting_changes_only_its_own_field_and_the_answer_fits() {
+    use fleetdeck_proto::coordinator_desktop_wire::DesktopInputGatesAnswer;
+    for purpose in [
+        PolicyPurpose::InputClick,
+        PolicyPurpose::InputAny,
+        PolicyPurpose::InputAnyClick,
+    ] {
+        for (click_on, any_on) in [(true, true), (false, true), (true, false), (false, false)] {
+            let mut l = live(&[]);
+            l.desktop_click = click_on;
+            l.desktop_input_any = any_on;
+            let v = answered(policy_reply(
+                &l,
+                &query(purpose, None),
+                false,
+                false,
+                (true, true),
+            ));
+            let a: DesktopInputGatesAnswer = serde_json::from_value(v.clone()).unwrap();
+            assert!(a.fits(purpose), "{purpose:?}: {v}");
+            let wants_click = !matches!(purpose, PolicyPurpose::InputAny);
+            let wants_any = !matches!(purpose, PolicyPurpose::InputClick);
+            assert_eq!(a.allow_desktop_click, wants_click.then_some(click_on));
+            assert_eq!(a.allow_desktop_input_any, wants_any.then_some(any_on));
+        }
+    }
+    // The input purpose keeps its five fields whatever the new settings are.
+    let mut l = live(&[]);
+    l.desktop_click = false;
+    l.desktop_input_any = false;
+    let v = answered(policy_reply(
+        &l,
+        &query(PolicyPurpose::Input, None),
+        true,
+        true,
+        (true, true),
+    ));
+    assert_eq!(v.as_object().unwrap().len(), 5);
+}
+
+// ------------------------------------------------- the window_list read
+
+/// A deck check that passes and keeps what it saw.
+struct Seen(Mutex<Vec<(AuthorityPhase, Option<ProtectedRead>)>>);
+
+#[async_trait]
+impl DispatchCheck for Seen {
+    async fn check(&self, phase: AuthorityPhase, read: Option<&ProtectedRead>) -> Result<(), Fail> {
+        self.0.lock().unwrap().push((phase, read.cloned()));
+        Ok(())
+    }
+}
+
+fn windows_read(context: Option<CoordinatorContext>) -> CoordinatorRead {
+    CoordinatorRead {
+        read_id: "ab".repeat(16),
+        read: ProtectedRead::InputWindows,
+        read_hash: "cd".repeat(32),
+        context,
+    }
+}
+
+fn caller() -> CoordinatorContext {
+    CoordinatorContext {
+        grant_id: "grant-1".to_owned(),
+        binding_id: "binding-1".to_owned(),
+        generation: 1,
+        caller_station: StationId::new("01HZZZZZZZZZZZZZZZZZZZZZZA"),
+        caller_session: SessionId::new("01HZZZZZZZZZZZZZZZZZZZZZZB"),
+        caller_label: "bold-fox".to_owned(),
+    }
+}
+
+#[tokio::test]
+async fn the_window_list_read_is_served_by_the_listing_and_needs_a_context() {
+    let fake = Rig::new(Opts::default());
+    let s = store_rig().await;
+    let dir = fake.dir.path();
+    std::fs::write(
+        dir.join("monitors.json"),
+        json!([{"name": "DP-1", "x": 0, "y": 0, "width": 1000, "height": 800,
+                "scale": 1.0, "transform": 0, "activeWorkspace": {"id": 1}}])
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("clients.json"),
+        json!([{"address": "0xa1", "class": "kitty", "title": "SENTINEL", "initialClass": "kitty",
+                "initialTitle": "SENTINEL", "mapped": true, "hidden": false,
+                "at": [10, 20], "size": [300, 200], "workspace": {"id": 1},
+                "focusHistoryID": 0}])
+        .to_string(),
+    )
+    .unwrap();
+    let settings = live(&[]);
+    let live_now = move || settings.clone();
+    let reader = Reader {
+        deck_fp: FP,
+        station: "target",
+        desktop: &fake.desktop,
+        service: None,
+        store: &s.store,
+        live: &live_now,
+    };
+    // Without a coordinator context the read is refused.
+    let check = Seen(Mutex::new(Vec::new()));
+    let e = read_with(&reader, &check, &windows_read(None))
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, "desktop_failed");
+    assert!(check.0.lock().unwrap().is_empty());
+    // With one: the closed projection, after the authority check of the read.
+    let value = read_with(&reader, &check, &windows_read(Some(caller())))
+        .await
+        .unwrap();
+    assert_eq!(
+        *check.0.lock().unwrap(),
+        [(AuthorityPhase::Read, Some(ProtectedRead::InputWindows))]
+    );
+    assert_eq!(value["station"], "target");
+    assert_eq!(value["windows"][0]["rect"]["width"], 300);
+    assert_eq!(value["windows"][0]["focused"], true);
+    assert!(!value.to_string().contains("SENTINEL"));
+    // The broader gate is a gate of the read.
+    let mut off = live(&[]);
+    off.desktop_input_any = false;
+    let off_now = move || off.clone();
+    let reader = Reader {
+        live: &off_now,
+        ..reader
+    };
+    let e = read_with(&reader, &check, &windows_read(Some(caller())))
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, "input_any_disabled");
 }

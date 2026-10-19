@@ -6,6 +6,12 @@
 //! (and the profile of a preview). The pid is never used. A read error, an
 //! EOF, a new signature or a reconnect clears all records, so the station
 //! never owns a window that it might confuse.
+//!
+//! R13 P7b §7 adds the lifetimes of ordinary windows: a station-local
+//! incarnation number for every window address that the station sees (an
+//! `openwindow` event, or an enumeration through [`Events::observe`]), and an
+//! epoch that grows at each connection and at each detected gap. A listed
+//! handle is bound to both, so it cannot outlive its window or a lost event.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -30,6 +36,10 @@ const RECONNECT_PAUSE: Duration = Duration::from_secs(2);
 pub enum Kind {
     Wall,
     Preview,
+    /// An ordinary window that a `window_list` handle names (R13 P7b §7). The
+    /// station did not launch it: it is never a preview and never a deck-origin
+    /// launch, and the barrier reads only the wall records and the names.
+    Listed,
 }
 
 /// A window that the station opened.
@@ -59,6 +69,9 @@ pub struct PreviewOwner {
 /// The most preview records that the station keeps; the 257th registration
 /// removes the oldest.
 pub const MAX_PREVIEWS: usize = 256;
+
+/// What runs after a window closed, with its address (outside the lock).
+pub type CloseHook = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// One event of the socket that the station uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,6 +180,14 @@ struct State {
     /// Launches that wait for their window, by class.
     pending: HashMap<String, Pending>,
     task: Option<tokio::task::JoinHandle<()>>,
+    /// The incarnation of every window address that the station sees (R13
+    /// P7b §7). A close removes the address; a later open gets a new number.
+    incarnations: HashMap<String, u64>,
+    next_incarnation: u64,
+    /// Grows at each connection of the event socket and at each gap.
+    epoch: u64,
+    /// What runs when a window closes.
+    close_hooks: Vec<CloseHook>,
 }
 
 struct Inner {
@@ -221,6 +242,8 @@ impl Events {
         }
         st.records.clear();
         st.previews.clear();
+        st.incarnations.clear();
+        st.epoch += 1;
         st.signature = Some(signature.to_owned());
         st.runtime_dir = Some(runtime_dir.to_owned());
         self.inner.connected.send_replace(false);
@@ -238,6 +261,63 @@ impl Events {
         tokio::time::timeout(limit, rx.wait_for(|up| *up))
             .await
             .is_ok_and(|r| r.is_ok())
+    }
+
+    /// The incarnation of the window at `address`, or `None` when the station
+    /// did not see it open (or enumerate it) since the last gap.
+    #[must_use]
+    pub fn incarnation(&self, address: &str) -> Option<u64> {
+        self.inner.lock().incarnations.get(address).copied()
+    }
+
+    /// The incarnation of the window at `address`: the existing number, or a
+    /// new one for an address that an enumeration sees first.
+    pub fn observe(&self, address: &str) -> u64 {
+        let mut st = self.inner.lock();
+        if let Some(n) = st.incarnations.get(address) {
+            return *n;
+        }
+        st.next_incarnation += 1;
+        let n = st.next_incarnation;
+        st.incarnations.insert(address.to_owned(), n);
+        n
+    }
+
+    /// The epoch of the event stream: it grows at each connection and at each
+    /// detected gap (a read error, an end of the stream, a reconnect).
+    #[must_use]
+    pub fn epoch(&self) -> u64 {
+        self.inner.lock().epoch
+    }
+
+    /// Runs `hook` with the address of every window that closes, after the
+    /// state lock is released.
+    pub fn on_close(&self, hook: CloseHook) {
+        self.inner.lock().close_hooks.push(hook);
+    }
+
+    /// The handles of the previews at `address`, for the barrier of a listing.
+    #[must_use]
+    pub fn preview_ids_at(&self, address: &str) -> Vec<String> {
+        self.inner
+            .lock()
+            .previews
+            .iter()
+            .filter(|(_, p)| p.record.address == address)
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    /// Applies one event as if the socket delivered it (tests).
+    #[cfg(test)]
+    pub(crate) fn inject(&self, event: Event) {
+        self.inner.handle(event);
+    }
+
+    /// Makes a gap in the stream as if the socket failed (tests).
+    #[cfg(test)]
+    pub(crate) fn inject_gap(&self) {
+        self.inner.gap();
     }
 
     /// Registers a launch: its window is the first `openwindow` of
@@ -414,11 +494,19 @@ impl Events {
 
 impl Inner {
     fn forget(&self, address: &str) {
-        let (record, runtime_dir) = {
+        let (record, runtime_dir, hooks) = {
             let mut st = self.lock();
             st.previews.retain(|_, p| p.record.address != address);
-            (st.records.remove(address), st.runtime_dir.clone())
+            st.incarnations.remove(address);
+            (
+                st.records.remove(address),
+                st.runtime_dir.clone(),
+                st.close_hooks.clone(),
+            )
         };
+        for hook in &hooks {
+            hook(address);
+        }
         if let (Some(record), Some(runtime_dir)) = (record, runtime_dir)
             && record.kind == Kind::Preview
         {
@@ -430,6 +518,11 @@ impl Inner {
         match event {
             Event::Open { address, class } => {
                 let mut st = self.lock();
+                // A window opens: a new incarnation, also for an address that
+                // an earlier window used (R13 P7b §7).
+                st.next_incarnation += 1;
+                let incarnation = st.next_incarnation;
+                st.incarnations.insert(address.clone(), incarnation);
                 if let Some(p) = st.pending.remove(&class) {
                     let mut record = p.record;
                     record.address.clone_from(&address);
@@ -448,6 +541,19 @@ impl Inner {
         let mut st = self.lock();
         st.records.clear();
         st.previews.clear();
+        st.incarnations.clear();
+    }
+
+    /// A connection or a gap of the stream: the epoch grows (R13 P7b §7).
+    fn bump(&self) {
+        self.lock().epoch += 1;
+    }
+
+    /// A gap in the stream: the station owns no window it might confuse, and
+    /// no listed handle of the earlier epoch stays valid.
+    fn gap(&self) {
+        self.clear();
+        self.bump();
     }
 }
 
@@ -494,6 +600,8 @@ async fn run_task(inner: Arc<Inner>, socket: PathBuf) {
         }
         match UnixStream::connect(&socket).await {
             Ok(stream) => {
+                // The epoch grows before the stream is announced as up.
+                inner.bump();
                 inner.connected.send_replace(true);
                 read_events(&inner, stream).await;
                 inner.connected.send_replace(false);
@@ -501,7 +609,7 @@ async fn run_task(inner: Arc<Inner>, socket: PathBuf) {
             Err(e) => tracing::debug!(error = %e, "the Hyprland event socket does not connect"),
         }
         // A gap in the stream: the station owns no window it might confuse.
-        inner.clear();
+        inner.gap();
         tokio::time::sleep(RECONNECT_PAUSE).await;
     }
 }
@@ -529,3 +637,7 @@ async fn read_events(inner: &Inner, stream: UnixStream) {
 #[cfg(test)]
 #[path = "events_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "events_life_tests.rs"]
+mod life_tests;

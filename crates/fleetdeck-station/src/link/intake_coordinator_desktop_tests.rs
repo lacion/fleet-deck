@@ -298,6 +298,7 @@ fn live(monitors: &[&str]) -> Live {
         capture: true,
         desktop_input: true,
         monitors: monitors.iter().map(|m| (*m).to_owned()).collect(),
+        ..Live::default()
     }
 }
 
@@ -423,6 +424,7 @@ impl T {
         let live = move || shared.lock().unwrap().clone();
         let reader = Reader {
             deck_fp: FP,
+            station: "target",
             desktop: &self.fake.desktop,
             service: Some(&self.s.service),
             store: &self.s.store,

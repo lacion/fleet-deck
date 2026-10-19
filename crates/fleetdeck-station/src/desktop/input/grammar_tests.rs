@@ -180,15 +180,96 @@ fn a_pointer_plan_and_the_disclosure_texts() {
     let (_, plan) = plan(&pointer).unwrap();
     assert_eq!(plan, Plan::Pointer { x: 3, y: 4 });
     assert_eq!(
-        plan.disclosure("bold-fox"),
+        plan.disclosure("bold-fox", false),
         "Fleet Deck is moving the pointer for bold-fox in an agent preview."
+    );
+    assert_eq!(
+        plan.disclosure("bold-fox", true),
+        "Fleet Deck is moving the pointer for bold-fox in an application window."
     );
     let (_, keys) = super::plan(&key("a")).unwrap();
     assert_eq!(
-        keys.disclosure("bold-fox"),
+        keys.disclosure("bold-fox", false),
         "Fleet Deck is sending keyboard input for bold-fox to an agent preview."
     );
+    assert_eq!(
+        keys.disclosure("bold-fox", true),
+        "Fleet Deck is sending keyboard input for bold-fox to an application window."
+    );
     let (_, typed) = super::plan(&text("hi")).unwrap();
-    assert_eq!(typed.disclosure("bold-fox"), keys.disclosure("bold-fox"));
+    assert_eq!(
+        typed.disclosure("bold-fox", true),
+        keys.disclosure("bold-fox", true)
+    );
     assert!(super::plan(&A::ScreenLock).is_err());
+}
+
+#[test]
+fn the_any_variants_have_the_grammar_and_the_plan_of_the_legacy_ones() {
+    let any_key = |chord: &str| A::InputAnyKeyPress {
+        window_id: WINDOW.into(),
+        chord: chord.into(),
+    };
+    let any_text = |t: &str| A::InputAnyTypeText {
+        window_id: WINDOW.into(),
+        text: t.into(),
+    };
+    let any_move = |x: u32| A::InputAnyPointerMove {
+        window_id: WINDOW.into(),
+        x,
+        y: 4,
+    };
+    assert_eq!(
+        super::plan(&any_key("Ctrl+a")).unwrap(),
+        super::plan(&key("Ctrl+a")).unwrap()
+    );
+    assert_eq!(
+        super::plan(&any_text("hi")).unwrap(),
+        super::plan(&text("hi")).unwrap()
+    );
+    assert_eq!(
+        super::plan(&any_move(3)).unwrap().1,
+        Plan::Pointer { x: 3, y: 4 }
+    );
+    for bad in [any_key("Alt+Tab"), any_text(""), any_move(40_000)] {
+        assert_eq!(check(&bad).unwrap_err().code, "invalid_params");
+        assert!(super::plan(&bad).is_err());
+    }
+    // The classification of the eight input variants.
+    let click = A::InputPointerClick {
+        window_id: WINDOW.into(),
+        x: 1,
+        y: 1,
+    };
+    let any_click = A::InputAnyPointerClick {
+        window_id: WINDOW.into(),
+        x: 1,
+        y: 1,
+    };
+    let all = [
+        key("a"),
+        text("a"),
+        A::InputPointerMove {
+            window_id: WINDOW.into(),
+            x: 1,
+            y: 1,
+        },
+        click.clone(),
+        any_key("a"),
+        any_text("a"),
+        any_move(1),
+        any_click.clone(),
+    ];
+    assert!(all.iter().all(is_input));
+    assert!(!is_input(&A::ScreenLock));
+    let any: Vec<bool> = all.iter().map(is_any).collect();
+    assert_eq!(any, [false, false, false, false, true, true, true, true]);
+    let clicks: Vec<bool> = all.iter().map(is_click).collect();
+    assert_eq!(
+        clicks,
+        [false, false, false, true, false, false, false, true]
+    );
+    // A click is not planned: it has no grammar in this build.
+    assert!(super::plan(&click).is_err());
+    assert!(super::plan(&any_click).is_err());
 }

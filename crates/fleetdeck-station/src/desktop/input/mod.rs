@@ -7,6 +7,8 @@
 //! - [`barrier`]: the board-window barrier of §7.2.
 //! - [`snapshot`] and [`focus`]: the bounded compositor observations.
 //! - [`exec`]: the 20 steps of §7.3.
+//! - [`listed`], [`list`] and [`target`]: the handles of ordinary windows,
+//!   the `window_list` read and the resolution of a target (R13 P7b §6, §7).
 //! - [`watch`]: the interruption of §7.5 while `wtype` runs.
 //!
 //! The text of `type_text` travels only on a private stdin pipe of `wtype`
@@ -19,7 +21,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use fleetdeck_proto::coordinator_desktop_text::code as p6_code;
+use fleetdeck_proto::coordinator_desktop_text::{code as p6_code, text_any};
 use fleetdeck_proto::desktop::{DesktopActResult, DesktopAction};
 
 use super::authority::Admitted;
@@ -31,8 +33,11 @@ pub mod claim;
 mod exec;
 pub(crate) mod focus;
 pub(crate) mod grammar;
+pub(crate) mod list;
+pub mod listed;
 pub mod slot;
 pub(crate) mod snapshot;
+mod target;
 mod watch;
 
 pub use slot::InputSlot;
@@ -141,10 +146,22 @@ impl Desktop {
         claim: &dyn Claimer,
     ) -> Result<(), Fail> {
         let name = super::actions::name(&action);
+        let any = grammar::is_any(&action);
         let run = exec::run(self, gate, action, &admitted, env, claim);
         let result = match tokio::time::timeout(env.handler_limit, run).await {
             Ok(result) => result,
             Err(_) => Err(fail(p6_code::INPUT_TIMEOUT)),
+        };
+        // R13 P7b §13: the `any_window` variants use the generic texts of the
+        // four codes that name a window or its focus.
+        let result = match result {
+            Err(mut e) if any => {
+                if let Some(text) = text_any(e.code) {
+                    e.message = text.to_owned();
+                }
+                Err(e)
+            }
+            other => other,
         };
         match &result {
             Ok(()) => tracing::info!(action = name, result = "ok", "desktop action"),
@@ -182,6 +199,8 @@ impl Desktop {
     }
 }
 
+#[cfg(test)]
+mod exec_any_tests;
 #[cfg(test)]
 mod exec_gate_tests;
 #[cfg(test)]

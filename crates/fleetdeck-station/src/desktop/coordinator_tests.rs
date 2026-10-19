@@ -553,6 +553,7 @@ fn the_live_gates_have_their_codes_and_texts() {
         capture: true,
         desktop_input: true,
         monitors: Vec::new(),
+        ..Live::default()
     };
     assert_eq!(check_live(&on, false, None), Ok(()));
     assert_eq!(check_live(&on, true, Some("DP-1")), Ok(()));
@@ -612,6 +613,7 @@ fn live(monitors: &[&str]) -> Live {
         capture: true,
         desktop_input: true,
         monitors: monitors.iter().map(|m| (*m).to_owned()).collect(),
+        ..Live::default()
     }
 }
 

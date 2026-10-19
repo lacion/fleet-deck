@@ -1,5 +1,5 @@
 //! The grammar of the input actions on the target (R13 P7 §4, §5.1, §5.2,
-//! §8.1): the validation with the proto validators, and the fixed `wtype`
+//! §8.1; R13 P7b §9.1): the validation with the proto validators, and the fixed `wtype`
 //! argv of a chord. The text never becomes an argv: it travels on a private
 //! stdin pipe (argv `-`).
 
@@ -28,20 +28,30 @@ pub(crate) enum Plan {
 }
 
 impl Plan {
-    /// The text of the fixed disclosure of §8.2 for `label`.
-    pub(crate) fn disclosure(&self, label: &str) -> String {
-        match self {
-            Self::Key { .. } | Self::Text { .. } => {
+    /// The text of the fixed disclosure of §8.2 for `label`; `any` is true for
+    /// the `InputAny*` variants (R13 P7b §14: another application window).
+    pub(crate) fn disclosure(&self, label: &str, any: bool) -> String {
+        match (self, any) {
+            (Self::Key { .. } | Self::Text { .. }, false) => {
                 format!("Fleet Deck is sending keyboard input for {label} to an agent preview.")
             }
-            Self::Pointer { .. } => {
+            (Self::Key { .. } | Self::Text { .. }, true) => {
+                format!(
+                    "Fleet Deck is sending keyboard input for {label} to an application window."
+                )
+            }
+            (Self::Pointer { .. }, false) => {
                 format!("Fleet Deck is moving the pointer for {label} in an agent preview.")
+            }
+            (Self::Pointer { .. }, true) => {
+                format!("Fleet Deck is moving the pointer for {label} in an application window.")
             }
         }
     }
 }
 
-/// Whether `action` is one of the three input actions.
+/// Whether `action` is one of the input actions: the three of P7, the click
+/// of a preview and the four `any_window` variants (R13 P7b §9.1).
 #[must_use]
 pub(crate) fn is_input(action: &DesktopAction) -> bool {
     matches!(
@@ -49,6 +59,32 @@ pub(crate) fn is_input(action: &DesktopAction) -> bool {
         DesktopAction::InputKeyPress { .. }
             | DesktopAction::InputTypeText { .. }
             | DesktopAction::InputPointerMove { .. }
+            | DesktopAction::InputPointerClick { .. }
+            | DesktopAction::InputAnyKeyPress { .. }
+            | DesktopAction::InputAnyTypeText { .. }
+            | DesktopAction::InputAnyPointerMove { .. }
+            | DesktopAction::InputAnyPointerClick { .. }
+    )
+}
+
+/// Whether `action` is one of the four `InputAny*` variants.
+#[must_use]
+pub(crate) fn is_any(action: &DesktopAction) -> bool {
+    matches!(
+        action,
+        DesktopAction::InputAnyKeyPress { .. }
+            | DesktopAction::InputAnyTypeText { .. }
+            | DesktopAction::InputAnyPointerMove { .. }
+            | DesktopAction::InputAnyPointerClick { .. }
+    )
+}
+
+/// Whether `action` is one of the two click variants.
+#[must_use]
+pub(crate) fn is_click(action: &DesktopAction) -> bool {
+    matches!(
+        action,
+        DesktopAction::InputPointerClick { .. } | DesktopAction::InputAnyPointerClick { .. }
     )
 }
 
@@ -63,21 +99,24 @@ fn invalid() -> Fail {
 /// `invalid_params` (the P6 text); the text never names the value.
 pub(crate) fn check(action: &DesktopAction) -> Result<(), Fail> {
     let checked = match action {
-        DesktopAction::InputKeyPress { window_id, chord } => KeyPressArguments {
+        DesktopAction::InputKeyPress { window_id, chord }
+        | DesktopAction::InputAnyKeyPress { window_id, chord } => KeyPressArguments {
             request_id: PLACEHOLDER_REQUEST.to_owned(),
             station: None,
             window_id: window_id.clone(),
             chord: chord.clone(),
         }
         .validate(),
-        DesktopAction::InputTypeText { window_id, text } => TypeTextArguments {
+        DesktopAction::InputTypeText { window_id, text }
+        | DesktopAction::InputAnyTypeText { window_id, text } => TypeTextArguments {
             request_id: PLACEHOLDER_REQUEST.to_owned(),
             station: None,
             window_id: window_id.clone(),
             text: text.clone(),
         }
         .validate(),
-        DesktopAction::InputPointerMove { window_id, x, y } => PointerMoveArguments {
+        DesktopAction::InputPointerMove { window_id, x, y }
+        | DesktopAction::InputAnyPointerMove { window_id, x, y } => PointerMoveArguments {
             request_id: PLACEHOLDER_REQUEST.to_owned(),
             station: None,
             window_id: window_id.clone(),
@@ -97,17 +136,20 @@ pub(crate) fn check(action: &DesktopAction) -> Result<(), Fail> {
 pub(crate) fn plan(action: &DesktopAction) -> Result<(String, Plan), Fail> {
     check(action)?;
     match action {
-        DesktopAction::InputKeyPress { window_id, chord } => {
+        DesktopAction::InputKeyPress { window_id, chord }
+        | DesktopAction::InputAnyKeyPress { window_id, chord } => {
             let argv = chord_argv(chord).ok_or_else(invalid)?;
             Ok((window_id.clone(), Plan::Key { argv }))
         }
-        DesktopAction::InputTypeText { window_id, text } => Ok((
+        DesktopAction::InputTypeText { window_id, text }
+        | DesktopAction::InputAnyTypeText { window_id, text } => Ok((
             window_id.clone(),
             Plan::Text {
                 bytes: text.clone().into_bytes(),
             },
         )),
-        DesktopAction::InputPointerMove { window_id, x, y } => {
+        DesktopAction::InputPointerMove { window_id, x, y }
+        | DesktopAction::InputAnyPointerMove { window_id, x, y } => {
             Ok((window_id.clone(), Plan::Pointer { x: *x, y: *y }))
         }
         _ => Err(invalid()),

@@ -18,6 +18,8 @@ use std::collections::VecDeque;
 use std::sync::{Mutex, PoisonError};
 
 use crate::desktop::events::Kind;
+use crate::desktop::{Fail, code};
+use crate::store::Store;
 
 /// The most marked handles the station keeps; the oldest goes first.
 const MAX_MARKS: usize = 1024;
@@ -154,6 +156,27 @@ pub(crate) fn host_of_url(url: &str) -> Option<String> {
     };
     let host = host.to_ascii_lowercase();
     (!host.is_empty()).then_some(host)
+}
+
+/// The lower case hosts of the deck origins that this station knows from its
+/// pairing records (the address that it dials), for the board barrier (R13
+/// P7 §7.2). A station that is dialed by the deck knows none.
+///
+/// # Errors
+/// `failed` when the pairing records cannot be read.
+pub(crate) async fn deck_hosts(store: &Store) -> Result<Vec<String>, Fail> {
+    let keys = store.paired_keys().await.map_err(|e| {
+        tracing::warn!(error = %e, "the paired decks cannot be read");
+        Fail::new(code::FAILED, "The station could not read the deck origins.")
+    })?;
+    let mut hosts: Vec<String> = keys
+        .iter()
+        .filter_map(|key| key.dial_url.as_deref())
+        .filter_map(host_of_url)
+        .collect();
+    hosts.sort();
+    hosts.dedup();
+    Ok(hosts)
 }
 
 /// Whether the host of `url` is one of the known deck hosts (§7.2: the

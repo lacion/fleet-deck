@@ -4,7 +4,9 @@
 //!    intake does; [`grammar::plan`] checks the action again);
 //! 2. read the live local gates;
 //! 3. take the station input slot, or refuse with `busy`;
-//! 4. resolve the preview of the caller through the registry;
+//! 4. resolve the target: the preview of the caller through the registry; an
+//!    `InputAny*` action first resolves a listed handle of the caller's
+//!    binding (R13 P7b §7, §10.1; [`super::target`]);
 //! 5. to 7. take the bounded snapshot, require an unlocked screen and a
 //!    permitted monitor, apply the board barrier and the pointer checks;
 //! 8. prepare the fixed command (nothing starts);
@@ -37,6 +39,7 @@ use super::barrier::{self, Names};
 use super::focus::{self, Active, Verdict, read_active};
 use super::grammar::{self, Plan};
 use super::snapshot::{self, Client, Snapshot, TakeError};
+use super::target::{self, ListedTarget};
 use super::{ACTIVE_LIMIT, AUTHORITY_MAX_AGE, Claimed, Claimer, Env, FOCUS_MAX_AGE, fail};
 use crate::desktop::actions::send_notify;
 use crate::desktop::authority::{Admitted, Start};
@@ -78,11 +81,17 @@ pub(super) struct Op<'a> {
     pub(super) plan: Plan,
     pub(super) owner: PreviewOwner,
     pub(super) label: String,
-    /// The registry record of the preview at resolution (step 4).
+    /// The registry record of the preview at resolution (step 4); for a
+    /// listed window the record that its handle names (kind `Listed`).
     pub(super) record: Record,
+    /// The resolved handle of a listed window (R13 P7b §7); `None` for an
+    /// own preview.
+    pub(super) listed: Option<ListedTarget>,
+    /// The action is one of the `InputAny*` variants.
+    pub(super) any: bool,
 }
 
-fn not_found() -> Fail {
+pub(super) fn not_found() -> Fail {
     fail(p6_code::DESKTOP_WINDOW_NOT_FOUND)
 }
 
@@ -106,7 +115,11 @@ pub(super) async fn run(
     env: &Env,
     claim: &dyn Claimer,
 ) -> Result<(), Fail> {
+    if grammar::is_click(&action) {
+        return refuse_click(&action, gate, admitted);
+    }
     let (window_id, plan) = grammar::plan(&action)?;
+    let any = grammar::is_any(&action);
     let start = Start::new(admitted.clone(), &action);
     let (owner, label) = identity(&start)?;
     admitted.local_gates()?;
@@ -115,10 +128,7 @@ pub(super) async fn run(
     }
     let _slot = desktop.input.try_take()?;
     let ctx = desktop.context().await?;
-    let (found_owner, record) = desktop.events.preview(&window_id).ok_or_else(not_found)?;
-    if found_owner != owner || record.signature != ctx.found.signature {
-        return Err(not_found());
-    }
+    let found = target::resolve(desktop, &ctx, &start, &window_id, &owner, any, env)?;
     let op = Op {
         desktop,
         ctx,
@@ -131,9 +141,23 @@ pub(super) async fn run(
         plan,
         owner,
         label,
-        record,
+        record: found.record,
+        listed: found.listed,
+        any,
     };
     op.go().await
+}
+
+/// The click variants (R13 P7b task S2a): the checks of the gates run, then
+/// `desktop_unsupported`. Nothing is claimed, disclosed, focused or sent.
+fn refuse_click(action: &DesktopAction, gate: Gate<'_>, admitted: &Admitted) -> Result<(), Fail> {
+    let start = Start::new(admitted.clone(), action);
+    identity(&start)?;
+    admitted.local_gates()?;
+    if !gate() {
+        return Err(Fail::forbidden());
+    }
+    Err(fail(p6_code::DESKTOP_UNSUPPORTED))
 }
 
 impl Op<'_> {
@@ -145,22 +169,8 @@ impl Op<'_> {
         }
     }
 
-    /// The launch URL of the preview named a known deck origin.
-    fn marked(&self) -> bool {
-        self.desktop.board_marks.is_marked(&self.window_id)
-    }
-
     fn pointer(&self) -> bool {
         matches!(self.plan, Plan::Pointer { .. })
-    }
-
-    /// The registry still holds the same owner and record (never a similar
-    /// window).
-    pub(super) fn same_record(&self) -> Result<(), Fail> {
-        match self.desktop.events.preview(&self.window_id) {
-            Some((o, r)) if o == self.owner && r == self.record => Ok(()),
-            _ => Err(not_found()),
-        }
     }
 
     /// An explicit execute check of the authority and the live gates.
@@ -236,7 +246,9 @@ impl Op<'_> {
             title: &client.title,
             initial_title: &client.initial_title,
         };
-        if self.marked() || barrier::is_board(self.record.kind, &names, &self.env.deck_hosts) {
+        if self.marked()
+            || barrier::is_board(self.barrier_record().kind, &names, &self.env.deck_hosts)
+        {
             return Err(fail(p6_code::INPUT_BOARD_FORBIDDEN));
         }
         let point = match self.plan {
@@ -266,7 +278,7 @@ impl Op<'_> {
     /// Step 10: the fixed disclosure through the notify path. Its failure is
     /// the failure of the operation and nothing is focused or injected.
     async fn disclose(&self) -> Result<(), Fail> {
-        let text = self.plan.disclosure(&self.label);
+        let text = self.plan.disclosure(&self.label, self.any);
         send_notify(&self.runner(), TITLE, &text, Urgency::Normal).await
     }
 
@@ -286,7 +298,7 @@ impl Op<'_> {
 
     /// Step 16 and step 19: what an observation of the active window means.
     pub(super) fn judge(&self, active: &Active) -> Result<(), Fail> {
-        match focus::verdict(active, &self.record, &self.env.deck_hosts) {
+        match focus::verdict(active, &self.barrier_record(), &self.env.deck_hosts) {
             Verdict::Same if self.marked() => Err(fail(p6_code::INPUT_BOARD_FORBIDDEN)),
             Verdict::Same => Ok(()),
             Verdict::Foreign => Err(fail(p6_code::FOCUS_CHANGED)),
