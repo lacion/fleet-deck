@@ -357,3 +357,158 @@ fn the_input_policy_request_and_answer_have_their_shapes() {
         r#"{"allow_fleet_control":true,"allow_desktop":true,"allow_desktop_capture":false,"monitor_allowed":true}"#
     );
 }
+
+#[test]
+fn the_p7b_policy_purposes_have_their_wire_names_and_answers_fit_them() {
+    // R13 P7b §9.2: the three new purposes; the bytes of `input` do not move.
+    for (purpose, text) in [
+        (PolicyPurpose::InputClick, "input_click"),
+        (PolicyPurpose::InputAny, "input_any"),
+        (PolicyPurpose::InputAnyClick, "input_any_click"),
+    ] {
+        let ask = DesktopPolicyNow {
+            purpose,
+            monitor: None,
+        };
+        let v = serde_json::to_value(&ask).unwrap();
+        assert_eq!(v, json!({"purpose": text, "monitor": null}));
+        assert_eq!(serde_json::from_value::<DesktopPolicyNow>(v).unwrap(), ask);
+    }
+    assert_eq!(
+        serde_json::to_string(&DesktopPolicyNow {
+            purpose: PolicyPurpose::Input,
+            monitor: None
+        })
+        .unwrap(),
+        r#"{"purpose":"input","monitor":null}"#
+    );
+    for bad in ["inputclick", "Input_Click", "input_any_clicks", "any"] {
+        assert!(
+            serde_json::from_value::<DesktopPolicyNow>(json!({"purpose": bad})).is_err(),
+            "{bad}"
+        );
+    }
+}
+
+fn gates(click: Option<bool>, any: Option<bool>) -> DesktopInputGatesAnswer {
+    DesktopInputGatesAnswer {
+        allow_fleet_control: true,
+        allow_desktop: true,
+        allow_desktop_capture: true,
+        allow_desktop_input: true,
+        monitor_allowed: true,
+        allow_desktop_click: click,
+        allow_desktop_input_any: any,
+    }
+}
+
+#[test]
+fn the_input_gates_answer_writes_only_the_gates_that_are_set_and_is_closed() {
+    let both = gates(Some(true), Some(false));
+    let v: Value = serde_json::to_value(&both).unwrap();
+    assert_eq!(
+        v,
+        json!({"allow_fleet_control": true, "allow_desktop": true,
+            "allow_desktop_capture": true, "allow_desktop_input": true,
+            "monitor_allowed": true, "allow_desktop_click": true,
+            "allow_desktop_input_any": false})
+    );
+    assert_eq!(
+        serde_json::from_value::<DesktopInputGatesAnswer>(v.clone()).unwrap(),
+        both
+    );
+    let click = serde_json::to_value(gates(Some(false), None)).unwrap();
+    assert_eq!(click["allow_desktop_click"], false);
+    assert!(
+        !click
+            .as_object()
+            .unwrap()
+            .contains_key("allow_desktop_input_any")
+    );
+    let any = serde_json::to_value(gates(None, Some(true))).unwrap();
+    assert!(!any.as_object().unwrap().contains_key("allow_desktop_click"));
+    assert_eq!(
+        serde_json::from_value::<DesktopInputGatesAnswer>(any).unwrap(),
+        gates(None, Some(true))
+    );
+    // It is closed: an unknown field and a missing base field are refused,
+    // and a null gate reads as an absent one.
+    let mut extra = v.clone();
+    extra["x"] = json!(1);
+    assert!(serde_json::from_value::<DesktopInputGatesAnswer>(extra).is_err());
+    let mut missing = v.clone();
+    missing.as_object_mut().unwrap().remove("monitor_allowed");
+    assert!(serde_json::from_value::<DesktopInputGatesAnswer>(missing).is_err());
+    let mut null = v;
+    null["allow_desktop_click"] = Value::Null;
+    assert_eq!(
+        serde_json::from_value::<DesktopInputGatesAnswer>(null).unwrap(),
+        gates(None, Some(false))
+    );
+    // The answer of the `input` purpose keeps its bytes and its type.
+    let p7 = serde_json::to_value(DesktopInputPolicyAnswer {
+        allow_fleet_control: true,
+        allow_desktop: true,
+        allow_desktop_capture: true,
+        allow_desktop_input: true,
+        monitor_allowed: true,
+    })
+    .unwrap();
+    assert!(
+        serde_json::from_value::<DesktopInputPolicyAnswer>(serde_json::to_value(both).unwrap())
+            .is_err()
+    );
+    assert_eq!(
+        serde_json::from_value::<DesktopInputGatesAnswer>(p7).unwrap(),
+        gates(None, None)
+    );
+}
+
+#[test]
+fn an_input_gates_answer_fits_exactly_the_gates_of_its_purpose() {
+    use PolicyPurpose::{Capture, Desktop, Input, InputAny, InputAnyClick, InputClick};
+    let cases = [
+        // (click, any, the purposes that fit)
+        (None, None, vec![]),
+        (Some(true), None, vec![InputClick]),
+        (Some(false), None, vec![InputClick]),
+        (None, Some(true), vec![InputAny]),
+        (None, Some(false), vec![InputAny]),
+        (Some(true), Some(true), vec![InputAnyClick]),
+        (Some(false), Some(false), vec![InputAnyClick]),
+        (Some(true), Some(false), vec![InputAnyClick]),
+    ];
+    for (click, any, fits) in cases {
+        let answer = gates(click, any);
+        for purpose in [Desktop, Capture, Input, InputClick, InputAny, InputAnyClick] {
+            assert_eq!(
+                answer.fits(purpose),
+                fits.contains(&purpose),
+                "{click:?} {any:?} {purpose:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_input_windows_read_has_its_kind() {
+    let v = serde_json::to_value(ProtectedRead::InputWindows).unwrap();
+    assert_eq!(v, json!({"kind": "input_windows"}));
+    assert_eq!(
+        serde_json::from_value::<ProtectedRead>(v).unwrap(),
+        ProtectedRead::InputWindows
+    );
+    // The other kinds keep their bytes.
+    assert_eq!(
+        serde_json::to_value(ProtectedRead::Info).unwrap(),
+        json!({"kind": "info"})
+    );
+    let read = CoordinatorRead {
+        read_id: "r1".into(),
+        read: ProtectedRead::InputWindows,
+        read_hash: "h".into(),
+    };
+    let v = serde_json::to_value(&read).unwrap();
+    assert_eq!(v["read"], json!({"kind": "input_windows"}));
+    assert_eq!(serde_json::from_value::<CoordinatorRead>(v).unwrap(), read);
+}

@@ -105,6 +105,11 @@ impl Holder for StationHolder {
             json!(c.allow_desktop_capture),
         );
         m.insert("allow_desktop_input".into(), json!(c.allow_desktop_input));
+        m.insert("allow_desktop_click".into(), json!(c.allow_desktop_click));
+        m.insert(
+            "allow_desktop_input_any".into(),
+            json!(c.allow_desktop_input_any),
+        );
         m.insert("capture_monitors".into(), json!(c.capture_monitors));
         m.insert("fleet_summary".into(), json!(c.fleet_summary));
         m.insert("max_shells".into(), json!(c.max_shells));
@@ -244,6 +249,14 @@ impl Holder for StationHolder {
         add(
             !old.allow_desktop_input && new.allow_desktop_input,
             "allow_desktop_input",
+        );
+        add(
+            !old.allow_desktop_click && new.allow_desktop_click,
+            "allow_desktop_click",
+        );
+        add(
+            !old.allow_desktop_input_any && new.allow_desktop_input_any,
+            "allow_desktop_input_any",
         );
         add(
             !old.capture_monitors.is_empty()

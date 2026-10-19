@@ -2,8 +2,9 @@
 import type { DesktopInfoArguments } from "./DesktopInfoArguments";
 import type { ImageArguments } from "./ImageArguments";
 import type { StatusArguments } from "./StatusArguments";
+import type { WindowListArguments } from "./WindowListArguments";
 
 /**
  * A read tool of a coordinator (the payload of `coordinator.desktop_query`).
  */
-export type DesktopQuery = { "tool": "desktop_info", "arguments": DesktopInfoArguments } | { "tool": "desktop_action_status", "arguments": StatusArguments } | { "tool": "capture_status", "arguments": StatusArguments } | { "tool": "read_capture_image", "arguments": ImageArguments };
+export type DesktopQuery = { "tool": "desktop_info", "arguments": DesktopInfoArguments } | { "tool": "desktop_action_status", "arguments": StatusArguments } | { "tool": "capture_status", "arguments": StatusArguments } | { "tool": "read_capture_image", "arguments": ImageArguments } | { "tool": "window_list", "arguments": WindowListArguments };

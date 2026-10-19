@@ -205,6 +205,18 @@ pub mod feature {
     /// protocol: it does not attest that `wtype` is installed.
     pub const DESKTOP_INPUT_MCP: &str = "desktop_input_mcp.v1";
 
+    /// R13 P7b: the coordinator tool `pointer_click`, the click grant field,
+    /// the click target actions and the `input_click` policy purpose (needs
+    /// `desktop_input_mcp.v1`). It means support for the protocol: it does
+    /// not attest that `wlrctl` is installed.
+    pub const DESKTOP_CLICK_MCP: &str = "desktop_click_mcp.v1";
+
+    /// R13 P7b: the `any_window` input scope, the coordinator tool
+    /// `window_list`, the `input_windows` protected read, the broader target
+    /// actions and the `input_any` policy purposes (needs
+    /// `desktop_input_mcp.v1`).
+    pub const DESKTOP_INPUT_ANY: &str = "desktop_input_any.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -257,6 +269,8 @@ pub mod feature {
         CAPTURE_RECORDING_MCP,
         OMARCHY_ADMIN,
         DESKTOP_INPUT_MCP,
+        DESKTOP_CLICK_MCP,
+        DESKTOP_INPUT_ANY,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];
@@ -400,6 +414,24 @@ mod tests {
             proto_max: max,
             features: features.iter().map(|f| (*f).to_owned()).collect(),
         }
+    }
+
+    #[test]
+    fn the_p7b_features_have_their_names_and_follow_the_input_feature_in_all() {
+        assert_eq!(feature::DESKTOP_CLICK_MCP, "desktop_click_mcp.v1");
+        assert_eq!(feature::DESKTOP_INPUT_ANY, "desktop_input_any.v1");
+        let at = |f: &str| feature::ALL.iter().position(|x| *x == f).unwrap();
+        assert_eq!(
+            at(feature::DESKTOP_CLICK_MCP),
+            at(feature::DESKTOP_INPUT_MCP) + 1
+        );
+        assert_eq!(
+            at(feature::DESKTOP_INPUT_ANY),
+            at(feature::DESKTOP_INPUT_MCP) + 2
+        );
+        let this = VersionOffer::this_build();
+        assert!(this.features.iter().any(|f| f == "desktop_click_mcp.v1"));
+        assert!(this.features.iter().any(|f| f == "desktop_input_any.v1"));
     }
 
     #[test]

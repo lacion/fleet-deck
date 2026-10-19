@@ -319,6 +319,12 @@ fn the_danger_rules() {
     );
     assert!(d("allow_desktop_input = true", "allow_desktop_input = false").is_empty());
     assert!(d("", "allow_desktop_input = false").is_empty());
+    // Agent clicks and broader input (R13 P7b §3.2): the same rule.
+    for key in ["allow_desktop_click", "allow_desktop_input_any"] {
+        assert_eq!(d("", &format!("{key} = true")), vec![key]);
+        assert!(d(&format!("{key} = true"), &format!("{key} = false")).is_empty());
+        assert!(d("", &format!("{key} = false")).is_empty());
+    }
     // Screenshot monitors (R13 P5a): only a widening is a danger change.
     assert!(d("", "capture_monitors = [\"DP-1\"]").is_empty());
     assert_eq!(

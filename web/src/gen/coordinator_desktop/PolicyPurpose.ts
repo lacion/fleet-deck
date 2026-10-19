@@ -3,4 +3,4 @@
 /**
  * Why the deck asks for the live policy of a target (§5.5).
  */
-export type PolicyPurpose = "desktop" | "capture" | "input";
+export type PolicyPurpose = "desktop" | "capture" | "input" | "input_click" | "input_any" | "input_any_click";

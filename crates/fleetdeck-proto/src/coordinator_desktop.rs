@@ -15,7 +15,10 @@ use crate::desktop::DesktopKind;
 use crate::display_directive::{ArtifactRef, SessionRef};
 use crate::recording::StopReason;
 
-pub use crate::coordinator_input::{KeyPressArguments, PointerMoveArguments, TypeTextArguments};
+pub use crate::coordinator_input::{
+    KeyPressArguments, PointerClickArguments, PointerMoveArguments, TypeTextArguments,
+    WindowListArguments,
+};
 
 /// A tool argument that failed validation: the name of the field only,
 /// never its value.
@@ -178,6 +181,8 @@ pub enum DesktopCall {
     TypeText(TypeTextArguments),
     /// R13 P7 §4, §6.2.
     PointerMove(PointerMoveArguments),
+    /// R13 P7b §5.1 (feature `desktop_click_mcp.v1`).
+    PointerClick(PointerClickArguments),
 }
 
 /// A read tool of a coordinator (the payload of `coordinator.desktop_query`).
@@ -194,6 +199,8 @@ pub enum DesktopQuery {
     DesktopActionStatus(StatusArguments),
     CaptureStatus(StatusArguments),
     ReadCaptureImage(ImageArguments),
+    /// R13 P7b §5.2, §6 (feature `desktop_input_any.v1`).
+    WindowList(WindowListArguments),
 }
 
 /// `^[A-Za-z0-9_-]+$` with 1 to `max` Unicode scalars.
@@ -317,6 +324,7 @@ impl DesktopCall {
             Self::KeyPress(a) => a.validate(),
             Self::TypeText(a) => a.validate(),
             Self::PointerMove(a) => a.validate(),
+            Self::PointerClick(a) => a.validate(),
         }
     }
 }
@@ -331,6 +339,7 @@ impl DesktopQuery {
             Self::DesktopInfo(a) => check_station(a.station.as_ref()),
             Self::DesktopActionStatus(a) | Self::CaptureStatus(a) => check_request(&a.request_id),
             Self::ReadCaptureImage(a) => check_artifact(&a.artifact),
+            Self::WindowList(a) => a.validate(),
         }
     }
 }

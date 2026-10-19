@@ -304,6 +304,80 @@ fn the_input_actions_have_pinned_coordinator_hashes_and_a_null_monitor() {
     }
 }
 
+fn p7b_input_actions() -> [DesktopAction; 5] {
+    [
+        DesktopAction::InputPointerClick {
+            window_id: INPUT_WINDOW.into(),
+            x: 12,
+            y: 34,
+        },
+        DesktopAction::InputAnyKeyPress {
+            window_id: INPUT_WINDOW.into(),
+            chord: "Ctrl+a".into(),
+        },
+        DesktopAction::InputAnyTypeText {
+            window_id: INPUT_WINDOW.into(),
+            text: "héllo --help".into(),
+        },
+        DesktopAction::InputAnyPointerMove {
+            window_id: INPUT_WINDOW.into(),
+            x: 12,
+            y: 34,
+        },
+        DesktopAction::InputAnyPointerClick {
+            window_id: INPUT_WINDOW.into(),
+            x: 12,
+            y: 34,
+        },
+    ]
+}
+
+/// R13 P7b §9.1: the hash of each new input action, with the fixed context
+/// and the node of the P7 fixtures. The monitor field is null, and the
+/// logical target is the `window_id`. Each value was computed once with
+/// SHA-256 over the exact compact JSON and is pinned here.
+#[test]
+fn the_p7b_input_actions_have_pinned_coordinator_hashes_and_a_null_monitor() {
+    let pinned = [
+        "bce9335a8b3eb610b4f4c11b222dd99c5f70133d1691a28aeeffc7fe693af821",
+        "d6ceef74f847b02cf4aa2a3f9b996bde8b7f755f60303240af837216689abe7c",
+        "a70f9912c5d9c112786355d50b7403955339607583641b3a98ba9d8307b62698",
+        "a1463118935133fbeee82444de2d6da31bb1aa23ed077474d00dbd5eb98a755b",
+        "b1aa073f98800e03de8a23ed4060176d4d286c3d6411c91c0cb0af4a6b58e67f",
+    ];
+    let texts = [
+        format!(
+            r#"{{"action":{{"action":"input_pointer_click","window_id":"{INPUT_WINDOW}","x":12,"y":34}},"coordinator":{CTX_JSON},"monitor":null,"station":"ff00"}}"#
+        ),
+        format!(
+            r#"{{"action":{{"action":"input_any_key_press","chord":"Ctrl+a","window_id":"{INPUT_WINDOW}"}},"coordinator":{CTX_JSON},"monitor":null,"station":"ff00"}}"#
+        ),
+        format!(
+            r#"{{"action":{{"action":"input_any_type_text","text":"héllo --help","window_id":"{INPUT_WINDOW}"}},"coordinator":{CTX_JSON},"monitor":null,"station":"ff00"}}"#
+        ),
+        format!(
+            r#"{{"action":{{"action":"input_any_pointer_move","window_id":"{INPUT_WINDOW}","x":12,"y":34}},"coordinator":{CTX_JSON},"monitor":null,"station":"ff00"}}"#
+        ),
+        format!(
+            r#"{{"action":{{"action":"input_any_pointer_click","window_id":"{INPUT_WINDOW}","x":12,"y":34}},"coordinator":{CTX_JSON},"monitor":null,"station":"ff00"}}"#
+        ),
+    ];
+    for ((action, hash), text) in p7b_input_actions().iter().zip(pinned).zip(texts) {
+        assert_eq!(target_monitor(action), None, "{action:?}");
+        assert_eq!(
+            String::from_utf8(canonical_bytes_for(action, "ff00", Some(&ctx()))).unwrap(),
+            text
+        );
+        assert_eq!(action_hash_for(action, "ff00", Some(&ctx())), hash);
+    }
+    // Every hash differs from the P7 hash of the same arguments.
+    let p7 = input_actions().map(|a| action_hash_for(&a, "ff00", Some(&ctx())));
+    for a in p7b_input_actions() {
+        let h = action_hash_for(&a, "ff00", Some(&ctx()));
+        assert!(!p7.contains(&h), "{a:?}");
+    }
+}
+
 #[test]
 fn an_input_hash_binds_the_action_the_context_and_the_node() {
     let [key, typed, point] = input_actions();

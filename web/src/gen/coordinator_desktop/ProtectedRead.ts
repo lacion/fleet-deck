@@ -3,4 +3,4 @@
 /**
  * The closed read of `desktop.coordinator_read` (§5.7).
  */
-export type ProtectedRead = { "kind": "info" } | { "kind": "action_status", operation_id: string, } | { "kind": "capture_status", capture_id: string, } | { "kind": "capture_file", artifact_id: string, version: number, offset: number, length: number, };
+export type ProtectedRead = { "kind": "info" } | { "kind": "action_status", operation_id: string, } | { "kind": "capture_status", capture_id: string, } | { "kind": "capture_file", artifact_id: string, version: number, offset: number, length: number, } | { "kind": "input_windows" };

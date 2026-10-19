@@ -453,6 +453,11 @@ pub struct GrantView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub input_character_used: Option<u32>,
+    /// R13 P7b §3.1: the click allowance; `Some` only for a grant with
+    /// `allow_input`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub allow_click: Option<bool>,
 }
 
 #[cfg(test)]

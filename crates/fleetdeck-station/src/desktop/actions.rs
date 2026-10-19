@@ -31,28 +31,9 @@ pub(super) const CLOSE_WAIT: Duration = Duration::from_secs(5);
 /// The entries are never removed.
 pub(super) type WallLocks = Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>;
 
-/// The kind of an action for the log: never its arguments.
-pub(super) fn name(action: &DesktopAction) -> &'static str {
-    match action {
-        DesktopAction::ScreenPower { .. } => "screen_power",
-        DesktopAction::ScreenLock => "screen_lock",
-        DesktopAction::ScreenDnd { .. } => "screen_dnd",
-        DesktopAction::ScreenIdleInhibit { .. } => "screen_idle_inhibit",
-        DesktopAction::WorkspaceShow { .. } => "workspace_show",
-        DesktopAction::WallOpen { .. } => "wall_open",
-        DesktopAction::WallClose { .. } => "wall_close",
-        DesktopAction::WallReload { .. } => "wall_reload",
-        DesktopAction::Notify { .. } => "notify",
-        DesktopAction::BrowserOpen { .. } => "browser_open",
-        DesktopAction::WindowClose { .. } => "window_close",
-        DesktopAction::ScreenCapture { .. } => "screen_capture",
-        DesktopAction::ScreenRecord { .. } => "screen_record",
-        DesktopAction::PreviewClose { .. } => "preview_close",
-        DesktopAction::InputKeyPress { .. } => "input_key_press",
-        DesktopAction::InputTypeText { .. } => "input_type_text",
-        DesktopAction::InputPointerMove { .. } => "input_pointer_move",
-    }
-}
+#[path = "actions_name.rs"]
+mod name_of;
+pub(super) use name_of::name;
 
 fn argv(parts: &[&str]) -> Vec<String> {
     parts.iter().map(|p| (*p).to_owned()).collect()
@@ -227,9 +208,16 @@ impl Cx<'_> {
             DesktopAction::PreviewClose { window_id } => {
                 self.owner_preview_close(&window_id).await.map(|()| None)
             }
+            // R13 P7 and P7b task F: no owner path sends input; the click and
+            // the broader variants refuse as the P7 ones do.
             DesktopAction::InputKeyPress { .. }
             | DesktopAction::InputTypeText { .. }
-            | DesktopAction::InputPointerMove { .. } => Err(Fail::input_unsupported()),
+            | DesktopAction::InputPointerMove { .. }
+            | DesktopAction::InputPointerClick { .. }
+            | DesktopAction::InputAnyKeyPress { .. }
+            | DesktopAction::InputAnyTypeText { .. }
+            | DesktopAction::InputAnyPointerMove { .. }
+            | DesktopAction::InputAnyPointerClick { .. } => Err(Fail::input_unsupported()),
         }
     }
 

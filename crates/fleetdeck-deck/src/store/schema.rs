@@ -768,6 +768,9 @@ pub fn migrations() -> Migrations<'static> {
         // `coordinator_desktop_ops` and `coordinator_desktop_rate`, the last
         // address of a session, and the sign-out of every session.
         M::up(super::coordinator_input_schema::SQL),
+        // V38 (R13 P7b task F): the click allowance and the `any_window` scope
+        // of a grant, the `pointer_click` tool and the `window_list` bucket.
+        M::up(super::coordinator_input_any_schema::SQL),
     ])
 }
 

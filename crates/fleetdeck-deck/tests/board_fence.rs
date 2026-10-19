@@ -42,9 +42,9 @@ use tokio_rustls::TlsConnector;
 use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName};
 use tokio_tungstenite::tungstenite::Message;
 
-const SIGNED_OUT_TEXT: &str =
-    "You were signed out because an agent typed on the station where this board is open.";
-const BLOCKED_TEXT: &str = "An agent is typing on this station. Sign in again in a minute.";
+const SIGNED_OUT_TEXT: &str = "You were signed out because an agent used desktop input on the station where this board is open.";
+const BLOCKED_TEXT: &str =
+    "An agent is using desktop input on this station. Sign in again in a minute.";
 const T: Duration = Duration::from_secs(10);
 
 /// Inserts an `attempted` input operation row that exposes `addrs` (a JSON

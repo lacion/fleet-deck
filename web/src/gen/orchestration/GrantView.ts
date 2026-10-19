@@ -85,4 +85,9 @@ input_character_cap?: number,
 /**
  * The typed characters charged; `Some` only with `allow_input`.
  */
-input_character_used?: number, };
+input_character_used?: number, 
+/**
+ * R13 P7b §3.1: the click allowance; `Some` only for a grant with
+ * `allow_input`.
+ */
+allow_click?: boolean, };

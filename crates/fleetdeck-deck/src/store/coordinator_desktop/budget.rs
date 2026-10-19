@@ -173,7 +173,7 @@ impl DeckStore {
                 .unwrap_or(grant.input_character_cap);
             if let Err(text) = check_input_grant(
                 &grant.classes,
-                grant.allow_input,
+                (grant.allow_input, grant.allow_click),
                 grant.input_scope,
                 (input_new, input_character_new),
             ) {

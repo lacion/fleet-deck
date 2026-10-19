@@ -157,6 +157,7 @@ fn spec() -> CoordinatorSpec {
         recording_cap: None,
         recording_second_cap: None,
         allow_input: false,
+        allow_click: false,
         input_scope: None,
         input_cap: None,
         input_character_cap: None,
@@ -217,6 +218,7 @@ fn a_grant_view_writes_the_p6_counters_only_when_set() {
         input_used: None,
         input_character_cap: None,
         input_character_used: None,
+        allow_click: None,
     };
     let v = serde_json::to_value(&view).unwrap();
     for key in [
@@ -304,6 +306,7 @@ fn a_grant_view_writes_the_recording_counters_only_when_set() {
         input_used: None,
         input_character_cap: None,
         input_character_used: None,
+        allow_click: None,
     };
     let v = serde_json::to_value(&view).unwrap();
     assert_eq!(v["recording_cap"], 5);
@@ -393,6 +396,7 @@ fn a_grant_view_writes_the_input_fields_only_when_set() {
         input_used: None,
         input_character_cap: None,
         input_character_used: None,
+        allow_click: None,
     };
     let v = serde_json::to_value(&view).unwrap();
     for key in [
@@ -418,5 +422,109 @@ fn a_grant_view_writes_the_input_fields_only_when_set() {
     assert_eq!(v["input_used"], 3);
     assert_eq!(v["input_character_cap"], 20_000);
     assert_eq!(v["input_character_used"], 41);
+    assert_eq!(serde_json::from_value::<GrantView>(v).unwrap(), view);
+}
+
+#[test]
+fn the_click_field_and_the_any_window_scope_of_the_spec_have_their_wire_forms() {
+    // R13 P7b §3.1: `allow_click` is written only when set, and a spec
+    // without it has the bytes of a P7 spec.
+    let none = serde_json::to_value(spec()).unwrap();
+    assert!(!none.as_object().unwrap().contains_key("allow_click"));
+    let p7 = CoordinatorSpec {
+        allow_input: true,
+        input_scope: Some(InputScope::OwnWindows),
+        ..spec()
+    };
+    let v = serde_json::to_value(&p7).unwrap();
+    assert!(!v.as_object().unwrap().contains_key("allow_click"));
+    assert_eq!(v["input_scope"], "own_windows");
+    let clicking = CoordinatorSpec {
+        allow_click: true,
+        ..p7.clone()
+    };
+    let v = serde_json::to_value(&clicking).unwrap();
+    assert_eq!(v["allow_click"], true);
+    assert_eq!(
+        serde_json::from_value::<CoordinatorSpec>(v).unwrap(),
+        clicking
+    );
+    // `allow_click: false` is the default and is not written, and an old
+    // spec without the field parses with it false.
+    let v = serde_json::to_value(CoordinatorSpec {
+        allow_click: false,
+        ..clicking
+    })
+    .unwrap();
+    assert!(!v.as_object().unwrap().contains_key("allow_click"));
+    assert!(
+        !serde_json::from_value::<CoordinatorSpec>(v)
+            .unwrap()
+            .allow_click
+    );
+    // The scope `any_window` round-trips; `any` and other names are refused.
+    let wide = CoordinatorSpec {
+        input_scope: Some(InputScope::AnyWindow),
+        ..p7
+    };
+    let v = serde_json::to_value(&wide).unwrap();
+    assert_eq!(v["input_scope"], "any_window");
+    assert_eq!(
+        serde_json::from_value::<CoordinatorSpec>(v.clone()).unwrap(),
+        wide
+    );
+    for bad in ["any", "AnyWindow", "anywindow", "any_windows", "all"] {
+        let mut other = v.clone();
+        other["input_scope"] = json!(bad);
+        assert!(
+            serde_json::from_value::<CoordinatorSpec>(other).is_err(),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn a_grant_view_writes_the_click_allowance_only_when_set() {
+    let mut view = GrantView {
+        grant_id: "g".into(),
+        station_id: "s".into(),
+        session_id: "x".into(),
+        classes: vec!["desktop".into(), "capture".into(), "input".into()],
+        stations: vec!["s".into()],
+        spawn_cap: 3,
+        spawn_used: 0,
+        state: "active".into(),
+        revoked_reason: None,
+        generation: None,
+        expires_at: 1,
+        last_used_at: None,
+        desktop_cap: None,
+        desktop_used: None,
+        capture_cap: None,
+        capture_used: None,
+        image_byte_cap: None,
+        image_byte_used: None,
+        recording_cap: None,
+        recording_used: None,
+        recording_second_cap: None,
+        recording_second_used: None,
+        allow_input: Some(true),
+        input_scope: Some(InputScope::AnyWindow),
+        input_cap: Some(100),
+        input_used: Some(0),
+        input_character_cap: Some(20_000),
+        input_character_used: Some(0),
+        allow_click: None,
+    };
+    let v = serde_json::to_value(&view).unwrap();
+    assert!(!v.as_object().unwrap().contains_key("allow_click"));
+    assert_eq!(v["input_scope"], "any_window");
+    view.allow_click = Some(false);
+    let v = serde_json::to_value(&view).unwrap();
+    assert_eq!(v["allow_click"], false);
+    assert_eq!(serde_json::from_value::<GrantView>(v).unwrap(), view);
+    view.allow_click = Some(true);
+    let v = serde_json::to_value(&view).unwrap();
+    assert_eq!(v["allow_click"], true);
     assert_eq!(serde_json::from_value::<GrantView>(v).unwrap(), view);
 }

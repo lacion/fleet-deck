@@ -18,6 +18,8 @@ use serde::{Deserialize, Serialize};
 
 use super::display_directives_coordinator::invalidate_coordinator_directives;
 use super::grant_scopes::sync_coordinate_scopes;
+pub use super::grants_input::check_input_grant;
+use super::grants_input::{input_scope_of, scope_text};
 pub(super) use super::grants_lifecycle::{apply_projection, record_lifecycle, renew_generation};
 use super::{DeckError, DeckStore, Result, call, new_id};
 
@@ -133,6 +135,8 @@ pub struct NewGrant {
     pub input_scope: Option<InputScope>,
     pub input_cap: u32,
     pub input_character_cap: u32,
+    /// R13 P7b §3.1: the click allowance (needs `allow_input`).
+    pub allow_click: bool,
 }
 
 impl NewGrant {
@@ -161,6 +165,7 @@ impl NewGrant {
             input_scope: None,
             input_cap: 0,
             input_character_cap: 0,
+            allow_click: false,
         }
     }
 }
@@ -222,6 +227,8 @@ pub struct Grant {
     pub input_used: u32,
     pub input_character_cap: u32,
     pub input_character_used: u32,
+    /// R13 P7b §3.1: the click allowance (false for every older grant).
+    pub allow_click: bool,
 }
 
 impl Grant {
@@ -251,7 +258,7 @@ pub(crate) const GRANT_COLUMNS: &str = "grant_id, station_id, session_id, classe
     scope, answer_cap, answer_used, desktop_cap, desktop_used, capture_cap, capture_used, \
     image_byte_cap, image_byte_used, desktop_attempts, recording_cap, recording_used, \
     recording_second_cap, recording_second_used, allow_input, input_scope, input_cap, input_used, \
-    input_character_cap, input_character_used";
+    input_character_cap, input_character_used, allow_click";
 
 fn state_of(text: &str) -> GrantState {
     match text {
@@ -298,10 +305,8 @@ pub(crate) fn grant_row(r: &Row<'_>) -> rusqlite::Result<(Grant, String, String,
     let allow_input: i64 = r.get(32)?;
     let input_scope: Option<String> = r.get(33)?;
     let input: [i64; 4] = [r.get(34)?, r.get(35)?, r.get(36)?, r.get(37)?];
-    // The allowance and the scope are both durable facts: an unknown scope
-    // text or a missing scope is no allowance (fail closed).
-    let input_scope = (allow_input == 1 && input_scope.as_deref() == Some("own_windows"))
-        .then_some(InputScope::OwnWindows);
+    let allow_click: i64 = r.get(38)?;
+    let input_scope = input_scope_of(allow_input, input_scope.as_deref());
     Ok((
         Grant {
             grant_id,
@@ -344,6 +349,7 @@ pub(crate) fn grant_row(r: &Row<'_>) -> rusqlite::Result<(Grant, String, String,
             input_used: u32::try_from(input[1]).unwrap_or(u32::MAX),
             input_character_cap: u32::try_from(input[2]).unwrap_or(0),
             input_character_used: u32::try_from(input[3]).unwrap_or(u32::MAX),
+            allow_click: allow_click == 1 && input_scope.is_some(),
         },
         r.get(3)?,
         r.get(4)?,
@@ -451,37 +457,6 @@ pub fn check_recording_caps(
     Ok(())
 }
 
-/// The rules of the input allowance of a new grant (R13 P7 §3.1), the same for
-/// the board request and for `create_grant`: the class rule, scope and caps
-/// need `allow_input`, then the ranges. The text is fixed and shows no value.
-///
-/// # Errors
-/// The fixed text of the first rule that fails.
-pub fn check_input_grant(
-    classes: &BTreeSet<GrantClass>,
-    allow_input: bool,
-    scope: Option<InputScope>,
-    (input_cap, input_character_cap): (u32, u32),
-) -> std::result::Result<(), &'static str> {
-    let all = [GrantClass::Desktop, GrantClass::Capture, GrantClass::Input];
-    if allow_input && !all.iter().all(|c| classes.contains(c)) {
-        return Err("allow_input needs the desktop, capture and input classes");
-    }
-    if !allow_input && scope.is_some() {
-        return Err("input_scope needs allow_input");
-    }
-    if !allow_input && (input_cap != 0 || input_character_cap != 0) {
-        return Err("input caps need allow_input");
-    }
-    if input_cap > limits::INPUT_CAP_MAX {
-        return Err("input_cap is 0 to 5000");
-    }
-    if input_character_cap > limits::INPUT_CHARACTER_CAP_MAX {
-        return Err("input_character_cap is 0 to 1000000");
-    }
-    Ok(())
-}
-
 impl DeckStore {
     /// Stores an owner-authorized grant (ADR-006 §4). The limits are
     /// checked here: cap ≤ 50, idle TTL ≤ 24 h, lifetime ≤ 7 days.
@@ -530,8 +505,13 @@ impl DeckStore {
         )
         .map_err(|m| DeckError::Invalid(m.to_owned()))?;
         let input = (grant.input_cap, grant.input_character_cap);
-        check_input_grant(&grant.classes, grant.allow_input, grant.input_scope, input)
-            .map_err(|m| DeckError::Invalid(m.to_owned()))?;
+        check_input_grant(
+            &grant.classes,
+            (grant.allow_input, grant.allow_click),
+            grant.input_scope,
+            input,
+        )
+        .map_err(|m| DeckError::Invalid(m.to_owned()))?;
         if grant.allow_input {
             grant.input_scope.get_or_insert(InputScope::OwnWindows);
         }
@@ -569,9 +549,9 @@ impl DeckStore {
                      spawn_cap, max_modes, idle_ttl_ms, created_at, expires_at, state,
                      start_command_id, scope, answer_cap, desktop_cap, capture_cap,
                      image_byte_cap, recording_cap, recording_second_cap, allow_input,
-                     input_scope, input_cap, input_character_cap)
+                     input_scope, input_cap, input_character_cap, allow_click)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active', ?11, ?12, ?13,
-                     ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+                     ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
                 params![
                     grant_id,
                     grant.station_id.as_str(),
@@ -597,9 +577,10 @@ impl DeckStore {
                     grant.recording_cap,
                     grant.recording_second_cap,
                     grant.allow_input,
-                    grant.input_scope.map(|_| "own_windows"),
+                    grant.input_scope.map(scope_text),
                     grant.input_cap,
-                    grant.input_character_cap
+                    grant.input_character_cap,
+                    grant.allow_click
                 ],
             )?;
             let stored = get_grant(&tx, &grant_id)?
