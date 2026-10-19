@@ -3,18 +3,25 @@
 //! trait. Task T3a is the pure logic; task T3b writes the real effects and
 //! wires the hidden command.
 
+pub mod binding;
 pub mod effects;
 pub mod real;
+mod real_report;
 pub mod release;
 pub mod retry;
 pub mod run;
 mod run_checks;
 pub mod state;
+pub mod supervise;
 
+#[cfg(test)]
+mod binding_tests;
 #[cfg(test)]
 mod fake;
 #[cfg(test)]
 mod release_tests;
+#[cfg(test)]
+mod run_auth_tests;
 #[cfg(test)]
 mod run_tests;
 #[cfg(test)]
@@ -23,6 +30,8 @@ mod run_tests_flow;
 mod run_tests_steps;
 #[cfg(test)]
 mod state_tests;
+#[cfg(test)]
+mod supervise_tests;
 
 use std::fmt::Write as _;
 
@@ -60,12 +69,15 @@ mod tests {
         let other = concat!("print", "!(");
         for (name, text) in [
             ("mod.rs", include_str!("mod.rs")),
+            ("binding.rs", include_str!("binding.rs")),
             ("effects.rs", include_str!("effects.rs")),
+            ("real_report.rs", include_str!("real_report.rs")),
             ("release.rs", include_str!("release.rs")),
             ("retry.rs", include_str!("retry.rs")),
             ("run.rs", include_str!("run.rs")),
             ("run_checks.rs", include_str!("run_checks.rs")),
             ("state.rs", include_str!("state.rs")),
+            ("supervise.rs", include_str!("supervise.rs")),
         ] {
             // `eprint` is also forbidden: stderr goes through `progress`.
             let hits = text

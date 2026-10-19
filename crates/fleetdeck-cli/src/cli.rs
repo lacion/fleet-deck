@@ -141,6 +141,20 @@ pub enum Command {
         /// Clear a retained terminal error first.
         #[arg(long)]
         retry: bool,
+        /// The retry authorization of a setup report (the supervisor writes
+        /// it): clears the retained error only for the exact reported
+        /// condition, once.
+        #[arg(long, conflicts_with = "retry")]
+        retry_authorization: Option<PathBuf>,
+    },
+    /// Runs the bootstrap in a loop and reports a terminal state to the
+    /// deck before the link (BG-3): the hook of the package runs it; it is
+    /// not a user command.
+    #[command(hide = true)]
+    ProvisionSupervise {
+        /// The absolute path of the provisioning file.
+        #[arg(long)]
+        file: PathBuf,
     },
     /// Copies the provisioning file from a supported medium (P8): the
     /// installer runs it; it is not a user command.
@@ -698,6 +712,43 @@ mod tests {
         };
         assert_eq!(args.tailnet, Some(Some("d:9".into())));
         assert_eq!(args.scopes, Some(vec!["read".into(), "admin".into()]));
+    }
+
+    #[test]
+    fn a_retry_authorization_excludes_the_plain_retry() {
+        let ok = parse(&[
+            "provision-bootstrap",
+            "--file",
+            "/p.toml",
+            "--retry-authorization",
+            "/a.json",
+        ])
+        .unwrap();
+        assert!(matches!(
+            ok.command,
+            Command::ProvisionBootstrap {
+                retry: false,
+                retry_authorization: Some(_),
+                ..
+            }
+        ));
+        assert!(
+            parse(&[
+                "provision-bootstrap",
+                "--file",
+                "/p.toml",
+                "--retry",
+                "--retry-authorization",
+                "/a.json",
+            ])
+            .is_err()
+        );
+        let supervise = parse(&["provision-supervise", "--file", "/p.toml"]).unwrap();
+        assert!(matches!(
+            supervise.command,
+            Command::ProvisionSupervise { .. }
+        ));
+        assert!(parse(&["provision-supervise"]).is_err());
     }
 
     #[test]

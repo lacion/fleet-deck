@@ -6,8 +6,9 @@
 #
 # The hook runs as the logged-in user. When the private provisioning file
 # exists, it hands the file to the hidden command `fleetdeck
-# provision-bootstrap`. The hook never installs a package and never downloads
-# anything: the trusted installer image supplies the package.
+# provision-supervise`, which runs `provision-bootstrap` and reports a stop
+# before the link to the pinned deck. The hook never installs a package and
+# never downloads anything: the trusted installer image supplies the package.
 set -u
 
 if [ -n "${XDG_CONFIG_HOME:-}" ]; then
@@ -34,4 +35,4 @@ if [ ! -e "$file" ]; then
     exit 0
 fi
 
-exec /usr/bin/fleetdeck provision-bootstrap --file "$file"
+exec /usr/bin/fleetdeck provision-supervise --file "$file"
