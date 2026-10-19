@@ -29,7 +29,7 @@ use super::audit::{self, Facts};
 use super::authorize::{Authorized, Tool, authorize, input_delivery_pass, store_error};
 use super::policy::{caller_policy, target_policy};
 use super::reads::coordinator_read;
-use super::{reply_err, reply_ok};
+use super::{input, reply_err, reply_err_text, reply_ok};
 use crate::link::DeckLink;
 use crate::store::AuditResult;
 
@@ -229,7 +229,9 @@ pub(super) async fn list(
                 Stage::Failed => (audit::OUTCOME, AuditResult::Failed),
             };
             audit_list(link, &auth, (name, result, Some(failure)), None).await;
-            reply_err(failure, None)
+            // The broader texts (R13 P7b §13); `screen_locked` has its capture
+            // text.
+            reply_err_text(failure, input::message(failure, true))
         }
     }
 }

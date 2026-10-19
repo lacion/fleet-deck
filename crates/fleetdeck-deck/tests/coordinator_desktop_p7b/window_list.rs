@@ -449,6 +449,73 @@ async fn a_closed_gate_or_a_refused_policy_asks_the_station_for_no_data() {
 }
 
 #[tokio::test]
+async fn a_station_refusal_of_the_read_reaches_the_caller_with_its_code_and_text() {
+    use fleetdeck_proto::coordinator_desktop_text::text;
+    let w = p7b_world(InputScope::AnyWindow, false).await;
+    // (the wire code, the fixed text).
+    let cases = [
+        ("input_any_disabled", text("input_any_disabled").unwrap()),
+        (
+            "screen_locked",
+            fleetdeck_proto::capture::text::SCREEN_LOCKED,
+        ),
+        (
+            "input_scope_not_allowed",
+            text("input_scope_not_allowed").unwrap(),
+        ),
+        ("input_not_allowed", text("input_not_allowed").unwrap()),
+        ("busy", text("busy").unwrap()),
+        (
+            "desktop_result_too_large",
+            text("desktop_result_too_large").unwrap(),
+        ),
+        (
+            "desktop_window_not_found",
+            "No input window available to this grant matches that handle.",
+        ),
+        ("desktop_control_off", text("desktop_control_off").unwrap()),
+        ("desktop_unsupported", text("desktop_unsupported").unwrap()),
+    ];
+    for (wire, expected) in cases {
+        w.fake.set(p7b_except("desktop.coordinator_read", move |_| {
+            Some(fail(wire, "SENTINEL-wire-text"))
+        }));
+        // The read rate is ten in a window: move the clock on.
+        w.f.det.advance(std::time::Duration::from_secs(61));
+        let r = w.query(window_list_query(None)).await;
+        assert_eq!(code(&r), wire, "{r}");
+        assert_eq!(r["message"], expected, "{wire}");
+        assert!(!r.to_string().contains("SENTINEL"));
+    }
+    let rows = audit_details(&w, "desktop.window_list").await;
+    assert_eq!(rows[0]["stage"], "outcome");
+    assert_eq!(rows[0]["code"], "input_any_disabled");
+}
+
+#[tokio::test]
+async fn any_other_unknown_code_of_the_read_stays_desktop_failed() {
+    let w = p7b_world(InputScope::AnyWindow, false).await;
+    for wire in [
+        "input_destination_unavailable",
+        "focus_changed",
+        "no_such_code",
+    ] {
+        w.fake.set(p7b_except("desktop.coordinator_read", move |_| {
+            Some(fail(wire, "x"))
+        }));
+        let r = w.query(window_list_query(None)).await;
+        assert_eq!(code(&r), "desktop_failed", "{wire}: {r}");
+    }
+    // The pass-through is for the `window_list` read only: a `desktop_info`
+    // read keeps the mapping.
+    w.fake.set(p7b_except("desktop.coordinator_read", |_| {
+        Some(fail("input_any_disabled", "x"))
+    }));
+    let r = w.query(info_query(None)).await;
+    assert_eq!(code(&r), "desktop_failed", "{r}");
+}
+
+#[tokio::test]
 async fn a_malformed_station_answer_and_a_station_error_are_desktop_failed() {
     let w = p7b_world(InputScope::AnyWindow, false).await;
     w.fake.set(p7b_except("desktop.coordinator_read", |_| {
