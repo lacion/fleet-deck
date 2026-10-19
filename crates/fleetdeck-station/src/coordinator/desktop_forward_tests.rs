@@ -102,6 +102,7 @@ fn caller() -> Caller {
         provider_instance: "claude".to_owned(),
         native_id: "native-1".to_owned(),
         generation: 2,
+        input_any: false,
     }
 }
 

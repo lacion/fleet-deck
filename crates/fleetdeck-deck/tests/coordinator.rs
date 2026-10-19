@@ -223,6 +223,7 @@ async fn a_station_forwards_tool_calls_to_the_deck_incarnation_of_its_link() {
         provider_instance: "claude".to_owned(),
         native_id: b.native_id.clone(),
         generation: b.generation,
+        input_any: false,
     };
     let serial = forward.connect(station.control.clone(), station.peer_incarnation.clone());
     // An unknown target: a stored `unknown_session` receipt, not an error.

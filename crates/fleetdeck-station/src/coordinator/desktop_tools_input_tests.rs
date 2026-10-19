@@ -68,8 +68,9 @@ fn the_tools_are_listed_only_with_both_input_classes() {
     ] {
         assert_eq!(has_input_tools(&set), [false; 3], "{set:?}");
     }
-    // No click and no scroll tool exists.
-    for name in ["pointer_click", "scroll", "click"] {
+    // No scroll tool exists; the click needs `click_enabled` (see the
+    // P7b tests).
+    for name in ["scroll", "click"] {
         assert!(tools::tool(name).is_none(), "{name}");
     }
 }
@@ -93,15 +94,15 @@ fn the_descriptions_are_exact() {
     for (name, text) in [
         (
             "key_press",
-            "Press one key or one chord (for example Return or Ctrl+Shift+a) in a preview window that this session opened, named by its window_id. A key can activate buttons and submit forms.",
+            "Press one key or one chord (for example Return or Ctrl+Shift+a) in a window named by its window_id (a preview window that this session opened, or a window from window_list when that tool is listed). A key can activate buttons and submit forms.",
         ),
         (
             "type_text",
-            "Type 1 to 2000 characters into a preview window that this session opened, named by its window_id. The text has no line breaks or control characters; use key_press for Return or Tab.",
+            "Type 1 to 2000 characters into a window named by its window_id (a preview window that this session opened, or a window from window_list when that tool is listed). The text has no line breaks or control characters; use key_press for Return or Tab.",
         ),
         (
             "pointer_move",
-            "Move the pointer to a point in a preview window that this session opened, named by its window_id. x and y count from the top-left corner of the preview. There is no click.",
+            "Move the pointer to a point in a window named by its window_id (a preview window that this session opened, or a window from window_list when that tool is listed). x and y count from the top-left corner of the preview. There is no click.",
         ),
     ] {
         assert_eq!(tools::tool(name).unwrap().description, text, "{name}");
@@ -111,7 +112,9 @@ fn the_descriptions_are_exact() {
 #[test]
 fn the_schemas_are_the_bundle_of_section_4_with_the_defs_in_each_root() {
     let bundle: Value = serde_json::from_str(BUNDLE).unwrap();
-    assert_eq!(bundle["schemas"].as_object().unwrap().len(), 3);
+    // The three P7 schemas and the two P7b schemas (`pointer_click` and
+    // `window_list`, tested in `desktop_tools_click_tests.rs`).
+    assert_eq!(bundle["schemas"].as_object().unwrap().len(), 5);
     let catalog = tools::catalog(&classes(&FULL));
     let listed = catalog["tools"].as_array().unwrap();
     for name in NAMES {

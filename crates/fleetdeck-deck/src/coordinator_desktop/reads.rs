@@ -51,6 +51,8 @@ pub(crate) async fn coordinator_read(
         read_id: registered.read_id,
         read,
         read_hash: registered.read_hash,
+        // R13 P7b §7: task K1 sends the context with `InputWindows`.
+        context: None,
     })
     .map_err(|_| code::DESKTOP_FAILED)?;
     let outcome = tokio::time::timeout(

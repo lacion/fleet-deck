@@ -339,6 +339,7 @@ fn request(read: ProtectedRead) -> CoordinatorRead {
         read_id: "ab".repeat(16),
         read,
         read_hash: "cd".repeat(32),
+        context: None,
     }
 }
 

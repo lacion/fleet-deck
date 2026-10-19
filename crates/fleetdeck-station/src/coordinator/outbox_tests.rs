@@ -137,6 +137,7 @@ impl Rig {
             provider_instance: caller.provider_instance,
             native_id: caller.native_id.unwrap(),
             generation: caller.generation,
+            input_any: false,
         };
         self.forward.call(caller, "send_mail", args).await
     }
@@ -415,6 +416,7 @@ async fn a_reconnect_holds_calls_and_queries_until_the_deck_acknowledges_the_lif
         provider_instance: "claude".to_owned(),
         native_id: "native-1".to_owned(),
         generation: 1,
+        input_any: false,
     };
     let query = r
         .forward
@@ -455,6 +457,7 @@ async fn a_worker_question_bypasses_the_outbox() {
         provider_instance: "claude".to_owned(),
         native_id: "native-w".to_owned(),
         generation: 1,
+        input_any: false,
     };
     let q = json!({"question": "which branch?"});
     r.forward

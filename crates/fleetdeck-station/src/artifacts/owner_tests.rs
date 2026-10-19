@@ -19,6 +19,7 @@ fn caller(session: &str) -> Caller {
         provider_instance: "claude".to_owned(),
         native_id: format!("native-{session}"),
         generation: 1,
+        input_any: false,
     }
 }
 

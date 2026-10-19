@@ -118,6 +118,7 @@ pub(super) fn parse_request(name: &str, args: Value) -> Option<DesktopRequest> {
             | "key_press"
             | "type_text"
             | "pointer_move"
+            | "pointer_click"
     ) {
         let call: DesktopCall = serde_json::from_value(tagged).ok()?;
         call.validate().ok()?;
@@ -146,14 +147,29 @@ impl DesktopRequest {
     }
 
     /// Whether the tool needs `desktop_input_mcp.v1` on the link (R13 P7
-    /// §6.1).
+    /// §6.1). `window_list` is a read, not an input call.
     fn is_input(&self) -> bool {
         matches!(
             self,
             Self::Call(
-                DesktopCall::KeyPress(_) | DesktopCall::TypeText(_) | DesktopCall::PointerMove(_)
+                DesktopCall::KeyPress(_)
+                    | DesktopCall::TypeText(_)
+                    | DesktopCall::PointerMove(_)
+                    | DesktopCall::PointerClick(_)
             )
         )
+    }
+
+    /// Whether the tool needs `desktop_click_mcp.v1` on the link (R13 P7b
+    /// §4).
+    fn is_click(&self) -> bool {
+        matches!(self, Self::Call(DesktopCall::PointerClick(_)))
+    }
+
+    /// Whether the tool is `window_list`, which needs `desktop_input_any.v1`
+    /// on the link (R13 P7b §4).
+    fn is_window_list(&self) -> bool {
+        matches!(self, Self::Query(DesktopQuery::WindowList(_)))
     }
 
     /// The MCP deadline of the tool (§9), in milliseconds.
@@ -164,7 +180,10 @@ impl DesktopRequest {
             ) => deadline_ms::ACTION_MCP,
             // R13 P7 §10: the caller MCP response limit is 45 s.
             Self::Call(
-                DesktopCall::KeyPress(_) | DesktopCall::TypeText(_) | DesktopCall::PointerMove(_),
+                DesktopCall::KeyPress(_)
+                | DesktopCall::TypeText(_)
+                | DesktopCall::PointerMove(_)
+                | DesktopCall::PointerClick(_),
             ) => INPUT_MCP_MS,
             Self::Call(DesktopCall::PreviewOpen(_)) => deadline_ms::PREVIEW_MCP,
             Self::Call(DesktopCall::Screenshot(_)) => deadline_ms::SCREENSHOT_MCP,
@@ -176,9 +195,7 @@ impl DesktopRequest {
             Self::Query(DesktopQuery::DesktopActionStatus(_)) => deadline_ms::STATUS_MCP,
             Self::Query(DesktopQuery::CaptureStatus(_)) => deadline_ms::CAPTURE_LOOKUP_MCP,
             Self::Query(DesktopQuery::ReadCaptureImage(_)) => deadline_ms::IMAGE_MCP,
-            // R13 P7b task F stubs: the tools are not listed yet; these
-            // mirror the input response limit and the `desktop_info` limit.
-            Self::Call(DesktopCall::PointerClick(_)) => INPUT_MCP_MS,
+            // R13 P7b: `window_list` has the `desktop_info` limit.
             Self::Query(DesktopQuery::WindowList(_)) => deadline_ms::INFO_MCP,
         }
     }
@@ -345,7 +362,14 @@ impl LinkForward {
             && (!request.is_capture() || link.transport.has_feature(feature::CAPTURE_MCP))
             && (!request.is_recording()
                 || link.transport.has_feature(feature::CAPTURE_RECORDING_MCP))
-            && (!request.is_input() || link.transport.has_feature(feature::DESKTOP_INPUT_MCP));
+            && (!request.is_input() || link.transport.has_feature(feature::DESKTOP_INPUT_MCP))
+            && (!request.is_click() || link.transport.has_feature(feature::DESKTOP_CLICK_MCP))
+            // R13 P7b §4: every input call of an `input_any` binding and every
+            // `window_list` call need `desktop_input_any.v1` on the current
+            // link. A downgrade after the start refuses; it never reduces
+            // the scope.
+            && (!((request.is_input() && caller.input_any) || request.is_window_list())
+                || link.transport.has_feature(feature::DESKTOP_INPUT_ANY));
         if !supported {
             return p6_error(code::DESKTOP_UNSUPPORTED, None, None);
         }
@@ -459,3 +483,7 @@ mod recording_tests;
 #[cfg(test)]
 #[path = "desktop_forward_input_tests.rs"]
 mod input_tests;
+
+#[cfg(test)]
+#[path = "desktop_forward_click_tests.rs"]
+mod click_tests;

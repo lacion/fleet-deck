@@ -5,7 +5,8 @@
 //! shared `$defs` copied into its root (a mechanical expansion).
 //! `record_monitor` has the schema of P5b §13.1 as written, with no `$defs`.
 //! The three input tools of R13 P7 (`key_press`, `type_text`, `pointer_move`)
-//! have their own bundle in the `input` module.
+//! and the two tools of R13 P7b (`pointer_click`, `window_list`) have their
+//! own bundle in the `input` module.
 
 use serde_json::Value;
 
@@ -288,8 +289,8 @@ fn read_capture_image() -> Value {
     schema("read_capture_image")
 }
 
-/// The nine P6 tools, `record_monitor` and the three P7 input tools, in the
-/// order of `tools/list`.
+/// The nine P6 tools, `record_monitor`, the three P7 input tools and the two
+/// P7b tools, in the order of `tools/list`.
 /// `desktop_info` is also given by the `capture` class (see
 /// `Tool::granted`). `record_monitor` needs the `capture` class and the
 /// station-internal `recording` class, which a start adds only for a spec
@@ -361,25 +362,48 @@ pub const DESKTOP_TOOLS: &[Tool] = &[
     Tool {
         name: "key_press",
         classes: &[ToolClass::Input, ToolClass::InputEnabled],
-        description: "Press one key or one chord (for example Return or Ctrl+Shift+a) in a preview window that this session opened, named by its window_id. A key can activate buttons and submit forms.",
+        description: "Press one key or one chord (for example Return or Ctrl+Shift+a) in a window named by its window_id (a preview window that this session opened, or a window from window_list when that tool is listed). A key can activate buttons and submit forms.",
         schema: input::key_press,
     },
     Tool {
         name: "type_text",
         classes: &[ToolClass::Input, ToolClass::InputEnabled],
-        description: "Type 1 to 2000 characters into a preview window that this session opened, named by its window_id. The text has no line breaks or control characters; use key_press for Return or Tab.",
+        description: "Type 1 to 2000 characters into a window named by its window_id (a preview window that this session opened, or a window from window_list when that tool is listed). The text has no line breaks or control characters; use key_press for Return or Tab.",
         schema: input::type_text,
     },
     Tool {
         name: "pointer_move",
         classes: &[ToolClass::Input, ToolClass::InputEnabled],
-        description: "Move the pointer to a point in a preview window that this session opened, named by its window_id. x and y count from the top-left corner of the preview. There is no click.",
+        description: "Move the pointer to a point in a window named by its window_id (a preview window that this session opened, or a window from window_list when that tool is listed). x and y count from the top-left corner of the preview. There is no click.",
         schema: input::pointer_move,
+    },
+    // R13 P7b §3.1, §4: `pointer_click` also needs `click_enabled`
+    // (`allow_click` and `desktop_click_mcp.v1` at the start); `window_list`
+    // needs `input_any` (the scope `any_window`).
+    Tool {
+        name: "pointer_click",
+        classes: &[
+            ToolClass::Input,
+            ToolClass::InputEnabled,
+            ToolClass::ClickEnabled,
+        ],
+        description: "Send one left-button click at a point in a window named by its window_id. x and y count from the top-left corner of the window. One press and release; two calls can act as a double click. A click can submit forms or approve actions.",
+        schema: input::pointer_click,
+    },
+    Tool {
+        name: "window_list",
+        classes: &[
+            ToolClass::Input,
+            ToolClass::InputEnabled,
+            ToolClass::InputAny,
+        ],
+        description: "List the application windows on a grant station that this agent may give input to: an opaque window_id, the position and size, the monitors and whether it has the focus. No titles. A window_id lasts 60 seconds; list again after that.",
+        schema: input::window_list,
     },
 ];
 
-/// True for one of the nine P6 tool names, `record_monitor` or one of the
-/// three P7 input tools.
+/// True for one of the nine P6 tool names, `record_monitor`, one of the
+/// three P7 input tools or one of the two P7b tools.
 #[must_use]
 pub fn is_desktop(name: &str) -> bool {
     DESKTOP_TOOLS.iter().any(|t| t.name == name)
@@ -392,3 +416,7 @@ mod recording_tests;
 #[cfg(test)]
 #[path = "desktop_tools_input_tests.rs"]
 mod input_tests;
+
+#[cfg(test)]
+#[path = "desktop_tools_click_tests.rs"]
+mod click_tests;

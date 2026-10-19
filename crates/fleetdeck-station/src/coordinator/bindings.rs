@@ -65,6 +65,9 @@ pub struct Caller {
     pub provider_instance: String,
     pub native_id: String,
     pub generation: u32,
+    /// R13 P7b §4: the binding has the station-internal `input_any` class
+    /// (the scope `any_window`). The desktop forward reads it at each call.
+    pub input_any: bool,
 }
 
 /// A new credential: the raw value (secret) and its digest.
@@ -660,6 +663,7 @@ impl Binding {
             provider_instance: self.provider_instance.clone(),
             native_id: self.native_id.clone().unwrap_or_default(),
             generation: self.generation,
+            input_any: self.classes.contains(&ToolClass::InputAny),
         })
     }
 }
