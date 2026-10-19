@@ -39,6 +39,7 @@ pub mod fleet_git_pref_routes;
 pub mod fleet_git_routes;
 pub mod fleet_routes;
 pub mod grant_routes;
+mod grant_spawn;
 pub mod guard;
 pub mod history_routes;
 mod maintenance_audit;

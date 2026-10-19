@@ -149,6 +149,13 @@ pub fn mode_within(family: &str, mode: Option<&str>, ceiling: &str) -> bool {
     }
 }
 
+/// Whether `ceiling` is a valid mode ceiling for `family` (MCP P0 §2.2 rule 5):
+/// a known mode of the family that is not a bypass mode.
+#[must_use]
+pub fn valid_ceiling(family: &str, ceiling: &str) -> bool {
+    mode_within(family, Some(ceiling), ceiling) && !is_bypass(family, Some(ceiling))
+}
+
 pub(super) fn family_of(
     info: Option<&StationInfo>,
     instance: &ProviderInstanceId,
@@ -670,6 +677,13 @@ pub(super) fn start(
     now: i64,
 ) -> Result<Decision> {
     let (station, spec, prompt, workspace) = what;
+    // MCP P0 §2.6: no transitive authority (ADR-006 §4).
+    if spec.coordinator.is_some() {
+        return no(
+            RejectCode::Forbidden,
+            "a coordinator never starts a session with a coordinator grant",
+        );
+    }
     let Some(family) = family_of(ctx.infos.get(station), &spec.provider_instance) else {
         return no(
             RejectCode::UnknownProvider,

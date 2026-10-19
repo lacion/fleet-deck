@@ -2,6 +2,8 @@
 //! from `command.rs` for the module size rule (R13 P6 F0); `command.rs`
 //! re-exports every item.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -98,6 +100,17 @@ pub struct CoordinatorSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[ts(optional, as = "Option<Vec<StationId>>")]
     pub stations: Vec<StationId>,
+    /// The spawn budget of a grant with the class `spawn` (ADR-006 §6.4,
+    /// MCP P0 §2.1). Board → deck only: the deck reads it in `owner_start`
+    /// and clears it before the start command goes to a station.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub spawn_cap: Option<u32>,
+    /// The most permissive native mode for each provider family (ADR-006 §4
+    /// `max_modes`; keys `claude` and `codex`). Board → deck only.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[ts(optional, as = "Option<BTreeMap<String, String>>")]
+    pub max_modes: BTreeMap<String, String>,
 }
 
 /// The serde skip rule of `allow_recording`.
