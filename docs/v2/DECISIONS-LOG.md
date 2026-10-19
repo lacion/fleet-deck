@@ -3486,3 +3486,21 @@ Owner review: pending.
   - g. The member join page shows a generic error for `sign_in_blocked_for_input`.
   - h. A browser on the target machine that reaches the deck through an address that the station does not report (a proxy or a VPN) is not signed out (the residual of P7-OD1).
 - Next: the PRE-PR review (high risk: the adversary agent); the live smoke on the owner's Omarchy machine; the owner reads the new rows of `SECURITY-CHECKLIST.md` (DL-158).
+
+## DL-246: R13 P7 accepted after the PRE-PR review (architect, 2026-10-19)
+
+- Context: the adversary PRE-PR review of DL-245 ran 3 rounds. Round 1: two BLOCKER and three MAJOR (report `adv-p7-prepr-r1-report.md`):
+  - an intermittent test: the coordinates of a pointer move matched inside random station IDs;
+  - a session with a socket at a target address but another last address survived the sign-out;
+  - a sign-in that ran during the attempted transaction made a session after the sweep;
+  - the station did not re-check the monitor coverage after the final authority answer or while `wtype` ran;
+  - a `null` monitor in the input policy query refused every input when `capture_monitors` was not empty.
+  The fixes are `9da1561e` (station) and `026b9aa3` (deck). Round 2: one MAJOR. A socket that registered after both sweeps, for a session whose last address had moved, was still admitted. The fix is `a3fd9121`. Round 3: PASS, no findings.
+- Decision: the fixes are accepted:
+  - the attempted transaction deletes the sessions of the sockets (pending or live) at the snapshot addresses;
+  - after the commit, every revoked session that still exists is deleted, its other sockets are revoked and it is audited (`rule=1`); a database error fails the operation before any input;
+  - the owner password login, the owner link login and the member join read the exposure in the transaction that inserts the session (403 `sign_in_blocked_for_input`, no cookie; a refused join keeps its invite use; a refused owner link may be used up);
+  - a socket admission reads the exposure of its address from the rows (never the cache); an exposed address deletes the session and refuses the socket (`rule=2`);
+  - the station treats a `null` monitor as unresolved at admission and checks the observed coverage against the live `capture_monitors` right before the spawn and while `wtype` runs.
+  P7 is accepted.
+- Open items: DL-245 items c to h. DL-245 items a and b are closed by this entry. The display routes and the device link keep the early sign-in check only (a display principal has no owner mutation; the device link makes a one-time token whose redemption is the owner link login).

@@ -198,7 +198,7 @@ These surfaces are new in v2 and have no v0 feature. Each row gives the four pro
 
 ## Agent keyboard and pointer input (R13 P7, DL-245)
 
-These surfaces are new in v2 and have no v0 feature. Each row gives the four proofs: the behavior, the tests by file, the failure behavior and the exposure (and the version where the surface has one). Design: `docs/v2/design/omarchy-p7.md`. The rows of the tasks F (`4cfb3e7c`), S1 (`e0cd374c`), K2 (`dcccb78d`), K1 (`93669b37`), W (`fd7da03d`) and S2 (`ab9fc084`, with the fix `79584fc8`) are built. The PRE-PR review of P7 is pending, and so are the end-to-end proofs of task P (the last row) and the live smoke on the owner's Omarchy machine (DL-245 items a, b and c; the list is in `docs/v2/LIVE-SMOKE.md`, `make desktop-smoke`). P7 is experimental and off by default. Test paths are in `crates/` unless a path is given.
+These surfaces are new in v2 and have no v0 feature. Each row gives the four proofs: the behavior, the tests by file, the failure behavior and the exposure (and the version where the surface has one). Design: `docs/v2/design/omarchy-p7.md`. The rows of the tasks F (`4cfb3e7c`), S1 (`e0cd374c`), K2 (`dcccb78d`), K1 (`93669b37`), W (`fd7da03d`) and S2 (`ab9fc084`, with the fix `79584fc8`) are built. The PRE-PR review of P7 passed in round 3 (DL-246), and the end-to-end proofs of task P (the last row) pass. The live smoke on the owner's Omarchy machine is pending (DL-245 item c; the list is in `docs/v2/LIVE-SMOKE.md`, `make desktop-smoke`). P7 is experimental and off by default. Test paths are in `crates/` unless a path is given.
 
 | Surface | v2 | Tests | Fail-open and exposure proof (R9.2) |
 | --- | --- | --- | --- |
