@@ -11,7 +11,7 @@
 3. Tools carry honest annotations; the two station-owned results carry an `outputSchema` and `structuredContent`; the list results carry `cacheScope: private`.
 4. The full catalog fits a byte budget that a test enforces.
 5. A cancelled call (the client closed the connection, on HTTP or on the bridge socket) stops waiting and frees its permit; a durable call stays durable; a desktop call is forwarded at most once.
-6. No log line at any log level carries a tool argument, a tool result or an image (omarchy-p6 §… and omarchy-p7 privacy rules).
+6. No log line at any log level carries a tool argument, a tool result or an image (the log privacy rules of `docs/v2/design/omarchy-p6.md` and `omarchy-p7.md`).
 
 ## 2. Dependency
 
