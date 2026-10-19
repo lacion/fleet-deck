@@ -809,7 +809,7 @@ This section covers the tools `key_press`, `type_text` and `pointer_move` of a c
 
 - The target is a preview window that this coordinator opened with `preview_open` on a grant station. The agent names it with the `window_id` that `preview_open` returned. It cannot name a window that you opened, a preview of another grant, a wall or a board window. All these give the same answer, `desktop_window_not_found`.
 - A new grant does not use the previews of an older grant. A renewal keeps the grant, so it keeps its previews.
-- There is no pointer click, no scroll, no drag, no held key and no scope for every window. The tool list of the agent does not show them.
+- This part has no pointer click and no input in other application windows: §7.9 adds both, each with its own opt-in. There is no scroll, no drag and no held key. The tool list of the agent does not show them.
 - The tools do not isolate the agent from other programs. The agent runs as your user. A key can press a button and send a form. The result `done` means that the tool finished. It does not mean that the page did what the agent wanted.
 
 | Tool | What it does |
@@ -848,8 +848,8 @@ An input action works only while every gate is on. All the gates of section 7.6 
 Fleet Deck cannot prove that a key never reaches a board window. So the deck signs out the board sessions on the machine where the agent types. Then a stray key cannot approve anything on a board of that machine.
 
 - The deck takes the addresses of the machine of the target station: the address of its link, the addresses that the station reports, and, for the station of the deck itself, the loopback and own addresses of the deck. It stores them with the operation, and it deletes every login of yours and every member login that was last seen from one of these addresses. It does this before the input starts, whatever the age of the login. It also ends the sockets of these logins.
-- While the input runs, for 5 seconds after it ends and then for 60 seconds more, a board request from one of these addresses gets the answer `signed_out_for_input`, and the deck deletes its login. The board shows the sign-in page with this line: "You were signed out because an agent typed on the station where this board is open."
-- In the same time, a sign-in from one of these addresses is refused with `sign_in_blocked_for_input` and gets no cookie. The board shows: "An agent is typing on this station. Sign in again in a minute." Wait a minute and sign in again with your own credentials.
+- While the input runs, for 5 seconds after it ends and then for 60 seconds more, a board request from one of these addresses gets the answer `signed_out_for_input`, and the deck deletes its login. The board shows the sign-in page with this line: "You were signed out because an agent used desktop input on the station where this board is open."
+- In the same time, a sign-in from one of these addresses is refused with `sign_in_blocked_for_input` and gets no cookie. The board shows: "An agent is using desktop input on this station. Sign in again in a minute." Wait a minute and sign in again with your own credentials.
 - A deleted login never works again. An old window with an old cookie cannot send a late approval. Items that were waiting are not sent again after the new sign-in.
 - The audit has one row `board.signed_out_for_input` for each deleted login, with the kind of login and the operation. It holds no address and no text.
 - The first time that you run this version, every login of yours and of the members ends once. Each browser signs in again once.
@@ -928,7 +928,7 @@ The deck and the station also answer with the codes `fleet_control_off`, `deskto
 
 - The PRE-PR review and the live smoke are not done (see `docs/v2/LIVE-SMOKE.md`). Do not rely on agent input before the smoke passes.
 - Installing `wtype`, and reading the `desktop-input` line of a remote station, have no board path yet.
-- The pointer click and the scope for every window are not built.
+- The pointer click and the input in other application windows are in §7.9 (P7b).
 - The page where a member joins shows a generic error when the sign-in is blocked for input.
 - A browser on the target machine that uses an address that the station does not report is not signed out.
 
