@@ -388,7 +388,7 @@ The install does not edit `hyprland.lua` when the file is a link, is not a regul
 
 #### Omarchy from the board
 
-This part shows how to manage the Omarchy integration of a station from the board. You do not log in to the station. The contract is `design/omarchy-admin.md`. The built version is recorded in DL-243. The PRE-PR review and the live smoke on the owner's Omarchy machines are not done yet (`make desktop-smoke` prints the list).
+This part shows how to manage the Omarchy integration of a station from the board. You do not log in to the station. The contract is `design/omarchy-admin.md`. The built version is recorded in DL-243. The PRE-PR review and the live smoke on the owner's Omarchy machines are not done yet (`make desktop-smoke` prints the list). The repair of an installer conflict (BG-2, DL-249) is built. See the part "Repair an installer conflict" below.
 
 Where the card is:
 
@@ -429,6 +429,7 @@ The buttons:
 | **Turn the screensaver off** | The integration is installed and not outdated, and the screensaver is on. | `fleetdeck omarchy screensaver off`, limit 15 seconds. |
 | **Use the current screensaver as the original** | The screensaver is blocked. | `fleetdeck omarchy screensaver rebaseline`, limit 15 seconds. |
 | **Retry provisioning** | See "Retry provisioning" below. | The provisioning bootstrap of section 15, limit 10 minutes. |
+| **Review files to replace…** | See "Repair an installer conflict" below. | A read of the plan, then `fleetdeck omarchy install --yes --replace-conflicts --plan-stdin` after **Keep copies and replace**, limit 60 seconds. |
 
 Each button asks the board to confirm that it is you. The dialog "Confirm it is you" names "Omarchy integration". A sign-in that is not the owner's cannot use the card. The board sends only the name of the action. It sends no argument, path or command. The station runs a fixed list of words as your own user, one action at a time. While an action runs, the buttons are off.
 
@@ -436,7 +437,7 @@ When an action fails, the card shows a fixed text. Below it, the card shows the 
 
 | Text | Meaning |
 | --- | --- |
-| The installer refused: some files were changed. | A file that a person changed stops the install. The installer keeps that file and its existing conflict rules. The message names the files. |
+| The installer refused: some files were changed. | A file that a person changed stops the install. The installer keeps that file and its existing conflict rules. The message names the files. Press **Review files to replace…** to repair it (see "Repair an installer conflict"). |
 | The uninstall did not finish. | The uninstall stopped. The message gives the reason. |
 | The screensaver change was refused. | The change did not happen. The message gives the reason. |
 | Update the integration first: press Install, then wait two minutes. | The integration is outdated. |
@@ -452,7 +453,7 @@ Another command of the station can hold the Omarchy lock. The command then waits
 
 ##### Install and uninstall
 
-**Install** runs the install of "How the install happens" with `--yes`: it asks no question. Press it on a station that P8 did not provision, or to repair changed or missing files. The installer never replaces a file that a person changed. A conflict stops the install before any write.
+**Install** runs the install of "How the install happens" with `--yes`: it asks no question. Press it on a station that P8 did not provision, or to repair changed or missing files. The installer never replaces a file that a person changed. A conflict stops the install before any write. To replace the conflicting files, and to keep a copy of each, use **Review files to replace…** (see "Repair an installer conflict").
 
 **Uninstall** removes only what the install wrote. It also turns the screensaver off, as **Turn the screensaver off** does, and keeps the original screensaver file. The install record goes last.
 
@@ -482,7 +483,84 @@ The card shows **Retry provisioning** when both of these are true:
 
 The station answers at once and runs the bootstrap in the background, with a limit of 10 minutes. The card shows "Provisioning is running" and reads the state every 5 seconds, for at most 10 minutes. A stop with a code runs the bootstrap again with its retry flag, which clears the code. A run that did not finish continues from its saved state. A restart of the station ends a retry that runs. Press the button again after the restart.
 
-A state in an earlier phase (`validated` or `service`) cannot be repaired from the board. The same is true for `complete`: it needs no retry. The card shows no button then. A terminal state before the station is linked to this deck (for example `file_invalid`, `release_untrusted`, `paired_elsewhere` or `fingerprint_mismatch`) has no board path yet, because the board cannot reach that station. Its repair is a new provisioning file at the first setup of the machine (section 15.1).
+A state in an earlier phase (`validated` or `service`) cannot be repaired from the board. The same is true for `complete`: it needs no retry. The card shows no button then. A terminal state before the station is linked to this deck cannot use this button, because the board cannot reach that station. The pairing page shows its setup report, and for some codes one setup retry (section 15.5). The codes without a retry (for example `file_invalid`, `release_untrusted`, `paired_elsewhere` or `fingerprint_mismatch`) have no board path yet. This is an open item.
+
+##### Repair an installer conflict
+
+This part shows how to replace the files that stop the install, and how to get the old files back. You do not log in to the station. The contract is `design/board-gaps.md` section 3 (BG-2). The built version is recorded in DL-249. The PRE-PR review and the live smoke are not done yet.
+
+The card shows **Review files to replace…** when the line "Integration: installed, <n> files changed or missing" shows, or after **Install** stopped with "The installer refused: some files were changed." A station of an older build, or an older deck, shows no button and no **Repairs** section. The feature name is `omarchy_repair.v1`.
+
+There are two kinds of file in a review:
+
+| Kind | What it is | What the review does |
+| --- | --- | --- |
+| Unrecorded conflict | A file with the name of an integration file that Fleet Deck did not install, with other content. | The box is checked and you cannot clear it. The text is "Not recorded by Fleet Deck: replaced, and a copy is kept." |
+| Recorded edit | A file that Fleet Deck installed and that you changed. | The box is not checked. The text is "You edited this recorded integration file. Fleet Deck will keep it unless you select it." Fleet Deck keeps the file as it is unless you select it. |
+
+Steps:
+
+1. Press **Review files to replace…**. The dialog "Review files to replace" shows the plan. The plan is valid for 2 minutes. It belongs to your sign-in, to the station and to the build.
+2. Read the list. A path that Fleet Deck cannot replace safely shows "Fleet Deck cannot safely replace this path." and the confirm button stays off. These paths are a link, a file with other hard links, a file that is not a regular file, a file that the station user does not own, a file larger than 8 MiB and a file below an unsafe folder. When nothing must be replaced, the dialog shows "No file needs to be replaced."
+3. Select the recorded edits that you want to replace. Read the line "Replace the listed integration files? Fleet Deck will keep a separate copy of each current file."
+4. Press **Keep copies and replace**. The board asks "Confirm it is you" for "Omarchy integration".
+5. Read the result: "Replaced N files. The kept copies are listed under Repairs." or the text of a refusal (see the table below).
+
+What a kept copy is: the old file, moved aside in the same folder. Its name is the old name with `.fleetdeck-conflict-<unix seconds>-<16 random hexadecimal characters>` added. Fleet Deck never replaces a kept copy in a rename and never deletes it. No action of the board removes a kept copy (open item: no board path yet to delete a kept copy). The board shows the path of each kept copy under **Repairs** as "Kept copy: <path>".
+
+How the station replaces the files:
+
+- It takes the Omarchy lock and keeps it from the check of the plan to the end. Another Omarchy action then gets the text "Another Omarchy action is running on this station."
+- It checks the plan again. A changed file, a changed install record or a changed build gives "The files changed since this review. Review the replacement plan again." and the station writes nothing.
+- It writes a journal of the repair in the config folder of the user, with the names of the kept copies, before it moves the first file.
+- For each file it moves the old file to its kept name, writes the new file to a staging name and publishes it with a rename that never replaces a file. The journal records each step.
+- Then it runs the rest of the normal install in the same locked run.
+- It never replaces your owner menus, your whole Hyprland configuration files, the screensaver data, or any file that is not an integration file.
+
+**Repairs** is a section of the card. It is closed at first. It lists the last 8 repairs. Each row shows the date, the state of the repair (`Complete`, `Incomplete` or `Restored`) and, for each file, its name, its state and the line "Kept copy: <path>" or "No kept copy". The state of a file comes from the files on the disk now, not from the journal alone:
+
+| File state | Meaning |
+| --- | --- |
+| Not changed | The file is the old file and nothing moved. |
+| Kept aside, not replaced yet | The old file is in its kept copy, and the new file is not published. |
+| Replaced | The new file is published, and the kept copy exists. |
+| Restored | The old file is back, and the kept copy stays. |
+| Changed after the repair | Someone changed the file after the repair. Fleet Deck does not touch it. |
+| Incomplete | The kept copy is gone or changed, or the staging file is not as expected. |
+
+**Resume repair.** A repair is `Incomplete` after a failure, a restart of the station or a restore that stopped. The card then shows **Resume repair** for it. The station looks at the files and does only what is not done. A resume skips a file that is restored. It stops for a file that someone changed (the file state shows "Changed after the repair"), and it goes on with the other files. When the build of the station is not the build that started the repair, the card shows "This repair was started by another build. Restore the kept copies instead."
+
+**Restore kept copies…** shows for each repair that has a kept copy.
+
+1. Press **Restore kept copies…**. The dialog "Restore kept copies" lists each file with what the restore does:
+
+   | Text | Meaning |
+   | --- | --- |
+   | Copy the kept file back | The old file is missing. The restore copies the kept copy to its place. |
+   | Keep the current file aside, then copy the kept file back | The new file that Fleet Deck published is there. The restore moves it aside to a new kept name (`.fleetdeck-kept-<unix seconds>-<16 hex characters>`) and copies the old file back. |
+   | Remove the file that Fleet Deck added | There was no old file. The restore removes the new file, only when it is still the file that Fleet Deck wrote. |
+   | Nothing to restore | The file is already restored. |
+   | Changed after the repair: not restored | Someone changed the file after the repair. Fleet Deck keeps both versions. |
+   | Incomplete: not restored | The kept copy is gone or changed. |
+
+2. The boxes are not checked. Select the files. Read "Restore the selected files from their kept copies? A file that changed after the repair is kept aside, never overwritten."
+3. Press **Restore selected**. The board asks "Confirm it is you" for "Omarchy integration". The result is "Restored N files. The kept copies stay."
+
+A restore copies the bytes of the kept copy through a staging file and publishes them without replacing a file. The kept copy stays after a restore (O12-28). A restore never overwrites a file that changed after the repair. The plan of a restore is valid for 2 minutes.
+
+The refusal texts:
+
+| Text | Meaning |
+| --- | --- |
+| The files changed since this review. Review the replacement plan again. | A premise of the plan changed. Nothing was written. |
+| Fleet Deck cannot safely replace one of these paths. | A path is a link, a hard link, not a regular file, not yours, too large or below an unsafe folder. |
+| Fleet Deck could not keep a copy of a file. The repair stopped. | The copy was not possible (for example a name that exists, or a full disk). |
+| The repair stopped after changing some files. Review the kept copies and repair status. | The repair is `Incomplete`. Use **Resume repair** or **Restore kept copies…**. |
+| A current file changed after the repair. Fleet Deck kept both versions and did not overwrite it. | A restore or a resume found a later change. |
+| This repair was started by another build. Restore the kept copies instead. | A resume with another build is refused. |
+| Another Omarchy action is running on this station. | The Omarchy lock is busy (exit code 3 of the command). Wait, then press the button again. |
+
+What this does not do: it does not repair a file that Fleet Deck did not list, it does not show the content of a file, and it does not delete a kept copy. The audit row `station.omarchy_repair` has the owner, the station, the request or repair ID, the action, the outcome, the code and the counts. It has no path, no hash and no file content.
 
 #### The hotkeys
 
@@ -1118,10 +1196,57 @@ With `host = "shim"` a resume starts a new shim and a new agent process. It is n
 - Resume on the shim host works on Linux only. On another platform the station refuses `session.resume`, `session.import`, the input of a hibernated session and a handover with `unsupported` ("resume on the shim host needs Linux").
 - The station resumes a session only when it can prove that the earlier agent run ended. The proof is one of these: a clean exit that the shim checked completely, a launch that never started, a verified reboot (the boot id differs from the one that the run stored), or your reconciliation.
 - A reboot proof is checked again at the resume. If the boot id is the old one again (for example after a restore of the VM memory) or a process with the stored identity lives, the resume is refused.
-- Reconciliation: for a run whose end is not proven, the station method `session.execution_check` lists the processes that still belong to it (the agent, its process group and its session). Stop them on the station. Then the command `session.reconcile_execution` marks the run as ended. The station checks the processes again and refuses while one lives or when the check is incomplete. On the board: open the session, then the session menu, then **Check the previous run**. The dialog "Previous run of this session" lists the processes; when nothing is alive, press **Mark as ended**, then resume the session. When a process is still alive, the dialog does not allow the mark (stopping that process has no board path yet).
+- Reconciliation: for a run whose end is not proven, the station method `session.execution_check` lists the processes that still belong to it (the agent, its process group and its session). Stop them on the station. Then the command `session.reconcile_execution` marks the run as ended. The station checks the processes again and refuses while one lives or when the check is incomplete. On the board: open the session, then the session menu, then **Check the previous run**. The dialog "Previous run of this session" lists the processes; when nothing is alive, press **Mark as ended**, then resume the session. When a process is still alive, the dialog does not allow the mark. Use **Stop these processes…** (see the part "Stop the processes of a lost run" below).
 - Detached hooks: the station cannot see a process that left the agent's process group and session (it called `setsid()`). A hook that detaches and keeps a writable descriptor on the transcript can write to it after a resume. The direct host has the same limit. The check lists such processes for information only.
 - Rollback: a launch journal of this release has a `boot_id` field. A station of an earlier release reads that journal as unknown evidence and fails closed: the session stays `lost` there. A shim of this release speaks the shim protocol 2 and the previous version 1 (an unavailable process count is `u32::MAX` on version 1).
 - Auto-continue on the shim host uses the same proof (DL-188 step 3): a lost session is continued only when its run is proven ended.
+
+### Stop the processes of a lost run (DL-249)
+
+This part shows how to stop the processes that still belong to an earlier run of a session, from the board. You do not log in to the station. The contract is `design/board-gaps.md` section 5 (BG-4). The built version is recorded in DL-249. The PRE-PR review and the live smoke are not done yet. It works on a Linux station that supports `execution_stop.v1`. A station of another platform, or of an older build, shows "This station's build cannot stop the processes of a lost run from the board."
+
+Only the owner on the board can stop the processes. A coordinator, an API token, a display and the local socket cannot.
+
+Steps:
+
+1. Open the session, then the session menu, then **Check the previous run**. The dialog "Previous run of this session" lists the processes.
+2. When a process of the run is alive, the dialog shows **Stop these processes…**. **Mark as ended** stays off.
+3. Press **Stop these processes…**. The dialog shows "Reading the stop plan…" and then the plan. "Processes to stop" lists the processes that the station will stop, with their command names. "Processes that left its group (they do not block)" lists the processes that the station will not stop, with the note "Processes outside the run's group and session are listed for information and will not be stopped."
+4. Read the confirmation: "Stop the listed processes from this previous run? Fleet Deck will ask them to exit, then force-stop surviving targets after five seconds. Unsaved work may be lost."
+5. Press **Stop processes**. The board asks "Confirm it is you" for "Stop previous run processes".
+6. Wait. The board reads the check every second, for at most 20 seconds, until the station reports the result. The result is "Fleet Deck stopped <n> processes. <k> needed a force stop." or the text of a code (see the table below). When no result comes in 20 seconds, the board shows the text of `outcome_unknown`.
+7. Press **Check the previous run** again. When the check is complete and nothing of the run lives, press **Mark as ended**. Then resume the session.
+
+The plan lives 30 seconds. When you press **Stop processes** more than 25 seconds after the plan was read, the board reads the plan again and shows it for review. It sends nothing. **Mark as ended** is a separate action. The board never presses it after a stop.
+
+What the station does:
+
+- It builds a new full list of the processes. It does not use the list of the read check.
+- It opens a pidfd for each process of the plan, and checks each one again after that. A process number that was reused is never a target.
+- It sends SIGTERM to each process through its pidfd, waits 5 seconds, and sends SIGKILL through the same pidfds to the processes that live. The whole operation has a limit of 15 seconds.
+- It never sends a signal to a group number or to a bare process number.
+- It refuses the plan with `identity_unproven` when PID 1, the station, a parent of the station or the shim is in the group or the session of the run.
+- It writes the decision before the first signal. A command with the same ID never signals again. After a restart of the station, an operation that was running is `outcome_unknown`, and the station sends no signal. You need a new plan and a new confirmation for any other stop.
+
+What "cannot prove" means. The text "Fleet Deck cannot safely prove that these processes belong to the previous run. No processes were stopped." (`identity_unproven`) means that the station found no proof, and it signalled nothing. An old process group number or session number is never proof by itself: a later, unrelated run can have the same number. The station accepts only these proofs:
+
+- The provider process of the run is alive. Its PID, its start time and its boot ID are the ones that the station recorded when the run started, and it still leads its group and its session. Then each process in that group or session that the station user owns is a target. The station records these members as witnesses.
+- The provider process is gone. A process is a target only when the station recorded it as a witness while the provider was alive, and it is still in the group or session. A witness never makes another process a target.
+- A run without a recorded leader identity (a legacy run) has no proof. The station gives `identity_unproven`.
+
+The texts of the other codes:
+
+| Text | Meaning |
+| --- | --- |
+| Fleet Deck could not complete the safety check. No processes were stopped. | The two reads of the process list differ, a read failed, or the plan has more than 128 processes. |
+| The process list changed. Review it again before stopping processes. | The plan expired, the run changed, or a target changed before the signals. |
+| Fleet Deck could not stop one or more processes as the station user. | A process belongs to another user, or the signal was refused. The other processes continue. |
+| Some processes remain. Review the updated list. | A new process of the group or session appeared after the plan (the station sent no signal then), or a process lives at the end. A forked process needs a new plan. |
+| The stop result is unknown. Refresh the process check before taking another action. | The station restarted during the stop, or the result did not arrive in time. |
+
+A plan that is not eligible and has no code shows "No process of this run is left to stop. Check again, then use Mark as ended."
+
+The limits. A process that left the group and the session (it called `setsid()`) is listed and never stopped. A process can change its group between the check and the signal. A pidfd stops a reused number, not a change of group. The stop therefore covers the processes that the plan names, with checks. It does not contain a hostile process of the same user. The audit row `session.execution_stop` has the owner, the station, the session, the shim, the command ID, the counts and the outcome. It has no command name, no argument and no `/proc` text.
 
 ## 11. Troubleshooting
 
@@ -1463,7 +1588,7 @@ After the one first login, every step happens on the board or on your own deck m
 
 ### 15.3 Terminal states
 
-A terminal state stops the bootstrap. The bootstrap keeps the code and does not clear it at the next login. Each state needs a repair. For a station that is linked to this deck, use **Retry provisioning** on its Omarchy card (see the part "Omarchy from the board" in section 7.5). A state before the station is linked to this deck has no board path yet, because the board cannot reach that station: its repair is a new provisioning file at the first setup of the machine (section 15.1). This is an open item (DL-243 item c). It is not an instruction to log in to the machine.
+A terminal state stops the bootstrap. The bootstrap keeps the code and does not clear it at the next login. Each state needs a repair. For a station that is linked to this deck, use **Retry provisioning** on its Omarchy card (see the part "Omarchy from the board" in section 7.5). A state before the station is linked to this deck cannot use that button, because the board cannot reach that station. The station can report the state to the deck, and you can allow one setup retry for the codes that a retry can repair (section 15.5). The other codes have no board path yet: their repair is a new provisioning file at the first setup of the machine (section 15.1). This is an open item (DL-243 item c). It is not an instruction to log in to the machine.
 
 | Code | Cause |
 | --- | --- |
@@ -1479,3 +1604,54 @@ A terminal state stops the bootstrap. The bootstrap keeps the code and does not 
 ### 15.4 Cloned machines
 
 Do not clone an initialized machine. Each machine needs its own medium credentials and its own provisioning (section 14.5). Two machines that start from one clean medium get two different fingerprints.
+
+### 15.5 Setup reports from unpaired keys (DL-249)
+
+This part shows how to see why a new station stopped before it was linked, and how to allow one retry, from the board. You do not log in to the station. The contract is `design/board-gaps.md` section 4 (BG-3). The built version is recorded in DL-249. The PRE-PR review and the live smoke are not done yet.
+
+The station runs a supervisor, `provision-supervise`. The hook `/usr/lib/fleetdeck/provision-first-login` starts it at a login while the provisioning file exists, in place of the bare bootstrap. The supervisor runs the bootstrap. When the bootstrap stops with a terminal code, it reports the code to the deck that the provisioning file names. It reports only when:
+
+- the provisioning file passes its checks;
+- the pin of the deck is valid;
+- the station already has a key (the supervisor never makes a key);
+- the deck and the station both support `provision_report.v1`.
+
+The supervisor reports at once, and then every 600 seconds with up to 60 seconds of jitter. The wait follows the reply of the deck (at least 60 seconds, at most one hour). It checks the condition again before each report. It stops after the bootstrap completes. It never weakens a P8 check. A package with the old hook has no supervisor and sends no report. The supervisor needs the station to be on and to reach the deck.
+
+The deck takes a report only while you opened the reporting window. The window is separate from the pairing window. Opening one never opens the other.
+
+Steps:
+
+1. On the board, open Stations and select "Add station". Select "A computer on my tailnet". Find the section "Setup reports from unpaired keys" below "Other computers ask to join".
+2. The line reads "Reporting is closed. Unpaired keys cannot send setup reports." Press **Open setup reports for one hour**. The board asks for a recent sign-in for "Setup reports". The line then reads "Reporting is open until <time>." The deck needs a tailnet listener. Without it, the deck refuses and the board shows its message.
+3. Wait for the supervisor to report. A station that reports while the window is closed gets the answer `disabled` and tries again later. Press **Close setup reports** at any time. It needs no sign-in.
+4. Read each row. It shows "This key has not been paired. Its name and setup status are self-reported.", the full key in groups, "Reported name: <name>", the text of the code, "Phase: <phase>", "Received: <time>" and "Last contact: <time>". Compare the key with the fingerprint of the new station (section 15.1, step 4). The name is only a label. The deck never merges rows by name or address. A report makes no station row, no paired mark, no grant and no invitation.
+5. For a code that a retry can repair, press **Allow one setup retry**. Read "Allow this key to try setup once more? This does not pair it, change its trusted deck, replace its identity, or override setup checks." Press **Allow one retry**. The board asks for a recent sign-in for "Setup reports".
+6. The row reads "Retry allowed. The setup supervisor will check again within about ten minutes while it is running." Press **Cancel retry** to take the permission back. When the station took it, the row reads "The retry was sent to the station." and has no cancel button.
+7. Press **Dismiss report** to remove a row and its permission.
+
+What a retry does and does not do:
+
+- It is one permission for one key and for the exact condition that you saw. It expires after 20 minutes. It is single use. Two clicks make one permission.
+- The supervisor gets it with its next report. It writes an authorization and runs the bootstrap once.
+- The bootstrap takes `provision.lock` and compares the condition, the configuration, the pin of the deck and the key of the station with the authorization. When they are equal, it clears the retained error and records the retry ID in one write. It then runs every P8 check again: configuration, release, identity, service and pairing. A replay of the same retry ID is refused. A changed condition gives "The reported setup condition changed. Review the latest report." and the station keeps the condition.
+- It does not pair the key, change the trusted deck, replace the key, repair trust or configuration, or override a check.
+- A retry that fails again gives a new report.
+
+The codes:
+
+| Retry | Codes |
+| --- | --- |
+| Allowed | `denied`, `cancelled`, `revoked`, `pending`, `pairing_failed`, `provider_probe_failed`, `integration_failed`, `unknown_error` |
+| Disabled | `file_invalid`, `release_untrusted`, `build_mismatch`, `config_conflict`, `config_changed`, `service_conflict`, `station_identity_changed`, `paired_elsewhere`, `fingerprint_mismatch`, `request_id_conflict`, `unsupported`, `invalid_request`, `retry_file` |
+
+For a disabled code the row reads "Retrying cannot repair this condition. Fleet Deck has no board repair for it yet." The board shows the text of each code. For `denied`, `cancelled` and `revoked` the normal pairing rules still apply (section 15.2). A retry never clears a revocation.
+
+The limits of the channel:
+
+- The deck keeps one latest report for each key, at most 64 reports, for 24 hours. A report frame has at most 4 KiB. The name has at most 64 characters, without control characters.
+- The deck accepts one update for each key in 5 minutes and 120 updates in one hour. When 64 rows exist, it refuses a new key (`capacity`) and removes no row.
+- A report has no error text, no path and no configuration.
+- A person with a key on your tailnet can send a false report while the window is open, and can fill the 64 rows. A report is a lossy diagnostic message. It is not proof of a failure, and not an enrollment. Code that runs as the station user can send a report in its name (P8-17).
+
+What stays open (no board path yet): a failure without a valid provisioning file, pin or station key; a station without a running supervisor or without a network; and the codes without a retry. Their repair is a new provisioning file at the first setup of the machine.

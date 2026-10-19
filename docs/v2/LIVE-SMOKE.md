@@ -713,4 +713,81 @@ Result:
 | (not run) | | | | Keyboard and movement in other windows: open. |
 | (not run) | | | | Clicks in other windows: open. The live smoke of P7b is open (DL-247 item b). Do not rely on agent clicks or on input in other windows before it passes. |
 
+### Board paths for the remaining owner actions (DL-249)
+
+The contract is `docs/v2/design/board-gaps.md` (BG-2, BG-3 and BG-4; BG-1 is not built and has no smoke). The owner guides are `docs/v2/operations.md` section 7.5 (part "Repair an installer conflict"), section 10 (part "Stop the processes of a lost run") and section 15.5. This smoke is required before you rely on these repairs. The PRE-PR reviews of BG-2, BG-3 and BG-4 are also pending (DL-249 item a).
+
+Every step is a board step. No step asks you to run a command or to edit a file on a station. A value that the board cannot show is marked "no board path yet". It is an open item, not an instruction. A step that needs a fault on a station has no board path to cause the fault. Use a station that already has the fault. When you have none, write "not run: no board path yet to cause the fault" in the result for that item. Use a machine and a session that hold nothing of value: a stop signals real processes, and a replacement moves real files.
+
+Set up:
+
+1. Items 1 to 4 need an Omarchy station that is linked to the deck, with the card "Omarchy" (the station tab of Settings). Its card must show the line "Integration: installed, <n> files changed or missing", or **Install** must stop with "The installer refused: some files were changed." The board has no way to create this conflict (no board path yet to create it). Use a station where it already happened. A file that Fleet Deck did not install, and that has the name of an integration file, causes the first state. A recorded integration file that you edited causes the second state.
+2. Items 5 and 6 need a session whose board dialog "Previous run of this session" lists a live process of a lost run. The board has no way to make a lost run with a live process (no board path yet to create it). Use a session that is in this state, on a Linux station that supports `execution_stop.v1`.
+3. Items 7 to 10 need a new machine that stopped in the first setup before it was linked, with a terminal code. The board has no way to cause the stop (no board path yet to cause it). A provisioning file that is wrong for its machine causes it (for example a changed file, `config_changed`, or a conflicting station configuration, `config_conflict`). Make the file on your deck machine as in the P8 smoke (section 15.1 of `docs/v2/operations.md`). A wrong pin gives no report at all (a residual): write it in the result.
+4. Each repair and stop button asks "Confirm it is you". The text names "Omarchy integration" for the repair, "Stop previous run processes" for the stop and "Setup reports" for the reports. The board asks nothing when it still holds a recent sign-in.
+
+Items:
+
+1. **Review the files to replace.**
+   1. On the card of the station, press **Review files to replace…**. Expect the dialog "Review files to replace".
+   2. Expect each file that Fleet Deck did not install, checked and fixed, with "Not recorded by Fleet Deck: replaced, and a copy is kept."
+   3. Expect each recorded integration file that you edited, not checked, with "You edited this recorded integration file. Fleet Deck will keep it unless you select it."
+   4. Expect the line "Replace the listed integration files? Fleet Deck will keep a separate copy of each current file." and the buttons **Keep copies and replace** and **Cancel**.
+   5. Press **Cancel**. Expect no change on the card. Write what the dialog listed.
+2. **Replace the files.**
+   1. Press **Review files to replace…** again. Leave the recorded edits that you want to keep unchecked. Press **Keep copies and replace**, and confirm.
+   2. Expect "Replaced N files. The kept copies are listed under Repairs." and the card line "Integration: installed" when no other file is changed.
+   3. Open **Repairs**. Expect one new row with the date, the state `Complete`, and for each file the state `Replaced` and the line "Kept copy: <path>". Write the paths.
+   4. Expect the files that you left unchecked to stay as they were: the card must not replace them.
+   5. Review again. Expect "No file needs to be replaced." when nothing is left, and **Keep copies and replace** off.
+3. **Restore a kept copy.**
+   1. In **Repairs**, press **Restore kept copies…** on the new row. Expect the dialog "Restore kept copies". Expect each file with "Keep the current file aside, then copy the kept file back" (or "Remove the file that Fleet Deck added" for a file that had no old file). Expect all boxes unchecked and **Restore selected** off.
+   2. Select one file. Press **Restore selected**, and confirm. Expect "Restored 1 file. The kept copies stay."
+   3. Expect the file state `Restored` and the line "Kept copy: <path>" on the row. The kept copy stays.
+   4. Press **Restore kept copies…** again. Expect "Nothing to restore" for that file.
+4. **The failures that the board can show.**
+   1. Press **Review files to replace…** on a station of an older build, if you have one. Expect no button and no **Repairs** section.
+   2. Open the dialog on two boards at the same time, and confirm on the first. Confirm on the second. Expect "The files changed since this review. Review the replacement plan again." on the second.
+   3. Write "no board path yet" in the result for: an interrupted repair (so **Resume repair** and the state `Incomplete` have no way to show), a restore of a file that changed after the repair, a kept copy that someone removed, and a full disk. The unit tests cover them.
+5. **Stop the processes of a lost run.**
+   1. Open the session, then the session menu, then **Check the previous run**. Expect the dialog "Previous run of this session" with the live processes, and **Mark as ended** off.
+   2. Expect **Stop these processes…**. Press it. Expect "Reading the stop plan…" and then "Processes to stop" with the command names, and the confirmation "Stop the listed processes from this previous run? Fleet Deck will ask them to exit, then force-stop surviving targets after five seconds. Unsaved work may be lost."
+   3. Expect a process that left the group and the session (if the run has one) in the list "Processes that left its group (they do not block)" with the note "Processes outside the run's group and session are listed for information and will not be stopped."
+   4. Press **Stop processes**, and confirm. Expect a result within 20 seconds: "Fleet Deck stopped <n> processes. <k> needed a force stop."
+   5. Press **Check the previous run** again. Expect no live process of the run. Write the numbers `n` and `k`.
+   6. Press **Mark as ended**. Expect the dialog to allow it only after the fresh check. Resume the session. Write the result.
+6. **The refusals of the stop.**
+   1. Wait 30 seconds after the plan loads. Press **Stop processes**. Expect the board to read the plan again and show it for review. No process stops.
+   2. For a lost run of an older Fleet Deck build (no recorded leader identity), expect "Fleet Deck cannot safely prove that these processes belong to the previous run. No processes were stopped." and no confirm button. Write "not run" when you have no such session.
+   3. Open the dialog on a station of an older build, if you have one. Expect "This station's build cannot stop the processes of a lost run from the board."
+   4. Write "no board path yet" in the result for: a station restart during the stop, a forked process during the stop and a refused signal. The unit tests cover them.
+7. **Open the window and read a report.**
+   1. On the board, open Stations, **Add station** and "A computer on my tailnet". Find "Setup reports from unpaired keys". Expect "Reporting is closed. Unpaired keys cannot send setup reports." and **Open setup reports for one hour**.
+   2. Press the button, and confirm. Expect "Reporting is open until <time>." Expect the pairing window to stay as it was. Opening one window never opens the other.
+   3. Wait for the supervisor of the new machine (about 11 minutes at most when it reported before you opened the window). Expect a row with "This key has not been paired. Its name and setup status are self-reported.", the full key in groups, "Reported name: <name>", the text of the code, "Phase: <phase>", "Received: <time>" and "Last contact: <time>".
+   4. Compare the key with the fingerprint that the new machine showed at its first login (section 15.1, step 4 of the guide). Write whether they match. Write the code text and the phase.
+   5. Expect no new row in "Stations", no paired mark and no grant.
+8. **Allow one setup retry.**
+   1. For a code that allows a retry (for example `integration_failed` or `provider_probe_failed`), expect **Allow one setup retry**. For a disabled code (for example `config_changed`), expect "Retrying cannot repair this condition. Fleet Deck has no board repair for it yet." and no retry button. Write which one you saw.
+   2. Press **Allow one setup retry**. Expect "Allow this key to try setup once more? This does not pair it, change its trusted deck, replace its identity, or override setup checks." Press **Allow one retry**, and confirm.
+   3. Expect "Retry allowed. The setup supervisor will check again within about ten minutes while it is running." and **Cancel retry**. The board must not say that the retry started.
+   4. Press **Cancel retry**. Expect the row without the retry line. Allow the retry again.
+   5. Wait. Expect "The retry was sent to the station." and no **Cancel retry**. Then expect a new report or a linked station.
+   6. A retry never repairs a trust or configuration code: write what happened to the code after the retry (the same code again is correct for a condition that the retry cannot repair).
+9. **The window and the limits.**
+   1. Press **Close setup reports**. Expect "Reporting is closed. Unpaired keys cannot send setup reports." Wait more than 10 minutes. Expect the row's "Last contact" not to change.
+   2. Press **Dismiss report**. Expect the row to go. Open the window again. Expect the row to return only with the next report of the station.
+   3. Write "no board path yet" in the result for: 64 reports at once, a false report from another key, a station with an old hook (no supervisor), a station that stops the network, and the rate limits. The unit tests cover them.
+10. **A station that links after a retry.**
+    1. When the retry cleared the condition, approve the pairing as in section 15.1 step 5 of the guide. Expect the station to appear on the board.
+    2. Expect the report row to go (or to show no new report). Write the result.
+
+Result:
+
+| Date | Machines | Items | Result |
+| --- | --- | --- | --- |
+| (not run) | | | Installer conflict repair: open. |
+| (not run) | | | Stop of a lost run: open. |
+| (not run) | | | Setup reports and one setup retry: open. The live smoke of BG-2, BG-3 and BG-4 is open (DL-249 item d). Do not rely on these repairs before it passes. |
+
 <!-- desktop-smoke:end -->
