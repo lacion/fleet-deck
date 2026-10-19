@@ -309,7 +309,7 @@ async fn a_failed_handshake_fails_the_start() {
 /// The events of a `!` command until its turn completes (B8).
 async fn shell_events(live: &mut Live, command: &str) -> Vec<Event> {
     live.session
-        .shell_command("eff-1".into(), command.into())
+        .shell_command("eff-1".into(), command.into(), 600_000)
         .await
         .unwrap();
     until(&mut live.rx, turn_completed).await
@@ -400,7 +400,7 @@ async fn a_failing_shell_command_reports_its_exit_code() {
 async fn a_refused_shell_command_fails_its_node() {
     let mut live = start(None, Origin::New).await;
     live.session
-        .shell_command("eff-1".into(), "refuse it".into())
+        .shell_command("eff-1".into(), "refuse it".into(), 600_000)
         .await
         .unwrap();
     let events = until(&mut live.rx, |e| matches!(e, Event::ToolCompleted { .. })).await;

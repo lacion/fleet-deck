@@ -16,7 +16,7 @@ const NODE: &str = "shell-eff-1";
 /// A core with `!pwd` on the wire (the effect `eff-1`).
 fn sent(command: &str) -> (CodexCore, Vec<Output>) {
     let mut core = ready_core();
-    let out = core.shell_command("eff-1", command).unwrap();
+    let out = core.shell_command("eff-1", command, 600_000).unwrap();
     (core, out)
 }
 
@@ -59,9 +59,20 @@ fn the_request_is_a_thread_shell_command_frame() {
 }
 
 #[test]
+fn the_request_carries_the_run_limit_of_the_caller() {
+    let mut core = ready_core();
+    let out = core.shell_command("eff-1", "pwd", 60_000).unwrap();
+    let w = writes(&out);
+    assert_eq!(
+        w[0]["params"],
+        json!({"threadId": T, "command": "pwd", "timeoutMs": 60_000})
+    );
+}
+
+#[test]
 fn a_busy_session_refuses_a_shell_command() {
     let (mut core, _) = sent("pwd");
-    let err = core.shell_command("eff-2", "ls").unwrap_err();
+    let err = core.shell_command("eff-2", "ls", 600_000).unwrap_err();
     assert!(
         matches!(&err, ProviderError::Refused(m) if m == "the session is busy"),
         "{err:?}"
@@ -69,7 +80,7 @@ fn a_busy_session_refuses_a_shell_command() {
     let mut core = ready_core();
     core.prompt(&super::tests::input("hi", "in-1")).unwrap();
     assert!(matches!(
-        core.shell_command("eff-1", "pwd"),
+        core.shell_command("eff-1", "pwd", 600_000),
         Err(ProviderError::Refused(_))
     ));
 }
@@ -103,7 +114,7 @@ fn an_error_response_fails_the_node_and_refuses_a_held_interrupt() {
         Event::InterruptResult { accepted: false, control_id: Some(c), .. } if c == "ctl-1"
     )));
     assert!(core.is_idle());
-    assert!(core.shell_command("eff-2", "ls").is_ok());
+    assert!(core.shell_command("eff-2", "ls", 600_000).is_ok());
 }
 
 #[test]
@@ -157,7 +168,7 @@ fn a_user_shell_item_is_the_shell_node() {
         core.pending_shell.is_some(),
         "the command waits for its turn end"
     );
-    assert!(core.shell_command("eff-2", "ls").is_err());
+    assert!(core.shell_command("eff-2", "ls", 600_000).is_err());
     // The turn ends: the node completes once, `done`, with the exit code.
     let end = emits(&complete(&mut core, "n1", "completed"));
     let done: Vec<_> = end
@@ -176,7 +187,7 @@ fn a_user_shell_item_is_the_shell_node() {
             < pos(|e| matches!(e, Event::TurnCompleted { .. }))
     );
     assert!(core.is_idle(), "the shell turn leaves the core idle");
-    assert!(core.shell_command("eff-2", "ls").is_ok());
+    assert!(core.shell_command("eff-2", "ls", 600_000).is_ok());
 }
 
 #[test]

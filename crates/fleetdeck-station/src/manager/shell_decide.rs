@@ -244,6 +244,8 @@ fn shell_command(
                 command: command.clone(),
                 provider,
                 worktree_root: root.to_owned(),
+                timeout_ms: u64::try_from(policy.timeouts().shell_command.as_millis())
+                    .unwrap_or(u64::MAX),
             },
         )?
         .effect_id

@@ -227,7 +227,15 @@ async fn two_stations_one_dialed_one_dialing_sync_and_a_deck_restart_loses_and_r
     let bravo = station("bravo").await;
     bravo.session("b1").await;
     let b_first = bravo.run("b1", 1).await;
-    bravo.node.join(&d.node.invite().unwrap()).await.unwrap();
+    bravo
+        .node
+        .join(
+            &d.node
+                .invite(fleetdeck_deck::knobs::DeckKnobs::default().invite)
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     // The first sync of each station is a snapshot batch.
     d.synced("alpha", a_first).await;
     let bravo_fp = bravo.node.link().node.identity.fingerprint().short();
@@ -303,7 +311,11 @@ async fn a_deck_without_a_link_listener_cannot_invite_the_first_sync_is_a_snapsh
     let dir = tempfile::tempdir().unwrap();
     let identity = Arc::new(Identity::generate().unwrap());
     let d = deck(dir.path(), &identity, &[]).await;
-    assert!(matches!(d.node.invite(), Err(NodeError::NoListener)));
+    assert!(matches!(
+        d.node
+            .invite(fleetdeck_deck::knobs::DeckKnobs::default().invite),
+        Err(NodeError::NoListener)
+    ));
 
     let first = station("alpha").await;
     first.session("old").await;

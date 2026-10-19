@@ -159,8 +159,8 @@ fn the_argv_has_the_exact_tokens() {
 }
 
 #[test]
-fn seconds_outside_one_to_120_are_invalid_params() {
-    for seconds in [0_u32, 121, u32::MAX] {
+fn seconds_outside_one_to_3600_are_invalid_params() {
+    for seconds in [0_u32, 3601, u32::MAX] {
         let e = argv("DP-1", seconds).unwrap_err();
         assert_eq!(e.code, code::INVALID_PARAMS);
     }

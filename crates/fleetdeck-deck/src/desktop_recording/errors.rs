@@ -47,7 +47,7 @@ const fn known(code: &'static str, status: StatusCode, text: &'static str) -> Kn
 
 /// The station codes of a recording that the deck relays (§16; the terminal
 /// codes of the owner column of §7.5).
-const KNOWN: [Known; 14] = [
+const KNOWN: [Known; 15] = [
     known(code::BUSY, StatusCode::CONFLICT, text::BUSY),
     known(
         code::DISK_FULL,
@@ -113,6 +113,11 @@ const KNOWN: [Known; 14] = [
         cd_code::DESKTOP_TIMEOUT,
         StatusCode::GATEWAY_TIMEOUT,
         "The station did not answer in time; the action may have run.",
+    ),
+    known(
+        code::RECORDING_TOO_LONG,
+        StatusCode::CONFLICT,
+        text::RECORDING_TOO_LONG,
     ),
 ];
 

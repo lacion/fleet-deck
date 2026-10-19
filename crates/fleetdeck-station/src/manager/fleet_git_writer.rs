@@ -154,8 +154,9 @@ impl WriterEnv {
 /// give shorter ones (decision Q6, H10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LandTimeouts {
-    /// `git push` (60 s).
-    pub push: Duration,
+    /// `git push`: `None` takes the station limit `limits.git_push_seconds`
+    /// (60 s by default); the tests set `Some(..)`.
+    pub push: Option<Duration>,
     /// One forge request (30 s).
     pub forge: Duration,
     /// How long the abandonment waits for the per-land lock (120 s).
@@ -167,7 +168,7 @@ pub struct LandTimeouts {
 impl Default for LandTimeouts {
     fn default() -> Self {
         Self {
-            push: Duration::from_secs(60),
+            push: None,
             forge: Duration::from_secs(30),
             lock_wait: Duration::from_secs(120),
             read: Duration::from_secs(20),
@@ -435,7 +436,8 @@ async fn branch_push(env: &WriterEnv, session_id: &SessionId) -> crate::store::R
     let Some(job) = attempt_job(&opened, &session, &slug) else {
         return Ok(());
     };
-    let result = env.push.submit(&job).await;
+    let timeout = env.policy.current().timeouts().git_push;
+    let result = env.push.submit(&job, timeout).await;
     settle(store, session_id, result.map_err(|e| e.to_string())).await
 }
 

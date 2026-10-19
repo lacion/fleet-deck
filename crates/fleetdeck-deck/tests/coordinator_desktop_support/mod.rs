@@ -199,6 +199,7 @@ pub fn info() -> DesktopInfo {
         features: Vec::new(),
         previews: Vec::new(),
         host_addresses: Vec::new(),
+        recording_max_seconds: None,
     }
 }
 
@@ -257,6 +258,7 @@ pub fn deck_live(desktop_control: bool) -> DeckLive {
         desktop_control,
         tailscale_cert: false,
         tailscale_bin: None,
+        knobs: fleetdeck_deck::knobs::DeckKnobs::default(),
     }
 }
 

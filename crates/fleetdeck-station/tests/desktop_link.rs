@@ -604,3 +604,50 @@ async fn a_desktop_screen_capture_act_without_an_artifact_directory_runs_no_prog
     assert_eq!(message, "this station has no artifact directory");
     assert_eq!(fake.calls(), "", "no program ran");
 }
+
+#[tokio::test]
+async fn desktop_info_carries_the_live_longest_recording() {
+    let _turn = ONE_AT_A_TIME.lock().await;
+    let info = desktop_field(capture_policy(true, true, &[])).await;
+    assert_eq!(info.recording_max_seconds, Some(120));
+    let policy = capture_policy(true, true, &[]).with_recording_max_seconds(600);
+    let info = desktop_field(policy.clone()).await;
+    assert_eq!(info.recording_max_seconds, Some(600));
+
+    let mut f = fixture_with(policy).await;
+    let _desktop = FakeDesktop::install().await;
+    let deck = f.connect().await;
+    for params in [json!({}), json!({"fresh": true})] {
+        let Outcome::Ok(raw) = call(&deck, "desktop.info", params.clone()).await else {
+            panic!("desktop.info failed: {params}");
+        };
+        let info: DesktopInfo = serde_json::from_value(raw).unwrap();
+        assert_eq!(info.recording_max_seconds, Some(600), "{params}");
+    }
+}
+
+#[tokio::test]
+async fn a_recording_over_the_station_limit_is_refused_before_any_program() {
+    let _turn = ONE_AT_A_TIME.lock().await;
+    let policy = capture_policy(true, true, &["DP-1"]).with_recording_max_seconds(600);
+    let mut f = fixture_with(policy).await;
+    let fake = FakeDesktop::install().await;
+    let deck = f.connect().await;
+    let record = |seconds: u32| DesktopAction::ScreenRecord {
+        monitor: "DP-1".to_owned(),
+        seconds,
+    };
+    let (code, message) =
+        refused(call(&deck, "desktop.act", authorized(&f, &deck, &record(601), 1)).await);
+    assert_eq!(code, "recording_too_long");
+    assert_eq!(
+        message,
+        "This recording is longer than this station allows. Shorten it, or raise Longest recording in the station settings."
+    );
+    // A request at the limit passes this check: this link has no recording
+    // feature, so the next check refuses it.
+    let (code, _) =
+        refused(call(&deck, "desktop.act", authorized(&f, &deck, &record(600), 2)).await);
+    assert_eq!(code, "unsupported");
+    assert_eq!(fake.calls(), "", "no program ran");
+}

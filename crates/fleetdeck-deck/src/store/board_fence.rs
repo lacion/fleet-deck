@@ -180,6 +180,45 @@ impl DeckStore {
         .await
     }
 
+    /// True while the browser session is valid at `now` under the current
+    /// knobs, without a touch (the final check of a socket at `on_upgrade`).
+    /// Owner: not expired, `created_at` inside the longest login time, not
+    /// idle for the idle limit and `idle_until` in the future. Member: the
+    /// conditions of the member grant (the login and its share are alive).
+    /// The clean-up of a lowered limit is best effort; this check does not
+    /// depend on it.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn session_valid(
+        &self,
+        kind: SessionKind,
+        session_hash: &str,
+        now: i64,
+    ) -> Result<bool> {
+        let knobs = self.knobs();
+        let hash = session_hash.to_owned();
+        call(&self.inner.db, move |conn| match kind {
+            SessionKind::Owner => {
+                let n: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM login_sessions
+                     WHERE session_hash = ?1 AND expires_at > ?2 AND created_at > ?3
+                       AND last_seen > ?4 AND idle_until > ?2",
+                    params![
+                        hash,
+                        now,
+                        now - knobs.login_max_ms,
+                        now - knobs.login_idle_ms
+                    ],
+                    |r| r.get(0),
+                )?;
+                Ok(n > 0)
+            }
+            SessionKind::Member => Ok(super::members::grant_alive(conn, &hash, now, &knobs)?),
+        })
+        .await
+    }
+
     /// True when `addr` is exposed at `now`, read from the rows, never from
     /// the cache of [`Self::exposed_addresses`] (the admission of a socket:
     /// a read that begins after the registration sees every committed

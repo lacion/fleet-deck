@@ -30,6 +30,7 @@ pub(super) fn stamp(ctx: &StationLink, info: &mut DesktopInfo) {
     let policy = ctx.manager.policy();
     info.allowed.capture = policy.allow_desktop() && policy.allow_desktop_capture();
     info.allowed.capture_monitors = policy.capture_monitors().to_vec();
+    info.recording_max_seconds = Some(policy.recording_max_seconds());
 }
 
 /// The previews that agents opened for the deck of this link (R13 P6):

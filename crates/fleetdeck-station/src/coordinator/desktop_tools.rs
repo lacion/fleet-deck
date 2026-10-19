@@ -232,7 +232,7 @@ const RECORD_MONITOR: &str = r#"
     "seconds": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 120
+      "maximum": 3600
     }
   }
 }
@@ -336,7 +336,7 @@ pub const DESKTOP_TOOLS: &[Tool] = &[
     Tool {
         name: "record_monitor",
         classes: &[ToolClass::Capture, ToolClass::Recording],
-        description: "Record one monitor of a grant station for 1 to 120 seconds. The recording is saved as a video artifact; this tool returns its reference, never the video.",
+        description: "Record one monitor of a grant station for 1 to 3600 seconds (the station's own limit can be lower). The recording is saved as a video artifact; this tool returns its reference, never the video.",
         schema: record_monitor,
     },
     Tool {

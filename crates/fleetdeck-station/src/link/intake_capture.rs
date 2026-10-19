@@ -97,6 +97,8 @@ pub(super) async fn capture(
             desktop: policy.allow_desktop(),
             capture: policy.allow_desktop_capture(),
             monitors: policy.capture_monitors().to_vec(),
+            quota_bytes: policy.capture_quota_bytes(),
+            free_reserve_bytes: policy.capture_free_reserve_bytes(),
         }
     });
     // The live station name, as `station.info` reports it.

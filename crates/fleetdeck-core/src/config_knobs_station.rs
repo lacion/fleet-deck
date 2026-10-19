@@ -1,6 +1,6 @@
 //! The owner knobs of `station.toml`: the tables `[limits]`, `[retention]`
-//! and `[capture]` (knobs design section 3). The station code does not read
-//! them yet (K3, K4).
+//! and `[capture]` (knobs design section 3). The station reads them through
+//! its policy (live values) or at its start (restart values).
 
 use serde::Deserialize;
 

@@ -353,6 +353,35 @@ async fn a_failed_clone_is_retried_after_the_cause_is_fixed() {
 }
 
 #[tokio::test]
+async fn a_clone_stops_at_the_clone_limit_of_the_policy() {
+    let one_second = crate::manager::policy_limits::StationTimeouts {
+        clone: Duration::from_secs(1),
+        ..Default::default()
+    };
+    let Some(rig) =
+        Rig::with_policy(|p| p.with_allow_local_remotes(true).with_timeouts(one_second)).await
+    else {
+        return;
+    };
+    // The wrapper hangs on a clone; the default limit of 15 minutes would
+    // not end it.
+    fs::write(
+        &rig.program,
+        "#!/bin/sh\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1\n\
+         case \" $* \" in *\" clone \"*) exec sleep 60 ;; esac\nexec git \"$@\"\n",
+    )
+    .unwrap();
+    rig.ensure(rig.params("p1", "app", "a1", &rig.url()))
+        .await
+        .unwrap();
+    let failed = rig.settle("p1", "a1").await;
+    assert_eq!(failed.state, HomeAttemptState::Failed);
+    assert_eq!(failed.code.as_deref(), Some(code::CLONE_FAILED));
+    let message = failed.message.unwrap();
+    assert!(message.contains("did not end within 1 s"), "{message}");
+}
+
+#[tokio::test]
 async fn a_retry_of_an_interrupted_attempt_never_adopts_the_folder_that_is_there() {
     let Some(rig) = Rig::new().await else { return };
     let dest = rig.projects().join("app");

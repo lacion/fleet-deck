@@ -110,6 +110,23 @@ async fn only_the_full_reservation_can_cross_the_quota() {
 }
 
 #[tokio::test]
+async fn a_lowered_quota_refuses_a_capture_that_the_default_allows() {
+    let s = store().await;
+    let begin_with = |quota: u64| {
+        let s = s.clone();
+        async move {
+            s.capture_begin_with(FP, A, "h", "DP-1", "art-a", None, quota, 10)
+                .await
+                .unwrap()
+        }
+    };
+    // One reservation of MAX_PNG_BYTES needs a quota of at least that.
+    assert_eq!(begin_with(MAX_PNG_BYTES - 1).await, Begin::Quota);
+    assert!(s.capture_get(FP, A).await.unwrap().is_none());
+    assert_eq!(begin_with(MAX_PNG_BYTES).await, Begin::Started);
+}
+
+#[tokio::test]
 async fn one_byte_over_the_quota_is_refused() {
     let s = store().await;
     assert_eq!(begin(&s, A, "h").await, Begin::Started);

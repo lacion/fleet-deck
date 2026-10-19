@@ -391,6 +391,8 @@ pub(crate) fn open() -> Allowed {
         desktop: true,
         capture: true,
         monitors: Vec::new(),
+        quota_bytes: crate::desktop::capture::CAPTURE_QUOTA,
+        free_reserve_bytes: crate::desktop::capture::FREE_RESERVE,
     }
 }
 

@@ -15,8 +15,8 @@ use common::board::BoardClient;
 use displays_support::*;
 use fleetdeck_core::Secret;
 use fleetdeck_core::identity::Identity;
+use fleetdeck_deck::knobs::DeckKnobs;
 use fleetdeck_deck::store::AuditResult;
-use fleetdeck_deck::store::displays::DISPLAY_IDLE_MS;
 use fleetdeck_deck::store::stations::NewStation;
 use fleetdeck_proto::event::{RequestKind, ToolKind};
 use fleetdeck_proto::link::Scope;
@@ -385,8 +385,9 @@ async fn a_display_session_ends_90_days_after_it_started_and_30_days_without_use
     // Unused for 30 days: gone.
     let (_, cookie) = display_login(&c, "Wall3", &[&st]).await;
     let value = Secret::new(cookie.split('=').nth(1).unwrap().to_owned());
-    f.det
-        .advance(Duration::from_millis(DISPLAY_IDLE_MS as u64 + 1));
+    f.det.advance(Duration::from_millis(
+        DeckKnobs::default().display_idle_ms as u64 + 1,
+    ));
     assert!(c.store.display_session(&value).await.unwrap().is_none());
 }
 

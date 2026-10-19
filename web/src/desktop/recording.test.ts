@@ -6,8 +6,10 @@ import {
   capability,
   DEFAULT_SECONDS,
   DISCLOSURE,
-  DURATION_ERROR,
   DURATION_LABEL,
+  durationError,
+  MAX_SECONDS,
+  maxSeconds,
   PHASE_TEXT,
   parseSeconds,
   REASONS,
@@ -41,22 +43,36 @@ const info = (over: Partial<DesktopInfo> = {}): DesktopInfo => ({
 const DECK = [RECORD_FEATURE, 'artifacts_video.v1', 'desktop_capture.v1'];
 
 describe('the recording duration', () => {
-  test('a whole number from 1 to 120 is accepted; the default is 30', () => {
+  test('a whole number from 1 to the maximum is accepted; the default is 30', () => {
     expect(DEFAULT_SECONDS).toBe('30');
-    expect(parseSeconds('30')).toBe(30);
-    expect(parseSeconds('1')).toBe(1);
-    expect(parseSeconds('120')).toBe(120);
+    expect(parseSeconds('30', 120)).toBe(30);
+    expect(parseSeconds('1', 120)).toBe(1);
+    expect(parseSeconds('120', 120)).toBe(120);
+    expect(parseSeconds('121', 600)).toBe(121);
+    expect(parseSeconds('3600', 3600)).toBe(3600);
   });
 
   test('anything else is refused', () => {
     for (const bad of ['', '0', '121', '-1', '1.5', '1e1', 'abc', ' 5', '5 ', '99999']) {
-      expect(parseSeconds(bad)).toBeNull();
+      expect(parseSeconds(bad, 120)).toBeNull();
     }
+    expect(parseSeconds('601', 600)).toBeNull();
+    expect(parseSeconds('3601', 3600)).toBeNull();
+  });
+
+  test('the maximum is the station value, else 120', () => {
+    expect(MAX_SECONDS).toBe(120);
+    expect(maxSeconds()).toBe(120);
+    expect(maxSeconds(info())).toBe(120);
+    expect(maxSeconds(info({ recording_max_seconds: null }))).toBe(120);
+    expect(maxSeconds(info({ recording_max_seconds: 600 }))).toBe(600);
+    expect(maxSeconds(info({ recording_max_seconds: 3600 }))).toBe(3600);
   });
 
   test('the texts are exact', () => {
     expect(DURATION_LABEL).toBe('Duration (seconds)');
-    expect(DURATION_ERROR).toBe('Recording duration must be a whole number from 1 to 120 seconds.');
+    expect(durationError(120)).toBe('Enter a whole number of seconds from 1 to 120.');
+    expect(durationError(3600)).toBe('Enter a whole number of seconds from 1 to 3600.');
     expect(PHASE_TEXT).toEqual({
       preparing: 'Preparing recording',
       recording: 'Recording',

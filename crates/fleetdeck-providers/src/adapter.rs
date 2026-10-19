@@ -356,9 +356,16 @@ pub trait LiveSession: Send {
         Err(Unsupported::new(Operation::Revert).into())
     }
     /// A `!` shell command through the provider (B8). The effect id names
-    /// the node `shell-<effect id>` of its events. Refused by default.
-    async fn shell_command(&mut self, effect_id: String, command: String) -> Result<()> {
-        let _ = (effect_id, command);
+    /// the node `shell-<effect id>` of its events. `timeout_ms` is the run
+    /// limit that the station chose when the command started (a provider
+    /// that runs no command of its own ignores it). Refused by default.
+    async fn shell_command(
+        &mut self,
+        effect_id: String,
+        command: String,
+        timeout_ms: u64,
+    ) -> Result<()> {
+        let _ = (effect_id, command, timeout_ms);
         Err(ProviderError::Refused(
             "shell commands are not supported".into(),
         ))

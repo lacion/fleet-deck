@@ -472,8 +472,10 @@ fn record_monitor_serializes_as_its_tool_and_refuses_unknown_fields() {
 fn record_monitor_validation_names_the_field_and_bounds_the_seconds() {
     assert_eq!(record(1).validate(), Ok(()));
     assert_eq!(record(120).validate(), Ok(()));
+    assert_eq!(record(121).validate(), Ok(()));
+    assert_eq!(record(3600).validate(), Ok(()));
     assert_eq!(record(0).validate(), Err(ArgError { field: "seconds" }));
-    assert_eq!(record(121).validate(), Err(ArgError { field: "seconds" }));
+    assert_eq!(record(3601).validate(), Err(ArgError { field: "seconds" }));
     assert_eq!(
         record(u32::MAX).validate(),
         Err(ArgError { field: "seconds" })

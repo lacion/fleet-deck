@@ -30,7 +30,9 @@ use rusqlite::{Connection, OptionalExtension, params};
 use super::artifact_deletions::tombstoned;
 use super::artifacts::{CommitError, Committed, Staged, StagedFile, load_artifact, load_versions};
 use super::{Result, Store, StoreError, call, to_i64, to_u64};
-use crate::desktop::capture::{CAPTURE_QUOTA, MAX_PNG_BYTES};
+#[cfg(test)]
+use crate::desktop::capture::CAPTURE_QUOTA;
+use crate::desktop::capture::MAX_PNG_BYTES;
 
 /// The one file of a screenshot version.
 pub const CAPTURE_FILE: &str = "capture.png";
@@ -238,11 +240,12 @@ impl Store {
     /// nothing changes; otherwise the quota is checked (the committed
     /// capture bytes, the reservations of every row that still holds one, the
     /// bytes of the garbage that is not yet removed and the new reservation of
-    /// [`MAX_PNG_BYTES`] must stay within [`CAPTURE_QUOTA`]) and a `running`
+    /// [`MAX_PNG_BYTES`] must stay within the quota) and a `running`
     /// row that holds the reservation is inserted.
     ///
     /// # Errors
     /// A database error.
+    #[cfg(test)]
     pub async fn capture_begin(
         &self,
         deck_fp: &str,
@@ -259,6 +262,7 @@ impl Store {
             monitor,
             artifact_id,
             None,
+            CAPTURE_QUOTA,
             now,
         )
         .await
@@ -267,6 +271,7 @@ impl Store {
     /// [`Store::capture_begin`] for an owner capture (`coordinator` is
     /// `None`) or a coordinator capture (R13 P6 §4.7): the new row keeps the
     /// JSON of the coordinator context, which holds the binding generation.
+    /// `quota` is the capture storage limit in bytes (`capture.quota_gib`).
     ///
     /// # Errors
     /// A database error.
@@ -279,6 +284,7 @@ impl Store {
         monitor: &str,
         artifact_id: &str,
         coordinator: Option<&CoordinatorContext>,
+        quota: u64,
         now: i64,
     ) -> Result<Begin> {
         let (deck_fp, capture_id) = (deck_fp.to_owned(), capture_id.to_owned());
@@ -297,7 +303,7 @@ impl Store {
                 );
             }
             let used = accounted(&tx)?.saturating_add(MAX_PNG_BYTES);
-            if used > CAPTURE_QUOTA {
+            if used > quota {
                 return Ok(Begin::Quota);
             }
             tx.execute(

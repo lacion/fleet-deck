@@ -158,7 +158,14 @@ async fn world(dir: &Path, config: ModelHelpConfig) -> World {
     )
     .await
     .unwrap();
-    station.join(&node.invite().unwrap()).await.unwrap();
+    station
+        .join(
+            &node
+                .invite(fleetdeck_deck::knobs::DeckKnobs::default().invite)
+                .unwrap(),
+        )
+        .await
+        .unwrap();
 
     let (cookie, csrf) = board.login().await;
     let headers = vec![

@@ -86,6 +86,7 @@ fn live(on: bool) -> DeckLive {
         desktop_control: false,
         tailscale_cert: on,
         tailscale_bin: None,
+        knobs: crate::knobs::DeckKnobs::default(),
     }
 }
 

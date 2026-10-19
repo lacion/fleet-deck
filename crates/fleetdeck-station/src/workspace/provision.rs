@@ -26,8 +26,6 @@ pub const CALLSIGNS: [&str; 12] = [
 pub const MAX_URL_CHARS: usize = 2048;
 /// The time limit of `git worktree add`.
 pub const WORKTREE_TIMEOUT: Duration = Duration::from_secs(120);
-/// The time limit of `git clone`.
-pub const CLONE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 /// How long a stopped provision waits for its Git process group to end after
 /// each signal (TERM, then KILL).
 const GROUP_WAIT: Duration = Duration::from_secs(5);
@@ -315,6 +313,7 @@ pub async fn provision(
     repo_dir: Option<&Path>,
     parent_dir: Option<&Path>,
     dest_dir: Option<&Path>,
+    clone_timeout: Duration,
 ) -> Result<(), String> {
     let grouped = |dir: &Path, timeout| {
         Git::new(dir, git_options(options, timeout)).with_group(Arc::clone(group))
@@ -391,7 +390,7 @@ pub async fn provision(
         }
         WorkspacePlan::Clone { url, path } => {
             let parent = Path::new(path).parent().unwrap_or(Path::new("/"));
-            grouped(parent_dir.unwrap_or(parent), CLONE_TIMEOUT)
+            grouped(parent_dir.unwrap_or(parent), clone_timeout)
                 .run(&[
                     "-c",
                     "protocol.ext.allow=never",
@@ -445,13 +444,14 @@ pub async fn provision_cancellable(
     repo_dir: Option<&Path>,
     parent_dir: Option<&Path>,
     dest_dir: Option<&Path>,
+    clone_timeout: Duration,
 ) -> Result<(), ProvisionError> {
     if *cancel.borrow() {
         return Err(ProvisionError::Stopped);
     }
     let group = Arc::new(AtomicU32::new(0));
     let done = tokio::select! {
-        r = provision(plan, options, &group, repo_dir, parent_dir, dest_dir) => Some(r),
+        r = provision(plan, options, &group, repo_dir, parent_dir, dest_dir, clone_timeout) => Some(r),
         _ = cancel.wait_for(|c| *c) => None,
     };
     match done {

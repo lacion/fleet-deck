@@ -170,7 +170,7 @@ async fn a_start_needs_the_header_the_seconds_the_features_and_the_switch() {
     expect(&r, 400, "invalid_capture_id");
     for bad in [
         json!(0),
-        json!(121),
+        json!(3601),
         json!(1.5),
         json!(-1),
         json!(30.0),
@@ -181,7 +181,7 @@ async fn a_start_needs_the_header_the_seconds_the_features_and_the_switch() {
         expect(&r, 400, "recording_duration");
         assert_eq!(
             r.body["message"],
-            "Recording duration must be a whole number from 1 to 120 seconds."
+            "The recording length must be from 1 to 3600 seconds."
         );
     }
     for body in [

@@ -174,6 +174,7 @@ async fn start_terminal(
     now: i64,
 ) -> Result<Result<(), String>, StoreError> {
     let max_shells = policy.max_shells();
+    let ring = policy.scrollback_limits();
     let started = if !policy.allow_shell() {
         // Shells turned off after the commit (DL-172 §1.4).
         Err(StartError::NotStarted(reject(
@@ -208,6 +209,7 @@ async fn start_terminal(
                                 now,
                                 max_shells,
                                 allow_bypass,
+                                ring,
                             )
                         })
                         .await

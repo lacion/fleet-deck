@@ -8,13 +8,16 @@ use std::path::{Path, PathBuf};
 use fleetdeck_core::ChildEnv;
 use fleetdeck_core::config::{
     DEFAULT_MAX_SHELLS, HostChoice, ModelHelpConfig, OfflineApprovalPolicy as ConfigOffline,
-    StationConfig, TrackerConfig,
+    StationConfig, StationLimits, TrackerConfig,
 };
 use fleetdeck_proto::ProviderInstanceId;
 use fleetdeck_proto::event::ProviderKind;
 use fleetdeck_proto::member_deny::MemberDeny;
 use fleetdeck_providers::adapter::canonical_workspace;
+use fleetdeck_providers::host::StopPolicy;
 
+use super::policy_capture::gib;
+use super::policy_limits::{StationTimeouts, scrollback_of, stop_policy};
 use crate::store::OfflineApprovalPolicy;
 
 /// Why the policy refuses a workspace.
@@ -112,6 +115,19 @@ pub struct Policy {
     allow_check_cmd: bool,
     /// `[taildrive_mounts]` of `station.toml` (FG-12).
     taildrive_mounts: BTreeMap<String, PathBuf>,
+    /// The `[limits]` timeouts of the station operations (knobs K3).
+    pub(super) timeouts: StationTimeouts,
+    /// The stop bounds of the provider processes: a restart value, from
+    /// `limits.provider_stop_grace_seconds` (knobs K3).
+    pub(super) stop: StopPolicy,
+    pub(super) recording_max_seconds: u32,
+    /// `capture.quota_gib` in bytes (knobs K3b).
+    pub(super) capture_quota_bytes: u64,
+    /// `capture.free_reserve_gib` in bytes (knobs K3b).
+    pub(super) capture_free_reserve_bytes: u64,
+    /// The ring of a new terminal: lines and bytes, from
+    /// `limits.scrollback_lines` and `limits.scrollback_mib` (knobs K3b).
+    pub(super) scrollback: (usize, usize),
 }
 
 /// The default `clone_root`: the first allowed root + `/projects`.
@@ -176,6 +192,12 @@ impl Policy {
             traits: config.traits.clone(),
             allow_check_cmd: config.allow_check_cmd,
             taildrive_mounts: config.taildrive_mounts.clone(),
+            timeouts: StationTimeouts::from_limits(&config.limits),
+            stop: stop_policy(&config.limits),
+            recording_max_seconds: config.capture.recording_max_seconds,
+            capture_quota_bytes: gib(config.capture.quota_gib),
+            capture_free_reserve_bytes: gib(config.capture.free_reserve_gib),
+            scrollback: scrollback_of(&config.limits),
         }
         .with_repo_groups(&config.repo_groups)
     }
@@ -259,6 +281,12 @@ impl Policy {
             traits: Vec::new(),
             allow_check_cmd: false,
             taildrive_mounts: BTreeMap::new(),
+            timeouts: StationTimeouts::default(),
+            stop: StopPolicy::default(),
+            recording_max_seconds: 120,
+            capture_quota_bytes: gib(4),
+            capture_free_reserve_bytes: gib(2),
+            scrollback: scrollback_of(&StationLimits::default()),
         }
     }
 
@@ -522,6 +550,8 @@ impl Policy {
         next.allow_check_cmd = self.allow_check_cmd;
         next.allow_local_remotes = self.allow_local_remotes;
         next.taildrive_mounts.clone_from(&self.taildrive_mounts);
+        // The stop grace applies at a restart (knobs K3).
+        next.stop = self.stop;
         next
     }
 

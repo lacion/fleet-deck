@@ -271,7 +271,9 @@ fn closing_an_exited_tui_sends_no_signal() {
     };
     let canonical = root.path().canonicalize().expect("canonical");
     let dir = LaunchDir::open(&canonical, std::path::Path::new("")).expect("the folder opens");
-    let pid = s.spawn("tui", &dir, 80, 24, 1, launch).expect("spawn");
+    let pid = s
+        .spawn("tui", &dir, (80, 24), 1, launch, (5000, 8 << 20))
+        .expect("spawn");
     assert!(pid.is_some());
     let shell = s.get("tui").expect("the shell is listed");
     let t0 = Instant::now();
@@ -285,4 +287,30 @@ fn closing_an_exited_tui_sends_no_signal() {
     // Its pid may be reused by now: nothing may be sent to it.
     assert!(!handover::signal_group(&shell, Signal::HUP));
     assert!(!handover::signal_group(&shell, Signal::KILL));
+}
+
+#[test]
+fn a_new_terminal_keeps_the_scrollback_lines_of_the_policy() {
+    use crate::manager::policy_hub::test_config;
+    let root = tempfile::tempdir().expect("root");
+    let extra = "allow_shell = true\n[limits]\nscrollback_lines = 500\n";
+    let p = Policy::from_config(&test_config(root.path(), extra));
+    assert_eq!(p.scrollback_limits().0, 500);
+    let s = shells();
+    s.apply(&open("sh", root.path()), &p, 1).expect("open");
+    assert!(s.input("sh", b"seq 1 800; echo done-$((40+2))\n"));
+    let t0 = Instant::now();
+    loop {
+        let (backlog, _) = s.attach("sh").expect("attach");
+        let text = String::from_utf8_lossy(&backlog).into_owned();
+        if text.contains("done-42") {
+            let lines = backlog.iter().filter(|b| **b == b'\n').count();
+            assert!(lines < 500, "{lines} lines");
+            assert!(text.contains("\n800\r\n"), "the newest lines stay");
+            assert!(!text.contains("\n3\r\n"), "the oldest lines are gone");
+            break;
+        }
+        assert!(t0.elapsed() < Duration::from_secs(10), "{text}");
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }

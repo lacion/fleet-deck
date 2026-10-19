@@ -47,17 +47,20 @@ async fn begin(r: &Rig, id: &str) -> String {
     let artifact = format!("art-{id}");
     let begin = r
         .store
-        .recording_begin(RecordingBegin {
-            deck_fp: FP,
-            capture_id: id,
-            action_hash: "h",
-            monitor: "DP-1",
-            artifact_id: &artifact,
-            seconds: 5,
-            link_epoch: "epoch",
-            coordinator: None,
-            now: 5,
-        })
+        .recording_begin(
+            RecordingBegin {
+                deck_fp: FP,
+                capture_id: id,
+                action_hash: "h",
+                monitor: "DP-1",
+                artifact_id: &artifact,
+                seconds: 5,
+                link_epoch: "epoch",
+                coordinator: None,
+                now: 5,
+            },
+            crate::desktop::capture::CAPTURE_QUOTA,
+        )
         .await
         .unwrap();
     assert_eq!(begin, Begin::Started);
@@ -166,17 +169,20 @@ async fn begin_coordinated(r: &Rig, id: &str) -> String {
     let artifact = format!("art-{id}");
     let begin = r
         .store
-        .recording_begin(RecordingBegin {
-            deck_fp: FP,
-            capture_id: id,
-            action_hash: "h",
-            monitor: "DP-1",
-            artifact_id: &artifact,
-            seconds: 5,
-            link_epoch: "epoch",
-            coordinator: Some(&context),
-            now: 5,
-        })
+        .recording_begin(
+            RecordingBegin {
+                deck_fp: FP,
+                capture_id: id,
+                action_hash: "h",
+                monitor: "DP-1",
+                artifact_id: &artifact,
+                seconds: 5,
+                link_epoch: "epoch",
+                coordinator: Some(&context),
+                now: 5,
+            },
+            crate::desktop::capture::CAPTURE_QUOTA,
+        )
         .await
         .unwrap();
     assert_eq!(begin, Begin::Started);
@@ -327,17 +333,20 @@ async fn garbage_counts_in_the_quota_until_its_durable_removal_finishes() {
     committed_bytes(&r, CAPTURE_QUOTA - PEAK_RESERVATION - 11).await;
     let refused = r
         .store
-        .recording_begin(RecordingBegin {
-            deck_fp: FP,
-            capture_id: A,
-            action_hash: "h",
-            monitor: "DP-1",
-            artifact_id: "art-a",
-            seconds: 5,
-            link_epoch: "epoch",
-            coordinator: None,
-            now: 5,
-        })
+        .recording_begin(
+            RecordingBegin {
+                deck_fp: FP,
+                capture_id: A,
+                action_hash: "h",
+                monitor: "DP-1",
+                artifact_id: "art-a",
+                seconds: 5,
+                link_epoch: "epoch",
+                coordinator: None,
+                now: 5,
+            },
+            crate::desktop::capture::CAPTURE_QUOTA,
+        )
         .await
         .unwrap();
     assert_eq!(refused, Begin::Quota);

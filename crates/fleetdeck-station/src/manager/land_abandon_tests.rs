@@ -195,7 +195,7 @@ async fn the_abandonment_waits_for_a_push_that_times_out() {
         return;
     };
     rig.set_timeouts(LandTimeouts {
-        push: Duration::from_secs(1),
+        push: Some(Duration::from_secs(1)),
         lock_wait: Duration::from_secs(30),
         ..LandTimeouts::default()
     });
@@ -217,7 +217,7 @@ async fn a_lock_that_is_not_free_in_time_answers_busy_and_records_nothing() {
         return;
     };
     rig.set_timeouts(LandTimeouts {
-        push: Duration::from_secs(60),
+        push: Some(Duration::from_secs(60)),
         lock_wait: Duration::from_secs(1),
         ..LandTimeouts::default()
     });

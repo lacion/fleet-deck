@@ -43,17 +43,20 @@ async fn a_stop_without_a_live_handle_writes_the_latch() {
     let t = T::new().await;
     let begin = t
         .store()
-        .recording_begin(RecordingBegin {
-            deck_fp: FP,
-            capture_id: ID2,
-            action_hash: "h",
-            monitor: "DP-1",
-            artifact_id: "ART",
-            seconds: 5,
-            link_epoch: "e",
-            coordinator: None,
-            now: 1,
-        })
+        .recording_begin(
+            RecordingBegin {
+                deck_fp: FP,
+                capture_id: ID2,
+                action_hash: "h",
+                monitor: "DP-1",
+                artifact_id: "ART",
+                seconds: 5,
+                link_epoch: "e",
+                coordinator: None,
+                now: 1,
+            },
+            crate::desktop::capture::CAPTURE_QUOTA,
+        )
         .await
         .unwrap();
     assert!(matches!(begin, Begin::Started));

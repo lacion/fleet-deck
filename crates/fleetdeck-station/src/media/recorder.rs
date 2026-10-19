@@ -30,8 +30,9 @@ use crate::desktop::{Fail, code};
 
 /// `RLIMIT_FSIZE` of the recorder, soft and hard (design §8).
 pub const FSIZE_LIMIT: u64 = 268_435_456;
-/// The most seconds of one recording.
-pub const MAX_SECONDS: u32 = 120;
+/// The most seconds of one recording: the absolute limit (the station setting
+/// `capture.recording_max_seconds` is the lower, live one).
+pub const MAX_SECONDS: u32 = 3600;
 /// How often the supervisor thread looks at its commands, timers and child.
 const POLL: Duration = Duration::from_millis(25);
 /// The size of one read of a pipe.
@@ -43,12 +44,12 @@ const DRAIN_WAIT: Duration = Duration::from_secs(2);
 /// value is built from the integer `seconds`.
 ///
 /// # Errors
-/// `invalid_params` when `seconds` is not in 1..=120.
+/// `invalid_params` when `seconds` is not in 1..=3600.
 pub fn argv(monitor: &str, seconds: u32) -> Result<Vec<String>, Fail> {
     if !(1..=MAX_SECONDS).contains(&seconds) {
         return Err(Fail::new(
             code::INVALID_PARAMS,
-            "`seconds` must be from 1 to 120",
+            "`seconds` must be from 1 to 3600",
         ));
     }
     let filter = format!("fps=30,trim=duration={seconds}");
@@ -241,7 +242,7 @@ fn failed() -> Fail {
 /// `guard` runs on the recorder thread immediately before the child starts.
 ///
 /// # Errors
-/// `invalid_params` for `seconds` outside 1..=120; `recording_failed` when
+/// `invalid_params` for `seconds` outside 1..=3600; `recording_failed` when
 /// the executable, the descriptor, a thread or the child cannot be started.
 #[allow(
     clippy::too_many_arguments,

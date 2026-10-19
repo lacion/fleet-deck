@@ -27,6 +27,7 @@ use tokio::task::JoinHandle;
 
 use super::SessionTarget;
 use super::launch::{Prepared, add_worktree_env, pinned_path};
+use crate::manager::policy_limits::StationTimeouts;
 use crate::store::{Dispatch, Effect, EffectPayload, InputRecord, WorkspacePlan};
 use crate::workspace::provision::ProvisionError;
 use crate::workspace::setup::{Held, STOPPED_MESSAGE, SetupError};
@@ -262,6 +263,10 @@ impl SessionTarget {
         let repo_dir = repo.as_ref().map(pinned).transpose()?;
         let dest_dir = dest.as_ref().map(pinned).transpose()?;
         let options = self.provision_options();
+        // The clone limit is read once, when the Git work starts.
+        let clone_timeout = self
+            .current_policy()
+            .map_or_else(|| StationTimeouts::default().clone, |p| p.timeouts().clone);
         let before = provision::before(plan);
         #[cfg(test)]
         self.hooks.provision.hold().await;
@@ -272,6 +277,7 @@ impl SessionTarget {
             repo_dir.as_deref(),
             Some(&parent_dir),
             dest_dir.as_deref(),
+            clone_timeout,
         )
         .await
         {
@@ -402,6 +408,10 @@ impl SessionTarget {
             self.artifact_step(&session_id, fg, &mut spec, env.as_mut())
                 .await;
         }
+        // The setup limit is read once, when the command starts.
+        let setup_timeout = self
+            .current_policy()
+            .map_or_else(|| StationTimeouts::default().setup, |p| p.timeouts().setup);
         let held = match (&cmd, &env) {
             (Some(cmd), Some(env)) => match self.child_dir(&spec).await {
                 // The command runs in the checked folder; `_dir` lives until
@@ -414,7 +424,7 @@ impl SessionTarget {
                         cmd,
                         &cwd,
                         env,
-                        crate::workspace::setup::DEFAULT_TIMEOUT,
+                        setup_timeout,
                         cancel,
                     )
                     .await

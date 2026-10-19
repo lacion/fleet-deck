@@ -14,6 +14,9 @@ use crate::workspace::GitOptions;
 use crate::workspace::provision::{self, ProvisionError};
 use crate::workspace::setup::STOPPED_MESSAGE;
 
+/// The clone time limit of these tests: the default of the station.
+const CLONE: std::time::Duration = std::time::Duration::from_secs(900);
+
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .current_dir(dir)
@@ -384,7 +387,7 @@ async fn a_cancel_during_the_worktree_add_leaves_the_new_worktree_and_names_it()
     let before = provision::before(&plan);
     let options = git_with(&program);
     let (cancel, rx) = watch::channel(false);
-    let run = provision::provision_cancellable(&plan, &options, rx, None, None, None);
+    let run = provision::provision_cancellable(&plan, &options, rx, None, None, None, CLONE);
     let stopper = async {
         let deadline = tokio::time::Instant::now() + WAIT;
         while !path.exists() {
@@ -406,6 +409,32 @@ async fn a_cancel_during_the_worktree_add_leaves_the_new_worktree_and_names_it()
 }
 
 #[tokio::test]
+async fn a_clone_ends_at_the_clone_limit_that_the_caller_gives() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("app");
+    std::fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+    let path = root.path().join("copy");
+    let plan = WorkspacePlan::Clone {
+        url: format!("file://{}", repo.display()),
+        path: path.to_string_lossy().into_owned(),
+    };
+    // This git waits 60 s after the clone worked: only the limit ends it.
+    let program = slow_git(root.path());
+    let options = git_with(&program);
+    let (_cancel, rx) = watch::channel(false);
+    let limit = Duration::from_secs(1);
+    let began = tokio::time::Instant::now();
+    let result =
+        provision::provision_cancellable(&plan, &options, rx, None, None, None, limit).await;
+    let Err(ProvisionError::Failed(text)) = result else {
+        panic!("{result:?}");
+    };
+    assert!(text.contains("did not end within 1 s"), "{text}");
+    assert!(began.elapsed() < Duration::from_secs(30));
+}
+
+#[tokio::test]
 async fn a_cancel_keeps_a_branch_that_existed_before() {
     let root = tempfile::tempdir().unwrap();
     let repo = root.path().join("app");
@@ -424,7 +453,7 @@ async fn a_cancel_keeps_a_branch_that_existed_before() {
     let before = provision::before(&plan);
     let options = git_with(&program);
     let (cancel, rx) = watch::channel(false);
-    let run = provision::provision_cancellable(&plan, &options, rx, None, None, None);
+    let run = provision::provision_cancellable(&plan, &options, rx, None, None, None, CLONE);
     let stopper = async {
         let deadline = tokio::time::Instant::now() + WAIT;
         while !path.exists() {
@@ -457,7 +486,7 @@ async fn a_cancel_during_the_clone_leaves_the_new_directory_and_names_it() {
     let before = provision::before(&plan);
     let options = git_with(&program);
     let (cancel, rx) = watch::channel(false);
-    let run = provision::provision_cancellable(&plan, &options, rx, None, None, None);
+    let run = provision::provision_cancellable(&plan, &options, rx, None, None, None, CLONE);
     let stopper = async {
         let deadline = tokio::time::Instant::now() + WAIT;
         while !path.join("a.txt").exists() {
@@ -487,7 +516,7 @@ async fn a_directory_that_existed_before_is_not_removed_after_a_cancel() {
     let before = provision::before(&plan);
     let (_cancel, rx) = watch::channel(true);
     assert_eq!(
-        provision::provision_cancellable(&plan, &options, rx, None, None, None).await,
+        provision::provision_cancellable(&plan, &options, rx, None, None, None, CLONE).await,
         Err(ProvisionError::Stopped)
     );
     assert_eq!(provision::undo_partial(&plan, &before), None);
@@ -595,7 +624,7 @@ async fn a_cancel_stops_the_git_descendants_and_leaves_the_directory() {
     let before = provision::before(&plan);
     let options = git_with(&program);
     let (cancel, rx) = watch::channel(false);
-    let run = provision::provision_cancellable(&plan, &options, rx, None, None, None);
+    let run = provision::provision_cancellable(&plan, &options, rx, None, None, None, CLONE);
     let stopper = async {
         let deadline = tokio::time::Instant::now() + WAIT;
         let pid = loop {

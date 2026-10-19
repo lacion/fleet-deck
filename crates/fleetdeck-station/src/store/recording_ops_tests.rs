@@ -45,7 +45,7 @@ fn request<'a>(id: &'a str, hash: &'a str, artifact: &'a str) -> RecordingBegin<
 async fn begin(store: &Store, id: &str, hash: &str) -> Begin {
     let artifact = format!("art-{id}");
     store
-        .recording_begin(request(id, hash, &artifact))
+        .recording_begin(request(id, hash, &artifact), CAPTURE_QUOTA)
         .await
         .unwrap()
 }
@@ -139,10 +139,16 @@ async fn a_repeat_returns_the_row_and_any_other_request_conflicts() {
     assert_eq!(begin(&s, A, "h2").await, Begin::Conflict);
     let mut other = request(A, "h1", "art-x");
     other.monitor = "HDMI-A-1";
-    assert_eq!(s.recording_begin(other).await.unwrap(), Begin::Conflict);
+    assert_eq!(
+        s.recording_begin(other, CAPTURE_QUOTA).await.unwrap(),
+        Begin::Conflict
+    );
     let mut other = request(A, "h1", "art-x");
     other.seconds = 6;
-    assert_eq!(s.recording_begin(other).await.unwrap(), Begin::Conflict);
+    assert_eq!(
+        s.recording_begin(other, CAPTURE_QUOTA).await.unwrap(),
+        Begin::Conflict
+    );
     // A screenshot with the same capture ID and hash is another kind.
     assert_eq!(
         s.capture_begin(FP, A, "h1", "DP-1", "art-y", 11)
@@ -188,6 +194,25 @@ async fn the_recording_quota_counts_commits_reservations_and_garbage() {
         .await
         .unwrap();
     assert_eq!(begin(&s, A, "h1").await, Begin::Started);
+}
+
+#[tokio::test]
+async fn a_lowered_quota_refuses_a_recording_that_the_default_allows() {
+    let s = store().await;
+    let artifact = format!("art-{A}");
+    assert_eq!(
+        s.recording_begin(request(A, "h1", &artifact), PEAK_RESERVATION - 1)
+            .await
+            .unwrap(),
+        Begin::Quota
+    );
+    assert!(s.recording_get(FP, A).await.unwrap().is_none());
+    assert_eq!(
+        s.recording_begin(request(A, "h1", &artifact), PEAK_RESERVATION)
+            .await
+            .unwrap(),
+        Begin::Started
+    );
 }
 
 #[tokio::test]

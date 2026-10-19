@@ -129,7 +129,7 @@ pub struct ScreenshotArguments {
     pub monitor: String,
 }
 
-/// `record_monitor` arguments (R13 P5b-2 §13.1). `seconds` is 1 to 120.
+/// `record_monitor` arguments (R13 P5b-2 §13.1). `seconds` is 1 to 3600 (a station can allow less).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export_to = "coordinator_desktop/")]
@@ -315,7 +315,7 @@ impl DesktopCall {
                 check_request(&a.request_id)?;
                 check_station(a.station.as_ref())?;
                 check_monitor(&a.monitor)?;
-                if (1..=120).contains(&a.seconds) {
+                if crate::recording::valid_seconds(u64::from(a.seconds)) {
                     Ok(())
                 } else {
                     Err(bad("seconds"))

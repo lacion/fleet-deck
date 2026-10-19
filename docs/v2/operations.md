@@ -160,7 +160,7 @@ A release build reports `2.0.0`. Every other build reports `2.0.0-dev.<YYYYMMDD>
 
 ## 5. Board access
 
-1. Set the owner password: `fleetdeck deck password` (from a prompt or `--stdin`). A new password ends every login.
+1. Set the owner password: `fleetdeck deck password` (from a prompt or `--stdin`). A new password ends every login. The password needs at least the deck's shortest owner password (12 characters by default; Settings → deck tab → Security limits).
 2. Get a one-time login URL: `fleetdeck open`.
 3. For scripts, make an API token: `fleetdeck deck token`. A token has a scope; keep it secret.
 4. Read the audit log: `fleetdeck deck audit`.
@@ -190,6 +190,84 @@ The local socket is the owner on this machine, so these commands need no elevati
 - **Login:** each flow has its own limit: the password (also the elevation check), the login link, and the member join. One IP address can fail 5 times in 1 minute in one flow; all IP addresses together can fail 50 times. A refused attempt gets HTTP 429 `too_many_attempts` with the wait in seconds. A full flow does not block the other flows.
 - **Password checks:** at most 2 run at the same time. A login that waits more than 2 seconds for a free slot gets HTTP 429 `busy`; this is not a failed attempt.
 - **Link:** a deck or station listener accepts at most 64 pending handshakes, and 16 from one IP address. An established link does not count.
+
+### Limits and retention (DL-252)
+
+Many limits of Fleet Deck are settings that you change in the board. You never edit a file and you never run a command on a remote machine. The defaults are the values that older builds used, so nothing changes until you set a value.
+
+Open **Settings**. The deck tab has the settings of the deck. The tab of a station has the settings of that station. A station value goes from the board over the link to the remote machine, and the station saves it there. Each tab has four sections: **Security limits**, **Time limits**, **Retention** and **Captures and recordings**. A section shows only the settings that the tab has.
+
+**Build state.** The deck reads all of its 14 settings and the station reads all of its 15 settings (DL-252).
+
+The rules for all settings:
+
+1. Each setting has a range. The board refuses a value outside it. The range includes both ends.
+2. **Live** means that the next use of the value takes the change: the next login, the next command or the next prune. **After a restart** means that the deck or the station reads the value at its start. The board offers the restart and asks for the elevation (see "Settings, elevation and restart").
+3. The board asks for the elevation when a change makes Fleet Deck less safe. The tables show the direction.
+4. A running operation keeps the value that it had at its start. A change applies to the next operation.
+5. The idle time of a login cannot be longer than the longest login. The same rule holds for a display. The board refuses a save that breaks the rule with the text "The idle time cannot be longer than the longest time."
+6. A lower login or display limit ends the older sessions at once, in the same save. A session over the new limit is deleted, and its open connections end. A higher limit later does not bring a deleted session back. A member login ends by its age only (Longest login).
+
+#### Security limits (deck tab)
+
+| Board label | Default | Range | Applies | The board asks for the elevation |
+| --- | --- | --- | --- | --- |
+| Shortest owner password (characters) | 12 | 8 to 128 | Live (the next password) | When you lower it |
+| Login idle time (days) | 7 | 1 to 90 | Live | When you raise it |
+| Longest login (days) | 30 | 1 to 365 | Live | When you raise it |
+| Elevation time (minutes) | 10 | 1 to 60 | Live (the next elevation) | When you raise it |
+| Longest API token (days) | 90 | 1 to 365 | Live (the next token) | When you raise it |
+| Display idle time (days) | 30 | 1 to 365 | Live | When you raise it |
+| Longest display pairing (days) | 90 | 1 to 730 | Live | When you raise it |
+| Station invitation time (minutes) | 15 | 5 to 1440 | Live (the next invitation) | When you raise it |
+| Agent screenshots per minute | 2 | 1 to 60 | Live | When you raise it |
+| Agent desktop actions per minute | 30 | 1 to 300 | Live | When you raise it |
+
+A new owner password must have at least the number of characters in Shortest owner password. A password that you set before stays valid.
+
+#### Time limits
+
+| Tab | Board label | Default | Range | Applies | The board asks for the elevation |
+| --- | --- | --- | --- | --- | --- |
+| Deck | Mail and task delivery (hours) | 24 | 1 to 168 | Live (the next mail or task) | Never |
+| Deck | Conflict radar interval (minutes) | 5 | 1 to 60 | After a restart | Never |
+| Station | Agent shell command time (minutes) | 10 | 1 to 240 | Live (the next command) | Never |
+| Station | Setup command time (minutes) | 10 | 1 to 240 | Live | Never |
+| Station | Land check time (minutes) | 10 | 1 to 240 | Live | Never |
+| Station | Clone time (minutes) | 15 | 1 to 240 | Live | Never |
+| Station | Git push time (seconds) | 60 | 10 to 600 | Live | Never |
+| Station | Agent stop grace (seconds) | 30 | 5 to 300 | After a restart | Never |
+| Station | Longest reconnect wait (seconds) | 300 | 5 to 600 | After a restart | Never |
+| Station | Terminal history (lines) | 5000 | 500 to 100000 | Live (new terminals) | Never |
+| Station | Terminal history (MiB) | 8 | 1 to 64 | Live (new terminals) | Never |
+
+The board terminal keeps 5000 lines of its own. The two Terminal history settings change the history that the station keeps.
+
+An operation that the board waits for keeps its fixed time limits. The settings above are for operations that run in the background and that the deck reads later.
+
+#### Retention
+
+| Tab | Board label | Default | Range | Applies | The board asks for the elevation |
+| --- | --- | --- | --- | --- | --- |
+| Deck | Audit history (days) | 90 | 7 to 3650 | Live (the next prune) | When you lower it |
+| Deck | Most audit rows | 200000 | 10000 to 10000000 | Live (the next prune) | When you lower it |
+| Station | Session history (days) | 90 | 1 to 3650 | After a restart | When you lower it |
+| Station | Delivered events (days) | 7 | 1 to 90 | After a restart | Never |
+| Station | Raw agent logs per session (MiB) | 16 | 0 to 256 | After a restart | When you raise it, also from 0 |
+
+**Raw agent logs and privacy.** A raw log is the log of the provider for one session, for debugging. It can hold prompt text. The value 0 turns the raw logs off. Every increase of the value asks for the elevation, because a higher value keeps more text on the station.
+
+#### Captures and recordings (station tab)
+
+| Board label | Default | Range | Applies | The board asks for the elevation |
+| --- | --- | --- | --- | --- |
+| Capture storage (GiB) | 4 | 1 to 1024 | Live | Never |
+| Free disk to keep (GiB) | 2 | 1 to 100 | Live | Never |
+| Longest recording (seconds) | 120 | 10 to 3600 | Live | Never |
+
+Capture storage is the most disk space that the screenshots and recordings of the station use. A capture is refused when it would leave less free disk than Free disk to keep.
+
+**Recording length.** The station refuses a recording that is longer than Longest recording. The text is "This recording is longer than this station allows. Shorten it, or raise Longest recording in the station settings." The recording form of the board uses this value as its maximum. The budget of a grant stays: a grant can still limit the seconds of its recordings. A long recording that reaches 256 MiB is discarded. (This part is in progress with K4: until it lands, the recording length stays at 120 seconds.)
 
 ## 6. Pair a station
 
@@ -312,7 +390,7 @@ The screenshot appears in the Desktop panel as an image, with the link "Open the
 Limits:
 
 - A screenshot is a PNG of at most 32 MiB.
-- The station keeps at most 4 GiB of screenshots. Delete some screenshots when the station refuses a new one with the text "This capture would exceed the station's 4 GiB capture limit. Delete some captures first."
+- The station keeps at most its Capture storage of screenshots and recordings (4 GiB by default; the station's tab, section Captures and recordings). Delete some captures when the station refuses a new one with the text "This capture would exceed the station's capture storage limit. Delete some captures first, or raise Capture storage in the station settings."
 - The deck keeps at most 256 MiB of screenshots in its cache. It evicts the least recently used file first, and the artifact stays valid.
 - The deck fetches a screenshot file for at most 60 seconds in total.
 
@@ -793,7 +871,7 @@ When the board shows "The recording result is unknown", the recording can exist.
 | Duration | 1 to 120 seconds |
 | File size | 256 MiB |
 | Disk reservation for one recording | 512 MiB (the staging file and the copy that the station saves) |
-| All captures of one station | 4 GiB, screenshots and recordings together. The station never deletes an artifact for you. It refuses a new capture with "This capture would exceed the station's 4 GiB capture limit. Delete some captures first." |
+| All captures of one station | Capture storage (4 GiB by default), screenshots and recordings together. The station never deletes an artifact for you. It refuses a new capture with "This capture would exceed the station's capture storage limit. Delete some captures first, or raise Capture storage in the station settings." |
 | Free space on the station | 2 GiB must stay free, plus the 512 MiB of the recording |
 | Captures at the same time on one station | 1, shared by screenshots and recordings. The text is "A capture is already running." |
 | Monitor size | Each side from 2 to 8192 pixels and even, at most 16,777,216 pixels. Another size gives "The monitor exceeds the recording size limit or has unsupported dimensions." |

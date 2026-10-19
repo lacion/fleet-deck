@@ -248,6 +248,8 @@ pub async fn collect(env: &ChildEnv, found: &Found) -> Result<DesktopInfo, Fail>
         previews: Vec::new(),
         // The link step clears it for a link without `desktop_input_mcp.v1`.
         host_addresses: host_addresses(&local_addresses()),
+        // The link step stamps the live setting (knobs K4).
+        recording_max_seconds: None,
     })
 }
 

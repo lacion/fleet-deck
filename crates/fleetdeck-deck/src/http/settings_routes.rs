@@ -418,9 +418,13 @@ async fn save_with(
         }
     }
     let writer = Arc::clone(&settings.writer);
+    let old = live.get().knobs;
+    let (clamp_store, handle) = (store.clone(), tokio::runtime::Handle::current());
     let saved = tokio::task::spawn_blocking(move || {
         writer.save(&change, elevated, |new| {
-            Ok::<_, (String, String)>(DeckLive::of(new))
+            let prepared = DeckLive::of(new);
+            clamp_before_write(&clamp_store, &handle, &old, &prepared.knobs)?;
+            Ok::<_, (String, String)>(prepared)
         })
     })
     .await
@@ -428,7 +432,15 @@ async fn save_with(
     match saved {
         // 1.4 step 2: publish, which cannot fail.
         Ok((saved, _config, new)) => {
+            let new_knobs = new.knobs;
             publish(store, live, new);
+            // A session issued between the clamp and the publish read the
+            // old knobs: clamp again with the new ones.
+            if crate::knobs::idle_shrank(&old, &new_knobs) {
+                crate::knobs::clamp_after_publish(store, &new_knobs).await;
+            }
+            // Rule 11: the sessions over a lowered limit end now.
+            crate::knobs::end_sessions_over_lowered(store, &old, &new_knobs).await;
             Ok(saved)
         }
         Err(e) => {
@@ -437,12 +449,48 @@ async fn save_with(
                 // base and publish it, so that the next save can work.
                 let writer = Arc::clone(&settings.writer);
                 if let Ok(Ok(config)) = tokio::task::spawn_blocking(move || writer.resync()).await {
-                    publish(store, live, DeckLive::of(&config));
+                    let old = live.get().knobs;
+                    let new = DeckLive::of(&config);
+                    let new_knobs = new.knobs;
+                    publish(store, live, new);
+                    // The file may be shorter than the stored deadlines.
+                    crate::knobs::clamp_after_publish(store, &new_knobs).await;
+                    // A hand edit that lowers a limit ends the sessions over it.
+                    crate::knobs::end_sessions_over_lowered(store, &old, &new_knobs).await;
                 }
             }
             Err(e)
         }
     }
+}
+
+/// Before the file write (fail closed): when a save shortens an idle limit,
+/// shortens the stored idle deadlines first. The caller runs on the blocking
+/// thread of the save. A failure aborts the save: nothing is written or
+/// published.
+fn clamp_before_write(
+    store: &DeckStore,
+    handle: &tokio::runtime::Handle,
+    old: &crate::knobs::DeckKnobs,
+    new: &crate::knobs::DeckKnobs,
+) -> Result<(), (String, String)> {
+    if !crate::knobs::idle_shrank(old, new) {
+        return Ok(());
+    }
+    handle
+        .block_on(store.clamp_idle_deadlines(new.login_idle_ms, new.display_idle_ms))
+        .map_err(|e| {
+            tracing::warn!(error = %e, "the idle deadlines were not clamped; the save is refused");
+            let key = if new.login_idle_ms < old.login_idle_ms {
+                "security.login_idle_days"
+            } else {
+                "security.display_idle_days"
+            };
+            (
+                key.to_owned(),
+                "The sessions could not be updated, so nothing was saved. Try again.".to_owned(),
+            )
+        })
 }
 
 /// The view of the deck settings, read in a blocking task.
@@ -465,10 +513,11 @@ pub async fn deck_view(settings: &DeckSettings) -> Result<SettingsView, String> 
 
 /// Publishes the live fields: the board reads them per use, and the store
 /// reads its flags for the conflict mail at every fold and for fleet control
-/// at every decision and send check.
+/// at every decision and send check, and its copy of the owner knobs.
 fn publish(store: &DeckStore, cell: &LiveCell, live: DeckLive) {
     store.set_conflict_mail(live.conflict_mail);
     store.set_fleet_control(live.fleet_control);
+    store.set_knobs(live.knobs);
     cell.publish(live);
 }
 

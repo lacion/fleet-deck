@@ -33,7 +33,9 @@ mod land_reconcile;
 mod land_run;
 pub mod land_temp_cleanup;
 pub mod policy;
+pub mod policy_capture;
 pub mod policy_hub;
+pub mod policy_limits;
 mod restart_check;
 pub mod restart_gate;
 pub mod resume;
@@ -334,6 +336,8 @@ impl SessionManager {
         let shells = target::ShellsSlot::default();
         let integrations = integrations
             .unwrap_or_else(|| crate::integrations::Integrations::new(policy.trackers().to_vec()));
+        // The stop bounds come from the station config at the start.
+        let stop = policy.stop_policy();
         let hub = Arc::new(PolicyHub::new(policy).with_fleet_control(coordinator.clone()));
         let restart = Arc::<restart_gate::RestartState>::default();
         let moves = Arc::<land::move_in::MoveState>::default();
@@ -348,13 +352,7 @@ impl SessionManager {
             target = target.with_shims(settings);
         }
         let target = target.shared();
-        target
-            .adopt(
-                restored,
-                fleetdeck_providers::host::StopPolicy::default(),
-                restore_from,
-            )
-            .await;
+        target.adopt(restored, stop, restore_from).await;
         let worker = EffectWorker::register(store.clone(), Arc::clone(&target) as Arc<_>).await?;
         let (shutdown, rx) = watch::channel(false);
         let mut tasks = Vec::new();

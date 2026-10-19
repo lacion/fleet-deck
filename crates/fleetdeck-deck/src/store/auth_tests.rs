@@ -7,7 +7,8 @@ use fleetdeck_core::Secret;
 use fleetdeck_proto::link::Scope;
 use fleetdeck_testkit::Det;
 
-use super::{LOGIN_LINK_TTL_MS, LoginMethod, SESSION_IDLE_MS, secret_hash};
+use super::{LOGIN_LINK_TTL_MS, LoginMethod, secret_hash};
+use crate::knobs::DeckKnobs;
 use crate::store::audit::{AuditResult, NewAudit};
 use crate::store::{DeckError, DeckStore};
 
@@ -19,6 +20,10 @@ async fn store(det: &Det) -> DeckStore {
 
 fn s(v: &str) -> Secret<String> {
     Secret::new(v.to_owned())
+}
+
+fn idle_ms() -> i64 {
+    DeckKnobs::default().login_idle_ms
 }
 
 fn ms(v: i64) -> Duration {
@@ -79,17 +84,17 @@ async fn a_login_session_stores_only_a_hash_and_ends_when_idle_or_too_old() {
     assert_eq!(st.login_session(&s("0000")).await.unwrap(), None);
 
     // Each use refreshes the idle time; 7 idle days end the session.
-    det.advance(ms(SESSION_IDLE_MS - 1000));
+    det.advance(ms(idle_ms() - 1000));
     assert!(st.login_session(&login.cookie).await.unwrap().is_some());
-    det.advance(ms(SESSION_IDLE_MS - 1000));
+    det.advance(ms(idle_ms() - 1000));
     assert!(st.login_session(&login.cookie).await.unwrap().is_some());
-    det.advance(ms(SESSION_IDLE_MS));
+    det.advance(ms(idle_ms()));
     assert_eq!(st.login_session(&login.cookie).await.unwrap(), None);
 
     // 30 days after the login the session ends, also when in use.
     let login = st.create_login(LoginMethod::Link).await.unwrap();
     for _ in 0..4 {
-        det.advance(ms(SESSION_IDLE_MS - 1000));
+        det.advance(ms(idle_ms() - 1000));
         assert!(st.login_session(&login.cookie).await.unwrap().is_some());
     }
     // Day 28 + 3 idle days: past the 30-day limit, not idle long enough.

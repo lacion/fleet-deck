@@ -301,7 +301,7 @@ impl Desktop {
         if !valid_seconds(u64::from(req.seconds)) {
             return Err(Fail::new(
                 desktop_code::INVALID_PARAMS,
-                "`seconds` must be from 1 to 120",
+                "`seconds` must be from 1 to 3600",
             ));
         }
         within(deadline, async {
@@ -317,7 +317,10 @@ impl Desktop {
         })?;
         // 2
         req.admitted.local_gates()?;
-        check_gates(&(req.allowed)(), &req.monitor)?;
+        // The capture quota is read once here (rule 9).
+        let now_allowed = (req.allowed)();
+        check_gates(&now_allowed, &req.monitor)?;
+        let quota = now_allowed.quota_bytes;
         let allowed = Arc::clone(&req.allowed);
         let gate = move || allowed().desktop;
         let admission = req.params.admission;
@@ -355,17 +358,20 @@ impl Desktop {
         let store = req.service.store().clone();
         let artifact_id = store.capture_artifact_id();
         let begin = store
-            .recording_begin(RecordingBegin {
-                deck_fp: &req.deck_fp,
-                capture_id: &req.capture_id,
-                action_hash: &req.action_hash,
-                monitor: &req.monitor,
-                artifact_id: &artifact_id,
-                seconds: req.seconds,
-                link_epoch: &req.link_epoch,
-                coordinator: req.coordinator.as_ref(),
-                now: store.now_ms(),
-            })
+            .recording_begin(
+                RecordingBegin {
+                    deck_fp: &req.deck_fp,
+                    capture_id: &req.capture_id,
+                    action_hash: &req.action_hash,
+                    monitor: &req.monitor,
+                    artifact_id: &artifact_id,
+                    seconds: req.seconds,
+                    link_epoch: &req.link_epoch,
+                    coordinator: req.coordinator.as_ref(),
+                    now: store.now_ms(),
+                },
+                quota,
+            )
             .await
             .map_err(internal)?;
         match begin {

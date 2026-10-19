@@ -482,8 +482,9 @@ describe('FleetControlFields', () => {
   });
 
   const REC = 'Allow monitor recordings';
+  // The markup escapes the apostrophe.
   const REC_NOTE =
-    'This agent can record the whole selected monitor for up to 120 seconds at a time, including other applications, notifications and private information visible there. Recordings are stored as video artifacts. The agent gets only a reference to each recording, never the video.';
+    'This agent can record the whole selected monitor for up to the station&#x27;s longest recording (120 seconds by default) at a time, including other applications, notifications and private information visible there. Recordings are stored as video artifacts. The agent gets only a reference to each recording, never the video.';
 
   test('the recording switch shows only while capture is on, with nothing else while off', () => {
     for (const fleet of [NO_FLEET, { ...NO_FLEET, desktop: true }]) {

@@ -105,6 +105,7 @@ fn deck_live(desktop_control: bool) -> DeckLive {
         desktop_control,
         tailscale_cert: false,
         tailscale_bin: None,
+        knobs: fleetdeck_deck::knobs::DeckKnobs::default(),
     }
 }
 

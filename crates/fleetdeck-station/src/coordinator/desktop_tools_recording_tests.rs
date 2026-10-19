@@ -77,7 +77,7 @@ fn it_is_a_p6_desktop_tool_that_never_becomes_a_coordinator_op() {
     assert_eq!(tool.classes, [ToolClass::Capture, ToolClass::Recording]);
     assert_eq!(
         tool.description,
-        "Record one monitor of a grant station for 1 to 120 seconds. The recording is saved as a video artifact; this tool returns its reference, never the video."
+        "Record one monitor of a grant station for 1 to 3600 seconds (the station's own limit can be lower). The recording is saved as a video artifact; this tool returns its reference, never the video."
     );
     assert_eq!(
         tools::to_op(NAME, &json!({})).unwrap_err(),
@@ -116,7 +116,7 @@ fn the_schema_is_the_one_of_section_13_1_exactly() {
             "seconds": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 120
+                "maximum": 3600
             }
         }
     });
@@ -197,8 +197,7 @@ async fn the_intake_lists_and_forwards_it_only_for_a_recording_binding() {
     assert_eq!(fake.forwarded.lock().unwrap().len(), 1);
 
     // Bad arguments are refused before any forward.
-    let bad =
-        json!({"name": NAME, "arguments": {"request_id": "r1", "monitor": "DP-1", "seconds": 500}});
+    let bad = json!({"name": NAME, "arguments": {"request_id": "r1", "monitor": "DP-1", "seconds": 3601}});
     let r = rpc(&granted, &fake, "tools/call", bad).await;
     assert_eq!(r["result"]["isError"], true, "{r}");
     assert_eq!(fake.forwarded.lock().unwrap().len(), 1);

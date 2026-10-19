@@ -67,7 +67,7 @@ const running = (over: Partial<Extract<RecState, { kind: 'running' }>> = {}): Re
 
 describe('the Record control of a monitor', () => {
   const html = (off: boolean) =>
-    renderToStaticMarkup(<RecordPanel monitor="DP-1" off={off} onStart={noop} />);
+    renderToStaticMarkup(<RecordPanel monitor="DP-1" max={120} off={off} onStart={noop} />);
 
   test('the duration input defaults to 30 and is a labeled whole number from 1 to 120', () => {
     const out = html(false);
@@ -78,6 +78,14 @@ describe('the Record control of a monitor', () => {
     expect(out).toContain('max="120"');
     expect(out).toContain('type="number"');
     expect(out).toContain('required=""');
+  });
+
+  test('the maximum of the input is the station maximum', () => {
+    const out = renderToStaticMarkup(
+      <RecordPanel monitor="DP-1" max={600} off={false} onStart={noop} />,
+    );
+    expect(out).toContain('max="600"');
+    expect(out).not.toContain('max="120"');
   });
 
   test('the disclosure is always visible under the control, exactly', () => {

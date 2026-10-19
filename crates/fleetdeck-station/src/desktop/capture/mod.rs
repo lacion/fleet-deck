@@ -39,9 +39,11 @@ pub const MAX_PNG_BYTES: u64 = 33_554_432;
 pub const MAX_DIMENSION: u32 = 8192;
 /// The most pixels of a screenshot.
 pub const MAX_PIXELS: u64 = 16_777_216;
-/// The station capture quota (the store sums it).
+/// The default capture quota (the setting `capture.quota_gib` decides at run
+/// time; the store sums it).
 pub const CAPTURE_QUOTA: u64 = 4_294_967_296;
-/// The free bytes that a capture leaves on the disk.
+/// The default free bytes that a capture leaves on the disk (the setting
+/// `capture.free_reserve_gib` decides at run time).
 pub const FREE_RESERVE: u64 = 2_147_483_648;
 /// The most bytes of one read or write of the copy.
 pub const COPY_BUFFER: usize = 65_536;

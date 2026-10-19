@@ -99,9 +99,11 @@ impl DurableCore for CodexCore {
             | EffectPayload::MoveIn { .. }
             | EffectPayload::StopExecution { .. } => Err(not_a_command()),
             // B8: a `!` command of a Codex session.
-            EffectPayload::ShellCommand { command, .. } => {
-                self.shell_command(effect.effect_id.as_str(), command)
-            }
+            EffectPayload::ShellCommand {
+                command,
+                timeout_ms,
+                ..
+            } => self.shell_command(effect.effect_id.as_str(), command, *timeout_ms),
         }?;
         Ok(split(out))
     }

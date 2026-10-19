@@ -30,6 +30,7 @@ fn live(desktop_control: bool) -> LiveCell {
         desktop_control,
         tailscale_cert: false,
         tailscale_bin: None,
+        knobs: fleetdeck_deck::knobs::DeckKnobs::default(),
     })
 }
 

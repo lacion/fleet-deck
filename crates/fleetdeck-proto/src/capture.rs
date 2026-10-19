@@ -21,6 +21,7 @@ pub mod code {
     pub const CAPTURE_INTERRUPTED: &str = "capture_interrupted";
     // R13 P5b recordings (design `omarchy-p5b.md` §16).
     pub const RECORDING_DURATION: &str = "recording_duration";
+    pub const RECORDING_TOO_LONG: &str = "recording_too_long";
     pub const RECORDING_DIMENSIONS: &str = "recording_dimensions";
     pub const RECORDING_TOO_LARGE: &str = "recording_too_large";
     pub const RECORDING_FAILED: &str = "recording_failed";
@@ -36,8 +37,7 @@ pub mod code {
 pub mod text {
     pub const BUSY: &str = "A capture is already running.";
     pub const DISK_FULL: &str = "The station has too little free space for a capture.";
-    pub const CAPTURE_QUOTA: &str =
-        "This capture would exceed the station's 4 GiB capture limit. Delete some captures first.";
+    pub const CAPTURE_QUOTA: &str = "This capture would exceed the station's capture storage limit. Delete some captures first, or raise Capture storage in the station settings.";
     pub const CAPTURE_TOO_LARGE: &str = "The screenshot exceeds 32 MiB.";
     pub const CAPTURE_DIMENSIONS: &str = "The monitor exceeds the screenshot size limit.";
     pub const CAPTURE_FAILED: &str = "The screenshot tool failed.";
@@ -48,8 +48,8 @@ pub mod text {
     pub const UNKNOWN: &str = "The screenshot result is unknown. Check the artifact list before taking another screenshot.";
     pub const NO_GRIM: &str = "The screenshot tool grim is not installed.";
     // R13 P5b recordings (design `omarchy-p5b.md` §16).
-    pub const RECORDING_DURATION: &str =
-        "Recording duration must be a whole number from 1 to 120 seconds.";
+    pub const RECORDING_DURATION: &str = "The recording length must be from 1 to 3600 seconds.";
+    pub const RECORDING_TOO_LONG: &str = "This recording is longer than this station allows. Shorten it, or raise Longest recording in the station settings.";
     pub const RECORDING_DIMENSIONS: &str =
         "The monitor exceeds the recording size limit or has unsupported dimensions.";
     pub const RECORDING_TOO_LARGE: &str = "The recording exceeds 256 MiB.";

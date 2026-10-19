@@ -14,7 +14,6 @@ use fleetdeck_core::identity::{Identity, IdentityError};
 use fleetdeck_core::paths::{Env, NodeDirs, ensure_private_dir};
 use fleetdeck_core::restart::Restart;
 use fleetdeck_core::{SharedClock, SharedIds, SystemClock, UlidSource};
-use fleetdeck_link::reconnect::BackoffPolicy;
 use fleetdeck_proto::command::StopMode;
 use fleetdeck_providers::host::shim::host::{ShimHost, ShimHostConfig};
 use fleetdeck_providers::host::{DirectChildHost, SessionHost};
@@ -27,6 +26,17 @@ use crate::manager::target::ShimSettings;
 use crate::manager::{Policy, SessionManager, adapters_from_config, setup_envs_from_config};
 use crate::store::{Store, StoreConfig};
 use crate::workspace::{PrivateEnv, PrivatePaths};
+
+/// The store retention of `retention.event_days` and
+/// `retention.history_days` (restart values).
+fn store_config(config: &StationConfig) -> StoreConfig {
+    let days = |n: u32| i64::from(n) * 86_400_000;
+    StoreConfig {
+        event_retention_ms: days(config.retention.event_days),
+        history_retention_ms: days(config.retention.history_days),
+        ..StoreConfig::default()
+    }
+}
 
 /// The host that a station runs: `shim` needs Linux for now (shim parity,
 /// step 0), so a macOS station runs the direct host.
@@ -306,7 +316,7 @@ impl RunningStation {
             &dirs.station_db(),
             clock,
             Arc::clone(&ids),
-            StoreConfig::default(),
+            store_config(config),
         )
         .await?;
         let host: Arc<dyn SessionHost> = Arc::new(DirectChildHost::new());
@@ -458,7 +468,7 @@ impl RunningStation {
             Arc::clone(&identity),
             config.name.clone(),
             &config.listen,
-            BackoffPolicy::default(),
+            crate::manager::policy_limits::reconnect_backoff(&config.limits),
             Arc::clone(&shells),
             Some(station_dir.join("paste")),
             Some(station_dir.join("artifacts")),

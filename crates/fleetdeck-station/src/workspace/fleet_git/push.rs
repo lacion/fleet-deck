@@ -18,8 +18,6 @@ use super::redact::redact;
 use crate::workspace::GitError;
 use crate::workspace::GitOptions;
 
-/// The time limit of `git push` (design §2.4).
-const PUSH_TIMEOUT: Duration = Duration::from_secs(60);
 /// The time limit of the recovery `git ls-remote` (design §2.4).
 const LS_REMOTE_TIMEOUT: Duration = Duration::from_secs(20);
 /// The most bytes of the porcelain output that a push keeps (design §2.4).
@@ -261,13 +259,18 @@ impl PushWriter {
     /// 5). The command: `push --porcelain --no-verify --no-follow-tags
     /// --recurse-submodules=no --force-with-lease=refs/heads/<ref>:<lease> --
     /// <url> <oid>:refs/heads/<ref>`. It names the verified URL, never a
-    /// remote. A `Rejected` or `Unknown` push runs the recovery read.
+    /// remote. A `Rejected` or `Unknown` push runs the recovery read. `timeout` is
+    /// the time limit of `git push` (`limits.git_push_seconds`, design §2.4).
     ///
     /// # Errors
     /// [`RefspecError`]: the ref is outside `refs/heads/fd/<slug>/` or an id
     /// is not valid. No Git process runs.
-    pub async fn submit(&self, job: &PushJob) -> Result<PushResult, RefspecError> {
-        self.submit_within(job, PUSH_TIMEOUT).await
+    pub async fn submit(
+        &self,
+        job: &PushJob,
+        timeout: Duration,
+    ) -> Result<PushResult, RefspecError> {
+        self.submit_within(job, timeout).await
     }
 
     async fn submit_within(

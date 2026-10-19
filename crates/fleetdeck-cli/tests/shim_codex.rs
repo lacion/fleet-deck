@@ -233,6 +233,7 @@ impl Rig {
                     command: command.clone(),
                     provider: ProviderKind::Codex,
                     worktree_root: root.clone(),
+                    timeout_ms: 600_000,
                 };
                 let id = d
                     .enqueue(&"s1".into(), payload)?

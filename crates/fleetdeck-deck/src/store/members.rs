@@ -16,9 +16,10 @@ use fleetdeck_proto::link::Scope;
 use fleetdeck_proto::share::{MAX_DISPLAY_NAME_CHARS, ShareKind, ShareRole, Steering};
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::auth::{SESSION_MAX_MS, random_token, secret_hash};
+use super::auth::{random_token, secret_hash};
 use super::board_fence::exposed_in_tx;
 use super::{DeckError, DeckStore, Result, call, new_id};
+use crate::knobs::DeckKnobs;
 
 /// The id of a member.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -255,7 +256,12 @@ fn parse_grant(row: GrantRow, hash: &str, conn: &Connection) -> Result<ShareGran
 
 /// The live grant of a member login, or `None` when the login or its share
 /// ended.
-fn load_grant(conn: &Connection, hash: &str, now: i64) -> Result<Option<ShareGrant>> {
+fn load_grant(
+    conn: &Connection,
+    hash: &str,
+    now: i64,
+    login_max_ms: i64,
+) -> Result<Option<ShareGrant>> {
     let row = conn
         .query_row(
             "SELECT ms.member_id, m.display_name, ms.csrf_token, ms.expires_at,
@@ -264,8 +270,9 @@ fn load_grant(conn: &Connection, hash: &str, now: i64) -> Result<Option<ShareGra
              JOIN members m ON m.member_id = ms.member_id
              JOIN shares s ON s.share_id = ms.share_id
              WHERE ms.session_hash = ?1 AND ms.expires_at > ?2
+               AND ms.created_at > ?3
                AND s.revoked_at IS NULL AND s.expires_at > ?2",
-            params![hash, now],
+            params![hash, now, now - login_max_ms],
             |r| {
                 Ok((
                     r.get(0)?,
@@ -286,14 +293,20 @@ fn load_grant(conn: &Connection, hash: &str, now: i64) -> Result<Option<ShareGra
 }
 
 /// True while the member login and its share are alive.
-pub(crate) fn grant_alive(conn: &Connection, hash: &str, now: i64) -> rusqlite::Result<bool> {
+pub(crate) fn grant_alive(
+    conn: &Connection,
+    hash: &str,
+    now: i64,
+    knobs: &DeckKnobs,
+) -> rusqlite::Result<bool> {
     Ok(conn
         .query_row(
             "SELECT 1 FROM member_sessions ms
              JOIN shares s ON s.share_id = ms.share_id
              WHERE ms.session_hash = ?1 AND ms.expires_at > ?2
+               AND ms.created_at > ?3
                AND s.revoked_at IS NULL AND s.expires_at > ?2",
-            params![hash, now],
+            params![hash, now, now - knobs.login_max_ms],
             |_| Ok(()),
         )
         .optional()?
@@ -337,6 +350,7 @@ impl DeckStore {
         let cookie_hash = secret_hash(&cookie);
         let member_id: String = new_id(self.inner.ids.as_ref());
         let now = self.now_ms();
+        let login_max_ms = self.knobs().login_max_ms;
         let found = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             tx.execute("DELETE FROM member_sessions WHERE expires_at <= ?1", [now])?;
@@ -398,7 +412,7 @@ impl DeckStore {
                     member_id
                 }
             };
-            let expires_at = share_expires.min(now.saturating_add(SESSION_MAX_MS));
+            let expires_at = share_expires.min(now.saturating_add(login_max_ms));
             tx.execute(
                 "INSERT INTO member_sessions
                  (session_hash, member_id, share_id, csrf_token, created_at, expires_at,
@@ -406,7 +420,7 @@ impl DeckStore {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CASE WHEN ?7 IS NULL THEN NULL ELSE ?5 END)",
                 params![cookie_hash, member, share_id, csrf, now, expires_at, addr],
             )?;
-            let grant = load_grant(&tx, &cookie_hash, now)?
+            let grant = load_grant(&tx, &cookie_hash, now, login_max_ms)?
                 .ok_or_else(|| DeckError::Corrupt("a new member login is gone".to_owned()))?;
             tx.commit()?;
             Ok(Some(grant))
@@ -425,7 +439,11 @@ impl DeckStore {
     pub async fn member_login(&self, cookie: &Secret<String>) -> Result<Option<ShareGrant>> {
         let hash = secret_hash(cookie.expose());
         let now = self.now_ms();
-        call(&self.inner.db, move |conn| load_grant(conn, &hash, now)).await
+        let login_max_ms = self.knobs().login_max_ms;
+        call(&self.inner.db, move |conn| {
+            load_grant(conn, &hash, now, login_max_ms)
+        })
+        .await
     }
 
     /// The same login with the sessions that its share covers now.
@@ -435,7 +453,11 @@ impl DeckStore {
     pub async fn member_refresh(&self, grant: &ShareGrant) -> Result<Option<ShareGrant>> {
         let hash = grant.session_hash.clone();
         let now = self.now_ms();
-        call(&self.inner.db, move |conn| load_grant(conn, &hash, now)).await
+        let login_max_ms = self.knobs().login_max_ms;
+        call(&self.inner.db, move |conn| {
+            load_grant(conn, &hash, now, login_max_ms)
+        })
+        .await
     }
 
     /// Ends one member login. True when it existed.

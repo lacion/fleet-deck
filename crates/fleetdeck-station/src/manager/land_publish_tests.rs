@@ -246,7 +246,7 @@ async fn a_push_that_applies_and_then_times_out_is_found_by_the_read() {
     // kills it, the outcome is unknown, the read finds the commit.
     rig.flag("hang_after_push", true);
     rig.set_timeouts(LandTimeouts {
-        push: Duration::from_secs(2),
+        push: Some(Duration::from_secs(2)),
         ..LandTimeouts::default()
     });
     let row = landed(&rig, "s1", "land-1").await;
@@ -259,6 +259,31 @@ async fn a_push_that_applies_and_then_times_out_is_found_by_the_read() {
     // No failed event came before the end.
     let states: Vec<LandState> = rig.phases().await.into_iter().map(|p| p.0).collect();
     assert!(!states.contains(&LandState::Failed));
+}
+
+#[tokio::test]
+async fn a_push_without_a_test_limit_takes_the_push_limit_of_the_policy() {
+    let Some(rig) = Rig::new(false).await else {
+        return;
+    };
+    // The rig sets no push limit (`None`): the limit is the policy value
+    // `limits.git_push_seconds`, here 2 s, not the default 60 s.
+    rig.flag("hang_after_push", true);
+    let timeouts = crate::manager::policy_limits::StationTimeouts {
+        git_push: Duration::from_secs(2),
+        ..Default::default()
+    };
+    rig.hub
+        .swap(rig.hub.current().as_ref().clone().with_timeouts(timeouts));
+    let began = tokio::time::Instant::now();
+    let row = landed(&rig, "s1", "land-1").await;
+    assert_eq!(row.state, LandState::Landed, "{row:?}");
+    assert_eq!(row.last_write_outcome.as_deref(), Some("unknown"));
+    assert!(
+        began.elapsed() < Duration::from_secs(40),
+        "{:?}",
+        began.elapsed()
+    );
 }
 
 #[tokio::test]

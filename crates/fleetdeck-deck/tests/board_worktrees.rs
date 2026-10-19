@@ -133,7 +133,13 @@ async fn the_owner_lists_the_worktrees_of_a_station_and_a_token_cannot() {
     let worktree = root.join("repo--fd-gone");
     let (node, board) = deck(&tmp.path().join("d")).await;
     let st = station(&tmp.path().join("s"), root.clone(), &worktree).await;
-    st.join(&node.invite().unwrap()).await.unwrap();
+    st.join(
+        &node
+            .invite(fleetdeck_deck::knobs::DeckKnobs::default().invite)
+            .unwrap(),
+    )
+    .await
+    .unwrap();
     let (cookie, _csrf) = board.login().await;
 
     let r = worktrees(&board, &[("Cookie", cookie.as_str())]).await;

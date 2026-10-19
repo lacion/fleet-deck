@@ -106,11 +106,14 @@ fn the_limits_and_the_file_name_are_fixed() {
 }
 
 #[test]
-fn valid_seconds_accepts_one_to_one_hundred_twenty() {
+fn valid_seconds_accepts_one_to_thirty_six_hundred() {
+    assert_eq!(MAX_RECORDING_SECONDS, 3600);
     assert!(!valid_seconds(0));
     assert!(valid_seconds(1));
     assert!(valid_seconds(120));
-    assert!(!valid_seconds(121));
+    assert!(valid_seconds(121));
+    assert!(valid_seconds(3600));
+    assert!(!valid_seconds(3601));
     assert!(!valid_seconds(u64::MAX));
 }
 
@@ -260,6 +263,7 @@ fn the_coordinator_code_follows_the_table() {
 fn the_recording_codes_and_texts_are_exact() {
     let rows = [
         (code::RECORDING_DURATION, "recording_duration"),
+        (code::RECORDING_TOO_LONG, "recording_too_long"),
         (code::RECORDING_DIMENSIONS, "recording_dimensions"),
         (code::RECORDING_TOO_LARGE, "recording_too_large"),
         (code::RECORDING_FAILED, "recording_failed"),
@@ -276,7 +280,11 @@ fn the_recording_codes_and_texts_are_exact() {
     use crate::capture::text;
     assert_eq!(
         text::RECORDING_DURATION,
-        "Recording duration must be a whole number from 1 to 120 seconds."
+        "The recording length must be from 1 to 3600 seconds."
+    );
+    assert_eq!(
+        text::RECORDING_TOO_LONG,
+        "This recording is longer than this station allows. Shorten it, or raise Longest recording in the station settings."
     );
     assert_eq!(
         text::RECORDING_DIMENSIONS,

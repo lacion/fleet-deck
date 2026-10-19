@@ -190,7 +190,13 @@ async fn the_board_opens_a_station_shell_and_reattaches_to_its_scrollback_after_
     std::fs::create_dir_all(tmp.path().join("d")).unwrap();
     let (node, board) = deck(&tmp.path().join("d")).await;
     let st = station(&tmp.path().join("s"), root.clone(), true).await;
-    st.join(&node.invite().unwrap()).await.unwrap();
+    st.join(
+        &node
+            .invite(fleetdeck_deck::knobs::DeckKnobs::default().invite)
+            .unwrap(),
+    )
+    .await
+    .unwrap();
     let (cookie, csrf) = board.login().await;
     let o = Owner {
         cookie,
@@ -342,7 +348,13 @@ async fn a_station_with_allow_shell_off_refuses_every_shell() {
     std::fs::create_dir_all(tmp.path().join("d")).unwrap();
     let (node, board) = deck(&tmp.path().join("d")).await;
     let st = station(&tmp.path().join("s"), root.clone(), false).await;
-    st.join(&node.invite().unwrap()).await.unwrap();
+    st.join(
+        &node
+            .invite(fleetdeck_deck::knobs::DeckKnobs::default().invite)
+            .unwrap(),
+    )
+    .await
+    .unwrap();
     let (cookie, csrf) = board.login().await;
     let o = Owner {
         cookie,
@@ -393,7 +405,13 @@ async fn an_attached_shell_socket_closes_after_a_logout_and_a_token_revocation()
     std::fs::create_dir_all(tmp.path().join("d")).unwrap();
     let (node, board) = deck(&tmp.path().join("d")).await;
     let st = station(&tmp.path().join("s"), root.clone(), true).await;
-    st.join(&node.invite().unwrap()).await.unwrap();
+    st.join(
+        &node
+            .invite(fleetdeck_deck::knobs::DeckKnobs::default().invite)
+            .unwrap(),
+    )
+    .await
+    .unwrap();
     let (cookie, csrf) = board.login().await;
     let o = Owner {
         cookie,
@@ -496,7 +514,13 @@ async fn many_detached_sockets_free_their_data_stream_slots() {
     std::fs::create_dir_all(tmp.path().join("d")).unwrap();
     let (node, board) = deck(&tmp.path().join("d")).await;
     let st = station(&tmp.path().join("s"), root.clone(), true).await;
-    st.join(&node.invite().unwrap()).await.unwrap();
+    st.join(
+        &node
+            .invite(fleetdeck_deck::knobs::DeckKnobs::default().invite)
+            .unwrap(),
+    )
+    .await
+    .unwrap();
     let (cookie, csrf) = board.login().await;
     let o = Owner {
         cookie,
@@ -542,7 +566,13 @@ async fn a_detach_with_unread_output_does_not_stall_other_streams() {
     std::fs::create_dir_all(tmp.path().join("d")).unwrap();
     let (node, board) = deck(&tmp.path().join("d")).await;
     let st = station(&tmp.path().join("s"), root.clone(), true).await;
-    st.join(&node.invite().unwrap()).await.unwrap();
+    st.join(
+        &node
+            .invite(fleetdeck_deck::knobs::DeckKnobs::default().invite)
+            .unwrap(),
+    )
+    .await
+    .unwrap();
     let (cookie, csrf) = board.login().await;
     let o = Owner {
         cookie,

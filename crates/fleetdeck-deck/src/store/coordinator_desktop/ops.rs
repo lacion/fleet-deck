@@ -166,7 +166,7 @@ pub struct NewOp {
     pub action_hash: Option<String>,
     /// Validated identifiers only (§7.2).
     pub resource: serde_json::Value,
-    /// The requested recording seconds (1 to 120); `None` for any other
+    /// The requested recording seconds (1 to 3600); `None` for any other
     /// tool (R13 P5b-2).
     pub seconds: Option<u32>,
     /// R13 P7 §3.5: the length of an input operation (a chord is 1, a text is

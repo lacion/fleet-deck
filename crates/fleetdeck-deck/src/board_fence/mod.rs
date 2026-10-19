@@ -315,9 +315,10 @@ pub(crate) async fn guard_rule(
     Ok(socket.map(|s| store.registry().register(&hash, kind, s, &addr)))
 }
 
-/// The admission of a socket at `on_upgrade`: reads that the session row
-/// still exists and that the address of the socket is not exposed (both
-/// reads begin after the guard registered the socket), then makes the entry
+/// The admission of a socket at `on_upgrade`: reads that the session is
+/// still valid (the full non-touching check of the current knobs, not only
+/// its row) and that the address of the socket is not exposed (both reads
+/// begin after the guard registered the socket), then makes the entry
 /// `Live` under the mutex of the registry. A socket that registered after
 /// the sweep of an input operation, from an exposed address, is refused
 /// here and its session is deleted (§7.6 rule 2). False: close the socket
@@ -349,7 +350,7 @@ pub(crate) async fn admit_socket(store: &DeckStore, ticket: &Ticket) -> bool {
         drop(store.registry().revoke(std::slice::from_ref(&hash), &[]).0);
         return false;
     }
-    let exists = match store.session_row_exists(kind, &hash).await {
+    let exists = match store.session_valid(kind, &hash, store.now_ms()).await {
         Ok(exists) => exists,
         Err(e) => {
             tracing::warn!(error = %e, "the session of a socket could not be read; the socket is closed");

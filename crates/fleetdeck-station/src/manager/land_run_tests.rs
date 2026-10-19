@@ -254,6 +254,31 @@ async fn a_failed_check_ends_with_the_last_fifty_redacted_lines() {
 }
 
 #[tokio::test]
+async fn a_check_ends_at_the_check_limit_of_the_policy() {
+    let Some(rig) = Rig::new(true).await else {
+        return;
+    };
+    // A land id of its own: the check marker kills every process that carries it.
+    rig.session("s1", false).await;
+    let mut plan = rig.plan("s1");
+    plan.check_cmd = Some("sleep 60".to_owned());
+    rig.admit_plan("s1", "land-limit", plan).await;
+    let timeouts = crate::manager::policy_limits::StationTimeouts {
+        land_check: Duration::from_secs(1),
+        ..Default::default()
+    };
+    rig.hub
+        .swap(rig.hub.current().as_ref().clone().with_timeouts(timeouts));
+    let row = rig.run("land-limit").await;
+    assert_eq!(row.state, LandState::CheckFailed, "{row:?}");
+    let text = row.message.unwrap();
+    assert!(
+        text.starts_with("The check command timed out after 1 s.\n"),
+        "{text}"
+    );
+}
+
+#[tokio::test]
 async fn a_check_that_edits_a_tracked_file_or_commits_is_check_mutated() {
     let Some(rig) = Rig::new(true).await else {
         return;

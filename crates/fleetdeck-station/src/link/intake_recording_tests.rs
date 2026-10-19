@@ -37,20 +37,39 @@ fn wire(o: Outcome) -> (String, String) {
 async fn row_only(t: &T, id: &str, hash: &str) {
     let begin = t
         .store()
-        .recording_begin(RecordingBegin {
-            deck_fp: FP,
-            capture_id: id,
-            action_hash: hash,
-            monitor: "DP-1",
-            artifact_id: &format!("ART{id}"),
-            seconds: 5,
-            link_epoch: "e",
-            coordinator: None,
-            now: 1,
-        })
+        .recording_begin(
+            RecordingBegin {
+                deck_fp: FP,
+                capture_id: id,
+                action_hash: hash,
+                monitor: "DP-1",
+                artifact_id: &format!("ART{id}"),
+                seconds: 5,
+                link_epoch: "e",
+                coordinator: None,
+                now: 1,
+            },
+            crate::desktop::capture::CAPTURE_QUOTA,
+        )
         .await
         .unwrap();
     assert!(matches!(begin, Begin::Started));
+}
+
+#[test]
+fn a_request_over_the_policy_length_is_refused_with_its_text() {
+    use crate::manager::policy_hub::test_config;
+    let root = tempfile::tempdir().unwrap();
+    let policy = Policy::from_config(&test_config(
+        root.path(),
+        "[capture]\nrecording_max_seconds = 600\n",
+    ));
+    assert!(too_long(&policy, 1).is_none());
+    assert!(too_long(&policy, 600).is_none());
+    let e = too_long(&policy, 601).unwrap();
+    assert_eq!(e.code, "recording_too_long");
+    assert_eq!(e.message, text::RECORDING_TOO_LONG);
+    assert!(too_long(&policy.with_recording_max_seconds(3600), 3600).is_none());
 }
 
 fn allowed_open() -> Allowed {
@@ -316,6 +335,8 @@ async fn policy_now_reads_the_settings_after_the_probe() {
             desktop,
             capture,
             monitors: monitors.clone(),
+            quota_bytes: 1,
+            free_reserve_bytes: 1,
         };
         let a = value(policy_now(&c, &allowed, "e", policy_params(ID, "h")).await);
         assert_eq!(a["allow_desktop"], desktop);
