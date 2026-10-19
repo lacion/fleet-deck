@@ -190,7 +190,7 @@ pub fn attribute(
         .filter(|m| leader_alive || is_witness(m))
         .cloned()
         .collect();
-    if let Some(m) = targets.iter().find(|m| m.uid != station.uid) {
+    if let Some(m) = targets.iter().find(|m| !m.owned_by(station.uid)) {
         return Err(Refused::new(
             code::PERMISSION_DENIED,
             format!("process {} belongs to another user", m.pid),

@@ -16,8 +16,10 @@ use std::time::Duration;
 
 use common::board::{BoardClient, Extras, board_with_extras};
 use common::*;
+use fleetdeck_deck::http::execution_routes::StopWatch;
 use fleetdeck_deck::store::{AuditEntry, AuditResult};
 use fleetdeck_link::LiveLink;
+use fleetdeck_link::control::InboundRequest;
 use fleetdeck_proto::SessionSummary;
 use fleetdeck_proto::link::{Outcome, Scope, WireError};
 use serde_json::{Value, json};
@@ -49,7 +51,15 @@ async fn setup() -> T {
         )
         .await
         .unwrap();
-    let c = board_with_extras(Arc::clone(&f.ctx), Extras::default()).await;
+    // A fast watcher for the outcome of an accepted stop.
+    let extras = Extras {
+        stop_watch: Some(StopWatch {
+            poll: Duration::from_millis(20),
+            limit: Duration::from_millis(400),
+        }),
+        ..Extras::default()
+    };
+    let c = board_with_extras(Arc::clone(&f.ctx), extras).await;
     set_password(&c).await;
     let h = owner(&c).await;
     T { f, station, c, h }
@@ -149,6 +159,93 @@ fn stop_body(id: &str, elevation: Option<&str>) -> Value {
         body["elevation"] = json!(e);
     }
     body
+}
+
+/// The `last_stop` of a check: the outcome of the command `id`.
+fn last_json(id: &str) -> Value {
+    json!({
+        "command_id": id,
+        "outcome": "done",
+        "code": null,
+        "term_sent": 2,
+        "kill_sent": 1,
+        "gone": 2,
+        "skipped": 0,
+    })
+}
+
+/// Answers the requests of the fake station until the stop command has its
+/// receipt. The checks of the watcher that come before it get an answer
+/// without `last_stop`. Returns the stop command.
+async fn answer_stop(station: &mut LiveLink) -> InboundRequest {
+    loop {
+        let req = next_request(station).await;
+        if req.method == "session.execution_check" {
+            let answer = Outcome::Ok(check_json(Value::Null));
+            station.control.respond(req.id, answer).await.unwrap();
+            continue;
+        }
+        let id = req.command_id.clone().expect("a command id");
+        station
+            .control
+            .respond(req.id, accepted(&id))
+            .await
+            .unwrap();
+        return req;
+    }
+}
+
+/// Answers the next request, which must be a check of the watcher.
+async fn answer_check(station: &mut LiveLink, check: &Value) {
+    let req = next_request(station).await;
+    assert_eq!(req.method, "session.execution_check");
+    station
+        .control
+        .respond(req.id, Outcome::Ok(check.clone()))
+        .await
+        .unwrap();
+}
+
+/// Answers every check of the watcher with `check` for `window`.
+async fn answer_checks_for(station: &mut LiveLink, check: &Value, window: Duration) {
+    let until = tokio::time::Instant::now() + window;
+    while let Some(left) = until.checked_duration_since(tokio::time::Instant::now()) {
+        let Ok(req) = tokio::time::timeout(left, next_request(station)).await else {
+            break;
+        };
+        assert_eq!(req.method, "session.execution_check");
+        station
+            .control
+            .respond(req.id, Outcome::Ok(check.clone()))
+            .await
+            .unwrap();
+    }
+}
+
+/// The detail of the stop rows that start with `stage`, newest first.
+async fn stage_rows(c: &BoardClient, stage: &str) -> Vec<AuditEntry> {
+    stop_rows(c)
+        .await
+        .into_iter()
+        .filter(|e| {
+            e.detail
+                .as_deref()
+                .is_some_and(|d| d.split(' ').next() == Some(&format!("stage={stage}")))
+        })
+        .collect()
+}
+
+/// Waits (at most 2 s) until a row of `stage` exists.
+async fn wait_stage(c: &BoardClient, stage: &str) {
+    let until = std::time::Instant::now() + Duration::from_secs(2);
+    while stage_rows(c, stage).await.is_empty() {
+        assert!(
+            std::time::Instant::now() < until,
+            "no `{stage}` row in 2 s: {:?}",
+            stop_rows(c).await
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }
 
 /// The `session.execution_stop` rows, newest first.
@@ -281,7 +378,7 @@ async fn an_elevated_owner_stop_command_reaches_the_station() {
     let mut t = setup().await;
     let e = elevate(&t.c, &t.h).await;
     let call = post(&t.c, &t.h, STOP, stop_body("st-ok", Some(&e)));
-    let (r, req) = tokio::join!(call, Fixture::answer(&mut t.station, accepted));
+    let (r, req) = tokio::join!(call, answer_stop(&mut t.station));
     assert_eq!(r.status, 200, "{}", r.body);
     assert_eq!(r.body["receipt"]["state"], "accepted");
     assert_eq!(req.method, "session.stop_execution");
@@ -319,7 +416,7 @@ async fn the_stop_command_writes_accepted_and_refused_rows_without_a_second_acce
 
     // Accepted: one row; a resend of the same command ID adds none.
     let call = post(&t.c, &t.h, STOP, stop_body("st-a-ok", Some(&e)));
-    let (r, _) = tokio::join!(call, Fixture::answer(&mut t.station, accepted));
+    let (r, _) = tokio::join!(call, answer_stop(&mut t.station));
     assert_eq!(r.status, 200, "{}", r.body);
     let again = post(&t.c, &t.h, STOP, stop_body("st-a-ok", Some(&e)));
     assert_eq!(again.await.status, 200);
@@ -406,4 +503,75 @@ async fn a_last_stop_of_a_check_writes_one_outcome_row() {
             "stage=outcome outcome=failed code=permission_denied term=1 kill=0 gone=0 skipped=1 shim=shim-1"
         )
     );
+}
+
+#[tokio::test]
+async fn an_accepted_stop_writes_its_outcome_row_without_a_board_check() {
+    let mut t = setup().await;
+    let e = elevate(&t.c, &t.h).await;
+    let call = post(&t.c, &t.h, STOP, stop_body("st-w-1", Some(&e)));
+    let (r, _) = tokio::join!(call, answer_stop(&mut t.station));
+    assert_eq!(r.status, 200, "{}", r.body);
+    // The watcher asks for the check; the station has the outcome.
+    let check = check_json(last_json("st-w-1"));
+    answer_check(&mut t.station, &check).await;
+    wait_stage(&t.c, "outcome").await;
+    let rows = stage_rows(&t.c, "outcome").await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].result, AuditResult::Ok);
+    assert_eq!(rows[0].command_id.as_ref().unwrap().as_str(), "st-w-1");
+    assert_eq!(
+        rows[0].detail.as_deref(),
+        Some("stage=outcome outcome=done code=- term=2 kill=1 gone=2 skipped=0 shim=shim-1")
+    );
+    // A board check with the same `last_stop` adds no second row.
+    let (r, _) = with_station(
+        &mut t.station,
+        get(&t.c, &t.h, "/api/sessions/fake/s1/execution"),
+        Outcome::Ok(check),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(stage_rows(&t.c, "outcome").await.len(), 1);
+    assert!(stage_rows(&t.c, "outcome_unobserved").await.is_empty());
+}
+
+#[tokio::test]
+async fn a_stop_whose_outcome_is_not_seen_writes_unobserved_and_a_later_check_the_outcome() {
+    let mut t = setup().await;
+    let e = elevate(&t.c, &t.h).await;
+    let call = post(&t.c, &t.h, STOP, stop_body("st-w-2", Some(&e)));
+    let (r, _) = tokio::join!(call, answer_stop(&mut t.station));
+    assert_eq!(r.status, 200, "{}", r.body);
+    // Every check of the watcher has no `last_stop`.
+    answer_checks_for(
+        &mut t.station,
+        &check_json(Value::Null),
+        Duration::from_millis(1000),
+    )
+    .await;
+    wait_stage(&t.c, "outcome_unobserved").await;
+    let rows = stage_rows(&t.c, "outcome_unobserved").await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].result, AuditResult::Failed);
+    assert_eq!(rows[0].command_id.as_ref().unwrap().as_str(), "st-w-2");
+    assert_eq!(
+        rows[0].detail.as_deref(),
+        Some("stage=outcome_unobserved shim=shim-1")
+    );
+    assert!(stage_rows(&t.c, "outcome").await.is_empty());
+    // The unobserved row does not claim the command ID: a later check with
+    // the outcome writes it.
+    let (r, _) = with_station(
+        &mut t.station,
+        get(&t.c, &t.h, "/api/sessions/fake/s1/execution"),
+        Outcome::Ok(check_json(last_json("st-w-2"))),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    let rows = stage_rows(&t.c, "outcome").await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].command_id.as_ref().unwrap().as_str(), "st-w-2");
+    assert_eq!(stage_rows(&t.c, "outcome_unobserved").await.len(), 1);
 }

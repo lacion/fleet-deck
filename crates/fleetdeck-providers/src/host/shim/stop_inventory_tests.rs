@@ -49,7 +49,7 @@ fn the_domain_holds_the_leader_and_the_live_members_of_the_group_and_the_session
     let keys: Vec<_> = inv
         .domain
         .iter()
-        .map(|m| (m.pid, m.start_time, m.uid))
+        .map(|m| (m.pid, m.start_time, m.uids[0]))
         .collect();
     assert_eq!(
         keys,
@@ -145,4 +145,41 @@ fn stat_now_tells_alive_gone_and_unreadable() {
         stat_now_in(dir.path(), 100),
         StatNow::Unreadable(_)
     ));
+}
+
+#[test]
+fn the_four_uids_are_read_and_all_must_equal_the_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    put(dir.path(), 100, &stat_line(100, 'S', 1, 100, 100, 5), 1000);
+    std::fs::write(
+        dir.path().join("100").join("status"),
+        "Name:\tx\nUid:\t1000\t0\t1000\t1000\nGid:\t1\t1\t1\t1\n",
+    )
+    .unwrap();
+    let inv = inventory_in(dir.path(), 100).unwrap();
+    let member = &inv.domain[0];
+    assert_eq!(member.uids, [1000, 0, 1000, 1000]);
+    assert!(!member.owned_by(1000));
+    assert_eq!(
+        uids_now_in(dir.path(), 100),
+        UidsNow::Uids([1000, 0, 1000, 1000])
+    );
+    assert!(!owned(&[1000, 0, 1000, 1000], 1000));
+    assert!(owned(&[1000; 4], 1000));
+    // Three fields are an error, not a guess.
+    std::fs::write(
+        dir.path().join("100").join("status"),
+        "Name:\tx\nUid:\t1000\t1000\t1000\n",
+    )
+    .unwrap();
+    assert!(matches!(
+        inventory_in(dir.path(), 100),
+        Err(StopInventoryError::Incomplete(_))
+    ));
+    assert!(matches!(
+        uids_now_in(dir.path(), 100),
+        UidsNow::Unreadable(_)
+    ));
+    // A PID that does not exist is gone.
+    assert_eq!(uids_now_in(dir.path(), 999), UidsNow::Gone);
 }

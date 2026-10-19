@@ -7,10 +7,15 @@
 //!    inventory gives `inspection_incomplete`.
 //! 2. Each target is read again (start time, state, group, session). A
 //!    process that ended or reused the PID is not signalled. A process that
-//!    left the domain is skipped and counted.
+//!    left the domain is skipped and counted. Then the four UIDs of each
+//!    live target are read, and the targets are read once more. A target
+//!    that another user owns now fails the whole stop with
+//!    `permission_denied` before any signal.
 //! 3. SIGTERM to each live target through its own pidfd, a wait of five
 //!    seconds on the monotonic clock (it ends when all are dead), then
-//!    SIGKILL through the same pidfds to the targets that still live.
+//!    SIGKILL through the same pidfds to the targets that still live. The
+//!    four UIDs are read again before each SIGKILL: a target that another
+//!    user owns now gets no SIGKILL and is counted as denied.
 //! 4. A fresh inventory. Members that remain: `processes_remain`.
 //!
 //! The whole run takes at most fifteen seconds. A run that does not finish
@@ -22,7 +27,7 @@ use std::time::Duration;
 use fleetdeck_proto::execution_stop::{StopOutcome, code};
 use fleetdeck_providers::host::shim::inspect::ProcStat;
 use fleetdeck_providers::host::shim::stop_inventory::{
-    Inventory, StatNow, StopInventoryError, inventory, stat_now,
+    Inventory, StatNow, StopInventoryError, UidsNow, inventory, owned, stat_now, uids_now,
 };
 use tokio::time::{Instant, sleep, timeout_at};
 
@@ -41,6 +46,14 @@ const POLL: Duration = Duration::from_millis(50);
 
 /// The signal sender; tests replace it.
 pub type SendFn = fn(&std::os::fd::OwnedFd, Which) -> Sent;
+
+/// The reader of the UIDs of a PID; tests replace it.
+pub type UidsFn = fn(u32) -> UidsNow;
+
+/// The owner of every target: the real UID of the station.
+fn owner_uid() -> u32 {
+    rustix::process::getuid().as_raw()
+}
 
 #[derive(Debug, Default)]
 struct Counts {
@@ -110,9 +123,14 @@ fn settled(counts: &Counts, gone: usize, remaining: bool) -> StopResult {
 
 /// Signals the targets of `plan` as described in the module documentation.
 /// `send` is [`send`] outside tests.
-pub async fn execute(plan: &StopPlan, send_signal: SendFn) -> StopResult {
+pub async fn execute(plan: &StopPlan, send_signal: SendFn, uids: UidsFn) -> StopResult {
     let mut counts = Counts::default();
-    match timeout_at(Instant::now() + TOTAL, run(plan, send_signal, &mut counts)).await {
+    match timeout_at(
+        Instant::now() + TOTAL,
+        run(plan, send_signal, uids, &mut counts),
+    )
+    .await
+    {
         Ok(result) => result,
         Err(_) => {
             tracing::warn!(plan = %plan.plan_id, "the stop did not finish in time");
@@ -149,7 +167,53 @@ fn record(counts: &mut Counts, pid: u32, which: Which, sent: Sent) -> bool {
     }
 }
 
-async fn run(plan: &StopPlan, send_signal: SendFn, counts: &mut Counts) -> StopResult {
+/// The checks before any SIGTERM: the owner of each live target, then the
+/// target itself once more. `Err` is the result of the stop.
+fn checked<'a>(
+    live: Vec<&'a PlanTarget>,
+    leader: u32,
+    uids: UidsFn,
+    counts: &mut Counts,
+) -> Result<Vec<&'a PlanTarget>, StopResult> {
+    let owner = owner_uid();
+    let mut owned_now: Vec<&PlanTarget> = Vec::new();
+    for t in live {
+        match uids(t.pid) {
+            UidsNow::Uids(u) if owned(&u, owner) => owned_now.push(t),
+            UidsNow::Uids(_) => return Err(StopResult::failed(code::PERMISSION_DENIED)),
+            UidsNow::Gone => {}
+            UidsNow::Unreadable(why) => {
+                tracing::warn!(pid = t.pid, %why, "the owner of a target cannot be read");
+                return Err(StopResult::failed(code::INSPECTION_INCOMPLETE));
+            }
+        }
+    }
+    let mut kept: Vec<&PlanTarget> = Vec::new();
+    for t in owned_now {
+        match stat_now(t.pid) {
+            StatNow::Alive(s) if s.start_time == t.start_time && !s.is_zombie() => {
+                if in_domain(&s, leader) {
+                    kept.push(t);
+                } else {
+                    counts.skipped += 1;
+                }
+            }
+            StatNow::Alive(_) | StatNow::Gone => {}
+            StatNow::Unreadable(why) => {
+                tracing::warn!(pid = t.pid, %why, "a target cannot be read");
+                return Err(StopResult::failed(code::INSPECTION_INCOMPLETE));
+            }
+        }
+    }
+    Ok(kept)
+}
+
+async fn run(
+    plan: &StopPlan,
+    send_signal: SendFn,
+    uids: UidsFn,
+    counts: &mut Counts,
+) -> StopResult {
     let leader = plan.leader;
     let before = match fresh_inventory(leader).await {
         Ok(inv) => inv,
@@ -184,6 +248,10 @@ async fn run(plan: &StopPlan, send_signal: SendFn, counts: &mut Counts) -> StopR
             }
         }
     }
+    let live = match checked(live, leader, uids, counts) {
+        Ok(live) => live,
+        Err(result) => return result,
+    };
     let mut waiting: Vec<&PlanTarget> = Vec::new();
     for t in &live {
         let sent = send_signal(&t.fd, Which::Term);
@@ -194,10 +262,26 @@ async fn run(plan: &StopPlan, send_signal: SendFn, counts: &mut Counts) -> StopR
     wait_dead(&waiting, TERM_WAIT).await;
     let mut waiting: Vec<&PlanTarget> = Vec::new();
     for t in &live {
-        if live_in_domain(t, leader) {
-            let sent = send_signal(&t.fd, Which::Kill);
-            if record(counts, t.pid, Which::Kill, sent) {
-                waiting.push(t);
+        if !live_in_domain(t, leader) {
+            continue;
+        }
+        // The owner is read again: a process that changed its UIDs since
+        // the SIGTERM gets no SIGKILL.
+        match uids(t.pid) {
+            UidsNow::Uids(u) if owned(&u, owner_uid()) => {
+                let sent = send_signal(&t.fd, Which::Kill);
+                if record(counts, t.pid, Which::Kill, sent) {
+                    waiting.push(t);
+                }
+            }
+            UidsNow::Uids(_) => {
+                counts.denied = true;
+                counts.skipped += 1;
+            }
+            UidsNow::Gone => {}
+            UidsNow::Unreadable(why) => {
+                tracing::warn!(pid = t.pid, %why, "the owner of a target cannot be read");
+                counts.skipped += 1;
             }
         }
     }
@@ -220,6 +304,12 @@ async fn run(plan: &StopPlan, send_signal: SendFn, counts: &mut Counts) -> StopR
 #[must_use]
 pub fn real_send() -> SendFn {
     send
+}
+
+/// The real reader of the UIDs, over `/proc`.
+#[must_use]
+pub fn real_uids() -> UidsFn {
+    uids_now
 }
 
 #[cfg(test)]

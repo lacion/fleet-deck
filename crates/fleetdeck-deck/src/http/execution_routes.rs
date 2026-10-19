@@ -9,7 +9,9 @@
 //! reads the stop plan (`session.execution_stop_plan`), and the audit rows of
 //! `session.execution_stop` live here: the command writes `accepted` or
 //! `refused` (`command_routes.rs`); a check that carries a `last_stop` writes
-//! one `outcome` row for each command ID.
+//! one `outcome` row for each command ID. A watcher ([`watch_outcome`]) asks
+//! the station for that check after each accepted stop, so that the outcome
+//! row does not depend on a browser that polls.
 
 use std::collections::HashSet;
 use std::sync::{Arc, LazyLock, Mutex, PoisonError};
@@ -52,6 +54,23 @@ pub(super) const STOP_UNSUPPORTED_TEXT: &str =
 /// How many command IDs the deck remembers as audited; the set is cleared
 /// when it is full.
 const AUDITED_CAP: usize = 1_024;
+
+/// How the deck watches for the outcome of an accepted stop (BG-4 §5.6).
+#[derive(Debug, Clone, Copy)]
+pub struct StopWatch {
+    /// The pause between two checks.
+    pub poll: Duration,
+    /// How long the watcher waits for the outcome.
+    pub limit: Duration,
+}
+
+impl StopWatch {
+    /// One check each second for 30 seconds.
+    pub const DEFAULT: Self = Self {
+        poll: Duration::from_secs(1),
+        limit: Duration::from_secs(30),
+    };
+}
 
 /// The IDs of the stop commands whose outcome row the deck wrote in this
 /// process.
@@ -261,6 +280,7 @@ pub(super) fn stop_gates(
 
 /// What the audit of a stop command names: the session, the shim and the
 /// command ID. Never a command name, an argument or `/proc` text.
+#[derive(Clone)]
 pub(super) struct StopAudit {
     session: String,
     shim: String,
@@ -312,8 +332,8 @@ impl StopAudit {
     }
 }
 
-/// True once for each command ID that the deck has not audited yet.
-fn first_outcome(command_id: &str) -> bool {
+/// True once for each command ID that the deck has not claimed yet.
+fn claim(command_id: &str) -> bool {
     let mut seen = AUDITED.lock().unwrap_or_else(PoisonError::into_inner);
     if seen.contains(command_id) {
         return false;
@@ -322,6 +342,14 @@ fn first_outcome(command_id: &str) -> bool {
         seen.clear();
     }
     seen.insert(command_id.to_owned())
+}
+
+/// Gives a claimed command ID back, after a failed write.
+fn release(command_id: &str) {
+    AUDITED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(command_id);
 }
 
 /// A code of the station for the audit: one of the six, else a fixed word, so
@@ -348,12 +376,13 @@ fn outcome_detail(last: &ExecutionStopOutcome, shim: &str) -> String {
 }
 
 /// One `stage=outcome` row for the `last_stop` of a check, when the deck did
-/// not audit its command ID yet in this process.
+/// not write the row of its command ID yet in this process. A failed write
+/// gives the ID back: a later check or the watcher can write the row again.
 async fn audit_outcome(board: &Board, actor: &str, target: &str, check: &ExecutionCheck) {
     let Some(last) = &check.last_stop else {
         return;
     };
-    if !first_outcome(&last.command_id) {
+    if !claim(&last.command_id) {
         return;
     }
     let result = match last.outcome {
@@ -361,13 +390,56 @@ async fn audit_outcome(board: &Board, actor: &str, target: &str, check: &Executi
         StopOutcome::Failed | StopOutcome::Unknown => AuditResult::Failed,
     };
     let shim = check.shim_id.as_deref().unwrap_or("-");
-    board
-        .store
-        .audit_or_log(
-            NewAudit::new(actor, STOP_ACTION, result)
-                .target(target)
-                .command(CommandId::from(last.command_id.as_str()))
-                .detail(outcome_detail(last, shim)),
-        )
-        .await;
+    let row = NewAudit::new(actor, STOP_ACTION, result)
+        .target(target)
+        .command(CommandId::from(last.command_id.as_str()))
+        .detail(outcome_detail(last, shim));
+    if let Err(e) = board.store.audit(row).await {
+        tracing::warn!(error = %e, command = %last.command_id, "the stop outcome row was not written");
+        release(&last.command_id);
+    }
+}
+
+/// Watches for the outcome of an accepted stop without a browser (BG-4
+/// §5.6): asks the station for the execution check until its `last_stop` is
+/// the outcome of this command, then writes the outcome row. When
+/// `board.stop_watch.limit` passes first, it writes one `outcome_unobserved`
+/// row; a later check can still write the real outcome.
+pub(super) fn watch_outcome(board: Arc<Board>, actor: String, station: StationId, stop: StopAudit) {
+    tokio::spawn(async move {
+        let watch = board.stop_watch;
+        let until = tokio::time::Instant::now() + watch.limit;
+        let target = format!("{}/{}", station.0, stop.session);
+        while tokio::time::Instant::now() < until {
+            if let Ok(check) = ask(&board, &station, &stop.session).await
+                && check
+                    .last_stop
+                    .as_ref()
+                    .is_some_and(|last| last.command_id == stop.command.as_str())
+            {
+                audit_outcome(&board, &actor, &target, &check).await;
+                return;
+            }
+            tokio::time::sleep(watch.poll).await;
+        }
+        let detail = format!("stage=outcome_unobserved shim={}", stop.shim);
+        board
+            .store
+            .audit_or_log(stop.row(&actor, &station.0, AuditResult::Failed, detail))
+            .await;
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{claim, release};
+
+    #[test]
+    fn a_command_id_is_claimed_once_until_it_is_released() {
+        assert!(claim("claim-test-1"));
+        assert!(!claim("claim-test-1"));
+        release("claim-test-1");
+        assert!(claim("claim-test-1"));
+        release("claim-test-1");
+    }
 }

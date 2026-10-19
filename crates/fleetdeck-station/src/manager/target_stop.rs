@@ -93,6 +93,6 @@ impl SessionTarget {
                 return StopResult::failed(code::PLAN_CHANGED);
             }
         }
-        stop_exec::execute(&plan, stop_exec::real_send()).await
+        stop_exec::execute(&plan, stop_exec::real_send(), stop_exec::real_uids()).await
     }
 }

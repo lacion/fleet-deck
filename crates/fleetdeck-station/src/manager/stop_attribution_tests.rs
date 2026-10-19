@@ -207,6 +207,22 @@ fn a_member_of_another_uid_refuses_the_plan_with_permission_denied() {
 }
 
 #[test]
+fn a_member_with_a_foreign_effective_uid_refuses_the_plan_with_permission_denied() {
+    let dir = tempfile::tempdir().unwrap();
+    machine(dir.path());
+    put(dir.path(), (100, 1), (100, 100), 5, 1000);
+    put(dir.path(), (101, 100), (100, 100), 6, 1000);
+    // The real UID is the station's; the effective UID is not.
+    std::fs::write(
+        dir.path().join("101").join("status"),
+        "Uid:\t1000\t0\t1000\t1000\n",
+    )
+    .unwrap();
+    let got = attribute_in(dir.path(), &[]).unwrap_err();
+    assert_eq!(got.code, code::PERMISSION_DENIED, "{got:?}");
+}
+
+#[test]
 fn a_protected_member_is_identity_unproven() {
     for (pid, parent) in [(1, 0), (5000, 4000), (4000, 1)] {
         let dir = tempfile::tempdir().unwrap();

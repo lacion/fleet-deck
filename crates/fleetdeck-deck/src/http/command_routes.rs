@@ -22,7 +22,7 @@ use fleetdeck_proto::event::RequestKind;
 use fleetdeck_proto::fleet_git::StartKind;
 use fleetdeck_proto::version::feature;
 
-use super::execution_routes::{StopAudit, stop_gates};
+use super::execution_routes::{StopAudit, stop_gates, watch_outcome};
 use super::guard::ApiError;
 use super::methods::COMMAND_PREFIX;
 use super::{Board, access};
@@ -73,6 +73,13 @@ pub async fn command(
             if let Some(stop) = stop.as_ref().filter(|_| new) {
                 stop.accepted(&board, &principal.actor(), &cmd.station_id.0)
                     .await;
+                // The outcome row does not wait for a browser (BG-4 §5.6).
+                watch_outcome(
+                    Arc::clone(&board),
+                    principal.actor(),
+                    cmd.station_id.clone(),
+                    stop.clone(),
+                );
             }
             let cmd = board
                 .link

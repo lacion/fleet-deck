@@ -4,7 +4,9 @@
 #![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used)]
 
+use std::collections::HashSet;
 use std::os::fd::OwnedFd;
+use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
 
 use fleetdeck_proto::execution_stop::{StopOutcome, code};
@@ -16,11 +18,33 @@ fn denied(_: &OwnedFd, _: Which) -> Sent {
     Sent::Denied
 }
 
+/// Every process belongs to another user.
+fn foreign(_: u32) -> UidsNow {
+    UidsNow::Uids([owner_uid() + 1; 4])
+}
+
+fn unreadable(_: u32) -> UidsNow {
+    UidsNow::Unreadable("a test error".to_owned())
+}
+
+/// The PIDs whose UIDs [`real_then_foreign`] answered once.
+static ASKED: LazyLock<Mutex<HashSet<u32>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// The real UIDs for the first call of a PID, foreign UIDs after it (a
+/// process that changes its UIDs after the SIGTERM).
+fn real_then_foreign(pid: u32) -> UidsNow {
+    if ASKED.lock().unwrap().insert(pid) {
+        UidsNow::Uids([owner_uid(); 4])
+    } else {
+        UidsNow::Uids([owner_uid() + 1; 4])
+    }
+}
+
 #[tokio::test]
 async fn a_tree_gets_sigterm_through_its_pidfds_and_nothing_more() {
     let mut tree = Tree::simple();
     let plan = tree.plan("s", "shim");
-    let result = execute(&plan, real_send()).await;
+    let result = execute(&plan, real_send(), real_uids()).await;
     assert_eq!(result.state, StopOutcome::Done, "{result:?}");
     assert_eq!(result.code, None);
     assert_eq!(
@@ -42,7 +66,7 @@ async fn a_child_that_ignores_sigterm_gets_sigkill_after_five_seconds() {
     tree.wait_members(3);
     let plan = tree.plan("s", "shim");
     let started = Instant::now();
-    let result = execute(&plan, real_send()).await;
+    let result = execute(&plan, real_send(), real_uids()).await;
     let took = started.elapsed();
     assert!(took >= TERM_WAIT, "SIGKILL came after {took:?}");
     assert!(took < TOTAL, "{took:?}");
@@ -66,7 +90,7 @@ async fn a_member_that_the_plan_does_not_list_gives_processes_remain_and_no_sign
     let new = plan.domain.pop().unwrap();
     let removed = plan.targets.pop().unwrap();
     assert_eq!(removed.pid, new.0);
-    let result = execute(&plan, real_send()).await;
+    let result = execute(&plan, real_send(), real_uids()).await;
     assert_eq!(result.state, StopOutcome::Failed, "{result:?}");
     assert_eq!(result.code, Some(code::PROCESSES_REMAIN));
     assert_eq!((result.term_sent, result.kill_sent), (0, 0));
@@ -83,7 +107,7 @@ async fn a_target_with_another_start_time_is_not_signalled() {
     let reused = plan.targets.last_mut().unwrap();
     let (pid, real) = (reused.pid, reused.start_time);
     reused.start_time += 1;
-    let result = execute(&plan, real_send()).await;
+    let result = execute(&plan, real_send(), real_uids()).await;
     assert_eq!(result.term_sent, 2, "{result:?}");
     assert!(Tree::alive(pid), "the process of the reused PID lives");
     assert_eq!(result.code, Some(code::PROCESSES_REMAIN), "{result:?}");
@@ -116,7 +140,7 @@ async fn a_target_that_left_the_domain_is_skipped_and_counted() {
         assert!(Instant::now() < until, "no process left the domain");
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     };
-    let result = execute(&plan, real_send()).await;
+    let result = execute(&plan, real_send(), real_uids()).await;
     assert_eq!(result.skipped, 1, "{result:?}");
     assert_eq!(result.term_sent, 2, "{result:?}");
     assert!(Tree::alive(left.0), "the process outside the domain lives");
@@ -129,10 +153,48 @@ async fn a_target_that_left_the_domain_is_skipped_and_counted() {
 async fn a_refused_signal_fails_the_stop_with_permission_denied_and_the_rest_stays_visible() {
     let mut tree = Tree::simple();
     let plan = tree.plan("s", "shim");
-    let result = execute(&plan, denied).await;
+    let result = execute(&plan, denied, real_uids()).await;
     assert_eq!(result.state, StopOutcome::Failed, "{result:?}");
     assert_eq!(result.code, Some(code::PERMISSION_DENIED));
     assert_eq!((result.term_sent, result.kill_sent, result.gone), (0, 0, 0));
     assert_eq!(tree.members().len(), 3);
+    tree.end();
+}
+
+#[tokio::test]
+async fn a_target_of_another_user_fails_the_whole_stop_before_any_signal() {
+    let mut tree = Tree::simple();
+    let plan = tree.plan("s", "shim");
+    let result = execute(&plan, real_send(), foreign).await;
+    assert_eq!(result.state, StopOutcome::Failed, "{result:?}");
+    assert_eq!(result.code, Some(code::PERMISSION_DENIED), "{result:?}");
+    assert_eq!((result.term_sent, result.kill_sent), (0, 0), "{result:?}");
+    assert_eq!(tree.members().len(), 3, "nothing was signalled");
+    tree.end();
+}
+
+#[tokio::test]
+async fn a_target_that_changes_owner_after_sigterm_gets_no_sigkill() {
+    let mut tree = Tree::spawn("(trap '' TERM; exec sleep 600) & sleep 600 & wait");
+    tree.wait_members(3);
+    let plan = tree.plan("s", "shim");
+    let result = execute(&plan, real_send(), real_then_foreign).await;
+    assert_eq!(result.term_sent, 3, "{result:?}");
+    assert_eq!(result.kill_sent, 0, "{result:?}");
+    assert_eq!(result.state, StopOutcome::Failed, "{result:?}");
+    assert_eq!(result.code, Some(code::PERMISSION_DENIED), "{result:?}");
+    assert_eq!(tree.members().len(), 1, "the survivor was not killed");
+    tree.end();
+}
+
+#[tokio::test]
+async fn an_unreadable_owner_gives_inspection_incomplete_and_no_signal() {
+    let mut tree = Tree::simple();
+    let plan = tree.plan("s", "shim");
+    let result = execute(&plan, real_send(), unreadable).await;
+    assert_eq!(result.state, StopOutcome::Failed, "{result:?}");
+    assert_eq!(result.code, Some(code::INSPECTION_INCOMPLETE), "{result:?}");
+    assert_eq!((result.term_sent, result.kill_sent), (0, 0), "{result:?}");
+    assert_eq!(tree.members().len(), 3, "nothing was signalled");
     tree.end();
 }
