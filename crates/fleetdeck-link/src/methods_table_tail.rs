@@ -33,7 +33,7 @@ const fn p5a_row(name: &'static str, feature: &'static str) -> MethodSpec {
 use Callers::{DeckToStation, Either, StationToDeck};
 
 /// The last rows of [`crate::methods::METHODS`].
-pub(crate) const TAIL: [MethodSpec; 52] = [
+pub(crate) const TAIL: [MethodSpec; 58] = [
     // Desktop control on the station (R13 P3): the board gates it for the
     // owner; the station checks `allow_desktop` live.
     m(
@@ -273,4 +273,11 @@ pub(crate) const TAIL: [MethodSpec; 52] = [
     p5a_row("omarchy.install_plan", feature::OMARCHY_REPAIR),
     p5a_row("omarchy.repair_status", feature::OMARCHY_REPAIR),
     p5a_row("omarchy.restore_plan", feature::OMARCHY_REPAIR),
+    // BG-1 (board-gaps.md §2.9): the desktop tools and the maintenance channel.
+    p5a_row("station.tools", feature::STATION_TOOLS),
+    p5a_row("station.desktop_tools_plan", feature::DESKTOP_TOOL_INSTALL),
+    p5a_row("maintenance.open", feature::DESKTOP_TOOL_INSTALL),
+    p5a_row("maintenance.list", feature::DESKTOP_TOOL_INSTALL),
+    p5a_row("maintenance.attach", feature::DESKTOP_TOOL_INSTALL),
+    p5a_row("maintenance.resize", feature::DESKTOP_TOOL_INSTALL),
 ];

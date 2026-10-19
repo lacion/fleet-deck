@@ -39,6 +39,7 @@ use crate::coordinator_desktop_wire as cdw;
 use crate::coordinator_input as ci;
 use crate::desktop as dk;
 use crate::desktop_authority::DesktopAuthority;
+use crate::desktop_tools as dt;
 use crate::display::{
     DisplayBinding, DisplayLinkMade, DisplayList, DisplaySelf, DisplayView, PairingPoll,
     PairingStarted, PairingState, PendingPairing,
@@ -492,6 +493,28 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         orp::InstallPlanView::export_all(&cfg),
         orp::RestorePlanViewFile::export_all(&cfg),
         orp::RestorePlanView::export_all(&cfg),
+        dt::ToolsQuery::export_all(&cfg),
+        dt::ToolsPlanQuery::export_all(&cfg),
+        dt::ToolsDesktop::export_all(&cfg),
+        dt::VersionSource::export_all(&cfg),
+        dt::Probe::export_all(&cfg),
+        dt::ToolFact::export_all(&cfg),
+        dt::FactStatus::export_all(&cfg),
+        dt::KeyboardFacts::export_all(&cfg),
+        dt::PluginStatus::export_all(&cfg),
+        dt::PluginFacts::export_all(&cfg),
+        dt::Switch::export_all(&cfg),
+        dt::StationTools::export_all(&cfg),
+        dt::ResolvedPackage::export_all(&cfg),
+        dt::DesktopToolsPlan::export_all(&cfg),
+        dt::MaintenanceOpen::export_all(&cfg),
+        dt::MaintenanceState::export_all(&cfg),
+        dt::PostCheck::export_all(&cfg),
+        dt::MaintenanceInfo::export_all(&cfg),
+        dt::MaintenanceListQuery::export_all(&cfg),
+        dt::MaintenanceList::export_all(&cfg),
+        dt::MaintenanceAttach::export_all(&cfg),
+        dt::MaintenanceResize::export_all(&cfg),
         acc::AccountKind::export_all(&cfg),
         acc::AccountMethod::export_all(&cfg),
         acc::AccountStatus::export_all(&cfg),

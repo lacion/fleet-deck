@@ -24,6 +24,7 @@ pub mod coordinator_spec;
 pub mod desktop;
 pub mod desktop_authority;
 pub mod desktop_text;
+pub mod desktop_tools;
 pub mod display;
 pub mod display_changes;
 pub mod display_directive;
