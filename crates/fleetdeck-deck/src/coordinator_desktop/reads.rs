@@ -47,12 +47,15 @@ pub(crate) async fn coordinator_read(
         permits,
         read_id: registered.read_id.clone(),
     };
+    // R13 P7b §7: the `window_list` read carries the coordinator context of
+    // the authorization (the same context as `desktop.act`); every other read
+    // carries none.
+    let context = matches!(read, ProtectedRead::InputWindows).then(|| auth.ctx().clone());
     let params = serde_json::to_value(CoordinatorRead {
         read_id: registered.read_id,
         read,
         read_hash: registered.read_hash,
-        // R13 P7b §7: task K1 sends the context with `InputWindows`.
-        context: None,
+        context,
     })
     .map_err(|_| code::DESKTOP_FAILED)?;
     let outcome = tokio::time::timeout(

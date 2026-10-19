@@ -69,6 +69,42 @@ async fn the_station_projection_is_returned_unchanged_and_the_read_uses_no_budge
 }
 
 #[tokio::test]
+async fn the_window_list_read_carries_the_coordinator_context_and_an_info_read_does_not() {
+    let (w, _) = listing_world(|w| window_list_value(w.station().as_str(), 1)).await;
+    let r = w.query(window_list_query(None)).await;
+    assert_eq!(r["status"], "ok", "{r}");
+    let sent = &w.fake.params_of("desktop.coordinator_read")[0];
+    // The context of the authorization: the same one that `desktop.act`
+    // carries.
+    assert_eq!(
+        sent["context"],
+        json!({
+            "grant_id": w.b.grant_id,
+            "binding_id": w.b.binding_id,
+            "generation": w.b.generation,
+            "caller_station": w.station().as_str(),
+            "caller_session": "coord-1",
+            "caller_label": "swift-fox",
+        })
+    );
+    assert_eq!(sent["read"], json!({"kind": "input_windows"}));
+    // The same context as an input action of the same grant.
+    let r = w.call("c1", key_call("k1", "a", None)).await;
+    assert_eq!(r["status"], "ok", "{r}");
+    let act = &w.fake.params_of("desktop.act")[0];
+    assert_eq!(act["authority"]["coordinator"], sent["context"], "{act}");
+    // A `desktop_info` read carries no `context` key.
+    w.fake.set(p7b_except("desktop.coordinator_read", |_| {
+        Some(ok(read_info(1)))
+    }));
+    let r = w.query(info_query(None)).await;
+    assert_eq!(r["status"], "ok", "{r}");
+    let info_read = &w.fake.params_of("desktop.coordinator_read")[1];
+    assert_eq!(info_read["read"], json!({"kind": "info"}));
+    assert!(info_read.get("context").is_none(), "{info_read}");
+}
+
+#[tokio::test]
 async fn the_target_station_argument_is_the_station_of_the_list() {
     let mut w = p7b_world(InputScope::AnyWindow, false).await;
     let beta_fake = w.link_beta().await;
