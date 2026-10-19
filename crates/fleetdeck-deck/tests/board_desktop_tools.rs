@@ -111,6 +111,12 @@ fn plan_json(plan_id: Option<&str>) -> Value {
     })
 }
 
+/// The answer of an open for `request` (the deck checks the request ID).
+fn with_request(mut info: Value, request: &str) -> Value {
+    info["request_id"] = json!(request);
+    info
+}
+
 fn run_json(id: &str, state: &str, code: Option<i32>, post: Option<&str>) -> Value {
     json!({
         "maintenance_id": id,
@@ -257,7 +263,7 @@ async fn each_route_sends_its_link_method_and_params() {
     .await;
     assert_eq!(r.body, plan_json(None), "a plan without an ID is passed on");
 
-    let info = run_json(&run, "running", None, None);
+    let info = with_request(run_json(&run, "running", None, None), &request);
     let call = post(&w.c, &h, OPEN, open_body(&plan, &request));
     let (r, req) = tokio::join!(call, answer_open(&mut w.station, &info));
     assert_eq!(r.status, 200, "{}", r.body);
@@ -446,7 +452,7 @@ async fn a_plan_belongs_to_one_request_of_one_login_for_two_minutes() {
     let (plan, r1, r2, run) = (hex(40), hex(41), hex(42), hex(43));
     let h = elevated(&w).await;
     read_plan(&mut w, &plan).await;
-    let info = run_json(&run, "running", None, None);
+    let info = with_request(run_json(&run, "running", None, None), &r1);
 
     // The same request asks twice: both reach the station.
     open_ok(&mut w, &h, &plan, &r1, &info).await;
@@ -510,7 +516,7 @@ async fn a_request_that_is_not_valid_is_refused_before_the_station() {
             })
     }));
     // The plan was not claimed by a bad request: a good one still opens.
-    let info = run_json(&hex(52), "running", None, None);
+    let info = with_request(run_json(&hex(52), "running", None, None), &request);
     open_ok(&mut w, &h, &plan, &request, &info).await;
 }
 
@@ -613,7 +619,7 @@ async fn an_opened_run_has_an_opened_row_and_one_completed_row() {
     let h = elevated(&w).await;
     let (plan, request, run) = (hex(70), hex(71), hex(72));
     read_plan(&mut w, &plan).await;
-    let info = run_json(&run, "running", None, None);
+    let info = with_request(run_json(&run, "running", None, None), &request);
     open_ok(&mut w, &h, &plan, &request, &info).await;
     let opened = stage_rows(&w.c, "opened").await;
     assert_eq!(opened.len(), 1, "{opened:?}");
@@ -653,7 +659,7 @@ async fn the_watcher_alone_writes_the_completed_row_once() {
         &h,
         &plan,
         &request,
-        &run_json(&run, "admitted", None, None),
+        &with_request(run_json(&run, "admitted", None, None), &request),
     )
     .await;
     let ended = list_json(&[run_json(&run, "exited", Some(1), Some("ok"))]);

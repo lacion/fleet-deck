@@ -355,7 +355,13 @@ async fn run_open(
         return Err(conflict(code::PLAN_CHANGED));
     }
     let params = serde_json::to_value(&open).map_err(ApiError::internal)?;
-    call(board, name, "maintenance.open", params, OPEN_WAIT).await
+    let info: MaintenanceInfo = call(board, name, "maintenance.open", params, OPEN_WAIT).await?;
+    // Station text reaches the audit and the claim map only as a valid ID of
+    // this request.
+    if !is_hex_id(&info.maintenance_id) || info.request_id != open.request_id {
+        return Err(bad_answer());
+    }
+    Ok(info)
 }
 
 /// The `station.maintenance` row of an open: `stage=opened` for a success,

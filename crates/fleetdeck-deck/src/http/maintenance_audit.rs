@@ -127,7 +127,11 @@ pub(super) async fn audit_completion(
     station: &str,
     run: &MaintenanceInfo,
 ) -> bool {
-    if !matches!(run.state, MaintenanceState::Exited | MaintenanceState::Lost) {
+    // A run that is not finished, or an ID that is not a station ID, writes
+    // no row.
+    if !matches!(run.state, MaintenanceState::Exited | MaintenanceState::Lost)
+        || !fleetdeck_proto::desktop_tools::is_hex_id(&run.maintenance_id)
+    {
         return true;
     }
     match claim(&run.maintenance_id) {
