@@ -350,3 +350,13 @@ The implementation order is: types and these tests first, then the wiring. Each 
 | --- | --- |
 | MAJOR — snapshot recovery cannot establish an initial binding; event-only wording contradicts snapshot recovery | §6.1 snapshot synchronization (generation 1 for a grant awaiting its initial binding under the §5.5 initial-binding rules; other increases need the recorded renewal generation; never revives a revoked grant), §6.2 step 3 (binding fields from admitted events or admitted snapshot projections, one transaction with the lifecycle state and the cursor), test 25e extended |
 | Note — ADR-004 rows for `session.coordinator_renew`/`session.coordinator_revoke` | Added with the implementation: ADR-004 envelope and method tables, `SESSION_METHODS`, and both agreement tests (`crates/fleetdeck-link/tests/method_table.rs`) |
+
+## 16. Implementation notes (2026-10-19, MCP P0)
+
+The accepted text above stays as the design record. The shipped implementation differs in these points (`docs/v2/design/mcp-p0.md`):
+
+- **Status.** The endpoint is wired (M3 6-5, DL-215 to DL-220). It also serves every session without a grant, with the session's own tools (DL-165).
+- **Protocol versions (§5.1).** The station accepts `2025-11-25` (Claude 2.1.296 and later, DL-220), `2025-06-18` and `2025-03-26`.
+- **Tool names (§6.3).** The catalog uses `assign` (not `create_task`), `interrupt` and `stop` (not `interrupt_session`, `stop_session`) and `spawn` (not `spawn_session`). There is no `fleet_status` and no `list_tasks`; `read_session` needs `inspect` (ADR-008). `wait_tasks` (DL-160) and `command_status` (MCP P0) were added.
+- **`command_status` (§6.3, §6.5).** The station lists it for a grant with `mail`, `drive`, `spawn`, `manage` or `answer`. The deck allows it for any mutating class and returns only the receipts of the admitted grant: `coordinator_receipts.grant_id` (deck schema V40) must equal that grant.
+- **Spawn grants (§4).** The board can give the class `spawn`, a `spawn_cap` and `max_modes`; a spawn grant needs the owner's elevation. A coordinator `spawn` whose spec carries a `coordinator` is a stored `forbidden`.
