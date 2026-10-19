@@ -1,5 +1,6 @@
 # Board paths for the remaining owner actions
 
+- **Revision history:** Revision 2 (2026-10-19): DESIGN REVIEW round 1 FAIL (1 BLOCKER, 4 MAJOR, 1 UNVERIFIED; report `adv-board-gaps-design-r1-codex.md`); fixed by the architect decisions O12-26.
 - **Status:** Proposed design (architect, 2026-10-19), from the advisor answer `advisor-board-gaps-answer.md` against v2 HEAD `fbce0923`. The architect accepts BG-1 to BG-4 as architect decisions (O12-25; the owner may change any of them). DESIGN REVIEW required before implementation; PRE-PR required before merge; live smoke required for the real sudo/pacman, compositor tools and process trees.
 - **Scope:** four gaps that still need an action on the station itself: the desktop tools (`operations.md` lines about 642, 799, 925 and 930); the installer conflict repair and the busy lock code (DL-243 items b and e); a P8 failure before the station is linked (DL-243 item c and `operations.md` §15.3); stopping the processes of a lost run (`operations.md` about line 978).
 - **Out of scope:** the residual product gaps of §1 (unsupported package delivery, trust or configuration repairs before the link, legacy process attribution without a trustworthy witness).
@@ -119,12 +120,16 @@ Params: `{}`. Answer:
   "installable": ["wtype", "wf_recorder"],
   "unavailable": ["wlrctl"],
   "already_present": ["grim"],
-  "command_display": "sudo pacman -S --needed ...",
+  "command_display": "sudo pacman -S --needed --noconfirm ...",
   "system_upgrade": false
 }
 ```
 
 - The station chooses the packages from a compiled allowlist. No package, repository, URL, path, option or command string that the browser supplies reaches execution.
+- **The policy covers the complete package transaction, not only the targets.** Before the terminal opens, the station runs a dry run without root with the fixed argv `pacman -Sp --needed --print-format '%r %n %v' <targets>`. It keeps the resolved list (repository, name and version of every package) in the plan.
+- The plan is valid only when both conditions are true: every resolved package comes from the repository `core` or `extra`, and the list holds every allowlisted target that is missing. Otherwise the plan answers `transaction_refused` with the names of the packages that are not allowed. Nothing is installed.
+- The terminal command is `sudo pacman -S --needed --noconfirm <targets>`. A conflict prompt or a removal prompt gets the answer no from `--noconfirm`, so the transaction stops. There is no `-y`: the package databases do not change between the dry run and the installation.
+- **Accepted authority.** The scriptlets and the hooks of the packages from `core` and `extra` run as root during the transaction. The owner authorizes that with the sudo password.
 - `wlrctl` becomes installable only after the supported distribution contract provides a reviewed binary package through an already trusted package source. This design does not bootstrap repository trust and does not build AUR packages.
 - `system_upgrade` is `false`. A full system upgrade is never part of this plan. A separate full-upgrade action must disclose its scope. This design does not add that action.
 - A plan lasts two minutes. There is one plan for each station and owner login.
@@ -144,24 +149,41 @@ Params: `{}`. Answer:
 }
 ```
 
-It creates a **fresh maintenance PTY** and executes the fixed absolute sudo/pacman argv directly. It does not reuse a shell, does not run shell startup files and does not attach to a provider TUI. The browser displays the command before it requests this action.
+It creates a **fresh maintenance PTY**. The PTY belongs to a separate runner process (§2.6) that executes the fixed absolute sudo/pacman argv directly. It does not reuse a shell, does not run shell startup files and does not attach to a provider TUI. The browser displays the command before it requests this action.
 
 It reuses the shell receipts and the data transport. Rules:
 - A maintenance terminal cannot be handed to a provider.
 - The action respects `allow_shell`. It never bypasses it.
 - Opening a maintenance terminal needs an elevation with the label **Install desktop tools**.
+- **The PTY baseline has no echo.** The runner clears the terminal attributes `ECHO` and `ECHONL` on the slave side before it spawns the child and before it accepts any input. sudo saves the attributes that it finds and restores them, so the baseline stays echo-off after the authentication.
+- The runner accepts input only while the child runs, and only after it has set the PTY baseline. Input after the exit is refused with `maintenance_ended`.
+- The output that the station keeps is the output of the PTY only. With echo off, the typed input is not in that output.
 
 ### 2.6 Maintenance terminal lifecycle
 
-Before the start, the station revalidates the plan, the tool facts, the package mapping, the station identity and the shell policy.
+Before the start, the station revalidates the plan, the dry run, the tool facts, the package mapping, the station identity and the shell policy.
+
+**Runner.** The transaction runs in a separate runner process. The runner is the own binary of the station, `fleetdeck maintenance-run --id <id>`, started with `systemd-run --user --collect --unit=fleetdeck-maintenance-<id>`. The unit is a transient user unit that is independent of the station unit. The runner:
+- Owns the PTY and spawns sudo.
+- Keeps a bounded output ring of 256 KiB.
+- Writes a state file `<station data>/maintenance/<id>.json` with the mode 0600. Its state is `running`, `exited` with the exit code, or `lost`.
+- Serves one unix socket `<station data>/maintenance/<id>.sock` with the mode 0600 and an owner-checked peer. The socket carries the attach and the input.
 
 After the start:
 - A board disconnect does not terminate the transaction.
 - There is no automatic resend, restart, system upgrade, lock deletion or `--overwrite`.
 - Closing the panel detaches it. A running package transaction must not inherit a generic "close terminal and kill child" control.
-- A reconnect reattaches through the existing shell ownership checks.
+- The station never kills the runner. `shells.close_all()` does not touch it. A station restart closes only the socket connection of the station.
+- After a station restart, the station scans the state files and offers **Reattach** for a running transaction. A reconnect of the board reattaches through the existing shell ownership checks.
+- A runner whose unit is gone while its state file says `running` becomes `lost`. The board shows "The installation runner ended without a result. Check the desktop tools again."
 - The password travels only as terminal input. Never put it in a request body, a command receipt, an audit row, an analytics event or an input recording.
 - Exit code zero triggers fresh diagnostics. It does not by itself mean that the tools are usable.
+- After the exit, the station compares the installed package versions with the plan. A difference is reported as `transaction_changed`.
+
+Tests:
+- A password that is pasted before the sudo prompt, a failed authentication, a reconnect, and an input after the exit. Each test asserts that the typed bytes are in no stored output and in no retransmitted output.
+- A station restart during an active transaction; the reattach; the discovery of a completion after the restart.
+- A dry run with a package from another repository, with a missing target and with a conflict prompt: each gives `transaction_refused` or a stopped transaction.
 
 ### 2.7 Board texts
 
@@ -177,6 +199,11 @@ After the start:
 | Missing after installation | "The package transaction finished, but wtype is still missing from the desktop PATH." |
 | Unknown compatibility | "Installed. Desktop compatibility has not been verified." |
 | Passwordless sudo | "Passwordless sudo is enabled on this station." |
+| `transaction_refused` | "The package transaction needs packages that Fleet Deck does not allow. Nothing was installed." |
+| `transaction_changed` | "The installed packages differ from the reviewed plan." |
+| `maintenance_ended` | "The installation has ended. Input is not sent." |
+| Runner lost | "The installation runner ended without a result. Check the desktop tools again." |
+| Reconnect control | **Reattach** |
 
 ### 2.8 Audit
 
@@ -235,6 +262,17 @@ Add the read-only method `omarchy.install_plan`. Params: `{}`. Answer:
 ```
 
 `asset_id` is a finite protocol enum that maps to the embedded installer assets. The station never accepts a path from the browser.
+
+Wire additions of the feature `omarchy_repair.v1` for the recovery:
+
+| Method or action | Params | Answer and rules |
+|---|---|---|
+| read `omarchy.repair_status` | `{}` | The last 8 journals. For each: `repair_id`, `state` (`complete`, `incomplete` or `restored`) and, for each file, `asset_id`, `state` and `backup_path`. |
+| `omarchy.act` action `install_resume` | `{repair_id}` | Allowed only when the build hash of the journal equals the running build. Otherwise `build_mismatch`: "This repair was started by another build. Restore the kept copies instead." |
+| read `omarchy.restore_plan` | `{repair_id}` | A restore plan for the kept copies. |
+| `omarchy.act` action `restore` | `{repair_id, plan_id, asset_ids}` | Restores the selected assets (§3.6). |
+
+A lost action answer is recovered with `omarchy.repair_status`.
 
 Extend `omarchy.act` with this action:
 
@@ -298,12 +336,32 @@ Answer of the action:
 2. Accept only bounded regular files that the station user owns. Reject hard links and unsafe permissions or ancestry.
 3. Walk through directory descriptors without following links. Open reads nonblocking before the check of the file type.
 4. Use same-directory backup names with seconds **and random suffixes**, and `RENAME_NOREPLACE`. The existing filesystem helper already provides a no-replace rename.
-5. Journal the repair and the planned backup names durably before any mutation. Record each completed step.
+5. Journal the repair and the planned backup names durably before any mutation. Record each completed step. The journal and its recovery are in §3.5.1.
 6. Verify the moved object against the approved identity and content. A concurrent edit stops the operation. Retain every displaced object and restore it without clobbering when possible.
-7. Publish the assets without overwriting an unexpected target. Record each successful publication.
+7. Publish the assets without overwriting an unexpected target. Record each successful publication. The publication protocol is in §3.5.1.
 8. Keep the backups indefinitely. There is no automatic cleanup.
 9. On an interruption, report the actual state of each file. Do not claim "nothing changed" after the first mutation.
 10. Reopening the card shows **Resume repair** or **Restore kept copies…**, derived from the journal. Neither of them repeats the whole replacement operation without a check.
+
+#### 3.5.1 Publication, journal and recovery
+
+**Publication.** Each asset is written to a synced staging file in the target directory, with the name `.<name>.fleetdeck-stage-<random>`. The station publishes it with `renameat2(RENAME_NOREPLACE)` to the empty target name, after the backup moved the old file away. The station syncs the directory after each rename.
+
+**Journal.** The file is `<config home>/fleetdeck/omarchy-repair/<repair_id>.json`, with the mode 0600, synced, with at most 64 files. For each file it records the state (`planned`, `backed_up`, `staged`, `published` or `done`), the backup name, the staging name, the hash of the asset and the expected hash of the backup.
+
+**Recovery table.**
+
+| State | What is true | Recovery |
+|---|---|---|
+| `planned` | Nothing changed. | A restart is allowed. |
+| `backed_up` | The target is absent and the backup is present. | Resume publishes the asset, or restore renames the backup back (no replace). |
+| `staged` | A staging file exists. | Remove the staging file, then recover as `backed_up`. |
+| `published` | The target was published. | Verify that the hash of the target equals the hash of the asset: then `done`. Otherwise stop with `repair_incomplete`. |
+| `done` | Complete. | Nothing. |
+
+A target that exists with another hash, where the journal expects it absent, stops the recovery for that file with `restore_conflict`.
+
+Tests: a crash at each journal state and at each seam between a rename and the directory sync; a target that a later owner edit created; a lost action answer that is recovered with `omarchy.repair_status`; a resume on another build (`build_mismatch`).
 
 ### 3.6 Restore
 
@@ -322,6 +380,7 @@ Restoration is elevated and plan-based. It accepts a repair ID and asset IDs. It
 | `backup_failed` | "Fleet Deck could not keep a copy of a file. The repair stopped." |
 | `repair_incomplete` | "The repair stopped after changing some files. Review the kept copies and repair status." |
 | `restore_conflict` | "A current file changed after the repair. Fleet Deck kept both versions and did not overwrite it." |
+| `build_mismatch` | "This repair was started by another build. Restore the kept copies instead." |
 | `busy` | "Another Omarchy change is running. Try again shortly." |
 
 ### 3.8 Exit 3 for the busy lock
@@ -407,9 +466,18 @@ The supervisor:
 - Stops reporting after completion. A successfully linked station uses the existing board management path.
 - Treats a reporting failure as a diagnostic failure. It does not replace the retained provisioning error.
 
-Persist the consumption of `retry_id` **before** the supervisor starts the bootstrap with `--retry`. A crash in that interval must not replay the permission. On restart, the supervisor exposes the uncertain attempt and requires a new owner retry if needed. The normal bootstrap recovery can continue without clearing another terminal condition.
+**Retry authorization.** The supervisor does not pass a boolean retry flag for a report retry. It writes a structured authorization `<station data>/provision-retry.json` with the mode 0600 and the fields `retry_id`, `terminal_id` and `state_digest`. It runs `provision-bootstrap --file <file> --retry-authorization <path>`.
 
-A retry clears only the terminal error that the existing retry semantics permit. All the configuration, release, identity, service and pairing checks run again.
+Under `provision.lock`, the bootstrap:
+1. Computes the current terminal binding: the terminal ID and the digest of the retained condition, the configuration, the destination pin and the station identity.
+2. Compares the binding with the authorization.
+3. Only when they are equal, writes in one atomic state-file write the cleared error and `consumed_retry_id`.
+
+A mismatch keeps the retained condition, leaves the authorization unused and exits with `report_changed`. A `retry_id` that is already in `consumed_retry_id` is refused: there is no replay. A crash before the atomic write leaves the condition and the authorization unchanged. A crash after it cannot replay the permission, because `consumed_retry_id` is in the same write as the cleared error.
+
+A retry clears only the terminal error that the existing retry semantics permit. All the P8 checks (configuration, release, identity, service and pairing) run again after the clear, as before. `--retry` without an authorization keeps its existing meaning for a linked station (DL-243 **Retry provisioning**).
+
+Tests: a binding that changes between the supervisor check and the bootstrap lock (mismatch, `report_changed`, condition kept); a replay of a consumed `retry_id`; a crash on each side of the atomic write.
 
 ### 4.4 Deck and board routes
 
@@ -610,7 +678,7 @@ An accepted command means that the operation was admitted. Only its completed ef
 1. Serialize the operation against resume, import, reconcile and other stop operations of that session.
 2. Require the exact unresolved shim row, the database incarnation and the boot. Refuse an active managed run, a changed row, an unknown identity or an unsupported platform.
 3. Obtain a fresh full inventory for the stop plan. Do not reuse the read-side check as a termination census.
-4. Establish continuity with the original execution. A live original provider with the recorded identity and the expected session or group leadership can anchor the attribution. New code can also record trustworthy member witnesses while that original domain is known to be alive.
+4. Establish continuity with the original execution through the witness rules below.
 5. **An equal old PGID or SID alone is never such a witness.** If the provider is gone and no reliable witness exists, return `identity_unproven` and send no signal.
 6. Build the deduplicated union of the provider and the verified group and session members. Include the provider explicitly, because the existing member lists omit its leader.
 7. Require station-user ownership. Exclude PID 1, the station, its supervisor and the protected infrastructure. Unexpected ownership or a protected member refuses the plan.
@@ -619,6 +687,15 @@ An accepted command means that the operation was admitted. Only its completed ef
 10. At the dispatch, revalidate the row, the boot, the plan and the targets. A new member or a changed target set before the signalling gives `plan_changed`.
 11. Send SIGTERM to each target individually through its pidfd. Wait five seconds with monotonic time. Send SIGKILL only through the same pidfds, only to the surviving authorized targets.
 12. Finish with a fresh execution check. Bound the operation to fifteen seconds. Survivors that are unreadable or uninterruptible stay visible.
+
+**Witness.** When the shim spawns the provider in a new session, the station records durably the leader identity (the PID, the start time in clock ticks since boot, and the boot ID) with the run. The authorization of a domain (the session and the group of that PID) follows these rules:
+- **(a) The leader is alive.** The leader with the recorded PID, start time and boot ID is alive, and it is still the leader of that session and of that group. Then every current member of that session or group that the station user owns is a target.
+- **(b) The leader is gone.** A member is a target only when the station recorded it as a member witness (PID, start time and boot ID) while the leader was alive, and it is still in that session or group now.
+- A witness authorizes only itself. It never authorizes other members.
+- A witness that left the domain is not a target.
+- A legacy run without a recorded leader identity gives `identity_unproven`.
+
+Test: an escaped witness and a recycled domain number both refuse with `identity_unproven`.
 
 Do not add newly forked processes to the authorized set automatically. Return `processes_remain` and require another reviewed plan. Otherwise a reviewed finite list becomes an open-ended kill authority.
 
@@ -666,10 +743,10 @@ The four proofs are acceptance criteria:
 
 | Surface | Behavior proof | Failure proof | Exposure proof | Version proof |
 |---|---|---|---|---|
-| Tools | Fixed facts use the desktop environment; exact compiled package argv; fresh facts after the transaction | Missing package, stale plan, denied sudo, shell disabled, disconnect during the transaction, package succeeds but PATH stays wrong | No command interpolation; no password or terminal input in storage or audit; no input or recording side effects from probes | Independent diagnostics and install features; old station and old deck; installed package with an unknown executable version |
-| Replacement | Unrecorded conflicts are replaced; recorded edits need a selection; backups and restore work | Backup collision, concurrent edit, full disk, failure or crash at every journal step, lock contention, changed restore target | No symlink, special file or path escape; no backup overwrite; no file contents in diagnostics or audit | An old station never gets the new action; CLI exit mapping; a repair journal or build mismatch invalidates the plan |
-| Provision reports | A report reaches the unpaired-key list; the exact one-shot retry reruns the P8 checks | Invalid file or pin, absent key, offline supervisor, changed state, crash after the permission was consumed, full report capacity | Forged name or code, replay, cross-key retry, key rotation, Sybil flooding, bounded audit and storage, no enrollment side effect | Bilateral feature negotiation; old hook or package; ordinary pairing unchanged |
-| Execution stop | The provider is included; the union is deduplicated; TERM then a five-second KILL through the retained pidfds | PID reuse at every seam, recycled PGID or SID, absent anchor, forks, escapes, zombies, permission failure, restart and duplicate command | Board-only admission; protected and foreign processes refused; no numeric group kill; no arguments exposed | Legacy rows without witnesses refuse safely; unsupported pidfds or platform; an old peer never receives the command |
+| Tools | Fixed facts use the desktop environment; exact compiled package argv; fresh facts after the transaction | Missing package, stale plan, denied sudo, shell disabled, disconnect during the transaction, station restart during the transaction, package succeeds but PATH stays wrong, a dry run with a package that is not allowed | No command interpolation; no password or terminal input in any stored or retransmitted output (early paste, failed authentication, reconnect, input after the exit), audit or storage; no input or recording side effects from probes | Independent diagnostics and install features; old station and old deck; installed package with an unknown executable version |
+| Replacement | Unrecorded conflicts are replaced; recorded edits need a selection; backups and restore work | Backup collision, concurrent edit, full disk, failure or crash at every journal state, lost action answer, lock contention, changed restore target | No symlink, special file or path escape; no backup overwrite; no file contents in diagnostics or audit | An old station never gets the new action; CLI exit mapping; a repair journal or build mismatch invalidates the plan |
+| Provision reports | A report reaches the unpaired-key list; the exact one-shot retry reruns the P8 checks | Invalid file or pin, absent key, offline supervisor, changed state, crash on each side of the atomic consumption, binding change before the bootstrap lock, full report capacity | Forged name or code, replay, cross-key retry, key rotation, Sybil flooding, bounded audit and storage, no enrollment side effect | Bilateral feature negotiation; old hook or package; ordinary pairing unchanged |
+| Execution stop | The provider is included; the union is deduplicated; TERM then a five-second KILL through the retained pidfds | PID reuse at every seam, recycled PGID or SID, escaped witness, absent anchor, forks, escapes, zombies, permission failure, restart and duplicate command | Board-only admission; protected and foreign processes refused; no numeric group kill; no arguments exposed | Legacy rows without witnesses refuse safely; unsupported pidfds or platform; an old peer never receives the command |
 
 Use fake binaries, fake process inspectors and deterministic crash seams for the automated proofs. The live smoke must exercise the real sudo and pacman, the supported compositor and tool versions, and controlled disposable process trees through the board. The automated tests must not install packages and must not signal unrelated host processes.
 
@@ -679,11 +756,11 @@ Use fake binaries, fake process inspectors and deterministic crash seams for the
 |---|---|
 | **A: Protocol contracts** | Feature constants, strict schemas, generated TS, method scopes, error catalogue, independent version gates |
 | **B: Tool diagnostics** | Shared desktop resolver, bounded probes, version provenance, keyboard, plugin and sudo facts |
-| **C: Maintenance terminal** | Fixed package mapping, plans, owner elevation, dedicated PTY lifecycle, reconnect behavior; keep the no-install packaging test |
-| **D: Installer repair** | CLI exit 3, structured plans, the distinction between conflict and edit, no-clobber backups, journal, recovery and restore |
-| **E: Provision supervisor** | Packaged lifecycle, safe state and identity loading, terminal binding, polling and durable one-shot retry consumption |
+| **C: Maintenance terminal** | Fixed package mapping, plans, owner elevation, dry-run transaction check, echo-off PTY baseline, separate runner process with state file and socket, reattach after a station restart; keep the no-install packaging test |
+| **D: Installer repair** | CLI exit 3, structured plans, the distinction between conflict and edit, no-clobber backups, staged no-replace publication, journal states, recovery table, repair status, resume and restore |
+| **E: Provision supervisor** | Packaged lifecycle, safe state and identity loading, terminal binding, polling and the structured retry authorization that the bootstrap consumes atomically under `provision.lock` |
 | **F: Report listener and store** | Pair-channel branch, admission and resource limits, bounded report storage, owner routes and audit |
-| **G: Execution safety** | Strong inventory, attribution witnesses, pidfd plans, durable effects, session serialization, fresh final checks |
+| **G: Execution safety** | Strong inventory, leader identity and member witnesses, pidfd plans, durable effects, session serialization, fresh final checks |
 | **H: Board** | Diagnostics, maintenance preview and terminal, repair review and recovery, unpaired report list, stop confirmation and the exact texts |
 | **I: Proofs and documents** | End-to-end tests; `PARITY.md`, `SECURITY-CHECKLIST.md`, operations, smoke and decision-log updates |
 
