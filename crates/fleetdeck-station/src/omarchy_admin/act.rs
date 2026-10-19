@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fleetdeck_proto::link::Outcome;
-use fleetdeck_proto::omarchy_admin::{ActOutcome, OmarchyActParams, OmarchyAction, code};
+use fleetdeck_proto::omarchy_admin::{
+    ActOutcome, LOCK_BUSY_EXIT, OmarchyActParams, OmarchyAction, code,
+};
 use serde_json::Value;
 
 use super::child::{RunResult, clean_message};
@@ -105,6 +107,10 @@ impl OmarchyAdmin {
                 stderr,
                 ..
             }) => (ActOutcome::Failed, Some(refused), clean_message(&stderr)),
+            // The Omarchy lock stayed busy for the whole wait of the command.
+            Ok(RunResult::Exit { code: Some(c), .. }) if c == i32::from(LOCK_BUSY_EXIT) => {
+                (ActOutcome::Failed, Some(code::BUSY), None)
+            }
             Ok(RunResult::Exit { .. }) => (ActOutcome::Failed, Some(code::FAILED), None),
             Ok(RunResult::TimedOut) => (ActOutcome::Failed, Some(code::TIMEOUT), None),
             Ok(RunResult::TooLarge) => (ActOutcome::Failed, Some(code::OUTPUT_TOO_LARGE), None),

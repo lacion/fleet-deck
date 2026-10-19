@@ -245,7 +245,10 @@ fn screensaver_commands_with_the_lock_held_by_another_change_do_nothing() {
     let wait = Duration::from_millis(150);
     for run in [on, off, rebaseline] {
         let started = std::time::Instant::now();
-        assert_eq!(code(run(&home, wait).unwrap()), fail());
+        assert_eq!(
+            code(run(&home, wait).unwrap()),
+            code(ExitCode::from(LOCK_BUSY_EXIT))
+        );
         assert!(started.elapsed() >= wait);
     }
     assert_eq!(record::load(&home).unwrap().unwrap(), record);

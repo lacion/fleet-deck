@@ -37,6 +37,11 @@ pub mod code {
     pub const FAILED: &str = "failed";
 }
 
+/// The exit code of an Omarchy CLI command that waited 10 s for the Omarchy
+/// lock and did not get it (DL-243 item b, `board-gaps.md` §3.8). The station
+/// maps it to [`code::BUSY`]; exit 1 keeps the refusal meaning.
+pub const LOCK_BUSY_EXIT: u8 = 3;
+
 /// One action of `omarchy.act`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]

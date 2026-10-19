@@ -16,6 +16,7 @@ use super::fsx::Home;
 use super::lock::{self, Take};
 use super::record::{self, FileEntry, Record, rel, sha256_hex};
 use super::{TOOL_LIMIT, hyprland, omarchy_env, open_home, set_summary, tool};
+use fleetdeck_proto::omarchy_admin::LOCK_BUSY_EXIT;
 
 const RESCAN: &str = "omarchy-shell shell rescanPlugins";
 const ENABLE: &str = "omarchy plugin enable fleetdeck.fleet --section right";
@@ -202,7 +203,7 @@ pub async fn run(dirs: &NodeDirs, yes: bool, screensaver: bool) -> anyhow::Resul
         Take::Held(guard) => guard,
         Take::Busy | Take::NoLockFile => {
             eprintln!("{}", lock::BUSY);
-            return Ok(ExitCode::from(1));
+            return Ok(ExitCode::from(LOCK_BUSY_EXIT));
         }
     };
     let mut record = record::load(&home)?.unwrap_or_default();

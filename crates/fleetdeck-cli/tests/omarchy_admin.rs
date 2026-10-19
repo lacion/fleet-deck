@@ -165,13 +165,13 @@ fn omarchy_admin_a_tick_writes_nothing_for_a_version_1_record() {
 // ---- the lock ----
 
 #[test]
-fn omarchy_admin_install_with_the_lock_held_waits_then_exits_1() {
+fn omarchy_admin_install_with_the_lock_held_waits_then_exits_3() {
     let rig = Rig::new();
     assert_eq!(rig.install().status.code(), Some(0));
     let _lock = hold_lock(&rig);
     let started = Instant::now();
     let (c, o, e) = code(&rig, &["omarchy", "install", "--yes"]);
-    assert_eq!((c, o.as_str()), (1, ""), "{e}");
+    assert_eq!((c, o.as_str()), (3, ""), "{e}");
     assert!(e.contains(BUSY), "{e}");
     assert!(
         started.elapsed() >= Duration::from_secs(9),
@@ -181,14 +181,14 @@ fn omarchy_admin_install_with_the_lock_held_waits_then_exits_1() {
 }
 
 #[test]
-fn omarchy_admin_screensaver_on_with_the_lock_held_waits_then_exits_1() {
+fn omarchy_admin_screensaver_on_with_the_lock_held_waits_then_exits_3() {
     let rig = Rig::new();
     assert_eq!(rig.install().status.code(), Some(0));
     let before = std::fs::read(record_path(&rig)).unwrap();
     let _lock = hold_lock(&rig);
     let started = Instant::now();
     let (c, _, e) = code(&rig, &["omarchy", "screensaver", "on"]);
-    assert_eq!(c, 1, "{e}");
+    assert_eq!(c, 3, "{e}");
     assert!(e.contains(BUSY), "{e}");
     assert!(
         started.elapsed() >= Duration::from_secs(9),
@@ -199,13 +199,13 @@ fn omarchy_admin_screensaver_on_with_the_lock_held_waits_then_exits_1() {
 }
 
 #[test]
-fn omarchy_admin_uninstall_with_the_lock_held_exits_1_and_changes_nothing() {
+fn omarchy_admin_uninstall_with_the_lock_held_exits_3_and_changes_nothing() {
     let rig = Rig::new();
     assert_eq!(rig.install().status.code(), Some(0));
     let before = std::fs::read(record_path(&rig)).unwrap();
     let _lock = hold_lock(&rig);
     let (c, o, e) = code(&rig, &["omarchy", "uninstall"]);
-    assert_eq!((c, o.as_str()), (1, ""), "{e}");
+    assert_eq!((c, o.as_str()), (3, ""), "{e}");
     assert!(e.contains(BUSY), "{e}");
     assert_eq!(std::fs::read(record_path(&rig)).unwrap(), before);
     assert!(rig.omarchy_dir().join(rig::MANIFEST).exists());

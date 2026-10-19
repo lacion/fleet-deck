@@ -83,6 +83,23 @@ async fn omarchy_exit_codes_map_to_the_fixed_codes() {
 }
 
 #[tokio::test]
+async fn omarchy_a_busy_lock_exit_is_busy_for_every_action() {
+    for action in [
+        "install",
+        "uninstall",
+        "screensaver_on",
+        "screensaver_off",
+        "screensaver_rebaseline",
+    ] {
+        let rig = Rig::new("echo 'Another Omarchy change is running.' >&2; exit 3");
+        let got = result(act(&rig.admin, action, true).await);
+        assert_eq!(got.outcome, ActOutcome::Failed, "{action}");
+        assert_eq!(got.code.as_deref(), Some("busy"), "{action}");
+        assert_eq!(got.message, None, "{action}");
+    }
+}
+
+#[tokio::test]
 async fn omarchy_a_program_that_does_not_start_is_failed_without_a_message() {
     let rig = Rig::with("exit 0", |cfg| {
         cfg.program = "/nonexistent/fleetdeck".into()

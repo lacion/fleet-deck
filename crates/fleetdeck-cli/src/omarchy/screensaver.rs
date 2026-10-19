@@ -30,6 +30,7 @@ use super::lock::{self, LockGuard, Take};
 use super::record::{self, LoadError, Record, Restored, Screensaver, rel, sha256_hex};
 use super::{STATION_LIMIT, digits, omarchy_env, open_home, tool};
 use crate::desktop_feed::{Answer, ask, corrected};
+use fleetdeck_proto::omarchy_admin::LOCK_BUSY_EXIT;
 
 /// The screensaver file, relative to `<omarchy>`.
 pub const FILE: &str = "branding/screensaver.txt";
@@ -274,7 +275,7 @@ fn begin(home: &Home, wait: Duration) -> anyhow::Result<Result<(LockGuard, Recor
         Take::Held(guard) => guard,
         Take::Busy => {
             eprintln!("{}", lock::BUSY);
-            return Ok(Err(ExitCode::from(1)));
+            return Ok(Err(ExitCode::from(LOCK_BUSY_EXIT)));
         }
         Take::NoLockFile => {
             eprintln!("{NOT_INSTALLED}");

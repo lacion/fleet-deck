@@ -10,6 +10,7 @@ use super::fsx::Home;
 use super::lock::{self, Take};
 use super::record::{self, LoadError, Record, rel, sha256_hex};
 use super::{TOOL_LIMIT, hyprland, omarchy_env, open_home, screensaver, set_summary, tool};
+use fleetdeck_proto::omarchy_admin::LOCK_BUSY_EXIT;
 
 const DISABLE: &str = "omarchy plugin disable fleetdeck.fleet";
 
@@ -86,7 +87,7 @@ pub async fn run(dirs: &NodeDirs) -> anyhow::Result<ExitCode> {
         Take::Held(guard) => guard,
         Take::Busy => {
             eprintln!("{}", lock::BUSY);
-            return Ok(ExitCode::from(1));
+            return Ok(ExitCode::from(LOCK_BUSY_EXIT));
         }
         Take::NoLockFile => return nothing(),
     };

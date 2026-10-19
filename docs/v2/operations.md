@@ -448,7 +448,7 @@ When an action fails, the card shows a fixed text. Below it, the card shows the 
 | Omarchy was not found on this station. | The station has no Omarchy. |
 | Provisioning cannot be retried from the board in this state. | **Retry provisioning** is not allowed in this state. |
 
-Another command of the station can hold the Omarchy lock. The command then waits 10 seconds and ends with the message "Another Omarchy change is running." The board shows the text of the install or screensaver refusal above that message, not the "busy" text (DL-243 open item b). Wait a moment and press the button again.
+Another command of the station can hold the Omarchy lock. The command then waits 10 seconds and ends with exit code 3. The board then shows "Another Omarchy action is running on this station." Wait a moment and press the button again.
 
 ##### Install and uninstall
 
