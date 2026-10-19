@@ -17,7 +17,7 @@
 use rusqlite::Connection;
 
 const DECK_V2_LAST: usize = 25;
-const DECK_LATEST: i64 = 41;
+const DECK_LATEST: i64 = 42;
 const STATION_V2_LAST: usize = 27;
 const STATION_LATEST: i64 = 40;
 
@@ -686,7 +686,7 @@ fn migration_v37_keeps_the_rows_and_signs_every_session_out() {
         "SELECT (SELECT count(*) FROM login_sessions) + (SELECT count(*) FROM member_sessions)";
     assert_eq!(count(&conn, sessions), 0);
     for sql in [
-        "INSERT INTO login_sessions VALUES ('s2', 'c', 'password', 1, 1, 99, '192.0.2.1', 5)",
+        "INSERT INTO login_sessions VALUES ('s2', 'c', 'password', 1, 1, 99, '192.0.2.1', 5, 0)",
         "INSERT INTO member_sessions VALUES ('m2', 'mem', 'sh', 'c', 1, 99, '2001:db8::1', 5)",
     ] {
         conn.execute(sql, []).unwrap();

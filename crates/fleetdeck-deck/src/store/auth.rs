@@ -332,9 +332,17 @@ impl DeckStore {
             tx.execute(
                 "INSERT INTO login_sessions
                  (session_hash, csrf_token, method, created_at, last_seen, expires_at,
-                  last_addr, last_addr_seen_at)
-                 VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, CASE WHEN ?6 IS NULL THEN NULL ELSE ?4 END)",
-                params![hash, stored, method.as_str(), now, expires_at, addr],
+                  last_addr, last_addr_seen_at, idle_until)
+                 VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, CASE WHEN ?6 IS NULL THEN NULL ELSE ?4 END, ?7)",
+                params![
+                    hash,
+                    stored,
+                    method.as_str(),
+                    now,
+                    expires_at,
+                    addr,
+                    now + knobs.login_idle_ms
+                ],
             )?;
             tx.commit()?;
             Ok(())
@@ -354,14 +362,21 @@ impl DeckStore {
     pub async fn login_session(&self, cookie: &Secret<String>) -> Result<Option<LoginSession>> {
         let hash = secret_hash(cookie.expose());
         let now = self.now_ms();
-        let idle_ms = self.knobs().login_idle_ms;
+        let knobs = self.knobs();
         call(&self.inner.db, move |conn| {
             let found = conn
                 .query_row(
-                    "UPDATE login_sessions SET last_seen = ?2
+                    "UPDATE login_sessions SET last_seen = ?2, idle_until = ?5
                      WHERE session_hash = ?1 AND expires_at > ?2 AND last_seen > ?3
+                       AND idle_until > ?2 AND created_at > ?4
                      RETURNING csrf_token, created_at, expires_at",
-                    params![hash, now, now - idle_ms],
+                    params![
+                        hash,
+                        now,
+                        now - knobs.login_idle_ms,
+                        now - knobs.login_max_ms,
+                        now + knobs.login_idle_ms
+                    ],
                     |r| {
                         Ok(LoginSession {
                             session_hash: hash.clone(),
@@ -390,9 +405,16 @@ impl DeckStore {
         call(&self.inner.db, move |conn| {
             let n = match &principal {
                 Principal::Owner(s) => conn.execute(
-                    "UPDATE login_sessions SET last_seen = ?2
-                     WHERE session_hash = ?1 AND expires_at > ?2 AND last_seen > ?3",
-                    params![s.session_hash, now, now - knobs.login_idle_ms],
+                    "UPDATE login_sessions SET last_seen = ?2, idle_until = ?5
+                     WHERE session_hash = ?1 AND expires_at > ?2 AND last_seen > ?3
+                       AND idle_until > ?2 AND created_at > ?4",
+                    params![
+                        s.session_hash,
+                        now,
+                        now - knobs.login_idle_ms,
+                        now - knobs.login_max_ms,
+                        now + knobs.login_idle_ms
+                    ],
                 )?,
                 Principal::Token(_, hash) => conn.execute(
                     "UPDATE api_tokens SET last_used = ?2
@@ -402,16 +424,16 @@ impl DeckStore {
                 // The login and its share must both be alive (a revoke or
                 // an expiry of the share ends the member at once).
                 Principal::Member(_, g) => {
-                    return Ok(super::members::grant_alive(conn, &g.session_hash, now)?);
+                    return Ok(super::members::grant_alive(
+                        conn,
+                        &g.session_hash,
+                        now,
+                        &knobs,
+                    )?);
                 }
                 // The display session and its display must both be alive.
                 Principal::Display(d) => {
-                    return super::displays::session_alive(
-                        conn,
-                        &d.session_hash,
-                        now,
-                        knobs.display_idle_ms,
-                    );
+                    return super::displays::session_alive(conn, &d.session_hash, now, &knobs);
                 }
             };
             Ok(n == 1)
@@ -427,12 +449,18 @@ impl DeckStore {
     /// A database error.
     pub async fn login_alive(&self, session_hash: String) -> Result<bool> {
         let now = self.now_ms();
-        let idle_ms = self.knobs().login_idle_ms;
+        let knobs = self.knobs();
         call(&self.inner.db, move |conn| {
             let n: i64 = conn.query_row(
                 "SELECT COUNT(*) FROM login_sessions
-                 WHERE session_hash = ?1 AND expires_at > ?2 AND last_seen > ?3",
-                params![session_hash, now, now - idle_ms],
+                 WHERE session_hash = ?1 AND expires_at > ?2 AND last_seen > ?3
+                   AND idle_until > ?2 AND created_at > ?4",
+                params![
+                    session_hash,
+                    now,
+                    now - knobs.login_idle_ms,
+                    now - knobs.login_max_ms
+                ],
                 |r| r.get(0),
             )?;
             Ok(n == 1)

@@ -777,6 +777,7 @@ pub fn migrations() -> Migrations<'static> {
         // V40 (MCP P0): the grant of a coordinator receipt.
         M::up(super::coordinator_receipt_grant_schema::SQL),
         M::up(super::recording_length_schema::SQL),
+        M::up(super::session_idle_schema::SQL),
     ])
 }
 

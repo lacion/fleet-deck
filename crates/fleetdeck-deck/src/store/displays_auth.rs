@@ -49,10 +49,18 @@ pub(super) fn issue_fenced(
     )?;
     let n = conn.execute(
         "INSERT INTO display_sessions
-         (session_hash, display_id, created_at, last_seen, expires_at, auth_generation)
-         SELECT ?1, d.display_id, ?3, ?3, ?4, d.auth_generation FROM displays d
+         (session_hash, display_id, created_at, last_seen, expires_at, auth_generation,
+          idle_until)
+         SELECT ?1, d.display_id, ?3, ?3, ?4, d.auth_generation, ?6 FROM displays d
          WHERE d.display_id = ?2 AND d.revoked_at IS NULL AND d.auth_generation = ?5",
-        params![hash, display_id, now, expires_at, generation],
+        params![
+            hash,
+            display_id,
+            now,
+            expires_at,
+            generation,
+            now + knobs.display_idle_ms
+        ],
     )?;
     Ok((n == 1).then(|| IssuedSession {
         display_id: display_id.to_owned(),
