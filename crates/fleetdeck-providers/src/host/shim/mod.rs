@@ -29,6 +29,7 @@ pub mod settle;
 pub mod start;
 mod status;
 pub mod stdin;
+pub mod stop_inventory;
 pub mod wire;
 pub mod writes;
 

@@ -267,6 +267,15 @@ pub enum SessionCommand {
         session_id: SessionId,
         shim_id: String,
     },
+    /// Stop the processes of a lost run that the stop plan `plan_id`
+    /// listed (BG-4, design `board-gaps.md` §5). Board origin only; needs
+    /// `execution_stop.v1`. The command carries no origin, PID, group,
+    /// UID, signal or timeout.
+    StopExecution {
+        session_id: SessionId,
+        shim_id: String,
+        plan_id: String,
+    },
     /// Run `command` in the session folder, as `!` does in the terminal UIs
     /// (B8). Owner board command; needs `shell_command.v1`.
     ShellCommand {
@@ -412,6 +421,7 @@ impl SessionCommand {
             Self::WorktreePurge { .. } => "session.worktree_purge",
             Self::WorktreeRelease { .. } => "session.worktree_release",
             Self::ReconcileExecution { .. } => "session.reconcile_execution",
+            Self::StopExecution { .. } => "session.stop_execution",
             Self::ShellCommand { .. } => "session.shell_command",
             Self::ReleaseShell { .. } => "session.release_shell",
             Self::Land { .. } => "session.land",
@@ -461,6 +471,7 @@ impl SessionCommand {
             | Self::WorktreePurge { session_id, .. }
             | Self::WorktreeRelease { session_id }
             | Self::ReconcileExecution { session_id, .. }
+            | Self::StopExecution { session_id, .. }
             | Self::ShellCommand { session_id, .. }
             | Self::ReleaseShell { session_id, .. }
             | Self::Land { session_id, .. }

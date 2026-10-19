@@ -9,6 +9,7 @@ use fleetdeck_proto::event::{ProviderKind, RequestKind, ResolvedBy, RunOrigin, S
 use fleetdeck_proto::session::BatchRef;
 use fleetdeck_proto::{InputId, Operation, Reject, RejectCode, SessionId, SessionSummary};
 
+use super::decide_rename::rename;
 use super::policy::{Policy, WorkspaceError};
 use super::shell_decide::ShellInterrupt;
 use crate::coordinator::Bindings;
@@ -341,6 +342,8 @@ pub fn decide(
             session_id,
             shim_id,
         } => super::shims::decide_reconcile(d, origin, &session_id, &shim_id, None),
+        // The session manager decides this with the stop plans (`submit`).
+        SessionCommand::StopExecution { .. } => Err(super::stop_decide::refuse_direct()),
         // The session manager decides these with the shells of the station
         // (`SessionManager::submit`); here no shell list is known (DL-150).
         command @ (SessionCommand::WorktreeTrash { .. }
@@ -350,28 +353,6 @@ pub fn decide(
             super::trash::decide(d, policy, origin, None, command)
         }
     }
-}
-
-/// `session.rename` (DL-095): a station event and no effect. It changes no
-/// provider state, so an ended session or a session in a revert can be
-/// renamed. An unchanged title is accepted without an event.
-fn rename(
-    d: &mut Decision<'_>,
-    session_id: &SessionId,
-    title: Option<String>,
-) -> Result<CommandResult, DecideError> {
-    let summary = d
-        .summary(session_id)?
-        .ok_or_else(|| reject(RejectCode::UnknownSession, "no such session"))?;
-    let title = fleetdeck_proto::command::normalize_title(title.as_deref())
-        .map_err(|why| reject(RejectCode::InvalidCommand, why))?;
-    if summary.title != title {
-        d.append(
-            session_id,
-            fleetdeck_proto::event::Event::SessionRenamed { title }.into(),
-        )?;
-    }
-    Ok(result(session_id, None))
 }
 
 pub(super) fn result(session_id: &SessionId, input_id: Option<InputId>) -> CommandResult {

@@ -86,6 +86,11 @@ pub mod feature {
     /// shim host (DL-182).
     pub const SHIM_RESUME: &str = "shim.resume.v1";
 
+    /// `session.execution_stop_plan` and `session.stop_execution`: the stop
+    /// plan and the board-origin command that stop the processes of a lost
+    /// run through pidfds (BG-4).
+    pub const EXECUTION_STOP: &str = "execution_stop.v1";
+
     /// `artifacts.publish`, `artifacts.list`, `artifacts.get` and
     /// `artifacts.file`: the artifact service (R12, DL-165).
     pub const ARTIFACTS: &str = "artifacts.v1";
@@ -271,6 +276,7 @@ pub mod feature {
         DESKTOP_INPUT_MCP,
         DESKTOP_CLICK_MCP,
         DESKTOP_INPUT_ANY,
+        EXECUTION_STOP,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

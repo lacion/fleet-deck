@@ -53,6 +53,9 @@ use crate::display_event::{
 };
 use crate::event::{Event, EventEnvelope};
 use crate::execution::{ExecutionCheck, ExecutionCheckQuery, ProcessInfo};
+use crate::execution_stop::{
+    ExecutionStopOutcome, ExecutionStopPlan, ExecutionStopPlanQuery, StopOutcome,
+};
 use crate::files::{
     CheckpointRef, FileContent, FileListQuery, FileListing, FileReadQuery, FileSearch,
     FileSearchQuery, SessionDiff, SessionDiffQuery, TurnDiff, TurnDiffQuery,
@@ -517,6 +520,10 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         ExecutionCheckQuery::export_all(&cfg),
         ExecutionCheck::export_all(&cfg),
         ProcessInfo::export_all(&cfg),
+        ExecutionStopPlanQuery::export_all(&cfg),
+        ExecutionStopPlan::export_all(&cfg),
+        ExecutionStopOutcome::export_all(&cfg),
+        StopOutcome::export_all(&cfg),
         fg::GitSettings::export_all(&cfg),
         fg::PushMode::export_all(&cfg),
         fg::CleanupMode::export_all(&cfg),

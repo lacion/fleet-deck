@@ -78,6 +78,7 @@ pub const SESSION_METHODS: &[&str] = &[
     "session.worktree_purge",
     "session.worktree_release",
     "session.reconcile_execution",
+    "session.stop_execution",
     "session.shell_command",
     "session.release_shell",
     "session.land",

@@ -123,6 +123,7 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `workspace.trash.v1` | `session.worktree_trash`, `session.worktree_restore`, `session.worktree_purge`, `session.worktree_release` (DL-150; a worktree moved to a trash folder, restored, deleted for good, or released) |
 | `artifacts.v1` | `artifacts.publish`, `artifacts.list`, `artifacts.get`, `artifacts.file` (DL-165; R12 artifacts: versioned files that a session or a person publishes, stored in the station's data directory) |
 | `shim.resume.v1` | `session.execution_check`, `session.reconcile_execution` (DL-182; the termination check and the owner's reconciliation for resume on the shim host) |
+| `execution_stop.v1` | `session.execution_stop_plan`, `session.stop_execution` (BG-4, design `docs/v2/design/board-gaps.md` §5; the stop plan and the board-origin command that stop the processes of a lost run through pidfds) |
 | `shell_command.v1` | `session.shell_command`, `session.release_shell` (B8, DL-196; a `!` shell command in a session folder, and the owner's release of a folder) |
 | `desktop.v1` | `desktop.info`, `desktop.act` (R13 §6, DL-201; desktop control on the station: Hyprland and Omarchy info, and a closed list of actions with typed argv) |
 | `fleet_git.v1` | `fleet_git.projects_set`, `fleet_git.push_now`, `fleet_git` on `session.start`, and the events `workspace.base_stale`, `workspace.include_skipped`, `session.push`, `session.cleanup` (Fleet Git phase 1, ADR-009; the Git settings of a project, fetch before a start, push, cleanup and worktree bootstrap) |
@@ -347,7 +348,7 @@ Per link (these values replace §2.7 "at most 256 open streams"):
 
 | Methods | `params` type | Payload field | Holder |
 | --- | --- | --- | --- |
-| `session.start`, `session.resume`, `session.import`, `session.fork`, `session.prompt`, `session.steer`, `session.follow_up`, `session.interrupt`, `session.set_mode`, `session.set_model`, `session.stop`, `session.revert`, `session.rename`, `session.resolve_revert`, `session.set_auto_continue`, `session.coordinator_renew`, `session.coordinator_revoke`, `session.worktree_trash`, `session.worktree_restore`, `session.worktree_purge`, `session.worktree_release`, `session.reconcile_execution`, `session.shell_command`, `session.release_shell`, `session.land`, `session.move_out`, `session.move_in`, `session.move_finish`, `session.move_undo`, `approval.answer` | `CommandEnvelope` | `command` | station |
+| `session.start`, `session.resume`, `session.import`, `session.fork`, `session.prompt`, `session.steer`, `session.follow_up`, `session.interrupt`, `session.set_mode`, `session.set_model`, `session.stop`, `session.revert`, `session.rename`, `session.resolve_revert`, `session.set_auto_continue`, `session.coordinator_renew`, `session.coordinator_revoke`, `session.worktree_trash`, `session.worktree_restore`, `session.worktree_purge`, `session.worktree_release`, `session.reconcile_execution`, `session.stop_execution`, `session.shell_command`, `session.release_shell`, `session.land`, `session.move_out`, `session.move_in`, `session.move_finish`, `session.move_undo`, `approval.answer` | `CommandEnvelope` | `command` | station |
 | `station.configure` | `StationConfigureEnvelope` | `change` | station |
 | `link.rotate_key` | `KeyRotationEnvelope` | `rotation` | receiver |
 | `shell.open`, `shell.resize`, `shell.close`, `shell.handover`, `shell.release` | `ShellEnvelope` | `change` | station |
@@ -453,6 +454,8 @@ close             { reason, detail }
 | `session.worktree_trash`, `session.worktree_restore`, `session.worktree_purge`, `session.worktree_release` | deck → station | admin | `workspace.trash.v1` | yes |
 | `session.execution_check` | deck → station | read | `shim.resume.v1` | no |
 | `session.reconcile_execution` | deck → station | admin | `shim.resume.v1` | yes |
+| `session.execution_stop_plan` | deck → station | admin | `execution_stop.v1` | no |
+| `session.stop_execution` | deck → station | admin | `execution_stop.v1` | yes |
 | `session.shell_command` | deck → station | admin | `shell_command.v1` | yes |
 | `session.release_shell` | deck → station | admin | `shell_command.v1` | yes |
 | `desktop.info` | deck → station | read | `desktop.v1` | no |

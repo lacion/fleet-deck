@@ -311,6 +311,7 @@ impl SessionTarget {
             | EffectPayload::Worktree { .. }
             | EffectPayload::Land { .. }
             | EffectPayload::MoveIn { .. }
+            | EffectPayload::StopExecution { .. }
             | EffectPayload::Stop { .. } => {
                 return Dispatch::NotDispatched("not_a_live_operation".into());
             }

@@ -54,8 +54,31 @@ impl SessionManager {
     ) -> Result<fleetdeck_proto::execution::ExecutionCheck> {
         let rows = self.store.shims_unresolved(Some(session.clone())).await?;
         let boot = self.boot_reader();
-        tokio::task::spawn_blocking(move || shims::check_unresolved(&boot, &rows))
+        let newest = rows.last().cloned();
+        let check = tokio::task::spawn_blocking(move || shims::check_unresolved(&boot, &rows))
             .await
-            .map_err(|e| crate::store::StoreError::Corrupt(format!("the check did not run: {e}")))
+            .map_err(|e| {
+                crate::store::StoreError::Corrupt(format!("the check did not run: {e}"))
+            })?;
+        // BG-4: while the leader of the run lives, its members are recorded
+        // as witnesses. The answer does not change.
+        if let Some(row) = &newest {
+            self.record_witnesses(row).await;
+        }
+        Ok(check)
+    }
+
+    /// [`Self::execution_check`] for a deck link that negotiated
+    /// `execution_stop.v1`: the answer also holds `last_stop`, the newest
+    /// settled stop of the run.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn execution_check_with_stop(
+        &self,
+        session: &fleetdeck_proto::SessionId,
+    ) -> Result<fleetdeck_proto::execution::ExecutionCheck> {
+        let check = self.execution_check(session).await?;
+        Ok(self.add_last_stop(check).await)
     }
 }

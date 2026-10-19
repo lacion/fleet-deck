@@ -107,6 +107,8 @@ pub struct SessionTarget {
     shell: shell_run::ShellRunState,
     /// The memory of the target moves (FG-9), shared with the manager.
     moves: Option<Arc<super::land::move_in::MoveState>>,
+    /// The session locks and the stop plans (BG-4).
+    stops: super::stop_state::StopState,
 }
 
 impl SessionTarget {
@@ -147,6 +149,7 @@ impl SessionTarget {
             restart: Arc::default(),
             shell: shell_run::ShellRunState::default(),
             moves: None,
+            stops: super::stop_state::StopState::default(),
         }
     }
 
@@ -633,6 +636,8 @@ impl EffectTarget for SessionTarget {
                 transcript,
                 ..
             } => {
+                // BG-4 rule 1: not together with a stop plan or a stop.
+                let _serial = self.stops.locks.hold(&effect.session_id).await;
                 let (policy, boot) = (self.current_policy(), self.boot_reader());
                 if let Some(code) =
                     recheck(&self.store, policy.as_deref(), boot.as_ref(), effect).await
@@ -719,6 +724,8 @@ impl EffectTarget for SessionTarget {
             EffectPayload::Land { .. } => Dispatch::Confirmed,
             // (FG-9) The launch of a moved session runs in a task.
             EffectPayload::MoveIn { .. } => self.dispatch_move_in(effect),
+            // (BG-4) The stop of a lost run's processes, through pidfds.
+            EffectPayload::StopExecution { .. } => self.dispatch_stop(effect).await,
             _ => self.operate(effect).await,
         }
     }
@@ -756,6 +763,9 @@ mod target_base;
 
 #[path = "move_launch.rs"]
 mod move_launch;
+
+#[path = "target_stop.rs"]
+mod target_stop;
 
 #[cfg(any(test, feature = "fault-injection"))]
 #[path = "target_gate.rs"]

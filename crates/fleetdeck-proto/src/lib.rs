@@ -30,6 +30,7 @@ pub mod display_directive;
 pub mod display_event;
 pub mod event;
 pub mod execution;
+pub mod execution_stop;
 pub mod files;
 pub mod fleet_git;
 pub mod fleet_summary;

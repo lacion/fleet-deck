@@ -91,6 +91,8 @@ pub(crate) fn sample(method: &str) -> Value {
                 "reconcile_execution" => {
                     json!({"op": op, "session_id": s, "shim_id": "01J0000000000000000000000H"})
                 }
+                "stop_execution" => json!({"op": op, "session_id": s,
+                    "shim_id": "01J0000000000000000000000H", "plan_id": "plan-1"}),
                 "shell_command" => json!({"op": op, "session_id": s, "command": "ls"}),
                 "release_shell" => {
                     json!({"op": op, "session_id": s, "effect_id": "01J0000000000000000000000E"})
@@ -155,7 +157,7 @@ fn every_mutating_method_parses_its_envelope_and_names_its_method() {
             count += 1;
         }
     }
-    assert_eq!(count, 39);
+    assert_eq!(count, 40);
 }
 
 #[test]
