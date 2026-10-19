@@ -471,13 +471,112 @@ async fn the_input_rules_refuse_with_the_fixed_texts_class_first_then_the_opt_in
 #[test]
 fn the_input_check_names_no_value() {
     let classes = BTreeSet::from(INPUT_CLASSES);
-    let err = check_input_grant(&classes, true, None, (123_456, 0)).unwrap_err();
+    let err = check_input_grant(&classes, (true, false), None, (123_456, 0)).unwrap_err();
     assert!(!err.contains("123456"));
-    let err = check_input_grant(&classes, true, None, (0, 7_654_321)).unwrap_err();
+    let err = check_input_grant(&classes, (true, false), None, (0, 7_654_321)).unwrap_err();
     assert!(!err.contains("7654321"));
     assert_eq!(
-        check_input_grant(&classes, true, None, (5000, 1_000_000)),
+        check_input_grant(&classes, (true, false), None, (5000, 1_000_000)),
         Ok(())
     );
-    assert_eq!(check_input_grant(&classes, false, None, (0, 0)), Ok(()));
+    assert_eq!(
+        check_input_grant(&classes, (false, false), None, (0, 0)),
+        Ok(())
+    );
+}
+
+#[tokio::test]
+async fn a_grant_stores_the_click_allowance_and_the_any_window_scope_and_reads_them_back() {
+    let s = store().await;
+    // The default has no click allowance, and neither has an older-style grant.
+    assert!(!NewGrant::new(StationId::from("alpha"), SessionId::from("coord")).allow_click);
+    let plain = s.create_grant(input_grant(|_| {})).await.unwrap();
+    assert!(plain.allow_input && !plain.allow_click);
+    assert_eq!(plain.input_scope, Some(InputScope::OwnWindows));
+    // A click allowance with the own scope.
+    let mut g = input_grant(|_| {});
+    g.session_id = SessionId::from("c2");
+    g.allow_click = true;
+    let click = s.create_grant(g).await.unwrap();
+    assert!(click.allow_click);
+    assert_eq!(click.input_scope, Some(InputScope::OwnWindows));
+    assert_eq!(
+        s.grant(click.grant_id.clone()).await.unwrap().unwrap(),
+        click
+    );
+    // The broader scope, with and without the click allowance.
+    for (session, allow_click) in [("c3", false), ("c4", true)] {
+        let mut g = input_grant(|_| {});
+        g.session_id = SessionId::from(session);
+        g.input_scope = Some(InputScope::AnyWindow);
+        g.allow_click = allow_click;
+        let wide = s.create_grant(g).await.unwrap();
+        assert!(wide.allow_input);
+        assert_eq!(wide.input_scope, Some(InputScope::AnyWindow));
+        assert_eq!(wide.allow_click, allow_click);
+        assert_eq!(s.grant(wide.grant_id.clone()).await.unwrap().unwrap(), wide);
+    }
+}
+
+#[tokio::test]
+async fn the_click_rule_has_its_fixed_text_and_the_scope_rules_are_unchanged() {
+    let s = store().await;
+    assert_eq!(
+        invalid(&s, new_grant_with_click(&INPUT_CLASSES, false)).await,
+        "allow_click needs allow_input"
+    );
+    // With the click flag and a scope but no allowance, the scope rule that
+    // came first in P7 still comes first.
+    let mut g = new_grant_with_click(&INPUT_CLASSES, false);
+    g.input_scope = Some(InputScope::AnyWindow);
+    assert_eq!(invalid(&s, g).await, "input_scope needs allow_input");
+    // The class rule comes before the click rule.
+    let mut g = new_grant(&[GrantClass::Read]);
+    g.allow_input = true;
+    g.allow_click = true;
+    assert_eq!(
+        invalid(&s, g).await,
+        "allow_input needs the desktop, capture and input classes"
+    );
+    assert!(s.grants(10).await.unwrap().is_empty());
+}
+
+fn new_grant_with_click(classes: &[GrantClass], allow_input: bool) -> NewGrant {
+    let mut g = new_grant(classes);
+    g.allow_input = allow_input;
+    g.allow_click = true;
+    g
+}
+
+#[test]
+fn the_stored_scope_text_maps_both_ways_and_fails_closed() {
+    use crate::store::grants_input::{input_scope_of, scope_text};
+    assert_eq!(scope_text(InputScope::OwnWindows), "own_windows");
+    assert_eq!(scope_text(InputScope::AnyWindow), "any_window");
+    assert_eq!(
+        input_scope_of(1, Some("own_windows")),
+        Some(InputScope::OwnWindows)
+    );
+    assert_eq!(
+        input_scope_of(1, Some("any_window")),
+        Some(InputScope::AnyWindow)
+    );
+    for text in [None, Some("any"), Some("AnyWindow"), Some("")] {
+        assert_eq!(input_scope_of(1, text), None, "{text:?}");
+    }
+    // Without the allowance a stored scope is no scope.
+    assert_eq!(input_scope_of(0, Some("any_window")), None);
+}
+
+#[test]
+fn the_click_check_names_no_value_and_a_click_with_input_passes() {
+    let classes = BTreeSet::from(INPUT_CLASSES);
+    assert_eq!(
+        check_input_grant(&classes, (false, true), None, (0, 0)),
+        Err("allow_click needs allow_input")
+    );
+    assert_eq!(
+        check_input_grant(&classes, (true, true), Some(InputScope::AnyWindow), (5, 6)),
+        Ok(())
+    );
 }

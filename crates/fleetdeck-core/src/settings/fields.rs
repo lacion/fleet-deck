@@ -140,6 +140,22 @@ pub fn station_fields() -> Vec<FieldMeta> {
         )
         .danger(),
         field(
+            "allow_desktop_click",
+            "Allow agent clicks",
+            K::Bool,
+            Live,
+            "Allows explicitly authorized coordinator grants to send one left pointer click at a time in their permitted windows on this station. Needs Allow agent desktop input. Turning this off stops new clicks and requests interruption of an active click; already sent input cannot be undone.",
+        )
+        .danger(),
+        field(
+            "allow_desktop_input_any",
+            "Allow agent input in other application windows",
+            K::Bool,
+            Live,
+            "Allows explicitly authorized coordinator grants to use keyboard input, pointer movement and, when allowed, clicks in other application windows on this station, including terminals and signed-in browser windows. Needs Allow agent desktop input. Turning this off stops new input and requests interruption of active input; already sent input cannot be undone.",
+        )
+        .danger(),
+        field(
             "capture_monitors",
             "Screenshot monitors",
             K::Texts,

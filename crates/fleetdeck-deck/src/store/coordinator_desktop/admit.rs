@@ -74,7 +74,7 @@ fn needs(class: OpClass) -> GrantClass {
 fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admission> {
     let input = matches!(
         op.tool,
-        OpTool::KeyPress | OpTool::TypeText | OpTool::PointerMove
+        OpTool::KeyPress | OpTool::TypeText | OpTool::PointerMove | OpTool::PointerClick
     );
     // An input tool is always of the input class, and has its length (the
     // call layer builds both from the validated arguments).
@@ -128,14 +128,24 @@ fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admi
         return refuse(code::NOT_GRANTED);
     }
     if input {
+        // R13 P7b task F stub: the click is admitted by a later task, under
+        // any grant. Nothing is stored.
+        if op.tool == OpTool::PointerClick {
+            return refuse(code::DESKTOP_UNSUPPORTED);
+        }
         // R13 P7 §3.1: an input grant holds the three classes, the explicit
-        // allowance and the one supported scope.
+        // allowance and a supported scope.
         let all = [GrantClass::Desktop, GrantClass::Capture, GrantClass::Input];
         if !all.iter().all(|c| grant.classes.contains(c)) {
             return refuse(code::NOT_GRANTED);
         }
-        if !grant.allow_input || grant.input_scope != Some(InputScope::OwnWindows) {
+        if !grant.allow_input || grant.input_scope.is_none() {
             return refuse(code::INPUT_NOT_ALLOWED);
+        }
+        // R13 P7b task F stub: every input tool under the `any_window` scope
+        // is admitted by a later task. Nothing is stored.
+        if grant.input_scope == Some(InputScope::AnyWindow) {
+            return refuse(code::DESKTOP_UNSUPPORTED);
         }
     }
     // 3. The request key: the same payload replays, another one conflicts.
@@ -340,3 +350,7 @@ impl DeckStore {
         .await
     }
 }
+
+#[cfg(test)]
+#[path = "admit_p7b_tests.rs"]
+mod p7b_tests;

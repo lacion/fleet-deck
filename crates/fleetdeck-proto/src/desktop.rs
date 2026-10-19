@@ -227,6 +227,39 @@ pub enum DesktopAction {
         x: u32,
         y: u32,
     },
+    /// R13 P7b §9.1: one left click inside a preview that the caller owns
+    /// (needs `desktop_click_mcp.v1`). `x` and `y` are logical coordinates
+    /// relative to the preview.
+    InputPointerClick {
+        window_id: String,
+        x: u32,
+        y: u32,
+    },
+    /// R13 P7b §9.1: one key chord under an `any_window` grant (needs
+    /// `desktop_input_any.v1`). `window_id` is a preview handle or a handle
+    /// that `window_list` issued.
+    InputAnyKeyPress {
+        window_id: String,
+        chord: String,
+    },
+    /// R13 P7b §9.1: typed text under an `any_window` grant.
+    InputAnyTypeText {
+        window_id: String,
+        text: String,
+    },
+    /// R13 P7b §9.1: one pointer movement under an `any_window` grant.
+    InputAnyPointerMove {
+        window_id: String,
+        x: u32,
+        y: u32,
+    },
+    /// R13 P7b §9.1: one left click under an `any_window` grant (needs both
+    /// features).
+    InputAnyPointerClick {
+        window_id: String,
+        x: u32,
+        y: u32,
+    },
 }
 
 /// The action of the owner's HTTP relay (R13 §6D item 6): the closed list of
@@ -512,6 +545,51 @@ mod tests {
                     y: 4,
                 },
             ),
+            // R13 P7b §9.1: the click and the broader variants.
+            (
+                format!(r#"{{"action":"input_pointer_click","window_id":"{window}","x":3,"y":4}}"#),
+                DesktopAction::InputPointerClick {
+                    window_id: window.into(),
+                    x: 3,
+                    y: 4,
+                },
+            ),
+            (
+                format!(
+                    r#"{{"action":"input_any_key_press","window_id":"{window}","chord":"Ctrl+a"}}"#
+                ),
+                DesktopAction::InputAnyKeyPress {
+                    window_id: window.into(),
+                    chord: "Ctrl+a".into(),
+                },
+            ),
+            (
+                format!(r#"{{"action":"input_any_type_text","window_id":"{window}","text":"hi"}}"#),
+                DesktopAction::InputAnyTypeText {
+                    window_id: window.into(),
+                    text: "hi".into(),
+                },
+            ),
+            (
+                format!(
+                    r#"{{"action":"input_any_pointer_move","window_id":"{window}","x":3,"y":4}}"#
+                ),
+                DesktopAction::InputAnyPointerMove {
+                    window_id: window.into(),
+                    x: 3,
+                    y: 4,
+                },
+            ),
+            (
+                format!(
+                    r#"{{"action":"input_any_pointer_click","window_id":"{window}","x":3,"y":4}}"#
+                ),
+                DesktopAction::InputAnyPointerClick {
+                    window_id: window.into(),
+                    x: 3,
+                    y: 4,
+                },
+            ),
         ] {
             let parsed: DesktopAction = serde_json::from_str(&json).unwrap();
             assert_eq!(parsed, action);
@@ -526,6 +604,15 @@ mod tests {
             format!(r#"{{"action":"input_pointer_move","window_id":"{window}","x":-1,"y":0}}"#),
             format!(r#"{{"action":"input_pointer_move","window_id":"{window}","x":1.5,"y":0}}"#),
             format!(r#"{{"action":"input_pointer_click","window_id":"{window}"}}"#),
+            format!(
+                r#"{{"action":"input_pointer_click","window_id":"{window}","x":1,"y":2,"button":"left"}}"#
+            ),
+            format!(
+                r#"{{"action":"input_any_pointer_click","window_id":"{window}","x":-1,"y":2}}"#
+            ),
+            format!(r#"{{"action":"input_any_key_press","window_id":"{window}"}}"#),
+            format!(r#"{{"action":"input_any_type_text","window_id":"{window}","chord":"a"}}"#),
+            r#"{"action":"input_any_key_press","address":"0x1","chord":"a"}"#.to_owned(),
             r#"{"action":"input_key_press","address":"0x1","chord":"a"}"#.to_owned(),
         ] {
             assert!(

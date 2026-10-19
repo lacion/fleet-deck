@@ -271,6 +271,8 @@ pub(crate) async fn desktop_query(
         DesktopQuery::ReadCaptureImage(args) => {
             image::read(ctx, &station, who, args, started).await
         }
+        // R13 P7b task F stub: `window_list` is served by a later task.
+        DesktopQuery::WindowList(_) => unsupported(),
     }
 }
 

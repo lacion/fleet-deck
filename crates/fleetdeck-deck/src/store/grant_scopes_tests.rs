@@ -234,6 +234,7 @@ fn a_grant_is_in_effect_only_while_active_inside_its_lifetime_and_not_idle() {
         input_used: 0,
         input_character_cap: 0,
         input_character_used: 0,
+        allow_click: false,
     };
     assert!(in_effect(&base, 10_000));
     assert!(!in_effect(&base, 10_001));

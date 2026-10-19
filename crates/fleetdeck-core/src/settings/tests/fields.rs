@@ -172,6 +172,30 @@ fn the_tables_are_well_formed() {
          movement on this station. Turning this off stops new input and requests interruption \
          of active input; already sent input cannot be undone."
     );
+    // R13 P7b §3.2: the two new live danger fields and their exact texts.
+    let click = get("allow_desktop_click");
+    assert!(click.danger && click.apply == fleetdeck_proto::settings::Apply::Live);
+    assert_eq!(click.kind, FieldKind::Bool);
+    assert_eq!(click.label, "Allow agent clicks");
+    assert_eq!(
+        click.help,
+        "Allows explicitly authorized coordinator grants to send one left pointer click at a \
+         time in their permitted windows on this station. Needs Allow agent desktop input. \
+         Turning this off stops new clicks and requests interruption of an active click; \
+         already sent input cannot be undone."
+    );
+    let any = get("allow_desktop_input_any");
+    assert!(any.danger && any.apply == fleetdeck_proto::settings::Apply::Live);
+    assert_eq!(any.kind, FieldKind::Bool);
+    assert_eq!(any.label, "Allow agent input in other application windows");
+    assert_eq!(
+        any.help,
+        "Allows explicitly authorized coordinator grants to use keyboard input, pointer \
+         movement and, when allowed, clicks in other application windows on this station, \
+         including terminals and signed-in browser windows. Needs Allow agent desktop input. \
+         Turning this off stops new input and requests interruption of active input; already \
+         sent input cannot be undone."
+    );
     let monitors = get("capture_monitors");
     assert!(monitors.danger && monitors.apply == fleetdeck_proto::settings::Apply::Live);
     assert_eq!(monitors.kind, FieldKind::Texts);
@@ -347,4 +371,34 @@ fn agent_desktop_input_is_off_by_default_and_parses_as_a_bool() {
     let fx = Fixture::new(Some("name = \"box\"\nallow_desktop_input = true\n"));
     let view = view_station(&fx.config, &fx.env, &fx.store, &[]).unwrap();
     assert_eq!(view.values["allow_desktop_input"], json!(true));
+}
+
+#[test]
+fn agent_clicks_and_broader_input_are_off_by_default_and_parse_as_bools() {
+    // R13 P7b §3.2: the default is false everywhere; the keys are strict bools.
+    let c = StationConfig::parse("", &home()).unwrap();
+    assert!(!c.allow_desktop_click && !c.allow_desktop_input_any);
+    let c = StationConfig::parse(
+        "allow_desktop_click = true\nallow_desktop_input_any = true\n",
+        &home(),
+    )
+    .unwrap();
+    assert!(c.allow_desktop_click && c.allow_desktop_input_any);
+    // Each key is independent of the other and of `allow_desktop_input`.
+    let c = StationConfig::parse("allow_desktop_click = true\n", &home()).unwrap();
+    assert!(c.allow_desktop_click && !c.allow_desktop_input_any && !c.allow_desktop_input);
+    let c = StationConfig::parse("allow_desktop_input_any = true\n", &home()).unwrap();
+    assert!(!c.allow_desktop_click && c.allow_desktop_input_any);
+    assert!(StationConfig::parse("allow_desktop_click = \"yes\"\n", &home()).is_err());
+    assert!(StationConfig::parse("allow_desktop_input_any = 1\n", &home()).is_err());
+    let fx = Fixture::new(None);
+    let view = view_station(&fx.config, &fx.env, &fx.store, &[]).unwrap();
+    assert_eq!(view.values["allow_desktop_click"], json!(false));
+    assert_eq!(view.values["allow_desktop_input_any"], json!(false));
+    let fx = Fixture::new(Some(
+        "name = \"box\"\nallow_desktop_click = true\nallow_desktop_input_any = true\n",
+    ));
+    let view = view_station(&fx.config, &fx.env, &fx.store, &[]).unwrap();
+    assert_eq!(view.values["allow_desktop_click"], json!(true));
+    assert_eq!(view.values["allow_desktop_input_any"], json!(true));
 }

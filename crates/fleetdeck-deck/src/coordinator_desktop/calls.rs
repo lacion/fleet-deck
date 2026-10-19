@@ -99,6 +99,8 @@ fn shape(call: &DesktopCall) -> Option<(Tool, Option<&str>)> {
         DesktopCall::KeyPress(a) => Some((Tool::KeyPress, a.station.as_deref())),
         DesktopCall::TypeText(a) => Some((Tool::TypeText, a.station.as_deref())),
         DesktopCall::PointerMove(a) => Some((Tool::PointerMove, a.station.as_deref())),
+        // R13 P7b task F stub: `pointer_click` is served by a later task.
+        DesktopCall::PointerClick(_) => None,
     }
 }
 
@@ -204,7 +206,7 @@ fn build(
         DesktopCall::KeyPress(_) | DesktopCall::TypeText(_) | DesktopCall::PointerMove(_) => {
             input::build(call).unwrap_or(Err(code::DESKTOP_UNSUPPORTED))
         }
-        DesktopCall::WallShow(_) => Err(code::DESKTOP_UNSUPPORTED),
+        DesktopCall::WallShow(_) | DesktopCall::PointerClick(_) => Err(code::DESKTOP_UNSUPPORTED),
     }
 }
 

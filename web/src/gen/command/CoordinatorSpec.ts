@@ -67,6 +67,12 @@ allow_input?: boolean,
  */
 input_scope?: InputScope, 
 /**
+ * R13 P7b §3.1: the explicit opt-in to one left pointer click at a time.
+ * Needs `allow_input`. Sent to a caller link that negotiated
+ * `desktop_click_mcp.v1` only; absent otherwise.
+ */
+allow_click?: boolean, 
+/**
  * The input action budget of a grant with `allow_input` (R13 P7 §3.2).
  * Board → deck only: the deck reads it in `owner_start` and removes it.
  */

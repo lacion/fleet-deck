@@ -90,6 +90,7 @@ fn view(g: Grant) -> GrantView {
         input_used: input.then_some(g.input_used),
         input_character_cap: input.then_some(g.input_character_cap),
         input_character_used: input.then_some(g.input_character_used),
+        allow_click: input.then_some(g.allow_click),
     }
 }
 
@@ -443,6 +444,8 @@ pub(super) async fn owner_start(
         (spec.recording_cap.take(), spec.recording_second_cap.take());
     // The input opt-in, scope and caps (R13 P7 §3.1, §3.2) are read here too.
     let allow_input = std::mem::take(&mut spec.allow_input);
+    // R13 P7b §3.1: the click opt-in is read here too.
+    let allow_click = std::mem::take(&mut spec.allow_click);
     let (input_scope, input_cap, input_character_cap) = (
         spec.input_scope.take(),
         spec.input_cap.take(),
@@ -512,8 +515,12 @@ pub(super) async fn owner_start(
     if !allow_input && (input_cap.is_some() || input_character_cap.is_some()) {
         return Err(invalid("input caps need allow_input".to_owned()));
     }
+    if allow_click && !allow_input {
+        return Err(invalid("allow_click needs allow_input".to_owned()));
+    }
     if allow_input {
         grant.allow_input = true;
+        grant.allow_click = allow_click;
         grant.input_scope = Some(input_scope.unwrap_or(InputScope::OwnWindows));
         grant.input_cap = input_cap.unwrap_or(limits::INPUT_CAP_DEFAULT);
         grant.input_character_cap =
@@ -522,7 +529,7 @@ pub(super) async fn owner_start(
     let input_caps = (grant.input_cap, grant.input_character_cap);
     crate::store::grants::check_input_grant(
         &grant.classes,
-        grant.allow_input,
+        (grant.allow_input, grant.allow_click),
         grant.input_scope,
         input_caps,
     )
@@ -579,7 +586,12 @@ pub(super) async fn owner_start(
             station,
             &grant.classes,
             &grant.stations,
-            (allow_recording, allow_input),
+            (
+                allow_recording,
+                allow_input,
+                grant.allow_click,
+                grant.input_scope == Some(InputScope::AnyWindow),
+            ),
         )?;
     }
     let g = board.store.create_grant(grant).await.map_err(|e| match e {
@@ -628,7 +640,23 @@ pub(super) async fn owner_start(
             .link_feature(station, feature::DESKTOP_INPUT_MCP)
             == LinkFeature::Negotiated;
     spec.allow_input = input_link;
-    spec.input_scope = g.input_scope.filter(|_| input_link);
+    // R13 P7b §3.1: the click flag goes on only to a caller link with
+    // `desktop_click_mcp.v1`, and the scope `any_window` only to one with
+    // `desktop_input_any.v1` (the feature check above refused otherwise).
+    spec.allow_click = g.allow_click
+        && input_link
+        && board
+            .store
+            .link_feature(station, feature::DESKTOP_CLICK_MCP)
+            == LinkFeature::Negotiated;
+    spec.input_scope = g.input_scope.filter(|scope| {
+        input_link
+            && (*scope != InputScope::AnyWindow
+                || board
+                    .store
+                    .link_feature(station, feature::DESKTOP_INPUT_ANY)
+                    == LinkFeature::Negotiated)
+    });
     spec.grant_id = g.grant_id;
     spec.idle_ttl_ms = u64::try_from(g.idle_ttl_ms).unwrap_or(0);
     spec.expires_at = g.expires_at;
@@ -653,7 +681,7 @@ fn desktop_features(
     caller: &StationId,
     classes: &std::collections::BTreeSet<GrantClass>,
     stations: &std::collections::BTreeSet<StationId>,
-    (recording, input): (bool, bool),
+    (recording, input, click, any): (bool, bool, bool, bool),
 ) -> Result<(), ApiError> {
     let capture = classes.contains(&GrantClass::Capture);
     if !capture && !classes.contains(&GrantClass::Desktop) {
@@ -689,6 +717,17 @@ fn desktop_features(
     if input {
         on_caller.push(feature::DESKTOP_INPUT_MCP);
         on_target.push(feature::DESKTOP_INPUT_MCP);
+    }
+    // R13 P7b §4: a click allowance also needs `desktop_click_mcp.v1`, and
+    // the `any_window` scope `desktop_input_any.v1`, on the caller's link and
+    // on every other station of the grant.
+    if click {
+        on_caller.push(feature::DESKTOP_CLICK_MCP);
+        on_target.push(feature::DESKTOP_CLICK_MCP);
+    }
+    if any {
+        on_caller.push(feature::DESKTOP_INPUT_ANY);
+        on_target.push(feature::DESKTOP_INPUT_ANY);
     }
     let has_all = |station: &StationId, wanted: &[&str]| {
         wanted

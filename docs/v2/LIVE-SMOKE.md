@@ -575,8 +575,8 @@ Items:
    1. Use a station whose desktop also runs your board in a browser: the laptop. Start a new coordinator grant with the allowance. Select the laptop as the coordinator station and as the grant station. Turn on "Allow agent desktop input" on its station tab.
    2. Keep the board open on another device (a phone). Keep the board open on the laptop too.
    3. Ask the coordinator to open the dummy page as a preview on the laptop and to type "hello".
-   4. Expect the board on the laptop to show the sign-in page with the line "You were signed out because an agent typed on the station where this board is open." Expect the board on the other device to stay signed in. Write the time between the typing and the sign-out.
-   5. On the laptop, try to sign in at once. Expect the line "An agent is typing on this station. Sign in again in a minute." and no login. Write the time after which the sign-in works again. Expect about 65 seconds after the input ended (5 seconds and then 60 seconds).
+   4. Expect the board on the laptop to show the sign-in page with the line "You were signed out because an agent used desktop input on the station where this board is open." Expect the board on the other device to stay signed in. Write the time between the typing and the sign-out.
+   5. On the laptop, try to sign in at once. Expect the line "An agent is using desktop input on this station. Sign in again in a minute." and no login. Write the time after which the sign-in works again. Expect about 65 seconds after the input ended (5 seconds and then 60 seconds).
    6. From the board on the other device, revoke the grant. Expect it to work (a board on another address is not signed out).
    7. Write whether the deck sees the laptop through its own address. When you reach the deck through a proxy or a VPN that the station does not report, write whether the laptop board is signed out. The contract expects that it is not (open item DL-245 h), and that a deck behind a proxy signs out every board.
    8. Write what the page where a member joins shows when a sign-in is blocked (expect a generic error, DL-245 item g).

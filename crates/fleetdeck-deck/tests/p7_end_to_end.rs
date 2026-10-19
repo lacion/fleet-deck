@@ -290,7 +290,7 @@ async fn an_input_signs_the_board_of_the_target_machine_out_and_blocks_a_sign_in
         );
         assert_eq!(
             r.body["message"],
-            "An agent is typing on this station. Sign in again in a minute."
+            "An agent is using desktop input on this station. Sign in again in a minute."
         );
         assert!(r.header("set-cookie").is_none());
         assert!(r.body.get("csrf").is_none());

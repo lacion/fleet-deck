@@ -28,6 +28,8 @@ pub enum OpTool {
     KeyPress,
     TypeText,
     PointerMove,
+    /// R13 P7b §5.1: the click. No path admits it yet (task F stub).
+    PointerClick,
 }
 
 impl OpTool {
@@ -43,6 +45,7 @@ impl OpTool {
             Self::KeyPress => "key_press",
             Self::TypeText => "type_text",
             Self::PointerMove => "pointer_move",
+            Self::PointerClick => "pointer_click",
         }
     }
 
@@ -57,6 +60,7 @@ impl OpTool {
             "key_press" => Self::KeyPress,
             "type_text" => Self::TypeText,
             "pointer_move" => Self::PointerMove,
+            "pointer_click" => Self::PointerClick,
             _ => return None,
         })
     }

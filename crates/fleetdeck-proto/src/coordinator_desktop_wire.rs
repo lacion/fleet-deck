@@ -110,6 +110,9 @@ pub enum ProtectedRead {
         offset: u64,
         length: u64,
     },
+    /// R13 P7b §6.1: the `window_list` read (feature `desktop_input_any.v1`);
+    /// the target answers an `InputWindowList`.
+    InputWindows,
 }
 
 /// `desktop.coordinator_read` params (§5.7). The deck computes `read_hash`;
@@ -168,6 +171,16 @@ pub enum PolicyPurpose {
     /// R13 P7 §6.4: the input purpose; sent and answered only with
     /// `desktop_input_mcp.v1`. Its answer is [`DesktopInputPolicyAnswer`].
     Input,
+    /// R13 P7b §9.2: the purpose of a click in a preview (feature
+    /// `desktop_click_mcp.v1`). Its answer is [`DesktopInputGatesAnswer`].
+    InputClick,
+    /// R13 P7b §9.2: the purpose of keyboard input and pointer movement under
+    /// the broader scope (feature `desktop_input_any.v1`). Its answer is
+    /// [`DesktopInputGatesAnswer`].
+    InputAny,
+    /// R13 P7b §9.2: the purpose of a click under the broader scope (both
+    /// features). Its answer is [`DesktopInputGatesAnswer`].
+    InputAnyClick,
 }
 
 /// `desktop.policy_now` params (§5.5). `monitor` is always written.
@@ -202,6 +215,50 @@ pub struct DesktopInputPolicyAnswer {
     pub allow_desktop_capture: bool,
     pub allow_desktop_input: bool,
     pub monitor_allowed: bool,
+}
+
+/// The answer to [`DesktopPolicyNow`] for [`PolicyPurpose::InputClick`],
+/// [`PolicyPurpose::InputAny`] and [`PolicyPurpose::InputAnyClick`] only (R13
+/// P7b §9.2): the five fields of [`DesktopInputPolicyAnswer`] and the station
+/// gates that the purpose needs. A gate that the purpose does not need is
+/// absent. The bytes of the `input` purpose and its answer do not change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "coordinator_desktop/")]
+pub struct DesktopInputGatesAnswer {
+    pub allow_fleet_control: bool,
+    pub allow_desktop: bool,
+    pub allow_desktop_capture: bool,
+    pub allow_desktop_input: bool,
+    pub monitor_allowed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub allow_desktop_click: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub allow_desktop_input_any: Option<bool>,
+}
+
+impl DesktopInputGatesAnswer {
+    /// Whether the answer has exactly the optional gates that `purpose`
+    /// needs: `input_click` has only `allow_desktop_click`; `input_any` has
+    /// only `allow_desktop_input_any`; `input_any_click` has both. A missing
+    /// or an extra gate does not fit, and no other purpose uses this answer.
+    #[must_use]
+    pub const fn fits(&self, purpose: PolicyPurpose) -> bool {
+        match purpose {
+            PolicyPurpose::InputClick => {
+                self.allow_desktop_click.is_some() && self.allow_desktop_input_any.is_none()
+            }
+            PolicyPurpose::InputAny => {
+                self.allow_desktop_click.is_none() && self.allow_desktop_input_any.is_some()
+            }
+            PolicyPurpose::InputAnyClick => {
+                self.allow_desktop_click.is_some() && self.allow_desktop_input_any.is_some()
+            }
+            PolicyPurpose::Desktop | PolicyPurpose::Capture | PolicyPurpose::Input => false,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -294,3 +294,327 @@ async fn an_input_grant_needs_desktop_input_mcp_on_the_caller_and_on_every_other
     no_request(&mut station, Duration::from_millis(200)).await;
     assert_eq!(c.store.grants(10).await.unwrap().len(), 3);
 }
+
+// ----------------------------------------------------------------- R13 P7b
+
+/// The base features of a caller link that can start an input grant.
+fn input_caller() -> Vec<String> {
+    [
+        feature::COORDINATOR,
+        feature::COORDINATOR_V2,
+        feature::DESKTOP_MCP,
+        feature::CAPTURE_MCP,
+        feature::DESKTOP_INPUT_MCP,
+    ]
+    .map(str::to_owned)
+    .to_vec()
+}
+
+#[tokio::test]
+async fn the_click_opt_in_needs_the_input_opt_in_and_refuses_before_anything_is_stored() {
+    let mut f = fixture().await;
+    let mut station = f.connect().await;
+    let c = board(Arc::clone(&f.ctx)).await;
+    set_password(&c).await;
+    let h = owner(&c).await;
+    let token = elevate(&c, &h).await;
+    let classes = "allow_input needs the desktop, capture and input classes";
+    let cases = [
+        (
+            json!({"classes": INPUT, "allow_click": true}),
+            "allow_click needs allow_input",
+        ),
+        (
+            json!({"classes": INPUT, "allow_click": true, "allow_input": false}),
+            "allow_click needs allow_input",
+        ),
+        (
+            json!({"classes": INPUT, "allow_click": true, "input_scope": "any_window"}),
+            "input_scope needs allow_input",
+        ),
+        (
+            json!({"classes": ["desktop", "capture"], "allow_click": true, "allow_input": true}),
+            classes,
+        ),
+        (
+            json!({"classes": INPUT, "input_scope": "any_window"}),
+            "input_scope needs allow_input",
+        ),
+    ];
+    for (spec, text) in cases {
+        for elevation in [None, Some(token.as_str())] {
+            let r = post(&c, &h, START, start_body("k1", spec.clone(), elevation)).await;
+            expect(&r, 400, "invalid_grant");
+            assert!(r.body.to_string().contains(text), "{text}: {}", r.body);
+        }
+    }
+    // A click flag that is not a bool, and an unknown scope, fail to decode.
+    for spec in [
+        json!({"classes": INPUT, "allow_input": true, "allow_click": "yes"}),
+        json!({"classes": INPUT, "allow_input": true, "input_scope": "ANY_WINDOW"}),
+        json!({"classes": INPUT, "allow_input": true, "input_scope": "any_windows"}),
+    ] {
+        let r = post(&c, &h, START, start_body("k2", spec, Some(&token))).await;
+        assert_eq!(r.status, 400, "{}", r.body);
+    }
+    // A valid click opt-in still needs the owner's elevation.
+    let spec = json!({"classes": INPUT, "allow_input": true, "allow_click": true});
+    let r = post(&c, &h, START, start_body("k3", spec, None)).await;
+    expect(&r, 400, "elevation_required");
+    no_request(&mut station, Duration::from_millis(200)).await;
+    assert!(c.store.grants(10).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_click_or_any_window_grant_is_stored_forwarded_and_shown() {
+    let mut f = fixture().await;
+    let mut station = f.connect().await;
+    let c = board(Arc::clone(&f.ctx)).await;
+    set_password(&c).await;
+    let h = owner(&c).await;
+    let token = elevate(&c, &h).await;
+    // (request, spec, click, scope, the scope that the station is sent)
+    let asks = [
+        ("a1", json!({"allow_input": true}), false, "own_windows"),
+        (
+            "a2",
+            json!({"allow_input": true, "allow_click": true}),
+            true,
+            "own_windows",
+        ),
+        (
+            "a3",
+            json!({"allow_input": true, "input_scope": "any_window"}),
+            false,
+            "any_window",
+        ),
+        (
+            "a4",
+            json!({"allow_input": true, "allow_click": true, "input_scope": "any_window"}),
+            true,
+            "any_window",
+        ),
+    ];
+    for (id, mut spec, click, scope) in asks {
+        spec["classes"] = json!(INPUT);
+        let call = post(&c, &h, START, start_body(id, spec, Some(&token)));
+        let (r, req) = tokio::join!(call, Fixture::answer(&mut station, accepted));
+        assert_eq!(r.status, 200, "{id}: {}", r.body);
+        let sent = req.params["command"]["spec"]["coordinator"].clone();
+        assert_eq!(sent["allow_input"], true, "{sent}");
+        assert_eq!(sent["input_scope"], scope, "{sent}");
+        // The click flag is written only when set, and the caps never.
+        assert_eq!(
+            sent.get("allow_click"),
+            click.then_some(&json!(true)),
+            "{sent}"
+        );
+        for key in INPUT_CAP_KEYS {
+            assert!(sent.get(key).is_none(), "{key}: {sent}");
+        }
+        let g = c.store.grants(10).await.unwrap().remove(0);
+        assert!(g.allow_input && g.is_fleet_control());
+        assert_eq!(g.allow_click, click, "{id}");
+        assert_eq!(
+            g.input_scope,
+            Some(if scope == "any_window" {
+                fleetdeck_proto::coordinator_spec::InputScope::AnyWindow
+            } else {
+                fleetdeck_proto::coordinator_spec::InputScope::OwnWindows
+            })
+        );
+        // The row reads back as stored.
+        assert_eq!(c.store.grant(g.grant_id.clone()).await.unwrap().unwrap(), g);
+    }
+    // A grant without input sends and shows no click field.
+    let call = post(
+        &c,
+        &h,
+        START,
+        start_body("a5", json!({"classes": ["capture"]}), Some(&token)),
+    );
+    let (r, req) = tokio::join!(call, Fixture::answer(&mut station, accepted));
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(
+        req.params["command"]["spec"]["coordinator"]
+            .get("allow_click")
+            .is_none()
+    );
+    let plain = c.store.grants(10).await.unwrap().remove(0);
+    assert!(!plain.allow_click);
+    // The board view: `allow_click` is present for a grant with input only.
+    let list = get(&c, &h, "/api/coordinator/grants").await;
+    let views = list.body.as_array().unwrap();
+    assert_eq!(views.len(), 5);
+    for view in views {
+        let grant = c
+            .store
+            .grant(view["grant_id"].as_str().unwrap().to_owned())
+            .await
+            .unwrap()
+            .unwrap();
+        if grant.allow_input {
+            assert_eq!(view["allow_click"], json!(grant.allow_click), "{view}");
+            let scope = if grant.input_scope
+                == Some(fleetdeck_proto::coordinator_spec::InputScope::AnyWindow)
+            {
+                "any_window"
+            } else {
+                "own_windows"
+            };
+            assert_eq!(view["input_scope"], scope, "{view}");
+        } else {
+            assert!(view.get("allow_click").is_none(), "{view}");
+        }
+    }
+    // "Change limits" sends caps only: it never changes the click flag or the
+    // scope.
+    let clicking = c.store.grants(10).await.unwrap();
+    let clicking = clicking
+        .iter()
+        .find(|g| g.allow_click && g.input_scope.is_some())
+        .unwrap();
+    let url = format!("/api/coordinator/grants/{}/caps", clicking.grant_id);
+    for body in [
+        json!({"allow_click": false}),
+        json!({"input_scope": "own_windows"}),
+        json!({"input_cap": 3, "allow_click": false}),
+    ] {
+        let r = post(&c, &h, &url, body).await;
+        assert_eq!(r.status, 400, "{}", r.body);
+    }
+    let r = post(&c, &h, &url, json!({"input_cap": 3})).await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    let after = c
+        .store
+        .grant(clicking.grant_id.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (after.allow_click, after.input_scope),
+        (clicking.allow_click, clicking.input_scope)
+    );
+    assert_eq!(after.input_cap, 3);
+}
+
+#[tokio::test]
+async fn a_click_needs_desktop_click_mcp_and_any_window_needs_desktop_input_any() {
+    let mut f = fixture().await;
+    let mut station = f.connect().await;
+    let c = board(Arc::clone(&f.ctx)).await;
+    set_password(&c).await;
+    let h = owner(&c).await;
+    let token = elevate(&c, &h).await;
+    let ask = |id: &str, spec: Value| post(&c, &h, START, start_body(id, spec, Some(&token)));
+    let plain = json!({"classes": INPUT, "allow_input": true});
+    let click = json!({"classes": INPUT, "allow_input": true, "allow_click": true});
+    let any = json!({"classes": INPUT, "allow_input": true, "input_scope": "any_window"});
+    let both = json!({"classes": INPUT, "allow_input": true, "allow_click": true,
+        "input_scope": "any_window"});
+    let refused = |r: &Http, what: &str| {
+        expect(r, 409, "unsupported");
+        assert!(
+            r.body.to_string().contains(UNSUPPORTED),
+            "{what}: {}",
+            r.body
+        );
+    };
+    // A second live link of the caller with the P7 features only.
+    let mut caller = input_caller();
+    f.store.set_link_features(&f.station, 98, caller.clone());
+    refused(
+        &ask("c1", click.clone()).await,
+        "click without click feature",
+    );
+    refused(&ask("c2", any.clone()).await, "any without any feature");
+    refused(&ask("c3", both.clone()).await, "both without either");
+    // Plain P7 input is not affected.
+    let (r, _) = tokio::join!(
+        ask("c4", plain.clone()),
+        Fixture::answer(&mut station, accepted)
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+    // The click feature alone gives clicks but not the scope.
+    caller.push(feature::DESKTOP_CLICK_MCP.to_owned());
+    f.store.set_link_features(&f.station, 98, caller.clone());
+    let (r, req) = tokio::join!(
+        ask("c5", click.clone()),
+        Fixture::answer(&mut station, accepted)
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(
+        req.params["command"]["spec"]["coordinator"]["allow_click"],
+        true
+    );
+    refused(
+        &ask("c6", any.clone()).await,
+        "any with the click feature only",
+    );
+    refused(
+        &ask("c7", both.clone()).await,
+        "both with the click feature only",
+    );
+    // The scope feature alone gives the scope but not clicks.
+    caller.pop();
+    caller.push(feature::DESKTOP_INPUT_ANY.to_owned());
+    f.store.set_link_features(&f.station, 98, caller.clone());
+    refused(
+        &ask("c8", click.clone()).await,
+        "click with the any feature only",
+    );
+    let (r, req) = tokio::join!(
+        ask("c9", any.clone()),
+        Fixture::answer(&mut station, accepted)
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(
+        req.params["command"]["spec"]["coordinator"]["input_scope"],
+        "any_window"
+    );
+    // Both features give both.
+    caller.push(feature::DESKTOP_CLICK_MCP.to_owned());
+    f.store.set_link_features(&f.station, 98, caller);
+    let (r, req) = tokio::join!(
+        ask("c10", both.clone()),
+        Fixture::answer(&mut station, accepted)
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+    let sent = &req.params["command"]["spec"]["coordinator"];
+    assert_eq!(
+        (&sent["allow_click"], &sent["input_scope"]),
+        (&json!(true), &json!("any_window"))
+    );
+    f.store.clear_link_features(&f.station, 98);
+    // The same rules for another station of the grant.
+    let mut target = target_features();
+    target.extend(
+        [
+            feature::DESKTOP_CAPTURE,
+            feature::ARTIFACTS_DELETE,
+            feature::CAPTURE_MCP,
+            feature::DESKTOP_INPUT_MCP,
+        ]
+        .map(str::to_owned),
+    );
+    let alpha = extra(&f.store, "alpha", target.clone()).await;
+    let with = |st: &StationId, spec: &Value| {
+        let mut spec = spec.clone();
+        spec["stations"] = json!([st]);
+        spec
+    };
+    refused(
+        &ask("t1", with(&alpha, &click)).await,
+        "target without click",
+    );
+    refused(&ask("t2", with(&alpha, &any)).await, "target without any");
+    target.push(feature::DESKTOP_CLICK_MCP.to_owned());
+    target.push(feature::DESKTOP_INPUT_ANY.to_owned());
+    let beta = extra(&f.store, "beta", target).await;
+    let (r, _) = tokio::join!(
+        ask("t3", with(&beta, &both)),
+        Fixture::answer(&mut station, accepted)
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+    no_request(&mut station, Duration::from_millis(200)).await;
+}

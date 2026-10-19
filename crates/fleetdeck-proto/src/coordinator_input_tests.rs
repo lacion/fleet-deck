@@ -137,7 +137,8 @@ fn unknown_fields_a_missing_field_null_and_wrong_types_are_refused() {
         json!({"tool": "pointer_move", "arguments": {"request_id": "r", "window_id": WINDOW, "x": "1", "y": 0}}),
         json!({"tool": "pointer_move", "arguments": {"request_id": "r", "window_id": WINDOW, "x": 1, "y": null}}),
         json!({"tool": "key_press", "arguments": {"request_id": "r", "window_id": WINDOW, "chord": null}}),
-        // Click and scroll are not tools of this contract (§4).
+        // Scroll is not a tool of any contract; a click needs `x` and `y`
+        // (R13 P7b §5.1; its own tests are in `coordinator_input_p7b_tests.rs`).
         json!({"tool": "pointer_click", "arguments": {"request_id": "r", "window_id": WINDOW}}),
         json!({"tool": "scroll", "arguments": {"request_id": "r", "window_id": WINDOW}}),
     ] {

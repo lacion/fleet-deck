@@ -17,9 +17,9 @@
 use rusqlite::Connection;
 
 const DECK_V2_LAST: usize = 25;
-const DECK_LATEST: i64 = 37;
+const DECK_LATEST: i64 = 38;
 const STATION_V2_LAST: usize = 27;
-const STATION_LATEST: i64 = 37;
+const STATION_LATEST: i64 = 38;
 
 fn user_version(conn: &Connection) -> i64 {
     conn.pragma_query_value(None, "user_version", |r| r.get(0))
@@ -674,7 +674,7 @@ fn migration_v37_keeps_the_rows_and_signs_every_session_out() {
     assert!(insert("i2", "type_text", "input", Some(2000)).is_ok());
     assert!(insert("i3", "pointer_move", "input", Some(0)).is_ok());
     assert!(insert("i4", "type_text", "input", Some(2001)).is_err());
-    assert!(insert("i5", "pointer_click", "input", None).is_err());
+    assert!(insert("i5", "pointer_scroll", "input", None).is_err());
     assert!(insert("op1", "notify", "desktop", None).is_err()); // the key stays unique
     let rate = |bucket: &str| {
         let sql = "INSERT INTO coordinator_desktop_rate VALUES ('grant:g1', ?1, 6)";

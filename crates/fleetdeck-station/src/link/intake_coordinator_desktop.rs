@@ -475,6 +475,11 @@ pub(crate) fn policy_reply(
         PolicyPurpose::Capture if !capture_mcp => unsupported(),
         PolicyPurpose::Input if !input_mcp => unsupported(),
         PolicyPurpose::Input => ok(input_policy_answer(live, query.monitor.as_deref())),
+        // R13 P7b task F stub: the three new purposes are answered by a later
+        // task; until then they are unsupported.
+        PolicyPurpose::InputClick | PolicyPurpose::InputAny | PolicyPurpose::InputAnyClick => {
+            unsupported()
+        }
         PolicyPurpose::Desktop | PolicyPurpose::Capture => {
             ok(policy_answer(live, query.monitor.as_deref()))
         }
@@ -509,6 +514,8 @@ pub(crate) fn validate_read(req: &CoordinatorRead) -> Result<(), Fail> {
                 offset,
                 ..
             } => id26(artifact_id) && *offset == 0,
+            // R13 P7b task F stub: the read has no fields; the work refuses.
+            ProtectedRead::InputWindows => true,
         };
     if shape {
         Ok(())
@@ -596,6 +603,8 @@ impl Reader<'_> {
                 length,
                 ..
             } => self.capture_file(artifact_id, *version, *length).await,
+            // R13 P7b task F stub: a later task builds the listing.
+            ProtectedRead::InputWindows => Err(p6_fail(p6_code::DESKTOP_UNSUPPORTED)),
         }
     }
 

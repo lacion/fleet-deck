@@ -82,6 +82,10 @@ pub struct Policy {
     allow_desktop_capture: bool,
     /// `allow_desktop_input` of `station.toml` (R13 P7 §3.3).
     allow_desktop_input: bool,
+    /// `allow_desktop_click` of `station.toml` (R13 P7b §3.2).
+    allow_desktop_click: bool,
+    /// `allow_desktop_input_any` of `station.toml` (R13 P7b §3.2).
+    allow_desktop_input_any: bool,
     /// `capture_monitors` of `station.toml` (R13 P5a); empty means every monitor.
     capture_monitors: Vec<String>,
     /// `fleet_summary` of `station.toml` (R13 P4): the deck may send the fleet summary.
@@ -158,6 +162,8 @@ impl Policy {
             allow_desktop: config.allow_desktop,
             allow_desktop_capture: config.allow_desktop_capture,
             allow_desktop_input: config.allow_desktop_input,
+            allow_desktop_click: config.allow_desktop_click,
+            allow_desktop_input_any: config.allow_desktop_input_any,
             capture_monitors: config.capture_monitors.clone(),
             fleet_summary: config.fleet_summary,
             max_shells: config.max_shells,
@@ -241,6 +247,8 @@ impl Policy {
             allow_desktop: false,
             allow_desktop_capture: false,
             allow_desktop_input: false,
+            allow_desktop_click: false,
+            allow_desktop_input_any: false,
             capture_monitors: Vec::new(),
             fleet_summary: false,
             max_shells: DEFAULT_MAX_SHELLS,
@@ -396,6 +404,22 @@ impl Policy {
     #[must_use]
     pub fn allow_desktop_input(&self) -> bool {
         self.allow_desktop_input
+    }
+
+    /// Whether authorized coordinator grants may send one left pointer click
+    /// on this station (R13 P7b §3.2). Needs [`Self::allow_desktop_input`].
+    /// Read it live.
+    #[must_use]
+    pub fn allow_desktop_click(&self) -> bool {
+        self.allow_desktop_click
+    }
+
+    /// Whether authorized coordinator grants may send input to other
+    /// application windows on this station (R13 P7b §3.2). Needs
+    /// [`Self::allow_desktop_input`]. Read it live.
+    #[must_use]
+    pub fn allow_desktop_input_any(&self) -> bool {
+        self.allow_desktop_input_any
     }
 
     /// The monitors that a screenshot may capture; empty means every monitor
@@ -670,6 +694,35 @@ mod tests {
         );
         assert!(!plain.allow_desktop_input());
         assert!(plain.with_allow_desktop_input(true).allow_desktop_input());
+    }
+
+    #[test]
+    fn allow_desktop_click_and_input_any_are_off_by_default_and_follow_a_live_reload() {
+        let root = tempfile::tempdir().unwrap();
+        let off = Policy::from_config(&test_config(root.path(), ""));
+        assert!(!off.allow_desktop_click() && !off.allow_desktop_input_any());
+        let on_config = test_config(
+            root.path(),
+            "allow_desktop_click = true\nallow_desktop_input_any = true\n",
+        );
+        let on = Policy::from_config(&on_config);
+        assert!(on.allow_desktop_click() && on.allow_desktop_input_any());
+        // Each key is its own: the first never sets the second.
+        let click = Policy::from_config(&test_config(root.path(), "allow_desktop_click = true\n"));
+        assert!(click.allow_desktop_click() && !click.allow_desktop_input_any());
+        // A live reload reads both values again, in both directions.
+        let reloaded = off.reconfigured(&on_config);
+        assert!(reloaded.allow_desktop_click() && reloaded.allow_desktop_input_any());
+        let reloaded = on.reconfigured(&test_config(root.path(), ""));
+        assert!(!reloaded.allow_desktop_click() && !reloaded.allow_desktop_input_any());
+        // The test policy has the same default.
+        let plain = Policy::new(
+            vec![root.path().to_path_buf()],
+            1,
+            OfflineApprovalPolicy::Wait,
+            BTreeMap::new(),
+        );
+        assert!(!plain.allow_desktop_click() && !plain.allow_desktop_input_any());
     }
 
     #[test]

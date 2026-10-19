@@ -176,6 +176,10 @@ impl DesktopRequest {
             Self::Query(DesktopQuery::DesktopActionStatus(_)) => deadline_ms::STATUS_MCP,
             Self::Query(DesktopQuery::CaptureStatus(_)) => deadline_ms::CAPTURE_LOOKUP_MCP,
             Self::Query(DesktopQuery::ReadCaptureImage(_)) => deadline_ms::IMAGE_MCP,
+            // R13 P7b task F stubs: the tools are not listed yet; these
+            // mirror the input response limit and the `desktop_info` limit.
+            Self::Call(DesktopCall::PointerClick(_)) => INPUT_MCP_MS,
+            Self::Query(DesktopQuery::WindowList(_)) => deadline_ms::INFO_MCP,
         }
     }
 }
@@ -187,6 +191,8 @@ fn query_deck_ms(query: &DesktopQuery) -> u64 {
         DesktopQuery::DesktopActionStatus(_) => deadline_ms::STATUS_DECK,
         DesktopQuery::CaptureStatus(_) => deadline_ms::CAPTURE_LOOKUP_DECK,
         DesktopQuery::ReadCaptureImage(_) => deadline_ms::IMAGE_DECK,
+        // R13 P7b task F stub: the `desktop_info` deadline.
+        DesktopQuery::WindowList(_) => deadline_ms::INFO_DECK,
     }
 }
 

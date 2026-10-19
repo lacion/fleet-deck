@@ -202,6 +202,101 @@ mod tests {
     }
 
     #[test]
+    fn v38_keeps_the_desktop_claims_and_admits_the_p7b_input_kinds() {
+        let migrations = migrations();
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations.to_version(&mut conn, 37).unwrap();
+        let insert = |conn: &Connection, id: &str, kind: &str, state: &str| {
+            conn.execute(
+                "INSERT INTO desktop_ops (deck_fp, operation_id, action_hash, kind, grant_id,
+                     caller_station, caller_session, state, result, code, claimed_at, updated_at)
+                 VALUES ('fp', ?1, 'h', ?2, 'g', 's', 'x', ?3, '{\"ok\":true}', 'c', 5, 6)",
+                params![id, kind, state],
+            )
+        };
+        for (id, kind, state) in [
+            ("o1", "notify", "done"),
+            ("o2", "preview_open", "claimed"),
+            ("o3", "preview_close", "failed"),
+            ("o4", "input_key_press", "done"),
+            ("o5", "input_type_text", "claimed"),
+            ("o6", "input_pointer_move", "failed"),
+        ] {
+            insert(&conn, id, kind, state).unwrap();
+        }
+        assert!(
+            insert(&conn, "n1", "input_pointer_click", "claimed").is_err(),
+            "V37 refuses the P7b kinds"
+        );
+        type Row = (
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            i64,
+            i64,
+        );
+        let rows = |conn: &Connection| -> Vec<Row> {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT operation_id, kind, state, action_hash, result, code, claimed_at,
+                            updated_at
+                     FROM desktop_ops ORDER BY operation_id",
+                )
+                .unwrap();
+            stmt.query_map([], |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                    r.get(7)?,
+                ))
+            })
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+        };
+        let before = rows(&conn);
+        assert_eq!(before.len(), 6);
+
+        migrations.to_version(&mut conn, 38).unwrap();
+        assert_eq!(rows(&conn), before);
+
+        for (id, kind) in [
+            ("p1", "input_pointer_click"),
+            ("p2", "input_any_key_press"),
+            ("p3", "input_any_type_text"),
+            ("p4", "input_any_pointer_move"),
+            ("p5", "input_any_pointer_click"),
+        ] {
+            insert(&conn, id, kind, "claimed").unwrap();
+        }
+        // The other checks and the key survive the rebuild.
+        assert!(insert(&conn, "x1", "screenshot", "claimed").is_err());
+        assert!(insert(&conn, "x2", "input_click", "claimed").is_err());
+        assert!(insert(&conn, "x3", "input_any_scroll", "claimed").is_err());
+        assert!(insert(&conn, "x4", "notify", "running").is_err());
+        assert!(
+            insert(&conn, "o1", "notify", "done").is_err(),
+            "one row per key"
+        );
+        let leftover: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE name = 'desktop_ops_v38'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(leftover, 0);
+    }
+
+    #[test]
     fn v22_adds_the_assist_cache_and_the_daily_usage() {
         let mut conn = Connection::open_in_memory().unwrap();
         migrations().to_latest(&mut conn).unwrap();

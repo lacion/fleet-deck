@@ -36,6 +36,7 @@ use crate::command::{CommandEnvelope, DeckCommandState, Receipt};
 use crate::conflicts::FileConflict;
 use crate::coordinator_desktop as cd;
 use crate::coordinator_desktop_wire as cdw;
+use crate::coordinator_input as ci;
 use crate::desktop as dk;
 use crate::desktop_authority::DesktopAuthority;
 use crate::display::{
@@ -177,6 +178,12 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         cd::KeyPressArguments::export_all(&cfg),
         cd::TypeTextArguments::export_all(&cfg),
         cd::PointerMoveArguments::export_all(&cfg),
+        cd::PointerClickArguments::export_all(&cfg),
+        cd::WindowListArguments::export_all(&cfg),
+        ci::InputWindowList::export_all(&cfg),
+        ci::InputWindow::export_all(&cfg),
+        ci::InputRect::export_all(&cfg),
+        ci::InputMonitor::export_all(&cfg),
         cd::StatusArguments::export_all(&cfg),
         cd::ImageArguments::export_all(&cfg),
         cd::DesktopCall::export_all(&cfg),
@@ -205,6 +212,7 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         cdw::DesktopPolicyNow::export_all(&cfg),
         cdw::DesktopPolicyAnswer::export_all(&cfg),
         cdw::DesktopInputPolicyAnswer::export_all(&cfg),
+        cdw::DesktopInputGatesAnswer::export_all(&cfg),
         StationResources::export_all(&cfg),
         DiskSpace::export_all(&cfg),
         MemoryUse::export_all(&cfg),

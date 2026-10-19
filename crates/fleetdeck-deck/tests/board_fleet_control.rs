@@ -153,6 +153,7 @@ async fn a_station_without_v2_gets_no_fleet_control_grant_and_a_lineage_start_ke
         recording_cap: None,
         recording_second_cap: None,
         allow_input: false,
+        allow_click: false,
         input_scope: None,
         input_cap: None,
         input_character_cap: None,

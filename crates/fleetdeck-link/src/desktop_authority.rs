@@ -247,6 +247,29 @@ mod tests {
                 x: 1,
                 y: 2,
             },
+            DesktopAction::InputPointerClick {
+                window_id: "0123456789abcdef0123456789abcdef".into(),
+                x: 1,
+                y: 2,
+            },
+            DesktopAction::InputAnyKeyPress {
+                window_id: "0123456789abcdef0123456789abcdef".into(),
+                chord: "Return".into(),
+            },
+            DesktopAction::InputAnyTypeText {
+                window_id: "0123456789abcdef0123456789abcdef".into(),
+                text: "t".into(),
+            },
+            DesktopAction::InputAnyPointerMove {
+                window_id: "0123456789abcdef0123456789abcdef".into(),
+                x: 1,
+                y: 2,
+            },
+            DesktopAction::InputAnyPointerClick {
+                window_id: "0123456789abcdef0123456789abcdef".into(),
+                x: 1,
+                y: 2,
+            },
         ]
     }
 
