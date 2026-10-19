@@ -57,6 +57,7 @@ pub mod project_session_routes;
 mod project_targets;
 pub mod project_writes;
 pub mod projects_routes;
+pub mod provision_report_routes;
 pub mod read_routes;
 pub mod review_anchor_cache;
 pub mod review_routes;
@@ -173,6 +174,20 @@ pub fn router(board: Arc<Board>) -> Router {
         .route(
             "/api/pairing/requests/{request_id}/deny",
             post(pairing_routes::deny),
+        )
+        .route("/api/provision-reports", get(provision_report_routes::list))
+        .route(
+            "/api/provision-reports/window",
+            post(provision_report_routes::window_set),
+        )
+        .route(
+            "/api/provision-reports/{fingerprint}/retry",
+            post(provision_report_routes::retry_allow)
+                .delete(provision_report_routes::retry_cancel),
+        )
+        .route(
+            "/api/provision-reports/{fingerprint}",
+            delete(provision_report_routes::dismiss),
         )
         .route(
             "/api/stations/{station}/settings",

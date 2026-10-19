@@ -81,6 +81,8 @@ mod table;
 mod table_display;
 #[path = "methods_table_git.rs"]
 mod table_git;
+#[path = "methods_table_reports.rs"]
+mod table_reports;
 #[path = "methods_table_rest.rs"]
 mod table_rest;
 
@@ -91,6 +93,7 @@ pub fn api() -> impl Iterator<Item = &'static ApiMethod> {
         .chain(table_rest::API_REST.iter())
         .chain(table_git::API_GIT.iter())
         .chain(table_display::API_DISPLAY.iter())
+        .chain(table_reports::API_REPORTS.iter())
 }
 
 /// The route prefix of the command methods.

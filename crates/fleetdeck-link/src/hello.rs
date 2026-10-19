@@ -172,6 +172,45 @@ pub enum HandshakeFrame {
         request_id: String,
         nonce: String,
     },
+    /// Pair channel, unpaired station key → deck (feature
+    /// `provision_report.v1`): one setup report. The deck takes the
+    /// fingerprint from the authenticated key, never from this frame
+    /// (`board-gaps.md` section 4.2).
+    ProvisionReport {
+        terminal_id: String,
+        state_digest: String,
+        code: String,
+        phase: String,
+        name: String,
+    },
+    /// Pair channel, deck → reporter: the one answer to a report. The three
+    /// retry fields are present only with the status `retry`.
+    ProvisionReportReply {
+        status: ReportStatus,
+        retry_after_seconds: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        retry_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        terminal_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        state_digest: Option<String>,
+    },
+}
+
+/// The status of a `ProvisionReportReply` (`board-gaps.md` section 4.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportStatus {
+    /// The deck stored the report.
+    Stored,
+    /// The reporting window is closed, or this listener takes no reports.
+    Disabled,
+    /// The deck holds the most reports that it accepts.
+    Capacity,
+    /// Too many reports of this key, or of all keys.
+    RateLimited,
+    /// The owner allowed one retry for this exact report.
+    Retry,
 }
 
 /// Why a handshake failed. `reason()` is the stable code that goes into the

@@ -18,6 +18,8 @@
 //! - [`live`]: a running link; one lifetime for both channels.
 //! - [`pairing`]: invitations, proofs and pairing admission (G11, G12).
 //! - [`join`]: the pair channel on top of [`node`].
+//! - [`report_accept`], [`report_dial`]: the setup report of an unpaired key
+//!   on the pair channel (BG-3).
 //! - [`revoke`]: revocation and key rotation (G5).
 //! - [`admission`]: the cap on pending handshakes of a listener (FDV2-001).
 //! - [`reconnect`]: the dialer's backoff with jitter and its redial task.
@@ -44,6 +46,8 @@ pub mod pair_hub;
 pub mod pair_request;
 pub mod pairing;
 pub mod reconnect;
+pub mod report_accept;
+pub mod report_dial;
 pub mod retry_file;
 pub mod revoke;
 pub mod table;
@@ -66,6 +70,8 @@ pub use pairing::{
     Invitation, InvitationId, Invitations, PairError, PairLimiter, PairedPeer, PairingSink,
 };
 pub use reconnect::{Backoff, BackoffPolicy, DialerEvent, spawn_dialer};
+pub use report_accept::{ReportReply, ReportSink, ValidReport};
+pub use report_dial::send_report;
 pub use revoke::{
     REVOKED, RotateError, check_rotation, finish_rotation, revoke, rotate, sign_rotation,
 };

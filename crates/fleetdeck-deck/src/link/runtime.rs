@@ -26,6 +26,7 @@ use fleetdeck_link::node::{self, LinkListener, ListenerKind, NodeConfig, Tailnet
 use fleetdeck_link::pair_hub::{HubConfig, PairApprover, PairRequests};
 use fleetdeck_link::pairing::{Invitation, Invitations, PairError};
 use fleetdeck_link::reconnect::{BackoffPolicy, DialerEvent, spawn_dialer};
+use fleetdeck_link::report_accept::ReportSink;
 use fleetdeck_link::revoke::revoke;
 use fleetdeck_link::tls::Role;
 use fleetdeck_link::ws::LinkError;
@@ -35,6 +36,7 @@ use tokio::task::JoinHandle;
 
 use super::{DeckLink, serve};
 use crate::peers::{DeckPeers, Expected};
+use crate::provision_reports::ProvisionReports;
 use crate::store::{DeckError, DeckStore, Direction, StationRecord};
 
 /// How often the command router expires and resends commands (G3).
@@ -116,6 +118,7 @@ pub struct DeckNode {
     ctx: Arc<DeckLink>,
     invitations: Arc<Invitations>,
     pair_requests: Arc<PairRequests>,
+    provision_reports: Arc<ProvisionReports>,
     listening: Vec<SocketAddr>,
     skipped: Vec<(SocketAddr, String)>,
     tasks: Mutex<Vec<JoinHandle<()>>>,
@@ -183,6 +186,10 @@ impl DeckNode {
             options.hub,
         );
         node = node.with_pair_requests(Arc::clone(&pair_requests));
+        // The setup reports of unpaired keys (BG-3): the reporting window is
+        // in memory only, and it is separate from the pairing window.
+        let provision_reports = ProvisionReports::new(store.clone());
+        node = node.with_provision_reports(Arc::clone(&provision_reports) as Arc<dyn ReportSink>);
         if let Some(limits) = options.tailnet {
             node.tailnet = limits;
         }
@@ -224,6 +231,7 @@ impl DeckNode {
             ctx,
             invitations,
             pair_requests,
+            provision_reports,
             listening: listeners.iter().map(|l| l.local_addr).collect(),
             skipped,
             tasks: Mutex::default(),
@@ -251,6 +259,12 @@ impl DeckNode {
     #[must_use]
     pub fn pair_requests(&self) -> &Arc<PairRequests> {
         &self.pair_requests
+    }
+
+    /// The reporting window and the setup reports of unpaired keys.
+    #[must_use]
+    pub fn provision_reports(&self) -> &Arc<ProvisionReports> {
+        &self.provision_reports
     }
 
     /// The shared link context.
