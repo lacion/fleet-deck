@@ -1,6 +1,6 @@
 # P7b: coordinator pointer click and the `any_window` input scope
 
-- **Status:** Proposed contract (architect, 2026-10-19), from the advisor answer `advisor-p7b-answer.md` against v2 HEAD `f2286e3e`. The architect accepts P7b-OD1 to P7b-OD6 as architect decisions (O12-24; the owner may change any of them). DESIGN REVIEW required before implementation; PRE-PR required before merge; live smoke required before operational reliance (both capabilities stay experimental and off by default).
+- **Status:** Proposed contract (architect, 2026-10-19), from the advisor answer `advisor-p7b-answer.md` against v2 HEAD `f2286e3e`. The architect accepts P7b-OD1 to P7b-OD6 as architect decisions (O12-24; the owner may change any of them). DESIGN REVIEW round 1 PASS (2026-10-19; two MINOR findings fixed in this file; report `adv-p7b-design-r1-report.md`): accepted for the build. PRE-PR required before merge; live smoke required before operational reliance (both capabilities stay experimental and off by default).
 - **Parent:** `omarchy-p7.md`.
 - **Prerequisite:** accepted and built P7 (DL-245, DL-246).
 - **Scope:** coordinator tool `pointer_click`, and the `any_window` input scope with the tool `window_list`.
@@ -455,6 +455,8 @@ Keep:
 
 Duplicates and status reads do not repeat the sign-out. `window_list` does not invoke it.
 
+The built P7 code lists the input tools by name in two places: the attempted step (`store/coordinator_desktop/input.rs`) and the exposure read (`store/board_fence.rs`, `read_exposed`). Both lists get `pointer_click`. Without this, a click is outside the sign-in exclusion and the startup exposure recovery. Regression tests: an exposure made only by a click, a sign-in refused during a click, and a restart recovery of an attempted click (design review round 1, MINOR 1).
+
 Keep the residual of the proxy or VPN and the disclosure of the owner lock-out. The broader scope does not make the sign-out by address complete.
 
 ## 13. Codes and exact owner texts
@@ -501,7 +503,9 @@ Keep the code and status behavior of `signed_out_for_input` and `sign_in_blocked
 
 ## 14. Board texts and controls
 
-Keep the existing input opt-in. Add an option that is independent and unchecked:
+Keep the existing input opt-in. Its P7 red disclosure (`omarchy-p7.md` §3.4) ends with "Pointer clicks and unrestricted window input are unavailable." That sentence is shown only while the click option is off and the scope is "This agent's preview windows". When the owner turns on clicks, the sentence becomes "Unrestricted window input is unavailable." When the owner selects the broader scope, the sentence is removed and the red disclosure of the broader scope below is shown too. The experimental sentence and the targeting limits stay in every case (design review round 1, MINOR 2).
+
+Add an option that is independent and unchecked:
 
 > **Allow pointer clicks**
 
