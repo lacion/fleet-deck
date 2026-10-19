@@ -6,6 +6,7 @@
 //! checks the request shape, the credential, the binding state and the
 //! granted tool classes; the deck decides every operation (§6.2).
 
+mod annotations;
 pub mod bindings;
 pub mod bridge;
 pub mod desktop_forward;
@@ -31,6 +32,9 @@ pub use ingress::{FleetTools, Forward, Ingress, Limits};
 pub use outbox::CallOutbox;
 pub use socket::BridgeSocket;
 
+#[cfg(test)]
+#[path = "catalog_p1_tests.rs"]
+mod catalog_p1_tests;
 #[cfg(test)]
 #[path = "desktop_forward_tests.rs"]
 mod desktop_forward_tests;

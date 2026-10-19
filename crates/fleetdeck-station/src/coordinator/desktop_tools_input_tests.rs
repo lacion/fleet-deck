@@ -120,7 +120,16 @@ fn the_schemas_are_the_bundle_of_section_4_with_the_defs_in_each_root() {
     for name in NAMES {
         let tool = listed.iter().find(|t| t["name"] == name).unwrap();
         let mut expected = bundle["schemas"][name].clone();
-        expected["$defs"] = bundle["$defs"].clone();
+        // Each schema carries only the `$defs` that it references (P1 §4.3).
+        let keys: &[&str] = match name {
+            "key_press" => &["request_id", "station", "window_id", "chord"],
+            _ => &["request_id", "station", "window_id"],
+        };
+        let mut defs = serde_json::Map::new();
+        for key in keys {
+            defs.insert((*key).to_owned(), bundle["$defs"][*key].clone());
+        }
+        expected["$defs"] = Value::Object(defs);
         assert_eq!(tool["inputSchema"], expected, "{name}");
     }
     // Spot checks against the contract text.

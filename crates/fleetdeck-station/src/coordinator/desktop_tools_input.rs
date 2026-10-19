@@ -2,8 +2,8 @@
 //! §4): `key_press`, `type_text` and `pointer_move`, and the two tools of
 //! R13 P7b (`docs/v2/design/omarchy-p7b.md` §5): `pointer_click` and
 //! `window_list`. The P7 schemas are the normative bundle of §4 byte for
-//! byte; each P7 tool gets its schema with the shared `$defs` copied into its
-//! root, as in P6. The P7b schemas are §5.1 and §5.2 with the referenced
+//! byte; each P7 tool gets its schema with the `$defs` that it references (transitively)
+//! copied into its root, as in P6. The P7b schemas are §5.1 and §5.2 with the referenced
 //! `$defs` copied into the root. There is no `scroll`.
 
 use serde_json::Value;
@@ -117,16 +117,40 @@ pub(super) const BUNDLE: &str = r##"
 }
 "##;
 
-/// The schema of tool `name`: `schemas[name]` with the bundle's `$defs`
-/// copied into its root. The bundle is a constant and a test parses it, so a
-/// parse failure cannot reach a release build.
-fn schema(name: &str) -> Value {
-    let bundle: Value = serde_json::from_str(BUNDLE).unwrap_or(Value::Null);
+/// The schema of tool `name` in `bundle`: `schemas[name]` with only the
+/// `$defs` that it references copied into its root, transitively: a copied
+/// def can reference another def, which is copied too (`docs/v2/design/mcp-p1.md`
+/// §4.3). The bundle is a constant and a test parses it, so a parse failure
+/// cannot reach a release build.
+pub(super) fn referenced_in(bundle: &str, name: &str) -> Value {
+    let bundle: Value = serde_json::from_str(bundle).unwrap_or(Value::Null);
     let mut schema = bundle["schemas"][name].clone();
+    let mut defs = serde_json::Map::new();
+    if let Some(all) = bundle["$defs"].as_object() {
+        let mut text = schema.to_string();
+        loop {
+            let found: Vec<(&String, &Value)> = all
+                .iter()
+                .filter(|(key, _)| !defs.contains_key(key.as_str()))
+                .filter(|(key, _)| text.contains(&format!("\"#/$defs/{key}\"")))
+                .collect();
+            if found.is_empty() {
+                break;
+            }
+            for (key, def) in found {
+                text.push_str(&def.to_string());
+                defs.insert(key.clone(), def.clone());
+            }
+        }
+    }
     if let Some(object) = schema.as_object_mut() {
-        object.insert("$defs".to_owned(), bundle["$defs"].clone());
+        object.insert("$defs".to_owned(), Value::Object(defs));
     }
     schema
+}
+
+fn schema(name: &str) -> Value {
+    referenced_in(BUNDLE, name)
 }
 
 pub(super) fn key_press() -> Value {
@@ -141,31 +165,10 @@ pub(super) fn pointer_move() -> Value {
     schema("pointer_move")
 }
 
-/// The schema of a P7b tool `name`: `schemas[name]` with only the `$defs` that
-/// it references copied into its root (P7b §5).
-fn referenced(name: &str) -> Value {
-    let bundle: Value = serde_json::from_str(BUNDLE).unwrap_or(Value::Null);
-    let mut schema = bundle["schemas"][name].clone();
-    let text = schema.to_string();
-    let defs: serde_json::Map<String, Value> = bundle["$defs"]
-        .as_object()
-        .map(|all| {
-            all.iter()
-                .filter(|(key, _)| text.contains(&format!("\"#/$defs/{key}\"")))
-                .map(|(key, def)| (key.clone(), def.clone()))
-                .collect()
-        })
-        .unwrap_or_default();
-    if let Some(object) = schema.as_object_mut() {
-        object.insert("$defs".to_owned(), Value::Object(defs));
-    }
-    schema
-}
-
 pub(super) fn pointer_click() -> Value {
-    referenced("pointer_click")
+    schema("pointer_click")
 }
 
 pub(super) fn window_list() -> Value {
-    referenced("window_list")
+    schema("window_list")
 }
