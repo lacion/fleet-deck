@@ -51,6 +51,9 @@ mod fleet_control_tests;
 #[path = "ingress_tests.rs"]
 mod ingress_tests;
 #[cfg(test)]
+#[path = "mcp_p1_auth_tests.rs"]
+mod mcp_p1_auth_tests;
+#[cfg(test)]
 #[path = "mcp_p1_rig_tests.rs"]
 mod mcp_p1_rig_tests;
 #[cfg(test)]
