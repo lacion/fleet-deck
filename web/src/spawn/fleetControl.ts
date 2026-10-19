@@ -31,6 +31,14 @@ export type FleetControl = {
   readonly anyWindow: boolean;
   /** The owner checked "Allow input in other application windows" (P7b). */
   readonly anyAck: boolean;
+  /** Allow the agent to start sessions (the `spawn` class; not fleet control). */
+  readonly spawn: boolean;
+  /** The session limit (spawn cap). */
+  readonly spawnCap: string;
+  /** The highest Claude mode that its sessions may get. */
+  readonly claudeCeiling: string;
+  /** The highest Codex `policy/sandbox` mode that its sessions may get. */
+  readonly codexCeiling: string;
 };
 
 export const NO_FLEET: FleetControl = {
@@ -53,12 +61,16 @@ export const NO_FLEET: FleetControl = {
   click: false,
   anyWindow: false,
   anyAck: false,
+  spawn: false,
+  spawnCap: '3',
+  claudeCeiling: 'acceptEdits',
+  codexCeiling: 'on-request/workspace-write',
 };
 
 /** The largest answer limit that the deck accepts. */
 export const MAX_ANSWER_CAP = 5000;
 
-/** True when any fleet-control switch is on. */
+/** True when any fleet-control switch is on. The `spawn` switch is not fleet control. */
 export function fleetOn(f: FleetControl): boolean {
   return f.scope || f.inspect || f.manage || f.answer || f.desktop || f.capture;
 }
@@ -71,6 +83,7 @@ export function answerCapProblem(f: FleetControl): string | null {
   return 'The answer limit is a whole number from 0 to 5000.';
 }
 
+const MAX_SPAWN_CAP = 50;
 const MAX_DESKTOP_CAP = 5000;
 const MAX_IMAGE_MIB = 1024;
 const MAX_RECORDING_SECONDS = 600_000;
@@ -143,9 +156,17 @@ export function anyAckProblem(f: FleetControl): string | null {
   return 'Check "Allow input in other application windows" to give this agent the broader scope.';
 }
 
-/** The first problem of the limit inputs (answer, desktop, screenshot, image budget, recording, input) and the acknowledgment, or null. */
+/** The problem of the session limit text, or null: an integer 0..50 (only checked when `spawn` is on). */
+export function spawnCapProblem(f: FleetControl): string | null {
+  if (!f.spawn) return null;
+  if (wholeUpTo(f.spawnCap, MAX_SPAWN_CAP)) return null;
+  return 'The session limit is a whole number from 0 to 50.';
+}
+
+/** The first problem of the limit inputs (session, answer, desktop, screenshot, image budget, recording, input) and the acknowledgment, or null. */
 export function fleetProblem(f: FleetControl): string | null {
   return (
+    spawnCapProblem(f) ??
     answerCapProblem(f) ??
     desktopCapProblem(f) ??
     captureCapProblem(f) ??
@@ -156,6 +177,11 @@ export function fleetProblem(f: FleetControl): string | null {
     inputCharsProblem(f) ??
     anyAckProblem(f)
   );
+}
+
+/** True when the shown grant fields of a coordinator start have a problem, so Start stays disabled. */
+export function fleetBlocked(coordinator: boolean, shown: boolean, f: FleetControl): boolean {
+  return coordinator && shown && fleetProblem(f) !== null;
 }
 
 /**
@@ -181,18 +207,25 @@ export function grantFields(
   input_cap?: number;
   input_character_cap?: number;
   stations?: string[];
+  spawn_cap?: number;
+  max_modes?: { [key in string]: string };
 } {
   return {
     classes: [
       'read',
       'mail',
       'drive',
+      ...(f.spawn ? ['spawn'] : []),
       ...(f.inspect ? ['inspect'] : []),
       ...(f.manage ? ['manage'] : []),
       ...(f.answer ? ['answer'] : []),
       ...(f.desktop ? ['desktop'] : []),
       ...(f.capture ? ['capture'] : []),
     ],
+    ...(f.spawn ? { spawn_cap: Number(f.spawnCap.trim()) } : {}),
+    ...(f.spawn || f.manage
+      ? { max_modes: { claude: f.claudeCeiling, codex: f.codexCeiling } }
+      : {}),
     ...(f.scope ? { scope: 'fleet' as const } : {}),
     ...(f.answer ? { answer_cap: Number(f.answerCap.trim()) } : {}),
     ...(f.desktop || f.capture ? { desktop_cap: Number(f.desktopCap.trim()) } : {}),
@@ -229,8 +262,8 @@ export function showFleetFields(owner: boolean, coordinator: boolean, importing:
 
 /**
  * The elevation of a start: asked once, only for a coordinator start (not an import) with a
- * switch on or with target stations picked (the deck treats a grant with other stations as fleet
- * control). `{ ok: false }` means the owner cancelled the dialog.
+ * switch on, with the spawn switch on, or with target stations picked (the deck treats a grant
+ * with other stations as fleet control). `{ ok: false }` means the owner cancelled the dialog.
  */
 export async function fleetElevation(
   gate: {
@@ -242,11 +275,11 @@ export async function fleetElevation(
   ask: (labels?: readonly string[]) => Promise<string | null>,
 ): Promise<{ readonly ok: true; readonly elevation: string | undefined } | { readonly ok: false }> {
   const wide = (gate.targets?.length ?? 0) > 0;
-  if (!(gate.coordinator && !gate.importing && (fleetOn(gate.fleet) || wide))) {
+  if (!(gate.coordinator && !gate.importing && (fleetOn(gate.fleet) || wide || gate.fleet.spawn))) {
     return { ok: true, elevation: undefined };
   }
   const labels = [
-    'Fleet control',
+    gate.fleet.spawn && !fleetOn(gate.fleet) && !wide ? 'Starting sessions' : 'Fleet control',
     ...(inputOn(gate.fleet) && gate.fleet.click ? ['Agent pointer clicks'] : []),
     ...(inputOn(gate.fleet) && gate.fleet.anyWindow
       ? ['Agent input in other application windows']
