@@ -152,7 +152,8 @@ impl Lease {
 
     /// One request for `phase`, bounded by the request deadline. A suspend
     /// during the request, or a link that is no longer the current one when
-    /// the answer comes, turns a good answer into a discard.
+    /// the answer comes, turns a good answer into a discard. A failed request
+    /// on a link that ended is `link_closed`.
     pub(crate) async fn request(&self, phase: LeasePhase) -> Answered {
         let _turn = self.inflight.lock().await;
         let sequence = self.sequence.fetch_add(1, Ordering::AcqRel) + 1;
@@ -173,6 +174,11 @@ impl Lease {
             tracing::debug!(error = %e, "the lease request failed");
         }
         let mut verdict = judge(sequence, &response);
+        // A request that failed because the link ended is a link close, not
+        // a denial: the supervisor and this renewal see the same end.
+        if response.is_err() && (!self.link.open() || !self.link.current()) {
+            verdict = Some(Verdict::Discard(StopReason::LinkClosed));
+        }
         if matches!(verdict, Some(Verdict::Continue | Verdict::Save)) {
             if watch.suspended_with(&*self.clocks) {
                 verdict = Some(Verdict::Discard(StopReason::LeaseExpired));

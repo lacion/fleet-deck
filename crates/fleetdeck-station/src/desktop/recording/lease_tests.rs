@@ -11,8 +11,8 @@ use fleetdeck_proto::capture::code;
 use fleetdeck_proto::link::{Outcome, WireError};
 use fleetdeck_proto::recording::{CaptureLeaseAnswer, LeaseDecision, LeasePhase, StopReason};
 
-use super::lease::{Verdict, judge};
-use super::rig_tests::{ID, Reply, T, err};
+use super::lease::{Lease, Verdict, judge};
+use super::rig_tests::{ID, Jumpy, Peer, Reply, T, err, timing};
 
 fn ok(
     sequence: u64,
@@ -194,4 +194,32 @@ async fn the_import_request_waits_for_a_renewal_in_flight() {
     assert!(done.is_ok(), "{:?}", done.err());
     assert_eq!(t.peer.peak.load(Ordering::SeqCst), 1);
     assert_eq!(t.peer.count(LeasePhase::Import), 1);
+}
+
+#[tokio::test]
+async fn a_request_that_fails_on_a_link_that_ended_is_link_closed() {
+    for supersede in [false, true] {
+        let peer = Peer::new();
+        peer.set_phase(LeasePhase::Record, Reply::Transport);
+        if supersede {
+            peer.supersede();
+        } else {
+            peer.close();
+        }
+        let lease = Lease::new(peer, ID, "h", Jumpy::new(), timing());
+        let answered = lease.request(LeasePhase::Record).await;
+        assert_eq!(
+            answered.verdict,
+            Some(Verdict::Discard(StopReason::LinkClosed))
+        );
+    }
+    // On a link that is still open, the same failure is a denial.
+    let peer = Peer::new();
+    peer.set_phase(LeasePhase::Record, Reply::Transport);
+    let lease = Lease::new(peer, ID, "h", Jumpy::new(), timing());
+    let answered = lease.request(LeasePhase::Record).await;
+    assert_eq!(
+        answered.verdict,
+        Some(Verdict::Discard(StopReason::LeaseDenied))
+    );
 }
