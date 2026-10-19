@@ -70,6 +70,9 @@ pub mod binary_hash;
 /// Structural validation of recorded media files (R13 P5b).
 pub mod media;
 
+/// The maintenance runner of the desktop tool installation (BG-1).
+pub mod maintenance;
+
 /// The session manager (PLAN §6.4, M2 P2-6).
 pub mod manager;
 
