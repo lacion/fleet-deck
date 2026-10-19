@@ -393,7 +393,7 @@ async fn queue(
 }
 
 /// The version of the deck-served control skill (ADR-006 §7.1).
-pub const CONTROL_SKILL_VERSION: &str = "2";
+pub const CONTROL_SKILL_VERSION: &str = "3";
 /// The deck-served control skill: the MCP `instructions` of a coordinator
 /// session. It holds no secret and no grant data.
 pub const CONTROL_SKILL: &str = include_str!("../control_skill.md");

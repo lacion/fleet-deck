@@ -22,6 +22,7 @@ fn is_fleet_op(grant: &Grant, op: &CoordinatorOp) -> bool {
                 | CoordinatorOp::ProjectStart { .. }
                 | CoordinatorOp::Answer { .. }
                 | CoordinatorOp::Land { .. }
+                | CoordinatorOp::Move { .. }
         )
 }
 

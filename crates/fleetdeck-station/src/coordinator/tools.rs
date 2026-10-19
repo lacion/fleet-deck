@@ -105,7 +105,8 @@ pub const TOOLS: &[Tool] = &[
     Tool {
         name: "wait_task",
         classes: &[ToolClass::Read],
-        description: "Wait for the end of a task.",
+        description: "Wait (at most about a minute) until a task is no longer open: done, failed, \
+                      blocked, or question (the worker asks you something; answer with send_mail).",
         schema: task,
     },
     Tool {
