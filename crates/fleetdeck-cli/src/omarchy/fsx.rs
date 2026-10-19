@@ -17,8 +17,8 @@ use std::path::{Component, Path, PathBuf};
 
 use ring::rand::{SecureRandom, SystemRandom};
 use rustix::fs::{
-    AtFlags, Dir, FileType, Mode, OFlags, RawMode, RenameFlags, Stat, fchmod, fstat, fsync, mkdirat,
-    open, openat, renameat, renameat_with, statat, unlinkat,
+    AtFlags, Dir, FileType, Mode, OFlags, RawMode, RenameFlags, Stat, fchmod, fstat, fsync,
+    mkdirat, open, openat, renameat, renameat_with, statat, unlinkat,
 };
 use rustix::io::Errno;
 use rustix::process::geteuid;
