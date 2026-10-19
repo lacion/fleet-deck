@@ -8,6 +8,10 @@ use std::os::fd::OwnedFd;
 
 /// Why a pidfd could not be opened.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    not(target_os = "linux"),
+    allow(dead_code, reason = "only the Linux pidfd calls make these variants")
+)]
 pub enum OpenError {
     /// The process ended before the pidfd was opened (`ESRCH`).
     Gone,
@@ -18,6 +22,10 @@ pub enum OpenError {
 
 /// The result of one signal through a pidfd.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    not(target_os = "linux"),
+    allow(dead_code, reason = "only the Linux pidfd calls make these variants")
+)]
 pub enum Sent {
     Delivered,
     /// The process ended (`ESRCH`).

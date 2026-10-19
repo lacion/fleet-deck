@@ -74,6 +74,10 @@ impl SessionTarget {
         };
         // Linux: the identity and the /proc path; elsewhere the check only
         // (design §6).
+        #[allow(
+            clippy::bind_instead_of_map,
+            reason = "only the Linux branch can fail"
+        )]
         let result = opened.and_then(|dir| {
             #[cfg(target_os = "linux")]
             {

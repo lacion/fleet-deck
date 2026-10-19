@@ -104,6 +104,10 @@ fn a_real_run_follows_the_file_system_type_of_the_temporary_directory() {
         "version = 1\ndeck = \"deck.example.ts.net:7421\"\ndeck_fingerprint = \"{FP}\"\nname = \"laptop\"\n"
     );
     fs::write(&source, &text).unwrap();
+    #[allow(
+        clippy::unnecessary_fallible_conversions,
+        reason = "f_type is u32 on macOS and i64 on Linux"
+    )]
     let f_type = {
         let file = fs::File::open(&source).unwrap();
         u64::try_from(rustix::fs::fstatfs(&file).unwrap().f_type).unwrap_or(0) & 0xFFFF_FFFF
