@@ -7,7 +7,7 @@ use std::sync::{Mutex, PoisonError};
 use fleetdeck_proto::capture::{code, text};
 use fleetdeck_proto::desktop::MonitorInfo;
 
-use super::{FREE_RESERVE, MAX_DIMENSION, MAX_PIXELS};
+use super::{MAX_DIMENSION, MAX_PIXELS};
 use crate::desktop::Fail;
 use crate::desktop::recording::Holder;
 
@@ -68,18 +68,18 @@ fn disk_full() -> Fail {
     Fail::new(code::DISK_FULL, text::DISK_FULL)
 }
 
-/// Checks that the disk of the staging directory `dir` keeps `FREE_RESERVE`
+/// Checks that the disk of the staging directory `dir` keeps `reserve`
 /// bytes free after `need` more bytes.
 ///
 /// # Errors
 /// `disk_full` when it does not, or when the free space is unknown.
-pub(crate) fn room(dir: &OwnedFd, need: u64) -> Result<(), Fail> {
+pub(crate) fn room(dir: &OwnedFd, need: u64, reserve: u64) -> Result<(), Fail> {
     let stat = rustix::fs::fstatvfs(dir).map_err(|e| {
         tracing::warn!(error = %e, "cannot read the free space of the capture disk");
         disk_full()
     })?;
     let available = stat.f_bavail.saturating_mul(stat.f_frsize);
-    if available >= FREE_RESERVE.saturating_add(need) {
+    if available >= reserve.saturating_add(need) {
         Ok(())
     } else {
         Err(disk_full())

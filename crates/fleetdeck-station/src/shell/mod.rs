@@ -299,8 +299,14 @@ impl Shells {
                 // The shell starts in the checked folder object (B9).
                 let dir =
                     LaunchDir::open_in(policy.allowed_roots(), &cwd).map_err(|e| e.to_string())?;
-                self.open(shell_id, &dir, *cols, *rows, now, policy.max_shells())
-                    .map_err(|r| r.message)
+                self.open(
+                    shell_id,
+                    &dir,
+                    (*cols, *rows),
+                    now,
+                    (policy.max_shells(), policy.scrollback_limits()),
+                )
+                .map_err(|r| r.message)
             }
             ShellChange::Resize {
                 shell_id,
@@ -400,10 +406,9 @@ impl Shells {
         &self,
         shell_id: &str,
         dir: &LaunchDir,
-        cols: u16,
-        rows: u16,
+        (cols, rows): (u16, u16),
         now: i64,
-        max_shells: u32,
+        (max_shells, ring): (u32, (usize, usize)),
     ) -> Result<(), Reject> {
         let launch = Launch {
             program: self.program(),
@@ -411,7 +416,7 @@ impl Shells {
             session: None,
             max_shells,
         };
-        self.spawn(shell_id, dir, cols, rows, now, launch)
+        self.spawn(shell_id, dir, (cols, rows), now, launch, ring)
             .map(|_| ())
             .map_err(|e| match e {
                 StartError::NotStarted(r) => r,
@@ -436,6 +441,7 @@ impl Shells {
         now: i64,
         max_shells: u32,
         allow_bypass: bool,
+        ring: (usize, usize),
     ) -> Result<Option<u32>, StartError> {
         let instance = self
             .config
@@ -464,17 +470,17 @@ impl Shells {
             session: Some(session_id.clone()),
             max_shells,
         };
-        self.spawn(shell_id, dir, cols, rows, now, launch_env)
+        self.spawn(shell_id, dir, (cols, rows), now, launch_env, ring)
     }
 
     fn spawn(
         &self,
         shell_id: &str,
         dir: &LaunchDir,
-        cols: u16,
-        rows: u16,
+        (cols, rows): (u16, u16),
         now: i64,
         launch: Launch,
+        ring: (usize, usize),
     ) -> Result<Option<u32>, StartError> {
         let mut shells = lock(&self.shells);
         let not_started =
@@ -565,7 +571,7 @@ impl Shells {
             writer: Mutex::new(writer),
             child: Mutex::new(child),
             output: Mutex::new(Output {
-                ring: Scrollback::default(),
+                ring: Scrollback::with_limits(ring.0, ring.1),
                 subscribers: Vec::new(),
             }),
             session: launch.session.clone(),

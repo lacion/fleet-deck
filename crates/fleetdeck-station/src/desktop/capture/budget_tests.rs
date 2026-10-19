@@ -63,14 +63,17 @@ fn room_needs_the_reserve_plus_the_bytes() {
     )
     .unwrap();
     // A request for more than any disk has never fits.
-    let e = room(&dir, u64::MAX - FREE_RESERVE).unwrap_err();
+    let e = room(&dir, u64::MAX - FREE_RESERVE, FREE_RESERVE).unwrap_err();
     assert_eq!(
         (e.code, e.message.as_str()),
         (code::DISK_FULL, text::DISK_FULL)
     );
+    // The reserve is a parameter: a huge one never fits, none always does.
+    assert_eq!(room(&dir, 0, u64::MAX).unwrap_err().code, code::DISK_FULL);
+    assert!(room(&dir, 0, 0).is_ok());
     let stat = rustix::fs::fstatvfs(&dir).unwrap();
     let available = stat.f_bavail * stat.f_frsize;
     if available > FREE_RESERVE + (1 << 30) {
-        assert!(room(&dir, 0).is_ok());
+        assert!(room(&dir, 0, FREE_RESERVE).is_ok());
     }
 }

@@ -27,6 +27,17 @@ use crate::manager::{Policy, SessionManager, adapters_from_config, setup_envs_fr
 use crate::store::{Store, StoreConfig};
 use crate::workspace::{PrivateEnv, PrivatePaths};
 
+/// The store retention of `retention.event_days` and
+/// `retention.history_days` (restart values).
+fn store_config(config: &StationConfig) -> StoreConfig {
+    let days = |n: u32| i64::from(n) * 86_400_000;
+    StoreConfig {
+        event_retention_ms: days(config.retention.event_days),
+        history_retention_ms: days(config.retention.history_days),
+        ..StoreConfig::default()
+    }
+}
+
 /// The host that a station runs: `shim` needs Linux for now (shim parity,
 /// step 0), so a macOS station runs the direct host.
 fn effective_host(host: HostChoice, is_macos: bool) -> HostChoice {
@@ -305,7 +316,7 @@ impl RunningStation {
             &dirs.station_db(),
             clock,
             Arc::clone(&ids),
-            StoreConfig::default(),
+            store_config(config),
         )
         .await?;
         let host: Arc<dyn SessionHost> = Arc::new(DirectChildHost::new());

@@ -192,3 +192,18 @@ async fn a_station_restart_marks_a_cloning_home_attempt_interrupted() {
     assert!(row.message.unwrap().contains(&dest.display().to_string()));
     station.stop().await;
 }
+
+#[test]
+fn the_store_retention_comes_from_the_retention_table() {
+    let root = tempfile::tempdir().unwrap();
+    let plain = crate::manager::policy_hub::test_config(root.path(), "");
+    assert_eq!(store_config(&plain), StoreConfig::default());
+    let extra = "[retention]\nhistory_days = 30\nevent_days = 2\n";
+    let set = store_config(&crate::manager::policy_hub::test_config(root.path(), extra));
+    let day = 86_400_000;
+    assert_eq!(set.history_retention_ms, 30 * day);
+    assert_eq!(set.event_retention_ms, 2 * day);
+    let base = StoreConfig::default();
+    assert_eq!(set.receipt_retention_ms, base.receipt_retention_ms);
+    assert_eq!(set.snapshot_sessions, base.snapshot_sessions);
+}

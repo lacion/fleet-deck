@@ -37,17 +37,20 @@ fn wire(o: Outcome) -> (String, String) {
 async fn row_only(t: &T, id: &str, hash: &str) {
     let begin = t
         .store()
-        .recording_begin(RecordingBegin {
-            deck_fp: FP,
-            capture_id: id,
-            action_hash: hash,
-            monitor: "DP-1",
-            artifact_id: &format!("ART{id}"),
-            seconds: 5,
-            link_epoch: "e",
-            coordinator: None,
-            now: 1,
-        })
+        .recording_begin(
+            RecordingBegin {
+                deck_fp: FP,
+                capture_id: id,
+                action_hash: hash,
+                monitor: "DP-1",
+                artifact_id: &format!("ART{id}"),
+                seconds: 5,
+                link_epoch: "e",
+                coordinator: None,
+                now: 1,
+            },
+            crate::desktop::capture::CAPTURE_QUOTA,
+        )
         .await
         .unwrap();
     assert!(matches!(begin, Begin::Started));
@@ -332,6 +335,8 @@ async fn policy_now_reads_the_settings_after_the_probe() {
             desktop,
             capture,
             monitors: monitors.clone(),
+            quota_bytes: 1,
+            free_reserve_bytes: 1,
         };
         let a = value(policy_now(&c, &allowed, "e", policy_params(ID, "h")).await);
         assert_eq!(a["allow_desktop"], desktop);

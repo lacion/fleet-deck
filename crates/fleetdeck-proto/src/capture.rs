@@ -37,8 +37,7 @@ pub mod code {
 pub mod text {
     pub const BUSY: &str = "A capture is already running.";
     pub const DISK_FULL: &str = "The station has too little free space for a capture.";
-    pub const CAPTURE_QUOTA: &str =
-        "This capture would exceed the station's 4 GiB capture limit. Delete some captures first.";
+    pub const CAPTURE_QUOTA: &str = "This capture would exceed the station's capture storage limit. Delete some captures first, or raise Capture storage in the station settings.";
     pub const CAPTURE_TOO_LARGE: &str = "The screenshot exceeds 32 MiB.";
     pub const CAPTURE_DIMENSIONS: &str = "The monitor exceeds the screenshot size limit.";
     pub const CAPTURE_FAILED: &str = "The screenshot tool failed.";

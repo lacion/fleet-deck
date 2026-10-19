@@ -70,6 +70,10 @@ pub struct Allowed {
     pub capture: bool,
     /// `capture_monitors`; empty means every monitor.
     pub monitors: Vec<String>,
+    /// `capture.quota_gib` in bytes: the most that the captures may use.
+    pub quota_bytes: u64,
+    /// `capture.free_reserve_gib` in bytes: the free disk space to keep.
+    pub free_reserve_bytes: u64,
 }
 
 /// What a test replaces: the launch of `grim`, the syncs and the admission
@@ -254,7 +258,10 @@ impl Desktop {
         let _slot = self.capture.try_take()?;
         // 3
         req.admitted.local_gates()?;
-        check_gates(&(req.allowed)(), &req.monitor)?;
+        // The storage settings are read once here (rule 9).
+        let now_allowed = (req.allowed)();
+        check_gates(&now_allowed, &req.monitor)?;
+        let (quota, reserve) = (now_allowed.quota_bytes, now_allowed.free_reserve_bytes);
         let allowed = Arc::clone(&req.allowed);
         let gate = move || allowed().desktop;
         // 4
@@ -275,7 +282,7 @@ impl Desktop {
         // 5
         let captures = req.service.captures_dir();
         let dir = open_captures(&captures)?;
-        room(&dir, MAX_PNG_BYTES)?;
+        room(&dir, MAX_PNG_BYTES, reserve)?;
         drop(dir);
         // 6
         let store = req.service.store();
@@ -288,6 +295,7 @@ impl Desktop {
                 &req.monitor,
                 &artifact_id,
                 req.admitted.coordinator(),
+                quota,
                 store.now_ms(),
             )
             .await
@@ -309,7 +317,15 @@ impl Desktop {
         }
         let mut last = info;
         match self
-            .stages(&req, &ctx, &gate, &mut last, at, deadline, &artifact_id)
+            .stages(
+                &req,
+                &ctx,
+                &gate,
+                &mut last,
+                (at, reserve),
+                deadline,
+                &artifact_id,
+            )
             .await
         {
             Ok(published) => Ok(self
@@ -340,7 +356,7 @@ impl Desktop {
         ctx: &Ctx,
         gate: &(dyn Fn() -> bool + Send + Sync),
         last: &mut DesktopInfo,
-        at: i64,
+        (at, reserve): (i64, u64),
         deadline: Instant,
         artifact_id: &str,
     ) -> Result<ArtifactPublished, Stage> {
@@ -377,7 +393,7 @@ impl Desktop {
                     staging.file(),
                     MAX_PNG_BYTES,
                     deadline,
-                    &|n| room(&dir, n),
+                    &|n| room(&dir, n, reserve),
                 ),
                 Err(_) => Err(capture_failed()),
             };
@@ -419,7 +435,9 @@ impl Desktop {
             Arc::clone(&req.params.fs),
         );
         let (imported, back) = tokio::task::spawn_blocking(move || {
-            let result = import_png(&root, &id, staging.file(), len, &*fs, &room);
+            let result = import_png(&root, &id, staging.file(), len, &*fs, &|d, n| {
+                room(d, n, reserve)
+            });
             (result, staging)
         })
         .await

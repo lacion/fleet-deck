@@ -90,6 +90,8 @@ fn open() -> Allowed {
         desktop: true,
         capture: true,
         monitors: Vec::new(),
+        quota_bytes: super::CAPTURE_QUOTA,
+        free_reserve_bytes: super::FREE_RESERVE,
     }
 }
 
@@ -387,6 +389,33 @@ async fn a_monitor_that_disappears_during_the_capture_discards_the_output() {
     );
     assert_eq!(err(t.run(ID, "DP-1").await).0, desktop_code::NOT_FOUND);
     assert_failed(&t, ID, desktop_code::NOT_FOUND).await;
+}
+
+#[tokio::test]
+async fn the_quota_of_the_allowed_values_refuses_the_capture() {
+    let t = setup().await;
+    t.service().ensure_recovered().await.unwrap();
+    t.allowed.lock().unwrap().quota_bytes = super::MAX_PNG_BYTES - 1;
+    assert_eq!(
+        err(t.run(ID, "DP-1").await),
+        (code::CAPTURE_QUOTA, text::CAPTURE_QUOTA.to_owned())
+    );
+    assert_eq!(t.grim_runs(), 0);
+    // The same capture passes when the setting allows it.
+    t.allowed.lock().unwrap().quota_bytes = super::CAPTURE_QUOTA;
+    assert!(t.run(ID, "DP-1").await.is_ok());
+}
+
+#[tokio::test]
+async fn the_free_reserve_of_the_allowed_values_refuses_the_capture() {
+    let t = setup().await;
+    t.service().ensure_recovered().await.unwrap();
+    t.allowed.lock().unwrap().free_reserve_bytes = u64::MAX;
+    assert_eq!(
+        err(t.run(ID, "DP-1").await),
+        (code::DISK_FULL, text::DISK_FULL.to_owned())
+    );
+    assert_eq!(t.grim_runs(), 0);
 }
 
 #[tokio::test]

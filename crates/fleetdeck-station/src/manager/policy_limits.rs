@@ -87,7 +87,24 @@ pub fn reconnect_backoff(limits: &StationLimits) -> BackoffPolicy {
     }
 }
 
+/// The ring of a new terminal: the lines of `limits.scrollback_lines` and
+/// the bytes of `limits.scrollback_mib`.
+#[must_use]
+pub(super) fn scrollback_of(limits: &StationLimits) -> (usize, usize) {
+    let mib = usize::try_from(limits.scrollback_mib).unwrap_or(usize::MAX);
+    (
+        usize::try_from(limits.scrollback_lines).unwrap_or(usize::MAX),
+        mib.saturating_mul(1024 * 1024),
+    )
+}
+
 impl Policy {
+    /// The lines and the bytes that the scrollback of a new terminal keeps.
+    #[must_use]
+    pub fn scrollback_limits(&self) -> (usize, usize) {
+        self.scrollback
+    }
+
     /// The stop bounds of the provider processes (a restart value).
     #[must_use]
     pub fn stop_policy(&self) -> StopPolicy {
@@ -190,6 +207,18 @@ mod tests {
         assert_eq!(policy.stop_policy().grace, Duration::from_secs(45));
         let reloaded = policy.reconfigured(&plain);
         assert_eq!(reloaded.stop_policy().grace, Duration::from_secs(45));
+    }
+
+    #[test]
+    fn the_scrollback_comes_from_the_limits_and_a_reload_takes_the_new_one() {
+        let root = tempfile::tempdir().unwrap();
+        let default = Policy::from_config(&test_config(root.path(), ""));
+        assert_eq!(default.scrollback_limits(), (5000, 8 * 1024 * 1024));
+        let extra = "[limits]\nscrollback_lines = 500\nscrollback_mib = 2\n";
+        let set = Policy::from_config(&test_config(root.path(), extra));
+        assert_eq!(set.scrollback_limits(), (500, 2 * 1024 * 1024));
+        let back = set.reconfigured(&test_config(root.path(), ""));
+        assert_eq!(back.scrollback_limits(), (5000, 8 * 1024 * 1024));
     }
 
     #[test]

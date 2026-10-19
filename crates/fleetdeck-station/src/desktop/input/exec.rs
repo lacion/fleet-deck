@@ -47,7 +47,7 @@ use super::target::{self, ListedTarget};
 use super::{ACTIVE_LIMIT, AUTHORITY_MAX_AGE, Claimed, Claimer, Env, FOCUS_MAX_AGE, fail};
 use crate::desktop::actions::send_notify;
 use crate::desktop::authority::{Admitted, Start};
-use crate::desktop::capture::{Allowed, capture_gate};
+use crate::desktop::capture::{Allowed, CAPTURE_QUOTA, FREE_RESERVE, capture_gate};
 use crate::desktop::coordinator::{preview_owner, refusal, unknown};
 use crate::desktop::events::{PreviewOwner, Record};
 use crate::desktop::run::{CALL_TIMEOUT, InputCommand, Runner};
@@ -210,6 +210,8 @@ impl Op<'_> {
                     desktop: true,
                     capture: true,
                     monitors: monitors.clone(),
+                    quota_bytes: CAPTURE_QUOTA,
+                    free_reserve_bytes: FREE_RESERVE,
                 },
                 Some(name),
             )?;
