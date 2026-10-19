@@ -124,12 +124,16 @@ pub async fn serve(
                 // The end of the board stream ends the relay only.
                 if let Some((_, task)) = relays.remove(&stream) {
                     task.abort();
+                    // The aborted relay cannot close its half: close it here
+                    // (an error, for example a half that is closed, is ignored).
+                    let _ = handle.close(stream).await;
                     continue;
                 }
                 // The deck's half of an export ends nothing: the station
                 // goes on writing.
                 if let Some((_, task)) = streams.remove(&stream) {
                     task.abort();
+                    let _ = handle.close(stream).await;
                 }
             }
             DataEvent::Reset { stream, .. } => {

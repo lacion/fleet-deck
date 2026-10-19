@@ -28,6 +28,7 @@ const WAIT: Duration = Duration::from_secs(30);
 pub(super) struct FakePort {
     output: Mutex<Vec<u8>>,
     pub(super) closed: AtomicBool,
+    closes: AtomicUsize,
     resets: Mutex<Vec<String>>,
     consumed: AtomicUsize,
 }
@@ -44,6 +45,7 @@ impl RelayPort for FakePort {
 
     async fn close(&self) {
         self.closed.store(true, Ordering::SeqCst);
+        self.closes.fetch_add(1, Ordering::SeqCst);
     }
 
     async fn reset(&self, reason: &str) {
@@ -336,6 +338,35 @@ async fn maintenance_relay_the_end_of_the_board_stream_leaves_the_runner_running
     .unwrap();
     assert_eq!(code, 0);
     assert!(contains(&output, b"got-z"));
+    run.finished().await;
+}
+
+#[tokio::test]
+async fn maintenance_relay_the_end_of_the_board_stream_closes_the_station_half_once() {
+    let run = start("read -r x; echo got-$x", POST_OK);
+    running(run.path()).await;
+    let svc = service(run.path());
+    let relay = relay(&svc);
+    timeout(WAIT, async {
+        while svc.relay_sender(ID).is_none() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    drop(relay.board);
+    timeout(WAIT, relay.task).await.unwrap().unwrap();
+    // The relay closed its half exactly once, and the runner still runs.
+    assert_eq!(relay.port.closes.load(Ordering::SeqCst), 1);
+    let state = files::read_state(run.path(), ID).unwrap().unwrap();
+    assert_eq!(state.state, RunStateKind::Running);
+    let mut client = connect(run.path(), &spec(ID)).await.unwrap();
+    client.input(b"q\n").await.unwrap();
+    timeout(WAIT, async {
+        while !matches!(client.next().await.unwrap(), Frame::Exit(_)) {}
+    })
+    .await
+    .unwrap();
     run.finished().await;
 }
 

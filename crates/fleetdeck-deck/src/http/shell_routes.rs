@@ -339,7 +339,7 @@ async fn copy(
                 Some(DataEvent::Opened { .. }) => {}
                 Some(DataEvent::Closed { .. } | DataEvent::Reset { .. }) | None => {
                     let _ = socket.send(Message::Close(None)).await;
-                    return;
+                    break;
                 }
             },
             message = socket.recv() => match message {
@@ -365,6 +365,8 @@ async fn copy(
             },
         }
     }
-    // The board went away: end the stream, not the shell.
+    // The board went away or the station ended its half: close this half (the
+    // stream slot is freed when both halves are closed); never the shell or the
+    // runner.
     let _ = stream.handle.close(stream.id).await;
 }
