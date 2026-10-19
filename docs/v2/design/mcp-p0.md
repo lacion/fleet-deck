@@ -1,6 +1,6 @@
 # MCP P0 — the board gives spawn and a mode ceiling; command_status; small fixes
 
-- **Status:** Draft revision 2, 2026-10-19. Revision 1 (1e0a9493) got adversary DESIGN REVIEW FAIL (1 BLOCKER, 3 MAJOR, 1 MINOR; report `~/fleetdeck-briefs/mcp-p0-design-r1-adversary.md`). Revision 2 applies all five (§7 maps them).
+- **Status:** Accepted revision 2, 2026-10-19 (adversary DESIGN RE-REVIEW PASS, report `~/fleetdeck-briefs/mcp-p0-design-r2-adversary.md`). Revision 1 (1e0a9493) got adversary DESIGN REVIEW FAIL (1 BLOCKER, 3 MAJOR, 1 MINOR; report `~/fleetdeck-briefs/mcp-p0-design-r1-adversary.md`). Revision 2 applies all five (§7 maps them).
 - **Program:** the MCP program on branch `MCP` (owner decisions D1–D3 of 2026-10-19). P0 fixes the five findings of the MCP review (artifact `01M5A0CCJ7CS4E9429R8WCZWJ5`). P4 later builds the default worker grant on the same grant fields.
 - **Related:** ADR-006 §4, §6.3, §6.4; ADR-008 §3, §5.2.
 
