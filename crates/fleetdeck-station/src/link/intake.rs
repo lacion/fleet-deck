@@ -554,6 +554,10 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
         "station.tools" | "station.desktop_tools_plan" => {
             crate::desktop_tools::call(&req.method, req.params, control.params().peer).await
         }
+        "maintenance.open" | "maintenance.list" | "maintenance.resize" => {
+            let (peer, allow_shell) = (control.params().peer, ctx.manager.policy().allow_shell());
+            crate::maintenance::call(&req.method, req.params, peer, allow_shell).await
+        }
         "shell.list" => ok(ctx.shells.list()),
         "session.list" => match store.snapshot().await {
             Ok(s) => ok(s.sessions),
@@ -608,6 +612,15 @@ pub(super) fn shell_attach(
         }),
         Err(e) => internal(e),
     }
+}
+
+/// `maintenance.attach`: a single-use token for one data stream of this link
+/// with the purpose `maintenance:<id>`.
+pub(super) fn maintenance_attach(
+    data: Option<&fleetdeck_link::data::Data>,
+    params: serde_json::Value,
+) -> Outcome {
+    crate::maintenance::attach_call(data, params)
 }
 
 fn not_stored(command_id: fleetdeck_proto::CommandId, reject: Reject, now: i64) -> Outcome {
