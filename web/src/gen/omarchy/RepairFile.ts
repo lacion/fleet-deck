@@ -13,4 +13,9 @@ path: string,
 /**
  * The absolute path of the kept copy; `null` when there is none.
  */
-backup_path: string | null, state: RepairFileState, };
+backup_path: string | null, state: RepairFileState, 
+/**
+ * The absolute path of a later edit of the owner that a restore moved
+ * aside and kept; left out when there is none.
+ */
+kept_path?: string, };

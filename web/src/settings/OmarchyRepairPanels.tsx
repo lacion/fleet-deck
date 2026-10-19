@@ -7,6 +7,7 @@ import type { RepairStatusView } from './omarchyRepair';
 import {
   CONFLICT_TEXT,
   canReplace,
+  type FileLine,
   fileName,
   hasKeptCopy,
   type InstallPlanView,
@@ -50,19 +51,16 @@ export type RepairsState =
   | { readonly kind: 'error' }
   | { readonly kind: 'ready'; readonly journals: RepairStatusView['journals'] };
 
-/** The note of a file: its state and its kept copy, one under the other. */
-export function FileLines({
-  lines,
-}: {
-  readonly lines: readonly { readonly line: string; readonly kept: string }[];
-}) {
+/** The note of a file: its state, its kept copy, and a later edit that is kept aside. */
+export function FileLines({ lines }: { readonly lines: readonly FileLine[] }) {
   if (lines.length === 0) return null;
   return (
     <ul className="fd-omarchy-files">
       {lines.map((l) => (
-        <li key={`${l.line}/${l.kept}`}>
+        <li key={`${l.line}/${l.kept}/${l.edit ?? ''}`}>
           <span>{l.line}</span>
           <span className="fd-note">{l.kept}</span>
+          {l.edit === undefined ? null : <span className="fd-note">{l.edit}</span>}
         </li>
       ))}
     </ul>

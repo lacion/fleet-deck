@@ -11,6 +11,9 @@
 #[path = "omarchy_install/rig.rs"]
 mod rig;
 
+#[path = "omarchy_repair/r1.rs"]
+mod r1;
+
 use std::io::Write as _;
 use std::os::unix::fs::{PermissionsExt as _, symlink};
 use std::path::{Path, PathBuf};

@@ -291,3 +291,77 @@ fn private_dir_makes_the_directory_0700_and_the_ones_above_it_0755() {
     symlink(dir.path().join("a"), dir.path().join("alink")).unwrap();
     assert!(home.private_dir(Path::new("alink")).is_err());
 }
+
+fn chmod(path: &Path, bits: u32) {
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(bits)).unwrap();
+}
+
+#[test]
+fn others_can_write_checks_the_file_and_each_directory_from_the_first_component() {
+    let (dir, home) = home();
+    let rel = Path::new("a/b/f");
+    home.write(rel, b"x", 0o644).unwrap();
+    assert!(!home.others_can_write(rel).unwrap());
+    // A missing file or directory adds nothing.
+    assert!(!home.others_can_write(Path::new("a/b/none")).unwrap());
+    assert!(!home.others_can_write(Path::new("a/none/f")).unwrap());
+    // The file: a group bit or an other bit.
+    for bits in [0o664, 0o646] {
+        chmod(&dir.path().join("a/b/f"), bits);
+        assert!(home.others_can_write(rel).unwrap(), "{bits:o}");
+    }
+    chmod(&dir.path().join("a/b/f"), 0o644);
+    // The first directory, a middle one, and the parent.
+    for d in ["a", "a/b"] {
+        chmod(&dir.path().join(d), 0o775);
+        assert!(home.others_can_write(rel).unwrap(), "{d}");
+        assert!(home.others_can_write(Path::new("a/b/none")).unwrap(), "{d}");
+        chmod(&dir.path().join(d), 0o755);
+    }
+    assert!(!home.others_can_write(rel).unwrap());
+    // The config home itself is not checked.
+    chmod(dir.path(), 0o777);
+    assert!(!home.others_can_write(rel).unwrap());
+}
+
+#[test]
+fn create_new_held_gives_the_descriptor_and_none_for_a_taken_name() {
+    let (dir, home) = home();
+    let rel = Path::new("a/held");
+    let fd = home.create_new_held(rel, b"one", 0o644).unwrap().unwrap();
+    assert_eq!(std::fs::read(dir.path().join(rel)).unwrap(), b"one");
+    assert!(home.create_new_held(rel, b"two", 0o644).unwrap().is_none());
+    assert_eq!(std::fs::read(dir.path().join(rel)).unwrap(), b"one");
+    // The same file by name: its bytes come back.
+    let data = home.read_same(rel, &fd).unwrap().unwrap();
+    assert_eq!(data.bytes, b"one");
+}
+
+#[test]
+fn read_same_refuses_another_file_a_loose_mode_a_second_name_and_a_link() {
+    let (dir, home) = home();
+    let rel = Path::new("a/held");
+    let path = dir.path().join(rel);
+    let fd = home.create_new_held(rel, b"one", 0o644).unwrap().unwrap();
+    // A group write bit.
+    chmod(&path, 0o664);
+    assert!(home.read_same(rel, &fd).unwrap().is_none());
+    chmod(&path, 0o644);
+    assert!(home.read_same(rel, &fd).unwrap().is_some());
+    // A second name.
+    std::fs::hard_link(&path, dir.path().join("a/other")).unwrap();
+    assert!(home.read_same(rel, &fd).unwrap().is_none());
+    std::fs::remove_file(dir.path().join("a/other")).unwrap();
+    // Another file under the same name (another inode).
+    std::fs::remove_file(&path).unwrap();
+    std::fs::write(&path, b"one").unwrap();
+    chmod(&path, 0o644);
+    assert!(home.read_same(rel, &fd).unwrap().is_none());
+    // A link under the name.
+    std::fs::remove_file(&path).unwrap();
+    symlink(dir.path().join("a"), &path).unwrap();
+    assert!(home.read_same(rel, &fd).unwrap().is_none());
+    // Nothing under the name.
+    std::fs::remove_file(&path).unwrap();
+    assert!(home.read_same(rel, &fd).unwrap().is_none());
+}

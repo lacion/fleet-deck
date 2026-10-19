@@ -33,6 +33,8 @@ pub enum Step {
     Published,
     Restoring,
     Restored,
+    /// A restore moves the published target to its kept name.
+    MovingAside,
 }
 
 /// One file of a repair.
@@ -45,8 +47,15 @@ pub struct JournalFile {
     /// target that did not exist.
     pub original_hash: Option<String>,
     pub asset_hash: String,
-    /// The name of the kept copy, in the directory of the target.
+    /// The name of the kept copy, in the directory of the target. It ends in
+    /// `.sample`, so that no Omarchy hook dispatcher runs it; a journal that
+    /// an earlier build wrote has the same name without that ending.
     pub backup_name: String,
+    /// The name that a restore gives to the published target when it moves
+    /// it aside (it ends in `.sample`), in the directory of the target.
+    /// Written before the move; `None` until a restore needs it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kept_name: Option<String>,
     /// The name of the staging file, in the directory of the target.
     pub staging_name: String,
     /// The step that began and has no completion record yet.
@@ -64,6 +73,15 @@ pub struct Journal {
     /// Unix milliseconds.
     pub created_at: i64,
     pub files: Vec<JournalFile>,
+    /// True once the rest of the install ran after the last publication. A
+    /// journal that an earlier build wrote has no such field and reads as
+    /// finished.
+    #[serde(default = "finished_default")]
+    pub finished: bool,
+}
+
+fn finished_default() -> bool {
+    true
 }
 
 /// Why a journal could not be loaded.
@@ -139,6 +157,12 @@ impl JournalFile {
         PathBuf::from(&self.target)
     }
 
+    /// The kept name of a displaced target, relative to the config home.
+    #[must_use]
+    pub fn kept_rel(&self) -> Option<PathBuf> {
+        self.kept_name.as_deref().map(|n| sibling(&self.target, n))
+    }
+
     /// The kept copy, relative to the config home.
     #[must_use]
     pub fn backup_rel(&self) -> PathBuf {
@@ -150,6 +174,22 @@ impl JournalFile {
     pub fn staging_rel(&self) -> PathBuf {
         sibling(&self.target, &self.staging_name)
     }
+}
+
+/// The ending of every kept name: the Omarchy hook dispatcher skips it.
+pub const KEPT_ENDING: &str = ".sample";
+
+/// A new kept name for a displaced target: `<name>.fleetdeck-kept-<secs>-
+/// <16 hex>.sample`.
+///
+/// # Errors
+/// The system has no random bytes.
+pub fn new_kept_name(target: &str, secs: i64) -> std::io::Result<String> {
+    Ok(format!(
+        "{}.fleetdeck-kept-{secs}-{}{KEPT_ENDING}",
+        leaf(target),
+        random_bytes_hex(8)?
+    ))
 }
 
 /// A new file entry for `asset` with its approved hash. The backup name has
@@ -170,7 +210,11 @@ pub fn new_file(
         asset_id: id,
         original_hash,
         asset_hash: sha256_hex(asset.text.as_bytes()),
-        backup_name: format!("{name}.fleetdeck-conflict-{secs}-{}", random_bytes_hex(8)?),
+        backup_name: format!(
+            "{name}.fleetdeck-conflict-{secs}-{}{KEPT_ENDING}",
+            random_bytes_hex(8)?
+        ),
+        kept_name: None,
         staging_name: format!(".{name}.fleetdeck-stage-{}", random_bytes_hex(8)?),
         target,
         intent: None,
@@ -194,6 +238,10 @@ fn valid_file(file: &JournalFile) -> bool {
         && file
             .staging_name
             .starts_with(&format!(".{name}.fleetdeck-stage-"))
+        && file
+            .kept_name
+            .as_deref()
+            .is_none_or(|k| single(k) && k.starts_with(&format!("{name}.fleetdeck-kept-")))
         && valid_hash(&file.asset_hash)
         && file.original_hash.as_deref().is_none_or(valid_hash)
 }
@@ -259,6 +307,7 @@ pub fn new_journal(
         build_hash,
         created_at,
         files,
+        finished: false,
     }
 }
 
