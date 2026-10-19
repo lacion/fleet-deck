@@ -498,14 +498,23 @@ impl RunningStation {
     /// gracefully.
     pub async fn stop(self) {
         tracing::info!("station stopping");
+        // One line for each step: a stop that does not end shows its step.
+        let began = std::time::Instant::now();
+        let step = |step: &str| tracing::info!(step, ms = began.elapsed().as_millis(), "stop step");
         let _ = self.shutdown.send(true);
         crate::desktop::service().shutdown_recordings();
         let _ = self.server.await;
+        step("local socket");
         let _ = self.assist.await;
+        step("assist");
         let _ = self.rescan.await;
+        step("rescan");
         let _ = self.prune.await;
+        step("prune");
         let _ = self.loads.await;
+        step("loads");
         let _ = self.omarchy_tick.await;
+        step("omarchy tick");
         for mut task in self.fleet_git {
             if tokio::time::timeout(FLEET_GIT_STOP_WAIT, &mut task)
                 .await
@@ -514,13 +523,17 @@ impl RunningStation {
                 task.abort();
             }
         }
+        step("fleet git");
         self.node.shutdown();
+        step("link node");
         // The stop waits for the terminal processes (up to the hangup grace).
         let shells = Arc::clone(&self.shells);
         if let Err(e) = tokio::task::spawn_blocking(move || shells.close_all()).await {
             tracing::warn!(error = %e, "shell close");
         }
+        step("shells");
         self.manager.shutdown(StopMode::Graceful).await;
+        step("sessions");
         // The pumps store the last events of each process (`session.ended`).
         let deadline = tokio::time::Instant::now() + PUMP_GRACE;
         while self.manager.live_sessions() > 0 && tokio::time::Instant::now() < deadline {
