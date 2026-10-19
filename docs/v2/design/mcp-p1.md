@@ -1,6 +1,6 @@
 # MCP P1 — both protocol eras through rmcp, tool annotations, catalog budget
 
-- **Status:** Draft revision 2, 2026-10-19. Revision 1 (c8bf6103) got adversary DESIGN REVIEW FAIL (2 BLOCKER, 8 MAJOR, 1 MINOR; `~/fleetdeck-briefs/mcp-p1-design-r1-adversary.md`). Revision 2 applies all eleven (§11 maps them).
+- **Status:** Draft revision 3, 2026-10-19. Revision 1 (c8bf6103) got adversary DESIGN REVIEW FAIL (2 BLOCKER, 8 MAJOR, 1 MINOR; `~/fleetdeck-briefs/mcp-p1-design-r1-adversary.md`); revision 2 (86404263) resolved nine and got RE-REVIEW FAIL on two (`~/fleetdeck-briefs/mcp-p1-design-r2-adversary.md`). Revision 3 replaces the log filter and the permit mechanism (§11, §12).
 - **Program:** the MCP program (DL-251). Architect decision A1: keep the station listener, authentication and limits (ADR-006 §5) as the outer boundary; the official SDK `rmcp` 3.5.1 owns the protocol behaviour of both eras. Evidence: the spike `spikes/s-rmcp/README.md` (T1–T10 pass) and the advisor answer `~/fleetdeck-briefs/mcp-p1-advisor-result.md`.
 - **Out of scope:** resources, prompts, completions, generated instructions (P3); `subscriptions/listen`, progress and SSE responses, bridge wire v2 (P2); output schemas for deck-produced results (P3); the default worker grant (P4).
 
@@ -33,7 +33,9 @@ Bridge: unix socket ─ socket::intake (AUTH, limits) ─ bridge request build �
 - `pub(super) struct McpService` holds only the `StreamableHttpServerConfig` and a `StationMcp` (cheap: `Arc`s inside). **It builds a new `StreamableHttpService<StationMcp, NeverSessionManager>` for every authenticated request** (R1 BLOCKER 2): rmcp's service keeps a shared, unbounded `tool_schemas` cache keyed by any tool name that a caller sends (`tower.rs:1344`, `:1605`), and a clone shares it. A per-request service drops that cache with the request. The factory closure clones the `StationMcp`.
 - Config, exactly: `StreamableHttpServerConfig::default().with_legacy_session_mode(false).with_json_response(true).with_max_request_body_bytes(256 * 1024)`, plus `enforce_origin_validation()` with an empty allow list (a second layer; the outer 403 stays first). The rmcp default Host check stays on (`localhost`, `127.0.0.1`, `::1`). `NeverSessionManager` (no session state at all; the spike proved it works with legacy session mode off).
 - `pub(super) async fn serve(&self, binding: Binding, body: Bytes, headers: &HeaderMap) -> Reply` builds an `http::Request` (method POST, URI `/mcp`, the original headers, `Accept: application/json, text/event-stream` added when absent, the body), inserts `binding.clone()` into the request extensions, calls the service, and collects the body. `Reply` is `{ status: StatusCode, content_type: Option<HeaderValue>, body: Bytes }`.
-- The per-binding permit lives until the reply is fully written (R1 MAJOR 9): on HTTP the permit moves into a `PermitBody` wrapper of the final hyper response body (the pattern of `spikes/s-rmcp/src/outer.rs`) and is dropped when hyper has written the body or the connection ends; on the socket the permit is held through `write_all` and `flush` of the reply line.
+- The per-binding permit lives until the reply bytes have left the station's buffers (R1 MAJOR 9, R2 BLOCKER 2). A body-drop wrapper is not enough: hyper takes a `Full` body's last frame into its write buffer and flushes later (hyper 1.12 `proto/h1/dispatch.rs:401-417`, `conn.rs:781-799`). Mechanism:
+  - HTTP: each accepted connection gets a `PermitSlot` (`Arc<Mutex<Vec<OwnedSemaphorePermit>>>`) and its IO is wrapped as `PermitIo { inner: TokioIo<TcpStream>, slot }`. When the service has built the response of an authenticated request, it moves that request's permit into the connection's slot (instead of dropping it). `PermitIo::poll_flush` clears the slot (drops the permits) when the inner `poll_flush` returns `Ready(Ok(()))`; `poll_shutdown` and `Drop` clear it too. HTTP/1.1 serves one request at a time on a connection, so a permit in the slot belongs to the response that is being written; a later spurious flush with an empty buffer can only release a permit whose bytes are already flushed. The worker confirms in the hyper 1.12 source that the dispatcher encodes the response into the write buffer before it calls `poll_flush`, and stops with STATUS: QUESTION if not.
+  - Socket: the permit is held through `write_all` and `flush` of the reply line, then dropped.
 
 ### 3.2 `StationMcp` (new module `crates/fleetdeck-station/src/coordinator/mcp_server.rs`)
 
@@ -72,9 +74,14 @@ The binding is read only with `ctx.extensions.get::<http::request::Parts>()?.ext
 - Legacy version memory for the bridge: `Bindings` stores, per credential digest, the version that the last **successful** `initialize` of that binding negotiated (set in `StationMcp::initialize` only after `negotiate_initialize` returns `Ok`; cleared when the binding is removed; a failed `initialize` leaves the old value). It is per binding, never shared, and only a header hint for the bridge path; it gives no authority.
 - The bridge client `fleetdeck mcp-bridge` (bridge.rs) does not change in P1.
 
-### 3.5 Logging (R1 BLOCKER 1)
+### 3.5 Logging (R1 BLOCKER 1, R2 BLOCKER 1)
 
-rmcp logs whole requests and results at `debug` (`service.rs:1563`, `:1609`), which would put typed text, tool arguments and screenshot bytes into the log at a debug filter. `fleetdeck_core::logging::env_filter` adds the directive `rmcp=off` after the user's filter text (from `FLEETDECK_LOG`, `RUST_LOG` or the default), so no filter can turn rmcp events on. The station's own sanitized diagnostics stay. A test sets the filter to `trace` (and to `rmcp=trace`), drives one `type_text` with a sentinel text, one refused call with a sentinel argument and one `read_capture_image` with a sentinel PNG through the real ingress with a captured writer, and asserts that no sentinel appears in the log.
+rmcp logs whole requests and results at `debug` (`service.rs:1563`, `:1609`), which would put typed text, tool arguments and screenshot bytes into the log. A directive in the user's `EnvFilter` cannot stop it: `EnvFilter` orders directives by specificity, so `rmcp::service=trace` beats an added `rmcp=off` (tracing-subscriber 0.3.23 `filter/env/directive.rs:300-325`). So the deny is outside `EnvFilter`:
+
+- `fleetdeck_core::logging::subscriber` (the only production subscriber setup) adds, for both formats, a global filter layer on the finished subscriber: `tracing_subscriber::filter::filter_fn(|meta| !is_sdk_target(meta.target()))` with `fn is_sdk_target(t: &str) -> bool { t == "rmcp" || t.starts_with("rmcp::") }`. As a layer, `FilterFn` vetoes the event or span for the whole subscriber, whatever the `EnvFilter` text is.
+- `env_filter` does not change.
+- The station's own sanitized diagnostics stay.
+- Test 13 sets each of these filters in turn: `trace`, `rmcp=trace`, `rmcp::service=trace`, `rmcp::transport=trace`, `rmcp::transport::streamable_http_server::tower=trace`, `[{}]=trace`; for each it drives one `type_text` with a sentinel text, one refused call with a sentinel argument and one `read_capture_image` with a sentinel PNG through the real ingress with a captured writer, and asserts that no sentinel appears. A unit test in `fleetdeck-core` checks `is_sdk_target` and that an `rmcp::service` debug event is not written under `rmcp::service=trace`.
 
 ### 3.6 What is removed
 
@@ -148,7 +155,7 @@ Existing tests in `ingress_tests.rs`, `socket_tests.rs`, `bridge_tests.rs`, `fle
 19. `a_dropped_link_request_before_the_queue_frees_its_slot_and_a_late_reply_after_the_queue_keeps_the_link` (`fleetdeck-link`, with real `Control` queue backpressure).
 20. `a_held_credential_whose_binding_ended_gets_the_uniform_401` (HTTP and socket, revoked and expired; same body and `WWW-Authenticate`).
 21. `two_identical_publish_calls_without_artifact_id_make_two_artifacts` (the annotation's reason).
-22. `a_slow_reader_keeps_the_binding_permit_until_the_reply_is_written` (HTTP and socket, with a reply larger than the socket buffer from a fake `FleetTools` and a client that does not read: a second request of the binding is limited until the first reply is read).
+22. `a_slow_reader_keeps_the_binding_permit_until_the_reply_is_written` (HTTP and socket): a fake `FleetTools` answers a 16 MiB reply; 8 clients of one binding send a request on 8 connections and do not read, so all 8 replies are blocked in hyper's writer (or the socket write); a 9th request of the binding on a new connection is limited (429 / the correlated `-32000` line); after one client reads its reply to the end, the next request succeeds.
 23. Transport-level authorization matrix (R1 MAJOR 10), through the real ingress and the socket, for each of `2025-03-26`, `2025-06-18`, `2025-11-25`, `2026-07-28`: a forged caller in the arguments, in `_meta` and in `clientInfo`; a class denial; a pending binding; the live switch turned off between two calls; a P6 binding revocation and a generation change while a delayed desktop result is in flight. A counting fake `Forward` asserts zero forwards for every refused case, and the delayed desktop case asserts that no image block reaches the client. Plus: `StationMcp` called without a binding extension fails closed (no forward); two bindings A and B in parallel never see each other's identity or results; the full `tools/list` JSON and the `instructions` are byte-identical across pending → active → idle expiry → renewal.
 
 ## 7. Files
@@ -181,6 +188,13 @@ Existing tests in `ingress_tests.rs`, `socket_tests.rs`, `bridge_tests.rs`, `fle
 | MAJOR 5 — link request reservation is not cancel-safe | §3.3 step 4 (guard before the queue), test 19 |
 | MAJOR 6 — held + ended credential gets `starting` | §3.4 (ended check before the hold), test 20 |
 | MAJOR 7 — `publish_artifact` not idempotent | §4.1, test 21 |
-| MAJOR 8 — the permit does not last through the write | §3.1 (`PermitBody`, socket write), test 22 |
+| MAJOR 8 — the permit does not last through the write | §3.1 (`PermitIo` flush release, socket write), test 22 |
 | MAJOR 9 — tests do not prove isolation through the adapters | §6 test 23 |
 | MINOR — rmcp defaults answer success for unsupported methods | §3.2 table, test 23 (method rows are covered in test 12's file) |
+
+## 12. Review map (R2 → revision 3)
+
+| Finding | Section |
+| --- | --- |
+| BLOCKER — `rmcp=off` in `EnvFilter` loses to a more specific `rmcp::service=trace` | §3.5 (a global `FilterFn` layer outside `EnvFilter`), test 13 with the specific targets |
+| BLOCKER — `PermitBody` releases at body drop, before hyper writes | §3.1 (`PermitIo` releases after a completed flush), test 22 with 8 blocked writers |
