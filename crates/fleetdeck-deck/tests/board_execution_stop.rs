@@ -40,7 +40,15 @@ struct T {
 }
 
 async fn setup() -> T {
-    let mut f = fixture().await;
+    setup_on(fixture().await).await
+}
+
+/// The same as [`setup`], with the deck store in the file `dir/deck.db`.
+async fn setup_file(dir: &std::path::Path) -> T {
+    setup_on(fixture_file(dir).await).await
+}
+
+async fn setup_on(mut f: Fixture) -> T {
     let station = f.connect().await;
     f.store
         .apply_snapshot(
@@ -574,4 +582,87 @@ async fn a_stop_whose_outcome_is_not_seen_writes_unobserved_and_a_later_check_th
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!(rows[0].command_id.as_ref().unwrap().as_str(), "st-w-2");
     assert_eq!(stage_rows(&t.c, "outcome_unobserved").await.len(), 1);
+}
+
+/// A trigger on the deck file that refuses the insert of the stop audit rows
+/// whose detail matches `like`, while the table `block_audit` has a row.
+fn block_rows(dir: &std::path::Path, like: &str) -> rusqlite::Connection {
+    let conn = rusqlite::Connection::open(dir.join("deck.db")).unwrap();
+    conn.busy_timeout(Duration::from_secs(5)).unwrap();
+    conn.execute_batch(&format!(
+        "CREATE TABLE block_audit (x INTEGER);
+         INSERT INTO block_audit VALUES (1);
+         CREATE TRIGGER block_stop_audit BEFORE INSERT ON audit
+         WHEN NEW.action = 'session.execution_stop'
+           AND NEW.detail LIKE '{like}'
+           AND EXISTS (SELECT 1 FROM block_audit)
+         BEGIN SELECT RAISE(ABORT, 'blocked'); END;"
+    ))
+    .unwrap();
+    conn
+}
+
+/// Lets the writes through, waits for the row of `stage` (at most 3 s) and
+/// checks that it is the only one. Then drops the trigger.
+async fn unblock_and_wait(c: &BoardClient, conn: &rusqlite::Connection, stage: &str) {
+    conn.execute_batch("DELETE FROM block_audit").unwrap();
+    let until = std::time::Instant::now() + Duration::from_secs(3);
+    while stage_rows(c, stage).await.is_empty() {
+        assert!(
+            std::time::Instant::now() < until,
+            "no `{stage}` row in 3 s: {:?}",
+            stop_rows(c).await
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(stage_rows(c, stage).await.len(), 1);
+    conn.execute_batch("DROP TRIGGER block_stop_audit").unwrap();
+}
+
+#[tokio::test]
+async fn a_failed_outcome_write_is_written_again_without_a_board_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut t = setup_file(dir.path()).await;
+    let conn = block_rows(dir.path(), "stage=outcome %");
+    let e = elevate(&t.c, &t.h).await;
+    let call = post(&t.c, &t.h, STOP, stop_body("st-r-1", Some(&e)));
+    let (r, _) = tokio::join!(call, answer_stop(&mut t.station));
+    assert_eq!(r.status, 200, "{}", r.body);
+    // The watcher sees the outcome once; the write fails.
+    answer_check(&mut t.station, &check_json(last_json("st-r-1"))).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(stage_rows(&t.c, "outcome").await.is_empty());
+    // The storage works again: the watcher writes the row it kept, without a
+    // board check. The fake station answers no other request.
+    unblock_and_wait(&t.c, &conn, "outcome").await;
+    let rows = stage_rows(&t.c, "outcome").await;
+    assert_eq!(rows[0].command_id.as_ref().unwrap().as_str(), "st-r-1");
+    assert_eq!(rows[0].result, AuditResult::Ok);
+    assert!(stage_rows(&t.c, "outcome_unobserved").await.is_empty());
+    no_request(&mut t.station, Duration::from_millis(100)).await;
+}
+
+#[tokio::test]
+async fn a_failed_unobserved_write_is_written_again_without_a_board_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut t = setup_file(dir.path()).await;
+    let conn = block_rows(dir.path(), "stage=outcome_unobserved%");
+    let e = elevate(&t.c, &t.h).await;
+    let call = post(&t.c, &t.h, STOP, stop_body("st-r-2", Some(&e)));
+    let (r, _) = tokio::join!(call, answer_stop(&mut t.station));
+    assert_eq!(r.status, 200, "{}", r.body);
+    // Every check of the watcher has no `last_stop`; the timeout row fails.
+    answer_checks_for(
+        &mut t.station,
+        &check_json(Value::Null),
+        Duration::from_millis(1000),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(stage_rows(&t.c, "outcome_unobserved").await.is_empty());
+    unblock_and_wait(&t.c, &conn, "outcome_unobserved").await;
+    let rows = stage_rows(&t.c, "outcome_unobserved").await;
+    assert_eq!(rows[0].command_id.as_ref().unwrap().as_str(), "st-r-2");
+    assert_eq!(rows[0].result, AuditResult::Failed);
+    assert!(stage_rows(&t.c, "outcome").await.is_empty());
 }

@@ -11,7 +11,8 @@
 //! `refused` (`command_routes.rs`); a check that carries a `last_stop` writes
 //! one `outcome` row for each command ID. A watcher ([`watch_outcome`]) asks
 //! the station for that check after each accepted stop, so that the outcome
-//! row does not depend on a browser that polls.
+//! row does not depend on a browser that polls. A failed write of a row is
+//! written again, for at most an hour ([`WRITE_RETRY_LIMIT`]).
 
 use std::collections::HashSet;
 use std::sync::{Arc, LazyLock, Mutex, PoisonError};
@@ -54,6 +55,12 @@ pub(super) const STOP_UNSUPPORTED_TEXT: &str =
 /// How many command IDs the deck remembers as audited; the set is cleared
 /// when it is full.
 const AUDITED_CAP: usize = 1_024;
+
+/// How long the watcher keeps trying to write a row that failed.
+const WRITE_RETRY_LIMIT: Duration = Duration::from_secs(3600);
+
+/// The longest pause between two writes of a row that failed.
+const WRITE_PAUSE_MAX: Duration = Duration::from_secs(60);
 
 /// How the deck watches for the outcome of an accepted stop (BG-4 §5.6).
 #[derive(Debug, Clone, Copy)]
@@ -378,12 +385,14 @@ fn outcome_detail(last: &ExecutionStopOutcome, shim: &str) -> String {
 /// One `stage=outcome` row for the `last_stop` of a check, when the deck did
 /// not write the row of its command ID yet in this process. A failed write
 /// gives the ID back: a later check or the watcher can write the row again.
-async fn audit_outcome(board: &Board, actor: &str, target: &str, check: &ExecutionCheck) {
+/// Returns `false` when the write failed; `true` when the check has no
+/// `last_stop`, when another writer has the ID, or when the write succeeded.
+async fn audit_outcome(board: &Board, actor: &str, target: &str, check: &ExecutionCheck) -> bool {
     let Some(last) = &check.last_stop else {
-        return;
+        return true;
     };
     if !claim(&last.command_id) {
-        return;
+        return true;
     }
     let result = match last.outcome {
         StopOutcome::Done => AuditResult::Ok,
@@ -397,6 +406,28 @@ async fn audit_outcome(board: &Board, actor: &str, target: &str, check: &Executi
     if let Err(e) = board.store.audit(row).await {
         tracing::warn!(error = %e, command = %last.command_id, "the stop outcome row was not written");
         release(&last.command_id);
+        return false;
+    }
+    true
+}
+
+/// Runs `write` until it succeeds: after each failure it waits `poll`, then
+/// twice as long each time, at most [`WRITE_PAUSE_MAX`], for at most
+/// [`WRITE_RETRY_LIMIT`]. Logs an error when it gives up.
+async fn until_written<F, Fut>(poll: Duration, what: &str, mut write: F)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let give_up = tokio::time::Instant::now() + WRITE_RETRY_LIMIT;
+    let mut pause = poll;
+    while !write().await {
+        if tokio::time::Instant::now() >= give_up {
+            tracing::error!(what, "the stop audit row was not written");
+            return;
+        }
+        tokio::time::sleep(pause).await;
+        pause = pause.saturating_mul(2).min(WRITE_PAUSE_MAX);
     }
 }
 
@@ -404,7 +435,8 @@ async fn audit_outcome(board: &Board, actor: &str, target: &str, check: &Executi
 /// §5.6): asks the station for the execution check until its `last_stop` is
 /// the outcome of this command, then writes the outcome row. When
 /// `board.stop_watch.limit` passes first, it writes one `outcome_unobserved`
-/// row; a later check can still write the real outcome.
+/// row; a later check can still write the real outcome. A failed write of
+/// either row is written again, for at most an hour.
 pub(super) fn watch_outcome(board: Arc<Board>, actor: String, station: StationId, stop: StopAudit) {
     tokio::spawn(async move {
         let watch = board.stop_watch;
@@ -417,16 +449,26 @@ pub(super) fn watch_outcome(board: Arc<Board>, actor: String, station: StationId
                     .as_ref()
                     .is_some_and(|last| last.command_id == stop.command.as_str())
             {
-                audit_outcome(&board, &actor, &target, &check).await;
+                until_written(watch.poll, "outcome", || {
+                    audit_outcome(&board, &actor, &target, &check)
+                })
+                .await;
                 return;
             }
             tokio::time::sleep(watch.poll).await;
         }
         let detail = format!("stage=outcome_unobserved shim={}", stop.shim);
-        board
-            .store
-            .audit_or_log(stop.row(&actor, &station.0, AuditResult::Failed, detail))
-            .await;
+        let row = stop.row(&actor, &station.0, AuditResult::Failed, detail);
+        until_written(watch.poll, "outcome_unobserved", || async {
+            match board.store.audit(row.clone()).await {
+                Ok(()) => true,
+                Err(e) => {
+                    tracing::warn!(error = %e, "the stop audit row was not written");
+                    false
+                }
+            }
+        })
+        .await;
     });
 }
 
