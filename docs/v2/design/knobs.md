@@ -50,7 +50,7 @@ Notes:
 | `limits.land_check_minutes` | 10 | 1–240 | Live | never | land `CHECK_TIMEOUT` (`manager/land_run.rs:31`) |
 | `limits.clone_minutes` | 15 | 1–240 | Live | never | `CLONE_TIMEOUT` (`workspace/provision.rs:30`) |
 | `limits.git_push_seconds` | 60 | 10–600 | Live | never | `PUSH_TIMEOUT` and `LandTimeouts.push` |
-| `limits.provider_stop_grace_seconds` | 30 | 5–300 | Live (next stop) | never | `StopPolicy.grace` (`providers/host/mod.rs:132`) |
+| `limits.provider_stop_grace_seconds` | 30 | 5–300 | Restart (revision 3: the adapters copy it at start) | never | `StopPolicy.grace` (`providers/host/mod.rs:132`) |
 | `limits.reconnect_max_seconds` | 300 | 5–600 | Restart | never | `BackoffPolicy.cap` of the station's link dialer |
 | `limits.scrollback_lines` | 5000 | 500–100000 | Live (new shells) | never | `SCROLLBACK_LINES` |
 | `limits.scrollback_mib` | 8 | 1–64 | Live (new shells) | never | `SCROLLBACK_BYTES` |
