@@ -13,7 +13,7 @@ use fleetdeck_link::ReportReply;
 use fleetdeck_link::hello::ReportStatus;
 
 use super::binding::{self, Authorization, Binding};
-use super::effects::Effects;
+use super::effects::{Effects, Terminal};
 use super::fake::{DECK_FP, Fake, JoinStep, ReportStep, file_text, go as bootstrap};
 use super::run::Exit;
 use super::sha256_hex;
@@ -357,6 +357,35 @@ async fn a_busy_bootstrap_keeps_the_authorization_for_the_next_run() {
     assert_eq!(fake.count("join"), 2);
     assert!(!path.exists());
     assert!(fake.reports.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_run_that_stops_before_the_check_keeps_the_authorization() {
+    let fake = Fake::new();
+    let bound = stopped(&fake, &[JoinStep::Paired]).await;
+    let path = authorize(&fake, RETRY, &bound);
+    // The provisioning file is missing for the first run and back at the
+    // first sleep.
+    let good = std::mem::replace(
+        &mut *fake.provision.lock().unwrap(),
+        Err(Terminal::FILE_INVALID),
+    );
+    *fake.on_first_sleep.lock().unwrap() = Some(Box::new(move |fake: &Fake| {
+        *fake.provision.lock().unwrap() = good;
+    }));
+    assert_eq!(go(&fake).await, Exit::Complete);
+    assert_eq!(sleeps(&fake).len(), 1);
+    assert!(
+        fake.lines()
+            .contains(&"provision: validated: file_invalid".to_owned())
+    );
+    // The second run consumed the authorization, exactly once.
+    let state = fake.state().unwrap();
+    assert_eq!(state.error, None);
+    assert_eq!(state.consumed_retry_id.as_deref(), Some(RETRY));
+    assert_eq!(fake.count("join"), 2);
+    assert!(!path.exists());
+    assert_eq!(fake.authorization_deleted.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]
