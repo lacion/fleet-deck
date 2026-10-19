@@ -309,6 +309,81 @@ async fn an_epoch_change_during_the_read_fails_without_a_handle_or_a_check() {
 }
 
 #[tokio::test]
+async fn a_close_and_reopen_of_the_same_window_during_the_check_fails_without_a_handle() {
+    use crate::desktop::coordinator_tests::DECK;
+    use crate::desktop::events::Event;
+    use crate::desktop::input::listed::{Binding, Seen};
+    let fx = Fx::new().await;
+    // An earlier listing gave a handle to the shell window at 0xbeef.
+    let old = fx.other_handle().await;
+    let before = fx.desktop().listed().len();
+    let desktop = Arc::clone(fx.desktop());
+    // The window closes and a window of the same address and class opens
+    // while the deck checks the authority of the read: no epoch change.
+    let check = FakeCheck::with_hook(Ok(()), move || {
+        desktop.events.inject(Event::Close {
+            address: "0xbeef".into(),
+        });
+        desktop.events.inject(Event::Open {
+            address: "0xbeef".into(),
+            class: "alacritty".into(),
+        });
+    });
+    let epoch = fx.desktop().events.epoch();
+    let e = fx
+        .list(&*live_of(all_on()), &*check, Some(ctx()))
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, "desktop_failed");
+    assert_eq!(fx.desktop().events.epoch(), epoch);
+    // The close removed the old handle; no handle was issued for the
+    // replacement (the preview handle of the first listing stays).
+    assert_eq!(before, 2);
+    assert_eq!(fx.desktop().listed().len(), 1);
+    let seen = Seen {
+        signature: crate::desktop::fake::SIGNATURE,
+        events: &fx.desktop().events,
+        now: std::time::Instant::now(),
+    };
+    assert!(
+        fx.desktop()
+            .listed()
+            .resolve(&old, &Binding::of(DECK, &ctx()), &seen)
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn a_lock_during_the_check_refuses_with_screen_locked_and_no_handle() {
+    let fx = Fx::new().await;
+    let flag = fx.root().join("hyprlock");
+    let check = FakeCheck::with_hook(Ok(()), move || std::fs::write(&flag, "").unwrap());
+    let e = fx
+        .list(&*live_of(all_on()), &*check, Some(ctx()))
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, "screen_locked");
+    assert_eq!(check.phases(), [AuthorityPhase::Read]);
+    assert_eq!(fx.desktop().listed().len(), 0);
+}
+
+#[tokio::test]
+async fn an_unknown_lock_state_after_the_check_fails_without_a_handle() {
+    let fx = Fx::new().await;
+    let pgrep = fx.root().join("bin/pgrep");
+    // `pgrep` fails (exit 2) from the authority check on.
+    let check = FakeCheck::with_hook(Ok(()), move || {
+        std::fs::write(&pgrep, "#!/bin/sh\nexit 2\n").unwrap();
+    });
+    let e = fx
+        .list(&*live_of(all_on()), &*check, Some(ctx()))
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, "desktop_failed");
+    assert_eq!(fx.desktop().listed().len(), 0);
+}
+
+#[tokio::test]
 async fn the_authority_check_runs_after_the_inspection_and_before_any_handle() {
     let fx = Fx::new().await;
     let desktop = Arc::clone(fx.desktop());

@@ -267,6 +267,25 @@ impl Snapshot {
             .find(|c| c.address == address && c.class == class)
     }
 
+    /// Whether a monitor shows the workspace of `client` now: its active
+    /// workspace for an ordinary one, its special workspace for a negative id.
+    pub(crate) fn shown(&self, client: &Client) -> bool {
+        self.monitors.iter().any(|m| {
+            !m.disabled
+                && if client.workspace >= 0 {
+                    m.workspace == Some(client.workspace)
+                } else {
+                    m.special == Some(client.workspace)
+                }
+        })
+    }
+
+    /// Whether `client` is mapped, not hidden, and on a workspace that a
+    /// monitor shows now (R13 P7b §6, §8).
+    pub(crate) fn eligible_place(&self, client: &Client) -> bool {
+        client.mapped && !client.hidden && self.shown(client)
+    }
+
     /// The enabled monitors that the window of `client` covers. Empty when
     /// the window is on none of them.
     pub(crate) fn covered(&self, client: &Client) -> Vec<&Monitor> {

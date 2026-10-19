@@ -186,8 +186,26 @@ struct State {
     next_incarnation: u64,
     /// Grows at each connection of the event socket and at each gap.
     epoch: u64,
+    /// Grows at every window open event, every close event, every change of
+    /// an incarnation and every change of the epoch. A listing that sees it
+    /// grow while it collects its answer fails (R13 P7b §7).
+    revision: u64,
     /// What runs when a window closes.
     close_hooks: Vec<CloseHook>,
+}
+
+impl State {
+    /// The incarnation of `address`: the existing number, or a new one.
+    fn observe(&mut self, address: &str) -> u64 {
+        if let Some(n) = self.incarnations.get(address) {
+            return *n;
+        }
+        self.next_incarnation += 1;
+        let n = self.next_incarnation;
+        self.incarnations.insert(address.to_owned(), n);
+        self.revision += 1;
+        n
+    }
 }
 
 struct Inner {
@@ -244,6 +262,7 @@ impl Events {
         st.previews.clear();
         st.incarnations.clear();
         st.epoch += 1;
+        st.revision += 1;
         st.signature = Some(signature.to_owned());
         st.runtime_dir = Some(runtime_dir.to_owned());
         self.inner.connected.send_replace(false);
@@ -274,13 +293,28 @@ impl Events {
     /// new one for an address that an enumeration sees first.
     pub fn observe(&self, address: &str) -> u64 {
         let mut st = self.inner.lock();
-        if let Some(n) = st.incarnations.get(address) {
-            return *n;
+        st.observe(address)
+    }
+
+    /// The incarnations of `addresses` (see [`Events::observe`]), but only
+    /// when the revision is still `revision`; the check and the reads happen
+    /// under one lock, so no event can come between them. `None` when the
+    /// revision changed.
+    #[must_use]
+    pub fn observe_all_at(&self, revision: u64, addresses: &[&str]) -> Option<Vec<u64>> {
+        let mut st = self.inner.lock();
+        if st.revision != revision {
+            return None;
         }
-        st.next_incarnation += 1;
-        let n = st.next_incarnation;
-        st.incarnations.insert(address.to_owned(), n);
-        n
+        Some(addresses.iter().map(|a| st.observe(a)).collect())
+    }
+
+    /// The revision of the registry of windows: it grows at every window open
+    /// event, every close event, every change of an incarnation and every
+    /// change of the epoch.
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.inner.lock().revision
     }
 
     /// The epoch of the event stream: it grows at each connection and at each
@@ -498,6 +532,7 @@ impl Inner {
             let mut st = self.lock();
             st.previews.retain(|_, p| p.record.address != address);
             st.incarnations.remove(address);
+            st.revision += 1;
             (
                 st.records.remove(address),
                 st.runtime_dir.clone(),
@@ -523,6 +558,7 @@ impl Inner {
                 st.next_incarnation += 1;
                 let incarnation = st.next_incarnation;
                 st.incarnations.insert(address.clone(), incarnation);
+                st.revision += 1;
                 if let Some(p) = st.pending.remove(&class) {
                     let mut record = p.record;
                     record.address.clone_from(&address);
@@ -542,11 +578,14 @@ impl Inner {
         st.records.clear();
         st.previews.clear();
         st.incarnations.clear();
+        st.revision += 1;
     }
 
     /// A connection or a gap of the stream: the epoch grows (R13 P7b §7).
     fn bump(&self) {
-        self.lock().epoch += 1;
+        let mut st = self.lock();
+        st.epoch += 1;
+        st.revision += 1;
     }
 
     /// A gap in the stream: the station owns no window it might confuse, and

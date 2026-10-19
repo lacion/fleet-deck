@@ -166,6 +166,12 @@ impl Claimer for FakeClaim {
     async fn claim(&self) -> Result<Claimed, Fail> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         mark(&self.root, "claim");
+        // A test can switch the shown workspace between the survey and the
+        // focus: the claim comes after the first survey.
+        let switch = self.root.join("claim_monitors.json");
+        if switch.exists() {
+            std::fs::copy(&switch, self.root.join("monitors.json")).unwrap();
+        }
         self.answer.lock().unwrap().clone()
     }
 }
@@ -578,6 +584,14 @@ impl Fx {
             "hidden": false, "at": [at.0, at.1], "size": [size.0, size.1],
             "workspace": {"id": ws}, "focusHistoryID": 3
         })
+    }
+
+    /// The monitors of the rig after the owner switched away: `DP-1` shows
+    /// workspace 2, so no monitor shows workspace 1 any more.
+    pub(super) fn monitors_away(&self) -> Value {
+        let mut monitors: Value = serde_json::from_str(&self.read("monitors.json")).unwrap();
+        monitors[0]["activeWorkspace"] = json!({"id": 2, "name": "2"});
+        monitors
     }
 
     pub(super) fn input_any(&self, window_id: &str, chord: &str) -> A {
