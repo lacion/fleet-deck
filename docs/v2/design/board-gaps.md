@@ -1,6 +1,6 @@
 # Board paths for the remaining owner actions
 
-- **Revision history:** Revision 2 (2026-10-19): DESIGN REVIEW round 1 FAIL (1 BLOCKER, 4 MAJOR, 1 UNVERIFIED; report `adv-board-gaps-design-r1-codex.md`); fixed by the architect decisions O12-26.
+- **Revision history:** Revision 2 (2026-10-19): DESIGN REVIEW round 1 FAIL (1 BLOCKER, 4 MAJOR, 1 UNVERIFIED; report `adv-board-gaps-design-r1-codex.md`); fixed by the architect decisions O12-26. Revision 3 (2026-10-19): DESIGN REVIEW round 2: R1-2 and R1-4 open (2 MAJOR; report `adv-board-gaps-design-r2-report.md`); fixed by O12-27.
 - **Status:** Proposed design (architect, 2026-10-19), from the advisor answer `advisor-board-gaps-answer.md` against v2 HEAD `fbce0923`. The architect accepts BG-1 to BG-4 as architect decisions (O12-25; the owner may change any of them). DESIGN REVIEW required before implementation; PRE-PR required before merge; live smoke required for the real sudo/pacman, compositor tools and process trees.
 - **Scope:** four gaps that still need an action on the station itself: the desktop tools (`operations.md` lines about 642, 799, 925 and 930); the installer conflict repair and the busy lock code (DL-243 items b and e); a P8 failure before the station is linked (DL-243 item c and `operations.md` §15.3); stopping the processes of a lost run (`operations.md` about line 978).
 - **Out of scope:** the residual product gaps of §1 (unsupported package delivery, trust or configuration repairs before the link, legacy process attribution without a trustworthy witness).
@@ -126,10 +126,13 @@ Params: `{}`. Answer:
 ```
 
 - The station chooses the packages from a compiled allowlist. No package, repository, URL, path, option or command string that the browser supplies reaches execution.
-- **The policy covers the complete package transaction, not only the targets.** Before the terminal opens, the station runs a dry run without root with the fixed argv `pacman -Sp --needed --print-format '%r %n %v' <targets>`. It keeps the resolved list (repository, name and version of every package) in the plan.
+- **The policy covers the complete package transaction, not only the targets. The enforced policy is the repository set, not the exact versions of the dry run (revision 3).** The station writes a pacman configuration file `<station data>/maintenance/pacman.conf` (mode 0600). It has the `[options]` that pacman needs, copied from the system file (`HoldPkg`, `Architecture = auto`, `SigLevel` as in the system file; no change to `IgnorePkg`), and exactly two repositories, `[core]` and `[extra]`, each with `Include = /etc/pacman.d/mirrorlist`. It has no other repository, no `Server` line of its own, no `XferCommand` and no hook directory option. The station writes the file again before each plan.
+- Before the terminal opens, the station runs a dry run without root with the fixed argv `pacman --config <that file> -Sp --needed --print-format '%r %n %v' <targets>`. It keeps the resolved list (repository, name and version of every package) in the plan as the expected transaction.
 - The plan is valid only when both conditions are true: every resolved package comes from the repository `core` or `extra`, and the list holds every allowlisted target that is missing. Otherwise the plan answers `transaction_refused` with the names of the packages that are not allowed. Nothing is installed.
-- The terminal command is `sudo pacman -S --needed --noconfirm <targets>`. A conflict prompt or a removal prompt gets the answer no from `--noconfirm`, so the transaction stops. There is no `-y`: the package databases do not change between the dry run and the installation.
-- **Accepted authority.** The scriptlets and the hooks of the packages from `core` and `extra` run as root during the transaction. The owner authorizes that with the sudo password.
+- The terminal command is `sudo pacman --config <that file> -S --needed --noconfirm <targets>`. A transaction therefore resolves only from `core` and `extra`, whenever it resolves. A conflict prompt or a removal prompt gets the answer no from `--noconfirm`, so a transaction that would remove or replace a package stops before any change. There is no `-y`.
+- **Accepted residual (revision 3).** Another program can refresh the package databases between the dry run and the installation, for example while sudo waits for the password. Then the versions and the provider choices can differ from the dry run. The transaction still stays inside `core` and `extra` and still cannot remove or replace a package. The post-check after the exit compares the installed set with the plan and reports `transaction_changed`.
+- Before the terminal opens, the station compares the configuration file with the one that the plan used. A difference refuses with `transaction_refused`.
+- **Accepted authority.** The scriptlets and the hooks of the packages from `core` and `extra` run as root during the transaction. The system pacman hooks in `/usr/share/libalpm/hooks` and `/etc/pacman.d/hooks` run as for any pacman transaction. The owner authorizes that with the sudo password.
 - `wlrctl` becomes installable only after the supported distribution contract provides a reviewed binary package through an already trusted package source. This design does not bootstrap repository trust and does not build AUR packages.
 - `system_upgrade` is `false`. A full system upgrade is never part of this plan. A separate full-upgrade action must disclose its scope. This design does not add that action.
 - A plan lasts two minutes. There is one plan for each station and owner login.
@@ -347,21 +350,25 @@ Answer of the action:
 
 **Publication.** Each asset is written to a synced staging file in the target directory, with the name `.<name>.fleetdeck-stage-<random>`. The station publishes it with `renameat2(RENAME_NOREPLACE)` to the empty target name, after the backup moved the old file away. The station syncs the directory after each rename.
 
-**Journal.** The file is `<config home>/fleetdeck/omarchy-repair/<repair_id>.json`, with the mode 0600, synced, with at most 64 files. For each file it records the state (`planned`, `backed_up`, `staged`, `published` or `done`), the backup name, the staging name, the hash of the asset and the expected hash of the backup.
+**Journal (write-ahead, revision 3).** The file is `<config home>/fleetdeck/omarchy-repair/<repair_id>.json`, with the mode 0600, synced, with at most 64 files. Before any file operation, the journal records for each file, and syncs: `asset_id`, the target path, `original_hash` (the reviewed hash of the target content, or `none` for a target that did not exist), `asset_hash`, the backup name and the staging name. Before each step, the journal records the intent of that step (`backing_up`, `staging` or `publishing`) and syncs. After the step and its directory sync, it records the completion (`backed_up`, `staged` or `published`). A completion record is a hint, never proof.
 
-**Recovery table.**
+**Recovery by the files.** Resume, restore and every `omarchy.repair_status` observe, for each file: the target (absent, or the hash of its content: `original_hash`, `asset_hash` or another hash), the named backup (absent, present with `original_hash`, or present with another hash) and the named staging file (absent or present). The decision comes from this table, not from the journal state alone:
 
-| State | What is true | Recovery |
-|---|---|---|
-| `planned` | Nothing changed. | A restart is allowed. |
-| `backed_up` | The target is absent and the backup is present. | Resume publishes the asset, or restore renames the backup back (no replace). |
-| `staged` | A staging file exists. | Remove the staging file, then recover as `backed_up`. |
-| `published` | The target was published. | Verify that the hash of the target equals the hash of the asset: then `done`. Otherwise stop with `repair_incomplete`. |
-| `done` | Complete. | Nothing. |
+| Target | Backup | Staging | Meaning | Resume | Restore |
+|---|---|---|---|---|---|
+| `original_hash` | absent | any | Nothing moved. | Remove the staging file. Back up, then publish. | Nothing to restore. Remove the staging file. |
+| absent | `original_hash` | any | Backed up, not published. | Remove the staging file. Stage and publish. | Rename the backup to the target (no replace). Remove the staging file. |
+| `asset_hash` | `original_hash` | any | Published. | Remove the staging file. Done. | Only after a new restore plan: move the target away to a new kept name, then rename the backup to the target. Never overwrite. |
+| `asset_hash` | absent | any | Published, and `original_hash` is `none`. | Remove the staging file. Done. | Remove the target only when its hash is `asset_hash`. Done. |
+| `asset_hash` | absent | any | `original_hash` is not `none`: the backup is gone. | Stop: `repair_incomplete`. | Stop: `repair_incomplete`. |
+| absent | absent | any | `original_hash` is `none`: nothing is published yet. | Stage and publish. | Nothing to restore. |
+| absent | absent | any | `original_hash` is not `none`. | Stop: `repair_incomplete`. | Stop: `repair_incomplete`. |
+| another hash | any | any | A later change by someone. | Stop for this file: `restore_conflict`. | Stop for this file: `restore_conflict`. |
+| any | another hash | any | The backup changed. | Stop for this file: `repair_incomplete`. | Stop for this file: `repair_incomplete`. |
 
-A target that exists with another hash, where the journal expects it absent, stops the recovery for that file with `restore_conflict`.
+Every action in the table is idempotent. If a crash comes before the completion record of an action, the next run finds the same row or the next row. The station removes a staging file only when its name is the recorded staging name.
 
-Tests: a crash at each journal state and at each seam between a rename and the directory sync; a target that a later owner edit created; a lost action answer that is recovered with `omarchy.repair_status`; a resume on another build (`build_mismatch`).
+Tests: a crash after each rename and before its completion record, after each staging write and after each directory sync, each followed by resume twice and by restore twice, with a check of the files after each run; a crash at each journal state; a target that a later owner edit created; a lost action answer that is recovered with `omarchy.repair_status`; a resume on another build (`build_mismatch`).
 
 ### 3.6 Restore
 
