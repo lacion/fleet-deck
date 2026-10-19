@@ -7,6 +7,8 @@ use std::time::Duration;
 use super::*;
 use crate::workspace::branches::parse_git_version;
 
+/// The push limit of these tests: the default of the station.
+const PUSH: Duration = Duration::from_secs(60);
 const SLUG: &str = "alpha";
 const REF: &str = "fd/alpha/falcon";
 const OID: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -236,7 +238,7 @@ async fn a_first_push_with_an_empty_lease_then_a_second_with_the_lease() {
     let writer = PushWriter::fixed(env.options(&env.program));
     let first = env.git(&repo, &["rev-parse", "HEAD"]);
     let got = writer
-        .submit(&env.job(&repo, &bare, &first, ""))
+        .submit(&env.job(&repo, &bare, &first, ""), PUSH)
         .await
         .unwrap();
     assert!(is_applied(&got), "{got:?}");
@@ -244,7 +246,7 @@ async fn a_first_push_with_an_empty_lease_then_a_second_with_the_lease() {
 
     let second = env.commit(&repo, "two");
     let got = writer
-        .submit(&env.job(&repo, &bare, &second, &first))
+        .submit(&env.job(&repo, &bare, &second, &first), PUSH)
         .await
         .unwrap();
     assert!(is_applied(&got), "{got:?}");
@@ -261,14 +263,14 @@ async fn a_revert_then_a_push_succeeds_with_the_lease() {
     let second = env.commit(&repo, "two");
     assert!(is_applied(
         &writer
-            .submit(&env.job(&repo, &bare, &second, ""))
+            .submit(&env.job(&repo, &bare, &second, ""), PUSH)
             .await
             .unwrap()
     ));
     // The session rewrites its history: the lease is the commit pushed last.
     env.git(&repo, &["reset", "--hard", &first]);
     let got = writer
-        .submit(&env.job(&repo, &bare, &first, &second))
+        .submit(&env.job(&repo, &bare, &first, &second), PUSH)
         .await
         .unwrap();
     assert!(is_applied(&got), "{got:?}");
@@ -284,7 +286,7 @@ async fn a_push_over_a_moved_remote_ref_is_rejected_and_confirmed_not_applied() 
     let first = env.git(&repo, &["rev-parse", "HEAD"]);
     assert!(is_applied(
         &writer
-            .submit(&env.job(&repo, &bare, &first, ""))
+            .submit(&env.job(&repo, &bare, &first, ""), PUSH)
             .await
             .unwrap()
     ));
@@ -310,7 +312,7 @@ async fn a_push_over_a_moved_remote_ref_is_rejected_and_confirmed_not_applied() 
     );
     let second = env.commit(&repo, "two");
     let got = writer
-        .submit(&env.job(&repo, &bare, &second, &first))
+        .submit(&env.job(&repo, &bare, &second, &first), PUSH)
         .await
         .unwrap();
     match got {
@@ -336,7 +338,7 @@ async fn the_recovery_read_takes_a_remote_tip_equal_to_the_attempt() {
     let first = env.git(&repo, &["rev-parse", "HEAD"]);
     assert!(is_applied(
         &writer
-            .submit(&env.job(&repo, &bare, &first, ""))
+            .submit(&env.job(&repo, &bare, &first, ""), PUSH)
             .await
             .unwrap()
     ));
@@ -365,7 +367,7 @@ async fn a_remote_that_does_not_answer_leaves_the_outcome_unknown() {
     let oid = env.git(&repo, &["rev-parse", "HEAD"]);
     let gone = env.root.join("gone.git");
     let got = writer
-        .submit(&env.job(&repo, &gone, &oid, ""))
+        .submit(&env.job(&repo, &gone, &oid, ""), PUSH)
         .await
         .unwrap();
     match got {
@@ -388,11 +390,11 @@ async fn a_ref_outside_the_own_namespace_is_never_pushed() {
     for publish in ["main", "fd/bravo/falcon", "refs/heads/fd/alpha/falcon"] {
         let mut job = env.job(&repo, &bare, &oid, "");
         publish.clone_into(&mut job.publish_ref);
-        assert!(writer.submit(&job).await.is_err(), "{publish}");
+        assert!(writer.submit(&job, PUSH).await.is_err(), "{publish}");
     }
     let mut job = env.job(&repo, &bare, &oid, "not-an-oid");
     assert_eq!(
-        writer.submit(&job).await.unwrap_err(),
+        writer.submit(&job, PUSH).await.unwrap_err(),
         RefspecError::InvalidOid
     );
     job.lease.clear();
@@ -416,7 +418,7 @@ async fn a_pre_push_hook_does_not_run() {
     let writer = PushWriter::fixed(env.options(&env.program));
     let oid = env.git(&repo, &["rev-parse", "HEAD"]);
     let got = writer
-        .submit(&env.job(&repo, &bare, &oid, ""))
+        .submit(&env.job(&repo, &bare, &oid, ""), PUSH)
         .await
         .unwrap();
     assert!(is_applied(&got), "{got:?}");
@@ -440,7 +442,7 @@ async fn the_push_command_names_the_verified_url_and_the_commit() {
     let writer = PushWriter::fixed(env.options(&logger));
     let oid = env.git(&repo, &["rev-parse", "HEAD"]);
     let job = env.job(&repo, &bare, &oid, "");
-    assert!(is_applied(&writer.submit(&job).await.unwrap()));
+    assert!(is_applied(&writer.submit(&job, PUSH).await.unwrap()));
     let args: Vec<String> = fs::read_to_string(&log)
         .unwrap()
         .lines()
@@ -540,7 +542,7 @@ async fn jobs_run_one_after_the_other() {
     let first = env.job(&repo, &bare, &oid, "");
     let mut second = env.job(&repo, &bare, &oid, "");
     "fd/alpha/raven".clone_into(&mut second.publish_ref);
-    let (a, b) = tokio::join!(writer.submit(&first), writer.submit(&second));
+    let (a, b) = tokio::join!(writer.submit(&first, PUSH), writer.submit(&second, PUSH));
     assert!(is_applied(&a.unwrap()) && is_applied(&b.unwrap()));
     let order: Vec<String> = fs::read_to_string(&log)
         .unwrap()

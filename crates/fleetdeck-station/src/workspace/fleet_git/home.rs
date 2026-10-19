@@ -21,7 +21,7 @@ use crate::store::Store;
 use crate::store::home_attempts::{
     BeginHome, HomeAttemptRow, HomeOutcome, HomeRefusal, NewHomeAttempt,
 };
-use crate::workspace::provision::{self, CLONE_TIMEOUT};
+use crate::workspace::provision;
 use crate::workspace::{Git, GitOptions};
 
 /// The most bytes of the answer of a small read.
@@ -148,8 +148,8 @@ fn clone_root(policy: &Policy) -> Result<PathBuf, HomeRefusal> {
 /// `project.ensure_home` (design §8.4). The answer is the stored status of
 /// the attempt: `cloning` at once for a clone, or the end of an adoption.
 ///
-/// `options` are the confined Git options of a clone (`CLONE_TIMEOUT` is set
-/// here); the home checks use them without the confinement.
+/// `options` are the confined Git options of a clone (the clone timeout of the
+/// policy is set here); the home checks use them without the confinement.
 ///
 /// # Errors
 /// A [`HomeRefusal`]: a link error with its code and text.
@@ -341,7 +341,7 @@ async fn clone_home(
     params: &EnsureHomeParams,
 ) -> HomeOutcome {
     let clone_options = GitOptions {
-        timeout: CLONE_TIMEOUT,
+        timeout: policy.timeouts().clone,
         // A clone needs the owner's credential helpers and SSH settings.
         isolated: false,
         ..options.clone()

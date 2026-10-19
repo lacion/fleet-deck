@@ -579,11 +579,13 @@ impl Publish<'_> {
             lease: row.branch_lease.clone().unwrap_or_default(),
             expect: row.base_oid.clone().unwrap_or_default(),
         });
+        let timeout = (self.ctx.timeouts.push)
+            .unwrap_or_else(|| self.ctx.policy.current().timeouts().git_push);
         let push = match self.which {
             Which::Branch => LandPush::branch(
                 &options,
                 &self.home.folder,
-                self.ctx.timeouts.push,
+                timeout,
                 &ops.url,
                 &self.home.slug,
                 &row.plan.publish_ref,
@@ -593,7 +595,7 @@ impl Publish<'_> {
             Which::Default => LandPush::default(
                 &options,
                 &self.home.folder,
-                self.ctx.timeouts.push,
+                timeout,
                 &ops.url,
                 &default_ref,
                 &ops.oid,

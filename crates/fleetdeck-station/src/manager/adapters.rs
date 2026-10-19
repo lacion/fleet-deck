@@ -25,6 +25,8 @@ pub fn adapters_from_config(
     raw_root: Option<PathBuf>,
 ) -> std::result::Result<Adapters, fleetdeck_core::childenv::ChildEnvError> {
     let mut out = Adapters::new();
+    // The stop grace of `limits.provider_stop_grace_seconds` (a restart value).
+    let stop = super::policy_limits::stop_policy(&config.limits);
     let raw_log = || {
         raw_root.as_ref().map(|root| RawLogSettings {
             root: root.clone(),
@@ -39,6 +41,7 @@ pub fn adapters_from_config(
                     ClaudeAdapterConfig::new(instance.id.clone(), instance.binary.clone(), env);
                 cfg.raw_log = raw_log();
                 cfg.allow_bypass = config.allow_bypass_permissions;
+                cfg.stop = stop;
                 Arc::new(ClaudeAdapter::new(cfg, Arc::clone(host)))
             }
             Driver::Codex => {
@@ -46,6 +49,7 @@ pub fn adapters_from_config(
                     CodexAdapterConfig::new(instance.id.clone(), instance.binary.clone(), env);
                 cfg.raw_log = raw_log();
                 cfg.allow_full_access = config.allow_bypass_permissions;
+                cfg.stop = stop;
                 Arc::new(CodexAdapter::new(cfg, Arc::clone(host)))
             }
         };

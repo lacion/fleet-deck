@@ -9,7 +9,6 @@
 //! steps 5 to 7), and attempt 2 starts again at step 1 (FG-8).
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use fleetdeck_core::ChildEnv;
 use fleetdeck_proto::CommandId;
@@ -27,8 +26,6 @@ use crate::workspace::fleet_git::{
 };
 use crate::workspace::setup;
 
-/// The longest check command (design §11.5 step 4).
-const CHECK_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// The most lines of the check output in a failure text (O26).
 const TAIL_LINES: usize = 50;
 /// The most bytes of the check output in a failure text (O26).
@@ -563,6 +560,9 @@ async fn checked(shared: &Shared, row: LandRunRow, temp: &Path) -> Step<LandRunR
         )
         .await?;
         let marker = format!("{}-{}", row.land_id, row.attempt);
+        // The longest check command (design §11.5 step 4): the station limit
+        // `limits.land_check_minutes`, read once when the check starts.
+        let limit = shared.policy.current().timeouts().land_check;
         let ran = setup::run(
             &shared.store,
             &marker,
@@ -570,7 +570,7 @@ async fn checked(shared: &Shared, row: LandRunRow, temp: &Path) -> Step<LandRunR
             &cmd,
             temp,
             &env,
-            CHECK_TIMEOUT,
+            limit,
             shared.shutdown.clone(),
         )
         .await;

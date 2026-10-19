@@ -291,6 +291,7 @@ async fn the_start_up_settles_a_running_row_unknown_after_killing_its_processes(
                         command: "sleep 60".to_owned(),
                         provider: ProviderKind::Claude,
                         worktree_root: "/w".to_owned(),
+                        timeout_ms: 600_000,
                     },
                 )?
                 .effect_id

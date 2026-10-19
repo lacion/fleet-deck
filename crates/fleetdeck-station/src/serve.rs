@@ -14,7 +14,6 @@ use fleetdeck_core::identity::{Identity, IdentityError};
 use fleetdeck_core::paths::{Env, NodeDirs, ensure_private_dir};
 use fleetdeck_core::restart::Restart;
 use fleetdeck_core::{SharedClock, SharedIds, SystemClock, UlidSource};
-use fleetdeck_link::reconnect::BackoffPolicy;
 use fleetdeck_proto::command::StopMode;
 use fleetdeck_providers::host::shim::host::{ShimHost, ShimHostConfig};
 use fleetdeck_providers::host::{DirectChildHost, SessionHost};
@@ -458,7 +457,7 @@ impl RunningStation {
             Arc::clone(&identity),
             config.name.clone(),
             &config.listen,
-            BackoffPolicy::default(),
+            crate::manager::policy_limits::reconnect_backoff(&config.limits),
             Arc::clone(&shells),
             Some(station_dir.join("paste")),
             Some(station_dir.join("artifacts")),

@@ -16,6 +16,11 @@ fn is_false(b: &bool) -> bool {
     !*b
 }
 
+/// The run limit of a `!` command that a stored row of an older build lacks.
+fn default_shell_timeout_ms() -> u64 {
+    600_000
+}
+
 /// A host input as the effect carries it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InputRecord {
@@ -197,6 +202,11 @@ pub enum EffectPayload {
         provider: ProviderKind,
         /// The canonical root of the folder, as the fences name it.
         worktree_root: String,
+        /// The run limit in ms, fixed when the command starts (knobs K3,
+        /// `limits.shell_command_minutes`). A row of an older build has the
+        /// old limit, 600 000.
+        #[serde(default = "default_shell_timeout_ms")]
+        timeout_ms: u64,
     },
     /// A land run (FG-8, design §11.4 step 3). It needs no provider process:
     /// the `land_runs` row holds the steps, and the land engine runs them.
@@ -442,5 +452,22 @@ mod tests {
         assert_eq!(back, pinned);
         let plain = serde_json::to_string(&resume(true)).unwrap();
         assert!(!plain.contains("transcript"), "{plain}");
+    }
+
+    #[test]
+    fn a_stored_shell_command_without_a_limit_reads_with_600_seconds() {
+        let old =
+            r#"{"kind":"shell_command","command":"ls","provider":"claude","worktree_root":"/w"}"#;
+        let EffectPayload::ShellCommand { timeout_ms, .. } = serde_json::from_str(old).unwrap()
+        else {
+            panic!("not a shell command");
+        };
+        assert_eq!(timeout_ms, 600_000);
+        let kept = old.replace("\"/w\"}", "\"/w\",\"timeout_ms\":60000}");
+        let EffectPayload::ShellCommand { timeout_ms, .. } = serde_json::from_str(&kept).unwrap()
+        else {
+            panic!("not a shell command");
+        };
+        assert_eq!(timeout_ms, 60_000);
     }
 }

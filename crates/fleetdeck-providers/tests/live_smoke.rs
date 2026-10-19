@@ -307,7 +307,7 @@ async fn live_codex_shell_smoke() {
 
     // The first command: output and exit 0.
     session
-        .shell_command("e-live-1".into(), "pwd && echo fd-shell-ok".into())
+        .shell_command("e-live-1".into(), "pwd && echo fd-shell-ok".into(), 600_000)
         .await
         .unwrap();
     let events = one_run(&mut rx).await;
@@ -362,7 +362,7 @@ async fn live_codex_shell_smoke() {
 
     // The second command: exit 3.
     session
-        .shell_command("e-live-2".into(), "exit 3".into())
+        .shell_command("e-live-2".into(), "exit 3".into(), 600_000)
         .await
         .unwrap();
     let events = one_run(&mut rx).await;

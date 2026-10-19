@@ -14,7 +14,9 @@ use fleetdeck_proto::ProviderInstanceId;
 use fleetdeck_proto::event::ProviderKind;
 use fleetdeck_proto::member_deny::MemberDeny;
 use fleetdeck_providers::adapter::canonical_workspace;
+use fleetdeck_providers::host::StopPolicy;
 
+use super::policy_limits::{StationTimeouts, stop_policy};
 use crate::store::OfflineApprovalPolicy;
 
 /// Why the policy refuses a workspace.
@@ -112,6 +114,11 @@ pub struct Policy {
     allow_check_cmd: bool,
     /// `[taildrive_mounts]` of `station.toml` (FG-12).
     taildrive_mounts: BTreeMap<String, PathBuf>,
+    /// The `[limits]` timeouts of the station operations (knobs K3).
+    pub(super) timeouts: StationTimeouts,
+    /// The stop bounds of the provider processes: a restart value, from
+    /// `limits.provider_stop_grace_seconds` (knobs K3).
+    pub(super) stop: StopPolicy,
 }
 
 /// The default `clone_root`: the first allowed root + `/projects`.
@@ -176,6 +183,8 @@ impl Policy {
             traits: config.traits.clone(),
             allow_check_cmd: config.allow_check_cmd,
             taildrive_mounts: config.taildrive_mounts.clone(),
+            timeouts: StationTimeouts::from_limits(&config.limits),
+            stop: stop_policy(&config.limits),
         }
         .with_repo_groups(&config.repo_groups)
     }
@@ -259,6 +268,8 @@ impl Policy {
             traits: Vec::new(),
             allow_check_cmd: false,
             taildrive_mounts: BTreeMap::new(),
+            timeouts: StationTimeouts::default(),
+            stop: StopPolicy::default(),
         }
     }
 
@@ -522,6 +533,8 @@ impl Policy {
         next.allow_check_cmd = self.allow_check_cmd;
         next.allow_local_remotes = self.allow_local_remotes;
         next.taildrive_mounts.clone_from(&self.taildrive_mounts);
+        // The stop grace applies at a restart (knobs K3).
+        next.stop = self.stop;
         next
     }
 

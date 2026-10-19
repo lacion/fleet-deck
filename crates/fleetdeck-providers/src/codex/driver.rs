@@ -638,8 +638,13 @@ impl LiveSession for CodexSession {
     }
 
     /// `thread/shellCommand` (B8): refused unless the session is idle.
-    async fn shell_command(&mut self, effect_id: String, command: String) -> Result<()> {
-        self.run(move |core| core.shell_command(&effect_id, &command))
+    async fn shell_command(
+        &mut self,
+        effect_id: String,
+        command: String,
+        timeout_ms: u64,
+    ) -> Result<()> {
+        self.run(move |core| core.shell_command(&effect_id, &command, timeout_ms))
             .await
     }
 

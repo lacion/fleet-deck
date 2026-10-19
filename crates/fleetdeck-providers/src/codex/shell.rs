@@ -18,8 +18,6 @@ use crate::adapter::{ProviderError, Result};
 
 /// The most bytes of `tool.output` of a shell node (B8).
 const OUTPUT_BYTES: usize = 16 * 1024;
-/// The run limit that the request names, in ms.
-const TIMEOUT_MS: u64 = 600_000;
 
 /// A `!` command that was sent and has not ended (B8).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -85,12 +83,18 @@ fn started_event(p: &PendingShell, item_id: Option<&str>) -> Event {
 }
 
 impl CodexCore {
-    /// `thread/shellCommand` for the shell effect `effect_id` (B8).
+    /// `thread/shellCommand` for the shell effect `effect_id` (B8). The
+    /// request names the run limit `timeout_ms`.
     ///
     /// # Errors
     /// No thread yet, an ended session, a rollback without an answer, or a
     /// session that is not idle ([`ProviderError::Refused`]).
-    pub fn shell_command(&mut self, effect_id: &str, command: &str) -> Result<Vec<Output>> {
+    pub fn shell_command(
+        &mut self,
+        effect_id: &str,
+        command: &str,
+        timeout_ms: u64,
+    ) -> Result<Vec<Output>> {
         let thread = self.thread()?;
         self.no_rollback_outstanding()?;
         if self.turn.is_some()
@@ -116,7 +120,7 @@ impl CodexCore {
         Ok(vec![Output::Write(rpc::request(
             &id,
             "thread/shellCommand",
-            json!({"threadId": thread, "command": command, "timeoutMs": TIMEOUT_MS}),
+            json!({"threadId": thread, "command": command, "timeoutMs": timeout_ms}),
         ))])
     }
 

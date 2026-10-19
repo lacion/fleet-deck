@@ -317,9 +317,13 @@ impl SessionTarget {
             }
             // B8: a Codex `!` command goes to the provider; the station has
             // checked it already (`dispatch_codex_shell`).
-            EffectPayload::ShellCommand { command, .. } => {
+            EffectPayload::ShellCommand {
+                command,
+                timeout_ms,
+                ..
+            } => {
                 session
-                    .shell_command(effect.effect_id.to_string(), command.clone())
+                    .shell_command(effect.effect_id.to_string(), command.clone(), *timeout_ms)
                     .await
             }
         };

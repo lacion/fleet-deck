@@ -63,6 +63,7 @@ async fn queue(s: &Store, det: &Det, id: &str, root: &'static str) -> String {
                         command: "ls".to_owned(),
                         provider: ProviderKind::Claude,
                         worktree_root: root.to_owned(),
+                        timeout_ms: 600_000,
                     },
                 )?
                 .effect_id

@@ -201,6 +201,26 @@ async fn the_station_start_opens_the_shell_admission() {
 }
 
 #[tokio::test]
+async fn a_shell_command_effect_carries_the_run_limit_of_the_policy() {
+    let mut st = Station::new(4).await;
+    let s = st.idle_here().await;
+    let deck = st.paired_deck().await;
+    let timeouts = crate::manager::policy_limits::StationTimeouts {
+        shell_command: Duration::from_secs(60),
+        ..Default::default()
+    };
+    let hub = st.manager.policy_hub();
+    hub.swap(hub.current().as_ref().clone().with_timeouts(timeouts));
+    let d = st.as_board(&deck, shell(&s, "ls")).await;
+    assert_eq!(d.receipt.state, ReceiptState::Accepted, "{:?}", d.receipt);
+    let EffectPayload::ShellCommand { timeout_ms, .. } = &d.effects[0].payload else {
+        panic!("{:?}", d.effects[0].payload);
+    };
+    assert_eq!(*timeout_ms, 60_000);
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+#[tokio::test]
 async fn only_the_board_through_a_paired_deck_runs_a_shell_command() {
     let mut st = Station::new(4).await;
     let s = st.idle_here().await;
@@ -319,6 +339,7 @@ async fn an_accepted_shell_command_stores_its_row_and_effect_and_the_run_settles
         command,
         provider,
         worktree_root,
+        timeout_ms,
     } = &effect.payload
     else {
         panic!("{:?}", effect.payload);
@@ -326,6 +347,7 @@ async fn an_accepted_shell_command_stores_its_row_and_effect_and_the_run_settles
     assert_eq!(command, "ls -la");
     assert_eq!(*provider, ProviderKind::Claude);
     assert_eq!(*worktree_root, st.ws_root());
+    assert_eq!(*timeout_ms, 600_000, "the default limit of 10 minutes");
     assert_eq!(effect.payload.kind(), "shell_command");
     let row = st.shell_row(effect.effect_id.as_str()).await;
     assert_eq!(row.session_id, s);

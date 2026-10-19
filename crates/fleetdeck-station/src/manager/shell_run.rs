@@ -2,7 +2,7 @@
 //!
 //! The effect worker only starts a task ([`SessionTarget::dispatch_shell`]);
 //! the task runs outside the worker, as the setup task does, so a command of
-//! up to 600 s never stalls the other sessions. The task holds the session
+//! up to the station's agent shell command time (10 minutes by default) never stalls the other sessions. The task holds the session
 //! fence while the command runs, advances the folder generation at the start
 //! (the settlement advance follows in `shell_advance`), keeps the tails of
 //! both streams and settles the row and the effect. A Codex command runs
@@ -33,8 +33,6 @@ use crate::manager::shell_advance::MARKER_VAR;
 use crate::store::shell_runs::ShellState;
 use crate::store::{Dispatch, Effect, EffectPayload};
 
-/// The longest run of a command.
-const TIMEOUT: Duration = Duration::from_secs(600);
 /// The wait for the open or due capture of the session.
 pub(super) const CAPTURE_WAIT: Duration = Duration::from_secs(5);
 pub(super) const CAPTURE_BUSY: &str = "The session is still saving its last turn; try again.";
@@ -68,7 +66,8 @@ pub(super) type PreSpawnHook =
 pub(super) struct ShellRunState {
     tasks: StdMutex<HashMap<String, watch::Sender<bool>>>,
     notify: Arc<Notify>,
-    /// The run limit in ms (a test shortens it).
+    /// A test override of the run limit in ms; 0 means the station policy
+    /// (`limits.shell_command_minutes`).
     timeout_ms: AtomicU64,
     /// The wait for the proof of a Codex command in ms (a test shortens it).
     watch_ms: AtomicU64,
@@ -82,7 +81,7 @@ impl Default for ShellRunState {
         Self {
             tasks: StdMutex::default(),
             notify: Arc::new(Notify::new()),
-            timeout_ms: AtomicU64::new(u64::try_from(TIMEOUT.as_millis()).unwrap_or(u64::MAX)),
+            timeout_ms: AtomicU64::new(0),
             watch_ms: AtomicU64::new(u64::try_from(CODEX_WATCH.as_millis()).unwrap_or(u64::MAX)),
             #[cfg(test)]
             pre_spawn: StdMutex::default(),
@@ -494,7 +493,7 @@ impl SessionTarget {
         id: &str,
         session: &SessionId,
         cancel: &watch::Receiver<bool>,
-    ) -> Result<(LaunchDir, std::path::PathBuf), Ran> {
+    ) -> Result<(LaunchDir, std::path::PathBuf, Duration), Ran> {
         let never = |state, stderr: String| Ran {
             state,
             exit_code: None,
@@ -549,7 +548,11 @@ impl SessionTarget {
         let path = dir.cwd().map_err(refused)?;
         #[cfg(not(target_os = "linux"))]
         let path = dir.path();
-        Ok((dir, path))
+        // The limit is read once, here at the start of the command.
+        let limit = policy
+            .timeouts()
+            .shell_command_limit(self.shell.timeout_ms.load(Ordering::Relaxed));
+        Ok((dir, path, limit))
     }
 
     /// Starts the command and waits for its end.
@@ -576,7 +579,7 @@ impl SessionTarget {
         .await;
         // (B8 PRE-PR r1) The append above was awaited: a cancel or a policy
         // change may have come in. Nothing starts when a gate is closed.
-        let (dir, cwd) = match self.shell_gates(id, session, cancel).await {
+        let (dir, cwd, limit) = match self.shell_gates(id, session, cancel).await {
             Ok(found) => found,
             Err(ran) => return ran,
         };
@@ -625,7 +628,6 @@ impl SessionTarget {
         .into_iter()
         .flatten()
         .collect();
-        let limit = Duration::from_millis(self.shell.timeout_ms.load(Ordering::Relaxed));
         let end = tokio::select! {
             r = child.wait() => End::Exited(r),
             () = tokio::time::sleep(limit) => End::Timeout,
