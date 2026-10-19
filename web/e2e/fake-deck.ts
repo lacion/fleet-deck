@@ -390,6 +390,11 @@ export class FakeDeck {
       }
       return { status: 200, body: window() };
     });
+    // BG-3: the setup-report window stays closed and lists no report.
+    this.on('/api/provision-reports', () => ({
+      status: 200,
+      body: { window: { open: false, deadline_ms: null }, reports: [] },
+    }));
     this.on('/api/pairing/requests', () => ({
       status: 200,
       body: { window: window(), requests: state.windowOpen ? state.requests : [] },
