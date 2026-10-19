@@ -35,6 +35,17 @@ pub enum ToolClass {
     /// `desktop_input_mcp.v1`. [`ToolClass::parse`] never returns it, so a
     /// deck grant cannot name it.
     InputEnabled,
+    /// Station-internal (R13 P7b §3.1, §4): the grant has the explicit click
+    /// allowance. The start adds it to the binding classes only when the
+    /// binding has `input_enabled`, the spec has `allow_click` and the deck
+    /// link negotiated `desktop_click_mcp.v1`. [`ToolClass::parse`] never
+    /// returns it, so a deck grant cannot name it.
+    ClickEnabled,
+    /// Station-internal (R13 P7b §3.1, §4): the grant has the scope
+    /// `any_window`. The start adds it to the binding classes only when the
+    /// binding has `input_enabled` and the spec has the scope `any_window`.
+    /// [`ToolClass::parse`] never returns it, so a deck grant cannot name it.
+    InputAny,
     /// The session's own tools (`publish_artifact`, `set_focus`,
     /// `ask_coordinator`; DL-165). Every binding has it; no grant names
     /// it ([`ToolClass::parse`] never returns it).
@@ -44,8 +55,8 @@ pub enum ToolClass {
 impl ToolClass {
     /// The class name: the inverse of [`Self::parse`] for a grant class.
     /// `own` is no grant class and is never stored; `recording` is stored
-    /// but is no grant class (see [`Self::from_stored`]); so is
-    /// `input_enabled`.
+    /// but is no grant class (see [`Self::from_stored`]); so are
+    /// `input_enabled`, `click_enabled` and `input_any`.
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
@@ -61,6 +72,8 @@ impl ToolClass {
             Self::Recording => "recording",
             Self::Input => "input",
             Self::InputEnabled => "input_enabled",
+            Self::ClickEnabled => "click_enabled",
+            Self::InputAny => "input_any",
             Self::Own => "own",
         }
     }
@@ -86,13 +99,15 @@ impl ToolClass {
     }
 
     /// The class of a stored name: a grant class, or the station-internal
-    /// `recording` (R13 P5b-2) or `input_enabled` (R13 P7). `own` is never
-    /// stored and fails closed.
+    /// `recording` (R13 P5b-2), `input_enabled` (R13 P7), `click_enabled` or
+    /// `input_any` (R13 P7b). `own` is never stored and fails closed.
     #[must_use]
     pub fn from_stored(name: &str) -> Option<Self> {
         match name {
             "recording" => Some(Self::Recording),
             "input_enabled" => Some(Self::InputEnabled),
+            "click_enabled" => Some(Self::ClickEnabled),
+            "input_any" => Some(Self::InputAny),
             other => Self::parse(other),
         }
     }
@@ -163,6 +178,8 @@ mod tests {
         }
         for name in [
             "input_enabled",
+            "click_enabled",
+            "input_any",
             "InputEnabled",
             "Input",
             "Desktop",
@@ -200,5 +217,22 @@ mod tests {
         assert_eq!(ToolClass::from_stored("input"), Some(ToolClass::Input));
         assert!(!class.is_fleet_control());
         assert!(!class.is_mutating());
+    }
+
+    #[test]
+    fn the_click_and_any_window_classes_are_internal_and_give_no_fleet_control() {
+        for (class, name) in [
+            (ToolClass::ClickEnabled, "click_enabled"),
+            (ToolClass::InputAny, "input_any"),
+        ] {
+            assert_eq!(class.name(), name);
+            // A grant never names it; only the stored form reads it back.
+            assert_eq!(ToolClass::parse(name), None);
+            assert_eq!(ToolClass::from_stored(name), Some(class));
+            assert!(!class.is_fleet_control());
+            assert!(!class.is_mutating());
+        }
+        assert_eq!(ToolClass::from_stored("ClickEnabled"), None);
+        assert_eq!(ToolClass::from_stored("InputAny"), None);
     }
 }

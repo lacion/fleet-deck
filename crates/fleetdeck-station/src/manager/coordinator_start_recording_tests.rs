@@ -5,7 +5,7 @@
 
 use fleetdeck_proto::command::CoordinatorSpec;
 
-use super::{ToolClass, grant_classes};
+use super::{DeckFeatures, ToolClass, grant_classes};
 use crate::manager::coordinator_spec_tests::coordinator_spec;
 
 fn spec(classes: &[&str], allow_recording: bool) -> CoordinatorSpec {
@@ -19,7 +19,7 @@ fn spec(classes: &[&str], allow_recording: bool) -> CoordinatorSpec {
 #[test]
 fn the_recording_class_needs_the_flag_and_the_capture_class() {
     let has = |classes: &[&str], flag: bool| {
-        grant_classes(&spec(classes, flag), false)
+        grant_classes(&spec(classes, flag), DeckFeatures::default())
             .unwrap()
             .contains(&ToolClass::Recording)
     };
@@ -35,7 +35,11 @@ fn the_recording_class_needs_the_flag_and_the_capture_class() {
 #[test]
 fn a_spec_that_names_the_recording_class_is_refused_as_unknown() {
     for flag in [false, true] {
-        let err = grant_classes(&spec(&["capture", "recording"], flag), false).unwrap_err();
+        let err = grant_classes(
+            &spec(&["capture", "recording"], flag),
+            DeckFeatures::default(),
+        )
+        .unwrap_err();
         assert_eq!(err, "unknown grant class `recording`");
     }
 }
