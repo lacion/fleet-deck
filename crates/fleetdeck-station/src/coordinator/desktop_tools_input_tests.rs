@@ -4,7 +4,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::collections::BTreeSet;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use super::super::bindings::{Binding, BindingState, Caller, ToolClass};
 use super::super::desktop_forward::{DesktopRequest, McpToolResult};
 use super::super::ingress::Forward;
-use super::super::jsonrpc::{Answer, answer};
+use super::super::mcp_p1_rig_tests::serve_json;
 use super::super::tools;
 use super::input::BUNDLE;
 
@@ -184,19 +184,16 @@ fn binding(granted: &[ToolClass]) -> Binding {
     }
 }
 
-async fn rpc(b: &Binding, fake: &Fake, method: &str, params: Value) -> Value {
+async fn rpc(b: &Binding, fake: &Arc<Fake>, method: &str, params: Value) -> Value {
     let msg = json!({"jsonrpc": "2.0", "id": 7, "method": method, "params": params});
-    match answer(msg, b, fake, None, true).await {
-        Answer::Json(v) => v,
-        Answer::Accepted => panic!("a notification"),
-    }
+    serve_json(b, fake.clone(), true, None, &msg).await
 }
 
 #[tokio::test]
 async fn the_intake_lists_and_forwards_them_only_for_an_input_binding() {
-    let fake = Fake {
+    let fake = Arc::new(Fake {
         forwarded: Mutex::default(),
-    };
+    });
     let call = json!({"name": "key_press", "arguments": {
         "request_id": "r1", "window_id": WINDOW, "chord": "Return"}});
 
@@ -229,7 +226,7 @@ async fn the_intake_lists_and_forwards_them_only_for_an_input_binding() {
     assert_eq!(r["result"]["isError"], true, "{r}");
     assert_eq!(
         r["result"]["content"][0]["text"],
-        "forbidden: the grant has no such tool"
+        "forbidden: your grant has no tool `key_press`. Call tools/list to see the tools you have."
     );
     assert_eq!(fake.forwarded.lock().unwrap().len(), 1);
 

@@ -191,7 +191,9 @@ async fn intake_refuses_a_fleet_control_call_while_the_station_switch_is_off() {
     assert_eq!(reply["result"]["isError"], json!(true));
     assert_eq!(
         reply["result"]["content"][0]["text"],
-        json!("not_granted: fleet control is off on this station")
+        json!(
+            "not_granted: fleet control is off on this station. Ask the owner to turn on \"Allow fleet control\" in the station settings."
+        )
     );
     assert!(
         r.forward.calls.lock().unwrap().is_empty(),
@@ -224,7 +226,9 @@ async fn an_adr_006_tool_under_a_fleet_control_grant_is_refused_too_but_not_unde
         let reply = rpc(&fleet, call(tool, args)).await;
         assert_eq!(
             reply["result"]["content"][0]["text"],
-            json!("not_granted: fleet control is off on this station"),
+            json!(
+                "not_granted: fleet control is off on this station. Ask the owner to turn on \"Allow fleet control\" in the station settings."
+            ),
             "{tool}"
         );
     }
@@ -239,7 +243,9 @@ async fn an_adr_006_tool_under_a_fleet_control_grant_is_refused_too_but_not_unde
     let reply = rpc(&fleet, call("set_focus", json!({"text": "x"}))).await;
     assert_ne!(
         reply["result"]["content"][0]["text"],
-        json!("not_granted: fleet control is off on this station")
+        json!(
+            "not_granted: fleet control is off on this station. Ask the owner to turn on \"Allow fleet control\" in the station settings."
+        )
     );
 }
 

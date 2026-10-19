@@ -54,8 +54,9 @@ pub fn env_filter(default: &str) -> Result<EnvFilter, LogError> {
     EnvFilter::try_new(&text).map_err(|e| LogError::Filter(format!("`{text}`: {e}")))
 }
 
-/// Whether `target` belongs to the MCP SDK (`rmcp` and its modules).
-fn is_sdk_target(target: &str) -> bool {
+/// Whether `target` belongs to the MCP SDK; its events never reach a log
+/// (MCP P1 §3.5).
+pub fn is_sdk_target(target: &str) -> bool {
     target == "rmcp" || target.starts_with("rmcp::")
 }
 

@@ -13,6 +13,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use bytes::Bytes;
+use http::HeaderMap;
+use http_body_util::Full;
 use hyper::body::{Body, Incoming};
 use hyper::header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, HOST, ORIGIN, WWW_AUTHENTICATE};
 use hyper::{Method, Request, Response, StatusCode};
@@ -23,8 +26,9 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 use tokio::task::JoinSet;
 
 use super::bindings::{Auth, Binding, Bindings, Caller};
-use super::desktop_forward::{DesktopRequest, McpToolResult, Rechecked, p6_error};
-use super::jsonrpc::{self, Answer};
+use super::desktop_forward::{DesktopRequest, McpToolResult, p6_error};
+use super::mcp_service::{McpService, Reply};
+use super::permit_io::{PermitIo, PermitSlot};
 
 /// The deck side of a tool call: the station forwards an authorized call
 /// as `coordinator.call` or `coordinator.query`. `ask_coordinator` of a
@@ -75,8 +79,7 @@ impl Default for Limits {
 pub(super) struct Shared {
     port: u16,
     pub(super) bindings: Bindings,
-    forward: Arc<dyn Forward>,
-    fleet: Option<Arc<dyn FleetTools>>,
+    mcp: McpService,
     pub(super) unauth: Arc<Semaphore>,
     pub(super) limits: Limits,
 }
@@ -91,9 +94,8 @@ impl Shared {
     ) -> Self {
         Self {
             port,
+            mcp: McpService::new(bindings.clone(), forward, fleet),
             bindings,
-            forward,
-            fleet,
             unauth: Arc::new(Semaphore::new(limits.unauthenticated)),
             limits,
         }
@@ -114,10 +116,8 @@ pub(super) enum MessageOutcome {
     ParseError,
     /// The body is a JSON-RPC batch, which the endpoint does not take.
     Batch,
-    /// A notification.
-    Accepted,
-    /// A JSON-RPC response.
-    Json(Value),
+    /// The reply of the MCP service.
+    Reply(Reply),
 }
 
 /// Checks the credential of a request (`Bearer <token>`). The binding
@@ -134,36 +134,30 @@ pub(super) fn authenticate_message(
     }
 }
 
-/// Parses and answers the body of an authenticated request.
+/// Checks and answers the body of an authenticated request. The body must
+/// be JSON and must not be a batch; both are refused before `rmcp` sees it.
+/// `headers` builds the request headers from the parsed message (the socket
+/// synthesizes them; HTTP passes the ones it received).
 pub(super) async fn answer_message(
     shared: &Shared,
     binding: &Binding,
-    body: &[u8],
+    body: Vec<u8>,
+    headers: impl FnOnce(&Value) -> HeaderMap,
 ) -> MessageOutcome {
-    let Ok(msg) = serde_json::from_slice::<Value>(body) else {
+    let Ok(msg) = serde_json::from_slice::<Value>(&body) else {
         return MessageOutcome::ParseError;
     };
     if msg.is_array() {
         return MessageOutcome::Batch;
     }
-    // A P6 result reaches the agent only after the caller policy and the
-    // binding are checked again (R13 P6 §4.9).
-    let forward = Rechecked {
-        inner: shared.forward.as_ref(),
-        bindings: &shared.bindings,
-    };
-    match jsonrpc::answer(
-        msg,
-        binding,
-        &forward,
-        shared.fleet.as_deref(),
-        shared.bindings.fleet_control(),
+    let headers = headers(&msg);
+    drop(msg);
+    MessageOutcome::Reply(
+        shared
+            .mcp
+            .serve(binding.clone(), Bytes::from(body), &headers)
+            .await,
     )
-    .await
-    {
-        Answer::Accepted => MessageOutcome::Accepted,
-        Answer::Json(v) => MessageOutcome::Json(v),
-    }
 }
 
 /// A running endpoint.
@@ -232,16 +226,22 @@ async fn serve(listener: TcpListener, shared: Arc<Shared>, mut stop: watch::Rece
                 let shared = shared.clone();
                 tasks.spawn(async move {
                     let _permit = permit;
+                    // The binding permit of a reply lives in this slot until
+                    // the connection flushed it (`permit_io.rs`).
+                    let slot = PermitSlot::default();
                     let svc_shared = shared.clone();
+                    let svc_slot = slot.clone();
                     let service = hyper::service::service_fn(move |req| {
                         let shared = svc_shared.clone();
-                        async move { Ok::<_, Infallible>(handle(req, &shared).await) }
+                        let slot = svc_slot.clone();
+                        async move { Ok::<_, Infallible>(handle(req, &shared, &slot).await) }
                     });
                     let mut builder = hyper::server::conn::http1::Builder::new();
                     builder
                         .timer(TokioTimer::new())
                         .header_read_timeout(shared.limits.headers);
-                    let _ = builder.serve_connection(TokioIo::new(tcp), service).await;
+                    let io = PermitIo::new(TokioIo::new(tcp), slot);
+                    let _ = builder.serve_connection(io, service).await;
                 });
             }
             Some(_) = tasks.join_next(), if !tasks.is_empty() => {}
@@ -251,14 +251,14 @@ async fn serve(listener: TcpListener, shared: Arc<Shared>, mut stop: watch::Rece
     tasks.abort_all();
 }
 
-fn plain(status: StatusCode) -> Response<String> {
-    let mut r = Response::new(String::new());
+fn plain(status: StatusCode) -> Response<Full<Bytes>> {
+    let mut r = Response::new(Full::new(Bytes::new()));
     *r.status_mut() = status;
     r
 }
 
-fn json(status: StatusCode, body: &Value) -> Response<String> {
-    let mut r = Response::new(body.to_string());
+fn json(status: StatusCode, body: &Value) -> Response<Full<Bytes>> {
+    let mut r = Response::new(Full::new(Bytes::from(body.to_string())));
     *r.status_mut() = status;
     r.headers_mut().insert(
         CONTENT_TYPE,
@@ -269,7 +269,7 @@ fn json(status: StatusCode, body: &Value) -> Response<String> {
 
 /// The answer while a reattached shim replays its buffered output (DL-194
 /// §9.7).
-fn starting() -> Response<String> {
+fn starting() -> Response<Full<Bytes>> {
     json(
         StatusCode::SERVICE_UNAVAILABLE,
         &serde_json::json!({"jsonrpc": "2.0", "id": null,
@@ -277,7 +277,7 @@ fn starting() -> Response<String> {
     )
 }
 
-fn unauthorized() -> Response<String> {
+fn unauthorized() -> Response<Full<Bytes>> {
     let mut r = json(
         StatusCode::UNAUTHORIZED,
         &serde_json::json!({"error": "unauthorized"}),
@@ -290,7 +290,7 @@ fn unauthorized() -> Response<String> {
 }
 
 /// A connection-closing answer for a body that did not arrive in time.
-fn closing(status: StatusCode) -> Response<String> {
+fn closing(status: StatusCode) -> Response<Full<Bytes>> {
     let mut r = plain(status);
     r.headers_mut().insert(
         hyper::header::CONNECTION,
@@ -299,7 +299,21 @@ fn closing(status: StatusCode) -> Response<String> {
     r
 }
 
-async fn handle(req: Request<Incoming>, shared: &Shared) -> Response<String> {
+/// The HTTP response of an `rmcp` reply: its status, content type and body.
+fn from_reply(reply: Reply) -> Response<Full<Bytes>> {
+    let mut r = Response::new(Full::new(reply.body));
+    *r.status_mut() = reply.status;
+    if let Some(content_type) = reply.content_type {
+        r.headers_mut().insert(CONTENT_TYPE, content_type);
+    }
+    r
+}
+
+async fn handle(
+    req: Request<Incoming>,
+    shared: &Shared,
+    slot: &PermitSlot,
+) -> Response<Full<Bytes>> {
     if req.uri().path() != "/mcp" {
         return plain(StatusCode::NOT_FOUND);
     }
@@ -339,6 +353,7 @@ async fn handle(req: Request<Incoming>, shared: &Shared) -> Response<String> {
         .get(AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
         .map(str::to_owned);
+    let headers = req.headers().clone();
     let body = match tokio::time::timeout(
         shared.limits.body,
         read_body(req.into_body(), shared.limits.body_bytes),
@@ -349,22 +364,26 @@ async fn handle(req: Request<Incoming>, shared: &Shared) -> Response<String> {
         Ok(Err(status)) => return closing(status),
         Ok(Ok(body)) => body,
     };
-    let (binding, _permit) = match authenticate_message(shared, auth.as_deref()) {
+    let (binding, permit) = match authenticate_message(shared, auth.as_deref()) {
         Ok(ok) => ok,
         Err(MessageOutcome::Limited) => return plain(StatusCode::TOO_MANY_REQUESTS),
         Err(MessageOutcome::Starting) => return starting(),
         Err(_) => return unauthorized(),
     };
     drop(_unauth);
-    match answer_message(shared, &binding, &body).await {
+    let outcome = answer_message(shared, &binding, body, move |_| headers).await;
+    // The permit lives until the connection flushed the reply (a slow reader
+    // keeps it); a dropped request (the client left) drops it with this
+    // frame.
+    slot.hold(permit);
+    match outcome {
         MessageOutcome::ParseError => json(
             StatusCode::BAD_REQUEST,
             &serde_json::json!({"jsonrpc": "2.0", "id": null,
                 "error": {"code": -32700, "message": "parse error"}}),
         ),
         MessageOutcome::Batch => plain(StatusCode::BAD_REQUEST),
-        MessageOutcome::Accepted => plain(StatusCode::ACCEPTED),
-        MessageOutcome::Json(v) => json(StatusCode::OK, &v),
+        MessageOutcome::Reply(reply) => from_reply(reply),
         // The authentication step returns these; the answer step never does.
         MessageOutcome::Unauthorized | MessageOutcome::Limited | MessageOutcome::Starting => {
             unauthorized()
