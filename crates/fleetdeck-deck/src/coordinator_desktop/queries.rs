@@ -157,7 +157,11 @@ pub(super) async fn status(
         Ok(Some(op)) if matches!(op.tool, OpTool::Screenshot | OpTool::RecordMonitor) => {
             Ok(status_without_op(&args.request_id, None))
         }
-        Ok(Some(op)) if input::is_input(op.tool) => Ok(input::status_of(&args.request_id, &op)),
+        Ok(Some(op)) if input::is_input(op.tool) => Ok(input::status_of(
+            &args.request_id,
+            &op,
+            begun.grant.input_scope,
+        )),
         Ok(Some(op)) => Ok(status_of(&args.request_id, &op)),
         Ok(None) => match link
             .store

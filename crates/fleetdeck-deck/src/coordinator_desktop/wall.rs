@@ -260,6 +260,7 @@ impl Wall<'_> {
             caller: &ctx.caller_station,
             target: self.auth.target(),
             class: self.auth.class(),
+            tool: None,
         };
         if let Err(refusal) = local_pass(self.link, &held).await {
             return self.end(id, OpOutcome::Failed(refusal), None).await;

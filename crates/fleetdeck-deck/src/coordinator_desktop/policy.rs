@@ -8,7 +8,8 @@ use std::time::{Duration, Instant};
 
 use fleetdeck_proto::coordinator_desktop_text::{code, deadline_ms};
 use fleetdeck_proto::coordinator_desktop_wire::{
-    DesktopInputPolicyAnswer, DesktopPolicyAnswer, DesktopPolicyNow, PolicyPurpose,
+    DesktopInputGatesAnswer, DesktopInputPolicyAnswer, DesktopPolicyAnswer, DesktopPolicyNow,
+    PolicyPurpose,
 };
 use fleetdeck_proto::link::Outcome;
 use fleetdeck_proto::mutation::{CoordinatorBinding, PolicyNow};
@@ -63,8 +64,12 @@ pub(crate) async fn caller_policy(
 /// are on, and for a capture purpose also the capture setting and the monitor
 /// rule. For the input purpose (R13 P7 §6.4) the answer has its own closed
 /// shape, and every flag must be true (the monitor of the deck query is
-/// `null`; the target enforces the real monitor coverage). An uncertain answer is `authority_unknown`; a false value is
-/// `not_granted`. (`_link` keeps the signature of the call layer; the route
+/// `null`; the target enforces the real monitor coverage). The three P7b
+/// purposes (R13 P7b §9.2) answer a [`DesktopInputGatesAnswer`] that must fit
+/// the purpose (else `authority_unknown`): the five flags of the input answer
+/// must be true (`not_granted`), then the click gate (`input_click_disabled`)
+/// and the broader-scope gate (`input_any_disabled`) when present. An
+/// uncertain answer is `authority_unknown`; a false value is `not_granted`. (`_link` keeps the signature of the call layer; the route
 /// holds the control channel.)
 ///
 /// # Errors
@@ -107,6 +112,31 @@ pub(crate) async fn target_policy(
         } else {
             Err(code::NOT_GRANTED)
         };
+    }
+    if matches!(
+        purpose,
+        PolicyPurpose::InputClick | PolicyPurpose::InputAny | PolicyPurpose::InputAnyClick
+    ) {
+        let answer: DesktopInputGatesAnswer =
+            serde_json::from_value(value).map_err(|_| code::AUTHORITY_UNKNOWN)?;
+        if !answer.fits(purpose) {
+            return Err(code::AUTHORITY_UNKNOWN);
+        }
+        if !(answer.allow_fleet_control
+            && answer.allow_desktop
+            && answer.allow_desktop_capture
+            && answer.allow_desktop_input
+            && answer.monitor_allowed)
+        {
+            return Err(code::NOT_GRANTED);
+        }
+        if answer.allow_desktop_click == Some(false) {
+            return Err(code::INPUT_CLICK_DISABLED);
+        }
+        if answer.allow_desktop_input_any == Some(false) {
+            return Err(code::INPUT_ANY_DISABLED);
+        }
+        return Ok(());
     }
     let answer: DesktopPolicyAnswer =
         serde_json::from_value(value).map_err(|_| code::AUTHORITY_UNKNOWN)?;

@@ -6,7 +6,6 @@
 use std::sync::Arc;
 
 use fleetdeck_proto::coordinator_desktop_text::{code, limits};
-use fleetdeck_proto::coordinator_spec::InputScope;
 use rusqlite::{Transaction, params};
 
 use super::input::StoredInputCharges;
@@ -93,8 +92,8 @@ fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admi
         (false, _) => 0,
     };
     // The typed characters that the operation charges (R13 P7 §9.1): the
-    // scalar count of a `type_text`; a chord and a pointer movement consume
-    // no character budget.
+    // scalar count of a `type_text`; a chord, a pointer movement and a click
+    // consume no character budget.
     let characters = if op.tool == OpTool::TypeText {
         length
     } else {
@@ -128,13 +127,10 @@ fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admi
         return refuse(code::NOT_GRANTED);
     }
     if input {
-        // R13 P7b task F stub: the click is admitted by a later task, under
-        // any grant. Nothing is stored.
-        if op.tool == OpTool::PointerClick {
-            return refuse(code::DESKTOP_UNSUPPORTED);
-        }
         // R13 P7 §3.1: an input grant holds the three classes, the explicit
-        // allowance and a supported scope.
+        // allowance and a scope. R13 P7b §3.1, §9.2: both scopes are admitted
+        // (the scope decides the action variant, not the admission), and a
+        // click needs its own allowance.
         let all = [GrantClass::Desktop, GrantClass::Capture, GrantClass::Input];
         if !all.iter().all(|c| grant.classes.contains(c)) {
             return refuse(code::NOT_GRANTED);
@@ -142,10 +138,8 @@ fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admi
         if !grant.allow_input || grant.input_scope.is_none() {
             return refuse(code::INPUT_NOT_ALLOWED);
         }
-        // R13 P7b task F stub: every input tool under the `any_window` scope
-        // is admitted by a later task. Nothing is stored.
-        if grant.input_scope == Some(InputScope::AnyWindow) {
-            return refuse(code::DESKTOP_UNSUPPORTED);
+        if op.tool == OpTool::PointerClick && !grant.allow_click {
+            return refuse(code::INPUT_CLICK_NOT_ALLOWED);
         }
     }
     // 3. The request key: the same payload replays, another one conflicts.

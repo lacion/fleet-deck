@@ -107,6 +107,7 @@ pub(super) async fn execute(
         caller: &ctx.caller_station,
         target: auth.target(),
         class: auth.class(),
+        tool: None,
     };
     if let Err(refusal) = local_pass(link, &held).await {
         return finish(link, operation_id, OpOutcome::Failed(refusal)).await;

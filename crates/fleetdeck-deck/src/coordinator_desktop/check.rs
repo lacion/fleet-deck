@@ -16,12 +16,12 @@ use fleetdeck_link::methods::code as link_code;
 use fleetdeck_proto::StationId;
 use fleetdeck_proto::coordinator_desktop_text::{code, deadline_ms};
 use fleetdeck_proto::coordinator_desktop_wire::{
-    AuthorityPhase, AuthorityReason, DesktopAuthorityAnswer, DesktopAuthorityCheck,
+    AuthorityPhase, AuthorityReason, DesktopAuthorityAnswer, DesktopAuthorityCheck, ProtectedRead,
 };
 use fleetdeck_proto::link::{Outcome, WireError};
 use fleetdeck_proto::mutation::CoordinatorBinding;
 
-use super::authorize::{Held, local_pass};
+use super::authorize::{Held, Tool, local_pass};
 use super::permits::Arrival;
 use super::policy::caller_policy;
 use crate::link::DeckLink;
@@ -144,6 +144,7 @@ async fn action(
         caller: &op.caller_station,
         target: &op.target_station,
         class: op.class,
+        tool: Some(Tool::of_op(op.tool)),
     };
     pass(ctx, &held, (&op.caller_session, deadline)).await
 }
@@ -183,6 +184,9 @@ async fn read(
         caller: &permit.ctx.caller_station,
         target: &permit.target,
         class: permit.class,
+        // R13 P7b §6.1: the permit of `input_windows` has the input class,
+        // and its read phase runs the rules of `window_list`.
+        tool: matches!(permit.read, ProtectedRead::InputWindows).then_some(Tool::WindowList),
     };
     pass(ctx, &held, (&permit.ctx.caller_session, deadline)).await
 }

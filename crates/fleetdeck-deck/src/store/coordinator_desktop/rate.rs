@@ -15,9 +15,7 @@ pub(super) const QUERY: &str = "query";
 pub(super) const IMAGE: &str = "image";
 pub(super) const NOTIFY: &str = "notify";
 pub(super) const INPUT: &str = "input";
-/// R13 P7b §6.1: the bucket of the `window_list` reads (no path counts it
-/// yet: task F stub).
-#[allow(dead_code)]
+/// R13 P7b §6.1: the bucket of the `window_list` reads.
 pub(super) const WINDOW_LIST: &str = "window_list";
 
 /// Rows older than this (milliseconds before `t`) are deleted when a row is

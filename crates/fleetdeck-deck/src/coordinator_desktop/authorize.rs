@@ -22,8 +22,8 @@ use crate::link::desktop_authority::{Route, resolve};
 use crate::store::coordinator_desktop::{OpClass, OpTool};
 use crate::store::{Grant, GrantClass, LinkFeature};
 
-/// The nine tools of §3, `record_monitor` (R13 P5b-2 §13.1) and the three
-/// input tools (R13 P7 §4).
+/// The nine tools of §3, `record_monitor` (R13 P5b-2 §13.1), the three input
+/// tools (R13 P7 §4), `pointer_click` and `window_list` (R13 P7b §5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub(crate) enum Tool {
@@ -40,6 +40,8 @@ pub(crate) enum Tool {
     KeyPress,
     TypeText,
     PointerMove,
+    PointerClick,
+    WindowList,
 }
 
 impl Tool {
@@ -57,7 +59,11 @@ impl Tool {
             | Self::RecordMonitor
             | Self::CaptureStatus
             | Self::ReadCaptureImage => Some(OpClass::Capture),
-            Self::KeyPress | Self::TypeText | Self::PointerMove => Some(OpClass::Input),
+            Self::KeyPress
+            | Self::TypeText
+            | Self::PointerMove
+            | Self::PointerClick
+            | Self::WindowList => Some(OpClass::Input),
             Self::DesktopInfo => None,
         }
     }
@@ -76,10 +82,29 @@ impl Tool {
             Self::KeyPress => Some(OpTool::KeyPress),
             Self::TypeText => Some(OpTool::TypeText),
             Self::PointerMove => Some(OpTool::PointerMove),
+            Self::PointerClick => Some(OpTool::PointerClick),
             Self::DesktopActionStatus
             | Self::CaptureStatus
             | Self::ReadCaptureImage
-            | Self::DesktopInfo => None,
+            | Self::DesktopInfo
+            | Self::WindowList => None,
+        }
+    }
+
+    /// The tool of an operation row.
+    #[must_use]
+    pub(crate) fn of_op(tool: OpTool) -> Self {
+        match tool {
+            OpTool::WallShow => Self::WallShow,
+            OpTool::Notify => Self::Notify,
+            OpTool::PreviewOpen => Self::PreviewOpen,
+            OpTool::WindowClose => Self::WindowClose,
+            OpTool::Screenshot => Self::Screenshot,
+            OpTool::RecordMonitor => Self::RecordMonitor,
+            OpTool::KeyPress => Self::KeyPress,
+            OpTool::TypeText => Self::TypeText,
+            OpTool::PointerMove => Self::PointerMove,
+            OpTool::PointerClick => Self::PointerClick,
         }
     }
 }
@@ -132,18 +157,41 @@ pub(super) fn needs(class: OpClass) -> GrantClass {
     }
 }
 
-/// The rules of an input grant (R13 P7 §3.1): the three classes `desktop`,
-/// `capture` and `input` (`not_granted`), then the explicit allowance and the
-/// one supported scope (`input_not_allowed`).
-fn input_grant(grant: &Grant) -> Result<(), &'static str> {
+/// The rules of an input grant (R13 P7 §3.1, R13 P7b §3.1, §9.2): the three
+/// classes `desktop`, `capture` and `input` (`not_granted`), then the explicit
+/// allowance and a scope (`input_not_allowed`). `pointer_click` also needs
+/// the click allowance (`input_click_not_allowed`); `window_list` needs the
+/// `any_window` scope (`input_scope_not_allowed`).
+fn input_grant(grant: &Grant, tool: Tool) -> Result<(), &'static str> {
     let all = [GrantClass::Desktop, GrantClass::Capture, GrantClass::Input];
     if !all.iter().all(|c| grant.classes.contains(c)) {
         return Err(code::NOT_GRANTED);
     }
-    if !grant.allow_input || grant.input_scope != Some(InputScope::OwnWindows) {
+    if !grant.allow_input || grant.input_scope.is_none() {
         return Err(code::INPUT_NOT_ALLOWED);
     }
+    if tool == Tool::PointerClick && !grant.allow_click {
+        return Err(code::INPUT_CLICK_NOT_ALLOWED);
+    }
+    if tool == Tool::WindowList && grant.input_scope != Some(InputScope::AnyWindow) {
+        return Err(code::INPUT_SCOPE_NOT_ALLOWED);
+    }
     Ok(())
+}
+
+/// The features that an input tool needs besides the capture set (R13 P7
+/// §6.1, R13 P7b §4): `desktop_input_mcp.v1`; for a click also
+/// `desktop_click_mcp.v1`; under the `any_window` scope, and for
+/// `window_list`, also `desktop_input_any.v1`.
+fn input_features(tool: Tool, scope: Option<InputScope>) -> Vec<&'static str> {
+    let mut wanted = vec![feature::DESKTOP_INPUT_MCP];
+    if tool == Tool::PointerClick {
+        wanted.push(feature::DESKTOP_CLICK_MCP);
+    }
+    if tool == Tool::WindowList || scope == Some(InputScope::AnyWindow) {
+        wanted.push(feature::DESKTOP_INPUT_ANY);
+    }
+    wanted
 }
 
 /// A deck store error: a warning without any request data, and
@@ -172,9 +220,10 @@ pub(super) fn switches(link: &DeckLink) -> Result<(), &'static str> {
 
 /// The features of the caller link (§5.1); a recording also needs
 /// `capture_recording_mcp.v1` (R13 P5b-2 §13.1), and an input tool the
-/// capture set and `desktop_input_mcp.v1` (R13 P7 §6.1).
-fn caller_features(class: OpClass, recording: bool) -> Vec<&'static str> {
+/// capture set and the input features of [`input_features`].
+fn caller_features(class: OpClass, tool: Tool, scope: Option<InputScope>) -> Vec<&'static str> {
     let capture = matches!(class, OpClass::Capture | OpClass::Input);
+    let recording = tool == Tool::RecordMonitor;
     let mut wanted = vec![
         feature::COORDINATOR,
         feature::COORDINATOR_V2,
@@ -187,7 +236,7 @@ fn caller_features(class: OpClass, recording: bool) -> Vec<&'static str> {
         wanted.push(feature::CAPTURE_RECORDING_MCP);
     }
     if class == OpClass::Input {
-        wanted.push(feature::DESKTOP_INPUT_MCP);
+        wanted.extend(input_features(tool, scope));
     }
     wanted
 }
@@ -233,11 +282,19 @@ fn target_features(capture: bool) -> Vec<&'static str> {
 
 /// The target link has every feature of its class: `station_unreachable`
 /// without a link, `desktop_unsupported` when a link lacks one. An input
-/// operation needs the capture set and `desktop_input_mcp.v1` (R13 P7 §6.1).
-fn target_ready(link: &DeckLink, target: &StationId, class: OpClass) -> Result<(), &'static str> {
+/// operation needs the capture set and the input features of
+/// [`input_features`] for its tool and the scope of its grant.
+fn target_ready(
+    link: &DeckLink,
+    target: &StationId,
+    class: OpClass,
+    (tool, scope): (Option<Tool>, Option<InputScope>),
+) -> Result<(), &'static str> {
     let mut wanted = target_features(matches!(class, OpClass::Capture | OpClass::Input));
     if class == OpClass::Input {
-        wanted.push(feature::DESKTOP_INPUT_MCP);
+        // An input class without a tool is refused by the grant rules; here
+        // it needs the base input feature at least.
+        wanted.extend(input_features(tool.unwrap_or(Tool::KeyPress), scope));
     }
     for f in wanted {
         match link.store.link_feature(target, f) {
@@ -320,7 +377,7 @@ pub(super) async fn begin(
     let class = match tool.class() {
         Some(class) => {
             if class == OpClass::Input {
-                input_grant(&grant)?;
+                input_grant(&grant, tool)?;
             } else if !grant.classes.contains(&needs(class)) {
                 return Err(code::NOT_GRANTED);
             }
@@ -339,7 +396,7 @@ pub(super) async fn begin(
         return Err(code::NOT_GRANTED);
     }
     // 5a. The features of the caller link.
-    for f in caller_features(class, tool == Tool::RecordMonitor) {
+    for f in caller_features(class, tool, grant.input_scope) {
         if link.store.link_feature(caller_station, f) != LinkFeature::Negotiated {
             return Err(code::DESKTOP_UNSUPPORTED);
         }
@@ -383,7 +440,12 @@ pub(crate) async fn authorize(
     .await?;
     // 5b. The target link and its features; no desktop epoch is
     // `station_unreachable`.
-    target_ready(link, &begun.target, begun.class)?;
+    target_ready(
+        link,
+        &begun.target,
+        begun.class,
+        (Some(tool), begun.grant.input_scope),
+    )?;
     if tool == Tool::RecordMonitor {
         recording_ready(link, &begun.target)?;
     }
@@ -405,6 +467,10 @@ pub(super) struct Held<'a> {
     pub(super) caller: &'a StationId,
     pub(super) target: &'a StationId,
     pub(super) class: OpClass,
+    /// The tool of the operation or the read, for the rules of an input
+    /// grant (R13 P7b §9.2); `None` for a P6 tool. An input class without a
+    /// tool is refused with `not_granted`.
+    pub(super) tool: Option<Tool>,
 }
 
 /// The deck-local grant checks, including the idle expiry (R13 P5b-2 PRE-PR
@@ -435,9 +501,10 @@ pub(super) async fn grant_pass(link: &DeckLink, held: &Held<'_>) -> Result<Grant
     if !classes.contains(&needs(held.class)) || !grant.stations.contains(held.target) {
         return Err(code::NOT_GRANTED);
     }
-    // R13 P7 §3.1: the allowance and the scope of an input grant.
+    // R13 P7 §3.1, R13 P7b §9.2: the allowance, the scope and the click
+    // allowance that the tool of the operation needs.
     if held.class == OpClass::Input {
-        input_grant(&grant)?;
+        input_grant(&grant, held.tool.ok_or(code::NOT_GRANTED)?)?;
     }
     Ok(grant)
 }
@@ -452,7 +519,12 @@ pub(super) async fn grant_pass(link: &DeckLink, held: &Held<'_>) -> Result<Grant
 /// The code of the first check that fails.
 pub(super) async fn local_pass(link: &DeckLink, held: &Held<'_>) -> Result<Grant, &'static str> {
     let grant = grant_pass(link, held).await?;
-    target_ready(link, held.target, held.class)?;
+    target_ready(
+        link,
+        held.target,
+        held.class,
+        (held.tool, grant.input_scope),
+    )?;
     Ok(grant)
 }
 
@@ -475,6 +547,7 @@ pub(super) async fn delivery_pass(
         caller: &ctx.caller_station,
         target,
         class: OpClass::Capture,
+        tool: None,
     };
     let grant = grant_pass(link, &held).await?;
     if grant.recording_cap == 0 {
@@ -484,9 +557,10 @@ pub(super) async fn delivery_pass(
 }
 
 /// The deck-local authority to deliver an input result to its caller (R13 P7
-/// §8.3, DL-242): [`grant_pass`] for the input class, which also checks the
-/// classes, the allowance and the scope of the grant. It makes no check of the
-/// target link.
+/// §8.3, DL-242): [`grant_pass`] for the input class and the `tool` of the
+/// operation, which also checks the classes, the allowance, the scope and the
+/// click allowance of the grant. It makes no check of the target link. The
+/// `window_list` read uses it too (R13 P7b §6.1).
 ///
 /// # Errors
 /// The code of the first check that fails.
@@ -494,6 +568,7 @@ pub(super) async fn input_delivery_pass(
     link: &DeckLink,
     ctx: &CoordinatorContext,
     target: &StationId,
+    tool: Tool,
 ) -> Result<(), &'static str> {
     let held = Held {
         grant_id: &ctx.grant_id,
@@ -502,6 +577,7 @@ pub(super) async fn input_delivery_pass(
         caller: &ctx.caller_station,
         target,
         class: OpClass::Input,
+        tool: Some(tool),
     };
     grant_pass(link, &held).await.map(|_| ())
 }
@@ -525,6 +601,7 @@ pub(crate) async fn recording_pass(
         caller: &ctx.caller_station,
         target,
         class: OpClass::Capture,
+        tool: None,
     };
     let grant = local_pass(link, &held).await?;
     if grant.recording_cap == 0 {
