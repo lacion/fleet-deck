@@ -5,6 +5,7 @@
 - **Prerequisite:** accepted and built P6, `omarchy-p6.md`, including subsequent authority fixes recorded in DL-242.
 - **Scope:** coordinator tools `key_press`, `type_text` and `pointer_move`, targeting caller-owned P6 preview windows through opaque `window_id` handles.
 - **Deferred:** `any` scope, pointer buttons, scrolling, dragging, held keys, terminal input and ordinary-session grants.
+- **P7b:** the pointer click and the `any_window` scope are proposed in `omarchy-p7b.md` (O12-24).
 - **Constraints:** no new library dependency, privileged helper, `uinput`, `ydotoold`, shell command interface or station-local approval step.
 
 Once accepted, this annex replaces the parent’s P7 scope, input protocol and input tests. P6 remains authoritative except for the explicit extensions below.
