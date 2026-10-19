@@ -182,7 +182,10 @@ fn fetch_route_stamps_fetched_at() {
     let rig = Rig::new(&["alpha", "bravo", "charlie"]);
     let (project, folders) = project_with_homes(&rig, 3, json!({ "push": "on_turn" }));
     let (b, _) = pushed_session(&rig, 1, &folders[1], &project, "b.txt");
-    let first = fetch(&rig, &project)["fetched_at"].as_i64().unwrap();
+    let answer = fetch(&rig, &project);
+    let first = answer["fetched_at"]
+        .as_i64()
+        .unwrap_or_else(|| panic!("no fetched_at: {answer}"));
     let view = branches(&rig, &project);
     assert!(view["fetched_at"].as_i64().unwrap() >= first, "{view}");
     let name_b = b.branch.clone().unwrap();
@@ -196,7 +199,10 @@ fn fetch_route_stamps_fetched_at() {
     assert!(has(&view, &name_b), "{view}");
 
     let (c, _) = pushed_session(&rig, 2, &folders[2], &project, "c.txt");
-    let second = fetch(&rig, &project)["fetched_at"].as_i64().unwrap();
+    let answer = fetch(&rig, &project);
+    let second = answer["fetched_at"]
+        .as_i64()
+        .unwrap_or_else(|| panic!("no fetched_at: {answer}"));
     assert!(second > first, "{first} then {second}");
     let view = branches(&rig, &project);
     assert!(view["fetched_at"].as_i64().unwrap() >= second, "{view}");

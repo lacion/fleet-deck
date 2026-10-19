@@ -385,3 +385,22 @@ async fn an_old_git_fails_the_start() {
         "Fleet Git needs Git 2.45 or newer on this station."
     );
 }
+
+#[tokio::test]
+async fn a_second_fetch_of_the_same_repository_waits_for_the_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let (one, other) = (dir.path().join("one"), dir.path().join("other"));
+    let held = fetch_lock(&one).await;
+    // Another repository does not wait.
+    drop(fetch_lock(&other).await);
+    let mut waiting = Box::pin(fetch_lock(&one));
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), &mut waiting)
+            .await
+            .is_err()
+    );
+    drop(held);
+    let _second = tokio::time::timeout(std::time::Duration::from_secs(5), waiting)
+        .await
+        .unwrap();
+}

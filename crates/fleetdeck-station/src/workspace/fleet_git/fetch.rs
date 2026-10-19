@@ -1,8 +1,9 @@
 //! Fetch before a start (FG-1, design §4, O7 and O8).
 
-use std::path::Path;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU32;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use fleetdeck_proto::fleet_git::{GitSettings, code};
@@ -216,6 +217,22 @@ pub(super) async fn default_branch(
     None
 }
 
+/// One lock for each repository, for the fetches of the radar, the manual
+/// fetch and the land: two `git fetch` runs in the same repository can refuse
+/// each other on the ref locks of Git.
+static FETCH_LOCKS: Mutex<Option<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> = Mutex::new(None);
+
+/// Waits until no other fetch runs in `repo_dir`; the fetch runs while the
+/// guard lives.
+pub(super) async fn fetch_lock(repo_dir: &Path) -> tokio::sync::OwnedMutexGuard<()> {
+    let lock = {
+        let mut map = FETCH_LOCKS.lock().unwrap_or_else(PoisonError::into_inner);
+        let map = map.get_or_insert_with(HashMap::new);
+        Arc::clone(map.entry(repo_dir.to_path_buf()).or_default())
+    };
+    lock.lock_owned().await
+}
+
 /// The plain fetch of `remote` in `repo_dir` (design §2.4, FG-7, FG-8): the
 /// same command, limit and confinement as the fetch of a start. The text of
 /// a failure has the redacted Git line; a timeout is `fetch_failed` too.
@@ -228,6 +245,7 @@ pub(super) async fn fetch_remote(
     remote: &str,
 ) -> Result<(), Refusal> {
     require_git(options).await?;
+    let _one = fetch_lock(repo_dir).await;
     let net = net_git(options, repo_dir, FETCH_TIMEOUT);
     let args = [
         "-c",

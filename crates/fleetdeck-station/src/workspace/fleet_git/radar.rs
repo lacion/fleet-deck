@@ -172,6 +172,7 @@ pub(super) async fn fetch_wip(env: &RadarEnv<'_>, url: &str) -> Result<(), Refus
         env.allow_local_remotes,
     )
     .await?;
+    let _one = super::fetch::fetch_lock(env.repo_dir).await;
     let net = net_git(env.options, env.repo_dir, WIP_FETCH_TIMEOUT);
     let args = [
         "-c",
