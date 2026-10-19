@@ -2,6 +2,7 @@
 
 - **Review state (2026-10-19):** DESIGN REVIEW used all 3 rounds. Round 3: R1-2 and R1-4 FIXED; one new BLOCKER in BG-1 (the station user writes the `pacman.conf` that root reads, so code of that user can change it while sudo waits; report `adv-board-gaps-design-r3-report.md`). **BG-1 waits for the owner's decision** (recommendation: the root-owned system `/etc/pacman.conf` and repository-qualified targets `core/<name>`, `extra/<name>`; the residual of code that runs as the user stays the P8-17 boundary). BG-2, BG-3 and BG-4 have no open finding and are accepted for the build.
 - **Revision history:** Revision 2 (2026-10-19): DESIGN REVIEW round 1 FAIL (1 BLOCKER, 4 MAJOR, 1 UNVERIFIED; report `adv-board-gaps-design-r1-codex.md`); fixed by the architect decisions O12-26. Revision 3 (2026-10-19): DESIGN REVIEW round 2: R1-2 and R1-4 open (2 MAJOR; report `adv-board-gaps-design-r2-report.md`); fixed by O12-27.
+- **Build status (2026-10-19):** BG-2, BG-3 and BG-4 built on v2 (DL-249); PRE-PR reviews pending. BG-1 waits for the owner.
 - **Status:** Proposed design (architect, 2026-10-19), from the advisor answer `advisor-board-gaps-answer.md` against v2 HEAD `fbce0923`. The architect accepts BG-1 to BG-4 as architect decisions (O12-25; the owner may change any of them). DESIGN REVIEW required before implementation; PRE-PR required before merge; live smoke required for the real sudo/pacman, compositor tools and process trees.
 - **Scope:** four gaps that still need an action on the station itself: the desktop tools (`operations.md` lines about 642, 799, 925 and 930); the installer conflict repair and the busy lock code (DL-243 items b and e); a P8 failure before the station is linked (DL-243 item c and `operations.md` §15.3); stopping the processes of a lost run (`operations.md` about line 978).
 - **Out of scope:** the residual product gaps of §1 (unsupported package delivery, trust or configuration repairs before the link, legacy process attribution without a trustworthy witness).
@@ -358,8 +359,9 @@ Answer of the action:
 | Target | Backup | Staging | Meaning | Resume | Restore |
 |---|---|---|---|---|---|
 | `original_hash` | absent | any | Nothing moved. | Remove the staging file. Back up, then publish. | Nothing to restore. Remove the staging file. |
-| absent | `original_hash` | any | Backed up, not published. | Remove the staging file. Stage and publish. | Rename the backup to the target (no replace). Remove the staging file. |
-| `asset_hash` | `original_hash` | any | Published. | Remove the staging file. Done. | Only after a new restore plan: move the target away to a new kept name, then rename the backup to the target. Never overwrite. |
+| absent | `original_hash` | any | Backed up, not published. | Remove the staging file. Stage and publish. | Copy the backup to the target (no replace). The backup stays. Remove the staging file. |
+| `asset_hash` | `original_hash` | any | Published. | Remove the staging file. Done. | Only after a new restore plan: move the target away to a new kept name, then copy the backup to the target. The backup stays. Never overwrite. |
+| `original_hash` | `original_hash` | any | Restored (revision 4, O12-28): the target holds the original again and the backup stays. | Skip the file. | Nothing to restore. |
 | `asset_hash` | absent | any | Published, and `original_hash` is `none`. | Remove the staging file. Done. | Remove the target only when its hash is `asset_hash`. Done. |
 | `asset_hash` | absent | any | `original_hash` is not `none`: the backup is gone. | Stop: `repair_incomplete`. | Stop: `repair_incomplete`. |
 | absent | absent | any | `original_hash` is `none`: nothing is published yet. | Stage and publish. | Nothing to restore. |
@@ -373,7 +375,7 @@ Tests: a crash after each rename and before its completion record, after each st
 
 ### 3.6 Restore
 
-Restoration is elevated and plan-based. It accepts a repair ID and asset IDs. It never accepts a path. It refuses a current target that changed unexpectedly. It does not overwrite a later owner edit. The backup stays after the restoration.
+Restoration is elevated and plan-based. It accepts a repair ID and asset IDs. It never accepts a path. It refuses a current target that changed unexpectedly. It does not overwrite a later owner edit. **A restore copies the bytes of the backup through a staging file and publishes them with `RENAME_NOREPLACE` to the absent target (revision 4, O12-28).** A rename of the backup cannot keep the backup, so a restore never renames it. The backup stays after the restoration. The restore plan names its actions `copy_backup`, `move_aside_then_copy_backup`, `remove_published`, `nothing`, `stop_restore_conflict` and `stop_repair_incomplete`.
 
 ### 3.7 Board and error texts
 
