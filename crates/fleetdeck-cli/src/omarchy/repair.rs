@@ -5,13 +5,15 @@
 //! from the journal alone. Every action is idempotent. A staging file is
 //! removed only under the name of the journal.
 
+use std::os::fd::OwnedFd;
+
 use fleetdeck_proto::omarchy_repair::{
     JournalState, ObservedState, RepairFile, RepairFileState, RepairJournalView, RepairStatusFile,
     RestoreAction, RestorePlanFacts, RestorePlanFile, code,
 };
 
 use super::assets::Asset;
-use super::fsx::{Home, Kind, random_bytes_hex};
+use super::fsx::{Home, Kind};
 use super::journal::{self, Journal, JournalFile, Step};
 use super::record::{now_ms, sha256_hex};
 
@@ -265,12 +267,22 @@ pub fn start(home: &Home, files: &[Replacement], build_hash: &str) -> Res<Journa
     }
 }
 
+/// The staging file that this run wrote and still holds open: the file that
+/// the publication must find again under its name.
+struct Staged {
+    index: usize,
+    fd: OwnedFd,
+    /// The hash of the bytes that were written.
+    hash: String,
+}
+
 /// A repair that runs on a journal.
 pub struct Run<'a> {
     home: &'a Home,
     pub journal: Journal,
     /// True once a file of this repair moved.
     moved: bool,
+    staged: Option<Staged>,
 }
 
 impl<'a> Run<'a> {
@@ -287,6 +299,7 @@ impl<'a> Run<'a> {
             home,
             journal,
             moved,
+            staged: None,
         }
     }
 
@@ -304,7 +317,21 @@ impl<'a> Run<'a> {
         journal::save(self.home, &self.journal).map_err(|_| self.io_stop())
     }
 
+    /// A target or a directory of its path that a group or other user can
+    /// write is unsafe: the step does not begin (`unsafe_path`).
+    fn check_path(&self, i: usize) -> Res<()> {
+        match self
+            .home
+            .others_can_write(&self.journal.files[i].target_rel())
+        {
+            Ok(false) => Ok(()),
+            Ok(true) => Err(Halt::Stop(code::UNSAFE_PATH)),
+            Err(_) => Err(self.io_stop()),
+        }
+    }
+
     fn begin(&mut self, i: usize, step: Step) -> Res<()> {
+        self.check_path(i)?;
         self.journal.files[i].intent = Some(step);
         self.save()?;
         seam()
@@ -352,15 +379,40 @@ impl<'a> Run<'a> {
     fn stage(&mut self, i: usize, bytes: &[u8], mode: u32, step: (Step, Step)) -> Res<()> {
         self.begin(i, step.0)?;
         let rel = self.journal.files[i].staging_rel();
-        match self.home.create_new(&rel, bytes, mode) {
-            Ok(true) => {}
-            Ok(false) | Err(_) => return Err(Halt::Stop(code::REPAIR_INCOMPLETE)),
+        match self.home.create_new_held(&rel, bytes, mode) {
+            Ok(Some(fd)) => {
+                self.staged = Some(Staged {
+                    index: i,
+                    fd,
+                    hash: sha256_hex(bytes),
+                });
+            }
+            Ok(None) | Err(_) => return Err(Halt::Stop(code::REPAIR_INCOMPLETE)),
         }
         self.end(i, step.1)
     }
 
+    /// The staging file of `i` is the file that this run wrote (same device
+    /// and inode), still has one name, is yours, has no group or other
+    /// write bit, and holds the bytes that were written; else the run
+    /// stops (`repair_incomplete`) and nothing is published.
+    fn check_staging(&mut self, i: usize) -> Res<()> {
+        let incomplete = Halt::Stop(code::REPAIR_INCOMPLETE);
+        let Some(staged) = self.staged.take().filter(|s| s.index == i) else {
+            return Err(incomplete);
+        };
+        match self
+            .home
+            .read_same(&self.journal.files[i].staging_rel(), &staged.fd)
+        {
+            Ok(Some(data)) if sha256_hex(&data.bytes) == staged.hash => Ok(()),
+            Ok(_) | Err(_) => Err(incomplete),
+        }
+    }
+
     fn publish(&mut self, i: usize, step: (Step, Step)) -> Res<()> {
         self.begin(i, step.0)?;
+        self.check_staging(i)?;
         let file = self.journal.files[i].clone();
         match self
             .home
@@ -425,6 +477,15 @@ impl<'a> Run<'a> {
 
     fn copy_backup(&mut self, i: usize) -> Res<()> {
         let file = self.journal.files[i].clone();
+        // A displaced file under the kept name that is not the published
+        // asset is an edit of the owner: it is never covered by a copy.
+        if let Some(kept) = file.kept_rel() {
+            match seen(self.home, &kept) {
+                Seen::Absent => {}
+                Seen::Hash(h) if h == file.asset_hash => {}
+                Seen::Hash(_) | Seen::Bad => return Err(Halt::Stop(code::RESTORE_CONFLICT)),
+            }
+        }
         let data = match self.home.read(&file.backup_rel()) {
             Ok(Some(data)) => data,
             _ => return Err(Halt::Stop(code::REPAIR_INCOMPLETE)),
@@ -438,24 +499,62 @@ impl<'a> Run<'a> {
         self.publish(i, (Step::Restoring, Step::Restored))
     }
 
+    fn clear_intent(&mut self, i: usize) -> Res<()> {
+        self.journal.files[i].intent = None;
+        self.save()
+    }
+
+    /// Moves the published target to a new kept name. The name is in the
+    /// journal before the move. A file under the earlier name of the journal
+    /// that is not the asset is an edit of the owner: it stays, and the new
+    /// name would hide it, so the file stops with `restore_conflict`.
     fn move_aside(&mut self, i: usize) -> Res<()> {
-        let file = self.journal.files[i].clone();
-        let name = file
-            .target
-            .rsplit('/')
-            .next()
-            .unwrap_or(&file.target)
-            .to_owned();
-        let kept = format!(
-            "{name}.fleetdeck-kept-{}-{}",
-            now_ms() / 1000,
-            random_bytes_hex(8).map_err(|_| Halt::Stop(code::REPAIR_INCOMPLETE))?
-        );
-        let to = std::path::Path::new(&file.target).with_file_name(kept);
-        match self.home.rename_new(&file.target_rel(), &to) {
-            Ok(true) => Ok(()),
-            Ok(false) | Err(_) => Err(Halt::Stop(code::REPAIR_INCOMPLETE)),
+        let file = &self.journal.files[i];
+        if let Some(earlier) = file.kept_rel() {
+            match seen(self.home, &earlier) {
+                Seen::Absent => {}
+                Seen::Hash(h) if h == file.asset_hash => {}
+                Seen::Hash(_) | Seen::Bad => return Err(Halt::Stop(code::RESTORE_CONFLICT)),
+            }
         }
+        let kept = journal::new_kept_name(&file.target, now_ms() / 1000)
+            .map_err(|_| Halt::Stop(code::REPAIR_INCOMPLETE))?;
+        self.journal.files[i].kept_name = Some(kept);
+        self.begin(i, Step::MovingAside)?;
+        let file = self.journal.files[i].clone();
+        let Some(to) = file.kept_rel() else {
+            return Err(Halt::Stop(code::REPAIR_INCOMPLETE));
+        };
+        match self.home.rename_new(&file.target_rel(), &to) {
+            Ok(true) => {}
+            Ok(false) => return Err(Halt::Stop(code::REPAIR_INCOMPLETE)),
+            Err(_) => {
+                // The rename may have happened before its directory sync failed.
+                if !matches!(self.home.lstat(&to), Ok(Some(_))) {
+                    return Err(Halt::Stop(code::REPAIR_INCOMPLETE));
+                }
+            }
+        }
+        seam()?;
+        self.settle_aside(i)
+    }
+
+    /// The displaced file must be the asset that the plan observed. An edit
+    /// that came in between is put back at the target when the target is
+    /// still absent (a file that cannot be hashed counts as an edit); a
+    /// refused or failed rename leaves it under the kept name, which the
+    /// result reports. The file stops with `restore_conflict`.
+    fn settle_aside(&mut self, i: usize) -> Res<()> {
+        let file = self.journal.files[i].clone();
+        let Some(to) = file.kept_rel() else {
+            return Err(Halt::Stop(code::REPAIR_INCOMPLETE));
+        };
+        if matches!(seen(self.home, &to), Seen::Hash(h) if h == file.asset_hash) {
+            return self.clear_intent(i);
+        }
+        let _ = self.home.rename_new(&to, &file.target_rel());
+        self.clear_intent(i)?;
+        Err(Halt::Stop(code::RESTORE_CONFLICT))
     }
 
     /// The "Restore" column for one file. `Ok(true)` when it changed the
@@ -519,6 +618,17 @@ impl<'a> Run<'a> {
     }
 }
 
+/// The absolute path of a file that a restore displaced and that is not the
+/// published asset (a later edit of the owner); `None` when there is none.
+fn displaced_edit(home: &Home, file: &JournalFile) -> Option<String> {
+    let rel = file.kept_rel()?;
+    match seen(home, &rel) {
+        Seen::Absent => None,
+        Seen::Hash(h) if h == file.asset_hash => None,
+        Seen::Hash(_) | Seen::Bad => Some(home.abs(&rel).display().to_string()),
+    }
+}
+
 /// The state of each file now, for the result of an install or a resume.
 #[must_use]
 pub fn result_files(home: &Home, journal: &Journal, only: Option<&[usize]>) -> Vec<RepairFile> {
@@ -541,6 +651,7 @@ pub fn result_files(home: &Home, journal: &Journal, only: Option<&[usize]>) -> V
                 backup_path: (o.backup != Backup::Absent)
                     .then(|| home.abs(&f.backup_rel()).display().to_string()),
                 state,
+                kept_path: displaced_edit(home, f),
             }
         })
         .collect()
@@ -560,6 +671,7 @@ pub fn unchanged_files(home: &Home, journal: &Journal, only: Option<&[usize]>) -
             path: home.abs(&f.target_rel()).display().to_string(),
             backup_path: None,
             state: RepairFileState::Unchanged,
+            kept_path: None,
         })
         .collect()
 }
@@ -586,7 +698,8 @@ pub fn view(home: &Home, journal: &Journal) -> RepairJournalView {
             (state_of(row(f, &o)), backup)
         })
         .collect();
-    let state = if observed.iter().all(|(s, _)| *s == ObservedState::Published) {
+    let published = observed.iter().all(|(s, _)| *s == ObservedState::Published);
+    let state = if published && journal.finished {
         JournalState::Complete
     } else if observed.iter().all(|(s, _)| *s == ObservedState::Restored) {
         JournalState::Restored
@@ -637,3 +750,7 @@ pub fn restore_facts(home: &Home, journal: &Journal) -> RestorePlanFacts {
 #[cfg(test)]
 #[path = "repair_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "repair_r1_tests.rs"]
+mod r1_tests;

@@ -14,25 +14,25 @@ use super::*;
 use crate::omarchy::assets::asset_for;
 use crate::omarchy::record::rel;
 
-const IDS: [Id; 2] = [Id::FleetPluginManifest, Id::HookThemeSet];
+pub(super) const IDS: [Id; 2] = [Id::FleetPluginManifest, Id::HookThemeSet];
 
-fn home() -> (tempfile::TempDir, Home) {
+pub(super) fn home() -> (tempfile::TempDir, Home) {
     let dir = tempfile::Builder::new().prefix("rep").tempdir().unwrap();
     let home = Home::open(dir.path()).unwrap();
     (dir, home)
 }
 
-fn original(id: Id) -> Vec<u8> {
+pub(super) fn original(id: Id) -> Vec<u8> {
     format!("original of {}\n", id.as_str()).into_bytes()
 }
 
-fn target(dir: &tempfile::TempDir, id: Id) -> PathBuf {
+pub(super) fn target(dir: &tempfile::TempDir, id: Id) -> PathBuf {
     let asset = asset_for(id).unwrap();
     dir.path().join(rel(asset.base, asset.path))
 }
 
 /// Writes an own file for each id and returns the replacements.
-fn setup(home: &Home, ids: &[Id]) -> Vec<Replacement> {
+pub(super) fn setup(home: &Home, ids: &[Id]) -> Vec<Replacement> {
     ids.iter()
         .map(|id| {
             let asset = asset_for(*id).unwrap();
@@ -48,27 +48,29 @@ fn setup(home: &Home, ids: &[Id]) -> Vec<Replacement> {
         .collect()
 }
 
-fn started(home: &Home, ids: &[Id]) -> Journal {
+pub(super) fn started(home: &Home, ids: &[Id]) -> Journal {
     let reps = setup(home, ids);
     start(home, &reps, &"b".repeat(64)).unwrap()
 }
 
-/// A complete replacement.
-fn replaced(home: &Home, ids: &[Id]) -> Journal {
+/// A complete replacement, and the rest of the install done (the command
+/// sets `finished`).
+pub(super) fn replaced(home: &Home, ids: &[Id]) -> Journal {
     let mut run = Run::new(home, started(home, ids));
     assert_eq!(run.advance_all(true).unwrap(), None);
+    run.journal.finished = true;
     run.journal
 }
 
-fn bytes(path: &Path) -> Option<Vec<u8>> {
+pub(super) fn bytes(path: &Path) -> Option<Vec<u8>> {
     std::fs::read(path).ok()
 }
 
-fn backup(dir: &tempfile::TempDir, file: &JournalFile) -> PathBuf {
+pub(super) fn backup(dir: &tempfile::TempDir, file: &JournalFile) -> PathBuf {
     dir.path().join(file.backup_rel())
 }
 
-fn staging(dir: &tempfile::TempDir, file: &JournalFile) -> PathBuf {
+pub(super) fn staging(dir: &tempfile::TempDir, file: &JournalFile) -> PathBuf {
     dir.path().join(file.staging_rel())
 }
 
@@ -122,15 +124,15 @@ fn assert_restored(dir: &tempfile::TempDir, journal: &Journal) {
     }
 }
 
-fn all(journal: &Journal) -> Vec<usize> {
+pub(super) fn all(journal: &Journal) -> Vec<usize> {
     (0..journal.files.len()).collect()
 }
 
-fn reload(home: &Home, journal: &Journal) -> Journal {
+pub(super) fn reload(home: &Home, journal: &Journal) -> Journal {
     journal::load(home, &journal.repair_id).unwrap().unwrap()
 }
 
-fn observed(home: &Home, journal: &Journal) -> Vec<ObservedState> {
+pub(super) fn observed(home: &Home, journal: &Journal) -> Vec<ObservedState> {
     view(home, journal).files.iter().map(|f| f.state).collect()
 }
 
@@ -627,6 +629,9 @@ fn the_view_derives_the_journal_state_from_the_files() {
     assert_eq!(view(&home, &journal).state, JournalState::Incomplete);
     let mut run = Run::new(&home, journal);
     run.advance_all(true).unwrap();
+    // Every file is published, and the rest of the install did not run yet.
+    assert_eq!(view(&home, &run.journal).state, JournalState::Incomplete);
+    run.journal.finished = true;
     assert_eq!(view(&home, &run.journal).state, JournalState::Complete);
     // The journal file says complete; a missing backup makes it incomplete.
     std::fs::remove_file(backup(&dir, &run.journal.files[0])).unwrap();
@@ -688,7 +693,9 @@ fn a_crash_at_every_seam_is_recovered_by_a_resume_twice() {
             assert_published(&dir, &run.journal);
             no_staging(&dir);
         }
-        assert_eq!(view(&home, &journal).state, JournalState::Complete);
+        let mut finished = journal.clone();
+        finished.finished = true;
+        assert_eq!(view(&home, &finished).state, JournalState::Complete);
     }
     // Two files with 3 steps each (backup, stage, publish) and 3 seams in
     // each step, and the journal writes in between.

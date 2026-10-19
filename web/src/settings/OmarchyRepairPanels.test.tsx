@@ -47,6 +47,25 @@ describe('the answer validators', () => {
     expect(repairResultOf(result)).toEqual(result);
   });
 
+  test('a kept path of a later edit is read only when it is a string', () => {
+    const file = {
+      asset_id: 'fleet_bindings',
+      path: '/h/b',
+      backup_path: null,
+      state: 'backed_up',
+    };
+    const got = repairResultOf({
+      code: 'restore_conflict',
+      repair_id: null,
+      files: [{ ...file, kept_path: '/h/b.fleetdeck-kept-1-ab.sample' }, file],
+    });
+    expect(got.files[0]?.kept_path).toBe('/h/b.fleetdeck-kept-1-ab.sample');
+    expect('kept_path' in (got.files[1] ?? {})).toBe(false);
+    expect(() =>
+      repairResultOf({ code: null, repair_id: null, files: [{ ...file, kept_path: 7 }] }),
+    ).toThrow('The deck sent an invalid answer.');
+  });
+
   test('a missing kept copy reads as null', () => {
     const got = repairStatusOf({
       journals: [{ ...journal(), files: [{ asset_id: 'fleet_bindings', state: 'published' }] }],

@@ -153,6 +153,11 @@ pub struct RepairFile {
     /// The absolute path of the kept copy; `null` when there is none.
     pub backup_path: Option<String>,
     pub state: RepairFileState,
+    /// The absolute path of a later edit of the owner that a restore moved
+    /// aside and kept; left out when there is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub kept_path: Option<String>,
 }
 
 /// The stdout of `install --replace-conflicts`, `install --resume` and
@@ -363,12 +368,39 @@ mod tests {
                 path: "/home/o/hook".into(),
                 backup_path: None,
                 state: RepairFileState::Unchanged,
+                kept_path: None,
             }],
         };
         let value = json!({
             "code": null, "repair_id": null,
             "files": [{"asset_id": "hook_theme_set", "path": "/home/o/hook",
                        "backup_path": null, "state": "unchanged"}]
+        });
+        assert_eq!(serde_json::to_value(&result).unwrap(), value);
+        assert_eq!(
+            serde_json::from_value::<RepairResult>(value).unwrap(),
+            result
+        );
+    }
+
+    #[test]
+    fn a_kept_path_is_written_only_when_there_is_one() {
+        let result = RepairResult {
+            code: Some(code::RESTORE_CONFLICT.into()),
+            repair_id: None,
+            files: vec![RepairFile {
+                asset_id: OmarchyAssetId::HookThemeSet,
+                path: "/home/o/hook".into(),
+                backup_path: None,
+                state: RepairFileState::BackedUp,
+                kept_path: Some("/home/o/hook.fleetdeck-kept-1-ab.sample".into()),
+            }],
+        };
+        let value = json!({
+            "code": "restore_conflict", "repair_id": null,
+            "files": [{"asset_id": "hook_theme_set", "path": "/home/o/hook",
+                       "backup_path": null, "state": "backed_up",
+                       "kept_path": "/home/o/hook.fleetdeck-kept-1-ab.sample"}]
         });
         assert_eq!(serde_json::to_value(&result).unwrap(), value);
         assert_eq!(

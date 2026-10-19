@@ -127,6 +127,7 @@ fn plan_files(files: &[&PlanFile]) -> Vec<RepairFile> {
             path: f.path.clone(),
             backup_path: None,
             state: RepairFileState::Unchanged,
+            kept_path: None,
         })
         .collect()
 }
@@ -141,7 +142,7 @@ fn injected() -> anyhow::Error {
 async fn finish_repair(
     dirs: &NodeDirs,
     session: &mut Session,
-    journal: &Journal,
+    journal: &mut Journal,
 ) -> anyhow::Result<ExitCode> {
     for file in &journal.files {
         if let Some(asset) = file.asset() {
@@ -162,6 +163,10 @@ async fn finish_repair(
     if done != ExitCode::SUCCESS {
         return Ok(done);
     }
+    // The journal is finished only now: until then a resume runs this part.
+    journal.finished = true;
+    journal::save(&session.found.home, journal)
+        .context("cannot record that the repair finished")?;
     print_json(&RepairResult {
         code: None,
         repair_id: Some(journal.repair_id.clone()),
@@ -241,8 +246,8 @@ pub async fn replace(dirs: &NodeDirs, input: InstallPlanInput) -> anyhow::Result
             repair::result_files(&session.found.home, &run.journal, None),
         );
     }
-    let journal = run.journal;
-    finish_repair(dirs, &mut session, &journal).await
+    let mut journal = run.journal;
+    finish_repair(dirs, &mut session, &mut journal).await
 }
 
 /// `fleetdeck omarchy install --resume <repair id>`.
@@ -273,8 +278,8 @@ pub async fn resume(dirs: &NodeDirs, id: &str) -> anyhow::Result<ExitCode> {
         );
     }
     if repair::all_published(&session.found.home, &run.journal) {
-        let journal = run.journal;
-        return finish_repair(dirs, &mut session, &journal).await;
+        let mut journal = run.journal;
+        return finish_repair(dirs, &mut session, &mut journal).await;
     }
     // Every file was restored: there is nothing to finish.
     print_json(&RepairResult {

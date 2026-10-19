@@ -186,6 +186,18 @@ impl Home {
     /// directories (0755). `Ok(None)` when a directory is missing and
     /// `create` is false.
     fn dir(&self, rel: &Path, create: bool) -> Result<Option<OwnedFd>, FsError> {
+        self.dir_modes(rel, create, &mut Vec::new())
+    }
+
+    /// [`Self::dir`], and `modes` gets the permission bits (`st_mode &
+    /// 0o7777`, from `fstat` of the opened descriptor) of each directory of
+    /// `rel`, from the first component down.
+    fn dir_modes(
+        &self,
+        rel: &Path,
+        create: bool,
+        modes: &mut Vec<u32>,
+    ) -> Result<Option<OwnedFd>, FsError> {
         let mut current = openat(&self.fd, ".", DIR_FLAGS, Mode::empty())?;
         let mut so_far = PathBuf::new();
         for name in normal_components(rel)? {
@@ -207,9 +219,11 @@ impl Home {
                 Err(Errno::NOENT) => return Ok(None),
                 Err(e) => return Err(self.map_open(e, &so_far)),
             };
-            if fstat(&next)?.st_uid != geteuid().as_raw() {
+            let stat = fstat(&next)?;
+            if stat.st_uid != geteuid().as_raw() {
                 return Err(self.unsafe_at(&so_far));
             }
+            modes.push(stat.st_mode & 0o7777);
             current = next;
         }
         Ok(Some(current))
@@ -306,6 +320,28 @@ impl Home {
             mode: stat.st_mode & 0o7777,
             size: stat.st_size.unsigned_abs(),
         }))
+    }
+
+    /// True when the file `rel` or a directory of its path has a group or
+    /// other write bit (`mode & 0o022`). The directories checked are the
+    /// ones from the first component of `rel` (the base folder) down to the
+    /// parent; the config home is not. A file or a directory that does not
+    /// exist adds nothing.
+    ///
+    /// # Errors
+    /// [`FsError::Unsafe`] for a link or a foreign owner on the path; `Io`.
+    pub fn others_can_write(&self, rel: &Path) -> Result<bool, FsError> {
+        let (parent, leaf) = Self::split(rel)?;
+        let mut modes = Vec::new();
+        let Some(dir) = self.dir_modes(parent, false, &mut modes)? else {
+            return Ok(modes.iter().any(|m| m & 0o022 != 0));
+        };
+        let file = match statat(&dir, leaf, AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(stat) => Some(stat.st_mode & 0o7777),
+            Err(Errno::NOENT) => None,
+            Err(e) => return Err(self.map_open(e, rel)),
+        };
+        Ok(modes.iter().chain(file.iter()).any(|m| m & 0o022 != 0))
     }
 
     /// The names in the directory `rel`, sorted. `Ok(None)` when the
@@ -415,6 +451,20 @@ impl Home {
     /// [`FsError::Unsafe`] for a link or a foreign owner above the file;
     /// `Io`. A failed write removes the file that this call created.
     pub fn create_new(&self, rel: &Path, bytes: &[u8], mode: u32) -> Result<bool, FsError> {
+        Ok(self.create_new_held(rel, bytes, mode)?.is_some())
+    }
+
+    /// [`Self::create_new`], and the open descriptor of the new file (write
+    /// only) instead of `true`: `None` when the name is taken.
+    ///
+    /// # Errors
+    /// The same as [`Self::create_new`].
+    pub fn create_new_held(
+        &self,
+        rel: &Path,
+        bytes: &[u8],
+        mode: u32,
+    ) -> Result<Option<OwnedFd>, FsError> {
         let (parent, leaf) = Self::split(rel)?;
         let dir = self
             .dir(parent, true)?
@@ -426,22 +476,43 @@ impl Home {
             mode_of(mode),
         ) {
             Ok(fd) => fd,
-            Err(Errno::EXIST) => return Ok(false),
+            Err(Errno::EXIST) => return Ok(None),
             Err(e) => return Err(e.into()),
         };
-        let written: Result<(), FsError> = (|| {
+        let written: Result<File, FsError> = (|| {
             fchmod(&fd, mode_of(mode))?;
             let mut file = File::from(fd);
             file.write_all(bytes)?;
             file.sync_all()?;
-            Ok(())
+            Ok(file)
         })();
-        if let Err(e) = written {
-            let _ = unlinkat(&dir, leaf, AtFlags::empty());
-            return Err(e);
-        }
+        let file = match written {
+            Ok(file) => file,
+            Err(e) => {
+                let _ = unlinkat(&dir, leaf, AtFlags::empty());
+                return Err(e);
+            }
+        };
         fsync(&dir)?;
-        Ok(true)
+        Ok(Some(OwnedFd::from(file)))
+    }
+
+    /// Opens the file `rel` by name (`O_NOFOLLOW`) and returns what it holds
+    /// only when it is the file of the open descriptor `held` (the same
+    /// device and inode), a regular file of yours with one name, and with
+    /// no group or other write bit. `Ok(None)` for any other file, or none.
+    ///
+    /// # Errors
+    /// [`FsError::Unsafe`] for a link or a foreign owner on the path; `Io`.
+    pub fn read_same(&self, rel: &Path, held: &OwnedFd) -> Result<Option<Data>, FsError> {
+        let stat = fstat(held)?;
+        let data = match self.read(rel) {
+            Ok(Some(data)) => data,
+            Ok(None) | Err(FsError::Unsafe(_)) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let same = data.dev == stat.st_dev && data.ino == stat.st_ino;
+        Ok((same && data.full_mode & 0o022 == 0).then_some(data))
     }
 
     /// Removes the file `rel`. `Ok(false)` when it does not exist. A link is

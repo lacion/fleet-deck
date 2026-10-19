@@ -200,11 +200,13 @@ export function repairResultOf(v: unknown): RepairResult {
     repair_id: stringOrNull(v['repair_id']),
     files: rows(v['files']).map((f) => {
       if (!has(FILE_STATE_TEXTS, f['state'])) throw invalid();
+      const kept = f['kept_path'];
       return {
         asset_id: assetIdOf(f['asset_id']),
         path: stringOf(f['path']),
         backup_path: stringOrNull(f['backup_path']),
         state: f['state'] as RepairFileState,
+        ...(kept === undefined || kept === null ? {} : { kept_path: stringOf(kept) }),
       };
     }),
   };
@@ -224,8 +226,15 @@ export function fileName(assetId: OmarchyAssetId, path?: string): string {
   return path === undefined || path === '' ? assetId.replaceAll('_', ' ') : lastComponent(path);
 }
 
-/** One file of a repair as the board shows it: `<name>: <State>` and the kept copy. */
-export type FileLine = { readonly line: string; readonly kept: string };
+/**
+ * One file of a repair as the board shows it: `<name>: <State>`, the kept copy, and, when a restore
+ * met a later edit of the owner and kept it aside, where that edit is.
+ */
+export type FileLine = {
+  readonly line: string;
+  readonly kept: string;
+  readonly edit?: string;
+};
 
 const keptText = (backupPath: string | null): string =>
   backupPath === null ? 'No kept copy' : `Kept copy: ${backupPath}`;
@@ -244,6 +253,7 @@ export function resultFileLines(repair: RepairResult | undefined): FileLine[] {
   return repair.files.map((f) => ({
     line: `${fileName(f.asset_id, f.path)}: ${FILE_STATE_TEXTS[f.state]}`,
     kept: keptText(f.backup_path),
+    ...(f.kept_path === undefined ? {} : { edit: `Your later edit is kept at: ${f.kept_path}` }),
   }));
 }
 

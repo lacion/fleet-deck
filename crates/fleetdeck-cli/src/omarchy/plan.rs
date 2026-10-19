@@ -83,6 +83,10 @@ pub fn facts(home: &Home, record: &Record) -> anyhow::Result<InstallPlanFacts> {
                     Plan::Keep => PlanClassification::RecordedEdit,
                     _ => continue,
                 };
+                // A file or a directory that a group or other user can write
+                // is unsafe, as is a path that cannot be checked.
+                let safe =
+                    data.full_mode & 0o022 == 0 && matches!(home.others_can_write(&rel), Ok(false));
                 let meta = Meta {
                     dev: data.dev,
                     ino: data.ino,
@@ -93,7 +97,7 @@ pub fn facts(home: &Home, record: &Record) -> anyhow::Result<InstallPlanFacts> {
                     classification,
                     Some(meta),
                     Some(sha256_hex(&data.bytes)),
-                    true,
+                    safe,
                 ));
             }
             // A link, a hard link, a file that is not yours or not regular,
@@ -125,3 +129,7 @@ pub fn facts(home: &Home, record: &Record) -> anyhow::Result<InstallPlanFacts> {
 #[cfg(test)]
 #[path = "plan_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "plan_r1_tests.rs"]
+mod r1_tests;

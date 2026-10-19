@@ -6,7 +6,13 @@ import { DeckError } from './http';
 import { type OmarchyActResult, type OmarchyStatus, runAction } from './omarchy';
 import { type Gate, gateActions, guarded, OmarchyView, planErrorText } from './OmarchyCard';
 import type { RepairsState } from './OmarchyRepairPanels';
-import { doneText, type RepairResult, resumeExtra, reviewVisible } from './omarchyRepair';
+import {
+  doneText,
+  type RepairResult,
+  resultFileLines,
+  resumeExtra,
+  reviewVisible,
+} from './omarchyRepair';
 import { fakeActions, plan, restorePlan, status } from './omarchyFixtures';
 
 const noop = () => {};
@@ -103,6 +109,40 @@ describe('the results', () => {
     expect(html).toContain('Kept copy: /h/x.kept');
     expect(html).toContain('widget.lua: Not changed');
     expect(html).toContain('No kept copy');
+  });
+
+  test('a later edit that a restore kept aside is shown under its file', () => {
+    const lines = resultFileLines({
+      code: 'restore_conflict',
+      repair_id: 'c'.repeat(32),
+      files: [
+        {
+          asset_id: 'fleet_bindings',
+          path: '/h/fleet-bindings.conf',
+          backup_path: '/h/fleet-bindings.conf.kept',
+          state: 'backed_up',
+          kept_path: '/h/fleet-bindings.conf.fleetdeck-kept-1-ab.sample',
+        },
+        { asset_id: 'hook_theme_set', path: '/h/theme', backup_path: null, state: 'unchanged' },
+      ],
+    });
+    expect(lines[0]?.edit).toBe(
+      'Your later edit is kept at: /h/fleet-bindings.conf.fleetdeck-kept-1-ab.sample',
+    );
+    expect(lines[1]?.edit).toBeUndefined();
+    const html = renderToStaticMarkup(
+      <OmarchyView
+        state={{ kind: 'ready', status: status() }}
+        busy={false}
+        failure={{ text: 'A current file changed.', message: null, lines }}
+        onAct={noop}
+        onRetryRead={noop}
+      />,
+    );
+    expect(html).toContain(
+      'Your later edit is kept at: /h/fleet-bindings.conf.fleetdeck-kept-1-ab.sample',
+    );
+    expect(html.split('Your later edit is kept at:').length).toBe(2);
   });
 
   test('a done repair has the tone ok', () => {

@@ -103,12 +103,14 @@ pub(super) fn repair_result(code: Option<&str>, state: RepairFileState) -> Repai
                 path: "/home/o/fleet_bindings".into(),
                 backup_path: Some("/home/o/fleet_bindings.kept".into()),
                 state,
+                kept_path: None,
             },
             RepairFile {
                 asset_id: OmarchyAssetId::HookThemeSet,
                 path: "/home/o/hook".into(),
                 backup_path: None,
                 state: RepairFileState::Unchanged,
+                kept_path: None,
             },
         ],
     }
