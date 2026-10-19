@@ -79,6 +79,11 @@ fn task() -> Value {
            "properties": {"task_id": {"type": "string"}, "timeout_ms": {"type": "integer"}}})
 }
 
+fn command() -> Value {
+    json!({"type": "object", "required": ["command_id"],
+           "properties": {"command_id": {"type": "string"}}})
+}
+
 fn publish_artifact() -> Value {
     json!({"type": "object", "properties": {
         "path": {"type": "string", "description": "A file in your workspace"},
@@ -114,6 +119,12 @@ pub const TOOLS: &[Tool] = &[
         classes: &[ToolClass::Read],
         description: "Wait for the first of several tasks to end, block or ask a question.",
         schema: tasks,
+    },
+    Tool {
+        name: "command_status",
+        classes: &[ToolClass::Read],
+        description: "Read the state of a call that answered `pending`: its receipt and deliveries, by its command_id.",
+        schema: command,
     },
     Tool {
         name: "send_mail",
@@ -182,7 +193,21 @@ impl Tool {
     /// Whether the granted classes give this tool. `ask_coordinator` is a
     /// `Mail` tool, and every session's own binding (`Own`) has it too
     /// (DL-165): there the call goes to the deck without a grant (R2.3).
+    /// `command_status` is granted by an outbox class (`Mail`, `Drive`,
+    /// `Spawn`, `Manage`, `Answer`), and `read` alone does not give it.
     pub fn granted(&self, classes: &BTreeSet<ToolClass>) -> bool {
+        if self.name == "command_status" {
+            return classes.iter().any(|c| {
+                matches!(
+                    c,
+                    ToolClass::Mail
+                        | ToolClass::Drive
+                        | ToolClass::Spawn
+                        | ToolClass::Manage
+                        | ToolClass::Answer
+                )
+            });
+        }
         self.classes.iter().all(|c| classes.contains(c))
             || (self.name == "ask_coordinator" && classes.contains(&ToolClass::Own))
             || (self.name == "desktop_info"
@@ -224,7 +249,7 @@ pub fn catalog(classes: &BTreeSet<ToolClass>) -> Value {
 }
 
 /// The `coordinator.call` operation of a mutating tool call. Read tools
-/// (`list_sessions`, `wait_task`, `wait_tasks` and the fleet-control read
+/// (`list_sessions`, `wait_task`, `wait_tasks`, `command_status` and the fleet-control read
 /// tools) are queries and give `Ok(None)`. Arguments
 /// that are not in the tool's schema are refused: no argument can name the
 /// caller (ADR-006 §5.3).
@@ -237,7 +262,7 @@ pub fn to_op(
     };
     let mut obj = obj.clone();
     let op = match tool {
-        "list_sessions" | "wait_task" | "wait_tasks" => return Ok(None),
+        "list_sessions" | "wait_task" | "wait_tasks" | "command_status" => return Ok(None),
         t if super::fleet_tools::is_query(t) => return Ok(None),
         // The P6 tools never become a `CoordinatorOp` (they use their own
         // forwarder).
@@ -381,5 +406,49 @@ mod tests {
                 .starts_with("forbidden")
         );
         assert!(to_op("stop", &json!("x")).is_err());
+    }
+
+    #[test]
+    fn command_status_is_listed_for_an_outbox_class_only() {
+        let names = |classes: &[ToolClass]| -> Vec<String> {
+            let set: BTreeSet<ToolClass> = classes.iter().copied().collect();
+            catalog(&set)["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| t["name"].as_str().unwrap().to_owned())
+                .collect()
+        };
+        let listed = |classes: &[ToolClass]| names(classes).iter().any(|n| n == "command_status");
+        for none in [
+            &[ToolClass::Read][..],
+            &[ToolClass::Inspect],
+            &[ToolClass::Read, ToolClass::Inspect],
+            &[ToolClass::Own],
+            &[ToolClass::Desktop],
+            &[ToolClass::Capture],
+            &[ToolClass::Input, ToolClass::InputEnabled],
+        ] {
+            assert!(!listed(none), "{none:?}");
+        }
+        for class in [
+            ToolClass::Mail,
+            ToolClass::Drive,
+            ToolClass::Spawn,
+            ToolClass::Manage,
+            ToolClass::Answer,
+        ] {
+            assert!(listed(&[class]), "{class:?}");
+        }
+    }
+
+    #[test]
+    fn command_status_is_a_read_query_and_needs_a_command_id() {
+        assert!(
+            to_op("command_status", &json!({"command_id": "c"}))
+                .unwrap()
+                .is_none()
+        );
+        assert!(to_op("command_status", &json!({})).unwrap().is_none());
     }
 }
