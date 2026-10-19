@@ -142,7 +142,9 @@ async fn the_preflight_is_relayed_to_the_station_and_its_refusals_are_mapped() {
 
     let (node, board) = deck(&tmp.path().join("d")).await;
     let st = station(&tmp.path().join("s"), root.clone()).await;
-    let invitation = node.invite().unwrap();
+    let invitation = node
+        .invite(fleetdeck_deck::knobs::DeckKnobs::default().invite)
+        .unwrap();
     st.join(&invitation).await.unwrap();
 
     let (cookie, csrf) = board.login().await;

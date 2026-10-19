@@ -15,8 +15,8 @@ use std::collections::BTreeSet;
 
 use common::board::{BoardClient, Http};
 use fleetdeck_core::identity::{Fingerprint, Identity};
-use fleetdeck_deck::elevation::ELEVATION_TTL_MS;
 use fleetdeck_deck::http::artifact_delete::ELEVATION_HEADER;
+use fleetdeck_deck::knobs::DeckKnobs;
 use fleetdeck_deck::store::AuditResult;
 use fleetdeck_deck::store::auth::secret_hash;
 use fleetdeck_link::hello::ReportStatus;
@@ -62,10 +62,11 @@ fn expired_elevation(c: &BoardClient, h: &Headers) -> String {
     let (_, value) = h[0].1.split_once('=').unwrap();
     let session_hash = secret_hash(value);
     let now = c.store.now_ms();
+    let ttl = DeckKnobs::default().elevation_ms;
     let (token, expires) = c
         .state
         .elevations
-        .issue(&session_hash, now - ELEVATION_TTL_MS - 1)
+        .issue(&session_hash, now - ttl - 1, ttl)
         .unwrap();
     assert!(expires <= now);
     token.expose().clone()

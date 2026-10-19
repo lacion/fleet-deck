@@ -47,13 +47,16 @@ pub async fn pair_local(deck: &RunningDeck, station: &RunningStation) -> anyhow:
         ),
         None => {}
     }
-    let invitation = deck.node.invite().map_err(|e| match e {
-        fleetdeck_deck::link::NodeError::NoListener => anyhow::anyhow!(
-            "`fleetdeck up` pairs the local station over the deck's link listener; \
+    let invitation = deck
+        .node
+        .invite(deck.store.knobs().invite)
+        .map_err(|e| match e {
+            fleetdeck_deck::link::NodeError::NoListener => anyhow::anyhow!(
+                "`fleetdeck up` pairs the local station over the deck's link listener; \
              set `link_listen` in deck.toml (the default is 127.0.0.1:7421)"
-        ),
-        other => anyhow::Error::new(other),
-    })?;
+            ),
+            other => anyhow::Error::new(other),
+        })?;
     station
         .node
         .join(&invitation)

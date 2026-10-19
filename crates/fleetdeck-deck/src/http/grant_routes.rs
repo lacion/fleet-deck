@@ -385,7 +385,7 @@ async fn queue(
             expires_at: board
                 .store
                 .now_ms()
-                .saturating_add(super::fleet_routes::DELIVERY_TTL_MS),
+                .saturating_add(board.store.knobs().delivery_ms),
         })
         .await
         .map_err(ApiError::internal)?;

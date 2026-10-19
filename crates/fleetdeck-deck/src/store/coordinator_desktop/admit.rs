@@ -71,6 +71,8 @@ fn needs(class: OpClass) -> GrantClass {
 }
 
 fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admission> {
+    // The owner's rates, read once when the operation starts.
+    let knobs = inner.knobs();
     let input = matches!(
         op.tool,
         OpTool::KeyPress | OpTool::TypeText | OpTool::PointerMove | OpTool::PointerClick
@@ -170,10 +172,10 @@ fn admit(tx: Transaction<'_>, inner: &Inner, op: NewOp, now: i64) -> Result<Admi
     // A recording shares the screenshot bucket (R13 P5b-2 §13.2).
     let capturing = matches!(op.tool, OpTool::Screenshot | OpTool::RecordMonitor);
     let limited = rate::count(&tx, &grant_scope, rate::MUTATION, now)?
-        >= limits::MUTATIONS_PER_WINDOW
+        >= knobs.mutations_per_window
         || (capturing
             && rate::count(&tx, &grant_scope, rate::SCREENSHOT, now)?
-                >= limits::SCREENSHOTS_PER_WINDOW)
+                >= knobs.screenshots_per_window)
         || (op.tool == OpTool::Notify
             && rate::count(&tx, &session_scope, rate::NOTIFY, now)? >= limits::NOTIFY_PER_WINDOW)
         // R13 P7 §9.3: the input bucket of the grant and of the caller
@@ -348,3 +350,7 @@ impl DeckStore {
 #[cfg(test)]
 #[path = "admit_p7b_tests.rs"]
 mod p7b_tests;
+
+#[cfg(test)]
+#[path = "admit_knobs_tests.rs"]
+mod knobs_tests;

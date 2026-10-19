@@ -151,7 +151,13 @@ async fn the_owner_pastes_an_image_through_a_real_station() {
         Some(paste_dir.clone()),
     )
     .await;
-    st.join(&node.invite().unwrap()).await.unwrap();
+    st.join(
+        &node
+            .invite(fleetdeck_deck::knobs::DeckKnobs::default().invite)
+            .unwrap(),
+    )
+    .await
+    .unwrap();
     let (cookie, csrf) = board.login().await;
     let h = [("Cookie", cookie.as_str()), ("X-CSRF-Token", csrf.as_str())];
 
@@ -253,7 +259,13 @@ async fn a_station_without_a_paste_directory_answers_unsupported() {
     std::fs::create_dir_all(tmp.path().join("d")).unwrap();
     let (node, board) = deck(&tmp.path().join("d")).await;
     let st = station(&tmp.path().join("s"), root.canonicalize().unwrap(), None).await;
-    st.join(&node.invite().unwrap()).await.unwrap();
+    st.join(
+        &node
+            .invite(fleetdeck_deck::knobs::DeckKnobs::default().invite)
+            .unwrap(),
+    )
+    .await
+    .unwrap();
     let (cookie, csrf) = board.login().await;
     let h = [("Cookie", cookie.as_str()), ("X-CSRF-Token", csrf.as_str())];
     let r = paste(&board, &h, body("upload-0001", &png(10))).await;

@@ -413,6 +413,7 @@ impl DeckStore {
     ) -> Result<Claim> {
         let hash = secret_hash(pending_secret.expose());
         let now = self.now_ms();
+        let knobs = self.knobs();
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let row: Option<ClaimRow> = tx
@@ -471,7 +472,7 @@ impl DeckStore {
                 return refuse(tx, Claim::Superseded);
             }
             let new_generation = replace_logins(&tx, &display_id)?;
-            let Some(issued) = issue_fenced(&tx, &display_id, new_generation, now)? else {
+            let Some(issued) = issue_fenced(&tx, &display_id, new_generation, now, &knobs)? else {
                 return refuse(tx, Claim::Stale);
             };
             invalidate_directive(&tx, &display_id)?;

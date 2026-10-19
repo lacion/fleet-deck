@@ -225,6 +225,7 @@ async fn serve_with(
                     desktop_control: false,
                     tailscale_cert: false,
                     tailscale_bin: None,
+                    knobs: fleetdeck_deck::knobs::DeckKnobs::default(),
                 }),
                 elevations: Arc::default(),
                 settings: extras.as_mut().and_then(|e| e.settings.take()),

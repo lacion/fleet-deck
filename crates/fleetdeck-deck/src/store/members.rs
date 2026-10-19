@@ -16,7 +16,7 @@ use fleetdeck_proto::link::Scope;
 use fleetdeck_proto::share::{MAX_DISPLAY_NAME_CHARS, ShareKind, ShareRole, Steering};
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::auth::{SESSION_MAX_MS, random_token, secret_hash};
+use super::auth::{random_token, secret_hash};
 use super::board_fence::exposed_in_tx;
 use super::{DeckError, DeckStore, Result, call, new_id};
 
@@ -337,6 +337,7 @@ impl DeckStore {
         let cookie_hash = secret_hash(&cookie);
         let member_id: String = new_id(self.inner.ids.as_ref());
         let now = self.now_ms();
+        let login_max_ms = self.knobs().login_max_ms;
         let found = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             tx.execute("DELETE FROM member_sessions WHERE expires_at <= ?1", [now])?;
@@ -398,7 +399,7 @@ impl DeckStore {
                     member_id
                 }
             };
-            let expires_at = share_expires.min(now.saturating_add(SESSION_MAX_MS));
+            let expires_at = share_expires.min(now.saturating_add(login_max_ms));
             tx.execute(
                 "INSERT INTO member_sessions
                  (session_hash, member_id, share_id, csrf_token, created_at, expires_at,

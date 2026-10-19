@@ -137,7 +137,9 @@ async fn the_directory_picker_lists_the_station_roots_through_the_link() {
     std::fs::create_dir_all(tmp.path().join("d")).unwrap();
     let (node, board) = deck(&tmp.path().join("d"), BoardAssets::None).await;
     let st = station(&tmp.path().join("s"), root.clone()).await;
-    let invitation = node.invite().unwrap();
+    let invitation = node
+        .invite(fleetdeck_deck::knobs::DeckKnobs::default().invite)
+        .unwrap();
     st.join(&invitation).await.unwrap();
 
     let (cookie, _) = board.login().await;

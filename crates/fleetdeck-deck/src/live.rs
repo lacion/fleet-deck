@@ -7,6 +7,8 @@ use std::sync::{Arc, PoisonError, RwLock};
 use fleetdeck_core::config::DeckConfig;
 use tokio::sync::Notify;
 
+use crate::knobs::DeckKnobs;
+
 /// The live fields of `deck.toml`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeckLive {
@@ -23,6 +25,8 @@ pub struct DeckLive {
     pub tailscale_cert: bool,
     /// The deck setting `tailscale_bin` (DL-190): the program of the certificate task.
     pub tailscale_bin: Option<std::path::PathBuf>,
+    /// The owner knobs of `[security]`, `[retention]` and `[limits]` (K2).
+    pub knobs: DeckKnobs,
 }
 
 impl DeckLive {
@@ -36,6 +40,7 @@ impl DeckLive {
             desktop_control: config.desktop_control,
             tailscale_cert: config.tailscale_cert,
             tailscale_bin: config.tailscale_bin.clone(),
+            knobs: DeckKnobs::of(config),
         }
     }
 }
@@ -92,6 +97,7 @@ mod tests {
             desktop_control: false,
             tailscale_cert: false,
             tailscale_bin: None,
+            knobs: DeckKnobs::default(),
         });
         let before = cell.get();
         cell.publish(DeckLive {
@@ -101,6 +107,7 @@ mod tests {
             desktop_control: false,
             tailscale_cert: true,
             tailscale_bin: None,
+            knobs: DeckKnobs::default(),
         });
         assert_eq!(before.name, "a");
         let now = cell.get();

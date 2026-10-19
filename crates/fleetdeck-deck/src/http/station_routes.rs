@@ -15,7 +15,6 @@ use fleetdeck_proto::board::{AddStationRequest, PairingInvitation};
 
 use super::Board;
 use super::guard::ApiError;
-use crate::link::runtime::INVITE_TTL;
 use crate::link::{DeckNode, NodeError};
 use crate::local::{StationView, station_view};
 use crate::store::{AuditResult, NewAudit, Principal};
@@ -76,15 +75,16 @@ pub async fn invite(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
 ) -> Result<Json<PairingInvitation>, ApiError> {
+    let ttl = board.store.knobs().invite;
     let r = owner_only(&principal)
         .and_then(|()| node(&board))
-        .and_then(|n| n.invite().map_err(|e| refusal(&e)));
+        .and_then(|n| n.invite(ttl).map_err(|e| refusal(&e)));
     audit(&board, &principal, "stations.invite", "", r.as_ref().err()).await;
     let text = r?;
     let expires_at = board
         .store
         .now_ms()
-        .saturating_add(i64::try_from(INVITE_TTL.as_millis()).unwrap_or(i64::MAX));
+        .saturating_add(i64::try_from(ttl.as_millis()).unwrap_or(i64::MAX));
     Ok(Json(PairingInvitation {
         invitation: text.expose().clone(),
         expires_at,

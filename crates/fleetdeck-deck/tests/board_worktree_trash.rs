@@ -198,7 +198,13 @@ async fn the_owner_trashes_restores_and_purges_a_worktree_and_every_call_is_audi
     std::fs::create_dir_all(tmp.path().join("d")).unwrap();
     let (node, board) = deck(&tmp.path().join("d")).await;
     let st = station(&tmp.path().join("s"), root.clone(), &wt).await;
-    st.join(&node.invite().unwrap()).await.unwrap();
+    st.join(
+        &node
+            .invite(fleetdeck_deck::knobs::DeckKnobs::default().invite)
+            .unwrap(),
+    )
+    .await
+    .unwrap();
     let (cookie, csrf) = board.login().await;
     let h = [("Cookie", cookie.as_str()), ("X-CSRF-Token", csrf.as_str())];
     let list_h = [("Cookie", cookie.as_str())];
@@ -338,7 +344,13 @@ async fn a_token_and_a_missing_csrf_header_are_refused_and_audited() {
     std::fs::create_dir_all(tmp.path().join("d")).unwrap();
     let (node, board) = deck(&tmp.path().join("d")).await;
     let st = station(&tmp.path().join("s"), root.clone(), &wt).await;
-    st.join(&node.invite().unwrap()).await.unwrap();
+    st.join(
+        &node
+            .invite(fleetdeck_deck::knobs::DeckKnobs::default().invite)
+            .unwrap(),
+    )
+    .await
+    .unwrap();
     let (cookie, csrf) = board.login().await;
     let h = [("Cookie", cookie.as_str()), ("X-CSRF-Token", csrf.as_str())];
     // Wait until the deck knows the station.

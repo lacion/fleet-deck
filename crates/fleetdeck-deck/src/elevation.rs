@@ -4,7 +4,7 @@
 //! The owner gets an elevation with the owner password, or with a one-time
 //! code from `fleetdeck open --elevate` (the owner-only local socket). A code
 //! is single use and lives [`CODE_TTL_MS`]. An elevation is bound to the
-//! session hash of the board login that asked, and lives [`ELEVATION_TTL_MS`].
+//! session hash of the board login that asked, and lives the deck's `security.elevation_minutes`.
 //! Both are kept in memory only, as their SHA-256.
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -19,8 +19,6 @@ use crate::store::auth::secret_hash;
 
 /// How long an elevation code lives.
 pub const CODE_TTL_MS: i64 = 5 * 60 * 1000;
-/// How long an elevation lives.
-pub const ELEVATION_TTL_MS: i64 = 10 * 60 * 1000;
 /// The most codes that wait for use at one time; a newer code pushes out the
 /// oldest.
 const MAX_CODES: usize = 8;
@@ -108,8 +106,8 @@ impl Elevations {
         valid
     }
 
-    /// Makes an elevation for the login `session_hash`. Returns it with its
-    /// expiry time.
+    /// Makes an elevation for the login `session_hash` that lives `ttl_ms`.
+    /// Returns it with its expiry time.
     ///
     /// # Errors
     /// [`RandomFailed`].
@@ -117,13 +115,14 @@ impl Elevations {
         &self,
         session_hash: &str,
         now: i64,
+        ttl_ms: i64,
     ) -> Result<(Secret<String>, i64), RandomFailed> {
         let mut bytes = [0u8; 32];
         SystemRandom::new()
             .fill(&mut bytes)
             .map_err(|_| RandomFailed)?;
         let token = URL_SAFE_NO_PAD.encode(bytes);
-        let expires_at = now + ELEVATION_TTL_MS;
+        let expires_at = now + ttl_ms;
         let mut s = self.state();
         s.elevations.retain(|(_, _, exp)| *exp > now);
         if s.elevations.len() >= MAX_ELEVATIONS {
@@ -159,6 +158,11 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+    use crate::knobs::DeckKnobs;
+
+    fn ttl() -> i64 {
+        DeckKnobs::default().elevation_ms
+    }
 
     #[test]
     fn a_code_has_ten_characters_of_the_alphabet_shown_in_two_groups() {
@@ -203,22 +207,22 @@ mod tests {
     #[test]
     fn an_elevation_is_bound_to_its_session_and_expires_after_ten_minutes() {
         let e = Elevations::default();
-        let (token, expires) = e.issue("session-a", 0).unwrap();
-        assert_eq!(expires, ELEVATION_TTL_MS);
+        let (token, expires) = e.issue("session-a", 0, ttl()).unwrap();
+        assert_eq!(expires, ttl());
         assert_eq!(URL_SAFE_NO_PAD.decode(token.expose()).unwrap().len(), 32);
         assert!(e.check(token.expose(), "session-a", 1));
         // It can be used again.
         assert!(e.check(token.expose(), "session-a", 2));
         assert!(!e.check(token.expose(), "session-b", 2));
         assert!(!e.check("not-a-token", "session-a", 2));
-        assert!(!e.check(token.expose(), "session-a", ELEVATION_TTL_MS));
+        assert!(!e.check(token.expose(), "session-a", ttl()));
     }
 
     #[test]
     fn a_login_that_ends_loses_its_elevations() {
         let e = Elevations::default();
-        let (a, _) = e.issue("a", 0).unwrap();
-        let (b, _) = e.issue("b", 0).unwrap();
+        let (a, _) = e.issue("a", 0, ttl()).unwrap();
+        let (b, _) = e.issue("b", 0, ttl()).unwrap();
         e.end_session("a");
         assert!(!e.check(a.expose(), "a", 1));
         assert!(e.check(b.expose(), "b", 1));

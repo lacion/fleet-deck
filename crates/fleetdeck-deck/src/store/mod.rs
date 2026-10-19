@@ -61,6 +61,7 @@ pub mod grants;
 mod grants_input;
 mod grants_lifecycle;
 pub mod home_attempts;
+mod knobs_store;
 mod land_actions;
 mod land_admit;
 pub mod land_outbox;
@@ -244,6 +245,8 @@ struct Inner {
     infos: Mutex<BTreeMap<StationId, (StationInfo, i64)>>,
     /// Whether two sessions that change one file get a mail (DL-145).
     conflict_mail: AtomicBool,
+    /// The owner knobs (a settings publish writes them).
+    knobs: std::sync::RwLock<crate::knobs::DeckKnobs>,
     /// The deck setting `fleet_control` (ADR-008 §3): every fleet-control
     /// decision and send check reads it here, so it is always current.
     fleet_control: AtomicBool,
@@ -391,6 +394,7 @@ impl DeckStore {
                 reachable: Mutex::default(),
                 infos: Mutex::default(),
                 conflict_mail: AtomicBool::new(true),
+                knobs: std::sync::RwLock::default(),
                 fleet_control: AtomicBool::new(false),
                 link_features: Mutex::default(),
                 link_peers: Mutex::default(),

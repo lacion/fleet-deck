@@ -428,7 +428,11 @@ async fn save_with(
     match saved {
         // 1.4 step 2: publish, which cannot fail.
         Ok((saved, _config, new)) => {
+            let old = live.get().knobs;
+            let new_knobs = new.knobs;
             publish(store, live, new);
+            // Rule 11: the sessions over a lowered limit end now.
+            crate::knobs::end_sessions_over_lowered(store, &old, &new_knobs).await;
             Ok(saved)
         }
         Err(e) => {
@@ -437,7 +441,12 @@ async fn save_with(
                 // base and publish it, so that the next save can work.
                 let writer = Arc::clone(&settings.writer);
                 if let Ok(Ok(config)) = tokio::task::spawn_blocking(move || writer.resync()).await {
-                    publish(store, live, DeckLive::of(&config));
+                    let old = live.get().knobs;
+                    let new = DeckLive::of(&config);
+                    let new_knobs = new.knobs;
+                    publish(store, live, new);
+                    // A hand edit that lowers a limit ends the sessions over it.
+                    crate::knobs::end_sessions_over_lowered(store, &old, &new_knobs).await;
                 }
             }
             Err(e)
@@ -465,10 +474,11 @@ pub async fn deck_view(settings: &DeckSettings) -> Result<SettingsView, String> 
 
 /// Publishes the live fields: the board reads them per use, and the store
 /// reads its flags for the conflict mail at every fold and for fleet control
-/// at every decision and send check.
+/// at every decision and send check, and its copy of the owner knobs.
 fn publish(store: &DeckStore, cell: &LiveCell, live: DeckLive) {
     store.set_conflict_mail(live.conflict_mail);
     store.set_fleet_control(live.fleet_control);
+    store.set_knobs(live.knobs);
     cell.publish(live);
 }
 

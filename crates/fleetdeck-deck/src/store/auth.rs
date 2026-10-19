@@ -26,16 +26,8 @@ use super::displays::DisplayLogin;
 use super::members::{MemberId, ShareGrant};
 use super::{DeckError, DeckStore, Result, call};
 
-/// A login session ends after 7 idle days.
-pub const SESSION_IDLE_MS: i64 = 7 * 24 * 60 * 60 * 1000;
-/// A login session ends 30 days after the login.
-pub const SESSION_MAX_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 /// A `fleetdeck open` link is valid for 5 minutes and one use.
 pub const LOGIN_LINK_TTL_MS: i64 = 5 * 60 * 1000;
-/// The shortest password.
-pub const MIN_PASSWORD_CHARS: usize = 12;
-/// The longest API token lifetime: 90 days.
-pub const MAX_TOKEN_TTL_MS: i64 = 90 * 24 * 60 * 60 * 1000;
 /// The scopes of the owner's login session. `coordinate` belongs to
 /// coordinator tokens (Phase 6).
 pub const OWNER_SCOPES: [Scope; 4] = [Scope::Read, Scope::Drive, Scope::Approve, Scope::Admin];
@@ -208,11 +200,12 @@ impl DeckStore {
     ///
     /// # Errors
     /// [`DeckError::Invalid`] for a password shorter than
-    /// [`MIN_PASSWORD_CHARS`]; a database or hashing error.
+    /// the deck's `security.min_password_chars`; a database or hashing error.
     pub async fn set_password(&self, password: Secret<String>) -> Result<()> {
-        if password.expose().chars().count() < MIN_PASSWORD_CHARS {
+        let min = self.knobs().min_password_chars;
+        if password.expose().chars().count() < min {
             return Err(DeckError::Invalid(format!(
-                "the password needs at least {MIN_PASSWORD_CHARS} characters"
+                "the password needs at least {min} characters"
             )));
         }
         let phc = blocking(move || hash_password(password.expose())).await?;
@@ -321,13 +314,14 @@ impl DeckStore {
         let csrf = random_hex()?;
         let hash = secret_hash(&cookie);
         let now = self.now_ms();
-        let expires_at = now + SESSION_MAX_MS;
+        let knobs = self.knobs();
+        let expires_at = now + knobs.login_max_ms;
         let stored = csrf.clone();
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             tx.execute(
                 "DELETE FROM login_sessions WHERE expires_at <= ?1 OR last_seen <= ?2",
-                params![now, now - SESSION_IDLE_MS],
+                params![now, now - knobs.login_idle_ms],
             )?;
             // The exposure is read in the transaction that inserts the
             // session: it is serialized with the attempted transaction of an
@@ -360,13 +354,14 @@ impl DeckStore {
     pub async fn login_session(&self, cookie: &Secret<String>) -> Result<Option<LoginSession>> {
         let hash = secret_hash(cookie.expose());
         let now = self.now_ms();
+        let idle_ms = self.knobs().login_idle_ms;
         call(&self.inner.db, move |conn| {
             let found = conn
                 .query_row(
                     "UPDATE login_sessions SET last_seen = ?2
                      WHERE session_hash = ?1 AND expires_at > ?2 AND last_seen > ?3
                      RETURNING csrf_token, created_at, expires_at",
-                    params![hash, now, now - SESSION_IDLE_MS],
+                    params![hash, now, now - idle_ms],
                     |r| {
                         Ok(LoginSession {
                             session_hash: hash.clone(),
@@ -390,13 +385,14 @@ impl DeckStore {
     /// A database error.
     pub async fn principal_alive(&self, principal: &Principal) -> Result<bool> {
         let now = self.now_ms();
+        let knobs = self.knobs();
         let principal = principal.clone();
         call(&self.inner.db, move |conn| {
             let n = match &principal {
                 Principal::Owner(s) => conn.execute(
                     "UPDATE login_sessions SET last_seen = ?2
                      WHERE session_hash = ?1 AND expires_at > ?2 AND last_seen > ?3",
-                    params![s.session_hash, now, now - SESSION_IDLE_MS],
+                    params![s.session_hash, now, now - knobs.login_idle_ms],
                 )?,
                 Principal::Token(_, hash) => conn.execute(
                     "UPDATE api_tokens SET last_used = ?2
@@ -410,7 +406,12 @@ impl DeckStore {
                 }
                 // The display session and its display must both be alive.
                 Principal::Display(d) => {
-                    return super::displays::session_alive(conn, &d.session_hash, now);
+                    return super::displays::session_alive(
+                        conn,
+                        &d.session_hash,
+                        now,
+                        knobs.display_idle_ms,
+                    );
                 }
             };
             Ok(n == 1)
@@ -426,11 +427,12 @@ impl DeckStore {
     /// A database error.
     pub async fn login_alive(&self, session_hash: String) -> Result<bool> {
         let now = self.now_ms();
+        let idle_ms = self.knobs().login_idle_ms;
         call(&self.inner.db, move |conn| {
             let n: i64 = conn.query_row(
                 "SELECT COUNT(*) FROM login_sessions
                  WHERE session_hash = ?1 AND expires_at > ?2 AND last_seen > ?3",
-                params![session_hash, now, now - SESSION_IDLE_MS],
+                params![session_hash, now, now - idle_ms],
                 |r| r.get(0),
             )?;
             Ok(n == 1)
@@ -456,7 +458,7 @@ impl DeckStore {
     ///
     /// # Errors
     /// [`DeckError::Invalid`] for an empty or taken name, an empty scope
-    /// set, `coordinate`, or a lifetime above [`MAX_TOKEN_TTL_MS`].
+    /// set, `coordinate`, or a lifetime above the deck's `security.api_token_max_days`.
     pub async fn create_token(
         &self,
         name: String,
@@ -478,10 +480,12 @@ impl DeckStore {
                 "a token needs one or more of the scopes read, drive, approve, admin".to_owned(),
             ));
         }
-        if !(1..=MAX_TOKEN_TTL_MS).contains(&ttl_ms) {
-            return Err(DeckError::Invalid(
-                "a token lives for 1 ms to 90 days".to_owned(),
-            ));
+        let max_ms = self.knobs().api_token_max_ms;
+        if !(1..=max_ms).contains(&ttl_ms) {
+            return Err(DeckError::Invalid(format!(
+                "a token lives for 1 ms to {} days",
+                max_ms / 86_400_000
+            )));
         }
         let value = format!("{TOKEN_PREFIX}{}", random_hex()?);
         let now = self.now_ms();

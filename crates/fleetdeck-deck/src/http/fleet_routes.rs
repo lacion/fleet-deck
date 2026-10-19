@@ -30,8 +30,6 @@ use crate::store::{
     AuditResult, Completed, MemberAction, NewAudit, NewMail, NewOutboxItem, NewTask, Principal,
 };
 
-/// How long the outbox tries to deliver a mail or a task.
-pub const DELIVERY_TTL_MS: i64 = 24 * 60 * 60 * 1000;
 /// The rows of one list answer.
 pub const LIST_PAGE: u32 = 200;
 /// The longest `mail_id` of a group send (the mails add `-<n>`).
@@ -106,7 +104,10 @@ fn intent(
         origin: origin_name(CommandOrigin::Mail).to_owned(),
         payload: serde_json::to_value(CommandKind::Session { command })
             .map_err(ApiError::internal)?,
-        expires_at: board.store.now_ms().saturating_add(DELIVERY_TTL_MS),
+        expires_at: board
+            .store
+            .now_ms()
+            .saturating_add(board.store.knobs().delivery_ms),
     })
 }
 
