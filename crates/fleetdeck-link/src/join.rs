@@ -142,9 +142,9 @@ pub(crate) async fn accept(
         peer,
     )
     .await?;
-    let frame =
+    let (frame_len, frame) =
         match tokio::time::timeout(limit, ws::recv_frame_capped(&mut ws, on.max_message)).await {
-            Ok(Ok((_, frame))) => frame,
+            Ok(Ok((text, frame))) => (text.len(), frame),
             Ok(Err(e)) => return Err(e),
             Err(_) => return Err(ws::timed_out(&mut ws, STEP_PROOF, limit).await),
         };
@@ -172,6 +172,22 @@ pub(crate) async fn accept(
                 offered_scopes,
             };
             crate::pair_accept::request(node, ws, &est, (peer, ip), on, fields, slot).await
+        }
+        HandshakeFrame::ProvisionReport {
+            terminal_id,
+            state_digest,
+            code,
+            phase,
+            name,
+        } => {
+            let fields = crate::report_accept::Fields {
+                terminal_id,
+                state_digest,
+                code,
+                phase,
+                name,
+            };
+            crate::report_accept::handle(node, ws, &est, peer, on, (fields, frame_len), slot).await
         }
         _ => {
             let e = HandshakeError::Protocol("expected PairProof".into());

@@ -771,6 +771,9 @@ pub fn migrations() -> Migrations<'static> {
         // V38 (R13 P7b task F): the click allowance and the `any_window` scope
         // of a grant, the `pointer_click` tool and the `window_list` bucket.
         M::up(super::coordinator_input_any_schema::SQL),
+        // V39 (BG-3): the setup reports of unpaired keys and their retry
+        // permissions, `store/provision_reports.rs`.
+        M::up(super::provision_reports::SQL),
     ])
 }
 

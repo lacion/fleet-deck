@@ -29,6 +29,7 @@ pub mod local_provision;
 pub mod maintenance;
 pub mod oauth;
 pub mod peers;
+pub mod provision_reports;
 pub mod routing;
 pub mod routing_place;
 pub mod scheduler;

@@ -36,6 +36,7 @@ use crate::hello::{
 use crate::net::{self, NetError};
 use crate::pair_hub::PairRequests;
 use crate::pairing::{Invitations, PairLimiter, PairingSink};
+use crate::report_accept::ReportSink;
 use crate::table::{Admitted, Closing, Dialer, LinkId, LinkTable, SUPERSEDED, TableGuard};
 use crate::tls::{self, InvitationGate, PeerPolicy, PinSet, Role};
 use crate::tokens::StreamTokens;
@@ -143,6 +144,9 @@ pub struct NodeConfig {
     /// The pairing request window of a deck and its pending requests
     /// (DL-178); `None`: the node accepts no `PairRequest`.
     pub pair_requests: Option<Arc<PairRequests>>,
+    /// The setup reports of unpaired keys (BG-3): the reporting window and
+    /// the store of a deck; `None`: the node accepts no `ProvisionReport`.
+    pub provision_reports: Option<Arc<dyn ReportSink>>,
     /// The limits of the tailnet link listeners of this node.
     pub tailnet: TailnetLimits,
     /// Tests: treats every listener as this kind instead of classifying its
@@ -170,6 +174,7 @@ impl NodeConfig {
             invitations: None,
             pair_limiter: PairLimiter::default(),
             pair_requests: None,
+            provision_reports: None,
             tailnet: TailnetLimits::default(),
             listener_kind: None,
         }
@@ -180,6 +185,15 @@ impl NodeConfig {
     #[must_use]
     pub fn with_pair_requests(mut self, requests: Arc<PairRequests>) -> Self {
         self.pair_requests = Some(requests);
+        self
+    }
+
+    /// Lets this node's tailnet link listeners take setup reports from
+    /// unpaired keys while the reporting window of `sink` is open. Opening
+    /// that window never opens the pairing window.
+    #[must_use]
+    pub fn with_provision_reports(mut self, sink: Arc<dyn ReportSink>) -> Self {
+        self.provision_reports = Some(sink);
         self
     }
 
@@ -472,14 +486,25 @@ impl Drop for LinkListener {
     }
 }
 
-/// Lets an unpinned key through TLS while an invitation or the pairing
-/// window is open (tailnet listeners of a deck).
-#[derive(Debug)]
-struct EitherGate(Arc<dyn InvitationGate>, Arc<PairRequests>);
+/// Lets an unpinned key through TLS while an invitation, the pairing window
+/// or the reporting window is open (tailnet listeners of a deck).
+struct OpenGate {
+    invites: Arc<dyn InvitationGate>,
+    requests: Option<Arc<PairRequests>>,
+    reports: Option<Arc<dyn ReportSink>>,
+}
 
-impl InvitationGate for EitherGate {
+impl std::fmt::Debug for OpenGate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenGate").finish_non_exhaustive()
+    }
+}
+
+impl InvitationGate for OpenGate {
     fn has_open(&self) -> bool {
-        self.0.has_open() || self.1.is_open()
+        self.invites.has_open()
+            || self.requests.as_ref().is_some_and(|r| r.is_open())
+            || self.reports.as_ref().is_some_and(|r| r.is_open())
     }
 }
 
@@ -492,10 +517,16 @@ pub async fn listen(node: NodeConfig, addr: SocketAddr) -> Result<LinkListener, 
         .listener_kind
         .unwrap_or_else(|| ListenerKind::of(local_addr));
     let tailnet = kind == ListenerKind::Tailnet;
-    let invites: Arc<dyn InvitationGate> = match (&node.pair_requests, tailnet) {
-        (Some(requests), true) => Arc::new(EitherGate(node.invites.clone(), requests.clone())),
-        _ => node.invites.clone(),
-    };
+    let invites: Arc<dyn InvitationGate> =
+        if tailnet && (node.pair_requests.is_some() || node.provision_reports.is_some()) {
+            Arc::new(OpenGate {
+                invites: node.invites.clone(),
+                requests: node.pair_requests.clone(),
+                reports: node.provision_reports.clone(),
+            })
+        } else {
+            node.invites.clone()
+        };
     let counted = match (&node.pair_requests, tailnet) {
         (Some(requests), true) => Some(requests.add_listener(local_addr)),
         _ => None,
@@ -595,7 +626,10 @@ async fn accept_one(
         let accepted = ws::accept(stream, from, config, opts).await;
         drop(setup);
         let (mut ws, peer, channel, exporter) = accepted?;
-        if channel == Channel::Pair && (node.invitations.is_some() || node.pair_requests.is_some())
+        if channel == Channel::Pair
+            && (node.invitations.is_some()
+                || node.pair_requests.is_some()
+                || node.provision_reports.is_some())
         {
             return Ok(Err(crate::join::accept(
                 node,

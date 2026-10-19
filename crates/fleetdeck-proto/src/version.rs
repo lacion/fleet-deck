@@ -91,6 +91,11 @@ pub mod feature {
     /// run through pidfds (BG-4).
     pub const EXECUTION_STOP: &str = "execution_stop.v1";
 
+    /// The provisioning report of an unpaired key on the Pair channel (BG-3,
+    /// `board-gaps.md` section 4). Optional: it is never required for
+    /// ordinary pairing.
+    pub const PROVISION_REPORT: &str = "provision_report.v1";
+
     /// `artifacts.publish`, `artifacts.list`, `artifacts.get` and
     /// `artifacts.file`: the artifact service (R12, DL-165).
     pub const ARTIFACTS: &str = "artifacts.v1";
@@ -284,6 +289,7 @@ pub mod feature {
         DESKTOP_CLICK_MCP,
         DESKTOP_INPUT_ANY,
         EXECUTION_STOP,
+        PROVISION_REPORT,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];
