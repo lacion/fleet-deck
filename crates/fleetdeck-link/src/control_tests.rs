@@ -693,3 +693,6 @@ async fn the_end_of_the_link_fails_open_requests_and_ends_the_inbound_queue() {
     drop(deck.control);
     assert_eq!(station.control.closed().await.reason, "closed");
 }
+
+#[path = "control_cancel_tests.rs"]
+mod cancel;

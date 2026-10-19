@@ -213,6 +213,22 @@ impl Shared {
     }
 }
 
+/// Removes the pending entry of a request whose frame is not queued, when
+/// `Control::request` fails or is dropped before `enqueue` returned.
+struct Unqueued<'a> {
+    shared: &'a Shared,
+    id: u64,
+    armed: bool,
+}
+
+impl Drop for Unqueued<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.shared.pending().out.remove(&self.id);
+        }
+    }
+}
+
 fn encode(frame: &ControlFrame) -> Result<String, LinkError> {
     let text = serde_json::to_string(frame).map_err(|e| LinkError::Protocol(e.to_string()))?;
     if text.len() > MAX_CONTROL_FRAME_BYTES {
@@ -287,10 +303,22 @@ impl Control {
             method: method.to_owned(),
             params,
         };
-        if let Err(e) = self.shared.enqueue(&frame).await {
-            self.shared.pending().out.remove(&id);
-            return Err(e);
-        }
+        // `Shared::enqueue` is cancel-safe: it encodes the frame before its
+        // only await point, and that await is `mpsc::Sender::send`, which
+        // takes the text only after it has a queue slot. A future that is
+        // dropped while it waits for a slot has not queued the frame, so
+        // the peer never answers this id. The guard removes the entry in
+        // that case, and when `enqueue` fails. After `enqueue` returned `Ok`
+        // the frame is queued: the entry stays until its reply arrives (a
+        // reply to a dropped receiver is ignored by the reader) or the link
+        // ends.
+        let mut unqueued = Unqueued {
+            shared: &self.shared,
+            id,
+            armed: true,
+        };
+        self.shared.enqueue(&frame).await?;
+        unqueued.armed = false;
         rx.await.map_err(|_| self.shared.gone())
     }
 
