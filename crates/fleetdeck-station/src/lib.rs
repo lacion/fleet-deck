@@ -43,6 +43,9 @@ pub mod integrations;
 /// Desktop control: Hyprland and Omarchy (R13 §6, DL-201).
 pub mod desktop;
 
+/// The reads of the desktop tools and the install plan (BG-1).
+pub mod desktop_tools;
+
 /// The station side of a deck link (M2 P3-5).
 pub mod link;
 
