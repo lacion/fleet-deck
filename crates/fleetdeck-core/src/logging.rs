@@ -8,7 +8,9 @@ use std::str::FromStr;
 
 use tracing::Subscriber;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::fmt::MakeWriter;
+use tracing_subscriber::layer::SubscriberExt;
 
 pub const FILTER_ENV: &str = "FLEETDECK_LOG";
 pub const DEFAULT_FILTER: &str = "info";
@@ -52,8 +54,18 @@ pub fn env_filter(default: &str) -> Result<EnvFilter, LogError> {
     EnvFilter::try_new(&text).map_err(|e| LogError::Filter(format!("`{text}`: {e}")))
 }
 
+/// Whether `target` belongs to the MCP SDK (`rmcp` and its modules).
+fn is_sdk_target(target: &str) -> bool {
+    target == "rmcp" || target.starts_with("rmcp::")
+}
+
 /// A subscriber that writes to `writer`. Tests pass a buffer. `ansi` adds
 /// colors to text lines (only for a terminal).
+///
+/// The MCP SDK logs whole requests and results; no filter text may turn them
+/// on (MCP P1 §3.5). The deny is a global filter layer outside `EnvFilter`,
+/// because `EnvFilter` lets a more specific directive such as
+/// `rmcp::service=trace` win over a general one.
 pub fn subscriber<W>(
     format: LogFormat,
     filter: EnvFilter,
@@ -69,13 +81,18 @@ where
         .with_ansi(ansi && format == LogFormat::Text)
         .with_target(true);
     match format {
-        LogFormat::Text => Box::new(builder.finish()),
+        LogFormat::Text => Box::new(
+            builder
+                .finish()
+                .with(filter_fn(|meta| !is_sdk_target(meta.target()))),
+        ),
         LogFormat::Json => Box::new(
             builder
                 .json()
                 .flatten_event(true)
                 .with_current_span(true)
-                .finish(),
+                .finish()
+                .with(filter_fn(|meta| !is_sdk_target(meta.target()))),
         ),
     }
 }
@@ -144,6 +161,52 @@ mod tests {
     fn text_lines_are_human_readable() {
         let out = capture(LogFormat::Text, || tracing::warn!(n = 3, "slow peer"));
         assert!(out.contains("WARN") && out.contains("slow peer") && out.contains("n=3"));
+    }
+
+    #[test]
+    fn sdk_targets_are_the_rmcp_crate_and_its_modules() {
+        for t in [
+            "rmcp",
+            "rmcp::service",
+            "rmcp::transport::streamable_http_server::tower",
+        ] {
+            assert!(is_sdk_target(t), "{t}");
+        }
+        for t in ["rmcpx", "fleetdeck_station::rmcp", "rmc"] {
+            assert!(!is_sdk_target(t), "{t}");
+        }
+    }
+
+    #[test]
+    fn no_filter_text_turns_on_the_sdk_logs() {
+        for format in [LogFormat::Text, LogFormat::Json] {
+            for text in [
+                "trace",
+                "rmcp=trace",
+                "rmcp::service=trace",
+                "rmcp::transport=trace",
+                "[s]=trace",
+                "[{secret}]=trace",
+                "[s{secret}]=trace",
+            ] {
+                let buf = Buf::default();
+                let filter = EnvFilter::try_new(text).unwrap_or_else(|e| panic!("{text}: {e}"));
+                let sub = subscriber(format, filter, buf.clone(), false);
+                tracing::subscriber::with_default(sub, || {
+                    tracing::debug!(target: "rmcp::service", secret = "SENTINEL-1", "received request");
+                    let span =
+                        tracing::info_span!(target: "rmcp::service", "s", secret = "SENTINEL-2");
+                    let _entered = span.enter();
+                    tracing::debug!(target: "rmcp::service", "inside the span");
+                    tracing::debug!(target: "fleetdeck_station", "visible");
+                });
+                let out = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+                assert!(!out.contains("SENTINEL"), "{format:?} {text}: {out}");
+                if text == "trace" {
+                    assert!(out.contains("visible"), "{format:?} {text}: {out}");
+                }
+            }
+        }
     }
 
     #[test]
