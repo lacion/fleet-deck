@@ -531,3 +531,72 @@ async fn many_detached_sockets_free_their_data_stream_slots() {
     st.shutdown();
     node.shutdown();
 }
+
+#[tokio::test]
+async fn a_detach_with_unread_output_does_not_stall_other_streams() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("projects");
+    std::fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    std::fs::create_dir_all(tmp.path().join("s")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("d")).unwrap();
+    let (node, board) = deck(&tmp.path().join("d")).await;
+    let st = station(&tmp.path().join("s"), root.clone(), true).await;
+    st.join(&node.invite().unwrap()).await.unwrap();
+    let (cookie, csrf) = board.login().await;
+    let o = Owner {
+        cookie,
+        csrf,
+        origin: board.origin(),
+    };
+    let r = change(
+        &board,
+        &o,
+        "sh-open-1",
+        json!({ "op": "open", "shell_id": "main", "cwd": root.to_str().unwrap(), "cols": 80, "rows": 24 }),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    // Each socket asks for more output than the credit window holds, reads
+    // nothing, and detaches: the station frees the stream without waiting
+    // for the pending writes.
+    for _ in 0..3 {
+        let mut ws = attach(&board, &o, "main").await;
+        keys(&mut ws, "head -c 600000 /dev/zero | tr '\\0' x; echo\n").await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let _ = ws.0.close(None).await;
+    }
+
+    // The same shell attaches again and answers within 5 seconds.
+    let mut ws = attach(&board, &o, "main").await;
+    keys(&mut ws, "echo again-$((40+2))\n").await;
+    tokio::time::timeout(Duration::from_secs(5), read_until(&mut ws, "again-42"))
+        .await
+        .expect("the shell did not answer after the detaches");
+
+    // A second shell opens, attaches and answers: the dispatcher still runs.
+    let r = change(
+        &board,
+        &o,
+        "sh-open-2",
+        json!({ "op": "open", "shell_id": "second", "cwd": root.to_str().unwrap(), "cols": 80, "rows": 24 }),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    let mut second = attach(&board, &o, "second").await;
+    keys(&mut second, "echo other-$((40+3))\n").await;
+    tokio::time::timeout(Duration::from_secs(5), read_until(&mut second, "other-43"))
+        .await
+        .expect("the second shell did not answer");
+
+    let r = board.get("/api/stations/alpha/shells", &o.read()).await;
+    let first = r
+        .body
+        .as_array()
+        .and_then(|l| l.iter().find(|s| s["shell_id"] == "main"))
+        .unwrap_or_else(|| panic!("no main shell in {}", r.body));
+    assert_eq!(first["state"], "running", "{}", r.body);
+    st.shutdown();
+    node.shutdown();
+}
