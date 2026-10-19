@@ -1,6 +1,6 @@
 # MCP P1 — both protocol eras through rmcp, tool annotations, catalog budget
 
-- **Status:** Draft revision 3, 2026-10-19. Revision 1 (c8bf6103) got adversary DESIGN REVIEW FAIL (2 BLOCKER, 8 MAJOR, 1 MINOR; `~/fleetdeck-briefs/mcp-p1-design-r1-adversary.md`); revision 2 (86404263) resolved nine and got RE-REVIEW FAIL on two (`~/fleetdeck-briefs/mcp-p1-design-r2-adversary.md`). Revision 3 replaces the log filter and the permit mechanism (§11, §12).
+- **Status:** Accepted revision 3, 2026-10-19 (adversary DESIGN RE-REVIEW round 3 PASS, `~/fleetdeck-briefs/mcp-p1-design-r3-adversary.md`). Revision 1 (c8bf6103) got adversary DESIGN REVIEW FAIL (2 BLOCKER, 8 MAJOR, 1 MINOR; `~/fleetdeck-briefs/mcp-p1-design-r1-adversary.md`); revision 2 (86404263) resolved nine and got RE-REVIEW FAIL on two (`~/fleetdeck-briefs/mcp-p1-design-r2-adversary.md`). Revision 3 replaces the log filter and the permit mechanism (§11, §12).
 - **Program:** the MCP program (DL-251). Architect decision A1: keep the station listener, authentication and limits (ADR-006 §5) as the outer boundary; the official SDK `rmcp` 3.5.1 owns the protocol behaviour of both eras. Evidence: the spike `spikes/s-rmcp/README.md` (T1–T10 pass) and the advisor answer `~/fleetdeck-briefs/mcp-p1-advisor-result.md`.
 - **Out of scope:** resources, prompts, completions, generated instructions (P3); `subscriptions/listen`, progress and SSE responses, bridge wire v2 (P2); output schemas for deck-produced results (P3); the default worker grant (P4).
 
