@@ -140,6 +140,8 @@ pub struct Desktop {
     input: input::InputSlot,
     /// The previews whose launch URL named a deck origin (R13 P7 §7.2).
     board_marks: input::barrier::Marks,
+    /// The handles of `window_list` (R13 P7b §7); in memory only.
+    listed: input::listed::Listed,
     /// The executable of the `shim-exec` launch of `grim`; `None` is the
     /// running executable. A test of another crate sets it.
     shim_exe: Option<std::path::PathBuf>,
@@ -149,9 +151,14 @@ impl Desktop {
     /// An adapter for the station environment `base`.
     #[must_use]
     pub fn with_env(base: ChildEnv) -> Self {
+        let events = Events::new();
+        let listed = input::listed::Listed::default();
+        // A close of a window ends the listed handles of its address.
+        let hooked = listed.clone();
+        events.on_close(Arc::new(move |address| hooked.forget_address(address)));
         Self {
             base,
-            events: Events::new(),
+            events,
             walls: actions::WallLocks::default(),
             cache: Mutex::new(None),
             limits: Mutex::new(deadline::Limits::default()),
@@ -159,8 +166,15 @@ impl Desktop {
             recordings: recording::Registry::default(),
             input: input::InputSlot::default(),
             board_marks: input::barrier::Marks::default(),
+            listed,
             shim_exe: None,
         }
+    }
+
+    /// The registry of listed-window handles (R13 P7b §7).
+    #[must_use]
+    pub fn listed(&self) -> &input::listed::Listed {
+        &self.listed
     }
 
     /// The same adapter with another `shim-exec` executable for `grim`.

@@ -54,6 +54,8 @@ pub(crate) struct Client {
     pub hidden: bool,
     pub rect: Rect,
     pub workspace: i64,
+    /// `focusHistoryID` is 0 (R13 P7b §6). A missing field is not focused.
+    pub focused: bool,
 }
 
 /// A monitor of `hyprctl -j monitors`, with its logical rectangle.
@@ -63,6 +65,9 @@ pub(crate) struct Monitor {
     pub rect: Rect,
     pub disabled: bool,
     pub workspace: Option<i64>,
+    /// The id of the special workspace that the monitor shows now, if any
+    /// (R13 P7b §6). A negative number.
+    pub special: Option<i64>,
 }
 
 /// What one snapshot read.
@@ -123,6 +128,7 @@ fn client_of(v: &Value) -> Option<Client> {
         hidden: v.get("hidden")?.as_bool()?,
         rect: Rect { x, y, w, h },
         workspace: int(v.get("workspace")?, "id")?,
+        focused: v.get("focusHistoryID").and_then(Value::as_i64) == Some(0),
     })
 }
 
@@ -171,6 +177,11 @@ fn monitor_of(v: &Value) -> Option<Monitor> {
         },
         disabled,
         workspace: v.get("activeWorkspace").and_then(|a| int(a, "id")),
+        // `specialWorkspace` is `{id: 0, name: ""}` while none is shown.
+        special: v
+            .get("specialWorkspace")
+            .and_then(|a| int(a, "id"))
+            .filter(|id| *id < 0),
     })
 }
 
