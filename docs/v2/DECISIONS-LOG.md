@@ -3583,3 +3583,22 @@ Owner review: pending.
   - c. `wlrctl` has no supported package source (it is an AUR package). Installing it has no board path yet.
   - d. Residuals: P8-17 (code that runs as the station user can read the spec and its tokens and can talk to the runner socket); a package database refresh by another program between the dry run and the install can change the versions and the dependency choices (the post-check reports `transaction_changed` for the expected packages only); after a deck restart the completion audit row comes only from a later list read; `portable-pty` sets `SHELL` in the child.
 - Next: the live smoke; the owner reads the new rows 250.x of `SECURITY-CHECKLIST.md` (DL-158).
+
+## DL-251: MCP program started; P0 built (spawn grants from the board, grant-scoped command status) (architect, 2026-10-19)
+
+- Context: a review of the station MCP server against MCP 2026-07-28 and the owner's guide "MCP in Rust: Implementation Guide" (2026-10-17). Artifacts `01M5A0CCJ7CS4E9429R8WCZWJ5` (capabilities and findings F1–F5) and `01M5A5AC4E3ZNAFGW901F0XBF4` (standard review and roadmap P0–P5). Branch `MCP`.
+- Owner decisions (2026-10-19):
+  - D1: every session starts with a **default worker grant** that can spawn directly (built in P4; not request-and-approve).
+  - D2: without a grant, every session may read the stations (name, OS, online state, providers, projects), itself, and the session list (titles and states, no content).
+  - D3: the order P0 → P1 → P3 → P2 → P4.
+- Architect decision A1 (advisor `~/fleetdeck-briefs/mcp-p1-advisor-result.md`, option B): keep the station listener, authentication and limits (ADR-006 §5) as the outer boundary, and let the official SDK `rmcp` 3.5.1 (Apache-2.0) own the protocol behaviour for both eras. P1 starts with a spike that proves the fit with the ingress and the bridge, and measures the build cost. The new dependency is recorded here; its features are pinned in the P1 design.
+- P0 (design `docs/v2/design/mcp-p0.md`; DESIGN REVIEW round 1 FAIL with 1 BLOCKER, 3 MAJOR and 1 MINOR, round 2 PASS; PRE-PR REVIEW PASS):
+  - The board gives a coordinator grant the class `spawn`, a `spawn_cap` (0–50, default 3) and `max_modes` (Claude and Codex ceilings, never a bypass mode). Both fields are board → deck only. A spawn grant needs the owner's elevation, separate from the `coordinator.v2` link check.
+  - The deck refuses a nested `coordinator` in a coordinator spawn (stored `forbidden`) and in a board import (`400 invalid_command`).
+  - Deck migration V40: `coordinator_receipts.grant_id`. `command_status` returns only the receipts of the admitted grant and needs a mutating class (an existing gap that P0 would have exposed). The station lists the new MCP tool `command_status` for `mail`, `drive`, `spawn`, `manage` and `answer`.
+  - Small fixes: control skill version 3 names only real tools; `wait_task` says that `question` also ends the wait; `Move` is a fleet op; ADR-006 §16 notes.
+- Verification: `make check` lanes web, e2e, e2e real, deny, module size, ts drift and replays pass. The Rust lane under the reaper wrapper: 7474 of 7475 pass. The one failure, `fleetdeck-station desktop::recording::op_tests::a_discard_latched_before_the_spawn_is_cancelled_too` (`recording_interrupted` instead of `recording_cancelled`), passed alone and is in code that P0 does not change: an intermittent failure that existed before.
+- Open items:
+  - a. Station outbox cancellation safety (advisor finding): `transmit` claims a row, awaits the send, then releases it; a dropped call future (the client closed the connection) leaves the row in `in_flight` until a restart. Fix in P1 with a release guard.
+  - b. The intermittent recording test above.
+  - c. Changing `spawn_cap` and `max_modes` after creation comes with P4.
