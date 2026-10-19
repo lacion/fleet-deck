@@ -135,10 +135,33 @@ fn every_schema_closes_every_object_level_and_carries_the_defs_in_its_root() {
         let schema = &tool["inputSchema"];
         assert_eq!(schema["type"], "object", "{name}");
         assert_eq!(schema["additionalProperties"], false, "{name}");
-        assert!(
-            schema["$defs"].as_object().is_some_and(|d| d.len() == 8),
-            "{name}"
-        );
+        // Each schema carries only the `$defs` that it references,
+        // transitively (P1 §4.3).
+        let keys: &[&str] = match name {
+            "desktop_info" => &["id"],
+            "wall_show" => &[
+                "artifact_ref",
+                "display_id",
+                "id",
+                "request_id",
+                "session_ref",
+                "wall_content",
+            ],
+            "notify" => &["id", "request_id"],
+            "preview_open" | "screenshot" => &["id", "monitor", "request_id"],
+            "window_close" => &["id", "request_id", "window_id"],
+            "desktop_action_status" | "capture_status" => &["request_id"],
+            "read_capture_image" => &["artifact_ref", "id"],
+            other => panic!("unexpected tool {other}"),
+        };
+        let mut have: Vec<&str> = schema["$defs"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        have.sort_unstable();
+        assert_eq!(have, keys, "{name}");
         assert!(schema.get("schemas").is_none(), "{name}");
         check_schema(schema, schema, name);
         assert!(tool["description"].as_str().is_some_and(|d| !d.is_empty()));

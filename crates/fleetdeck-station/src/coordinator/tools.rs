@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
 
+use super::annotations::{annotations, output_schema};
 use super::bindings::ToolClass;
 
 /// One tool: its name, classes and input schema. A grant lists the tool
@@ -243,7 +244,18 @@ pub fn catalog(classes: &BTreeSet<ToolClass>) -> Value {
         .chain(super::fleet_tools::FLEET_TOOLS)
         .chain(super::desktop_tools::DESKTOP_TOOLS)
         .filter(|t| t.granted(classes))
-        .map(|t| json!({"name": t.name, "description": t.description, "inputSchema": (t.schema)()}))
+        .map(|t| {
+            let mut entry = json!({
+                "name": t.name,
+                "description": t.description,
+                "inputSchema": (t.schema)(),
+                "annotations": annotations(t.name),
+            });
+            if let (Some(object), Some(output)) = (entry.as_object_mut(), output_schema(t.name)) {
+                object.insert("outputSchema".to_owned(), output);
+            }
+            entry
+        })
         .collect();
     json!({ "tools": tools })
 }

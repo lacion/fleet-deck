@@ -2,7 +2,8 @@
 //! (`docs/v2/design/omarchy-p6.md` §3) and `record_monitor` of R13 P5b-2
 //! (`docs/v2/design/omarchy-p5b.md` §13.1). The input schemas are the
 //! normative bundle of §3, byte for byte; each tool gets its schema with the
-//! shared `$defs` copied into its root (a mechanical expansion).
+//! `$defs` that it references (transitively) copied into its root (a mechanical
+//! expansion).
 //! `record_monitor` has the schema of P5b §13.1 as written, with no `$defs`.
 //! The three input tools of R13 P7 (`key_press`, `type_text`, `pointer_move`)
 //! and the two tools of R13 P7b (`pointer_click`, `window_list`) have their
@@ -237,16 +238,10 @@ const RECORD_MONITOR: &str = r#"
 }
 "#;
 
-/// The schema of tool `name`: `schemas[name]` with the bundle's `$defs`
-/// copied into its root. The bundle is a constant and a test parses it, so a
-/// parse failure cannot reach a release build.
+/// The schema of tool `name`: `schemas[name]` with the `$defs` that it
+/// references, transitively, copied into its root.
 fn schema(name: &str) -> Value {
-    let bundle: Value = serde_json::from_str(BUNDLE).unwrap_or(Value::Null);
-    let mut schema = bundle["schemas"][name].clone();
-    if let Some(object) = schema.as_object_mut() {
-        object.insert("$defs".to_owned(), bundle["$defs"].clone());
-    }
-    schema
+    input::referenced_in(BUNDLE, name)
 }
 
 fn desktop_info() -> Value {
