@@ -5,6 +5,7 @@ mod apply;
 mod diff;
 mod error;
 mod fields;
+mod fields_knobs;
 mod fs;
 mod holder;
 pub mod refs;

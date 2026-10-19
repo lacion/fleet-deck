@@ -45,6 +45,53 @@ const SECTIONS: readonly { readonly title: string; readonly keys: readonly strin
     title: 'Fleet Git',
     keys: ['clone_root', 'traits', 'allow_check_cmd', 'allow_local_remotes', 'taildrive_mounts'],
   },
+  // The owner knobs (knobs design section 4). One section lists the keys of the deck and of the
+  // station; `groupFields` skips a key that the view of one file does not have.
+  {
+    title: 'Security limits',
+    keys: [
+      'security.min_password_chars',
+      'security.login_idle_days',
+      'security.login_max_days',
+      'security.elevation_minutes',
+      'security.api_token_max_days',
+      'security.display_idle_days',
+      'security.display_max_days',
+      'security.invite_minutes',
+      'security.desktop_screenshots_per_minute',
+      'security.desktop_actions_per_minute',
+    ],
+  },
+  {
+    title: 'Time limits',
+    keys: [
+      'limits.delivery_hours',
+      'limits.radar_minutes',
+      'limits.shell_command_minutes',
+      'limits.setup_minutes',
+      'limits.land_check_minutes',
+      'limits.clone_minutes',
+      'limits.git_push_seconds',
+      'limits.provider_stop_grace_seconds',
+      'limits.reconnect_max_seconds',
+      'limits.scrollback_lines',
+      'limits.scrollback_mib',
+    ],
+  },
+  {
+    title: 'Retention',
+    keys: [
+      'retention.audit_days',
+      'retention.audit_max_rows',
+      'retention.history_days',
+      'retention.event_days',
+      'retention.raw_log_mib',
+    ],
+  },
+  {
+    title: 'Captures and recordings',
+    keys: ['capture.quota_gib', 'capture.free_reserve_gib', 'capture.recording_max_seconds'],
+  },
 ];
 
 export type Group = { readonly title: string; readonly fields: readonly FieldMeta[] };

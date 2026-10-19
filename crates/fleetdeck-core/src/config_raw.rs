@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use fleetdeck_proto::ProviderInstanceId;
 use serde::Deserialize;
 
+use super::knobs_station_cfg::{RawCapture, RawStationLimits, RawStationRetention};
 use super::model_help_cfg::RawModelHelp;
 use super::trackers_cfg::RawTracker;
 use super::{ConfigError, Driver, ProviderInstance, invalid, valid_env_key, valid_instance_id};
@@ -15,7 +16,9 @@ use crate::secret::Secret;
 use crate::settings::refs;
 
 /// The keys of `station.toml` (`RawStation`). `model_help` is a table; its
-/// keys are in [`RAW_MODEL_HELP_KEYS`].
+/// keys are in [`RAW_MODEL_HELP_KEYS`]. `limits`, `retention` and `capture`
+/// are tables too (`RAW_STATION_LIMITS_KEYS`, `RAW_STATION_RETENTION_KEYS`,
+/// `RAW_CAPTURE_KEYS`).
 #[cfg(test)]
 pub(crate) const RAW_STATION_KEYS: &[&str] = &[
     "name",
@@ -49,6 +52,9 @@ pub(crate) const RAW_STATION_KEYS: &[&str] = &[
     "allow_check_cmd",
     "allow_local_remotes",
     "taildrive_mounts",
+    "limits",
+    "retention",
+    "capture",
 ];
 
 #[derive(Deserialize)]
@@ -85,6 +91,9 @@ pub(super) struct RawStation {
     pub(super) allow_check_cmd: Option<bool>,
     pub(super) allow_local_remotes: Option<bool>,
     pub(super) taildrive_mounts: Option<BTreeMap<String, String>>,
+    pub(super) limits: Option<RawStationLimits>,
+    pub(super) retention: Option<RawStationRetention>,
+    pub(super) capture: Option<RawCapture>,
 }
 
 /// The keys of one `[[provider_instance]]` (`RawInstance`).

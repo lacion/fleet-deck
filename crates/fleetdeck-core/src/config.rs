@@ -32,6 +32,18 @@ pub use model_help_cfg::{
     DEFAULT_ASSIST_CLAUDE_MODEL, DEFAULT_ASSIST_CODEX_MODEL, DEFAULT_ASSIST_DAILY_TOKEN_CAP,
     DEFAULT_ASSIST_MAX_OUTPUT_TOKENS, ModelHelpConfig,
 };
+#[path = "config_knobs_deck.rs"]
+mod knobs_deck_cfg;
+pub use knobs_deck_cfg::{DeckLimits, DeckRetention, DeckSecurity};
+#[cfg(test)]
+pub(crate) use knobs_deck_cfg::{RAW_DECK_LIMITS_KEYS, RAW_DECK_RETENTION_KEYS, RAW_SECURITY_KEYS};
+#[path = "config_knobs_station.rs"]
+mod knobs_station_cfg;
+pub use knobs_station_cfg::{CaptureLimits, StationLimits, StationRetention};
+#[cfg(test)]
+pub(crate) use knobs_station_cfg::{
+    RAW_CAPTURE_KEYS, RAW_STATION_LIMITS_KEYS, RAW_STATION_RETENTION_KEYS,
+};
 #[path = "config_clone.rs"]
 mod clone_cfg;
 #[path = "config_deck.rs"]
@@ -303,6 +315,12 @@ pub struct StationConfig {
     pub allow_local_remotes: bool,
     /// `[taildrive_mounts]`: `<machine>/<share>` to the mount folder (FG-12).
     pub taildrive_mounts: BTreeMap<String, PathBuf>,
+    /// `[limits]`: the time limits of the station (knobs K1; nothing reads them yet).
+    pub limits: StationLimits,
+    /// `[retention]`: how long the station keeps its history, events and raw logs.
+    pub retention: StationRetention,
+    /// `[capture]`: the storage and recording limits of screenshots and recordings.
+    pub capture: CaptureLimits,
 }
 
 impl StationConfig {
@@ -433,6 +451,18 @@ impl StationConfig {
             Some(raw) => raw.validate()?,
             None => ModelHelpConfig::default(),
         };
+        let limits = match raw.limits {
+            Some(raw) => raw.validate()?,
+            None => StationLimits::default(),
+        };
+        let retention = match raw.retention {
+            Some(raw) => raw.validate()?,
+            None => StationRetention::default(),
+        };
+        let capture = match raw.capture {
+            Some(raw) => raw.validate()?,
+            None => CaptureLimits::default(),
+        };
         let capture_monitors = capture_cfg::capture_monitors(raw.capture_monitors)?;
         let tailscale_bin = tailnet_cfg::parse_station(raw.tailscale_bin, home)?;
         let fleet_git = fleet_git_cfg::parse(
@@ -478,6 +508,9 @@ impl StationConfig {
             allow_check_cmd: fleet_git.allow_check_cmd,
             allow_local_remotes: fleet_git.allow_local_remotes,
             taildrive_mounts: fleet_git.taildrive_mounts,
+            limits,
+            retention,
+            capture,
         })
     }
 
@@ -574,6 +607,9 @@ pub(crate) fn valid_env_key(key: &str) -> bool {
         && b.iter().all(|c| c.is_ascii_alphanumeric() || *c == b'_')
 }
 
+#[cfg(test)]
+#[path = "config_knobs_tests.rs"]
+pub(crate) mod knobs_tests;
 #[cfg(test)]
 #[path = "config_tests.rs"]
 mod tests;
