@@ -485,3 +485,28 @@ async fn a_worker_question_bypasses_the_outbox() {
     assert!(down.deck.sent().is_empty());
     assert!(down.store.coordinator_pending().await.unwrap().is_empty());
 }
+
+/// DL-251 item a: a transmission future that is dropped (the caller closed
+/// the connection) releases its claim, so a later flush can send the row.
+#[tokio::test]
+async fn a_dropped_transmission_releases_its_claim() {
+    let r = rig(Mode::Accept).await;
+    let outbox = super::outbox::CallOutbox::new(r.store.clone(), r.bindings.clone());
+    let id = CommandId::from("cmd-claim");
+    let first = outbox.claim(&id).expect("a free row is claimed");
+    assert!(outbox.claim(&id).is_none(), "one transmission at a time");
+    drop(first);
+    let held = async {
+        let _claim = outbox.claim(&id).expect("released after the drop");
+        std::future::pending::<()>().await;
+    };
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), held)
+            .await
+            .is_err()
+    );
+    assert!(
+        outbox.claim(&id).is_some(),
+        "the dropped future released its claim"
+    );
+}

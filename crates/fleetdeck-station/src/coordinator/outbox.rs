@@ -110,18 +110,35 @@ impl CallOutbox {
         }
     }
 
-    fn claim(&self, id: &CommandId) -> bool {
-        self.in_flight
+    /// Claims a row for one transmission; `None` when a transmission of it
+    /// is in flight already.
+    pub(super) fn claim(&self, id: &CommandId) -> Option<Claim> {
+        let fresh = self
+            .in_flight
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(id.as_str().to_owned())
+            .insert(id.as_str().to_owned());
+        fresh.then(|| Claim {
+            in_flight: self.in_flight.clone(),
+            id: id.as_str().to_owned(),
+        })
     }
+}
 
-    fn release(&self, id: &CommandId) {
+/// A row claimed for one transmission. Dropping it releases the claim, also
+/// when the transmission future is dropped because the caller closed the
+/// connection: a later flush then sends the row again (DL-251 item a).
+pub(super) struct Claim {
+    in_flight: Arc<Mutex<HashSet<String>>>,
+    id: String,
+}
+
+impl Drop for Claim {
+    fn drop(&mut self) {
         self.in_flight
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .remove(id.as_str());
+            .remove(&self.id);
     }
 }
 
@@ -216,12 +233,10 @@ impl LinkForward {
         if self.fenced(&link).await? {
             return Ok(row);
         }
-        if !outbox.claim(&id) {
+        let Some(_claim) = outbox.claim(&id) else {
             return Ok(row);
-        }
-        let out = self.send(outbox, &link.transport, row).await;
-        outbox.release(&id);
-        out
+        };
+        self.send(outbox, &link.transport, row).await
     }
 
     async fn send(
