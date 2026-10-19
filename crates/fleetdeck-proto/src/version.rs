@@ -203,6 +203,12 @@ pub mod feature {
     /// (design `omarchy-admin.md`).
     pub const OMARCHY_ADMIN: &str = "omarchy_admin.v1";
 
+    /// The installer repair of Omarchy (`board-gaps.md` section 3): the
+    /// reads `omarchy.install_plan`, `omarchy.repair_status` and
+    /// `omarchy.restore_plan`, and the `omarchy.act` actions
+    /// `install_replace`, `install_resume` and `restore`.
+    pub const OMARCHY_REPAIR: &str = "omarchy_repair.v1";
+
     /// R13 P7: the coordinator input tools `key_press`, `type_text` and
     /// `pointer_move`, the input grant fields, the input target actions, the
     /// `input` policy purpose and `DesktopInfo.host_addresses` (needs
@@ -273,6 +279,7 @@ pub mod feature {
         ARTIFACTS_VIDEO,
         CAPTURE_RECORDING_MCP,
         OMARCHY_ADMIN,
+        OMARCHY_REPAIR,
         DESKTOP_INPUT_MCP,
         DESKTOP_CLICK_MCP,
         DESKTOP_INPUT_ANY,

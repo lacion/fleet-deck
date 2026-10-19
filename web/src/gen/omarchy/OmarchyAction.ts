@@ -3,4 +3,4 @@
 /**
  * One action of `omarchy.act`.
  */
-export type OmarchyAction = "install" | "uninstall" | "screensaver_on" | "screensaver_off" | "screensaver_rebaseline" | "provision_retry";
+export type OmarchyAction = "install" | "uninstall" | "screensaver_on" | "screensaver_off" | "screensaver_rebaseline" | "provision_retry" | "install_replace" | "install_resume" | "restore";

@@ -99,6 +99,12 @@ export function actionLabel(action: OmarchyAction): string {
       return 'Use the current screensaver as the original';
     case 'provision_retry':
       return 'Retry provisioning';
+    case 'install_replace':
+      return 'Replace changed files';
+    case 'install_resume':
+      return 'Resume the repair';
+    case 'restore':
+      return 'Restore kept copies';
   }
 }
 

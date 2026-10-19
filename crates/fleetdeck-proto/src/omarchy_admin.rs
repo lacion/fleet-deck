@@ -4,10 +4,15 @@
 //! receipt-mutating).
 //!
 //! `omarchy.status` takes no params (`null` or `{}`). `Option` fields
-//! serialize as `null`; they are never skipped.
+//! serialize as `null`; they are never skipped, except the fields of the
+//! feature `omarchy_repair.v1` (`OmarchyActParams` and
+//! `OmarchyActResult::repair`), which are skipped when absent so that the
+//! bytes of the older actions do not change.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+
+use crate::omarchy_repair::{OmarchyAssetId, RepairResult};
 
 /// Wire error codes and `failed` codes of the Omarchy methods.
 pub mod code {
@@ -53,15 +58,43 @@ pub enum OmarchyAction {
     ScreensaverOff,
     ScreensaverRebaseline,
     ProvisionRetry,
+    /// Replace the files of a reviewed install plan (`omarchy_repair.v1`).
+    InstallReplace,
+    /// Resume an interrupted repair (`omarchy_repair.v1`).
+    InstallResume,
+    /// Restore the kept copies of a repair (`omarchy_repair.v1`).
+    Restore,
 }
 
-/// `omarchy.act` params.
+/// `omarchy.act` params. The five optional fields belong to the actions of
+/// `omarchy_repair.v1`; the station refuses (`invalid_request`) a field
+/// outside the list of its action. An absent field is not serialized.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export_to = "omarchy/")]
 pub struct OmarchyActParams {
     pub action: OmarchyAction,
     pub elevated: bool,
+    /// `install_replace`, `restore`: the reviewed plan (32 lowercase hex).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub plan_id: Option<String>,
+    /// `install_replace`: the recorded edits to replace; absent means none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub replace_recorded_edits: Option<Vec<OmarchyAssetId>>,
+    /// `install_resume`, `restore`: the repair (32 lowercase hex).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub repair_id: Option<String>,
+    /// `restore`: the assets to restore; not empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub asset_ids: Option<Vec<OmarchyAssetId>>,
+    /// The three new actions: 1 to 64 characters of `[A-Za-z0-9_-]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub request_id: Option<String>,
 }
 
 /// Whether Omarchy is present on the station.
@@ -134,6 +167,11 @@ pub struct OmarchyActResult {
     pub code: Option<String>,
     pub message: Option<String>,
     pub status: OmarchyStatus,
+    /// The result of a repair action (`omarchy_repair.v1`); not serialized
+    /// when there is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub repair: Option<RepairResult>,
 }
 
 #[cfg(test)]
@@ -163,9 +201,126 @@ mod tests {
                 "screensaver_rebaseline",
             ),
             (OmarchyAction::ProvisionRetry, "provision_retry"),
+            (OmarchyAction::InstallReplace, "install_replace"),
+            (OmarchyAction::InstallResume, "install_resume"),
+            (OmarchyAction::Restore, "restore"),
         ] {
             round(&action, json!(name));
         }
+    }
+
+    /// An `OmarchyActParams` with only the three required fields set.
+    fn params(action: OmarchyAction) -> OmarchyActParams {
+        OmarchyActParams {
+            action,
+            elevated: true,
+            plan_id: None,
+            replace_recorded_edits: None,
+            repair_id: None,
+            asset_ids: None,
+            request_id: None,
+        }
+    }
+
+    #[test]
+    fn old_action_params_keep_their_bytes() {
+        for name in [
+            "install",
+            "uninstall",
+            "screensaver_on",
+            "screensaver_off",
+            "screensaver_rebaseline",
+            "provision_retry",
+        ] {
+            let action: OmarchyAction = serde_json::from_value(json!(name)).unwrap();
+            let text = serde_json::to_string(&params(action)).unwrap();
+            assert_eq!(text, format!(r#"{{"action":"{name}","elevated":true}}"#));
+        }
+    }
+
+    #[test]
+    fn each_repair_action_serializes_its_fields() {
+        let id = "0123456789abcdef0123456789abcdef";
+        let plan = "fedcba9876543210fedcba9876543210";
+        round(
+            &OmarchyActParams {
+                plan_id: Some(plan.into()),
+                replace_recorded_edits: Some(vec![OmarchyAssetId::FleetBindings]),
+                request_id: Some("req_1-A".into()),
+                ..params(OmarchyAction::InstallReplace)
+            },
+            json!({"action": "install_replace", "elevated": true, "plan_id": plan,
+                   "replace_recorded_edits": ["fleet_bindings"], "request_id": "req_1-A"}),
+        );
+        round(
+            &OmarchyActParams {
+                repair_id: Some(id.into()),
+                ..params(OmarchyAction::InstallResume)
+            },
+            json!({"action": "install_resume", "elevated": true, "repair_id": id}),
+        );
+        round(
+            &OmarchyActParams {
+                repair_id: Some(id.into()),
+                plan_id: Some(plan.into()),
+                asset_ids: Some(vec![
+                    OmarchyAssetId::HookPostBoot,
+                    OmarchyAssetId::ThemeTemplate,
+                ]),
+                ..params(OmarchyAction::Restore)
+            },
+            json!({"action": "restore", "elevated": true, "plan_id": plan,
+                   "repair_id": id, "asset_ids": ["hook_post_boot", "theme_template"]}),
+        );
+    }
+
+    #[test]
+    fn repair_params_still_reject_unknown_keys_and_unknown_assets() {
+        for bad in [
+            json!({"action": "restore", "elevated": true, "path": "/x"}),
+            json!({"action": "restore", "elevated": true, "asset_ids": ["menu"]}),
+            json!({"action": "install_replace", "elevated": true, "plan_id": 1}),
+        ] {
+            assert!(serde_json::from_value::<OmarchyActParams>(bad).is_err());
+        }
+        // A field that is absent or `null` is `None`.
+        let got: OmarchyActParams = serde_json::from_value(
+            json!({"action": "install_resume", "elevated": true, "repair_id": null}),
+        )
+        .unwrap();
+        assert_eq!(got, params(OmarchyAction::InstallResume));
+    }
+
+    #[test]
+    fn a_repair_result_is_in_the_answer_only_when_it_exists() {
+        let status = OmarchyStatus {
+            omarchy: OmarchyPresence {
+                present: true,
+                version: None,
+            },
+            install: None,
+            screensaver: None,
+            provision: None,
+            running: None,
+        };
+        let status_json = serde_json::to_value(&status).unwrap();
+        let repair = RepairResult {
+            code: Some("plan_changed".into()),
+            repair_id: None,
+            files: Vec::new(),
+        };
+        round(
+            &OmarchyActResult {
+                outcome: ActOutcome::Failed,
+                code: Some("plan_changed".into()),
+                message: None,
+                status,
+                repair: Some(repair),
+            },
+            json!({"outcome": "failed", "code": "plan_changed", "message": null,
+                   "status": status_json,
+                   "repair": {"code": "plan_changed", "repair_id": null, "files": []}}),
+        );
     }
 
     #[test]
@@ -266,6 +421,7 @@ mod tests {
                 code: Some(code::INSTALL_REFUSED.into()),
                 message: None,
                 status,
+                repair: None,
             },
             json!({"outcome": "failed", "code": "install_refused", "message": null,
                    "status": status_json}),

@@ -5,6 +5,7 @@ use std::ffi::OsString;
 use std::sync::Arc;
 use std::time::Duration;
 
+use fleetdeck_core::identity::Fingerprint;
 use fleetdeck_proto::link::Outcome;
 use fleetdeck_proto::omarchy_admin::{
     ActOutcome, LOCK_BUSY_EXIT, OmarchyActParams, OmarchyAction, code,
@@ -13,17 +14,22 @@ use serde_json::Value;
 
 use super::child::{RunResult, clean_message};
 use super::provision::{self, StateRead};
+use super::repair;
 use super::{
     Holder, OmarchyAdmin, Permit, TEXT_BUSY, TEXT_ELEVATION, TEXT_INVALID, TEXT_MISSING,
     TEXT_NOT_PROVISIONED, result, wire,
 };
 
 impl OmarchyAdmin {
-    /// `omarchy.act`.
-    pub async fn act_call(self: &Arc<Self>, params: Value) -> Outcome {
+    /// `omarchy.act`. `peer` is the deck link of the request (the plans of
+    /// the repair actions are bound to it).
+    pub async fn act_call(self: &Arc<Self>, params: Value, peer: Fingerprint) -> Outcome {
         let Ok(params) = serde_json::from_value::<OmarchyActParams>(params) else {
             return wire(code::INVALID_REQUEST, TEXT_INVALID);
         };
+        if !repair::params_valid(&params) {
+            return wire(code::INVALID_REQUEST, TEXT_INVALID);
+        }
         if !params.elevated {
             return wire(code::ELEVATION_REQUIRED, TEXT_ELEVATION);
         }
@@ -53,6 +59,9 @@ impl OmarchyAdmin {
                     status,
                 );
             }
+        }
+        if repair::is_repair_action(action) {
+            return self.repair_act(&params, peer, permit).await;
         }
         let (outcome, failed_code, message) = self.run_action(action).await;
         let status = self.build_status(None).await;
@@ -91,8 +100,12 @@ impl OmarchyAdmin {
                 self.cfg.limits.screensaver,
                 code::SCREENSAVER_REFUSED,
             ),
-            // The caller handles the retry before it reaches this function.
-            OmarchyAction::ProvisionRetry => return (ActOutcome::Failed, Some(code::FAILED), None),
+            // The caller handles the retry and the repair actions before it
+            // reaches this function.
+            OmarchyAction::ProvisionRetry
+            | OmarchyAction::InstallReplace
+            | OmarchyAction::InstallResume
+            | OmarchyAction::Restore => return (ActOutcome::Failed, Some(code::FAILED), None),
         };
         match self.run_tail(tail, limit).await {
             // A done action keeps the warnings of the command (for example a

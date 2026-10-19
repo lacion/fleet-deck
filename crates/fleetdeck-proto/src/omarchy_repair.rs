@@ -267,6 +267,54 @@ pub struct RestorePlanInput {
     pub asset_ids: Vec<OmarchyAssetId>,
 }
 
+/// One file of an [`InstallPlanView`]: no hash, no inode, no mode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "omarchy/")]
+pub struct InstallPlanViewFile {
+    pub asset_id: OmarchyAssetId,
+    /// The absolute path.
+    pub path: String,
+    pub classification: PlanClassification,
+    pub replaceable: bool,
+}
+
+/// The answer to `omarchy.install_plan`. The station keeps the full
+/// [`InstallPlanFacts`]; they never leave it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "omarchy/")]
+pub struct InstallPlanView {
+    /// 32 lowercase hex characters.
+    pub plan_id: String,
+    /// Unix milliseconds.
+    pub expires_at: i64,
+    pub files: Vec<InstallPlanViewFile>,
+    /// The block code of the first blocked file (`unsafe_path`); `null`
+    /// when no file is blocked.
+    pub blocked: Option<String>,
+}
+
+/// One file of a [`RestorePlanView`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "omarchy/")]
+pub struct RestorePlanViewFile {
+    pub asset_id: OmarchyAssetId,
+    /// The absolute path of the target.
+    pub path: String,
+    pub action: RestoreAction,
+}
+
+/// The answer to `omarchy.restore_plan`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "omarchy/")]
+pub struct RestorePlanView {
+    /// 32 lowercase hex characters.
+    pub plan_id: String,
+    /// Unix milliseconds.
+    pub expires_at: i64,
+    pub repair_id: String,
+    pub files: Vec<RestorePlanViewFile>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -342,6 +390,53 @@ mod tests {
         assert!(serde_json::from_value::<InstallPlanInput>(extra).is_err());
         let unknown = json!({"facts": facts, "replace_recorded_edits": ["menu"]});
         assert!(serde_json::from_value::<InstallPlanInput>(unknown).is_err());
+    }
+
+    #[test]
+    fn the_plan_views_serialize_without_facts() {
+        let view = InstallPlanView {
+            plan_id: "0123456789abcdef0123456789abcdef".into(),
+            expires_at: 1_792_400_120_000,
+            files: vec![InstallPlanViewFile {
+                asset_id: OmarchyAssetId::FleetBindings,
+                path: "/home/o/.config/hypr/x.lua".into(),
+                classification: PlanClassification::RecordedEdit,
+                replaceable: true,
+            }],
+            blocked: None,
+        };
+        let value = json!({
+            "plan_id": "0123456789abcdef0123456789abcdef", "expires_at": 1_792_400_120_000_i64,
+            "files": [{"asset_id": "fleet_bindings", "path": "/home/o/.config/hypr/x.lua",
+                       "classification": "recorded_edit", "replaceable": true}],
+            "blocked": null
+        });
+        assert_eq!(serde_json::to_value(&view).unwrap(), value);
+        assert_eq!(
+            serde_json::from_value::<InstallPlanView>(value).unwrap(),
+            view
+        );
+        let restore = RestorePlanView {
+            plan_id: "fedcba9876543210fedcba9876543210".into(),
+            expires_at: 5,
+            repair_id: "0123456789abcdef0123456789abcdef".into(),
+            files: vec![RestorePlanViewFile {
+                asset_id: OmarchyAssetId::HookThemeSet,
+                path: "/home/o/hook".into(),
+                action: RestoreAction::CopyBackup,
+            }],
+        };
+        let value = json!({
+            "plan_id": "fedcba9876543210fedcba9876543210", "expires_at": 5,
+            "repair_id": "0123456789abcdef0123456789abcdef",
+            "files": [{"asset_id": "hook_theme_set", "path": "/home/o/hook",
+                       "action": "copy_backup"}]
+        });
+        assert_eq!(serde_json::to_value(&restore).unwrap(), value);
+        assert_eq!(
+            serde_json::from_value::<RestorePlanView>(value).unwrap(),
+            restore
+        );
     }
 
     #[test]

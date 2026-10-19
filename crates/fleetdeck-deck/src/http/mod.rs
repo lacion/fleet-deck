@@ -183,6 +183,18 @@ pub fn router(board: Arc<Board>) -> Router {
             get(omarchy_routes::status).post(omarchy_routes::act),
         )
         .route(
+            "/api/stations/{station}/omarchy/install-plan",
+            get(omarchy_routes::install_plan),
+        )
+        .route(
+            "/api/stations/{station}/omarchy/repairs",
+            get(omarchy_routes::repairs),
+        )
+        .route(
+            "/api/stations/{station}/omarchy/repairs/{repair_id}/restore-plan",
+            get(omarchy_routes::restore_plan),
+        )
+        .route(
             "/api/secrets/stations/{station}/settings",
             post(secrets_routes::station_settings).layer(axum::extract::DefaultBodyLimit::max(
                 secrets_routes::MAX_BODY,

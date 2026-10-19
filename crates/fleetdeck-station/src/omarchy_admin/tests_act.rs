@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use super::Holder;
 use super::child::clean_message;
-use super::tests::{Rig, STATUS_OUTDATED, act, result, status, until, wire_error};
+use super::tests::{Rig, STATUS_OUTDATED, act, peer, result, status, until, wire_error};
 
 const GUARDED: [&str; 4] = [
     "screensaver_on",
@@ -218,8 +218,14 @@ async fn omarchy_a_status_json_with_missing_keys_gives_no_install_facts() {
 
 #[tokio::test]
 async fn omarchy_without_a_service_both_methods_are_unavailable() {
-    for method in ["omarchy.status", "omarchy.act"] {
-        let (code, text) = wire_error(super::call(method, Value::Null).await);
+    for method in [
+        "omarchy.status",
+        "omarchy.act",
+        "omarchy.install_plan",
+        "omarchy.repair_status",
+        "omarchy.restore_plan",
+    ] {
+        let (code, text) = wire_error(super::call(method, Value::Null, peer(1)).await);
         assert_eq!(code, "unavailable", "{method}");
         assert_eq!(text, "Omarchy management is not available on this station.");
     }
