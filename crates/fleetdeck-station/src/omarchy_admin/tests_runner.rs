@@ -25,6 +25,7 @@ async fn run_sh(script: &str, limit: Duration) -> std::io::Result<RunResult> {
         args: &args,
         env: &env,
         extra: &[],
+        stdin: None,
         limit,
     })
     .await
@@ -58,6 +59,56 @@ async fn omarchy_runner_gives_stdin_as_dev_null() {
         RunResult::Exit { stdout, .. } => assert_eq!(stdout, b"done\n"),
         other => panic!("{other:?}"),
     }
+}
+
+async fn run_stdin(script: &str, stdin: Vec<u8>) -> std::io::Result<RunResult> {
+    let args = sh(script);
+    let env = vec![("PATH".into(), "/usr/bin:/bin".into())];
+    child::run(&Spec {
+        program: Path::new("/bin/sh"),
+        args: &args,
+        env: &env,
+        extra: &[],
+        stdin: Some(stdin),
+        limit: Duration::from_secs(5),
+    })
+    .await
+}
+
+#[tokio::test]
+async fn omarchy_runner_gives_the_stdin_bytes_exactly_and_closes_the_pipe() {
+    // `cat` ends only at the end of file: the pipe is closed after the write.
+    let bytes: Vec<u8> = (0..=255_u8).chain(b"\n{\"a\":1}".iter().copied()).collect();
+    let RunResult::Exit { stdout, code, .. } = run_stdin("cat", bytes.clone()).await.unwrap()
+    else {
+        panic!("no exit");
+    };
+    assert_eq!(code, Some(0));
+    assert_eq!(stdout, bytes);
+    // The whole cap fits.
+    let full = vec![b'x'; child::STDIN_CAP];
+    let RunResult::Exit { stdout, .. } = run_stdin("cat", full.clone()).await.unwrap() else {
+        panic!("no exit");
+    };
+    assert_eq!(stdout.len(), full.len());
+}
+
+#[tokio::test]
+async fn omarchy_runner_refuses_a_stdin_over_the_cap_before_it_starts_the_child() {
+    let too_long = vec![b'x'; child::STDIN_CAP + 1];
+    let e = run_stdin("exit 0", too_long).await.unwrap_err();
+    assert_eq!(e.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+#[tokio::test]
+async fn omarchy_runner_a_child_that_ignores_its_stdin_still_ends_with_its_code() {
+    let big = vec![b'x'; child::STDIN_CAP];
+    let RunResult::Exit { code, stdout, .. } = run_stdin("echo bye; exit 4", big).await.unwrap()
+    else {
+        panic!("no exit");
+    };
+    assert_eq!(code, Some(4));
+    assert_eq!(stdout, b"bye\n");
 }
 
 #[tokio::test]
@@ -140,6 +191,7 @@ async fn omarchy_runner_reports_a_program_that_does_not_start() {
         args: &[],
         env: &env,
         extra: &[],
+        stdin: None,
         limit: Duration::from_secs(1),
     })
     .await;
@@ -157,6 +209,7 @@ async fn omarchy_runner_extra_variables_win_over_the_base() {
         args: &args,
         env: &env,
         extra: &extra,
+        stdin: None,
         limit: Duration::from_secs(5),
     })
     .await

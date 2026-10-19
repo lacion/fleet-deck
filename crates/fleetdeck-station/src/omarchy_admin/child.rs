@@ -1,7 +1,8 @@
 //! The runner of the fixed children (design `omarchy-admin.md` §3.1).
 //!
-//! A child runs in its own process group with stdin on `/dev/null`. The
-//! station reads stdout up to 64 KiB and stderr up to 16 KiB, both at the
+//! A child runs in its own process group with stdin on `/dev/null`, unless
+//! the spec has stdin bytes (the repair actions, at most 64 KiB): the bytes
+//! go into a pipe that is closed after the write. The station reads stdout up to 64 KiB and stderr up to 16 KiB, both at the
 //! same time. A longer output or the time limit kills the whole group
 //! (`SIGKILL`) and reaps the child. A normal exit and a dropped run kill the
 //! group too, so a subprocess that a tool left behind does not stay alive.
@@ -13,13 +14,15 @@ use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
 
 use rustix::process::{Pid, Signal, WaitId, WaitIdOptions, kill_process_group, waitid};
-use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
 /// The most stdout bytes that the station reads.
 pub const STDOUT_CAP: usize = 64 * 1024;
 /// The most stderr bytes that the station reads.
 pub const STDERR_CAP: usize = 16 * 1024;
+/// The most stdin bytes that the station writes.
+pub const STDIN_CAP: usize = 64 * 1024;
 /// The longest wait for the reap of a killed child.
 const REAP_WAIT: Duration = Duration::from_secs(5);
 
@@ -39,7 +42,8 @@ pub enum RunResult {
     TooLarge,
 }
 
-/// What to run: the program, its argv, the environment and the limit.
+/// What to run: the program, its argv, the environment, the stdin and the
+/// limit.
 pub struct Spec<'a> {
     pub program: &'a Path,
     pub args: &'a [OsString],
@@ -47,6 +51,9 @@ pub struct Spec<'a> {
     pub env: &'a [(OsString, OsString)],
     /// Variables set after the base environment.
     pub extra: &'a [(&'static str, OsString)],
+    /// `None`: stdin is `/dev/null`. `Some`: these bytes (at most
+    /// [`STDIN_CAP`]) are written to a pipe, which is then closed.
+    pub stdin: Option<Vec<u8>>,
     pub limit: Duration,
 }
 
@@ -73,8 +80,15 @@ impl Drop for GroupGuard {
 /// Runs the child of `spec`.
 ///
 /// # Errors
-/// The child did not start, or it has no process id.
+/// The stdin is longer than [`STDIN_CAP`], the child did not start, or it
+/// has no process id.
 pub async fn run(spec: &Spec<'_>) -> io::Result<RunResult> {
+    if spec.stdin.as_ref().is_some_and(|b| b.len() > STDIN_CAP) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "the stdin of the child is too long",
+        ));
+    }
     let mut child = Command::new(spec.program)
         .args(spec.args)
         .env_clear()
@@ -82,7 +96,11 @@ pub async fn run(spec: &Spec<'_>) -> io::Result<RunResult> {
         .envs(spec.extra.iter().map(|(k, v)| (*k, v)))
         .process_group(0)
         .kill_on_drop(true)
-        .stdin(Stdio::null())
+        .stdin(if spec.stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
@@ -97,10 +115,12 @@ pub async fn run(spec: &Spec<'_>) -> io::Result<RunResult> {
     let mut guard = GroupGuard(Some(pgid));
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
+    let stdin = child.stdin.take();
     let work = async {
-        let (out, err) = tokio::try_join!(
+        let (out, err, ()) = tokio::try_join!(
             read_capped(stdout, STDOUT_CAP),
-            read_capped(stderr, STDERR_CAP)
+            read_capped(stderr, STDERR_CAP),
+            write_stdin(stdin, spec.stdin.as_deref())
         )?;
         // The leader must stay unreaped here (see the normal-exit branch).
         wait_exited(pgid).await?;
@@ -173,6 +193,23 @@ async fn stop(guard: &GroupGuard, child: &mut tokio::process::Child) {
 enum Overflow {
     TooLarge,
     Wait,
+}
+
+/// Writes `bytes` to the pipe `stdin` and closes it. A child that ends
+/// before it reads everything breaks the pipe: the exit code of the child
+/// still decides the result, so a write error is only logged.
+async fn write_stdin(
+    stdin: Option<tokio::process::ChildStdin>,
+    bytes: Option<&[u8]>,
+) -> Result<(), Overflow> {
+    let (Some(mut pipe), Some(bytes)) = (stdin, bytes) else {
+        return Ok(());
+    };
+    if let Err(e) = pipe.write_all(bytes).await {
+        tracing::debug!(error = %e, "the Omarchy child did not read its stdin");
+    }
+    // The drop of `pipe` closes the write end.
+    Ok(())
 }
 
 /// Reads `reader` to its end. More than `cap` bytes is `TooLarge`.

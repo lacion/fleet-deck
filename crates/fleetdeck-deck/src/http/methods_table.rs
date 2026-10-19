@@ -206,6 +206,29 @@ pub const API: &[ApiMethod] = &[
         Some(Scope::Admin),
         true,
     ),
+    // The installer repair (`omarchy_repair.v1`, `board-gaps.md` section 3):
+    // three reads, `admin`, owner login only. The actions use the POST above.
+    m(
+        "station.omarchy_install_plan",
+        Method::GET,
+        "/api/stations/{station}/omarchy/install-plan",
+        Some(Scope::Admin),
+        false,
+    ),
+    m(
+        "station.omarchy_repairs",
+        Method::GET,
+        "/api/stations/{station}/omarchy/repairs",
+        Some(Scope::Admin),
+        false,
+    ),
+    m(
+        "station.omarchy_restore_plan",
+        Method::GET,
+        "/api/stations/{station}/omarchy/repairs/{repair_id}/restore-plan",
+        Some(Scope::Admin),
+        false,
+    ),
     m(
         "stations.workspaces",
         Method::GET,

@@ -95,7 +95,7 @@ fn code_table() -> BTreeMap<String, Row> {
 fn the_code_method_table_equals_the_adr_method_table() {
     let adr = adr_table(&adr());
     let code = code_table();
-    assert_eq!(adr.len(), 135, "{:?}", adr.keys());
+    assert_eq!(adr.len(), 138, "{:?}", adr.keys());
     for (name, row) in &adr {
         assert_eq!(code.get(name), Some(row), "{name}");
     }
@@ -110,6 +110,22 @@ fn the_omarchy_admin_methods_need_their_feature_and_scope() {
         assert_eq!(row.callers, "deck → station", "{name}");
         assert_eq!(row.scope, "admin", "{name}");
         assert_eq!(row.feature.as_deref(), Some("omarchy_admin.v1"), "{name}");
+        assert!(!row.mutating, "{name}");
+    }
+}
+
+#[test]
+fn the_omarchy_repair_reads_need_their_feature_and_scope() {
+    let code = code_table();
+    for name in [
+        "omarchy.install_plan",
+        "omarchy.repair_status",
+        "omarchy.restore_plan",
+    ] {
+        let row = code.get(name).unwrap_or_else(|| panic!("{name} missing"));
+        assert_eq!(row.callers, "deck → station", "{name}");
+        assert_eq!(row.scope, "admin", "{name}");
+        assert_eq!(row.feature.as_deref(), Some("omarchy_repair.v1"), "{name}");
         assert!(!row.mutating, "{name}");
     }
 }

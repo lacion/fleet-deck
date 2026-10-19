@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fleetdeck_core::childenv::ChildEnv;
+use fleetdeck_core::identity::Fingerprint;
 use fleetdeck_proto::link::Outcome;
 use fleetdeck_proto::omarchy_admin::{ActOutcome, OmarchyActResult, OmarchyStatus};
 use serde_json::{Value, json};
@@ -169,9 +170,14 @@ fn runs(rec: &Path) -> Vec<Run> {
     out
 }
 
+/// The deck link of the tests: the fingerprint of the key `byte` repeated.
+pub(super) fn peer(byte: u8) -> Fingerprint {
+    format!("{byte:02x}").repeat(32).parse().unwrap()
+}
+
 pub(super) async fn act(admin: &Arc<OmarchyAdmin>, action: &str, elevated: bool) -> Outcome {
     admin
-        .act_call(json!({"action": action, "elevated": elevated}))
+        .act_call(json!({"action": action, "elevated": elevated}), peer(1))
         .await
 }
 
@@ -312,7 +318,7 @@ async fn omarchy_bad_params_are_invalid_requests_with_a_fixed_text() {
         json!("install"),
         Value::Null,
     ] {
-        let (code, text) = wire_error(rig.admin.act_call(params.clone()).await);
+        let (code, text) = wire_error(rig.admin.act_call(params.clone(), peer(1)).await);
         assert_eq!(code, "invalid_request", "{params}");
         assert_eq!(text, "The request is not valid.", "{params}");
     }

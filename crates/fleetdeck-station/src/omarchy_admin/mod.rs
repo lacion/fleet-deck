@@ -1,5 +1,6 @@
-//! Omarchy management on the station: the link methods `omarchy.status` and
-//! `omarchy.act`, and the screensaver tick (design `omarchy-admin.md`).
+//! Omarchy management on the station: the link methods `omarchy.status`,
+//! `omarchy.act` and the repair methods (`repair.rs`), and the screensaver
+//! tick (design `omarchy-admin.md`).
 //!
 //! The station runs fixed `fleetdeck` subcommands of its own executable as
 //! children (`child.rs`). No value from the wire reaches the argv, the
@@ -11,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use fleetdeck_core::identity::Fingerprint;
 use fleetdeck_core::paths::NodeDirs;
 use fleetdeck_proto::link::{Outcome, WireError};
 use fleetdeck_proto::omarchy_admin::{
@@ -24,6 +26,7 @@ mod act;
 pub mod child;
 mod config;
 mod provision;
+mod repair;
 mod status;
 mod tick;
 
@@ -35,6 +38,10 @@ mod tests;
 mod tests_act;
 #[cfg(test)]
 mod tests_provision;
+#[cfg(test)]
+mod tests_repair;
+#[cfg(test)]
+mod tests_repair_act;
 #[cfg(test)]
 mod tests_retry;
 #[cfg(test)]
@@ -84,14 +91,23 @@ impl Drop for Permit {
 pub struct OmarchyAdmin {
     cfg: Config,
     shared: Arc<Shared>,
+    plans: repair::PlanStore,
+    clock: repair::Clock,
 }
 
 impl OmarchyAdmin {
     #[must_use]
     pub fn new(cfg: Config) -> Self {
+        Self::with_clock(cfg, repair::Clock::system())
+    }
+
+    /// A service with the clock of the plan store (tests set it).
+    fn with_clock(cfg: Config, clock: repair::Clock) -> Self {
         Self {
             cfg,
             shared: Arc::default(),
+            plans: repair::PlanStore::default(),
+            clock,
         }
     }
 
@@ -170,6 +186,16 @@ impl OmarchyAdmin {
     /// Runs the own executable with `tail`, after `--data-dir` when the
     /// station has one.
     async fn run_argv(&self, tail: &[OsString], limit: Duration) -> std::io::Result<RunResult> {
+        self.run_argv_stdin(tail, limit, None).await
+    }
+
+    /// [`Self::run_argv`] with `stdin` bytes for the child (`None`: `/dev/null`).
+    async fn run_argv_stdin(
+        &self,
+        tail: &[OsString],
+        limit: Duration,
+        stdin: Option<Vec<u8>>,
+    ) -> std::io::Result<RunResult> {
         let mut args: Vec<OsString> = Vec::new();
         if let Some(dir) = &self.cfg.data_dir {
             args.push("--data-dir".into());
@@ -182,6 +208,7 @@ impl OmarchyAdmin {
             args: &args,
             env: &self.cfg.env,
             extra: &extra,
+            stdin,
             limit,
         })
         .await
@@ -189,15 +216,19 @@ impl OmarchyAdmin {
 
     /// `omarchy.status`: params `null` or `{}` only.
     pub async fn status_call(&self, params: Value) -> Outcome {
-        let empty = match &params {
-            Value::Null => true,
-            Value::Object(map) => map.is_empty(),
-            _ => false,
-        };
-        if !empty {
+        if !is_empty_params(&params) {
             return wire(code::INVALID_REQUEST, TEXT_INVALID);
         }
         answer(self.build_status(self.running()).await)
+    }
+}
+
+/// True for params that are `null` or `{}`.
+fn is_empty_params(params: &Value) -> bool {
+    match params {
+        Value::Null => true,
+        Value::Object(map) => map.is_empty(),
+        _ => false,
     }
 }
 
@@ -224,6 +255,7 @@ fn result(
         code: failed_code.map(str::to_owned),
         message,
         status,
+        repair: None,
     })
 }
 
@@ -243,14 +275,18 @@ pub fn install(admin: Arc<OmarchyAdmin>) {
     *SERVICE.lock().unwrap_or_else(PoisonError::into_inner) = Some(admin);
 }
 
-/// The link handler of `omarchy.status` and `omarchy.act`.
-pub async fn call(method: &str, params: Value) -> Outcome {
+/// The link handler of the Omarchy methods. `peer` is the fingerprint of
+/// the deck link of the request: a plan is bound to it.
+pub async fn call(method: &str, params: Value, peer: Fingerprint) -> Outcome {
     let Some(admin) = service() else {
         return wire("unavailable", TEXT_UNAVAILABLE);
     };
     match method {
         "omarchy.status" => admin.status_call(params).await,
-        "omarchy.act" => admin.act_call(params).await,
+        "omarchy.act" => admin.act_call(params, peer).await,
+        "omarchy.install_plan" => admin.install_plan_call(params, peer).await,
+        "omarchy.repair_status" => admin.repair_status_call(params).await,
+        "omarchy.restore_plan" => admin.restore_plan_call(params, peer).await,
         other => Outcome::Err(WireError::new(
             crate::link::NOT_IMPLEMENTED,
             format!("`{other}` is not served by this station build"),

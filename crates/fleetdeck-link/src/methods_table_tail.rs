@@ -33,7 +33,7 @@ const fn p5a_row(name: &'static str, feature: &'static str) -> MethodSpec {
 use Callers::{DeckToStation, Either, StationToDeck};
 
 /// The last rows of [`crate::methods::METHODS`].
-pub(crate) const TAIL: [MethodSpec; 49] = [
+pub(crate) const TAIL: [MethodSpec; 52] = [
     // Desktop control on the station (R13 P3): the board gates it for the
     // owner; the station checks `allow_desktop` live.
     m(
@@ -268,4 +268,9 @@ pub(crate) const TAIL: [MethodSpec; 49] = [
     // runs fixed `fleetdeck` subcommands; the deck keeps its own record.
     p5a_row("omarchy.status", feature::OMARCHY_ADMIN),
     p5a_row("omarchy.act", feature::OMARCHY_ADMIN),
+    // The installer repair (`omarchy_repair.v1`): the reads of the plans and
+    // of the repair status. The repair actions use `omarchy.act`.
+    p5a_row("omarchy.install_plan", feature::OMARCHY_REPAIR),
+    p5a_row("omarchy.repair_status", feature::OMARCHY_REPAIR),
+    p5a_row("omarchy.restore_plan", feature::OMARCHY_REPAIR),
 ];
