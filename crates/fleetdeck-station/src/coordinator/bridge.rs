@@ -144,7 +144,7 @@ async fn answer_for(socket: &Path, token: &str, line: &[u8], msg: &Value) -> Opt
     };
     match code {
         b"unauthorized" => error_answer(msg, -32001, UNAUTHORIZED),
-        b"limited" => error_answer(msg, -32002, LIMITED),
+        b"limited" => error_answer(msg, -32000, LIMITED),
         b"starting" => error_answer(msg, -32000, STARTING),
         // `bad_request` and any later code: a message that is not an
         // object (a batch) gets an answer with a null id.

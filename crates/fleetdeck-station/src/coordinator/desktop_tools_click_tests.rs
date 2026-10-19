@@ -4,7 +4,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::collections::BTreeSet;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use super::super::bindings::{Binding, BindingState, Caller, ToolClass};
 use super::super::desktop_forward::{DesktopRequest, McpToolResult};
 use super::super::ingress::Forward;
-use super::super::jsonrpc::{Answer, answer};
+use super::super::mcp_p1_tests::serve_json;
 use super::super::tools;
 
 const P7: [&str; 3] = ["key_press", "type_text", "pointer_move"];
@@ -270,12 +270,9 @@ fn binding(granted: &[ToolClass]) -> Binding {
     }
 }
 
-async fn rpc(b: &Binding, fake: &Fake, method: &str, params: Value) -> Value {
+async fn rpc(b: &Binding, fake: &Arc<Fake>, method: &str, params: Value) -> Value {
     let msg = json!({"jsonrpc": "2.0", "id": 7, "method": method, "params": params});
-    match answer(msg, b, fake, None, true).await {
-        Answer::Json(v) => v,
-        Answer::Accepted => panic!("a notification"),
-    }
+    serve_json(b, fake.clone(), true, None, &msg).await
 }
 
 #[test]
@@ -291,9 +288,9 @@ fn the_caller_of_a_binding_knows_the_any_window_class() {
 
 #[tokio::test]
 async fn the_intake_forwards_each_new_tool_only_for_its_binding() {
-    let fake = Fake {
+    let fake = Arc::new(Fake {
         forwarded: Mutex::default(),
-    };
+    });
     let click = json!({"name": "pointer_click", "arguments": {
         "request_id": "r1", "window_id": WINDOW, "x": 4, "y": 5}});
     let list = json!({"name": "window_list", "arguments": {}});
@@ -321,12 +318,17 @@ async fn the_intake_forwards_each_new_tool_only_for_its_binding() {
 
     // A binding without the classes: the P7 refusal, nothing forwarded.
     let plain = binding(&BASE);
-    for call in [click.clone(), list.clone()] {
+    for (name, call) in [
+        ("pointer_click", click.clone()),
+        ("window_list", list.clone()),
+    ] {
         let r = rpc(&plain, &fake, "tools/call", call).await;
         assert_eq!(r["result"]["isError"], true, "{r}");
         assert_eq!(
             r["result"]["content"][0]["text"],
-            "forbidden: the grant has no such tool"
+            format!(
+                "forbidden: your grant has no tool `{name}`. Call tools/list to see the tools you have."
+            )
         );
     }
     // The click binding does not list or accept `window_list`, and the

@@ -8,14 +8,21 @@
 //! authentication, the limits and the JSON-RPC code are those of the HTTP
 //! ingress (`ingress::authenticate_message`, `ingress::answer_message`).
 //! The token is never logged.
+//!
+//! The message goes to the `rmcp` service (`mcp_service.rs`) with the HTTP
+//! headers that the station synthesizes for it. While the service runs, the
+//! connection watches the socket: a full close by the peer drops the service
+//! future, which cancels the call (MCP P1 §3.4).
 
 use std::io;
+use std::os::fd::{AsFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use fleetdeck_core::localsock;
 use fleetdeck_providers::host::shim::journal::{SUN_PATH_MAX, prepare_dir};
+use serde_json::{Value, json};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -25,6 +32,7 @@ use super::bindings::{Binding, Bindings};
 use super::ingress::{
     FleetTools, Forward, Limits, MessageOutcome, Shared, answer_message, authenticate_message,
 };
+use super::mcp_service::bridge_headers;
 
 /// The longest `AUTH <token>` line.
 const AUTH_LINE_MAX: usize = 1024;
@@ -37,6 +45,14 @@ const ERR_BAD_REQUEST: &str = "ERR bad_request";
 const ERR_UNAUTHORIZED: &str = "ERR unauthorized";
 const ERR_LIMITED: &str = "ERR limited";
 const ERR_STARTING: &str = "ERR starting";
+
+/// The message of the correlated line for a call over the binding limit. The
+/// same text as the bridge client uses for `ERR limited` (`bridge.rs`).
+const LIMITED_TEXT: &str = "Too many calls; try again in a moment.";
+
+/// How often the connection checks for a full close by the peer while a call
+/// runs.
+const HANGUP_POLL: Duration = Duration::from_millis(100);
 
 /// The socket path (DL-194 §9.2): the first candidate that fits `sun_path`
 /// and whose directory is created or accepted as 0700, owned by this user
@@ -227,6 +243,9 @@ async fn serve(listener: UnixListener, shared: Arc<Shared>) {
 enum Intake {
     Close,
     Refuse(&'static str),
+    /// The binding is over its limit; the message line was read, so the
+    /// refusal can carry its id.
+    Limited(Vec<u8>),
     Ready(Box<Binding>, OwnedSemaphorePermit, Vec<u8>),
 }
 
@@ -260,15 +279,92 @@ async fn intake<R: AsyncBufRead + Unpin>(reader: &mut R, shared: &Shared) -> io:
             drop(unauth);
             Ok(Intake::Ready(binding, permit, body))
         }
-        Err(MessageOutcome::Limited) => Ok(Intake::Refuse(ERR_LIMITED)),
+        Err(MessageOutcome::Limited) => Ok(Intake::Limited(body)),
         Err(MessageOutcome::Starting) => Ok(Intake::Refuse(ERR_STARTING)),
         Err(_) => Ok(Intake::Refuse(ERR_UNAUTHORIZED)),
     }
 }
 
+/// The line for a message that the binding limit refused: a correlated
+/// JSON-RPC error for an object with an `id`, no line for an object without
+/// one (a notification), and `ERR bad_request` for anything else.
+fn limited_line(body: &[u8]) -> Option<String> {
+    match serde_json::from_slice::<Value>(body) {
+        Ok(Value::Object(message)) => message.get("id").map(|id| {
+            json!({"jsonrpc": "2.0", "id": id,
+                   "error": {"code": -32000, "message": LIMITED_TEXT}})
+            .to_string()
+        }),
+        _ => Some(ERR_BAD_REQUEST.to_owned()),
+    }
+}
+
+/// True when the peer closed the socket in both directions (POLLHUP). A
+/// half-close (POLLRDHUP without POLLHUP) does not count: the wire-v1 client
+/// may close its write side and still wait for the reply.
+///
+/// Linux reports POLLHUP for a fully closed AF_UNIX peer. The behaviour on
+/// macOS is a live-smoke item of MCP P1 (design §3.4).
+fn peer_hung_up(fd: &OwnedFd) -> bool {
+    use rustix::event::{PollFd, PollFlags};
+    let mut fds = [PollFd::new(fd, PollFlags::HUP)];
+    let now = rustix::time::Timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    match rustix::event::poll(&mut fds, Some(&now)) {
+        Ok(_) => fds[0].revents().intersects(PollFlags::HUP),
+        Err(error) => {
+            tracing::debug!(kind = ?io::Error::from(error).kind(), "the bridge socket poll failed");
+            false
+        }
+    }
+}
+
+/// Completes when the peer of `fd` closed the socket completely. Never
+/// completes without a descriptor to watch.
+async fn hung_up(fd: Option<&OwnedFd>) {
+    let Some(fd) = fd else {
+        return std::future::pending().await;
+    };
+    loop {
+        tokio::time::sleep(HANGUP_POLL).await;
+        if peer_hung_up(fd) {
+            return;
+        }
+    }
+}
+
+/// The line for the outcome of one message, or `None` for no line.
+fn outcome_line(outcome: MessageOutcome) -> Option<String> {
+    match outcome {
+        // A notification is accepted: 202, no body.
+        MessageOutcome::Reply(reply) if reply.status == http::StatusCode::ACCEPTED => None,
+        MessageOutcome::Reply(reply) => Some(
+            serde_json::from_slice::<Value>(&reply.body)
+                .map_or_else(|_| ERR_BAD_REQUEST.to_owned(), |value| value.to_string()),
+        ),
+        MessageOutcome::ParseError | MessageOutcome::Batch => Some(ERR_BAD_REQUEST.to_owned()),
+        MessageOutcome::Unauthorized => Some(ERR_UNAUTHORIZED.to_owned()),
+        MessageOutcome::Limited => Some(ERR_LIMITED.to_owned()),
+        MessageOutcome::Starting => Some(ERR_STARTING.to_owned()),
+    }
+}
+
 async fn connection(stream: UnixStream, shared: &Shared) {
+    // A descriptor of the same socket, to watch for a full close while the
+    // call runs (the halves below own the stream).
+    let watch = match stream.as_fd().try_clone_to_owned() {
+        Ok(fd) => Some(fd),
+        Err(error) => {
+            tracing::debug!(kind = ?error.kind(), "a bridge connection cannot be watched");
+            None
+        }
+    };
     let (read, mut write) = stream.into_split();
     let mut reader = BufReader::new(read);
+    // The binding permit lives until the reply line is written.
+    let mut permit = None;
     let reply = match tokio::time::timeout(IDLE, intake(&mut reader, shared)).await {
         Err(_) => None,
         Ok(Err(error)) => {
@@ -277,18 +373,17 @@ async fn connection(stream: UnixStream, shared: &Shared) {
         }
         Ok(Ok(Intake::Close)) => None,
         Ok(Ok(Intake::Refuse(line))) => Some(line.to_owned()),
-        Ok(Ok(Intake::Ready(binding, permit, body))) => {
-            let outcome = answer_message(shared, &binding, &body).await;
-            drop(permit);
-            match outcome {
-                MessageOutcome::Json(value) => Some(value.to_string()),
-                MessageOutcome::Accepted => None,
-                MessageOutcome::ParseError | MessageOutcome::Batch => {
-                    Some(ERR_BAD_REQUEST.to_owned())
-                }
-                MessageOutcome::Unauthorized => Some(ERR_UNAUTHORIZED.to_owned()),
-                MessageOutcome::Limited => Some(ERR_LIMITED.to_owned()),
-                MessageOutcome::Starting => Some(ERR_STARTING.to_owned()),
+        Ok(Ok(Intake::Limited(body))) => limited_line(&body),
+        Ok(Ok(Intake::Ready(binding, held, body))) => {
+            permit = Some(held);
+            let legacy = shared.bindings.legacy_version(&binding.binding_id);
+            let answered = answer_message(shared, &binding, body, |message| {
+                bridge_headers(message, legacy.as_deref())
+            });
+            tokio::select! {
+                outcome = answered => outcome_line(outcome),
+                // The peer left: the call is dropped, which cancels it.
+                () = hung_up(watch.as_ref()) => return,
             }
         }
     };
@@ -302,6 +397,7 @@ async fn connection(stream: UnixStream, shared: &Shared) {
             tracing::debug!(kind = ?error.kind(), "a bridge reply was not sent");
         }
     }
+    drop(permit);
 }
 
 #[cfg(test)]

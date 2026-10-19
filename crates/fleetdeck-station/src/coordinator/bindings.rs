@@ -115,6 +115,11 @@ struct Entry {
     binding: Binding,
     inflight: Arc<Semaphore>,
     window: (Instant, u32),
+    /// The protocol version that the last successful `initialize` of this
+    /// binding negotiated (MCP P1 §3.4): a header hint for the bridge path
+    /// only. It is per binding, never shared, and gives no authority. The
+    /// entry holds it, so removing or replacing the binding clears it.
+    legacy_version: Option<String>,
 }
 
 /// The serial of a deck link and its request path.
@@ -453,6 +458,7 @@ impl Bindings {
             binding,
             inflight: Arc::new(Semaphore::new(BINDING_CONCURRENCY)),
             window: (Instant::now(), 0),
+            legacy_version: None,
         };
         let mut map = self.lock();
         map.retain(|_, e| e.binding.binding_id != entry.binding.binding_id);
@@ -596,6 +602,32 @@ impl Bindings {
         out
     }
 
+    /// Records the protocol version that a successful `initialize` of the
+    /// binding negotiated (MCP P1 §3.4). Returns false for an unknown
+    /// binding id.
+    pub(super) fn set_legacy_version(&self, binding_id: &str, version: &str) -> bool {
+        match self
+            .lock()
+            .values_mut()
+            .find(|e| e.binding.binding_id == binding_id)
+        {
+            Some(e) => {
+                e.legacy_version = Some(version.to_owned());
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The protocol version that the last successful `initialize` of the
+    /// binding negotiated, if any. A header hint for the bridge path only.
+    pub(super) fn legacy_version(&self, binding_id: &str) -> Option<String> {
+        self.lock()
+            .values()
+            .find(|e| e.binding.binding_id == binding_id)
+            .and_then(|e| e.legacy_version.clone())
+    }
+
     /// A copy of a binding by id.
     pub fn get(&self, binding_id: &str) -> Option<Binding> {
         self.lock()
@@ -619,15 +651,18 @@ impl Bindings {
             tracing::info!(case = "unknown", "coordinator credential refused");
             return Auth::Unauthorized;
         };
-        if self.is_held(&key) {
-            return Auth::Starting;
-        }
+        // An ended binding is refused before the replay hold: a held
+        // credential whose binding ended gets the uniform answer, never
+        // "starting" (MCP P1 §3.4).
         if matches!(
             e.binding.state,
             BindingState::Revoked | BindingState::Expired
         ) {
             tracing::info!(case = "ended", binding = %e.binding.binding_id, "coordinator credential refused");
             return Auth::Unauthorized;
+        }
+        if self.is_held(&key) {
+            return Auth::Starting;
         }
         let now = Instant::now();
         if now.duration_since(e.window.0).as_secs() >= 1 {

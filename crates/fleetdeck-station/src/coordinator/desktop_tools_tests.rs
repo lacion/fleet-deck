@@ -3,7 +3,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::collections::BTreeSet;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use fleetdeck_proto::coordinator_desktop_text::{code, text};
@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use super::bindings::{Binding, BindingState, Caller, ToolClass};
 use super::desktop_forward::{DesktopRequest, McpToolResult};
 use super::ingress::Forward;
-use super::jsonrpc::{Answer, PROTOCOL_VERSIONS, answer};
+use super::mcp_p1_tests::serve_json;
 use super::tools;
 
 const NINE: [&str; 9] = [
@@ -197,19 +197,19 @@ struct Fake {
 }
 
 impl Fake {
-    fn new() -> Self {
+    fn new() -> Arc<Self> {
         Self::replying(McpToolResult {
             content: vec![json!({"type": "text", "text": "{\"ok\":true}"})],
             is_error: false,
         })
     }
 
-    fn replying(reply: McpToolResult) -> Self {
-        Self {
+    fn replying(reply: McpToolResult) -> Arc<Self> {
+        Arc::new(Self {
             desktop: Mutex::default(),
             plain: Mutex::default(),
             reply,
-        }
+        })
     }
 
     fn forwarded(&self) -> usize {
@@ -249,16 +249,13 @@ fn rpc(method: &str, params: Value) -> Value {
     json!({"jsonrpc": "2.0", "id": 7, "method": method, "params": params})
 }
 
-async fn run(b: &Binding, fake: &Fake, fleet_control: bool, msg: Value) -> Value {
-    match answer(msg, b, fake, None, fleet_control).await {
-        Answer::Json(v) => v,
-        Answer::Accepted => panic!("a notification"),
-    }
+async fn run(b: &Binding, fake: &Arc<Fake>, fleet_control: bool, msg: Value) -> Value {
+    serve_json(b, fake.clone(), fleet_control, None, &msg).await
 }
 
 async fn tool_call(
     b: &Binding,
-    fake: &Fake,
+    fake: &Arc<Fake>,
     fleet_control: bool,
     name: &str,
     args: Value,
@@ -346,7 +343,6 @@ async fn bad_arguments_are_invalid_params_without_any_supplied_value() {
             json!({"request_id": "r1", "title": "t", "body": "b", "urgency": "ug_secret"}),
         ),
         ("notify", json!({"title": "t", "body": "b"})),
-        ("notify", json!("not an object")),
         ("preview_open", json!({"request_id": "r1", "url": ""})),
         (
             "preview_open",
@@ -384,19 +380,26 @@ async fn bad_arguments_are_invalid_params_without_any_supplied_value() {
             let (is_error, t) = tool_call(&b, &fake, fleet_control, name, args.clone()).await;
             assert!(is_error, "{name} {args}");
             assert_eq!(t, error_text(code::INVALID_PARAMS), "{name} {args}");
-            for secret in [
-                "secret",
-                "TTTT",
-                "bad id",
-                "w/1",
-                "st st",
-                "bad mon",
-                "not an object",
-            ] {
+            for secret in ["secret", "TTTT", "bad id", "w/1", "st st", "bad mon"] {
                 assert!(!t.contains(secret), "{name}: {t}");
             }
         }
     }
+    // `arguments` that is not an object is not a valid `tools/call`: `rmcp`
+    // answers its standard JSON-RPC error (-32601, "tools/call") before the
+    // handler runs (it was a tool error before P1).
+    let v = run(
+        &b,
+        &fake,
+        true,
+        rpc(
+            "tools/call",
+            json!({"name": "notify", "arguments": "not an object"}),
+        ),
+    )
+    .await;
+    assert!(v["result"].is_null(), "{v}");
+    assert_eq!(v["error"]["code"], -32601, "{v}");
     assert_eq!(fake.forwarded(), 0);
 }
 
@@ -428,11 +431,15 @@ async fn a_p6_tool_outside_the_granted_classes_keeps_the_forbidden_answer() {
     let desktop = binding(BindingState::Active, &[ToolClass::Desktop]);
     let capture = binding(BindingState::Active, &[ToolClass::Capture]);
     let none = binding(BindingState::Active, &[ToolClass::Read]);
-    let forbidden = "forbidden: the grant has no such tool";
+    let forbidden = |name: &str| {
+        format!(
+            "forbidden: your grant has no tool `{name}`. Call tools/list to see the tools you have."
+        )
+    };
     for name in ["screenshot", "capture_status", "read_capture_image"] {
         assert_eq!(
             tool_call(&desktop, &fake, true, name, json!({})).await,
-            (true, forbidden.to_owned()),
+            (true, forbidden(name)),
             "{name}"
         );
     }
@@ -445,14 +452,14 @@ async fn a_p6_tool_outside_the_granted_classes_keeps_the_forbidden_answer() {
     ] {
         assert_eq!(
             tool_call(&capture, &fake, true, name, wall()).await,
-            (true, forbidden.to_owned()),
+            (true, forbidden(name)),
             "{name}"
         );
     }
     for name in NINE {
         assert_eq!(
             tool_call(&none, &fake, true, name, json!({})).await,
-            (true, forbidden.to_owned()),
+            (true, forbidden(name)),
             "{name}"
         );
     }
@@ -474,27 +481,20 @@ async fn a_forwarder_without_the_p6_path_answers_desktop_unsupported() {
         }
     }
     let b = binding(BindingState::Active, &[ToolClass::Desktop]);
-    let v = match answer(
-        rpc(
-            "tools/call",
-            json!({"name": "desktop_info", "arguments": {}}),
-        ),
-        &b,
-        &Old,
-        None,
-        true,
-    )
-    .await
-    {
-        Answer::Json(v) => v,
-        Answer::Accepted => panic!(),
-    };
+    let msg = rpc(
+        "tools/call",
+        json!({"name": "desktop_info", "arguments": {}}),
+    );
+    let v = serve_json(&b, Arc::new(Old), true, None, &msg).await;
     assert_eq!(v["result"]["isError"], true);
     assert_eq!(
         v["result"]["content"][0]["text"].as_str().unwrap(),
         error_text(code::DESKTOP_UNSUPPORTED)
     );
 }
+
+/// The versions that the station serves (P1 §3.2).
+const SUPPORTED_VERSIONS: [&str; 4] = ["2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"];
 
 #[tokio::test]
 async fn every_mcp_version_gives_the_same_content_blocks_for_an_image() {
@@ -507,36 +507,43 @@ async fn every_mcp_version_gives_the_same_content_blocks_for_an_image() {
     };
     let b = binding(BindingState::Active, &[ToolClass::Capture]);
     let mut seen = Vec::new();
-    for version in PROTOCOL_VERSIONS {
+    for version in SUPPORTED_VERSIONS {
         let fake = Fake::replying(reply.clone());
-        let init = run(
-            &b,
-            &fake,
-            true,
-            rpc(
-                "initialize",
-                json!({"protocolVersion": version, "capabilities": {},
-                       "clientInfo": {"name": "t", "version": "1"}}),
-            ),
-        )
-        .await;
-        assert_eq!(init["result"]["protocolVersion"], version);
-        let v = run(
-            &b,
-            &fake,
-            true,
-            rpc(
-                "tools/call",
-                json!({"name": "read_capture_image", "arguments":
-                    {"artifact": {"station_id": "st", "artifact_id": "a1", "version": 1}}}),
-            ),
-        )
-        .await;
+        let modern = version == "2026-07-28";
+        let mut params = json!({"name": "read_capture_image", "arguments":
+            {"artifact": {"station_id": "st", "artifact_id": "a1", "version": 1}}});
+        if modern {
+            // The modern era has no `initialize`: the version and the client
+            // capabilities travel in the `_meta` of the request.
+            params["_meta"] = json!({
+                "io.modelcontextprotocol/protocolVersion": version,
+                "io.modelcontextprotocol/clientCapabilities": {},
+            });
+        } else {
+            let init = run(
+                &b,
+                &fake,
+                true,
+                rpc(
+                    "initialize",
+                    json!({"protocolVersion": version, "capabilities": {},
+                           "clientInfo": {"name": "t", "version": "1"}}),
+                ),
+            )
+            .await;
+            assert_eq!(init["result"]["protocolVersion"], version);
+        }
+        let msg = rpc("tools/call", params);
+        let v = serve_json(&b, fake.clone(), true, (!modern).then_some(version), &msg).await;
         assert_eq!(v["id"], 7);
-        assert_eq!(v["result"]["isError"], false);
-        seen.push(v["result"].clone());
+        assert_eq!(v["result"]["isError"], false, "{v}");
+        let mut result = v["result"].clone();
+        // `resultType` exists in the modern era only.
+        let result_type = result.as_object_mut().unwrap().remove("resultType");
+        assert_eq!(result_type.is_some(), modern, "{version}");
+        seen.push(result);
     }
-    assert_eq!(seen.len(), 3);
+    assert_eq!(seen.len(), 4);
     assert!(seen.iter().all(|r| r == &seen[0]));
     assert_eq!(seen[0]["content"].as_array().unwrap().len(), 2);
     assert_eq!(seen[0]["content"][1]["type"], "image");

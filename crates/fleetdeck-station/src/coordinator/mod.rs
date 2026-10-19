@@ -18,7 +18,10 @@ mod git_tools;
 pub mod handoff;
 pub mod ingress;
 mod jsonrpc;
+mod mcp_server;
+mod mcp_service;
 pub mod outbox;
+mod permit_io;
 pub mod socket;
 mod tool_class;
 pub mod tools;
@@ -47,6 +50,9 @@ mod fleet_control_tests;
 #[cfg(test)]
 #[path = "ingress_tests.rs"]
 mod ingress_tests;
+#[cfg(test)]
+#[path = "mcp_p1_tests.rs"]
+mod mcp_p1_tests;
 #[cfg(test)]
 #[path = "outbox_tests.rs"]
 mod outbox_tests;

@@ -134,6 +134,14 @@ fn list() -> Value {
     json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
 }
 
+/// A valid `initialize`: `rmcp` requires the capabilities and the client info
+/// (the earlier tests sent the version alone).
+fn initialize(version: &str) -> Value {
+    json!({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+           "params": {"protocolVersion": version, "capabilities": {},
+                      "clientInfo": {"name": "test", "version": "1"}}})
+}
+
 fn names(reply: &Reply) -> Vec<String> {
     let v: Value = serde_json::from_str(&reply.body).unwrap();
     v["result"]["tools"]
@@ -238,16 +246,16 @@ async fn a_tool_parameter_that_names_another_session_does_not_change_the_caller(
 async fn a_pending_binding_discovers_the_fixed_granted_catalog_and_every_execution_returns_not_bound()
  {
     let r = rig(BindingState::Pending, MAIL).await;
-    let init = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize",
-                      "params": {"protocolVersion": "2025-06-18"}});
+    let init = initialize("2025-06-18");
     let reply = rpc(&r, Some(&r.token), init).await;
     let v: Value = serde_json::from_str(&reply.body).unwrap();
     assert_eq!(v["result"]["protocolVersion"], "2025-06-18");
     assert_eq!(v["result"]["instructions"], "SKILL v1");
-    let bad = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize",
-                     "params": {"protocolVersion": "2024-11-05"}});
+    let bad = initialize("2024-11-05");
     let v: Value = serde_json::from_str(&rpc(&r, Some(&r.token), bad).await.body).unwrap();
-    assert!(v["error"].is_object());
+    // `rmcp` negotiates an unsupported version down to the newest legacy
+    // version that the station serves (it does not refuse).
+    assert_eq!(v["result"]["protocolVersion"], "2025-11-25");
     let tools = names(&rpc(&r, Some(&r.token), list()).await);
     assert_eq!(
         tools,
@@ -265,14 +273,19 @@ async fn a_pending_binding_discovers_the_fixed_granted_catalog_and_every_executi
     );
     for tool in &tools {
         let reply = rpc(&r, Some(&r.token), call(tool, json!({}))).await;
-        assert_eq!(tool_result(&reply), (true, "not_bound".to_owned()));
+        assert_eq!(
+            tool_result(&reply),
+            (
+                true,
+                "not_bound: this session is still starting. Try again in a few seconds.".to_owned()
+            )
+        );
     }
     assert!(r.forward.calls.lock().unwrap().is_empty());
 }
 
 async fn snapshot(r: &Rig) -> (Value, Vec<String>) {
-    let init = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize",
-                      "params": {"protocolVersion": "2025-03-26"}});
+    let init = initialize("2025-03-26");
     let i: Value = serde_json::from_str(&rpc(r, Some(&r.token), init).await.body).unwrap();
     (
         i["result"]["instructions"].clone(),
@@ -538,7 +551,11 @@ async fn a_fleet_only_binding_sees_its_own_tools_and_the_station_answers_them() 
     let reply = send(call("list_sessions", json!({}))).await;
     assert_eq!(
         tool_result(&reply),
-        (true, "forbidden: the grant has no such tool".to_owned())
+        (
+            true,
+            "forbidden: your grant has no tool `list_sessions`. Call tools/list to see the tools you have."
+                .to_owned()
+        )
     );
     assert!(
         forward.calls.lock().unwrap().is_empty(),
