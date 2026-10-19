@@ -3559,7 +3559,7 @@ Owner review: pending.
   - c. The residual product gaps of §1.1 of the contract stay open: no supported package source for `wlrctl`; a failure before the link without a valid provisioning file, a usable pin or station identity, a running supervisor or a network, and the trust, configuration and service repairs (`release_untrusted`, `build_mismatch`, `config_conflict`, `config_changed`, `service_conflict`, `station_identity_changed`, `paired_elsewhere`, `fingerprint_mismatch` and the other codes without a retry); a legacy run without a leader identity (`identity_unproven`, no signal).
   - d. The live smoke on the owner's machines is not done. The list is in `docs/v2/LIVE-SMOKE.md`, part "Board paths for the remaining owner actions (DL-249)" (`make desktop-smoke`). It needs a real Omarchy station, a lost run with a live process and a station with a wrong provisioning file.
   - DL-243 item b is closed by `a01aaa7a`. DL-243 item e is closed for a station that supports `omarchy_repair.v1`. DL-243 item c is closed for the codes that allow a retry, and stays open for the other codes and the residuals of item c above. The "no board path yet" for stopping a process of a lost run (`operations.md` section 10) is closed for a Linux station that supports `execution_stop.v1`.
-- Next: the PRE-PR review of BG-1 (DL-250 item a); the live smoke; the owner reads the new rows 249.x of `SECURITY-CHECKLIST.md` (DL-158).
+- Next: the live smoke; the owner reads the new rows 249.x of `SECURITY-CHECKLIST.md` (DL-158).
 
 ## DL-250: BG-1 built: the desktop tools from the board (architect, 2026-10-19)
 
@@ -3578,8 +3578,8 @@ Owner review: pending.
   - Fleet Deck installs only the compiled allowlist, with no AUR helper, no system upgrade, no `-y` and no repository other than `core` and `extra` for a target. `--noconfirm` answers no to a conflict or removal prompt, so a transaction that would remove or replace a package stops before any change.
   - Closing the panel only detaches it. Fleet Deck has no control that stops a running installation.
 - Open items:
-  - a. The BG-1 PRE-PR review is pending (high risk: the adversary agent).
+  - a. The BG-1 PRE-PR review: PASS in round 3 (report `adv-bg1-rereview-r3-report.md`). Round 1: 1 MAJOR (a detach or an ended output left one half of its data stream open, so repeated reattaches could use up the 64 streams of a link; it also affected the shell streams), fixed by `17e80b97`. Round 2: 1 BLOCKER in that fix (the awaited close after a detach could wait for credit and stop the station's data dispatcher), fixed by `d1e0edb6` (the station resets the stream). Round 3: no finding.
   - b. The live smoke on the owner's Omarchy machines is not done: a real `sudo pacman` install, a station restart during an install and the reattach. The list is in `docs/v2/LIVE-SMOKE.md`, part "Install desktop tools from the board (DL-250)" (`make desktop-smoke`).
   - c. `wlrctl` has no supported package source (it is an AUR package). Installing it has no board path yet.
   - d. Residuals: P8-17 (code that runs as the station user can read the spec and its tokens and can talk to the runner socket); a package database refresh by another program between the dry run and the install can change the versions and the dependency choices (the post-check reports `transaction_changed` for the expected packages only); after a deck restart the completion audit row comes only from a later list read; `portable-pty` sets `SHELL` in the child.
-- Next: the PRE-PR review of BG-1; the live smoke; the owner reads the new rows 250.x of `SECURITY-CHECKLIST.md` (DL-158).
+- Next: the live smoke; the owner reads the new rows 250.x of `SECURITY-CHECKLIST.md` (DL-158).
