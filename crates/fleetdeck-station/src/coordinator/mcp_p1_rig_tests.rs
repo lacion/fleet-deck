@@ -284,11 +284,12 @@ impl Rig {
         classes: &[ToolClass],
     ) -> Self {
         let forward: Arc<dyn Forward> = fake.clone();
-        Self::start_with(forward, fake, state, classes).await
+        Self::start_with(move |_| forward, fake, state, classes).await
     }
 
+    /// The station on a forwarder that `make` builds from the bindings.
     pub(super) async fn start_with(
-        forward: Arc<dyn Forward>,
+        make: impl FnOnce(&Bindings) -> Arc<dyn Forward>,
         fake: Arc<Fake>,
         state: BindingState,
         classes: &[ToolClass],
@@ -296,6 +297,7 @@ impl Rig {
         let bindings = Bindings::default();
         let (token, d) = mint().unwrap();
         bindings.insert(d, binding("b-1", state, classes));
+        let forward = make(&bindings);
         let fleet = Arc::new(FakeFleet::default());
         let ingress = Ingress::start_with(
             bindings.clone(),

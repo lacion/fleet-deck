@@ -239,7 +239,7 @@ async fn two_bindings_in_parallel_never_see_each_others_identity_or_results() {
     let echo = Arc::new(Echo::default());
     let forward: Arc<dyn Forward> = echo.clone();
     let r = Rig::start_with(
-        forward,
+        move |_| forward,
         super::mcp_p1_rig_tests::Fake::new(),
         BindingState::Active,
         MAIL,
