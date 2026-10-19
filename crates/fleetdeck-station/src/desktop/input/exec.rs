@@ -307,6 +307,20 @@ impl Op<'_> {
 
     /// Step 12: focus exactly the recorded address, once.
     async fn focus(&self, runner: &Runner<'_>) -> Result<(), Fail> {
+        // R13 P7b §8 (PRE-PR r1): `focuswindow` switches to the workspace of
+        // its window, so a listed window is checked again right before it:
+        // still mapped, not hidden and on a workspace that a monitor shows.
+        if self.listed.is_some() {
+            let snap = snapshot::take(runner, false)
+                .await
+                .map_err(|_| fail(p6_code::INPUT_FOCUS_UNKNOWN))?;
+            let client = snap
+                .client(&self.record.address, &self.record.class)
+                .ok_or_else(not_found)?;
+            if !snap.eligible_place(client) {
+                return Err(not_found());
+            }
+        }
         let target = format!("address:{}", self.record.address);
         let args = ["dispatch", "focuswindow", target.as_str()]
             .map(str::to_owned)

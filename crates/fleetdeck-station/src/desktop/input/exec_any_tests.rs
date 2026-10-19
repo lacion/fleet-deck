@@ -560,6 +560,24 @@ async fn a_preview_marked_after_its_listing_refuses_the_listed_handle() {
 
 // ------------------------------------------------- the shown workspace
 
+/// The owner switches away after the first survey and before the focus step
+/// (here: at the claim): the station checks the shown workspace again right
+/// before `focuswindow`, refuses, and never switches the workspace.
+#[tokio::test]
+async fn a_switch_away_before_the_focus_step_is_refused_without_a_focus() {
+    let (fx, handle) = listed_shell().await;
+    fx.write("claim_monitors.json", &fx.monitors_away());
+    let probe = Probe::new(&fx);
+    let e = refused(&fx, &probe, &fx.input_any(&handle, "a")).await;
+    assert_eq!(e.code, "desktop_window_not_found", "{e:?}");
+    assert!(
+        !fx.timeline().iter().any(|l| l.contains("focuswindow")),
+        "{:?}",
+        fx.timeline()
+    );
+    assert!(fx.calls_of("wtype").is_empty());
+}
+
 /// The owner switches away from the workspace of a listed window after the
 /// listing: the input is refused and the station never dispatches a focus
 /// (R13 P7b §8: no workspace switch).

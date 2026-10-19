@@ -166,6 +166,12 @@ impl Claimer for FakeClaim {
     async fn claim(&self) -> Result<Claimed, Fail> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         mark(&self.root, "claim");
+        // A test can switch the shown workspace between the survey and the
+        // focus: the claim comes after the first survey.
+        let switch = self.root.join("claim_monitors.json");
+        if switch.exists() {
+            std::fs::copy(&switch, self.root.join("monitors.json")).unwrap();
+        }
         self.answer.lock().unwrap().clone()
     }
 }
