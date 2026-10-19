@@ -1,4 +1,5 @@
 import {
+  anyAckProblem,
   answerCapProblem,
   captureCapProblem,
   desktopCapProblem,
@@ -55,9 +56,35 @@ const DESKTOP_GATE_NOTE =
   'Desktop and screenshot tools work only while the deck settings Fleet control and Desktop control are on, and on stations that allow them.';
 
 const INPUT_TEXT = "Allow keyboard input and pointer movement in this agent's previews";
-const INPUT_DISCLOSURE =
-  'This agent can type, press keys and move the pointer in preview windows opened for it on the grant stations. Keyboard input can activate buttons and submit forms. Focus can change after Fleet Deck checks it, so input may reach another window, including an owner board window. Board detection is incomplete. Agents run as your OS user. Pointer clicks and unrestricted window input are unavailable. This feature is experimental until its live smoke passes.';
-const INPUT_SCOPE = "Scope: this caller's preview windows";
+const INPUT_DISCLOSURE_HEAD =
+  'This agent can type, press keys and move the pointer in preview windows opened for it on the grant stations. Keyboard input can activate buttons and submit forms. Focus can change after Fleet Deck checks it, so input may reach another window, including an owner board window. Board detection is incomplete. Agents run as your OS user.';
+const INPUT_UNAVAILABLE_BOTH = 'Pointer clicks and unrestricted window input are unavailable.';
+const INPUT_UNAVAILABLE_SCOPE = 'Unrestricted window input is unavailable.';
+const INPUT_DISCLOSURE_TAIL = 'This feature is experimental until its live smoke passes.';
+
+/** The P7 red disclosure with its sentence on clicks and scope for the state of the two options (P7b §14, MINOR 2). */
+export function inputDisclosure(fleet: FleetControl): string {
+  const unavailable = fleet.anyWindow
+    ? null
+    : fleet.click
+      ? INPUT_UNAVAILABLE_SCOPE
+      : INPUT_UNAVAILABLE_BOTH;
+  return [INPUT_DISCLOSURE_HEAD, unavailable, INPUT_DISCLOSURE_TAIL]
+    .filter((part): part is string => part !== null)
+    .join(' ');
+}
+
+const CLICK_TEXT = 'Allow pointer clicks';
+const CLICK_DISCLOSURE =
+  'Allows this agent to move the pointer and send a left click in its permitted windows. A click can submit forms or approve actions. The pointer or receiving surface can change after Fleet Deck checks it.';
+const SCOPE_LEGEND = 'Input windows';
+const SCOPE_OWN = "This agent's preview windows";
+const SCOPE_ANY = 'Other application windows on the grant stations';
+const ANY_ACK_TEXT = 'Allow input in other application windows';
+const ANY_DISCLOSURE =
+  'This agent can list window positions, view permitted screenshots, and type, press keys and move the pointer in existing applications, including terminals and signed-in browser windows. If clicks are enabled, it can click there too. It can read personal information and act using your logged-in accounts. Fleet Deck refuses detected board and wall windows, but detection and targeting are incomplete. Board sign-out protects this deck only at the machine addresses it records. Agents run as your OS user.';
+const INPUT_SCOPE_OWN = "Scope: this caller's preview windows";
+const INPUT_SCOPE_ANY = 'Scope: other application windows on the grant stations';
 const INPUT_SIGN_OUT_NOTE =
   'While an agent types on a station, every board signed in on that station is signed out. Keep this board on another device.';
 
@@ -110,7 +137,7 @@ export function FleetControlFields({ fleet, onChange }: Props) {
                 ...(s.key === 'capture' && !event.target.checked ? { recording: false } : {}),
                 // Input needs previews and screenshots: turning either off turns it off too.
                 ...((s.key === 'capture' || s.key === 'desktop') && !event.target.checked
-                  ? { input: false }
+                  ? { input: false, click: false, anyWindow: false, anyAck: false }
                   : {}),
               })
             }
@@ -133,10 +160,69 @@ export function FleetControlFields({ fleet, onChange }: Props) {
           <input
             type="checkbox"
             checked={fleet.input}
-            onChange={(event) => onChange({ ...fleet, input: event.target.checked })}
+            onChange={(event) =>
+              onChange({
+                ...fleet,
+                input: event.target.checked,
+                // Clicks and the broader scope need input: turning input off turns them off too.
+                ...(event.target.checked ? {} : { click: false, anyWindow: false, anyAck: false }),
+              })
+            }
           />
           {INPUT_TEXT}
         </label>
+      ) : null}
+      {inputOn(fleet) ? (
+        <>
+          <label className="fd-spawn-opt">
+            <input
+              type="checkbox"
+              checked={fleet.click}
+              onChange={(event) => onChange({ ...fleet, click: event.target.checked })}
+            />
+            {CLICK_TEXT}
+          </label>
+          <p className="fd-note">{CLICK_DISCLOSURE}</p>
+          <fieldset className="fd-spawn-scope">
+            <legend>{SCOPE_LEGEND}</legend>
+            <label className="fd-spawn-opt">
+              <input
+                type="radio"
+                name="fd-input-scope"
+                checked={!fleet.anyWindow}
+                onChange={() => onChange({ ...fleet, anyWindow: false })}
+              />
+              {SCOPE_OWN}
+            </label>
+            <label className="fd-spawn-opt">
+              <input
+                type="radio"
+                name="fd-input-scope"
+                checked={fleet.anyWindow}
+                onChange={() => onChange({ ...fleet, anyWindow: true })}
+              />
+              {SCOPE_ANY}
+            </label>
+          </fieldset>
+          {fleet.anyWindow ? (
+            <>
+              <label className="fd-spawn-opt">
+                <input
+                  type="checkbox"
+                  checked={fleet.anyAck}
+                  onChange={(event) => onChange({ ...fleet, anyAck: event.target.checked })}
+                />
+                {ANY_ACK_TEXT}
+              </label>
+              {anyAckProblem(fleet) === null ? null : (
+                <p className="fd-note" role="alert">
+                  {anyAckProblem(fleet)}
+                </p>
+              )}
+              <p className="fd-note fd-fleet-failed">{ANY_DISCLOSURE}</p>
+            </>
+          ) : null}
+        </>
       ) : null}
       {fleet.answer ? (
         <LimitInput
@@ -194,7 +280,7 @@ export function FleetControlFields({ fleet, onChange }: Props) {
       ) : null}
       {inputOn(fleet) ? (
         <>
-          <p className="fd-note">{INPUT_SCOPE}</p>
+          <p className="fd-note">{fleet.anyWindow ? INPUT_SCOPE_ANY : INPUT_SCOPE_OWN}</p>
           <LimitInput
             label="Input action limit"
             value={fleet.inputCap}
@@ -216,7 +302,7 @@ export function FleetControlFields({ fleet, onChange }: Props) {
       {fleet.capture && fleet.recording ? <p className="fd-note">{RECORDING_NOTE}</p> : null}
       {inputOn(fleet) ? (
         <>
-          <p className="fd-note fd-fleet-failed">{INPUT_DISCLOSURE}</p>
+          <p className="fd-note fd-fleet-failed">{inputDisclosure(fleet)}</p>
           <p className="fd-note">{INPUT_SIGN_OUT_NOTE}</p>
         </>
       ) : null}

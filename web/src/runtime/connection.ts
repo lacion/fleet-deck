@@ -29,9 +29,9 @@ export type Environment = {
 };
 /** R13 P7 §7.6, §13: the board's lines after the deck signs it out for agent input. */
 export const SIGNED_OUT_FOR_INPUT_TEXT =
-  'You were signed out because an agent typed on the station where this board is open.';
+  'You were signed out because an agent used desktop input on the station where this board is open.';
 export const SIGN_IN_BLOCKED_FOR_INPUT_TEXT =
-  'An agent is typing on this station. Sign in again in a minute.';
+  'An agent is using desktop input on this station. Sign in again in a minute.';
 const SIGNED_OUT_FOR_INPUT = 'signed_out_for_input';
 const SIGN_IN_BLOCKED_FOR_INPUT = 'sign_in_blocked_for_input';
 export const IDLE_MS = 5 * 60_000;
