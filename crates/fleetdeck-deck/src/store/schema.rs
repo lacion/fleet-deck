@@ -774,6 +774,8 @@ pub fn migrations() -> Migrations<'static> {
         // V39 (BG-3): the setup reports of unpaired keys and their retry
         // permissions, `store/provision_reports.rs`.
         M::up(super::provision_reports::SQL),
+        // V40 (MCP P0): the grant of a coordinator receipt.
+        M::up(super::coordinator_receipt_grant_schema::SQL),
     ])
 }
 

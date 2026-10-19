@@ -392,6 +392,8 @@ async fn a_coordinator_start_on_the_shim_host_binds_after_session_started() {
         input_cap: None,
         input_character_cap: None,
         stations: Vec::new(),
+        spawn_cap: None,
+        max_modes: Default::default(),
     }));
     rig.next += 1;
     let envelope = CommandEnvelope {

@@ -12,9 +12,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use fleetdeck_proto::StationId;
-use fleetdeck_proto::coordinator_desktop_text::{
-    code as desktop_code, limits, text as desktop_text,
-};
+use fleetdeck_proto::coordinator_desktop_text::limits;
 use fleetdeck_proto::coordinator_spec::InputScope;
 use fleetdeck_proto::orchestration::GrantView;
 use fleetdeck_proto::version::feature;
@@ -460,6 +458,9 @@ pub(super) async fn owner_start(
     if classes.is_empty() {
         return Err(invalid("a coordinator grant needs a class".to_owned()));
     }
+    // MCP P0 §2.2: the spawn cap and the mode ceilings, rules 1 to 5.
+    let (spawn_cap, max_modes) =
+        super::grant_spawn::take_spawn_fields(spec, &classes).map_err(invalid)?;
     for target in &targets {
         let paired = board
             .store
@@ -479,6 +480,10 @@ pub(super) async fn owner_start(
     }
     let widened = grant.stations.len() > 1;
     grant.classes = classes;
+    if grant.classes.contains(&GrantClass::Spawn) {
+        grant.spawn_cap = spawn_cap.unwrap_or(crate::store::grants::DEFAULT_SPAWN_CAP);
+    }
+    grant.max_modes = max_modes;
     grant.scope = spec.scope;
     grant.answer_cap = spec.answer_cap;
     grant.desktop_cap = desktop_cap;
@@ -543,6 +548,16 @@ pub(super) async fn owner_start(
     }
     let fleet = spec.scope == fleetdeck_proto::command::GrantScope::Fleet
         || grant.classes.iter().any(|c| c.is_fleet_control());
+    if grant.classes.contains(&GrantClass::Spawn)
+        && !(fleet || widened)
+        && !is_elevated(board, session, elevation)
+    {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "elevation_required",
+            "a grant that starts sessions needs the owner's elevation".to_owned(),
+        ));
+    }
     if fleet || widened {
         // The answer cap is checked first: a bad request is a bad request
         // with or without elevation.
@@ -581,7 +596,7 @@ pub(super) async fn owner_start(
                 ));
             }
         }
-        desktop_features(
+        super::grant_spawn::desktop_features(
             board,
             station,
             &grant.classes,
@@ -619,7 +634,7 @@ pub(super) async fn owner_start(
             NewAudit::new("owner", "coordinator.grant_created", AuditResult::Ok)
                 .target(g.grant_id.clone())
                 .command(command_id.clone())
-                .detail(format!("stations={named}")),
+                .detail(super::grant_spawn::audit_detail(&g, &named)),
         )
         .await;
     // R13 P5b-2 (decision O12-22, §14 item 13): the flag goes on to the
@@ -668,88 +683,6 @@ pub(super) async fn owner_start(
         text: CONTROL_SKILL.to_owned(),
     };
     Ok(())
-}
-
-/// The features that a `desktop` or `capture` grant needs now (R13 P6 §5.1,
-/// §10): the caller's link has the caller features, and every other station
-/// of the grant has the target features. The caller's own station is a target
-/// only when a call names it, and that call is checked at call time, so a
-/// headless coordinator station stays supported (§2.3). A missing feature or
-/// link is 409 `unsupported`.
-fn desktop_features(
-    board: &Board,
-    caller: &StationId,
-    classes: &std::collections::BTreeSet<GrantClass>,
-    stations: &std::collections::BTreeSet<StationId>,
-    (recording, input, click, any): (bool, bool, bool, bool),
-) -> Result<(), ApiError> {
-    let capture = classes.contains(&GrantClass::Capture);
-    if !capture && !classes.contains(&GrantClass::Desktop) {
-        return Ok(());
-    }
-    let mut on_caller = vec![
-        feature::COORDINATOR,
-        feature::COORDINATOR_V2,
-        feature::DESKTOP_MCP,
-    ];
-    let mut on_target = vec![
-        feature::COORDINATOR_V2,
-        feature::DESKTOP,
-        feature::DESKTOP_AUTHORITY,
-        feature::DESKTOP_MCP,
-    ];
-    if capture {
-        on_caller.push(feature::CAPTURE_MCP);
-        on_target.extend([
-            feature::DESKTOP_CAPTURE,
-            feature::ARTIFACTS_DELETE,
-            feature::CAPTURE_MCP,
-        ]);
-    }
-    // R13 P5b-2: a recording allowance also needs `capture_recording_mcp.v1`
-    // on the caller's link and on every other station of the grant.
-    if recording {
-        on_caller.push(feature::CAPTURE_RECORDING_MCP);
-        on_target.push(feature::CAPTURE_RECORDING_MCP);
-    }
-    // R13 P7: an input allowance also needs `desktop_input_mcp.v1` on the
-    // caller's link and on every other station of the grant.
-    if input {
-        on_caller.push(feature::DESKTOP_INPUT_MCP);
-        on_target.push(feature::DESKTOP_INPUT_MCP);
-    }
-    // R13 P7b §4: a click allowance also needs `desktop_click_mcp.v1`, and
-    // the `any_window` scope `desktop_input_any.v1`, on the caller's link and
-    // on every other station of the grant.
-    if click {
-        on_caller.push(feature::DESKTOP_CLICK_MCP);
-        on_target.push(feature::DESKTOP_CLICK_MCP);
-    }
-    if any {
-        on_caller.push(feature::DESKTOP_INPUT_ANY);
-        on_target.push(feature::DESKTOP_INPUT_ANY);
-    }
-    let has_all = |station: &StationId, wanted: &[&str]| {
-        wanted
-            .iter()
-            .all(|f| board.store.link_feature(station, f) == LinkFeature::Negotiated)
-    };
-    let ready = has_all(caller, &on_caller)
-        && stations
-            .iter()
-            .filter(|s| *s != caller)
-            .all(|s| has_all(s, &on_target));
-    if ready {
-        Ok(())
-    } else {
-        Err(ApiError::new(
-            StatusCode::CONFLICT,
-            desktop_code::UNSUPPORTED,
-            desktop_text(desktop_code::UNSUPPORTED)
-                .unwrap_or(desktop_code::UNSUPPORTED)
-                .to_owned(),
-        ))
-    }
 }
 
 fn view_classes(classes: &std::collections::BTreeSet<GrantClass>) -> Vec<String> {

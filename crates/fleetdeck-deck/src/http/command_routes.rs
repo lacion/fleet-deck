@@ -167,6 +167,16 @@ async fn route(
             message.to_owned(),
         ));
     }
+    // MCP P0 §2.6: an import never carries a coordinator grant.
+    if let SessionCommand::Import { spec, .. } = &req.command
+        && spec.coordinator.is_some()
+    {
+        return Err(refuse(
+            StatusCode::BAD_REQUEST,
+            "invalid_command",
+            "an import never carries a coordinator grant".to_owned(),
+        ));
+    }
     let found = board
         .store
         .find_station(req.station.clone())

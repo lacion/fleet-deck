@@ -36,6 +36,7 @@ mod coordinator_input_schema;
 pub(crate) mod coordinator_ops;
 pub mod coordinator_query;
 mod coordinator_query_reads;
+mod coordinator_receipt_grant_schema;
 mod coordinator_recording_schema;
 pub mod desktop_captures;
 pub(crate) mod desktop_recordings;
