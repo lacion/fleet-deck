@@ -12,10 +12,11 @@ use fleetdeck_core::private_file::try_lock_private_below;
 use fleetdeck_link::ReportReply;
 use fleetdeck_link::hello::ReportStatus;
 
-use super::binding;
+use super::binding::{self, Authorization, Binding};
 use super::effects::Effects;
-use super::fake::{DECK_FP, Fake, JoinStep, ReportStep};
+use super::fake::{DECK_FP, Fake, JoinStep, ReportStep, file_text, go as bootstrap};
 use super::run::Exit;
+use super::sha256_hex;
 use super::state::Phase;
 use super::supervise::supervise;
 
@@ -297,4 +298,154 @@ async fn the_supervisor_leaves_the_provisioning_file_and_the_checks_alone() {
     );
     assert_eq!(fake.reports.lock().unwrap().len(), 2);
     assert_eq!(fake.reports.lock().unwrap()[0].3.code, "service_conflict");
+}
+
+/// The binding of the condition that the state keeps now, with the file as
+/// read now (what the supervisor stores before it reports).
+fn bind(fake: &Fake) -> Binding {
+    let state = fake.state().unwrap();
+    let file = fake.provision.lock().unwrap().clone().unwrap();
+    let digest = binding::digest(
+        state.error.as_deref().unwrap(),
+        state.phase,
+        &sha256_hex(&file),
+        DECK_FP,
+        state.station_fingerprint.as_deref(),
+    );
+    binding::ensure(&fake.trust_root(), &fake.station_dir(), &digest).unwrap()
+}
+
+fn authorize(fake: &Fake, retry_id: &str, bound: &Binding) -> std::path::PathBuf {
+    let path = binding::authorization_path(&fake.station_dir());
+    Authorization {
+        retry_id: retry_id.to_owned(),
+        terminal_id: bound.terminal_id.clone(),
+        state_digest: bound.state_digest.clone(),
+    }
+    .write(&fake.trust_root(), &path)
+    .unwrap();
+    path
+}
+
+/// A bootstrap that stopped with `pending`, then its binding.
+async fn stopped(fake: &Fake, then: &[JoinStep]) -> Binding {
+    pending_then(fake, then);
+    assert_eq!(bootstrap(fake, false).await, Exit::Terminal);
+    bind(fake)
+}
+
+#[tokio::test]
+async fn a_busy_bootstrap_keeps_the_authorization_for_the_next_run() {
+    let fake = Fake::new();
+    let bound = stopped(&fake, &[JoinStep::Paired]).await;
+    let path = authorize(&fake, RETRY, &bound);
+    // Another bootstrap holds the lock for the first run, and ends before the
+    // second one.
+    let held = try_lock_private_below(
+        &fake.trust_root(),
+        &super::state::lock_path(&fake.station_dir()),
+    )
+    .unwrap()
+    .unwrap();
+    *fake.on_first_sleep.lock().unwrap() = Some(Box::new(move |_| drop(held)));
+    assert_eq!(go(&fake).await, Exit::Complete);
+    assert_eq!(sleeps(&fake), [secs(30)]);
+    // The second run got the same authorization and consumed it.
+    let state = fake.state().unwrap();
+    assert_eq!(state.error, None);
+    assert_eq!(state.consumed_retry_id.as_deref(), Some(RETRY));
+    assert_eq!(fake.count("join"), 2);
+    assert!(!path.exists());
+    assert!(fake.reports.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_start_with_a_valid_authorization_file_consumes_it_in_the_first_run() {
+    let fake = Fake::new();
+    let bound = stopped(&fake, &[JoinStep::Paired]).await;
+    let path = authorize(&fake, RETRY, &bound);
+    assert_eq!(go(&fake).await, Exit::Complete);
+    let state = fake.state().unwrap();
+    assert_eq!(state.phase, Phase::Complete);
+    assert_eq!(state.error, None);
+    assert_eq!(state.consumed_retry_id.as_deref(), Some(RETRY));
+    assert_eq!(fake.count("join"), 2);
+    assert!(fake.reports.lock().unwrap().is_empty());
+    assert!(!path.exists());
+}
+
+#[tokio::test]
+async fn a_start_with_a_stale_authorization_file_deletes_it_and_reports() {
+    let fake = Fake::new();
+    stopped(&fake, &[JoinStep::Paired]).await;
+    // The stored binding is of another condition than the state.
+    let stale = binding::ensure(&fake.trust_root(), &fake.station_dir(), &"44".repeat(32)).unwrap();
+    let path = authorize(&fake, RETRY, &stale);
+    let before = std::fs::read(fake.state_file()).unwrap();
+    push(&fake, reply(ReportStatus::Stored, 600));
+    stop_after(&fake, 1);
+    assert_eq!(go(&fake).await, Exit::Unexpected);
+    assert!(
+        fake.lines()
+            .contains(&"provision: retry: report_changed".to_owned())
+    );
+    assert_eq!(std::fs::read(fake.state_file()).unwrap(), before);
+    assert!(!path.exists());
+    assert_eq!(fake.authorization_deleted.lock().unwrap().len(), 1);
+    // The report step ran after the refusal.
+    assert_eq!(fake.reports.lock().unwrap().len(), 1);
+    assert_eq!(fake.count("join"), 1);
+}
+
+#[tokio::test]
+async fn a_replayed_authorization_is_refused_and_deleted() {
+    let fake = Fake::new();
+    let bound = stopped(&fake, &[JoinStep::Code("pending")]).await;
+    let path = authorize(&fake, RETRY, &bound);
+    // The first use stops with the same condition again.
+    assert_eq!(
+        super::fake::go_authorized(&fake, &path).await,
+        Exit::Terminal
+    );
+    assert_eq!(fake.count("join"), 2);
+    assert!(!path.exists());
+    let again = bind(&fake);
+    assert_eq!(again, bound);
+    let path = authorize(&fake, RETRY, &again);
+    let before = std::fs::read(fake.state_file()).unwrap();
+    push(&fake, reply(ReportStatus::Stored, 600));
+    stop_after(&fake, 1);
+    assert_eq!(go(&fake).await, Exit::Unexpected);
+    assert!(
+        fake.lines()
+            .contains(&"provision: retry: retry_replayed".to_owned())
+    );
+    assert_eq!(std::fs::read(fake.state_file()).unwrap(), before);
+    assert!(!path.exists());
+    assert_eq!(fake.count("join"), 2);
+}
+
+#[tokio::test]
+async fn a_change_of_the_provisioning_file_gives_a_new_terminal_id() {
+    let fake = Fake::new();
+    pending_then(&fake, &[]);
+    push(&fake, reply(ReportStatus::Stored, 600));
+    push(&fake, reply(ReportStatus::Stored, 600));
+    // After the first report the owner changes the destination of the file
+    // and keeps the pin.
+    *fake.on_first_sleep.lock().unwrap() = Some(Box::new(|fake: &Fake| {
+        let other = String::from_utf8(file_text("laptop"))
+            .unwrap()
+            .replace("deck.example.ts.net", "other.example.ts.net");
+        *fake.provision.lock().unwrap() = Ok(other.into_bytes());
+    }));
+    stop_after(&fake, 2);
+    assert_eq!(go(&fake).await, Exit::Unexpected);
+    let reports = fake.reports.lock().unwrap().clone();
+    assert_eq!(reports.len(), 2);
+    assert_eq!(reports[1].0, "other.example.ts.net");
+    assert_ne!(reports[0].3.terminal_id, reports[1].3.terminal_id);
+    assert_ne!(reports[0].3.state_digest, reports[1].3.state_digest);
+    // The state itself did not change.
+    assert_eq!(fake.state().unwrap().error.as_deref(), Some("pending"));
 }

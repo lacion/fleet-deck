@@ -107,7 +107,12 @@ describe('the validators', () => {
 });
 
 describe('reportsActions', () => {
-  const calls: { kind: string; path: string; body?: unknown }[] = [];
+  const calls: {
+    kind: string;
+    path: string;
+    body?: unknown;
+    headers?: Readonly<Record<string, string>> | undefined;
+  }[] = [];
   const view: ReportsView = { window: { open: false, deadline_ms: null }, reports: [report()] };
   const io: DeckHttp = {
     get: async (path) => {
@@ -119,8 +124,8 @@ describe('reportsActions', () => {
       if (path.endsWith('/window')) return { open: true, deadline_ms: 9 };
       return { retry: { state: 'queued', expires_at: 7 } };
     },
-    del: async (path) => {
-      calls.push({ kind: 'del', path });
+    del: async (path, headers) => {
+      calls.push({ kind: 'del', path, headers });
       return null;
     },
   };
@@ -130,13 +135,13 @@ describe('reportsActions', () => {
     calls.length = 0;
     expect((await actions.list()).reports).toHaveLength(1);
     expect(await actions.setWindow(true, 'tok')).toEqual({ open: true, deadline_ms: 9 });
-    await actions.setWindow(false, null);
+    await actions.setWindow(false, 'tok2');
     expect(await actions.allowRetry(FP, TERMINAL, DIGEST, 'r'.repeat(32), 'tok')).toEqual({
       state: 'queued',
       expires_at: 7,
     });
-    await actions.cancelRetry(FP);
-    await actions.dismiss(FP);
+    await actions.cancelRetry(FP, 'tok3');
+    await actions.dismiss(FP, 'tok4');
     expect(calls).toEqual([
       { kind: 'get', path: '/api/provision-reports' },
       {
@@ -144,7 +149,11 @@ describe('reportsActions', () => {
         path: '/api/provision-reports/window',
         body: { open: true, elevation: 'tok' },
       },
-      { kind: 'post', path: '/api/provision-reports/window', body: { open: false } },
+      {
+        kind: 'post',
+        path: '/api/provision-reports/window',
+        body: { open: false, elevation: 'tok2' },
+      },
       {
         kind: 'post',
         path: `/api/provision-reports/${FP}/retry`,
@@ -155,8 +164,16 @@ describe('reportsActions', () => {
           elevation: 'tok',
         },
       },
-      { kind: 'del', path: `/api/provision-reports/${FP}/retry` },
-      { kind: 'del', path: `/api/provision-reports/${FP}` },
+      {
+        kind: 'del',
+        path: `/api/provision-reports/${FP}/retry`,
+        headers: { 'x-fleetdeck-elevation': 'tok3' },
+      },
+      {
+        kind: 'del',
+        path: `/api/provision-reports/${FP}`,
+        headers: { 'x-fleetdeck-elevation': 'tok4' },
+      },
     ]);
   });
 
@@ -436,12 +453,18 @@ describe('the owner actions', () => {
     expect(calls).toEqual([]);
   });
 
-  test('closing asks for nothing and sends no elevation', async () => {
+  test('closing asks with the label "Setup reports" and sends the elevation', async () => {
     asks.length = 0;
     const { calls, actions } = make();
-    await changeWindow(actions, ask('tok'), false);
-    expect(asks).toEqual([]);
-    expect(calls).toEqual([{ name: 'setWindow', args: [false, null] }]);
+    expect(await changeWindow(actions, ask('tok'), false)).toEqual({ kind: 'done' });
+    expect(asks).toEqual([['Setup reports']]);
+    expect(calls).toEqual([{ name: 'setWindow', args: [false, 'tok'] }]);
+  });
+
+  test('a cancelled elevation does not close the window', async () => {
+    const { calls, actions } = make();
+    expect(await changeWindow(actions, ask(null), false)).toEqual({ kind: 'cancelled' });
+    expect(calls).toEqual([]);
   });
 
   test('the deck message of no_tailnet_listener is shown', async () => {
@@ -499,18 +522,31 @@ describe('the owner actions', () => {
     expect(retryError(null, 'x')).toBe('x');
   });
 
-  test('dismiss and cancel call the deck with the fingerprint and no elevation', async () => {
+  test('dismiss and cancel ask for the elevation and send it with the fingerprint', async () => {
+    asks.length = 0;
     const { calls, actions } = make();
-    expect(await plainCall(() => actions.dismiss(FP))).toEqual({ kind: 'done' });
-    expect(await plainCall(() => actions.cancelRetry(FP))).toEqual({ kind: 'done' });
+    const dismissed = await plainCall(ask('tok'), (e) => actions.dismiss(FP, e));
+    expect(dismissed).toEqual({ kind: 'done' });
+    const cancelled = await plainCall(ask('tok'), (e) => actions.cancelRetry(FP, e));
+    expect(cancelled).toEqual({ kind: 'done' });
+    expect(asks).toEqual([['Setup reports'], ['Setup reports']]);
     expect(calls).toEqual([
-      { name: 'dismiss', args: [FP] },
-      { name: 'cancelRetry', args: [FP] },
+      { name: 'dismiss', args: [FP, 'tok'] },
+      { name: 'cancelRetry', args: [FP, 'tok'] },
     ]);
+    // A cancelled elevation sends nothing.
+    const none = make();
+    expect(await plainCall(ask(null), (e) => none.actions.dismiss(FP, e))).toEqual({
+      kind: 'cancelled',
+    });
+    expect(await plainCall(ask(null), (e) => none.actions.cancelRetry(FP, e))).toEqual({
+      kind: 'cancelled',
+    });
+    expect(none.calls).toEqual([]);
     const bad = make(
       new DeckError(409, 'The retry was already delivered to the station.', 'retry_delivered', {}),
     );
-    expect(await plainCall(() => bad.actions.cancelRetry(FP))).toEqual({
+    expect(await plainCall(ask('tok'), (e) => bad.actions.cancelRetry(FP, e))).toEqual({
       kind: 'failed',
       text: 'The retry was already delivered to the station.',
       refused: false,

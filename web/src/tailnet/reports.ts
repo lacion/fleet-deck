@@ -3,6 +3,7 @@
 // board never shows it as a station, a paired badge or a grant. The code texts are fixed here;
 // peer text never supplies them. All routes are owner only.
 import { DeckError, type DeckHttp } from '../settings/http';
+import { ELEVATION_HEADER } from '../settings/omarchy';
 
 /** The retry permission of a report: `queued` until the station fetches it. */
 export type RetryView = { state: 'queued' | 'delivered'; expires_at: number };
@@ -30,7 +31,7 @@ export type ReportsView = { window: ReportsWindow; reports: SetupReport[] };
 
 export type ReportsActions = {
   list(): Promise<ReportsView>;
-  setWindow(open: boolean, elevation: string | null): Promise<ReportsWindow>;
+  setWindow(open: boolean, elevation: string): Promise<ReportsWindow>;
   allowRetry(
     fingerprint: string,
     terminalId: string,
@@ -38,8 +39,8 @@ export type ReportsActions = {
     requestId: string,
     elevation: string | null,
   ): Promise<RetryView>;
-  cancelRetry(fingerprint: string): Promise<void>;
-  dismiss(fingerprint: string): Promise<void>;
+  cancelRetry(fingerprint: string, elevation: string): Promise<void>;
+  dismiss(fingerprint: string, elevation: string): Promise<void>;
 };
 
 /** The text for an answer that does not have the shape. */
@@ -101,8 +102,7 @@ export function reportsActions(io: DeckHttp): ReportsActions {
       return { window: v['window'], reports: rows };
     },
     setWindow: async (open, elevation) => {
-      const body = elevation === null ? { open } : { open, elevation };
-      const v = await io.post(`${BASE}/window`, body);
+      const v = await io.post(`${BASE}/window`, { open, elevation });
       return isWindow(v) ? v : invalid();
     },
     allowRetry: async (fingerprint, terminalId, stateDigest, requestId, elevation) => {
@@ -115,11 +115,11 @@ export function reportsActions(io: DeckHttp): ReportsActions {
       const v = await io.post(`${BASE}/${seg(fingerprint)}/retry`, body);
       return record(v) && isRetry(v['retry']) ? v['retry'] : invalid();
     },
-    cancelRetry: async (fingerprint) => {
-      await io.del(`${BASE}/${seg(fingerprint)}/retry`);
+    cancelRetry: async (fingerprint, elevation) => {
+      await io.del(`${BASE}/${seg(fingerprint)}/retry`, { [ELEVATION_HEADER]: elevation });
     },
-    dismiss: async (fingerprint) => {
-      await io.del(`${BASE}/${seg(fingerprint)}`);
+    dismiss: async (fingerprint, elevation) => {
+      await io.del(`${BASE}/${seg(fingerprint)}`, { [ELEVATION_HEADER]: elevation });
     },
   };
 }

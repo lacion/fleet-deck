@@ -15,7 +15,10 @@ use std::collections::BTreeSet;
 
 use common::board::{BoardClient, Http};
 use fleetdeck_core::identity::{Fingerprint, Identity};
+use fleetdeck_deck::elevation::ELEVATION_TTL_MS;
+use fleetdeck_deck::http::artifact_delete::ELEVATION_HEADER;
 use fleetdeck_deck::store::AuditResult;
+use fleetdeck_deck::store::auth::secret_hash;
 use fleetdeck_link::hello::ReportStatus;
 use fleetdeck_link::node::ListenerKind;
 use fleetdeck_link::{ReportSink, ValidReport, send_report};
@@ -39,8 +42,33 @@ fn report(t: char, code: &str) -> ValidReport {
     ValidReport::validate(&terminal(t), &digest(t), code, "link", NAME).unwrap()
 }
 
+/// A DELETE with the elevation header (or without it).
+async fn delete_with(c: &BoardClient, h: &Headers, path: &str, elevation: Option<&str>) -> Http {
+    let mut headers = refs(h);
+    if let Some(token) = elevation {
+        headers.push((ELEVATION_HEADER, token));
+    }
+    c.req("DELETE", path, &headers, None).await
+}
+
+/// A DELETE with a fresh elevation of the login `h`.
 async fn delete(c: &BoardClient, h: &Headers, path: &str) -> Http {
-    c.req("DELETE", path, &refs(h), None).await
+    let elevation = elevate(c, h).await;
+    delete_with(c, h, path, Some(&elevation)).await
+}
+
+/// An elevation of the login `h` that is already expired.
+fn expired_elevation(c: &BoardClient, h: &Headers) -> String {
+    let (_, value) = h[0].1.split_once('=').unwrap();
+    let session_hash = secret_hash(value);
+    let now = c.store.now_ms();
+    let (token, expires) = c
+        .state
+        .elevations
+        .issue(&session_hash, now - ELEVATION_TTL_MS - 1)
+        .unwrap();
+    assert!(expires <= now);
+    token.expose().clone()
 }
 
 fn key() -> Fingerprint {
@@ -170,8 +198,15 @@ async fn provision_report_window_needs_elevation_to_open_and_never_opens_pairing
         get(c, &h, "/api/provision-reports").await.body["window"]["open"],
         true
     );
-    // Closing needs no elevation.
-    let r = post(c, &h, path, json!({ "open": false })).await;
+    // Closing needs the elevation too: the window stays open without it.
+    let elevation = elevate(c, &h).await;
+    let r = post(
+        c,
+        &h,
+        path,
+        json!({ "open": false, "elevation": elevation }),
+    )
+    .await;
     assert_eq!(r.status, 200, "{}", r.body);
     assert_eq!(r.body, json!({ "open": false, "deadline_ms": null }));
     let audited = |result| c.audited("provision_reports.window", result);
@@ -180,6 +215,79 @@ async fn provision_report_window_needs_elevation_to_open_and_never_opens_pairing
         vec![Some("close".to_owned()), Some("open".to_owned())]
     );
     assert_eq!(audited(AuditResult::Failed).await.len(), 2);
+}
+
+#[tokio::test]
+async fn provision_report_close_cancel_and_dismiss_need_the_owners_elevation() {
+    let d = deck(Some(ListenerKind::Tailnet)).await;
+    let c = &d.board;
+    let h = owner(c).await;
+    open_reports(c, &h).await;
+    let fp = key();
+    receive(&d, fp, report('a', "denied"), 0).await;
+    let granted = elevate(c, &h).await;
+    let retry_path = format!("/api/provision-reports/{fp}/retry");
+    let report_path = format!("/api/provision-reports/{fp}");
+    let window_path = "/api/provision-reports/window";
+    let queued = post(c, &h, &retry_path, retry_body('a', "req-1", &granted)).await;
+    assert_eq!(queued.status, 200, "{}", queued.body);
+
+    // The elevation of another login, an expired one, a wrong one and none.
+    let other = owner(c).await;
+    let foreign = elevate(c, &other).await;
+    let expired = expired_elevation(c, &h);
+    for (what, token) in [
+        ("none", None),
+        ("wrong", Some("nope".to_owned())),
+        ("expired", Some(expired)),
+        ("another login", Some(foreign)),
+    ] {
+        let token = token.as_deref();
+        let mut close = json!({ "open": false });
+        if let Some(t) = token {
+            close["elevation"] = json!(t);
+        }
+        expect(
+            &post(c, &h, window_path, close).await,
+            400,
+            "elevation_required",
+        );
+        expect(
+            &delete_with(c, &h, &retry_path, token).await,
+            400,
+            "elevation_required",
+        );
+        expect(
+            &delete_with(c, &h, &report_path, token).await,
+            400,
+            "elevation_required",
+        );
+        // Nothing changed: the window is open, the retry is queued, the
+        // report is still listed.
+        let list = get(c, &h, "/api/provision-reports").await;
+        assert_eq!(list.body["window"]["open"], true, "{what}");
+        let rows = list.body["reports"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "{what}");
+        assert_eq!(rows[0]["retry"]["state"], "queued", "{what}");
+        assert!(d.node.provision_reports().window().open, "{what}");
+    }
+
+    // With a valid elevation each one works.
+    let r = post(
+        c,
+        &h,
+        window_path,
+        json!({ "open": false, "elevation": granted }),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(r.body, json!({ "open": false, "deadline_ms": null }));
+    let r = delete_with(c, &h, &retry_path, Some(&granted)).await;
+    assert_eq!(r.status, 204, "{}", r.text);
+    let r = delete_with(c, &h, &report_path, Some(&granted)).await;
+    assert_eq!(r.status, 204, "{}", r.text);
+    let list = get(c, &h, "/api/provision-reports").await;
+    assert!(list.body["reports"].as_array().unwrap().is_empty());
 }
 
 #[tokio::test]

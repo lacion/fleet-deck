@@ -75,7 +75,7 @@ pub(super) struct Input {
     pub(super) file: ProvisionFile,
     pub(super) host: String,
     pub(super) port: u16,
-    config_sha256: String,
+    pub(super) config_sha256: String,
 }
 
 /// The provisioning file as the supervisor needs it before a report: `None`
@@ -296,7 +296,7 @@ impl Run<'_> {
         let current = binding::digest(
             &error,
             state.phase,
-            &state.config_sha256,
+            &input.config_sha256,
             &input.file.deck_fingerprint,
             state.station_fingerprint.as_deref(),
         );

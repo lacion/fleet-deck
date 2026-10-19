@@ -11,6 +11,7 @@ use super::binding::{self, Authorization, Binding};
 use super::effects::{Effects, ServiceState};
 use super::fake::{DECK_FP, Fake, JoinStep, file_text, go, go_authorized};
 use super::run::Exit;
+use super::sha256_hex;
 use super::state::{self, Phase};
 
 const RETRY: &str = "0123456789abcdef0123456789abcdef";
@@ -19,14 +20,16 @@ fn hex(unit: &str, times: usize) -> String {
     unit.repeat(times)
 }
 
-/// The binding of the terminal condition that the state keeps now (what the
-/// supervisor stores before it reports).
+/// The binding of the terminal condition that the state keeps now, with the
+/// provisioning file as read now (what the supervisor stores before it
+/// reports).
 fn bind(fake: &Fake) -> Binding {
     let state = fake.state().unwrap();
+    let file = fake.provision.lock().unwrap().clone().unwrap();
     let digest = binding::digest(
         state.error.as_deref().unwrap(),
         state.phase,
-        &state.config_sha256,
+        &sha256_hex(&file),
         DECK_FP,
         state.station_fingerprint.as_deref(),
     );
@@ -317,4 +320,32 @@ async fn a_provisioning_file_that_is_not_valid_is_still_file_invalid() {
     assert_eq!(last_line(&fake), "provision: validated: file_invalid");
     assert_eq!(state_bytes(&fake), before);
     assert!(path.exists());
+}
+
+/// The provisioning file with another `deck` host and the same pin.
+fn file_with_other_host() -> Vec<u8> {
+    format!(
+        "version = 1\ndeck = \"other.example.ts.net:7421\"\ndeck_fingerprint = \"{DECK_FP}\"\nname = \"laptop\"\n"
+    )
+    .into_bytes()
+}
+
+#[tokio::test]
+async fn an_authorization_of_the_file_before_a_change_is_report_changed() {
+    let fake = Fake::new();
+    let bound = stopped(&fake, &[JoinStep::Paired]).await;
+    let path = authorize(&fake, RETRY, &bound);
+    // The owner changes the destination of the file, with the same pin.
+    *fake.provision.lock().unwrap() = Ok(file_with_other_host());
+    let before = state_bytes(&fake);
+    assert_eq!(go_authorized(&fake, &path).await, Exit::Terminal);
+    assert_eq!(Exit::Terminal.code(), 2);
+    assert_eq!(last_line(&fake), "provision: retry: report_changed");
+    assert_eq!(state_bytes(&fake), before);
+    assert_eq!(fake.state().unwrap().consumed_retry_id, None);
+    assert_eq!(fake.state().unwrap().error.as_deref(), Some("pending"));
+    assert_eq!(fake.count("join"), 1);
+    assert!(path.exists());
+    // The binding of the new file is another one.
+    assert_ne!(bind(&fake), bound);
 }

@@ -80,22 +80,45 @@ pub async fn supervise(effects: &dyn Effects, file: &Path) -> Exit {
             return Exit::Unexpected;
         }
     };
-    let mut authorization: Option<PathBuf> = None;
+    // An authorization that an earlier supervisor wrote and nobody consumed
+    // is kept: the bootstrap checks it under `provision.lock`.
+    let pending = binding::authorization_path(&dir);
+    let mut authorization: Option<PathBuf> = effects
+        .read_authorization(&pending)
+        .is_ok()
+        .then_some(pending);
     loop {
         let path = authorization.take();
-        match run::run(effects, file, false, path.as_deref()).await {
-            Exit::Complete => return Exit::Complete,
+        let exit = run::run(effects, file, false, path.as_deref()).await;
+        match exit {
             Exit::Unexpected => return Exit::Unexpected,
             Exit::Busy => {
+                // The authorization stays for the next run.
+                authorization = path;
                 effects.sleep(BUSY_WAIT).await;
                 continue;
             }
-            Exit::Terminal => {}
+            Exit::Complete | Exit::Terminal => {
+                if let Some(path) = &path {
+                    remove_authorization(effects, path);
+                }
+            }
+        }
+        if exit == Exit::Complete {
+            return Exit::Complete;
         }
         match report_step(effects, file, &root, &dir).await {
             Next::Wait(wait) => effects.sleep(wait).await,
             Next::Retry(path) => authorization = Some(path),
         }
+    }
+}
+
+/// Removes an authorization file that a finished run left (a refused or a
+/// replayed one). A failure is a diagnostic line.
+fn remove_authorization(effects: &dyn Effects, path: &Path) {
+    if effects.read_authorization(path).is_ok() && effects.delete_authorization(path).is_err() {
+        line(effects, "retry", "authorization_not_removed");
     }
 }
 
@@ -119,7 +142,7 @@ fn condition(
     let digest = binding::digest(
         &error,
         state.phase,
-        &state.config_sha256,
+        &input.config_sha256,
         &input.file.deck_fingerprint,
         state.station_fingerprint.as_deref(),
     );

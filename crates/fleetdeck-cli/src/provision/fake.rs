@@ -58,6 +58,9 @@ pub enum ReportStep {
 /// A function that runs once after the authorization is read.
 pub type AuthHook = Box<dyn FnOnce() + Send>;
 
+/// A function that runs once, at the first sleep (the sleep is recorded).
+pub type SleepHook = Box<dyn FnOnce(&Fake) + Send>;
+
 pub struct Station {
     pub fingerprint: String,
     pub up_at: Duration,
@@ -114,6 +117,7 @@ pub struct Fake {
     pub authorization_deleted: Mutex<Vec<PathBuf>>,
     pub fail_delete: Mutex<bool>,
     pub after_auth_read: Mutex<Option<AuthHook>>,
+    pub on_first_sleep: Mutex<Option<SleepHook>>,
     /// After this many sleeps the next run fails with `Unexpected` (the
     /// directory of the station gives an error), which ends a supervisor.
     pub stop_after_sleeps: Mutex<Option<usize>>,
@@ -256,6 +260,7 @@ impl Fake {
             authorization_deleted: Mutex::new(Vec::new()),
             fail_delete: Mutex::new(false),
             after_auth_read: Mutex::new(None),
+            on_first_sleep: Mutex::new(None),
             stop_after_sleeps: Mutex::new(None),
         }
     }
@@ -353,6 +358,10 @@ impl Effects for Fake {
                 .is_some_and(|n| slept >= n)
             {
                 *self.dir_error.lock().unwrap() = true;
+            }
+            let hook = self.on_first_sleep.lock().unwrap().take();
+            if let Some(hook) = hook {
+                hook(self);
             }
         })
     }
