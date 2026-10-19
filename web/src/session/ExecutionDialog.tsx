@@ -7,6 +7,7 @@ import { useOverlay } from '../app/overlay';
 import type { ExecutionCheck } from '../gen';
 import { Icon, X } from '../ui/icons';
 import type { SessionActions } from './commands';
+import { ESCAPED_TITLE, ExecutionStop, stillRuns } from './ExecutionStop';
 
 type ProcessList = { readonly title: string; readonly rows: readonly string[] };
 
@@ -36,10 +37,7 @@ export function executionView(check: ExecutionCheck): ExecutionView {
     { title: 'Processes in its session', rows: rowsOf(check.session_members) },
   ];
   if (check.escaped.length > 0) {
-    lists.push({
-      title: 'Processes that left its group (they do not block)',
-      rows: rowsOf(check.escaped),
-    });
+    lists.push({ title: ESCAPED_TITLE, rows: rowsOf(check.escaped) });
   }
   return {
     nothing: false,
@@ -168,6 +166,14 @@ export function ExecutionDialog({ actions, onClose }: Props) {
               <p className="fd-note" role="alert">
                 {view.incomplete}
               </p>
+            )}
+            {view.nothing || shimId === null || marked ? null : (
+              <ExecutionStop
+                actions={actions}
+                shimId={shimId}
+                stillRuns={check !== null && stillRuns(check)}
+                onCheck={setCheck}
+              />
             )}
             {view.nothing || shimId === null ? null : marked ? (
               <p className="fd-note" role="status">

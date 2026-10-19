@@ -587,6 +587,10 @@ pub fn router(board: Arc<Board>) -> Router {
             get(execution_routes::check),
         )
         .route(
+            "/api/sessions/{station}/{session}/execution/stop-plan",
+            get(execution_routes::stop_plan),
+        )
+        .route(
             "/api/sessions/{station}/{session}/fleet-answers",
             get(fleet_answers_routes::list),
         )

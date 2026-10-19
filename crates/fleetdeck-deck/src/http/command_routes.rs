@@ -22,6 +22,7 @@ use fleetdeck_proto::event::RequestKind;
 use fleetdeck_proto::fleet_git::StartKind;
 use fleetdeck_proto::version::feature;
 
+use super::execution_routes::{StopAudit, stop_gates};
 use super::guard::ApiError;
 use super::methods::COMMAND_PREFIX;
 use super::{Board, access};
@@ -34,6 +35,9 @@ use crate::store::{
 /// How long a command call waits for the station's receipt before it
 /// answers with the `pending` command (the board then polls).
 pub const RECEIPT_WAIT: Duration = Duration::from_secs(5);
+
+/// The method of the command that stops the processes of a lost run.
+const STOP_METHOD: &str = "session.stop_execution";
 
 /// `POST /api/commands/<method>`.
 ///
@@ -52,6 +56,11 @@ pub async fn command(
         .unwrap_or_default()
         .to_owned();
     let audit = NewAudit::new(principal.actor(), method.clone(), AuditResult::Refused);
+    // BG-4: a stop command has its own audit rows next to the generic one.
+    let stop = match &body {
+        Ok(Json(req)) if method == STOP_METHOD => StopAudit::of(req),
+        _ => None,
+    };
     match route(&board, &method, &principal, body).await {
         Ok((cmd, new)) => {
             let mut row = NewAudit::new(principal.actor(), method, AuditResult::Ok)
@@ -61,6 +70,10 @@ pub async fn command(
                 row = row.detail("duplicate");
             }
             board.store.audit_or_log(row).await;
+            if let Some(stop) = stop.as_ref().filter(|_| new) {
+                stop.accepted(&board, &principal.actor(), &cmd.station_id.0)
+                    .await;
+            }
             let cmd = board
                 .link
                 .wait_command(cmd.command_id, RECEIPT_WAIT)
@@ -69,6 +82,15 @@ pub async fn command(
             Ok(Json(cmd))
         }
         Err((station, id, e)) => {
+            if let Some(stop) = &stop {
+                stop.refused(
+                    &board,
+                    &principal.actor(),
+                    station.as_deref().unwrap_or("-"),
+                    e.code,
+                )
+                .await;
+            }
             let mut row = audit.detail(e.code);
             if let Some(station) = station {
                 row = row.target(station);
@@ -178,6 +200,12 @@ async fn route(
             "import_pin_unsupported",
             "This station cannot verify an import. Update it.".to_owned(),
         ));
+    }
+    // Stopping the processes of a lost run (BG-4): the owner, the feature and
+    // the elevation are checked before anything else is stored or sent.
+    if matches!(&req.command, SessionCommand::StopExecution { .. }) {
+        stop_gates(board, principal, &rec.station_id, req.elevation.as_deref())
+            .map_err(|e| (station.clone(), id.clone(), e))?;
     }
     let mut command = req.command;
     if let Principal::Member(_, grant) = principal {

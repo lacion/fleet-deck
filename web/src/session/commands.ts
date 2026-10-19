@@ -8,6 +8,7 @@ import { ApiError } from '../runtime/api';
 import type {
   DeckCommand,
   ExecutionCheck,
+  ExecutionStopPlan,
   ImageInput,
   RevertResolution,
   RepoBranches,
@@ -67,6 +68,18 @@ export type SessionActions = {
   checkExecution(): Promise<ExecutionCheck>;
   /** Mark the previous run (shim `shimId`) as ended; the station checks the processes again. */
   reconcileExecution(shimId: string): Promise<Outcome>;
+  /** BG-4: the stop plan of the lost run `shimId` (owner only); the deck answers 501 for an old station. */
+  stopPlan(shimId: string): Promise<ExecutionStopPlan>;
+  /**
+   * BG-4: stop the listed processes of the plan `planId`. The deck needs the owner's `elevation`;
+   * the caller makes the command id (`commandId()`) to find the outcome in `last_stop`.
+   */
+  stopExecution(
+    shimId: string,
+    planId: string,
+    elevation: string,
+    commandId: string,
+  ): Promise<Outcome>;
   /** What the coordinator session answered (ADR-008 §5.3, owner only). */
   fleetAnswers(): Promise<FleetAnswers>;
   /** The file service of the session; `null` without a reader (tests). */
@@ -110,6 +123,7 @@ const METHODS: Record<SessionCommand['op'], string> = {
   worktree_purge: 'session.worktree_purge',
   worktree_release: 'session.worktree_release',
   reconcile_execution: 'session.reconcile_execution',
+  stop_execution: 'session.stop_execution',
   shell_command: 'session.shell_command',
   release_shell: 'session.release_shell',
   land: 'session.land',
@@ -155,6 +169,22 @@ export function outcomeOf(v: unknown): Outcome {
   }
 }
 
+/** BG-4 (design `board-gaps.md` §5.5): the six codes of a refused plan or a stop, with the board texts. */
+export const STOP_TEXTS: Readonly<Record<string, string>> = {
+  identity_unproven:
+    'Fleet Deck cannot safely prove that these processes belong to the previous run. No processes were stopped.',
+  inspection_incomplete:
+    'Fleet Deck could not complete the safety check. No processes were stopped.',
+  plan_changed: 'The process list changed. Review it again before stopping processes.',
+  permission_denied: 'Fleet Deck could not stop one or more processes as the station user.',
+  processes_remain: 'Some processes remain. Review the updated list.',
+  outcome_unknown:
+    'The stop result is unknown. Refresh the process check before taking another action.',
+};
+
+/** The text of a plan that the deck sent with a shape or a code that the board does not know. */
+export const INVALID_STOP_PLAN = 'The deck sent an invalid stop plan.';
+
 const isExecutionCheck = (v: unknown): v is ExecutionCheck =>
   record(v) &&
   typeof v['reason'] === 'string' &&
@@ -162,6 +192,20 @@ const isExecutionCheck = (v: unknown): v is ExecutionCheck =>
   Array.isArray(v['group_members']) &&
   Array.isArray(v['session_members']) &&
   Array.isArray(v['escaped']);
+
+const isProcessList = (v: unknown): boolean =>
+  Array.isArray(v) &&
+  v.every((p) => record(p) && typeof p['pid'] === 'number' && typeof p['command'] === 'string');
+
+const isStopPlan = (v: unknown): v is ExecutionStopPlan =>
+  record(v) &&
+  typeof v['plan_id'] === 'string' &&
+  typeof v['expires_at'] === 'number' &&
+  typeof v['eligible'] === 'boolean' &&
+  (v['code'] === null || (typeof v['code'] === 'string' && Object.hasOwn(STOP_TEXTS, v['code']))) &&
+  isProcessList(v['targets']) &&
+  isProcessList(v['escaped']) &&
+  isExecutionCheck(v['check']);
 
 const invalidAnswer = (): Error => new Error('The deck sent an invalid answer.');
 
@@ -184,9 +228,18 @@ export function sessionActions(
   newId: () => string = commandId,
   get: Get | null = null,
 ): SessionActions {
-  const run = async (command: SessionCommand): Promise<Outcome> => {
+  const run = async (
+    command: SessionCommand,
+    elevation?: string,
+    id: string = newId(),
+  ): Promise<Outcome> => {
     try {
-      const body = { station: key.station_id, command_id: newId(), command };
+      const body = {
+        station: key.station_id,
+        command_id: id,
+        command,
+        ...(elevation === undefined ? {} : { elevation }),
+      };
       return outcomeOf(await post(`/api/commands/${METHODS[command.op]}`, body));
     } catch (error) {
       // R11.7: in mob mode a member who does not drive is refused.
@@ -254,6 +307,15 @@ export function sessionActions(
       return v;
     },
     reconcileExecution: (shim_id) => run({ op: 'reconcile_execution', session_id, shim_id }),
+    stopPlan: async (shimId) => {
+      if (get === null) throw new Error('No reader.');
+      const path = `${sessionPath}/execution/stop-plan?shim_id=${encodeURIComponent(shimId)}`;
+      const v = await get(path);
+      if (!isStopPlan(v)) throw new Error(INVALID_STOP_PLAN);
+      return v;
+    },
+    stopExecution: (shim_id, plan_id, elevation, id) =>
+      run({ op: 'stop_execution', session_id, shim_id, plan_id }, elevation, id),
     fleetAnswers: async () => {
       if (get === null) throw new Error('No reader.');
       const path = `/api/sessions/${encodeURIComponent(key.station_id)}/${encodeURIComponent(session_id)}/fleet-answers`;

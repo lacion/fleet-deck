@@ -4,27 +4,58 @@
 //! sees of the unresolved execution (`session.execution_check`). Only the
 //! owner's board login asks. The owner then marks the run as ended with the
 //! command `session.reconcile_execution` (`command_routes.rs`).
+//!
+//! BG-4 (design `board-gaps.md` §5): `GET .../execution/stop-plan?shim_id=`
+//! reads the stop plan (`session.execution_stop_plan`), and the audit rows of
+//! `session.execution_stop` live here: the command writes `accepted` or
+//! `refused` (`command_routes.rs`); a check that carries a `last_stop` writes
+//! one `outcome` row for each command ID.
 
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 use std::time::Duration;
 
 use axum::Json;
-use axum::extract::{Extension, Path, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
-use fleetdeck_proto::StationId;
+use fleetdeck_proto::board::CommandRequest;
+use fleetdeck_proto::command::SessionCommand;
 use fleetdeck_proto::execution::{ExecutionCheck, ExecutionCheckQuery};
+use fleetdeck_proto::execution_stop::{
+    ExecutionStopOutcome, ExecutionStopPlan, ExecutionStopPlanQuery, StopOutcome, code as stop_code,
+};
 use fleetdeck_proto::files::code as files_code;
 use fleetdeck_proto::link::Outcome;
+use fleetdeck_proto::version::feature;
+use fleetdeck_proto::{CommandId, StationId};
+use serde::Deserialize;
 use serde_json::Value;
 
 use super::Board;
 use super::guard::{ApiError, owner_only};
-use crate::store::{AuditResult, NewAudit, Principal};
+use super::settings_routes::is_elevated;
+use crate::store::{AuditResult, LinkFeature, NewAudit, Principal, StationRecord};
 
 /// The longest the deck waits for the station.
 const WAIT: Duration = Duration::from_secs(10);
 
 const METHOD: &str = "session.execution_check";
+const PLAN_METHOD: &str = "session.execution_stop_plan";
+
+/// The audit action of a stop (design §5.6).
+const STOP_ACTION: &str = "session.execution_stop";
+
+/// The text of a station that cannot stop the processes of a lost run.
+pub(super) const STOP_UNSUPPORTED_TEXT: &str =
+    "This station's build cannot stop the processes of a lost run from the board.";
+
+/// How many command IDs the deck remembers as audited; the set is cleared
+/// when it is full.
+const AUDITED_CAP: usize = 1_024;
+
+/// The IDs of the stop commands whose outcome row the deck wrote in this
+/// process.
+static AUDITED: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
 fn unreachable_error(station: &StationId) -> ApiError {
     ApiError::new(
@@ -35,12 +66,17 @@ fn unreachable_error(station: &StationId) -> ApiError {
 }
 
 /// One request to the station's live link.
-async fn request(board: &Board, station: &StationId, params: Value) -> Result<Outcome, ApiError> {
+async fn request(
+    board: &Board,
+    station: &StationId,
+    method: &str,
+    params: Value,
+) -> Result<Outcome, ApiError> {
     let control = board
         .link
         .control_for(station)
         .ok_or_else(|| unreachable_error(station))?;
-    tokio::time::timeout(WAIT, control.request(METHOD, None, params))
+    tokio::time::timeout(WAIT, control.request(method, None, params))
         .await
         .map_err(|_| {
             ApiError::new(
@@ -71,6 +107,21 @@ fn refusal(code: &str, message: &str) -> ApiError {
     }
 }
 
+async fn find_station(board: &Board, station: &str) -> Result<StationRecord, ApiError> {
+    board
+        .store
+        .find_station(station.to_owned())
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "unknown_station",
+                format!("no station is named `{station}`"),
+            )
+        })
+}
+
 /// `GET /api/sessions/{station}/{session}/execution`.
 ///
 /// # Errors
@@ -82,27 +133,19 @@ pub async fn check(
     Path((station, session)): Path<(String, String)>,
 ) -> Result<Json<ExecutionCheck>, ApiError> {
     owner_only(&principal, "checks a previous run")?;
-    let found = board
-        .store
-        .find_station(station.clone())
-        .await
-        .map_err(ApiError::internal)?;
-    let Some(rec) = found else {
-        return Err(ApiError::new(
-            StatusCode::NOT_FOUND,
-            "unknown_station",
-            format!("no station is named `{station}`"),
-        ));
-    };
+    let rec = find_station(&board, &station).await?;
     let target = format!("{}/{session}", rec.station_id.0);
     let result = ask(&board, &rec.station_id, &session).await;
     let row = match &result {
-        Ok(_) => NewAudit::new(principal.actor(), METHOD, AuditResult::Ok).target(target),
+        Ok(_) => NewAudit::new(principal.actor(), METHOD, AuditResult::Ok).target(target.clone()),
         Err(e) => NewAudit::new(principal.actor(), METHOD, AuditResult::Failed)
-            .target(target)
+            .target(target.clone())
             .detail(e.code),
     };
     board.store.audit_or_log(row).await;
+    if let Ok(check) = &result {
+        audit_outcome(&board, &principal.actor(), &target, check).await;
+    }
     result.map(Json)
 }
 
@@ -115,7 +158,7 @@ async fn ask(
         session_id: session.into(),
     })
     .map_err(ApiError::internal)?;
-    match request(board, station, params).await? {
+    match request(board, station, METHOD, params).await? {
         Outcome::Ok(value) => serde_json::from_value(value).map_err(|_| {
             ApiError::new(
                 StatusCode::BAD_GATEWAY,
@@ -125,4 +168,206 @@ async fn ask(
         }),
         Outcome::Err(e) => Err(refusal(&e.code, &e.message)),
     }
+}
+
+fn stop_unsupported() -> ApiError {
+    ApiError::new(
+        StatusCode::NOT_IMPLEMENTED,
+        "unsupported",
+        STOP_UNSUPPORTED_TEXT,
+    )
+}
+
+/// The query of the plan route.
+#[derive(Deserialize)]
+pub struct PlanQuery {
+    shim_id: String,
+}
+
+/// `GET /api/sessions/{station}/{session}/execution/stop-plan?shim_id=`:
+/// link method `session.execution_stop_plan` (BG-4, design §5.2). The read
+/// writes no audit row.
+///
+/// # Errors
+/// 403 `owner_only`, 404 `unknown_station` / `unknown_session`, 409
+/// `station_unreachable`, 429 `busy`, 501 `unsupported`, 502
+/// `station_error`, 504 `timeout`.
+pub async fn stop_plan(
+    State(board): State<Arc<Board>>,
+    Extension(principal): Extension<Principal>,
+    Path((station, session)): Path<(String, String)>,
+    Query(query): Query<PlanQuery>,
+) -> Result<Json<ExecutionStopPlan>, ApiError> {
+    owner_only(&principal, "reads the stop plan of a previous run")?;
+    let rec = find_station(&board, &station).await?;
+    if board
+        .store
+        .link_feature(&rec.station_id, feature::EXECUTION_STOP)
+        == LinkFeature::Without
+    {
+        return Err(stop_unsupported());
+    }
+    let params = serde_json::to_value(ExecutionStopPlanQuery {
+        session_id: session.into(),
+        shim_id: query.shim_id,
+    })
+    .map_err(ApiError::internal)?;
+    match request(&board, &rec.station_id, PLAN_METHOD, params).await? {
+        Outcome::Ok(value) => serde_json::from_value(value).map(Json).map_err(|_| {
+            ApiError::new(
+                StatusCode::BAD_GATEWAY,
+                "station_error",
+                "the station sent an invalid stop plan",
+            )
+        }),
+        Outcome::Err(e) => Err(match e.code.as_str() {
+            "unsupported" | "feature_not_negotiated" | "unknown_method" => stop_unsupported(),
+            _ => refusal(&e.code, &e.message),
+        }),
+    }
+}
+
+/// The gates of the stop command, in this order: the owner's board login, a
+/// station that did not refuse the feature (a down link passes: the link
+/// layer fails as for any command), and a live elevation of the login.
+///
+/// # Errors
+/// 403 `owner_only`, 501 `unsupported`, 400 `elevation_required`.
+pub(super) fn stop_gates(
+    board: &Board,
+    principal: &Principal,
+    station: &StationId,
+    elevation: Option<&str>,
+) -> Result<(), ApiError> {
+    let Principal::Owner(session) = principal else {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "owner_only",
+            "only the owner's board login stops the processes of a previous run",
+        ));
+    };
+    if board.store.link_feature(station, feature::EXECUTION_STOP) == LinkFeature::Without {
+        return Err(stop_unsupported());
+    }
+    if !is_elevated(board, session, elevation) {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "elevation_required",
+            "This action needs the owner's elevation.",
+        ));
+    }
+    Ok(())
+}
+
+/// What the audit of a stop command names: the session, the shim and the
+/// command ID. Never a command name, an argument or `/proc` text.
+pub(super) struct StopAudit {
+    session: String,
+    shim: String,
+    command: CommandId,
+}
+
+impl StopAudit {
+    /// The audit subject of a `stop_execution` request; `None` for any other
+    /// command.
+    pub(super) fn of(req: &CommandRequest) -> Option<Self> {
+        let SessionCommand::StopExecution {
+            session_id,
+            shim_id,
+            ..
+        } = &req.command
+        else {
+            return None;
+        };
+        Some(Self {
+            session: session_id.as_str().to_owned(),
+            shim: shim_id.clone(),
+            command: req.command_id.clone(),
+        })
+    }
+
+    fn row(&self, actor: &str, station: &str, result: AuditResult, detail: String) -> NewAudit {
+        NewAudit::new(actor, STOP_ACTION, result)
+            .target(format!("{station}/{}", self.session))
+            .command(self.command.clone())
+            .detail(detail)
+    }
+
+    /// `stage=accepted`: the deck accepted a new stop command.
+    pub(super) async fn accepted(&self, board: &Board, actor: &str, station: &str) {
+        let detail = format!("stage=accepted shim={}", self.shim);
+        board
+            .store
+            .audit_or_log(self.row(actor, station, AuditResult::Ok, detail))
+            .await;
+    }
+
+    /// `stage=refused code=<code>`: the deck refused the stop command.
+    pub(super) async fn refused(&self, board: &Board, actor: &str, station: &str, code: &str) {
+        let detail = format!("stage=refused code={code} shim={}", self.shim);
+        board
+            .store
+            .audit_or_log(self.row(actor, station, AuditResult::Refused, detail))
+            .await;
+    }
+}
+
+/// True once for each command ID that the deck has not audited yet.
+fn first_outcome(command_id: &str) -> bool {
+    let mut seen = AUDITED.lock().unwrap_or_else(PoisonError::into_inner);
+    if seen.contains(command_id) {
+        return false;
+    }
+    if seen.len() >= AUDITED_CAP {
+        seen.clear();
+    }
+    seen.insert(command_id.to_owned())
+}
+
+/// A code of the station for the audit: one of the six, else a fixed word, so
+/// that a station cannot put text into the audit.
+fn known_code(code: &str) -> &str {
+    if stop_code::text(code).is_some() {
+        code
+    } else {
+        "unknown_code"
+    }
+}
+
+/// The audit detail of a stop outcome.
+fn outcome_detail(last: &ExecutionStopOutcome, shim: &str) -> String {
+    format!(
+        "stage=outcome outcome={} code={} term={} kill={} gone={} skipped={} shim={shim}",
+        last.outcome.as_str(),
+        last.code.as_deref().map_or("-", known_code),
+        last.term_sent,
+        last.kill_sent,
+        last.gone,
+        last.skipped,
+    )
+}
+
+/// One `stage=outcome` row for the `last_stop` of a check, when the deck did
+/// not audit its command ID yet in this process.
+async fn audit_outcome(board: &Board, actor: &str, target: &str, check: &ExecutionCheck) {
+    let Some(last) = &check.last_stop else {
+        return;
+    };
+    if !first_outcome(&last.command_id) {
+        return;
+    }
+    let result = match last.outcome {
+        StopOutcome::Done => AuditResult::Ok,
+        StopOutcome::Failed | StopOutcome::Unknown => AuditResult::Failed,
+    };
+    let shim = check.shim_id.as_deref().unwrap_or("-");
+    board
+        .store
+        .audit_or_log(
+            NewAudit::new(actor, STOP_ACTION, result)
+                .target(target)
+                .command(CommandId::from(last.command_id.as_str()))
+                .detail(outcome_detail(last, shim)),
+        )
+        .await;
 }
