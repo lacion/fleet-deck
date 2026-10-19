@@ -246,14 +246,13 @@ fn a_directory_source_is_unsafe_source() {
 fn a_fifo_source_is_unsafe_source_and_does_not_block() {
     let dir = tempfile::tempdir().unwrap();
     let fifo = dir.path().join("fifo");
-    rustix::fs::mknodat(
-        rustix::fs::CWD,
-        &fifo,
-        rustix::fs::FileType::Fifo,
-        Mode::RUSR | Mode::WUSR,
-        0,
-    )
-    .unwrap();
+    // `mkfifo(1)`: rustix has no `mknodat` on macOS.
+    let made = std::process::Command::new("mkfifo")
+        .args(["-m", "600"])
+        .arg(&fifo)
+        .status()
+        .unwrap();
+    assert!(made.success());
     assert_eq!(
         code(import(&fifo, Path::new("/x"), &ext4)).0,
         "unsafe_source"

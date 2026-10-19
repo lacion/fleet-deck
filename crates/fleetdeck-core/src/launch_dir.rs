@@ -177,14 +177,15 @@ impl LaunchDir {
         let fd = open_below(&root_fd, rel, &names).map_err(|_| LaunchDirError::Changed)?;
         let stat = rustix::fs::fstat(&fd).map_err(|_| LaunchDirError::Changed)?;
         #[allow(
-            clippy::useless_conversion,
-            reason = "st_dev and st_ino differ by platform"
+            clippy::unnecessary_cast,
+            clippy::cast_sign_loss,
+            reason = "st_dev and st_ino differ by platform (dev_t is i32 on macOS)"
         )]
         let identity = LaunchIdentity {
             root: root_text.to_owned(),
             rel: rel_text,
-            dev: u64::from(stat.st_dev),
-            ino: u64::from(stat.st_ino),
+            dev: stat.st_dev as u64,
+            ino: stat.st_ino as u64,
         };
         Ok(Self { fd, identity })
     }
