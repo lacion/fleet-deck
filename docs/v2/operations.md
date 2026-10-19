@@ -506,7 +506,7 @@ Steps:
 4. Press **Keep copies and replace**. The board asks "Confirm it is you" for "Omarchy integration".
 5. Read the result: "Replaced N files. The kept copies are listed under Repairs." or the text of a refusal (see the table below).
 
-What a kept copy is: the old file, moved aside in the same folder. Its name is the old name with `.fleetdeck-conflict-<unix seconds>-<16 random hexadecimal characters>` added. Fleet Deck never replaces a kept copy in a rename and never deletes it. No action of the board removes a kept copy (open item: no board path yet to delete a kept copy). The board shows the path of each kept copy under **Repairs** as "Kept copy: <path>".
+What a kept copy is: the old file, moved aside in the same folder. Its name is the old name with `.fleetdeck-conflict-<unix seconds>-<16 random hexadecimal characters>.sample` added. The ending `.sample` makes sure that no Omarchy hook runs a kept copy of a hook file. Fleet Deck never replaces a kept copy in a rename and never deletes it. No action of the board removes a kept copy (open item: no board path yet to delete a kept copy). The board shows the path of each kept copy under **Repairs** as "Kept copy: <path>".
 
 How the station replaces the files:
 
@@ -537,7 +537,7 @@ How the station replaces the files:
    | Text | Meaning |
    | --- | --- |
    | Copy the kept file back | The old file is missing. The restore copies the kept copy to its place. |
-   | Keep the current file aside, then copy the kept file back | The new file that Fleet Deck published is there. The restore moves it aside to a new kept name (`.fleetdeck-kept-<unix seconds>-<16 hex characters>`) and copies the old file back. |
+   | Keep the current file aside, then copy the kept file back | The new file that Fleet Deck published is there. The restore moves it aside to a new kept name (`.fleetdeck-kept-<unix seconds>-<16 hex characters>.sample`) and copies the old file back. |
    | Remove the file that Fleet Deck added | There was no old file. The restore removes the new file, only when it is still the file that Fleet Deck wrote. |
    | Nothing to restore | The file is already restored. |
    | Changed after the repair: not restored | Someone changed the file after the repair. Fleet Deck keeps both versions. |
@@ -1624,11 +1624,11 @@ Steps:
 
 1. On the board, open Stations and select "Add station". Select "A computer on my tailnet". Find the section "Setup reports from unpaired keys" below "Other computers ask to join".
 2. The line reads "Reporting is closed. Unpaired keys cannot send setup reports." Press **Open setup reports for one hour**. The board asks for a recent sign-in for "Setup reports". The line then reads "Reporting is open until <time>." The deck needs a tailnet listener. Without it, the deck refuses and the board shows its message.
-3. Wait for the supervisor to report. A station that reports while the window is closed gets the answer `disabled` and tries again later. Press **Close setup reports** at any time. It needs no sign-in.
+3. Wait for the supervisor to report. A station that reports while the window is closed gets the answer `disabled` and tries again later. Press **Close setup reports** at any time. The board asks for a recent sign-in for "Setup reports".
 4. Read each row. It shows "This key has not been paired. Its name and setup status are self-reported.", the full key in groups, "Reported name: <name>", the text of the code, "Phase: <phase>", "Received: <time>" and "Last contact: <time>". Compare the key with the fingerprint of the new station (section 15.1, step 4). The name is only a label. The deck never merges rows by name or address. A report makes no station row, no paired mark, no grant and no invitation.
 5. For a code that a retry can repair, press **Allow one setup retry**. Read "Allow this key to try setup once more? This does not pair it, change its trusted deck, replace its identity, or override setup checks." Press **Allow one retry**. The board asks for a recent sign-in for "Setup reports".
-6. The row reads "Retry allowed. The setup supervisor will check again within about ten minutes while it is running." Press **Cancel retry** to take the permission back. When the station took it, the row reads "The retry was sent to the station." and has no cancel button.
-7. Press **Dismiss report** to remove a row and its permission.
+6. The row reads "Retry allowed. The setup supervisor will check again within about ten minutes while it is running." Press **Cancel retry** to take the permission back. The board asks for a recent sign-in for "Setup reports". When the station took it, the row reads "The retry was sent to the station." and has no cancel button.
+7. Press **Dismiss report** to remove a row and its permission. The board asks for a recent sign-in for "Setup reports".
 
 What a retry does and does not do:
 
