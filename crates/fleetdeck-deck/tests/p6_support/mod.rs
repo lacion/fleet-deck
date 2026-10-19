@@ -11,6 +11,7 @@ pub mod board;
 pub mod fake_deck;
 pub mod fake_desktop;
 pub mod input_rig;
+pub mod input_rig_p7b;
 pub mod mcp;
 mod proofs_exposure;
 pub mod recorder;
@@ -225,12 +226,22 @@ pub fn set_policy_input(
     manager: &SessionManager,
     (fleet, desktop, capture, input): (bool, bool, bool, bool),
 ) {
+    set_policy_p7b(manager, (fleet, desktop, capture, input), (false, false));
+}
+
+/// As [`set_policy_input`], with `allow_desktop_click` and
+/// `allow_desktop_input_any` (R13 P7b): `(click, any)`.
+pub fn set_policy_p7b(
+    manager: &SessionManager,
+    (fleet, desktop, capture, input): (bool, bool, bool, bool),
+    (click, any): (bool, bool),
+) {
     let env = Env {
         home: Some("/home/test".into()),
         ..Env::default()
     };
     let text = format!(
-        "allow_fleet_control = {fleet}\nallow_desktop = {desktop}\nallow_desktop_capture = {capture}\nallow_desktop_input = {input}\n"
+        "allow_fleet_control = {fleet}\nallow_desktop = {desktop}\nallow_desktop_capture = {capture}\nallow_desktop_input = {input}\nallow_desktop_click = {click}\nallow_desktop_input_any = {any}\n"
     );
     let config = fleetdeck_core::config::StationConfig::parse(&text, &env).unwrap();
     let prepared = manager.prepare(&config).unwrap();
@@ -335,6 +346,9 @@ pub struct World {
     /// The input cap and the character cap of the grant, if the world has the
     /// input allowance (R13 P7).
     input: Option<(u32, u32)>,
+    /// The click allowance and the scope `any_window` of the grant (R13 P7b).
+    click: bool,
+    any_window: bool,
 }
 
 /// What a world starts with.
@@ -353,6 +367,13 @@ pub struct Setup {
     /// gives the binding on A the classes `Input` and `InputEnabled`, and
     /// turns `allow_desktop_input` on for B. `None` is a grant without input.
     pub input: Option<(u32, u32)>,
+    /// R13 P7b: the grant has `allow_click`, the binding on A has the class
+    /// `ClickEnabled`, and B turns `allow_desktop_click` on. Needs `input`.
+    pub click: bool,
+    /// R13 P7b: the grant has the scope `any_window`, the binding on A has the
+    /// class `InputAny`, and B turns `allow_desktop_input_any` on. Needs
+    /// `input`.
+    pub any_window: bool,
 }
 
 impl Default for Setup {
@@ -362,6 +383,8 @@ impl Default for Setup {
             grant: true,
             recording: None,
             input: None,
+            click: false,
+            any_window: false,
         }
     }
 }
@@ -380,6 +403,9 @@ impl World {
         let b = StationB::new(&tmp.path().join("b"), rig, &identity).await;
         if setup.input.is_some() {
             input_rig::arm(&b.rig);
+            if setup.click || setup.any_window {
+                input_rig_p7b::arm(&b.rig);
+            }
         }
         let pin = vec![NewStation {
             key: b.identity.public_key(),
@@ -425,6 +451,8 @@ impl World {
             },
             recording: setup.recording,
             input: setup.input,
+            click: setup.click,
+            any_window: setup.any_window,
         };
         world.wait_linked(&setup.b_without).await;
         if setup.grant {
@@ -464,6 +492,12 @@ impl World {
         if self.input.is_some() && !missing.contains(&feature::DESKTOP_INPUT_MCP) {
             wanted.push(feature::DESKTOP_INPUT_MCP);
         }
+        if self.click && !missing.contains(&feature::DESKTOP_CLICK_MCP) {
+            wanted.push(feature::DESKTOP_CLICK_MCP);
+        }
+        if self.any_window && !missing.contains(&feature::DESKTOP_INPUT_ANY) {
+            wanted.push(feature::DESKTOP_INPUT_ANY);
+        }
         eventually("the features of the links", || {
             let (store, b, missing, wanted) =
                 (store.clone(), b.clone(), missing.clone(), wanted.clone());
@@ -502,7 +536,12 @@ impl World {
         if let Some((count, characters)) = self.input {
             spec.classes.insert(GrantClass::Input);
             spec.allow_input = true;
-            spec.input_scope = Some(InputScope::OwnWindows);
+            spec.input_scope = Some(if self.any_window {
+                InputScope::AnyWindow
+            } else {
+                InputScope::OwnWindows
+            });
+            spec.allow_click = self.click;
             spec.input_cap = count;
             spec.input_character_cap = characters;
         }
@@ -536,6 +575,12 @@ impl World {
         if self.input.is_some() {
             classes.insert(ToolClass::Input);
             classes.insert(ToolClass::InputEnabled);
+            if self.click {
+                classes.insert(ToolClass::ClickEnabled);
+            }
+            if self.any_window {
+                classes.insert(ToolClass::InputAny);
+            }
             // The station B of an input world allows desktop input.
             self.set_b_input(true, true, true, true);
         }
@@ -577,7 +622,17 @@ impl World {
     /// The settings of B with `allow_desktop_input` (R13 P7): fleet control,
     /// desktop, capture, input.
     pub fn set_b_input(&self, fleet: bool, desktop: bool, capture: bool, input: bool) {
-        set_policy_input(&self.b.manager, (fleet, desktop, capture, input));
+        set_policy_p7b(
+            &self.b.manager,
+            (fleet, desktop, capture, input),
+            (self.click, self.any_window),
+        );
+    }
+
+    /// The settings of B with every P7 gate on and the two P7b gates as told
+    /// (R13 P7b): `allow_desktop_click`, `allow_desktop_input_any`.
+    pub fn set_b_gates(&self, click: bool, any: bool) {
+        set_policy_p7b(&self.b.manager, (true, true, true, true), (click, any));
     }
 
     /// The setting `allow_fleet_control` of A.
