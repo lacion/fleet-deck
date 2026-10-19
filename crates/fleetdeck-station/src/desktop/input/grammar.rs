@@ -4,7 +4,7 @@
 //! stdin pipe (argv `-`).
 
 use fleetdeck_proto::coordinator_desktop::{
-    KeyPressArguments, PointerMoveArguments, TypeTextArguments,
+    KeyPressArguments, PointerClickArguments, PointerMoveArguments, TypeTextArguments,
 };
 use fleetdeck_proto::coordinator_desktop_text::code as p6_code;
 use fleetdeck_proto::desktop::DesktopAction;
@@ -25,6 +25,9 @@ pub(crate) enum Plan {
     Text { bytes: Vec<u8> },
     /// `hyprctl dispatch movecursor` at the window-relative point.
     Pointer { x: u32, y: u32 },
+    /// `hyprctl dispatch movecursor` at the window-relative point, then
+    /// `wlrctl pointer click left` (R13 P7b §10.2).
+    Click { x: u32, y: u32 },
 }
 
 impl Plan {
@@ -45,6 +48,12 @@ impl Plan {
             }
             (Self::Pointer { .. }, true) => {
                 format!("Fleet Deck is moving the pointer for {label} in an application window.")
+            }
+            (Self::Click { .. }, false) => {
+                format!("Fleet Deck is clicking for {label} in an agent preview.")
+            }
+            (Self::Click { .. }, true) => {
+                format!("Fleet Deck is clicking for {label} in an application window.")
             }
         }
     }
@@ -124,6 +133,15 @@ pub(crate) fn check(action: &DesktopAction) -> Result<(), Fail> {
             y: *y,
         }
         .validate(),
+        DesktopAction::InputPointerClick { window_id, x, y }
+        | DesktopAction::InputAnyPointerClick { window_id, x, y } => PointerClickArguments {
+            request_id: PLACEHOLDER_REQUEST.to_owned(),
+            station: None,
+            window_id: window_id.clone(),
+            x: *x,
+            y: *y,
+        }
+        .validate(),
         _ => return Ok(()),
     };
     checked.map_err(|_| invalid())
@@ -151,6 +169,10 @@ pub(crate) fn plan(action: &DesktopAction) -> Result<(String, Plan), Fail> {
         DesktopAction::InputPointerMove { window_id, x, y }
         | DesktopAction::InputAnyPointerMove { window_id, x, y } => {
             Ok((window_id.clone(), Plan::Pointer { x: *x, y: *y }))
+        }
+        DesktopAction::InputPointerClick { window_id, x, y }
+        | DesktopAction::InputAnyPointerClick { window_id, x, y } => {
+            Ok((window_id.clone(), Plan::Click { x: *x, y: *y }))
         }
         _ => Err(invalid()),
     }

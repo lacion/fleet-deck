@@ -1,7 +1,7 @@
 //! The input protocol under the `any_window` scope (R13 P7b §7, §8, §9, §10.1,
 //! §13): the admission and the gates of the new variants, a listed window as
 //! the target of keys, text and a pointer movement, the invalidation of a
-//! handle at each point, and the click variants that stay refused.
+//! handle at each point, and the gates of the click variants.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -586,9 +586,8 @@ async fn a_close_a_new_epoch_or_the_end_of_the_life_interrupts_the_input() {
 // ----------------------------------------------------------------- clicks
 
 #[tokio::test]
-async fn the_click_variants_are_refused_with_unsupported_after_the_gates() {
+async fn the_click_gates_come_first_and_the_broader_gate_guards_only_its_variants() {
     let fx = Fx::new().await;
-    let probe = Probe::new(&fx);
     let clicks = [
         A::InputPointerClick {
             window_id: fx.window_id.clone(),
@@ -601,39 +600,15 @@ async fn the_click_variants_are_refused_with_unsupported_after_the_gates() {
             y: 5,
         },
     ];
-    for action in &clicks {
-        let e = refused(&fx, &probe, action).await;
-        assert_eq!(
-            pair(&e),
-            (
-                "desktop_unsupported",
-                "This station's build has no desktop control.".into()
-            )
-        );
-        assert!(fx.timeline().is_empty(), "{:?}", fx.timeline());
-        assert_eq!(probe.claim.calls.load(Ordering::SeqCst), 0);
-        assert!(!fx.desktop().input.is_held());
-    }
-    // The gates come first: the click gate and the broader gate.
     let mut no_click = Probe::new(&fx);
     no_click.live.desktop_click = false;
-    assert_eq!(
-        refused(&fx, &no_click, &clicks[0]).await.code,
-        "input_click_disabled"
-    );
-    assert_eq!(
-        refused(&fx, &no_click, &clicks[1]).await.code,
-        "input_click_disabled"
-    );
+    for action in &clicks {
+        nothing(&fx, &no_click, action, "input_click_disabled").await;
+    }
     let mut no_any = Probe::new(&fx);
     no_any.live.desktop_input_any = false;
-    assert_eq!(
-        refused(&fx, &no_any, &clicks[1]).await.code,
-        "input_any_disabled"
-    );
+    nothing(&fx, &no_any, &clicks[1], "input_any_disabled").await;
     // A click in a preview does not read the broader gate.
-    assert_eq!(
-        refused(&fx, &no_any, &clicks[0]).await.code,
-        "desktop_unsupported"
-    );
+    fx.run(&clicks[0], &no_any).await.unwrap();
+    assert_eq!(fx.calls_of("wlrctl").len(), 1);
 }

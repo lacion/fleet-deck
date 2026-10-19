@@ -27,6 +27,10 @@
 //! The checks of steps 10, 11 and 14 are `check_phase(Execute)` calls: a
 //! passing `Start::begin` is cached and would not check again. A refusal
 //! before step 18 does not undo a notification or a focus change.
+//!
+//! A click (R13 P7b §10.2) shares steps 1 to 13, then continues in
+//! [`super::click`]: the movement, a fourth check, the final observation
+//! bundle and `wlrctl pointer click left`.
 
 use std::time::Instant;
 
@@ -38,7 +42,7 @@ use fleetdeck_proto::desktop::{DesktopAction, Urgency};
 use super::barrier::{self, Names};
 use super::focus::{self, Active, Verdict, read_active};
 use super::grammar::{self, Plan};
-use super::snapshot::{self, Client, Snapshot, TakeError};
+use super::snapshot::{self, Client, Rect, Snapshot, TakeError};
 use super::target::{self, ListedTarget};
 use super::{ACTIVE_LIMIT, AUTHORITY_MAX_AGE, Claimed, Claimer, Env, FOCUS_MAX_AGE, fail};
 use crate::desktop::actions::send_notify;
@@ -53,19 +57,24 @@ use crate::desktop::{Ctx, Desktop, Fail, Gate};
 const TITLE: &str = "Fleet Deck";
 
 /// What step 8 prepared. Nothing runs yet.
-enum Prepared {
+pub(super) enum Prepared {
     Wtype {
         cmd: Box<InputCommand>,
         stdin: Option<Vec<u8>>,
     },
     Pointer,
+    /// The fixed `wlrctl pointer click left` of a click; the movement is the
+    /// same dispatch as a pointer movement.
+    Click(Box<InputCommand>),
 }
 
-/// What a survey observed: the global pointer point (a pointer movement only)
-/// and the names of the monitors that the preview overlaps.
-struct Surveyed {
-    point: Option<(i64, i64)>,
-    covered: Vec<String>,
+/// What a survey observed: the global pointer point (a pointer movement or a
+/// click only), the names of the monitors that the target overlaps and the
+/// rectangle of the target.
+pub(super) struct Surveyed {
+    pub(super) point: Option<(i64, i64)>,
+    pub(super) covered: Vec<String>,
+    pub(super) rect: Rect,
 }
 
 /// One resolved input operation.
@@ -115,9 +124,6 @@ pub(super) async fn run(
     env: &Env,
     claim: &dyn Claimer,
 ) -> Result<(), Fail> {
-    if grammar::is_click(&action) {
-        return refuse_click(&action, gate, admitted);
-    }
     let (window_id, plan) = grammar::plan(&action)?;
     let any = grammar::is_any(&action);
     let start = Start::new(admitted.clone(), &action);
@@ -148,18 +154,6 @@ pub(super) async fn run(
     op.go().await
 }
 
-/// The click variants (R13 P7b task S2a): the checks of the gates run, then
-/// `desktop_unsupported`. Nothing is claimed, disclosed, focused or sent.
-fn refuse_click(action: &DesktopAction, gate: Gate<'_>, admitted: &Admitted) -> Result<(), Fail> {
-    let start = Start::new(admitted.clone(), action);
-    identity(&start)?;
-    admitted.local_gates()?;
-    if !gate() {
-        return Err(Fail::forbidden());
-    }
-    Err(fail(p6_code::DESKTOP_UNSUPPORTED))
-}
-
 impl Op<'_> {
     pub(super) fn runner(&self) -> Runner<'_> {
         Runner {
@@ -170,11 +164,11 @@ impl Op<'_> {
     }
 
     fn pointer(&self) -> bool {
-        matches!(self.plan, Plan::Pointer { .. })
+        matches!(self.plan, Plan::Pointer { .. } | Plan::Click { .. })
     }
 
     /// An explicit execute check of the authority and the live gates.
-    async fn check(&self) -> Result<(), Fail> {
+    pub(super) async fn check(&self) -> Result<(), Fail> {
         self.start
             .check_phase(AuthorityPhase::Execute, &self.ctx.env)
             .await
@@ -182,7 +176,7 @@ impl Op<'_> {
 
     /// The failure of an observation that cannot be read: a program that
     /// failed keeps its failure; an unreadable answer fails closed.
-    fn unreadable(&self, e: TakeError) -> Fail {
+    pub(super) fn unreadable(&self, e: TakeError) -> Fail {
         match e {
             TakeError::Run(fail) => fail,
             TakeError::Malformed if self.pointer() => fail(p6_code::INPUT_DESTINATION_UNAVAILABLE),
@@ -230,6 +224,14 @@ impl Op<'_> {
         let snap = snapshot::take(runner, self.pointer())
             .await
             .map_err(|e| self.unreadable(e))?;
+        self.examine(&snap)
+    }
+
+    /// What a snapshot says about the target: the client, the lock, the
+    /// monitors, the barrier and, for a pointer movement or a click, the
+    /// global point (the checks of steps 5 to 7; a click repeats them on its
+    /// final bundle).
+    pub(super) fn examine(&self, snap: &Snapshot) -> Result<Surveyed, Fail> {
         let client = snap
             .client(&self.record.address, &self.record.class)
             .ok_or_else(not_found)?;
@@ -239,7 +241,7 @@ impl Op<'_> {
                 capture_text::SCREEN_LOCKED,
             ));
         }
-        let covered = self.coverage(&snap, client)?;
+        let covered = self.coverage(snap, client)?;
         let names = Names {
             class: &client.class,
             initial_class: &client.initial_class,
@@ -252,21 +254,36 @@ impl Op<'_> {
             return Err(fail(p6_code::INPUT_BOARD_FORBIDDEN));
         }
         let point = match self.plan {
-            Plan::Pointer { x, y } => Some(
+            Plan::Pointer { x, y } | Plan::Click { x, y } => Some(
                 snap.destination(client, x, y)
                     .ok_or_else(|| fail(p6_code::INPUT_DESTINATION_UNAVAILABLE))?,
             ),
             _ => None,
         };
-        Ok(Surveyed { point, covered })
+        Ok(Surveyed {
+            point,
+            covered,
+            rect: client.rect,
+        })
     }
 
-    /// Step 8: the fixed command. A missing `wtype` is `input_tool_missing`.
-    fn prepare(&self, runner: &Runner<'_>) -> Result<Prepared, Fail> {
+    /// Step 8: the fixed command. A missing `wtype` is `input_tool_missing`;
+    /// a click needs `wlrctl` (`input_click_tool_missing`) and a verified
+    /// correspondence between the Hyprland instance and the Wayland socket
+    /// (`input_click_tool_unsupported`, [`Op::compositor_matches`]).
+    async fn prepare(&self, runner: &Runner<'_>) -> Result<Prepared, Fail> {
         let (argv, stdin) = match &self.plan {
             Plan::Key { argv } => (argv.clone(), None),
             Plan::Text { bytes } => (grammar::text_argv(), Some(bytes.clone())),
             Plan::Pointer { .. } => return Ok(Prepared::Pointer),
+            Plan::Click { .. } => {
+                let argv = ["pointer", "click", "left"].map(str::to_owned).to_vec();
+                let cmd = runner
+                    .prepare_input("wlrctl", &argv)
+                    .map_err(click_spawn_fail)?;
+                self.compositor_matches(runner).await?;
+                return Ok(Prepared::Click(Box::new(cmd)));
+            }
         };
         let cmd = runner.prepare_input("wtype", &argv).map_err(spawn_fail)?;
         Ok(Prepared::Wtype {
@@ -306,22 +323,29 @@ impl Op<'_> {
         }
     }
 
-    /// Step 17: the synchronous gates, the observed monitor coverage against
-    /// the live policy, the link, the start deadlines, the registry and the
-    /// age limits. No await.
-    fn last_checks(
-        &self,
-        covered: &[String],
-        authority_at: Instant,
-        focus_at: Instant,
-    ) -> Result<(), Fail> {
+    /// The synchronous gates of step 17, with no await: the local gates, the
+    /// observed monitor coverage against the live policy, the start deadlines
+    /// and the connection, the link and the registry.
+    pub(super) fn gates_now(&self, covered: &[String]) -> Result<(), Fail> {
         self.admitted.local_gates()?;
         self.covered_now(covered)?;
         self.start.still_valid()?;
         if !(self.env.link_alive)() {
             return Err(unknown());
         }
-        self.same_record()?;
+        self.same_record()
+    }
+
+    /// Step 17: the synchronous gates, the observed monitor coverage against
+    /// the live policy, the link, the start deadlines, the registry and the
+    /// age limits. No await.
+    pub(super) fn last_checks(
+        &self,
+        covered: &[String],
+        authority_at: Instant,
+        focus_at: Instant,
+    ) -> Result<(), Fail> {
+        self.gates_now(covered)?;
         let now = (self.env.clock)();
         if now.saturating_duration_since(authority_at) > AUTHORITY_MAX_AGE {
             return Err(unknown());
@@ -332,11 +356,30 @@ impl Op<'_> {
         Ok(())
     }
 
+    /// Steps 14 to 17: the authority check for the injection, the read of the
+    /// active window and the last synchronous checks. No await follows the
+    /// last checks.
+    pub(super) async fn before_input(
+        &self,
+        runner: &Runner<'_>,
+        covered: &[String],
+    ) -> Result<(), Fail> {
+        self.check().await?;
+        let authority_at = (self.env.clock)();
+        let active = read_active(runner, ACTIVE_LIMIT)
+            .await
+            .map_err(|_| fail(p6_code::INPUT_FOCUS_UNKNOWN))?;
+        let focus_at = (self.env.clock)();
+        self.judge(&active)?;
+        // Step 17 and step 18: no await between them but the spawn itself.
+        self.last_checks(covered, authority_at, focus_at)
+    }
+
     /// Steps 5 to 20 of the protocol.
     async fn go(&self) -> Result<(), Fail> {
         let runner = self.runner();
         self.survey(&runner).await?;
-        let prepared = self.prepare(&runner)?;
+        let prepared = self.prepare(&runner).await?;
         match self.claim.claim().await? {
             Claimed::New => {}
             Claimed::Replay => return Ok(()),
@@ -346,32 +389,39 @@ impl Op<'_> {
         self.check().await?;
         self.same_record()?;
         self.focus(&runner).await?;
-        let Surveyed { point, covered } = self.survey(&runner).await?;
+        let Surveyed {
+            point,
+            covered,
+            rect,
+        } = self.survey(&runner).await?;
         self.same_record()?;
-        self.check().await?;
-        let authority_at = (self.env.clock)();
-        let active = read_active(&runner, ACTIVE_LIMIT)
-            .await
-            .map_err(|_| fail(p6_code::INPUT_FOCUS_UNKNOWN))?;
-        let focus_at = (self.env.clock)();
-        self.judge(&active)?;
-        // Step 17 and step 18: no await between them but the spawn itself.
-        self.last_checks(&covered, authority_at, focus_at)?;
         match prepared {
             Prepared::Wtype { cmd, stdin } => {
+                self.before_input(&runner, &covered).await?;
                 let mut child = runner.spawn_input(*cmd, stdin).map_err(spawn_fail)?;
-                self.supervise(&runner, &mut child, &covered).await?;
+                self.supervise(&runner, &mut child, &covered, self.env.wtype_limit)
+                    .await?;
             }
             Prepared::Pointer => {
+                self.before_input(&runner, &covered).await?;
                 let (x, y) = point.ok_or_else(|| fail(p6_code::INPUT_DESTINATION_UNAVAILABLE))?;
                 self.move_pointer(&runner, x, y).await?;
+            }
+            Prepared::Click(cmd) => {
+                let point = point.ok_or_else(|| fail(p6_code::INPUT_DESTINATION_UNAVAILABLE))?;
+                return self.click(&runner, *cmd, point, rect, &covered).await;
             }
         }
         self.finally(&runner).await
     }
 
     /// Step 19, the pointer: one `movecursor` dispatch within 1 s.
-    async fn move_pointer(&self, runner: &Runner<'_>, x: i64, y: i64) -> Result<(), Fail> {
+    pub(super) async fn move_pointer(
+        &self,
+        runner: &Runner<'_>,
+        x: i64,
+        y: i64,
+    ) -> Result<(), Fail> {
         let args = ["dispatch", "movecursor"]
             .map(str::to_owned)
             .into_iter()
@@ -392,11 +442,21 @@ impl Op<'_> {
     /// Step 19, after a clean end: the final focus and identity observation.
     /// An observation that cannot be made leaves the result open
     /// (`input_interrupted`: some input may have been sent).
-    async fn finally(&self, runner: &Runner<'_>) -> Result<(), Fail> {
+    pub(super) async fn finally(&self, runner: &Runner<'_>) -> Result<(), Fail> {
         match read_active(runner, ACTIVE_LIMIT).await {
             Ok(active) => self.judge(&active),
             Err(_) => Err(fail(p6_code::INPUT_INTERRUPTED)),
         }
+    }
+}
+
+/// The failure of `wlrctl` that cannot start: not installed is
+/// `input_click_tool_missing` (R13 P7b §13).
+pub(super) fn click_spawn_fail(e: Fail) -> Fail {
+    match e.code {
+        crate::desktop::code::UNSUPPORTED => fail(p6_code::INPUT_CLICK_TOOL_MISSING),
+        crate::desktop::code::FORBIDDEN => e,
+        _ => fail(p6_code::INPUT_FAILED),
     }
 }
 

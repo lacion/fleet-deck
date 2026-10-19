@@ -269,7 +269,43 @@ fn the_any_variants_have_the_grammar_and_the_plan_of_the_legacy_ones() {
         clicks,
         [false, false, false, true, false, false, false, true]
     );
-    // A click is not planned: it has no grammar in this build.
-    assert!(super::plan(&click).is_err());
-    assert!(super::plan(&any_click).is_err());
+    // A click has the grammar of a pointer movement and its own plan.
+    assert_eq!(
+        super::plan(&click).unwrap(),
+        (WINDOW.to_owned(), Plan::Click { x: 1, y: 1 })
+    );
+    assert_eq!(
+        super::plan(&any_click).unwrap(),
+        super::plan(&click).unwrap()
+    );
+    for bad in [
+        A::InputPointerClick {
+            window_id: "x".into(),
+            x: 1,
+            y: 1,
+        },
+        A::InputPointerClick {
+            window_id: WINDOW.into(),
+            x: 32_768,
+            y: 1,
+        },
+        A::InputAnyPointerClick {
+            window_id: WINDOW.into(),
+            x: 1,
+            y: 40_000,
+        },
+    ] {
+        assert_eq!(check(&bad).unwrap_err().code, "invalid_params");
+        assert!(super::plan(&bad).is_err());
+    }
+    // The fixed disclosure texts of a click.
+    let (_, plan) = super::plan(&click).unwrap();
+    assert_eq!(
+        plan.disclosure("bold-fox", false),
+        "Fleet Deck is clicking for bold-fox in an agent preview."
+    );
+    assert_eq!(
+        plan.disclosure("bold-fox", true),
+        "Fleet Deck is clicking for bold-fox in an application window."
+    );
 }
