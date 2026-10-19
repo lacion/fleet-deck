@@ -13,7 +13,8 @@ use fleetdeck_proto::command::SessionCommand;
 use fleetdeck_proto::execution::{ExecutionCheck, ProcessInfo};
 use fleetdeck_proto::execution_stop::{ExecutionStopPlan, ExecutionStopPlanQuery, code};
 use fleetdeck_providers::host::shim::stop_inventory::{
-    Inventory, StatNow, StopInventoryError, comm_of, inventory, stat_now,
+    Inventory, Member, StatNow, StopInventoryError, UidsNow, comm_of, inventory, owned, stat_now,
+    uids_now,
 };
 use tokio::sync::OwnedMutexGuard;
 
@@ -189,16 +190,23 @@ impl SessionManager {
             // The pidfd now names the process that had this PID when it
             // was opened. The read after it proves that this process is
             // the one of the inventory, and that it is still in the domain.
-            match stat_now(member.pid) {
-                StatNow::Alive(s)
-                    if s.start_time == member.start_time
-                        && !s.is_zombie()
-                        && (s.pgrp == identity.pid || s.session == identity.pid) => {}
-                StatNow::Unreadable(why) => {
-                    tracing::warn!(pid = member.pid, %why, "a target cannot be read");
+            if let Some(no_plan) = same_process(member, identity.pid) {
+                return Ok(Err(no_plan));
+            }
+            // The owner is read after the open too (rule 8): the process
+            // may have changed its UIDs since the inventory.
+            match uids_now(member.pid) {
+                UidsNow::Uids(u) if owned(&u, Station::current().uid) => {}
+                UidsNow::Uids(_) => return Ok(Err(NoPlan::code(code::PERMISSION_DENIED))),
+                UidsNow::Gone => return Ok(Err(NoPlan::code(code::PLAN_CHANGED))),
+                UidsNow::Unreadable(why) => {
+                    tracing::warn!(pid = member.pid, %why, "the owner of a target cannot be read");
                     return Ok(Err(NoPlan::code(code::INSPECTION_INCOMPLETE)));
                 }
-                _ => return Ok(Err(NoPlan::code(code::PLAN_CHANGED))),
+            }
+            // The PID could be reused between the two reads.
+            if let Some(no_plan) = same_process(member, identity.pid) {
+                return Ok(Err(no_plan));
             }
             targets.push(PlanTarget {
                 pid: member.pid,
@@ -270,6 +278,25 @@ impl SessionManager {
         {
             tracing::warn!(error = %e, "the witnesses are not stored");
         }
+    }
+}
+
+/// Reads `stat` of the target now: `None` when it is the process of the
+/// inventory (same start time), live, and still in the domain of `leader`.
+fn same_process(member: &Member, leader: u32) -> Option<NoPlan> {
+    match stat_now(member.pid) {
+        StatNow::Alive(s)
+            if s.start_time == member.start_time
+                && !s.is_zombie()
+                && (s.pgrp == leader || s.session == leader) =>
+        {
+            None
+        }
+        StatNow::Unreadable(why) => {
+            tracing::warn!(pid = member.pid, %why, "a target cannot be read");
+            Some(NoPlan::code(code::INSPECTION_INCOMPLETE))
+        }
+        _ => Some(NoPlan::code(code::PLAN_CHANGED)),
     }
 }
 

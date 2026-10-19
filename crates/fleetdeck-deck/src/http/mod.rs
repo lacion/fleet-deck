@@ -121,6 +121,8 @@ pub struct Board {
     /// The longest time that one send to a display socket may take
     /// ([`ws::DISPLAY_SEND`]); a slower send ends the socket (R13 §5A).
     pub ws_display_send: std::time::Duration,
+    /// How the deck watches for the outcome of an accepted stop (BG-4 §5.6).
+    pub stop_watch: execution_routes::StopWatch,
     /// The link node for the pairing methods (`None`: they answer 503).
     pub pairing: Option<Arc<crate::link::DeckNode>>,
     /// The board web client (P4-4).

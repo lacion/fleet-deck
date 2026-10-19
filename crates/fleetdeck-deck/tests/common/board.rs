@@ -7,6 +7,7 @@ use std::time::Duration;
 use fleetdeck_core::restart::Restart;
 use fleetdeck_deck::DeckStore;
 use fleetdeck_deck::http::assets::BoardAssets;
+use fleetdeck_deck::http::execution_routes::StopWatch;
 use fleetdeck_deck::http::settings_routes::DeckSettings;
 use fleetdeck_deck::http::tls::pinned_client;
 use fleetdeck_deck::http::{Board, BoardServer, BoardTls, LoginLimits, Origins};
@@ -140,6 +141,9 @@ pub struct Extras {
     pub tailnet_start: Option<fleetdeck_deck::tailnet_auto::TailnetStart>,
     /// Optional board addresses (the automatic ones), bound with skipping.
     pub optional: Vec<std::net::SocketAddr>,
+    /// How the deck watches for the outcome of an accepted stop (default:
+    /// `StopWatch::DEFAULT`).
+    pub stop_watch: Option<StopWatch>,
 }
 
 /// Serves the board API of `link` with `extras`.
@@ -199,6 +203,10 @@ async fn serve_with(
                 tickets: fleetdeck_deck::http::ws::Tickets::default(),
                 ws_recheck: Duration::from_millis(200),
                 ws_display_send: fleetdeck_deck::http::ws::DISPLAY_SEND,
+                stop_watch: extras
+                    .as_ref()
+                    .and_then(|e| e.stop_watch)
+                    .unwrap_or(StopWatch::DEFAULT),
                 pairing: pairing
                     .clone()
                     .or_else(|| extras.as_mut().and_then(|e| e.pairing.take())),

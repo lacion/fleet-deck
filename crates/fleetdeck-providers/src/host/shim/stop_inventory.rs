@@ -5,7 +5,7 @@
 //! member: it is not a termination inventory. This module reads `/proc`
 //! completely, twice, and gives the live members of the domain of a leader
 //! PID: every process whose process group or session equals that number,
-//! the leader included. It reads the start time, the state and the real UID
+//! the leader included. It reads the start time, the state and the four UIDs
 //! of each member. The two passes must give the same members (PID and
 //! start time); otherwise the answer is [`StopInventoryError::Incomplete`].
 //! Only Linux has a reader; other platforms answer
@@ -47,10 +47,24 @@ pub struct Member {
     pub pid: u32,
     /// Field 22 of `stat`.
     pub start_time: u64,
-    /// The real UID (first field of `Uid:` in `status`).
-    pub uid: u32,
+    /// The real, effective, saved and filesystem UIDs (`Uid:` of `status`).
+    pub uids: [u32; 4],
     pub pgrp: u32,
     pub session: u32,
+}
+
+impl Member {
+    /// True when all four UIDs equal `uid`.
+    #[must_use]
+    pub fn owned_by(&self, uid: u32) -> bool {
+        owned(&self.uids, uid)
+    }
+}
+
+/// True when all four UIDs equal `uid`.
+#[must_use]
+pub fn owned(uids: &[u32; 4], uid: u32) -> bool {
+    uids.iter().all(|&u| u == uid)
 }
 
 /// A complete, stable view of the domain of `leader`.
@@ -146,11 +160,11 @@ fn pass(root: &Path, leader: u32) -> Result<Inventory, StopInventoryError> {
         if p.is_zombie() || (p.pgrp != leader && p.session != leader) {
             continue;
         }
-        match uid_of(root, p.pid) {
-            Ok(Some(uid)) => domain.push(Member {
+        match uids_of(root, p.pid) {
+            Ok(Some(uids)) => domain.push(Member {
                 pid: p.pid,
                 start_time: p.start_time,
-                uid,
+                uids,
                 pgrp: p.pgrp,
                 session: p.session,
             }),
@@ -169,8 +183,8 @@ fn pass(root: &Path, leader: u32) -> Result<Inventory, StopInventoryError> {
     })
 }
 
-/// The real UID of `pid`; `Ok(None)` when the process ended.
-fn uid_of(root: &Path, pid: u32) -> Result<Option<u32>, String> {
+/// The four UIDs of `pid`; `Ok(None)` when the process ended.
+fn uids_of(root: &Path, pid: u32) -> Result<Option<[u32; 4]>, String> {
     let path = root.join(pid.to_string()).join("status");
     let text = match std::fs::read(&path) {
         Ok(text) => text,
@@ -184,10 +198,42 @@ fn uid_of(root: &Path, pid: u32) -> Result<Option<u32>, String> {
         .find_map(|line| line.strip_prefix(b"Uid:"))
         .and_then(|rest| {
             let rest = String::from_utf8_lossy(rest);
-            rest.split_whitespace().next()?.parse().ok()
+            let fields: Vec<u32> = rest
+                .split_whitespace()
+                .map(str::parse)
+                .collect::<Result<_, _>>()
+                .ok()?;
+            <[u32; 4]>::try_from(fields).ok()
         })
         .map(Some)
         .ok_or_else(|| format!("the status of process {pid} has no readable UID"))
+}
+
+/// The UIDs of one PID now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UidsNow {
+    /// No such process.
+    Gone,
+    /// The real, effective, saved and filesystem UIDs.
+    Uids([u32; 4]),
+    /// The read failed for another reason.
+    Unreadable(String),
+}
+
+/// Reads the UIDs of `pid` under the real `/proc`.
+#[must_use]
+pub fn uids_now(pid: u32) -> UidsNow {
+    uids_now_in(Path::new(PROC), pid)
+}
+
+/// [`uids_now`] over another `/proc` root (tests).
+#[must_use]
+pub fn uids_now_in(root: &Path, pid: u32) -> UidsNow {
+    match uids_of(root, pid) {
+        Ok(Some(uids)) => UidsNow::Uids(uids),
+        Ok(None) => UidsNow::Gone,
+        Err(why) => UidsNow::Unreadable(why),
+    }
 }
 
 /// The state of one PID now.
