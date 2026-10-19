@@ -275,7 +275,7 @@ async fn revoked(ticket: Option<&Ticket>) {
 
 /// Admits the socket (R13 P7 §7.6: before any byte), runs the relay, and
 /// leaves the registry when the relay can no longer forward a byte.
-async fn relay(
+pub(super) async fn relay(
     board: Arc<Board>,
     principal: Principal,
     mut socket: WebSocket,

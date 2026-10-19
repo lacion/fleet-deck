@@ -323,6 +323,8 @@ impl RunningDeck {
                     ws_recheck: crate::http::ws::RECHECK,
                     ws_display_send: crate::http::ws::DISPLAY_SEND,
                     stop_watch: crate::http::execution_routes::StopWatch::DEFAULT,
+                    maintenance_watch:
+                        crate::http::execution_routes::StopWatch::MAINTENANCE_DEFAULT,
                     pairing: Some(board_node),
                     assets: crate::http::assets::BoardAssets::Embedded,
                     live: board_live,
