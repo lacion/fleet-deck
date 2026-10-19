@@ -1068,9 +1068,10 @@ Open the project page, then the section "Git sync" of the project form. Only the
 | After (hours) | 24 | 1 to 720. |
 | Copy ignored files into new worktrees | none | One relative path per line, at most 32. A `*` or `?` matches inside one name. No `..`, no `**`. |
 | Environment for agents and setup | none | One `NAME=value` per line, at most 32. `PATH`, `HOME`, `LD_*`, `DYLD_*`, `GIT_*` and the provider and Fleet Deck variables are refused. |
+| Land as | "Pull request" with a forge binding, else "Merge" | "Merge" or "Pull request". |
+| Check command before landing (optional) | none | 1 to 4096 characters without NUL. It runs only on a station where the board setting **Allow check commands** is on (§13.2). |
 | Artifact share (optional) | none | `<machine>/<share>`, for example `nas/artifacts` (§13.13). |
-
-The settings land mode, check command and radar home are part of the same settings record. This release has no board field for them, and the board form sends them unchanged. To set them, send the full settings and the current `revision` in `PUT /api/projects/{id}/git` as the owner (`"land": "pr"` or `"merge"`, `"check_cmd": "<command>"`, `"radar_home": "<station id>"`).
+| Radar station | the first home on an always-on station, else the first home | A station with a ready home of the project. It checks the branches for conflicts every 5 minutes. The field shows when the project has a home. |
 
 - **Land mode.** Empty means `pr` when the project has a forge binding, else `merge`.
 - **Check command.** 1 to 4096 characters. It runs only on a station with `allow_check_cmd = true`.
