@@ -119,6 +119,60 @@ fn a_gap_clears_the_incarnations_and_grows_the_epoch() {
 }
 
 #[test]
+fn the_revision_grows_at_each_open_close_incarnation_and_epoch_change() {
+    let events = Events::new();
+    let mut last = events.revision();
+    let mut grew = |events: &Events| {
+        let now = events.revision();
+        assert!(now > last, "the revision did not grow");
+        last = now;
+    };
+    events.inject(Event::Open {
+        address: "0xaa".into(),
+        class: "c".into(),
+    });
+    grew(&events);
+    // An enumeration that sees a new address changes an incarnation.
+    events.observe("0xbb");
+    grew(&events);
+    // An enumeration of a known address changes nothing.
+    let known = events.revision();
+    events.observe("0xbb");
+    assert_eq!(events.revision(), known);
+    events.inject(Event::Close {
+        address: "0xaa".into(),
+    });
+    grew(&events);
+    events.inject_gap();
+    grew(&events);
+}
+
+#[test]
+fn the_incarnations_are_read_only_at_the_revision_that_the_caller_saw() {
+    let events = Events::new();
+    events.inject(Event::Open {
+        address: "0xaa".into(),
+        class: "c".into(),
+    });
+    let seen = events.revision();
+    let first = events.incarnation("0xaa").unwrap();
+    // The same revision: the existing number.
+    let found = events.observe_all_at(seen, &["0xaa"]).unwrap();
+    assert_eq!(found, [first]);
+    // A close and a reopen of the same address (no epoch change) is another
+    // revision: nothing is read, and no number is made for another address.
+    events.inject(Event::Close {
+        address: "0xaa".into(),
+    });
+    events.inject(Event::Open {
+        address: "0xaa".into(),
+        class: "c".into(),
+    });
+    assert!(events.observe_all_at(seen, &["0xaa", "0xcc"]).is_none());
+    assert_eq!(events.incarnation("0xcc"), None);
+}
+
+#[test]
 fn the_close_hook_runs_outside_the_lock_with_the_address() {
     let events = Events::new();
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));

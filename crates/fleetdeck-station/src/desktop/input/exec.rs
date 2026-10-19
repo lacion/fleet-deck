@@ -241,6 +241,12 @@ impl Op<'_> {
                 capture_text::SCREEN_LOCKED,
             ));
         }
+        // A listed window must still be mapped, not hidden, and on a workspace
+        // that a monitor shows now: the focus step never switches workspace
+        // (R13 P7b §8).
+        if self.listed.is_some() && !snap.eligible_place(client) {
+            return Err(not_found());
+        }
         let covered = self.coverage(snap, client)?;
         let names = Names {
             class: &client.class,

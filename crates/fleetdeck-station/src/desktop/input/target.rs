@@ -6,7 +6,8 @@
 //! neither gives `desktop_window_not_found`. A listed window has no preview
 //! provenance: its record has the kind `Listed`, the barrier reads the wall
 //! records and the names only, and the absence of board evidence is not
-//! proof. While the operation runs, the handle must stay valid, and the
+//! proof (a deck-origin mark on a preview record at its address is evidence).
+//! While the operation runs, the handle must stay valid, and the
 //! window incarnation and the event epoch must not change.
 
 use super::Env;
@@ -114,9 +115,18 @@ impl Op<'_> {
     }
 
     /// The launch URL of the preview named a known deck origin. A listed
-    /// window is never a deck-origin launch (R13 P7b §8).
+    /// window has no preview provenance of its own; it is marked when any
+    /// preview record at its address carries a deck-origin mark (R13 P7b §8),
+    /// read at each barrier check.
     pub(super) fn marked(&self) -> bool {
-        self.listed.is_none() && self.desktop.board_marks.is_marked(&self.window_id)
+        if self.listed.is_none() {
+            return self.desktop.board_marks.is_marked(&self.window_id);
+        }
+        self.desktop
+            .events
+            .preview_ids_at(&self.record.address)
+            .iter()
+            .any(|id| self.desktop.is_board_origin(id))
     }
 
     /// The record that the barrier reads: a listed window is a wall window

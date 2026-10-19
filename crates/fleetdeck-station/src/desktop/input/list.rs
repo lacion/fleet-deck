@@ -6,14 +6,17 @@
 //!
 //! 1. the live gates of an `InputAny*` action (no click gate) and the capture
 //!    gate; a read without a coordinator context is refused;
-//! 2. the epoch, one snapshot of the clients, the monitors and the lock
-//!    state, the epoch again: a changed epoch fails (no sampling loop);
+//! 2. the revision of the window registry, one snapshot of the clients, the
+//!    monitors and the lock state, the epoch again: a changed epoch fails (no
+//!    sampling loop);
 //! 3. an unlocked screen, then the eligible windows (mapped, not hidden, on a
 //!    workspace that a monitor shows now, positive bounded size, not a board
 //!    or wall window, every overlapped monitor permitted);
 //! 4. the limits of 64 windows and 64 monitors (no truncation);
-//! 5. the authority check of the read, then the live gates again, and only
-//!    then the handles are issued or reused and the answer is built.
+//! 5. the authority check of the read, then a fresh bounded lock check, the
+//!    live gates again and the revision: a changed revision fails. Only then
+//!    the handles are issued or reused (the revision check and the issue have
+//!    no await between them) and the answer is built.
 //!
 //! Titles and classes are read only inside the eligibility check. They go
 //! into no answer, record, log or audit. A window that fails a rule is left
@@ -27,6 +30,7 @@ use fleetdeck_proto::coordinator_desktop_wire::{AuthorityPhase, CoordinatorRead}
 use fleetdeck_proto::coordinator_input::{InputMonitor, InputRect, InputWindow, InputWindowList};
 use serde_json::Value;
 
+use super::ACTIVE_LIMIT;
 use super::barrier::{self, Names};
 use super::listed::{Binding, Item};
 use super::snapshot::{self, Client, Snapshot, TakeError};
@@ -34,7 +38,7 @@ use crate::desktop::capture::{Allowed, capture_gate};
 use crate::desktop::coordinator::{DispatchCheck, Live, check_live_window_list, p6_fail};
 use crate::desktop::events::Kind;
 use crate::desktop::run::Runner;
-use crate::desktop::{Desktop, Fail};
+use crate::desktop::{Ctx, Desktop, Fail, info};
 
 /// How long a listing waits for the event socket before its first epoch read
 /// (R13 P7b task S2a).
@@ -84,10 +88,12 @@ struct Candidate {
     focused: bool,
 }
 
-/// What the inspection read: the target identity, the epoch and the snapshot.
+/// What the inspection read: the target, the epoch, the revision of the
+/// window registry before the snapshot, and the snapshot.
 struct Inspected {
-    signature: String,
+    ctx: Ctx,
     epoch: u64,
+    revision: u64,
     snap: Snapshot,
 }
 
@@ -108,6 +114,7 @@ async fn inspect(
         return Err(failed());
     }
     let epoch = desktop.events.epoch();
+    let revision = desktop.events.revision();
     let runner = Runner {
         env: &ctx.env,
         gate: Some(gate),
@@ -118,27 +125,40 @@ async fn inspect(
         return Err(failed());
     }
     Ok(Inspected {
-        signature: ctx.found.signature.clone(),
+        ctx,
         epoch,
+        revision,
         snap,
     })
 }
 
-fn permitted(allowed: &[String], name: &str) -> bool {
-    allowed.is_empty() || allowed.iter().any(|a| a == name)
+/// The lock state again, after the authority check (R13 P7b §6.1): one read
+/// within [`ACTIVE_LIMIT`].
+///
+/// # Errors
+/// `screen_locked`; `desktop_failed` when the state is unknown or the read
+/// fails or passes its limit.
+async fn still_unlocked(
+    seen: &Inspected,
+    gate: &(dyn Fn() -> bool + Send + Sync),
+) -> Result<(), Fail> {
+    let runner = Runner {
+        env: &seen.ctx.env,
+        gate: Some(gate),
+        start: None,
+    };
+    match tokio::time::timeout(ACTIVE_LIMIT, info::locked(&runner)).await {
+        Ok(Some(false)) => Ok(()),
+        Ok(Some(true)) => Err(Fail::new(
+            capture_code::SCREEN_LOCKED,
+            capture_text::SCREEN_LOCKED,
+        )),
+        Ok(None) | Err(_) => Err(failed()),
+    }
 }
 
-/// Whether a monitor shows the workspace of `client` now: its active
-/// workspace for an ordinary one, its special workspace for a negative id.
-fn shown(snap: &Snapshot, client: &Client) -> bool {
-    snap.monitors.iter().any(|m| {
-        !m.disabled
-            && if client.workspace >= 0 {
-                m.workspace == Some(client.workspace)
-            } else {
-                m.special == Some(client.workspace)
-            }
-    })
+fn permitted(allowed: &[String], name: &str) -> bool {
+    allowed.is_empty() || allowed.iter().any(|a| a == name)
 }
 
 /// The rectangle of `client` when its geometry fits the answer (`i32` x and y,
@@ -204,7 +224,7 @@ fn eligible(
         .collect();
     let mut windows = Vec::new();
     for client in &snap.clients {
-        if !client.mapped || client.hidden || !shown(snap, client) {
+        if !snap.eligible_place(client) {
             continue;
         }
         let Some(rect) = rect_of(client) else {
@@ -279,25 +299,33 @@ pub async fn read(
     }
     let (monitors, windows) = eligible(desktop, &seen.snap, &live().monitors, deck_hosts)?;
     check.check(AuthorityPhase::Read, Some(&req.read)).await?;
+    still_unlocked(&seen, &gate).await?;
     let now_live = live();
     check_live_window_list(&now_live)?;
     monitors_still_permitted(&now_live, &monitors)?;
-    // The event stream did not change during the checks (no sampling loop).
-    if desktop.events.epoch() != seen.epoch {
-        return Err(failed());
-    }
+    // The event stream did not change during the checks (no sampling loop:
+    // an epoch change is a revision change), and no window opened or closed.
+    // The revision check and the reading of
+    // the incarnations are one step, and no await follows it until the
+    // handles are issued.
+    let addresses: Vec<&str> = windows.iter().map(|w| w.address.as_str()).collect();
+    let incarnations = desktop
+        .events
+        .observe_all_at(seen.revision, &addresses)
+        .ok_or_else(failed)?;
     let binding = Binding::of(source.deck_fp, context);
     let items: Vec<Item> = windows
         .iter()
-        .map(|w| Item {
+        .zip(incarnations)
+        .map(|(w, incarnation)| Item {
             address: w.address.clone(),
             class: w.class.clone(),
-            incarnation: desktop.events.observe(&w.address),
+            incarnation,
         })
         .collect();
     let issued = desktop.listed().issue(
         &binding,
-        &seen.signature,
+        &seen.ctx.found.signature,
         seen.epoch,
         &items,
         Instant::now(),

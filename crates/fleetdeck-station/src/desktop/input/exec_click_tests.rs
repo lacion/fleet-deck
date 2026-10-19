@@ -455,6 +455,34 @@ async fn an_expired_handle_or_a_new_epoch_between_the_move_and_the_spawn_refuses
     assert!(!fx.desktop().input.is_held());
 }
 
+#[tokio::test]
+async fn a_switch_away_before_the_button_refuses_the_click_in_a_listed_window() {
+    let (fx, handle) = listed_shell().await;
+    let root = fx.root();
+    let away = fx.monitors_away().to_string();
+    let mut probe = Probe::new(&fx);
+    // The fourth check is the button authorization; the final bundle follows.
+    probe.check = fx.check(
+        None,
+        Some(Box::new(move |k| {
+            if k == 4 {
+                std::fs::write(root.join("monitors.json"), &away).unwrap();
+            }
+        })),
+    );
+    let e = refused(&fx, &probe, &fx.click_any(&handle, 10, 20)).await;
+    assert_eq!(e.code, "desktop_window_not_found");
+    // The movement ran once (into the listed window); `wlrctl` never.
+    let moves = fx
+        .timeline()
+        .iter()
+        .filter(|l| *l == "hyprctl dispatch movecursor 2010 120")
+        .count();
+    assert_eq!(moves, 1, "{:?}", fx.timeline());
+    assert!(fx.calls_of("wlrctl").is_empty(), "{:?}", fx.timeline());
+    assert!(!fx.desktop().input.is_held());
+}
+
 // ----------------------------------------------------- during wlrctl
 
 async fn until(what: &str, mut ready: impl FnMut() -> bool) {

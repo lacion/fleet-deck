@@ -580,6 +580,14 @@ impl Fx {
         })
     }
 
+    /// The monitors of the rig after the owner switched away: `DP-1` shows
+    /// workspace 2, so no monitor shows workspace 1 any more.
+    pub(super) fn monitors_away(&self) -> Value {
+        let mut monitors: Value = serde_json::from_str(&self.read("monitors.json")).unwrap();
+        monitors[0]["activeWorkspace"] = json!({"id": 2, "name": "2"});
+        monitors
+    }
+
     pub(super) fn input_any(&self, window_id: &str, chord: &str) -> A {
         A::InputAnyKeyPress {
             window_id: window_id.to_owned(),

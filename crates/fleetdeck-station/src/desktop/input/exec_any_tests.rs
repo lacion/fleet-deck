@@ -518,6 +518,86 @@ async fn a_wall_record_at_the_address_of_a_listed_handle_is_refused() {
     nothing(&fx, &probe, &action, "input_board_forbidden").await;
 }
 
+/// A deck-origin mark on a preview record at the address of a listed handle,
+/// set after the handle was issued, refuses the input (R13 P7b §8).
+#[tokio::test]
+async fn a_preview_marked_after_its_listing_refuses_the_listed_handle() {
+    // Before the survey: nothing runs, no claim.
+    let fx = Fx::new().await;
+    fx.set_active(&fx.preview_active(super::rig::WINDOW_TITLE));
+    let handle = Fx::handle_at(&fx.listing().await, 100, 100);
+    fx.clear_logs();
+    fx.desktop().mark_board_origin(&fx.window_id);
+    let probe = Probe::new(&fx);
+    nothing(
+        &fx,
+        &probe,
+        &fx.input_any(&handle, "a"),
+        "input_board_forbidden",
+    )
+    .await;
+    // During the protocol, before the injection: the mark at the third
+    // check is seen by the final observation; `wtype` never starts.
+    let fx = Fx::new().await;
+    fx.set_active(&fx.preview_active(super::rig::WINDOW_TITLE));
+    let handle = Fx::handle_at(&fx.listing().await, 100, 100);
+    fx.clear_logs();
+    let desktop = Arc::clone(fx.desktop());
+    let id = fx.window_id.clone();
+    let mut probe = Probe::new(&fx);
+    probe.check = fx.check(
+        None,
+        Some(Box::new(move |k| {
+            if k == 3 {
+                desktop.mark_board_origin(&id);
+            }
+        })),
+    );
+    let e = refused(&fx, &probe, &fx.input_any(&handle, "a")).await;
+    assert_eq!(e.code, "input_board_forbidden");
+    assert!(fx.calls_of("wtype").is_empty());
+}
+
+// ------------------------------------------------- the shown workspace
+
+/// The owner switches away from the workspace of a listed window after the
+/// listing: the input is refused and the station never dispatches a focus
+/// (R13 P7b §8: no workspace switch).
+#[tokio::test]
+async fn a_listed_window_on_a_workspace_that_is_no_longer_shown_is_refused() {
+    let (fx, handle) = listed_shell().await;
+    fx.write("monitors.json", &fx.monitors_away());
+    let probe = Probe::new(&fx);
+    nothing(
+        &fx,
+        &probe,
+        &fx.input_any(&handle, "a"),
+        "desktop_window_not_found",
+    )
+    .await;
+    assert!(
+        !fx.timeline().iter().any(|l| l.contains("focuswindow")),
+        "{:?}",
+        fx.timeline()
+    );
+    assert!(fx.calls_of("wtype").is_empty());
+    // A window that is hidden or no longer mapped is refused the same way.
+    for (key, value) in [("hidden", true), ("mapped", false)] {
+        let (fx, handle) = listed_shell().await;
+        let mut shell = other_client();
+        shell[key] = json!(value);
+        fx.set_clients(&[fx.preview_client(), shell]);
+        let probe = Probe::new(&fx);
+        nothing(
+            &fx,
+            &probe,
+            &fx.input_any(&handle, "a"),
+            "desktop_window_not_found",
+        )
+        .await;
+    }
+}
+
 // ----------------------------------------------------------- interruption
 
 async fn until(what: &str, mut ready: impl FnMut() -> bool) {
