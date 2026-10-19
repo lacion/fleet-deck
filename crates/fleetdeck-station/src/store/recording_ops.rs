@@ -219,7 +219,7 @@ impl Store {
     /// reservation is inserted.
     ///
     /// # Errors
-    /// A database error; a `seconds` outside 1 to 120 (the column check).
+    /// A database error; a `seconds` outside 1 to 3600 (the column check).
     pub async fn recording_begin(&self, b: RecordingBegin<'_>) -> Result<Begin> {
         let (deck_fp, capture_id) = (b.deck_fp.to_owned(), b.capture_id.to_owned());
         let (action_hash, monitor) = (b.action_hash.to_owned(), b.monitor.to_owned());

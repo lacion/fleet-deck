@@ -9,6 +9,7 @@ const CAPTURE_FEATURE = 'desktop_capture.v1';
 const VIDEO_FEATURE = 'artifacts_video.v1';
 
 export const MIN_SECONDS = 1;
+/** The longest recording when the station does not report its own limit (`maxSeconds`). */
 export const MAX_SECONDS = 120;
 export const DEFAULT_SECONDS = '30';
 /** The completion allowance on top of the duration, for the POST and for the polling (O12-10). */
@@ -18,7 +19,12 @@ export const ALLOWANCE_MS = 45_000;
 export const windowMs = (seconds: number): number => seconds * 1000 + ALLOWANCE_MS;
 
 export const DURATION_LABEL = 'Duration (seconds)';
-export const DURATION_ERROR = 'Recording duration must be a whole number from 1 to 120 seconds.';
+/** The longest recording of a station: its `desktop.info` value, else 120. */
+export const maxSeconds = (info?: DesktopInfo): number =>
+  info?.recording_max_seconds ?? MAX_SECONDS;
+
+export const durationError = (max: number): string =>
+  `Enter a whole number of seconds from 1 to ${max}.`;
 export const DISCLOSURE =
   'Records the whole selected monitor, including other applications, notifications and private information visible there. No audio is recorded. The recording is stored as an ordinary artifact until deleted.';
 
@@ -44,11 +50,11 @@ export const REASONS = {
   monitor: 'This monitor is not allowed for recordings.',
 } as const;
 
-/** The duration that the owner typed: a whole number from 1 to 120, else `null`. */
-export function parseSeconds(text: string): number | null {
+/** The duration that the owner typed: a whole number from 1 to `max`, else `null`. */
+export function parseSeconds(text: string, max: number): number | null {
   if (!/^\d{1,4}$/.test(text)) return null;
   const n = Number(text);
-  return n >= MIN_SECONDS && n <= MAX_SECONDS ? n : null;
+  return n >= MIN_SECONDS && n <= max ? n : null;
 }
 
 /** The key of the capture ID of the recording of one station in `localStorage`. */

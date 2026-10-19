@@ -195,7 +195,7 @@ fn schema() -> Value {
                         "pattern": "^[A-Za-z0-9_-]+$"},
             "monitor": {"type": "string", "minLength": 1, "maxLength": 64,
                         "pattern": "^[A-Za-z0-9._-]+$"},
-            "seconds": {"type": "integer", "minimum": 1, "maximum": 120}
+            "seconds": {"type": "integer", "minimum": 1, "maximum": 3600}
         }
     })
 }

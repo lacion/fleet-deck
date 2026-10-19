@@ -121,6 +121,13 @@ pub struct DesktopInfo {
     /// sends it only on a link with `desktop_input_mcp.v1`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub host_addresses: Vec<String>,
+    /// The longest recording that this station allows, in seconds: its
+    /// `capture.recording_max_seconds` setting (knobs K4). The station stamps
+    /// it on every answer. `None` for a station that does not report it; the
+    /// board then uses 120.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub recording_max_seconds: Option<u32>,
 }
 
 /// The params of `desktop.info` (R13 §6D item 4). An empty object is
@@ -196,8 +203,8 @@ pub enum DesktopAction {
     ScreenCapture {
         monitor: String,
     },
-    /// R13 P5b: one H.264 MP4 recording of one monitor, 1 to 120 seconds
-    /// (needs `desktop_recording.v1`).
+    /// R13 P5b: one H.264 MP4 recording of one monitor, 1 to 3600 seconds
+    /// (the station allows up to its own `recording_max_seconds`; needs `desktop_recording.v1`).
     ScreenRecord {
         monitor: String,
         seconds: u32,
@@ -515,6 +522,18 @@ mod tests {
         assert_eq!(info.host_addresses, ["192.0.2.7", "2001:db8::1"]);
         let v = serde_json::to_value(&info).unwrap();
         assert_eq!(v["host_addresses"][1], "2001:db8::1");
+    }
+
+    #[test]
+    fn the_recording_maximum_is_optional_and_round_trips() {
+        let info: DesktopInfo = serde_json::from_str(&info_json("")).unwrap();
+        assert_eq!(info.recording_max_seconds, None);
+
+        let with = info_json(r#","recording_max_seconds":600"#);
+        let info: DesktopInfo = serde_json::from_str(&with).unwrap();
+        assert_eq!(info.recording_max_seconds, Some(600));
+        let v = serde_json::to_value(&info).unwrap();
+        assert_eq!(v["recording_max_seconds"], 600);
     }
 
     #[test]

@@ -185,10 +185,13 @@ export class RecordFlow {
     if (this.state.kind === 'discovering') this.set(IDLE);
   }
 
-  /** The one POST of a recording. A recording that runs is not started again. */
-  async start(monitor: string, seconds: number): Promise<void> {
+  /**
+   * The one POST of a recording. A recording that runs is not started again. `max` is the longest
+   * recording of the station (`maxSeconds` of its desktop info); 120 when the caller has none.
+   */
+  async start(monitor: string, seconds: number, max: number = MAX_SECONDS): Promise<void> {
     if (isActive(this.state)) return;
-    if (!Number.isInteger(seconds) || seconds < MIN_SECONDS || seconds > MAX_SECONDS) return;
+    if (!Number.isInteger(seconds) || seconds < MIN_SECONDS || seconds > max) return;
     const captureId = this.newId();
     this.write({ captureId, monitor, seconds, at: this.now() });
     this.since = this.now();

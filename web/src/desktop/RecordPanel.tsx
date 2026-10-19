@@ -13,8 +13,9 @@ import {
   DELETED_TEXT,
   deckRecords,
   DISCLOSURE,
-  DURATION_ERROR,
   DURATION_LABEL,
+  durationError,
+  maxSeconds,
   OFFLINE_TEXT,
   PHASE_TEXT,
   parseSeconds,
@@ -26,10 +27,13 @@ import {
 /** The Record control of one monitor: the duration, the button and the disclosure. */
 export function RecordPanel({
   monitor,
+  max,
   off,
   onStart,
 }: {
   readonly monitor: string;
+  /** The longest recording of the station (`maxSeconds`). */
+  readonly max: number;
   /** Record is off: not available, or another action or capture runs. */
   readonly off: boolean;
   readonly onStart: (monitor: string, seconds: number) => void;
@@ -39,9 +43,9 @@ export function RecordPanel({
   const id = useId();
   const noteId = `${id}-note`;
   const press = () => {
-    const seconds = parseSeconds(text.trim());
+    const seconds = parseSeconds(text.trim(), max);
     if (seconds === null) {
-      setError(DURATION_ERROR);
+      setError(durationError(max));
       return;
     }
     setError(null);
@@ -55,7 +59,7 @@ export function RecordPanel({
           id={`${id}-seconds`}
           type="number"
           min={1}
-          max={120}
+          max={max}
           step={1}
           inputMode="numeric"
           required
@@ -221,6 +225,7 @@ export function useRecording(
     IDLE_SNAPSHOT,
   );
   const active = isActive(state);
+  const max = maxSeconds(info);
   const reasonOf = (monitor: string) =>
     info === undefined ? { enabled: false, reason: null } : availability(deck, info, monitor);
   const reason =
@@ -233,12 +238,13 @@ export function useRecording(
     controls: (monitorName, slotActive = false) => (
       <RecordPanel
         monitor={monitorName}
+        max={max}
         off={startOff({
           busy: busy || flow === null,
           slotActive: slotActive || active,
           enabled: reasonOf(monitorName).enabled,
         })}
-        onStart={(monitor, seconds) => void flow?.start(monitor, seconds)}
+        onStart={(monitor, seconds) => void flow?.start(monitor, seconds, max)}
       />
     ),
     block:

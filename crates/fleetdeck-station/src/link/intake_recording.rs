@@ -26,6 +26,7 @@ use crate::artifacts::capture_import::SyncFs;
 use crate::desktop::capture::{ADMISSION, Allowed, Launch, room};
 use crate::desktop::recording::{ControlLink, RecordParams, RecordRequest, RoomCheck, Timing};
 use crate::desktop::{self, Desktop, Fail, authority};
+use crate::manager::Policy;
 use crate::media::clock::SystemClocks;
 use crate::store::StoreError;
 use crate::store::capture_ops::Lookup;
@@ -121,6 +122,14 @@ fn allowed_of(ctx: &StationLink) -> Arc<dyn Fn() -> Allowed + Send + Sync> {
     })
 }
 
+/// The refusal of a request that is longer than the station's own longest
+/// recording (`capture.recording_max_seconds`, knobs K4); `None` when the
+/// request fits.
+fn too_long(policy: &Policy, seconds: u32) -> Option<Fail> {
+    (seconds > policy.recording_max_seconds())
+        .then(|| Fail::new(code::RECORDING_TOO_LONG, text::RECORDING_TOO_LONG))
+}
+
 /// `desktop.act` with `screen_record` of an owner: `capture_id` is the
 /// `action_id` that `authority::admit` consumed.
 pub(super) async fn record(
@@ -146,6 +155,9 @@ pub(super) async fn record_for(
     seconds: u32,
     coordinator: Option<CoordinatorContext>,
 ) -> Outcome {
+    if let Some(e) = too_long(&ctx.manager.policy(), seconds) {
+        return failed(e);
+    }
     if !(recording_link(control) && video_link(control)) {
         return refused();
     }

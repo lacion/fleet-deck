@@ -86,6 +86,7 @@ pub mod provision_reports;
 pub mod radar;
 pub mod read_cursors;
 pub mod read_model;
+mod recording_length_schema;
 pub mod review;
 pub mod review_anchor;
 mod review_edit;

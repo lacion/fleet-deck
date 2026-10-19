@@ -53,6 +53,22 @@ async fn row_only(t: &T, id: &str, hash: &str) {
     assert!(matches!(begin, Begin::Started));
 }
 
+#[test]
+fn a_request_over_the_policy_length_is_refused_with_its_text() {
+    use crate::manager::policy_hub::test_config;
+    let root = tempfile::tempdir().unwrap();
+    let policy = Policy::from_config(&test_config(
+        root.path(),
+        "[capture]\nrecording_max_seconds = 600\n",
+    ));
+    assert!(too_long(&policy, 1).is_none());
+    assert!(too_long(&policy, 600).is_none());
+    let e = too_long(&policy, 601).unwrap();
+    assert_eq!(e.code, "recording_too_long");
+    assert_eq!(e.message, text::RECORDING_TOO_LONG);
+    assert!(too_long(&policy.with_recording_max_seconds(3600), 3600).is_none());
+}
+
 fn allowed_open() -> Allowed {
     open()
 }

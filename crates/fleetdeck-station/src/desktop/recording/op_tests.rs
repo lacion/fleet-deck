@@ -454,7 +454,7 @@ async fn the_gates_and_the_admission_refuse_before_any_row() {
     assert_eq!(err(t.run(ID, "DP-1", 1).await).0, desktop_code::FORBIDDEN);
     t.allowed.lock().unwrap().monitors = Vec::new();
     assert_eq!(err(t.run(ID, "DP-9", 1).await).0, desktop_code::NOT_FOUND);
-    for seconds in [0, 121] {
+    for seconds in [0, 3601] {
         assert_eq!(
             err(t.run(ID, "DP-1", seconds).await).0,
             desktop_code::INVALID_PARAMS

@@ -488,11 +488,11 @@ async fn a_record_monitor_row_keeps_its_seconds_and_reads_back() {
             .seconds,
         None
     );
-    // The column takes only 1 to 120.
+    // The column takes only 1 to 3600.
     let bad = call(&s.inner.db, |conn| {
         Ok(conn
             .execute(
-                "UPDATE coordinator_desktop_ops SET seconds = 121 WHERE operation_id = 'op-rec'",
+                "UPDATE coordinator_desktop_ops SET seconds = 3601 WHERE operation_id = 'op-rec'",
                 [],
             )
             .is_err())

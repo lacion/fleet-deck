@@ -33,6 +33,7 @@ mod land_reconcile;
 mod land_run;
 pub mod land_temp_cleanup;
 pub mod policy;
+pub mod policy_capture;
 pub mod policy_hub;
 pub mod policy_limits;
 mod restart_check;
