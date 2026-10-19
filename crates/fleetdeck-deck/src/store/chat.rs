@@ -118,6 +118,7 @@ impl DeckStore {
         display_name: String,
     ) -> Result<bool> {
         let now = self.now_ms();
+        let login_max_ms = self.knobs().login_max_ms;
         call(&self.inner.db, move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT s.kind, s.target, s.role FROM members m
@@ -125,10 +126,11 @@ impl DeckStore {
                  WHERE m.display_name = ?1 COLLATE NOCASE
                    AND s.revoked_at IS NULL AND s.expires_at > ?2
                    AND EXISTS (SELECT 1 FROM member_sessions ms
-                               WHERE ms.member_id = m.member_id AND ms.expires_at > ?2)",
+                               WHERE ms.member_id = m.member_id AND ms.expires_at > ?2
+                                 AND ms.created_at > ?3)",
             )?;
             let rows = stmt
-                .query_map(params![display_name, now], |r| {
+                .query_map(params![display_name, now, now - login_max_ms], |r| {
                     Ok((
                         r.get::<_, String>(0)?,
                         r.get::<_, String>(1)?,

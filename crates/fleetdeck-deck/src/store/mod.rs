@@ -62,6 +62,8 @@ pub mod grants;
 mod grants_input;
 mod grants_lifecycle;
 pub mod home_attempts;
+#[cfg(test)]
+mod knobs_age_tests;
 mod knobs_store;
 mod land_actions;
 mod land_admit;
@@ -94,6 +96,7 @@ pub mod review_send;
 pub mod review_text;
 pub mod schedules;
 pub mod schema;
+mod session_idle_schema;
 pub mod session_moves;
 mod session_moves_ready;
 pub mod session_moves_steps;

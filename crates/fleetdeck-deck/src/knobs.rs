@@ -99,11 +99,14 @@ pub fn radar_options(config: &DeckConfig) -> RadarOptions {
     }
 }
 
-/// Rule 11 of the design: a save that lowered a login or a display limit
-/// deletes the sessions over the new limit and ends their sockets. Call it
-/// after the store holds the new knobs. A failure is logged and does not fail
-/// the save: the stored `expires_at` and the idle check refuse the session at
-/// its next request.
+/// Rule 11 of the design, as a best-effort cleanup: a save that lowered a
+/// login or a display limit deletes the sessions over the new limit and ends
+/// their sockets. Call it after the store holds the new knobs. A failure is
+/// logged and does not fail the save, because the sign-in checks enforce the
+/// current limits themselves (the age check against the current longest time
+/// and the idle check against the current idle limit and the idle deadline),
+/// also after a restart. A socket whose session fails the check ends at its
+/// next recheck (30 s for the board, 2 s for a display).
 pub async fn end_sessions_over_lowered(store: &DeckStore, old: &DeckKnobs, new: &DeckKnobs) {
     let logins = new.login_idle_ms < old.login_idle_ms || new.login_max_ms < old.login_max_ms;
     let displays =
