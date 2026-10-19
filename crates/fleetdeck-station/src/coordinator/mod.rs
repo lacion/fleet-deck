@@ -60,6 +60,9 @@ mod mcp_p1_bridge_tests;
 #[path = "mcp_p1_cancel_tests.rs"]
 mod mcp_p1_cancel_tests;
 #[cfg(test)]
+#[path = "mcp_p1_log_tests.rs"]
+mod mcp_p1_log_tests;
+#[cfg(test)]
 #[path = "mcp_p1_rig_tests.rs"]
 mod mcp_p1_rig_tests;
 #[cfg(test)]
