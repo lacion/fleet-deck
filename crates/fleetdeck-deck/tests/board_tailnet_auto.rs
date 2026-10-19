@@ -603,14 +603,21 @@ fn fail_with_automatic_entries(bound: &[SocketAddr]) -> Result<(), TlsError> {
     Ok(())
 }
 
-/// Distinct free local ports, all bound at the same time before they are
-/// released: an entry on port 0 of the deck can never take the port of the
-/// automatic entry.
-fn free_ports<const N: usize>() -> [std::net::SocketAddr; N] {
-    let held: Vec<_> = (0..N)
-        .map(|_| std::net::TcpListener::bind("127.0.0.1:0").unwrap())
-        .collect();
-    std::array::from_fn(|i| held[i].local_addr().unwrap())
+/// A free local port below the ephemeral range of the system: after it is
+/// released, no bind on port 0 (an entry of the deck, another test) can take
+/// it. The start depends on the process, so parallel tests try other ports.
+fn free_port_below_ephemeral() -> SocketAddr {
+    let low: u16 = std::fs::read_to_string("/proc/sys/net/ipv4/ip_local_port_range")
+        .ok()
+        .and_then(|t| t.split_whitespace().next()?.parse().ok())
+        .unwrap_or(32_768);
+    let span = u32::from(low.saturating_sub(10_000).max(1));
+    let start = 10_000 + u16::try_from(std::process::id() % span).unwrap();
+    (start..low)
+        .chain(10_000..start)
+        .find_map(|port| std::net::TcpListener::bind(("127.0.0.1", port)).ok())
+        .map(|held| held.local_addr().unwrap())
+        .expect("a free port below the ephemeral range")
 }
 
 /// The board certificate cannot be prepared with an automatic entry (design
@@ -642,11 +649,11 @@ async fn a_certificate_failure_with_an_automatic_entry_falls_back_to_the_manual_
     first.stop().await;
     // The second start has an automatic board entry (a local address with a
     // free port) and a certificate hook that fails when it is bound.
-    let [auto, manual, link] = free_ports();
+    let auto = free_port_below_ephemeral();
     let missing = tmp.path().join("no-such-tailscale").display().to_string();
     write(&format!(
         "name = \"d\"\ntailnet_auto = true\ntailscale_bin = \"{missing}\"\n\
-         listen = [\"{manual}\", \"{auto}\"]\nlink_listen = [\"{link}\"]\n\
+         listen = [\"127.0.0.1:0\", \"{auto}\"]\nlink_listen = [\"127.0.0.1:0\"]\n\
          tailnet_auto_listen = [\"{auto}\"]\n"
     ));
     let options = StartOptions {
@@ -701,12 +708,12 @@ async fn a_real_certificate_write_failure_falls_back_to_the_stored_pair() {
     let blocker = deck_dir.join("board-selfsigned.key.tmp");
     std::fs::create_dir(&blocker).unwrap();
     std::fs::write(blocker.join("x"), "x").unwrap();
-    let [auto, manual, link] = free_ports();
+    let auto = free_port_below_ephemeral();
     let missing = tmp.path().join("no-such-tailscale").display().to_string();
     // The host name adds a name to the certificate, so the update must write.
     write(&format!(
         "name = \"d\"\ntailnet_auto = true\ntailnet_hostname = \"deck.tail1234.ts.net\"\ntailscale_bin = \"{missing}\"\n\
-         listen = [\"{manual}\", \"{auto}\"]\nlink_listen = [\"{link}\"]\n\
+         listen = [\"127.0.0.1:0\", \"{auto}\"]\nlink_listen = [\"127.0.0.1:0\"]\n\
          tailnet_auto_listen = [\"{auto}\"]\n"
     ));
     let deck = RunningDeck::start(

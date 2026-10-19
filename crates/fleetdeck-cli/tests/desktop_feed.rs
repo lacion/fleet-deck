@@ -77,14 +77,16 @@ impl Rig {
         });
     }
 
-    /// A fake program that logs its argv to `<name>.log`.
+    /// A fake program that logs its argv to `<name>.log`. The whole call is
+    /// one write: a reader never sees part of a call, and the calls of
+    /// programs that run at the same time do not mix.
     fn tool(&self, name: &str) {
         let log = self.dir.path().join(format!("{name}.log"));
         let path = self.dir.path().join("bin").join(name);
         std::fs::write(
             &path,
             format!(
-                "#!/bin/sh\n{{ echo \"== {name}\"; for a in \"$@\"; do echo \"$a\"; done; }} >> {}\n",
+                "#!/bin/sh\nrec=\"== {name}\n\"\nfor a in \"$@\"; do rec=\"$rec$a\n\"; done\nprintf '%s' \"$rec\" >> {}\n",
                 log.display()
             ),
         )
