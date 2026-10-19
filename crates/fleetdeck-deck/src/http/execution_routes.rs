@@ -77,6 +77,13 @@ impl StopWatch {
         poll: Duration::from_secs(1),
         limit: Duration::from_secs(30),
     };
+
+    /// One check each 10 seconds for two hours: the completion watcher of a
+    /// maintenance run (BG-1, `board-gaps.md` section 2.9).
+    pub const MAINTENANCE_DEFAULT: Self = Self {
+        poll: Duration::from_secs(10),
+        limit: Duration::from_secs(7200),
+    };
 }
 
 /// What the deck knows of the outcome row of a command ID.
@@ -452,7 +459,7 @@ async fn audit_outcome(board: &Board, actor: &str, target: &str, check: &Executi
 /// Runs `write` until it succeeds: after each failure it waits `poll`, then
 /// twice as long each time, at most [`WRITE_PAUSE_MAX`], for at most
 /// [`WRITE_RETRY_LIMIT`]. Logs an error when it gives up.
-async fn until_written<F, Fut>(poll: Duration, what: &str, mut write: F)
+pub(super) async fn until_written<F, Fut>(poll: Duration, what: &str, mut write: F)
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = bool>,

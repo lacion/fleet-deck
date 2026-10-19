@@ -22,6 +22,7 @@ pub mod command_routes;
 pub mod desktop_capture_routes;
 pub mod desktop_recording_routes;
 pub mod desktop_routes;
+pub mod desktop_tools_routes;
 pub mod display_artifact;
 pub mod display_bodies;
 pub mod display_changes;
@@ -40,6 +41,7 @@ pub mod fleet_routes;
 pub mod grant_routes;
 pub mod guard;
 pub mod history_routes;
+mod maintenance_audit;
 pub mod methods;
 pub mod native_routes;
 pub mod not_built;
@@ -123,6 +125,9 @@ pub struct Board {
     pub ws_display_send: std::time::Duration,
     /// How the deck watches for the outcome of an accepted stop (BG-4 §5.6).
     pub stop_watch: execution_routes::StopWatch,
+    /// How the deck watches for the completion of a maintenance run (BG-1
+    /// §2.9): the pause between two list reads and the longest watch.
+    pub maintenance_watch: execution_routes::StopWatch,
     /// The link node for the pairing methods (`None`: they answer 503).
     pub pairing: Option<Arc<crate::link::DeckNode>>,
     /// The board web client (P4-4).
@@ -210,6 +215,26 @@ pub fn router(board: Arc<Board>) -> Router {
         .route(
             "/api/stations/{station}/omarchy/repairs/{repair_id}/restore-plan",
             get(omarchy_routes::restore_plan),
+        )
+        .route(
+            "/api/stations/{station}/desktop-tools",
+            get(desktop_tools_routes::tools),
+        )
+        .route(
+            "/api/stations/{station}/desktop-tools/plan",
+            get(desktop_tools_routes::plan),
+        )
+        .route(
+            "/api/stations/{station}/maintenance",
+            get(desktop_tools_routes::list).post(desktop_tools_routes::open),
+        )
+        .route(
+            "/api/stations/{station}/maintenance/{id}/resize",
+            post(desktop_tools_routes::resize),
+        )
+        .route(
+            "/api/stations/{station}/maintenance/{id}/attach",
+            get(desktop_tools_routes::attach),
         )
         .route(
             "/api/secrets/stations/{station}/settings",

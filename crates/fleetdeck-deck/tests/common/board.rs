@@ -144,6 +144,9 @@ pub struct Extras {
     /// How the deck watches for the outcome of an accepted stop (default:
     /// `StopWatch::DEFAULT`).
     pub stop_watch: Option<StopWatch>,
+    /// How the deck watches for the completion of a maintenance run
+    /// (default: `StopWatch::MAINTENANCE_DEFAULT`).
+    pub maintenance_watch: Option<StopWatch>,
 }
 
 /// Serves the board API of `link` with `extras`.
@@ -207,6 +210,10 @@ async fn serve_with(
                     .as_ref()
                     .and_then(|e| e.stop_watch)
                     .unwrap_or(StopWatch::DEFAULT),
+                maintenance_watch: extras
+                    .as_ref()
+                    .and_then(|e| e.maintenance_watch)
+                    .unwrap_or(StopWatch::MAINTENANCE_DEFAULT),
                 pairing: pairing
                     .clone()
                     .or_else(|| extras.as_mut().and_then(|e| e.pairing.take())),

@@ -67,12 +67,14 @@ impl ApiMethod {
 pub const WS_METHOD: &str = "board.ws";
 /// The WebSocket of one human shell (PLAN §6.8).
 pub const SHELL_WS_METHOD: &str = "shells.attach";
+/// The WebSocket of one maintenance run (BG-1, `board-gaps.md` section 2.9).
+pub const MAINTENANCE_WS_METHOD: &str = "station.maintenance_attach";
 
 /// True for a WebSocket method: its login is a ticket or a cookie with an
 /// `Origin` of this deck's board.
 #[must_use]
 pub fn is_socket(name: &str) -> bool {
-    name == WS_METHOD || name == SHELL_WS_METHOD
+    name == WS_METHOD || name == SHELL_WS_METHOD || name == MAINTENANCE_WS_METHOD
 }
 
 #[path = "methods_table.rs"]
@@ -85,6 +87,8 @@ mod table_git;
 mod table_reports;
 #[path = "methods_table_rest.rs"]
 mod table_rest;
+#[path = "methods_table_tools.rs"]
+mod table_tools;
 
 /// Every board-API method, in table order.
 pub fn api() -> impl Iterator<Item = &'static ApiMethod> {
@@ -94,6 +98,7 @@ pub fn api() -> impl Iterator<Item = &'static ApiMethod> {
         .chain(table_git::API_GIT.iter())
         .chain(table_display::API_DISPLAY.iter())
         .chain(table_reports::API_REPORTS.iter())
+        .chain(table_tools::API_TOOLS.iter())
 }
 
 /// The route prefix of the command methods.

@@ -172,3 +172,56 @@ fn the_settings_routes_are_admin_and_owner_only() {
         Some("settings.station_secret_set")
     );
 }
+
+/// The desktop tools rows (BG-1): `admin`, owner only, and the WebSocket row
+/// is a socket that the guard admits by ticket or by cookie with the board
+/// `Origin`.
+#[test]
+fn the_desktop_tools_rows_are_admin_owner_rows_and_one_is_a_socket() {
+    let rows = [
+        (
+            "station.desktop_tools",
+            Method::GET,
+            "/api/stations/{station}/desktop-tools",
+            false,
+        ),
+        (
+            "station.desktop_tools_plan",
+            Method::GET,
+            "/api/stations/{station}/desktop-tools/plan",
+            false,
+        ),
+        (
+            "station.maintenance_open",
+            Method::POST,
+            "/api/stations/{station}/maintenance",
+            true,
+        ),
+        (
+            "station.maintenance_list",
+            Method::GET,
+            "/api/stations/{station}/maintenance",
+            false,
+        ),
+        (
+            "station.maintenance_resize",
+            Method::POST,
+            "/api/stations/{station}/maintenance/{id}/resize",
+            true,
+        ),
+        (
+            MAINTENANCE_WS_METHOD,
+            Method::GET,
+            "/api/stations/{station}/maintenance/{id}/attach",
+            false,
+        ),
+    ];
+    for (name, method, path, mutating) in rows {
+        let api = find(&method, path).unwrap_or_else(|| panic!("{name} has no row"));
+        assert_eq!(api.name, name);
+        assert_eq!(api.scope, Some(Scope::Admin), "{name}");
+        assert_eq!(api.mutating, mutating, "{name}");
+        assert!(!api.member && !api.display, "{name}");
+        assert_eq!(is_socket(name), name == MAINTENANCE_WS_METHOD, "{name}");
+    }
+}
