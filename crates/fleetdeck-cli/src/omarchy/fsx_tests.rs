@@ -5,7 +5,7 @@
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _, symlink};
 use std::path::Path;
 
-use super::fsx::{FsError, Home};
+use super::fsx::{FsError, Home, Kind};
 
 fn home() -> (tempfile::TempDir, Home) {
     let dir = tempfile::Builder::new().prefix("fsx").tempdir().unwrap();
@@ -184,4 +184,110 @@ fn create_new_follows_no_link_at_the_leaf_or_above_it() {
         FsError::Unsafe(_)
     ));
     assert!(!outside.path().join("f").exists());
+}
+
+#[test]
+fn a_hard_linked_file_is_refused_for_a_read() {
+    let (dir, home) = home();
+    home.write(Path::new("one"), b"data", 0o644).unwrap();
+    assert!(home.read(Path::new("one")).unwrap().is_some());
+    std::fs::hard_link(dir.path().join("one"), dir.path().join("two")).unwrap();
+    for name in ["one", "two"] {
+        assert!(matches!(
+            home.read(Path::new(name)).unwrap_err(),
+            FsError::Unsafe(_)
+        ));
+    }
+    std::fs::remove_file(dir.path().join("two")).unwrap();
+    assert!(home.read(Path::new("one")).unwrap().is_some());
+}
+
+#[test]
+fn a_fifo_is_refused_without_blocking_the_read() {
+    let (dir, home) = home();
+    let fifo = dir.path().join("pipe");
+    let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+    if !matches!(made, Ok(s) if s.success()) {
+        return;
+    }
+    assert!(matches!(
+        home.read(Path::new("pipe")).unwrap_err(),
+        FsError::Unsafe(_)
+    ));
+}
+
+#[test]
+fn a_read_returns_the_identity_of_the_file() {
+    let (dir, home) = home();
+    home.write(Path::new("f"), b"12345", 0o640).unwrap();
+    let data = home.read(Path::new("f")).unwrap().unwrap();
+    let meta = std::fs::metadata(dir.path().join("f")).unwrap();
+    assert_eq!((data.dev, data.ino, data.size), (meta.dev(), meta.ino(), 5));
+    assert_eq!(data.full_mode, 0o640);
+}
+
+#[test]
+fn lstat_tells_the_kind_without_following_a_link() {
+    let (dir, home) = home();
+    home.write(Path::new("d/f"), b"x", 0o644).unwrap();
+    symlink(dir.path().join("d/f"), dir.path().join("link")).unwrap();
+    let file = home.lstat(Path::new("d/f")).unwrap().unwrap();
+    assert_eq!(file.kind, Kind::Regular);
+    assert!(file.is_mine() && file.single_link);
+    assert_eq!((file.mode, file.size), (0o644, 1));
+    assert_eq!(
+        home.lstat(Path::new("d")).unwrap().unwrap().kind,
+        Kind::Directory
+    );
+    assert_eq!(
+        home.lstat(Path::new("link")).unwrap().unwrap().kind,
+        Kind::Link
+    );
+    assert!(home.lstat(Path::new("d/none")).unwrap().is_none());
+    assert!(home.lstat(Path::new("none/f")).unwrap().is_none());
+    std::fs::hard_link(dir.path().join("d/f"), dir.path().join("d/g")).unwrap();
+    assert!(!home.lstat(Path::new("d/g")).unwrap().unwrap().single_link);
+    symlink(dir.path().join("d"), dir.path().join("dlink")).unwrap();
+    assert!(matches!(
+        home.lstat(Path::new("dlink/f")).unwrap_err(),
+        FsError::Unsafe(_)
+    ));
+}
+
+#[test]
+fn list_gives_the_sorted_names_and_none_for_a_missing_directory() {
+    let (dir, home) = home();
+    home.write(Path::new("d/b"), b"x", 0o644).unwrap();
+    home.write(Path::new("d/a"), b"x", 0o644).unwrap();
+    assert_eq!(
+        home.list(Path::new("d")).unwrap(),
+        Some(vec!["a".to_owned(), "b".to_owned()])
+    );
+    assert_eq!(home.list(Path::new("none")).unwrap(), None);
+    symlink(dir.path().join("d"), dir.path().join("dlink")).unwrap();
+    assert!(matches!(
+        home.list(Path::new("dlink")).unwrap_err(),
+        FsError::Unsafe(_)
+    ));
+}
+
+#[test]
+fn private_dir_makes_the_directory_0700_and_the_ones_above_it_0755() {
+    let (dir, home) = home();
+    home.private_dir(Path::new("a/b/private")).unwrap();
+    assert_eq!(mode(&dir.path().join("a/b/private")), 0o700);
+    assert_eq!(mode(&dir.path().join("a/b")), 0o755);
+    // An existing directory of yours is set to 0700; again is fine.
+    std::fs::set_permissions(
+        dir.path().join("a/b/private"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    home.private_dir(Path::new("a/b/private")).unwrap();
+    assert_eq!(mode(&dir.path().join("a/b/private")), 0o700);
+    // A file or a link in the way is refused.
+    std::fs::write(dir.path().join("file"), "x").unwrap();
+    assert!(home.private_dir(Path::new("file")).is_err());
+    symlink(dir.path().join("a"), dir.path().join("alink")).unwrap();
+    assert!(home.private_dir(Path::new("alink")).is_err());
 }

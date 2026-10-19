@@ -13,8 +13,53 @@ pub enum OmarchyCommand {
         #[arg(long)]
         yes: bool,
         /// Also record that the ambient screensaver is on.
-        #[arg(long)]
+        #[arg(
+            long,
+            conflicts_with_all = ["replace_conflicts", "plan_stdin", "resume"]
+        )]
         screensaver: bool,
+        /// Replace the files of a reviewed plan (read from stdin) and keep a
+        /// copy of each. Needs --plan-stdin; prints JSON on stdout.
+        #[arg(long, requires = "plan_stdin")]
+        replace_conflicts: bool,
+        /// Read the reviewed plan (one JSON object, at most 64 KiB) from stdin.
+        #[arg(long, requires = "replace_conflicts")]
+        plan_stdin: bool,
+        /// Finish an incomplete repair; prints JSON on stdout.
+        #[arg(
+            long,
+            value_name = "REPAIR_ID",
+            conflicts_with_all = ["replace_conflicts", "plan_stdin"]
+        )]
+        resume: Option<String>,
+    },
+    /// Print the facts of the install plan as JSON: the files that differ
+    /// from the assets (read only).
+    InstallPlan {
+        /// Accepted for clarity; the output is always JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the last repairs, from the files on disk, as JSON.
+    RepairStatus {
+        /// Accepted for clarity; the output is always JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the restore plan of a repair as JSON (read only).
+    RestorePlan {
+        /// The repair ID (32 lowercase hexadecimal characters).
+        #[arg(long)]
+        repair: String,
+        /// Accepted for clarity; the output is always JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Restore the kept copies of a reviewed restore plan (read from stdin).
+    Restore {
+        /// Read the restore plan (one JSON object, at most 64 KiB) from stdin.
+        #[arg(long, required = true)]
+        plan_stdin: bool,
     },
     /// Remove what install wrote (a file that you changed stays).
     Uninstall,

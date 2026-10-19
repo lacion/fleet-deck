@@ -17,7 +17,7 @@ use std::path::{Component, Path, PathBuf};
 
 use ring::rand::{SecureRandom, SystemRandom};
 use rustix::fs::{
-    AtFlags, FileType, Mode, OFlags, RenameFlags, fchmod, fstat, fsync, mkdirat, open, openat,
+    AtFlags, Dir, FileType, Mode, OFlags, RenameFlags, fchmod, fstat, fsync, mkdirat, open, openat,
     renameat, renameat_with, statat, unlinkat,
 };
 use rustix::io::Errno;
@@ -67,6 +67,45 @@ pub struct Data {
     pub bytes: Vec<u8>,
     /// The permission bits.
     pub mode: u32,
+    /// The device of the file.
+    pub dev: u64,
+    /// The inode of the file.
+    pub ino: u64,
+    /// The size in bytes.
+    pub size: u64,
+    /// The permission bits with the special bits (`st_mode & 0o7777`).
+    pub full_mode: u32,
+}
+
+/// The kind of a file, without following a link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Regular,
+    Directory,
+    Link,
+    Other,
+}
+
+/// What `lstat` found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Meta {
+    pub kind: Kind,
+    pub uid: u32,
+    /// True when the file has exactly one name.
+    pub single_link: bool,
+    pub dev: u64,
+    pub ino: u64,
+    /// `st_mode & 0o7777`.
+    pub mode: u32,
+    pub size: u64,
+}
+
+impl Meta {
+    /// True when the file is owned by the effective user.
+    #[must_use]
+    pub fn is_mine(&self) -> bool {
+        self.uid == geteuid().as_raw()
+    }
 }
 
 /// The config home, opened.
@@ -101,7 +140,15 @@ fn mode_of(bits: u32) -> Mode {
 }
 
 fn random_hex() -> io::Result<String> {
-    let mut raw = [0_u8; 8];
+    random_bytes_hex(8)
+}
+
+/// `count` random bytes as lower-case hex (`2 * count` characters).
+///
+/// # Errors
+/// The system has no random bytes.
+pub fn random_bytes_hex(count: usize) -> io::Result<String> {
+    let mut raw = vec![0_u8; count];
     SystemRandom::new()
         .fill(&mut raw)
         .map_err(|_| io::Error::other("no random bytes"))?;
@@ -200,7 +247,7 @@ impl Home {
         let fd = match openat(
             &dir,
             leaf,
-            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
             Mode::empty(),
         ) {
             Ok(fd) => fd,
@@ -210,6 +257,7 @@ impl Home {
         let stat = fstat(&fd)?;
         if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile
             || stat.st_uid != geteuid().as_raw()
+            || stat.st_nlink != 1
         {
             return Err(self.unsafe_at(rel));
         }
@@ -221,7 +269,91 @@ impl Home {
         Ok(Some(Data {
             bytes,
             mode: stat.st_mode & 0o777,
+            dev: stat.st_dev,
+            ino: stat.st_ino,
+            size: stat.st_size.unsigned_abs(),
+            full_mode: stat.st_mode & 0o7777,
         }))
+    }
+
+    /// What is at `rel`, without following a link. `Ok(None)` when it (or a
+    /// directory above it) does not exist.
+    ///
+    /// # Errors
+    /// [`FsError::Unsafe`] for a link or a foreign owner above it; `Io`.
+    pub fn lstat(&self, rel: &Path) -> Result<Option<Meta>, FsError> {
+        let (parent, leaf) = Self::split(rel)?;
+        let Some(dir) = self.dir(parent, false)? else {
+            return Ok(None);
+        };
+        let stat = match statat(&dir, leaf, AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(stat) => stat,
+            Err(Errno::NOENT) => return Ok(None),
+            Err(e) => return Err(self.map_open(e, rel)),
+        };
+        let kind = match FileType::from_raw_mode(stat.st_mode) {
+            FileType::RegularFile => Kind::Regular,
+            FileType::Directory => Kind::Directory,
+            FileType::Symlink => Kind::Link,
+            _ => Kind::Other,
+        };
+        Ok(Some(Meta {
+            kind,
+            uid: stat.st_uid,
+            single_link: stat.st_nlink == 1,
+            dev: stat.st_dev,
+            ino: stat.st_ino,
+            mode: stat.st_mode & 0o7777,
+            size: stat.st_size.unsigned_abs(),
+        }))
+    }
+
+    /// The names in the directory `rel`, sorted. `Ok(None)` when the
+    /// directory does not exist. A name that is not UTF-8 is left out.
+    ///
+    /// # Errors
+    /// [`FsError::Unsafe`] for a link or a foreign owner on the path; `Io`.
+    pub fn list(&self, rel: &Path) -> Result<Option<Vec<String>>, FsError> {
+        let Some(fd) = self.dir(rel, false)? else {
+            return Ok(None);
+        };
+        let mut names = Vec::new();
+        for entry in Dir::read_from(&fd)? {
+            let entry = entry?;
+            let name = entry.file_name().to_bytes();
+            if name == b"." || name == b".." {
+                continue;
+            }
+            if let Ok(text) = std::str::from_utf8(name) {
+                names.push(text.to_owned());
+            }
+        }
+        names.sort();
+        Ok(Some(names))
+    }
+
+    /// Makes the directory `rel` with the mode 0700 (the missing ones above
+    /// it get 0755). An existing directory of yours is set to 0700.
+    ///
+    /// # Errors
+    /// [`FsError::Unsafe`] for a link, a non-directory or a foreign owner on
+    /// the path; `Io`.
+    pub fn private_dir(&self, rel: &Path) -> Result<(), FsError> {
+        let (parent, leaf) = Self::split(rel)?;
+        let dir = self
+            .dir(parent, true)?
+            .ok_or_else(|| self.unsafe_at(parent))?;
+        match mkdirat(&dir, leaf, mode_of(0o700)) {
+            Ok(()) | Err(Errno::EXIST) => {}
+            Err(e) => return Err(e.into()),
+        }
+        let fd = openat(&dir, leaf, DIR_FLAGS, Mode::empty()).map_err(|e| self.map_open(e, rel))?;
+        if fstat(&fd)?.st_uid != geteuid().as_raw() {
+            return Err(self.unsafe_at(rel));
+        }
+        fchmod(&fd, mode_of(0o700))?;
+        fsync(&dir)?;
+        Ok(())
     }
 
     /// Writes `bytes` to `rel` atomically with the permission bits `mode`,

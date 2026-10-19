@@ -44,6 +44,7 @@ pub mod member_deny;
 pub mod mutation;
 pub mod native;
 pub mod omarchy_admin;
+pub mod omarchy_repair;
 pub mod orchestration;
 pub mod palette;
 pub mod plans;

@@ -80,6 +80,7 @@ use crate::native::{
     NativeSession, NativeSessionList, NativeSessionsQuery, TranscriptPin,
 };
 use crate::omarchy_admin as oa;
+use crate::omarchy_repair as orp;
 use crate::orchestration::{
     AssignOutcome, AssignRequest, GrantView, GroupMailRequest, MailRequest, MailView,
     TaskCompletion, TaskRequest, TaskView, TaskWaitAnswer,
@@ -465,6 +466,25 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         oa::OmarchyStatus::export_all(&cfg),
         oa::ActOutcome::export_all(&cfg),
         oa::OmarchyActResult::export_all(&cfg),
+        orp::OmarchyAssetId::export_all(&cfg),
+        orp::AssetBase::export_all(&cfg),
+        orp::PlanClassification::export_all(&cfg),
+        orp::PlanBlock::export_all(&cfg),
+        orp::PlanFile::export_all(&cfg),
+        orp::InstallPlanFacts::export_all(&cfg),
+        orp::InstallPlanInput::export_all(&cfg),
+        orp::RepairFileState::export_all(&cfg),
+        orp::RepairFile::export_all(&cfg),
+        orp::RepairResult::export_all(&cfg),
+        orp::ObservedState::export_all(&cfg),
+        orp::JournalState::export_all(&cfg),
+        orp::RepairStatusFile::export_all(&cfg),
+        orp::RepairJournalView::export_all(&cfg),
+        orp::RepairStatusView::export_all(&cfg),
+        orp::RestoreAction::export_all(&cfg),
+        orp::RestorePlanFile::export_all(&cfg),
+        orp::RestorePlanFacts::export_all(&cfg),
+        orp::RestorePlanInput::export_all(&cfg),
         acc::AccountKind::export_all(&cfg),
         acc::AccountMethod::export_all(&cfg),
         acc::AccountStatus::export_all(&cfg),
