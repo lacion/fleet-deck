@@ -2,6 +2,11 @@
 //! right after the Git work, the preparation Git runs in the checked source
 //! repository, and the checkpoint start-up runs in the checked folder.
 
+#![cfg_attr(
+    not(target_os = "linux"),
+    allow(unused_imports, dead_code, reason = "most tests here are Linux-only")
+)]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

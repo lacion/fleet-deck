@@ -3,6 +3,11 @@
 //! checked folder object, and a Codex folder that changed after the spawn
 //! stops the session.
 
+#![cfg_attr(
+    not(target_os = "linux"),
+    allow(unused_imports, dead_code, reason = "most tests here are Linux-only")
+)]
+
 use fleetdeck_core::launch_dir::CHANGED;
 use fleetdeck_proto::command::{SessionCommand, StopMode};
 use fleetdeck_proto::event::{Event, SessionState};

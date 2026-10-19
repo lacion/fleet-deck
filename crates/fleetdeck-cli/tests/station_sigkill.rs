@@ -12,6 +12,7 @@
 //! survive until its next stdout write (EPIPE); DL-074 records that limit.
 //! The durable `ShimHost` (ADR-005) is the intended exception.
 
+#![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used, clippy::expect_used, reason = "test code")]
 
 mod common;

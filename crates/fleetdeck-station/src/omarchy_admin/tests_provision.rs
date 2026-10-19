@@ -5,7 +5,7 @@ use std::fs::{self, File};
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::Path;
 
-use rustix::fs::{CWD, FileType, FlockOperation, Mode, flock, mknodat};
+use rustix::fs::{FlockOperation, flock};
 
 use super::provision::{
     LOCK_FILE, STATE_FILE, StateRead, bootstrap_running, open_private, read_state, view,
@@ -132,14 +132,13 @@ fn omarchy_a_link_or_a_fifo_or_a_directory_is_unreadable_and_never_blocks() {
     assert_eq!(read_state(dir.path()), StateRead::Unreadable);
     fs::remove_file(dir.path().join(STATE_FILE)).unwrap();
     // A FIFO with no writer: a blocking open or read would hang here.
-    mknodat(
-        CWD,
-        dir.path().join(STATE_FILE),
-        FileType::Fifo,
-        Mode::from_raw_mode(0o600),
-        0,
-    )
-    .unwrap();
+    // `mkfifo(1)`: rustix has no `mknodat` on macOS.
+    let made = std::process::Command::new("mkfifo")
+        .args(["-m", "600"])
+        .arg(dir.path().join(STATE_FILE))
+        .status()
+        .unwrap();
+    assert!(made.success());
     assert_eq!(read_state(dir.path()), StateRead::Unreadable);
     fs::remove_file(dir.path().join(STATE_FILE)).unwrap();
     fs::create_dir(dir.path().join(STATE_FILE)).unwrap();
@@ -179,7 +178,13 @@ fn omarchy_the_lock_probe_fails_closed() {
     assert!(bootstrap_running(dir.path()));
     fs::remove_file(&path).unwrap();
     // A FIFO.
-    mknodat(CWD, &path, FileType::Fifo, Mode::from_raw_mode(0o600), 0).unwrap();
+    // `mkfifo(1)`: rustix has no `mknodat` on macOS.
+    let made = std::process::Command::new("mkfifo")
+        .args(["-m", "600"])
+        .arg(&path)
+        .status()
+        .unwrap();
+    assert!(made.success());
     assert!(bootstrap_running(dir.path()));
     fs::remove_file(&path).unwrap();
     // A directory.

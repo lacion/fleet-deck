@@ -5,6 +5,11 @@
 //! bounds the `git` output itself (finding 4), and a timed-out blocking
 //! worker keeps its slot until it ends (finding 5).
 
+#![cfg_attr(
+    not(target_os = "linux"),
+    allow(unused_imports, dead_code, reason = "most tests here are Linux-only")
+)]
+
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;

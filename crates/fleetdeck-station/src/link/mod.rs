@@ -239,6 +239,13 @@ async fn request(
                 tracing::debug!(error = %e, "response");
             }
         }
+        // BG-1: the token of a maintenance stream needs the data channel.
+        "maintenance.attach" => {
+            let reply = intake::maintenance_attach(data, req.params);
+            if let Err(e) = control.respond(req.id, reply).await {
+                tracing::debug!(error = %e, "response");
+            }
+        }
         // FG-9: the export token needs the data channel of this link.
         "session.move_export" => {
             let reply = intake::move_export(ctx, data, req.params).await;

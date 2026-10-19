@@ -423,6 +423,10 @@ pub fn identity_alive_in(root: &Path, identity: &ProviderIdentity) -> Option<boo
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
+    #![cfg_attr(
+        not(target_os = "linux"),
+        allow(dead_code, reason = "most tests here are Linux-only")
+    )]
 
     use super::*;
 

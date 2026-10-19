@@ -183,6 +183,7 @@ impl Holder for StationHolder {
             json!(h.daily_token_cap),
         );
         m.insert("tailscale_bin".into(), tailscale_bin_text(&c.tailscale_bin));
+        insert_station_knobs(&mut m, c);
         m.insert("clone_root".into(), tailscale_bin_text(&c.clone_root));
         m.insert("traits".into(), strings(c.traits.clone()));
         m.insert("allow_check_cmd".into(), json!(c.allow_check_cmd));
@@ -294,6 +295,16 @@ impl Holder for StationHolder {
             !old.allow_local_remotes && new.allow_local_remotes,
             "allow_local_remotes",
         );
+        // A shorter session history deletes data; a longer raw log keeps more
+        // text that can hold prompts (knobs design section 3).
+        add(
+            new.retention.history_days < old.retention.history_days,
+            "retention.history_days",
+        );
+        add(
+            new.retention.raw_log_mib > old.retention.raw_log_mib,
+            "retention.raw_log_mib",
+        );
         keys
     }
 
@@ -350,6 +361,7 @@ impl Holder for DeckHolder {
             "tailnet_auto_link_listen".into(),
             addrs(&c.tailnet_auto_link_listen),
         );
+        insert_deck_knobs(&mut m, c);
         m
     }
 
@@ -387,7 +399,134 @@ impl Holder for DeckHolder {
         if !old.tailnet_auto && new.tailnet_auto {
             keys.push("tailnet_auto".to_owned());
         }
+        deck_knob_danger(old, new, &mut keys);
         keys
+    }
+}
+
+/// The values of the deck knobs (knobs design section 2).
+fn insert_deck_knobs(m: &mut Map<String, Value>, c: &DeckConfig) {
+    let s = &c.security;
+    let numbers = [
+        ("security.min_password_chars", s.min_password_chars),
+        ("security.login_idle_days", s.login_idle_days),
+        ("security.login_max_days", s.login_max_days),
+        ("security.elevation_minutes", s.elevation_minutes),
+        ("security.api_token_max_days", s.api_token_max_days),
+        ("security.display_idle_days", s.display_idle_days),
+        ("security.display_max_days", s.display_max_days),
+        ("security.invite_minutes", s.invite_minutes),
+        (
+            "security.desktop_screenshots_per_minute",
+            s.desktop_screenshots_per_minute,
+        ),
+        (
+            "security.desktop_actions_per_minute",
+            s.desktop_actions_per_minute,
+        ),
+        ("retention.audit_days", c.retention.audit_days),
+        ("retention.audit_max_rows", c.retention.audit_max_rows),
+        ("limits.delivery_hours", c.limits.delivery_hours),
+        ("limits.radar_minutes", c.limits.radar_minutes),
+    ];
+    for (key, value) in numbers {
+        m.insert(key.into(), json!(value));
+    }
+}
+
+/// The values of the station knobs (knobs design section 3).
+fn insert_station_knobs(m: &mut Map<String, Value>, c: &StationConfig) {
+    let l = &c.limits;
+    let numbers = [
+        ("limits.shell_command_minutes", l.shell_command_minutes),
+        ("limits.setup_minutes", l.setup_minutes),
+        ("limits.land_check_minutes", l.land_check_minutes),
+        ("limits.clone_minutes", l.clone_minutes),
+        ("limits.git_push_seconds", l.git_push_seconds),
+        (
+            "limits.provider_stop_grace_seconds",
+            l.provider_stop_grace_seconds,
+        ),
+        ("limits.reconnect_max_seconds", l.reconnect_max_seconds),
+        ("limits.scrollback_lines", l.scrollback_lines),
+        ("limits.scrollback_mib", l.scrollback_mib),
+        ("retention.history_days", c.retention.history_days),
+        ("retention.event_days", c.retention.event_days),
+        ("retention.raw_log_mib", c.retention.raw_log_mib),
+        ("capture.quota_gib", c.capture.quota_gib),
+        ("capture.free_reserve_gib", c.capture.free_reserve_gib),
+        (
+            "capture.recording_max_seconds",
+            c.capture.recording_max_seconds,
+        ),
+    ];
+    for (key, value) in numbers {
+        m.insert(key.into(), json!(value));
+    }
+}
+
+/// The deck knobs whose change needs the elevation (knobs design section 2):
+/// a weaker security value, or a shorter audit history.
+fn deck_knob_danger(old: &DeckConfig, new: &DeckConfig, keys: &mut Vec<String>) {
+    let (o, n) = (&old.security, &new.security);
+    // Lowered is weaker.
+    let lowered = [
+        (
+            "security.min_password_chars",
+            n.min_password_chars < o.min_password_chars,
+        ),
+        (
+            "retention.audit_days",
+            new.retention.audit_days < old.retention.audit_days,
+        ),
+        (
+            "retention.audit_max_rows",
+            new.retention.audit_max_rows < old.retention.audit_max_rows,
+        ),
+    ];
+    // Raised is weaker.
+    let raised = [
+        (
+            "security.login_idle_days",
+            n.login_idle_days > o.login_idle_days,
+        ),
+        (
+            "security.login_max_days",
+            n.login_max_days > o.login_max_days,
+        ),
+        (
+            "security.elevation_minutes",
+            n.elevation_minutes > o.elevation_minutes,
+        ),
+        (
+            "security.api_token_max_days",
+            n.api_token_max_days > o.api_token_max_days,
+        ),
+        (
+            "security.display_idle_days",
+            n.display_idle_days > o.display_idle_days,
+        ),
+        (
+            "security.display_max_days",
+            n.display_max_days > o.display_max_days,
+        ),
+        (
+            "security.invite_minutes",
+            n.invite_minutes > o.invite_minutes,
+        ),
+        (
+            "security.desktop_screenshots_per_minute",
+            n.desktop_screenshots_per_minute > o.desktop_screenshots_per_minute,
+        ),
+        (
+            "security.desktop_actions_per_minute",
+            n.desktop_actions_per_minute > o.desktop_actions_per_minute,
+        ),
+    ];
+    for (key, weaker) in lowered.into_iter().chain(raised) {
+        if weaker {
+            keys.push(key.to_owned());
+        }
     }
 }
 

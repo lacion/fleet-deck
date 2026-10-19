@@ -6,6 +6,9 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use super::clone_cfg::{valid_clone_host, valid_clone_org};
+use super::knobs_deck_cfg::{
+    DeckLimits, DeckRetention, DeckSecurity, RawDeckLimits, RawDeckRetention, RawSecurity,
+};
 use super::toml_text::toml_error;
 use super::{
     ConfigError, DEFAULT_BOARD_LISTEN, DEFAULT_LINK_LISTEN, check_name, invalid, parse_listen,
@@ -64,6 +67,12 @@ pub struct DeckConfig {
     pub tailnet_auto: bool,
     pub tailnet_auto_listen: Vec<SocketAddr>,
     pub tailnet_auto_link_listen: Vec<SocketAddr>,
+    /// `[security]`: sign-in lifetimes, password length and desktop rates (knobs K1; nothing reads them yet).
+    pub security: DeckSecurity,
+    /// `[retention]`: how long the deck keeps its audit rows.
+    pub retention: DeckRetention,
+    /// `[limits]`: the delivery time of mail and tasks, the radar interval.
+    pub limits: DeckLimits,
 }
 
 /// The keys of `deck.toml` (`RawDeck`).
@@ -84,6 +93,9 @@ pub(crate) const RAW_DECK_KEYS: &[&str] = &[
     "tailnet_auto",
     "tailnet_auto_listen",
     "tailnet_auto_link_listen",
+    "security",
+    "retention",
+    "limits",
 ];
 
 #[derive(Deserialize)]
@@ -104,6 +116,9 @@ struct RawDeck {
     tailnet_auto: Option<bool>,
     tailnet_auto_listen: Option<Vec<String>>,
     tailnet_auto_link_listen: Option<Vec<String>>,
+    security: Option<RawSecurity>,
+    retention: Option<RawDeckRetention>,
+    limits: Option<RawDeckLimits>,
 }
 
 impl DeckConfig {
@@ -155,6 +170,18 @@ impl DeckConfig {
             raw.tailnet_auto_listen,
             raw.tailnet_auto_link_listen,
         )?;
+        let security = match raw.security {
+            Some(raw) => raw.validate()?,
+            None => DeckSecurity::default(),
+        };
+        let retention = match raw.retention {
+            Some(raw) => raw.validate()?,
+            None => DeckRetention::default(),
+        };
+        let limits = match raw.limits {
+            Some(raw) => raw.validate()?,
+            None => DeckLimits::default(),
+        };
         Ok(Self {
             name,
             listen,
@@ -171,6 +198,9 @@ impl DeckConfig {
             tailnet_auto: raw.tailnet_auto.unwrap_or(true),
             tailnet_auto_listen,
             tailnet_auto_link_listen,
+            security,
+            retention,
+            limits,
         })
     }
 }

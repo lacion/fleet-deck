@@ -17,8 +17,8 @@ use std::path::{Component, Path, PathBuf};
 
 use ring::rand::{SecureRandom, SystemRandom};
 use rustix::fs::{
-    AtFlags, Dir, FileType, Mode, OFlags, RenameFlags, fchmod, fstat, fsync, mkdirat, open, openat,
-    renameat, renameat_with, statat, unlinkat,
+    AtFlags, Dir, FileType, Mode, OFlags, RawMode, RenameFlags, Stat, fchmod, fstat, fsync,
+    mkdirat, open, openat, renameat, renameat_with, statat, unlinkat,
 };
 use rustix::io::Errno;
 use rustix::process::geteuid;
@@ -135,8 +135,22 @@ fn normal_components(rel: &Path) -> Result<Vec<&std::ffi::OsStr>, FsError> {
     Ok(parts)
 }
 
+/// `mode_t` is `u16` on macOS; every mode here is at most `0o7777`.
+#[allow(clippy::unnecessary_cast, clippy::cast_possible_truncation)]
 fn mode_of(bits: u32) -> Mode {
-    Mode::from_raw_mode(bits)
+    Mode::from_raw_mode(bits as RawMode)
+}
+
+/// The `st_mode` of `stat` (`mode_t` is `u16` on macOS).
+#[allow(clippy::useless_conversion)]
+fn mode_bits(stat: &Stat) -> u32 {
+    u32::from(stat.st_mode)
+}
+
+/// The device and the inode of `stat` (`dev_t` is `i32` on macOS).
+#[allow(clippy::unnecessary_cast, clippy::cast_sign_loss)]
+fn id_of(stat: &Stat) -> (u64, u64) {
+    (stat.st_dev as u64, stat.st_ino as u64)
 }
 
 fn random_hex() -> io::Result<String> {
@@ -223,7 +237,7 @@ impl Home {
             if stat.st_uid != geteuid().as_raw() {
                 return Err(self.unsafe_at(&so_far));
             }
-            modes.push(stat.st_mode & 0o7777);
+            modes.push(mode_bits(&stat) & 0o7777);
             current = next;
         }
         Ok(Some(current))
@@ -280,13 +294,14 @@ impl Home {
         if bytes.len() as u64 > MAX_READ {
             return Err(FsError::Io(io::Error::other("the file is too large")));
         }
+        let (dev, ino) = id_of(&stat);
         Ok(Some(Data {
             bytes,
-            mode: stat.st_mode & 0o777,
-            dev: stat.st_dev,
-            ino: stat.st_ino,
+            mode: mode_bits(&stat) & 0o777,
+            dev,
+            ino,
             size: stat.st_size.unsigned_abs(),
-            full_mode: stat.st_mode & 0o7777,
+            full_mode: mode_bits(&stat) & 0o7777,
         }))
     }
 
@@ -311,13 +326,14 @@ impl Home {
             FileType::Symlink => Kind::Link,
             _ => Kind::Other,
         };
+        let (dev, ino) = id_of(&stat);
         Ok(Some(Meta {
             kind,
             uid: stat.st_uid,
             single_link: stat.st_nlink == 1,
-            dev: stat.st_dev,
-            ino: stat.st_ino,
-            mode: stat.st_mode & 0o7777,
+            dev,
+            ino,
+            mode: mode_bits(&stat) & 0o7777,
             size: stat.st_size.unsigned_abs(),
         }))
     }
@@ -337,7 +353,7 @@ impl Home {
             return Ok(modes.iter().any(|m| m & 0o022 != 0));
         };
         let file = match statat(&dir, leaf, AtFlags::SYMLINK_NOFOLLOW) {
-            Ok(stat) => Some(stat.st_mode & 0o7777),
+            Ok(stat) => Some(mode_bits(&stat) & 0o7777),
             Err(Errno::NOENT) => None,
             Err(e) => return Err(self.map_open(e, rel)),
         };
@@ -511,7 +527,7 @@ impl Home {
             Ok(None) | Err(FsError::Unsafe(_)) => return Ok(None),
             Err(e) => return Err(e),
         };
-        let same = data.dev == stat.st_dev && data.ino == stat.st_ino;
+        let same = (data.dev, data.ino) == id_of(&stat);
         Ok((same && data.full_mode & 0o022 == 0).then_some(data))
     }
 

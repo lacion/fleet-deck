@@ -5,6 +5,11 @@
 //! shim rows are written the way a shim station leaves them. The real
 //! shims are in `crates/fleetdeck-cli/tests/shim_resume*.rs`.
 
+#![cfg_attr(
+    not(target_os = "linux"),
+    allow(unused_imports, dead_code, reason = "most tests here are Linux-only")
+)]
+
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

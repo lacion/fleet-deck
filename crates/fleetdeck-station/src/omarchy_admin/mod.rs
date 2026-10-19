@@ -296,7 +296,7 @@ pub async fn call(method: &str, params: Value, peer: Fingerprint) -> Outcome {
 
 /// The station's own executable: `<station dir>/bin/current` when that link
 /// exists, else the running executable.
-fn own_program(station_dir: &Path) -> std::io::Result<PathBuf> {
+pub(crate) fn own_program(station_dir: &Path) -> std::io::Result<PathBuf> {
     let link = station_dir.join("bin").join("current");
     if std::fs::symlink_metadata(&link).is_ok() {
         Ok(link)

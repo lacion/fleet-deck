@@ -1,5 +1,10 @@
 //! Tests of the trusted path, the mount table and the identity rules (B7).
 
+#![cfg_attr(
+    not(target_os = "linux"),
+    allow(unused_imports, dead_code, reason = "most tests here are Linux-only")
+)]
+
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 
@@ -283,10 +288,12 @@ const LOOP: &str = "103 80 7:3 / /mnt/image rw,relatime - ext4 /dev/loop3 rw";
 const NESTED: &str = "104 101 8:17 /sub /srv/shared/plain rw,relatime - ext4 /dev/sdb1 rw";
 const SPACE: &str = r"105 80 8:33 / /mnt/my\040disk rw - ext4 /dev/sdc1 rw";
 
+#[allow(clippy::unnecessary_cast, clippy::cast_sign_loss)]
 fn dev(major: u32, minor: u32) -> u64 {
-    rustix::fs::makedev(major, minor)
+    rustix::fs::makedev(major, minor) as u64
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn mountinfo_lines_are_read_for_options_and_sources() {
     let text = [
@@ -308,6 +315,7 @@ fn mountinfo_lines_are_read_for_options_and_sources() {
     assert!(mounts.verifiable(dev(8, 33), Path::new("/mnt/my disk/x")));
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn the_longest_mount_point_of_the_device_decides() {
     let text = [IDMAPPED, NESTED].join("\n");
@@ -580,105 +588,6 @@ async fn codex_later_records_must_agree() {
     }
 }
 
-// --------------------------------------------------------------- fixtures
-
-/// Copies a fixture into the rig: every `cwd` is the rig path, and the
-/// Codex parent thread is cleared.
-fn load_fixture(name: &str, cwd: &str) -> Vec<String> {
-    let text = std::fs::read_to_string(fixture(name)).unwrap();
-    let path = regex_free_replace(&text, cwd);
-    path.lines().map(str::to_owned).collect()
-}
-
-fn regex_free_replace(text: &str, cwd: &str) -> String {
-    let mut out = String::new();
-    let mut rest = text;
-    while let Some(i) = rest.find("\"<path ") {
-        out.push_str(&rest[..i]);
-        let tail = &rest[i + 1..];
-        let end = tail.find('"').unwrap();
-        out.push('"');
-        out.push_str(cwd);
-        rest = &tail[end..];
-    }
-    out.push_str(rest);
-    out.replace(
-        "\"parent_thread_id\":\"<text 3>\"",
-        "\"parent_thread_id\":null",
-    )
-}
-
-#[tokio::test]
-async fn the_claude_fixtures_give_the_expected_fields() {
-    let Some(b) = rig(Limits::default(), &[]).await else {
-        return;
-    };
-    let id = "00e00a5d-d49a-4946-b5bc-fcdf51bd4493";
-    for name in [
-        "claude-2.1.300-basic.jsonl",
-        "claude-2.1.300-tools.jsonl",
-        "claude-2.1.300-resumed.jsonl",
-        "claude-2.1.300-sidechain-meta.jsonl",
-    ] {
-        let path = b.claude_path(&b.cwd, id);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        write_private(&path, &join(&load_fixture(name, &b.cwd)));
-        let list = b.list().await;
-        let s = entry(&list, id);
-        assert_eq!(s.import, ImportState::Ok, "{name}");
-        assert_eq!(s.cwd.as_deref(), Some(b.cwd.as_str()), "{name}");
-        assert!(s.verified, "{name}");
-    }
-    let path = b.claude_path(&b.cwd, id);
-    write_private(
-        &path,
-        &join(&load_fixture("claude-2.1.300-basic.jsonl", &b.cwd)),
-    );
-    let list = b.list().await;
-    let s = entry(&list, id);
-    assert_eq!(s.first_prompt.as_deref(), Some("<text 5>"));
-    // The tools fixture holds no prompt that a person typed.
-    write_private(
-        &path,
-        &join(&load_fixture("claude-2.1.300-tools.jsonl", &b.cwd)),
-    );
-    assert_eq!(entry(&b.list().await, id).first_prompt, None);
-    write_private(
-        &path,
-        &join(&load_fixture("claude-2.1.300-basic.jsonl", &b.cwd)),
-    );
-    let list = b.list().await;
-    let s = entry(&list, id);
-    assert_eq!(s.title, None);
-}
-
-#[tokio::test]
-async fn the_codex_fixtures_give_the_expected_fields() {
-    let Some(b) = rig(Limits::default(), &[]).await else {
-        return;
-    };
-    let tools = b.codex_path(CODEX_ID);
-    std::fs::create_dir_all(tools.parent().unwrap()).unwrap();
-    write_private(
-        &tools,
-        &join(&load_fixture("codex-0.162.1-tools.jsonl", &b.cwd)),
-    );
-    let basic_id = "01a13777-3cb3-7a42-b7ff-9572798fa426";
-    let basic = b.codex_path(basic_id);
-    write_private(
-        &basic,
-        &join(&load_fixture("codex-0.162.1-basic.jsonl", &b.cwd)),
-    );
-    let list = b.list().await;
-    let s = entry(&list, CODEX_ID);
-    assert_eq!(s.import, ImportState::Ok);
-    assert_eq!(s.cwd.as_deref(), Some(b.cwd.as_str()));
-    assert!(s.parent_native_id.is_none());
-    let s = entry(&list, basic_id);
-    assert_eq!(s.import, ImportState::Ok);
-    assert!(s.first_prompt.is_some());
-}
-
 #[tokio::test]
 async fn a_cwd_through_a_link_is_path_not_trusted_or_a_cwd_mismatch_when_unverifiable() {
     let Some(b) = rig(Limits::default(), &[]).await else {
@@ -731,6 +640,12 @@ async fn an_idmapped_or_unknown_mount_lists_entries_as_not_verified() {
     };
     b.good_claude(ID_A);
     let dev = std::fs::metadata(&b.rig.root).unwrap().dev();
+    #[allow(
+        clippy::unnecessary_cast,
+        clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap
+    )]
+    let dev = dev as rustix::fs::Dev;
     let (major, minor) = (rustix::fs::major(dev), rustix::fs::minor(dev));
     let idmapped = format!("1 0 {major}:{minor} / / rw,relatime,idmapped - ext4 /dev/sdz rw\n");
     for text in [idmapped.as_str(), ""] {
@@ -790,3 +705,6 @@ async fn a_codex_id_in_two_files_is_not_trusted_in_the_preview() {
         .unwrap();
     unavailable(&p, HistoryUnavailable::NotTrusted);
 }
+
+#[path = "tests_trust_fixtures.rs"]
+mod fixtures;

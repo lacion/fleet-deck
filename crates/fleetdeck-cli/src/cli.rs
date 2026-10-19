@@ -100,6 +100,14 @@ pub enum Command {
         #[arg(long)]
         id: String,
     },
+    /// The maintenance runner of the desktop tool install (board-gaps §2.9).
+    #[command(hide = true)]
+    MaintenanceRun {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        dir: PathBuf,
+    },
     /// The provider side of a shim launch (ADR-005 §2): a new session, the
     /// parent-death signal, then `exec` of the provider.
     #[command(hide = true)]

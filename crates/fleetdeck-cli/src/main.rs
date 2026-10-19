@@ -57,6 +57,9 @@ fn main() -> ExitCode {
     // they need no data directory and no logging set-up (ADR-005 §2).
     match &cli.command {
         Command::Shim { id } => return exit_code(fleetdeck_providers::host::shim::server::run(id)),
+        Command::MaintenanceRun { id, dir } => {
+            return exit_code(fleetdeck_station::maintenance::runner::main(dir, id));
+        }
         Command::ShimExec {
             parent,
             fsize,
@@ -183,6 +186,7 @@ fn run(cli: Cli, restart: &restart::RestartHandle) -> anyhow::Result<ExitCode> {
         }
         Command::Station { .. }
         | Command::Shim { .. }
+        | Command::MaintenanceRun { .. }
         | Command::ShimExec { .. }
         | Command::ConfineExec { .. }
         | Command::McpBridge { .. }
