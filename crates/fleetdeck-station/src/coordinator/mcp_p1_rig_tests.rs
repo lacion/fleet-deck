@@ -267,9 +267,11 @@ pub(super) struct Rig {
     pub fake: Arc<Fake>,
     pub fleet: Arc<FakeFleet>,
     pub ingress: Ingress,
-    pub socket: BridgeSocket,
+    /// Held so that the socket keeps listening.
+    pub _socket: BridgeSocket,
     pub path: PathBuf,
-    pub dir: tempfile::TempDir,
+    /// Held so that the socket directory stays.
+    pub _dir: tempfile::TempDir,
     fresh: AtomicUsize,
 }
 
@@ -324,9 +326,9 @@ impl Rig {
             fake,
             fleet,
             ingress,
-            socket,
+            _socket: socket,
             path,
-            dir,
+            _dir: dir,
             fresh: AtomicUsize::new(0),
         }
     }

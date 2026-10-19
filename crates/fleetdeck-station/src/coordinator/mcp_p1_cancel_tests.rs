@@ -26,12 +26,12 @@ use crate::store::coordinator_outbox::OutboxState;
 use crate::store::{Store, StoreConfig};
 
 /// The deck of the durable call: `request` waits while the gate is closed.
-struct GatedDeck {
-    sent: Mutex<Vec<(Option<CommandId>, Value)>>,
-    gate: AtomicBool,
-    entered: Semaphore,
-    open: watch::Sender<bool>,
-    dropped: AtomicUsize,
+pub(super) struct GatedDeck {
+    pub sent: Mutex<Vec<(Option<CommandId>, Value)>>,
+    pub gate: AtomicBool,
+    pub entered: Semaphore,
+    pub open: watch::Sender<bool>,
+    pub dropped: AtomicUsize,
 }
 
 impl GatedDeck {
@@ -84,7 +84,72 @@ impl Transport for GatedDeck {
     }
 }
 
-async fn until(what: &str, mut done: impl FnMut() -> bool) {
+/// The station on a real outbox (`LinkForward`) and a gated deck.
+pub(super) struct Durable {
+    pub rig: Rig,
+    pub store: Store,
+    pub deck: Arc<GatedDeck>,
+    pub forward: Arc<LinkForward>,
+}
+
+impl Durable {
+    pub(super) async fn start() -> Self {
+        let det = Det::at(1_000_000);
+        let store = Store::open_in_memory(det.clock(), det.ids(), StoreConfig::default())
+            .await
+            .unwrap();
+        store.recover(Vec::new()).await.unwrap();
+        let deck = GatedDeck::new();
+        let link: Arc<Mutex<Option<Arc<LinkForward>>>> = Arc::default();
+        let rig = Rig::start_with(
+            {
+                let (store, deck, link) = (store.clone(), deck.clone(), link.clone());
+                move |bindings| {
+                    let forward = Arc::new(LinkForward::with_outbox(store, bindings.clone()));
+                    forward.connect_transport(deck, IncarnationId::from("deck-inc".to_owned()));
+                    *link.lock().unwrap() = Some(forward.clone());
+                    forward as Arc<dyn Forward>
+                }
+            },
+            Fake::new(),
+            BindingState::Active,
+            MAIL,
+        )
+        .await;
+        let forward = link.lock().unwrap().clone().unwrap();
+        Self {
+            rig,
+            store,
+            deck,
+            forward,
+        }
+    }
+
+    /// The `send_mail` call of the tests.
+    pub(super) fn mail() -> Value {
+        legacy(
+            1,
+            "tools/call",
+            json!({"name": "send_mail", "arguments":
+                {"to": {"station": "st", "session_id": "s1"}, "text": "hi"}}),
+        )
+    }
+
+    /// Waits for the deck request of a held call.
+    pub(super) async fn entered(&self) {
+        durable_entered(&self.deck).await;
+    }
+}
+
+async fn durable_entered(deck: &GatedDeck) {
+    tokio::time::timeout(Duration::from_secs(5), deck.entered.acquire())
+        .await
+        .unwrap()
+        .unwrap()
+        .forget();
+}
+
+pub(super) async fn until(what: &str, mut done: impl FnMut() -> bool) {
     for _ in 0..500 {
         if done() {
             return;
@@ -96,14 +161,14 @@ async fn until(what: &str, mut done: impl FnMut() -> bool) {
 
 /// A request that is sent and not read: the connection of the returned
 /// stream stays open.
-async fn send_only(addr: SocketAddr, token: &str, body: &Value) -> TcpStream {
+pub(super) async fn send_only(addr: SocketAddr, token: &str, body: &Value) -> TcpStream {
     let mut stream = TcpStream::connect(addr).await.unwrap();
     let request = http_request(addr, Some(token), &[], &body.to_string());
     stream.write_all(request.as_bytes()).await.unwrap();
     stream
 }
 
-fn wait_call(n: usize) -> Value {
+pub(super) fn wait_call(n: usize) -> Value {
     legacy(
         n as i64,
         "tools/call",
@@ -113,45 +178,18 @@ fn wait_call(n: usize) -> Value {
 
 #[tokio::test]
 async fn a_cancelled_wait_frees_the_binding_permit_and_a_durable_call_stays_pending() {
-    let det = Det::at(1_000_000);
-    let store = Store::open_in_memory(det.clock(), det.ids(), StoreConfig::default())
-        .await
-        .unwrap();
-    store.recover(Vec::new()).await.unwrap();
-    let deck = GatedDeck::new();
-    let link: Arc<Mutex<Option<Arc<LinkForward>>>> = Arc::default();
-    let fake = Fake::new();
-    let r = Rig::start_with(
-        {
-            let (store, deck, link) = (store.clone(), deck.clone(), link.clone());
-            move |bindings| {
-                let forward = Arc::new(LinkForward::with_outbox(store, bindings.clone()));
-                forward.connect_transport(deck, IncarnationId::from("deck-inc".to_owned()));
-                *link.lock().unwrap() = Some(forward.clone());
-                forward as Arc<dyn Forward>
-            }
-        },
-        fake,
-        BindingState::Active,
-        MAIL,
-    )
-    .await;
-    let forward = link.lock().unwrap().clone().unwrap();
+    let Durable {
+        rig: r,
+        store,
+        deck,
+        forward,
+    } = Durable::start().await;
 
     // The durable call: the client closes its connection while the deck
     // request is held.
-    let mail = legacy(
-        1,
-        "tools/call",
-        json!({"name": "send_mail", "arguments":
-            {"to": {"station": "st", "session_id": "s1"}, "text": "hi"}}),
-    );
+    let mail = Durable::mail();
     let client = send_only(r.addr(), &r.token, &mail).await;
-    tokio::time::timeout(Duration::from_secs(5), deck.entered.acquire())
-        .await
-        .unwrap()
-        .unwrap()
-        .forget();
+    durable_entered(&deck).await;
     drop(client);
     until("the deck request was not dropped", || {
         deck.dropped.load(Ordering::SeqCst) == 1

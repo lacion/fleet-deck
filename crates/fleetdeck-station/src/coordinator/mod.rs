@@ -54,6 +54,9 @@ mod ingress_tests;
 #[path = "mcp_p1_auth_tests.rs"]
 mod mcp_p1_auth_tests;
 #[cfg(test)]
+#[path = "mcp_p1_bridge_tests.rs"]
+mod mcp_p1_bridge_tests;
+#[cfg(test)]
 #[path = "mcp_p1_cancel_tests.rs"]
 mod mcp_p1_cancel_tests;
 #[cfg(test)]
