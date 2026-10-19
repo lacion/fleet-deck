@@ -11,6 +11,7 @@ use fleetdeck_link::desktop_authority::action_hash_for;
 use fleetdeck_proto::coordinator_desktop::{CoordUrgency, DesktopCall};
 use fleetdeck_proto::coordinator_desktop_text::{code, deadline_ms};
 use fleetdeck_proto::coordinator_desktop_wire::{CoordinatorDesktopCallEnvelope, PolicyPurpose};
+use fleetdeck_proto::coordinator_spec::InputScope;
 use fleetdeck_proto::desktop::{DesktopAction, Urgency};
 use fleetdeck_proto::desktop_text;
 use fleetdeck_proto::link::Outcome;
@@ -86,7 +87,7 @@ fn call_handler_ms(tool: Tool, call: &DesktopCall) -> u64 {
 
 /// The tool and the target argument of a call. Every tool of
 /// `coordinator.desktop_call` is served (`wall_show` by [`super::wall`],
-/// `record_monitor` by [`super::record`], the input tools by
+/// `record_monitor` by [`super::record`], the four input tools by
 /// [`super::input_run`]).
 fn shape(call: &DesktopCall) -> Option<(Tool, Option<&str>)> {
     match call {
@@ -99,8 +100,7 @@ fn shape(call: &DesktopCall) -> Option<(Tool, Option<&str>)> {
         DesktopCall::KeyPress(a) => Some((Tool::KeyPress, a.station.as_deref())),
         DesktopCall::TypeText(a) => Some((Tool::TypeText, a.station.as_deref())),
         DesktopCall::PointerMove(a) => Some((Tool::PointerMove, a.station.as_deref())),
-        // R13 P7b task F stub: `pointer_click` is served by a later task.
-        DesktopCall::PointerClick(_) => None,
+        DesktopCall::PointerClick(a) => Some((Tool::PointerClick, a.station.as_deref())),
     }
 }
 
@@ -111,10 +111,13 @@ pub(super) fn served(call: &DesktopCall) -> bool {
 
 /// Builds the typed action of §4.3 to §4.5 from the validated arguments.
 /// `invalid_params` when the text or the URL does not pass the shared rules.
+/// `any_scope` is true for a grant of the `any_window` scope: an input call
+/// then has its broader action variant (R13 P7b §9.1).
 fn build(
     call: &DesktopCall,
     label: &str,
     caller_session: &SessionId,
+    any_scope: bool,
 ) -> Result<Built, &'static str> {
     let invalid = |_| code::INVALID_PARAMS;
     match call {
@@ -203,10 +206,13 @@ fn build(
             seconds: Some(a.seconds),
             input_length: None,
         }),
-        DesktopCall::KeyPress(_) | DesktopCall::TypeText(_) | DesktopCall::PointerMove(_) => {
-            input::build(call).unwrap_or(Err(code::DESKTOP_UNSUPPORTED))
+        DesktopCall::KeyPress(_)
+        | DesktopCall::TypeText(_)
+        | DesktopCall::PointerMove(_)
+        | DesktopCall::PointerClick(_) => {
+            input::build(call, any_scope).unwrap_or(Err(code::DESKTOP_UNSUPPORTED))
         }
-        DesktopCall::WallShow(_) | DesktopCall::PointerClick(_) => Err(code::DESKTOP_UNSUPPORTED),
+        DesktopCall::WallShow(_) => Err(code::DESKTOP_UNSUPPORTED),
     }
 }
 
@@ -230,6 +236,7 @@ fn action_name(tool: Tool) -> &'static str {
         Tool::KeyPress => input::KEY_PRESS,
         Tool::TypeText => input::TYPE_TEXT,
         Tool::PointerMove => input::POINTER_MOVE,
+        Tool::PointerClick => input::POINTER_CLICK,
         _ => "desktop.window_close",
     }
 }
@@ -260,6 +267,16 @@ impl Call<'_> {
         }
     }
 
+    /// True when the call is an input call whose action is one of the five
+    /// P7b variants (R13 P7b §13): its texts are the broader ones.
+    fn any_text(&self) -> bool {
+        input::is_input_tool(self.tool)
+            && self
+                .tool
+                .op_tool()
+                .is_some_and(|t| input::is_any(t, self.auth.grant().input_scope))
+    }
+
     /// A refusal after the authorization: its audit row and its reply.
     async fn refuse(&self, refusal: &'static str) -> Outcome {
         let row = self
@@ -270,6 +287,9 @@ impl Call<'_> {
         // used has its own text; the screenshot text does not change.
         if self.tool == Tool::RecordMonitor && refusal == code::CAPTURE_CAP_REACHED {
             return reply_err_text(refusal, RECORDING_CAPTURE_LIMIT);
+        }
+        if self.any_text() {
+            return reply_err_text(refusal, input::message(refusal, true));
         }
         reply_err(refusal, None)
     }
@@ -290,16 +310,32 @@ impl Call<'_> {
             deadline,
         )
         .await?;
+        let any_scope = self.auth.grant().input_scope == Some(InputScope::AnyWindow);
         // Only a screenshot and a recording ask for the capture purpose and a
         // monitor.
         let (purpose, monitor) = match (self.tool, self.built) {
             (Tool::Screenshot | Tool::RecordMonitor, Some(built)) => {
                 (PolicyPurpose::Capture, built.monitor.as_deref())
             }
-            // R13 P7 §6.4: the deck query of an input has a null monitor.
-            (Tool::KeyPress | Tool::TypeText | Tool::PointerMove, _) => {
-                (PolicyPurpose::Input, None)
-            }
+            // R13 P7 §6.4, R13 P7b §9.2: the deck query of an input has a
+            // null monitor; the scope of the grant and a click decide the
+            // purpose.
+            (Tool::KeyPress | Tool::TypeText | Tool::PointerMove, _) => (
+                if any_scope {
+                    PolicyPurpose::InputAny
+                } else {
+                    PolicyPurpose::Input
+                },
+                None,
+            ),
+            (Tool::PointerClick, _) => (
+                if any_scope {
+                    PolicyPurpose::InputAnyClick
+                } else {
+                    PolicyPurpose::InputClick
+                },
+                None,
+            ),
             _ => (PolicyPurpose::Desktop, None),
         };
         target_policy(self.link, self.auth.route(), purpose, monitor, deadline).await
@@ -441,7 +477,8 @@ pub(super) async fn run(
     if let DesktopCall::WallShow(args) = &call {
         return wall::run(link, &auth, &binding, args, deadline).await;
     }
-    let built = match build(&call, &auth.ctx().caller_label, &caller) {
+    let any_scope = auth.grant().input_scope == Some(InputScope::AnyWindow);
+    let built = match build(&call, &auth.ctx().caller_label, &caller, any_scope) {
         Ok(built) => built,
         Err(refusal) => {
             let this = Call {
@@ -471,7 +508,12 @@ pub(super) async fn run(
             capture_status::replay(link, &built.request_id, &op).await
         }
         Ok(Admission::Existing(op)) if input::is_input(op.tool) => reply_ok(
-            serde_json::to_value(input::status_of(&built.request_id, &op)).unwrap_or(Value::Null),
+            serde_json::to_value(input::status_of(
+                &built.request_id,
+                &op,
+                auth.grant().input_scope,
+            ))
+            .unwrap_or(Value::Null),
         ),
         Ok(Admission::Existing(op)) => {
             reply_ok(serde_json::to_value(status_of(&built.request_id, &op)).unwrap_or(Value::Null))

@@ -39,7 +39,7 @@ fn session() -> SessionId {
 }
 
 fn built(call: &DesktopCall) -> Built {
-    build(call, "coord-1", &session()).expect("a valid call")
+    build(call, "coord-1", &session(), false).expect("a valid call")
 }
 
 #[test]
@@ -115,7 +115,7 @@ fn a_url_that_fails_the_shared_grammar_is_invalid_params() {
         "file:///etc/passwd",
     ] {
         assert_eq!(
-            build(&preview(url, None), "coord-1", &session()).err(),
+            build(&preview(url, None), "coord-1", &session(), false).err(),
             Some("invalid_params"),
             "{url}"
         );
@@ -255,7 +255,7 @@ fn record_monitor_is_served_and_builds_as_a_recording() {
     });
     assert!(served(&record));
     assert_eq!(shape(&record), Some((Tool::RecordMonitor, None)));
-    let built = build(&record, "coord-1", &session()).unwrap();
+    let built = build(&record, "coord-1", &session(), false).unwrap();
     assert_eq!(built.op_tool, OpTool::RecordMonitor);
     assert_eq!(
         built.action,

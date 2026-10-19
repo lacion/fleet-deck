@@ -73,8 +73,7 @@ fn deck_ms(query: &DesktopQuery) -> u64 {
         DesktopQuery::DesktopActionStatus(_) => deadline_ms::STATUS_DECK,
         DesktopQuery::CaptureStatus(_) => deadline_ms::CAPTURE_LOOKUP_DECK,
         DesktopQuery::ReadCaptureImage(_) => deadline_ms::IMAGE_DECK,
-        // R13 P7b task F stub: the deadline of `desktop_info`, the other
-        // station read; a later task serves the tool.
+        // R13 P7b §6.1: the protected-read deadline of `desktop_info`.
         DesktopQuery::WindowList(_) => deadline_ms::INFO_DECK,
     }
 }

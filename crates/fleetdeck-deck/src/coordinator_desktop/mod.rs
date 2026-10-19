@@ -5,8 +5,8 @@
 //! - [`desktop_call`] serves `notify`, `preview_open`, `window_close`,
 //!   `screenshot` and `record_monitor` ([`calls`], [`capture`], [`record`]); [`desktop_query`] serves
 //!   `desktop_info` and `desktop_action_status` ([`queries`]),
-//!   `capture_status` ([`capture_status`]) and `read_capture_image`
-//!   ([`image`]); [`authority_check`] answers the dispatch authority check of
+//!   `capture_status` ([`capture_status`]), `read_capture_image`
+//!   ([`image`]) and `window_list` ([`window_list`]); [`authority_check`] answers the dispatch authority check of
 //!   the target station ([`check`]).
 //! - [`envelope`] is step 1, [`authorize`] steps 2 to 6, [`policy`] the live
 //!   policy round trips, [`relay`] the one send of a mutation, [`permits`] and
@@ -38,6 +38,7 @@ mod reads;
 mod record;
 mod relay;
 mod wall;
+mod window_list;
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -66,6 +67,7 @@ use crate::link::DeckLink;
 use envelope::Stop;
 use limits::Slots;
 use permits::Permits;
+use window_list::ListSlots;
 
 /// What the deck link shares for the P6 tools: the in-flight slots and the
 /// read permits (§8.2, §5.7).
@@ -73,6 +75,7 @@ use permits::Permits;
 pub(crate) struct Shared {
     slots: Arc<Slots>,
     permits: Permits,
+    lists: Arc<ListSlots>,
 }
 
 impl Default for Shared {
@@ -81,6 +84,7 @@ impl Default for Shared {
         Self {
             permits: Permits::new(Arc::clone(&slots)),
             slots,
+            lists: Arc::default(),
         }
     }
 }
@@ -92,6 +96,11 @@ impl Shared {
 
     pub(super) fn permits(&self) -> &Permits {
         &self.permits
+    }
+
+    /// The `window_list` reads in flight (R13 P7b §6.1).
+    pub(super) fn lists(&self) -> &Arc<ListSlots> {
+        &self.lists
     }
 }
 
@@ -271,8 +280,9 @@ pub(crate) async fn desktop_query(
         DesktopQuery::ReadCaptureImage(args) => {
             image::read(ctx, &station, who, args, started).await
         }
-        // R13 P7b task F stub: `window_list` is served by a later task.
-        DesktopQuery::WindowList(_) => unsupported(),
+        DesktopQuery::WindowList(args) => {
+            window_list::list(ctx, &station, who, args, started).await
+        }
     }
 }
 

@@ -21,12 +21,12 @@
 use std::time::Instant;
 
 use fleetdeck_proto::StationId;
-use fleetdeck_proto::coordinator_desktop_text::{INPUT_OUTCOME_UNKNOWN_TEXT, code};
+use fleetdeck_proto::coordinator_desktop_text::code;
 use fleetdeck_proto::desktop::DesktopAction;
 use fleetdeck_proto::link::Outcome;
 
 use super::audit::{self, Facts};
-use super::authorize::{Authorized, Held, input_delivery_pass, local_pass};
+use super::authorize::{Authorized, Held, Tool, input_delivery_pass, local_pass};
 use super::relay::{Ran, finish, waits};
 use super::{input, reply_err, reply_err_op_text, reply_ok};
 use crate::board_fence::{audit_signed_out, machine_addresses, revoke_before_dispatch};
@@ -49,12 +49,18 @@ fn exposure_addresses(link: &DeckLink, target: &StationId) -> Vec<String> {
     machine_addresses(store, store.link_peer(target), &hosts, local)
 }
 
-/// The window handle of an input action.
+/// The window handle of an input action (R13 P7b §9.1: the five new
+/// variants too).
 fn window_of(action: &DesktopAction) -> Option<&str> {
     match action {
         DesktopAction::InputKeyPress { window_id, .. }
         | DesktopAction::InputTypeText { window_id, .. }
-        | DesktopAction::InputPointerMove { window_id, .. } => Some(window_id),
+        | DesktopAction::InputPointerMove { window_id, .. }
+        | DesktopAction::InputPointerClick { window_id, .. }
+        | DesktopAction::InputAnyKeyPress { window_id, .. }
+        | DesktopAction::InputAnyTypeText { window_id, .. }
+        | DesktopAction::InputAnyPointerMove { window_id, .. }
+        | DesktopAction::InputAnyPointerClick { window_id, .. } => Some(window_id),
         _ => None,
     }
 }
@@ -63,7 +69,7 @@ fn window_of(action: &DesktopAction) -> Option<&str> {
 async fn execute(
     link: &DeckLink,
     auth: &Authorized,
-    id: &str,
+    (id, tool): (&str, Tool),
     action: &DesktopAction,
     deadline: Instant,
 ) -> Ran {
@@ -77,6 +83,7 @@ async fn execute(
         caller: &ctx.caller_station,
         target,
         class: auth.class(),
+        tool: Some(tool),
     };
     if let Err(refusal) = local_pass(link, &held).await {
         return finish(link, id, OpOutcome::Failed(refusal)).await;
@@ -111,7 +118,8 @@ async fn execute(
 
 /// Runs the accepted input operation `op` and answers: an empty result for
 /// `done`; the code and the operation ID for a failure; `desktop_timeout`
-/// with the fixed explanatory text for an unknown result. The outcome audit
+/// with the fixed explanatory text for an unknown result (the texts of the
+/// five P7b variants are the broader ones, R13 P7b §13). The outcome audit
 /// row is written once, by the call that made the first transition, and the
 /// mutation slot is held until it is written.
 pub(super) async fn run_input(
@@ -122,6 +130,7 @@ pub(super) async fn run_input(
     deadline: Instant,
 ) -> Outcome {
     let id = op.operation_id.as_str();
+    let any = input::is_any(op.tool, auth.grant().input_scope);
     // The in-flight slots; released on every path (a drop guard), after the
     // terminal bookkeeping.
     let slots = link
@@ -129,7 +138,7 @@ pub(super) async fn run_input(
         .slots()
         .take_call(&auth.ctx().grant_id);
     let ran = if slots.is_some() {
-        execute(link, auth, id, action, deadline).await
+        execute(link, auth, (id, Tool::of_op(op.tool)), action, deadline).await
     } else {
         finish(link, id, OpOutcome::Failed(code::BUSY)).await
     };
@@ -166,7 +175,8 @@ pub(super) async fn run_input(
     // durable result stays, the caller gets `authority_lost` or
     // `authority_unknown`.
     if matches!(outcome, OpOutcome::Done(_))
-        && let Err(refusal) = input_delivery_pass(link, auth.ctx(), auth.target()).await
+        && let Err(refusal) =
+            input_delivery_pass(link, auth.ctx(), auth.target(), Tool::of_op(op.tool)).await
     {
         let lost = if refusal == code::AUTHORITY_UNKNOWN {
             code::AUTHORITY_UNKNOWN
@@ -198,8 +208,8 @@ pub(super) async fn run_input(
     match outcome {
         OpOutcome::Done(value) => reply_ok(value),
         OpOutcome::Unknown => {
-            reply_err_op_text(code::DESKTOP_TIMEOUT, INPUT_OUTCOME_UNKNOWN_TEXT, id)
+            reply_err_op_text(code::DESKTOP_TIMEOUT, input::unknown_text(any), id)
         }
-        OpOutcome::Failed(c) => reply_err_op_text(c, input::message(c), id),
+        OpOutcome::Failed(c) => reply_err_op_text(c, input::message(c, any), id),
     }
 }

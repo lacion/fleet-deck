@@ -7,6 +7,7 @@
 
 use std::time::{Duration, Instant};
 
+use fleetdeck_proto::capture;
 use fleetdeck_proto::coordinator_desktop_text::code;
 use fleetdeck_proto::coordinator_desktop_wire::{CoordinatorRead, ProtectedRead};
 use fleetdeck_proto::link::Outcome;
@@ -15,6 +16,29 @@ use serde_json::Value;
 use super::authorize::Authorized;
 use super::known_code;
 use super::permits::PermitGuard;
+
+/// The station refusals of the `window_list` read that pass to the caller (R13
+/// P7b §6.1), besides the codes of [`known_code`]; any other unknown code of
+/// that read stays `desktop_failed`.
+const LIST_CODES: [&str; 9] = [
+    code::INPUT_ANY_DISABLED,
+    code::INPUT_SCOPE_NOT_ALLOWED,
+    code::INPUT_NOT_ALLOWED,
+    capture::code::SCREEN_LOCKED,
+    code::BUSY,
+    code::DESKTOP_RESULT_TOO_LARGE,
+    code::DESKTOP_WINDOW_NOT_FOUND,
+    code::DESKTOP_CONTROL_OFF,
+    code::DESKTOP_UNSUPPORTED,
+];
+
+/// The constant of a passed station refusal of the `window_list` read.
+fn window_list_code(is_list: bool, candidate: &str) -> Option<&'static str> {
+    if !is_list {
+        return None;
+    }
+    LIST_CODES.iter().copied().find(|c| *c == candidate)
+}
 
 /// Reads `read` from the target of `auth` (a fresh read, one request). The
 /// whole read, from the permit to the answer, takes at most `deadline_ms`.
@@ -47,12 +71,16 @@ pub(crate) async fn coordinator_read(
         permits,
         read_id: registered.read_id.clone(),
     };
+    // R13 P7b §7: the `window_list` read carries the coordinator context of
+    // the authorization (the same context as `desktop.act`); every other read
+    // carries none.
+    let is_list = matches!(read, ProtectedRead::InputWindows);
+    let context = is_list.then(|| auth.ctx().clone());
     let params = serde_json::to_value(CoordinatorRead {
         read_id: registered.read_id,
         read,
         read_hash: registered.read_hash,
-        // R13 P7b §7: task K1 sends the context with `InputWindows`.
-        context: None,
+        context,
     })
     .map_err(|_| code::DESKTOP_FAILED)?;
     let outcome = tokio::time::timeout(
@@ -66,7 +94,9 @@ pub(crate) async fn coordinator_read(
     match outcome {
         Ok(Outcome::Ok(value)) => Ok(value),
         // A code of §11 passes through; a wire message never does.
-        Ok(Outcome::Err(e)) => Err(known_code(&e.code).unwrap_or(code::DESKTOP_FAILED)),
+        Ok(Outcome::Err(e)) => Err(known_code(&e.code)
+            .or_else(|| window_list_code(is_list, &e.code))
+            .unwrap_or(code::DESKTOP_FAILED)),
         Err(_) => Err(code::DESKTOP_FAILED),
     }
 }

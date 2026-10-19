@@ -40,7 +40,7 @@ fn table(kind: SessionKind) -> &'static str {
 fn read_exposed(conn: &Connection, now: i64) -> Result<HashSet<String>> {
     let mut stmt = conn.prepare(
         "SELECT operation_id, exposure_addrs FROM coordinator_desktop_ops
-         WHERE tool IN ('key_press', 'type_text', 'pointer_move')
+         WHERE tool IN ('key_press', 'type_text', 'pointer_move', 'pointer_click')
            AND attempted_at IS NOT NULL
            AND COALESCE(finished_at + ?2, attempted_at + ?3) + ?4 > ?1",
     )?;
@@ -208,8 +208,8 @@ impl DeckStore {
 
     /// The canonical addresses that are exposed at `now`: the union of the
     /// `exposure_addrs` of every input operation (`key_press`, `type_text`,
-    /// `pointer_move`) that was `attempted` and whose end plus 60 s has not
-    /// passed. The end is `finished_at + 5 s` when `finished_at` is set, else
+    /// `pointer_move`, `pointer_click`) that was `attempted` and whose end
+    /// plus 60 s has not passed. The end is `finished_at + 5 s` when `finished_at` is set, else
     /// `attempted_at + 45 s`. The set is cached for 1 s; a malformed
     /// `exposure_addrs` counts as no address and logs a warning.
     ///

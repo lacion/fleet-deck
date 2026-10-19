@@ -209,6 +209,7 @@ async fn recheck(
         caller: &ctx.caller_station,
         target: auth.target(),
         class: auth.class(),
+        tool: None,
     };
     local_pass(link, &held)
         .await

@@ -54,7 +54,7 @@ impl DeckStore {
                 "UPDATE coordinator_desktop_ops
                  SET state = 'attempted', updated_at = ?2, attempted_at = ?2, exposure_addrs = ?3
                  WHERE operation_id = ?1 AND state = 'prepared'
-                   AND tool IN ('key_press', 'type_text', 'pointer_move')",
+                   AND tool IN ('key_press', 'type_text', 'pointer_move', 'pointer_click')",
                 params![operation_id, now, snapshot],
             )?;
             if n != 1 {

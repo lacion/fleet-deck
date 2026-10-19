@@ -324,6 +324,7 @@ async fn execute(
         caller: &ctx.caller_station,
         target: station,
         class: auth.class(),
+        tool: None,
     };
     if let Err(refusal) = local_pass(link, &held).await {
         return fail_before_send(link, who, refusal).await;

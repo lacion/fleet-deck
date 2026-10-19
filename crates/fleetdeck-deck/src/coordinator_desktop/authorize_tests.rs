@@ -94,6 +94,7 @@ fn held<'a>(rig: &'a Rig, station: &'a StationId, class: OpClass) -> Held<'a> {
         caller: station,
         target: station,
         class,
+        tool: None,
     }
 }
 
@@ -280,4 +281,117 @@ fn the_class_of_each_tool_and_the_callsign_grammar() {
     for bad in ["", "Swift", "swift fox", "swift_fox", "é", &"a".repeat(33)] {
         assert!(!callsign_ok(bad), "{bad:?}");
     }
+}
+
+#[tokio::test]
+async fn the_input_grant_rules_follow_the_tool_the_allowances_and_the_scope() {
+    let r = rig(&[GrantClass::Desktop, GrantClass::Capture, GrantClass::Input]).await;
+    let mut grant = r
+        .link
+        .store
+        .grant(r.grant_id.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    // No allowance: every input tool, `window_list` included.
+    for tool in [
+        Tool::KeyPress,
+        Tool::TypeText,
+        Tool::PointerMove,
+        Tool::PointerClick,
+        Tool::WindowList,
+    ] {
+        assert_eq!(
+            input_grant(&grant, tool),
+            Err("input_not_allowed"),
+            "{tool:?}"
+        );
+    }
+    grant.allow_input = true;
+    grant.input_scope = Some(InputScope::OwnWindows);
+    for tool in [Tool::KeyPress, Tool::TypeText, Tool::PointerMove] {
+        assert_eq!(input_grant(&grant, tool), Ok(()), "{tool:?}");
+    }
+    // A click needs its allowance; `window_list` needs the broader scope.
+    assert_eq!(
+        input_grant(&grant, Tool::PointerClick),
+        Err("input_click_not_allowed")
+    );
+    assert_eq!(
+        input_grant(&grant, Tool::WindowList),
+        Err("input_scope_not_allowed")
+    );
+    grant.allow_click = true;
+    assert_eq!(input_grant(&grant, Tool::PointerClick), Ok(()));
+    grant.input_scope = Some(InputScope::AnyWindow);
+    for tool in [
+        Tool::KeyPress,
+        Tool::TypeText,
+        Tool::PointerMove,
+        Tool::PointerClick,
+        Tool::WindowList,
+    ] {
+        assert_eq!(input_grant(&grant, tool), Ok(()), "{tool:?}");
+    }
+    // A scope that is `None` is not an allowance.
+    grant.input_scope = None;
+    assert_eq!(
+        input_grant(&grant, Tool::KeyPress),
+        Err("input_not_allowed")
+    );
+    // A missing class is `not_granted`, before everything else.
+    grant.input_scope = Some(InputScope::AnyWindow);
+    grant.classes.remove(&GrantClass::Capture);
+    assert_eq!(input_grant(&grant, Tool::PointerClick), Err("not_granted"));
+}
+
+#[test]
+fn the_input_features_follow_the_tool_and_the_scope() {
+    let own = Some(InputScope::OwnWindows);
+    let any = Some(InputScope::AnyWindow);
+    assert_eq!(
+        input_features(Tool::KeyPress, own),
+        [feature::DESKTOP_INPUT_MCP]
+    );
+    assert_eq!(
+        input_features(Tool::PointerClick, own),
+        [feature::DESKTOP_INPUT_MCP, feature::DESKTOP_CLICK_MCP]
+    );
+    assert_eq!(
+        input_features(Tool::TypeText, any),
+        [feature::DESKTOP_INPUT_MCP, feature::DESKTOP_INPUT_ANY]
+    );
+    assert_eq!(
+        input_features(Tool::PointerClick, any),
+        [
+            feature::DESKTOP_INPUT_MCP,
+            feature::DESKTOP_CLICK_MCP,
+            feature::DESKTOP_INPUT_ANY
+        ]
+    );
+    assert_eq!(
+        input_features(Tool::WindowList, any),
+        [feature::DESKTOP_INPUT_MCP, feature::DESKTOP_INPUT_ANY]
+    );
+}
+
+#[test]
+fn the_tool_of_an_operation_row_round_trips_and_the_new_tools_have_their_class() {
+    for tool in [
+        OpTool::WallShow,
+        OpTool::Notify,
+        OpTool::PreviewOpen,
+        OpTool::WindowClose,
+        OpTool::Screenshot,
+        OpTool::RecordMonitor,
+        OpTool::KeyPress,
+        OpTool::TypeText,
+        OpTool::PointerMove,
+        OpTool::PointerClick,
+    ] {
+        assert_eq!(Tool::of_op(tool).op_tool(), Some(tool));
+    }
+    assert_eq!(Tool::PointerClick.class(), Some(OpClass::Input));
+    assert_eq!(Tool::WindowList.class(), Some(OpClass::Input));
+    assert_eq!(Tool::WindowList.op_tool(), None);
 }

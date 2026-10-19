@@ -5,6 +5,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+#[path = "board_fence/click.rs"]
+mod click;
 mod common;
 #[path = "board_fence/race.rs"]
 mod race;
@@ -56,6 +58,17 @@ async fn expose(
     finished_at: Option<i64>,
     addrs: &str,
 ) {
+    expose_tool(store, "type_text", id, (attempted_at, finished_at), addrs).await;
+}
+
+/// As [`expose`], for the input tool `tool` (the stored tool name).
+async fn expose_tool(
+    store: &DeckStore,
+    tool: &'static str,
+    id: &str,
+    (attempted_at, finished_at): (i64, Option<i64>),
+    addrs: &str,
+) {
     let (id, addrs) = (id.to_owned(), addrs.to_owned());
     store
         .db()
@@ -65,9 +78,9 @@ async fn expose(
                  (operation_id, grant_id, request_key, payload_hash, tool, class, binding_id,
                   generation, caller_station, caller_session, target_station, resource, state,
                   charged, created_at, updated_at, attempted_at, finished_at, exposure_addrs)
-                 VALUES (?1, 'g', ?1, 'h', 'type_text', 'input', 'b', 1, 'cs', 'cn', 'ts', 'r',
+                 VALUES (?1, 'g', ?1, 'h', ?5, 'input', 'b', 1, 'cs', 'cn', 'ts', 'r',
                          'attempted', '{}', 0, 0, ?2, ?3, ?4)",
-                params![id, attempted_at, finished_at, addrs],
+                params![id, attempted_at, finished_at, addrs, tool],
             )?;
             Ok(())
         })

@@ -2,6 +2,7 @@
 //! coordinator desktop tools (R13 P6 §8.1, §8.2, §2.2).
 
 use fleetdeck_proto::coordinator_desktop_text::{code, limits};
+use fleetdeck_proto::coordinator_desktop_wire::CoordinatorContext;
 use rusqlite::params;
 
 use super::rate;
@@ -108,6 +109,41 @@ impl DeckStore {
                 return Ok(Err(code::RATE_LIMITED));
             }
             rate::charge(&tx, &scope, rate::QUERY, now)?;
+            tx.commit()?;
+            Ok(Ok(()))
+        })
+        .await
+    }
+
+    /// Counts one `window_list` read (R13 P7b §6.1) in one transaction: the
+    /// query rate of the grant (as [`Self::desktop_query_admit`]) and the
+    /// `window_list` bucket of the grant and of the caller session, at most
+    /// `WINDOW_LIST_PER_WINDOW` in a rolling window each. A refusal charges
+    /// nothing. The inner `Err` is the code of the refusal. The read uses no
+    /// input, character or desktop-mutation budget.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn desktop_window_list_admit(
+        &self,
+        ctx: &CoordinatorContext,
+        now: i64,
+    ) -> Result<std::result::Result<(), &'static str>> {
+        let grant_scope = format!("grant:{}", ctx.grant_id);
+        let session_scope = format!("session:{}/{}", ctx.caller_station, ctx.caller_session);
+        call(&self.inner.db, move |conn| {
+            let tx = conn.transaction()?;
+            if rate::count(&tx, &grant_scope, rate::QUERY, now)? >= limits::QUERIES_PER_WINDOW
+                || rate::count(&tx, &grant_scope, rate::WINDOW_LIST, now)?
+                    >= limits::WINDOW_LIST_PER_WINDOW
+                || rate::count(&tx, &session_scope, rate::WINDOW_LIST, now)?
+                    >= limits::WINDOW_LIST_PER_WINDOW
+            {
+                return Ok(Err(code::RATE_LIMITED));
+            }
+            rate::charge(&tx, &grant_scope, rate::QUERY, now)?;
+            rate::charge(&tx, &grant_scope, rate::WINDOW_LIST, now)?;
+            rate::charge(&tx, &session_scope, rate::WINDOW_LIST, now)?;
             tx.commit()?;
             Ok(Ok(()))
         })
