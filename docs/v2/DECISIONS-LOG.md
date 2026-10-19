@@ -3530,3 +3530,9 @@ Owner review: pending.
   - d. `any_window` reaches terminals and signed-in browser windows. Text typed in a terminal can run commands, and a signed-in browser window acts with the accounts of the owner. The owner is asked about this in the morning report.
   - e. Right and middle buttons, a double click as one call, scrolling, dragging and held keys are not built. Each needs another reviewed contract.
 - Next: the PRE-PR review (high risk: the adversary agent); the live smoke on the owner's Omarchy machine; the owner reads the new rows 247.x of `SECURITY-CHECKLIST.md` (DL-158).
+
+## DL-248: P7b accepted after the PRE-PR review (architect, 2026-10-19)
+
+- Context: the adversary PRE-PR review of DL-247 ran 2 rounds. Round 1 FAIL (report `adv-p7b-prepr-r1-report.md`): one BLOCKER (a listing could bind an old observation to a replacement window at the same address and class) and three MAJOR (listed targets ignored board-origin marks; listed input could switch to a workspace that is no longer shown; the listing did not check the lock again after the authority wait). Fixes `458dcbbc` and `a76ec54d` (merge `f2cbf317`). Round 2: PASS, no findings.
+- Decision: the fixes are accepted: the events module keeps a lifecycle revision and the handles are issued only when it is unchanged since the snapshot (one lock); a listed target is refused when a preview at its address has a deck-origin mark; a listed target must be mapped, not hidden and on a shown workspace at each survey and right before `focuswindow`; the listing reads the lock again after the authority check. P7b is accepted.
+- Open items: DL-247 items b to e. DL-247 item a is closed by this entry. Known residual: a switch-away after the last survey while `wtype` runs is not caught by the watcher (a focus loss is).
