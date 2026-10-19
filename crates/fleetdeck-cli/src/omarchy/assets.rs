@@ -2,6 +2,7 @@
 //! `omarchy-p4.md` §3.4, §3.5 and §3.7). The text is embedded with
 //! `include_str!` from `assets/omarchy/`.
 
+use fleetdeck_proto::omarchy_repair::OmarchyAssetId;
 use serde::{Deserialize, Serialize};
 
 /// The folder that a path is relative to, below the config home.
@@ -28,6 +29,9 @@ impl Base {
 /// One file of the install.
 #[derive(Debug, Clone, Copy)]
 pub struct Asset {
+    /// The ID of the repair protocol; `None` only for the menu, which a
+    /// repair never replaces.
+    pub id: Option<OmarchyAssetId>,
     pub base: Base,
     /// Relative to the base.
     pub path: &'static str,
@@ -46,6 +50,7 @@ pub const HYPR_PATH: &str = "omarchy/hypr.lua";
 /// The files, in the order of the install.
 pub const FILES: &[Asset] = &[
     Asset {
+        id: Some(OmarchyAssetId::FleetPluginManifest),
         base: Base::Omarchy,
         path: "plugins/fleetdeck.fleet/manifest.json",
         mode: 0o644,
@@ -53,6 +58,7 @@ pub const FILES: &[Asset] = &[
         only_if_absent: false,
     },
     Asset {
+        id: Some(OmarchyAssetId::FleetPluginWidget),
         base: Base::Omarchy,
         path: "plugins/fleetdeck.fleet/Widget.qml",
         mode: 0o644,
@@ -60,6 +66,7 @@ pub const FILES: &[Asset] = &[
         only_if_absent: false,
     },
     Asset {
+        id: Some(OmarchyAssetId::FleetPluginPanel),
         base: Base::Omarchy,
         path: "plugins/fleetdeck.fleet/Panel.qml",
         mode: 0o644,
@@ -67,6 +74,7 @@ pub const FILES: &[Asset] = &[
         only_if_absent: false,
     },
     Asset {
+        id: Some(OmarchyAssetId::FleetPluginService),
         base: Base::Omarchy,
         path: "plugins/fleetdeck.fleet/Service.qml",
         mode: 0o644,
@@ -74,6 +82,7 @@ pub const FILES: &[Asset] = &[
         only_if_absent: false,
     },
     Asset {
+        id: Some(OmarchyAssetId::FleetPluginModel),
         base: Base::Omarchy,
         path: "plugins/fleetdeck.fleet/Model.js",
         mode: 0o644,
@@ -81,6 +90,7 @@ pub const FILES: &[Asset] = &[
         only_if_absent: false,
     },
     Asset {
+        id: Some(OmarchyAssetId::FleetPluginI18n),
         base: Base::Omarchy,
         path: "plugins/fleetdeck.fleet/i18n/en.json",
         mode: 0o644,
@@ -88,6 +98,7 @@ pub const FILES: &[Asset] = &[
         only_if_absent: false,
     },
     Asset {
+        id: Some(OmarchyAssetId::HookPostBoot),
         base: Base::Omarchy,
         path: "hooks/post-boot.d/fleetdeck",
         mode: 0o755,
@@ -95,6 +106,7 @@ pub const FILES: &[Asset] = &[
         only_if_absent: false,
     },
     Asset {
+        id: Some(OmarchyAssetId::HookPostUpdate),
         base: Base::Omarchy,
         path: "hooks/post-update.d/fleetdeck",
         mode: 0o755,
@@ -102,6 +114,7 @@ pub const FILES: &[Asset] = &[
         only_if_absent: false,
     },
     Asset {
+        id: Some(OmarchyAssetId::HookThemeSet),
         base: Base::Omarchy,
         path: "hooks/theme-set.d/fleetdeck",
         mode: 0o755,
@@ -109,6 +122,7 @@ pub const FILES: &[Asset] = &[
         only_if_absent: false,
     },
     Asset {
+        id: Some(OmarchyAssetId::ThemeTemplate),
         base: Base::Omarchy,
         path: "themed/fleetdeck.json.tpl",
         mode: 0o644,
@@ -116,6 +130,7 @@ pub const FILES: &[Asset] = &[
         only_if_absent: false,
     },
     Asset {
+        id: Some(OmarchyAssetId::FleetBindings),
         base: Base::Fleetdeck,
         path: HYPR_PATH,
         mode: 0o644,
@@ -123,6 +138,7 @@ pub const FILES: &[Asset] = &[
         only_if_absent: false,
     },
     Asset {
+        id: None,
         base: Base::Omarchy,
         path: MENU_PATH,
         mode: 0o644,
@@ -130,6 +146,12 @@ pub const FILES: &[Asset] = &[
         only_if_absent: true,
     },
 ];
+
+/// The asset of a repair ID.
+#[must_use]
+pub fn asset_for(id: OmarchyAssetId) -> Option<&'static Asset> {
+    FILES.iter().find(|a| a.id == Some(id))
+}
 
 /// The menu rows to add by hand: the lines of the menu asset between the
 /// opening and the closing brace.

@@ -12,8 +12,12 @@ pub mod digits;
 pub mod fsx;
 pub mod hyprland;
 pub mod install;
+pub mod journal;
 pub mod lock;
+pub mod plan;
 pub mod record;
+pub mod repair;
+pub mod repair_cmd;
 pub mod screensaver;
 pub mod status;
 pub mod theme_sync;
@@ -161,8 +165,25 @@ pub async fn set_summary(dirs: &NodeDirs, on: bool) -> Result<bool, String> {
 /// exits 1.
 pub async fn run(dirs: &NodeDirs, command: &OmarchyCommand) -> anyhow::Result<ExitCode> {
     match command {
-        OmarchyCommand::Install { yes, screensaver } => {
-            install::run(dirs, *yes, *screensaver).await
+        OmarchyCommand::Install {
+            yes,
+            screensaver,
+            replace_conflicts,
+            plan_stdin: _,
+            resume,
+        } => {
+            let mode = match (resume, replace_conflicts) {
+                (Some(id), _) => install::Mode::Resume(id.clone()),
+                (None, true) => install::Mode::Replace(repair_cmd::read_install_input()?),
+                (None, false) => install::Mode::Plain { yes: *yes },
+            };
+            install::run(dirs, mode, *screensaver).await
+        }
+        OmarchyCommand::InstallPlan { json: _ } => repair_cmd::install_plan(),
+        OmarchyCommand::RepairStatus { json: _ } => repair_cmd::status(),
+        OmarchyCommand::RestorePlan { repair, json: _ } => repair_cmd::restore_plan(repair),
+        OmarchyCommand::Restore { plan_stdin: _ } => {
+            repair_cmd::restore(&repair_cmd::read_restore_input()?)
         }
         OmarchyCommand::Uninstall => uninstall::run(dirs).await,
         OmarchyCommand::Status { json } => status::run(dirs, *json).await,
