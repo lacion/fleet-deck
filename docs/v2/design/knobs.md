@@ -1,7 +1,7 @@
 # Owner knobs: the hard-coded limits that become settings
 
-- **Status:** Revision 2 (architect, 2026-10-19), after DESIGN REVIEW round 1 (report `adv-knobs-design-r1-report.md`: 1 BLOCKER recording CHECK constraints, 2 MAJOR session revival and outer deadlines, 1 MINOR raw logs; all answered below). Revision 1: proposed (architect, 2026-10-19). The owner asked for the recommended set of the knobs inventory (`~/fleetdeck-briefs/knobs-inventory.md`, page "Fleet Deck Knobs") and said: "everything needs to be configurable from the deck, specially stuff that happens on the remote machines". DESIGN REVIEW required before the build (high risk: sign-in lifetimes, password length, elevation, audit retention, agent desktop rates).
-- **Scope:** 32 settings: 14 on the deck and 18 on each station. Every other constant stays fixed.
+- **Status:** Revision 3 (architect, 2026-10-19), accepted for the build: DESIGN REVIEW round 2 PASS (report `adv-knobs-design-r2-report.md`); its one MAJOR (rule 10 bounds single calls, not whole synchronous operations) is answered by removing the three knobs of synchronous operations (`limits.precheck_seconds`, `limits.git_fetch_seconds`, `limits.integration_seconds`). Revision 2 (architect, 2026-10-19), after DESIGN REVIEW round 1 (report `adv-knobs-design-r1-report.md`: 1 BLOCKER recording CHECK constraints, 2 MAJOR session revival and outer deadlines, 1 MINOR raw logs; all answered below). Revision 1: proposed (architect, 2026-10-19). The owner asked for the recommended set of the knobs inventory (`~/fleetdeck-briefs/knobs-inventory.md`, page "Fleet Deck Knobs") and said: "everything needs to be configurable from the deck, specially stuff that happens on the remote machines". DESIGN REVIEW required before the build (high risk: sign-in lifetimes, password length, elevation, audit retention, agent desktop rates).
+- **Scope:** 29 settings: 14 on the deck and 15 on each station. Every other constant stays fixed.
 
 ## 1. Rules
 
@@ -14,7 +14,7 @@
 7. **Pairs.** `security.login_idle_days` ≤ `security.login_max_days` and `security.display_idle_days` ≤ `security.display_max_days`; a save that breaks a pair is refused with the text "The idle time cannot be longer than the longest time."
 8. **No silent clamp.** A value is used as it is saved; a station never changes a value that the deck sent.
 9. **Snapshot at start (revision 2).** A timeout or a limit is read once when an operation starts; a change applies to the next operation, never to one that runs.
-10. **Outer deadlines (revision 2).** A station timeout whose operation the deck waits for synchronously has a ceiling below that deck wait, so the board never reports a timeout while the station still works: integrations (deck waits 75 s) at most 60 s, the schedule precheck (deck waits 90 s) at most 80 s, the Fleet Git fetch (deck `project.fetch` waits 70 s) at most 60 s. The other station timeouts are for asynchronous operations whose state the deck reads later.
+10. **Only asynchronous operations get a timeout knob (revision 3).** An operation that the deck or the board waits for synchronously keeps its fixed timeouts, because a per-call value cannot bound a whole operation with several calls and a cleanup. The station timeout knobs of §3 are all for asynchronous operations whose state the deck reads later.
 11. **Shrinking a lifetime is permanent (revision 2).** A save that lowers `security.login_idle_days` or `security.login_max_days` deletes, in the same apply, every owner and member login session whose idle time or age is over the new limit; a save that lowers `security.display_idle_days` or `security.display_max_days` does the same for display sessions. The existing session revocation then ends their WebSockets, terminal relays and recording leases. Raising a limit later never brings a deleted session back.
 
 ## 2. Deck knobs (`deck.toml`, deck tab)
@@ -47,12 +47,9 @@ Notes:
 |---|---|---|---|---|---|
 | `limits.shell_command_minutes` | 10 | 1–240 | Live (next command) | never | agent `!` command `TIMEOUT` (`manager/shell_run.rs:37`) and the run limit sent to Codex (`codex/shell.rs:22`) |
 | `limits.setup_minutes` | 10 | 1–240 | Live | never | setup `DEFAULT_TIMEOUT` (`workspace/setup.rs:35`) |
-| `limits.precheck_seconds` | 60 | 10–80 | Live | never | precheck `TIMEOUT` (`workspace/precheck.rs:34`) |
 | `limits.land_check_minutes` | 10 | 1–240 | Live | never | land `CHECK_TIMEOUT` (`manager/land_run.rs:31`) |
 | `limits.clone_minutes` | 15 | 1–240 | Live | never | `CLONE_TIMEOUT` (`workspace/provision.rs:30`) |
-| `limits.git_fetch_seconds` | 30 | 10–60 | Live | never | Fleet Git `FETCH_TIMEOUT` (fetch, cleanup, radar WIP, move) |
 | `limits.git_push_seconds` | 60 | 10–600 | Live | never | `PUSH_TIMEOUT` and `LandTimeouts.push` |
-| `limits.integration_seconds` | 20 | 5–60 | Live | never | integrations `CALL_TIMEOUT` (`integrations/exec.rs:24`) |
 | `limits.provider_stop_grace_seconds` | 30 | 5–300 | Live (next stop) | never | `StopPolicy.grace` (`providers/host/mod.rs:132`) |
 | `limits.reconnect_max_seconds` | 300 | 5–600 | Restart | never | `BackoffPolicy.cap` of the station's link dialer |
 | `limits.scrollback_lines` | 5000 | 500–100000 | Live (new shells) | never | `SCROLLBACK_LINES` |
@@ -83,7 +80,7 @@ Protocol and frame sizes, the mux window and stream count, the token and ID leng
 | Task | Deliverable |
 |---|---|
 | **K1** Registry | The tables, keys, defaults, bounds, pairs and elevation rules in `fleetdeck-core` (parse, field tables, holder danger), the TS settings types if any, the board sections; no consumer changes (the values are parsed and shown only). |
-| **K2** Deck consumers | The 14 deck knobs read by the deck code instead of the constants, and the session deletion of rule 11. |
+| **K2** Deck consumers | The 14 deck knobs read by the deck code instead of the constants, and the session deletion of rule 11 (member sessions have no `last_seen` today, `store/schema.rs:522`: K2 adds idle tracking for them in a deck migration, or deletes by age only for members; decided in the K2 brief). |
 | **K3** Station consumers | The station knobs except the recording length, read by the station and provider code. |
 | **K4** Recording length | Proto ceiling, the deck and station migrations of the CHECK constraints, the MCP schema, station enforcement and report, deck pass-through, board form maximum. |
 | **K5** Docs | The decision log entry, `operations.md` (a "Limits and retention" part with board steps), parity and security rows. |
