@@ -14,6 +14,7 @@ import { settingsActions } from '../settings/actions';
 import { tailnetActions } from '../tailnet/api';
 import { desktopActions, displayActions } from '../displays/actions';
 import { deckHttp } from '../settings/http';
+import { desktopToolsActions } from '../settings/desktopTools';
 import { omarchyActions } from '../settings/omarchy';
 import { captureActions } from '../desktop/capture';
 import { deleteActions } from '../artifacts/DeleteArtifact';
@@ -290,6 +291,9 @@ export function RuntimeApp({ connection }: { readonly connection: Connection }) 
       ),
       deletion: deleteActions(lookupIo),
       omarchy: omarchyActions(deckHttp((path, init) => fetch(path, init), csrf, OMARCHY_WAIT_MS)),
+      desktopTools: desktopToolsActions(
+        deckHttp((path, init) => fetch(path, init), csrf, OMARCHY_WAIT_MS),
+      ),
     };
   }, [connection, owner, canAdmin, guest]);
   const filesFor = useMemo(
