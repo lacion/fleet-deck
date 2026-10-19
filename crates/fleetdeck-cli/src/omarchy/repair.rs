@@ -427,6 +427,7 @@ impl<'a> Run<'a> {
 
     /// The "Resume" column for one file.
     fn advance(&mut self, i: usize) -> Res<()> {
+        self.reconcile_aside(i)?;
         let file = self.journal.files[i].clone();
         let o = observe(self.home, &file);
         match resume_of(row(&file, &o)) {
@@ -557,9 +558,34 @@ impl<'a> Run<'a> {
         Err(Halt::Stop(code::RESTORE_CONFLICT))
     }
 
+    /// Settles what an interrupted move aside left, before a resume or a
+    /// restore chooses its action for file `i`; then refuses to go on while a
+    /// displaced edit of the owner sits under the kept name.
+    fn reconcile_aside(&mut self, i: usize) -> Res<()> {
+        if self.journal.files[i].intent == Some(Step::MovingAside) {
+            let kept = self.journal.files[i].kept_rel();
+            match kept.as_ref().map(|k| seen(self.home, k)) {
+                // The move did not happen.
+                None | Some(Seen::Absent) => self.clear_intent(i)?,
+                // The asset moved, or an edit moved: settle_aside decides.
+                Some(_) => self.settle_aside(i)?,
+            }
+        }
+        let file = &self.journal.files[i];
+        if let Some(kept) = file.kept_rel() {
+            match seen(self.home, &kept) {
+                Seen::Absent => {}
+                Seen::Hash(h) if h == file.asset_hash => {}
+                Seen::Hash(_) | Seen::Bad => return Err(Halt::Stop(code::RESTORE_CONFLICT)),
+            }
+        }
+        Ok(())
+    }
+
     /// The "Restore" column for one file. `Ok(true)` when it changed the
     /// file.
     fn restore_one(&mut self, i: usize) -> Res<bool> {
+        self.reconcile_aside(i)?;
         let file = self.journal.files[i].clone();
         let o = observe(self.home, &file);
         let action = restore_of(row(&file, &o));
@@ -754,3 +780,7 @@ mod tests;
 #[cfg(test)]
 #[path = "repair_r1_tests.rs"]
 mod r1_tests;
+
+#[cfg(test)]
+#[path = "repair_r2_tests.rs"]
+mod r2_tests;
