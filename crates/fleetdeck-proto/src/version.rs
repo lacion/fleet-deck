@@ -96,6 +96,14 @@ pub mod feature {
     /// ordinary pairing.
     pub const PROVISION_REPORT: &str = "provision_report.v1";
 
+    /// The read `station.tools`: the desktop tool facts of the station
+    /// (`board-gaps.md` §2.3).
+    pub const STATION_TOOLS: &str = "station_tools.v1";
+
+    /// The desktop tools plan and the maintenance channel (`board-gaps.md`
+    /// §2.4, §2.9).
+    pub const DESKTOP_TOOL_INSTALL: &str = "desktop_tool_install.v1";
+
     /// `artifacts.publish`, `artifacts.list`, `artifacts.get` and
     /// `artifacts.file`: the artifact service (R12, DL-165).
     pub const ARTIFACTS: &str = "artifacts.v1";
@@ -290,6 +298,8 @@ pub mod feature {
         DESKTOP_INPUT_ANY,
         EXECUTION_STOP,
         PROVISION_REPORT,
+        STATION_TOOLS,
+        DESKTOP_TOOL_INSTALL,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];
@@ -451,6 +461,22 @@ mod tests {
         let this = VersionOffer::this_build();
         assert!(this.features.iter().any(|f| f == "desktop_click_mcp.v1"));
         assert!(this.features.iter().any(|f| f == "desktop_input_any.v1"));
+    }
+
+    #[test]
+    fn the_desktop_tool_features_have_their_names_and_follow_provision_report_in_all() {
+        assert_eq!(feature::STATION_TOOLS, "station_tools.v1");
+        assert_eq!(feature::DESKTOP_TOOL_INSTALL, "desktop_tool_install.v1");
+        let at = |f: &str| feature::ALL.iter().position(|x| *x == f).unwrap();
+        assert_eq!(
+            at(feature::STATION_TOOLS),
+            at(feature::PROVISION_REPORT) + 1
+        );
+        assert_eq!(
+            at(feature::DESKTOP_TOOL_INSTALL),
+            at(feature::PROVISION_REPORT) + 2
+        );
+        assert_eq!(feature::ALL.last(), Some(&feature::DESKTOP_TOOL_INSTALL));
     }
 
     #[test]

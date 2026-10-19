@@ -124,6 +124,8 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `artifacts.v1` | `artifacts.publish`, `artifacts.list`, `artifacts.get`, `artifacts.file` (DL-165; R12 artifacts: versioned files that a session or a person publishes, stored in the station's data directory) |
 | `shim.resume.v1` | `session.execution_check`, `session.reconcile_execution` (DL-182; the termination check and the owner's reconciliation for resume on the shim host) |
 | `execution_stop.v1` | `session.execution_stop_plan`, `session.stop_execution` (BG-4, design `docs/v2/design/board-gaps.md` §5; the stop plan and the board-origin command that stop the processes of a lost run through pidfds) |
+| `station_tools.v1` | `station.tools` (BG-1, design `docs/v2/design/board-gaps.md` §2.3; the desktop tool facts of the station: parsed facts only) |
+| `desktop_tool_install.v1` | `station.desktop_tools_plan`, `maintenance.open`, `maintenance.list`, `maintenance.attach`, `maintenance.resize` (BG-1, `board-gaps.md` §2.4, §2.9; the desktop tools plan and the maintenance channel: a runner process that outlives the station, the stream purpose `maintenance:<id>`, no shell receipts) |
 | `shell_command.v1` | `session.shell_command`, `session.release_shell` (B8, DL-196; a `!` shell command in a session folder, and the owner's release of a folder) |
 | `desktop.v1` | `desktop.info`, `desktop.act` (R13 §6, DL-201; desktop control on the station: Hyprland and Omarchy info, and a closed list of actions with typed argv) |
 | `fleet_git.v1` | `fleet_git.projects_set`, `fleet_git.push_now`, `fleet_git` on `session.start`, and the events `workspace.base_stale`, `workspace.include_skipped`, `session.push`, `session.cleanup` (Fleet Git phase 1, ADR-009; the Git settings of a project, fetch before a start, push, cleanup and worktree bootstrap) |
@@ -515,6 +517,12 @@ close             { reason, detail }
 | `omarchy.install_plan` | deck → station | admin | `omarchy_repair.v1` | no |
 | `omarchy.repair_status` | deck → station | admin | `omarchy_repair.v1` | no |
 | `omarchy.restore_plan` | deck → station | admin | `omarchy_repair.v1` | no |
+| `station.tools` | deck → station | admin | `station_tools.v1` | no |
+| `station.desktop_tools_plan` | deck → station | admin | `desktop_tool_install.v1` | no |
+| `maintenance.open` | deck → station | admin | `desktop_tool_install.v1` | no |
+| `maintenance.list` | deck → station | admin | `desktop_tool_install.v1` | no |
+| `maintenance.attach` | deck → station | admin | `desktop_tool_install.v1` | no |
+| `maintenance.resize` | deck → station | admin | `desktop_tool_install.v1` | no |
 
 - **`workspace.list` (added in M2 P4-4, DL-061, under the extension rule of §3: "every new method must declare a scope and, if needed, a feature"):** the directory picker of the board's spawn form. It lists the sub-directories of a path inside the station's allowed roots (`WorkspaceQuery` → `WorkspaceListing`). It reads only, but it needs `drive` because only a caller that may start a session needs the station's directory names. Errors: `missing_workspace`, `outside_roots`, `timeout`.
 - **`workspace.worktrees` (DL-142; feature `workspace.worktrees.v1`):** `workspace.worktrees` (DL-142) is read only: it lists the worktrees that the station created for sessions, with what Git reports about each (dirty and ignored entries, commits on no fetched remote ref, registration, last commit). It runs no Git command that writes.

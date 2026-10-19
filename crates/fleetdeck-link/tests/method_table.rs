@@ -95,8 +95,9 @@ fn code_table() -> BTreeMap<String, Row> {
 fn the_code_method_table_equals_the_adr_method_table() {
     let adr = adr_table(&adr());
     let code = code_table();
-    // 135 + 2 (BG4-1 execution stop) + 3 (BG2-2 installer repair).
-    assert_eq!(adr.len(), 140, "{:?}", adr.keys());
+    // 135 + 2 (BG4-1 execution stop) + 3 (BG2-2 installer repair)
+    // + 6 (BG1-1 desktop tools and maintenance).
+    assert_eq!(adr.len(), 146, "{:?}", adr.keys());
     for (name, row) in &adr {
         assert_eq!(code.get(name), Some(row), "{name}");
     }
@@ -127,6 +128,25 @@ fn the_omarchy_repair_reads_need_their_feature_and_scope() {
         assert_eq!(row.callers, "deck → station", "{name}");
         assert_eq!(row.scope, "admin", "{name}");
         assert_eq!(row.feature.as_deref(), Some("omarchy_repair.v1"), "{name}");
+        assert!(!row.mutating, "{name}");
+    }
+}
+
+#[test]
+fn the_desktop_tool_rows_need_their_features_and_scope() {
+    let code = code_table();
+    for (name, feature) in [
+        ("station.tools", "station_tools.v1"),
+        ("station.desktop_tools_plan", "desktop_tool_install.v1"),
+        ("maintenance.open", "desktop_tool_install.v1"),
+        ("maintenance.list", "desktop_tool_install.v1"),
+        ("maintenance.attach", "desktop_tool_install.v1"),
+        ("maintenance.resize", "desktop_tool_install.v1"),
+    ] {
+        let row = code.get(name).unwrap_or_else(|| panic!("{name} missing"));
+        assert_eq!(row.callers, "deck → station", "{name}");
+        assert_eq!(row.scope, "admin", "{name}");
+        assert_eq!(row.feature.as_deref(), Some(feature), "{name}");
         assert!(!row.mutating, "{name}");
     }
 }
