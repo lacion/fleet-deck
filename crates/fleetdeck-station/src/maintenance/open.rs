@@ -127,7 +127,9 @@ impl MaintenanceService {
             }
         };
         if let Some(spec) = specs.iter().find(|s| s.request_id == req.request_id) {
-            if spec.plan_id != req.plan_id {
+            // The same request of another deck or for another plan is a
+            // conflict, never the record of that request.
+            if spec.plan_id != req.plan_id || spec.deck != peer.to_string() {
                 return refuse(code::REQUEST_ID_CONFLICT);
             }
             return answer(self.info(spec).await);

@@ -206,6 +206,18 @@ async fn maintenance_open_the_same_request_with_another_plan_is_a_conflict() {
 }
 
 #[tokio::test]
+async fn maintenance_open_the_same_request_of_another_deck_is_a_conflict() {
+    let rig = Rig::with_plan(Launch::Fail);
+    let mut spec = write_spec(&rig, &id_of(1), REQUEST, NOW);
+    spec.deck = peer(2).to_string();
+    std::fs::remove_file(files::spec_path(rig.dir.path(), &id_of(1))).unwrap();
+    files::write_spec(rig.dir.path(), &spec).unwrap();
+    let v = rig.open(REQUEST, PLAN, true).await;
+    assert_eq!(error_of(&v), "request_id_conflict");
+    assert_eq!(rig.host.launch_count(), 0);
+}
+
+#[tokio::test]
 async fn maintenance_open_a_running_or_admitted_record_is_busy() {
     let rig = Rig::with_plan(Launch::Fail);
     write_spec(&rig, &id_of(1), REQUEST, NOW);

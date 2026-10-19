@@ -257,6 +257,7 @@ impl Rig {
 pub(super) fn write_spec(rig: &Rig, id: &str, request: &str, created_at: i64) -> Spec {
     let mut s = spec(id);
     s.request_id = request.to_owned();
+    s.deck = peer(1).to_string();
     s.created_at = created_at;
     files::write_spec(rig.dir.path(), &s).unwrap();
     s
