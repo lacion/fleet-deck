@@ -261,13 +261,14 @@ async fn an_answer_over_a_limit_or_not_valid_is_refused_and_returns_no_list() {
         .set(list_station(zero, new_verdicts(), Around::default()));
     let r = w.query(window_list_query(None)).await;
     assert_eq!(code(&r), "desktop_failed", "{r}");
-    // A wrong station.
-    let wrong = window_list_value("not-this-station", 1);
+    // The station names itself by its readable name: the deck answers the
+    // target ID instead (as `desktop_info`), never the station's own value.
+    let named = window_list_value("Lighting", 1);
     w.fake
-        .set(list_station(wrong, new_verdicts(), Around::default()));
+        .set(list_station(named, new_verdicts(), Around::default()));
     let r = w.query(window_list_query(None)).await;
-    assert_eq!(code(&r), "desktop_failed", "{r}");
-    assert!(!r.to_string().contains("not-this-station"));
+    assert_eq!(r["result"]["station"], w.station().as_str(), "{r}");
+    assert!(!r.to_string().contains("Lighting"));
     // A handle that is not of the P7 form.
     let mut bad = window_list_value(w.station().as_str(), 1);
     bad["windows"][0]["window_id"] = json!("NOT-A-HANDLE");
