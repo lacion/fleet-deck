@@ -177,6 +177,18 @@ fn query(tool: &str, args: &Value) -> Result<(CoordinatorQuery, Duration), Strin
                 })?;
             Ok((CoordinatorQuery::WaitTasks { task_ids: ids }, WAIT_LIMIT))
         }
+        "command_status" => {
+            let command_id = args
+                .get("command_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "invalid_params: `command_id` is required".to_owned())?;
+            Ok((
+                CoordinatorQuery::CommandStatus {
+                    command_id: CommandId::from(command_id),
+                },
+                QUERY_LIMIT,
+            ))
+        }
         other => super::fleet_tools::query(other, args).map(|q| (q, QUERY_LIMIT)),
     }
 }
@@ -520,6 +532,33 @@ mod tests {
         assert_eq!(q.deadline, 56_000);
         for bad in [json!({}), json!({"task_ids": []}), json!({"task_ids": [1]})] {
             assert!(LinkForward::envelope(&caller(), "wait_tasks", &bad, &inc, 1).is_err());
+        }
+    }
+
+    #[test]
+    fn command_status_is_a_query_with_the_given_command_id() {
+        let inc: IncarnationId = "deck-inc".to_owned().into();
+        let (method, id, v) = LinkForward::envelope(
+            &caller(),
+            "command_status",
+            &json!({"command_id": "coord-abc"}),
+            &inc,
+            1_000,
+        )
+        .unwrap();
+        assert_eq!(method, "coordinator.query");
+        assert!(id.is_none());
+        let q: CoordinatorQueryEnvelope = serde_json::from_value(v).unwrap();
+        assert_eq!(
+            q.query,
+            CoordinatorQuery::CommandStatus {
+                command_id: "coord-abc".into()
+            }
+        );
+        assert_eq!(q.deadline, 26_000);
+        for bad in [json!({}), json!({"command_id": 1})] {
+            let e = LinkForward::envelope(&caller(), "command_status", &bad, &inc, 1).unwrap_err();
+            assert_eq!(e, "invalid_params: `command_id` is required");
         }
     }
 

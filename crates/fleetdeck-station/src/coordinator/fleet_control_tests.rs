@@ -151,10 +151,15 @@ fn the_catalog_lists_the_fleet_control_tools_by_class_and_never_by_the_switch() 
     assert!(!listed(&[Answer]).contains("list_needs_you"));
     // `manage`: four tools; `start_in_project` needs `spawn` and `manage`.
     let manage = listed(&[Manage]);
-    assert_eq!(manage, set(MANAGE));
+    let mut manage_expected = set(MANAGE);
+    manage_expected.insert("command_status".to_owned());
+    assert_eq!(manage, manage_expected);
     assert!(!listed(&[Spawn]).contains("start_in_project"));
     assert!(listed(&[Spawn, Manage]).contains("start_in_project"));
-    assert_eq!(listed(&[Answer]), set(&["answer_request"]));
+    assert_eq!(
+        listed(&[Answer]),
+        set(&["command_status", "answer_request"])
+    );
     // Every tool of the catalog has a one-sentence description.
     let tools = catalog(
         &[Read, Mail, Spawn, Inspect, Manage, Answer]
