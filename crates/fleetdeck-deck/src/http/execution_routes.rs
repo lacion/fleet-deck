@@ -14,7 +14,7 @@
 //! row does not depend on a browser that polls. A failed write of a row is
 //! written again, for at most an hour ([`WRITE_RETRY_LIMIT`]).
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -52,8 +52,8 @@ const STOP_ACTION: &str = "session.execution_stop";
 pub(super) const STOP_UNSUPPORTED_TEXT: &str =
     "This station's build cannot stop the processes of a lost run from the board.";
 
-/// How many command IDs the deck remembers as audited; the set is cleared
-/// when it is full.
+/// How many command IDs the deck remembers as audited; the written IDs are
+/// forgotten when the map is full.
 const AUDITED_CAP: usize = 1_024;
 
 /// How long the watcher keeps trying to write a row that failed.
@@ -79,9 +79,30 @@ impl StopWatch {
     };
 }
 
-/// The IDs of the stop commands whose outcome row the deck wrote in this
-/// process.
-static AUDITED: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+/// What the deck knows of the outcome row of a command ID.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mark {
+    /// A writer holds the claim and its write has not ended.
+    InFlight,
+    /// The row is written.
+    Written,
+}
+
+/// The answer of [`claim`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Claim {
+    /// The caller holds the claim now and must write the row.
+    Mine,
+    /// Another writer holds it: the row is not proven written.
+    InFlight,
+    /// The row is written.
+    Written,
+}
+
+/// The stop commands whose outcome row the deck writes or wrote in this
+/// process: a claim in flight, or a row that is written.
+static AUDITED: LazyLock<Mutex<HashMap<String, Mark>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn unreachable_error(station: &StationId) -> ApiError {
     ApiError::new(
@@ -339,16 +360,21 @@ impl StopAudit {
     }
 }
 
-/// True once for each command ID that the deck has not claimed yet.
-fn claim(command_id: &str) -> bool {
+/// Takes the claim of a command ID when no writer holds it and its row is not
+/// written. Otherwise tells why not.
+fn claim(command_id: &str) -> Claim {
     let mut seen = AUDITED.lock().unwrap_or_else(PoisonError::into_inner);
-    if seen.contains(command_id) {
-        return false;
+    match seen.get(command_id) {
+        Some(Mark::InFlight) => return Claim::InFlight,
+        Some(Mark::Written) => return Claim::Written,
+        None => {}
     }
     if seen.len() >= AUDITED_CAP {
-        seen.clear();
+        // Only the written rows are forgotten; a claim in flight stays.
+        seen.retain(|_, mark| *mark == Mark::InFlight);
     }
-    seen.insert(command_id.to_owned())
+    seen.insert(command_id.to_owned(), Mark::InFlight);
+    Claim::Mine
 }
 
 /// Gives a claimed command ID back, after a failed write.
@@ -357,6 +383,14 @@ fn release(command_id: &str) {
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .remove(command_id);
+}
+
+/// Records that the row of a claimed command ID is written.
+fn written(command_id: &str) {
+    AUDITED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(command_id.to_owned(), Mark::Written);
 }
 
 /// A code of the station for the audit: one of the six, else a fixed word, so
@@ -385,14 +419,17 @@ fn outcome_detail(last: &ExecutionStopOutcome, shim: &str) -> String {
 /// One `stage=outcome` row for the `last_stop` of a check, when the deck did
 /// not write the row of its command ID yet in this process. A failed write
 /// gives the ID back: a later check or the watcher can write the row again.
-/// Returns `false` when the write failed; `true` when the check has no
-/// `last_stop`, when another writer has the ID, or when the write succeeded.
+/// Returns `true` when the check has no `last_stop`, or when the row is
+/// written (by this call or by another). Returns `false` when the write failed
+/// or when the write of another writer has not ended: the watcher tries again.
 async fn audit_outcome(board: &Board, actor: &str, target: &str, check: &ExecutionCheck) -> bool {
     let Some(last) = &check.last_stop else {
         return true;
     };
-    if !claim(&last.command_id) {
-        return true;
+    match claim(&last.command_id) {
+        Claim::Written => return true,
+        Claim::InFlight => return false,
+        Claim::Mine => {}
     }
     let result = match last.outcome {
         StopOutcome::Done => AuditResult::Ok,
@@ -408,6 +445,7 @@ async fn audit_outcome(board: &Board, actor: &str, target: &str, check: &Executi
         release(&last.command_id);
         return false;
     }
+    written(&last.command_id);
     true
 }
 
@@ -474,14 +512,16 @@ pub(super) fn watch_outcome(board: Arc<Board>, actor: String, station: StationId
 
 #[cfg(test)]
 mod tests {
-    use super::{claim, release};
+    use super::{Claim, claim, release, written};
 
     #[test]
-    fn a_command_id_is_claimed_once_until_it_is_released() {
-        assert!(claim("claim-test-1"));
-        assert!(!claim("claim-test-1"));
-        release("claim-test-1");
-        assert!(claim("claim-test-1"));
-        release("claim-test-1");
+    fn claims_are_mine_then_in_flight_then_written() {
+        assert_eq!(claim("claim-test-2"), Claim::Mine);
+        assert_eq!(claim("claim-test-2"), Claim::InFlight);
+        written("claim-test-2");
+        assert_eq!(claim("claim-test-2"), Claim::Written);
+        release("claim-test-2");
+        assert_eq!(claim("claim-test-2"), Claim::Mine);
+        release("claim-test-2");
     }
 }

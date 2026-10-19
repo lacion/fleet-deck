@@ -666,3 +666,33 @@ async fn a_failed_unobserved_write_is_written_again_without_a_board_check() {
     assert_eq!(rows[0].result, AuditResult::Failed);
     assert!(stage_rows(&t.c, "outcome").await.is_empty());
 }
+
+#[tokio::test]
+async fn a_board_check_whose_write_fails_does_not_end_the_watcher_retries() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut t = setup_file(dir.path()).await;
+    let conn = block_rows(dir.path(), "stage=outcome %");
+    let e = elevate(&t.c, &t.h).await;
+    let call = post(&t.c, &t.h, STOP, stop_body("st-r-3", Some(&e)));
+    let (r, _) = tokio::join!(call, answer_stop(&mut t.station));
+    assert_eq!(r.status, 200, "{}", r.body);
+    // The watcher sees the outcome once; its write fails and it retries.
+    let check = check_json(last_json("st-r-3"));
+    answer_check(&mut t.station, &check).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    // A board check of the same `last_stop` meets the same failing storage.
+    let (r, _) = with_station(
+        &mut t.station,
+        get(&t.c, &t.h, "/api/sessions/fake/s1/execution"),
+        Outcome::Ok(check),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(stage_rows(&t.c, "outcome").await.is_empty());
+    // The storage works again: the row is written once.
+    unblock_and_wait(&t.c, &conn, "outcome").await;
+    let rows = stage_rows(&t.c, "outcome").await;
+    assert_eq!(rows[0].command_id.as_ref().unwrap().as_str(), "st-r-3");
+    assert_eq!(rows[0].result, AuditResult::Ok);
+}
