@@ -460,6 +460,14 @@ pub const API_REST: &[ApiMethod] = &[
         Some(Scope::Admin),
         false,
     ),
+    // The stop plan of a lost run (BG-4); owner only, as the check.
+    m(
+        "session.execution_stop_plan",
+        Method::GET,
+        "/api/sessions/{station}/{session}/execution/stop-plan",
+        Some(Scope::Admin),
+        false,
+    ),
     m(
         "session.fleet_answers",
         Method::GET,
@@ -485,6 +493,9 @@ pub const API_REST: &[ApiMethod] = &[
     // The owner marks the previous run of a session as ended (DL-182); the
     // handler refuses a token (`owner_only`).
     cmd("session.reconcile_execution", Scope::Admin),
+    // The owner stops the listed processes of a lost run (BG-4); the handler
+    // also needs the feature and an elevation.
+    cmd("session.stop_execution", Scope::Admin),
     // The owner runs a `!` shell command in the session folder, and releases
     // a folder (B8); the handler refuses a token and a member (`owner_only`).
     cmd("session.shell_command", Scope::Admin),
