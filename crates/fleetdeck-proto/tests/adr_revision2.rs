@@ -111,6 +111,8 @@ fn commands() -> Vec<SessionCommand> {
         json!({"op": "worktree_purge", "session_id": s, "confirm_name": "app--fd-x--01j000000000"}),
         json!({"op": "worktree_release", "session_id": s}),
         json!({"op": "reconcile_execution", "session_id": s, "shim_id": "01J0000000000000000000000H"}),
+        json!({"op": "stop_execution", "session_id": s, "shim_id": "01J0000000000000000000000H",
+            "plan_id": "plan-1"}),
         json!({"op": "shell_command", "session_id": s, "command": "ls"}),
         json!({"op": "release_shell", "session_id": s, "effect_id": "01J0000000000000000000000E"}),
         json!({"op": "land", "session_id": s, "land_id": "land-1", "plan": {
@@ -154,6 +156,7 @@ fn commands() -> Vec<SessionCommand> {
             | SessionCommand::WorktreePurge { .. }
             | SessionCommand::WorktreeRelease { .. }
             | SessionCommand::ReconcileExecution { .. }
+            | SessionCommand::StopExecution { .. }
             | SessionCommand::ShellCommand { .. }
             | SessionCommand::ReleaseShell { .. }
             | SessionCommand::Land { .. }
@@ -170,7 +173,7 @@ fn commands() -> Vec<SessionCommand> {
 fn every_session_command_is_a_mutating_deck_to_station_method_of_the_adr_table() {
     let table = method_table();
     let commands = commands();
-    assert_eq!(commands.len(), 27);
+    assert_eq!(commands.len(), 28);
     for c in &commands {
         let r = row(&table, c.method());
         assert!(r.mutating, "`{}` must be mutating", c.method());
@@ -179,6 +182,7 @@ fn every_session_command_is_a_mutating_deck_to_station_method_of_the_adr_table()
             "approve"
         } else if c.method().starts_with("session.worktree_")
             || c.method() == "session.reconcile_execution"
+            || c.method() == "session.stop_execution"
             || c.method() == "session.shell_command"
             || c.method() == "session.release_shell"
             || c.method().starts_with("session.move_")

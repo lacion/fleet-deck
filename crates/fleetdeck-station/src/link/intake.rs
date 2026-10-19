@@ -49,6 +49,9 @@ mod intake_fleet_git;
 // R13 P4: `fleet.summary` (a stub until task B2).
 #[path = "intake_summary.rs"]
 mod intake_summary;
+// DL-182 and BG-4: `session.execution_check` and `session.execution_stop_plan`.
+#[path = "intake_execution.rs"]
+mod intake_execution;
 // R13 P6: `coordinator.policy_now`.
 #[path = "intake_policy.rs"]
 mod intake_policy;
@@ -148,25 +151,6 @@ async fn write_temp(ctx: &StationLink, params: serde_json::Value) -> Outcome {
     match task.await {
         Ok(Ok(answer)) => ok(answer),
         Ok(Err(e)) => Outcome::Err(WireError::new(e.code, e.message)),
-        Err(e) => internal(e),
-    }
-}
-
-/// `session.execution_check` (DL-182 §4.2): what still runs of the previous
-/// execution of a session under a shim. Error code `unknown_session`.
-async fn execution_check(ctx: &StationLink, params: serde_json::Value) -> Outcome {
-    let query: fleetdeck_proto::execution::ExecutionCheckQuery =
-        match serde_json::from_value(params) {
-            Ok(q) => q,
-            Err(e) => return bad_params(e),
-        };
-    match ctx.manager.store().summary(query.session_id.clone()).await {
-        Ok(Some(_)) => {}
-        Ok(None) => return Outcome::Err(WireError::new("unknown_session", "no such session")),
-        Err(e) => return internal(e),
-    }
-    match ctx.manager.execution_check(&query.session_id).await {
-        Ok(check) => ok(check),
         Err(e) => internal(e),
     }
 }
@@ -505,7 +489,8 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
         "workspace.preflight" => preflight(ctx, req.params).await,
         "workspace.precheck" => precheck(ctx, req.params).await,
         "assist.generate" => assist(ctx, req.params).await,
-        "session.execution_check" => execution_check(ctx, req.params).await,
+        "session.execution_check" => intake_execution::check(ctx, control, req.params).await,
+        "session.execution_stop_plan" => intake_execution::stop_plan(ctx, req.params).await,
         "files.write_temp" => write_temp(ctx, req.params).await,
         m if crate::integrations::Integrations::serves(m) => integration(ctx, m, req.params).await,
         m if crate::integrations::Integrations::serves_accounts(m) => {

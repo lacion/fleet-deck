@@ -16,6 +16,7 @@ pub mod binding_start;
 pub mod coordinator_command;
 mod coordinator_start;
 pub mod decide;
+mod decide_rename;
 pub mod drain;
 pub mod durable;
 pub mod files;
@@ -45,10 +46,20 @@ mod shells_slot;
 pub mod shim_claude;
 pub mod shim_codex;
 pub mod shim_codex_poll;
+mod shim_configs;
 pub mod shim_exit;
 pub mod shim_station;
 pub mod shim_stdin;
 pub mod shims;
+mod stop_attribution;
+mod stop_decide;
+mod stop_exec;
+mod stop_plan;
+mod stop_signal;
+mod stop_state;
+#[cfg(test)]
+#[path = "stop_tree.rs"]
+mod stop_tree;
 pub mod target;
 mod task_stop;
 pub mod trash;
@@ -56,6 +67,8 @@ mod turn_rows;
 pub mod turns;
 pub mod workspaces;
 pub use adapters::{adapters_from_config, setup_envs_from_config};
+pub use shim_configs::durable_configs;
+pub use stop_plan::StopPlanError;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -311,6 +324,12 @@ impl SessionManager {
         let requeued = store.requeue_worktree_ops().await?;
         if requeued > 0 {
             tracing::info!(requeued, "resumed interrupted worktree operations");
+        }
+        // A stop that a restart interrupted settles from its row; nothing is
+        // signalled (BG-4 rule 12).
+        let (unknown, failed) = store.recover_execution_stops().await?;
+        if unknown + failed > 0 {
+            tracing::info!(unknown, failed, "settled interrupted process stops");
         }
         let shells = target::ShellsSlot::default();
         let integrations = integrations
@@ -600,6 +619,9 @@ impl SessionManager {
                 shell_decide::guard(&command, &caller, origin, envelope.authority.is_some())
             });
         let shells = self.shells.get();
+        // The stop plan, resume, reconcile and stop of one session never
+        // run together (BG-4 rule 1); a stop also reads its plan here.
+        let (serial, stop) = self.stop_prepare(&command).await;
         // The process check of a reconciliation runs here, outside the
         // writer transaction; the decision rechecks only the row state
         // (DL-182 §4.2).
@@ -613,6 +635,16 @@ impl SessionManager {
                         session_id,
                         shim_id,
                     } => shims::decide_reconcile(d, origin, &session_id, &shim_id, check.as_ref()),
+                    SessionCommand::StopExecution {
+                        session_id,
+                        shim_id,
+                        plan_id,
+                    } => stop_decide::decide(
+                        d,
+                        origin,
+                        (&session_id, &shim_id, &plan_id),
+                        stop.as_ref(),
+                    ),
                     command @ (SessionCommand::WorktreeTrash { .. }
                     | SessionCommand::WorktreeRestore { .. }
                     | SessionCommand::WorktreePurge { .. }
@@ -651,6 +683,7 @@ impl SessionManager {
             self.land.get().inspect(|engine| engine.wake());
         }
         self.target.cancel_shells_after(interrupted, &decided).await;
+        drop(serial);
         decided
     }
 
@@ -680,41 +713,6 @@ impl SessionManager {
             .await;
         self.target.stop_all(how).await;
         let _ = tokio::task::spawn_blocking(crate::workspace::precheck::kill_all_marked).await;
-    }
-}
-
-/// The adapter configs of restored shim sessions: each session's adapter
-/// builds its durable launch from the stored summary.
-#[must_use]
-pub fn durable_configs(adapters: &Adapters) -> shim_station::Configs {
-    fn launch(
-        adapters: &Adapters,
-        summary: &fleetdeck_proto::SessionSummary,
-    ) -> Option<fleetdeck_providers::durable::DurableConfig> {
-        let instance = summary.provider_instance.clone()?;
-        let adapter = adapters.get(&instance)?;
-        let spec = fleetdeck_proto::command::SessionSpec {
-            provider_instance: instance,
-            cwd: summary.cwd.clone()?,
-            mode: summary.mode.clone(),
-            model: summary.model.clone(),
-            title: summary.title.clone(),
-            coordinator: None,
-            launch: None,
-            extra_env: None,
-        };
-        adapter.durable_launch(&spec).ok().map(|l| l.core)
-    }
-    let (a, b) = (adapters.clone(), adapters.clone());
-    shim_station::Configs {
-        claude: Box::new(move |summary| match launch(&a, summary)? {
-            fleetdeck_providers::durable::DurableConfig::Claude(config) => Some(config),
-            fleetdeck_providers::durable::DurableConfig::Codex { .. } => None,
-        }),
-        codex: Box::new(move |summary| match launch(&b, summary)? {
-            fleetdeck_providers::durable::DurableConfig::Codex { config, .. } => Some(config),
-            fleetdeck_providers::durable::DurableConfig::Claude(_) => None,
-        }),
     }
 }
 

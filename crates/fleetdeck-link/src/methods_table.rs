@@ -30,7 +30,7 @@ const fn drive(name: &'static str) -> MethodSpec {
 use Callers::DeckToStation;
 
 /// The first rows of [`METHODS`].
-const HEAD: [MethodSpec; 86] = [
+const HEAD: [MethodSpec; 88] = [
     m("station.info", DeckToStation, Scope::Read, None, false),
     m("session.list", DeckToStation, Scope::Read, None, false),
     m("events.replay", DeckToStation, Scope::Read, None, false),
@@ -578,6 +578,23 @@ const HEAD: [MethodSpec; 86] = [
         DeckToStation,
         Scope::Admin,
         Some(feature::SHIM_RESUME),
+        true,
+    ),
+    // Stopping the processes of a lost run (BG-4): the plan reads the
+    // processes of the station (not mutating); the stop signals them (an
+    // owner action). Both need `admin`.
+    m(
+        "session.execution_stop_plan",
+        DeckToStation,
+        Scope::Admin,
+        Some(feature::EXECUTION_STOP),
+        false,
+    ),
+    m(
+        "session.stop_execution",
+        DeckToStation,
+        Scope::Admin,
+        Some(feature::EXECUTION_STOP),
         true,
     ),
     // `!` shell commands (B8, DL-196): the station runs a command with its own

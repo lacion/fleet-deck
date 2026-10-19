@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::execution_stop::ExecutionStopOutcome;
 use crate::ids::SessionId;
 
 /// `session.execution_check` params.
@@ -54,6 +55,12 @@ pub struct ExecutionCheck {
     /// `error`).
     pub complete: bool,
     pub error: Option<String>,
+    /// The outcome of the newest stop of this run (`execution_stop.v1`).
+    /// The station fills it only for a deck link that negotiated the
+    /// feature: an older deck never sees the key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub last_stop: Option<ExecutionStopOutcome>,
 }
 
 impl ExecutionCheck {
@@ -70,6 +77,7 @@ impl ExecutionCheck {
             escaped: Vec::new(),
             complete: true,
             error: None,
+            last_stop: None,
         }
     }
 

@@ -575,7 +575,10 @@ fn transition_events(effect: &Effect, to: EffectState, reason: &str) -> Vec<Even
     let input = effect.payload.input();
     // The row of a worktree operation and the inventory carry its outcome
     // (DL-150).
-    if matches!(effect.payload, EffectPayload::Worktree { .. }) {
+    if matches!(
+        effect.payload,
+        EffectPayload::Worktree { .. } | EffectPayload::StopExecution { .. }
+    ) {
         return Vec::new();
     }
     match (to, input) {

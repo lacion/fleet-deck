@@ -235,6 +235,14 @@ pub enum EffectPayload {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         authority: Option<CommandAuthority>,
     },
+    /// The stop of the processes of a lost run (BG-4, design `board-gaps.md`
+    /// §5). It needs no provider process: the `execution_stops` row of
+    /// `command_id` holds the state, and the stop plan `plan_id` lives in
+    /// the station memory.
+    StopExecution {
+        command_id: String,
+        plan_id: String,
+    },
 }
 
 impl EffectPayload {
@@ -256,6 +264,7 @@ impl EffectPayload {
             Self::ShellCommand { .. } => "shell_command",
             Self::Land { .. } => "land",
             Self::MoveIn { .. } => "move_in",
+            Self::StopExecution { .. } => "stop_execution",
         }
     }
 
@@ -270,6 +279,7 @@ impl EffectPayload {
                 | Self::Worktree { .. }
                 | Self::Land { .. }
                 | Self::MoveIn { .. }
+                | Self::StopExecution { .. }
         )
     }
 
@@ -319,7 +329,8 @@ impl EffectPayload {
             Self::SetModel { .. }
             | Self::Revert { .. }
             | Self::Worktree { .. }
-            | Self::ShellCommand { .. } => None,
+            | Self::ShellCommand { .. }
+            | Self::StopExecution { .. } => None,
         }
     }
 
@@ -342,7 +353,8 @@ impl EffectPayload {
             Self::SetModel { .. }
             | Self::Revert { .. }
             | Self::Worktree { .. }
-            | Self::ShellCommand { .. } => {}
+            | Self::ShellCommand { .. }
+            | Self::StopExecution { .. } => {}
         }
         self
     }
