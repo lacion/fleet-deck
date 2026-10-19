@@ -23,6 +23,7 @@ import {
 import { makeSleeper, OmarchyView, REFRESH_MS, type WatchEnv, watchStatus } from './OmarchyCard';
 import { SettingsTab } from './SettingsTab';
 import { view } from './fixtures';
+import { unusedReads } from './omarchyFixtures';
 
 const status = (extra: Partial<OmarchyStatus> = {}): OmarchyStatus => ({
   omarchy: { present: true, version: '3.1.0' },
@@ -330,6 +331,7 @@ function fake(opts: { act?: () => Promise<OmarchyActResult>; statuses?: OmarchyS
         opts.act ?? (async () => ({ outcome: 'done', code: null, message: null, status: status() }))
       )();
     },
+    ...unusedReads,
   };
   return { actions, calls };
 }
@@ -523,6 +525,7 @@ describe('watchStatus (the refresh of a mounted card)', () => {
         return next;
       },
       act: async () => result(),
+      ...unusedReads,
     };
     await watchStatus(actions, 'alpha', {
       sleep: async (ms) => {
