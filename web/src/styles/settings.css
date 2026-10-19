@@ -492,3 +492,69 @@ input[data-mono="true"] {
 .fd-omarchy-repairlist p {
   margin: 0;
 }
+
+/* ── desktop tools card (BG-1) ──────────────────────────────────── */
+.fd-desktop-tools {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-desktop-tools h2,
+.fd-desktop-tools h3,
+.fd-desktop-tools p {
+  margin: 0;
+}
+.fd-desktop-tools h3 {
+  font-size: var(--fs-body);
+}
+.fd-dt-tools,
+.fd-dt-transaction,
+.fd-dt-runs {
+  display: grid;
+  gap: var(--sp-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-13);
+}
+.fd-dt-tools > li {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.fd-dt-transaction {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+.fd-dt-install,
+.fd-dt-installations,
+.fd-maint {
+  display: grid;
+  gap: var(--sp-2);
+  width: 100%;
+  min-width: 0;
+}
+.fd-dt-install pre {
+  margin: 0;
+  overflow-x: auto;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+.fd-dt-runs > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-3);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.fd-maint-state {
+  display: grid;
+  gap: var(--sp-1);
+}
+.fd-maint-term {
+  width: 100%;
+  height: 22rem;
+  min-width: 0;
+}

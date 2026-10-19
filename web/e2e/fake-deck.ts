@@ -707,6 +707,14 @@ export class FakeDeck {
         return { status: 200, body: { items: [], state: { kind: 'empty' } } };
       }
     }
+    // BG-1: a station build without the desktop tools; the card stays hidden.
+    if (
+      handler === undefined &&
+      method === 'GET' &&
+      /^\/api\/stations\/[^/]+\/(desktop-tools|maintenance)$/.test(path)
+    ) {
+      return { status: 501, body: { error: 'unsupported', message: 'Not supported.' } };
+    }
     if (handler === undefined) return { status: 404, body: { code: 'not_found', message: path } };
     if (method === 'POST' && !csrf && !display) {
       return { status: 403, body: { code: 'csrf', message: 'Missing CSRF token.' } };

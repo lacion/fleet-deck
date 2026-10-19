@@ -7,6 +7,7 @@ import type { DesktopActions, DisplayActions } from '../displays/actions';
 import type { CaptureActions } from '../desktop/capture';
 import type { TailnetActions } from '../tailnet/api';
 import type { SettingsActions } from './actions';
+import type { DesktopToolsActions } from './desktopTools';
 import type { OmarchyActions } from './omarchy';
 
 export type SettingsEnv = {
@@ -21,6 +22,8 @@ export type SettingsEnv = {
   readonly deletion: DeleteActions;
   /** The Omarchy card of a station tab (Omarchy admin task D); absent in tests that need none. */
   readonly omarchy?: OmarchyActions;
+  /** The desktop tools card of a station tab (BG-1); absent in tests that need none. */
+  readonly desktopTools?: DesktopToolsActions;
 };
 
 const Context = createContext<SettingsEnv | undefined>(undefined);

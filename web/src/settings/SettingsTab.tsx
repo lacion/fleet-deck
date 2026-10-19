@@ -10,6 +10,8 @@ import { useElevation } from './elevation';
 import { relaySecret, tryRestart, trySave, UNSUPPORTED_TEXT } from './flow';
 import { describe } from './http';
 import { OmarchyCard } from './OmarchyCard';
+import type { DesktopToolsActions } from './desktopTools';
+import { DesktopToolsCard } from './DesktopToolsCard';
 import type { OmarchyActions } from './omarchy';
 import { asInstances, changedKeys, changesOf, labelOf, type Values } from './model';
 import { SettingsFields } from './SettingsFields';
@@ -43,6 +45,8 @@ type Props = {
   readonly initial?: InitialTab;
   /** The Omarchy calls; the card shows only on a live station tab when this is set. */
   readonly omarchy?: OmarchyActions | undefined;
+  /** The desktop tools card (BG-1); same condition as the Omarchy card. */
+  readonly desktopTools?: DesktopToolsActions | undefined;
 };
 
 export function Notice({
@@ -132,6 +136,7 @@ export function SettingsTab({
   monitors,
   initial,
   omarchy,
+  desktopTools,
 }: Props) {
   const target = useMemo<Target>(
     () => (stationId === null ? DECK : { kind: 'station', id: stationId }),
@@ -434,6 +439,9 @@ export function SettingsTab({
       )}
       {live && omarchy !== undefined && stationId !== null ? (
         <OmarchyCard station={name} actions={omarchy} ask={ask} />
+      ) : null}
+      {live && omarchy !== undefined && desktopTools !== undefined && stationId !== null ? (
+        <DesktopToolsCard station={name} actions={desktopTools} ask={ask} />
       ) : null}
       {secret === null ? null : (
         <SecretDialog
