@@ -3602,3 +3602,29 @@ Owner review: pending.
   - a. Station outbox cancellation safety (advisor finding): `transmit` claims a row, awaits the send, then releases it; a dropped call future (the client closed the connection) leaves the row in `in_flight` until a restart. Fix in P1 with a release guard.
   - b. The intermittent recording test above.
   - c. Changing `spawn_cap` and `max_modes` after creation comes with P4.
+
+## DL-252: Owner knobs: 29 hard-coded limits become settings that the board edits (architect, 2026-10-19)
+
+- Context: the owner asked why the owner password needs 12 characters, and then asked for the recommended set of the knobs inventory (`~/fleetdeck-briefs/knobs-inventory.md`, 1,425 entries, page "Fleet Deck Knobs"). The owner rule: "everything needs to be configurable from the deck, specially stuff that happens on the remote machines". Design: `docs/v2/design/knobs.md` (revision 3, 29 settings: 14 on the deck and 15 on each station).
+- Design history:
+  - Revision 1: proposed. DESIGN REVIEW round 1 FAIL (report `adv-knobs-design-r1-report.md`): 1 BLOCKER, 2 MAJOR and 1 MINOR.
+  - Revision 2 answers the four findings. BLOCKER (the SQLite `CHECK (… BETWEEN 1 AND 120)` constraints of the recordings and the MCP schema): K4 gets forward migrations (V40) for the station table and the deck tables, and the MCP schema advertises the new maximum; tests cover a fresh and an upgraded database. MAJOR (a lowered login limit that a later increase could revive): rule 11 deletes the sessions over a lowered limit in the same save. MAJOR (a station timeout above the fixed deck deadline): `limits.station_wait_seconds` is removed, and rule 9 says that a limit is read once when an operation starts. MINOR (a raw log increase keeps more prompt text): every increase of `retention.raw_log_mib` needs the elevation, also from 0.
+  - DESIGN REVIEW round 2 PASS (report `adv-knobs-design-r2-report.md`) with 1 MAJOR: rule 10 bounded single calls, not whole synchronous operations (a lookup and a write in one request, two Git fetches). Revision 3 answers it by removing the three knobs of synchronous operations (`limits.precheck_seconds`, `limits.git_fetch_seconds`, `limits.integration_seconds`); rule 10 says that only asynchronous operations get a timeout knob. The stop grace of a provider became a restart knob, because the adapters copy it at start.
+- Decisions (architect):
+  - Each knob is a field of the settings registry only. The board edits it on the deck tab or on the station's tab, over the link for a remote station. No knob is an environment variable, a CLI flag or a file that only the station machine can change.
+  - Every default equals the value that the code had before, so the build changes no behavior while the owner sets nothing. Every knob has an inclusive floor and ceiling, and the parser refuses a value outside them.
+  - The board asks for the elevation for a change that makes Fleet Deck less safe: a shorter password, a longer login, elevation time, API token, display session or invitation, a higher agent desktop rate, a shorter audit history (days or rows), a shorter session history, and a higher raw log size. The other direction needs no elevation.
+  - Rule 11: a lower login or display limit deletes the sessions over it at the save and revokes their sockets. A higher limit never brings a session back. Member logins end by age only, because a member session has no `last_seen`.
+  - Rule 9: a timeout or a limit is read once when an operation starts.
+  - The synchronous operations keep their fixed timeouts (rule 10).
+  - The shortest owner password keeps the floor 8 at the owner's request. The Codex review noted that NIST SP 800-63B-4 gives 15 characters for sign-in with a password only; the default stays 12 and the owner can raise it.
+- Built, in these merges on v2:
+  - K1, the registry: `9fba336a`. The tables, keys, defaults, bounds, pairs and elevation directions in `fleetdeck-core`, and the four board sections (**Security limits**, **Time limits**, **Retention** and **Captures and recordings**).
+  - K2, the deck: `3ef902e3`. The deck reads its 14 knobs, and a lowered login or display limit ends the sessions over it.
+  - K3a, the station timeouts: `7e8dd366`. The station reads the five command time limits, the provider stop grace and the reconnect cap.
+- Open items:
+  - a. K4 (the recording length: the proto ceiling, the migrations, the station check, the board form) and K3b (the terminal history, the retention, the raw logs and the capture storage) are in progress. Until they land, the station does not use those settings.
+  - b. The PRE-PR review of the knobs is pending (high risk: sign-in lifetimes, password length, elevation, audit retention, agent desktop rates).
+  - c. The board terminal (xterm) keeps 5000 lines of its own. The setting Terminal history changes only the history that the station keeps.
+  - d. The other constants (about 1,390 of the inventory) stay fixed. The inventory lists them. They can become settings later with the same rules.
+- Next: K4 and K3b, then the PRE-PR review; the owner reads the rows 252.x of `SECURITY-CHECKLIST.md` (DL-158). The owner guide is `docs/v2/operations.md`, part "Limits and retention".
