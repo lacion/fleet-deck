@@ -149,7 +149,9 @@ export function grantStatus(g: GrantView): string {
     g.input_cap === undefined
       ? ''
       : `, input actions ${g.input_used ?? 0} of ${g.input_cap}, typed characters ${g.input_character_used ?? 0} of ${g.input_character_cap ?? 0}`;
-  return `${g.classes.join(', ')}${spawn}${desktop}${capture}${image}${recording}${input}: ${state}`;
+  const click = g.allow_click === true ? ', clicks allowed' : '';
+  const anyWindow = g.input_scope === 'any_window' ? ', input in other application windows' : '';
+  return `${g.classes.join(', ')}${spawn}${desktop}${capture}${image}${recording}${input}${click}${anyWindow}: ${state}`;
 }
 
 /** MiB of a byte count with at most one decimal and no trailing `.0`. */

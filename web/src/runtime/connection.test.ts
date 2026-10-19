@@ -431,8 +431,9 @@ describe('deck connection runtime', () => {
 });
 
 describe('the sign-out of agent input (R13 P7 §7.6, §13)', () => {
-  const OUT = 'You were signed out because an agent typed on the station where this board is open.';
-  const BLOCKED = 'An agent is typing on this station. Sign in again in a minute.';
+  const OUT =
+    'You were signed out because an agent used desktop input on the station where this board is open.';
+  const BLOCKED = 'An agent is using desktop input on this station. Sign in again in a minute.';
   const render = (c: Connection) =>
     renderToStaticMarkup(createElement(RuntimeApp, { connection: c }));
   const signedOut = () =>

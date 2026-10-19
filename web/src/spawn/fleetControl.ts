@@ -25,6 +25,12 @@ export type FleetControl = {
   readonly inputCap: string;
   /** The typed character limit. */
   readonly inputChars: string;
+  /** Allow pointer clicks (P7b; only meaningful while the input opt-in is on). */
+  readonly click: boolean;
+  /** The scope is "other application windows" (P7b; only meaningful while the input opt-in is on). */
+  readonly anyWindow: boolean;
+  /** The owner checked "Allow input in other application windows" (P7b). */
+  readonly anyAck: boolean;
 };
 
 export const NO_FLEET: FleetControl = {
@@ -44,6 +50,9 @@ export const NO_FLEET: FleetControl = {
   input: false,
   inputCap: '100',
   inputChars: '20000',
+  click: false,
+  anyWindow: false,
+  anyAck: false,
 };
 
 /** The largest answer limit that the deck accepts. */
@@ -127,7 +136,14 @@ export function inputCharsProblem(f: FleetControl): string | null {
   return 'The typed character limit is a whole number from 0 to 1000000.';
 }
 
-/** The first problem of the limit inputs (answer, desktop, screenshot, image budget, recording, input), or null. */
+/** P7b §14: the problem of the missing acknowledgment of the broader scope, or null (checked when the input opt-in is on). */
+export function anyAckProblem(f: FleetControl): string | null {
+  if (!inputOn(f)) return null;
+  if (!f.anyWindow || f.anyAck) return null;
+  return 'Check "Allow input in other application windows" to give this agent the broader scope.';
+}
+
+/** The first problem of the limit inputs (answer, desktop, screenshot, image budget, recording, input) and the acknowledgment, or null. */
 export function fleetProblem(f: FleetControl): string | null {
   return (
     answerCapProblem(f) ??
@@ -137,7 +153,8 @@ export function fleetProblem(f: FleetControl): string | null {
     recordingCapProblem(f) ??
     recordingSecondsProblem(f) ??
     inputCapProblem(f) ??
-    inputCharsProblem(f)
+    inputCharsProblem(f) ??
+    anyAckProblem(f)
   );
 }
 
@@ -159,7 +176,8 @@ export function grantFields(
   recording_cap?: number;
   recording_second_cap?: number;
   allow_input?: boolean;
-  input_scope?: 'own_windows';
+  input_scope?: 'own_windows' | 'any_window';
+  allow_click?: boolean;
   input_cap?: number;
   input_character_cap?: number;
   stations?: string[];
@@ -194,7 +212,8 @@ export function grantFields(
     ...(inputOn(f)
       ? {
           allow_input: true,
-          input_scope: 'own_windows' as const,
+          input_scope: f.anyWindow ? ('any_window' as const) : ('own_windows' as const),
+          ...(f.click ? { allow_click: true } : {}),
           input_cap: Number(f.inputCap.trim()),
           input_character_cap: Number(f.inputChars.trim()),
         }
@@ -226,6 +245,13 @@ export async function fleetElevation(
   if (!(gate.coordinator && !gate.importing && (fleetOn(gate.fleet) || wide))) {
     return { ok: true, elevation: undefined };
   }
-  const code = await ask(['Fleet control']);
+  const labels = [
+    'Fleet control',
+    ...(inputOn(gate.fleet) && gate.fleet.click ? ['Agent pointer clicks'] : []),
+    ...(inputOn(gate.fleet) && gate.fleet.anyWindow
+      ? ['Agent input in other application windows']
+      : []),
+  ];
+  const code = await ask(labels);
   return code === null ? { ok: false } : { ok: true, elevation: code };
 }
