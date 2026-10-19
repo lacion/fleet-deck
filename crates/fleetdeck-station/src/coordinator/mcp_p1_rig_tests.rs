@@ -149,6 +149,10 @@ impl Forward for Fake {
 pub(super) struct FakeFleet {
     pub calls: Mutex<Vec<(Caller, String, Value)>>,
     pub focus_bytes: AtomicUsize,
+    /// A delay of `publish_artifact`, in milliseconds (0: none).
+    pub publish_delay_ms: AtomicU64,
+    /// The calls of `publish_artifact` that ran to their end.
+    pub published: AtomicUsize,
     counter: AtomicU64,
 }
 
@@ -160,12 +164,19 @@ impl FleetTools for FakeFleet {
             .unwrap()
             .push((caller, tool.to_owned(), args.clone()));
         match tool {
-            "publish_artifact" => Ok(json!({
-                "artifact_id": format!("art-{}", self.counter.fetch_add(1, Ordering::SeqCst)),
-                "version": 1,
-                "title": args.get("title").cloned().unwrap_or(json!("untitled")),
-                "created": true,
-            })),
+            "publish_artifact" => {
+                let delay = self.publish_delay_ms.load(Ordering::SeqCst);
+                if delay > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                }
+                self.published.fetch_add(1, Ordering::SeqCst);
+                Ok(json!({
+                    "artifact_id": format!("art-{}", self.counter.fetch_add(1, Ordering::SeqCst)),
+                    "version": 1,
+                    "title": args.get("title").cloned().unwrap_or(json!("untitled")),
+                    "created": true,
+                }))
+            }
             "set_focus" => {
                 let size = self.focus_bytes.load(Ordering::SeqCst);
                 if size > 0 {

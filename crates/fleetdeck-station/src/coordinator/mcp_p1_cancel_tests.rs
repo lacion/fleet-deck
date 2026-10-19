@@ -362,3 +362,27 @@ async fn on_the_socket() {
     );
     drop(clients);
 }
+
+/// P1 PRE-PR finding: a closed connection does not stop a call of the
+/// station's own tools; `publish_artifact` runs to its end, so no staging job
+/// is left behind.
+#[tokio::test]
+async fn a_closed_connection_lets_an_own_tool_call_finish() {
+    let r = Rig::start(BindingState::Active, &[ToolClass::Read, ToolClass::Own]).await;
+    r.fleet.publish_delay_ms.store(300, Ordering::SeqCst);
+    let call = legacy(
+        1,
+        "tools/call",
+        json!({"name": "publish_artifact", "arguments": {"name": "a.md", "content": "x"}}),
+    );
+    let client = send_only(r.addr(), &r.token, &call).await;
+    until("the publish call did not arrive", || {
+        r.fleet.calls.lock().unwrap().len() == 1
+    })
+    .await;
+    drop(client);
+    until("the publish call did not finish after the close", || {
+        r.fleet.published.load(Ordering::SeqCst) == 1
+    })
+    .await;
+}

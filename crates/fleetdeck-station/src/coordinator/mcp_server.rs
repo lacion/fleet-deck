@@ -225,16 +225,24 @@ impl ServerHandler for StationMcp {
             &name,
             args,
         );
-        // A closed connection cancels `context.ct`: the work future is
-        // dropped (design §3.3 step 4) and no response reaches the client.
-        // The cancel branch is first: a call that is already cancelled is
-        // not started.
-        let outcome = tokio::select! {
-            biased;
-            () = context.ct.cancelled() => {
-                return Err(McpError::internal_error("cancelled", None));
+        // The station's own tools (`publish_artifact`, `set_focus`) run to
+        // their end even when the client went away: they are local and
+        // bounded, and a dropped artifact staging job would leave its files
+        // until a restart (P1 PRE-PR finding).
+        let outcome = if tools::tool(&name).is_some_and(tools::Tool::is_own) {
+            work.await
+        } else {
+            // A closed connection cancels `context.ct`: the work future is
+            // dropped (design §3.3 step 4) and no response reaches the
+            // client. The cancel branch is first: a call that is already
+            // cancelled is not started.
+            tokio::select! {
+                biased;
+                () = context.ct.cancelled() => {
+                    return Err(McpError::internal_error("cancelled", None));
+                }
+                outcome = work => outcome,
             }
-            outcome = work => outcome,
         };
         Ok(CallToolResponse::Complete(into_result(&name, outcome)))
     }
