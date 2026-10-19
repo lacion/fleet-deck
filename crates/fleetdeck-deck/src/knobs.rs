@@ -99,6 +99,27 @@ pub fn radar_options(config: &DeckConfig) -> RadarOptions {
     }
 }
 
+/// True when a login or a display idle limit is shorter in `new` than in
+/// `old`.
+#[must_use]
+pub fn idle_shrank(old: &DeckKnobs, new: &DeckKnobs) -> bool {
+    new.login_idle_ms < old.login_idle_ms || new.display_idle_ms < old.display_idle_ms
+}
+
+/// Clamps the idle deadlines of the stored sessions to the idle limits of
+/// `knobs` after a publish (a session issued between the first clamp and the
+/// publish read the old knobs) and after a hand edit. A failure is logged:
+/// the clamp before the file write and the clamp at the next deck start
+/// cover the sessions.
+pub async fn clamp_after_publish(store: &DeckStore, knobs: &DeckKnobs) {
+    if let Err(e) = store
+        .clamp_idle_deadlines(knobs.login_idle_ms, knobs.display_idle_ms)
+        .await
+    {
+        tracing::warn!(error = %e, "the idle deadlines of the sessions were not clamped after a publish");
+    }
+}
+
 /// Rule 11 of the design, as a best-effort cleanup: a save that lowered a
 /// login or a display limit deletes the sessions over the new limit and ends
 /// their sockets. Call it after the store holds the new knobs. A failure is

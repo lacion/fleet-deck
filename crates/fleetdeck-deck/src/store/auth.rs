@@ -315,6 +315,7 @@ impl DeckStore {
         let hash = secret_hash(&cookie);
         let now = self.now_ms();
         let knobs = self.knobs();
+        let knobs_now = self.knobs_reader();
         let expires_at = now + knobs.login_max_ms;
         let stored = csrf.clone();
         call(&self.inner.db, move |conn| {
@@ -343,6 +344,14 @@ impl DeckStore {
                     addr,
                     now + knobs.login_idle_ms
                 ],
+            )?;
+            // A settings publish may have run since the knobs were read: the
+            // newest idle limit wins.
+            super::knobs_store::clamp_session_row(
+                &tx,
+                "login_sessions",
+                &hash,
+                knobs_now().login_idle_ms,
             )?;
             tx.commit()?;
             Ok(())
