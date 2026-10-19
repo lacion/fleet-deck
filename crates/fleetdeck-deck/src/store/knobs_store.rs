@@ -4,7 +4,7 @@
 
 use std::sync::PoisonError;
 
-use rusqlite::params;
+use rusqlite::{Connection, params};
 
 use super::{DeckStore, Inner, Result, call};
 use crate::board_fence::registry::SessionKind;
@@ -17,7 +17,63 @@ impl Inner {
     }
 }
 
+/// Shortens the idle deadline of one new session row to the idle limit that is
+/// current now (`table` is `login_sessions` or `display_sessions`). A session
+/// that read the knobs before a settings publish calls it after its insert,
+/// in the same database call, so the newest limit wins.
+pub(super) fn clamp_session_row(
+    conn: &Connection,
+    table: &'static str,
+    session_hash: &str,
+    idle_ms: i64,
+) -> Result<()> {
+    conn.execute(
+        &format!(
+            "UPDATE {table} SET idle_until = MIN(idle_until, last_seen + ?2)
+             WHERE session_hash = ?1"
+        ),
+        params![session_hash, idle_ms],
+    )?;
+    Ok(())
+}
+
 impl DeckStore {
+    /// A reader of the current knobs that a database call can own: it gives
+    /// the knobs that are installed when it runs, not when it was built.
+    pub(super) fn knobs_reader(&self) -> impl Fn() -> DeckKnobs + Send + 'static {
+        let inner = std::sync::Arc::clone(&self.inner);
+        move || inner.knobs()
+    }
+
+    /// Shortens the idle deadlines (`idle_until`) of every owner login and
+    /// display session to `last_seen + <idle limit>`, in one transaction. It
+    /// only shortens a deadline and never deletes a row, so a session that
+    /// was idle past a short limit stays expired when the limit is raised
+    /// again.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn clamp_idle_deadlines(
+        &self,
+        login_idle_ms: i64,
+        display_idle_ms: i64,
+    ) -> Result<()> {
+        call(&self.inner.db, move |conn| {
+            let tx = conn.transaction()?;
+            tx.execute(
+                "UPDATE login_sessions SET idle_until = MIN(idle_until, last_seen + ?1)",
+                params![login_idle_ms],
+            )?;
+            tx.execute(
+                "UPDATE display_sessions SET idle_until = MIN(idle_until, last_seen + ?1)",
+                params![display_idle_ms],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
+
     /// Sets the knobs that the store reads (a settings publish calls it; the
     /// deck start calls it once).
     pub fn set_knobs(&self, knobs: DeckKnobs) {
@@ -98,3 +154,7 @@ impl DeckStore {
 #[cfg(test)]
 #[path = "knobs_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "knobs_idle_tests.rs"]
+mod idle_tests;

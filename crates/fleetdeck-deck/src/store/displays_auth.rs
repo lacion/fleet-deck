@@ -32,13 +32,16 @@ pub struct IssuedSession {
 
 /// Issues a session for `display_id` when its generation is still
 /// `generation`. `None` when the display is gone, revoked or at another
-/// generation. The caller holds the transaction and has read `knobs` once.
+/// generation. The caller holds the transaction and has read `knobs` once;
+/// `knobs_now` reads the knobs again after the insert, so that a settings
+/// publish since then shortens the idle deadline of the new row.
 pub(super) fn issue_fenced(
     conn: &Connection,
     display_id: &str,
     generation: i64,
     now: i64,
     knobs: &DeckKnobs,
+    knobs_now: &dyn Fn() -> DeckKnobs,
 ) -> Result<Option<IssuedSession>> {
     let cookie = format!("{SESSION_PREFIX}{}", random_token()?);
     let hash = secret_hash(&cookie);
@@ -62,6 +65,14 @@ pub(super) fn issue_fenced(
             now + knobs.display_idle_ms
         ],
     )?;
+    if n == 1 {
+        super::knobs_store::clamp_session_row(
+            conn,
+            "display_sessions",
+            &hash,
+            knobs_now().display_idle_ms,
+        )?;
+    }
     Ok((n == 1).then(|| IssuedSession {
         display_id: display_id.to_owned(),
         cookie: Secret::new(cookie),
@@ -100,6 +111,7 @@ impl DeckStore {
         let hash = secret_hash(token.expose());
         let now = self.now_ms();
         let knobs = self.knobs();
+        let knobs_now = self.knobs_reader();
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let link: Option<(String, i64)> = tx
@@ -111,7 +123,9 @@ impl DeckStore {
                 )
                 .optional()?;
             let issued = match link {
-                Some((id, generation)) => issue_fenced(&tx, &id, generation, now, &knobs)?,
+                Some((id, generation)) => {
+                    issue_fenced(&tx, &id, generation, now, &knobs, &knobs_now)?
+                }
                 None => None,
             };
             tx.commit()?;
@@ -132,13 +146,21 @@ impl DeckStore {
     ) -> Result<(Secret<String>, i64)> {
         let now = self.now_ms();
         let knobs = self.knobs();
+        let knobs_now = self.knobs_reader();
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let Some(display) = load(&tx, &display_id)? else {
                 return Err(DeckError::Invalid("no such display".to_owned()));
             };
-            let issued = issue_fenced(&tx, &display_id, display.auth_generation, now, &knobs)?
-                .ok_or_else(|| DeckError::Invalid("no such display".to_owned()))?;
+            let issued = issue_fenced(
+                &tx,
+                &display_id,
+                display.auth_generation,
+                now,
+                &knobs,
+                &knobs_now,
+            )?
+            .ok_or_else(|| DeckError::Invalid("no such display".to_owned()))?;
             tx.commit()?;
             Ok((issued.cookie, issued.expires_at))
         })
