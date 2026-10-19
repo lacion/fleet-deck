@@ -29,6 +29,9 @@ const BUSY_WAIT: Duration = SHORT;
 const NOT_READY_WAIT: Duration = LONG;
 /// The least wait after a reply of the deck.
 const MIN_REPLY_WAIT: Duration = Duration::from_secs(60);
+/// The longest wait that a deck reply can ask for: the supervisor checks the
+/// condition again at least once an hour.
+const MAX_REPLY_WAIT: Duration = Duration::from_secs(3600);
 /// The wait after a `retry` reply that is not for the current binding.
 const STALE_WAIT: Duration = Duration::from_secs(60);
 /// The longest jitter that is added to a wait.
@@ -166,7 +169,8 @@ async fn report_step(effects: &dyn Effects, file: &Path, root: &Path, dir: &Path
             retry(effects, file, root, dir, &cond, reply)
         }
         Ok(reply) => {
-            let wait = Duration::from_secs(reply.retry_after_seconds).max(MIN_REPLY_WAIT);
+            let wait = Duration::from_secs(reply.retry_after_seconds)
+                .clamp(MIN_REPLY_WAIT, MAX_REPLY_WAIT);
             Next::Wait(jittered(effects, wait))
         }
     }
