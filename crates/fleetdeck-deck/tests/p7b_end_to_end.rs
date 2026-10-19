@@ -173,7 +173,7 @@ async fn window_list_gives_opaque_handles_and_geometry_and_no_title_or_class() {
     rig7b::add_ordinary_windows(&w.b.rig);
     let out = w.window_list().await;
     let listing = out.ok();
-    assert!(listing["station"].is_string(), "{listing}");
+    assert_eq!(listing["station"], w.to_b(), "{listing}");
     assert_eq!(
         listing["monitors"],
         json!([
@@ -253,6 +253,7 @@ async fn key_press_in_a_listed_window_focuses_the_address_of_that_window() {
     let (w, _preview) = world_with(false, true).await;
     rig7b::add_ordinary_windows(&w.b.rig);
     let listing = w.window_list().await.ok();
+    assert_eq!(listing["station"], w.to_b(), "{listing}");
     let handle = World::handle_at(&listing, rig7b::OTHER_AT);
     rig7b::focus_goes_to(
         &w.b.rig,
@@ -302,6 +303,7 @@ async fn a_listed_handle_of_another_coordinator_grant_is_not_found_and_runs_noth
     let (w, _preview) = world_with(false, true).await;
     rig7b::add_ordinary_windows(&w.b.rig);
     let listing = w.window_list().await.ok();
+    assert_eq!(listing["station"], w.to_b(), "{listing}");
     let handle = World::handle_at(&listing, rig7b::OTHER_AT);
     let second = w.second_caller().await;
     let out = second
@@ -367,6 +369,7 @@ async fn a_target_with_the_p7b_gates_off_refuses_before_any_effect() {
 
     w.set_b_gates(true, true);
     let listing = w.window_list().await.ok();
+    assert_eq!(listing["station"], w.to_b(), "{listing}");
     assert_eq!(listing["windows"].as_array().unwrap().len(), 3, "{listing}");
 }
 
