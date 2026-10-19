@@ -106,14 +106,15 @@ async fn the_transport_never_lets_a_field_change_the_caller_or_the_grant() {
             }
             let before = r.fake.calls.lock().unwrap().len();
             let answer = r.rpc(http, &token, version, "tools/call", params).await;
-            assert_eq!(tool_text(&answer).0, false, "{label}: {answer}");
-            let calls = r.fake.calls.lock().unwrap();
-            assert_eq!(calls.len(), before + 1, "{label}");
-            let caller = &calls[before].0;
+            assert!(!tool_text(&answer).0, "{label}: {answer}");
+            let caller = {
+                let calls = r.fake.calls.lock().unwrap();
+                assert_eq!(calls.len(), before + 1, "{label}");
+                calls[before].0.clone()
+            };
             assert_eq!(caller.session_id.as_str(), "coord-1", "{label}");
             assert_eq!(caller.native_id, "native-1", "{label}");
             assert!(caller.binding_id.starts_with("fresh-"), "{label}");
-            drop(calls);
             if version != MODERN {
                 // A forged `clientInfo` in `initialize`.
                 let init = legacy(
@@ -148,7 +149,7 @@ async fn the_transport_never_lets_a_field_change_the_caller_or_the_grant() {
             let first = r
                 .rpc(http, &token, version, "tools/call", read.clone())
                 .await;
-            assert_eq!(tool_text(&first).0, false, "{label}: {first}");
+            assert!(!tool_text(&first).0, "{label}: {first}");
             assert_eq!(r.fake.forwards(), before + 1, "{label}");
             r.bindings.set_fleet_control(false);
             let second = r.rpc(http, &token, version, "tools/call", read).await;

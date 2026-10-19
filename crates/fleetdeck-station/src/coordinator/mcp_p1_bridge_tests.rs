@@ -297,7 +297,7 @@ async fn a_full_socket_close_cancels_the_call_and_a_half_close_still_gets_its_re
     .unwrap();
     let got: Value = serde_json::from_str(line.trim_end()).unwrap();
     assert_eq!(got["id"], 3);
-    assert_eq!(tool_text(&got).0, false, "{got}");
+    assert!(!tool_text(&got).0, "{got}");
 }
 
 #[tokio::test]

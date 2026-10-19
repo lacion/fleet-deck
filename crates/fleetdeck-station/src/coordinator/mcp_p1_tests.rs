@@ -365,7 +365,7 @@ async fn many_unknown_tool_names_build_no_state_and_do_not_affect_another_bindin
         )
         .await
         .json();
-    assert_eq!(tool_text(&called).0, false, "{called}");
+    assert!(!tool_text(&called).0, "{called}");
     assert_eq!(r.fake.forwards(), 1);
 }
 
