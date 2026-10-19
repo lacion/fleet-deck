@@ -197,7 +197,7 @@ Many limits of Fleet Deck are settings that you change in the board. You never e
 
 Open **Settings**. The deck tab has the settings of the deck. The tab of a station has the settings of that station. A station value goes from the board over the link to the remote machine, and the station saves it there. Each tab has four sections: **Security limits**, **Time limits**, **Retention** and **Captures and recordings**. A section shows only the settings that the tab has.
 
-**Build state.** The deck reads all of its 14 settings. The station reads these settings now: Agent shell command time, Setup command time, Land check time, Clone time, Git push time, Agent stop grace and Longest reconnect wait. The other station settings (Terminal history, Session history, Delivered events, Raw agent logs per session, Capture storage, Free disk to keep and Longest recording) show in the board and save, but the station does not use them yet (DL-252 item a).
+**Build state.** The deck reads all of its 14 settings and the station reads all of its 15 settings (DL-252).
 
 The rules for all settings:
 
@@ -390,7 +390,7 @@ The screenshot appears in the Desktop panel as an image, with the link "Open the
 Limits:
 
 - A screenshot is a PNG of at most 32 MiB.
-- The station keeps at most 4 GiB of screenshots. Delete some screenshots when the station refuses a new one with the text "This capture would exceed the station's 4 GiB capture limit. Delete some captures first."
+- The station keeps at most its Capture storage of screenshots and recordings (4 GiB by default; the station's tab, section Captures and recordings). Delete some captures when the station refuses a new one with the text "This capture would exceed the station's capture storage limit. Delete some captures first, or raise Capture storage in the station settings."
 - The deck keeps at most 256 MiB of screenshots in its cache. It evicts the least recently used file first, and the artifact stays valid.
 - The deck fetches a screenshot file for at most 60 seconds in total.
 
@@ -871,7 +871,7 @@ When the board shows "The recording result is unknown", the recording can exist.
 | Duration | 1 to 120 seconds |
 | File size | 256 MiB |
 | Disk reservation for one recording | 512 MiB (the staging file and the copy that the station saves) |
-| All captures of one station | 4 GiB, screenshots and recordings together. The station never deletes an artifact for you. It refuses a new capture with "This capture would exceed the station's 4 GiB capture limit. Delete some captures first." |
+| All captures of one station | Capture storage (4 GiB by default), screenshots and recordings together. The station never deletes an artifact for you. It refuses a new capture with "This capture would exceed the station's capture storage limit. Delete some captures first, or raise Capture storage in the station settings." |
 | Free space on the station | 2 GiB must stay free, plus the 512 MiB of the recording |
 | Captures at the same time on one station | 1, shared by screenshots and recordings. The text is "A capture is already running." |
 | Monitor size | Each side from 2 to 8192 pixels and even, at most 16,777,216 pixels. Another size gives "The monitor exceeds the recording size limit or has unsupported dimensions." |

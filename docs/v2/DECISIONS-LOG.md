@@ -3623,8 +3623,8 @@ Owner review: pending.
   - K2, the deck: `3ef902e3`. The deck reads its 14 knobs, and a lowered login or display limit ends the sessions over it.
   - K3a, the station timeouts: `7e8dd366`. The station reads the five command time limits, the provider stop grace and the reconnect cap.
 - Open items:
-  - a. K4 (the recording length: the proto ceiling, the migrations, the station check, the board form) and K3b (the terminal history, the retention, the raw logs and the capture storage) are in progress. Until they land, the station does not use those settings.
+  - a. K4 (the recording length: the proto ceiling, the deck migration V41 and the station migration V40, the station check, the board form) is merged as `f07da68e`, and K3b (the terminal history, the retention, the raw logs and the capture storage) as `c307ef5b`. The station reads all 15 settings.
   - b. The PRE-PR review of the knobs is pending (high risk: sign-in lifetimes, password length, elevation, audit retention, agent desktop rates).
   - c. The board terminal (xterm) keeps 5000 lines of its own. The setting Terminal history changes only the history that the station keeps.
   - d. The other constants (about 1,390 of the inventory) stay fixed. The inventory lists them. They can become settings later with the same rules.
-- Next: K4 and K3b, then the PRE-PR review; the owner reads the rows 252.x of `SECURITY-CHECKLIST.md` (DL-158). The owner guide is `docs/v2/operations.md`, part "Limits and retention".
+- Next: the PRE-PR review; the owner reads the rows 252.x of `SECURITY-CHECKLIST.md` (DL-158). The owner guide is `docs/v2/operations.md`, part "Limits and retention".
