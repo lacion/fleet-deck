@@ -112,7 +112,7 @@ pub(super) fn prepare(
     let url = bindings
         .endpoint()
         .ok_or_else(|| "the coordinator endpoint does not listen".to_owned())?;
-    let classes = grant_classes(coordinator, deck_input_mcp(bindings))?;
+    let classes = grant_classes(coordinator, DeckFeatures::of(bindings))?;
     let handoff = Handoff::prepare(provider, &url).map_err(|e| e.to_string())?;
     bindings.insert(
         handoff.digest.clone(),
@@ -124,12 +124,26 @@ pub(super) fn prepare(
 /// The refusal of a coordinator start that is not a new child.
 const NOT_NEW_CHILD: &str = "a coordinator session starts only as a new direct child";
 
-/// Whether the current deck link negotiated `desktop_input_mcp.v1` (R13 P7
-/// §3.2). No deck link gives `false`.
-fn deck_input_mcp(bindings: &Bindings) -> bool {
-    bindings
-        .deck()
-        .is_some_and(|deck| deck.has_feature(feature::DESKTOP_INPUT_MCP))
+/// The input features that the current deck link negotiated (R13 P7 §3.2,
+/// R13 P7b §4). No deck link gives `false` for each.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct DeckFeatures {
+    /// `desktop_input_mcp.v1`.
+    input_mcp: bool,
+    /// `desktop_click_mcp.v1`.
+    click_mcp: bool,
+    /// `desktop_input_any.v1`.
+    input_any: bool,
+}
+
+impl DeckFeatures {
+    fn of(bindings: &Bindings) -> Self {
+        bindings.deck().map_or_else(Self::default, |deck| Self {
+            input_mcp: deck.has_feature(feature::DESKTOP_INPUT_MCP),
+            click_mcp: deck.has_feature(feature::DESKTOP_CLICK_MCP),
+            input_any: deck.has_feature(feature::DESKTOP_INPUT_ANY),
+        })
+    }
 }
 
 /// The tool classes of a grant, with the session's own tools (DL-165). The
@@ -137,12 +151,16 @@ fn deck_input_mcp(bindings: &Bindings) -> bool {
 /// the spec has `allow_recording` and the `capture` class; a spec that names
 /// `recording` itself is refused as an unknown class. The station-internal
 /// `input_enabled` class (R13 P7 §3.2) is added only when the spec has
-/// `allow_input` with the scope `own_windows`, the classes `desktop`,
-/// `capture` and `input`, and `input_mcp` (the deck link negotiated
-/// `desktop_input_mcp.v1` at the start); a spec that names it is refused too.
+/// `allow_input`, the classes `desktop`, `capture` and `input`,
+/// `features.input_mcp`, and either the scope `own_windows`, or the scope
+/// `any_window` with `features.input_any`; `any_window` is never reduced to
+/// `own_windows` (R13 P7b §4). `click_enabled` (R13 P7b §3.1) needs
+/// `input_enabled`, `allow_click` and `features.click_mcp`. `input_any`
+/// needs `input_enabled` and the scope `any_window`. A spec that names an
+/// internal class is refused too.
 fn grant_classes(
     coordinator: &CoordinatorSpec,
-    input_mcp: bool,
+    features: DeckFeatures,
 ) -> Result<std::collections::BTreeSet<ToolClass>, String> {
     let mut classes: std::collections::BTreeSet<ToolClass> = coordinator
         .classes
@@ -154,14 +172,25 @@ fn grant_classes(
     if coordinator.allow_recording && classes.contains(&ToolClass::Capture) {
         classes.insert(ToolClass::Recording);
     }
-    if input_mcp
+    let scope_ok = match coordinator.input_scope {
+        Some(InputScope::OwnWindows) => true,
+        Some(InputScope::AnyWindow) => features.input_any,
+        None => false,
+    };
+    if features.input_mcp
         && coordinator.allow_input
-        && coordinator.input_scope == Some(InputScope::OwnWindows)
+        && scope_ok
         && [ToolClass::Desktop, ToolClass::Capture, ToolClass::Input]
             .iter()
             .all(|c| classes.contains(c))
     {
         classes.insert(ToolClass::InputEnabled);
+        if coordinator.allow_click && features.click_mcp {
+            classes.insert(ToolClass::ClickEnabled);
+        }
+        if coordinator.input_scope == Some(InputScope::AnyWindow) {
+            classes.insert(ToolClass::InputAny);
+        }
     }
     Ok(classes)
 }
@@ -235,7 +264,7 @@ pub(super) fn prepare_bridge(
     let bridge = bindings
         .bridge()
         .ok_or_else(|| "the coordinator bridge does not listen".to_owned())?;
-    let classes = grant_classes(coordinator, deck_input_mcp(bindings))?;
+    let classes = grant_classes(coordinator, DeckFeatures::of(bindings))?;
     let handoff = Handoff::prepare_bridge(provider, &bridge).map_err(|e| e.to_string())?;
     let digest = handoff.digest.clone();
     Ok(BridgeStart {

@@ -1,8 +1,10 @@
-//! The three coordinator input tools of R13 P7 (`docs/v2/design/omarchy-p7.md`
-//! §4): `key_press`, `type_text` and `pointer_move`. Their schemas are the
-//! normative bundle of §4 byte for byte; each tool gets its schema with the
-//! shared `$defs` copied into its root, as in P6. There is no `pointer_click`
-//! and no `scroll` (§4).
+//! The coordinator input tools of R13 P7 (`docs/v2/design/omarchy-p7.md`
+//! §4): `key_press`, `type_text` and `pointer_move`, and the two tools of
+//! R13 P7b (`docs/v2/design/omarchy-p7b.md` §5): `pointer_click` and
+//! `window_list`. The P7 schemas are the normative bundle of §4 byte for
+//! byte; each P7 tool gets its schema with the shared `$defs` copied into its
+//! root, as in P6. The P7b schemas are §5.1 and §5.2 with the referenced
+//! `$defs` copied into the root. There is no `scroll`.
 
 use serde_json::Value;
 
@@ -83,6 +85,33 @@ pub(super) const BUNDLE: &str = r##"
           "maximum": 32767
         }
       }
+    },
+    "pointer_click": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_id", "window_id", "x", "y"],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/request_id"},
+        "station": {"$ref": "#/$defs/station"},
+        "window_id": {"$ref": "#/$defs/window_id"},
+        "x": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32767
+        },
+        "y": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32767
+        }
+      }
+    },
+    "window_list": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "station": {"$ref": "#/$defs/station"}
+      }
     }
   }
 }
@@ -110,4 +139,33 @@ pub(super) fn type_text() -> Value {
 
 pub(super) fn pointer_move() -> Value {
     schema("pointer_move")
+}
+
+/// The schema of a P7b tool `name`: `schemas[name]` with only the `$defs` that
+/// it references copied into its root (P7b §5).
+fn referenced(name: &str) -> Value {
+    let bundle: Value = serde_json::from_str(BUNDLE).unwrap_or(Value::Null);
+    let mut schema = bundle["schemas"][name].clone();
+    let text = schema.to_string();
+    let defs: serde_json::Map<String, Value> = bundle["$defs"]
+        .as_object()
+        .map(|all| {
+            all.iter()
+                .filter(|(key, _)| text.contains(&format!("\"#/$defs/{key}\"")))
+                .map(|(key, def)| (key.clone(), def.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(object) = schema.as_object_mut() {
+        object.insert("$defs".to_owned(), Value::Object(defs));
+    }
+    schema
+}
+
+pub(super) fn pointer_click() -> Value {
+    referenced("pointer_click")
+}
+
+pub(super) fn window_list() -> Value {
+    referenced("window_list")
 }
