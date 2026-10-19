@@ -3,12 +3,13 @@
 
 use fleetdeck_proto::settings::{Apply, FieldKind, FieldMeta};
 
+use super::fields_knobs::{deck_knob_fields, station_knob_fields};
 use crate::config::MAX_HIBERNATE_AFTER_MIN;
 
 /// The builder of one entry.
-struct F(FieldMeta);
+pub(super) struct F(pub(super) FieldMeta);
 
-fn field(key: &str, label: &str, kind: FieldKind, apply: Apply, help: &str) -> F {
+pub(super) fn field(key: &str, label: &str, kind: FieldKind, apply: Apply, help: &str) -> F {
     F(FieldMeta {
         key: key.to_owned(),
         label: label.to_owned(),
@@ -27,7 +28,7 @@ fn field(key: &str, label: &str, kind: FieldKind, apply: Apply, help: &str) -> F
 }
 
 impl F {
-    fn range(mut self, min: i64, max: i64) -> Self {
+    pub(super) fn range(mut self, min: i64, max: i64) -> Self {
         self.0.min = Some(min);
         self.0.max = Some(max);
         self
@@ -38,7 +39,7 @@ impl F {
         self
     }
 
-    fn danger(mut self) -> Self {
+    pub(super) fn danger(mut self) -> Self {
         self.0.danger = true;
         self
     }
@@ -344,6 +345,7 @@ pub fn station_fields() -> Vec<FieldMeta> {
     ]
     .into_iter()
     .map(|f| f.0)
+    .chain(station_knob_fields())
     .collect()
 }
 
@@ -463,5 +465,6 @@ pub fn deck_fields() -> Vec<FieldMeta> {
     ]
     .into_iter()
     .map(|f| f.0)
+    .chain(deck_knob_fields())
     .collect()
 }

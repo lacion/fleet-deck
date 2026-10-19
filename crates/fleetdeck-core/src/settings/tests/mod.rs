@@ -3,6 +3,7 @@
 
 mod fault;
 mod fields;
+mod knobs;
 mod p7b;
 mod save;
 mod secrets;

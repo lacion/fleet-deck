@@ -7,8 +7,9 @@ use serde_json::json;
 
 use super::{CANARY, CANARY_REF, Fixture};
 use crate::config::{
-    DeckConfig, RAW_DECK_KEYS, RAW_INSTANCE_KEYS, RAW_MODEL_HELP_KEYS, RAW_STATION_KEYS,
-    StationConfig,
+    DeckConfig, RAW_CAPTURE_KEYS, RAW_DECK_KEYS, RAW_DECK_LIMITS_KEYS, RAW_DECK_RETENTION_KEYS,
+    RAW_INSTANCE_KEYS, RAW_MODEL_HELP_KEYS, RAW_SECURITY_KEYS, RAW_STATION_KEYS,
+    RAW_STATION_LIMITS_KEYS, RAW_STATION_RETENTION_KEYS, StationConfig,
 };
 use crate::paths::Env;
 use crate::settings::{deck_fields, revision_of, station_fields, view_deck, view_station};
@@ -28,6 +29,9 @@ fn keys(fields: &[FieldMeta]) -> BTreeSet<String> {
 fn sample(f: &FieldMeta) -> String {
     match f.kind {
         FieldKind::Bool => "true".to_owned(),
+        // The longest times take their ceiling: the minimum would break the
+        // pair with the default idle time.
+        FieldKind::Int if f.key.ends_with("_max_days") => f.max.unwrap_or(1).to_string(),
         FieldKind::Int => f.min.unwrap_or(1).to_string(),
         FieldKind::Text if f.key == "tailnet_hostname" => "\"deck.example\"".to_owned(),
         FieldKind::Text if f.key == "tailscale_bin" => "\"/usr/bin/tailscale\"".to_owned(),
@@ -46,16 +50,21 @@ fn sample(f: &FieldMeta) -> String {
 
 #[test]
 fn station_field_keys_equal_the_parser_keys() {
+    let tables = ["model_help", "limits", "retention", "capture"];
     let mut expected: BTreeSet<String> = RAW_STATION_KEYS
         .iter()
-        .filter(|k| **k != "model_help")
+        .filter(|k| !tables.contains(k))
         .map(|k| (*k).to_owned())
         .collect();
-    expected.extend(
-        RAW_MODEL_HELP_KEYS
-            .iter()
-            .map(|k| format!("model_help.{k}")),
-    );
+    let dotted = [
+        ("model_help", RAW_MODEL_HELP_KEYS),
+        ("limits", RAW_STATION_LIMITS_KEYS),
+        ("retention", RAW_STATION_RETENTION_KEYS),
+        ("capture", RAW_CAPTURE_KEYS),
+    ];
+    for (table, list) in dotted {
+        expected.extend(list.iter().map(|k| format!("{table}.{k}")));
+    }
     let fields = station_fields();
     assert_eq!(keys(&fields), expected);
     assert_eq!(fields.len(), expected.len(), "a key appears twice");
@@ -63,7 +72,20 @@ fn station_field_keys_equal_the_parser_keys() {
 
 #[test]
 fn deck_field_keys_equal_the_parser_keys() {
-    let expected: BTreeSet<String> = RAW_DECK_KEYS.iter().map(|k| (*k).to_owned()).collect();
+    let tables = ["security", "retention", "limits"];
+    let mut expected: BTreeSet<String> = RAW_DECK_KEYS
+        .iter()
+        .filter(|k| !tables.contains(k))
+        .map(|k| (*k).to_owned())
+        .collect();
+    let dotted = [
+        ("security", RAW_SECURITY_KEYS),
+        ("retention", RAW_DECK_RETENTION_KEYS),
+        ("limits", RAW_DECK_LIMITS_KEYS),
+    ];
+    for (table, list) in dotted {
+        expected.extend(list.iter().map(|k| format!("{table}.{k}")));
+    }
     let fields = deck_fields();
     assert_eq!(keys(&fields), expected);
     assert_eq!(fields.len(), expected.len());
