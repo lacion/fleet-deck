@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { SettingsSaved } from '../gen';
 import type { SettingsActions } from '../settings/actions';
-import { DeckError, type DeckIo } from '../settings/http';
+import { DeckError, type DeckHttp } from '../settings/http';
 import {
   type Device,
   type PairRequest,
@@ -46,7 +46,8 @@ const HEX = '0123456789abcdef'.repeat(4);
 
 describe('tailnetActions (DL-178)', () => {
   const calls: { kind: 'get' | 'post'; path: string; body?: unknown }[] = [];
-  const io: DeckIo = {
+  const io: DeckHttp = {
+    del: async () => null,
     get: async (path) => {
       calls.push({ kind: 'get', path });
       if (path === '/api/tailnet') return VIEW;
@@ -106,7 +107,11 @@ describe('tailnetActions (DL-178)', () => {
   });
 
   test('a wrong shape is refused', async () => {
-    const bad = tailnetActions({ get: async () => ({ nope: true }), post: async () => ({}) });
+    const bad = tailnetActions({
+      get: async () => ({ nope: true }),
+      post: async () => ({}),
+      del: async () => null,
+    });
     await expect(bad.view()).rejects.toThrow('invalid tailnet view');
     await expect(bad.devices()).rejects.toThrow('invalid device list');
     await expect(bad.window()).rejects.toThrow('invalid pairing window');

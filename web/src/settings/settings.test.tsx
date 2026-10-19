@@ -728,6 +728,13 @@ describe('the Settings link (DL-172)', () => {
       requests: () => Promise.reject(new Error('not in this test')),
       approve: () => Promise.reject(new Error('not in this test')),
       deny: () => Promise.reject(new Error('not in this test')),
+      reports: {
+        list: () => Promise.reject(new Error('not in this test')),
+        setWindow: () => Promise.reject(new Error('not in this test')),
+        allowRetry: () => Promise.reject(new Error('not in this test')),
+        cancelRetry: () => Promise.reject(new Error('not in this test')),
+        dismiss: () => Promise.reject(new Error('not in this test')),
+      },
     },
     displays: {} as never,
     desktop: {} as never,

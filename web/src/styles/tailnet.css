@@ -218,6 +218,27 @@
   display: grid;
   gap: var(--sp-2);
 }
+.fd-reports {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-reports h3 {
+  font-size: var(--fs-body);
+  color: var(--dim);
+  font-weight: 600;
+}
+.fd-reports-window,
+.fd-reports-confirm {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-reports-window p,
+.fd-reports-confirm p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
 .fd-add-list {
   display: grid;
   margin: 0;
