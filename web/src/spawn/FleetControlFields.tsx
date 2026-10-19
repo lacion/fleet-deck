@@ -12,6 +12,7 @@ import {
   MAX_ANSWER_CAP,
   recordingCapProblem,
   recordingSecondsProblem,
+  spawnCapProblem,
 } from './fleetControl';
 
 type Props = {
@@ -45,6 +46,21 @@ const SWITCHES: readonly {
     text: 'Screenshots: capture a whole monitor of a grant station and read its own screenshots',
   },
 ];
+
+const CLAUDE_CEILINGS = ['default', 'plan', 'acceptEdits', 'dontAsk', 'auto'] as const;
+const CODEX_CEILINGS = [
+  'untrusted/read-only',
+  'untrusted/workspace-write',
+  'untrusted/danger-full-access',
+  'on-request/read-only',
+  'on-request/workspace-write',
+  'on-request/danger-full-access',
+  'never/read-only',
+  'never/workspace-write',
+] as const;
+const SPAWN_NOTE =
+  "It can start new sessions on the grant's stations. Each start uses one unit of the session limit.";
+const CEILING_NOTE = 'Sessions that it starts, resumes or changes never get a higher mode.';
 
 const DESKTOP_NOTE =
   'Opening a preview runs web content as your user on that station, and the page can make network requests.';
@@ -124,6 +140,58 @@ export function FleetControlFields({ fleet, onChange }: Props) {
   return (
     <fieldset className="fd-spawn-fleet">
       <legend>Fleet control</legend>
+      <fieldset className="fd-spawn-scope">
+        <legend>Sessions it may start</legend>
+        <label className="fd-spawn-opt">
+          <input
+            type="checkbox"
+            checked={fleet.spawn}
+            onChange={(event) => onChange({ ...fleet, spawn: event.target.checked })}
+          />
+          Allow starting sessions
+        </label>
+        <p className="fd-note">{SPAWN_NOTE}</p>
+        {fleet.spawn ? (
+          <LimitInput
+            label="Session limit"
+            value={fleet.spawnCap}
+            max={50}
+            problem={spawnCapProblem(fleet)}
+            onChange={(spawnCap) => onChange({ ...fleet, spawnCap })}
+          />
+        ) : null}
+        {fleet.spawn || fleet.manage ? (
+          <>
+            <label>
+              Highest Claude mode
+              <select
+                value={fleet.claudeCeiling}
+                onChange={(event) => onChange({ ...fleet, claudeCeiling: event.target.value })}
+              >
+                {CLAUDE_CEILINGS.map((mode) => (
+                  <option key={mode} value={mode}>
+                    {mode}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Highest Codex mode
+              <select
+                value={fleet.codexCeiling}
+                onChange={(event) => onChange({ ...fleet, codexCeiling: event.target.value })}
+              >
+                {CODEX_CEILINGS.map((mode) => (
+                  <option key={mode} value={mode}>
+                    {mode}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="fd-note">{CEILING_NOTE}</p>
+          </>
+        ) : null}
+      </fieldset>
       {SWITCHES.map((s) => (
         <label key={s.key} className="fd-spawn-opt">
           <input

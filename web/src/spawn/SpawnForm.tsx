@@ -15,9 +15,8 @@ import { FleetControlFields } from './FleetControlFields';
 import { TargetStations } from './TargetStations';
 import {
   type FleetControl,
+  fleetBlocked,
   fleetElevation,
-  fleetOn,
-  fleetProblem,
   grantFields,
   NO_FLEET,
   showFleetFields,
@@ -249,7 +248,7 @@ export function SpawnForm({
   const targetIds = pickedTargets.filter(
     (id) => id !== stationId && stations.some((s) => s.station_id === id),
   );
-  const fleetBad = coordinator && fleetOn(fleet) && fleetProblem(fleet) !== null;
+  const fleetBad = fleetBlocked(coordinator, fleetShown, fleet);
   const cloneReady =
     place !== 'clone' || importId.trim() !== '' || (cloneUrl !== '' && cloneName.trim() !== '');
   const hasTarget = auto
@@ -286,7 +285,7 @@ export function SpawnForm({
       ? 'fix the base'
       : null,
     setupBad ? 'fix the setup command' : null,
-    fleetBad ? 'fix the answer limit' : null,
+    fleetBad ? 'fix the grant limits' : null,
   ].filter((m): m is string => m !== null);
 
   return (

@@ -6,6 +6,7 @@ import {
   answerCapProblem,
   captureCapProblem,
   desktopCapProblem,
+  fleetBlocked,
   fleetElevation,
   fleetOn,
   grantFields,
@@ -18,6 +19,7 @@ import {
   recordingCapProblem,
   recordingSecondsProblem,
   showFleetFields,
+  spawnCapProblem,
 } from './fleetControl';
 import { spawnActions } from './spawn';
 
@@ -69,8 +71,73 @@ describe('grantFields (ADR-008 §3)', () => {
       classes: ['read', 'mail', 'drive', 'inspect', 'manage', 'answer'],
       scope: 'fleet',
       answer_cap: 0,
+      max_modes: { claude: 'acceptEdits', codex: 'on-request/workspace-write' },
     });
     expect(fleetOn({ ...NO_FLEET, manage: true })).toBe(true);
+  });
+});
+
+describe('the spawn switch (MCP P0 §2.5)', () => {
+  test('the defaults are off, 3, acceptEdits and on-request/workspace-write', () => {
+    expect(NO_FLEET.spawn).toBe(false);
+    expect(NO_FLEET.spawnCap).toBe('3');
+    expect(NO_FLEET.claudeCeiling).toBe('acceptEdits');
+    expect(NO_FLEET.codexCeiling).toBe('on-request/workspace-write');
+    expect(fleetOn({ ...NO_FLEET, spawn: true })).toBe(false);
+  });
+  test('spawn off sends neither spawn_cap nor max_modes', () => {
+    expect(grantFields(NO_FLEET)).toEqual({ classes: ['read', 'mail', 'drive'] });
+  });
+  test('spawn on adds the class after drive, the cap and both ceilings', () => {
+    expect(grantFields({ ...NO_FLEET, spawn: true, spawnCap: ' 7 ', inspect: true })).toEqual({
+      classes: ['read', 'mail', 'drive', 'spawn', 'inspect'],
+      spawn_cap: 7,
+      max_modes: { claude: 'acceptEdits', codex: 'on-request/workspace-write' },
+    });
+  });
+  test('manage alone sends max_modes and no spawn_cap', () => {
+    expect(
+      grantFields({
+        ...NO_FLEET,
+        manage: true,
+        claudeCeiling: 'plan',
+        codexCeiling: 'never/read-only',
+      }),
+    ).toEqual({
+      classes: ['read', 'mail', 'drive', 'manage'],
+      max_modes: { claude: 'plan', codex: 'never/read-only' },
+    });
+  });
+  test('spawnCapProblem', () => {
+    const PROBLEM_TEXT = 'The session limit is a whole number from 0 to 50.';
+    const on = (spawnCap: string) => spawnCapProblem({ ...NO_FLEET, spawn: true, spawnCap });
+    for (const bad of ['', '2.5', '51']) expect(on(bad)).toBe(PROBLEM_TEXT);
+    for (const ok of ['0', '50']) expect(on(ok)).toBeNull();
+    expect(spawnCapProblem({ ...NO_FLEET, spawn: false, spawnCap: '' })).toBeNull();
+    expect(fleetProblem({ ...NO_FLEET, spawn: true, spawnCap: '' })).toBe(PROBLEM_TEXT);
+  });
+  test('fleetBlocked', () => {
+    const blank = { ...NO_FLEET, spawn: true, spawnCap: '' };
+    expect(fleetBlocked(true, true, blank)).toBe(true);
+    expect(fleetBlocked(true, true, { ...blank, spawnCap: '3' })).toBe(false);
+    expect(fleetBlocked(false, true, blank)).toBe(false);
+    expect(fleetBlocked(true, false, blank)).toBe(false);
+  });
+  test('the fields show the group, the limit and the ceilings only when needed', () => {
+    const render = (fleet: FleetControl) =>
+      renderToStaticMarkup(<FleetControlFields fleet={fleet} onChange={() => {}} />);
+    const off = render(NO_FLEET);
+    expect(off).toContain('Sessions it may start');
+    expect(off).toContain('Allow starting sessions');
+    expect(off).not.toContain('Session limit');
+    expect(off).not.toContain('Highest Claude mode');
+    const on = render({ ...NO_FLEET, spawn: true });
+    expect(on).toContain('Session limit');
+    expect(on).toContain('Highest Claude mode');
+    expect(on).toContain('Highest Codex mode');
+    const manage = render({ ...NO_FLEET, manage: true });
+    expect(manage).not.toContain('Session limit');
+    expect(manage).toContain('Highest Claude mode');
   });
 });
 
@@ -248,6 +315,35 @@ describe('fleetElevation', () => {
       });
       expect(a.calls).toEqual([['Fleet control']]);
     }
+  });
+
+  test('a spawn-only grant asks once with the Starting sessions label', async () => {
+    const a = asker('code-3');
+    const fleet = { ...NO_FLEET, spawn: true };
+    expect(await fleetElevation({ ...gate, fleet }, a.ask)).toEqual({
+      ok: true,
+      elevation: 'code-3',
+    });
+    expect(a.calls).toEqual([['Starting sessions']]);
+  });
+
+  test('spawn with a switch on or with targets keeps the Fleet control label', async () => {
+    const a = asker('code-4');
+    await fleetElevation({ ...gate, fleet: { ...NO_FLEET, spawn: true, inspect: true } }, a.ask);
+    await fleetElevation(
+      { ...gate, fleet: { ...NO_FLEET, spawn: true }, targets: ['station-b'] },
+      a.ask,
+    );
+    expect(a.calls).toEqual([['Fleet control'], ['Fleet control']]);
+  });
+
+  test('a coordinator start with all switches and spawn off asks nothing', async () => {
+    const a = asker('code-5');
+    expect(await fleetElevation({ ...gate, fleet: NO_FLEET }, a.ask)).toEqual({
+      ok: true,
+      elevation: undefined,
+    });
+    expect(a.calls).toEqual([]);
   });
 
   test('a cancelled dialog is not ok', async () => {
