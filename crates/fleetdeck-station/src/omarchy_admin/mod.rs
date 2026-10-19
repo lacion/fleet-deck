@@ -224,7 +224,7 @@ impl OmarchyAdmin {
 }
 
 /// True for params that are `null` or `{}`.
-fn is_empty_params(params: &Value) -> bool {
+pub(crate) fn is_empty_params(params: &Value) -> bool {
     match params {
         Value::Null => true,
         Value::Object(map) => map.is_empty(),

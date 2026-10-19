@@ -551,6 +551,9 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
         | "omarchy.restore_plan" => {
             crate::omarchy_admin::call(&req.method, req.params, control.params().peer).await
         }
+        "station.tools" | "station.desktop_tools_plan" => {
+            crate::desktop_tools::call(&req.method, req.params, control.params().peer).await
+        }
         "shell.list" => ok(ctx.shells.list()),
         "session.list" => match store.snapshot().await {
             Ok(s) => ok(s.sessions),
