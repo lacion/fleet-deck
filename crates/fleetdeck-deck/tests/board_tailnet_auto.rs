@@ -603,6 +603,16 @@ fn fail_with_automatic_entries(bound: &[SocketAddr]) -> Result<(), TlsError> {
     Ok(())
 }
 
+/// Distinct free local ports, all bound at the same time before they are
+/// released: an entry on port 0 of the deck can never take the port of the
+/// automatic entry.
+fn free_ports<const N: usize>() -> [std::net::SocketAddr; N] {
+    let held: Vec<_> = (0..N)
+        .map(|_| std::net::TcpListener::bind("127.0.0.1:0").unwrap())
+        .collect();
+    std::array::from_fn(|i| held[i].local_addr().unwrap())
+}
+
 /// The board certificate cannot be prepared with an automatic entry (design
 /// 15.3): the deck starts with the manual entries and the existing
 /// certificate, and the card says why.
@@ -632,13 +642,11 @@ async fn a_certificate_failure_with_an_automatic_entry_falls_back_to_the_manual_
     first.stop().await;
     // The second start has an automatic board entry (a local address with a
     // free port) and a certificate hook that fails when it is bound.
-    let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let auto = free.local_addr().unwrap();
-    drop(free);
+    let [auto, manual, link] = free_ports();
     let missing = tmp.path().join("no-such-tailscale").display().to_string();
     write(&format!(
         "name = \"d\"\ntailnet_auto = true\ntailscale_bin = \"{missing}\"\n\
-         listen = [\"127.0.0.1:0\", \"{auto}\"]\nlink_listen = [\"127.0.0.1:0\"]\n\
+         listen = [\"{manual}\", \"{auto}\"]\nlink_listen = [\"{link}\"]\n\
          tailnet_auto_listen = [\"{auto}\"]\n"
     ));
     let options = StartOptions {
@@ -693,14 +701,12 @@ async fn a_real_certificate_write_failure_falls_back_to_the_stored_pair() {
     let blocker = deck_dir.join("board-selfsigned.key.tmp");
     std::fs::create_dir(&blocker).unwrap();
     std::fs::write(blocker.join("x"), "x").unwrap();
-    let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let auto = free.local_addr().unwrap();
-    drop(free);
+    let [auto, manual, link] = free_ports();
     let missing = tmp.path().join("no-such-tailscale").display().to_string();
     // The host name adds a name to the certificate, so the update must write.
     write(&format!(
         "name = \"d\"\ntailnet_auto = true\ntailnet_hostname = \"deck.tail1234.ts.net\"\ntailscale_bin = \"{missing}\"\n\
-         listen = [\"127.0.0.1:0\", \"{auto}\"]\nlink_listen = [\"127.0.0.1:0\"]\n\
+         listen = [\"{manual}\", \"{auto}\"]\nlink_listen = [\"{link}\"]\n\
          tailnet_auto_listen = [\"{auto}\"]\n"
     ));
     let deck = RunningDeck::start(
