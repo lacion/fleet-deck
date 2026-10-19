@@ -3,6 +3,10 @@
 //! an established link.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+#![cfg_attr(
+    not(target_os = "linux"),
+    allow(unused_imports, dead_code, reason = "most tests here are Linux-only")
+)]
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;

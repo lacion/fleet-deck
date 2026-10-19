@@ -2,6 +2,11 @@
 //! one, and a folder that changed after the decide fails the start or the
 //! resume.
 
+#![cfg_attr(
+    not(target_os = "linux"),
+    allow(unused_imports, dead_code, reason = "most tests here are Linux-only")
+)]
+
 use std::time::Duration;
 
 use fleetdeck_core::launch_dir::CHANGED;

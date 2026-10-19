@@ -4,6 +4,11 @@
 //! the leader of its own session and group, as a provider is. Every
 //! process that a test signals is one that the test started itself.
 
+#![cfg_attr(
+    not(target_os = "linux"),
+    allow(unused_imports, dead_code, reason = "most tests here are Linux-only")
+)]
+
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};

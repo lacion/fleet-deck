@@ -3,6 +3,11 @@
 //! read and walk search run. The descriptor-relative walk must never
 //! return outside names or content, at any depth.
 
+#![cfg_attr(
+    not(target_os = "linux"),
+    allow(unused_imports, dead_code, reason = "most tests here are Linux-only")
+)]
+
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

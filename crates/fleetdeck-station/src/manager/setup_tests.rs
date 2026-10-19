@@ -2,6 +2,11 @@
 //! command that runs before the provider starts, and a failure that ends the
 //! start with the exit text and the output tail.
 
+#![cfg_attr(
+    not(target_os = "linux"),
+    allow(unused_imports, dead_code, reason = "most tests here are Linux-only")
+)]
+
 use fleetdeck_testkit::fake::STDIN_LOG_ENV;
 use fleetdeck_testkit::sim_claude::StdinLog;
 

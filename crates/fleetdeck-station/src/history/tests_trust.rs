@@ -1,5 +1,10 @@
 //! Tests of the trusted path, the mount table and the identity rules (B7).
 
+#![cfg_attr(
+    not(target_os = "linux"),
+    allow(unused_imports, dead_code, reason = "most tests here are Linux-only")
+)]
+
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 
@@ -283,10 +288,12 @@ const LOOP: &str = "103 80 7:3 / /mnt/image rw,relatime - ext4 /dev/loop3 rw";
 const NESTED: &str = "104 101 8:17 /sub /srv/shared/plain rw,relatime - ext4 /dev/sdb1 rw";
 const SPACE: &str = r"105 80 8:33 / /mnt/my\040disk rw - ext4 /dev/sdc1 rw";
 
+#[allow(clippy::unnecessary_cast, clippy::cast_sign_loss)]
 fn dev(major: u32, minor: u32) -> u64 {
-    rustix::fs::makedev(major, minor)
+    rustix::fs::makedev(major, minor) as u64
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn mountinfo_lines_are_read_for_options_and_sources() {
     let text = [
@@ -308,6 +315,7 @@ fn mountinfo_lines_are_read_for_options_and_sources() {
     assert!(mounts.verifiable(dev(8, 33), Path::new("/mnt/my disk/x")));
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn the_longest_mount_point_of_the_device_decides() {
     let text = [IDMAPPED, NESTED].join("\n");
@@ -731,6 +739,12 @@ async fn an_idmapped_or_unknown_mount_lists_entries_as_not_verified() {
     };
     b.good_claude(ID_A);
     let dev = std::fs::metadata(&b.rig.root).unwrap().dev();
+    #[allow(
+        clippy::unnecessary_cast,
+        clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap
+    )]
+    let dev = dev as rustix::fs::Dev;
     let (major, minor) = (rustix::fs::major(dev), rustix::fs::minor(dev));
     let idmapped = format!("1 0 {major}:{minor} / / rw,relatime,idmapped - ext4 /dev/sdz rw\n");
     for text in [idmapped.as_str(), ""] {

@@ -154,7 +154,7 @@ impl PlanStore {
 
     /// Changes the recorded start time of a target: the PID then looks
     /// reused (tests only).
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     pub fn tamper_start_time(&self, session: &SessionId, pid: u32, start_time: u64) {
         let mut plans = locked(&self.plans);
         let plan = plans.get_mut(session).expect("a stored plan");
