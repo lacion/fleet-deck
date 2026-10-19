@@ -192,8 +192,10 @@ impl tracing::field::Visit for Fields {
 struct Recorder;
 
 impl tracing::Subscriber for Recorder {
-    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
-        true
+    fn enabled(&self, meta: &tracing::Metadata<'_>) -> bool {
+        // The production subscriber denies the MCP SDK targets
+        // (fleetdeck_core::logging::subscriber); the recorder mirrors it.
+        !fleetdeck_core::logging::is_sdk_target(meta.target())
     }
 
     fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
