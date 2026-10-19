@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use super::bindings::{Binding, BindingState, Caller, ToolClass};
 use super::desktop_forward::{DesktopRequest, McpToolResult};
 use super::ingress::Forward;
-use super::mcp_p1_tests::serve_json;
+use super::mcp_p1_rig_tests::serve_json;
 use super::tools;
 
 const NINE: [&str; 9] = [

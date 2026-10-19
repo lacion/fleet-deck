@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use super::super::bindings::{Binding, BindingState, Caller, ToolClass};
 use super::super::desktop_forward::{DesktopRequest, McpToolResult};
 use super::super::ingress::Forward;
-use super::super::mcp_p1_tests::serve_json;
+use super::super::mcp_p1_rig_tests::serve_json;
 use super::super::tools;
 
 const NAME: &str = "record_monitor";
