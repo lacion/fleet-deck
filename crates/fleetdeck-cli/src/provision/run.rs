@@ -324,9 +324,12 @@ impl Run<'_> {
     }
 
     /// A definite refusal of an authorization: the file is deleted (a failure
-    /// is a diagnostic line) and the refusal stays the same.
+    /// is a diagnostic line; a file that is already gone is not) and the
+    /// refusal stays the same.
     fn refuse(&self, path: &Path, code: &'static str) -> Stop {
-        if self.effects.delete_authorization(path).is_err() {
+        if let Err(e) = self.effects.delete_authorization(path)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
             self.line("retry", "authorization_not_removed");
         }
         Stop::RetryRefused(code)
