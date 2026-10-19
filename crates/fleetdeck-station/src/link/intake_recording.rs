@@ -4,6 +4,7 @@
 //! §4.4, §6.2). The work is in [`crate::desktop::recording`]; this file reads
 //! the station policy and the link identity and calls it.
 
+use std::os::fd::OwnedFd;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -118,6 +119,8 @@ fn allowed_of(ctx: &StationLink) -> Arc<dyn Fn() -> Allowed + Send + Sync> {
             desktop: policy.allow_desktop(),
             capture: policy.allow_desktop_capture(),
             monitors: policy.capture_monitors().to_vec(),
+            quota_bytes: policy.capture_quota_bytes(),
+            free_reserve_bytes: policy.capture_free_reserve_bytes(),
         }
     })
 }
@@ -188,6 +191,8 @@ pub(super) async fn record_for(
         "" => ctx.name.clone(),
         live => live.to_owned(),
     };
+    // The free-space reserve is read once for this recording (rule 9).
+    let reserve = ctx.manager.policy().capture_free_reserve_bytes();
     let request = RecordRequest {
         service,
         allowed: allowed_of(ctx),
@@ -212,7 +217,7 @@ pub(super) async fn record_for(
             admission: ADMISSION,
             clocks: Arc::new(SystemClocks),
             timing: Timing::default(),
-            room: Arc::new(room) as RoomCheck,
+            room: Arc::new(move |dir: &OwnedFd, need: u64| room(dir, need, reserve)) as RoomCheck,
         },
     };
     match desktop::service().screen_record(request).await {

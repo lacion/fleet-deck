@@ -31,7 +31,7 @@ use fleetdeck_proto::link::Outcome;
 use fleetdeck_proto::version::{Negotiated, feature};
 use ring::rand::{SecureRandom, SystemRandom};
 
-use super::capture::{Allowed, capture_gate};
+use super::capture::{Allowed, CAPTURE_QUOTA, FREE_RESERVE, capture_gate};
 use super::events::PreviewOwner;
 use super::input::grammar;
 use super::{Fail, code};
@@ -319,6 +319,8 @@ pub fn check_live(live: &Live, capture: bool, monitor: Option<&str>) -> Result<(
             desktop: live.desktop,
             capture: live.capture,
             monitors: live.monitors.clone(),
+            quota_bytes: CAPTURE_QUOTA,
+            free_reserve_bytes: FREE_RESERVE,
         },
         monitor,
     )
@@ -379,6 +381,8 @@ pub fn check_live_gates(live: &Live, any: bool, click: bool) -> Result<(), Fail>
             desktop: live.desktop,
             capture: live.capture,
             monitors: Vec::new(),
+            quota_bytes: CAPTURE_QUOTA,
+            free_reserve_bytes: FREE_RESERVE,
         },
         None,
     )

@@ -12,7 +12,7 @@ fn every_recording_code_has_its_status_and_exact_text() {
         (
             "capture_quota",
             409,
-            "This capture would exceed the station's 4 GiB capture limit. Delete some captures first.",
+            "This capture would exceed the station's capture storage limit. Delete some captures first, or raise Capture storage in the station settings.",
         ),
         ("recording_too_large", 413, "The recording exceeds 256 MiB."),
         (

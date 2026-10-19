@@ -19,17 +19,20 @@ async fn started() -> (
     let s = rig().await;
     let begin = s
         .store
-        .recording_begin(RecordingBegin {
-            deck_fp: FP,
-            capture_id: ID,
-            action_hash: "h",
-            monitor: "DP-1",
-            artifact_id: "ART",
-            seconds: 5,
-            link_epoch: "e",
-            coordinator: None,
-            now: 1,
-        })
+        .recording_begin(
+            RecordingBegin {
+                deck_fp: FP,
+                capture_id: ID,
+                action_hash: "h",
+                monitor: "DP-1",
+                artifact_id: "ART",
+                seconds: 5,
+                link_epoch: "e",
+                coordinator: None,
+                now: 1,
+            },
+            crate::desktop::capture::CAPTURE_QUOTA,
+        )
         .await
         .unwrap();
     assert!(matches!(begin, Begin::Started));

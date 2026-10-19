@@ -32,7 +32,6 @@ use super::{
     Begin, COLUMNS, CaptureOp, CommitSpec, NewCaptureArtifact, accounted, commit, finish_op,
     raw_op, read_op,
 };
-use crate::desktop::capture::CAPTURE_QUOTA;
 use crate::store::artifacts::{CommitError, Committed};
 use crate::store::{Result, Store, StoreError, call, to_i64, to_u64};
 
@@ -214,13 +213,13 @@ impl Store {
     /// action hash, another kind, another monitor or other seconds is a
     /// conflict; a row of the same request is returned and nothing changes;
     /// otherwise the quota is checked (the accounted capture bytes and the new
-    /// reservation of [`PEAK_RESERVATION`] must stay within [`CAPTURE_QUOTA`])
+    /// reservation of [`PEAK_RESERVATION`] must stay within `quota`, the capture storage limit in bytes)
     /// and a `running` row in the phase `preparing` that holds the
     /// reservation is inserted.
     ///
     /// # Errors
     /// A database error; a `seconds` outside 1 to 3600 (the column check).
-    pub async fn recording_begin(&self, b: RecordingBegin<'_>) -> Result<Begin> {
+    pub async fn recording_begin(&self, b: RecordingBegin<'_>, quota: u64) -> Result<Begin> {
         let (deck_fp, capture_id) = (b.deck_fp.to_owned(), b.capture_id.to_owned());
         let (action_hash, monitor) = (b.action_hash.to_owned(), b.monitor.to_owned());
         let (artifact_id, link_epoch) = (b.artifact_id.to_owned(), b.link_epoch.to_owned());
@@ -245,7 +244,7 @@ impl Store {
                     Begin::Conflict
                 });
             }
-            if accounted(&tx)?.saturating_add(PEAK_RESERVATION) > CAPTURE_QUOTA {
+            if accounted(&tx)?.saturating_add(PEAK_RESERVATION) > quota {
                 return Ok(Begin::Quota);
             }
             tx.execute(

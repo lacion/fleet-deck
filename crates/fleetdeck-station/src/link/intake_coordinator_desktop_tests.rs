@@ -560,7 +560,16 @@ impl T {
         let c = ctx();
         let by = coordinator.then_some(&c);
         store
-            .capture_begin_with(FP, capture_id, "h", "DP-1", &artifact_id, by, 10)
+            .capture_begin_with(
+                FP,
+                capture_id,
+                "h",
+                "DP-1",
+                &artifact_id,
+                by,
+                crate::desktop::capture::CAPTURE_QUOTA,
+                10,
+            )
             .await
             .unwrap();
         let dir = self.s.root.join(&artifact_id).join("1");

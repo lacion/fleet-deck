@@ -125,6 +125,8 @@ impl T {
                 desktop: true,
                 capture: true,
                 monitors: Vec::new(),
+                quota_bytes: super::CAPTURE_QUOTA,
+                free_reserve_bytes: super::FREE_RESERVE,
             }),
             admitted,
             deck_fp: FP.to_owned(),

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use fleetdeck_core::ChildEnv;
 use fleetdeck_core::config::{
     DEFAULT_MAX_SHELLS, HostChoice, ModelHelpConfig, OfflineApprovalPolicy as ConfigOffline,
-    StationConfig, TrackerConfig,
+    StationConfig, StationLimits, TrackerConfig,
 };
 use fleetdeck_proto::ProviderInstanceId;
 use fleetdeck_proto::event::ProviderKind;
@@ -16,7 +16,8 @@ use fleetdeck_proto::member_deny::MemberDeny;
 use fleetdeck_providers::adapter::canonical_workspace;
 use fleetdeck_providers::host::StopPolicy;
 
-use super::policy_limits::{StationTimeouts, stop_policy};
+use super::policy_capture::gib;
+use super::policy_limits::{StationTimeouts, scrollback_of, stop_policy};
 use crate::store::OfflineApprovalPolicy;
 
 /// Why the policy refuses a workspace.
@@ -120,6 +121,13 @@ pub struct Policy {
     /// `limits.provider_stop_grace_seconds` (knobs K3).
     pub(super) stop: StopPolicy,
     pub(super) recording_max_seconds: u32,
+    /// `capture.quota_gib` in bytes (knobs K3b).
+    pub(super) capture_quota_bytes: u64,
+    /// `capture.free_reserve_gib` in bytes (knobs K3b).
+    pub(super) capture_free_reserve_bytes: u64,
+    /// The ring of a new terminal: lines and bytes, from
+    /// `limits.scrollback_lines` and `limits.scrollback_mib` (knobs K3b).
+    pub(super) scrollback: (usize, usize),
 }
 
 /// The default `clone_root`: the first allowed root + `/projects`.
@@ -187,6 +195,9 @@ impl Policy {
             timeouts: StationTimeouts::from_limits(&config.limits),
             stop: stop_policy(&config.limits),
             recording_max_seconds: config.capture.recording_max_seconds,
+            capture_quota_bytes: gib(config.capture.quota_gib),
+            capture_free_reserve_bytes: gib(config.capture.free_reserve_gib),
+            scrollback: scrollback_of(&config.limits),
         }
         .with_repo_groups(&config.repo_groups)
     }
@@ -273,6 +284,9 @@ impl Policy {
             timeouts: StationTimeouts::default(),
             stop: StopPolicy::default(),
             recording_max_seconds: 120,
+            capture_quota_bytes: gib(4),
+            capture_free_reserve_bytes: gib(2),
+            scrollback: scrollback_of(&StationLimits::default()),
         }
     }
 

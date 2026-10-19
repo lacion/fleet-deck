@@ -34,7 +34,7 @@ use super::ACTIVE_LIMIT;
 use super::barrier::{self, Names};
 use super::listed::{Binding, Item};
 use super::snapshot::{self, Client, Snapshot, TakeError};
-use crate::desktop::capture::{Allowed, capture_gate};
+use crate::desktop::capture::{Allowed, CAPTURE_QUOTA, FREE_RESERVE, capture_gate};
 use crate::desktop::coordinator::{DispatchCheck, Live, check_live_window_list, p6_fail};
 use crate::desktop::events::Kind;
 use crate::desktop::run::Runner;
@@ -261,6 +261,8 @@ fn monitors_still_permitted(live: &Live, monitors: &[InputMonitor]) -> Result<()
                 desktop: true,
                 capture: true,
                 monitors: live.monitors.clone(),
+                quota_bytes: CAPTURE_QUOTA,
+                free_reserve_bytes: FREE_RESERVE,
             },
             Some(&monitor.name),
         )?;
