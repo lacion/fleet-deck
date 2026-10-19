@@ -12,6 +12,7 @@ import { CommandBlock, WaitLine } from './CommandBlock';
 import { DeviceList } from './DeviceList';
 import { approveError, countdownText, groupDevices, requestOf } from './model';
 import { RequestCard } from './RequestCard';
+import { SetupReports, useSetupReports } from './SetupReports';
 
 export { RequestCard };
 
@@ -56,6 +57,7 @@ export function TailnetPairing({
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [opening, setOpening] = useState(false);
   const [acting, setActing] = useState<string | null>(null);
+  const { state: reports, refresh: refreshReports } = useSetupReports(tailnet.reports);
   const calls = useRef(0);
   const alive = useRef(true);
 
@@ -80,13 +82,17 @@ export function TailnetPairing({
 
   useEffect(() => {
     alive.current = true;
-    void refresh();
-    const id = setInterval(() => void refresh(), REFRESH_MS);
+    const tick = () => {
+      void refresh();
+      void refreshReports();
+    };
+    tick();
+    const id = setInterval(tick, REFRESH_MS);
     return () => {
       alive.current = false;
       clearInterval(id);
     };
-  }, [refresh]);
+  }, [refresh, refreshReports]);
 
   /** A refused elevation is dropped, so that the next try asks again. */
   const forgetIfRefused = (e: unknown) => {
@@ -290,6 +296,13 @@ export function TailnetPairing({
           {others.map(card)}
         </section>
       ) : null}
+      <SetupReports
+        actions={tailnet.reports}
+        state={reports}
+        refresh={refreshReports}
+        ask={ask}
+        onRefused={() => env.settings.forgetElevation()}
+      />
       {body}
       {error === null ? null : <p role="alert">{error}</p>}
       {node}

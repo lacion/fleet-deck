@@ -1,6 +1,7 @@
 // DL-178: the tailnet and pairing-window calls of the board. The shapes are the deck's
 // (`GET /api/tailnet`, `/api/tailnet/devices`, `/api/pairing/*`); all routes are owner only.
-import type { DeckIo } from '../settings/http';
+import type { DeckHttp } from '../settings/http';
+import { type ReportsActions, reportsActions } from './reports';
 
 /** The state of "Use Tailscale automatically" (tailnet design 14.4). */
 export type AutoView = {
@@ -111,6 +112,8 @@ export type TailnetActions = {
   requests(): Promise<RequestsView>;
   approve(id: string, fingerprint: string, digest: string, elevation: string | null): Promise<void>;
   deny(id: string): Promise<void>;
+  /** BG-3: the setup reports from unpaired keys. */
+  reports: ReportsActions;
 };
 
 const record = (v: unknown): v is Record<string, unknown> =>
@@ -130,7 +133,7 @@ const withElevation = (body: Record<string, unknown>, elevation: string | null) 
   elevation === null ? body : { ...body, elevation };
 
 /** The tailnet calls over a transport. */
-export function tailnetActions(io: DeckIo): TailnetActions {
+export function tailnetActions(io: DeckHttp): TailnetActions {
   return {
     view: async () =>
       shaped<TailnetView>(
@@ -173,5 +176,6 @@ export function tailnetActions(io: DeckIo): TailnetActions {
     deny: async (id) => {
       await io.post(`/api/pairing/requests/${seg(id)}/deny`, {});
     },
+    reports: reportsActions(io),
   };
 }
