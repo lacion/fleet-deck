@@ -14,7 +14,6 @@ pub const MAX_PLANS: usize = 4;
 
 /// A plan that the station keeps.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)] // The fields are read by the maintenance channel (BG1-3).
 pub struct StoredPlan {
     pub plan_id: String,
     /// The deck link that asked for the plan.
@@ -82,13 +81,11 @@ impl PlanStore {
 pub static STORE: PlanStore = PlanStore::new();
 
 /// A live plan of the deck `peer`; the plan stays stored.
-#[allow(dead_code)] // Used by the maintenance channel (BG1-3).
 pub(crate) fn plan(plan_id: &str, peer: &Fingerprint, now_ms: i64) -> Option<StoredPlan> {
     STORE.get(plan_id, peer, now_ms)
 }
 
 /// Removes the plan `plan_id`.
-#[allow(dead_code)] // Used by the maintenance channel (BG1-3).
 pub(crate) fn remove(plan_id: &str) {
     STORE.remove(plan_id);
 }

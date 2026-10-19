@@ -42,9 +42,7 @@ mod recheck_tests;
 #[cfg(test)]
 mod test_support;
 
-#[allow(unused_imports)] // Used by the maintenance channel (BG1-3).
 pub(crate) use plan::recheck;
-#[allow(unused_imports)] // Used by the maintenance channel (BG1-3).
 pub(crate) use store::{StoredPlan, plan, remove};
 
 const TEXT_INVALID: &str = "The request is not valid.";

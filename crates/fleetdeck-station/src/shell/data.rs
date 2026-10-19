@@ -12,19 +12,23 @@
 //! station to the deck (`workspace/fleet_git/move_stream.rs`). A stream with
 //! the purpose `move-import:<move_id>` (the token of `session.move_prepare`)
 //! carries them from the deck to the station
-//! (`workspace/fleet_git/move_upload.rs`).
+//! (`workspace/fleet_git/move_upload.rs`). A stream with the purpose
+//! `maintenance:<id>` (the token of `maintenance.attach`) is a relay to the
+//! runner socket of a desktop tool installation (`maintenance/relay.rs`).
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use fleetdeck_link::data::{Data, DataEvent};
+use fleetdeck_proto::desktop_tools::{STREAM_PURPOSE as MAINTENANCE_PURPOSE, is_hex_id};
 use fleetdeck_proto::fleet_git::{MOVE_EXPORT_PURPOSE, MOVE_IMPORT_PURPOSE};
 use fleetdeck_proto::shell::STREAM_PURPOSE;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::Shells;
+use crate::maintenance::relay;
 use crate::manager::SessionManager;
 use crate::workspace::fleet_git::{UploadEvent, UploadPort, serve_upload};
 
@@ -42,6 +46,8 @@ pub async fn serve(
     let mut exports: HashMap<u32, JoinHandle<()>> = HashMap::new();
     // The uploads of moves: each stream has a task that reads its events.
     let mut imports: HashMap<u32, mpsc::UnboundedSender<UploadEvent>> = HashMap::new();
+    // The maintenance relays (BG-1): the bytes of the board go to the relay.
+    let mut relays: HashMap<u32, (mpsc::UnboundedSender<Vec<u8>>, JoinHandle<()>)> = HashMap::new();
     while let Some(event) = events.recv().await {
         match event {
             DataEvent::Opened { stream, purpose } => {
@@ -67,6 +73,17 @@ pub async fn serve(
                     imports.insert(stream, tx);
                     continue;
                 }
+                if let Some(id) = purpose.strip_prefix(MAINTENANCE_PURPOSE) {
+                    if !is_hex_id(id) {
+                        let _ = handle.reset(stream, "unknown_purpose").await;
+                        continue;
+                    }
+                    let (tx, rx) = mpsc::unbounded_channel();
+                    let task =
+                        tokio::spawn(relay::serve(handle.clone(), stream, id.to_owned(), rx));
+                    relays.insert(stream, (tx, task));
+                    continue;
+                }
                 let Some(id) = purpose.strip_prefix(STREAM_PURPOSE).map(str::to_owned) else {
                     let _ = handle.reset(stream, "unknown_purpose").await;
                     continue;
@@ -84,6 +101,13 @@ pub async fn serve(
                     let _ = upload.send(UploadEvent::Data(bytes));
                     continue;
                 }
+                if let Some((relay, _)) = relays.get(&stream) {
+                    // A relay that ended gives no credit back: do it here.
+                    if let Err(mpsc::error::SendError(bytes)) = relay.send(bytes) {
+                        let _ = handle.consumed(stream, bytes.len()).await;
+                    }
+                    continue;
+                }
                 let n = bytes.len();
                 if let Some((id, _)) = streams.get(&stream)
                     && !shells.input(id, &bytes)
@@ -95,6 +119,11 @@ pub async fn serve(
             DataEvent::Closed { stream } => {
                 if let Some(upload) = imports.remove(&stream) {
                     let _ = upload.send(UploadEvent::Closed);
+                    continue;
+                }
+                // The end of the board stream ends the relay only.
+                if let Some((_, task)) = relays.remove(&stream) {
+                    task.abort();
                     continue;
                 }
                 // The deck's half of an export ends nothing: the station
@@ -113,8 +142,14 @@ pub async fn serve(
                 if let Some(task) = exports.remove(&stream) {
                     task.abort();
                 }
+                if let Some((_, task)) = relays.remove(&stream) {
+                    task.abort();
+                }
             }
         }
+    }
+    for (_, (_, task)) in relays {
+        task.abort();
     }
     for (_, (_, task)) in streams {
         task.abort();

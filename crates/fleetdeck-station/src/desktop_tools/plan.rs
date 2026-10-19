@@ -149,7 +149,6 @@ pub async fn recheck_with(
 ///
 /// # Errors
 /// `transaction_refused` for any difference or failure.
-#[allow(dead_code)] // Used by the maintenance channel (BG1-3).
 pub(crate) async fn recheck(plan: &StoredPlan) -> Result<(), &'static str> {
     recheck_with(&super::probe::RealExec, &EtcRoot::system(), plan).await
 }
