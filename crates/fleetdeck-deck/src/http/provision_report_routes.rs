@@ -5,13 +5,14 @@
 //!
 //! - `GET /api/provision-reports`: the reporting window and the reports,
 //!   newest first.
-//! - `POST /api/provision-reports/window { open, elevation? }`: opens the
-//!   window for one hour (needs the elevation) or closes it.
+//! - `POST /api/provision-reports/window { open, elevation }`: opens the
+//!   window for one hour or closes it (both need the elevation).
 //! - `POST /api/provision-reports/{fingerprint}/retry`: allows one retry for
 //!   the exact report that the owner saw (needs the elevation).
 //! - `DELETE /api/provision-reports/{fingerprint}/retry`: cancels a queued
-//!   retry.
-//! - `DELETE /api/provision-reports/{fingerprint}`: dismisses a report.
+//!   retry (needs the elevation in the `x-fleetdeck-elevation` header).
+//! - `DELETE /api/provision-reports/{fingerprint}`: dismisses a report
+//!   (needs the elevation in the `x-fleetdeck-elevation` header).
 //!
 //! A report is self-reported by an unpaired key. The routes never create a
 //! station, a pairing, a grant or an invitation. The audit rows hold the
@@ -22,13 +23,14 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use fleetdeck_core::identity::Fingerprint;
 use fleetdeck_link::pair_hub::NoTailnetListener;
 use fleetdeck_link::report_accept::is_lower_hex;
 use serde::{Deserialize, Serialize};
 
 use super::Board;
+use super::artifact_delete::ELEVATION_HEADER;
 use super::guard::ApiError;
 use super::settings_routes::{is_elevated, owner};
 use crate::provision_reports::{ProvisionReports, WindowView, new_retry_id, retry_allowed};
@@ -202,10 +204,11 @@ pub struct WindowRequest {
     elevation: Option<String>,
 }
 
-/// `POST /api/provision-reports/window { open, elevation? }`.
+/// `POST /api/provision-reports/window { open, elevation }`.
 ///
 /// # Errors
-/// 400 `invalid_request`, `elevation_required` (to open); 403 `owner_only`;
+/// 400 `invalid_request`, `elevation_required` (to open and to close); 403
+/// `owner_only`;
 /// 409 `no_tailnet_listener`; 503 `pairing_unavailable`.
 pub async fn window_set(
     State(board): State<Arc<Board>>,
@@ -225,8 +228,10 @@ pub async fn window_set(
     let word = if req.open { "open" } else { "close" };
     let result = if req.open {
         open_window(&board, reports, &session, req.elevation.as_deref())
-    } else {
+    } else if is_elevated(&board, &session, req.elevation.as_deref()) {
         Ok(reports.close_window())
+    } else {
+        Err(elevation_required("closing the setup reports"))
     };
     audit(&board, "provision_reports.window", "", word, &result).await;
     result.map(|w| Json(w.into()))
@@ -373,14 +378,16 @@ fn no_report() -> ApiError {
 /// `DELETE /api/provision-reports/{fingerprint}/retry`.
 ///
 /// # Errors
-/// 400 `invalid_request`; 403 `owner_only`; 404 `report_not_found`,
-/// `retry_not_found`; 409 `retry_delivered`; 503 `pairing_unavailable`.
+/// 400 `invalid_request`, `elevation_required`; 403 `owner_only`; 404
+/// `report_not_found`, `retry_not_found`; 409 `retry_delivered`; 503
+/// `pairing_unavailable`.
 pub async fn retry_cancel(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
+    headers: HeaderMap,
     Path(key): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    owner(
+    let session = owner(
         &board,
         &principal,
         "provision_reports.retry_cancel",
@@ -388,9 +395,13 @@ pub async fn retry_cancel(
         "cancels a setup retry",
     )
     .await?;
+    let token = headers.get(ELEVATION_HEADER).and_then(|v| v.to_str().ok());
     reports(&board)?;
     let fingerprint = key_of(&key)?;
     let result = async {
+        if !is_elevated(&board, &session, token) {
+            return Err(elevation_required("cancelling a setup retry"));
+        }
         let cancelled = board
             .store
             .cancel_provision_retry(fingerprint.to_string(), board.store.now_ms())
@@ -424,14 +435,15 @@ pub async fn retry_cancel(
 /// `DELETE /api/provision-reports/{fingerprint}`.
 ///
 /// # Errors
-/// 400 `invalid_request`; 403 `owner_only`; 404 `report_not_found`; 503
-/// `pairing_unavailable`.
+/// 400 `invalid_request`, `elevation_required`; 403 `owner_only`; 404
+/// `report_not_found`; 503 `pairing_unavailable`.
 pub async fn dismiss(
     State(board): State<Arc<Board>>,
     Extension(principal): Extension<Principal>,
+    headers: HeaderMap,
     Path(key): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    owner(
+    let session = owner(
         &board,
         &principal,
         "provision_reports.dismiss",
@@ -439,9 +451,13 @@ pub async fn dismiss(
         "dismisses a setup report",
     )
     .await?;
+    let token = headers.get(ELEVATION_HEADER).and_then(|v| v.to_str().ok());
     reports(&board)?;
     let fingerprint = key_of(&key)?;
     let result = async {
+        if !is_elevated(&board, &session, token) {
+            return Err(elevation_required("dismissing a setup report"));
+        }
         let removed = board
             .store
             .dismiss_provision_report(fingerprint.to_string())

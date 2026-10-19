@@ -61,18 +61,15 @@ function failed(e: unknown, text: string = describe(e)): FlowResult {
   };
 }
 
-/** Opens the window (with the elevation) or closes it (no elevation, as the pairing window). */
+/** Opens the window or closes it: both need the owner's elevation. */
 export async function changeWindow(
   actions: ReportsActions,
   ask: Ask,
   open: boolean,
 ): Promise<FlowResult> {
   try {
-    let elevation: string | null = null;
-    if (open) {
-      elevation = await ask([ELEVATION_LABEL]);
-      if (elevation === null) return { kind: 'cancelled' };
-    }
+    const elevation = await ask([ELEVATION_LABEL]);
+    if (elevation === null) return { kind: 'cancelled' };
     await actions.setWindow(open, elevation);
     return { kind: 'done' };
   } catch (e) {
@@ -106,10 +103,15 @@ export async function allowOneRetry(
   }
 }
 
-/** Cancels a queued retry, or dismisses the report: no confirmation, no elevation. */
-export async function plainCall(call: () => Promise<void>): Promise<FlowResult> {
+/** Cancels a queued retry, or dismisses the report: no confirmation; the owner's elevation. */
+export async function plainCall(
+  ask: Ask,
+  call: (elevation: string) => Promise<void>,
+): Promise<FlowResult> {
   try {
-    await call();
+    const elevation = await ask([ELEVATION_LABEL]);
+    if (elevation === null) return { kind: 'cancelled' };
+    await call(elevation);
     return { kind: 'done' };
   } catch (e) {
     return failed(e);
@@ -427,9 +429,13 @@ export function SetupReports({
     onDismissAsk: () => setConfirming(null),
     onConfirm: () => void rowAction(report, () => allowOneRetry(actions, ask, ids.current, report)),
     onCancelRetry: () =>
-      void rowAction(report, () => plainCall(() => actions.cancelRetry(report.fingerprint))),
+      void rowAction(report, () =>
+        plainCall(ask, (elevation) => actions.cancelRetry(report.fingerprint, elevation)),
+      ),
     onDismiss: () =>
-      void rowAction(report, () => plainCall(() => actions.dismiss(report.fingerprint))),
+      void rowAction(report, () =>
+        plainCall(ask, (elevation) => actions.dismiss(report.fingerprint, elevation)),
+      ),
   });
 
   return (

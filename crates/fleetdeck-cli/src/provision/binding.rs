@@ -2,7 +2,9 @@
 //! (design `board-gaps.md` 4.2 and 4.3).
 //!
 //! The binding ties one observed terminal condition to a random
-//! `terminal_id` and to a digest of the state that produced it. The
+//! `terminal_id` and to a digest of the state that produced it and of the
+//! provisioning file as read now (a change of the file gives a new digest,
+//! so an older authorization is `report_changed`). The
 //! supervisor keeps it in `<station data>/provision-terminal.json`. A retry
 //! authorization (`<station data>/provision-retry.json`) is valid only for
 //! the exact stored binding, and only when the stored digest is still the
@@ -45,10 +47,10 @@ pub fn supervise_lock_path(dir: &Path) -> PathBuf {
 }
 
 /// The digest of a terminal condition: the lowercase hex SHA-256 over the
-/// lines `v1`, the retained error code, the phase word, the configuration
-/// hash of the state, the deck fingerprint pin of the provisioning file and
-/// the station fingerprint of the state (`-` when it has none), each
-/// followed by a newline.
+/// lines `v1`, the retained error code, the phase word, the hash of the
+/// provisioning file as read now (`config_sha256`), the deck fingerprint pin
+/// of the provisioning file and the station fingerprint of the state (`-`
+/// when it has none), each followed by a newline.
 #[must_use]
 pub fn digest(
     error: &str,
