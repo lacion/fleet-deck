@@ -2,7 +2,7 @@
 
 - **Review state (2026-10-19):** DESIGN REVIEW used all 3 rounds. Round 3: R1-2 and R1-4 FIXED; one new BLOCKER in BG-1 (the station user writes the `pacman.conf` that root reads, so code of that user can change it while sudo waits; report `adv-board-gaps-design-r3-report.md`). **BG-1 waits for the owner's decision** (recommendation: the root-owned system `/etc/pacman.conf` and repository-qualified targets `core/<name>`, `extra/<name>`; the residual of code that runs as the user stays the P8-17 boundary). BG-2, BG-3 and BG-4 have no open finding and are accepted for the build.
 - **Revision history:** Revision 2 (2026-10-19): DESIGN REVIEW round 1 FAIL (1 BLOCKER, 4 MAJOR, 1 UNVERIFIED; report `adv-board-gaps-design-r1-codex.md`); fixed by the architect decisions O12-26. Revision 3 (2026-10-19): DESIGN REVIEW round 2: R1-2 and R1-4 open (2 MAJOR; report `adv-board-gaps-design-r2-report.md`); fixed by O12-27.
-- **Build status (2026-10-19):** BG-2, BG-3 and BG-4 built on v2 (DL-249); PRE-PR reviews: BG-2 PASS (round 3), BG-3 PASS (round 2), BG-4 round 3 finding fixed without a further round (owner decision O12-29). **Revision 4 (2026-10-19, owner decision O12-29):** BG-1 uses the root-owned system `/etc/pacman.conf` and repository-qualified targets (§2.4); this closes the round 3 BLOCKER. BG-1 is accepted for the build; PRE-PR review required.
+- **Build status (2026-10-19):** BG-2, BG-3 and BG-4 built on v2 (DL-249); PRE-PR reviews: BG-2 PASS (round 3), BG-3 PASS (round 2), BG-4 round 3 finding fixed without a further round (owner decision O12-29). **Revision 5 (2026-10-19):** the maintenance terminal is a separate channel (§2.9, advisor option B). **Revision 4 (2026-10-19, owner decision O12-29):** BG-1 uses the root-owned system `/etc/pacman.conf` and repository-qualified targets (§2.4); this closes the round 3 BLOCKER. BG-1 is accepted for the build; PRE-PR review required.
 - **Status:** Proposed design (architect, 2026-10-19), from the advisor answer `advisor-board-gaps-answer.md` against v2 HEAD `fbce0923`. The architect accepts BG-1 to BG-4 as architect decisions (O12-25; the owner may change any of them). DESIGN REVIEW required before implementation; PRE-PR required before merge; live smoke required for the real sudo/pacman, compositor tools and process trees.
 - **Scope:** four gaps that still need an action on the station itself: the desktop tools (`operations.md` lines about 642, 799, 925 and 930); the installer conflict repair and the busy lock code (DL-243 items b and e); a P8 failure before the station is linked (DL-243 item c and `operations.md` §15.3); stopping the processes of a lost run (`operations.md` about line 978).
 - **Out of scope:** the residual product gaps of §1 (unsupported package delivery, trust or configuration repairs before the link, legacy process attribution without a trustworthy witness).
@@ -213,6 +213,51 @@ Tests:
 ### 2.8 Audit
 
 Audit the creation and the completion of the terminal with the compiled package IDs, the station, the owner login, the request ID and a fixed outcome. Do not audit the terminal contents.
+
+### 2.9 Revision 5: the maintenance channel (architect, 2026-10-19; advisor answer `advisor-bg1-answer.md`, option B)
+
+Revision 5 overrides §2.2, §2.5 and §2.6 where they differ. The maintenance terminal is **not** a `ShellChange` and does not use the shell receipts, the shell effects or the shell manager. Reason: the runner outlives the station, and the shell effect recovery retires or marks unknown every effect after a restart without a reconcile of a surviving runner. `shells.close_all()`, handover and the shell close control never reach a maintenance run.
+
+**Wire.**
+
+| Feature | Link method | Row | Deck route |
+|---|---|---|---|
+| `station_tools.v1` | `station.tools` | read, `Scope::Admin` | `GET /api/stations/{station}/desktop-tools` (owner) |
+| `desktop_tool_install.v1` | `station.desktop_tools_plan` | read, `Scope::Admin` | `GET /api/stations/{station}/desktop-tools/plan` (owner) |
+| `desktop_tool_install.v1` | `maintenance.open` | not mutating (as `omarchy.act`), `Scope::Admin` | `POST /api/stations/{station}/maintenance` (owner, elevation **Install desktop tools**, HTTP row mutating) |
+| `desktop_tool_install.v1` | `maintenance.list` | read, `Scope::Admin` | `GET /api/stations/{station}/maintenance` (owner) |
+| `desktop_tool_install.v1` | `maintenance.attach` | read, `Scope::Admin` (issues a data token) | `GET /api/stations/{station}/maintenance/{id}/attach` (WebSocket, owner) |
+| `desktop_tool_install.v1` | `maintenance.resize` | not mutating, `Scope::Admin` | `POST /api/stations/{station}/maintenance/{id}/resize` (owner, HTTP row mutating) |
+
+Every deck route is owner only (the board login); `Scope::Admin` of an API token is not enough. The data purpose is `maintenance:<id>`; its token is bound to the link that asked for it and to the exact maintenance ID.
+
+**Identifiers.** A maintenance ID is 32 lowercase hex characters from 128 random bits that the station makes. The unit name is exactly `fleetdeck-maintenance-<id>.service`. The station validates every ID that it reads back from a file. A browser value never becomes a name, a path or an argument.
+
+**Admission (durable, before `systemd-run`).** `maintenance.open {plan_id, request_id, cols, rows}` (`request_id`: 32 lowercase hex characters from the board):
+1. One admission at a time on the station (a mutex). One maintenance run at a time: a run in the state `admitted` or `running` refuses a new request with `maintenance_busy`.
+2. A request ID that is already in a record: the same plan ID gives the existing record (also after the plan expired or the station restarted); another plan ID gives `request_id_conflict`. A recovered result never starts a launch.
+3. `allow_shell` must be on (else `shell_disabled`). The station revalidates the plan (alive, bound to this deck), the root-owned configuration and its hash, and runs the dry run again: a different expected transaction gives `transaction_refused`.
+4. The station writes the spec `<station data>/maintenance/<id>.spec.json` (0600, in the 0700 owner-checked folder `<station data>/maintenance`, written atomically and never changed): version, maintenance ID, request ID, the deck fingerprint, the plan ID, the tool IDs to install, the expected transaction, the configuration hash, the PTY size, two random 32-hex handshake tokens (`station_token`, `runner_token`) and the creation time. The spec is the durable admission record and the launch marker. Only then the station runs `systemd-run`.
+5. The deck binds a plan to one request: a plan moves from "available" to "claimed by this request ID and login". The same request of the same login can ask again and gets the station's answer; another request cannot use the plan.
+
+**Launch.** Exact argv: `/usr/bin/systemd-run --user --collect --quiet --unit=fleetdeck-maintenance-<id> --service-type=exec --property=Restart=no --expand-environment=no -- <own binary> maintenance-run --id <id> --dir <station data>/maintenance`. No `--pty`, `--pipe` or `--scope`. The unit has no dependency on the station unit. The own binary is resolved as for the Omarchy child (`<station data>/bin/current` when it exists, else the current executable). The station waits at most ten seconds for the runner's state `running`; without it, the answer is the record in the state `admitted` and the board shows "Starting…"; recovery decides later.
+
+**Runner** (`fleetdeck maintenance-run`, a hidden subcommand that is dispatched before the normal startup, the logging and the database; its code is the station module `maintenance`):
+- It opens the spec without following links, checks the owner, a regular file, the mode 0600 and at most 16 KiB, the version and the ID, and reads it once. It builds the argv from the compiled package mapping: `/usr/bin/sudo /usr/bin/pacman -S --needed --noconfirm <core/... extra/...>`. There is no generic program interface.
+- It opens a PTY, clears `ECHO` and `ECHONL` before it spawns sudo and before it accepts input, and spawns the child with a fixed environment (`PATH=/usr/bin:/bin`, `TERM=xterm-256color`, `LANG=C.UTF-8`).
+- It serves `<id>.sock` (0600, created inside the private folder; an existing path is never unlinked because a connect failed; a per-run lock file `<id>.lock`). A connection must have the same UID (`SO_PEERCRED`) and must send the `station_token` first; the runner answers with the `runner_token`, and the station checks it before it forwards any input byte. Frames are bounded (64 KiB). One client at a time; a new client replaces the old one. A slow client is cut off and never stalls the PTY drain.
+- It keeps a 256 KiB output ring. A client gets the ring first, then the live output.
+- Input is written to the PTY only while the child runs; the check is repeated right before each write; queued input is discarded at the exit and never replayed. A socket close never closes the PTY or signals the child.
+- At the child's exit: the post-check compares the installed versions of the expected transaction (`/usr/bin/pacman -Q <names>`) with the plan (`ok` or `transaction_changed`); the runner writes the output ring to `<id>.out` (0600) and then the state `<id>.state.json` = `exited {exit_code, post_check}` atomically, and exits.
+- State file: `running` (written after the socket listens and the child started), then `exited`.
+
+**Recovery and states.** `maintenance.list` gives the records (newest first, at most 16; older records are removed with their files) with `state`: `admitted`, `running`, `exited` (with `exit_code` and `post_check`) or `lost`. A recorded `exited` always wins. `lost` only when the state is not `exited`, and `systemctl --user show -p LoadState,ActiveState fleetdeck-maintenance-<id>.service` answers `not-found`, or `inactive` or `failed`, for a unit that the station launched (a spec exists). An unanswered query is not proof: the state stays as it is. The station never stops, kills or restarts a runner unit.
+
+**Attach.** The station relays `maintenance:<id>` to the runner socket (after the handshake): the ring, then live output; data-channel bytes become input frames. For an `exited` or `lost` run, the station sends `<id>.out` (when it exists) and ends; input is refused with `maintenance_ended`.
+
+**Deck audit.** `station.maintenance` rows: `stage=opened` or `stage=refused code=<code>` with the station, the owner login, the request ID, the maintenance ID and the tool IDs; `stage=completed outcome=<exited|lost> code=<exit code or -> post=<ok|transaction_changed|->`, written once for each maintenance ID by a watcher after an accepted open (every 10 s for at most two hours) or by a `maintenance.list` read that passes through the deck (the claim rules of BG-4: in flight and written are different). Accepted residual: after a deck restart, the completion row comes only from a later list read.
+
+**Residuals.** Code that runs as the station user can read the spec and its tokens and can talk to the runner socket (P8-17). The post-check does not see an extra dependency that another repository supplied after a database refresh; the exit code and the post-check of the expected packages are the result.
 
 ## 3. BG-2: installer repair
 
