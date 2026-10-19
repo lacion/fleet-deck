@@ -7,9 +7,10 @@
 //! - [`barrier`]: the board-window barrier of §7.2.
 //! - [`snapshot`] and [`focus`]: the bounded compositor observations.
 //! - [`exec`]: the 20 steps of §7.3.
+//! - [`click`]: the click of P7b §10.2 (`wlrctl pointer click left`).
 //! - [`listed`], [`list`] and [`target`]: the handles of ordinary windows,
 //!   the `window_list` read and the resolution of a target (R13 P7b §6, §7).
-//! - [`watch`]: the interruption of §7.5 while `wtype` runs.
+//! - [`watch`]: the interruption of §7.5 while `wtype` or `wlrctl` runs.
 //!
 //! The text of `type_text` travels only on a private stdin pipe of `wtype`
 //! (argv `-`): never in an argv, an environment variable, a file that Fleet
@@ -21,7 +22,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use fleetdeck_proto::coordinator_desktop_text::{code as p6_code, text_any};
+use fleetdeck_proto::coordinator_desktop_text::{code as p6_code, deadline_ms, text_any};
 use fleetdeck_proto::desktop::{DesktopActResult, DesktopAction};
 
 use super::authority::Admitted;
@@ -30,6 +31,7 @@ use super::{Desktop, Fail, Gate};
 
 pub(crate) mod barrier;
 pub mod claim;
+mod click;
 mod exec;
 pub(crate) mod focus;
 pub(crate) mod grammar;
@@ -52,6 +54,14 @@ pub const FOCUS_MAX_AGE: Duration = Duration::from_millis(100);
 pub const WTYPE_LIMIT: Duration = Duration::from_secs(15);
 /// The pointer dispatch (§10).
 pub const POINTER_LIMIT: Duration = Duration::from_secs(1);
+/// The whole final observation bundle of a click (P7b §10.3).
+pub const CLICK_FINAL_BUNDLE: Duration = Duration::from_millis(deadline_ms::CLICK_FINAL_BUNDLE);
+/// The oldest observation of the bundle at the start of the button process
+/// (P7b §10.3).
+pub const CLICK_OBSERVATION_MAX_AGE: Duration =
+    Duration::from_millis(deadline_ms::CLICK_OBSERVATION_MAX_AGE);
+/// The `wlrctl` click invocation (P7b §11.2).
+pub const CLICK_LIMIT: Duration = Duration::from_millis(deadline_ms::CLICK_LIMIT);
 /// The whole station input handler (§10).
 pub const HANDLER_LIMIT: Duration = Duration::from_secs(30);
 /// The least time between two polls of the active window while `wtype`
@@ -201,6 +211,8 @@ impl Desktop {
 
 #[cfg(test)]
 mod exec_any_tests;
+#[cfg(test)]
+mod exec_click_tests;
 #[cfg(test)]
 mod exec_gate_tests;
 #[cfg(test)]

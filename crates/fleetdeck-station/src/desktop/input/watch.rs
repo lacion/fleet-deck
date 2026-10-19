@@ -9,6 +9,8 @@
 //! a compensating key (no Escape, BackSpace or undo), never retries and never
 //! restores the focus or the pointer.
 
+use std::time::Duration;
+
 use fleetdeck_proto::coordinator_desktop_text::code as p6_code;
 use tokio::time::Instant;
 
@@ -26,8 +28,8 @@ enum Exit {
 }
 
 impl Op<'_> {
-    /// Watches the child until it ends, passes its 15 s limit or a loss is
-    /// seen. `Ok` only for a clean exit.
+    /// Watches the child until it ends, passes its `limit` (15 s for `wtype`,
+    /// 1 s for `wlrctl`) or a loss is seen. `Ok` only for a clean exit.
     ///
     /// # Errors
     /// `input_timeout`, `input_failed`, `input_interrupted`, `focus_changed`
@@ -37,9 +39,10 @@ impl Op<'_> {
         runner: &Runner<'_>,
         child: &mut InputChild,
         covered: &[String],
+        limit: Duration,
     ) -> Result<(), Fail> {
         let exit = {
-            let limit = tokio::time::sleep(self.env.wtype_limit);
+            let limit = tokio::time::sleep(limit);
             tokio::pin!(limit);
             tokio::select! {
                 status = child.wait() => Exit::Done(status),

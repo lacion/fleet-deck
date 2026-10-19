@@ -1,13 +1,17 @@
 //! The fake desktop of the input tests: the P6 fake rig, a fake `hyprctl`
 //! with geometry, an active window, layers and a focus dispatch, a fake
-//! `wtype` that captures its stdin and can stall or change the focus, and a
+//! `wtype` that captures its stdin and can stall or change the focus, a fake
+//! `wlrctl` that logs its argv and can stall, fail or change the focus, and a
 //! timeline file where the fake programs, the fake authority check and the
 //! fake claim all write one marker line in call order.
 //!
 //! The shell fakes read flag files of the rig folder. `on_active.sh` and
 //! `on_focus.sh` are sourced by the fake `hyprctl` at an `activewindow` read
 //! and at a `focuswindow` dispatch: a test writes a snippet there to change
-//! the fake desktop at that exact point.
+//! the fake desktop at that exact point; `on_cursor.sh` and `on_move.sh` do
+//! the same at a `cursorpos` read and at a `movecursor` dispatch. The fake
+//! `movecursor` sets the cursor to its point (the flag `cursor_drift` sets it
+//! elsewhere).
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -44,7 +48,8 @@ fn hyprctl_script(r: &str) -> String {
         "case \"$1\" in -j|instances) {{ echo \"== hyprctl\"; for a in \"$@\"; do echo \"$a\"; done; }} >> {r}/reads.log;; \
          *) {{ echo \"== hyprctl\"; for a in \"$@\"; do echo \"$a\"; done; }} >> {r}/calls.log;; esac\n\
          case \"$*\" in\n\
-         \"instances -j\") /bin/cat {r}/instances.json;;\n\
+         \"instances -j\") if [ -f {r}/instances_later.json ] && [ -f {r}/instances.seen ]; then /bin/cat {r}/instances_later.json; \
+         else : > {r}/instances.seen; /bin/cat {r}/instances.json; fi;;\n\
          \"-j monitors\") /bin/cat {r}/monitors.json;;\n\
          \"-j clients\") /bin/cat {r}/clients.json;;\n\
          \"-j layers\") /bin/cat {r}/layers.json;;\n\
@@ -52,6 +57,12 @@ fn hyprctl_script(r: &str) -> String {
          [ -f {r}/on_active.sh ] && . {r}/on_active.sh; \
          [ -f {r}/active_fail ] && exit 1; [ -f {r}/active_garbage ] && {{ echo 'not json'; exit 0; }}; \
          [ -f {r}/active_stall ] && /bin/sleep 5; /bin/cat {r}/active.json;;\n\
+         \"-j cursorpos\") [ -f {r}/on_cursor.sh ] && . {r}/on_cursor.sh; \
+         [ -f {r}/cursor_fail ] && exit 1; [ -f {r}/cursor_garbage ] && {{ echo 'not json'; exit 0; }}; \
+         [ -f {r}/cursor_stall ] && /bin/sleep 5; /bin/cat {r}/cursor.json;;\n\
+         \"dispatch movecursor \"*) [ -f {r}/on_move.sh ] && . {r}/on_move.sh; \
+         if [ -f {r}/cursor_drift ]; then printf '{{\"x\": %s, \"y\": %s}}' 1 1 > {r}/cursor.json; \
+         else printf '{{\"x\": %s, \"y\": %s}}' \"$3\" \"$4\" > {r}/cursor.json; fi; echo ok;;\n\
          \"dispatch closewindow address:\"*) echo \"${{3#address:}}\" >> {r}/close.req; echo ok;;\n\
          \"dispatch focuswindow address:\"*) [ -f {r}/on_focus.sh ] && . {r}/on_focus.sh; \
          [ -f {r}/focus_fail ] && exit 1; echo ok;;\n\
@@ -74,6 +85,20 @@ fn wtype_script(r: &str) -> String {
          [ -f {r}/wtype_breaks_active ] && : > {r}/active_fail\n\
          if [ -f {r}/wtype_stall ]; then /bin/sleep 30 & echo $! > {r}/wtype.child; echo $$ > {r}/wtype.pid; wait; fi\n\
          [ -f {r}/wtype_fail ] && exit 3\n\
+         exit 0"
+    )
+}
+
+/// The fake `wlrctl`: logs its argv and obeys the flag files
+/// `wlrctl_changes_focus` (it copies `after_wlrctl.json` over the active
+/// window), `wlrctl_stall` (it hangs with a child; the pids are recorded) and
+/// `wlrctl_fail`.
+fn wlrctl_script(r: &str) -> String {
+    format!(
+        "{{ echo \"== wlrctl\"; for a in \"$@\"; do echo \"$a\"; done; }} >> {r}/calls.log\n\
+         [ -f {r}/wlrctl_changes_focus ] && /bin/cp {r}/after_wlrctl.json {r}/active.json\n\
+         if [ -f {r}/wlrctl_stall ]; then /bin/sleep 30 & echo $! > {r}/wlrctl.child; echo $$ > {r}/wlrctl.pid; wait; fi\n\
+         [ -f {r}/wlrctl_fail ] && exit 3\n\
          exit 0"
     )
 }
@@ -213,6 +238,7 @@ impl Fx {
         let bin = root.join("bin");
         write_script(&bin, "hyprctl", &hyprctl_script(&r));
         write_script(&bin, "wtype", &wtype_script(&r));
+        write_script(&bin, "wlrctl", &wlrctl_script(&r));
         // The preview opens through the P6 path.
         let h = Harness::new();
         let action = A::BrowserOpen {
@@ -251,6 +277,8 @@ impl Fx {
         fx.set_clients(&[fx.preview_client(), other_client()]);
         fx.set_active(&fx.preview_active(WINDOW_TITLE));
         fx.write("after_wtype.json", &foreign_active());
+        fx.write("after_wlrctl.json", &foreign_active());
+        fx.write("cursor.json", &json!({"x": 0, "y": 0}));
         fx.clear_logs();
         fx
     }
@@ -446,6 +474,43 @@ impl Fx {
             x,
             y,
         }
+    }
+
+    /// A click in the preview of the caller.
+    pub(super) fn click(&self, x: u32, y: u32) -> A {
+        A::InputPointerClick {
+            window_id: self.window_id.clone(),
+            x,
+            y,
+        }
+    }
+
+    /// A click under the broader scope, in the window of `window_id`.
+    pub(super) fn click_any(&self, window_id: &str, x: u32, y: u32) -> A {
+        A::InputAnyPointerClick {
+            window_id: window_id.to_owned(),
+            x,
+            y,
+        }
+    }
+
+    /// Makes `hyprctl instances -j` answer these `(instance, wl_socket)`
+    /// entries from its next call on but one: the detection of the desktop
+    /// at the start of the call still sees the entries of the rig.
+    pub(super) fn set_instances_later(&self, entries: &[(&str, &str)]) {
+        let list: Vec<Value> = entries
+            .iter()
+            .map(|(instance, socket)| {
+                json!({"instance": instance, "time": 1, "pid": 1, "wl_socket": socket})
+            })
+            .collect();
+        self.instances_later_text(&Value::Array(list).to_string());
+    }
+
+    /// As [`Fx::set_instances_later`], with the raw text of the answer.
+    pub(super) fn instances_later_text(&self, body: &str) {
+        self.write_text("instances_later.json", body);
+        let _ = std::fs::remove_file(self.root().join("instances.seen"));
     }
 
     // ---------------------------------------------- ordinary windows (P7b)
