@@ -281,9 +281,11 @@ impl Run<'_> {
     /// Step 3, with a retry authorization: the authorization must be for the
     /// exact terminal condition that the state keeps now. One atomic write
     /// of the state clears the error and records the `retry_id`. A mismatch
-    /// or an unusable authorization changes nothing (`report_changed`).
+    /// or an unusable authorization changes nothing (`report_changed`), and
+    /// the refused file is deleted. A stop of the state load or save keeps
+    /// the file.
     fn authorize(&mut self, path: &Path, input: &Input) -> Result<(), Stop> {
-        let changed = || Stop::RetryRefused("report_changed");
+        let changed = || self.refuse(path, "report_changed");
         let bytes = self
             .effects
             .read_authorization(path)
@@ -309,7 +311,7 @@ impl Run<'_> {
             return Err(changed());
         }
         if state.consumed_retry_id.as_deref() == Some(auth.retry_id.as_str()) {
-            return Err(Stop::RetryRefused("retry_replayed"));
+            return Err(self.refuse(path, "retry_replayed"));
         }
         state.error = None;
         state.consumed_retry_id = Some(auth.retry_id);
@@ -319,6 +321,15 @@ impl Run<'_> {
             self.line("retry", "authorization_not_removed");
         }
         Ok(())
+    }
+
+    /// A definite refusal of an authorization: the file is deleted (a failure
+    /// is a diagnostic line) and the refusal stays the same.
+    fn refuse(&self, path: &Path, code: &'static str) -> Stop {
+        if self.effects.delete_authorization(path).is_err() {
+            self.line("retry", "authorization_not_removed");
+        }
+        Stop::RetryRefused(code)
     }
 
     /// Step 2: reads and validates the provisioning file.

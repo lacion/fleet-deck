@@ -4,6 +4,10 @@
 //! deck and, when the owner allowed one retry on the board, runs the
 //! bootstrap once with the retry authorization.
 //!
+//! The bootstrap deletes the authorization after its consumption or a
+//! refusal; a run that stops before the check keeps it for the next run. The
+//! supervisor never deletes it.
+//!
 //! The supervisor holds only its own lock. It never takes `provision.lock`
 //! (the bootstrap takes it), never creates an identity, never changes the
 //! provisioning file and never weakens a check of the bootstrap. A failure
@@ -64,7 +68,9 @@ fn jittered(effects: &dyn Effects, wait: Duration) -> Duration {
 }
 
 /// Runs the bootstrap in a loop until it is complete, fails unexpectedly, or
-/// another supervisor holds the lock (exit 0 at once).
+/// another supervisor holds the lock (exit 0 at once). The bootstrap deletes
+/// the authorization after its consumption or a refusal; a run that stops
+/// before the check keeps it for the next run.
 pub async fn supervise(effects: &dyn Effects, file: &Path) -> Exit {
     if effects.ensure_station_dir().is_err() {
         line(effects, "supervise", "unexpected_error");
@@ -99,9 +105,10 @@ pub async fn supervise(effects: &dyn Effects, file: &Path) -> Exit {
                 continue;
             }
             Exit::Complete | Exit::Terminal => {
-                if let Some(path) = &path {
-                    remove_authorization(effects, path);
-                }
+                // The bootstrap deletes the authorization after its
+                // consumption or a refusal; a run that stops before the
+                // check keeps it for the next run.
+                authorization = path.filter(|p| effects.read_authorization(p).is_ok());
             }
         }
         if exit == Exit::Complete {
@@ -111,14 +118,6 @@ pub async fn supervise(effects: &dyn Effects, file: &Path) -> Exit {
             Next::Wait(wait) => effects.sleep(wait).await,
             Next::Retry(path) => authorization = Some(path),
         }
-    }
-}
-
-/// Removes an authorization file that a finished run left (a refused or a
-/// replayed one). A failure is a diagnostic line.
-fn remove_authorization(effects: &dyn Effects, path: &Path) {
-    if effects.read_authorization(path).is_ok() && effects.delete_authorization(path).is_err() {
-        line(effects, "retry", "authorization_not_removed");
     }
 }
 

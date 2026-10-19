@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use super::binding::{self, Authorization, Binding};
 use super::effects::{Effects, ServiceState};
-use super::fake::{DECK_FP, Fake, JoinStep, file_text, go, go_authorized};
+use super::fake::{DECK_FP, Fake, JoinStep, file_text, go, go_authorized, write_state};
 use super::run::Exit;
 use super::sha256_hex;
 use super::state::{self, Phase};
@@ -127,7 +127,7 @@ async fn a_condition_that_changed_before_the_lock_is_report_changed() {
     assert_eq!(go_authorized(&fake, &path).await, Exit::Terminal);
     assert_eq!(last_line(&fake), "provision: retry: report_changed");
     assert_eq!(state_bytes(&fake), before);
-    assert!(path.exists());
+    assert!(!path.exists());
     assert_eq!(fake.count("join"), 1);
 }
 
@@ -147,6 +147,7 @@ async fn a_replayed_retry_id_is_refused() {
     assert_eq!(last_line(&fake), "provision: retry: retry_replayed");
     assert_eq!(state_bytes(&fake), before);
     assert_eq!(fake.count("join"), 2);
+    assert!(!path.exists());
     // Another retry id for the same condition is a new permission.
     let path = authorize(&fake, &hex("ab", 16), &again);
     fake.set_join(&[JoinStep::Paired]);
@@ -232,6 +233,7 @@ async fn refused(fake: &Fake, path: &std::path::Path, what: &str) {
         "{what}"
     );
     assert_eq!(std::fs::read(fake.state_file()).ok(), before, "{what}");
+    assert!(!path.exists(), "{what}");
 }
 
 #[tokio::test]
@@ -264,15 +266,16 @@ async fn every_unusable_authorization_is_report_changed_and_changes_nothing() {
     for (what, bytes, mode) in cases {
         write_raw(&path, &bytes, mode);
         refused(&fake, &path, what).await;
-        std::fs::remove_file(&path).unwrap();
     }
     // The stored binding is unusable.
     let stored = binding::binding_path(&fake.station_dir());
     write_raw(&path, good.as_bytes(), 0o600);
     std::fs::set_permissions(&stored, std::fs::Permissions::from_mode(0o644)).unwrap();
     refused(&fake, &path, "binding not private").await;
+    write_raw(&path, good.as_bytes(), 0o600);
     write_raw(&stored, b"{}", 0o600);
     refused(&fake, &path, "binding invalid").await;
+    write_raw(&path, good.as_bytes(), 0o600);
     std::fs::remove_file(&stored).unwrap();
     refused(&fake, &path, "binding missing").await;
     assert_eq!(fake.count("join"), 1);
@@ -345,7 +348,49 @@ async fn an_authorization_of_the_file_before_a_change_is_report_changed() {
     assert_eq!(fake.state().unwrap().consumed_retry_id, None);
     assert_eq!(fake.state().unwrap().error.as_deref(), Some("pending"));
     assert_eq!(fake.count("join"), 1);
-    assert!(path.exists());
+    assert!(!path.exists());
     // The binding of the new file is another one.
     assert_ne!(bind(&fake), bound);
+}
+
+#[tokio::test]
+async fn a_stale_and_a_replayed_authorization_are_deleted_by_the_bootstrap() {
+    let fake = Fake::new();
+    let bound = stopped(&fake, &[JoinStep::Code("pending")]).await;
+    // A stale one: the stored binding is of another condition.
+    let stale = binding::ensure(&fake.trust_root(), &fake.station_dir(), &hex("44", 32)).unwrap();
+    let path = authorize(&fake, RETRY, &stale);
+    assert_eq!(go_authorized(&fake, &path).await, Exit::Terminal);
+    assert_eq!(last_line(&fake), "provision: retry: report_changed");
+    assert!(!path.exists());
+    assert_eq!(fake.count("join"), 1);
+    // A replayed one: the first use stops with the same condition again.
+    let bound = binding::ensure(&fake.trust_root(), &fake.station_dir(), &bound.state_digest);
+    let bound = bound.unwrap();
+    let path = authorize(&fake, RETRY, &bound);
+    assert_eq!(go_authorized(&fake, &path).await, Exit::Terminal);
+    assert_eq!(fake.count("join"), 2);
+    assert!(!path.exists());
+    let path = authorize(&fake, RETRY, &bind(&fake));
+    assert_eq!(go_authorized(&fake, &path).await, Exit::Terminal);
+    assert_eq!(last_line(&fake), "provision: retry: retry_replayed");
+    assert!(!path.exists());
+    assert_eq!(fake.count("join"), 2);
+}
+
+#[tokio::test]
+async fn a_state_that_cannot_be_loaded_keeps_the_authorization() {
+    let fake = Fake::new();
+    let bound = stopped(&fake, &[JoinStep::Paired]).await;
+    let path = authorize(&fake, RETRY, &bound);
+    write_state(&fake, b"junk", 0o600);
+    assert_eq!(go_authorized(&fake, &path).await, Exit::Unexpected);
+    assert!(path.exists());
+    assert!(fake.lines().iter().any(|l| l.ends_with("state_invalid")));
+    assert!(
+        !fake
+            .lines()
+            .contains(&"provision: retry: report_changed".to_owned())
+    );
+    assert!(fake.authorization_deleted.lock().unwrap().is_empty());
 }
