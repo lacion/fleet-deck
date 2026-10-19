@@ -127,11 +127,12 @@ async fn fetch(
     let value = coordinator_read(link, auth, ProtectedRead::InputWindows, ms)
         .await
         .map_err(|c| (c, Stage::Failed))?;
-    let list: InputWindowList =
+    let mut list: InputWindowList =
         serde_json::from_value(value).map_err(|_| (code::DESKTOP_FAILED, Stage::Failed))?;
-    if list.station != auth.target().as_str() {
-        return Err((code::DESKTOP_FAILED, Stage::Failed));
-    }
+    // The station names itself by its readable name; the caller addresses
+    // stations by their ID, as `desktop_info` answers (`shape_info`). The
+    // read went to this target over its own link, so the deck sets the ID.
+    list.station = auth.target().to_string();
     list.validate().map_err(|e| (e.code(), Stage::Failed))?;
     // The final authority check before the list goes to the caller.
     input_delivery_pass(link, ctx, auth.target(), Tool::WindowList)
