@@ -24,7 +24,7 @@ use super::admission::{Attempt, FlowLimiter, PeerAddr, busy, request_source, too
 use super::guard::{ApiError, COOKIE, DISPLAY_COOKIE, owner_only};
 use crate::board_fence;
 use crate::local_auth::login_url;
-use crate::store::auth::{LOGIN_LINK_TTL_MS, SESSION_MAX_MS};
+use crate::store::auth::LOGIN_LINK_TTL_MS;
 use crate::store::{
     AuditResult, DeckError, LoginMethod, NewAudit, NewLogin, Principal, ShareGrant, ShareScope,
 };
@@ -118,7 +118,13 @@ pub(super) fn named_cookie(name: &str, value: &str, max_age_s: i64) -> HeaderVal
         .unwrap_or_else(|_| HeaderValue::from_static("fd_display=; Max-Age=0"))
 }
 
-fn logged_in(login: &NewLogin) -> Response {
+/// The seconds that a stored `expires_at` has left at `now`: the `Max-Age` of
+/// a session cookie. It is never negative.
+pub(super) fn remaining_s(expires_at: i64, now: i64) -> i64 {
+    (expires_at - now).max(0) / 1000
+}
+
+fn logged_in(login: &NewLogin, now: i64) -> Response {
     let view = SessionView {
         actor: "owner".to_owned(),
         scopes: crate::store::auth::OWNER_SCOPES.to_vec(),
@@ -132,7 +138,7 @@ fn logged_in(login: &NewLogin) -> Response {
     let mut res = Json(view).into_response();
     res.headers_mut().insert(
         header::SET_COOKIE,
-        set_cookie(login.cookie.expose(), SESSION_MAX_MS / 1000),
+        set_cookie(login.cookie.expose(), remaining_s(login.expires_at, now)),
     );
     res
 }
@@ -163,7 +169,7 @@ async fn login(
                         .store
                         .audit_or_log(NewAudit::new("owner", action, AuditResult::Ok))
                         .await;
-                    logged_in(&login)
+                    logged_in(&login, now)
                 }
                 // An input began while the sign-in ran: no session, no cookie
                 // (§7.6 rule 2).
@@ -627,7 +633,11 @@ pub async fn elevate(
     attempt.succeeded();
     let (token, expires_at) = board
         .elevations
-        .issue(&session.session_hash, now)
+        .issue(
+            &session.session_hash,
+            now,
+            board.live.get().knobs.elevation_ms,
+        )
         .map_err(ApiError::internal)?;
     board
         .store

@@ -13,8 +13,8 @@ use std::time::Duration;
 
 use displays_support::*;
 use fleetdeck_deck::http::methods;
+use fleetdeck_deck::knobs::DeckKnobs;
 use fleetdeck_deck::store::AuditResult;
-use fleetdeck_deck::store::displays::DISPLAY_MAX_MS;
 use serde_json::{Value, json};
 use share_support::*;
 
@@ -121,7 +121,10 @@ async fn the_whole_pairing_flow_gives_a_read_only_display_login() {
     assert!(display.starts_with("fd_display=fdisp1_"), "{display}");
     let set = set_cookies(&r).join("|");
     assert!(
-        set.contains(&format!("Max-Age={}", DISPLAY_MAX_MS / 1000)),
+        set.contains(&format!(
+            "Max-Age={}",
+            DeckKnobs::default().display_max_ms / 1000
+        )),
         "{set}"
     );
     assert!(

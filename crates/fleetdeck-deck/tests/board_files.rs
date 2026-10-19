@@ -144,7 +144,9 @@ async fn the_file_routes_browse_read_and_search_through_the_link() {
     std::fs::create_dir_all(tmp.path().join("d")).unwrap();
     let (node, board) = deck(&tmp.path().join("d"), BoardAssets::None).await;
     let st = station(&tmp.path().join("s"), root.clone()).await;
-    let invitation = node.invite().unwrap();
+    let invitation = node
+        .invite(fleetdeck_deck::knobs::DeckKnobs::default().invite)
+        .unwrap();
     st.join(&invitation).await.unwrap();
     let (cookie, _) = board.login().await;
     let h = vec![("Cookie".to_owned(), cookie)];

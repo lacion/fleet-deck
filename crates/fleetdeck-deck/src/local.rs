@@ -297,7 +297,14 @@ async fn handle(deck: &LocalDeck, request: DeckRequest) -> DeckResponse {
                 Err(e) => error(e.to_string()),
             }
         }
-        DeckRequest::Invite => match audited(node, "station.invite", "", node.invite()).await {
+        DeckRequest::Invite => match audited(
+            node,
+            "station.invite",
+            "",
+            node.invite(store.knobs().invite),
+        )
+        .await
+        {
             Ok(text) => DeckResponse::Invitation {
                 invitation: InvitationText(text.expose().clone()),
             },

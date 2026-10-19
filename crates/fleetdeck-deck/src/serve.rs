@@ -227,6 +227,7 @@ impl RunningDeck {
         let config = &config;
         store.set_conflict_mail(config.conflict_mail);
         store.set_fleet_control(config.fleet_control);
+        store.set_knobs(crate::knobs::DeckKnobs::of(config));
         let socket = local::socket_path(&deck_dir);
         let listener = local::bind(&socket).await?;
         let identity = Arc::new(Identity::load_or_create(&deck_dir)?);
@@ -464,7 +465,7 @@ impl RunningDeck {
                 Arc::clone(&link.radar_state),
                 Arc::clone(&link.radar_kick),
                 rx.clone(),
-                crate::fleet_git_radar::RadarOptions::PRODUCTION,
+                crate::knobs::radar_options(config),
             )),
         ];
         // The move task: the steps of each session move (FG-9).

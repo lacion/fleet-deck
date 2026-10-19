@@ -369,7 +369,7 @@ pub enum TokenCommand {
         /// A scope of the token: read, drive, approve or admin (repeat).
         #[arg(long = "scope", required = true)]
         scopes: Vec<String>,
-        /// Lifetime in days (at most 90).
+        /// Lifetime in days (at most the deck's longest API token, 90 days by default).
         #[arg(long, default_value_t = 30)]
         days: u32,
     },

@@ -66,8 +66,8 @@ pub async fn invite(dirs: &NodeDirs) -> anyhow::Result<()> {
         bail!("unexpected answer from the deck");
     };
     eprintln!(
-        "single-use invitation, valid for 15 minutes; give it to \
-         `fleetdeck station join` on the station:"
+        "single-use invitation, valid for the deck's invitation time (15 minutes by default); \
+         give it to `fleetdeck station join` on the station:"
     );
     println!("{}", invitation.0);
     Ok(())

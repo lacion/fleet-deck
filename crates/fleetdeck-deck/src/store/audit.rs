@@ -8,12 +8,6 @@ use serde::{Deserialize, Serialize};
 
 use super::{DeckStore, Result, call};
 
-/// How long an audit row stays (NV-11).
-pub const AUDIT_RETENTION_MS: i64 = 90 * 24 * 60 * 60 * 1000;
-
-/// The most audit rows that stay (NV-11). The newest rows win.
-pub const AUDIT_MAX_ROWS: i64 = 200_000;
-
 /// The outcome of an audited action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -166,14 +160,15 @@ impl DeckStore {
         .await
     }
 
-    /// Removes the audit rows older than [`AUDIT_RETENTION_MS`], then the
-    /// oldest rows above [`AUDIT_MAX_ROWS`], in one transaction. Returns the
-    /// number of removed rows (NV-11).
+    /// Removes the audit rows older than the deck's `retention.audit_days`,
+    /// then the oldest rows above `retention.audit_max_rows`, in one
+    /// transaction. Returns the number of removed rows (NV-11).
     ///
     /// # Errors
     /// A database error.
     pub async fn prune_audit(&self) -> Result<usize> {
-        self.prune_audit_with(AUDIT_RETENTION_MS, AUDIT_MAX_ROWS)
+        let knobs = self.knobs();
+        self.prune_audit_with(knobs.audit_retention_ms, knobs.audit_max_rows)
             .await
     }
 
@@ -203,6 +198,7 @@ mod tests {
     use fleetdeck_testkit::Det;
 
     use super::*;
+    use crate::knobs::DeckKnobs;
 
     const DAY: Duration = Duration::from_secs(24 * 60 * 60);
 
@@ -241,12 +237,22 @@ mod tests {
         let det = Det::new();
         let s = store(&det).await;
         add(&s, 12).await;
-        assert_eq!(s.prune_audit_with(AUDIT_RETENTION_MS, 5).await.unwrap(), 7);
+        assert_eq!(
+            s.prune_audit_with(DeckKnobs::default().audit_retention_ms, 5)
+                .await
+                .unwrap(),
+            7
+        );
         let rows = s.audit_log(100).await.unwrap();
         let actions: Vec<_> = rows.iter().map(|r| r.action.as_str()).collect();
         assert_eq!(actions, ["a11", "a10", "a9", "a8", "a7"]);
         // At the cap nothing goes.
-        assert_eq!(s.prune_audit_with(AUDIT_RETENTION_MS, 5).await.unwrap(), 0);
+        assert_eq!(
+            s.prune_audit_with(DeckKnobs::default().audit_retention_ms, 5)
+                .await
+                .unwrap(),
+            0
+        );
     }
 
     #[tokio::test]
@@ -256,7 +262,12 @@ mod tests {
         add(&s, 4).await;
         det.advance(91 * DAY);
         add(&s, 6).await;
-        assert_eq!(s.prune_audit_with(AUDIT_RETENTION_MS, 3).await.unwrap(), 7);
+        assert_eq!(
+            s.prune_audit_with(DeckKnobs::default().audit_retention_ms, 3)
+                .await
+                .unwrap(),
+            7
+        );
         assert_eq!(s.audit_log(100).await.unwrap().len(), 3);
     }
 }

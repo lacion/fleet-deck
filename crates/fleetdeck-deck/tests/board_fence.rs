@@ -481,7 +481,13 @@ async fn a_shell_relay_ends_on_a_revoke_and_forwards_no_byte_after_it() {
     .unwrap();
     let c = board_with_node(Arc::clone(&node)).await;
     let st = station(&tmp.path().join("s"), root.clone()).await;
-    st.join(&node.invite().unwrap()).await.unwrap();
+    st.join(
+        &node
+            .invite(fleetdeck_deck::knobs::DeckKnobs::default().invite)
+            .unwrap(),
+    )
+    .await
+    .unwrap();
     let (cookie, csrf) = c.login().await;
     let write = [("Cookie", cookie.as_str()), ("X-CSRF-Token", csrf.as_str())];
     let deadline = tokio::time::Instant::now() + T;

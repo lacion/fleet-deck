@@ -29,15 +29,13 @@ use serde_json::json;
 use super::Board;
 use super::account_routes::body_error;
 use super::admission::{PeerAddr, request_source, too_many_requests};
-use super::auth_routes::{Audit, limit_refusal, named_cookie, start_attempt};
+use super::auth_routes::{Audit, limit_refusal, named_cookie, remaining_s, start_attempt};
 use super::display_bodies::{BindingBody, parse_pair_body};
 use super::guard::{ApiError, DISPLAY_COOKIE, PENDING_COOKIE, cookie, owner_only};
 use super::settings_routes::{is_elevated, owner};
 use crate::board_fence;
 use crate::store::auth::LoginSession;
-use crate::store::displays::{
-    DISPLAY_MAX_MS, DisplayChange, NewDisplay, check_quiet_hours, clean_name,
-};
+use crate::store::displays::{DisplayChange, NewDisplay, check_quiet_hours, clean_name};
 use crate::store::displays_binding::{BindError, check_monitor};
 use crate::store::displays_pairing::{Approval, Claim};
 use crate::store::{AuditResult, DeckError, NewAudit, Principal};
@@ -272,7 +270,11 @@ async fn pair_poll(
             let h = res.headers_mut();
             h.append(
                 header::SET_COOKIE,
-                named_cookie(DISPLAY_COOKIE, cookie_value.expose(), DISPLAY_MAX_MS / 1000),
+                named_cookie(
+                    DISPLAY_COOKIE,
+                    cookie_value.expose(),
+                    remaining_s(issued.expires_at, board.store.now_ms()),
+                ),
             );
             h.append(header::SET_COOKIE, named_cookie(PENDING_COOKIE, "", 0));
             res
@@ -546,7 +548,7 @@ async fn redeem_link(
         named_cookie(
             DISPLAY_COOKIE,
             issued.cookie.expose(),
-            DISPLAY_MAX_MS / 1000,
+            remaining_s(issued.expires_at, board.store.now_ms()),
         ),
     );
     res

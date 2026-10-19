@@ -215,7 +215,13 @@ async fn the_owner_manages_projects_reads_prs_and_writes_with_a_confirm() {
     let gh = fake_gh(tmp.path());
     let (node, board) = deck(&tmp.path().join("d")).await;
     let st = station(&tmp.path().join("s"), root.clone(), gh).await;
-    st.join(&node.invite().unwrap()).await.unwrap();
+    st.join(
+        &node
+            .invite(fleetdeck_deck::knobs::DeckKnobs::default().invite)
+            .unwrap(),
+    )
+    .await
+    .unwrap();
     let (cookie, csrf) = board.login().await;
     let h = [("Cookie", cookie.as_str()), ("X-CSRF-Token", csrf.as_str())];
     let path = root.join("app");

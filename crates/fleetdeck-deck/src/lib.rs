@@ -21,6 +21,7 @@ pub mod fleet_git_move_send;
 pub mod fleet_git_radar;
 pub mod fleet_summary;
 pub mod http;
+pub mod knobs;
 pub mod link;
 pub mod live;
 pub mod local;

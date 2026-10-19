@@ -42,9 +42,6 @@ use crate::store::{DeckError, DeckStore, Direction, StationRecord};
 /// How often the command router expires and resends commands (G3).
 pub const ROUTER_TICK: Duration = Duration::from_secs(1);
 
-/// How long an invitation of `deck invite` is valid (PLAN §8.5).
-pub const INVITE_TTL: Duration = Duration::from_secs(15 * 60);
-
 /// The scopes that a paired station gets on the deck (DL-050): `admin`
 /// for `link.rotate_key`. `coordinate` (coordinator agents, G7) is granted
 /// per station later.
@@ -342,12 +339,17 @@ impl DeckNode {
         Ok(created)
     }
 
-    pub fn invite(&self) -> Result<Secret<String>, NodeError> {
+    /// A new invitation that is valid for `ttl` (PLAN §8.5; the deck's
+    /// `security.invite_minutes`).
+    ///
+    /// # Errors
+    /// [`NodeError::NoListener`] without a link listener.
+    pub fn invite(&self, ttl: Duration) -> Result<Secret<String>, NodeError> {
         let addr = *self.listening.first().ok_or(NodeError::NoListener)?;
         let invitation = self.invitations.create(
             addr,
             self.ctx.node.identity.fingerprint(),
-            INVITE_TTL,
+            ttl,
             STATION_SCOPES,
         )?;
         Ok(invitation.reveal())

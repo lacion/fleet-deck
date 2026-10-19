@@ -207,8 +207,9 @@ async fn a_delayed_redemption_cannot_issue_a_session_after_a_replacement() {
         let d = d.clone();
         move |conn| {
             let tx = conn.transaction()?;
-            let late = super::displays_auth::issue_fenced(&tx, &d, 0, 5)?;
-            let now = super::displays_auth::issue_fenced(&tx, &d, 1, 5)?;
+            let knobs = crate::knobs::DeckKnobs::default();
+            let late = super::displays_auth::issue_fenced(&tx, &d, 0, 5, &knobs)?;
+            let now = super::displays_auth::issue_fenced(&tx, &d, 1, 5, &knobs)?;
             tx.commit()?;
             Ok((late.is_some(), now.is_some()))
         }

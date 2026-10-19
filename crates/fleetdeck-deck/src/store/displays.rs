@@ -20,10 +20,6 @@ use super::auth::{random_token, secret_hash};
 use super::display_directive_schema::invalidate_directive;
 use super::{DeckError, DeckStore, Result, call};
 
-/// A display session ends after 30 idle days.
-pub const DISPLAY_IDLE_MS: i64 = 30 * 24 * 60 * 60 * 1000;
-/// A display session ends 90 days after it started, however often it is used.
-pub const DISPLAY_MAX_MS: i64 = 90 * 24 * 60 * 60 * 1000;
 /// A display link is valid for 5 minutes and one use.
 pub const DISPLAY_LINK_TTL_MS: i64 = 5 * 60 * 1000;
 /// The longest display name, in characters.
@@ -294,7 +290,12 @@ pub(super) fn insert(
 /// A display session is alive: not expired, not idle, and its display is not
 /// revoked. A use refreshes `last_seen` of the session and of the display;
 /// `expires_at` never moves.
-fn touch_session(conn: &Connection, session_hash: &str, now: i64) -> Result<Option<String>> {
+fn touch_session(
+    conn: &Connection,
+    session_hash: &str,
+    now: i64,
+    idle_ms: i64,
+) -> Result<Option<String>> {
     let id: Option<String> = conn
         .query_row(
             "UPDATE display_sessions SET last_seen = ?2
@@ -303,7 +304,7 @@ fn touch_session(conn: &Connection, session_hash: &str, now: i64) -> Result<Opti
                AND auth_generation = (SELECT auth_generation FROM displays
                                       WHERE displays.display_id = display_sessions.display_id)
              RETURNING display_id",
-            params![session_hash, now, now - DISPLAY_IDLE_MS],
+            params![session_hash, now, now - idle_ms],
             |r| r.get(0),
         )
         .optional()?;
@@ -316,8 +317,13 @@ fn touch_session(conn: &Connection, session_hash: &str, now: i64) -> Result<Opti
     Ok(id)
 }
 
-fn login_of(conn: &Connection, session_hash: &str, now: i64) -> Result<Option<DisplayLogin>> {
-    let Some(id) = touch_session(conn, session_hash, now)? else {
+fn login_of(
+    conn: &Connection,
+    session_hash: &str,
+    now: i64,
+    idle_ms: i64,
+) -> Result<Option<DisplayLogin>> {
+    let Some(id) = touch_session(conn, session_hash, now, idle_ms)? else {
         return Ok(None);
     };
     Ok(load(conn, &id)?.map(|d| DisplayLogin {
@@ -329,8 +335,13 @@ fn login_of(conn: &Connection, session_hash: &str, now: i64) -> Result<Option<Di
 }
 
 /// True while the display session and its display are valid (a refresh).
-pub(super) fn session_alive(conn: &Connection, session_hash: &str, now: i64) -> Result<bool> {
-    Ok(touch_session(conn, session_hash, now)?.is_some())
+pub(super) fn session_alive(
+    conn: &Connection,
+    session_hash: &str,
+    now: i64,
+    idle_ms: i64,
+) -> Result<bool> {
+    Ok(touch_session(conn, session_hash, now, idle_ms)?.is_some())
 }
 
 impl DeckStore {
@@ -522,7 +533,11 @@ impl DeckStore {
     pub async fn display_session(&self, cookie: &Secret<String>) -> Result<Option<DisplayLogin>> {
         let hash = secret_hash(cookie.expose());
         let now = self.now_ms();
-        call(&self.inner.db, move |conn| login_of(conn, &hash, now)).await
+        let idle_ms = self.knobs().display_idle_ms;
+        call(&self.inner.db, move |conn| {
+            login_of(conn, &hash, now, idle_ms)
+        })
+        .await
     }
 
     /// The login again, with the ceiling as it is now. `None` when the
@@ -533,7 +548,11 @@ impl DeckStore {
     pub async fn display_refresh(&self, login: &DisplayLogin) -> Result<Option<DisplayLogin>> {
         let hash = login.session_hash.clone();
         let now = self.now_ms();
-        call(&self.inner.db, move |conn| login_of(conn, &hash, now)).await
+        let idle_ms = self.knobs().display_idle_ms;
+        call(&self.inner.db, move |conn| {
+            login_of(conn, &hash, now, idle_ms)
+        })
+        .await
     }
 
     /// True while the display session is alive (not expired, not idle, the
@@ -544,8 +563,9 @@ impl DeckStore {
     /// A database error.
     pub async fn display_session_alive(&self, session_hash: String) -> Result<bool> {
         let now = self.now_ms();
+        let idle_ms = self.knobs().display_idle_ms;
         call(&self.inner.db, move |conn| {
-            session_alive(conn, &session_hash, now)
+            session_alive(conn, &session_hash, now, idle_ms)
         })
         .await
     }

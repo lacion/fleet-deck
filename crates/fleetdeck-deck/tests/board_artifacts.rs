@@ -148,7 +148,13 @@ async fn an_artifact_is_published_served_under_the_sandbox_and_shared_while_the_
     std::fs::write(work.join("img/a.png"), b"PNGDATA").unwrap();
     let (node, board) = deck(&tmp.path().join("d")).await;
     let st = station(&tmp.path().join("s"), root.clone(), &work).await;
-    st.join(&node.invite().unwrap()).await.unwrap();
+    st.join(
+        &node
+            .invite(fleetdeck_deck::knobs::DeckKnobs::default().invite)
+            .unwrap(),
+    )
+    .await
+    .unwrap();
     let (cookie, csrf) = board.login().await;
     let h = [("Cookie", cookie.as_str()), ("X-CSRF-Token", csrf.as_str())];
 
@@ -429,7 +435,13 @@ async fn a_publish_outside_the_workspace_and_without_a_station_is_refused() {
     std::fs::write(tmp.path().join("outside.html"), "x").unwrap();
     let (node, board) = deck(&tmp.path().join("d")).await;
     let st = station(&tmp.path().join("s"), root, &work).await;
-    st.join(&node.invite().unwrap()).await.unwrap();
+    st.join(
+        &node
+            .invite(fleetdeck_deck::knobs::DeckKnobs::default().invite)
+            .unwrap(),
+    )
+    .await
+    .unwrap();
     let (cookie, csrf) = board.login().await;
     let h = [("Cookie", cookie.as_str()), ("X-CSRF-Token", csrf.as_str())];
     let outside = tmp.path().join("outside.html").display().to_string();
