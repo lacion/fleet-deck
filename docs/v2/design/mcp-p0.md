@@ -127,7 +127,7 @@ Tool {
 
 with `fn command() -> Value { json!({"type": "object", "required": ["command_id"], "properties": {"command_id": {"type": "string"}}}) }`.
 
-`classes` must not be used for the grant check alone. `Tool::granted` gets one more special case: `command_status` is granted when `classes.iter().any(|c| c.is_mutating())` (the deck rule of ADR-006 §6.3: any mutating class; `read` is not needed and is not enough). `ToolClass::is_mutating` already exists in `tool_class.rs`. The `classes: &[ToolClass::Read]` value is only for `is_own`/`is_fleet_control` (both false).
+`classes` must not be used for the grant check alone. `Tool::granted` gets one more special case: `command_status` is granted when the classes contain any of `Mail`, `Drive`, `Spawn`, `Manage`, `Answer`: the classes whose calls go through `coordinator.call` and the outbox. The desktop, capture and input tools never use the outbox and have their own status tools (`desktop_action_status`, `capture_status`), so they do not list it (architect decision during the build, 2026-10-19). The deck rule stays `is_mutating` (§3.4 item 4); the station list is a narrower filter, and the deck is the authority. The `classes: &[ToolClass::Read]` value is only for `is_own`/`is_fleet_control` (both false).
 
 ### 3.2 Mapping
 
