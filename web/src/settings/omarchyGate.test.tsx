@@ -5,6 +5,7 @@ import {
   type OmarchyStatus,
   runAction,
 } from './omarchy';
+import { unusedReads } from './omarchyFixtures';
 import { type Gate, gateActions, type WatchEnv, watchStatus } from './OmarchyCard';
 
 const status = (): OmarchyStatus => ({
@@ -59,6 +60,7 @@ function rig() {
       posts.push(d);
       return d.promise;
     },
+    ...unusedReads,
   };
   const gate: Gate = { current: Promise.resolve() };
   return { log, reads, posts, gated: gateActions(raw, gate) };

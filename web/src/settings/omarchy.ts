@@ -12,6 +12,15 @@ import type {
 } from '../gen';
 import type { ElevationAsk } from './elevation';
 import { DeckError, type DeckIo } from './http';
+import {
+  type ActExtra,
+  type InstallPlanView,
+  type RepairResult,
+  type RepairStatusView,
+  type RestorePlanView,
+  repairCalls,
+  repairResultOf,
+} from './omarchyRepair';
 
 export type {
   ActOutcome,
@@ -28,7 +37,18 @@ export type OmarchyActions = {
   /** `GET /api/stations/{station}/omarchy`. */
   status(station: string): Promise<OmarchyStatus>;
   /** `POST /api/stations/{station}/omarchy` with the elevation header. */
-  act(station: string, action: OmarchyAction, elevation: string): Promise<OmarchyActResult>;
+  act(
+    station: string,
+    action: OmarchyAction,
+    elevation: string,
+    extra?: ActExtra,
+  ): Promise<OmarchyActResult>;
+  /** `GET /api/stations/{station}/omarchy/install-plan`. */
+  installPlan(station: string): Promise<InstallPlanView>;
+  /** `GET /api/stations/{station}/omarchy/repairs`. */
+  repairs(station: string): Promise<RepairStatusView>;
+  /** `GET /api/stations/{station}/omarchy/repairs/{repairId}/restore-plan`. */
+  restorePlan(station: string, repairId: string): Promise<RestorePlanView>;
 };
 
 /** The header that carries the elevation (design §4). */
@@ -59,12 +79,14 @@ function resultOf(v: unknown): OmarchyActResult {
   if (!record(v) || typeof v['outcome'] !== 'string' || !OUTCOMES.includes(v['outcome'])) {
     throw new Error('The deck sent an invalid Omarchy answer.');
   }
-  return {
+  const out = {
     outcome: v['outcome'],
     code: typeof v['code'] === 'string' ? v['code'] : null,
     message: typeof v['message'] === 'string' ? v['message'] : null,
     status: statusOf(v['status']),
   } as OmarchyActResult;
+  if (v['repair'] !== undefined && v['repair'] !== null) out.repair = repairResultOf(v['repair']);
+  return out;
 }
 
 const seg = encodeURIComponent;
@@ -73,14 +95,15 @@ const seg = encodeURIComponent;
 export function omarchyActions(io: DeckIo): OmarchyActions {
   return {
     status: async (station) => statusOf(await io.get(`/api/stations/${seg(station)}/omarchy`)),
-    act: async (station, action, elevation) =>
+    act: async (station, action, elevation, extra) =>
       resultOf(
         await io.post(
           `/api/stations/${seg(station)}/omarchy`,
-          { action },
+          { action, ...extra },
           { [ELEVATION_HEADER]: elevation },
         ),
       ),
+    ...repairCalls(io),
   };
 }
 
@@ -124,6 +147,14 @@ const ERROR_TEXTS: Readonly<Record<string, string>> = {
   failed: 'The command failed.',
   elevation_required: 'This action needs your confirmation.',
   busy: 'Another Omarchy action is running on this station.',
+  plan_changed: 'The files changed since this review. Review the replacement plan again.',
+  unsafe_path: 'Fleet Deck cannot safely replace one of these paths.',
+  backup_failed: 'Fleet Deck could not keep a copy of a file. The repair stopped.',
+  repair_incomplete:
+    'The repair stopped after changing some files. Review the kept copies and repair status.',
+  restore_conflict:
+    'A current file changed after the repair. Fleet Deck kept both versions and did not overwrite it.',
+  build_mismatch: 'This repair was started by another build. Restore the kept copies instead.',
   omarchy_missing: 'Omarchy was not found on this station.',
   not_provisioned: 'Provisioning cannot be retried from the board in this state.',
   unsupported: UNSUPPORTED_TEXT,
@@ -269,7 +300,13 @@ export function stateOfReadError(e: unknown): CardState {
 /** How an action ended, for the card. */
 export type ActEnd =
   | { readonly kind: 'cancelled' }
-  | { readonly kind: 'done'; readonly status: OmarchyStatus; readonly message: string | null }
+  | {
+      readonly kind: 'done';
+      readonly status: OmarchyStatus;
+      readonly message: string | null;
+      /** The result of a repair action. */
+      readonly repair?: RepairResult;
+    }
   | { readonly kind: 'started'; readonly status: OmarchyStatus }
   | {
       readonly kind: 'failed';
@@ -277,6 +314,10 @@ export type ActEnd =
       readonly message: string | null;
       /** The status of the answer; `null` for an HTTP error. */
       readonly status: OmarchyStatus | null;
+      /** The code of a `failed` answer (not of an HTTP error). */
+      readonly code?: string;
+      /** The result of a repair action. */
+      readonly repair?: RepairResult;
     };
 
 /** The label that every action gives to the elevation dialog. */
@@ -288,12 +329,13 @@ export async function runAction(
   station: string,
   action: OmarchyAction,
   ask: ElevationAsk,
+  extra?: ActExtra,
 ): Promise<ActEnd> {
   const token = await ask(ELEVATION_LABELS);
   if (token === null) return { kind: 'cancelled' };
   let result: OmarchyActResult;
   try {
-    result = await actions.act(station, action, token);
+    result = await actions.act(station, action, token, extra);
   } catch (e) {
     return {
       kind: 'failed',
@@ -308,10 +350,17 @@ export async function runAction(
       text: errorText(result.code ?? 'failed'),
       message: result.message,
       status: result.status,
+      code: result.code ?? 'failed',
+      ...(result.repair === undefined ? {} : { repair: result.repair }),
     };
   }
   if (result.outcome === 'done') {
-    return { kind: 'done', status: result.status, message: result.message };
+    return {
+      kind: 'done',
+      status: result.status,
+      message: result.message,
+      ...(result.repair === undefined ? {} : { repair: result.repair }),
+    };
   }
   return { kind: 'started', status: result.status };
 }
