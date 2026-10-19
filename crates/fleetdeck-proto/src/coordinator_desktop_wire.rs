@@ -124,6 +124,13 @@ pub struct CoordinatorRead {
     pub read_id: String,
     pub read: ProtectedRead,
     pub read_hash: String,
+    /// R13 P7b §7: the coordinator of the read, sent only with
+    /// [`ProtectedRead::InputWindows`] so that the target binds the listed
+    /// handles to the grant, the caller and the binding. Absent for every
+    /// other read (their bytes do not change).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub context: Option<CoordinatorContext>,
 }
 
 /// `desktop.authority_check` params (§5.6). For the phase `read`,

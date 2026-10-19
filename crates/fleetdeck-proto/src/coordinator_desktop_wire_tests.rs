@@ -173,6 +173,7 @@ fn a_read_request_and_an_authority_check_have_their_shapes() {
         read_id: "r".repeat(32),
         read: ProtectedRead::Info,
         read_hash: "ab".repeat(32),
+        context: None,
     };
     let v = serde_json::to_value(&read).unwrap();
     assert_eq!(v["read"], json!({"kind": "info"}));
@@ -507,8 +508,11 @@ fn the_input_windows_read_has_its_kind() {
         read_id: "r1".into(),
         read: ProtectedRead::InputWindows,
         read_hash: "h".into(),
+        context: None,
     };
     let v = serde_json::to_value(&read).unwrap();
     assert_eq!(v["read"], json!({"kind": "input_windows"}));
+    // An absent context is not serialized (the other reads keep their bytes).
+    assert!(v.get("context").is_none());
     assert_eq!(serde_json::from_value::<CoordinatorRead>(v).unwrap(), read);
 }
