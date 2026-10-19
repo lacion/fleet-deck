@@ -371,8 +371,10 @@ impl DeckStore {
     pub async fn login_session(&self, cookie: &Secret<String>) -> Result<Option<LoginSession>> {
         let hash = secret_hash(cookie.expose());
         let now = self.now_ms();
-        let knobs = self.knobs();
+        // Read on the DB thread (see `display_session`): no stale deadline.
+        let knobs_now = self.knobs_reader();
         call(&self.inner.db, move |conn| {
+            let knobs = knobs_now();
             let found = conn
                 .query_row(
                     "UPDATE login_sessions SET last_seen = ?2, idle_until = ?5
@@ -409,9 +411,11 @@ impl DeckStore {
     /// A database error.
     pub async fn principal_alive(&self, principal: &Principal) -> Result<bool> {
         let now = self.now_ms();
-        let knobs = self.knobs();
+        // Read on the DB thread (see `display_session`): no stale deadline.
+        let knobs_now = self.knobs_reader();
         let principal = principal.clone();
         call(&self.inner.db, move |conn| {
+            let knobs = knobs_now();
             let n = match &principal {
                 Principal::Owner(s) => conn.execute(
                     "UPDATE login_sessions SET last_seen = ?2, idle_until = ?5

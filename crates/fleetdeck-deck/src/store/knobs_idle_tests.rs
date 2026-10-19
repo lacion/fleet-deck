@@ -324,3 +324,60 @@ async fn a_socket_of_a_session_over_a_lowered_limit_is_not_admitted_with_the_cle
     assert!(!crate::board_fence::admit_socket(&st, &late).await);
     assert!(crate::board_fence::admit_socket(&st, &fine).await);
 }
+
+/// Knobs PRE-PR r3: a refresh reads the knobs on the DB thread, inside its
+/// job. A refresh that was queued before the limit shrank, and runs after the
+/// publish, writes the new deadline; raising the limit later revives nothing.
+#[tokio::test]
+async fn a_refresh_queued_before_a_lower_limit_writes_the_new_deadline() {
+    let det = Det::new();
+    let st = store(&det).await;
+    let login = st.create_login(LoginMethod::Link).await.unwrap();
+    let wall = display_cookie(&st, "alpha").await;
+    det.advance(Duration::from_secs(60));
+    // Hold the DB thread, so that the two refreshes queue behind this job.
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let blocker = tokio::spawn({
+        let st = st.clone();
+        async move {
+            call(&st.inner.db, move |_conn| {
+                let _ = held.recv();
+                Ok(())
+            })
+            .await
+            .unwrap();
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let refresh = tokio::spawn({
+        let (st, cookie) = (st.clone(), Secret::new(login.cookie.expose().clone()));
+        async move { st.login_session(&cookie).await.unwrap() }
+    });
+    let refresh_wall = tokio::spawn({
+        let (st, cookie) = (st.clone(), Secret::new(wall.expose().clone()));
+        async move { st.display_session(&cookie).await.unwrap() }
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    // The limits shrink and are published while the refreshes wait.
+    st.set_knobs(knobs(|k| {
+        k.login_idle_ms = DAY_MS;
+        k.display_idle_ms = DAY_MS;
+    }));
+    release.send(()).unwrap();
+    blocker.await.unwrap();
+    assert!(refresh.await.unwrap().is_some());
+    assert!(refresh_wall.await.unwrap().is_some());
+    let now = st.now_ms();
+    let hash = secret_hash(login.cookie.expose());
+    assert_eq!(idle_until(&st, "login_sessions", hash).await, now + DAY_MS);
+    let wall_hash = secret_hash(wall.expose());
+    assert_eq!(
+        idle_until(&st, "display_sessions", wall_hash).await,
+        now + DAY_MS
+    );
+    // Both idle for 2 days, then the limits grow again: still refused.
+    det.advance(days(2));
+    st.set_knobs(DeckKnobs::default());
+    assert_eq!(st.login_session(&login.cookie).await.unwrap(), None);
+    assert!(st.display_session(&wall).await.unwrap().is_none());
+}

@@ -543,9 +543,12 @@ impl DeckStore {
     pub async fn display_session(&self, cookie: &Secret<String>) -> Result<Option<DisplayLogin>> {
         let hash = secret_hash(cookie.expose());
         let now = self.now_ms();
-        let knobs = self.knobs();
+        // The knobs are read on the DB thread, inside the job: a refresh
+        // then never writes a deadline of knobs older than a clamp that
+        // ran before it (the DB jobs run in order).
+        let knobs_now = self.knobs_reader();
         call(&self.inner.db, move |conn| {
-            login_of(conn, &hash, now, &knobs)
+            login_of(conn, &hash, now, &knobs_now())
         })
         .await
     }
@@ -558,9 +561,12 @@ impl DeckStore {
     pub async fn display_refresh(&self, login: &DisplayLogin) -> Result<Option<DisplayLogin>> {
         let hash = login.session_hash.clone();
         let now = self.now_ms();
-        let knobs = self.knobs();
+        // The knobs are read on the DB thread, inside the job: a refresh
+        // then never writes a deadline of knobs older than a clamp that
+        // ran before it (the DB jobs run in order).
+        let knobs_now = self.knobs_reader();
         call(&self.inner.db, move |conn| {
-            login_of(conn, &hash, now, &knobs)
+            login_of(conn, &hash, now, &knobs_now())
         })
         .await
     }
@@ -573,9 +579,12 @@ impl DeckStore {
     /// A database error.
     pub async fn display_session_alive(&self, session_hash: String) -> Result<bool> {
         let now = self.now_ms();
-        let knobs = self.knobs();
+        // The knobs are read on the DB thread, inside the job: a refresh
+        // then never writes a deadline of knobs older than a clamp that
+        // ran before it (the DB jobs run in order).
+        let knobs_now = self.knobs_reader();
         call(&self.inner.db, move |conn| {
-            session_alive(conn, &session_hash, now, &knobs)
+            session_alive(conn, &session_hash, now, &knobs_now())
         })
         .await
     }
