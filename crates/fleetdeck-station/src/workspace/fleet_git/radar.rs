@@ -172,8 +172,14 @@ pub(super) async fn fetch_wip(env: &RadarEnv<'_>, url: &str) -> Result<(), Refus
         env.allow_local_remotes,
     )
     .await?;
-    let _one = super::fetch::fetch_lock(env.repo_dir).await;
-    let net = net_git(env.options, env.repo_dir, WIP_FETCH_TIMEOUT);
+    let Some((_one, left)) = super::fetch::fetch_lock_within(env.repo_dir, WIP_FETCH_TIMEOUT).await
+    else {
+        return Err(Refusal::new(
+            code::FETCH_FAILED,
+            "The fetch failed: it took more than 30 s.",
+        ));
+    };
+    let net = net_git(env.options, env.repo_dir, left);
     let args = [
         "-c",
         "protocol.ext.allow=never",

@@ -404,3 +404,14 @@ async fn a_second_fetch_of_the_same_repository_waits_for_the_first() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn the_wait_for_the_lock_counts_in_the_time_limit_of_the_fetch() {
+    let dir = tempfile::tempdir().unwrap();
+    let held = fetch_lock(dir.path()).await;
+    let budget = std::time::Duration::from_millis(50);
+    assert!(fetch_lock_within(dir.path(), budget).await.is_none());
+    drop(held);
+    let (_guard, left) = fetch_lock_within(dir.path(), budget).await.unwrap();
+    assert!(left <= budget);
+}

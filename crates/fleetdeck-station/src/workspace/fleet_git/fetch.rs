@@ -233,6 +233,20 @@ pub(super) async fn fetch_lock(repo_dir: &Path) -> tokio::sync::OwnedMutexGuard<
     lock.lock_owned().await
 }
 
+/// The lock of `repo_dir` and the part of `budget` that is left after the
+/// wait for it: the wait counts in the time limit of the fetch. `None` when
+/// the whole budget passed in the wait.
+pub(super) async fn fetch_lock_within(
+    repo_dir: &Path,
+    budget: Duration,
+) -> Option<(tokio::sync::OwnedMutexGuard<()>, Duration)> {
+    let started = tokio::time::Instant::now();
+    let guard = tokio::time::timeout(budget, fetch_lock(repo_dir))
+        .await
+        .ok()?;
+    Some((guard, budget.saturating_sub(started.elapsed())))
+}
+
 /// The plain fetch of `remote` in `repo_dir` (design §2.4, FG-7, FG-8): the
 /// same command, limit and confinement as the fetch of a start. The text of
 /// a failure has the redacted Git line; a timeout is `fetch_failed` too.
@@ -245,8 +259,13 @@ pub(super) async fn fetch_remote(
     remote: &str,
 ) -> Result<(), Refusal> {
     require_git(options).await?;
-    let _one = fetch_lock(repo_dir).await;
-    let net = net_git(options, repo_dir, FETCH_TIMEOUT);
+    let Some((_one, left)) = fetch_lock_within(repo_dir, FETCH_TIMEOUT).await else {
+        return Err(Refusal::new(
+            code::FETCH_FAILED,
+            "The fetch failed: it took more than 30 s.",
+        ));
+    };
+    let net = net_git(options, repo_dir, left);
     let args = [
         "-c",
         "protocol.ext.allow=never",
