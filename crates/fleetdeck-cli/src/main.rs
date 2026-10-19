@@ -157,10 +157,25 @@ fn run(cli: Cli, restart: &restart::RestartHandle) -> anyhow::Result<ExitCode> {
             })
             .await?
         })),
-        Command::ProvisionBootstrap { file, retry } => {
+        Command::ProvisionBootstrap {
+            file,
+            retry,
+            retry_authorization,
+        } => {
             let ctx = service::Context::detect(&dirs, &env, cli.data_dir.is_some())?;
             let effects = provision::real::RealEffects::new(dirs.clone(), env.clone(), ctx);
-            let exit = runtime()?.block_on(provision::run::run(&effects, file, *retry));
+            let exit = runtime()?.block_on(provision::run::run(
+                &effects,
+                file,
+                *retry,
+                retry_authorization.as_deref(),
+            ));
+            Ok(ExitCode::from(exit.code()))
+        }
+        Command::ProvisionSupervise { file } => {
+            let ctx = service::Context::detect(&dirs, &env, cli.data_dir.is_some())?;
+            let effects = provision::real::RealEffects::new(dirs.clone(), env.clone(), ctx);
+            let exit = runtime()?.block_on(provision::supervise::supervise(&effects, file));
             Ok(ExitCode::from(exit.code()))
         }
         Command::ProvisionImport { source } => {

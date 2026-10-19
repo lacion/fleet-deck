@@ -12,6 +12,7 @@ use fleetdeck_core::private_file::try_lock_private_below;
 use fleetdeck_core::provision::ProvisionFile;
 use fleetdeck_proto::link::VersionStatus;
 
+use super::binding::{self, Authorization};
 use super::effects::{Effects, JoinOutcome, ServiceState, StationView, Terminal};
 use super::release::{self, Manifest};
 use super::retry::{Action, SHORT, classify};
@@ -56,6 +57,9 @@ impl Exit {
 /// Why the sequence stopped before the end.
 enum Stop {
     Terminal(Terminal),
+    /// A retry authorization that cannot be used: the word after
+    /// `provision: retry:`. Nothing is saved.
+    RetryRefused(&'static str),
     StateInvalid,
     Unexpected,
 }
@@ -67,11 +71,17 @@ impl From<Terminal> for Stop {
 }
 
 /// The validated provisioning file.
-struct Input {
-    file: ProvisionFile,
-    host: String,
-    port: u16,
+pub(super) struct Input {
+    pub(super) file: ProvisionFile,
+    pub(super) host: String,
+    pub(super) port: u16,
     config_sha256: String,
+}
+
+/// The provisioning file as the supervisor needs it before a report: `None`
+/// when it does not pass the rules of step 2.
+pub(super) fn read_provision_input(effects: &dyn Effects, path: &Path) -> Option<Input> {
+    Run::read_input(effects, path).ok()
 }
 
 struct Run<'a> {
@@ -85,7 +95,15 @@ struct Run<'a> {
 
 /// Runs the bootstrap once (the loops inside it wait for retryable
 /// conditions). `retry` clears a retained terminal error first.
-pub async fn run(effects: &dyn Effects, file: &Path, retry: bool) -> Exit {
+/// `authorization` is the path of a retry authorization of a report (design
+/// `board-gaps.md` 4.3): the run checks it under the lock and consumes it
+/// with one write of the state, then goes on as a `retry` run.
+pub async fn run(
+    effects: &dyn Effects,
+    file: &Path,
+    retry: bool,
+    authorization: Option<&Path>,
+) -> Exit {
     let mut run = Run {
         effects,
         root: effects.trust_root(),
@@ -101,7 +119,7 @@ pub async fn run(effects: &dyn Effects, file: &Path, retry: bool) -> Exit {
         Ok(None) => return Exit::Busy,
         Err(stop) => return run.finish(stop),
     };
-    match run.execute(file, retry).await {
+    match run.execute(file, retry, authorization).await {
         Ok(exit) => exit,
         Err(stop) => run.finish(stop),
     }
@@ -159,6 +177,10 @@ impl Run<'_> {
                 self.line(self.phase_word(), t.0);
                 Exit::Terminal
             }
+            Stop::RetryRefused(code) => {
+                self.line("retry", code);
+                Exit::Terminal
+            }
             Stop::StateInvalid => {
                 self.line(self.phase_word(), "state_invalid");
                 Exit::Unexpected
@@ -208,11 +230,19 @@ impl Run<'_> {
         try_lock_private_below(&self.root, &lock).map_err(|_| Stop::Unexpected)
     }
 
-    async fn execute(&mut self, file: &Path, retry: bool) -> Result<Exit, Stop> {
+    async fn execute(
+        &mut self,
+        file: &Path,
+        retry: bool,
+        authorization: Option<&Path>,
+    ) -> Result<Exit, Stop> {
         let effects = self.effects;
         // 2. The provisioning file.
         let input = Self::read_input(effects, file)?;
-        // 3. The state.
+        // 3. The state. An authorization clears the retained error first.
+        if let Some(path) = authorization {
+            self.authorize(path, &input)?;
+        }
         match state::load(&self.state_path).map_err(|_| Stop::StateInvalid)? {
             None => self.state = Some(ProvisionState::new(input.config_sha256.clone())),
             Some(stored) => {
@@ -246,6 +276,49 @@ impl Run<'_> {
             return Ok(Exit::Complete);
         }
         self.sequence(&input).await
+    }
+
+    /// Step 3, with a retry authorization: the authorization must be for the
+    /// exact terminal condition that the state keeps now. One atomic write
+    /// of the state clears the error and records the `retry_id`. A mismatch
+    /// or an unusable authorization changes nothing (`report_changed`).
+    fn authorize(&mut self, path: &Path, input: &Input) -> Result<(), Stop> {
+        let changed = || Stop::RetryRefused("report_changed");
+        let bytes = self
+            .effects
+            .read_authorization(path)
+            .map_err(|_| changed())?;
+        let auth = Authorization::parse(&bytes).ok_or_else(changed)?;
+        let mut state = state::load(&self.state_path)
+            .map_err(|_| Stop::StateInvalid)?
+            .ok_or_else(changed)?;
+        let error = state.error.clone().ok_or_else(changed)?;
+        let current = binding::digest(
+            &error,
+            state.phase,
+            &state.config_sha256,
+            &input.file.deck_fingerprint,
+            state.station_fingerprint.as_deref(),
+        );
+        let stored = binding::load(&binding::binding_path(&self.effects.station_dir()))
+            .ok_or_else(changed)?;
+        if stored.terminal_id != auth.terminal_id
+            || stored.state_digest != auth.state_digest
+            || stored.state_digest != current
+        {
+            return Err(changed());
+        }
+        if state.consumed_retry_id.as_deref() == Some(auth.retry_id.as_str()) {
+            return Err(Stop::RetryRefused("retry_replayed"));
+        }
+        state.error = None;
+        state.consumed_retry_id = Some(auth.retry_id);
+        state::save(&self.root, &self.state_path, &state).map_err(|_| Stop::Unexpected)?;
+        // A crash before the delete is harmless: the next use is a replay.
+        if self.effects.delete_authorization(path).is_err() {
+            self.line("retry", "authorization_not_removed");
+        }
+        Ok(())
     }
 
     /// Step 2: reads and validates the provisioning file.

@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::time::{Duration, Instant};
 
+use fleetdeck_link::{ReportReply, ValidReport};
 use fleetdeck_proto::link::StationProvider;
 
 /// A future that an effect returns (the crate has no async trait macro).
@@ -146,6 +147,12 @@ pub enum JoinOutcome {
     Code(String),
 }
 
+/// Why a setup report got no reply: a fixed word (`fingerprint_mismatch`,
+/// `unsupported`, `timeout`, `no_identity`, `no_address`, `failed`). Text
+/// from a peer never becomes the word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReportFailure(pub &'static str);
+
 /// What the bootstrap does to the machine.
 pub trait Effects {
     /// The station data directory (`<data>/station`).
@@ -218,6 +225,31 @@ pub trait Effects {
     fn notify(&self, grouped_fingerprint: &str);
     /// One stderr line.
     fn progress(&self, line: &str);
+
+    /// True when the key of this station can be loaded. It never creates a
+    /// key.
+    fn identity_loads(&self) -> bool;
+    /// Sends one setup report to the deck pinned by `deck_fingerprint`
+    /// (30 s limit). It uses the key of this station and never creates one.
+    fn report(
+        &self,
+        host: &str,
+        port: u16,
+        deck_fingerprint: &str,
+        report: &ValidReport,
+    ) -> BoxFuture<'_, Result<ReportReply, ReportFailure>>;
+    /// A random duration from zero to `max`.
+    fn jitter(&self, max: Duration) -> Duration;
+    /// The bytes of a retry authorization (private file rules, 1 KiB).
+    ///
+    /// # Errors
+    /// The file is missing, not private, too large or unreadable.
+    fn read_authorization(&self, path: &Path) -> io::Result<Vec<u8>>;
+    /// Removes the retry authorization file.
+    ///
+    /// # Errors
+    /// The file could not be removed.
+    fn delete_authorization(&self, path: &Path) -> io::Result<()>;
 }
 
 #[cfg(test)]

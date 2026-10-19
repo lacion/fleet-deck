@@ -63,7 +63,7 @@ fn the_hook_is_a_posix_script_that_runs_only_the_bootstrap() {
         "the hook is not a #!/bin/sh script"
     );
     assert!(
-        hook.contains("exec /usr/bin/fleetdeck provision-bootstrap --file"),
+        hook.contains("exec /usr/bin/fleetdeck provision-supervise --file"),
         "the hook does not exec the bootstrap"
     );
     for word in [
@@ -151,7 +151,7 @@ fn an_unset_home_exits_1_with_the_exact_line() {
 fn the_hook_passes_the_private_config_path_to_the_bootstrap() {
     let hook = read(HOOK);
     assert!(
-        hook.contains(r#"exec /usr/bin/fleetdeck provision-bootstrap --file "$file""#),
+        hook.contains(r#"exec /usr/bin/fleetdeck provision-supervise --file "$file""#),
         "the exec line differs"
     );
     assert!(

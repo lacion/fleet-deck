@@ -14,9 +14,12 @@ use std::time::{Duration, Instant};
 use fleetdeck_proto::event::ProviderKind;
 use fleetdeck_proto::link::{StationProvider, VersionStatus};
 
+use fleetdeck_core::private_file::read_private;
+use fleetdeck_link::{ReportReply, ValidReport};
+
 use super::effects::{
-    BoxFuture, Build, CallError, ConfigState, Effects, JoinOutcome, RootFile, ServiceState,
-    StationView, Terminal,
+    BoxFuture, Build, CallError, ConfigState, Effects, JoinOutcome, ReportFailure, RootFile,
+    ServiceState, StationView, Terminal,
 };
 use super::release::{DESKTOP_PATH, HOOK_PATH, MANIFEST_PATH};
 use super::sha256_hex;
@@ -39,6 +42,21 @@ pub enum JoinStep {
     /// A failure code after the deck committed the pairing.
     CodeCommitted(&'static str),
 }
+
+/// What `report` does the next time.
+pub enum ReportStep {
+    /// This reply.
+    Reply(ReportReply),
+    /// A `retry` reply for the exact binding of the report that arrives.
+    RetryFor(&'static str),
+    /// A `retry` reply for a binding that is not the current one.
+    StaleRetry,
+    /// No reply: this fixed word.
+    Fail(&'static str),
+}
+
+/// A function that runs once after the authorization is read.
+pub type AuthHook = Box<dyn FnOnce() + Send>;
 
 pub struct Station {
     pub fingerprint: String,
@@ -86,6 +104,19 @@ pub struct Fake {
     pub trusted: Mutex<Option<String>>,
     pub progress_hooks: Mutex<Vec<ProgressHook>>,
     pub dir_error: Mutex<bool>,
+    /// The key of the station can be loaded.
+    pub identity: Mutex<bool>,
+    pub report_steps: Mutex<VecDeque<ReportStep>>,
+    /// The reports that arrived: the host, the port, the pin, the report.
+    pub reports: Mutex<Vec<(String, u16, String, ValidReport)>>,
+    /// What `jitter` returns (at most the maximum).
+    pub jitter: Mutex<Duration>,
+    pub authorization_deleted: Mutex<Vec<PathBuf>>,
+    pub fail_delete: Mutex<bool>,
+    pub after_auth_read: Mutex<Option<AuthHook>>,
+    /// After this many sleeps the next run fails with `Unexpected` (the
+    /// directory of the station gives an error), which ends a supervisor.
+    pub stop_after_sleeps: Mutex<Option<usize>>,
 }
 
 pub fn build() -> Build {
@@ -218,6 +249,14 @@ impl Fake {
             trusted: Mutex::new(None),
             progress_hooks: Mutex::new(Vec::new()),
             dir_error: Mutex::new(false),
+            identity: Mutex::new(true),
+            report_steps: Mutex::new(VecDeque::new()),
+            reports: Mutex::new(Vec::new()),
+            jitter: Mutex::new(Duration::ZERO),
+            authorization_deleted: Mutex::new(Vec::new()),
+            fail_delete: Mutex::new(false),
+            after_auth_read: Mutex::new(None),
+            stop_after_sleeps: Mutex::new(None),
         }
     }
 
@@ -302,7 +341,19 @@ impl Effects for Fake {
     fn sleep(&self, d: Duration) -> BoxFuture<'_, ()> {
         Box::pin(async move {
             *self.clock.lock().unwrap() += d;
-            self.sleeps.lock().unwrap().push(d);
+            let slept = {
+                let mut sleeps = self.sleeps.lock().unwrap();
+                sleeps.push(d);
+                sleeps.len()
+            };
+            if self
+                .stop_after_sleeps
+                .lock()
+                .unwrap()
+                .is_some_and(|n| slept >= n)
+            {
+                *self.dir_error.lock().unwrap() = true;
+            }
         })
     }
 
@@ -462,11 +513,84 @@ impl Effects for Fake {
             hook(line);
         }
     }
+
+    fn identity_loads(&self) -> bool {
+        *self.identity.lock().unwrap()
+    }
+
+    fn report(
+        &self,
+        host: &str,
+        port: u16,
+        deck_fingerprint: &str,
+        report: &ValidReport,
+    ) -> BoxFuture<'_, Result<ReportReply, ReportFailure>> {
+        let entry = (
+            host.to_owned(),
+            port,
+            deck_fingerprint.to_owned(),
+            report.clone(),
+        );
+        Box::pin(async move {
+            self.log("report");
+            let report = entry.3.clone();
+            self.reports.lock().unwrap().push(entry);
+            let step = self.report_steps.lock().unwrap().pop_front();
+            match step.expect("an unscripted report") {
+                ReportStep::Reply(reply) => Ok(reply),
+                ReportStep::RetryFor(id) => Ok(ReportReply::retry(
+                    id.to_owned(),
+                    report.terminal_id,
+                    report.state_digest,
+                )),
+                ReportStep::StaleRetry => Ok(ReportReply::retry(
+                    "11".repeat(16),
+                    "22".repeat(16),
+                    report.state_digest,
+                )),
+                ReportStep::Fail(word) => Err(ReportFailure(word)),
+            }
+        })
+    }
+
+    fn jitter(&self, max: Duration) -> Duration {
+        (*self.jitter.lock().unwrap()).min(max)
+    }
+
+    fn read_authorization(&self, path: &Path) -> io::Result<Vec<u8>> {
+        let bytes = read_private(path, 1024).map_err(io::Error::other);
+        if let Some(hook) = self.after_auth_read.lock().unwrap().take() {
+            hook();
+        }
+        bytes
+    }
+
+    fn delete_authorization(&self, path: &Path) -> io::Result<()> {
+        if *self.fail_delete.lock().unwrap() {
+            return Err(io::Error::other("scripted"));
+        }
+        self.authorization_deleted
+            .lock()
+            .unwrap()
+            .push(path.to_path_buf());
+        std::fs::remove_file(path)
+    }
 }
 
 /// One run of the bootstrap against the fake.
 pub async fn go(fake: &Fake, retry: bool) -> super::run::Exit {
-    super::run::run(fake, Path::new("/provision.toml"), retry).await
+    super::run::run(fake, Path::new("/provision.toml"), retry, None).await
+}
+
+/// One run of the bootstrap with a retry authorization.
+pub async fn go_authorized(fake: &Fake, authorization: &Path) -> super::run::Exit {
+    super::run::run(
+        fake,
+        Path::new("/provision.toml"),
+        false,
+        Some(authorization),
+    )
+    .await
 }
 
 /// Writes the state file as it is given (a test of the file rules).

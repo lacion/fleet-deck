@@ -16,19 +16,23 @@ use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use fleetdeck_core::config::StationConfig;
+use fleetdeck_core::identity::Identity;
 use fleetdeck_core::localsock::LineClient;
 use fleetdeck_core::paths::{Env, NodeDirs};
-use fleetdeck_core::private_file::{read_private, write_new_shared_parent};
+use fleetdeck_core::private_file::{PrivateReadError, read_private, write_new_shared_parent};
+use fleetdeck_link::{ReportReply, ValidReport};
 use fleetdeck_station::link::runtime::DECK_SCOPES;
 use fleetdeck_station::local::{LocalRequest, LocalResponse, socket_path};
 use fleetdeck_station::local_fingerprint::FEATURE;
+use ring::rand::{SecureRandom, SystemRandom};
 use serde::Serialize;
 use tokio::io::AsyncReadExt as _;
 
 use super::effects::{
-    BoxFuture, Build, CallError, ConfigState, Effects, JoinOutcome, RootFile, ServiceState,
-    StationView, Terminal,
+    BoxFuture, Build, CallError, ConfigState, Effects, JoinOutcome, ReportFailure, RootFile,
+    ServiceState, StationView, Terminal,
 };
+use super::{binding, real_report};
 use crate::cli::{ServiceCommand, ServiceKind};
 use crate::service::inspect::{ServiceInspect, inspect, sha256_file, sha256_reader};
 use crate::service::{self, Context};
@@ -39,6 +43,8 @@ const CALL_WAIT: Duration = Duration::from_secs(2);
 const PROBE_CALL_WAIT: Duration = Duration::from_secs(35);
 /// The wait of the CLI for the tailnet join (the owner has 660 s).
 const JOIN_WAIT: Duration = Duration::from_secs(690);
+/// The limit of one setup report (the lookup and the send).
+const REPORT_WAIT: Duration = Duration::from_secs(30);
 /// The limit of `omarchy install` and `omarchy status`.
 const OMARCHY_LIMIT: Duration = Duration::from_secs(60);
 /// A file of the release prerequisite is at most this large.
@@ -278,6 +284,46 @@ impl Effects for RealEffects {
 
     fn progress(&self, line: &str) {
         eprintln!("{line}");
+    }
+
+    fn identity_loads(&self) -> bool {
+        Identity::load(&self.dirs.station()).is_ok()
+    }
+
+    fn report(
+        &self,
+        host: &str,
+        port: u16,
+        deck_fingerprint: &str,
+        report: &ValidReport,
+    ) -> BoxFuture<'_, Result<ReportReply, ReportFailure>> {
+        let dir = self.dirs.station();
+        let host = host.to_owned();
+        let fingerprint = deck_fingerprint.to_owned();
+        let report = report.clone();
+        Box::pin(async move {
+            real_report::send(&dir, &host, port, &fingerprint, &report, REPORT_WAIT).await
+        })
+    }
+
+    fn jitter(&self, max: Duration) -> Duration {
+        let mut bytes = [0_u8; 8];
+        if SystemRandom::new().fill(&mut bytes).is_err() {
+            return Duration::ZERO;
+        }
+        let span = u64::try_from(max.as_millis()).unwrap_or(u64::MAX);
+        Duration::from_millis(u64::from_le_bytes(bytes) % span.saturating_add(1))
+    }
+
+    fn read_authorization(&self, path: &Path) -> io::Result<Vec<u8>> {
+        read_private(path, binding::MAX_BYTES).map_err(|e| match e {
+            PrivateReadError::Io(e) => e,
+            other => io::Error::other(other),
+        })
+    }
+
+    fn delete_authorization(&self, path: &Path) -> io::Result<()> {
+        fs::remove_file(path)
     }
 }
 

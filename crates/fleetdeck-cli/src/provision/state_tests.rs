@@ -16,6 +16,7 @@ fn sample() -> ProvisionState {
         station_fingerprint: Some("cd".repeat(32)),
         phase: Phase::Link,
         error: None,
+        consumed_retry_id: None,
     }
 }
 
@@ -26,6 +27,21 @@ fn an_absent_state_is_none() {
     let fake = Fake::new();
     fake.ensure_station_dir().unwrap();
     assert!(state::load(&fake.state_file()).unwrap().is_none());
+}
+
+#[test]
+fn a_consumed_retry_id_is_stored_only_when_it_exists() {
+    let fake = Fake::new();
+    fake.ensure_station_dir().unwrap();
+    let path = fake.state_file();
+    state::save(&fake.trust_root(), &path, &sample()).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(!text.contains("consumed_retry_id"), "{text}");
+    assert_eq!(state::load(&path).unwrap().unwrap().consumed_retry_id, None);
+    let mut with = sample();
+    with.consumed_retry_id = Some("ab".repeat(16));
+    state::save(&fake.trust_root(), &path, &with).unwrap();
+    assert_eq!(state::load(&path).unwrap(), Some(with));
 }
 
 #[test]

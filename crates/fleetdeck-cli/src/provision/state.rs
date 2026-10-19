@@ -51,6 +51,11 @@ pub struct ProvisionState {
     pub station_fingerprint: Option<String>,
     pub phase: Phase,
     pub error: Option<String>,
+    /// The `retry_id` of the last report retry that the bootstrap consumed
+    /// (design `board-gaps.md` 4.3). It is written in the same save that
+    /// clears the error, so a retry permission cannot be used twice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumed_retry_id: Option<String>,
 }
 
 impl ProvisionState {
@@ -63,6 +68,7 @@ impl ProvisionState {
             station_fingerprint: None,
             phase: Phase::Validated,
             error: None,
+            consumed_retry_id: None,
         }
     }
 }
