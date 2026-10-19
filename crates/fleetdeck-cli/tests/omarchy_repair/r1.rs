@@ -155,11 +155,22 @@ fn omarchy_repair_a_journal_that_is_not_finished_stays_incomplete_until_a_resume
 }
 
 #[test]
-fn omarchy_repair_a_journal_of_an_earlier_build_without_finished_reads_as_complete() {
+fn omarchy_repair_a_journal_without_finished_or_of_version_1_is_not_read() {
     let mut rig = Rig::new();
     let id = replaced_two(&mut rig);
-    let mut journal = journal_json(&rig, &id);
-    journal.as_object_mut().unwrap().remove("finished");
+    assert_eq!(journal_json(&rig, &id)["v"], 2);
+    let journal = journal_json(&rig, &id);
+    // No `finished` field: the journal is skipped, not read as complete.
+    let mut without = journal.clone();
+    without.as_object_mut().unwrap().remove("finished");
+    save_journal(&rig, &id, &without);
+    assert!(status(&rig)["journals"].as_array().unwrap().is_empty());
+    // Version 1: the same.
+    let mut old = journal.clone();
+    old["v"] = 1.into();
+    save_journal(&rig, &id, &old);
+    assert!(status(&rig)["journals"].as_array().unwrap().is_empty());
+    // The journal as it was written is read.
     save_journal(&rig, &id, &journal);
     assert_eq!(status(&rig)["journals"][0]["state"], "complete");
 }

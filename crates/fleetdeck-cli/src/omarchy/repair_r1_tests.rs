@@ -166,34 +166,6 @@ fn every_asset_gets_a_backup_name_that_ends_in_sample_and_a_kept_name_too() {
 }
 
 #[test]
-fn a_journal_of_an_earlier_build_still_loads() {
-    let (_dir, home) = home();
-    let journal = replaced(&home, &IDS);
-    let mut value = serde_json::to_value(&journal).unwrap();
-    // The form before the fix: no `.sample`, no `kept_name`, no `finished`.
-    for file in value["files"].as_array_mut().unwrap() {
-        let name = file["backup_name"].as_str().unwrap().to_owned();
-        file["backup_name"] = name.strip_suffix(".sample").unwrap().into();
-        assert!(file.as_object_mut().unwrap().remove("kept_name").is_none());
-    }
-    value.as_object_mut().unwrap().remove("finished");
-    home.write(
-        &journal::path_of(&journal.repair_id),
-        &serde_json::to_vec(&value).unwrap(),
-        0o600,
-    )
-    .unwrap();
-    let loaded = journal::load(&home, &journal.repair_id).unwrap().unwrap();
-    assert!(loaded.finished, "a journal without the field is finished");
-    assert!(
-        loaded
-            .files
-            .iter()
-            .all(|f| !f.backup_name.ends_with(".sample") && f.kept_name.is_none())
-    );
-}
-
-#[test]
 fn a_kept_name_of_a_journal_must_be_a_single_name_of_the_target() {
     let (_dir, home) = home();
     let journal = replaced(&home, &IDS);

@@ -3,7 +3,8 @@
 //! mode 0600 in a directory of mode 0700, synced. The journal records the
 //! plan before any file operation and the intent and the completion of each
 //! step. A completion record is a hint, never proof: the files decide.
-//! Journals are never deleted.
+//! Journals are never deleted. Journals of version 1 (a development form
+//! before the first release) are not read.
 
 use std::path::{Path, PathBuf};
 
@@ -19,7 +20,7 @@ pub const DIR: &str = "fleetdeck/omarchy-repair";
 /// The most files that one journal holds.
 pub const MAX_FILES: usize = 64;
 /// The format version of the journal.
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 /// One step of a file in a repair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,8 +49,7 @@ pub struct JournalFile {
     pub original_hash: Option<String>,
     pub asset_hash: String,
     /// The name of the kept copy, in the directory of the target. It ends in
-    /// `.sample`, so that no Omarchy hook dispatcher runs it; a journal that
-    /// an earlier build wrote has the same name without that ending.
+    /// `.sample`, so that no Omarchy hook dispatcher runs it.
     pub backup_name: String,
     /// The name that a restore gives to the published target when it moves
     /// it aside (it ends in `.sample`), in the directory of the target.
@@ -73,15 +73,8 @@ pub struct Journal {
     /// Unix milliseconds.
     pub created_at: i64,
     pub files: Vec<JournalFile>,
-    /// True once the rest of the install ran after the last publication. A
-    /// journal that an earlier build wrote has no such field and reads as
-    /// finished.
-    #[serde(default = "finished_default")]
+    /// True once the rest of the install ran after the last publication.
     pub finished: bool,
-}
-
-fn finished_default() -> bool {
-    true
 }
 
 /// Why a journal could not be loaded.
@@ -235,13 +228,15 @@ fn valid_file(file: &JournalFile) -> bool {
         && file
             .backup_name
             .starts_with(&format!("{name}.fleetdeck-conflict-"))
+        && file.backup_name.ends_with(KEPT_ENDING)
         && file
             .staging_name
             .starts_with(&format!(".{name}.fleetdeck-stage-"))
-        && file
-            .kept_name
-            .as_deref()
-            .is_none_or(|k| single(k) && k.starts_with(&format!("{name}.fleetdeck-kept-")))
+        && file.kept_name.as_deref().is_none_or(|k| {
+            single(k)
+                && k.starts_with(&format!("{name}.fleetdeck-kept-"))
+                && k.ends_with(KEPT_ENDING)
+        })
         && valid_hash(&file.asset_hash)
         && file.original_hash.as_deref().is_none_or(valid_hash)
 }
