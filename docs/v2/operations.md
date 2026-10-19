@@ -932,6 +932,149 @@ The deck and the station also answer with the codes `fleet_control_off`, `deskto
 - The page where a member joins shows a generic error when the sign-in is blocked for input.
 - A browser on the target machine that uses an address that the station does not report is not signed out.
 
+### 7.9 Agent pointer clicks and input in other application windows (R13 P7b)
+
+This section covers the tools `pointer_click` and `window_list` of a coordinator session. They add two separate allowances to section 7.8. The contract is `design/omarchy-p7b.md`. The built version is recorded in DL-247. The PRE-PR review and the live smoke on the owner's Omarchy machine are not done yet (`make desktop-smoke` prints the list). Both allowances are experimental and off by default. No grant has a click or the scope for other windows unless you opt in, and both station settings are off until you turn them on. Do not rely on them before the live smoke passes.
+
+Read section 7.8 first. All its rules stay true (the classes, the limits, the notifications, "Stop it", the sign-out), with these changes. Section 7.8 says that the pointer click and the scope for every window are not built: this part replaces that statement. Section 7.8 shows the older sign-out lines "an agent typed" and "an agent is typing": the board now shows the lines of this part.
+
+> **Caution:** an agent with the click allowance can click on a real desktop, without a prompt from you. A click can submit a form or approve an action. An agent with the scope for other windows can type, press keys and move the pointer (and click, with the click allowance) in your existing applications, including terminals and signed-in browser windows. Fleet Deck checks the target before it acts, but the pointer and the receiving window can change after the check. The board shows these disclosures. Read them before you start the session.
+
+The board shows this note under the option **Allow pointer clicks**: "Allows this agent to move the pointer and send a left click in its permitted windows. A click can submit forms or approve actions. The pointer or receiving surface can change after Fleet Deck checks it."
+
+The board shows this disclosure in red when you select the scope "Other application windows on the grant stations": "This agent can list window positions, view permitted screenshots, and type, press keys and move the pointer in existing applications, including terminals and signed-in browser windows. If clicks are enabled, it can click there too. It can read personal information and act using your logged-in accounts. Fleet Deck refuses detected board and wall windows, but detection and targeting are incomplete. Board sign-out protects this deck only at the machine addresses it records. Agents run as your OS user."
+
+The red disclosure of the input switch (section 7.8) has a sentence about the unavailable features. It changes with your choices:
+
+- Clicks off, scope "This agent's preview windows": "Pointer clicks and unrestricted window input are unavailable."
+- Clicks on, scope "This agent's preview windows": "Unrestricted window input is unavailable."
+- Scope "Other application windows on the grant stations": the sentence is not shown.
+
+The sentence "This feature is experimental until its live smoke passes." stays in every case.
+
+#### What it allows and what it does not
+
+- `pointer_click` sends one left-button press and release at a point of a window. The point x, y is a pair of whole numbers from 0 to 32,767, in logical coordinates from the top-left corner of the window. They are not screenshot pixels. The tool has no argument for a button, a count or a time. Two calls can act as a double click in an application. There is no right or middle button, no scroll, no drag and no held key or button.
+- Before the click, the station moves the pointer to the point. Then it reads the window, the cursor position and the layers again, and it clicks only when the window, its rectangle and the cursor are as expected. The pointer can move and the click can still be refused. Fleet Deck never tries again and never moves the pointer back.
+- A click point is refused when it is outside the window, when another window covers it, when a panel on the `top` or `overlay` layer covers it, and when the window is hidden. A wallpaper does not refuse a point. The station does not move a point into the window.
+- `window_list` shows the windows that the agent can give input to. For each window it gives a `window_id` (32 lower-case hexadecimal characters), the position and size in global logical coordinates, the monitors that the window overlaps, whether it has the focus, and the time that is left (`expires_in_ms`). It also gives the position and size of each monitor. It gives no title, no class, no address, no process number, no workspace name and no focus history. It gives no count of the windows that it left out.
+- The list has only windows that are mapped, not hidden and on a workspace that a monitor shows now. Every monitor that a window overlaps must be allowed by "Screenshot monitors". The list leaves out the windows that the station detects as board or wall windows. The list has at most 64 windows, at most 64 monitors and at most 16 KiB. A longer answer fails with `desktop_result_too_large`, and Fleet Deck does not cut it. The station does not switch a workspace, raise a window or move the focus to make a list.
+- A `window_id` from `window_list` lasts 60 seconds. A new list does not make it last longer. An agent binding can have at most 64 of them for one target station, and a station keeps at most 1,024. When the room is full, the new list fails with `busy`, and Fleet Deck does not remove the `window_id` of another agent. A `window_id` stops working when its window closes, when the station reconnects to the desktop or loses an event, when the grant binding changes, or when the target restarts. A closed window that opens again gets a new `window_id`.
+- A `window_id` from `window_list` gives input only. The tool `window_close` does not accept it, and it does not give the agent a preview.
+- A call with a wrong, expired, closed or foreign `window_id` always gets the same answer, `desktop_window_not_found`.
+- A list read does not use the input limit, the typed-character limit or the desktop action limit. It shows no notification and it does not sign out a board. A grant and a coordinator session can read the list 10 times in 60 seconds. A station runs one list read at a time: a second read gets `busy` at once.
+- With the scope for other windows, every input call needs the allowance of the scope. This includes a key, a text or a pointer move in a preview of the agent. A call in a preview is not sent to the older path when the gate is closed.
+- A window of another application has no launch record. The board detector uses the window class, the title, the address of the deck and the records of the station. When the detector finds no sign of a board, the window is treated as an ordinary window. A board in a browser window can stay undetected (see "What Fleet Deck cannot do").
+- The scope for other windows reaches terminals and signed-in browser windows. Text that goes to a terminal can run commands. A signed-in browser window acts with your accounts. Fleet Deck adds no way to run a command, but it cannot block this authority by a class list. If you do not accept it, do not select the scope.
+
+| Tool | What it does |
+| --- | --- |
+| `pointer_click` | One left click at the point x, y of a window. The window is a preview of this agent or, with the scope for other windows, a window of `window_list`. It is listed only when the grant has the click allowance. |
+| `window_list` | Lists the windows of a grant station as described above. It has one optional argument, the station. It is listed only when the grant has the scope for other windows. |
+
+The input tools of section 7.8 (`key_press`, `type_text` and `pointer_move`) also accept a `window_id` from `window_list` when the grant has the scope for other windows.
+
+#### Turn it on
+
+The click and the scope need the input switch of section 7.8. The input switch needs the classes `desktop` and `capture` in the same grant.
+
+1. On the board, open "New session". Choose a station, a provider instance and a directory. Select "Coordinator". The import field must be empty.
+2. In the group "Fleet control", turn on the switch "Desktop: show notifications and previews on grant stations, close its own previews, and show its work on walls" and the switch "Screenshots: capture a whole monitor of a grant station and read its own screenshots". Turn on "Allow keyboard input and pointer movement in this agent's previews".
+3. To allow clicks, turn on **Allow pointer clicks**. The option is off by default. It shows only while the input switch is on.
+4. To allow input in other windows, select "Other application windows on the grant stations" in the group "Input windows". The default is "This agent's preview windows". The board then shows the option **Allow input in other application windows**, which is off, and the red disclosure above. The board does not start the session until you turn on this option, and it shows "Check "Allow input in other application windows" to give this agent the broader scope." The line "Scope: other application windows on the grant stations" replaces the line "Scope: this caller's preview windows".
+5. Set the two limits of section 7.8. A click uses the "Input action limit". It uses no typed characters.
+6. In the group "Grant stations", select the stations where the agent can act. Start the session. The board asks you to confirm that it is you. The dialog "Confirm it is you" shows the text "This change needs it:" with the labels "Fleet control", and, when you chose them, "Agent pointer clicks" and "Agent input in other application windows". The elevated confirmation covers the allowances.
+7. Open Settings and the station tab of each station where the agent acts. Turn on "Allow agent desktop input" (section 7.8). For clicks, turn on **Allow agent clicks**. For the scope, turn on **Allow agent input in other application windows**. The board asks for a recent sign-in when you turn on one of these. Turning off needs none.
+
+The text of **Allow agent clicks** is: "Allows explicitly authorized coordinator grants to send one left pointer click at a time in their permitted windows on this station. Needs Allow agent desktop input. Turning this off stops new clicks and requests interruption of an active click; already sent input cannot be undone."
+
+The text of **Allow agent input in other application windows** is: "Allows explicitly authorized coordinator grants to use keyboard input, pointer movement and, when allowed, clicks in other application windows on this station, including terminals and signed-in browser windows. Needs Allow agent desktop input. Turning this off stops new input and requests interruption of active input; already sent input cannot be undone."
+
+Rules of the grant:
+
+- A grant that exists before this version has no click and the scope "This agent's preview windows". A renewal never adds a click or the scope. "Change limits" never adds them. To add one, start a new coordinator.
+- The click needs the input allowance. A grant with a click and no input allowance is refused before it is stored.
+- The start fails with `unsupported` when the station of the coordinator or a grant station has no link, or lacks a link feature. A click needs `desktop_click_mcp.v1`. The scope needs `desktop_input_any.v1`. A click with the scope needs both. The tool `pointer_click` shows in the tool list of the agent only when the grant has the click and the station negotiated the feature at the start. The tool `window_list` shows only with the scope. The tool list does not change later.
+- The grant row in the "Coordinator grants" list of the "Mail and tasks" panel shows ", clicks allowed" and ", input in other application windows" after the use of the input, for example "input actions 12 of 100, typed characters 340 of 20000, clicks allowed, input in other application windows".
+
+A click or an input action in another window works only while every gate is on. All the gates of sections 7.6 and 7.8 apply. On the station where the action runs, **Allow agent clicks** must be on for a click, and **Allow agent input in other application windows** must be on for every input call under the scope. The station reads its own settings live. Turn a switch off and the next action stops. The deck setting "Desktop control" stays the kill switch of all input.
+
+#### What the station shows
+
+- Before each new action, the station shows a notification with the title "Fleet Deck". For a click in a preview, the text is "Fleet Deck is clicking for <callsign> in an agent preview."
+- Under the scope for other windows, every input call shows one of these texts, also for a call in a preview of the agent: "Fleet Deck is sending keyboard input for <callsign> to an application window.", "Fleet Deck is moving the pointer for <callsign> in an application window." or "Fleet Deck is clicking for <callsign> in an application window."
+- The agent cannot change these texts. They show no key, no text, no point, no page title and no address. When the notification fails, the station does not focus the window and does not send input.
+- The station focuses the window once. It does not move a window, does not switch a workspace and does not use another window instead.
+- A station runs one input action at a time, a click included. A `window_list` read does not use this place.
+
+#### The sign-out of the boards on the target machine
+
+The rules of section 7.8 apply to a click and to every input call in both scopes. Before a new input action starts, the deck signs out the boards of the machine of the target. For a click, this is before the disclosure, the focus and the pointer movement. A repeated request and a status question do not sign out again. `window_list` does not sign out.
+
+The board shows the two lines in these words:
+
+- At a sign-out: "You were signed out because an agent used desktop input on the station where this board is open."
+- At a blocked sign-in: "An agent is using desktop input on this station. Sign in again in a minute."
+
+The times of section 7.8 stay: the sign-out is in force while the action runs, for 5 seconds after it ends, and then for 60 seconds more. For an action that has no end time, it lasts 45 seconds and then the 60 seconds. This sign-out is not complete. It protects the decisions that go through this deck, for the machine addresses that the deck records. It does not protect the approval screen of another service, of another deck, a path through a proxy or a VPN that the station does not report, or the other applications that you signed in to.
+
+#### The charges
+
+A click is one input action. It uses one desktop action, one input action and no typed characters, and it uses one entry of the input rate. The pointer movement inside the click has no charge of its own. All limits of section 7.8 apply. A count is not given back when a click is refused after the movement, fails, or ends with an unknown result. A `window_list` read has no charge.
+
+#### Stop it
+
+All the ways of section 7.8 work. These are the new ones:
+
+- Turn off **Allow agent clicks** or **Allow agent input in other application windows** on the station tab. The next action is refused. A click or an input that runs is interrupted.
+- When the station interrupts a click, it stops the click tool. It does not send a second click, a button release, Escape or an undo. It does not return the focus or the pointer.
+
+What Fleet Deck cannot do:
+
+- The program `wlrctl` that sends the click has no target window. It sends the click to the place where the compositor sends it. Fleet Deck checks the window, the rectangle, the focus, the layers and the cursor position right before the click, but the receiving surface can change in the short time after the check. A menu or a popup that the window list does not show is not a target of its own.
+- A click that closes its own window or changes the focus can end with an interrupted or unknown result.
+- The window checks cannot prove that a window is the same window after a close and a new open at the same address, when an event is late. Fleet Deck refuses a `window_id` for the changes that it can see.
+- Detection of board and wall windows is incomplete. A board in a browser window with another title can be a target of the scope for other windows.
+- The result `done` means that the click tool and the final checks ended without a detected failure. It does not mean that the application did what the agent wanted.
+
+#### The refusals, in your words
+
+The agent sees the code and the fixed text. The codes of section 7.8 stay. These codes are new:
+
+| Code | Text | What it means |
+| --- | --- | --- |
+| `input_click_not_allowed` | "This grant does not allow pointer clicks." | The grant has no click allowance. |
+| `input_scope_not_allowed` | "This grant does not allow input in other application windows." | The grant has the scope "This agent's preview windows". |
+| `input_click_disabled` | "Agent pointer clicks are disabled on the target station." | **Allow agent clicks** is off on the target station. |
+| `input_any_disabled` | "Agent input in other application windows is disabled on the target station." | **Allow agent input in other application windows** is off on the target station. |
+| `input_click_tool_missing` | "The pointer click tool wlrctl is not installed on the target station." | A click needs `wlrctl`. |
+| `input_click_tool_unsupported` | "The target desktop cannot use the configured pointer click tool." | The station cannot show that the Hyprland instance and the Wayland socket of `wlrctl` are the same one. |
+
+For a click and for every call under the scope for other windows, four codes have a text that does not name a preview:
+
+| Code | Text |
+| --- | --- |
+| `desktop_window_not_found` | "No input window available to this grant matches that handle." |
+| `input_destination_unavailable` | "The pointer destination is not available inside the target window." |
+| `input_focus_unknown` | "The target window's input focus could not be verified. No further input was started; the pointer may already have moved." |
+| `focus_changed` | "The target window no longer has focus. Input stopped; some input may already have been sent." |
+
+For a click, `input_destination_unavailable` also means that the window rectangle or the cursor point changed between the movement and the click. `input_focus_unknown` also means that the cursor position could not be read. `input_failed` also covers a query of the Hyprland instances that failed before the click started. A call without a click and without the scope keeps the texts of section 7.8.
+
+When the deck cannot know the result of a click or of a call under the scope, the agent gets the code `desktop_timeout` and this text: "The input outcome is unknown. Inspect the target application before issuing another input request. Do not retry automatically." The state is `unknown`. Look at the target application before you ask for more input.
+
+`window_list` also gives these codes from the station: `input_any_disabled`, `input_scope_not_allowed`, `input_not_allowed`, `screen_locked`, `busy`, `desktop_result_too_large`, `desktop_window_not_found`, `desktop_control_off` and `desktop_unsupported`. Another station error gives `desktop_failed`. A list that the station cannot finish because of a window change gives `desktop_failed` and no window.
+
+`fleetdeck doctor` shows whether `wlrctl` is installed on the machine where it runs. On an Omarchy machine the line is `ok desktop-click: wlrctl found; compatibility is not verified (live smoke pending)` or `warn desktop-click: wlrctl not found: agent pointer clicks fail until it is installed`. A machine without Omarchy has no line. The doctor never clicks and never runs `wlrctl`. The `warn` is not a failure. A check of a remote station has no board path yet. Installing `wlrctl` has no board path yet (there is no supported package source).
+
+#### Open items
+
+- The PRE-PR review and the live smoke are not done (see `docs/v2/LIVE-SMOKE.md`). Do not rely on clicks or on input in other windows before the smoke passes.
+- Installing `wlrctl`, and reading the `desktop-click` line of a remote station, have no board path yet.
+- The scope for other windows reaches terminals and signed-in browser windows. You decide if you accept this.
+- The right and middle buttons, a double click as one call, scrolling, dragging and held keys are not built.
+- The open items of section 7.8 about the member join page and about an address that the station does not report still apply.
+
 ## 8. Back up
 
 - The station event log (`station.db`) is the source of truth for sessions. The deck database (`deck.db`) is the source of truth for mail, plans, tasks, routing and settings.

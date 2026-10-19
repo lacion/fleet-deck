@@ -1,6 +1,6 @@
 # P7b: coordinator pointer click and the `any_window` input scope
 
-- **Status:** Proposed contract (architect, 2026-10-19), from the advisor answer `advisor-p7b-answer.md` against v2 HEAD `f2286e3e`. The architect accepts P7b-OD1 to P7b-OD6 as architect decisions (O12-24; the owner may change any of them). DESIGN REVIEW round 1 PASS (2026-10-19; two MINOR findings fixed in this file; report `adv-p7b-design-r1-report.md`): accepted for the build. PRE-PR required before merge; live smoke required before operational reliance (both capabilities stay experimental and off by default).
+- **Status:** Proposed contract (architect, 2026-10-19), from the advisor answer `advisor-p7b-answer.md` against v2 HEAD `f2286e3e`. The architect accepts P7b-OD1 to P7b-OD6 as architect decisions (O12-24; the owner may change any of them). DESIGN REVIEW round 1 PASS (2026-10-19; two MINOR findings fixed in this file; report `adv-p7b-design-r1-report.md`): accepted for the build. PRE-PR required before merge; live smoke required before operational reliance (both capabilities stay experimental and off by default). **Built on v2 (DL-247); PRE-PR review and live smoke pending.**
 - **Parent:** `omarchy-p7.md`.
 - **Prerequisite:** accepted and built P7 (DL-245, DL-246).
 - **Scope:** coordinator tool `pointer_click`, and the `any_window` input scope with the tool `window_list`.
