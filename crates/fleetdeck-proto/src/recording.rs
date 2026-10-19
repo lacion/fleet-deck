@@ -21,10 +21,15 @@ pub const RECORDING_FILE: &str = "capture.mp4";
 /// The most pixels of one recorded frame (§8).
 const MAX_PIXELS: u64 = 16_777_216;
 
-/// True for a requested duration of 1 to 120 seconds (§3.2).
+/// The longest recording that the proto and the stored constraints accept:
+/// one hour. A station refuses a request that is longer than its own
+/// `capture.recording_max_seconds` (knobs K4).
+pub const MAX_RECORDING_SECONDS: u64 = 3600;
+
+/// True for a requested duration of 1 to 3600 seconds (§3.2).
 #[must_use]
 pub fn valid_seconds(n: u64) -> bool {
-    (1..=120).contains(&n)
+    (1..=MAX_RECORDING_SECONDS).contains(&n)
 }
 
 /// True for a recordable monitor size: each side 2 to 8192 and even, at most

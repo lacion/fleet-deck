@@ -119,6 +119,7 @@ pub struct Policy {
     /// The stop bounds of the provider processes: a restart value, from
     /// `limits.provider_stop_grace_seconds` (knobs K3).
     pub(super) stop: StopPolicy,
+    pub(super) recording_max_seconds: u32,
 }
 
 /// The default `clone_root`: the first allowed root + `/projects`.
@@ -185,6 +186,7 @@ impl Policy {
             taildrive_mounts: config.taildrive_mounts.clone(),
             timeouts: StationTimeouts::from_limits(&config.limits),
             stop: stop_policy(&config.limits),
+            recording_max_seconds: config.capture.recording_max_seconds,
         }
         .with_repo_groups(&config.repo_groups)
     }
@@ -270,6 +272,7 @@ impl Policy {
             taildrive_mounts: BTreeMap::new(),
             timeouts: StationTimeouts::default(),
             stop: StopPolicy::default(),
+            recording_max_seconds: 120,
         }
     }
 

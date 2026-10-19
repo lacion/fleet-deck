@@ -2,7 +2,7 @@
 //! §3.2, §4.3, §4.4, §14):
 //! - the `screen_record` branch of `POST /api/stations/{station}/desktop/act`
 //!   ([`act`], called by [`super::desktop_routes`]): owner, Admin, the header
-//!   `X-FleetDeck-Capture-Id`, `seconds` from 1 to 120; `200` with the result,
+//!   `X-FleetDeck-Capture-Id`, `seconds` from 1 to 3600; `200` with the result,
 //!   `202` with a state body, or a recording error;
 //! - `GET /api/stations/{station}/desktop/recording` (owner, Admin): the
 //!   active recording of the station;
@@ -75,7 +75,7 @@ pub(super) fn project(headers: &HeaderMap, status: &mut RecordingCaptureStatus) 
 }
 
 /// The whole number of seconds of the body, or `None`: a fraction, a negative
-/// number and a number outside 1 to 120 are not valid.
+/// number and a number outside 1 to 3600 are not valid.
 fn duration(n: &serde_json::Number) -> Option<u32> {
     n.as_u64()
         .filter(|n| valid_seconds(*n))
@@ -239,13 +239,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_duration_is_a_whole_number_from_1_to_120() {
-        for ok in [1_u32, 30, 120] {
+    fn the_duration_is_a_whole_number_from_1_to_3600() {
+        for ok in [1_u32, 30, 120, 121, 3600] {
             assert_eq!(duration(&serde_json::Number::from(ok)), Some(ok));
         }
         for bad in [
             serde_json::Number::from(0),
-            serde_json::Number::from(121),
+            serde_json::Number::from(3601),
             serde_json::Number::from(-1),
             serde_json::Number::from_f64(1.5).unwrap(),
             serde_json::Number::from_f64(30.0).unwrap(),

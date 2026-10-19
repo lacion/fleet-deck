@@ -95,7 +95,7 @@ fn the_arguments_are_checked_into_the_closed_record_call() {
     ));
     for bad in [
         json!({"request_id": "r1", "monitor": "DP-1", "seconds": 0}),
-        json!({"request_id": "r1", "monitor": "DP-1", "seconds": 121}),
+        json!({"request_id": "r1", "monitor": "DP-1", "seconds": 3601}),
         json!({"request_id": "r1", "monitor": "DP-1"}),
         json!({"monitor": "DP-1", "seconds": 5}),
         json!({"request_id": "r1", "monitor": "DP 1", "seconds": 5}),
@@ -111,7 +111,7 @@ fn the_arguments_are_checked_into_the_closed_record_call() {
 
 #[test]
 fn the_mcp_deadline_is_the_seconds_plus_forty_five_seconds() {
-    for seconds in [1_u32, 60, 120] {
+    for seconds in [1_u32, 60, 120, 3600] {
         assert_eq!(
             record(seconds).mcp_ms(),
             u64::from(seconds) * 1000 + 45_000,

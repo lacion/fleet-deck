@@ -301,7 +301,7 @@ impl Desktop {
         if !valid_seconds(u64::from(req.seconds)) {
             return Err(Fail::new(
                 desktop_code::INVALID_PARAMS,
-                "`seconds` must be from 1 to 120",
+                "`seconds` must be from 1 to 3600",
             ));
         }
         within(deadline, async {

@@ -199,6 +199,7 @@ pub fn info() -> DesktopInfo {
         features: Vec::new(),
         previews: Vec::new(),
         host_addresses: Vec::new(),
+        recording_max_seconds: None,
     }
 }
 

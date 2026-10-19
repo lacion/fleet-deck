@@ -67,7 +67,7 @@ const DESKTOP_NOTE =
 const CAPTURE_NOTE =
   'This agent can capture the whole selected monitor, including other applications, notifications and private information visible there. Screenshots are stored as artifacts. Images the agent reads are sent to its provider conversation. Deleting an artifact does not remove downloaded copies or provider conversations.';
 const RECORDING_NOTE =
-  'This agent can record the whole selected monitor for up to 120 seconds at a time, including other applications, notifications and private information visible there. Recordings are stored as video artifacts. The agent gets only a reference to each recording, never the video.';
+  "This agent can record the whole selected monitor for up to the station's longest recording (120 seconds by default) at a time, including other applications, notifications and private information visible there. Recordings are stored as video artifacts. The agent gets only a reference to each recording, never the video.";
 const DESKTOP_GATE_NOTE =
   'Desktop and screenshot tools work only while the deck settings Fleet control and Desktop control are on, and on stations that allow them.';
 

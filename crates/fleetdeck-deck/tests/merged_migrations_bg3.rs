@@ -36,7 +36,7 @@ fn migration_v39_adds_the_provision_report_tables_and_keeps_the_rows() {
     .unwrap();
 
     migrations.to_latest(&mut conn).unwrap();
-    assert_eq!(user_version(&conn), 40);
+    assert_eq!(user_version(&conn), 41);
     assert_eq!(count(&conn, "SELECT count(*) FROM audit"), 1);
     for table in ["provision_reports", "provision_retries"] {
         assert_eq!(count(&conn, &format!("SELECT count(*) FROM {table}")), 0);

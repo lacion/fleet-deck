@@ -34,4 +34,11 @@ previews?: Array<PreviewWindow>,
  * machine (at most 16, loopback and link-local excluded). The station
  * sends it only on a link with `desktop_input_mcp.v1`.
  */
-host_addresses?: Array<string>, };
+host_addresses?: Array<string>, 
+/**
+ * The longest recording that this station allows, in seconds: its
+ * `capture.recording_max_seconds` setting (knobs K4). The station stamps
+ * it on every answer. `None` for a station that does not report it; the
+ * board then uses 120.
+ */
+recording_max_seconds?: number | null, };

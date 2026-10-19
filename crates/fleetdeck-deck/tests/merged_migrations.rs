@@ -17,9 +17,9 @@
 use rusqlite::Connection;
 
 const DECK_V2_LAST: usize = 25;
-const DECK_LATEST: i64 = 40;
+const DECK_LATEST: i64 = 41;
 const STATION_V2_LAST: usize = 27;
-const STATION_LATEST: i64 = 39;
+const STATION_LATEST: i64 = 40;
 
 fn user_version(conn: &Connection) -> i64 {
     conn.pragma_query_value(None, "user_version", |r| r.get(0))
@@ -424,7 +424,7 @@ fn migration_v35_keeps_a_deck_capture_row_as_a_screenshot() {
     };
     assert!(insert("r1", "recording", 120).is_ok());
     assert!(insert("r2", "recording", 0).is_err());
-    assert!(insert("r3", "recording", 121).is_err());
+    assert!(insert("r3", "recording", 3601).is_err());
     assert!(insert("r4", "video", 5).is_err());
     assert!(
         conn.execute("UPDATE desktop_captures SET stop_intent = 'later'", [])
@@ -438,7 +438,7 @@ fn migration_v35_keeps_a_deck_capture_row_as_a_screenshot() {
 
 /// R13 P5b-2 task Q-F: V35 to V36 gives an existing grant four zero recording
 /// counters, keeps an existing operation row through the table rebuild (with
-/// `seconds` `NULL`), and accepts `record_monitor` and `seconds` 1 to 120 only.
+/// `seconds` `NULL`), and accepts `record_monitor` and `seconds` 1 to 3600 only.
 #[test]
 fn migration_v36_keeps_a_grant_at_zero_recording_caps_and_an_op_row_through_the_rebuild() {
     let migrations = fleetdeck_deck::store::schema::migrations();
@@ -554,7 +554,7 @@ fn migration_v36_keeps_a_grant_at_zero_recording_caps_and_an_op_row_through_the_
         ),
         0
     );
-    // The rebuilt table takes `record_monitor` with 1 to 120 seconds, and the
+    // The rebuilt table takes `record_monitor` with 1 to 3600 seconds, and the
     // old checks still hold. One request key for each grant still holds.
     let insert = |id: &str, tool: &str, seconds: Option<i64>| {
         conn.execute(
@@ -570,7 +570,7 @@ fn migration_v36_keeps_a_grant_at_zero_recording_caps_and_an_op_row_through_the_
     assert!(insert("r1", "record_monitor", Some(1)).is_ok());
     assert!(insert("r2", "record_monitor", Some(120)).is_ok());
     assert!(insert("r3", "record_monitor", Some(0)).is_err());
-    assert!(insert("r4", "record_monitor", Some(121)).is_err());
+    assert!(insert("r4", "record_monitor", Some(3601)).is_err());
     assert!(insert("r5", "notify", None).is_ok());
     assert!(insert("r6", "record_demo", Some(5)).is_err());
     assert!(insert("op1", "notify", None).is_err());
@@ -652,7 +652,7 @@ fn migration_v37_keeps_the_rows_and_signs_every_session_out() {
              ('coordinator_desktop_ops_state', 'coordinator_desktop_rate_key')
              OR name LIKE '%_new'"
         ),
-        "coordinator_desktop_ops_state,coordinator_desktop_rate_key"
+        "coordinator_desktop_rate_key,coordinator_desktop_ops_state"
     );
     assert_eq!(
         count(&conn, "SELECT count(*) FROM coordinator_desktop_rate"),

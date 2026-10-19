@@ -61,6 +61,11 @@ fn every_recording_code_has_its_status_and_exact_text() {
             504,
             "The station did not answer in time; the action may have run.",
         ),
+        (
+            "recording_too_long",
+            409,
+            "This recording is longer than this station allows. Shorten it, or raise Longest recording in the station settings.",
+        ),
     ];
     assert_eq!(cases.len(), KNOWN.len());
     for (code, status, text) in cases {
