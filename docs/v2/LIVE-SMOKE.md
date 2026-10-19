@@ -595,4 +595,122 @@ Result:
 | --- | --- | --- | --- | --- |
 | (not run) | | | | The live smoke of P7 is open (DL-245 item c). Do not rely on agent input before it passes. |
 
+### P7b agent pointer clicks and input in other windows (DL-247)
+
+The contract is `docs/v2/design/omarchy-p7b.md` (sections 16 and 17). The owner guide is `docs/v2/operations.md` section 7.9. This smoke is required before you rely on agent clicks or on agent input in other application windows. P7b is built, but both capabilities stay experimental and off by default until this smoke passes and you accept what it shows. The PRE-PR review is also pending (DL-247 item a). Do it on the owner's Omarchy machines after the P7 smoke passed. The coordinator runs on one station (it can be a machine with no desktop). The agent acts on a second station that has a Hyprland desktop, `wtype` and `wlrctl`. Use the server with the wall display as the second station, and the laptop as the first. Item 12 needs a station whose desktop also runs your board: it uses the laptop.
+
+The smoke needs a separate recorded acceptance for each of three things: clicks in the previews of the agent (items 1, 3 and 4), keyboard input and pointer movement in other windows (items 2, 5 and 6), and clicks in other windows (items 2, 5 and 7). Items 8 to 14 apply to all three.
+
+Every step is a board step. No step asks you to run a command or to edit a file on a station. You give the coordinator its work in its chat on the board. A value that the board cannot show is marked "no board path yet". It is an open item, not an instruction. Use dummy content only. Do not test with a real approval or a real secret. The smoke must not approve a real dangerous operation.
+
+> **Caution:** the coordinator clicks, types and presses keys on a real desktop, and with the scope for other windows it can do this in your existing applications, including terminals and signed-in browser windows. The focus and the receiving window can change after Fleet Deck checks them. Close every window of a real account and every terminal on the second station before you run this smoke. Keep one board open on another device (for example a phone), because the deck signs out the boards of the machine where the agent acts (item 12).
+
+Set up:
+
+1. Do the set-up steps 1, 3 and 5 of the P7 smoke. After you upgrade a deck to this version, the migration V38 keeps every login. The board does not ask you to sign in again for it.
+2. On the station tab of the second station, turn on "Allow agent desktop input" and leave **Allow agent clicks** and **Allow agent input in other application windows** off. Items 3 and 6 turn them on.
+3. Use the dummy web page of the P7 smoke. Add to it a button that only changes a line of text on the page, a second button at another place, and a field that shows a count of the clicks that it received. The second station must have `wlrctl`. A station without it is a result to write (item 3 step 7). Installing `wlrctl` has no board path yet.
+4. Open a second dummy application window that the agent did not open (for example another browser window with the same dummy page, opened by you on the second station). Keep it harmless.
+
+Items:
+
+1. **The grant with the click.**
+   1. Open "New session". Choose the coordinator station, a provider instance and a directory. Select "Coordinator".
+   2. In the group "Fleet control", turn on "Desktop: show notifications and previews on grant stations, close its own previews, and show its work on walls" and "Screenshots: capture a whole monitor of a grant station and read its own screenshots". Expect no click option and no group "Input windows" yet.
+   3. Turn on "Allow keyboard input and pointer movement in this agent's previews". Expect the option **Allow pointer clicks** (off), the note "Allows this agent to move the pointer and send a left click in its permitted windows. A click can submit forms or approve actions. The pointer or receiving surface can change after Fleet Deck checks it.", and the group "Input windows" with "This agent's preview windows" selected and "Other application windows on the grant stations". Expect the red disclosure to end with "Pointer clicks and unrestricted window input are unavailable. This feature is experimental until its live smoke passes."
+   4. Turn on **Allow pointer clicks**. Expect the red disclosure to end with "Unrestricted window input is unavailable. This feature is experimental until its live smoke passes."
+   5. Turn "Desktop" off and on. Expect the input switch, the click option and the group "Input windows" to go off and to hide when you turn "Desktop" off.
+   6. Turn the input switch and **Allow pointer clicks** on again. In the group "Grant stations", select the second station. Start the session. Expect the dialog "Confirm it is you" with the text "This change needs it: Fleet control, Agent pointer clicks." (the board asks nothing when it still holds a recent sign-in).
+   7. In the "Coordinator grants" list of the "Mail and tasks" panel, find the grant. Expect "clicks allowed" after "input actions 0 of 100, typed characters 0 of 20000" in its line.
+2. **The grant with the scope for other windows.**
+   1. Start a second session like item 1 steps 1 to 3. Select "Other application windows on the grant stations". Expect the option **Allow input in other application windows** (off), the line "Scope: other application windows on the grant stations", and the red disclosure "This agent can list window positions, view permitted screenshots, and type, press keys and move the pointer in existing applications, including terminals and signed-in browser windows. If clicks are enabled, it can click there too. It can read personal information and act using your logged-in accounts. Fleet Deck refuses detected board and wall windows, but detection and targeting are incomplete. Board sign-out protects this deck only at the machine addresses it records. Agents run as your OS user." Expect that the red disclosure of the input switch no longer has the sentence about unavailable features.
+   2. Try to start the session without the option **Allow input in other application windows**. Expect the line "Check "Allow input in other application windows" to give this agent the broader scope." and no start.
+   3. Turn on **Allow input in other application windows**. Start the session once with **Allow pointer clicks** off and once with it on (two sessions, for items 5 to 7). Expect the dialog text "This change needs it: Fleet control, Agent input in other application windows." for the first, and "This change needs it: Fleet control, Agent pointer clicks, Agent input in other application windows." for the second.
+   4. Expect "input in other application windows" on the grant line of each (and "clicks allowed" on the second).
+3. **The station settings and the click in a preview.**
+   1. Ask the coordinator of item 1 to open the dummy page as a preview on the second station. Expect a window and a `window_id`.
+   2. With **Allow agent clicks** off, ask the coordinator to click the button of the preview. Expect `input_click_disabled` with the text "Agent pointer clicks are disabled on the target station." and no click. Write the code and the text.
+   3. On the station tab of the second station, turn on **Allow agent clicks**. Expect the board to ask for a recent sign-in. Expect the text of the setting: "Allows explicitly authorized coordinator grants to send one left pointer click at a time in their permitted windows on this station. Needs Allow agent desktop input. Turning this off stops new clicks and requests interruption of an active click; already sent input cannot be undone."
+   4. Ask for a click on the button of the preview (x and y from the top-left corner of the window, in logical coordinates). Expect the notification "Fleet Deck is clicking for <callsign> in an agent preview." on the screen of the second station, before the click. Expect the page to react once, and the result `done` with no echo of the point. Write the count of clicks that the page shows.
+   5. Expect "input actions 1 of 100, typed characters 0 of 20000" on the grant row and the line "pointer_click on <station>: done" in "Desktop operations".
+   6. Ask for a click at a point outside the preview, then at a point that another window covers. Expect `input_destination_unavailable` with the text "The pointer destination is not available inside the target window." for each, and no click. A click always uses this broader text, also in a preview.
+   7. If the second station has no `wlrctl`, ask for a click and expect `input_click_tool_missing` with the text "The pointer click tool wlrctl is not installed on the target station." Write the result. There is no board path to remove `wlrctl` to cause it.
+   8. Ask the coordinator of a grant without the click (the session of the P7 smoke) for a click. Expect that it has no `pointer_click` tool. Write the answer.
+4. **The click recording (record).**
+   1. Write the versions of Hyprland, Chromium and `wlrctl` in the result (no board path yet to read them).
+   2. Write whether the Hyprland session and the Wayland socket of `wlrctl` are the same one. The board cannot show this. An ambiguous setup refuses with `input_click_tool_unsupported` and the text "The target desktop cannot use the configured pointer click tool." Write whether you got this text. There is no board path to cause it.
+   3. Write where the pointer stands after a click. The board has no view of the pointer (no board path yet): look at the screen. Write whether the creation of the virtual pointer by `wlrctl` kept the cursor at the checked point.
+   4. Ask for two clicks, one call each, on the button that counts clicks. Write whether the page counts one click or two for each call, whether it reads two calls as a double click, and whether the press and the release both reach the page.
+   5. Write whether a modifier key, a held physical button or a pointer grab (for example an open menu) changes what a click does. Write whether the focus follows the pointer in this Hyprland setting.
+5. **The window list.**
+   1. Ask a coordinator with the scope (item 2) for the window list of the second station. Expect each window with a `window_id` of 32 lower-case hexadecimal characters, a position and size, the monitors that it overlaps, whether it has the focus, and `expires_in_ms`. Expect the monitors with a name, a position and a size. Expect no title, no class, no address, no process number and no workspace name. Write what the list holds.
+   2. Check that the windows that you see on the second station and that are on a shown workspace are in the list, that a window on a workspace that is not shown is not, and that no board and no wall window is in the list. Expect no count of left-out windows. Write any difference.
+   3. Ask for a screenshot of the monitor and compare it with the monitor and window positions of the list. Write whether the windows are where the list says.
+   4. Wait 60 seconds and ask for a click or a key with an old `window_id`. Expect `desktop_window_not_found` with the text "No input window available to this grant matches that handle." List again and expect a new `window_id`.
+   5. Close the dummy window that the agent listed, open it again, and ask for input with the old `window_id`. Expect `desktop_window_not_found`. List again and expect a new `window_id`.
+   6. Ask for 11 list reads in 60 seconds. Expect `rate_limited` for the eleventh. Ask for two list reads at the same time. Expect `busy` for the second.
+   7. Lock the screen of the second station and ask for the list. Expect `screen_locked` with the text "The screen is locked or its lock state is unknown." and no list. Unlock it.
+   8. Put a window on a second monitor that "Screenshot monitors" does not allow (on the station tab, set "Screenshot monitors" to the other monitor for this step, and clear it afterward). Expect that the window is not in the list.
+   9. Ask a coordinator with only the P7 allowance, and a coordinator with the scope off, for the window list. Expect no `window_list` tool.
+6. **Keyboard and movement in a listed window.**
+   1. With a grant that has the scope and no click (item 2), and with **Allow agent input in other application windows** off on the station, ask for a key in a listed window. Expect `input_any_disabled` with the text "Agent input in other application windows is disabled on the target station." and no key.
+   2. Turn on **Allow agent input in other application windows** on the station tab of the second station. Expect the board to ask for a recent sign-in. Expect the text of the setting: "Allows explicitly authorized coordinator grants to use keyboard input, pointer movement and, when allowed, clicks in other application windows on this station, including terminals and signed-in browser windows. Needs Allow agent desktop input. Turning this off stops new input and requests interruption of active input; already sent input cannot be undone."
+   3. Ask for the text "hello" in the field of the window that you opened yourself (item 4 of the set-up). Expect the notification "Fleet Deck is sending keyboard input for <callsign> to an application window." before the letters, "hello" in the field, and a result `done`.
+   4. Ask for a pointer move in that window. Expect the notification "Fleet Deck is moving the pointer for <callsign> in an application window." and a result `done`. Write where the pointer stands.
+   5. Ask for a key in a preview that the agent opened. Expect the notification "Fleet Deck is sending keyboard input for <callsign> to an application window." (the scope uses the broader variant for every call). Write the result.
+   6. Ask the coordinator to try `window_close` with a `window_id` of the list. Expect `desktop_window_not_found`. The list gives input only.
+   7. Ask for a key in a window that is not in the list, by a made-up `window_id`. Expect `desktop_window_not_found`.
+   8. Write whether the input stays in the window that was listed when another window gets the focus before the call.
+   9. Ask for a key after you switch the workspace of the window away. Expect `desktop_window_not_found`, no change of the workspace and no input. Write the code.
+7. **Clicks in a listed window.**
+   1. Use the session with the scope and the click (item 2). Turn on **Allow agent clicks** on the station (item 3). Ask for a click on the button of the window that you opened. Expect the notification "Fleet Deck is clicking for <callsign> in an application window." and the page to react once.
+   2. Ask for a click on a point that another window covers, on a point of a `top` or `overlay` layer (for example the status bar over the window), and on a point of a `background` or `bottom` layer. Expect `input_destination_unavailable` for the first two. Expect `done` for a point that no layer covers, and for a point under a `background` or `bottom` layer only. Write the result for each.
+   3. Move the window between the list and the click (drag it yourself). Expect a refusal for the changed rectangle and no click. Write the code.
+   4. Write whether a click that opens a dialog or closes the window gives `done` or an unknown outcome.
+   5. Ask for a click while the owner moves the physical pointer. Write the result (no board path yet to time the move).
+8. **The geometry (record).**
+   1. Do item 3 step 4 and item 7 step 1 on a monitor with a scale other than 1 (for example 1.5 or 2). Write how far the click is from the expected point, in logical coordinates.
+   2. Do the same on a monitor that is left of or above the first one (a negative origin), on a rotated monitor if there is one, on a second monitor, and on a special workspace. Write the result.
+   3. Place a window across two monitors, with one of them not allowed by "Screenshot monitors". Expect that the window is not in the list and that a click on its preview is refused. Write the result.
+9. **Popups and overlap (record).**
+   1. Open a native dialog or a menu on the window. Ask for a click on the dialog. Write that the list does not show the dialog, and what the click does.
+   2. Place a second window over a part of the first one. Ask for a click under it. Expect `input_destination_unavailable`.
+10. **The deadlines (record).**
+    1. Write the time from the notification to the result of a click, and of a list read.
+    2. Write whether a click ever ends with `desktop_timeout` and the text "The input outcome is unknown. Inspect the target application before issuing another input request. Do not retry automatically." Write whether the grant row and "Desktop operations" mark it "— unresolved".
+11. **The board and wall barrier (record).**
+    1. Open the address of your board in a browser window that you open yourself. List the windows. Expect that the window is not in the list when the station detects it as a board window. Write whether it is listed, because the detector is incomplete for an ordinary browser window with another title. This is the accepted false negative of the contract. It is a result to write, not a failure to fix.
+    2. Ask for a click in a wall window by a made-up `window_id`. Expect `desktop_window_not_found`.
+    3. Write whether the list holds a terminal or a signed-in browser window. This is the authority that the owner is asked about (DL-247 item d). Write whether you accept it.
+12. **The board sign-out (record).**
+    1. Use the laptop (a station whose desktop also runs your board in a browser) as the coordinator station and as the grant station, with a click grant. Turn on "Allow agent desktop input" and **Allow agent clicks** on its station tab. Keep the board open on another device and on the laptop.
+    2. Ask the coordinator to open the dummy page as a preview on the laptop and to click. Expect the board on the laptop to show the sign-in page with the line "You were signed out because an agent used desktop input on the station where this board is open." Expect the board on the other device to stay signed in. Write the time between the click and the sign-out.
+    3. On the laptop, try to sign in at once. Expect the line "An agent is using desktop input on this station. Sign in again in a minute." and no login. Write the time after which the sign-in works again. Expect about 65 seconds after the click ended.
+    4. Ask for a window list on the laptop. Expect no sign-out.
+    5. Write whether the deck sees the laptop through its own address, and whether the laptop board is signed out when you reach the deck through a proxy or a VPN that the station does not report. The contract expects that it is not.
+13. **Limits, stop and kill switches.**
+    1. Set "Input action limit" to the number that the grant has used. Ask for a click. Expect `input_cap_reached` with the text "This grant has used its input action limit." Write the use on the grant row. A list read does not use the limit: expect the list to work.
+    2. Try "Change limits" on a grant with the click and the scope. Expect only the limit fields. Expect that the click and the scope do not change.
+    3. Select "Revoke" on the grant row. Ask for a click and for a list. Expect an error and no input.
+    4. On the Deck tab, turn off "Desktop control". Ask for a click and for a list. Expect `desktop_control_off` with the text "Desktop control is off on this deck." Turn it on again.
+    5. Turn off **Allow agent clicks** on the station tab. Ask for a click. Expect `input_click_disabled`. Turn off **Allow agent input in other application windows** and ask for a key and for a list. Expect `input_any_disabled`. Turn the settings on again.
+    6. Turn on "Do not disturb" in the Desktop panel. Ask for a click. Write whether the notification shows and whether the click goes on. Turn "Do not disturb" off again.
+    7. Lock the screen of the second station and ask for a click. Expect `screen_locked`. Unlock it.
+    8. A notification that fails, and an interruption while the click tool runs, cannot be caused from the board (no board path yet). The unit tests cover them.
+14. **The tools of each provider.**
+    1. Ask a Claude coordinator and a Codex coordinator with the click and the scope which desktop tools they have. Expect `pointer_click` and `window_list` next to `key_press`, `type_text`, `pointer_move` and the P6 tools, and no `scroll`.
+    2. Ask the same for a coordinator with the input switch on and without the click and without the scope. Expect none of the two new tools.
+    3. Ask each provider to repeat a click request with the same request ID. Expect the same result and no second click. Ask for the status of a click. Write how each provider handles an unknown outcome.
+    4. Write the provider versions, and whether a provider asked you to approve a tool in its own terminal.
+
+Record the other items of section 17 of the contract that you can test from the board in the same run. Write "no board path yet" for an item that needs you at the machine (the physical keyboard or pointer while the agent acts, several seats, a real notification failure, and the versions and the seat of the compositor).
+
+Result:
+
+| Date | Machines | `wlrctl` / `wtype` / Hyprland / Chromium versions | Items | Result |
+| --- | --- | --- | --- | --- |
+| (not run) | | | | Preview clicks: open. |
+| (not run) | | | | Keyboard and movement in other windows: open. |
+| (not run) | | | | Clicks in other windows: open. The live smoke of P7b is open (DL-247 item b). Do not rely on agent clicks or on input in other windows before it passes. |
+
 <!-- desktop-smoke:end -->
