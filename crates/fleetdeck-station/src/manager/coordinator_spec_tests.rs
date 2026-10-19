@@ -35,6 +35,8 @@ pub(super) fn coordinator_spec() -> fleetdeck_proto::command::CoordinatorSpec {
         input_cap: None,
         input_character_cap: None,
         stations: Vec::new(),
+        spawn_cap: None,
+        max_modes: Default::default(),
     }
 }
 

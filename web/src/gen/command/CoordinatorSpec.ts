@@ -89,4 +89,15 @@ input_character_cap?: number,
  * to a station, so a station never sees it (both coordinator.v1 and the
  * current v2 decoders refuse unknown fields).
  */
-stations?: Array<StationId>, };
+stations?: Array<StationId>, 
+/**
+ * The spawn budget of a grant with the class `spawn` (ADR-006 §6.4,
+ * MCP P0 §2.1). Board → deck only: the deck reads it in `owner_start`
+ * and clears it before the start command goes to a station.
+ */
+spawn_cap?: number, 
+/**
+ * The most permissive native mode for each provider family (ADR-006 §4
+ * `max_modes`; keys `claude` and `codex`). Board → deck only.
+ */
+max_modes?: { [key in string]: string }, };

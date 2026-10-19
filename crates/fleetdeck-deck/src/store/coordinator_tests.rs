@@ -25,11 +25,11 @@ use crate::store::coordinator_query::QueryAnswer;
 use crate::store::grants::{GrantClass, GrantState, NewGrant};
 use crate::store::stations::NewStation;
 
-struct World {
-    det: Det,
-    s: DeckStore,
-    alpha: StationId,
-    beta: StationId,
+pub(super) struct World {
+    pub(super) det: Det,
+    pub(super) s: DeckStore,
+    pub(super) alpha: StationId,
+    pub(super) beta: StationId,
 }
 
 async fn pin(s: &DeckStore, name: &str) -> StationId {
@@ -87,7 +87,7 @@ fn info(name: &str) -> StationInfo {
 
 /// Station `alpha` with the coordinator `coord-1` and `worker-1` in
 /// `/w/app`; station `beta` with `other-1`.
-async fn world() -> World {
+pub(super) async fn world() -> World {
     let det = Det::new();
     let s = DeckStore::open_in_memory(det.clock(), det.ids())
         .await
@@ -118,7 +118,7 @@ async fn world() -> World {
     }
 }
 
-fn binding_of(grant_id: &str, generation: u32) -> CoordinatorBinding {
+pub(super) fn binding_of(grant_id: &str, generation: u32) -> CoordinatorBinding {
     CoordinatorBinding {
         binding_id: "b-1".to_owned(),
         grant_id: grant_id.to_owned(),
@@ -129,7 +129,7 @@ fn binding_of(grant_id: &str, generation: u32) -> CoordinatorBinding {
 }
 
 /// A bound grant of `coord-1` on `alpha`.
-async fn grant(
+pub(super) async fn grant(
     w: &World,
     classes: &[GrantClass],
     cap: u32,
@@ -138,7 +138,7 @@ async fn grant(
     grant_with(w, classes, cap, modes, |_| {}).await
 }
 
-async fn grant_with(
+pub(super) async fn grant_with(
     w: &World,
     classes: &[GrantClass],
     cap: u32,
@@ -159,7 +159,12 @@ async fn grant_with(
     b
 }
 
-fn env(w: &World, b: &CoordinatorBinding, id: &str, op: CoordinatorOp) -> CoordinatorCallEnvelope {
+pub(super) fn env(
+    w: &World,
+    b: &CoordinatorBinding,
+    id: &str,
+    op: CoordinatorOp,
+) -> CoordinatorCallEnvelope {
     CoordinatorCallEnvelope {
         command_id: CommandId::from(id),
         target_incarnation: w.s.incarnation().clone(),
@@ -173,7 +178,7 @@ fn env(w: &World, b: &CoordinatorBinding, id: &str, op: CoordinatorOp) -> Coordi
     }
 }
 
-fn target(station: &StationId, session: &str) -> CoordinatorTarget {
+pub(super) fn target(station: &StationId, session: &str) -> CoordinatorTarget {
     CoordinatorTarget {
         station: station.clone(),
         session_id: session.into(),
@@ -188,7 +193,7 @@ fn mail(to: CoordinatorTarget, text: &str) -> CoordinatorOp {
     }
 }
 
-fn spawn(station: &StationId, instance: &str, mode: Option<&str>) -> CoordinatorOp {
+pub(super) fn spawn(station: &StationId, instance: &str, mode: Option<&str>) -> CoordinatorOp {
     CoordinatorOp::Spawn {
         station: station.clone(),
         spec: SessionSpec {
@@ -205,15 +210,15 @@ fn spawn(station: &StationId, instance: &str, mode: Option<&str>) -> Coordinator
     }
 }
 
-async fn decide(w: &World, e: CoordinatorCallEnvelope) -> Receipt {
+pub(super) async fn decide(w: &World, e: CoordinatorCallEnvelope) -> Receipt {
     w.s.decide_coordinator(w.alpha.clone(), e).await.unwrap()
 }
 
-fn code(r: &Receipt) -> Option<RejectCode> {
+pub(super) fn code(r: &Receipt) -> Option<RejectCode> {
     r.reject.as_ref().map(|j| j.code)
 }
 
-async fn spawn_used(w: &World, b: &CoordinatorBinding) -> u32 {
+pub(super) async fn spawn_used(w: &World, b: &CoordinatorBinding) -> u32 {
     w.s.grant(b.grant_id.clone())
         .await
         .unwrap()
@@ -574,7 +579,7 @@ async fn a_task_completes_only_for_its_assignee() {
     assert_eq!(task.result.as_deref(), Some("ok"));
 }
 
-fn query(
+pub(super) fn query(
     w: &World,
     b: &CoordinatorBinding,
     q: CoordinatorQuery,
@@ -590,7 +595,10 @@ fn query(
     }
 }
 
-async fn ask(w: &World, e: CoordinatorQueryEnvelope) -> Result<serde_json::Value, RejectCode> {
+pub(super) async fn ask(
+    w: &World,
+    e: CoordinatorQueryEnvelope,
+) -> Result<serde_json::Value, RejectCode> {
     let answer = w.s.coordinator_query(w.alpha.clone(), e).await.unwrap();
     match answer.map_err(|r| r.code)? {
         QueryAnswer::Value(v) => Ok(v),

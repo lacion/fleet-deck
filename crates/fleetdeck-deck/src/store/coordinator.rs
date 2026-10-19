@@ -321,8 +321,8 @@ impl DeckStore {
                 };
                 tx.execute(
                     "INSERT INTO coordinator_receipts
-                     (command_id, station_id, method, caller, payload_sha256, receipt, at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                     (command_id, station_id, method, caller, payload_sha256, receipt, at, grant_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     params![
                         command_id.as_str(),
                         station.as_str(),
@@ -330,7 +330,10 @@ impl DeckStore {
                         caller,
                         payload,
                         serde_json::to_string(&receipt)?,
-                        now
+                        now,
+                        // MCP P0 §3.4: the grant that the decision used; the
+                        // worker path has none.
+                        grant.as_ref().map(|g| g.grant_id.as_str())
                     ],
                 )?;
                 tx.commit()?;
@@ -737,3 +740,7 @@ pub(super) use gate::{fleet_gate, v2_refusal};
 #[cfg(test)]
 #[path = "coordinator_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "coordinator_p0_tests.rs"]
+mod p0_tests;

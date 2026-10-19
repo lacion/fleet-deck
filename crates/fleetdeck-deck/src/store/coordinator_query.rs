@@ -218,9 +218,7 @@ impl DeckStore {
             | CoordinatorQuery::FileSearch { .. }
             | CoordinatorQuery::ProjectBranches { .. }
             | CoordinatorQuery::ProjectFetch { .. } => grant.classes.contains(&GrantClass::Inspect),
-            CoordinatorQuery::CommandStatus { .. } => {
-                grant.classes.iter().any(|c| *c != GrantClass::Read)
-            }
+            CoordinatorQuery::CommandStatus { .. } => grant.classes.iter().any(|c| c.is_mutating()),
             _ => grant.classes.contains(&GrantClass::Read),
         };
         if !allowed {
@@ -262,12 +260,13 @@ impl DeckStore {
             CoordinatorQuery::CommandStatus { command_id } => {
                 let caller = format!("{station}/{}", env.caller);
                 let id = command_id.as_str().to_owned();
+                let grant_id = grant.grant_id.clone();
                 let found: Option<(String, Vec<Value>)> = call(&self.inner.db, move |conn| {
                     let receipt: Option<String> = conn
                         .query_row(
                             "SELECT receipt FROM coordinator_receipts
-                             WHERE command_id = ?1 AND caller = ?2",
-                            params![id, caller],
+                             WHERE command_id = ?1 AND caller = ?2 AND grant_id = ?3",
+                            params![id, caller, grant_id],
                             |r| r.get(0),
                         )
                         .optional()?;
