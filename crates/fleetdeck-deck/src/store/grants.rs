@@ -15,13 +15,13 @@ use fleetdeck_proto::{ProviderInstanceId, SessionId, StationId};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
+use super::DeckError;
 pub use super::grants_input::check_input_grant;
 use super::grants_input::input_scope_of;
 pub(super) use super::grants_lifecycle::{apply_projection, record_lifecycle, renew_generation};
 pub use super::worker_grant::{check_desktop_caps, check_recording_caps};
 use super::worker_grant::{create_grant_tx, prepare_grant, revoke_tx};
-#[cfg(test)]
-use super::DeckError;
 use super::{DeckStore, Result, call, new_id};
 
 #[path = "fleet_answers.rs"]
