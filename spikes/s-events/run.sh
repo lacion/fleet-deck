@@ -3,7 +3,10 @@
 # changes, resource updates, progress, cancellation, cache TTLs)?
 #
 # Usage: sh spikes/s-events/run.sh [experiment ...]
-#   experiments: C1 C2 C3 C4 C4B C4C C4D C5 X1A X1B X1C X2 X2B X3 X3B (default: all)
+#   experiments: C1 C2 C3 C4 C4B C4C C4D C5 C6 C7 C8 X1A X1B X1C X2 X2B X3 X3B (default: all)
+#   C6, C7 and C8 (section 7 of the README) run the server over stdio, started by Claude
+#   itself (MCP config type stdio): C6 `--stdio --push listen`, C7 `--stdio --no-listen
+#   --push peer`, C8 `--stdio --no-listen --push listen` (the control, no notification).
 #   C4B, C4C, C4D, X2B and X3B are extra runs: a short tool timeout (10 s) against a 25 s
 #   count; Claude by MCP_TOOL_TIMEOUT with progress (C4B) and without progress (C4C), and
 #   by the per-server `timeout` key (C4D); Codex by tool_timeout_sec (X2B); and a 15 s
@@ -97,6 +100,23 @@ claude_run() {
   summary "$id"
 }
 
+# claude_stdio_run ID PLAN_JSON "server flags": Claude starts the events-server itself
+# (MCP type stdio, command = $BIN, args = the flags, env EVENTS_LOG); no port, no
+# separate server process. The log is $DIR/events.log.
+claude_stdio_run() {
+  id=$1
+  plan=$2
+  flags=$3
+  DIR="$TMP/$id"
+  mkdir -p "$DIR/work"
+  config=$(jq -nc --arg bin "$BIN" --arg flags "$flags" --arg log "$DIR/events.log" \
+    '{mcpServers:{events:{type:"stdio",command:$bin,args:($flags | split(" ") | map(select(length > 0))),env:{EVENTS_LOG:$log}}}}')
+  timeout $BOUND python3 -I "$HERE/claude_session.py" "$DIR" "$DIR/work" "$config" "$plan" \
+    >"$DIR/driver.txt" 2>&1
+  echo "exit=$?" >"$DIR/exit.txt"
+  summary "$id"
+}
+
 # codex_run ID MODE "server flags" [--flag FEATURE ...]
 codex_run() {
   id=$1
@@ -136,6 +156,9 @@ run_one() {
       )
       ;;
     C5) claude_run C5 '[["turn_interrupt","Call slow_count with seconds 60.",5]]' '--stateless --json' ;;
+    C6) claude_stdio_run C6 "[[\"turn\",\"Call tick.\"],[\"sleep\",3],[\"turn\",\"$LATE\"]]" '--stdio --push listen' ;;
+    C7) claude_stdio_run C7 "[[\"turn\",\"Call tick.\"],[\"sleep\",3],[\"turn\",\"$LATE\"]]" '--stdio --no-listen --push peer' ;;
+    C8) claude_stdio_run C8 "[[\"turn\",\"Call tick.\"],[\"sleep\",3],[\"turn\",\"$LATE\"]]" '--stdio --no-listen --push listen' ;;
     X1A) codex_run X1A events '--stateless --json' ;;
     X1B) codex_run X1B events '--stateful --sse' ;;
     X1C) codex_run X1C events '--stateful --sse' --flag mcp_2026_07_28 ;;
@@ -158,7 +181,7 @@ run_one() {
 }
 
 if [ "$#" -eq 0 ]; then
-  set -- C1 C2 C3 C4 C4B C4C C4D C5 X1A X1B X1C X2 X2B X3 X3B
+  set -- C1 C2 C3 C4 C4B C4C C4D C5 C6 C7 C8 X1A X1B X1C X2 X2B X3 X3B
 fi
 for e in "$@"; do
   run_one "$e"
