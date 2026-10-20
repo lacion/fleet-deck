@@ -245,6 +245,11 @@ pub mod feature {
     /// a coordinator grant (MCP P3, design `docs/v2/design/mcp-p3.md` §2).
     pub const FLEET_VIEW: &str = "fleet_view.v1";
 
+    /// `worker_grant.v1`: the station accepts a `CoordinatorSpec` with
+    /// `kind: worker` from the paired deck (MCP P4a, design
+    /// `docs/v2/design/mcp-p4a.md` §6.1).
+    pub const WORKER_GRANT: &str = "worker_grant.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -301,6 +306,7 @@ pub mod feature {
         DESKTOP_CLICK_MCP,
         DESKTOP_INPUT_ANY,
         FLEET_VIEW,
+        WORKER_GRANT,
         EXECUTION_STOP,
         PROVISION_REPORT,
         STATION_TOOLS,
@@ -482,6 +488,19 @@ mod tests {
             at(feature::PROVISION_REPORT) + 2
         );
         assert_eq!(feature::ALL.last(), Some(&feature::DESKTOP_TOOL_INSTALL));
+    }
+
+    #[test]
+    fn the_worker_grant_feature_has_its_name_and_follows_the_fleet_view_in_all() {
+        assert_eq!(feature::WORKER_GRANT, "worker_grant.v1");
+        let at = |f: &str| feature::ALL.iter().position(|x| *x == f).unwrap();
+        assert_eq!(at(feature::WORKER_GRANT), at(feature::FLEET_VIEW) + 1);
+        assert!(
+            VersionOffer::this_build()
+                .features
+                .iter()
+                .any(|f| f == "worker_grant.v1")
+        );
     }
 
     #[test]

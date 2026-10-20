@@ -5,7 +5,7 @@ use super::Event;
 
 impl Event {
     /// Every known kind name, in declaration order.
-    pub const KINDS: [&'static str; 60] = [
+    pub const KINDS: [&'static str; 61] = [
         "session.started",
         "session.state",
         "run.started",
@@ -42,6 +42,7 @@ impl Event {
         "session.auto_continue_skipped",
         "coordinator.bound",
         "coordinator.ended",
+        "coordinator.worker_outcome",
         "session.terminal",
         "session.slash_commands",
         "session.notice",
@@ -107,6 +108,7 @@ impl Event {
             Self::AutoContinueSkipped { .. } => "session.auto_continue_skipped",
             Self::CoordinatorBound { .. } => "coordinator.bound",
             Self::CoordinatorEnded { .. } => "coordinator.ended",
+            Self::CoordinatorWorkerOutcome { .. } => "coordinator.worker_outcome",
             Self::OutputGap { .. } => "session.output_gap",
             Self::SessionTerminal { .. } => "session.terminal",
             Self::SlashCommands { .. } => "session.slash_commands",

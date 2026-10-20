@@ -5,6 +5,7 @@
 //! `POST .../caps` changes the desktop caps (R13 P6 §2.2) and
 //! `GET .../desktop-ops` lists the recent desktop operations of a grant.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use axum::Json;
@@ -13,7 +14,7 @@ use axum::extract::{Extension, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use fleetdeck_proto::StationId;
 use fleetdeck_proto::coordinator_desktop_text::limits;
-use fleetdeck_proto::coordinator_spec::InputScope;
+use fleetdeck_proto::coordinator_spec::{GrantKind, InputScope};
 use fleetdeck_proto::orchestration::GrantView;
 use fleetdeck_proto::version::feature;
 
@@ -89,6 +90,8 @@ fn view(g: Grant) -> GrantView {
         input_character_cap: input.then_some(g.input_character_cap),
         input_character_used: input.then_some(g.input_character_used),
         allow_click: input.then_some(g.allow_click),
+        kind: GrantKind::Coordinator,
+        max_modes: BTreeMap::new(),
     }
 }
 

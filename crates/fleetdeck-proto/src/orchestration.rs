@@ -2,11 +2,13 @@
 //! auto` (6-3), mail (6-2) and tasks with waitable completions (6-4). The
 //! board's TypeScript types come from here.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::command::DeckCommandState;
-use crate::coordinator_spec::InputScope;
+use crate::coordinator_spec::{GrantKind, InputScope};
 use crate::event::ProviderKind;
 use crate::fleet_git::Prefer;
 use crate::ids::{CommandId, SessionId, StationId};
@@ -458,6 +460,15 @@ pub struct GrantView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub allow_click: Option<bool>,
+    /// MCP P4a §4: the grant kind. Absent in an old answer: `coordinator`.
+    #[serde(default, skip_serializing_if = "GrantKind::is_coordinator")]
+    #[ts(optional, as = "Option<GrantKind>")]
+    pub kind: GrantKind,
+    /// MCP P4a §4: the native mode ceilings of the grant (keys `claude`,
+    /// `codex`). Absent in an old answer: empty.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[ts(optional, as = "Option<BTreeMap<String, String>>")]
+    pub max_modes: BTreeMap<String, String>,
 }
 
 #[cfg(test)]

@@ -4,7 +4,8 @@
 use serde_json::{Value, json};
 
 use crate::command::{
-    CommandEnvelope, CommandOrigin, ControlSkill, CoordinatorSpec, GrantScope, SessionCommand,
+    CommandEnvelope, CommandOrigin, ControlSkill, CoordinatorSpec, GrantKind, GrantScope,
+    SessionCommand,
 };
 use crate::event::{ApprovalOption, OptionKind};
 use crate::ids::{CommandId, SessionId};
@@ -42,6 +43,7 @@ fn lineage_spec() -> CoordinatorSpec {
         stations: Vec::new(),
         spawn_cap: None,
         max_modes: Default::default(),
+        kind: GrantKind::Coordinator,
     }
 }
 
@@ -52,6 +54,28 @@ fn a_lineage_spec_serializes_byte_identically_to_the_recorded_v1_json() {
     assert_eq!(decoded, lineage_spec());
     assert_eq!(decoded.scope, GrantScope::Lineage);
     assert_eq!(decoded.answer_cap, None);
+}
+
+#[test]
+fn the_spec_kind_is_written_only_for_a_worker_and_defaults_to_coordinator() {
+    // An owner spec serializes as before: no `kind`.
+    let owner = serde_json::to_value(lineage_spec()).unwrap();
+    assert!(owner.get("kind").is_none());
+    let mut worker = lineage_spec();
+    worker.kind = GrantKind::Worker;
+    let text = serde_json::to_string(&worker).unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&text).unwrap()["kind"],
+        "worker"
+    );
+    assert_eq!(
+        serde_json::from_str::<CoordinatorSpec>(&text).unwrap().kind,
+        GrantKind::Worker
+    );
+    // An old spec without `kind` decodes as a coordinator grant.
+    let old: CoordinatorSpec = serde_json::from_str(V1_SPEC).unwrap();
+    assert_eq!(old.kind, GrantKind::Coordinator);
+    assert!(old.kind.is_coordinator());
 }
 
 #[test]

@@ -111,6 +111,11 @@ pub struct CoordinatorSpec {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[ts(optional, as = "Option<BTreeMap<String, String>>")]
     pub max_modes: BTreeMap<String, String>,
+    /// Set by the deck only (MCP P4a §4): `worker` for a default worker
+    /// grant; never sent by the board.
+    #[serde(default, skip_serializing_if = "GrantKind::is_coordinator")]
+    #[ts(optional, as = "Option<GrantKind>")]
+    pub kind: GrantKind,
 }
 
 /// The serde skip rule of `allow_recording`.
@@ -130,6 +135,26 @@ pub enum InputScope {
     /// R13 P7b §3.1: the preview windows of this caller and the windows that
     /// `window_list` issued a handle for (feature `desktop_input_any.v1`).
     AnyWindow,
+}
+
+/// The kind of a coordinator grant (MCP P4a §4). The deck owns it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "command/")]
+pub enum GrantKind {
+    /// A grant that the owner created, or any grant before MCP P4a.
+    #[default]
+    Coordinator,
+    /// A default worker grant that the deck attached to a start (MCP P4a).
+    Worker,
+}
+
+impl GrantKind {
+    /// True for the default kind; the serde skip rule of `kind`.
+    #[must_use]
+    pub const fn is_coordinator(&self) -> bool {
+        matches!(self, Self::Coordinator)
+    }
 }
 
 /// The reach of a coordinator grant (ADR-008 §2, §3).

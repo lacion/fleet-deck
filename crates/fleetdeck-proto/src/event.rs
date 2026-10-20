@@ -15,7 +15,8 @@ use ts_rs::TS;
 use crate::capability::Capabilities;
 use crate::fleet_git::{CleanupState, LandInfo, MoveInInfo, PushState, SkippedFile};
 use crate::ids::{
-    InputId, NodeId, PlanId, ProviderInstanceId, RequestId, RunId, SessionId, StationId, TurnId,
+    CommandId, InputId, NodeId, PlanId, ProviderInstanceId, RequestId, RunId, SessionId, StationId,
+    TurnId,
 };
 use crate::integrations::IssueRef;
 use crate::session::{BatchRef, RepoInfo};
@@ -259,6 +260,18 @@ pub enum Event {
     CoordinatorEnded {
         binding_id: String,
         generation: u32,
+        reason: String,
+    },
+    /// A worker grant's credential did not reach a provider (MCP P4a §6.2).
+    /// The station appends it after the launch preparation, or at the
+    /// admission skip of the start. A used worker grant has no outcome event:
+    /// its `coordinator.bound` shows the use. Older peers decode this kind as
+    /// unknown.
+    #[serde(rename = "coordinator.worker_outcome")]
+    CoordinatorWorkerOutcome {
+        grant_id: String,
+        start_command_id: CommandId,
+        outcome: WorkerOutcome,
         reason: String,
     },
     /// Provider stdout bytes `[from, to)` were not parsed as events

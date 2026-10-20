@@ -6,6 +6,7 @@ import type { LandInfo } from "../fleet_git/LandInfo";
 import type { MoveInInfo } from "../fleet_git/MoveInInfo";
 import type { PushState } from "../fleet_git/PushState";
 import type { SkippedFile } from "../fleet_git/SkippedFile";
+import type { CommandId } from "../ids/CommandId";
 import type { InputId } from "../ids/InputId";
 import type { NodeId } from "../ids/NodeId";
 import type { PlanId } from "../ids/PlanId";
@@ -40,6 +41,7 @@ import type { ToolStatus } from "./ToolStatus";
 import type { TurnCheckpoint } from "./TurnCheckpoint";
 import type { TurnStatus } from "./TurnStatus";
 import type { Usage } from "./Usage";
+import type { WorkerOutcome } from "./WorkerOutcome";
 
 /**
  * A canonical event of a known kind.
@@ -120,7 +122,7 @@ checkpoint: TurnCheckpoint | null,
 /**
  * Set when both checkpoint sides are available.
  */
-diff_summary: DiffSummary | null, } | { "kind": "revert.updated", revert_id: string, turn_id: TurnId, turns: number, state: RevertState, reason: string | null, } | { "kind": "session.renamed", title: string | null, } | { "kind": "session.named", callsign: string, worktree: string | null, } | { "kind": "session.issue", issue: IssueRef, } | { "kind": "session.auto_continue_changed", enabled: boolean, } | { "kind": "session.auto_continue_skipped", reason: string, } | { "kind": "coordinator.bound", binding_id: string, grant_id: string, generation: number, provider_instance: string, native_id: string, } | { "kind": "coordinator.ended", binding_id: string, generation: number, reason: string, } | { "kind": "session.output_gap", from: number, to: number, reason: OutputGapReason, } | { "kind": "session.terminal", shell_id?: string, pid?: number, reason?: string, } | { "kind": "session.slash_commands", commands: Array<string>, skills: Array<string>, } | { "kind": "session.notice", code: string, text: string, } | { "kind": "session.models", models: Array<ModelChoice>, } | { "kind": "session.base", git_ref?: string, oid: string, 
+diff_summary: DiffSummary | null, } | { "kind": "revert.updated", revert_id: string, turn_id: TurnId, turns: number, state: RevertState, reason: string | null, } | { "kind": "session.renamed", title: string | null, } | { "kind": "session.named", callsign: string, worktree: string | null, } | { "kind": "session.issue", issue: IssueRef, } | { "kind": "session.auto_continue_changed", enabled: boolean, } | { "kind": "session.auto_continue_skipped", reason: string, } | { "kind": "coordinator.bound", binding_id: string, grant_id: string, generation: number, provider_instance: string, native_id: string, } | { "kind": "coordinator.ended", binding_id: string, generation: number, reason: string, } | { "kind": "coordinator.worker_outcome", grant_id: string, start_command_id: CommandId, outcome: WorkerOutcome, reason: string, } | { "kind": "session.output_gap", from: number, to: number, reason: OutputGapReason, } | { "kind": "session.terminal", shell_id?: string, pid?: number, reason?: string, } | { "kind": "session.slash_commands", commands: Array<string>, skills: Array<string>, } | { "kind": "session.notice", code: string, text: string, } | { "kind": "session.models", models: Array<ModelChoice>, } | { "kind": "session.base", git_ref?: string, oid: string, 
 /**
  * The station guessed the base (an import or a resume).
  */
