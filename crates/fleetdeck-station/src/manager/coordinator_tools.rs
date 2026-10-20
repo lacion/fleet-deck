@@ -227,10 +227,10 @@ pub(super) fn log_no_tools(session_id: &SessionId, provider: ProviderKind, why: 
 }
 
 /// The name part of a fleet-only binding id.
-const FLEET_GRANT: &str = "fleet";
+pub(super) const FLEET_GRANT: &str = "fleet";
 
 /// The MCP `instructions` of a session without a coordinator grant.
-const FLEET_SKILL: &str = "Fleet Deck session tools. `publish_artifact` keeps a file of your \
+pub(super) const FLEET_SKILL: &str = "Fleet Deck session tools. `publish_artifact` keeps a file of your \
 workspace (an HTML page, Markdown, an image, SVG or PDF) as a versioned artifact that the owner \
 opens in Fleet Deck. To show a page or a document to the owner, call publish_artifact. When you \
 cannot write files (for example in dontAsk mode), pass the page as `content` with a `name` such as \

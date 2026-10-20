@@ -626,6 +626,7 @@ impl SessionManager {
         // writer transaction; the decision rechecks only the row state
         // (DL-182 §4.2).
         let check = self.reconcile_check(&command).await;
+        let set = coordinator_command::set_session(&command);
         let decided = self
             .store
             .decide(envelope, caller, move |d| {
@@ -665,11 +666,7 @@ impl SessionManager {
                 }
             })
             .await;
-        // A revoke wrote a fence entry; after the commit it is removed
-        // (DL-194 §2.3 step 4). A failure leaves it, which is harmless.
-        if let Some(fence) = self.coordinator.fence() {
-            fence.settle(&self.store).await;
-        }
+        coordinator_command::after_commit(&self.store, &self.coordinator, set, &decided).await;
         // B8: a release settled a row; its advance follows.
         if is_release
             && decided
