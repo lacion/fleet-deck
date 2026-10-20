@@ -17,7 +17,7 @@ use bytes::Bytes;
 use fleetdeck_proto::StationId;
 use fleetdeck_proto::fleet_view::FleetView;
 use http::HeaderMap;
-use http_body_util::Full;
+use http_body_util::{Either, Full};
 use hyper::body::{Body, Incoming};
 use hyper::header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, HOST, ORIGIN, WWW_AUTHENTICATE};
 use hyper::{Method, Request, Response, StatusCode};
@@ -27,9 +27,9 @@ use tokio::net::TcpListener;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 use tokio::task::JoinSet;
 
-use super::bindings::{Auth, Binding, Bindings, Caller};
+use super::bindings::{Auth, Binding, Bindings, Caller, StreamAuth, StreamKind};
 use super::desktop_forward::{DesktopRequest, McpToolResult, p6_error};
-use super::mcp_service::{McpService, Reply};
+use super::mcp_service::{ListenBody, ListenReply, McpService, Reply};
 use super::permit_io::{PermitIo, PermitSlot};
 
 /// The deck side of a tool call: the station forwards an authorized call
@@ -83,7 +83,7 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            connections: 128,
+            connections: 512,
             unauthenticated: 16,
             headers: Duration::from_secs(5),
             body: Duration::from_secs(10),
@@ -91,6 +91,9 @@ impl Default for Limits {
         }
     }
 }
+
+/// The method of the MCP message that opens an event stream.
+pub(super) const LISTEN_METHOD: &str = "subscriptions/listen";
 
 /// What a message path needs: the HTTP listener and the bridge socket
 /// (DL-194) build one each and answer through the same code.
@@ -168,6 +171,12 @@ pub(super) async fn answer_message(
     if msg.is_array() {
         return MessageOutcome::Batch;
     }
+    // A listen is a stream, not a request and a reply: the HTTP path takes it
+    // before this function (`handle_listen`); this transport does not serve
+    // it (MCP P4b §8.3).
+    if msg.get("method").and_then(Value::as_str) == Some(LISTEN_METHOD) {
+        return MessageOutcome::Reply(listen_refusal(&msg));
+    }
     let headers = headers(&msg);
     drop(msg);
     MessageOutcome::Reply(
@@ -176,6 +185,27 @@ pub(super) async fn answer_message(
             .serve(binding.clone(), Bytes::from(body), &headers)
             .await,
     )
+}
+
+/// The answer to a `subscriptions/listen` message on a transport that does
+/// not serve it: `-32601` with the id of the request, or no answer (a `202`
+/// with an empty body) for a message without an id.
+fn listen_refusal(msg: &Value) -> Reply {
+    let Some(id) = msg.get("id") else {
+        return Reply {
+            status: StatusCode::ACCEPTED,
+            content_type: None,
+            body: Bytes::new(),
+        };
+    };
+    let body = serde_json::json!({"jsonrpc": "2.0", "id": id,
+        "error": {"code": -32601,
+                  "message": "subscriptions/listen is not served on this transport"}});
+    Reply {
+        status: StatusCode::OK,
+        content_type: Some(hyper::header::HeaderValue::from_static("application/json")),
+        body: Bytes::from(body.to_string()),
+    }
 }
 
 /// A running endpoint.
@@ -269,14 +299,23 @@ async fn serve(listener: TcpListener, shared: Arc<Shared>, mut stop: watch::Rece
     tasks.abort_all();
 }
 
-fn plain(status: StatusCode) -> Response<Full<Bytes>> {
-    let mut r = Response::new(Full::new(Bytes::new()));
+/// The body of an HTTP answer: a whole body, or an event stream that owns
+/// its permits (MCP P4b §8.2).
+type ResBody = Either<Full<Bytes>, ListenBody>;
+
+/// A whole-body answer as an answer of the ingress.
+fn whole(body: Bytes) -> Response<ResBody> {
+    Response::new(Either::Left(Full::new(body)))
+}
+
+fn plain(status: StatusCode) -> Response<ResBody> {
+    let mut r = whole(Bytes::new());
     *r.status_mut() = status;
     r
 }
 
-fn json(status: StatusCode, body: &Value) -> Response<Full<Bytes>> {
-    let mut r = Response::new(Full::new(Bytes::from(body.to_string())));
+fn json(status: StatusCode, body: &Value) -> Response<ResBody> {
+    let mut r = whole(Bytes::from(body.to_string()));
     *r.status_mut() = status;
     r.headers_mut().insert(
         CONTENT_TYPE,
@@ -287,7 +326,7 @@ fn json(status: StatusCode, body: &Value) -> Response<Full<Bytes>> {
 
 /// The answer while a reattached shim replays its buffered output (DL-194
 /// §9.7).
-fn starting() -> Response<Full<Bytes>> {
+fn starting() -> Response<ResBody> {
     json(
         StatusCode::SERVICE_UNAVAILABLE,
         &serde_json::json!({"jsonrpc": "2.0", "id": null,
@@ -295,7 +334,7 @@ fn starting() -> Response<Full<Bytes>> {
     )
 }
 
-fn unauthorized() -> Response<Full<Bytes>> {
+fn unauthorized() -> Response<ResBody> {
     let mut r = json(
         StatusCode::UNAUTHORIZED,
         &serde_json::json!({"error": "unauthorized"}),
@@ -308,7 +347,7 @@ fn unauthorized() -> Response<Full<Bytes>> {
 }
 
 /// A connection-closing answer for a body that did not arrive in time.
-fn closing(status: StatusCode) -> Response<Full<Bytes>> {
+fn closing(status: StatusCode) -> Response<ResBody> {
     let mut r = plain(status);
     r.headers_mut().insert(
         hyper::header::CONNECTION,
@@ -318,8 +357,8 @@ fn closing(status: StatusCode) -> Response<Full<Bytes>> {
 }
 
 /// The HTTP response of an `rmcp` reply: its status, content type and body.
-fn from_reply(reply: Reply) -> Response<Full<Bytes>> {
-    let mut r = Response::new(Full::new(reply.body));
+fn from_reply(reply: Reply) -> Response<ResBody> {
+    let mut r = whole(reply.body);
     *r.status_mut() = reply.status;
     if let Some(content_type) = reply.content_type {
         r.headers_mut().insert(CONTENT_TYPE, content_type);
@@ -327,11 +366,7 @@ fn from_reply(reply: Reply) -> Response<Full<Bytes>> {
     r
 }
 
-async fn handle(
-    req: Request<Incoming>,
-    shared: &Shared,
-    slot: &PermitSlot,
-) -> Response<Full<Bytes>> {
+async fn handle(req: Request<Incoming>, shared: &Shared, slot: &PermitSlot) -> Response<ResBody> {
     if req.uri().path() != "/mcp" {
         return plain(StatusCode::NOT_FOUND);
     }
@@ -382,6 +417,9 @@ async fn handle(
         Ok(Err(status)) => return closing(status),
         Ok(Ok(body)) => body,
     };
+    if is_listen(&body) {
+        return handle_listen(shared, auth.as_deref(), &headers, body, _unauth).await;
+    }
     let (binding, permit) = match authenticate_message(shared, auth.as_deref()) {
         Ok(ok) => ok,
         Err(MessageOutcome::Limited) => return plain(StatusCode::TOO_MANY_REQUESTS),
@@ -409,6 +447,57 @@ async fn handle(
     }
 }
 
+/// True when the body is a JSON object whose `method` opens an event stream.
+fn is_listen(body: &[u8]) -> bool {
+    serde_json::from_slice::<Value>(body)
+        .ok()
+        .is_some_and(|msg| msg.get("method").and_then(Value::as_str) == Some(LISTEN_METHOD))
+}
+
+/// A `subscriptions/listen` request (MCP P4b §8.2): authenticated as a
+/// stream with its own permits, never with the request permits of the
+/// binding. The unauthenticated permit is released after the handshake. The
+/// stream permits live as long as the response body.
+async fn handle_listen(
+    shared: &Shared,
+    auth: Option<&str>,
+    headers: &HeaderMap,
+    body: Vec<u8>,
+    unauth: OwnedSemaphorePermit,
+) -> Response<ResBody> {
+    let (binding, handle, permits) = match shared
+        .bindings
+        .authenticate_stream(auth, StreamKind::Listen)
+    {
+        StreamAuth::Unauthorized => return unauthorized(),
+        StreamAuth::Limited => return plain(StatusCode::TOO_MANY_REQUESTS),
+        StreamAuth::Starting => return starting(),
+        StreamAuth::Ok {
+            binding,
+            handle,
+            permits,
+        } => (binding, handle, permits),
+    };
+    drop(unauth);
+    let reply = shared
+        .mcp
+        .serve_listen(*binding, handle, Bytes::from(body), headers)
+        .await;
+    match reply {
+        ListenReply::Reply(reply) => from_reply(reply),
+        ListenReply::Stream {
+            status,
+            headers,
+            body,
+        } => {
+            let mut r = Response::new(Either::Right(ListenBody::new(body, permits)));
+            *r.status_mut() = status;
+            *r.headers_mut() = headers;
+            r
+        }
+    }
+}
+
 async fn read_body(mut body: Incoming, limit: usize) -> Result<Vec<u8>, StatusCode> {
     let mut out = Vec::new();
     while let Some(frame) = poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
@@ -422,3 +511,7 @@ async fn read_body(mut body: Incoming, limit: usize) -> Result<Vec<u8>, StatusCo
     }
     Ok(out)
 }
+
+#[cfg(test)]
+#[path = "ingress_listen_tests.rs"]
+mod listen_tests;

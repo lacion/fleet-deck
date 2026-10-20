@@ -3,7 +3,9 @@
 
 use std::time::Instant;
 
-use super::{BINDING_RATE, Binding, BindingState, digest, well_formed};
+use tokio::sync::OwnedSemaphorePermit;
+
+use super::{BINDING_RATE, Binding, BindingHandle, BindingState, digest, well_formed};
 
 /// The result of an authentication.
 pub(crate) enum Auth {
@@ -20,7 +22,96 @@ pub(crate) enum Auth {
     },
 }
 
+/// The kind of a long-lived stream (MCP P4b §8): it has its own limits, not
+/// the request permits of the binding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StreamKind {
+    /// A `subscriptions/listen` stream of the HTTP ingress.
+    Listen,
+    /// A `WATCH` connection of the bridge socket.
+    Watch,
+}
+
+/// The permits of one stream: the binding's and the station's. They drop
+/// together with the stream.
+#[derive(Debug)]
+#[allow(dead_code, reason = "the permits are held for their drop")]
+pub(crate) struct StreamPermits(OwnedSemaphorePermit, OwnedSemaphorePermit);
+
+/// The result of the authentication of a stream.
+pub(crate) enum StreamAuth {
+    /// Missing, malformed, unknown, expired or revoked: one answer (§5.3).
+    Unauthorized,
+    /// The binding is over its rate or its stream limits, or the station is.
+    Limited,
+    /// The binding is held until the replay of its shim finished.
+    Starting,
+    Ok {
+        binding: Box<Binding>,
+        handle: BindingHandle,
+        permits: StreamPermits,
+    },
+}
+
 impl super::Bindings {
+    /// Authenticates a stream with the checks and the order of
+    /// [`Self::authenticate`], and takes the stream permits of its kind
+    /// instead of a request permit. The change receiver is registered under
+    /// the same lock as the authentication (MCP P4b §8.1).
+    pub(crate) fn authenticate_stream(&self, header: Option<&str>, kind: StreamKind) -> StreamAuth {
+        let Some(token) = header.and_then(|h| h.strip_prefix("Bearer ")) else {
+            tracing::info!(case = "missing", "coordinator credential refused");
+            return StreamAuth::Unauthorized;
+        };
+        if !well_formed(token) {
+            tracing::info!(case = "malformed", "coordinator credential refused");
+            return StreamAuth::Unauthorized;
+        }
+        let mut map = self.lock();
+        let key = digest(token);
+        let Some(e) = map.get_mut(&key) else {
+            tracing::info!(case = "unknown", "coordinator credential refused");
+            return StreamAuth::Unauthorized;
+        };
+        if matches!(
+            e.binding.state,
+            BindingState::Revoked | BindingState::Expired
+        ) {
+            tracing::info!(case = "ended", binding = %e.binding.binding_id, "coordinator credential refused");
+            return StreamAuth::Unauthorized;
+        }
+        if self.is_held(&key) {
+            return StreamAuth::Starting;
+        }
+        let now = Instant::now();
+        if now.duration_since(e.window.0).as_secs() >= 1 {
+            e.window = (now, 0);
+        }
+        if e.window.1 >= BINDING_RATE {
+            return StreamAuth::Limited;
+        }
+        let (binding_limit, station_limit) = match kind {
+            StreamKind::Listen => (&e.listens, &self.station_streams.listens),
+            StreamKind::Watch => (&e.watches, &self.station_streams.watches),
+        };
+        let Ok(binding_permit) = binding_limit.clone().try_acquire_owned() else {
+            return StreamAuth::Limited;
+        };
+        let Ok(station_permit) = station_limit.clone().try_acquire_owned() else {
+            return StreamAuth::Limited;
+        };
+        e.window.1 += 1;
+        StreamAuth::Ok {
+            binding: Box::new(e.binding.clone()),
+            handle: BindingHandle {
+                digest: key,
+                incarnation: e.incarnation,
+                changes: e.changes.subscribe(),
+            },
+            permits: StreamPermits(binding_permit, station_permit),
+        }
+    }
+
     pub(crate) fn authenticate(&self, header: Option<&str>) -> Auth {
         let Some(token) = header.and_then(|h| h.strip_prefix("Bearer ")) else {
             tracing::info!(case = "missing", "coordinator credential refused");

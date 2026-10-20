@@ -4,7 +4,8 @@
 //! a stable URL, so it runs `fleetdeck mcp-bridge`, which relays each
 //! JSON-RPC message to this Unix socket. One connection carries one
 //! message: line 1 is `AUTH <token>`, line 2 is the JSON-RPC message. The
-//! answer is one JSON line, `ERR <code>`, or nothing (a notification). The
+//! answer is one JSON line, `ERR <code>`, or nothing (a notification). A first
+//! line `WATCH <token>` opens a push connection instead (`socket_watch.rs`). The
 //! authentication, the limits and the JSON-RPC code are those of the HTTP
 //! ingress (`ingress::authenticate_message`, `ingress::answer_message`).
 //! The token is never logged.
@@ -33,13 +34,14 @@ use super::ingress::{
     FleetTools, Forward, Limits, MessageOutcome, Shared, answer_message, authenticate_message,
 };
 use super::mcp_service::bridge_headers;
+use super::socket_watch;
 
-/// The longest `AUTH <token>` line.
+/// The longest `AUTH <token>` or `WATCH <token>` line.
 const AUTH_LINE_MAX: usize = 1024;
 /// A connection that sent no complete message in this time is closed.
 const IDLE: Duration = Duration::from_secs(30);
 /// Connections served at once; above it a connection is closed at once.
-const MAX_CONNECTIONS: usize = 64;
+const MAX_CONNECTIONS: usize = 256;
 
 const ERR_BAD_REQUEST: &str = "ERR bad_request";
 const ERR_UNAUTHORIZED: &str = "ERR unauthorized";
@@ -247,17 +249,27 @@ enum Intake {
     /// refusal can carry its id.
     Limited(Vec<u8>),
     Ready(Box<Binding>, OwnedSemaphorePermit, Vec<u8>),
+    /// The first line was `WATCH <token>` (the token): a push connection.
+    Watch(String),
 }
 
-/// Reads `AUTH <token>` and the message, and authenticates. The
-/// unauthenticated permit is held between the two lines, like the HTTP
-/// path holds it while it reads the body.
+/// Reads `AUTH <token>` and the message, and authenticates; or reads
+/// `WATCH <token>` and hands the token on. The unauthenticated permit is held
+/// between the two lines, like the HTTP path holds it while it reads the
+/// body.
 async fn intake<R: AsyncBufRead + Unpin>(reader: &mut R, shared: &Shared) -> io::Result<Intake> {
     let first = match read_bounded(reader, AUTH_LINE_MAX).await? {
         Line::Text(text) => text,
         Line::Eof | Line::Partial(_) => return Ok(Intake::Close),
         Line::TooLong => return Ok(Intake::Refuse(ERR_BAD_REQUEST)),
     };
+    if let Some(token) = first
+        .strip_prefix(b"WATCH ")
+        .and_then(|rest| std::str::from_utf8(rest).ok())
+        .filter(|rest| !rest.is_empty())
+    {
+        return Ok(Intake::Watch(token.to_owned()));
+    }
     let Some(token) = first
         .strip_prefix(b"AUTH ")
         .and_then(|rest| std::str::from_utf8(rest).ok())
@@ -373,6 +385,23 @@ async fn connection(stream: UnixStream, shared: &Shared) {
         }
         Ok(Ok(Intake::Close)) => None,
         Ok(Ok(Intake::Refuse(line))) => Some(line.to_owned()),
+        Ok(Ok(Intake::Watch(token))) => {
+            // The push connection lives until a closing rule applies; the
+            // idle time of the intake does not apply to it.
+            match socket_watch::admit(shared, &token) {
+                Ok((handle, _permits)) => socket_watch::push(&mut reader, &mut write, handle).await,
+                Err(line) => {
+                    let sent = async {
+                        write.write_all(format!("{line}\n").as_bytes()).await?;
+                        write.flush().await
+                    };
+                    if let Err(error) = sent.await {
+                        tracing::debug!(kind = ?error.kind(), "a bridge reply was not sent");
+                    }
+                }
+            }
+            return;
+        }
         Ok(Ok(Intake::Limited(body))) => limited_line(&body),
         Ok(Ok(Intake::Ready(binding, held, body))) => {
             permit = Some(held);
