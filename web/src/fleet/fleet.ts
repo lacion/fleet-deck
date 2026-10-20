@@ -32,6 +32,8 @@ export type FleetActions = {
       recording_second_cap?: number;
       input_cap?: number;
       input_character_cap?: number;
+      spawn_cap?: number;
+      max_modes?: { [key in string]: string };
     },
     elevation?: string,
   ): Promise<FleetResult>;

@@ -69,4 +69,19 @@ describe('the owner knob sections (knobs design section 4)', () => {
     ]);
     expect(groups[3]?.fields.map((f) => f.key)).toEqual([...DECK.Retention, ...STATION.Retention]);
   });
+
+  test('the worker grant keys land in their own section', () => {
+    const keys = [
+      'worker_grant.enabled',
+      'worker_grant.stations',
+      'worker_grant.spawn_cap',
+      'worker_grant.claude_mode',
+      'worker_grant.codex_mode',
+      'worker_grant.lifetime_hours',
+      'worker_grant.idle_minutes',
+    ];
+    const groups = groupFields(keys.map(intField));
+    expect(groups.map((g) => g.title)).toEqual(['Worker grants']);
+    expect(groups[0]?.fields.map((f) => f.key)).toEqual(keys);
+  });
 });
