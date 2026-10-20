@@ -1,6 +1,6 @@
 # MCP P4a — the default worker grant
 
-- **Status:** Draft revision 2, 2026-10-20. Revision 1 (f901d98e) got adversary DESIGN REVIEW FAIL (1 BLOCKER, 7 MAJOR, 3 MINOR; `~/fleetdeck-briefs/mcp-p4a-design-r1-adversary.md`). Revision 2 applies all eleven (§10 maps them).
+- **Status:** Draft revision 3, 2026-10-20. Revision 1 (f901d98e) got DESIGN REVIEW FAIL (1 BLOCKER, 7 MAJOR, 3 MINOR; `~/fleetdeck-briefs/mcp-p4a-design-r1-adversary.md`); revision 2 (61eebb2f) fixed nine and got RE-REVIEW FAIL on two (`~/fleetdeck-briefs/mcp-p4a-design-r2-adversary.md`). Revision 3 applies them (§11).
 - **Program:** DL-251 (D1: every session starts with a small grant that can spawn), owner decisions W1–W3 of 2026-10-20 (`~/fleetdeck-briefs/mcp-p3-research-notes.md` §"P4 owner decisions"). P2 is folded into P4; P4b (live grant changes and the listen stream) follows.
 - **Out of scope:** live changes of a running session's grant and `tools/list_changed` (P4b); a grant on resume, import, bearer-token, member or CLI starts (W2).
 
@@ -63,18 +63,20 @@ Never: a coordinator `spawn`, `start_in_project`, `assign_auto` spawn, Fleet Git
 Feature `worker_grant.v1` (proto `version.rs`, offered by stations of this build). A station that negotiated it accepts a `CoordinatorSpec` with `kind: worker` from the paired deck with origin `Board` (`check_spec`: origin, import and structure checks unchanged). `Binding` gets `kind`; `shim_bindings` gets a `kind` column (station migration, default `coordinator`) so a reattach keeps it.
 
 ### 6.2 Fallback (R1 MAJOR 3)
-For `kind: worker`, `check_spec` keeps every origin, import and structure refusal, but a handoff refusal (`handoff_unverified`, the shim bridge not verified) does not refuse the command: the station removes the worker `CoordinatorSpec` from the spec before the launch and records the outcome `skipped` with the reason. The launch then prepares the fleet-only binding only when the fleet handoff is verified (the same gate as today), else `Tools::None`. The same applies when `tools_for` would refuse (a resumed start). The station's receipt of the start command carries `"worker_grant": "used" | "skipped"` in its result (next to `session_id`).
+For `kind: worker`, `check_spec` keeps every origin, import and structure refusal, but a handoff refusal (`handoff_unverified`, the shim bridge not verified) does not refuse the command: the station removes the worker `CoordinatorSpec` from the spec before the launch. The launch then prepares the fleet-only binding only when the fleet handoff is verified (the same gate as today), else `Tools::None`. The same applies when `tools_for` would refuse (a resumed start), and when saving the shim binding fails after the credential was minted.
+
+**The handoff outcome (R2 BLOCKER 1).** The start receipt is committed before the launch, so it cannot report the handoff. Instead, after the launch preparation (the end of `tools_for`/`prepare*`, including the shim row save), the station appends one durable station event `coordinator.worker_outcome { grant_id, start_command_id, outcome: "skipped", reason }` for every worker grant whose credential did not reach a provider (the admission skip of `check_spec` emits it too, right after the receipt). A used worker grant needs no outcome event: its `coordinator.bound` shows the use. The event is a station event like `coordinator.bound` (decodable by older decks as `EventBody::Unknown`, L16), so it is stored, acknowledged and replayed through the event stream; a coordinator-capable snapshot carries the skipped outcomes that are not yet acknowledged (the snapshot rule of ADR-006 §6.1).
 
 ### 6.3 Queued starts and a downgraded station (R1 MAJOR 4)
 The deck's outbox sends a command that carries a worker `CoordinatorSpec` only on a link that negotiated `worker_grant.v1`. On a link without it, the command waits (it is not sent, so no older station ever decodes `kind`) until a compatible link or the command's delivery TTL; at the TTL it fails as any undelivered command (`expired`) and the deck revokes its grant with the reason `undelivered`. This is the one case in which the worker grant can make a start fail (goal 5), and it needs a station downgrade while the start is queued; the owner starts again.
 
 ### 6.4 Unused grants (R1 MAJOR 5)
-No time-based `never_bound` sweep. The deck revokes a worker grant at once when the start receipt says `"worker_grant": "skipped"` (reason `handoff_skipped`) or when the start command fails or is refused (reason `start_failed`). A used worker grant binds through `coordinator.bound` as any grant and ends by its lifetime, its idle time (counted from creation until the first use, then from `last_used_at`), revocation, or the session's end. When the deck receives a `coordinator.bound` for a worker grant that is already terminal, it keeps it terminal and queues `session.coordinator_revoke` for that session, so the station's binding ends too.
+No `never_bound` sweep. The deck revokes a worker grant at once when it ingests `coordinator.worker_outcome` with `skipped` for it (reason `handoff_skipped`; the event must name a worker grant of that station and its start command, else it is ignored and logged) or when the start command fails or is refused (reason `start_failed`). When no outcome and no `coordinator.bound` ever arrive (a lost station), the idle time counted from creation ends the grant (30 minutes by default). A used worker grant binds through `coordinator.bound` as any grant and ends by its lifetime, its idle time (counted from creation until the first use, then from `last_used_at`), revocation, or the session's end. When the deck receives a `coordinator.bound` for a worker grant that is already terminal, it keeps it terminal and queues `session.coordinator_revoke` for that session, so the station's binding ends too.
 
 ## 7. Bounds (R1 MAJOR 6)
 
 - At most 200 worker grants in effect deck-wide (a constant). At the cap the decision is `none` with the reason `worker_cap`, and the start goes on without a grant (one audit row `coordinator.worker_grant_skipped`).
-- Retention: `sweep_grants` deletes worker grants that are terminal (`revoked`, or `expired` past `expires_at`) for more than 7 days, together with their `worker_attach` rows and their lineage rows. Owner grants keep today's retention. A retry of a command whose `worker_attach` row was pruned is older than every delivery TTL and is refused as stale (`expired`).
+- Retention (R2 BLOCKER 2): `sweep_grants` deletes (a) worker grants that are terminal (`revoked`, or `expired` past `expires_at`) for more than 7 days, together with their `worker_attach` rows and their lineage rows, and (b) every `worker_attach` row with `decision = none` older than 7 days, independent of any grant. Owner grants keep today's retention. Seven days is longer than every delivery TTL and the commands table keeps its own command records, so a retry of a command whose `worker_attach` row was pruned is already stale and is refused (`expired`) by the existing command rules; a new command ID never collides with a pruned one (ULIDs).
 - With at most 200 worker grants plus the owner's grants in effect, the coverage scans of `grant_scopes.rs` stay bounded; an issue batch of 50 starts creates at most 50 grants and, at cap 2, at most 100 children, which get no grant.
 
 ## 8. Changing the spawn cap and the ceilings (any grant)
@@ -94,8 +96,8 @@ Deck:
 5. `the_grant_kind_is_server_owned` (a board-supplied `kind: worker` is refused; an owner grant is stored and sent as `coordinator`).
 6. `a_retry_reuses_the_stored_decision_across_setting_and_feature_changes` (setting on→off and off→on between retries; a different original → `command_id_reused`; a crash point between the decision and the command leaves nothing).
 7. `a_queued_worker_start_waits_for_a_compatible_link_and_expires_with_its_grant_revoked`.
-8. `a_skipped_or_failed_start_revokes_its_worker_grant_at_once_and_a_late_bound_event_revokes_the_station_binding`.
-9. `the_deck_wide_cap_and_the_retention_bound_worker_grants` (201st start without a grant; a 50-start batch; pruning after 7 days; a stale retry refused).
+8. `a_skipped_or_failed_start_revokes_its_worker_grant_at_once_and_a_late_bound_event_revokes_the_station_binding` (the outcome event after an admission skip, after a launch skip, and after a shim row save failure; the event replayed after a reconnect and carried by a snapshot; a forged outcome for another station's or an owner grant is ignored; no outcome at all → idle expiry from creation).
+9. `the_deck_wide_cap_and_the_retention_bound_worker_grants` (201st start without a grant; a 50-start batch; pruning after 7 days; a stale retry refused; sustained no-grant automation with the setting off, then pruning of its `none` rows, then a replay refused).
 10. `the_setting_and_the_caps_route_need_elevation_for_every_widening` (each widening key; incomparable Codex ceilings both directions; a new family; concurrent caps updates compared in the transaction; narrowing without elevation).
 11. `rule_3_ignores_worker_grants_and_keeps_owner_grants`.
 12. `fleet_control_approval_of_a_worker_spawn_stays_inside_the_worker_grant` (R1 MINOR 3: a fleet coordinator answers a worker's spawn approval; the spawn charges the worker's cap, keeps its stations and ceilings, is refused after the worker grant's revocation, and the child has no grant; the same non-transitivity through `assign_auto`, `start_in_project` and a Fleet Git move; owner-grant targets stay refused).
@@ -124,3 +126,10 @@ Live (architect): one board start on a test station gets a worker grant; its Cla
 | MINOR — stations union in the registry | §2 (`["all"]` list form) |
 | MINOR — caps editor readback and manage-only grants | §4 `GrantView.max_modes`, §8 board, test 19 |
 | MINOR — authority confinement after the exemption | test 12 |
+
+## 11. Review map (R2 → revision 3)
+
+| Finding | Section |
+| --- | --- |
+| BLOCKER — the start receipt cannot report a later launch fallback | §6.2 (the durable event `coordinator.worker_outcome` after launch preparation), §6.4, test 8 |
+| BLOCKER — no-grant decisions escape the retention | §7 retention (b), test 9 |
