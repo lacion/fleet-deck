@@ -633,3 +633,5 @@ async fn the_deck_wide_cap_and_the_retention_bound_worker_grants() {
 
 #[path = "worker_grant_authority_tests.rs"]
 mod authority;
+#[path = "worker_grant_end_tests.rs"]
+mod end;

@@ -398,7 +398,7 @@ fn grant_stations(
 }
 
 /// The worker grants in effect now (§7).
-fn worker_grants_in_effect(tx: &Connection, now: i64) -> Result<usize> {
+pub(super) fn worker_grants_in_effect(tx: &Connection, now: i64) -> Result<usize> {
     Ok(active_grants(tx)?
         .iter()
         .filter(|g| g.kind == GrantKind::Worker && in_effect(g, now))
