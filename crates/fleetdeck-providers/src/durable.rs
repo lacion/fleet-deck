@@ -19,6 +19,9 @@ pub enum DurableConfig {
     Codex {
         config: codex::CoreConfig,
         thread: codex::SessionSpec,
+        /// The published fleet skill tree whose `skills` root the handshake
+        /// registers before the thread open (MCP P3 §4.2); `None`: no skill.
+        skill_dir: Option<std::path::PathBuf>,
     },
 }
 

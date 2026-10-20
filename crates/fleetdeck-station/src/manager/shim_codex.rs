@@ -3,6 +3,7 @@
 //! (`initialize`, `thread/start`) of a newly launched shim. A restored
 //! driver never repeats the handshake ([`DurableDriver::restore`]).
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,7 +13,7 @@ use fleetdeck_providers::codex::{CodexCore, CoreConfig, Output, SessionSpec, rpc
 use fleetdeck_providers::host::shim::host::Attached;
 
 pub use super::durable::{DriverError, REASON_FRAME_UNKNOWN};
-use super::durable::{DurableCore, DurableDriver, Steps, host_input, not_a_command};
+use super::durable::{DurableCore, DurableDriver, OPEN_WAIT, Steps, host_input, not_a_command};
 use crate::store::{Effect, EffectPayload, IdentitySignal, NewEvent, Store};
 
 /// The durable Codex driver of one shim.
@@ -150,7 +151,8 @@ impl DurableDriver<CodexCore> {
     }
 
     /// Drives a newly launched shim: commits the first checkpoint, then the
-    /// handshake and the thread (`initialize`, `thread/start`).
+    /// handshake and the thread (`initialize`, the fleet skill requests
+    /// when `skill_dir` is set, `thread/start`).
     ///
     /// # Errors
     /// A store error, or a handshake that does not finish.
@@ -159,14 +161,58 @@ impl DurableDriver<CodexCore> {
         attached: Attached,
         config: CoreConfig,
         thread: &SessionSpec,
+        skill_dir: Option<&Path>,
     ) -> Result<Arc<Self>, DriverError> {
         let this = Self::new(store, &attached, config.clone(), CodexCore::new(config));
         this.start_pump(attached);
         this.internal(|c| c.initialize().map(split)).await?;
         this.wait(CodexCore::is_initialized, "initialize").await?;
+        if let Some(dir) = skill_dir {
+            this.inject_skill(dir).await?;
+        }
         this.internal(|c| c.open_thread(thread).map(split)).await?;
         this.wait(|c| !c.is_opening() && c.thread_id().is_some(), "thread")
             .await?;
         Ok(this)
+    }
+
+    /// The fleet skill requests before the thread open (MCP P3 §4.2), the
+    /// same steps as the direct driver: `skills/extraRoots/set`, then
+    /// `skills/list` with `forceReload`. A request waits for its answer at
+    /// most [`CodexCore::SKILL_REQUEST_TIMEOUT`]. An error answer or a
+    /// timeout is a warning and the open goes on. With less than two
+    /// timeouts left of the handshake wait, both are skipped.
+    async fn inject_skill(&self, dir: &Path) -> Result<(), DriverError> {
+        let deadline = tokio::time::Instant::now() + OPEN_WAIT;
+        if OPEN_WAIT < CodexCore::SKILL_REQUEST_TIMEOUT * 2 {
+            tracing::warn!("skill injection skipped: handshake deadline");
+            return Ok(());
+        }
+        self.skill_step("skills/extraRoots/set", deadline, |c| {
+            c.set_skill_root(dir).map(split)
+        })
+        .await?;
+        self.skill_step("skills/list", deadline, |c| c.reload_skills().map(split))
+            .await
+    }
+
+    async fn skill_step(
+        &self,
+        request: &'static str,
+        deadline: tokio::time::Instant,
+        op: impl FnOnce(&mut CodexCore) -> Result<Steps, ProviderError>,
+    ) -> Result<(), DriverError> {
+        self.internal(op).await?;
+        let until = deadline.min(tokio::time::Instant::now() + CodexCore::SKILL_REQUEST_TIMEOUT);
+        match self
+            .wait_until(|c| !c.is_skill_request_pending(request), until, "skills")
+            .await
+        {
+            Err(DriverError::Handshake(_)) => {
+                tracing::warn!(request, "the fleet skill request timed out");
+                Ok(())
+            }
+            other => other,
+        }
     }
 }

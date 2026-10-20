@@ -162,6 +162,7 @@ impl Rig {
             attached,
             codex_config(cwd_of(&self.tmp)),
             &thread,
+            None,
         )
         .await
         .unwrap()

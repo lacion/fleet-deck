@@ -51,7 +51,7 @@ pub const REASON_FRAME_UNKNOWN: &str = "internal_frame_unknown";
 /// would queue behind a running turn.
 pub const REASON_PROVIDER_BUSY: &str = "provider_busy";
 /// How long a handshake step waits.
-const OPEN_WAIT: Duration = Duration::from_secs(15);
+pub(super) const OPEN_WAIT: Duration = Duration::from_secs(15);
 /// How long the pump waits for the shim's exit state after EOF.
 const EXIT_WAIT: Duration = Duration::from_secs(10);
 /// The `error` code of an overlong provider line (ADR-005 §4.2).

@@ -64,6 +64,8 @@ impl CodexAdapter {
                     resume: resume.map(|id| id.0.clone()),
                     fork: false,
                 },
+                // The station sets the skill tree of a coordinated launch.
+                skill_dir: None,
             },
             stop: self.config.stop,
         })
@@ -109,7 +111,7 @@ mod tests {
         let launch = adapter()
             .durable_resume_launch(&spec(dir.path(), None), &id)
             .unwrap();
-        let DurableConfig::Codex { config, thread } = launch.core else {
+        let DurableConfig::Codex { config, thread, .. } = launch.core else {
             panic!("a Codex core");
         };
         assert_eq!(thread.resume.as_deref(), Some("thread-1"));
@@ -131,7 +133,7 @@ mod tests {
     fn a_new_durable_launch_opens_a_new_thread() {
         let dir = tempfile::tempdir().unwrap();
         let launch = adapter().durable_launch(&spec(dir.path(), None)).unwrap();
-        let DurableConfig::Codex { config, thread } = launch.core else {
+        let DurableConfig::Codex { config, thread, .. } = launch.core else {
             panic!("a Codex core");
         };
         assert_eq!(thread.resume, None);

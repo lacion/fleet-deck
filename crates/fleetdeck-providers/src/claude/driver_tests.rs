@@ -193,3 +193,156 @@ async fn a_process_that_does_not_read_stdin_is_killed_when_the_queue_is_full() {
     assert!(control.was_killed());
     assert_eq!(seen, 1, "the loop stops after the first failed line");
 }
+
+// MCP P3 §4.2, test 14: the plugin dir and the fleet skill rule.
+
+mod skill {
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
+
+    use async_trait::async_trait;
+    use fleetdeck_core::{ChildEnv, Secret};
+    use fleetdeck_proto::command::SessionSpec;
+    use fleetdeck_proto::event::ProviderKind;
+
+    use crate::adapter::EventSink;
+    use crate::claude::driver::{ClaudeAdapter, ClaudeAdapterConfig, Origin};
+    use crate::coordinator::{CoordinatorLaunch, bridge_args, mcp_args};
+    use crate::host::{HostError, HostKind, HostedProcess, ProcessSpec, SessionHost};
+
+    const URL: &str = "http://127.0.0.1:41234/mcp";
+    const DIR: &str = "/station/share/fleet-skill/abc123";
+    const ALLOWED: &str = "mcp__fleetdeck Skill(fleetdeck:fleet)";
+
+    fn launch(args: Vec<String>, skill_dir: Option<&str>) -> CoordinatorLaunch {
+        CoordinatorLaunch {
+            args,
+            token: Secret::new("t".to_owned()),
+            skill_dir: skill_dir.map(PathBuf::from),
+        }
+    }
+
+    fn value_of<'a>(args: &'a [String], flag: &str) -> Vec<&'a str> {
+        args.windows(2)
+            .filter(|w| w[0] == flag)
+            .map(|w| w[1].as_str())
+            .collect()
+    }
+
+    #[test]
+    fn claude_starts_with_the_plugin_dir_and_only_the_fleet_skill_allowed() {
+        let direct = mcp_args(ProviderKind::Claude, URL).unwrap();
+        let bridge = bridge_args(
+            ProviderKind::Claude,
+            std::path::Path::new("/bin/fleetdeck"),
+            std::path::Path::new("/run/s.sock"),
+        )
+        .unwrap();
+        for args in [direct, bridge] {
+            // No skill tree: the arguments are the handoff arguments.
+            let without = launch(args.clone(), None).claude_args();
+            assert_eq!(without, args);
+            assert_eq!(value_of(&without, "--allowedTools"), ["mcp__fleetdeck"]);
+            assert!(value_of(&without, "--plugin-dir").is_empty());
+            // A skill tree: the plugin dir and the one extra rule.
+            let with = launch(args.clone(), Some(DIR)).claude_args();
+            assert_eq!(value_of(&with, "--plugin-dir"), [DIR]);
+            assert_eq!(value_of(&with, "--allowedTools"), [ALLOWED]);
+            // Only the allowed-tools value changes; the plugin dir follows.
+            assert_eq!(with[..args.len() - 1], args[..args.len() - 1]);
+            assert_eq!(with.len(), args.len() + 2);
+            for arg in &with {
+                for bad in ["ListMcpResourcesTool", "ReadMcpResourceTool"] {
+                    assert!(!arg.contains(bad), "{arg}");
+                }
+            }
+            let allowed = value_of(&with, "--allowedTools")[0];
+            let rules: Vec<&str> = allowed.split_whitespace().collect();
+            assert_eq!(rules, ["mcp__fleetdeck", "Skill(fleetdeck:fleet)"]);
+            assert!(!rules.contains(&"Skill"));
+            assert!(!with.iter().any(|a| a.contains("fdc1_")));
+        }
+    }
+
+    #[test]
+    fn a_skill_tree_with_no_allowed_tools_argument_adds_the_skill_rule_alone() {
+        let with = launch(Vec::new(), Some(DIR)).claude_args();
+        assert_eq!(
+            value_of(&with, "--allowedTools"),
+            ["Skill(fleetdeck:fleet)"]
+        );
+        assert_eq!(value_of(&with, "--plugin-dir"), [DIR]);
+    }
+
+    #[test]
+    fn a_skill_tree_path_that_is_not_utf8_gives_no_injection() {
+        use std::os::unix::ffi::OsStrExt as _;
+        let args = mcp_args(ProviderKind::Claude, URL).unwrap();
+        let mut l = launch(args.clone(), None);
+        l.skill_dir = Some(PathBuf::from(std::ffi::OsStr::from_bytes(b"/odd\xffdir")));
+        assert_eq!(l.claude_args(), args);
+    }
+
+    /// A host that records the spawn spec and refuses to start.
+    #[derive(Debug)]
+    struct Recorder(Arc<Mutex<Vec<ProcessSpec>>>);
+
+    #[async_trait]
+    impl SessionHost for Recorder {
+        fn kind(&self) -> HostKind {
+            HostKind::DirectChild
+        }
+
+        fn survives_station_restart(&self) -> bool {
+            false
+        }
+
+        async fn spawn(&self, spec: ProcessSpec) -> Result<HostedProcess, HostError> {
+            self.0.lock().unwrap().push(spec);
+            Err(HostError::NoPipe)
+        }
+    }
+
+    async fn spawned_args(skill_dir: Option<&str>, origin: Origin) -> Vec<String> {
+        let spawned = Arc::new(Mutex::new(Vec::new()));
+        let config =
+            ClaudeAdapterConfig::new("claude".into(), "claude".into(), ChildEnv::from_process());
+        let adapter = ClaudeAdapter::new(config, Arc::new(Recorder(Arc::clone(&spawned))));
+        let dir = tempfile::tempdir().unwrap();
+        let spec = SessionSpec {
+            provider_instance: "claude".into(),
+            cwd: dir.path().to_string_lossy().into_owned(),
+            mode: None,
+            model: None,
+            title: None,
+            coordinator: None,
+            launch: None,
+            extra_env: None,
+        };
+        let (sink, _events) = EventSink::channel(8);
+        let l = launch(mcp_args(ProviderKind::Claude, URL).unwrap(), skill_dir);
+        let started = adapter
+            .start_session_with(spec, sink, origin, Some(&l))
+            .await;
+        assert!(started.is_err());
+        let spec = spawned.lock().unwrap().remove(0);
+        spec.args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn the_driver_passes_the_skill_arguments_to_a_start_and_a_resume() {
+        use crate::adapter::NativeSessionId;
+        let id = NativeSessionId("s-1".to_owned());
+        for origin in [Origin::New, Origin::Resume(id.clone()), Origin::Fork(id)] {
+            let args = spawned_args(Some(DIR), origin.clone()).await;
+            assert_eq!(value_of(&args, "--plugin-dir"), [DIR]);
+            assert_eq!(value_of(&args, "--allowedTools"), [ALLOWED]);
+            let args = spawned_args(None, origin).await;
+            assert!(value_of(&args, "--plugin-dir").is_empty());
+            assert_eq!(value_of(&args, "--allowedTools"), ["mcp__fleetdeck"]);
+        }
+    }
+}
