@@ -462,6 +462,76 @@ pub fn deck_fields() -> Vec<FieldMeta> {
             "The station link addresses that the automatic mode added. Only the deck writes this list.",
         )
         .hidden(),
+        field(
+            "worker_grant.enabled",
+            "Worker grant",
+            K::Bool,
+            Live,
+            "Give each session that you start from the board a small grant that lets it start a few helper sessions. Off stops new worker grants. Grants that exist stay.",
+        )
+        .danger(),
+        field(
+            "worker_grant.stations",
+            "Worker grant stations",
+            K::Texts,
+            Live,
+            "The stations where a worker grant works. Use all for every paired station, or 1 to 16 station names.",
+        )
+        .danger(),
+        field(
+            "worker_grant.spawn_cap",
+            "Worker grant session limit",
+            K::Int,
+            Live,
+            "The most sessions that one worker can start. Default 2.",
+        )
+        .range(0, 10)
+        .danger(),
+        field(
+            "worker_grant.claude_mode",
+            "Worker grant Claude mode",
+            K::Enum,
+            Live,
+            "The most permissive Claude mode that a worker can give to a session that it starts. Default acceptEdits.",
+        )
+        .options(&["default", "plan", "acceptEdits", "dontAsk", "auto"])
+        .danger(),
+        field(
+            "worker_grant.codex_mode",
+            "Worker grant Codex mode",
+            K::Enum,
+            Live,
+            "The most permissive Codex mode that a worker can give to a session that it starts. Default on-request/workspace-write.",
+        )
+        .options(&[
+            "untrusted/read-only",
+            "untrusted/workspace-write",
+            "untrusted/danger-full-access",
+            "on-request/read-only",
+            "on-request/workspace-write",
+            "on-request/danger-full-access",
+            "never/read-only",
+            "never/workspace-write",
+        ])
+        .danger(),
+        field(
+            "worker_grant.lifetime_hours",
+            "Worker grant lifetime (hours)",
+            K::Int,
+            Live,
+            "A worker grant ends this many hours after it is made. Default 12.",
+        )
+        .range(1, 168)
+        .danger(),
+        field(
+            "worker_grant.idle_minutes",
+            "Worker grant idle time (minutes)",
+            K::Int,
+            Live,
+            "A worker grant ends after this many minutes without use. Default 30.",
+        )
+        .range(5, 1440)
+        .danger(),
     ]
     .into_iter()
     .map(|f| f.0)

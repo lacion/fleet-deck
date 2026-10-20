@@ -362,6 +362,7 @@ impl Holder for DeckHolder {
             addrs(&c.tailnet_auto_link_listen),
         );
         insert_deck_knobs(&mut m, c);
+        insert_worker_grant(&mut m, c);
         m
     }
 
@@ -400,6 +401,11 @@ impl Holder for DeckHolder {
             keys.push("tailnet_auto".to_owned());
         }
         deck_knob_danger(old, new, &mut keys);
+        keys.extend(
+            crate::config_worker_grant::widens(&old.worker_grant, &new.worker_grant)
+                .into_iter()
+                .map(str::to_owned),
+        );
         keys
     }
 }
@@ -432,6 +438,21 @@ fn insert_deck_knobs(m: &mut Map<String, Value>, c: &DeckConfig) {
     for (key, value) in numbers {
         m.insert(key.into(), json!(value));
     }
+}
+
+/// The values of `[worker_grant]` (MCP P4a section 2).
+fn insert_worker_grant(m: &mut Map<String, Value>, c: &DeckConfig) {
+    let w = &c.worker_grant;
+    m.insert("worker_grant.enabled".into(), json!(w.enabled));
+    m.insert("worker_grant.stations".into(), json!(w.stations));
+    m.insert("worker_grant.spawn_cap".into(), json!(w.spawn_cap));
+    m.insert("worker_grant.claude_mode".into(), json!(w.claude_mode));
+    m.insert("worker_grant.codex_mode".into(), json!(w.codex_mode));
+    m.insert(
+        "worker_grant.lifetime_hours".into(),
+        json!(w.lifetime_hours),
+    );
+    m.insert("worker_grant.idle_minutes".into(), json!(w.idle_minutes));
 }
 
 /// The values of the station knobs (knobs design section 3).
