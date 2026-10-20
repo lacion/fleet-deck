@@ -1,9 +1,9 @@
 # MCP P4b — live grant changes and live tool lists
 
-- **Status:** Draft revision 3, 2026-10-20 (for the adversary DESIGN RE-REVIEW round 2). Revision 1 (997b107d): advisor review (`~/fleetdeck-briefs/mcp-p4b-advisor-r1.md`, map §14.1). Revision 2 (6a69bdbe): DESIGN REVIEW round 1 FAIL, 2 BLOCKER and 10 MAJOR (`~/fleetdeck-briefs/mcp-p4b-design-r1-adversary.md`, map §14.2).
+- **Status:** Draft revision 4, 2026-10-20 (for the adversary DESIGN RE-REVIEW round 3, the last). Revision 3 (2376c5ae): RE-REVIEW round 2 FAIL, 1 BLOCKER and 3 MAJOR (`~/fleetdeck-briefs/mcp-p4b-design-r2-adversary.md`, map §14.3). Revision 1 (997b107d): advisor review (`~/fleetdeck-briefs/mcp-p4b-advisor-r1.md`, map §14.1). Revision 2 (6a69bdbe): DESIGN REVIEW round 1 FAIL, 2 BLOCKER and 10 MAJOR (`~/fleetdeck-briefs/mcp-p4b-design-r1-adversary.md`, map §14.2).
 - **Program:** DL-251 (D1), DL-255 (P4a), owner decisions L1–L3 of 2026-10-20 (`~/fleetdeck-briefs/mcp-p3-research-notes.md` §"P4b owner decisions").
 - **Evidence:** spike `spikes/s-events/` (HTTP C1–C5, X1–X3; stdio C6–C8). Claude 2.1.302 re-lists its tools 2–7 ms after `notifications/tools/list_changed`: over HTTP only on a `subscriptions/listen` stream (C1; no TTL refetch, C2), over stdio on a listen stream **or** as an unsolicited line (C6, C7). Codex 0.163.0 never re-lists inside a running process (X1A–X1C).
-- **Out of scope:** live changes of the `desktop`, `capture` and `input` classes, of their caps and allowances, of a grant's scope or stations; `resources/updated`, prompt list changes, progress and cancellation; Codex live tool lists (impossible in 0.163.0); a binary downgrade of a station past its migration V42 (§9).
+- **Out of scope:** live changes of the `desktop`, `capture` and `input` classes, of their caps and allowances, of a grant's scope or stations; `resources/updated`, prompt list changes, progress and cancellation; Codex live tool lists (impossible in 0.163.0); a binary downgrade of a station past its migration V42 or of a deck past its P4b migration (§9).
 
 ## 1. Goals
 
@@ -53,6 +53,7 @@ Rotation (resume), the process end, a fence, a changed native identity, a statio
 - **Process end.** The binding ends as today (credential dead). For a grant with an `attached` record the station appends **no** `coordinator.ended`; the record stays attached.
 - **Deck rebind rule** (`apply_bound`): a `coordinator.bound` for a grant with a `session_owner_grant` entry, from the grant's station and session, with `generation > bound_generation`, rebinds the grant **when the grant is in effect** (active, inside its lifetime, not idle-expired): `bound_generation = generation`, `invalidate_stale_generation`, the usage counters and the idle clock kept. A grant not in effect ignores it (the owner renews, below). Every other higher generation needs the owner's pending renewal, as today. No detach event and no snapshot change are needed: a missed process end changes nothing, because the next process's higher generation rebinds.
 - **Renewal.** The owner renews an idle-expired grant as today; the deck's pending renewal is `p = bound_generation + 1`. The station's renew of a grant with a record sets `record.generation = g = max(p, record.generation + 1)`; when a process of the session holds the binding, its generation becomes `g` and it appends `coordinator.bound { g }`; otherwise the record keeps `g − 1` as its base so that the next process start binds at `g`. The deck accepts a renewal bound with `generation >= p` (instead of `== p`) for grants with a record.
+- **Snapshot projection (round 2 MAJOR).** For a grant with a record, the station's coordinator binding projection (the snapshot of a coordinator-capable link) follows the **record**, not the credential: an `attached` record with a live credential (`Pending` or `Active`) reports that credential; an `attached` record whose credential is dead (process ended, rotated, not started yet) reports **nothing** for that grant (the deck's `apply_projection` leaves a grant that is absent unchanged); an `ended` record reports the grant as `Revoked` (`Expired` for `ended_reason = expired`), so a missed terminal event reaches the deck. Grants without a record keep today's projection. Covered: recovery while hibernated, after a crash, and after an identity failure.
 - **Stale work:** every deck coordinator operation is keyed by `(grant_id, generation)`; a rebind runs `invalidate_stale_generation`, and the station's authority check (§7.1) compares the generation.
 
 ## 6. Deck routes and lifecycle
@@ -81,7 +82,7 @@ Unchanged route. For a grant with a `session_owner_grant` row: the next `seq`, t
 
 ### 7.1 Fleet-control commands: the station's pre-execution check
 - Every outbox item and every `land_queue`/move item that carries a `CommandAuthority` also stores, deck-side only, the **full class set** that admitted it (`outbox.required_classes`, the same in the land and move tables; JSON array; the admitting decision's class requirements, for example `{spawn, manage}` for `project_start`).
-- `authority_local` (the deck's answer to the station's `coordinator.authority_check` before a fleet command runs, ADR-008 §6.2) and its land and move fallbacks also require `required_classes ⊆ grant.classes` (besides today's state, generation, coverage and switch). A narrowing or a revoke therefore stops any fleet command that the station has not executed yet, also one already sent: the station executes only after the deck says yes.
+- `authority_local` (the deck's answer to the station's `coordinator.authority_check` before a fleet command runs, ADR-008 §6.2) and its land and move fallbacks also require `required_classes ⊆ grant.classes` (besides today's state, generation, coverage and switch). A narrowing or a revoke therefore stops any fleet command whose authority check has not been answered yet, also one already sent: the station executes only after the deck says yes. A check that the deck answered `valid` **before** the narrowing or revoke committed is not recalled: the station may still run that command (§13). The window is the check's round trip, bounded by `AUTHORITY_CHECK_DEADLINE` (5 s); revoke has the same window today (ADR-008 §6.2).
 - Items admitted before this change (no `required_classes`) are checked as today.
 
 ### 7.2 Narrowing fails pending items at once
@@ -117,13 +118,13 @@ Unchanged: legacy era, no listen, no re-list; the record reaches it at its next 
 - A start-time owner grant of a deck link that negotiated the feature also gets a record (the deck writes a `session_owner_grant` row with `seq = 1` when the start's receipt names the session; the station writes the record when it prepares the start's grant binding, with `seq = 1`). Every new station lifecycle rule (no `coordinator.ended` at the process end, the downgrade, the rebind at a start) is tied to a record, which only such a deck creates.
 - The deck's new rules (rebind, `>=` renewal, terminal events by binding id) apply only to grants with a `session_owner_grant` row.
 - WATCH is negotiated by its own `OK watch.v1`; an old station never causes a synthetic refresh.
-- **Downgrade:** station migrations are forward-only (an older station binary refuses a newer database, `DbError::TooNew`), as for every earlier migration. A binary downgrade past V42 is not supported; the release notes say so. A deck downgrade keeps the station's records harmless: an older deck never sends `coordinator_set`, and the station keeps applying its records at process starts (the older deck sees ordinary `coordinator.bound` events at higher generations and, without the rebind rule, ignores them, so the grant's calls are refused until the owner renews it).
+- **Downgrade:** station and deck migrations are forward-only (an older binary refuses a newer database, `DbError::TooNew`), as for every earlier migration. A binary downgrade of a station past V42 or of a deck past its P4b migration is not supported; the release notes say so (round 2 MAJOR). A link between a new station and an older deck **binary that never had P4b** is the only mixed case: that deck never negotiates `coordinator_live.v1`, so the station writes no records for it and every rule of today applies.
 
 ## 10. Authorization invariants
 
 1. Only the owner login gives, changes or ends a grant; no coordinator tool can.
-2. Every widening (class, cap, family, ceiling) needs the owner's elevation, compared with the stored row in the transaction; a removed and re-added class keeps its usage counters. Worker grants: their classes never change; their caps can be raised with elevation within the worker bounds (P4a §8, unchanged).
-3. The deck decides every class-gated call from the stored grant. A fleet command runs only after the deck's pre-execution check confirms its full class set, generation and state (§7.1). Ordinary admitted work completes (§7.3).
+2. Every widening (class, cap, family, ceiling) needs the owner's elevation, compared with the stored row in the transaction; a removed and re-added class keeps its usage counters. Worker grants: their classes never change; their spawn cap and mode ceilings can be raised by the owner with elevation within the worker bounds (P4a §8, accepted and unchanged by P4b).
+3. The deck decides every class-gated call from the stored grant. A fleet command runs only after the deck's pre-execution check confirms its full class set, generation and state (§7.1); a `valid` answer given before a narrowing is not recalled (§13). Ordinary admitted work completes (§7.3).
 4. One owner grant per session; one per-session sequence orders every give, change and end, so a delayed message never restores a replaced or ended grant.
 5. In-place changes keep the credential; hard invalidation keeps killing it; a dead credential is never revived; a new process gets a new credential and a higher generation that the deck accepts only for a grant in effect.
 6. Listen and watch streams are authenticated, bounded per binding and per station, own their permits, refresh once at registration, detect stalls and EOF, and end with their credential.
@@ -142,7 +143,7 @@ Deck:
 8. `the_owner_gives_a_grant_to_a_running_or_hibernated_session` (`check_owner_grant` elevation; `has_grant` also for an idle-expired grant; a terminal grant's row overwritten; concurrent gives; a worker grant replaced without a worker revoke command; desktop fields refused; held until the feature; a failed give revokes).
 9. `class_and_cap_changes_need_elevation_for_every_widening` (an added class, a higher cap with the same classes, a new family, an incomparable ceiling; counters kept across remove and re-add; worker grants refused).
 10. `a_narrowing_or_a_revoke_stops_fleet_commands_before_execution` (a sent `manage` command fails the station's authority check after `manage` is removed while `inspect` stays; `project_start` under `{spawn, manage}` fails when either is removed; land and move fallbacks; pending items fail with `authority_removed`; ordinary admitted mail completes).
-11. `the_rebind_rule_accepts_a_higher_generation_only_for_a_grant_in_effect` (a missed process end, a snapshot recovery, an idle-expired grant ignored then renewed with `>=`; a grant without a row keeps today's rules; `identity_changed` with a higher generation revokes and fails pending items).
+11. `the_rebind_rule_accepts_a_higher_generation_only_for_a_grant_in_effect` (a missed process end, a snapshot recovery while the record is attached and the credential is dead leaves the grant unchanged, a snapshot with an ended record ends the grant, an idle-expired grant ignored then renewed with `>=`; a grant without a row keeps today's rules; `identity_changed` with a higher generation revokes and fails pending items).
 12. `the_session_sequence_reconciles_after_a_reconnect_and_supersedes_pending_sets` (revoke A then give B in either delivery order; a delayed A set after B; the reconnect queues the latest state).
 13. `a_member_or_a_token_cannot_give_change_or_end_a_grant`.
 14. Migrations: deck `session_owner_grant`, `outbox.required_classes` (and the land/move tables); station V42 `session_grants`.
@@ -161,7 +162,8 @@ Live (architect): a running Claude session on a shim station gets `spawn` from t
 
 - Ordinary work admitted before a narrowing or a revoke completes (§7.3), as for a revoke today.
 - A leaked token keeps fleet-only access until its process ends (§4.2).
-- No binary downgrade past station V42 (§9).
+- No binary downgrade of a station past V42 or of a deck past its P4b migration (§9).
+- A fleet command whose authority check the deck answered `valid` before a narrowing or a revoke committed may still run; the window is the check's round trip, at most 5 s (`AUTHORITY_CHECK_DEADLINE`), the same as for a revoke today (ADR-008 §6.2) (round 2 BLOCKER, accepted by the architect: a fence would need a two-phase execution protocol between deck and station and would only delay the owner's confirmation, not the command).
 - A shim session started before the upgrade gets no push until its next process start (§8.3).
 
 ## 14. Review maps
@@ -195,3 +197,11 @@ Live (architect): a running Claude session on a shim station gets `spawn` from t
 | MAJOR — renewal and process generations share a counter | §5 one counter in the record, renewal `max(p, record + 1)`, deck accepts `>= p`; tests 7, 11 |
 | MAJOR — registration misses changes before authentication | §8.2, §8.3 a refresh after every acknowledgment and every `OK watch.v1`; tests 2, 3 |
 | MAJOR — no downgrade path | §9 forward-only migrations, no binary downgrade past V42; deck downgrade harmless; §13 |
+
+### 14.3 DESIGN RE-REVIEW round 2 (revision 3 → 4)
+| Finding | Where |
+| --- | --- |
+| BLOCKER — a `valid` authority answer does not fence later execution | Accepted limit (§7.1, §10.3, §13): the window is the check round trip (≤ 5 s), as for a revoke today; the architect did not adopt a two-phase execution fence (it would delay the confirmation, not the command) |
+| MAJOR — worker widening through `/caps` (round 1 M1) | §10.2: the P4a policy (the owner raises worker caps and ceilings with elevation within the worker bounds) is the accepted rule; the review criterion is aligned |
+| MAJOR — a snapshot reports a dead credential of an attached record as revoked | §5 snapshot projection follows the record; test 11 |
+| MAJOR — the deck downgrade is not harmless | §9: deck binary downgrade past its P4b migration excluded, as for the station; §13 |
