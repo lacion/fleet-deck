@@ -13,11 +13,11 @@
 
 use std::ffi::OsString;
 
-use fleetdeck_proto::command::{CoordinatorSpec, GrantScope, SessionSpec};
+use fleetdeck_proto::command::{CoordinatorSpec, GrantKind, GrantScope, SessionSpec};
 use fleetdeck_proto::coordinator_spec::InputScope;
 use fleetdeck_proto::event::ProviderKind;
 use fleetdeck_proto::version::feature;
-use fleetdeck_proto::{Event, SessionId};
+use fleetdeck_proto::{CommandId, Event, SessionId};
 use fleetdeck_providers::coordinator::CoordinatorLaunch;
 use fleetdeck_providers::host::ProcessControl as _;
 use fleetdeck_providers::host::shim::host::Attached;
@@ -255,6 +255,7 @@ fn grant_binding(
         scope: coordinator.scope,
         state: BindingState::Pending,
         control_skill: coordinator.control_skill.text.clone(),
+        kind: coordinator.kind,
     }
 }
 
@@ -271,6 +272,7 @@ fn fleet_binding(session_id: &SessionId, spec: &SessionSpec) -> Binding {
         scope: GrantScope::Lineage,
         state: BindingState::Pending,
         control_skill: FLEET_SKILL.to_owned(),
+        kind: GrantKind::Coordinator,
     }
 }
 
@@ -288,6 +290,11 @@ pub(crate) struct BridgeStart {
     pub expires_at: Option<i64>,
     /// The provider, for the log line after the launch.
     pub provider: ProviderKind,
+    /// The worker grant (MCP P4a §6.2) when the binding is one: a failed row
+    /// save then appends its `shim_row_failed` outcome. `None` otherwise.
+    pub grant_id: Option<String>,
+    /// The start command of that worker grant.
+    pub start_command_id: Option<CommandId>,
 }
 
 /// The bridge form of [`prepare`]: it mints the credential and builds the
@@ -315,6 +322,8 @@ pub(super) fn prepare_bridge(
         binding: grant_binding(session_id, spec, coordinator, classes),
         expires_at: Some(coordinator.expires_at),
         provider,
+        grant_id: None,
+        start_command_id: None,
     })
 }
 
@@ -343,6 +352,14 @@ pub(super) async fn store_tools(
     );
     if let Err(error) = store.shim_binding_insert(row).await {
         tracing::warn!(%error, "the binding row was not stored; the session starts without tools");
+        if let Some(grant_id) = t.grant_id {
+            let skip = super::worker_grant::WorkerSkip {
+                grant_id,
+                start_command_id: t.start_command_id,
+                reason: super::worker_grant::SHIM_ROW_FAILED,
+            };
+            super::worker_grant::record(store, &t.binding.session_id, Some(&skip)).await;
+        }
         return (None, None);
     }
     bindings.insert(t.digest.clone(), t.binding);
@@ -543,6 +560,8 @@ pub(super) fn prepare_bridge_fleet(
         binding: fleet_binding(session_id, spec),
         expires_at: None,
         provider,
+        grant_id: None,
+        start_command_id: None,
     })
 }
 
@@ -560,12 +579,12 @@ pub(super) enum Tools {
     Bridge(BridgeStart),
 }
 
-/// Chooses the tools of one start (DL-165, DL-194). `shim_host` is true
-/// when the session runs under a shim; `resumed` is true for a resume.
+/// `tools_for_start` without the skip, for the tests (DL-165, DL-194).
 ///
 /// # Errors
 /// The reason that a coordinator start fails with. A session without a
 /// grant never fails here: it gets [`Tools::None`] and a log line.
+#[cfg(test)]
 pub(super) fn tools_for(
     bindings: &Bindings,
     provider: ProviderKind,
@@ -574,14 +593,38 @@ pub(super) fn tools_for(
     shim_host: bool,
     resumed: bool,
 ) -> Result<Tools, String> {
-    // The bridge mode needs Linux and a probed version list in which every
-    // version passed the live bridge smoke (§9.10).
+    let start = super::worker_grant::tools_for_start;
+    start(
+        bindings, provider, session_id, spec, shim_host, resumed, None,
+    )
+    .map(|(t, _)| t)
+}
+
+/// True when the bridge mode is available for `provider`: Linux and a probed
+/// version list in which every version passed the live bridge smoke (§9.10).
+pub(super) fn bridge_verified(bindings: &Bindings, provider: ProviderKind) -> bool {
     let versions = bindings.versions(provider);
-    let bridge_ok = cfg!(target_os = "linux")
+    cfg!(target_os = "linux")
         && !versions.is_empty()
         && versions
             .iter()
-            .all(|v| fleetdeck_providers::coordinator::bridge_handoff(provider, Some(v)).is_ok());
+            .all(|v| fleetdeck_providers::coordinator::bridge_handoff(provider, Some(v)).is_ok())
+}
+
+/// [`tools_for`] without the worker rules: the owner grant and the
+/// fleet-only forms.
+///
+/// # Errors
+/// The reason that an owner grant start fails with.
+pub(super) fn tools_generic(
+    bindings: &Bindings,
+    provider: ProviderKind,
+    session_id: &SessionId,
+    spec: &SessionSpec,
+    shim_host: bool,
+    resumed: bool,
+) -> Result<Tools, String> {
+    let bridge_ok = bridge_verified(bindings, provider);
     let Some(coordinator) = spec.coordinator.as_deref() else {
         let chosen = if !shim_host {
             prepare_fleet(bindings, provider, session_id, spec, false).map(Tools::Direct)

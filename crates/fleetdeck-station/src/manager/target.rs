@@ -25,10 +25,11 @@ use fleetdeck_providers::{EventSink, LiveSession, ProviderAdapter, ProviderError
 use tokio::sync::{Mutex, oneshot, watch};
 
 use super::auto_continue::recheck;
-use super::coordinator_start::{Tools, tools_for};
+use super::coordinator_start::Tools;
 use super::durable::host_input;
 pub use super::shells_slot::ShellsSlot;
 use super::turns::SessionTurns;
+use super::worker_grant::tools_for_start;
 use crate::history::subagent::LaunchFacts;
 use crate::store::{Dispatch, Effect, EffectPayload, InputRecord, ProcessIncarnation, Store};
 use crate::worker::EffectTarget;
@@ -318,7 +319,6 @@ impl SessionTarget {
                 .await;
             return Dispatch::NotDispatched("unknown_provider".into());
         };
-        let fleet_only = spec.coordinator.is_none();
         // The durable launch comes first: it says which host the tools are
         // for (DL-194).
         let durable = resume
@@ -326,22 +326,25 @@ impl SessionTarget {
             .then(|| self.durable_launch(&adapter, spec))
             .flatten();
         let shim_host = (resume.is_some() && self.shims.is_some()) || durable.is_some();
-        let (bridge, coordinator) = match tools_for(
+        let (bridge, coordinator, worker_skip) = match tools_for_start(
             &self.coordinator,
             adapter.kind(),
             &session_id,
             spec,
             shim_host,
             resume.is_some(),
+            effect.command_id.clone(),
         ) {
-            Ok(Tools::Direct(launch)) => (None, Some(launch)),
-            Ok(Tools::Bridge(start)) => (Some(start), None),
-            Ok(Tools::None) => (None, None),
+            Ok((Tools::Direct(launch), skip)) => (None, Some(launch), skip),
+            Ok((Tools::Bridge(start), skip)) => (Some(start), None, skip),
+            Ok((Tools::None, skip)) => (None, None, skip),
             Err(why) => {
                 self.start_failed(&session_id, &why).await;
                 return Dispatch::NotDispatched(format!("coordinator: {why}"));
             }
         };
+        // A skipped worker grant is a start without a grant (MCP P4a §6.2).
+        super::worker_grant::record(&self.store, &session_id, worker_skip.as_ref()).await;
         if let (Some(native), Some(shims)) = (resume, self.shims.clone()) {
             // A resume on the shim host (DL-182): a new shim and a new
             // provider process, never a reattachment.
@@ -390,7 +393,7 @@ impl SessionTarget {
             spec,
             resume,
             launch: coordinator,
-            fleet_only,
+            fleet_only: spec.coordinator.is_none() || worker_skip.is_some(),
         }
         .run(&adapter, sink)
         .await;

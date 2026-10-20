@@ -233,6 +233,22 @@ pub(super) fn check_spec(
     import: bool,
     bindings: &crate::coordinator::Bindings,
 ) -> Result<(), DecideError> {
+    check_structure(origin, spec, import)?;
+    bindings
+        .handoff(provider, None)
+        .map_err(|reason| reject(RejectCode::Unsupported, reason))
+}
+
+/// The origin, import and structure checks of a coordinator spec, without the
+/// handoff check. A worker spec (MCP P4a) keeps all of them.
+///
+/// # Errors
+/// [`DecideError::Reject`] for a refused spec.
+pub(super) fn check_structure(
+    origin: RunOrigin,
+    spec: &CoordinatorSpec,
+    import: bool,
+) -> Result<(), DecideError> {
     match origin {
         RunOrigin::Board => {}
         RunOrigin::Local => {
@@ -268,7 +284,5 @@ pub(super) fn check_spec(
             "a coordinator spec needs a grant id, known classes, an idle TTL and a control skill version",
         ));
     }
-    bindings
-        .handoff(provider, None)
-        .map_err(|reason| reject(RejectCode::Unsupported, reason))
+    Ok(())
 }

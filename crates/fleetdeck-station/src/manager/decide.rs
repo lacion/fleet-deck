@@ -435,15 +435,17 @@ fn start(
     if facts.origin_text {
         spec.mode = Some(restrict_mode(provider, spec.mode.as_deref())?);
     }
-    if let Some(coordinator) = &spec.coordinator {
-        super::coordinator_command::check_spec(
-            origin,
-            provider,
-            coordinator,
-            import.is_some(),
-            bindings,
-        )?;
-    }
+    // A worker grant (MCP P4a §6.2) that the station cannot hand off is
+    // dropped from the spec; the start goes on without it and records the
+    // skip below.
+    let admission_skip = super::worker_grant::admit(
+        origin,
+        provider,
+        &mut spec,
+        import.is_some(),
+        bindings,
+        d.command_id(),
+    )?;
     // Before the existence check: a folder in the trash is missing at its
     // original place, and the owner needs the reason (DL-150).
     super::trash::custody(d, &spec.cwd)?;
@@ -577,6 +579,9 @@ fn start(
         &session_id,
         fleetdeck_proto::event::Event::SessionNamed { callsign, worktree }.into(),
     )?;
+    if let Some(event) = admission_skip.as_ref().and_then(|s| s.event()) {
+        d.append(&session_id, event)?;
+    }
     if let (Some(fg), Some(home)) = (facts.fleet_git.as_deref(), home.as_deref()) {
         let owns = workspace::fleet_git::owns_branch(workspace.as_ref());
         workspace::fleet_git::record(d, &session_id, fg, plan.as_ref(), home, owns)?;
