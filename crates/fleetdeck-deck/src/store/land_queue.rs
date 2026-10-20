@@ -19,6 +19,7 @@ use fleetdeck_proto::{SessionSummary, StationId};
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use serde::Serialize;
 
+use super::grants::GrantClass;
 pub use super::land_ready::LandRefusal;
 use super::land_ready::{Env, check, summary_of};
 use super::land_text;
@@ -28,7 +29,7 @@ use super::{DeckStore, LinkFeature, Result, call, new_id, to_u64};
 pub const AUTHORITY_TTL_MS: i64 = 600_000;
 
 /// The columns of a land row, in the order of [`read`].
-pub(super) const COLS: &str = "land_id, command_id, requested_by, request_command_id, authority, authority_expires_at, project_id, lock_key, station_id, session_id, plan, settings_revision, state, phase, reconciling, abandon_state, abandon_attempts, abandon_next_at, abandon_write, attempt, source_oid, base_oid, rebased_oid, branch_published_oid, default_published_oid, pr_url, files, code, message, created_at, started_at, ended_at";
+pub(super) const COLS: &str = "land_id, command_id, requested_by, request_command_id, authority, authority_expires_at, project_id, lock_key, station_id, session_id, plan, settings_revision, state, phase, reconciling, abandon_state, abandon_attempts, abandon_next_at, abandon_write, attempt, source_oid, base_oid, rebased_oid, branch_published_oid, default_published_oid, pr_url, files, code, message, created_at, started_at, ended_at, required_classes";
 
 /// One row of `land_queue`.
 #[derive(Debug, Clone, PartialEq)]
@@ -39,6 +40,9 @@ pub struct LandRow {
     pub request_command_id: String,
     pub authority: Option<CommandAuthority>,
     pub authority_expires_at: Option<i64>,
+    /// The raw JSON of the class set that admitted a coordinator land (MCP
+    /// P4b §7.1); `None` before V46 and for an owner land.
+    pub required_classes: Option<String>,
     pub project_id: String,
     pub lock_key: String,
     pub station_id: String,
@@ -105,6 +109,7 @@ pub(super) fn read(r: &Row<'_>) -> Result<LandRow> {
         created_at: r.get(29)?,
         started_at: r.get(30)?,
         ended_at: r.get(31)?,
+        required_classes: r.get(32)?,
     })
 }
 
@@ -471,6 +476,8 @@ pub struct LandRequest {
     pub session_id: String,
     /// The authority of a coordinator land (design §11.2, B3).
     pub authority: Option<CommandAuthority>,
+    /// The classes that admitted a coordinator land (MCP P4b §7.1).
+    pub required_classes: Option<BTreeSet<GrantClass>>,
 }
 
 /// The answer to a request.
@@ -544,8 +551,8 @@ pub(super) fn request_in_tx(
     tx.execute(
         "INSERT INTO land_queue (land_id, command_id, requested_by, request_command_id,
              authority, authority_expires_at, project_id, lock_key, station_id, session_id,
-             state, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'queued', ?11)",
+             state, created_at, required_classes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'queued', ?11, ?12)",
         params![
             land_id,
             command_id,
@@ -561,6 +568,10 @@ pub(super) fn request_in_tx(
             req.station_id,
             req.session_id,
             now,
+            req.required_classes
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()?,
         ],
     )?;
     let row = find(tx, land_id)?.ok_or_else(|| super::DeckError::Corrupt("land row".into()))?;

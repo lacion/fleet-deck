@@ -13,6 +13,8 @@
 //! The transitions and the reads of the driver are in
 //! [`super::session_moves_steps`].
 
+use std::collections::BTreeSet;
+
 use fleetdeck_proto::fleet_git::{MoveInInfo, MoveInState, MovePublication};
 use fleetdeck_proto::mutation::{AuthorityCheck, CommandAuthority};
 use fleetdeck_proto::{EventEnvelope, SessionId, StationId};
@@ -20,6 +22,7 @@ use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use serde::Serialize;
 
 use super::coordinator::AuthorityLocal;
+use super::grants::GrantClass;
 pub use super::session_moves_ready::{MoveEnv, MoveRefusal, MoveTarget};
 use super::session_moves_ready::{Ready, check};
 use super::{DeckError, DeckStore, Result, call, new_id, to_u64};
@@ -28,7 +31,7 @@ use super::{DeckError, DeckStore, Result, call, new_id, to_u64};
 pub use super::land_queue::AUTHORITY_TTL_MS;
 
 /// The columns of a move row, in the order of [`read`].
-pub(super) const COLS: &str = "move_id, request_command_id, src_station, src_session, dst_station, dst_session, kind, state, out_command_id, in_command_id, finish_command_id, undo_command_id, undo_request_command_id, publication, step_attempts, next_step_at, code, message, bytes, requested_by, authority, authority_expires_at, created_at, committed_at, ended_at";
+pub(super) const COLS: &str = "move_id, request_command_id, src_station, src_session, dst_station, dst_session, kind, state, out_command_id, in_command_id, finish_command_id, undo_command_id, undo_request_command_id, publication, step_attempts, next_step_at, code, message, bytes, requested_by, authority, authority_expires_at, created_at, committed_at, ended_at, required_classes";
 
 /// The state of a move on the deck (design §12.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -125,6 +128,9 @@ pub struct MoveRow {
     pub created_at: i64,
     pub committed_at: Option<i64>,
     pub ended_at: Option<i64>,
+    /// The raw JSON of the class set that admitted a coordinator move (MCP
+    /// P4b §7.1); `None` before V46 and for an owner move.
+    pub required_classes: Option<String>,
 }
 
 fn json_of<T: serde::de::DeserializeOwned>(text: Option<String>) -> Result<Option<T>> {
@@ -158,6 +164,7 @@ pub(super) fn read(r: &Row<'_>) -> Result<MoveRow> {
         created_at: r.get(22)?,
         committed_at: r.get(23)?,
         ended_at: r.get(24)?,
+        required_classes: r.get(25)?,
     })
 }
 
@@ -226,6 +233,8 @@ pub struct MoveRequest {
     pub dst_station: String,
     /// The authority of a coordinator move (design §12.3, B3).
     pub authority: Option<CommandAuthority>,
+    /// The classes that admitted a coordinator move (MCP P4b §7.1).
+    pub required_classes: Option<BTreeSet<GrantClass>>,
 }
 
 /// The answer to a request.
@@ -281,8 +290,8 @@ pub(super) fn request_in_tx(
     tx.execute(
         "INSERT INTO session_moves (move_id, request_command_id, src_station, src_session,
              dst_station, kind, state, out_command_id, in_command_id, finish_command_id,
-             requested_by, authority, authority_expires_at, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'holding', ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             requested_by, authority, authority_expires_at, created_at, required_classes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'holding', ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             move_id,
             req.request_command_id,
@@ -300,6 +309,10 @@ pub(super) fn request_in_tx(
                 .transpose()?,
             req.authority.as_ref().map(|_| now + AUTHORITY_TTL_MS),
             now,
+            req.required_classes
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()?,
         ],
     )?;
     Ok(MoveRequested::Started {
@@ -503,6 +516,12 @@ fn move_authority_local(
     let Some(row) = row else {
         return Ok(Err("unknown_command"));
     };
+    if !super::coordinator::grant_narrowing::required_hold(
+        row.required_classes.as_deref(),
+        &grant.classes,
+    ) {
+        return Ok(Err("class_removed"));
+    }
     let src = StationId::from(row.src_station.clone());
     let session = SessionId::from(row.src_session.clone());
     // `MoveIn`: the asking station is the target. `MoveOut`: the source and

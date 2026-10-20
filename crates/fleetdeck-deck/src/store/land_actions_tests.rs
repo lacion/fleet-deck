@@ -228,6 +228,7 @@ async fn coordinator_land(w: &World, session: &str) -> String {
             station_id: w.st.0.clone(),
             session_id: session.to_owned(),
             authority: Some(authority()),
+            required_classes: None,
         })
         .await
         .unwrap();
