@@ -673,3 +673,27 @@ fn the_platform_rule_maps_omarchy_macos_and_linux() {
     assert_eq!(platform.chars().count(), 32);
     assert!(platform.ends_with('…'));
 }
+
+/// MCP P3 PRE-PR finding: `me` keeps the 8 KiB item limit. Sixteen grant
+/// stations whose names are 128 four-byte characters make the item too
+/// large, so the answer is left out and the caller gets `forbidden`.
+#[tokio::test]
+async fn an_oversized_me_item_is_left_out() {
+    let mut w = world().await;
+    let mut stations = BTreeSet::new();
+    let mut first = None;
+    for n in 0..16 {
+        let name = format!("{n:02}{}", "🛰".repeat(126));
+        let id = w.pin(&name, None).await;
+        first.get_or_insert_with(|| id.clone());
+        stations.insert(id);
+    }
+    let home = first.unwrap();
+    w.sessions(&home, vec![summary("s1")]).await;
+    let mut g = NewGrant::new(home.clone(), SessionId::from("s1"));
+    g.classes = [GrantClass::Read].into_iter().collect();
+    g.stations = stations;
+    w.s.create_grant(g).await.unwrap();
+    let r = ask(&w, &home, "s1", "me", None, None).await;
+    assert_eq!(refusal(r), NOT_KNOWN);
+}

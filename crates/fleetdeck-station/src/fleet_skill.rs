@@ -11,7 +11,7 @@
 //! that does not match is renamed to `<hash>.bad-<unix ms>` and published
 //! again. A new tree is written into `.tmp-<random>/`, flushed and renamed.
 
-use std::ffi::OsStr;
+use std::ffi::{CStr, CString, OsStr};
 use std::io::{Read as _, Write as _};
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
@@ -314,8 +314,9 @@ fn with_lock<T>(
     result
 }
 
-/// The entry names of a directory (those that are UTF-8).
-fn names(dir: &OwnedFd) -> Result<Vec<String>, Failure> {
+/// Every entry name of a directory as raw bytes, also a name that is not
+/// UTF-8 (`.` and `..` left out).
+fn raw_names(dir: &OwnedFd) -> Result<Vec<CString>, Failure> {
     let entries = Dir::read_from(dir).map_err(io("a directory listing"))?;
     let mut out = Vec::new();
     for entry in entries {
@@ -324,32 +325,50 @@ fn names(dir: &OwnedFd) -> Result<Vec<String>, Failure> {
         if name == c"." || name == c".." {
             continue;
         }
-        if let Ok(name) = name.to_str() {
-            out.push(name.to_owned());
-        }
+        out.push(name.to_owned());
     }
     Ok(out)
+}
+
+/// The entry names of a directory that are UTF-8 (for the loops that look
+/// for `.tmp-*` and hash names only).
+fn names(dir: &OwnedFd) -> Result<Vec<String>, Failure> {
+    Ok(raw_names(dir)?
+        .into_iter()
+        .filter_map(|name| name.into_string().ok())
+        .collect())
 }
 
 /// Removes `name` below `parent`: a directory with everything in it, or a
 /// file or a link (not followed).
 fn remove_tree(parent: &OwnedFd, name: &str) -> Result<(), Failure> {
+    let raw = CString::new(name).map_err(|_| Failure::Io {
+        what: name.to_owned(),
+        source: std::io::Error::from(std::io::ErrorKind::InvalidInput),
+    })?;
+    remove_raw(parent, &raw)
+}
+
+/// [`remove_tree`] by the raw name, so that a child whose name is not UTF-8
+/// is removed too.
+fn remove_raw(parent: &OwnedFd, name: &CStr) -> Result<(), Failure> {
+    let what = name.to_string_lossy();
     let stat = match rustix::fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW) {
         Ok(stat) => stat,
         Err(Errno::NOENT) => return Ok(()),
-        Err(errno) => return Err(io(name)(errno)),
+        Err(errno) => return Err(io(&what)(errno)),
     };
     if FileType::from_raw_mode(stat.st_mode) != FileType::Directory {
-        return rustix::fs::unlinkat(parent, name, AtFlags::empty()).map_err(io(name));
+        return rustix::fs::unlinkat(parent, name, AtFlags::empty()).map_err(io(&what));
     }
-    let dir = rustix::fs::openat(parent, name, dir_flags(), Mode::empty()).map_err(io(name))?;
+    let dir = rustix::fs::openat(parent, name, dir_flags(), Mode::empty()).map_err(io(&what))?;
     // A directory without the owner's write and search bits cannot be emptied.
-    rustix::fs::fchmod(&dir, Mode::from_bits_truncate(0o700)).map_err(io(name))?;
-    for child in names(&dir)? {
-        remove_tree(&dir, &child)?;
+    rustix::fs::fchmod(&dir, Mode::from_bits_truncate(0o700)).map_err(io(&what))?;
+    for child in raw_names(&dir)? {
+        remove_raw(&dir, &child)?;
     }
     drop(dir);
-    rustix::fs::unlinkat(parent, name, AtFlags::REMOVEDIR).map_err(io(name))
+    rustix::fs::unlinkat(parent, name, AtFlags::REMOVEDIR).map_err(io(&what))
 }
 
 // ---------------------------------------------------------------------------
@@ -384,7 +403,15 @@ fn verify_dir(dir: &OwnedFd, at: &str) -> Result<bool, Failure> {
     if own.st_uid != euid() || own.st_mode & 0o022 != 0 {
         return Ok(false);
     }
-    let mut found = names(dir)?;
+    // Every entry counts: a name that is not UTF-8 is never ours, so the
+    // tree does not verify (MCP P3 PRE-PR finding).
+    let mut found = Vec::new();
+    for raw in raw_names(dir)? {
+        match raw.into_string() {
+            Ok(name) => found.push(name),
+            Err(_) => return Ok(false),
+        }
+    }
     found.sort();
     let mut wanted: Vec<String> = expected_names(at).into_iter().map(str::to_owned).collect();
     wanted.sort();

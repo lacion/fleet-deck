@@ -372,3 +372,29 @@ fn every_tool_named_in_the_fleet_skill_is_conditional() {
     // `read_artifact` and `stop` are all checked, at least once each.
     assert!(checked >= 7, "{checked}");
 }
+
+/// MCP P3 PRE-PR finding: an entry whose name is not UTF-8 makes a published
+/// tree bad (it is renamed and published again), and a leftover temporary
+/// tree that holds one is removed.
+#[test]
+fn a_name_that_is_not_utf8_makes_a_tree_bad_and_a_temp_tree_with_one_is_removed() {
+    use std::os::unix::ffi::OsStrExt as _;
+    let odd = std::ffi::OsStr::from_bytes(b"x\xff\xfe");
+    let dir = station();
+    let tree = publish(dir.path()).unwrap();
+    std::fs::create_dir(tree.join("skills").join(odd)).unwrap();
+    std::fs::write(tree.join("skills").join(odd).join("SKILL.md"), "not ours").unwrap();
+    assert_eq!(publish(dir.path()).unwrap(), tree);
+    assert_valid(&tree);
+    assert!(!tree.join("skills").join(odd).exists());
+    assert_eq!(bad_copies(dir.path()).len(), 1);
+    // A leftover temporary tree with such an entry is removed.
+    let temp = trees(dir.path()).join(format!("{TEMP_PREFIX}leftover"));
+    std::fs::create_dir_all(temp.join(odd)).unwrap();
+    std::fs::write(temp.join(odd).join("f"), "x").unwrap();
+    assert_eq!(publish(dir.path()).unwrap(), tree);
+    assert!(
+        tmp_dirs(dir.path()).is_empty(),
+        "the temporary tree is removed"
+    );
+}

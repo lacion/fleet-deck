@@ -347,6 +347,14 @@ impl DeckStore {
             mode: summary.mode.as_deref().map(|m| cut(m, MODE_MAX_CHARS)),
             grant,
         };
-        Ok(Some(serde_json::to_value(item)?))
+        // The same item limit as the other views (MCP P3 PRE-PR finding): an
+        // oversized answer is left out, and the caller gets `forbidden`.
+        let value = serde_json::to_value(item)?;
+        let len = serde_json::to_string(&value)?.len();
+        if len > ITEM_MAX_BYTES {
+            tracing::debug!(bytes = len, "fleet view: an oversized me item is left out");
+            return Ok(None);
+        }
+        Ok(Some(value))
     }
 }
