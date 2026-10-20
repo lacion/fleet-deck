@@ -1,96 +1,126 @@
 # MCP P4a — the default worker grant
 
-- **Status:** Draft revision 1, 2026-10-20. Needs an adversary DESIGN REVIEW (authorization, cost) before it freezes.
-- **Program:** DL-251 (D1: every session starts with a small grant that can spawn), owner decisions W1–W3 of 2026-10-20 (`~/fleetdeck-briefs/mcp-p3-research-notes.md` §"P4 owner decisions"). P2 is folded into P4; P4b (live grant changes and the listen stream) follows this.
-- **Facts:** the start-path map of the P4 research (only the owner's board `session.start` can carry a grant today, through `owner_start`; resume has no spec; coordinator spawns refuse a grant; ADR-008 rule 3 makes every session with a mutating grant a "coordinator").
-- **Out of scope:** live changes of a running session's grant and `tools/list_changed` (P4b); a grant on resume, import, bearer-token or CLI starts (W2).
+- **Status:** Draft revision 2, 2026-10-20. Revision 1 (f901d98e) got adversary DESIGN REVIEW FAIL (1 BLOCKER, 7 MAJOR, 3 MINOR; `~/fleetdeck-briefs/mcp-p4a-design-r1-adversary.md`). Revision 2 applies all eleven (§10 maps them).
+- **Program:** DL-251 (D1: every session starts with a small grant that can spawn), owner decisions W1–W3 of 2026-10-20 (`~/fleetdeck-briefs/mcp-p3-research-notes.md` §"P4 owner decisions"). P2 is folded into P4; P4b (live grant changes and the listen stream) follows.
+- **Out of scope:** live changes of a running session's grant and `tools/list_changed` (P4b); a grant on resume, import, bearer-token, member or CLI starts (W2).
 
 ## 1. Goals
 
-1. With the deck setting on (the default, W3), every eligible start (§3) gets a worker grant: classes `read`, `mail`, `drive`, `spawn`, scope `lineage`, the stations, spawn cap, mode ceilings, lifetime and idle time of the setting.
-2. A worker grant never chains: a session that a grant starts gets no worker grant.
-3. Worker grants are exempt from ADR-008 rule 3 (W1): fleet control can still act on those sessions. Owner-made coordinator grants keep rule 3.
-4. A start never fails because of the worker grant: when the station cannot hand off the credential, the session starts without it.
-5. The owner can change the spawn cap and the mode ceilings of any grant after creation (deferred from P0).
+1. With the deck setting on (the default, W3), every eligible start (§3) gets a worker grant: classes `read`, `mail`, `drive`, `spawn`, scope `lineage`, and the stations, spawn cap, mode ceilings, lifetime and idle time of the setting.
+2. Only the owner's login authorizes a worker grant: the owner's board start, an issue batch that the owner's login requests, and a scheduled run of a schedule that the owner's login last saved.
+3. A worker grant never chains: a session that any grant starts gets no worker grant.
+4. Worker grants are exempt from ADR-008 rule 3 (W1); owner-made coordinator grants keep rule 3.
+5. A start never fails because of the worker grant, with one stated exception (§6.3).
+6. The deck's work and storage for worker grants are bounded.
+7. The owner can change the spawn cap and the mode ceilings of any grant after creation (deferred from P0).
 
 ## 2. The setting (deck)
 
-`deck.toml` section `[worker_grant]` (new `DeckConfig` field `worker_grant: WorkerGrantConfig`, `RawDeck` + `RAW_DECK_KEYS`, settings registry fields, `DeckLive`), with these keys, defaults and bounds:
+`deck.toml` section `[worker_grant]` (a `DeckConfig` field `worker_grant: WorkerGrantConfig`, `RawDeck` + `RAW_DECK_KEYS`, settings registry fields, `DeckLive`):
 
-| Key | Default | Bounds |
+| Key | Kind | Default | Bounds |
+| --- | --- | --- | --- |
+| `worker_grant.enabled` | bool | `true` (W3) | — |
+| `worker_grant.stations` | list of strings | `["all"]` | `["all"]` (only as the sole entry) or 1–16 station names (R1 MINOR 1) |
+| `worker_grant.spawn_cap` | number | 2 | 0–10 |
+| `worker_grant.claude_mode` | enum | `acceptEdits` | `default`, `plan`, `acceptEdits`, `dontAsk`, `auto` |
+| `worker_grant.codex_mode` | enum | `on-request/workspace-write` | the eight non-bypass values of P0 §2.5 |
+| `worker_grant.lifetime_hours` | number | 12 | 1–168 |
+| `worker_grant.idle_minutes` | number | 30 | 5–1440 |
+
+**Widening** (`DeckHolder::danger`, elevation required), compared with the saved values: `enabled` off → on; a higher `spawn_cap`; `stations` from a list to `["all"]`, or a list with a name that was not in it; a longer `lifetime_hours` or `idle_minutes`; a ceiling change unless `mode_within(family, Some(new), old)` holds (R1 MAJOR 7: an incomparable Codex change, such as `on-request/workspace-write` → `never/read-only`, is widening). Everything else is narrowing. A change does not touch existing grants.
+
+## 3. Eligibility and provenance (R1 BLOCKER)
+
+A start gets a worker grant only when every condition holds: the setting is on; the command is a `SessionCommand::Start` whose spec has `coordinator: None`; the target station's current link negotiated `worker_grant.v1` and `coordinator.v1`; the in-effect worker grant count is below the deck cap (§7); and the **provenance** is one of:
+
+| Provenance | Where | The rule |
 | --- | --- | --- |
-| `worker_grant.enabled` | `true` (W3) | bool |
-| `worker_grant.stations` | `"all"` | `"all"` or a list of 1–16 station names |
-| `worker_grant.spawn_cap` | 2 | 0–10 |
-| `worker_grant.claude_mode` | `acceptEdits` | a valid Claude ceiling (`valid_ceiling`, P0) |
-| `worker_grant.codex_mode` | `on-request/workspace-write` | a valid Codex ceiling |
-| `worker_grant.lifetime_hours` | 12 | 1–168 |
-| `worker_grant.idle_minutes` | 30 | 5–1440 |
+| `owner` | `http/command_routes.rs` `route` | the principal is the owner login (`Principal::Owner`), the command is not an import |
+| `issue_batch` | `http/project_writes.rs` (the batch start route) | the principal of the HTTP request is the owner login; a bearer token or member principal → no grant |
+| `schedule` | `scheduler/run.rs` | the schedule row's `author` is `owner` |
 
-- Elevation (`DeckHolder::danger`) for a change that widens: `enabled` off → on; a higher `spawn_cap`; a higher ceiling (by `mode_within`); `stations` from a list to `"all"` or a list with a station that was not in it; a longer `lifetime_hours` or `idle_minutes`. A narrowing change needs none.
-- The board shows the section "Default worker grant" from the field metadata (no new board component beyond the registry).
-- The setting is read when a grant is created (§3); a change does not touch existing grants.
+The provenance is a value that the route computes from the authenticated principal and passes into the attachment function; nothing in a request body or command can set it. Schedules get a new column `author TEXT NOT NULL DEFAULT 'unknown' CHECK (author IN ('owner','token','unknown'))` (deck migration, §8): the schedule create and update routes write `owner` for the owner login and `token` for a bearer token; existing rows stay `unknown` and get no grant until the owner saves them. A schedule started by the owner's "run now" click uses the schedule's `author` too.
 
-## 3. Where the deck attaches a worker grant
+Never: a coordinator `spawn`, `start_in_project`, `assign_auto` spawn, Fleet Git move, resume, fork, import, CLI/station-local start, member or bearer-token start, or a start that already has an owner coordinator request.
 
-A single deck function `worker_grant_for(station, command_id, principal_kind) -> Option<CoordinatorSpec>` builds the spec; it is called on exactly these paths, and only when all of these hold: the setting is on; the command is a `SessionCommand::Start` whose spec has `coordinator: None`; the target station's link negotiated the feature `worker_grant.v1` (§5) and `coordinator.v1`; the station is paired.
+## 4. The grant kind (R1 MAJOR 1)
 
-| Path | File | Principal kind |
-| --- | --- | --- |
-| Owner board start (single or batch, not import) | `http/command_routes.rs` `route`, the branch after the owner/coordinator checks | `owner` (owner login only; a member or bearer-token start gets none) |
-| Scheduled run | `scheduler/run.rs` (the `submit_as` call) | `schedule` |
-| Issue batch start | `project_writes.rs` (the `submit_as` call) | `issue_batch` |
+- Deck migration: `ALTER TABLE tokens ADD COLUMN kind TEXT NOT NULL DEFAULT 'coordinator' CHECK (kind IN ('coordinator','worker'))`. Existing grants read `coordinator`.
+- `kind` is server-owned. The proto `CoordinatorSpec` gains `kind: GrantKind` (`#[serde(default, skip_serializing_if = "GrantKind::is_coordinator")]`), but `owner_start` refuses a board-supplied `kind: worker` with `400 invalid_grant` "the grant kind is set by the deck", always stores `coordinator`, and the deck builds the outgoing `kind` from the stored grant only. Only the attachment function of §5 creates `kind = worker`, always with exactly the classes {read, mail, drive, spawn} and scope lineage (`create_grant` refuses anything else for a worker).
+- `GrantView` gains `kind` and `max_modes` (R1 MINOR 2; backward compatible: absent in old answers means `coordinator` and `{}`).
+- Rule 3 (W1): the deck's `holds_mutating_grant` and the station's `holds_mutating` ignore grants and bindings of kind `worker`; `strict_target` and the station's `TARGET_IS_COORDINATOR` use these predicates. `holds_grant` (the `policy_now` `bound` field) still reports a worker binding as bound.
 
-Never: a coordinator `spawn`, `start_in_project`, `assign_auto` spawn, Fleet Git move, resume, fork, import, CLI/station-local start, a start that already has an owner coordinator request (that grant is the session's only grant).
+## 5. Atomic attachment and retries (R1 MAJOR 2)
 
-`worker_grant_for` creates the grant with `create_grant` in the same way as `owner_start` (idempotent on `start_command_id`), with `kind = worker` (§4), classes {read, mail, drive, spawn}, scope lineage, `stations` = all paired stations at that moment (or the configured names that are paired; unknown names are skipped; the start's own station is always included), `spawn_cap`, `max_modes` {claude, codex}, `ttl_ms` = lifetime, `idle_ttl_ms` = idle. No elevation is asked (the owner's setting is the authorization). It returns the `CoordinatorSpec` with `kind: worker`, the grant id, the expiry, the idle TTL, the classes, the deck control skill, and no board-only fields. The audit row: action `coordinator.worker_grant_created`, actor `owner` / `schedule` / `issue_batch`, target the grant id, the command id, detail as P0's `audit_detail`.
+- One store function `submit_start_with_worker_decision(original: Command, provenance, …)` runs in one deck write transaction: it computes the decision (`grant` or `none`, with the reason) from the setting and the conditions of §3, writes the row `worker_attach(command_id PK, original_sha256, decision, grant_id NULL, created_at)`, creates the grant when the decision is `grant` (with `start_command_id` = the command ID), and inserts the final command (the original plus the deck-built `CoordinatorSpec` for a grant) into the commands and outbox tables.
+- A retry with the same command ID reads `worker_attach` first: the same `original_sha256` returns the stored command and its receipt (the stored decision is reused even when the setting, the feature or the link changed since); another `original_sha256` → `command_id_reused`. The board-supplied command is the canonical request; the final command is derived from it and the stored decision.
+- No path creates a worker grant outside this transaction, so a crash leaves either nothing or the decision, the grant and the command together.
 
-## 4. The grant kind
+## 6. Station rules
 
-- Deck migration V43 (`coordinator_worker_grant_schema.rs`): `ALTER TABLE tokens ADD COLUMN kind TEXT NOT NULL DEFAULT 'coordinator' CHECK (kind IN ('coordinator','worker'))`. Existing grants read `coordinator`.
-- `Grant`/`NewGrant` get `kind: GrantKind { Coordinator, Worker }`. A worker grant always has exactly the classes {read, mail, drive, spawn} and scope lineage (`create_grant` refuses anything else for `kind = worker` with `invalid: a worker grant has fixed classes`).
-- Proto: `CoordinatorSpec` gains `kind: GrantKind` with `#[serde(default, skip_serializing_if = "GrantKind::is_coordinator")]` (an owner grant serializes as today). `GrantView` gains `kind` (the board shows "worker").
-- Rule 3 (W1): the deck's `holds_mutating_grant` (`store/coordinator.rs`) and the station's `holds_mutating` (`coordinator/bindings.rs`, used by `fleet_control.rs` `TARGET_IS_COORDINATOR`) ignore grants and bindings of kind `worker`. Every other rule-3 consequence (the target exclusions of ADR-008 §4.2, `strict_target`) uses the same predicate, so a worker-grant session is a valid fleet-control target. `holds_grant` (the `policy_now` `bound` field) still reports a worker binding as bound.
-- Link scope: a worker grant adds the link scope `coordinate` to its stations like any grant (`sync_coordinate_scopes`); that is what lets its session call `coordinator.call`.
+### 6.1 Acceptance
+Feature `worker_grant.v1` (proto `version.rs`, offered by stations of this build). A station that negotiated it accepts a `CoordinatorSpec` with `kind: worker` from the paired deck with origin `Board` (`check_spec`: origin, import and structure checks unchanged). `Binding` gets `kind`; `shim_bindings` gets a `kind` column (station migration, default `coordinator`) so a reattach keeps it.
 
-## 5. Station rules for a worker grant
+### 6.2 Fallback (R1 MAJOR 3)
+For `kind: worker`, `check_spec` keeps every origin, import and structure refusal, but a handoff refusal (`handoff_unverified`, the shim bridge not verified) does not refuse the command: the station removes the worker `CoordinatorSpec` from the spec before the launch and records the outcome `skipped` with the reason. The launch then prepares the fleet-only binding only when the fleet handoff is verified (the same gate as today), else `Tools::None`. The same applies when `tools_for` would refuse (a resumed start). The station's receipt of the start command carries `"worker_grant": "used" | "skipped"` in its result (next to `session_id`).
 
-- Feature `worker_grant.v1` (proto `version.rs`, offered by stations of this build). A station that negotiated it accepts a `CoordinatorSpec` with `kind: worker` from the paired deck with origin `Board` (scheduled and issue-batch starts use origin Board too; `check_spec` is unchanged for origin and import).
-- `Binding` gets `kind` (from the spec); the shim row `shim_bindings` gets a `kind` column (station migration, default `coordinator`) so that a reattach keeps it.
-- Fallback (goal 4): for `kind: worker`, every refusal of `tools_for`/`prepare*` that would fail the start — the handoff is not verified for the probed provider version (`handoff_unverified`), the shim bridge is not verified, a resumed start — instead starts the session with its fleet-only binding (as without a grant) and writes one info log line with the reason. The station sends nothing about the unused grant.
-- The deck's `sweep_grants` revokes a worker grant that has no binding 10 minutes after its creation with the reason `never_bound` (a worker grant only; an owner grant keeps today's rules). So an unused worker grant never stays in effect and never keeps a station's `coordinate` scope.
+### 6.3 Queued starts and a downgraded station (R1 MAJOR 4)
+The deck's outbox sends a command that carries a worker `CoordinatorSpec` only on a link that negotiated `worker_grant.v1`. On a link without it, the command waits (it is not sent, so no older station ever decodes `kind`) until a compatible link or the command's delivery TTL; at the TTL it fails as any undelivered command (`expired`) and the deck revokes its grant with the reason `undelivered`. This is the one case in which the worker grant can make a start fail (goal 5), and it needs a station downgrade while the start is queued; the owner starts again.
 
-## 6. Changing the spawn cap and the ceilings (any grant)
+### 6.4 Unused grants (R1 MAJOR 5)
+No time-based `never_bound` sweep. The deck revokes a worker grant at once when the start receipt says `"worker_grant": "skipped"` (reason `handoff_skipped`) or when the start command fails or is refused (reason `start_failed`). A used worker grant binds through `coordinator.bound` as any grant and ends by its lifetime, its idle time (counted from creation until the first use, then from `last_used_at`), revocation, or the session's end. When the deck receives a `coordinator.bound` for a worker grant that is already terminal, it keeps it terminal and queues `session.coordinator_revoke` for that session, so the station's binding ends too.
 
-- `POST /api/coordinator/grants/{grant_id}/caps` (`CapsBody`) gains `spawn_cap: Option<u32>` (0–50; a worker grant 0–10) and `max_modes: Option<BTreeMap<String,String>>` (keys `claude`/`codex`, values by `valid_ceiling`; the map replaces the stored one).
-- Elevation: a raise of `spawn_cap` or a higher ceiling (by `mode_within`) or a new family needs `x-fleetdeck-elevation`; a lower value or a removed family does not. `spawn_cap` below `spawn_used` is allowed (it blocks further spawns, ADR-006 §4).
-- `max_modes` needs the class `spawn` or `manage` (P0 rule 3); `spawn_cap` needs `spawn`.
-- The audit row `coordinator.grant_caps` holds the old and the new values. Deck only: no station message (the deck decides every spawn).
-- Board: the Fleet panel's caps editor (`fleet/GrantDesktop.tsx` pattern) gets the session limit and the two ceilings for grants with `spawn`.
+## 7. Bounds (R1 MAJOR 6)
 
-## 7. Tests (names are binding)
+- At most 200 worker grants in effect deck-wide (a constant). At the cap the decision is `none` with the reason `worker_cap`, and the start goes on without a grant (one audit row `coordinator.worker_grant_skipped`).
+- Retention: `sweep_grants` deletes worker grants that are terminal (`revoked`, or `expired` past `expires_at`) for more than 7 days, together with their `worker_attach` rows and their lineage rows. Owner grants keep today's retention. A retry of a command whose `worker_attach` row was pruned is older than every delivery TTL and is refused as stale (`expired`).
+- With at most 200 worker grants plus the owner's grants in effect, the coverage scans of `grant_scopes.rs` stay bounded; an issue batch of 50 starts creates at most 50 grants and, at cap 2, at most 100 children, which get no grant.
+
+## 8. Changing the spawn cap and the ceilings (any grant)
+
+- `POST /api/coordinator/grants/{grant_id}/caps` (`CapsBody`) gains `spawn_cap: Option<u32>` (0–50; a worker grant 0–10) and `max_modes: Option<BTreeMap<String,String>>` (keys `claude`, `codex`; values by `valid_ceiling`; the map replaces the stored one; `max_modes` needs the class `spawn` or `manage`, `spawn_cap` needs `spawn`).
+- Narrowing (no elevation) and widening (elevation) follow §2 exactly, compared with the stored values inside the update transaction (as `store/coordinator_desktop/budget.rs` does): a lower `spawn_cap` is narrowing; for `max_modes`, the change is narrowing only when every family in the new map was in the old map and `mode_within(family, Some(new), old)` holds; any other change (a new family, a higher or incomparable ceiling) is widening. A removed family is narrowing. `spawn_cap` below `spawn_used` is allowed.
+- The audit row `coordinator.grant_caps` holds the old and the new values. Deck only (the deck decides every spawn).
+- Board: the Fleet panel caps editor shows the two ceilings for a grant with `spawn` or `manage` (initialized from `GrantView.max_modes`; a family without a ceiling shows "not allowed") and the session limit for a grant with `spawn`; saving one field sends only that field.
+
+## 9. Tests (names are binding)
 
 Deck:
-1. `an_owner_board_start_gets_a_worker_grant_with_the_setting_values` (classes, scope, stations "all" snapshot plus the own station, cap, ceilings, lifetime, idle; the audit row with actor `owner`; the start command carries `kind: worker`).
-2. `schedules_and_issue_batches_get_one_and_member_bearer_import_resume_spawn_and_cli_starts_get_none`.
-3. `an_owner_coordinator_start_gets_no_extra_worker_grant`.
-4. `a_station_without_worker_grant_v1_gets_no_worker_grant_and_the_start_is_unchanged`.
-5. `the_setting_off_gives_no_grant_and_widening_changes_need_elevation` (each widening key; narrowing without elevation).
-6. `rule_3_ignores_worker_grants_and_keeps_owner_grants` (deck `holds_mutating_grant`, `strict_target`: a fleet-control `answer_request` on a worker-grant session is accepted; on an owner-grant session refused).
-7. `a_worker_grant_child_gets_no_worker_grant` (a spawn by a worker grant: no grant on the child; non-transitive).
-8. `an_unbound_worker_grant_is_revoked_never_bound_after_ten_minutes_and_its_scope_goes`.
-9. `the_caps_route_changes_spawn_cap_and_max_modes_with_elevation_for_a_raise`.
-10. Migration V43 test (a V42 database upgrades; existing grants read `coordinator`).
+1. `an_owner_board_start_gets_a_worker_grant_with_the_setting_values` (all fields; the audit row; the command carries `kind: worker`).
+2. `issue_batches_by_the_owner_login_get_one_and_by_a_drive_token_get_none` (the real batch endpoint; a forged `Board` origin in the body changes nothing).
+3. `a_schedule_gets_one_only_when_the_owner_login_saved_it_last` (author owner/token/unknown; "run now").
+4. `members_bearer_tokens_imports_resumes_spawns_and_cli_starts_get_none`.
+5. `the_grant_kind_is_server_owned` (a board-supplied `kind: worker` is refused; an owner grant is stored and sent as `coordinator`).
+6. `a_retry_reuses_the_stored_decision_across_setting_and_feature_changes` (setting on→off and off→on between retries; a different original → `command_id_reused`; a crash point between the decision and the command leaves nothing).
+7. `a_queued_worker_start_waits_for_a_compatible_link_and_expires_with_its_grant_revoked`.
+8. `a_skipped_or_failed_start_revokes_its_worker_grant_at_once_and_a_late_bound_event_revokes_the_station_binding`.
+9. `the_deck_wide_cap_and_the_retention_bound_worker_grants` (201st start without a grant; a 50-start batch; pruning after 7 days; a stale retry refused).
+10. `the_setting_and_the_caps_route_need_elevation_for_every_widening` (each widening key; incomparable Codex ceilings both directions; a new family; concurrent caps updates compared in the transaction; narrowing without elevation).
+11. `rule_3_ignores_worker_grants_and_keeps_owner_grants`.
+12. `fleet_control_approval_of_a_worker_spawn_stays_inside_the_worker_grant` (R1 MINOR 3: a fleet coordinator answers a worker's spawn approval; the spawn charges the worker's cap, keeps its stations and ceilings, is refused after the worker grant's revocation, and the child has no grant; the same non-transitivity through `assign_auto`, `start_in_project` and a Fleet Git move; owner-grant targets stay refused).
+13. Migrations: `tokens.kind`, `schedules.author`, `worker_attach` (an upgraded database: existing grants `coordinator`, schedules `unknown`).
 Station:
-11. `a_worker_spec_from_the_deck_is_accepted_and_a_coordinator_origin_or_local_start_still_refused`.
-12. `an_unverified_provider_or_bridge_starts_the_session_fleet_only` (worker kind; an owner grant still refuses as today).
-13. `fleet_control_may_target_a_worker_binding` (station `holds_mutating`).
-14. `a_shim_reattach_keeps_the_worker_kind` (the new column).
-Proto/link: 15. the feature `worker_grant.v1` and the `CoordinatorSpec`/`GrantView` serialization (an owner grant serializes as before; an N−1 station never receives `kind`).
+14. `a_worker_spec_from_the_deck_is_accepted_and_coordinator_origin_local_and_import_still_refused`.
+15. `an_unverified_provider_or_bridge_skips_the_worker_grant_at_admission_and_launch` (direct and shim hosts; fleet-only only with a verified fleet handoff, else no tools; the receipt says `skipped`; a resume).
+16. `fleet_control_may_target_a_worker_binding`.
+17. `a_shim_reattach_keeps_the_worker_kind`.
+Proto/link: 18. `worker_grant.v1` and the `CoordinatorSpec`/`GrantView` serialization (an owner grant serializes as before; `GrantView` without `kind`/`max_modes` still decodes).
+Board: 19. the caps editor (ceilings for `spawn` or `manage`, readback, one-field save) and the settings section.
 Live (architect): one board start on a test station gets a worker grant; its Claude session lists `spawn`, `assign`, `wait_tasks`, `stop`; `fleet_view` `me` shows the grant.
 
-## 8. Risks
+## 10. Review map (R1 → revision 2)
 
-- Cost: every owner start and every scheduled or issue-batch start can now start up to 2 more sessions (W3), and those cannot start more (non-transitive). The owner can turn the setting off, lower the cap, or revoke a grant on the board.
-- Rule 3 is narrower: a fleet-control coordinator can now answer an approval of a session that can itself spawn. A worker grant has no fleet-control class, so it cannot answer approvals or manage other sessions.
-- A worker grant gives `drive` (interrupt, stop) only over sessions that it started (lineage).
+| Finding | Section |
+| --- | --- |
+| BLOCKER — bearer-token issue batches get worker grants | §1 goal 2, §3 provenance (owner login only; schedules by `author`), tests 2, 3 |
+| MAJOR — `kind` not server-owned | §4, test 5 |
+| MAJOR — eligibility recomputed on retries | §5 (`worker_attach`, one transaction), test 6 |
+| MAJOR — fallback misses `check_spec` and promises a fleet binding | §6.2, test 15 |
+| MAJOR — queued sends to a downgraded station | §6.3, test 7 |
+| MAJOR — `never_bound` confuses delay with non-use | §6.4 (receipt outcome, no time sweep, late bound → revoke), test 8 |
+| MAJOR — grant growth and coverage scans | §7 (cap 200, 7-day retention), test 9 |
+| MAJOR — incomparable Codex ceilings | §2 and §8 widening rule, test 10 |
+| MINOR — stations union in the registry | §2 (`["all"]` list form) |
+| MINOR — caps editor readback and manage-only grants | §4 `GrantView.max_modes`, §8 board, test 19 |
+| MINOR — authority confinement after the exemption | test 12 |
