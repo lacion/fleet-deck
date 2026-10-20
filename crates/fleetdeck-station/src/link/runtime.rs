@@ -42,6 +42,29 @@ use crate::manager::SessionManager;
 use crate::shell::{ShellConfig, Shells};
 use crate::store::StoreError;
 
+/// Publishes the fleet skill tree once at the start and records its path on
+/// the bindings (MCP P3 §4.1). Without a station directory, or when the
+/// publication fails, the path stays `None`: no session gets the skill.
+async fn publish_fleet_skill(
+    manager: &SessionManager,
+    bindings: &crate::coordinator::Bindings,
+    station_dir: Option<std::path::PathBuf>,
+) {
+    let Some(dir) = station_dir else {
+        tracing::info!("no fleet skill: this station has no station directory");
+        return;
+    };
+    let live = manager.live_sessions();
+    let published =
+        tokio::task::spawn_blocking(move || crate::fleet_skill::publish_at_start(&dir, live))
+            .await
+            .unwrap_or_else(|error| {
+                tracing::error!(%error, "the fleet skill publication task failed");
+                None
+            });
+    bindings.set_skill_dir(published);
+}
+
 /// How long an invitation of `station invite` is valid (PLAN §8.5).
 pub const INVITE_TTL: Duration = Duration::from_secs(15 * 60);
 
@@ -274,6 +297,11 @@ impl StationNode {
         artifacts_dir: Option<std::path::PathBuf>,
         fleet_git: Arc<FleetGitRuntime>,
     ) -> Result<Arc<Self>, NodeError> {
+        // The station directory is the parent of the artifacts folder.
+        let station_dir = artifacts_dir
+            .as_deref()
+            .and_then(std::path::Path::parent)
+            .map(std::path::Path::to_path_buf);
         if let Some(dir) = artifacts_dir {
             manager.set_artifacts_dir(dir, manager.private_paths());
         }
@@ -293,6 +321,23 @@ impl StationNode {
         .with_invitations(Arc::clone(&invitations));
         let paired = peers.pin_all(&node.pins).await?;
         let bindings = manager.coordinator_bindings().clone();
+        // The station facts of the generated MCP instructions (MCP P3 §3.3):
+        // the live name (else the name of the start) and the platform, which
+        // is fixed for a run.
+        let live_name = manager.policy().name().to_owned();
+        bindings.set_station(
+            if live_name.is_empty() {
+                name.clone()
+            } else {
+                live_name
+            },
+            crate::coordinator::station_platform(
+                crate::desktop::detect::omarchy_root(&fleetdeck_core::ChildEnv::from_process())
+                    .is_some(),
+                std::env::consts::OS,
+            ),
+        );
+        publish_fleet_skill(&manager, &bindings, station_dir).await;
         // The durable coordinator outbox (ADR-006 §6.5, DL-218).
         let forward = crate::coordinator::LinkForward::with_outbox(store.clone(), bindings.clone())
             .with_bindings(bindings.clone());

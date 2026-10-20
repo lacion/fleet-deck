@@ -34,6 +34,9 @@ pub mod artifact_share;
 /// The session history from the captured transcript (DL-189).
 pub mod history;
 
+/// The fleet skill tree that every provider session gets (MCP P3 §4).
+pub mod fleet_skill;
+
 /// The last fleet summary of the deck, in memory (R13 P4).
 pub mod fleet_summary;
 

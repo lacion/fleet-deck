@@ -373,12 +373,17 @@ impl SessionTarget {
         spec: &SessionSpec,
         prompt: Option<&InputRecord>,
         shims: &ShimSettings,
-        launch: DurableLaunch,
+        mut launch: DurableLaunch,
         native: Option<&str>,
         tools: Option<BridgeStart>,
         cancel: Option<&tokio::sync::watch::Receiver<bool>>,
     ) -> Dispatch {
         let session_id = effect.session_id.clone();
+        // The skill root of a Codex session with tools (MCP P3 §4.2): the
+        // station chose it when it prepared the launch (version gate).
+        if let (DurableConfig::Codex { skill_dir, .. }, Some(t)) = (&mut launch.core, &tools) {
+            *skill_dir = t.launch.skill_dir.clone();
+        }
         if super::setup_task::cancelled(cancel) {
             // A stop came during the setup: no shim is launched.
             self.start_failed(&session_id, crate::workspace::setup::STOPPED_MESSAGE)

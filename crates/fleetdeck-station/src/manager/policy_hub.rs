@@ -111,6 +111,10 @@ impl PolicyHub {
         let mut slot = self.inner.write().unwrap_or_else(PoisonError::into_inner);
         if let Some(bindings) = &self.fleet {
             bindings.set_fleet_control(policy.allow_fleet_control());
+            // The name is a live setting; an empty one keeps the last name.
+            if !policy.name().is_empty() {
+                bindings.set_station_name(policy.name().to_owned());
+            }
         }
         *slot = Arc::new(policy);
         self.version.fetch_add(1, Ordering::SeqCst);

@@ -11,8 +11,8 @@ use super::bindings::{BindingState, ToolClass};
 use super::desktop_forward::McpToolResult;
 use super::ingress::Forward;
 use super::mcp_p1_rig_tests::{
-    MAIL, MODERN, NOT_BOUND, Rig, SKILL, VERSIONS, binding, forbidden, http_raw, http_request,
-    legacy, modern, tool_names, tool_text,
+    MAIL, MODERN, NOT_BOUND, Rig, VERSIONS, binding, forbidden, http_raw, http_request, legacy,
+    modern, tool_names, tool_text,
 };
 use super::mcp_service::{McpService, bridge_headers};
 
@@ -25,21 +25,30 @@ async fn a_modern_discover_serves_the_binding_control_skill_and_the_four_version
     let v = reply.json();
     assert_eq!(v["result"]["resultType"], "complete");
     assert_eq!(v["result"]["supportedVersions"], json!(VERSIONS));
-    assert_eq!(v["result"]["instructions"], SKILL);
+    super::mcp_p1_rig_tests::assert_generated(&v["result"]["instructions"]);
     assert!(v["result"]["capabilities"]["tools"].is_object());
-    assert!(v["result"]["capabilities"].get("resources").is_none());
+    // MCP P3 §5.1: resources and prompts are advertised too.
+    assert!(v["result"]["capabilities"]["resources"].is_object());
+    assert!(v["result"]["capabilities"]["prompts"].is_object());
     assert_eq!(
         v["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
         "fleetdeck"
     );
     // The bridge socket gives the same answer.
     assert_eq!(r.sock_json(&r.token, &message).await, v);
-    // Another binding gets its own skill, never this one.
+    // The instructions are generated: another binding gets its own, built
+    // from its own catalog, and no control skill text reaches them.
     let other = r.add("b-2", BindingState::Active, MAIL);
     r.bindings
         .update("b-2", |b| b.control_skill = "OTHER".to_owned());
     let got = r.http(Some(&other), &headers, &message).await.json();
-    assert_eq!(got["result"]["instructions"], "OTHER");
+    super::mcp_p1_rig_tests::assert_generated(&got["result"]["instructions"]);
+    assert!(
+        !got["result"]["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("OTHER")
+    );
 }
 
 #[tokio::test]
@@ -69,7 +78,7 @@ async fn a_modern_request_with_an_unknown_version_gets_32022_and_a_legacy_initia
         );
         let v = r.http(Some(&r.token), &[], &init).await.json();
         assert_eq!(v["result"]["protocolVersion"], "2025-11-25", "{version}");
-        assert_eq!(v["result"]["instructions"], SKILL);
+        super::mcp_p1_rig_tests::assert_generated(&v["result"]["instructions"]);
         assert_eq!(v["result"]["serverInfo"]["name"], "fleetdeck");
         assert!(v["result"]["capabilities"]["tools"].is_object());
     }
@@ -307,13 +316,9 @@ async fn the_outer_checks_still_run_before_rmcp() {
     let batch = http_request(r.addr(), Some(&r.token), &[], &json!([list]).to_string());
     let batch = http_raw(r.addr(), batch).await;
     assert_eq!((batch.status, batch.body.as_str()), (400, ""));
-    // The methods whose rmcp default answers success are method-not-found.
-    for method in [
-        "completion/complete",
-        "prompts/list",
-        "resources/list",
-        "resources/templates/list",
-    ] {
+    // `complete` stays method-not-found (MCP P3 §5.1); the prompt and
+    // resource lists are served now (MCP P3 tests).
+    for method in ["completion/complete"] {
         let params = match method {
             "completion/complete" => json!({"ref": {"type": "ref/prompt", "name": "p"},
                                             "argument": {"name": "a", "value": "v"}}),

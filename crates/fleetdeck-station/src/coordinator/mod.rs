@@ -18,6 +18,7 @@ mod git_tools;
 pub mod handoff;
 pub mod ingress;
 mod jsonrpc;
+mod mcp_fleet;
 mod mcp_server;
 mod mcp_service;
 pub mod outbox;
@@ -32,6 +33,7 @@ pub use bindings::{
 pub use forward::{LinkForward, Transport};
 pub use handoff::{Handoff, HandoffError};
 pub use ingress::{FleetTools, Forward, Ingress, Limits};
+pub use mcp_fleet::station_platform;
 pub use outbox::CallOutbox;
 pub use socket::BridgeSocket;
 
@@ -68,6 +70,12 @@ mod mcp_p1_rig_tests;
 #[cfg(test)]
 #[path = "mcp_p1_tests.rs"]
 mod mcp_p1_tests;
+#[cfg(test)]
+#[path = "mcp_p3_tests.rs"]
+mod mcp_p3_tests;
+#[cfg(test)]
+#[path = "mcp_p3_text_tests.rs"]
+mod mcp_p3_text_tests;
 #[cfg(test)]
 #[path = "outbox_tests.rs"]
 mod outbox_tests;

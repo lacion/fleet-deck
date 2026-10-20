@@ -34,7 +34,8 @@ pub(super) fn annotations(name: &str) -> Option<Value> {
         | "desktop_action_status"
         | "capture_status"
         | "read_capture_image"
-        | "window_list" => read_only(false),
+        | "window_list"
+        | "fleet_view" => read_only(false),
         "project_items" => read_only(true),
         "set_focus" | "resume_session" | "rename_session" | "set_mode" | "move_to_project"
         | "wall_show" | "pointer_move" => write(false, true, false),

@@ -14,20 +14,21 @@ use std::sync::Arc;
 
 use rmcp::model::{
     CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, CompleteRequestMethod,
-    CompleteRequestParams, CompleteResult, ContentBlock, DiscoverResult, Implementation,
-    InitializeRequestParams, InitializeResult, ListPromptsRequestMethod, ListPromptsResult,
-    ListResourceTemplatesRequestMethod, ListResourceTemplatesResult, ListResourcesRequestMethod,
-    ListResourcesResult, ListToolsResult, PaginatedRequestParams, ProtocolVersion, ResultType,
-    ServerCapabilities, ServerConfig, Tool,
+    CompleteRequestParams, CompleteResult, ContentBlock, DiscoverResult, GetPromptRequestParams,
+    GetPromptResponse, Implementation, InitializeRequestParams, InitializeResult,
+    ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
+    PaginatedRequestParams, ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse,
+    ReadResourceResult, ResourceContents, ResultType, ServerCapabilities, ServerConfig, Tool,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData as McpError, RoleServer, ServerHandler};
 use serde_json::{Map, Value, json};
 
-use super::bindings::{Binding, Bindings, ToolClass};
+use super::bindings::{Binding, BindingState, Bindings, ToolClass};
 use super::desktop_forward::Rechecked;
 use super::ingress::{FleetTools, Forward};
-use super::jsonrpc::{self, CallOutcome};
+use super::jsonrpc::{self, CallOutcome, NOT_BOUND};
+use super::mcp_fleet::{self, ResourceRef};
 use super::tools;
 
 /// The binding of an authenticated request, in the request extensions. A
@@ -95,12 +96,18 @@ impl StationMcp {
         }
     }
 
-    /// The server description with the control skill of the binding as the
-    /// instructions.
+    /// The server description with the generated instructions of the
+    /// binding (MCP P3 §3.3).
     fn info_for(&self, binding: &Binding) -> ServerConfig {
         let mut info = self.get_info();
-        info.instructions = Some(binding.control_skill.clone());
+        info.instructions = Some(self.instructions(binding));
         info
+    }
+
+    /// The generated instructions of a binding, from its catalog and the
+    /// station facts that the station recorded.
+    fn instructions(&self, binding: &Binding) -> String {
+        mcp_fleet::instructions(binding, self.bindings.station().as_ref())
     }
 }
 
@@ -146,8 +153,14 @@ fn into_result(name: &str, outcome: CallOutcome) -> CallToolResult {
 
 impl ServerHandler for StationMcp {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new("fleetdeck", env!("CARGO_PKG_VERSION")))
+        ServerConfig::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .enable_prompts()
+                .build(),
+        )
+        .with_server_info(Implementation::new("fleetdeck", env!("CARGO_PKG_VERSION")))
     }
 
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
@@ -162,7 +175,7 @@ impl ServerHandler for StationMcp {
         let binding = binding_of(&context)?;
         context.peer.set_peer_info(request.clone());
         let mut info = self.negotiate_initialize(&request)?;
-        info.instructions = Some(binding.control_skill.clone());
+        info.instructions = Some(self.instructions(&binding));
         // Only a successful negotiation is remembered (bridge header hint).
         self.bindings
             .set_legacy_version(&binding.binding_id, info.protocol_version.as_str());
@@ -229,7 +242,9 @@ impl ServerHandler for StationMcp {
         // their end even when the client went away: they are local and
         // bounded, and a dropped artifact staging job would leave its files
         // until a restart (P1 PRE-PR finding).
-        let outcome = if tools::tool(&name).is_some_and(tools::Tool::is_own) {
+        // The fleet view is `Own` but a request to the deck: a closed
+        // connection cancels it.
+        let outcome = if tools::tool(&name).is_some_and(|t| t.is_own() && t.name != "fleet_view") {
             work.await
         } else {
             // A closed connection cancels `context.ct`: the work future is
@@ -257,8 +272,8 @@ impl ServerHandler for StationMcp {
         .ok()
     }
 
-    // The `rmcp` defaults of the next four methods answer success. The
-    // station serves no completions, prompts or resources in P1.
+    // The `rmcp` default of `complete` answers success. The station serves
+    // no completions.
 
     async fn complete(
         &self,
@@ -271,26 +286,161 @@ impl ServerHandler for StationMcp {
     async fn list_prompts(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, McpError> {
-        Err(McpError::method_not_found::<ListPromptsRequestMethod>())
+        let binding = binding_of(&context)?;
+        let prompts = mcp_fleet::prompts(&mcp_fleet::catalog_names(&binding));
+        Ok(with_hints_prompts(
+            ListPromptsResult::with_all_items(prompts),
+            &context,
+        ))
+    }
+
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResponse, McpError> {
+        let binding = binding_of(&context)?;
+        let args = request.arguments.unwrap_or_default();
+        let result = mcp_fleet::prompt(&request.name, &args, &mcp_fleet::catalog_names(&binding))?;
+        Ok(GetPromptResponse::Complete(result))
     }
 
     async fn list_resources(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
-        Err(McpError::method_not_found::<ListResourcesRequestMethod>())
+        binding_of(&context)?;
+        Ok(with_hints_resources(
+            ListResourcesResult::with_all_items(mcp_fleet::resources()),
+            &context,
+        ))
     }
 
     async fn list_resource_templates(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, McpError> {
-        Err(McpError::method_not_found::<
-            ListResourceTemplatesRequestMethod,
-        >())
+        binding_of(&context)?;
+        Ok(with_hints_templates(
+            ListResourceTemplatesResult::with_all_items(Vec::new()),
+            &context,
+        ))
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResponse, McpError> {
+        let binding = binding_of(&context)?;
+        let uri = request.uri;
+        let Some(resource) = mcp_fleet::parse_uri(&uri) else {
+            return Err(McpError::resource_not_found(
+                "unknown resource",
+                Some(json!({"uri": uri})),
+            ));
+        };
+        let (text, mime) = match &resource {
+            // The guide needs no deck and no active binding.
+            ResourceRef::Guide => (mcp_fleet::guide(&binding), "text/markdown"),
+            ResourceRef::View {
+                view,
+                cursor,
+                station,
+            } => (
+                self.read_view(&binding, *view, cursor.clone(), station.clone())
+                    .await,
+                "application/json",
+            ),
+        };
+        let mut result =
+            ReadResourceResult::new(vec![ResourceContents::text(text, uri).with_mime_type(mime)]);
+        if is_modern(&context) {
+            result = result
+                .with_ttl_ms(resource.ttl_ms())
+                .with_cache_scope(CacheScope::Private);
+        }
+        Ok(ReadResourceResponse::Complete(result))
+    }
+}
+
+impl StationMcp {
+    /// The text of a view read: the compact JSON `{"items", "next_cursor"}`,
+    /// or `{"error": "<text>"}`. The caller is the binding's only (§3.1).
+    async fn read_view(
+        &self,
+        binding: &Binding,
+        view: fleetdeck_proto::fleet_view::FleetView,
+        cursor: Option<String>,
+        station: Option<fleetdeck_proto::StationId>,
+    ) -> String {
+        let Some(caller) = binding
+            .caller()
+            .filter(|_| binding.state == BindingState::Active)
+        else {
+            return mcp_fleet::error_text(NOT_BOUND);
+        };
+        let forward = Rechecked {
+            inner: self.forward.as_ref(),
+            bindings: &self.bindings,
+        };
+        match forward
+            .fleet_view(caller, view, cursor, station)
+            .await
+            .and_then(mcp_fleet::page_value)
+        {
+            Ok(page) => page.to_string(),
+            Err(text) => mcp_fleet::error_text(&text),
+        }
+    }
+}
+
+/// True for a client of the modern era, which reads the cache hints.
+fn is_modern(context: &RequestContext<RoleServer>) -> bool {
+    context
+        .protocol_version()
+        .is_some_and(|version| version >= ProtocolVersion::V_2026_07_28)
+}
+
+fn with_hints_prompts(
+    result: ListPromptsResult,
+    context: &RequestContext<RoleServer>,
+) -> ListPromptsResult {
+    if is_modern(context) {
+        result
+            .with_ttl_ms(LIST_TTL_MS)
+            .with_cache_scope(CacheScope::Private)
+    } else {
+        result
+    }
+}
+
+fn with_hints_resources(
+    result: ListResourcesResult,
+    context: &RequestContext<RoleServer>,
+) -> ListResourcesResult {
+    if is_modern(context) {
+        result
+            .with_ttl_ms(LIST_TTL_MS)
+            .with_cache_scope(CacheScope::Private)
+    } else {
+        result
+    }
+}
+
+fn with_hints_templates(
+    result: ListResourceTemplatesResult,
+    context: &RequestContext<RoleServer>,
+) -> ListResourceTemplatesResult {
+    if is_modern(context) {
+        result
+            .with_ttl_ms(LIST_TTL_MS)
+            .with_cache_scope(CacheScope::Private)
+    } else {
+        result
     }
 }

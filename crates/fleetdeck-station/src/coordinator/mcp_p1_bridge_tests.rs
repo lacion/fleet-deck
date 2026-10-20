@@ -47,7 +47,7 @@ async fn the_bridge_serves_both_eras_and_remembers_the_legacy_version() {
     assert_eq!(r.bindings.legacy_version("b-1"), None);
     let got = r.sock_json(&r.token, &initialize(1, "2025-06-18")).await;
     assert_eq!(got["result"]["protocolVersion"], "2025-06-18", "{got}");
-    assert_eq!(got["result"]["instructions"], "SKILL v1");
+    super::mcp_p1_rig_tests::assert_generated(&got["result"]["instructions"]);
     assert_eq!(
         r.bindings.legacy_version("b-1").as_deref(),
         Some("2025-06-18")

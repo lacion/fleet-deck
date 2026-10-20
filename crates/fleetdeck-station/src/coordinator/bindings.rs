@@ -155,6 +155,13 @@ pub struct Bindings {
     /// The digests of reattached bindings whose replay is not finished: the
     /// ingress answers "starting" for them (DL-194 §9.7).
     held: Arc<Mutex<HashSet<String>>>,
+    /// The name and the platform of this station for the generated MCP
+    /// instructions (MCP P3 §3.3): set at the start, the name again at every
+    /// publish of the policy.
+    pub(super) station: Arc<Mutex<Option<(String, String)>>>,
+    /// The published fleet skill tree `<hash>/` (MCP P3 §4.1), once the
+    /// station published it; `None` for no injection.
+    pub(super) skill_dir: Arc<Mutex<Option<std::path::PathBuf>>>,
 }
 
 /// What a shim-hosted provider runs for its tools (DL-194 §2.2, §9.3): the

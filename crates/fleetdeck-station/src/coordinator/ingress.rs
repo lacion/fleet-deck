@@ -14,6 +14,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use fleetdeck_proto::StationId;
+use fleetdeck_proto::fleet_view::FleetView;
 use http::HeaderMap;
 use http_body_util::Full;
 use hyper::body::{Body, Incoming};
@@ -43,7 +45,23 @@ pub trait Forward: Send + Sync {
     async fn call_desktop(&self, _caller: Caller, _request: DesktopRequest) -> McpToolResult {
         p6_error("desktop_unsupported", None, None)
     }
+
+    /// The fleet view of MCP P3 (`fleet.view`): one page of `view` for
+    /// `caller`. The result is `{"items", "next_cursor"}`. A forwarder
+    /// without the method answers `unavailable`.
+    async fn fleet_view(
+        &self,
+        _caller: Caller,
+        _view: FleetView,
+        _cursor: Option<String>,
+        _station: Option<StationId>,
+    ) -> Result<Value, String> {
+        Err(FLEET_VIEW_UNSERVED.to_owned())
+    }
 }
+
+/// The text of a fleet view that the deck does not serve.
+pub const FLEET_VIEW_UNSERVED: &str = "unavailable: the deck does not serve the fleet view yet";
 
 /// The station side of the session's own tools (`publish_artifact`,
 /// `set_focus`; DL-165): the station answers them, the deck is not asked.
