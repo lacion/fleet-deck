@@ -3,7 +3,10 @@
 //! cache TTLs) and logs what the host does.
 //!
 //! Flags: `--port N` (default 0: any), `--stateless` (default) or `--stateful`,
-//! `--json` (default) or `--sse`, `--no-listen` (no `subscriptions/listen`).
+//! `--json` (default) or `--sse`, `--no-listen` (no `subscriptions/listen`),
+//! `--stdio` (serve the same handler over stdin/stdout; the log then goes to
+//! `$EVENTS_LOG` only) with `--push listen` (default) or `--push peer` (how the
+//! server sends `notifications/tools/list_changed` in stdio mode).
 //! Environment: `EVENTS_DIR` (the `bump` trigger file), `EVENTS_LOG` (log file),
 //! `EVENTS_NO_PROGRESS` (never send progress notifications).
 
@@ -37,9 +40,10 @@ use rmcp::transport::streamable_http_server::session::SessionManager;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::session::never::NeverSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
-use rmcp::{ErrorData, RoleServer, ServerHandler, tool, tool_router};
+use rmcp::{ErrorData, RoleServer, ServerHandler, ServiceExt, tool, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 
@@ -49,17 +53,23 @@ const TTL_MS: u64 = 5_000;
 /// Seconds since the first log line, for the log stamps.
 static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
+/// Stdio mode: stdout carries the protocol, so the log must not use it (or stderr).
+static STDIO_MODE: AtomicBool = AtomicBool::new(false);
+
 /// Appends one line to stderr and to the file named by `EVENTS_LOG`.
 fn log(line: &str) {
     let start = *START.get_or_init(Instant::now);
     let stamp = format!("{:8.3}", start.elapsed().as_secs_f64());
-    eprintln!("[events {stamp}] {line}");
+    if !STDIO_MODE.load(Ordering::SeqCst) {
+        eprintln!("[events {stamp}] {line}");
+    }
     if let Ok(path) = std::env::var("EVENTS_LOG")
         && let Ok(mut file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(path)
         && let Err(err) = writeln!(file, "[{stamp}] {line}")
+        && !STDIO_MODE.load(Ordering::SeqCst)
     {
         eprintln!("[events] log write failed: {err}");
     }
@@ -72,7 +82,21 @@ enum Event {
     ResourceUpdated(String),
 }
 
+/// How the stdio mode sends `notifications/tools/list_changed`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Push {
+    /// Only on the open `subscriptions/listen` streams.
+    Listen,
+    /// Unsolicited, through the running service's peer.
+    Peer,
+}
+
 struct Shared {
+    /// Stdio mode (no legacy peers, no HTTP streams).
+    stdio: bool,
+    push: Push,
+    /// The peer of the running stdio service (set after `serve` returns).
+    service_peer: Mutex<Option<Peer<RoleServer>>>,
     late_enabled: AtomicBool,
     board: AtomicU64,
     /// Events for the `subscriptions/listen` streams.
@@ -190,6 +214,27 @@ impl EventsServer {
 }
 
 async fn emit_tools_changed(shared: &Shared) {
+    if shared.stdio {
+        match shared.push {
+            Push::Listen => {
+                let listeners = shared.events.send(Event::ToolsChanged).unwrap_or(0);
+                log(&format!(
+                    "emit tools/list_changed (push listen): {listeners} listen stream(s)"
+                ));
+            }
+            Push::Peer => {
+                let peer = shared.service_peer.lock().expect("peer lock").clone();
+                match peer {
+                    Some(peer) => match peer.notify_tool_list_changed().await {
+                        Ok(()) => log("sent unsolicited notifications/tools/list_changed (push peer)"),
+                        Err(err) => log(&format!("peer tools/list_changed FAILED: {err}")),
+                    },
+                    None => log("emit tools/list_changed (push peer): no service peer yet"),
+                }
+            }
+        }
+        return;
+    }
     let listeners = shared.events.send(Event::ToolsChanged).unwrap_or(0);
     log(&format!(
         "emit tools/list_changed: {listeners} listen stream(s)"
@@ -629,6 +674,117 @@ async fn serve<M: SessionManager>(
     }
 }
 
+// ---- stdio layer: logs every line read from stdin and written to stdout ----
+
+/// One JSON-RPC line, reduced to `rpc=<method> id=<id>` for the log.
+fn rpc_summary(line: &str) -> String {
+    let json: serde_json::Value = serde_json::from_str(line).unwrap_or(serde_json::Value::Null);
+    let method = json.get("method").and_then(|v| v.as_str()).unwrap_or_else(|| {
+        if json.get("result").is_some() {
+            "(response)"
+        } else if json.get("error").is_some() {
+            "(error response)"
+        } else {
+            "-"
+        }
+    });
+    let id = json
+        .get("id")
+        .map_or_else(|| "-".to_owned(), ToString::to_string);
+    format!("rpc={method} id={id}")
+}
+
+fn log_line(dir: &str, line: &str) {
+    let cut: String = line.chars().take(600).collect();
+    log(&format!("{dir} line {}: {cut}", rpc_summary(line)));
+}
+
+/// Serves the handler over the process stdin/stdout. The two pump tasks sit
+/// between `rmcp::transport::stdio()` and the service, to log each line.
+async fn run_stdio(shared: Arc<Shared>) -> Result<(), Box<dyn std::error::Error>> {
+    let (stdin, mut stdout) = rmcp::transport::stdio();
+    let (mut to_service, from_stdin) = tokio::io::duplex(1 << 20);
+    let (to_stdout, mut from_service) = tokio::io::duplex(1 << 20);
+
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(stdin).lines();
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => {
+                    log_line("stdin", &line);
+                    let written = async {
+                        to_service.write_all(line.as_bytes()).await?;
+                        to_service.write_all(b"\n").await?;
+                        to_service.flush().await
+                    }
+                    .await;
+                    if let Err(err) = written {
+                        log(&format!("stdin pump: write to the service failed: {err}"));
+                        break;
+                    }
+                }
+                Ok(None) => {
+                    log("stdin EOF");
+                    break;
+                }
+                Err(err) => {
+                    log(&format!("stdin read failed: {err}"));
+                    break;
+                }
+            }
+        }
+        // Dropping `to_service` ends the service input.
+    });
+
+    let out_task = tokio::spawn(async move {
+        let mut lines = BufReader::new(&mut from_service).lines();
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => {
+                    log_line("stdout", &line);
+                    let written = async {
+                        stdout.write_all(line.as_bytes()).await?;
+                        stdout.write_all(b"\n").await?;
+                        stdout.flush().await
+                    }
+                    .await;
+                    if let Err(err) = written {
+                        log(&format!("stdout write failed: {err}"));
+                        break;
+                    }
+                }
+                Ok(None) => {
+                    log("service output closed");
+                    break;
+                }
+                Err(err) => {
+                    log(&format!("service output read failed: {err}"));
+                    break;
+                }
+            }
+        }
+    });
+
+    let service = match EventsServer::new(shared.clone())
+        .serve((from_stdin, to_stdout))
+        .await
+    {
+        Ok(service) => service,
+        Err(err) => {
+            log(&format!("stdio serve failed: {err}"));
+            return Err(err.into());
+        }
+    };
+    log("stdio service running");
+    *shared.service_peer.lock().expect("peer lock") = Some(service.peer().clone());
+    let reason = service.waiting().await;
+    log(&format!("stdio service ended: {reason:?}"));
+    if let Err(err) = out_task.await {
+        log(&format!("stdout pump task failed: {err}"));
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -642,6 +798,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stateful = flag("--stateful");
     let sse = flag("--sse");
     let listen = !flag("--no-listen");
+    let stdio = flag("--stdio");
+    let push = match args
+        .iter()
+        .position(|a| a == "--push")
+        .and_then(|i| args.get(i + 1))
+        .map(String::as_str)
+    {
+        None | Some("listen") => Push::Listen,
+        Some("peer") => Push::Peer,
+        Some(other) => return Err(format!("--push takes listen or peer, not {other}").into()),
+    };
     if stateful && flag("--stateless") {
         return Err("--stateful and --stateless exclude each other".into());
     }
@@ -650,7 +817,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let (events, _) = broadcast::channel(64);
+    if stdio {
+        STDIO_MODE.store(true, Ordering::SeqCst);
+    }
     let shared = Arc::new(Shared {
+        stdio,
+        push,
+        service_peer: Mutex::new(None),
         late_enabled: AtomicBool::new(false),
         board: AtomicU64::new(1),
         events,
@@ -677,6 +850,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         });
+    }
+
+    if stdio {
+        log(&format!("start stdio listen={listen} push={push:?}"));
+        return run_stdio(shared).await;
     }
 
     let listener = TcpListener::bind(("127.0.0.1", port)).await?;

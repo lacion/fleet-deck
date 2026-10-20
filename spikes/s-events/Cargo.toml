@@ -11,7 +11,7 @@ name = "events-server"
 path = "src/main.rs"
 
 [dependencies]
-rmcp = { version = "=3.5.1", default-features = false, features = ["server", "macros", "schemars", "transport-streamable-http-server"] }
+rmcp = { version = "=3.5.1", default-features = false, features = ["server", "macros", "schemars", "transport-streamable-http-server", "transport-io"] }
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio", "service"] }
 http-body-util = "0.1"
