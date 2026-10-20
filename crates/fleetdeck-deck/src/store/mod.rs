@@ -114,6 +114,7 @@ pub mod station_palettes;
 pub mod stations;
 pub mod wake_seen;
 pub mod worker_grant;
+mod worker_grant_end;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;

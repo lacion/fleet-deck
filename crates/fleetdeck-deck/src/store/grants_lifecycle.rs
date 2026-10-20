@@ -44,6 +44,7 @@ pub(super) fn renew_generation(conn: &Connection, grant_id: &str) -> Result<Opti
 ///
 /// - `coordinator.worker_outcome` (MCP P4a §6.4) revokes the worker grant that
 ///   the event names, for the same station and start command only.
+/// - `session.ended` revokes the worker grants of that session (MCP P4a §6.4).
 ///
 /// These events change which grants are in effect, so the derived `coordinate`
 /// scopes are rebuilt in the same transaction; the stations whose scopes
@@ -100,6 +101,9 @@ pub(super) fn record_lifecycle(
             generation,
             reason,
         } => apply_ended(tx, station, binding_id, *generation, reason)?,
+        Event::SessionEnded { .. } => {
+            return super::worker_grant_end::apply_session_ended(tx, station, &e.session_id, now);
+        }
         _ => return Ok(BTreeSet::new()),
     }
     sync_coordinate_scopes(tx, now)
@@ -110,7 +114,9 @@ pub(super) fn record_lifecycle(
 ///
 /// A binding of a worker grant that is terminal and never bound (MCP P4a
 /// §6.4) changes nothing, and `late` queues `session.coordinator_revoke` for
-/// the session, so the station's binding ends too.
+/// the session, so the station's binding ends too. A renewal that would pass
+/// the worker cap is not applied: the grant is revoked (`worker_cap`) and `late`
+/// queues the same `session.coordinator_revoke`.
 fn apply_bound(
     tx: &Connection,
     station: &StationId,
@@ -131,19 +137,7 @@ fn apply_bound(
         && grant.state != GrantState::Active
         && let Some((ids, now, delivery_ms)) = late
     {
-        let item = NewOutboxItem {
-            station_id: station.clone(),
-            origin: "board".to_owned(),
-            payload: serde_json::to_value(CommandKind::Session {
-                command: SessionCommand::CoordinatorRevoke {
-                    session_id: session.clone(),
-                    grant_id: b.grant_id.clone(),
-                },
-            })?,
-            expires_at: now.saturating_add(delivery_ms),
-        };
-        let id: String = fleetdeck_core::ids::new_id(ids);
-        insert_item(tx, &id, &item, now)?;
+        queue_revoke(tx, station, session, &b.grant_id, (ids, now, delivery_ms))?;
     }
     // A first binding needs no renewal; a higher generation of a bound
     // grant needs the owner's matching pending renewal (25b).
@@ -155,6 +149,16 @@ fn apply_bound(
         .is_some_and(|old| old.generation < b.generation)
         && renewal
         && grant.state != GrantState::Revoked;
+    if ours && renewed {
+        let now = late.map_or(at, |(_, now, _)| now);
+        if super::worker_grant_end::over_worker_cap(tx, &grant, now)? {
+            super::worker_grant::revoke_tx(tx, &b.grant_id, "worker_cap", now)?;
+            if let Some(queue) = late {
+                queue_revoke(tx, station, session, &b.grant_id, queue)?;
+            }
+            return Ok(());
+        }
+    }
     if ours && (first || renewed) {
         tx.execute(
             "UPDATE tokens SET bound_generation = ?2, bound_native_id = ?3,
@@ -174,6 +178,31 @@ fn apply_bound(
         )?;
         invalidate_stale_generation(tx, &b.grant_id, b.generation)?;
     }
+    Ok(())
+}
+
+/// Queues `session.coordinator_revoke` of `grant_id` for `session` on `station`
+/// (`ids`: the id source, the time and the delivery window).
+fn queue_revoke(
+    tx: &Connection,
+    station: &StationId,
+    session: &SessionId,
+    grant_id: &str,
+    (ids, now, delivery_ms): (&dyn IdSource, i64, i64),
+) -> Result<()> {
+    let item = NewOutboxItem {
+        station_id: station.clone(),
+        origin: "board".to_owned(),
+        payload: serde_json::to_value(CommandKind::Session {
+            command: SessionCommand::CoordinatorRevoke {
+                session_id: session.clone(),
+                grant_id: grant_id.to_owned(),
+            },
+        })?,
+        expires_at: now.saturating_add(delivery_ms),
+    };
+    let id: String = fleetdeck_core::ids::new_id(ids);
+    insert_item(tx, &id, &item, now)?;
     Ok(())
 }
 

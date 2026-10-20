@@ -498,7 +498,8 @@ impl DeckStore {
     /// generation + 1). The grant stays expired until the station
     /// acknowledges that generation with `coordinator.bound`. Returns the
     /// pending generation, or `None` when the grant cannot be renewed. A
-    /// repeated renewal returns the same generation.
+    /// repeated renewal returns the same generation. A worker grant does not
+    /// renew while 200 worker grants are in effect.
     ///
     /// # Errors
     /// A database error.
@@ -510,9 +511,16 @@ impl DeckStore {
             };
             let idle = grant.state == GrantState::Expired
                 && grant.revoked_reason.as_deref() == Some("idle");
-            let Some(binding) = grant.binding.filter(|_| idle && grant.expires_at > now) else {
+            let Some(binding) = grant
+                .binding
+                .as_ref()
+                .filter(|_| idle && grant.expires_at > now)
+            else {
                 return Ok(None);
             };
+            if super::worker_grant_end::over_worker_cap(conn, &grant, now)? {
+                return Ok(None);
+            }
             let next = binding.generation.saturating_add(1);
             conn.execute(
                 "UPDATE tokens SET renew_generation = ?2
