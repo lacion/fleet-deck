@@ -21,6 +21,10 @@ fn live() -> LiveCell {
         tailscale_cert: false,
         tailscale_bin: None,
         knobs: fleetdeck_deck::knobs::DeckKnobs::default(),
+        worker_grant: fleetdeck_core::config_worker_grant::WorkerGrantConfig {
+            enabled: false,
+            ..fleetdeck_core::config_worker_grant::WorkerGrantConfig::default()
+        },
     })
 }
 

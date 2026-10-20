@@ -43,12 +43,12 @@ pub fn in_effect(grant: &Grant, now: i64) -> bool {
     grant.state == GrantState::Active
         && now <= grant.expires_at
         && grant
-            .last_used_at
+            .idle_since()
             .is_none_or(|t| now.saturating_sub(t) <= grant.idle_ttl_ms)
 }
 
 /// Every grant whose state is `active` (some may be past a deadline).
-fn active_grants(tx: &Connection) -> Result<Vec<Grant>> {
+pub(super) fn active_grants(tx: &Connection) -> Result<Vec<Grant>> {
     let mut stmt = tx.prepare(&format!(
         "SELECT {GRANT_COLUMNS} FROM tokens WHERE state = 'active'"
     ))?;
@@ -108,7 +108,7 @@ fn end_stale(tx: &Connection, now: i64) -> Result<Vec<(String, &'static str)>> {
         let reason = if now > g.expires_at {
             "expired"
         } else if g
-            .last_used_at
+            .idle_since()
             .is_some_and(|t| now.saturating_sub(t) > g.idle_ttl_ms)
         {
             "idle"
@@ -218,6 +218,7 @@ impl DeckStore {
         let (ended, changed) = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let ended = end_stale(&tx, now)?;
+            super::worker_grant::prune(&tx, now)?;
             let changed = sync_coordinate_scopes(&tx, now)?;
             tx.commit()?;
             Ok((ended, changed))

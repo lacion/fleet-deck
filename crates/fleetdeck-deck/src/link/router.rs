@@ -20,7 +20,9 @@ use std::time::Duration;
 
 use fleetdeck_link::control::Control;
 use fleetdeck_link::methods::code;
-use fleetdeck_proto::command::{CommandOrigin, DeckCommandState, RETRY_WINDOW_MS, SessionCommand};
+use fleetdeck_proto::command::{
+    CommandOrigin, DeckCommandState, GrantKind, RETRY_WINDOW_MS, SessionCommand,
+};
 use fleetdeck_proto::link::Outcome;
 use fleetdeck_proto::mutation::{
     CommandAuthority, PolicyNow, PolicyNowAnswer, StationChange, StationConfigureEnvelope,
@@ -334,6 +336,38 @@ impl DeckLink {
         Ok((cmd, new))
     }
 
+    /// The live `worker_grant` setting; off when the deck has no live
+    /// settings (fail closed).
+    pub(crate) fn worker_setting(&self) -> fleetdeck_core::config_worker_grant::WorkerGrantConfig {
+        self.desktop_live.get().map_or_else(
+            || fleetdeck_core::config_worker_grant::WorkerGrantConfig {
+                enabled: false,
+                ..Default::default()
+            },
+            |cell| cell.get().worker_grant.clone(),
+        )
+    }
+
+    /// [`DeckLink::submit_by`] for a session start that may get a worker
+    /// grant (MCP P4a §5): the store decides, stores the grant and the
+    /// command in one transaction, and the first send starts when the command
+    /// is new.
+    ///
+    /// # Errors
+    /// See [`crate::store::DeckStore::submit_start_with_worker_decision`].
+    pub async fn submit_start_by(
+        self: &Arc<Self>,
+        req: crate::store::worker_grant::WorkerStart,
+    ) -> Result<(DeckCommand, bool), DeckError> {
+        let out = self.store.submit_start_with_worker_decision(req).await?;
+        if out.new {
+            let ctx = Arc::clone(self);
+            let id = out.command.command_id.clone();
+            tokio::spawn(async move { ctx.send(&id).await });
+        }
+        Ok((out.command, out.new))
+    }
+
     /// Starts the first send of a command that a caller stored in its own
     /// transaction (the review send, DL-179), after that transaction
     /// committed. The router's pending-command recovery sends it too if this
@@ -437,6 +471,17 @@ impl DeckLink {
                 }
             }
         }
+        // A start with a worker grant goes only to a link that negotiated
+        // `worker_grant.v1`, so no older station decodes `kind`. Otherwise it
+        // waits for a compatible link or its expiry (MCP P4a §6.3).
+        if worker_start(&cmd.envelope)
+            && self
+                .store
+                .link_feature(&cmd.station_id, feature::WORKER_GRANT)
+                != LinkFeature::Negotiated
+        {
+            return;
+        }
         // A mail of a member checks its share before every send and resend
         // (NV-17).
         match self.store.gate_member_mail(cmd.command_id.clone()).await {
@@ -515,6 +560,19 @@ impl DeckLink {
             }
         }
     }
+}
+
+/// True for a stored `session.start` envelope that carries a worker grant
+/// (MCP P4a §6.3).
+#[must_use]
+fn worker_start(envelope: &serde_json::Value) -> bool {
+    serde_json::from_value::<CommandEnvelope>(envelope.clone()).is_ok_and(|env| {
+        matches!(
+            &env.command,
+            SessionCommand::Start { spec, .. }
+                if spec.coordinator.as_deref().is_some_and(|c| c.kind == GrantKind::Worker)
+        )
+    })
 }
 
 /// True for a stored `session.import` envelope that carries a `transcript`

@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use fleetdeck_core::identity::{Identity, PeerKey};
+use fleetdeck_proto::command::GrantKind;
 use fleetdeck_proto::event::{Event, EventBody};
 use fleetdeck_proto::link::Scope;
 use fleetdeck_proto::mutation::{
@@ -235,6 +236,7 @@ fn a_grant_is_in_effect_only_while_active_inside_its_lifetime_and_not_idle() {
         input_character_cap: 0,
         input_character_used: 0,
         allow_click: false,
+        kind: GrantKind::Coordinator,
     };
     assert!(in_effect(&base, 10_000));
     assert!(!in_effect(&base, 10_001));

@@ -778,6 +778,11 @@ pub fn migrations() -> Migrations<'static> {
         M::up(super::coordinator_receipt_grant_schema::SQL),
         M::up(super::recording_length_schema::SQL),
         M::up(super::session_idle_schema::SQL),
+        // V43 to V45 (MCP P4a): the grant kind, the author of a schedule and
+        // the stored worker-grant decision, `store/worker_grant.rs`.
+        M::up(super::worker_grant::tokens_kind_schema::SQL),
+        M::up(super::worker_grant::schedules_author_schema::SQL),
+        M::up(super::worker_grant::worker_attach_schema::SQL),
     ])
 }
 

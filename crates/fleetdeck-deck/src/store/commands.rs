@@ -19,6 +19,8 @@
 //!
 //! Nothing is redispatched with a new id.
 
+use std::collections::BTreeSet;
+
 use fleetdeck_core::ids::new_id;
 use fleetdeck_proto::command::{DeckCommandState, ReceiptState};
 use fleetdeck_proto::{CommandId, Receipt, RejectCode, StationId};
@@ -152,9 +154,21 @@ fn list(conn: &Connection, sql: &str, p: impl rusqlite::Params) -> Result<Vec<De
     Ok(out)
 }
 
+/// What a command's end changed besides the command: a review (the caller
+/// tells the board) and the stations whose derived scopes changed because the
+/// worker grant of the start ended (the caller notes them).
+#[derive(Debug, Default)]
+struct Finished {
+    review: bool,
+    scopes: BTreeSet<StationId>,
+}
+
 /// Moves a `pending` command to `state`. The review of the command (DL-179)
-/// follows in the same transaction; the result is true when a review changed,
-/// so the caller tells the board.
+/// follows in the same transaction. A start whose worker grant cannot be
+/// used revokes the grant in the same transaction (MCP P4a §6.3, §6.4):
+/// `undelivered` for a start that was never sent, `start_failed` for a
+/// failure through a refusal of the link layer or a rejected receipt; an
+/// ambiguous command revokes nothing.
 fn finish(
     conn: &Connection,
     id: &CommandId,
@@ -162,7 +176,7 @@ fn finish(
     receipt: Option<&Receipt>,
     reason: Option<&str>,
     now: i64,
-) -> Result<bool> {
+) -> Result<Finished> {
     let json = receipt.map(serde_json::to_string).transpose()?;
     let moved = conn.execute(
         "UPDATE commands SET state = ?2, receipt = ?3, reason = ?4, updated_at = ?5
@@ -170,9 +184,23 @@ fn finish(
         params![id.as_str(), state_name(state), json, reason, now],
     )?;
     if moved == 0 {
-        return Ok(false);
+        return Ok(Finished::default());
     }
-    super::review::command_ended(conn, id, state, receipt, reason)
+    let rejected = receipt.is_some_and(|r| r.state == ReceiptState::Rejected);
+    let revoke = match state {
+        DeckCommandState::Failed if reason == Some("not_sent") => Some("undelivered"),
+        DeckCommandState::Failed => Some("start_failed"),
+        DeckCommandState::Done if rejected => Some("start_failed"),
+        _ => None,
+    };
+    let scopes = match revoke {
+        Some(why) => super::worker_grant::revoke_for_start(conn, id, why, now)?,
+        None => BTreeSet::new(),
+    };
+    Ok(Finished {
+        review: super::review::command_ended(conn, id, state, receipt, reason)?,
+        scopes,
+    })
 }
 
 /// Marks the pending commands of a removed station `failed`
@@ -352,23 +380,24 @@ impl DeckStore {
         let out = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let cmd = get(&tx, &id)?.ok_or_else(|| DeckError::UnknownCommand(id.0.clone()))?;
-            let mut review = false;
+            let mut done = Finished::default();
             if cmd.state == DeckCommandState::Pending {
                 let (state, reason) = next_state(&settle, cmd.attempts);
                 let receipt = match &settle {
                     Settle::Receipt(r) => Some(r),
                     Settle::Refused { .. } => None,
                 };
-                review = finish(&tx, &id, state, receipt, reason.as_deref(), now)?;
+                done = finish(&tx, &id, state, receipt, reason.as_deref(), now)?;
             }
             let out = get(&tx, &id)?
                 .ok_or_else(|| DeckError::Corrupt("a settled command is gone".to_owned()))?;
             tx.commit()?;
-            Ok((out, review))
+            Ok((out, done))
         })
         .await?;
+        self.note_scope_changes(out.1.scopes);
         self.commands_changed();
-        if out.1 {
+        if out.1.review {
             self.board_changed();
         }
         Ok(out.0)
@@ -389,27 +418,30 @@ impl DeckStore {
                 "WHERE state = 'pending' AND retry_until <= ?1 ORDER BY created_at, command_id",
                 [now],
             )?;
-            let mut review = false;
+            let mut done = Finished::default();
             for cmd in &due {
                 let (state, reason) = if cmd.attempts > 0 {
                     (DeckCommandState::Ambiguous, "no_receipt")
                 } else {
                     (DeckCommandState::Failed, "not_sent")
                 };
-                review |= finish(&tx, &cmd.command_id, state, None, Some(reason), now)?;
+                let one = finish(&tx, &cmd.command_id, state, None, Some(reason), now)?;
+                done.review |= one.review;
+                done.scopes.extend(one.scopes);
             }
             let mut changed = Vec::new();
             for cmd in due {
                 changed.extend(get(&tx, &cmd.command_id)?);
             }
             tx.commit()?;
-            Ok((changed, review))
+            Ok((changed, done))
         })
         .await?;
+        self.note_scope_changes(out.1.scopes);
         if !out.0.is_empty() {
             self.commands_changed();
         }
-        if out.1 {
+        if out.1.review {
             self.board_changed();
         }
         Ok(out.0)

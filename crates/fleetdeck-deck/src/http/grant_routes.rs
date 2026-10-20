@@ -5,7 +5,6 @@
 //! `POST .../caps` changes the desktop caps (R13 P6 §2.2) and
 //! `GET .../desktop-ops` lists the recent desktop operations of a grant.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use axum::Json;
@@ -29,10 +28,15 @@ use crate::store::{
     AuditResult, Grant, GrantClass, GrantState, LinkFeature, LinkV2, NewAudit, Principal,
 };
 
+/// The detail of the audit row of a created grant (the store writes the row
+/// of a worker grant in its own transaction).
+pub(crate) use super::grant_spawn::audit_detail;
+
 /// The most stations that one grant names (its own station included).
 pub const MAX_GRANT_STATIONS: usize = 16;
 
 fn view(g: Grant) -> GrantView {
+    let (kind, max_modes) = (g.kind, g.max_modes.clone());
     let class = |c: &GrantClass| {
         match c {
             GrantClass::Read => "read",
@@ -90,8 +94,8 @@ fn view(g: Grant) -> GrantView {
         input_character_cap: input.then_some(g.input_character_cap),
         input_character_used: input.then_some(g.input_character_used),
         allow_click: input.then_some(g.allow_click),
-        kind: GrantKind::Coordinator,
-        max_modes: BTreeMap::new(),
+        kind,
+        max_modes,
     }
 }
 
@@ -430,6 +434,11 @@ pub(super) async fn owner_start(
     (session, elevation): (&LoginSession, Option<&str>),
 ) -> Result<(), ApiError> {
     let invalid = |m: String| ApiError::new(StatusCode::BAD_REQUEST, "invalid_grant", m);
+    // The grant kind is set by the deck (MCP P4a §4): a board request for a
+    // worker grant is refused, and the outgoing kind comes from the stored grant.
+    if spec.kind != GrantKind::Coordinator {
+        return Err(invalid("the grant kind is set by the deck".to_owned()));
+    }
     // The board-to-deck list never goes on to a station.
     let targets = std::mem::take(&mut spec.stations);
     // The desktop caps are read here and never go on to a station either
@@ -675,6 +684,7 @@ pub(super) async fn owner_start(
                     .link_feature(station, feature::DESKTOP_INPUT_ANY)
                     == LinkFeature::Negotiated)
     });
+    spec.kind = g.kind;
     spec.grant_id = g.grant_id;
     spec.idle_ttl_ms = u64::try_from(g.idle_ttl_ms).unwrap_or(0);
     spec.expires_at = g.expires_at;

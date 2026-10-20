@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use crate::config_worker_grant::{RawWorkerGrant, WorkerGrantConfig};
+
 use super::clone_cfg::{valid_clone_host, valid_clone_org};
 use super::knobs_deck_cfg::{
     DeckLimits, DeckRetention, DeckSecurity, RawDeckLimits, RawDeckRetention, RawSecurity,
@@ -73,6 +75,8 @@ pub struct DeckConfig {
     pub retention: DeckRetention,
     /// `[limits]`: the delivery time of mail and tasks, the radar interval.
     pub limits: DeckLimits,
+    /// `[worker_grant]`: the default grant of an eligible session start (MCP P4a).
+    pub worker_grant: WorkerGrantConfig,
 }
 
 /// The keys of `deck.toml` (`RawDeck`).
@@ -96,6 +100,7 @@ pub(crate) const RAW_DECK_KEYS: &[&str] = &[
     "security",
     "retention",
     "limits",
+    "worker_grant",
 ];
 
 #[derive(Deserialize)]
@@ -119,6 +124,7 @@ struct RawDeck {
     security: Option<RawSecurity>,
     retention: Option<RawDeckRetention>,
     limits: Option<RawDeckLimits>,
+    worker_grant: Option<RawWorkerGrant>,
 }
 
 impl DeckConfig {
@@ -182,6 +188,10 @@ impl DeckConfig {
             Some(raw) => raw.validate()?,
             None => DeckLimits::default(),
         };
+        let worker_grant = match raw.worker_grant {
+            Some(raw) => raw.validate()?,
+            None => WorkerGrantConfig::default(),
+        };
         Ok(Self {
             name,
             listen,
@@ -201,6 +211,7 @@ impl DeckConfig {
             security,
             retention,
             limits,
+            worker_grant,
         })
     }
 }

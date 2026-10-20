@@ -244,7 +244,7 @@ impl DeckStore {
                         ));
                     }
                     if grant
-                        .last_used_at
+                        .idle_since()
                         .is_some_and(|t| now.saturating_sub(t) > grant.idle_ttl_ms)
                     {
                         expire_idle(tx, &inner, &grant.grant_id, now)?;
@@ -434,7 +434,9 @@ impl DeckStore {
 
 /// True when a session holds an active grant with a mutating class (ADR-008
 /// §4.2 rule 3): `state = 'active'`, not past `expires_at`; an idle-expired
-/// row that was not revoked still counts (conservative).
+/// row that was not revoked still counts (conservative). A worker grant
+/// (MCP P4a W1, `kind = 'worker'`) is exempt: it does not make its session a
+/// coordinator.
 pub(super) fn holds_mutating_grant(
     tx: &Connection,
     station: &StationId,
@@ -443,7 +445,8 @@ pub(super) fn holds_mutating_grant(
 ) -> Result<bool> {
     let mut stmt = tx.prepare(
         "SELECT classes FROM tokens
-         WHERE station_id = ?1 AND session_id = ?2 AND state = 'active' AND ?3 <= expires_at",
+         WHERE station_id = ?1 AND session_id = ?2 AND state = 'active' AND ?3 <= expires_at
+           AND kind = 'coordinator'",
     )?;
     let rows = stmt
         .query_map(params![station.as_str(), session.0, now], |r| {

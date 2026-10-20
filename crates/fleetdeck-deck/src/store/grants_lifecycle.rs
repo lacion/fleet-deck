@@ -4,16 +4,20 @@
 
 use std::collections::BTreeSet;
 
+use fleetdeck_core::ids::IdSource;
 use fleetdeck_proto::mutation::CoordinatorBinding;
 use fleetdeck_proto::{SessionId, StationId};
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::Result;
 use super::display_directives_coordinator::{
     invalidate_ended_binding, invalidate_stale_generation,
 };
 use super::grant_scopes::sync_coordinate_scopes;
 use super::grants::{GrantState, get_grant};
+use super::outbox::insert_item;
+use super::{NewOutboxItem, Result};
+use crate::link::CommandKind;
+use fleetdeck_proto::command::{GrantKind, SessionCommand};
 
 /// The pending renewal generation of a grant (V10), if any.
 pub(super) fn renew_generation(conn: &Connection, grant_id: &str) -> Result<Option<i64>> {
@@ -38,14 +42,21 @@ pub(super) fn renew_generation(conn: &Connection, grant_id: &str) -> Result<Opti
 ///   `expired` (`idle`) or `revoked` (any other reason); a revoked grant
 ///   stays revoked.
 ///
-/// Both events change which grants are in effect, so the derived `coordinate`
+/// - `coordinator.worker_outcome` (MCP P4a §6.4) revokes the worker grant that
+///   the event names, for the same station and start command only.
+///
+/// These events change which grants are in effect, so the derived `coordinate`
 /// scopes are rebuilt in the same transaction; the stations whose scopes
 /// changed are returned (design §2.3 items 4 and 5).
+///
+/// `late` is the id source and the delivery time of a `session.coordinator_revoke`
+/// that a late `coordinator.bound` of a terminal worker grant queues.
 pub(super) fn record_lifecycle(
     tx: &Connection,
     station: &StationId,
     e: &fleetdeck_proto::EventEnvelope,
     now: i64,
+    late: (&dyn IdSource, i64),
 ) -> Result<BTreeSet<StationId>> {
     use fleetdeck_proto::event::{Event, EventBody};
     let EventBody::Known(event) = &e.event else {
@@ -70,7 +81,20 @@ pub(super) fn record_lifecycle(
                 provider_instance: provider_instance.clone().into(),
                 native_id: native_id.clone(),
             },
+            Some((late.0, now, late.1)),
         )?,
+        Event::CoordinatorWorkerOutcome {
+            grant_id,
+            start_command_id,
+            ..
+        } => {
+            return super::worker_grant::apply_outcome(
+                tx,
+                station,
+                (grant_id, start_command_id),
+                now,
+            );
+        }
         Event::CoordinatorEnded {
             binding_id,
             generation,
@@ -83,12 +107,17 @@ pub(super) fn record_lifecycle(
 
 /// The `coordinator.bound` rules of [`record_lifecycle`], also used by a
 /// snapshot projection (ADR-006 §6.1, test 25e).
+///
+/// A binding of a worker grant that is terminal and never bound (MCP P4a
+/// §6.4) changes nothing, and `late` queues `session.coordinator_revoke` for
+/// the session, so the station's binding ends too.
 fn apply_bound(
     tx: &Connection,
     station: &StationId,
     session: &SessionId,
     at: i64,
     b: &CoordinatorBinding,
+    late: Option<(&dyn IdSource, i64, i64)>,
 ) -> Result<()> {
     let Some(grant) = get_grant(tx, &b.grant_id)? else {
         return Ok(());
@@ -96,6 +125,26 @@ fn apply_bound(
     let ours = &grant.station_id == station
         && (&grant.session_id == session
             || claims_start(tx, &b.grant_id, &grant.session_id, session)?);
+    if ours
+        && grant.kind == GrantKind::Worker
+        && grant.binding.is_none()
+        && grant.state != GrantState::Active
+        && let Some((ids, now, delivery_ms)) = late
+    {
+        let item = NewOutboxItem {
+            station_id: station.clone(),
+            origin: "board".to_owned(),
+            payload: serde_json::to_value(CommandKind::Session {
+                command: SessionCommand::CoordinatorRevoke {
+                    session_id: session.clone(),
+                    grant_id: b.grant_id.clone(),
+                },
+            })?,
+            expires_at: now.saturating_add(delivery_ms),
+        };
+        let id: String = fleetdeck_core::ids::new_id(ids);
+        insert_item(tx, &id, &item, now)?;
+    }
     // A first binding needs no renewal; a higher generation of a bound
     // grant needs the owner's matching pending renewal (25b).
     let renewal = renew_generation(tx, &b.grant_id)? == Some(i64::from(b.generation));
@@ -181,7 +230,7 @@ pub(super) fn apply_projection(
                 provider_instance: p.provider_instance.clone().into(),
                 native_id: native_id.clone(),
             };
-            apply_bound(tx, station, &p.session_id, at, &binding)?;
+            apply_bound(tx, station, &p.session_id, at, &binding, None)?;
         }
         let reason = match p.state {
             Phase::Pending | Phase::Active => continue,

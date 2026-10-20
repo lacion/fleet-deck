@@ -11,6 +11,7 @@ use crate::config::{
     RAW_INSTANCE_KEYS, RAW_MODEL_HELP_KEYS, RAW_SECURITY_KEYS, RAW_STATION_KEYS,
     RAW_STATION_LIMITS_KEYS, RAW_STATION_RETENTION_KEYS, StationConfig,
 };
+use crate::config_worker_grant::RAW_WORKER_GRANT_KEYS;
 use crate::paths::Env;
 use crate::settings::{deck_fields, revision_of, station_fields, view_deck, view_station};
 
@@ -42,6 +43,7 @@ fn sample(f: &FieldMeta) -> String {
         FieldKind::Enum => format!("{:?}", f.options[0]),
         FieldKind::Paths => "[\"/tmp\"]".to_owned(),
         FieldKind::Addresses => "[\"127.0.0.1:7420\"]".to_owned(),
+        FieldKind::Texts if f.key == "worker_grant.stations" => "[\"all\"]".to_owned(),
         FieldKind::Texts | FieldKind::Instances | FieldKind::Trackers => "[]".to_owned(),
         FieldKind::RepoGroups => "{}".to_owned(),
         FieldKind::ShareMounts => "{ \"nas/out\" = \"/mnt/out\" }".to_owned(),
@@ -72,7 +74,7 @@ fn station_field_keys_equal_the_parser_keys() {
 
 #[test]
 fn deck_field_keys_equal_the_parser_keys() {
-    let tables = ["security", "retention", "limits"];
+    let tables = ["security", "retention", "limits", "worker_grant"];
     let mut expected: BTreeSet<String> = RAW_DECK_KEYS
         .iter()
         .filter(|k| !tables.contains(k))
@@ -82,6 +84,7 @@ fn deck_field_keys_equal_the_parser_keys() {
         ("security", RAW_SECURITY_KEYS),
         ("retention", RAW_DECK_RETENTION_KEYS),
         ("limits", RAW_DECK_LIMITS_KEYS),
+        ("worker_grant", RAW_WORKER_GRANT_KEYS),
     ];
     for (table, list) in dotted {
         expected.extend(list.iter().map(|k| format!("{table}.{k}")));
