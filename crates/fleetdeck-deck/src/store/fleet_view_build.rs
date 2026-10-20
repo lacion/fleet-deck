@@ -3,8 +3,8 @@
 //!
 //! An item is built from typed structs of `fleetdeck_proto::fleet_view`, so
 //! no field outside the design can leave the deck. A text field is cut to its
-//! limit; an item with an ID above 128 bytes, a key part with a line feed, or
-//! more than 8 KiB serialized is left out (with a debug line).
+//! limit; an item with an ID above 128 bytes or more than 8 KiB serialized is
+//! left out (with a debug line). No character in a name leaves an item out.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -38,13 +38,8 @@ pub(super) struct Entry {
 }
 
 /// The entry of `item`, or `None` (with a debug line) when it must be left
-/// out: a key part with a line feed (the cursor joins the parts by it), a
-/// serialization error, or more than [`ITEM_MAX_BYTES`].
+/// out: a serialization error, or more than [`ITEM_MAX_BYTES`].
 fn entry(key: Vec<String>, item: &impl Serialize, stations: Vec<StationId>) -> Option<Entry> {
-    if key.iter().any(|part| part.contains('\n')) {
-        tracing::debug!("fleet view: an item with a line feed in its key is left out");
-        return None;
-    }
     let value = serde_json::to_value(item).ok()?;
     let len = serde_json::to_string(&value).ok()?.len();
     if len > ITEM_MAX_BYTES {

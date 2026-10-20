@@ -282,7 +282,7 @@ async fn paging_lists_every_station_project_and_session_above_one_page_with_conc
     let good = encode_cursor(&["a".to_owned(), "b".to_owned()]);
     for (view, cursor) in [
         ("stations", "***".to_owned()),
-        ("stations", "A".repeat(3000)),
+        ("stations", "A".repeat(5000)),
         ("stations", encode_cursor(&["only-one".to_owned()])),
         (
             "stations",
@@ -302,4 +302,89 @@ async fn paging_lists_every_station_project_and_session_above_one_page_with_conc
     ask(&w, &caller_station, "caller-0", "me", Some("***"), None)
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn a_line_feed_and_a_quote_in_a_name_or_a_callsign_keep_the_cursor_valid() {
+    let mut w = world().await;
+    // 40 stations; the 32nd of the sorted list ends the first page.
+    let odd_station = "a31\n\"q\\".to_owned();
+    let mut ids = Vec::new();
+    for i in 0..40 {
+        let name = if i == 31 {
+            odd_station.clone()
+        } else {
+            format!("a{i:02}")
+        };
+        ids.push(w.pin(&name, Some(info(&name, vec![]))).await);
+    }
+    // 101 sessions on one station; the 100th of the sorted list ends the
+    // first page.
+    let odd_callsign = "c099\n\"q\\".to_owned();
+    let list = (0..101)
+        .map(|i| {
+            let mut s = summary(&format!("s{i:03}"));
+            s.callsign = Some(if i == 99 {
+                odd_callsign.clone()
+            } else {
+                format!("c{i:03}")
+            });
+            s
+        })
+        .collect();
+    w.sessions(&ids[0], list).await;
+    w.sessions(&ids[1], vec![summary("caller")]).await;
+
+    let first = ask(&w, &ids[1], "caller", "stations", None, None)
+        .await
+        .unwrap();
+    assert_eq!(first.items.as_array().unwrap().len(), 32);
+    assert_eq!(first.items[31]["name"], odd_station.as_str());
+    let cursor = first.next_cursor.unwrap();
+    let parts = decode_cursor(FleetView::Stations, &cursor).unwrap();
+    assert_eq!(parts[0], odd_station);
+    let second = ask(&w, &ids[1], "caller", "stations", Some(&cursor), None)
+        .await
+        .unwrap();
+    let names: Vec<&str> = second
+        .items
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names.len(), 8);
+    assert_eq!(names[0], "a32");
+    assert_eq!(second.next_cursor, None);
+
+    let first = ask(&w, &ids[1], "caller", "sessions", None, None)
+        .await
+        .unwrap();
+    assert_eq!(first.items.as_array().unwrap().len(), 100);
+    let cursor = first.next_cursor.unwrap();
+    let parts = decode_cursor(FleetView::Sessions, &cursor).unwrap();
+    assert_eq!(parts[1], odd_callsign);
+    let second = ask(&w, &ids[1], "caller", "sessions", Some(&cursor), None)
+        .await
+        .unwrap();
+    let listed: Vec<&str> = second
+        .items
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["session_id"].as_str().unwrap())
+        .collect();
+    // The odd callsign sorts last of the 100 (control and quote are below
+    // the digits); the next page holds the rest, each session once.
+    let seen: BTreeSet<&str> = first
+        .items
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["session_id"].as_str().unwrap())
+        .chain(listed.iter().copied())
+        .collect();
+    assert_eq!(seen.len(), 102);
+    assert!(!listed.contains(&"s099"));
+    assert_eq!(second.next_cursor, None);
 }

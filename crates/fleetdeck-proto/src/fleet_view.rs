@@ -110,7 +110,7 @@ pub const PAGE_MAX_BYTES: usize = 192 * 1024;
 /// left out.
 pub const ITEM_MAX_BYTES: usize = 8 * 1024;
 /// The most bytes of a cursor.
-pub const CURSOR_MAX_BYTES: usize = 2048;
+pub const CURSOR_MAX_BYTES: usize = 4096;
 
 /// The ellipsis that ends a cut text.
 pub const ELLIPSIS: char = '…';
@@ -216,43 +216,15 @@ pub struct MeItem {
 // The cursor (design §2.3, "Common").
 // ---------------------------------------------------------------------------
 
-/// The limit of one part of a cursor key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PartLimit {
-    /// A text part: at most this many characters.
-    Chars(usize),
-    /// An ID part: at most this many bytes.
-    Bytes(usize),
-}
-
-impl PartLimit {
-    fn holds(self, part: &str) -> bool {
-        match self {
-            Self::Chars(n) => part.chars().count() <= n,
-            Self::Bytes(n) => part.len() <= n,
-        }
-    }
-}
-
-/// The parts of the cursor key of a view, in order, with their limits:
-/// stations `(name, station_id)`, projects `(name, project_id)`, sessions
-/// `(station name, callsign, session_id)`. `me` has no cursor.
+/// The parts of the cursor key of a view, in order, with the most characters
+/// of each: stations `(name, station_id)`, projects `(name, project_id)`,
+/// sessions `(station name, callsign, session_id)`. `me` has no cursor.
 #[must_use]
-pub const fn cursor_parts(view: FleetView) -> &'static [PartLimit] {
+pub const fn cursor_parts(view: FleetView) -> &'static [usize] {
     match view {
-        FleetView::Stations => &[
-            PartLimit::Chars(NAME_MAX_CHARS),
-            PartLimit::Bytes(ID_MAX_BYTES),
-        ],
-        FleetView::Projects => &[
-            PartLimit::Chars(PROJECT_NAME_MAX_CHARS),
-            PartLimit::Bytes(ID_MAX_BYTES),
-        ],
-        FleetView::Sessions => &[
-            PartLimit::Chars(NAME_MAX_CHARS),
-            PartLimit::Chars(CALLSIGN_MAX_CHARS),
-            PartLimit::Bytes(ID_MAX_BYTES),
-        ],
+        FleetView::Stations => &[NAME_MAX_CHARS, ID_MAX_BYTES],
+        FleetView::Projects => &[PROJECT_NAME_MAX_CHARS, ID_MAX_BYTES],
+        FleetView::Sessions => &[NAME_MAX_CHARS, CALLSIGN_MAX_CHARS, ID_MAX_BYTES],
         FleetView::Me => &[],
     }
 }
@@ -304,18 +276,20 @@ fn b64_decode(text: &str) -> Option<Vec<u8>> {
     (b64_encode(&out) == text).then_some(out)
 }
 
-/// The cursor of a key: base64url of the key parts joined by `\n`.
+/// The cursor of a key: base64url (no padding) of a JSON array of the key
+/// parts as strings, in the sort order of the view.
 #[must_use]
 pub fn encode_cursor(parts: &[String]) -> String {
-    b64_encode(parts.join("\n").as_bytes())
+    let json = serde_json::to_string(parts).unwrap_or_else(|_| "[]".to_owned());
+    b64_encode(json.as_bytes())
 }
 
 /// The key parts of `cursor` for `view`.
 ///
 /// # Errors
 /// [`CursorInvalid`] when the cursor is longer than [`CURSOR_MAX_BYTES`],
-/// does not decode, is not UTF-8, or does not have exactly the parts of the
-/// view with each part within its limit.
+/// is not base64url, is not JSON, is not an array of strings, does not have
+/// exactly the parts of the view, or has a part above its limit in characters.
 pub fn decode_cursor(view: FleetView, cursor: &str) -> Result<Vec<String>, CursorInvalid> {
     if cursor.len() > CURSOR_MAX_BYTES {
         return Err(CursorInvalid);
@@ -325,9 +299,9 @@ pub fn decode_cursor(view: FleetView, cursor: &str) -> Result<Vec<String>, Curso
         return Err(CursorInvalid);
     }
     let bytes = b64_decode(cursor).ok_or(CursorInvalid)?;
-    let text = String::from_utf8(bytes).map_err(|_| CursorInvalid)?;
-    let parts: Vec<String> = text.split('\n').map(str::to_owned).collect();
-    if parts.len() != limits.len() || !parts.iter().zip(limits).all(|(p, l)| l.holds(p)) {
+    let parts: Vec<String> = serde_json::from_slice(&bytes).map_err(|_| CursorInvalid)?;
+    let within = |p: &String, max: &usize| p.chars().count() <= *max;
+    if parts.len() != limits.len() || !parts.iter().zip(limits).all(|(p, l)| within(p, l)) {
         return Err(CursorInvalid);
     }
     Ok(parts)
@@ -369,10 +343,16 @@ mod tests {
         assert!(decode_cursor(FleetView::Stations, "a+b/").is_err());
         assert!(decode_cursor(FleetView::Stations, "A").is_err());
         assert!(decode_cursor(FleetView::Stations, "").is_err());
-        // Not UTF-8.
-        assert!(
-            decode_cursor(FleetView::Stations, &b64_encode(&[0xff, 0xfe, b'\n', 0xfd])).is_err()
-        );
+        // Not JSON, not an array of strings.
+        for bad in [
+            &b"\xff\xfe"[..],
+            b"a\nb",
+            b"[1,2]",
+            b"{\"a\":\"b\"}",
+            b"[\"a\",\"b\"] x",
+        ] {
+            assert!(decode_cursor(FleetView::Stations, &b64_encode(bad)).is_err());
+        }
         // A part above its limit.
         let long = encode_cursor(&["n".repeat(NAME_MAX_CHARS + 1), "i".to_owned()]);
         assert!(decode_cursor(FleetView::Stations, &long).is_err());
