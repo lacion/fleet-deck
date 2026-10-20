@@ -1,6 +1,6 @@
 # MCP P4a — the default worker grant
 
-- **Status:** Draft revision 3, 2026-10-20. Revision 1 (f901d98e) got DESIGN REVIEW FAIL (1 BLOCKER, 7 MAJOR, 3 MINOR; `~/fleetdeck-briefs/mcp-p4a-design-r1-adversary.md`); revision 2 (61eebb2f) fixed nine and got RE-REVIEW FAIL on two (`~/fleetdeck-briefs/mcp-p4a-design-r2-adversary.md`). Revision 3 applies them (§11).
+- **Status:** Accepted revision 3, 2026-10-20 (adversary DESIGN RE-REVIEW round 3 PASS, `~/fleetdeck-briefs/mcp-p4a-design-r3-adversary.md`). Revision 1 (f901d98e) got DESIGN REVIEW FAIL (1 BLOCKER, 7 MAJOR, 3 MINOR; `~/fleetdeck-briefs/mcp-p4a-design-r1-adversary.md`); revision 2 (61eebb2f) fixed nine and got RE-REVIEW FAIL on two (`~/fleetdeck-briefs/mcp-p4a-design-r2-adversary.md`). Revision 3 applies them (§11).
 - **Program:** DL-251 (D1: every session starts with a small grant that can spawn), owner decisions W1–W3 of 2026-10-20 (`~/fleetdeck-briefs/mcp-p3-research-notes.md` §"P4 owner decisions"). P2 is folded into P4; P4b (live grant changes and the listen stream) follows.
 - **Out of scope:** live changes of a running session's grant and `tools/list_changed` (P4b); a grant on resume, import, bearer-token, member or CLI starts (W2).
 
@@ -76,7 +76,7 @@ No `never_bound` sweep. The deck revokes a worker grant at once when it ingests 
 ## 7. Bounds (R1 MAJOR 6)
 
 - At most 200 worker grants in effect deck-wide (a constant). At the cap the decision is `none` with the reason `worker_cap`, and the start goes on without a grant (one audit row `coordinator.worker_grant_skipped`).
-- Retention (R2 BLOCKER 2): `sweep_grants` deletes (a) worker grants that are terminal (`revoked`, or `expired` past `expires_at`) for more than 7 days, together with their `worker_attach` rows and their lineage rows, and (b) every `worker_attach` row with `decision = none` older than 7 days, independent of any grant. Owner grants keep today's retention. Seven days is longer than every delivery TTL and the commands table keeps its own command records, so a retry of a command whose `worker_attach` row was pruned is already stale and is refused (`expired`) by the existing command rules; a new command ID never collides with a pruned one (ULIDs).
+- Retention (R2 BLOCKER 2): `sweep_grants` deletes (a) worker grants that are terminal (`revoked`, or `expired` past `expires_at`) for more than 7 days, together with their `worker_attach` rows and their lineage rows, and (b) every `worker_attach` row with `decision = none` older than 7 days, independent of any grant. Owner grants keep today's retention. Seven days is longer than every delivery TTL and the commands table keeps its own command records, so a retry of a command whose `worker_attach` row was pruned finds the retained command record: the command store's own deduplication answers it with the stored receipt (or `command_id_reused` for another payload) and never dispatches it again; a new command ID never collides with a pruned one (ULIDs).
 - With at most 200 worker grants plus the owner's grants in effect, the coverage scans of `grant_scopes.rs` stay bounded; an issue batch of 50 starts creates at most 50 grants and, at cap 2, at most 100 children, which get no grant.
 
 ## 8. Changing the spawn cap and the ceilings (any grant)
