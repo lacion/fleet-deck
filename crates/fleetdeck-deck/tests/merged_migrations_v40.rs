@@ -13,7 +13,7 @@ use rusqlite::types::Value;
 const DECK_BEFORE: usize = 40;
 const DECK_AFTER: i64 = 45;
 const STATION_BEFORE: usize = 39;
-const STATION_AFTER: i64 = 40;
+const STATION_AFTER: i64 = 41;
 
 fn user_version(conn: &Connection) -> i64 {
     conn.pragma_query_value(None, "user_version", |r| r.get(0))
