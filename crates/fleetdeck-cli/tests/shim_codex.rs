@@ -132,6 +132,10 @@ impl Rig {
     }
 
     async fn open(&self) -> Arc<DurableCodex> {
+        self.open_with(None).await
+    }
+
+    async fn open_with(&self, skill_dir: Option<&std::path::Path>) -> Arc<DurableCodex> {
         let spec = ProcessSpec {
             program: FakeAgent::Codex.locate().unwrap(),
             args: vec!["app-server".into()],
@@ -152,7 +156,7 @@ impl Rig {
             cwd: Some(self.cwd()),
             ..SessionSpec::default()
         };
-        match DurableCodex::open(&self.store, attached, self.config(), &thread).await {
+        match DurableCodex::open(&self.store, attached, self.config(), &thread, skill_dir).await {
             Ok(d) => d,
             Err(e) => panic!(
                 "open: {e}; log {:?}; events {:?}",
@@ -695,4 +699,47 @@ async fn a_restored_shim_hosted_codex_session_lists_its_background_work_at_once(
     .await;
     assert_eq!(rig.method_count("initialize"), 1);
     assert_eq!(rig.method_count("thread/start"), 1);
+}
+
+#[tokio::test]
+async fn the_shim_hosted_open_sets_the_skill_root_and_reloads_before_the_thread_open() {
+    // MCP P3 §4.2, test 15: the sim answers both skill requests with an
+    // error ("method not supported"), which must not stop the open.
+    let rig = Rig::new().await;
+    let dir = rig.tmp.path().join("skill-tree");
+    let driver = rig.open_with(Some(&dir)).await;
+    let frames = rig.frames();
+    let methods: Vec<&str> = frames
+        .iter()
+        .filter_map(|f| f["method"].as_str())
+        .filter(|m| m.starts_with("skills/") || m.starts_with("thread/"))
+        .collect();
+    assert_eq!(
+        methods,
+        ["skills/extraRoots/set", "skills/list", "thread/start"]
+    );
+    let set = frames
+        .iter()
+        .find(|f| f["method"] == "skills/extraRoots/set")
+        .unwrap();
+    assert_eq!(
+        set["params"],
+        serde_json::json!({"extraRoots": [dir.join("skills").to_str().unwrap()]})
+    );
+    let list = frames
+        .iter()
+        .find(|f| f["method"] == "skills/list")
+        .unwrap();
+    assert_eq!(list["params"], serde_json::json!({"forceReload": true}));
+    drop(driver);
+}
+
+#[tokio::test]
+async fn the_shim_hosted_open_without_a_skill_tree_sends_no_skill_request() {
+    let rig = Rig::new().await;
+    let driver = rig.open().await;
+    assert_eq!(rig.method_count("skills/extraRoots/set"), 0);
+    assert_eq!(rig.method_count("skills/list"), 0);
+    assert_eq!(rig.method_count("thread/start"), 1);
+    drop(driver);
 }

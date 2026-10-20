@@ -97,6 +97,11 @@ pub struct CodexCore {
     /// when it changes (DL-024, DL-199).
     #[serde(skip)]
     turns_ended: u64,
+    /// The fleet skill requests (`skills/extraRoots/set`, `skills/list`)
+    /// that wait for their answer: id → request name. Only the handshake
+    /// uses them, so they are not in the checkpoint.
+    #[serde(skip)]
+    skill_requests: HashMap<String, &'static str>,
 }
 
 impl CodexCore {
@@ -139,6 +144,7 @@ impl CodexCore {
             unknown_frames: 0,
             pending_shell: None,
             turns_ended: 0,
+            skill_requests: HashMap::new(),
         }
     }
 
@@ -567,8 +573,16 @@ impl CodexCore {
             return Vec::new();
         }
         match frame {
-            Incoming::Response { id, result } => self.on_response(&id, Ok(result)),
+            Incoming::Response { id, result } => {
+                if self.skill_answer(&id, false) {
+                    return Vec::new();
+                }
+                self.on_response(&id, Ok(result))
+            }
             Incoming::ErrorResponse { id, code, message } => {
+                if self.skill_answer(&id, true) {
+                    return Vec::new();
+                }
                 self.on_response(&id, Err((code, message)))
             }
             Incoming::Request { id, method, params } => {
@@ -763,3 +777,6 @@ impl CodexCore {
         self.tool_order
     }
 }
+
+#[path = "core_skills.rs"]
+mod skills;

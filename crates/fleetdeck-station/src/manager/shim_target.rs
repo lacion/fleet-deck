@@ -442,8 +442,12 @@ impl SessionTarget {
             DurableConfig::Claude(config) => DurableClaude::open(&self.store, attached, config)
                 .await
                 .map(Durable::Claude),
-            DurableConfig::Codex { config, thread } => {
-                DurableCodex::open(&self.store, attached, config, &thread)
+            DurableConfig::Codex {
+                config,
+                thread,
+                skill_dir,
+            } => {
+                DurableCodex::open(&self.store, attached, config, &thread, skill_dir.as_deref())
                     .await
                     .map(|d| {
                         // The shim host polls the background work too
