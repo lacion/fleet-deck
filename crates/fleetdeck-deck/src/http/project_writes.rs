@@ -41,6 +41,7 @@ use super::guard::{ApiError, owner_only};
 use super::project_targets::{Target, target_for, targets};
 use super::projects_routes::{READ_WAIT, ask, bad_body, forge_of, load, station_of};
 use crate::link::CommandKind;
+use crate::store::worker_grant::{Provenance, WorkerStart};
 use crate::store::{AuditResult, DeckError, NewAudit, Principal};
 
 fn bad(code: &'static str, message: impl Into<String>) -> ApiError {
@@ -654,16 +655,35 @@ pub async fn sessions(
     let mut submitted = Vec::new();
     for (n, at, key, command) in attached {
         let command_id = CommandId::from(format!("{}-{}", req.batch_id, n + 1));
-        match board
-            .link
-            .submit_as(
-                target_for(&targets, at).rec.station_id.clone(),
-                CommandOrigin::Board,
-                CommandKind::Session { command },
-                command_id,
-            )
-            .await
-        {
+        let station = target_for(&targets, at).rec.station_id.clone();
+        // A start that the owner's login asked for may get the default worker
+        // grant (MCP P4a §3); a bearer token or member keeps the plain path.
+        let eligible = matches!(principal, Principal::Owner(_))
+            && matches!(&command, SessionCommand::Start { spec, .. } if spec.coordinator.is_none());
+        let sent = if eligible {
+            board
+                .link
+                .submit_start_by(WorkerStart {
+                    station,
+                    command,
+                    command_id,
+                    provenance: Provenance::IssueBatch,
+                    author: None,
+                    setting: board.live.get().worker_grant.clone(),
+                })
+                .await
+        } else {
+            board
+                .link
+                .submit_as(
+                    station,
+                    CommandOrigin::Board,
+                    CommandKind::Session { command },
+                    command_id,
+                )
+                .await
+        };
+        match sent {
             Ok((cmd, _)) => submitted.push((key, cmd)),
             Err(e) => {
                 let api = match &e {

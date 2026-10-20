@@ -56,7 +56,7 @@ pub(super) fn take_spawn_fields(
 /// The detail of the audit row `coordinator.grant_created` (MCP P0 §2.4):
 /// the stations, the spawn cap with the class `spawn`, and the mode
 /// ceilings when there are any.
-pub(super) fn audit_detail(g: &Grant, named: &str) -> String {
+pub(crate) fn audit_detail(g: &Grant, named: &str) -> String {
     let mut detail = format!("stations={named}");
     if g.classes.contains(&GrantClass::Spawn) {
         detail.push_str(&format!(";spawn_cap={}", g.spawn_cap));

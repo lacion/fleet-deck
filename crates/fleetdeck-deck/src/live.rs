@@ -5,6 +5,7 @@
 use std::sync::{Arc, PoisonError, RwLock};
 
 use fleetdeck_core::config::DeckConfig;
+use fleetdeck_core::config_worker_grant::WorkerGrantConfig;
 use tokio::sync::Notify;
 
 use crate::knobs::DeckKnobs;
@@ -27,6 +28,8 @@ pub struct DeckLive {
     pub tailscale_bin: Option<std::path::PathBuf>,
     /// The owner knobs of `[security]`, `[retention]` and `[limits]` (K2).
     pub knobs: DeckKnobs,
+    /// The `[worker_grant]` setting (MCP P4a §2): read at each eligible start.
+    pub worker_grant: WorkerGrantConfig,
 }
 
 impl DeckLive {
@@ -41,6 +44,7 @@ impl DeckLive {
             tailscale_cert: config.tailscale_cert,
             tailscale_bin: config.tailscale_bin.clone(),
             knobs: DeckKnobs::of(config),
+            worker_grant: config.worker_grant.clone(),
         }
     }
 }
@@ -98,6 +102,7 @@ mod tests {
             tailscale_cert: false,
             tailscale_bin: None,
             knobs: DeckKnobs::default(),
+            worker_grant: WorkerGrantConfig::default(),
         });
         let before = cell.get();
         cell.publish(DeckLive {
@@ -108,6 +113,7 @@ mod tests {
             tailscale_cert: true,
             tailscale_bin: None,
             knobs: DeckKnobs::default(),
+            worker_grant: WorkerGrantConfig::default(),
         });
         assert_eq!(before.name, "a");
         let now = cell.get();

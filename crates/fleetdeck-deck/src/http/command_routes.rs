@@ -27,6 +27,7 @@ use super::guard::ApiError;
 use super::methods::COMMAND_PREFIX;
 use super::{Board, access};
 use crate::link::CommandKind;
+use crate::store::worker_grant::{Provenance, WorkerStart};
 use crate::store::{
     AuditResult, DeckCommand, DeckError, LinkFeature, MemberAction, NewAudit, Principal,
     ShareGrant, member_allows,
@@ -375,32 +376,50 @@ async fn route(
                     .map_err(|e| (station.clone(), id.clone(), e))?;
         }
     }
-    let kind = CommandKind::Session { command };
-    board
-        .link
-        .submit_by(
-            rec.station_id,
-            CommandOrigin::Board,
-            kind,
-            req.command_id,
-            Some(principal.actor()),
-        )
-        .await
-        .map_err(|e| {
-            let api = match &e {
-                DeckError::NotSynced(_) => {
-                    ApiError::new(StatusCode::CONFLICT, "not_synced", e.to_string())
-                }
-                DeckError::CommandIdReused(_) => {
-                    ApiError::new(StatusCode::CONFLICT, "command_id_reused", e.to_string())
-                }
-                DeckError::UnknownStation(_) => {
-                    ApiError::new(StatusCode::NOT_FOUND, "unknown_station", e.to_string())
-                }
-                _ => ApiError::internal(&e),
-            };
-            (station, id, api)
-        })
+    // An owner start without a coordinator request may get the default worker
+    // grant (MCP P4a §3). Only the owner's login authorizes it; a bearer
+    // token start keeps the plain path.
+    let worker_eligible = owner
+        && matches!(&command, SessionCommand::Start { spec, .. } if spec.coordinator.is_none());
+    let submitted = if worker_eligible {
+        board
+            .link
+            .submit_start_by(WorkerStart {
+                station: rec.station_id,
+                command,
+                command_id: req.command_id,
+                provenance: Provenance::Owner,
+                author: Some(principal.actor()),
+                setting: board.live.get().worker_grant.clone(),
+            })
+            .await
+    } else {
+        board
+            .link
+            .submit_by(
+                rec.station_id,
+                CommandOrigin::Board,
+                CommandKind::Session { command },
+                req.command_id,
+                Some(principal.actor()),
+            )
+            .await
+    };
+    submitted.map_err(|e| {
+        let api = match &e {
+            DeckError::NotSynced(_) => {
+                ApiError::new(StatusCode::CONFLICT, "not_synced", e.to_string())
+            }
+            DeckError::CommandIdReused(_) => {
+                ApiError::new(StatusCode::CONFLICT, "command_id_reused", e.to_string())
+            }
+            DeckError::UnknownStation(_) => {
+                ApiError::new(StatusCode::NOT_FOUND, "unknown_station", e.to_string())
+            }
+            _ => ApiError::internal(&e),
+        };
+        (station, id, api)
+    })
 }
 
 /// Removes the author of every input and the `answered_by` of an answer of

@@ -22,6 +22,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use fleetdeck_core::config_worker_grant::WorkerGrantConfig;
 use fleetdeck_proto::automation::{Schedule, ScheduleRun, ScheduleRunState};
 use fleetdeck_proto::board::SessionKey;
 use fleetdeck_proto::command::{
@@ -35,6 +36,7 @@ use serde_json::json;
 use super::cron::{self, Cron};
 use super::{Plan, plan};
 use crate::link::{CommandKind, DeckLink};
+use crate::store::worker_grant::{Provenance, WorkerStart};
 use crate::store::{AuditResult, DeckError, DeckStore, NewAudit, StoredSchedule};
 
 /// The longest the deck waits for a precheck (the station stops it at 60 s).
@@ -347,6 +349,18 @@ struct LinkBackend {
 }
 
 impl LinkBackend {
+    /// The live `worker_grant` setting; off when the deck has no live
+    /// settings (fail closed).
+    fn worker_setting(&self) -> WorkerGrantConfig {
+        self.link.desktop_live.get().map_or_else(
+            || WorkerGrantConfig {
+                enabled: false,
+                ..WorkerGrantConfig::default()
+            },
+            |cell| cell.get().worker_grant.clone(),
+        )
+    }
+
     async fn precheck(&self, schedule: &Schedule, cmd: &str) -> Verdict {
         let Some(control) = self.link.control_for(&schedule.station_id) else {
             return Verdict::Fail("the station has no live link to this deck".to_owned());
@@ -451,15 +465,38 @@ impl Backend for LinkBackend {
             Err(e) => return Done::failed(e),
         };
         let command_id = CommandId::from(format!("sch-{}-{due_at}", schedule.schedule_id));
-        let submitted = self
-            .link
-            .submit_as(
-                schedule.station_id.clone(),
-                CommandOrigin::Board,
-                CommandKind::Session { command },
-                command_id,
-            )
-            .await;
+        // A start of a schedule that the owner's login saved last may get a
+        // worker grant (MCP P4a §3); the author is read now, not at the claim.
+        let eligible = matches!(&command, SessionCommand::Start { spec, .. } if spec.coordinator.is_none())
+            && match self
+                .store
+                .schedule_author(schedule.schedule_id.clone())
+                .await
+            {
+                Ok(author) => author.as_deref() == Some("owner"),
+                Err(e) => return Done::failed(e.to_string()),
+            };
+        let submitted = if eligible {
+            self.link
+                .submit_start_by(WorkerStart {
+                    station: schedule.station_id.clone(),
+                    command,
+                    command_id,
+                    provenance: Provenance::Schedule,
+                    author: None,
+                    setting: self.worker_setting(),
+                })
+                .await
+        } else {
+            self.link
+                .submit_as(
+                    schedule.station_id.clone(),
+                    CommandOrigin::Board,
+                    CommandKind::Session { command },
+                    command_id,
+                )
+                .await
+        };
         let cmd = match submitted {
             Ok((cmd, _)) => cmd,
             Err(e) => return Done::failed(e.to_string()),
@@ -575,7 +612,7 @@ mod tests {
             .await
             .unwrap();
         let schedule = store
-            .create_schedule(input(cron), StationId::from("st1"))
+            .create_schedule(input(cron), StationId::from("st1"), "owner")
             .await
             .unwrap();
         (store, schedule)

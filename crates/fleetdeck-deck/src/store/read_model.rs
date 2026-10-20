@@ -193,6 +193,7 @@ impl DeckStore {
             .map(|(id, _)| id)
             .collect();
         let (id, inc) = (station.clone(), incarnation.clone());
+        let (ids, delivery_ms) = (Arc::clone(&self.inner.ids), self.knobs().delivery_ms);
         let (applied, folded, jobs, scopes) = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let rec = station_by_id(&tx, &station)?
@@ -223,7 +224,13 @@ impl DeckStore {
                 super::artifacts::record_artifact(&tx, &station, &e)?;
                 super::land_queue::record_land(&tx, &station, &e, now)?;
                 super::session_moves::record_move(&tx, &station, &e, now)?;
-                scopes.extend(super::grants::record_lifecycle(&tx, &station, &e, now)?);
+                scopes.extend(super::grants::record_lifecycle(
+                    &tx,
+                    &station,
+                    &e,
+                    now,
+                    (ids.as_ref(), delivery_ms),
+                )?);
                 let mail = mail_ids.as_ref().map(|ids| super::conflicts::MailContext {
                     ids: ids.as_ref(),
                     now,

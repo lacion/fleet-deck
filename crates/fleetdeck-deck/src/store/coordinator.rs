@@ -244,7 +244,7 @@ impl DeckStore {
                         ));
                     }
                     if grant
-                        .last_used_at
+                        .idle_since()
                         .is_some_and(|t| now.saturating_sub(t) > grant.idle_ttl_ms)
                     {
                         expire_idle(tx, &inner, &grant.grant_id, now)?;
@@ -443,7 +443,8 @@ pub(super) fn holds_mutating_grant(
 ) -> Result<bool> {
     let mut stmt = tx.prepare(
         "SELECT classes FROM tokens
-         WHERE station_id = ?1 AND session_id = ?2 AND state = 'active' AND ?3 <= expires_at",
+         WHERE station_id = ?1 AND session_id = ?2 AND state = 'active' AND ?3 <= expires_at
+           AND kind = 'coordinator'",
     )?;
     let rows = stmt
         .query_map(params![station.as_str(), session.0, now], |r| {

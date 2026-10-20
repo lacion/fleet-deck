@@ -156,8 +156,27 @@ impl DeckStore {
         .await
     }
 
+    /// Who saved a schedule last: `owner`, `token` or `unknown` (MCP P4a §3).
+    /// `None` for a schedule that does not exist.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn schedule_author(&self, id: String) -> Result<Option<String>> {
+        call(&self.inner.db, move |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT author FROM schedules WHERE schedule_id = ?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .optional()?)
+        })
+        .await
+    }
+
     /// Stores a new schedule. The caller checked the input, the cron text,
-    /// the time zone and the station, and passes the canonical station id.
+    /// the time zone and the station, and passes the canonical station id and
+    /// the author (`owner`, `token` or `unknown`).
     ///
     /// # Errors
     /// A database error.
@@ -165,6 +184,7 @@ impl DeckStore {
         &self,
         input: ScheduleInput,
         station_id: StationId,
+        author: &str,
     ) -> Result<Schedule> {
         let id: String = new_id(self.inner.ids.as_ref());
         let now = self.now_ms();
@@ -188,12 +208,13 @@ impl DeckStore {
             created_at: now,
         };
         let row = schedule.clone();
+        let author = author.to_owned();
         call(&self.inner.db, move |conn| {
             conn.execute(
                 &format!(
-                    "INSERT INTO schedules ({COLUMNS})
+                    "INSERT INTO schedules ({COLUMNS}, author)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                             NULL, NULL, ?15, ?16, ?16)"
+                             NULL, NULL, ?15, ?16, ?16, ?17)"
                 ),
                 params![
                     row.schedule_id,
@@ -212,6 +233,7 @@ impl DeckStore {
                     i64::from(row.reuse_session),
                     row.grace_ms,
                     row.created_at,
+                    author,
                 ],
             )?;
             Ok(())
@@ -220,9 +242,9 @@ impl DeckStore {
         Ok(schedule)
     }
 
-    /// Replaces every field of a schedule. Turning a schedule on, or changing
-    /// its cron or time zone, arms it again: the due times of the time before
-    /// do not run.
+    /// Replaces every field of a schedule and its author. Turning a schedule
+    /// on, or changing its cron or time zone, arms it again: the due times of
+    /// the time before do not run.
     ///
     /// # Errors
     /// [`DeckError::UnknownSchedule`]; a database error.
@@ -231,8 +253,10 @@ impl DeckStore {
         id: String,
         input: ScheduleInput,
         station_id: StationId,
+        author: &str,
     ) -> Result<Schedule> {
         let now = self.now_ms();
+        let author = author.to_owned();
         call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
             let (old, _) = tx
@@ -274,7 +298,8 @@ impl DeckStore {
                      station_id = ?6, project_id = ?7, path = ?8, provider_instance = ?9,
                      mode = ?10, model = ?11, prompt = ?12, precheck_cmd = ?13,
                      reuse_session = ?14, last_station = ?15, last_session = ?16,
-                     grace_ms = ?17, armed_at = CASE WHEN ?18 THEN ?19 ELSE armed_at END
+                     grace_ms = ?17, armed_at = CASE WHEN ?18 THEN ?19 ELSE armed_at END,
+                     author = ?20
                  WHERE schedule_id = ?1",
                 params![
                     schedule.schedule_id,
@@ -302,6 +327,7 @@ impl DeckStore {
                     schedule.grace_ms,
                     rearm,
                     now,
+                    author,
                 ],
             )?;
             tx.commit()?;
@@ -503,8 +529,8 @@ mod tests {
     async fn a_schedule_is_created_listed_and_read_back() {
         let det = Det::new();
         let s = store(&det).await;
-        let made = s.create_schedule(input("b"), st()).await.unwrap();
-        let other = s.create_schedule(input("a"), st()).await.unwrap();
+        let made = s.create_schedule(input("b"), st(), "owner").await.unwrap();
+        let other = s.create_schedule(input("a"), st(), "owner").await.unwrap();
         assert_eq!(made.grace_ms, fleetdeck_proto::automation::DEFAULT_GRACE_MS);
         assert_eq!(made.precheck_cmd.as_deref(), Some("test -n x"));
         let list = s.schedules().await.unwrap();
@@ -526,7 +552,7 @@ mod tests {
     async fn a_run_is_claimed_once_for_a_due_time() {
         let det = Det::new();
         let s = store(&det).await;
-        let sc = s.create_schedule(input("a"), st()).await.unwrap();
+        let sc = s.create_schedule(input("a"), st(), "owner").await.unwrap();
         let id = sc.schedule_id.clone();
         let first = s
             .insert_schedule_run(
@@ -573,7 +599,7 @@ mod tests {
     async fn a_manual_run_does_not_move_the_cursor() {
         let det = Det::new();
         let s = store(&det).await;
-        let sc = s.create_schedule(input("a"), st()).await.unwrap();
+        let sc = s.create_schedule(input("a"), st(), "owner").await.unwrap();
         let id = sc.schedule_id.clone();
         s.insert_schedule_run(
             id.clone(),
@@ -596,12 +622,12 @@ mod tests {
         let det = Det::new();
         let s = store(&det).await;
         let a = s
-            .create_schedule(input("a"), st())
+            .create_schedule(input("a"), st(), "owner")
             .await
             .unwrap()
             .schedule_id;
         let b = s
-            .create_schedule(input("b"), st())
+            .create_schedule(input("b"), st(), "owner")
             .await
             .unwrap()
             .schedule_id;
@@ -628,7 +654,7 @@ mod tests {
         let s = store(&det).await;
         let mut off = input("a");
         off.enabled = false;
-        let sc = s.create_schedule(off, st()).await.unwrap();
+        let sc = s.create_schedule(off, st(), "owner").await.unwrap();
         let id = sc.schedule_id.clone();
         let armed = |s: &StoredSchedule| s.armed_at;
         let first = armed(&s.schedule(id.clone()).await.unwrap().unwrap());
@@ -637,14 +663,16 @@ mod tests {
         // A rename keeps the arming.
         let mut change = input("renamed");
         change.enabled = false;
-        s.update_schedule(id.clone(), change, st()).await.unwrap();
+        s.update_schedule(id.clone(), change, st(), "owner")
+            .await
+            .unwrap();
         assert_eq!(
             armed(&s.schedule(id.clone()).await.unwrap().unwrap()),
             first
         );
 
         // Turning it on arms it again.
-        s.update_schedule(id.clone(), input("renamed"), st())
+        s.update_schedule(id.clone(), input("renamed"), st(), "owner")
             .await
             .unwrap();
         let on = armed(&s.schedule(id.clone()).await.unwrap().unwrap());
@@ -652,19 +680,22 @@ mod tests {
 
         // The same cron keeps it; another cron arms it again.
         det.advance(Duration::from_secs(5));
-        s.update_schedule(id.clone(), input("renamed"), st())
+        s.update_schedule(id.clone(), input("renamed"), st(), "owner")
             .await
             .unwrap();
         assert_eq!(armed(&s.schedule(id.clone()).await.unwrap().unwrap()), on);
         let mut other = input("renamed");
         other.cron = "0 9 * * *".to_owned();
-        s.update_schedule(id.clone(), other, st()).await.unwrap();
+        s.update_schedule(id.clone(), other, st(), "owner")
+            .await
+            .unwrap();
         assert_eq!(
             armed(&s.schedule(id.clone()).await.unwrap().unwrap()),
             on + 5_000
         );
         assert!(matches!(
-            s.update_schedule("none".to_owned(), input("x"), st()).await,
+            s.update_schedule("none".to_owned(), input("x"), st(), "owner")
+                .await,
             Err(DeckError::UnknownSchedule(_))
         ));
     }
@@ -673,7 +704,7 @@ mod tests {
     async fn a_new_folder_forgets_the_session_to_reuse() {
         let det = Det::new();
         let s = store(&det).await;
-        let sc = s.create_schedule(input("a"), st()).await.unwrap();
+        let sc = s.create_schedule(input("a"), st(), "owner").await.unwrap();
         let id = sc.schedule_id.clone();
         s.set_schedule_session(
             id.clone(),
@@ -684,7 +715,7 @@ mod tests {
         )
         .await
         .unwrap();
-        s.update_schedule(id.clone(), input("a"), st())
+        s.update_schedule(id.clone(), input("a"), st(), "owner")
             .await
             .unwrap();
         assert!(
@@ -698,7 +729,9 @@ mod tests {
         );
         let mut moved = input("a");
         moved.path = "/work/other".to_owned();
-        s.update_schedule(id.clone(), moved, st()).await.unwrap();
+        s.update_schedule(id.clone(), moved, st(), "owner")
+            .await
+            .unwrap();
         assert!(
             s.schedule(id.clone())
                 .await
@@ -714,7 +747,7 @@ mod tests {
     async fn a_delete_removes_the_schedule_and_its_runs() {
         let det = Det::new();
         let s = store(&det).await;
-        let sc = s.create_schedule(input("a"), st()).await.unwrap();
+        let sc = s.create_schedule(input("a"), st(), "owner").await.unwrap();
         let id = sc.schedule_id.clone();
         s.insert_schedule_run(
             id.clone(),
@@ -737,7 +770,7 @@ mod tests {
         let det = Det::new();
         let s = store(&det).await;
         let id = s
-            .create_schedule(input("a"), st())
+            .create_schedule(input("a"), st(), "owner")
             .await
             .unwrap()
             .schedule_id;

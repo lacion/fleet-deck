@@ -31,6 +31,16 @@ use crate::store::{AuditResult, DeckError, NewAudit, Principal};
 
 const WHO: &str = "manages automations";
 
+/// The author of a saved schedule (MCP P4a §3): the owner's login or a bearer
+/// token; every other principal is `unknown` and gets no worker grant.
+fn author_of(principal: &Principal) -> &'static str {
+    match principal {
+        Principal::Owner(_) => "owner",
+        Principal::Token(..) => "token",
+        _ => "unknown",
+    }
+}
+
 fn unknown_schedule(id: &str) -> ApiError {
     ApiError::new(
         StatusCode::NOT_FOUND,
@@ -156,7 +166,7 @@ pub async fn create(
             Err(e) => Err(e),
             Ok(station) => board
                 .store
-                .create_schedule(input, station)
+                .create_schedule(input, station, author_of(&principal))
                 .await
                 .map_err(ApiError::internal),
         },
@@ -190,7 +200,7 @@ pub async fn update(
             Err(e) => Err(e),
             Ok(station) => board
                 .store
-                .update_schedule(id.clone(), input, station)
+                .update_schedule(id.clone(), input, station, author_of(&principal))
                 .await
                 .map_err(|e| match e {
                     DeckError::UnknownSchedule(id) => unknown_schedule(&id),

@@ -226,6 +226,10 @@ async fn serve_with(
                     tailscale_cert: false,
                     tailscale_bin: None,
                     knobs: fleetdeck_deck::knobs::DeckKnobs::default(),
+                    worker_grant: fleetdeck_core::config_worker_grant::WorkerGrantConfig {
+                        enabled: false,
+                        ..fleetdeck_core::config_worker_grant::WorkerGrantConfig::default()
+                    },
                 }),
                 elevations: Arc::default(),
                 settings: extras.as_mut().and_then(|e| e.settings.take()),

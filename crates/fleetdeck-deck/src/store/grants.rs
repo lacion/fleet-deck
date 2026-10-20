@@ -8,20 +8,21 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use fleetdeck_proto::command::GrantScope;
-use fleetdeck_proto::coordinator_desktop_text::limits;
+use fleetdeck_proto::command::{GrantKind, GrantScope};
 use fleetdeck_proto::coordinator_spec::InputScope;
 use fleetdeck_proto::mutation::{CommandAuthority, CoordinatorBinding};
 use fleetdeck_proto::{ProviderInstanceId, SessionId, StationId};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 
-use super::display_directives_coordinator::invalidate_coordinator_directives;
-use super::grant_scopes::sync_coordinate_scopes;
 pub use super::grants_input::check_input_grant;
-use super::grants_input::{input_scope_of, scope_text};
+use super::grants_input::input_scope_of;
 pub(super) use super::grants_lifecycle::{apply_projection, record_lifecycle, renew_generation};
-use super::{DeckError, DeckStore, Result, call, new_id};
+pub use super::worker_grant::{check_desktop_caps, check_recording_caps};
+use super::worker_grant::{create_grant_tx, prepare_grant, revoke_tx};
+#[cfg(test)]
+use super::DeckError;
+use super::{DeckStore, Result, call, new_id};
 
 #[path = "fleet_answers.rs"]
 mod fleet_answers;
@@ -137,6 +138,10 @@ pub struct NewGrant {
     pub input_character_cap: u32,
     /// R13 P7b §3.1: the click allowance (needs `allow_input`).
     pub allow_click: bool,
+    /// The kind (MCP P4a §4). Only the worker attachment of `worker_grant.rs`
+    /// sets `Worker`; `create_grant` refuses a worker grant with any other
+    /// classes or scope.
+    pub kind: GrantKind,
 }
 
 impl NewGrant {
@@ -166,6 +171,7 @@ impl NewGrant {
             input_cap: 0,
             input_character_cap: 0,
             allow_click: false,
+            kind: GrantKind::Coordinator,
         }
     }
 }
@@ -229,9 +235,21 @@ pub struct Grant {
     pub input_character_used: u32,
     /// R13 P7b §3.1: the click allowance (false for every older grant).
     pub allow_click: bool,
+    /// The kind (MCP P4a §4); every grant before P4a reads `coordinator`.
+    pub kind: GrantKind,
 }
 
 impl Grant {
+    /// Since when the grant counts as idle: the last use, and for a worker
+    /// grant (MCP P4a §6.4) its creation until the first use.
+    #[must_use]
+    pub fn idle_since(&self) -> Option<i64> {
+        match self.kind {
+            GrantKind::Worker => Some(self.last_used_at.unwrap_or(self.created_at)),
+            GrantKind::Coordinator => self.last_used_at,
+        }
+    }
+
     /// A fleet-control grant has the fleet scope or a fleet-control class
     /// (ADR-008 §2).
     #[must_use]
@@ -258,7 +276,7 @@ pub(crate) const GRANT_COLUMNS: &str = "grant_id, station_id, session_id, classe
     scope, answer_cap, answer_used, desktop_cap, desktop_used, capture_cap, capture_used, \
     image_byte_cap, image_byte_used, desktop_attempts, recording_cap, recording_used, \
     recording_second_cap, recording_second_used, allow_input, input_scope, input_cap, input_used, \
-    input_character_cap, input_character_used, allow_click";
+    input_character_cap, input_character_used, allow_click, kind";
 
 fn state_of(text: &str) -> GrantState {
     match text {
@@ -306,6 +324,7 @@ pub(crate) fn grant_row(r: &Row<'_>) -> rusqlite::Result<(Grant, String, String,
     let input_scope: Option<String> = r.get(33)?;
     let input: [i64; 4] = [r.get(34)?, r.get(35)?, r.get(36)?, r.get(37)?];
     let allow_click: i64 = r.get(38)?;
+    let kind: String = r.get(39)?;
     let input_scope = input_scope_of(allow_input, input_scope.as_deref());
     Ok((
         Grant {
@@ -350,6 +369,12 @@ pub(crate) fn grant_row(r: &Row<'_>) -> rusqlite::Result<(Grant, String, String,
             input_character_cap: u32::try_from(input[2]).unwrap_or(0),
             input_character_used: u32::try_from(input[3]).unwrap_or(u32::MAX),
             allow_click: allow_click == 1 && input_scope.is_some(),
+            // Unknown text is the narrow kind (fail closed: rule 3 applies).
+            kind: if kind == "worker" {
+                GrantKind::Worker
+            } else {
+                GrantKind::Coordinator
+            },
         },
         r.get(3)?,
         r.get(4)?,
@@ -397,200 +422,21 @@ pub(crate) fn caller_grant(
     .transpose()
 }
 
-/// The rules of the desktop caps of a new grant (R13 P6 §8.1), the same for
-/// the board request and for `create_grant`: the class rule first, then the
-/// range, then the multiple. The text is fixed and shows no value.
-///
-/// # Errors
-/// The fixed text of the first rule that fails.
-pub fn check_desktop_caps(
-    classes: &BTreeSet<GrantClass>,
-    desktop_cap: Option<u32>,
-    capture_cap: Option<u32>,
-    image_byte_cap: Option<u64>,
-) -> std::result::Result<(), &'static str> {
-    let capture = classes.contains(&GrantClass::Capture);
-    let desktop = capture || classes.contains(&GrantClass::Desktop);
-    if desktop_cap.is_some() && !desktop {
-        return Err("desktop_cap needs the desktop or capture class");
-    }
-    if (capture_cap.is_some() || image_byte_cap.is_some()) && !capture {
-        return Err("capture_cap and image_byte_cap need the capture class");
-    }
-    if desktop_cap.is_some_and(|c| c > limits::DESKTOP_CAP_MAX) {
-        return Err("desktop_cap is 0 to 5000");
-    }
-    if capture_cap.is_some_and(|c| c > limits::CAPTURE_CAP_MAX) {
-        return Err("capture_cap is 0 to 5000");
-    }
-    if image_byte_cap.is_some_and(|c| c > limits::IMAGE_BYTE_CAP_MAX) {
-        return Err("image_byte_cap is 0 to 1073741824");
-    }
-    if image_byte_cap.is_some_and(|c| c % limits::IMAGE_BYTE_CAP_UNIT != 0) {
-        return Err("image_byte_cap is a multiple of 1048576");
-    }
-    Ok(())
-}
-
-/// The rules of the recording caps of a new grant (R13 P5b-2 §13.2), the same
-/// for the board request and for `create_grant`: the class rule first (a
-/// non-zero cap needs the `capture` class), then the ranges. The text is
-/// fixed and shows no value.
-///
-/// # Errors
-/// The fixed text of the first rule that fails.
-pub fn check_recording_caps(
-    classes: &BTreeSet<GrantClass>,
-    recording_cap: u32,
-    recording_second_cap: u32,
-) -> std::result::Result<(), &'static str> {
-    if (recording_cap != 0 || recording_second_cap != 0) && !classes.contains(&GrantClass::Capture)
-    {
-        return Err("recording caps need the capture class");
-    }
-    if recording_cap > limits::RECORDING_CAP_MAX {
-        return Err("recording_cap is 0 to 5000");
-    }
-    if recording_second_cap > limits::RECORDING_SECOND_CAP_MAX {
-        return Err("recording_second_cap is 0 to 600000");
-    }
-    Ok(())
-}
-
 impl DeckStore {
     /// Stores an owner-authorized grant (ADR-006 §4). The limits are
     /// checked here: cap ≤ 50, idle TTL ≤ 24 h, lifetime ≤ 7 days.
     ///
     /// # Errors
     /// [`DeckError::Invalid`] for a value out of range, or a database error.
-    pub async fn create_grant(&self, mut grant: NewGrant) -> Result<Grant> {
-        if grant.spawn_cap > MAX_SPAWN_CAP
-            || !(1..=MAX_IDLE_TTL_MS).contains(&grant.idle_ttl_ms)
-            || !(1..=MAX_TTL_MS).contains(&grant.ttl_ms)
-            || grant.stations.is_empty()
-        {
-            return Err(DeckError::Invalid(
-                "a grant needs a cap of at most 50, an idle TTL of at most 24 h, a lifetime of \
-                 at most 7 days and at least one station"
-                    .to_owned(),
-            ));
-        }
-        // The answer cap (ADR-008 §3): 0 to 5000, only with the `answer`
-        // class, 500 when the class has no value.
-        let answers = grant.classes.contains(&GrantClass::Answer);
-        match grant.answer_cap {
-            Some(_) if !answers => {
-                return Err(DeckError::Invalid(
-                    "answer_cap needs the answer class".to_owned(),
-                ));
-            }
-            Some(cap) if cap > MAX_ANSWER_CAP => {
-                return Err(DeckError::Invalid("answer_cap is 0 to 5000".to_owned()));
-            }
-            None if answers => grant.answer_cap = Some(DEFAULT_ANSWER_CAP),
-            _ => {}
-        }
-        // The desktop caps (R13 P6 §8.1).
-        check_desktop_caps(
-            &grant.classes,
-            grant.desktop_cap,
-            grant.capture_cap,
-            grant.image_byte_cap,
-        )
-        .map_err(|m| DeckError::Invalid(m.to_owned()))?;
-        check_recording_caps(
-            &grant.classes,
-            grant.recording_cap,
-            grant.recording_second_cap,
-        )
-        .map_err(|m| DeckError::Invalid(m.to_owned()))?;
-        let input = (grant.input_cap, grant.input_character_cap);
-        check_input_grant(
-            &grant.classes,
-            (grant.allow_input, grant.allow_click),
-            grant.input_scope,
-            input,
-        )
-        .map_err(|m| DeckError::Invalid(m.to_owned()))?;
-        if grant.allow_input {
-            grant.input_scope.get_or_insert(InputScope::OwnWindows);
-        }
-        if grant.classes.contains(&GrantClass::Desktop)
-            || grant.classes.contains(&GrantClass::Capture)
-        {
-            grant.desktop_cap.get_or_insert(limits::DESKTOP_CAP_DEFAULT);
-        }
-        if grant.classes.contains(&GrantClass::Capture) {
-            grant.capture_cap.get_or_insert(limits::CAPTURE_CAP_DEFAULT);
-            grant
-                .image_byte_cap
-                .get_or_insert(limits::IMAGE_BYTE_CAP_DEFAULT);
-        }
+    pub async fn create_grant(&self, grant: NewGrant) -> Result<Grant> {
+        let grant = prepare_grant(grant)?;
         let now = self.now_ms();
         let grant_id: String = new_id(self.inner.ids.as_ref());
         let (stored, changed) = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
-            if let Some(start) = grant.start_command_id.as_deref() {
-                let found: Option<String> = tx
-                    .query_row(
-                        "SELECT grant_id FROM tokens WHERE start_command_id = ?1",
-                        [start],
-                        |r| r.get(0),
-                    )
-                    .optional()?;
-                if let Some(id) = found {
-                    let found = get_grant(&tx, &id)?
-                        .ok_or_else(|| DeckError::Corrupt("a found grant is gone".to_owned()))?;
-                    return Ok((found, BTreeSet::new()));
-                }
-            }
-            tx.execute(
-                "INSERT INTO tokens (grant_id, station_id, session_id, classes, stations,
-                     spawn_cap, max_modes, idle_ttl_ms, created_at, expires_at, state,
-                     start_command_id, scope, answer_cap, desktop_cap, capture_cap,
-                     image_byte_cap, recording_cap, recording_second_cap, allow_input,
-                     input_scope, input_cap, input_character_cap, allow_click)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active', ?11, ?12, ?13,
-                     ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
-                params![
-                    grant_id,
-                    grant.station_id.as_str(),
-                    grant.session_id.0,
-                    serde_json::to_string(&grant.classes)?,
-                    serde_json::to_string(&grant.stations)?,
-                    grant.spawn_cap,
-                    serde_json::to_string(&grant.max_modes)?,
-                    grant.idle_ttl_ms,
-                    now,
-                    now.saturating_add(grant.ttl_ms),
-                    grant.start_command_id,
-                    if grant.scope == GrantScope::Fleet {
-                        "fleet"
-                    } else {
-                        "lineage"
-                    },
-                    grant.answer_cap,
-                    grant.desktop_cap,
-                    grant.capture_cap,
-                    // SQLite integers are signed 64-bit; the cap is at most 1 GiB.
-                    grant.image_byte_cap.and_then(|c| i64::try_from(c).ok()),
-                    grant.recording_cap,
-                    grant.recording_second_cap,
-                    grant.allow_input,
-                    grant.input_scope.map(scope_text),
-                    grant.input_cap,
-                    grant.input_character_cap,
-                    grant.allow_click
-                ],
-            )?;
-            let stored = get_grant(&tx, &grant_id)?
-                .ok_or_else(|| DeckError::Corrupt("an inserted grant is gone".to_owned()))?;
-            // The owner's grant lets each station that it names relay
-            // coordinator calls: the derived scope `coordinate` follows in
-            // the same transaction (DL-211, design §2.3 item 1).
-            let changed = sync_coordinate_scopes(&tx, now)?;
+            let out = create_grant_tx(&tx, &grant_id, &grant, now)?;
             tx.commit()?;
-            Ok((stored, changed))
+            Ok(out)
         })
         .await?;
         self.note_scope_changes(changed);
@@ -704,15 +550,9 @@ impl DeckStore {
         let now = self.now_ms();
         let (revoked, changed) = call(&self.inner.db, move |conn| {
             let tx = conn.transaction()?;
-            let n = tx.execute(
-                "UPDATE tokens SET state = 'revoked', revoked_reason = ?2
-                 WHERE grant_id = ?1 AND state != 'revoked'",
-                params![grant_id, reason],
-            )?;
-            invalidate_coordinator_directives(&tx, &grant_id)?;
-            let changed = sync_coordinate_scopes(&tx, now)?;
+            let out = revoke_tx(&tx, &grant_id, &reason, now)?;
             tx.commit()?;
-            Ok((n == 1, changed))
+            Ok(out)
         })
         .await?;
         self.note_scope_changes(changed);

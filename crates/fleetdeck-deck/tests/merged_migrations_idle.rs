@@ -8,7 +8,7 @@
 use rusqlite::Connection;
 
 const DECK_BEFORE: usize = 41;
-const DECK_AFTER: i64 = 42;
+const DECK_AFTER: i64 = 45;
 const LOGIN_IDLE_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 const DISPLAY_IDLE_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 

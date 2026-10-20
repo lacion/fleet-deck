@@ -31,6 +31,10 @@ fn live(desktop_control: bool) -> DeckLive {
         tailscale_cert: false,
         tailscale_bin: None,
         knobs: crate::knobs::DeckKnobs::default(),
+        worker_grant: fleetdeck_core::config_worker_grant::WorkerGrantConfig {
+            enabled: false,
+            ..fleetdeck_core::config_worker_grant::WorkerGrantConfig::default()
+        },
     }
 }
 
