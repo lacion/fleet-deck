@@ -382,6 +382,7 @@ async fn bridge_round(kind: ProviderKind) {
     let launch = CoordinatorLaunch {
         args,
         token: Secret::new(token.clone()),
+        skill_dir: None,
     };
     let answer = run_round(&*adapter, kind, &fixture, Start::WithToken(launch), &token).await;
     {
@@ -440,6 +441,7 @@ async fn bridge_round(kind: ProviderKind) {
             let launch = CoordinatorLaunch {
                 args,
                 token: Secret::new(token.clone()),
+                skill_dir: None,
             };
             (adapter_for(kind, Vec::new()), Start::WithToken(launch))
         }

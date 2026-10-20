@@ -566,6 +566,7 @@ async fn handoff_round(
     let launch = CoordinatorLaunch {
         args: mcp_args(kind, &url).unwrap(),
         token: Secret::new(token.clone()),
+        skill_dir: None,
     };
     assert!(!launch.args.iter().any(|a| a.contains(&token)));
 

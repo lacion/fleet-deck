@@ -89,6 +89,7 @@ impl Handoff {
         CoordinatorLaunch {
             args: self.args,
             token: self.token,
+            skill_dir: None,
         }
     }
 }

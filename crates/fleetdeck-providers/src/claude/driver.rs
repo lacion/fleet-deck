@@ -168,8 +168,8 @@ impl ClaudeAdapter {
                 .config
                 .extra_args
                 .iter()
-                .chain(coordinator.iter().flat_map(|c| c.args.iter()))
                 .cloned()
+                .chain(coordinator.into_iter().flat_map(|c| c.claude_args()))
                 .collect(),
         };
         let args: Vec<OsString> = cli_args(&launch, &caps)

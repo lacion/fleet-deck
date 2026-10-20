@@ -125,9 +125,41 @@ pub fn bridge_args(
 pub struct CoordinatorLaunch {
     pub args: Vec<String>,
     pub token: Secret<String>,
+    /// The absolute path of the published fleet skill tree `<hash>/`
+    /// (MCP P3 §4.2), or `None` for a start without the skill.
+    pub skill_dir: Option<std::path::PathBuf>,
 }
 
+/// The `--allowedTools` rule that allows only the fleet skill (MCP P3 §4.2).
+const SKILL_RULE: &str = "Skill(fleetdeck:fleet)";
+
 impl CoordinatorLaunch {
+    /// The Claude arguments of this launch: [`Self::args`] as they are
+    /// without a skill tree; with one, `--plugin-dir <dir>` and the
+    /// [`SKILL_RULE`] added to the value of `--allowedTools` (a new
+    /// `--allowedTools` pair when `args` has none). A skill tree path that
+    /// is not UTF-8 gives no injection and a warning.
+    #[must_use]
+    pub fn claude_args(&self) -> Vec<String> {
+        let mut args = self.args.clone();
+        let Some(dir) = &self.skill_dir else {
+            return args;
+        };
+        let Some(dir) = dir.to_str() else {
+            tracing::warn!("the fleet skill tree path is not UTF-8; no skill injection");
+            return args;
+        };
+        match args.iter().position(|a| a == "--allowedTools") {
+            Some(at) if at + 1 < args.len() => {
+                args[at + 1].push(' ');
+                args[at + 1].push_str(SKILL_RULE);
+            }
+            _ => args.extend(["--allowedTools".to_owned(), SKILL_RULE.to_owned()]),
+        }
+        args.extend(["--plugin-dir".to_owned(), dir.to_owned()]);
+        args
+    }
+
     /// The child environment `base` plus the credential variable.
     ///
     /// # Errors
@@ -166,6 +198,21 @@ pub const VERIFIED: &[(ProviderKind, &str)] = &[
     (ProviderKind::Claude, "2.1.296"),
     (ProviderKind::Codex, "0.160.0"),
 ];
+
+/// The provider families and minimum versions from which the fleet skill
+/// is injected (MCP P3 §4.2). Below them, no injection.
+pub const SKILL_VERIFIED: [(ProviderKind, &str); 2] = [
+    (ProviderKind::Claude, "2.1.302"),
+    (ProviderKind::Codex, "0.163.0"),
+];
+
+/// Whether the fleet skill is injected for a provider version: true only
+/// for a known provider with a parsed version at or above its
+/// [`SKILL_VERIFIED`] minimum.
+#[must_use]
+pub fn skill_injection_verified(kind: ProviderKind, version: Option<&str>) -> bool {
+    at_or_above(&SKILL_VERIFIED, kind, version).is_ok()
+}
 
 /// The numeric parts of a dotted version (`2.1.296 (Claude Code)` →
 /// `[2, 1, 296]`), or `None` when it does not start with a number.
@@ -372,5 +419,28 @@ mod tests {
             bridge_handoff(ProviderKind::Codex, Some("0.160.0")),
             Err(UNVERIFIED)
         );
+    }
+    #[test]
+    fn an_unverified_provider_version_gets_no_injection() {
+        let claude = |v| skill_injection_verified(ProviderKind::Claude, v);
+        assert!(!claude(Some("2.1.301")));
+        assert!(claude(Some("2.1.302")));
+        assert!(claude(Some("2.1.302 (Claude Code)")));
+        assert!(claude(Some("2.2.0")));
+        assert!(claude(Some("2.10.0")));
+        assert!(!claude(None));
+        assert!(!claude(Some("")));
+        assert!(!claude(Some("unknown")));
+        let codex = |v| skill_injection_verified(ProviderKind::Codex, v);
+        assert!(!codex(Some("0.162.1")));
+        assert!(codex(Some("0.163.0")));
+        assert!(codex(Some("0.170.4")));
+        assert!(codex(Some("1.0.0")));
+        assert!(!codex(None));
+        assert!(!codex(Some("v0.163.0")));
+        assert!(!skill_injection_verified(
+            ProviderKind::Unknown,
+            Some("9.9.9")
+        ));
     }
 }

@@ -43,6 +43,7 @@ fn launch(provider: ProviderKind) -> CoordinatorLaunch {
     CoordinatorLaunch {
         args: mcp_args(provider, URL).unwrap(),
         token: Secret::new(TOKEN.to_owned()),
+        skill_dir: None,
     }
 }
 
