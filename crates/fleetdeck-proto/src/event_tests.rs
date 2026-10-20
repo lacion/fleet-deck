@@ -235,6 +235,12 @@ fn samples() -> Vec<Event> {
             generation: 1,
             reason: "idle".into(),
         },
+        Event::CoordinatorWorkerOutcome {
+            grant_id: "g-1".into(),
+            start_command_id: crate::ids::CommandId::from("cmd-1"),
+            outcome: WorkerOutcome::Skipped,
+            reason: "handoff_unverified".into(),
+        },
         Event::SessionTerminal {
             shell_id: Some("tui-1".into()),
             pid: Some(4242),
@@ -384,6 +390,27 @@ fn an_unknown_kind_is_kept_verbatim() {
     let raw = json!({"kind": "future.thing", "x": 1});
     let body: EventBody = serde_json::from_value(raw.clone()).unwrap();
     assert_eq!(body.kind_name(), "future.thing");
+    assert!(body.known().is_none());
+    assert_eq!(serde_json::to_value(&body).unwrap(), raw);
+}
+
+#[test]
+fn the_worker_outcome_event_has_its_wire_form_and_a_newer_kind_stays_unknown() {
+    let event = Event::CoordinatorWorkerOutcome {
+        grant_id: "g-1".into(),
+        start_command_id: crate::ids::CommandId::from("cmd-1"),
+        outcome: WorkerOutcome::Skipped,
+        reason: "handoff_unverified".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&event).unwrap(),
+        json!({"kind": "coordinator.worker_outcome", "grant_id": "g-1",
+            "start_command_id": "cmd-1", "outcome": "skipped", "reason": "handoff_unverified"})
+    );
+    // A kind that this build does not know decodes as `Unknown`, as an older
+    // peer decodes this event (L16).
+    let raw = json!({"kind": "coordinator.worker_outcome.v2", "grant_id": "g-1"});
+    let body: EventBody = serde_json::from_value(raw.clone()).unwrap();
     assert!(body.known().is_none());
     assert_eq!(serde_json::to_value(&body).unwrap(), raw);
 }

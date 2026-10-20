@@ -223,6 +223,7 @@ impl SessionSummary {
             Event::AutoContinueSkipped { .. }
             | Event::CoordinatorBound { .. }
             | Event::CoordinatorEnded { .. }
+            | Event::CoordinatorWorkerOutcome { .. }
             | Event::SessionNotice { .. } => {}
             Event::SlashCommands { commands, skills } => {
                 self.slash_commands = Some(commands.clone());

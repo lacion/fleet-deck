@@ -10,7 +10,7 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use crate::capability::Unsupported;
-pub use crate::coordinator_spec::{ControlSkill, CoordinatorSpec, GrantScope};
+pub use crate::coordinator_spec::{ControlSkill, CoordinatorSpec, GrantKind, GrantScope};
 use crate::fleet_git::{FleetGitStart, LandPlan, MoveFrom, MoveKind};
 use crate::ids::{
     CommandId, IncarnationId, InputId, ProviderInstanceId, RequestId, SessionId, StationId, TurnId,

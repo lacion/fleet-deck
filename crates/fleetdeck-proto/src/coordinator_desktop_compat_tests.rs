@@ -5,7 +5,7 @@
 use serde_json::json;
 
 use crate::command::{ControlSkill, CoordinatorSpec, GrantScope};
-use crate::coordinator_spec::InputScope;
+use crate::coordinator_spec::{GrantKind, InputScope};
 use crate::ids::{CommandId, IncarnationId, ProviderInstanceId, SessionId};
 use crate::mutation::{
     CoordinatorBinding, Holder, Mutation, PolicyNow, PolicyNowAnswer, envelope_of,
@@ -164,6 +164,7 @@ fn spec() -> CoordinatorSpec {
         stations: Vec::new(),
         spawn_cap: None,
         max_modes: Default::default(),
+        kind: GrantKind::Coordinator,
     }
 }
 
@@ -187,6 +188,53 @@ fn the_spec_caps_are_written_only_when_set_and_parse_back() {
         serde_json::from_value::<CoordinatorSpec>(v).unwrap(),
         capped
     );
+}
+
+#[test]
+fn a_grant_view_writes_kind_and_max_modes_only_when_set_and_old_answers_decode() {
+    let mut view = GrantView {
+        grant_id: "g".into(),
+        station_id: "s".into(),
+        session_id: "x".into(),
+        classes: vec!["read".into()],
+        stations: vec!["s".into()],
+        spawn_cap: 3,
+        spawn_used: 0,
+        state: "active".into(),
+        revoked_reason: None,
+        generation: None,
+        expires_at: 1,
+        last_used_at: None,
+        desktop_cap: None,
+        desktop_used: None,
+        capture_cap: None,
+        capture_used: None,
+        image_byte_cap: None,
+        image_byte_used: None,
+        recording_cap: None,
+        recording_used: None,
+        recording_second_cap: None,
+        recording_second_used: None,
+        allow_input: None,
+        input_scope: None,
+        input_cap: None,
+        input_used: None,
+        input_character_cap: None,
+        input_character_used: None,
+        allow_click: None,
+        kind: GrantKind::Coordinator,
+        max_modes: Default::default(),
+    };
+    let old = serde_json::to_value(&view).unwrap();
+    assert!(old.get("kind").is_none() && old.get("max_modes").is_none());
+    // An answer without `kind` and `max_modes` still decodes.
+    assert_eq!(serde_json::from_value::<GrantView>(old).unwrap(), view);
+    view.kind = GrantKind::Worker;
+    view.max_modes.insert("claude".into(), "acceptEdits".into());
+    let v = serde_json::to_value(&view).unwrap();
+    assert_eq!(v["kind"], "worker");
+    assert_eq!(v["max_modes"], json!({"claude": "acceptEdits"}));
+    assert_eq!(serde_json::from_value::<GrantView>(v).unwrap(), view);
 }
 
 #[test]
@@ -221,6 +269,8 @@ fn a_grant_view_writes_the_p6_counters_only_when_set() {
         input_character_cap: None,
         input_character_used: None,
         allow_click: None,
+        kind: GrantKind::Coordinator,
+        max_modes: Default::default(),
     };
     let v = serde_json::to_value(&view).unwrap();
     for key in [
@@ -309,6 +359,8 @@ fn a_grant_view_writes_the_recording_counters_only_when_set() {
         input_character_cap: None,
         input_character_used: None,
         allow_click: None,
+        kind: GrantKind::Coordinator,
+        max_modes: Default::default(),
     };
     let v = serde_json::to_value(&view).unwrap();
     assert_eq!(v["recording_cap"], 5);
@@ -399,6 +451,8 @@ fn a_grant_view_writes_the_input_fields_only_when_set() {
         input_character_cap: None,
         input_character_used: None,
         allow_click: None,
+        kind: GrantKind::Coordinator,
+        max_modes: Default::default(),
     };
     let v = serde_json::to_value(&view).unwrap();
     for key in [
@@ -517,6 +571,8 @@ fn a_grant_view_writes_the_click_allowance_only_when_set() {
         input_character_cap: Some(20_000),
         input_character_used: Some(0),
         allow_click: None,
+        kind: GrantKind::Coordinator,
+        max_modes: Default::default(),
     };
     let v = serde_json::to_value(&view).unwrap();
     assert!(!v.as_object().unwrap().contains_key("allow_click"));

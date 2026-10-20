@@ -90,6 +90,16 @@ pub enum ResponseChannel {
     Message,
 }
 
+/// The outcome of a worker grant that did not reach a provider (MCP P4a
+/// §6.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "event/")]
+pub enum WorkerOutcome {
+    /// The station skipped the grant: the start went on without it.
+    Skipped,
+}
+
 /// One answer option with the provider's own option id (L3).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export_to = "event/")]

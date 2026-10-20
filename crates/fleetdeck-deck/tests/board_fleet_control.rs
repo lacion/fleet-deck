@@ -160,6 +160,7 @@ async fn a_station_without_v2_gets_no_fleet_control_grant_and_a_lineage_start_ke
         stations: Vec::new(),
         spawn_cap: None,
         max_modes: Default::default(),
+        kind: fleetdeck_proto::command::GrantKind::Coordinator,
     };
     let recorded = r#"{"grant_id":"g","classes":["read","mail"],"idle_ttl_ms":1,"expires_at":2,"control_skill":{"version":"1","text":"t"}}"#;
     assert_eq!(serde_json::to_string(&spec).unwrap(), recorded);
