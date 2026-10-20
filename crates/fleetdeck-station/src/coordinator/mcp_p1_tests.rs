@@ -11,8 +11,8 @@ use super::bindings::{BindingState, ToolClass};
 use super::desktop_forward::McpToolResult;
 use super::ingress::Forward;
 use super::mcp_p1_rig_tests::{
-    MAIL, MODERN, NOT_BOUND, Rig, SKILL, VERSIONS, binding, forbidden, http_raw, http_request,
-    legacy, modern, tool_names, tool_text,
+    MAIL, MODERN, NOT_BOUND, Rig, VERSIONS, binding, forbidden, http_raw, http_request, legacy,
+    modern, tool_names, tool_text,
 };
 use super::mcp_service::{McpService, bridge_headers};
 

@@ -639,3 +639,118 @@ mod recording_tests;
 #[cfg(test)]
 #[path = "coordinator_start_input_tests.rs"]
 mod input_tests;
+
+/// MCP P3 test 16 (station part): a provider version that is not verified
+/// for the fleet skill gets `skill_dir: None` on its launch
+/// (`docs/v2/design/mcp-p3.md` §4.2, §6).
+#[cfg(test)]
+mod skill_tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::path::PathBuf;
+
+    use fleetdeck_proto::command::SessionSpec;
+    use fleetdeck_proto::event::ProviderKind;
+
+    use super::{prepare_bridge_fleet, prepare_fleet};
+    use crate::coordinator::{Bindings, BridgeEndpoint};
+
+    const URL: &str = "http://127.0.0.1:41234/mcp";
+
+    fn spec() -> SessionSpec {
+        SessionSpec {
+            provider_instance: "claude".into(),
+            cwd: "/w".to_owned(),
+            mode: None,
+            model: None,
+            title: None,
+            coordinator: None,
+            launch: None,
+            extra_env: None,
+        }
+    }
+
+    fn tree() -> PathBuf {
+        PathBuf::from("/station/share/fleet-skill/abc")
+    }
+
+    /// Bindings with the probed `versions` of `provider` and, when `published`,
+    /// the skill tree.
+    fn bindings(provider: ProviderKind, versions: &[&str], published: bool) -> Bindings {
+        let bindings = Bindings::default();
+        bindings.set_endpoint(URL.to_owned());
+        bindings.set_bridge(BridgeEndpoint {
+            program: "/station/bin/current".into(),
+            socket: "/run/mcp.s".into(),
+        });
+        for version in versions {
+            bindings.record_version(provider, (*version).to_owned());
+        }
+        if published {
+            bindings.set_skill_dir(Some(tree()));
+        }
+        bindings
+    }
+
+    /// The skill tree of the direct launch and of the bridge launch.
+    fn skill(bindings: &Bindings, provider: ProviderKind) -> (Option<PathBuf>, Option<PathBuf>) {
+        let session = "s-1".into();
+        let direct = prepare_fleet(bindings, provider, &session, &spec(), false)
+            .unwrap()
+            .skill_dir;
+        let bridge = prepare_bridge_fleet(bindings, provider, &session, &spec())
+            .unwrap()
+            .launch
+            .skill_dir;
+        (direct, bridge)
+    }
+
+    #[test]
+    fn an_unverified_provider_version_gets_no_injection() {
+        let some = (Some(tree()), Some(tree()));
+        let none = (None, None);
+        // Claude: the handoff passes from 2.1.296, the skill from 2.1.302.
+        let claude = ProviderKind::Claude;
+        assert_eq!(skill(&bindings(claude, &["2.1.302"], true), claude), some);
+        assert_eq!(skill(&bindings(claude, &["2.2.0"], true), claude), some);
+        assert_eq!(skill(&bindings(claude, &["2.1.301"], true), claude), none);
+        // Every probed instance of the family must pass.
+        assert_eq!(
+            skill(&bindings(claude, &["2.1.302", "2.1.301"], true), claude),
+            none
+        );
+        assert_eq!(
+            skill(&bindings(claude, &["2.1.302", "2.1.400"], true), claude),
+            some
+        );
+        // No published tree: no injection, also for a verified version.
+        assert_eq!(skill(&bindings(claude, &["2.1.302"], false), claude), none);
+        // Codex: the skill from 0.163.0.
+        let codex = ProviderKind::Codex;
+        assert_eq!(skill(&bindings(codex, &["0.163.0"], true), codex), some);
+        assert_eq!(skill(&bindings(codex, &["0.162.1"], true), codex), none);
+        // Without a skill the Claude arguments are the plain handoff ones; with
+        // one they carry the plugin directory and the skill rule.
+        let session = "s-1".into();
+        let plain = prepare_fleet(
+            &bindings(claude, &["2.1.301"], true),
+            claude,
+            &session,
+            &spec(),
+            false,
+        )
+        .unwrap();
+        assert_eq!(plain.claude_args(), plain.args);
+        let with = prepare_fleet(
+            &bindings(claude, &["2.1.302"], true),
+            claude,
+            &session,
+            &spec(),
+            false,
+        )
+        .unwrap();
+        let args = with.claude_args();
+        assert!(args.iter().any(|a| a == "--plugin-dir"));
+        assert!(args.iter().any(|a| a.contains("Skill(fleetdeck:fleet)")));
+    }
+}

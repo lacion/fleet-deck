@@ -12,6 +12,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use fleetdeck_proto::StationId;
+use fleetdeck_proto::fleet_view::FleetView;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UnixStream};
@@ -88,7 +90,15 @@ pub(super) struct Fake {
     pub open: watch::Sender<bool>,
     /// Gated calls that were dropped before `open`.
     pub dropped: AtomicUsize,
+    /// The `fleet_view` requests (MCP P3): the caller, the view, the cursor
+    /// and the station filter.
+    pub views: Mutex<Vec<FleetViewCall>>,
+    /// The answer of `fleet_view`.
+    pub view_answer: Mutex<Result<Value, String>>,
 }
+
+/// One recorded `Forward::fleet_view` call.
+pub(super) type FleetViewCall = (Caller, FleetView, Option<String>, Option<StationId>);
 
 impl Fake {
     pub(super) fn new() -> Arc<Self> {
@@ -103,6 +113,8 @@ impl Fake {
             entered: Semaphore::new(0),
             open: watch::channel(false).0,
             dropped: AtomicUsize::new(0),
+            views: Mutex::default(),
+            view_answer: Mutex::new(Ok(json!({"items": [], "next_cursor": null}))),
         })
     }
 
@@ -150,6 +162,20 @@ impl Forward for Fake {
             .push((caller, tool.to_owned(), args));
         self.wait_gate().await;
         Ok(json!({"state": "accepted"}))
+    }
+
+    async fn fleet_view(
+        &self,
+        caller: Caller,
+        view: FleetView,
+        cursor: Option<String>,
+        station: Option<StationId>,
+    ) -> Result<Value, String> {
+        self.views
+            .lock()
+            .unwrap()
+            .push((caller, view, cursor, station));
+        self.view_answer.lock().unwrap().clone()
     }
 
     async fn call_desktop(&self, caller: Caller, request: DesktopRequest) -> McpToolResult {
@@ -277,9 +303,12 @@ pub(super) fn modern(
         ("MCP-Protocol-Version".to_owned(), version.to_owned()),
         ("Mcp-Method".to_owned(), method.to_owned()),
     ];
-    if let Some(name) = params.get("name").and_then(Value::as_str)
-        && method == "tools/call"
-    {
+    let named = match method {
+        "tools/call" | "prompts/get" => params.get("name"),
+        "resources/read" => params.get("uri"),
+        _ => None,
+    };
+    if let Some(name) = named.and_then(Value::as_str) {
         headers.push(("Mcp-Name".to_owned(), name.to_owned()));
     }
     (legacy(id, method, params), headers)

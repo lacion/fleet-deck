@@ -78,9 +78,10 @@ pub(super) async fn call(
             // it (MCP P3 §3.1): one `fleet.view` for the binding's caller.
             (BindingState::Active, Some(caller)) if tool.name == "fleet_view" => {
                 let outcome = match fleet_view_args(&args) {
-                    Ok((view, cursor, station)) => {
-                        forward.fleet_view(caller, view, cursor, station).await
-                    }
+                    Ok((view, cursor, station)) => forward
+                        .fleet_view(caller, view, cursor, station)
+                        .await
+                        .and_then(super::mcp_fleet::page_value),
                     Err(e) => Err(e),
                 };
                 match outcome {
