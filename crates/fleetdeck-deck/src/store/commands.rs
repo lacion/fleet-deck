@@ -193,10 +193,20 @@ fn finish(
         DeckCommandState::Done if rejected => Some("start_failed"),
         _ => None,
     };
-    let scopes = match revoke {
+    let mut scopes = match revoke {
         Some(why) => super::worker_grant::revoke_for_start(conn, id, why, now)?,
         None => BTreeSet::new(),
     };
+    // A session that ended before its receipt was stored (MCP P4a PRE-PR R2).
+    let named = receipt
+        .filter(|r| r.state == ReceiptState::Accepted)
+        .and_then(|r| r.result.as_ref())
+        .and_then(|r| r.session_id.as_ref());
+    if let Some(session) = named {
+        scopes.extend(super::worker_grant_end::revoke_if_ended(
+            conn, id, session, now,
+        )?);
+    }
     Ok(Finished {
         review: super::review::command_ended(conn, id, state, receipt, reason)?,
         scopes,

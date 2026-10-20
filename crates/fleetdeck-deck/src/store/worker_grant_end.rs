@@ -5,8 +5,8 @@
 use std::collections::BTreeSet;
 
 use fleetdeck_proto::command::GrantKind;
-use fleetdeck_proto::{SessionId, StationId};
-use rusqlite::{Connection, params};
+use fleetdeck_proto::{CommandId, SessionId, StationId};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use super::Result;
 use super::grants::Grant;
@@ -39,6 +39,33 @@ pub(super) fn apply_session_ended(
         changed.extend(revoke_tx(tx, &id, "session_ended", now)?.1);
     }
     Ok(changed)
+}
+
+/// Revokes the worker grant of start `command_id` (`session_ended`) when the
+/// session that its accepted receipt names has already ended on the grant's
+/// station (PRE-PR R2 BLOCKER): `session.ended` can be folded before the
+/// receipt is stored, and then [`apply_session_ended`] finds no grant. A session
+/// has ended when its summary state is `exited` or `lost`.
+pub(super) fn revoke_if_ended(
+    tx: &Connection,
+    command_id: &CommandId,
+    session: &SessionId,
+    now: i64,
+) -> Result<BTreeSet<StationId>> {
+    let found: Option<String> = tx
+        .query_row(
+            "SELECT t.grant_id FROM tokens t
+             JOIN sessions s ON s.station_id = t.station_id AND s.session_id = ?2
+             WHERE t.start_command_id = ?1 AND t.kind = 'worker' AND t.state != 'revoked'
+               AND json_extract(s.summary, '$.state') IN ('exited', 'lost')",
+            params![command_id.as_str(), session.0],
+            |r| r.get(0),
+        )
+        .optional()?;
+    match found {
+        Some(id) => Ok(revoke_tx(tx, &id, "session_ended", now)?.1),
+        None => Ok(BTreeSet::new()),
+    }
 }
 
 /// True when reactivating `grant` would pass the worker cap (PRE-PR R1 MAJOR 2): a worker grant and

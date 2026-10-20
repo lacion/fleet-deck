@@ -168,3 +168,23 @@ async fn a_worker_renewal_cannot_pass_the_cap() {
         )]
     );
 }
+
+#[tokio::test]
+async fn a_session_end_before_the_receipt_still_revokes_the_worker_grant() {
+    let w = world().await;
+    // `session.ended` is folded first: no receipt names the session yet.
+    submit(&w, "s1", &on()).await;
+    let g1 = of_start(&w, "s1").await;
+    apply(&w, &w.a, 1, "w1", ended()).await;
+    assert_eq!(state_of(&w, &g1).await, ACTIVE);
+    // The receipt arrives later and names the ended session.
+    accept_start(&w, "s1", "w1").await;
+    assert_eq!(state_of(&w, &g1).await, revoked("session_ended"));
+    // A receipt that names a running session, or a session that ended only on
+    // another station, keeps the grant.
+    submit(&w, "s2", &on()).await;
+    let g2 = of_start(&w, "s2").await;
+    apply(&w, &w.b, 1, "worker-1", ended()).await;
+    accept_start(&w, "s2", "worker-1").await;
+    assert_eq!(state_of(&w, &g2).await, ACTIVE);
+}
