@@ -336,6 +336,18 @@ impl DeckLink {
         Ok((cmd, new))
     }
 
+    /// The live `worker_grant` setting; off when the deck has no live
+    /// settings (fail closed).
+    pub(crate) fn worker_setting(&self) -> fleetdeck_core::config_worker_grant::WorkerGrantConfig {
+        self.desktop_live.get().map_or_else(
+            || fleetdeck_core::config_worker_grant::WorkerGrantConfig {
+                enabled: false,
+                ..Default::default()
+            },
+            |cell| cell.get().worker_grant.clone(),
+        )
+    }
+
     /// [`DeckLink::submit_by`] for a session start that may get a worker
     /// grant (MCP P4a §5): the store decides, stores the grant and the
     /// command in one transaction, and the first send starts when the command

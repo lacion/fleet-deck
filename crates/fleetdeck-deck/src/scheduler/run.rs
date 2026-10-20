@@ -22,7 +22,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use fleetdeck_core::config_worker_grant::WorkerGrantConfig;
 use fleetdeck_proto::automation::{Schedule, ScheduleRun, ScheduleRunState};
 use fleetdeck_proto::board::SessionKey;
 use fleetdeck_proto::command::{
@@ -349,18 +348,6 @@ struct LinkBackend {
 }
 
 impl LinkBackend {
-    /// The live `worker_grant` setting; off when the deck has no live
-    /// settings (fail closed).
-    fn worker_setting(&self) -> WorkerGrantConfig {
-        self.link.desktop_live.get().map_or_else(
-            || WorkerGrantConfig {
-                enabled: false,
-                ..WorkerGrantConfig::default()
-            },
-            |cell| cell.get().worker_grant.clone(),
-        )
-    }
-
     async fn precheck(&self, schedule: &Schedule, cmd: &str) -> Verdict {
         let Some(control) = self.link.control_for(&schedule.station_id) else {
             return Verdict::Fail("the station has no live link to this deck".to_owned());
@@ -484,7 +471,7 @@ impl Backend for LinkBackend {
                     command_id,
                     provenance: Provenance::Schedule,
                     author: None,
-                    setting: self.worker_setting(),
+                    setting: self.link.worker_setting(),
                 })
                 .await
         } else {
