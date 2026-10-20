@@ -311,7 +311,7 @@ async fn every_binding_has_the_fleet_view_tool_and_the_four_resources() {
         json!({}),
         json!({"view": "everything"}),
         json!({"view": "me", "extra": 1}),
-        json!({"view": "stations", "cursor": "x".repeat(2049)}),
+        json!({"view": "stations", "cursor": "x".repeat(4097)}),
         json!({"view": "projects", "station": "x".repeat(129)}),
         json!({"view": "stations", "cursor": 5}),
     ] {

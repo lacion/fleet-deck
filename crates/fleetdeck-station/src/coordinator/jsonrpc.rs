@@ -108,8 +108,9 @@ pub(super) async fn call(
     }
 }
 
-/// The most characters of the `cursor` argument of `fleet_view`.
-const CURSOR_ARG_MAX: usize = 2048;
+/// The most characters of the `cursor` argument of `fleet_view`: the deck's
+/// cursor limit (a cursor is ASCII base64url, so characters are bytes).
+const CURSOR_ARG_MAX: usize = fleetdeck_proto::fleet_view::CURSOR_MAX_BYTES;
 /// The most characters of the `station` argument of `fleet_view`.
 const STATION_ARG_MAX: usize = 128;
 

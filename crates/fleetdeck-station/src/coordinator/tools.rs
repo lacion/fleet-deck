@@ -103,7 +103,7 @@ fn set_focus() -> Value {
 fn fleet_view() -> Value {
     json!({"type": "object", "required": ["view"], "additionalProperties": false, "properties": {
         "view": {"type": "string", "enum": ["stations", "projects", "sessions", "me"]},
-        "cursor": {"type": "string", "maxLength": 2048},
+        "cursor": {"type": "string", "maxLength": 4096},
         "station": {"type": "string", "maxLength": 128}}})
 }
 

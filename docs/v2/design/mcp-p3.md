@@ -70,7 +70,7 @@ Common (R2 BLOCKER 1, R3 BLOCKER 2): every projected text field has a limit by c
 
 ### 3.3 Generated instructions (replace the control skill as `instructions`)
 
-`initialize` and `discover` serve `instructions` built from the binding's catalog and the station's own facts, in this order, each line only when its condition holds (at most 8 sentences):
+`initialize` and `discover` serve `instructions` built from the binding's catalog and the station's own facts, in this order, each line only when its condition holds (at most 9 sentences; line 5 has three):
 
 1. Always: `You are a Fleet Deck session on station {name} ({platform}).` (`{platform}` by the rule of §2.3 from the station's own desktop kind and `std::env::consts::OS`.)
 2. Always: `Call fleet_view to see the stations and their platforms (view stations), the live sessions (view sessions), and yourself and your grant (view me).`
