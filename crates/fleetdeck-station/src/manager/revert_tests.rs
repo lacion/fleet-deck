@@ -263,6 +263,7 @@ impl Rig {
                 Ok(CommandResult {
                     session_id: Some(S1.into()),
                     input_id: None,
+                    seq: None,
                 })
             })
             .await
@@ -687,6 +688,7 @@ async fn a_second_open_revert_of_the_session_is_refused_by_the_store() {
             Ok(CommandResult {
                 session_id: Some(S1.into()),
                 input_id: None,
+                seq: None,
             })
         })
         .await;

@@ -86,6 +86,7 @@ fn started(id: &CommandId) -> Outcome {
         result: Some(CommandResult {
             session_id: Some("sess-1".into()),
             input_id: None,
+            seq: None,
         }),
         reject: None,
         at: 0,

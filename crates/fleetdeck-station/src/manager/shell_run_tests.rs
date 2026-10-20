@@ -301,6 +301,7 @@ async fn the_start_up_settles_a_running_row_unknown_after_killing_its_processes(
             Ok(fleetdeck_proto::command::CommandResult {
                 session_id: Some(owner.clone()),
                 input_id: None,
+                seq: None,
             })
         })
         .await

@@ -284,6 +284,7 @@ fn prompt_decision(
         Ok(CommandResult {
             session_id: Some("s1".into()),
             input_id: Some(InputId::from("in-1")),
+            seq: None,
         })
     }
 }

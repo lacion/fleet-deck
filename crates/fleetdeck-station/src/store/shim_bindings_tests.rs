@@ -367,6 +367,7 @@ async fn a_decision_ends_a_row_once_and_returns_the_old_row() {
         Ok(CommandResult {
             session_id: Some("s1".into()),
             input_id: None,
+            seq: None,
         })
     })
     .await

@@ -415,6 +415,7 @@ async fn an_owner_coordinator_start_creates_one_grant_and_sends_its_id_and_the_c
             result: Some(fleetdeck_proto::command::CommandResult {
                 session_id: Some("coord-new".into()),
                 input_id: None,
+                seq: None,
             }),
             reject: None,
             at: 0,

@@ -239,6 +239,16 @@ pub enum SessionCommand {
         session_id: SessionId,
         grant_id: String,
     },
+    /// The owner's desired grant of a session (MCP P4b §3): `Some(spec)`
+    /// gives or changes the grant `grant_id`, `None` ends it. `seq` is the
+    /// session's sequence; the station applies only a higher one. Deck →
+    /// station only.
+    CoordinatorSet {
+        session_id: SessionId,
+        seq: u64,
+        grant_id: String,
+        spec: Option<Box<CoordinatorSpec>>,
+    },
     /// Move the worktree of an ended session into the trash folder beside
     /// it (DL-150). Nothing is deleted. Owner action, scope `admin`.
     WorktreeTrash {
@@ -416,6 +426,7 @@ impl SessionCommand {
             Self::SetAutoContinue { .. } => "session.set_auto_continue",
             Self::CoordinatorRenew { .. } => "session.coordinator_renew",
             Self::CoordinatorRevoke { .. } => "session.coordinator_revoke",
+            Self::CoordinatorSet { .. } => "session.coordinator_set",
             Self::WorktreeTrash { .. } => "session.worktree_trash",
             Self::WorktreeRestore { .. } => "session.worktree_restore",
             Self::WorktreePurge { .. } => "session.worktree_purge",
@@ -466,6 +477,7 @@ impl SessionCommand {
             | Self::SetAutoContinue { session_id, .. }
             | Self::CoordinatorRenew { session_id, .. }
             | Self::CoordinatorRevoke { session_id, .. }
+            | Self::CoordinatorSet { session_id, .. }
             | Self::WorktreeTrash { session_id }
             | Self::WorktreeRestore { session_id }
             | Self::WorktreePurge { session_id, .. }
@@ -661,6 +673,11 @@ impl From<Unsupported> for Reject {
 pub struct CommandResult {
     pub session_id: Option<SessionId>,
     pub input_id: Option<InputId>,
+    /// The record sequence that a `session.coordinator_set` left on the
+    /// station (MCP P4b §3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub seq: Option<u64>,
 }
 
 /// The stored answer to a command (PLAN §6.4). Acceptance, not completion.

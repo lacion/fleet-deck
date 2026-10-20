@@ -106,6 +106,10 @@ fn commands() -> Vec<SessionCommand> {
         json!({"op": "resolve_revert", "session_id": s, "revert_id": "rv-1", "resolution": "retry_restore"}),
         json!({"op": "coordinator_renew", "session_id": s, "grant_id": "g-1", "generation": 2}),
         json!({"op": "coordinator_revoke", "session_id": s, "grant_id": "g-1"}),
+        json!({"op": "coordinator_set", "session_id": s, "seq": 3, "grant_id": "g-1",
+            "spec": {"grant_id": "g-1", "classes": ["observe"], "idle_ttl_ms": 60_000,
+            "expires_at": 4_102_444_800_000_i64,
+            "control_skill": {"version": "1", "text": "You coordinate the fleet."}}}),
         json!({"op": "worktree_trash", "session_id": s}),
         json!({"op": "worktree_restore", "session_id": s}),
         json!({"op": "worktree_purge", "session_id": s, "confirm_name": "app--fd-x--01j000000000"}),
@@ -151,6 +155,7 @@ fn commands() -> Vec<SessionCommand> {
             | SessionCommand::SetAutoContinue { .. }
             | SessionCommand::CoordinatorRenew { .. }
             | SessionCommand::CoordinatorRevoke { .. }
+            | SessionCommand::CoordinatorSet { .. }
             | SessionCommand::WorktreeTrash { .. }
             | SessionCommand::WorktreeRestore { .. }
             | SessionCommand::WorktreePurge { .. }
@@ -173,7 +178,7 @@ fn commands() -> Vec<SessionCommand> {
 fn every_session_command_is_a_mutating_deck_to_station_method_of_the_adr_table() {
     let table = method_table();
     let commands = commands();
-    assert_eq!(commands.len(), 28);
+    assert_eq!(commands.len(), 29);
     for c in &commands {
         let r = row(&table, c.method());
         assert!(r.mutating, "`{}` must be mutating", c.method());

@@ -729,6 +729,7 @@ pub(super) async fn fence(rig: &Rig, land_id: &str) {
             Ok(fleetdeck_proto::command::CommandResult {
                 session_id: None,
                 input_id: None,
+                seq: None,
             })
         })
         .await

@@ -280,3 +280,54 @@ fn a_land_command_has_the_op_land_and_the_session_land_method() {
     assert_eq!(serde_json::to_value(&cmd).unwrap(), value);
     assert!(crate::mutation::SESSION_METHODS.contains(&"session.land"));
 }
+
+#[test]
+fn a_coordinator_set_command_round_trips_with_and_without_a_spec() {
+    let spec = serde_json::json!({
+        "grant_id": "g-1", "classes": ["observe"], "idle_ttl_ms": 60_000,
+        "expires_at": 4_102_444_800_000_i64,
+        "control_skill": {"version": "1", "text": "You coordinate the fleet."}
+    });
+    for spec in [spec, serde_json::Value::Null] {
+        let value = serde_json::json!({
+            "op": "coordinator_set", "session_id": "s1", "seq": 7,
+            "grant_id": "g-1", "spec": spec
+        });
+        let cmd: SessionCommand = serde_json::from_value(value.clone()).unwrap();
+        let SessionCommand::CoordinatorSet { seq, spec: got, .. } = &cmd else {
+            panic!("not a coordinator_set: {cmd:?}");
+        };
+        assert_eq!(*seq, 7);
+        assert_eq!(got.is_none(), value["spec"].is_null());
+        assert_eq!(cmd.method(), "session.coordinator_set");
+        assert_eq!(cmd.session_id().map(SessionId::as_str), Some("s1"));
+        assert_eq!(serde_json::to_value(&cmd).unwrap(), value);
+        assert!(crate::mutation::SESSION_METHODS.contains(&"session.coordinator_set"));
+    }
+}
+
+#[test]
+fn a_command_result_without_a_seq_serializes_as_before_and_an_old_one_decodes() {
+    let result = CommandResult {
+        session_id: Some("s1".into()),
+        input_id: None,
+        seq: None,
+    };
+    assert_eq!(
+        serde_json::to_string(&result).unwrap(),
+        r#"{"session_id":"s1","input_id":null}"#
+    );
+    let old: CommandResult =
+        serde_json::from_str(r#"{"session_id":"s1","input_id":null}"#).unwrap();
+    assert_eq!(old, result);
+    let with = CommandResult {
+        seq: Some(4),
+        ..result
+    };
+    let value = serde_json::to_value(&with).unwrap();
+    assert_eq!(value["seq"], 4);
+    assert_eq!(
+        serde_json::from_value::<CommandResult>(value).unwrap(),
+        with
+    );
+}

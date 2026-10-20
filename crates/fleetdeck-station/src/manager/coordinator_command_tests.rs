@@ -263,3 +263,52 @@ async fn a_station_local_request_or_a_coordinator_operation_cannot_create_renew_
     assert_eq!(st.binding("g-1").state, BindingState::Expired);
     assert!(st.lifecycle_events().await.is_empty());
 }
+
+/// MCP P4b-2a: `session.coordinator_set` is a placeholder until P4b-2b.
+#[tokio::test]
+async fn a_coordinator_set_from_a_paired_deck_is_refused_as_unsupported_and_a_local_one_as_forbidden()
+ {
+    let mut st = Station::new(4).await;
+    let s = st.start(&st.workspace(), Some("hello")).await;
+    let deck = st.deck().await;
+    let spec: fleetdeck_proto::command::CoordinatorSpec =
+        serde_json::from_value(serde_json::json!({
+            "grant_id": "g-1", "classes": ["observe"], "idle_ttl_ms": 60_000,
+            "expires_at": 4_102_444_800_000_i64,
+            "control_skill": {"version": "1", "text": "You coordinate the fleet."}
+        }))
+        .unwrap();
+    for (n, spec) in [Some(Box::new(spec)), None].into_iter().enumerate() {
+        let command = SessionCommand::CoordinatorSet {
+            session_id: s.clone(),
+            seq: 1,
+            grant_id: "g-1".to_owned(),
+            spec,
+        };
+        let d = st
+            .lifecycle(
+                &format!("set-{n}"),
+                CommandOrigin::Board,
+                deck.clone(),
+                command,
+            )
+            .await;
+        let reject = d.receipt.reject.unwrap();
+        assert_eq!(reject.code, RejectCode::Unsupported);
+        assert_eq!(
+            reject.message,
+            "session.coordinator_set is not part of this station build yet"
+        );
+    }
+    // The local socket never sets a grant.
+    let local = SessionCommand::CoordinatorSet {
+        session_id: s.clone(),
+        seq: 1,
+        grant_id: "g-1".to_owned(),
+        spec: None,
+    };
+    let d = st
+        .lifecycle("set-local", CommandOrigin::Board, Caller::local(), local)
+        .await;
+    assert_eq!(d.receipt.reject.unwrap().code, RejectCode::Forbidden);
+}

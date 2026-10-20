@@ -75,6 +75,7 @@ impl Rig {
                 Ok(fleetdeck_proto::command::CommandResult {
                     session_id: Some(session.as_str().into()),
                     input_id: None,
+                    seq: None,
                 })
             })
             .await

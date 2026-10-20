@@ -313,6 +313,7 @@ impl DeckStore {
                             CommandResult {
                                 session_id,
                                 input_id: None,
+                                seq: None,
                             },
                             now,
                         )

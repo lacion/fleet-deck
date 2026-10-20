@@ -56,6 +56,41 @@ fn coordinator_renew_and_revoke_from_the_wrong_role_without_the_feature_or_witho
     }
 }
 
+/// MCP P4b-2a: `session.coordinator_set` needs `coordinator_live.v1`.
+#[test]
+fn coordinator_set_needs_its_feature_and_drive_from_a_deck() {
+    let (d, s) = (Role::Deck, Role::Station);
+    let name = "session.coordinator_set";
+    let drive = scopes(&[Scope::Drive]);
+    let read = scopes(&[Scope::Read]);
+    // `coordinator.v1` alone is not enough.
+    let without = negotiated(&[
+        feature::CONTROL,
+        feature::COMMAND_RECEIPTS,
+        feature::COORDINATOR,
+    ]);
+    assert_eq!(
+        code_of(authorize(name, d, s, Some("c"), &all(), Some(&drive))),
+        "ok"
+    );
+    assert_eq!(
+        code_of(authorize(name, s, d, Some("c"), &all(), Some(&drive))),
+        "wrong_role"
+    );
+    assert_eq!(
+        code_of(authorize(name, d, s, Some("c"), &without, Some(&drive))),
+        code::FEATURE_NOT_NEGOTIATED
+    );
+    assert_eq!(
+        code_of(authorize(name, d, s, Some("c"), &all(), Some(&read))),
+        code::FORBIDDEN
+    );
+    assert_eq!(
+        code_of(authorize(name, d, s, None, &all(), Some(&drive))),
+        code::MISSING_COMMAND_ID
+    );
+}
+
 /// ADR-006 §8.3 26 (DL-214): without `coordinator.v1` a station's
 /// coordinator traffic is refused before any scope check, as an M2 deck
 /// does (it knows no coordinator shapes).

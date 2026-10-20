@@ -36,7 +36,9 @@ fn forbidden() -> DecideError {
 pub fn guard(command: &SessionCommand, caller: &Caller) -> Result<(), DecideError> {
     let lifecycle = matches!(
         command,
-        SessionCommand::CoordinatorRenew { .. } | SessionCommand::CoordinatorRevoke { .. }
+        SessionCommand::CoordinatorRenew { .. }
+            | SessionCommand::CoordinatorRevoke { .. }
+            | SessionCommand::CoordinatorSet { .. }
     );
     if lifecycle && !caller.is_peer() {
         return Err(forbidden());

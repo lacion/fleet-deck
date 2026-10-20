@@ -192,6 +192,7 @@ async fn a_resume_claimed_before_a_crash_settles_as_outcome_unknown_and_is_never
                 Ok(fleetdeck_proto::command::CommandResult {
                     session_id: Some(session_id.clone()),
                     input_id: None,
+                    seq: None,
                 })
             },
         )
