@@ -50,6 +50,7 @@ fn binding(classes: &[ToolClass], scope: GrantScope) -> Binding {
         scope,
         state: BindingState::Active,
         control_skill: "SKILL v1".to_owned(),
+        kind: fleetdeck_proto::command::GrantKind::Coordinator,
     }
 }
 

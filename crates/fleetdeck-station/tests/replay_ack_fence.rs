@@ -126,6 +126,7 @@ async fn fixture() -> Fixture {
             scope: GrantScope::Lineage,
             state: BindingState::Active,
             control_skill: "skill".to_owned(),
+            kind: fleetdeck_proto::command::GrantKind::Coordinator,
         },
     );
 

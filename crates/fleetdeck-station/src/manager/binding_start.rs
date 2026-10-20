@@ -39,6 +39,7 @@ fn damaged(row: &BindingRow) -> Binding {
         scope: fleetdeck_proto::command::GrantScope::Lineage,
         state: BindingState::Revoked,
         control_skill: String::new(),
+        kind: row.kind,
     }
 }
 

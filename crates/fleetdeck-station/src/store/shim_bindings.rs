@@ -13,6 +13,7 @@
 
 use std::sync::Arc;
 
+use fleetdeck_proto::command::GrantKind;
 use fleetdeck_proto::{Event, EventBody, SessionId};
 use rusqlite::{Connection, OptionalExtension as _, Row, params};
 
@@ -26,7 +27,7 @@ pub const REASON_NATIVE_REPLACED: &str = "native_replaced";
 
 pub(super) const COLUMNS: &str =
     "digest, shim_id, session_id, binding_id, grant_id, provider_instance,
-    native_id, generation, classes, scope, state, control_skill, expires_at, created_at";
+    native_id, generation, classes, scope, state, control_skill, expires_at, created_at, kind";
 
 /// The state of a stored binding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +84,8 @@ pub struct BindingRow {
     /// Unix ms; `None` for a fleet-only binding.
     pub expires_at: Option<i64>,
     pub created_at: i64,
+    /// The kind of the grant (MCP P4a §6.1); a reattach keeps it.
+    pub kind: GrantKind,
 }
 
 impl BindingRow {
@@ -330,6 +333,7 @@ pub(super) fn row(r: &Row<'_>) -> rusqlite::Result<RawRow> {
         control_skill: r.get(11)?,
         expires_at: r.get(12)?,
         created_at: r.get(13)?,
+        kind: r.get(14)?,
     })
 }
 
@@ -348,6 +352,7 @@ pub(super) struct RawRow {
     control_skill: String,
     expires_at: Option<i64>,
     created_at: i64,
+    kind: String,
 }
 
 impl RawRow {
@@ -368,6 +373,11 @@ impl RawRow {
             control_skill: self.control_skill,
             expires_at: self.expires_at,
             created_at: self.created_at,
+            kind: match self.kind.as_str() {
+                "coordinator" => GrantKind::Coordinator,
+                "worker" => GrantKind::Worker,
+                other => return Err(StoreError::Corrupt(format!("binding kind {other}"))),
+            },
         })
     }
 }
@@ -433,7 +443,7 @@ impl Store {
             conn.execute(
                 &format!(
                     "INSERT INTO shim_bindings ({COLUMNS})
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)"
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)"
                 ),
                 params![
                     row.digest,
@@ -449,7 +459,11 @@ impl Store {
                     row.state.as_str(),
                     row.control_skill,
                     row.expires_at,
-                    row.created_at
+                    row.created_at,
+                    match row.kind {
+                        GrantKind::Coordinator => "coordinator",
+                        GrantKind::Worker => "worker",
+                    }
                 ],
             )?;
             Ok(())

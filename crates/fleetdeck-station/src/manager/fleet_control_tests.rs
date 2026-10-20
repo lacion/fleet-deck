@@ -250,6 +250,7 @@ fn coordinator_binding(session: &SessionId, classes: &[ToolClass], state: Bindin
         scope: fleetdeck_proto::command::GrantScope::Fleet,
         state,
         control_skill: String::new(),
+        kind: fleetdeck_proto::command::GrantKind::Coordinator,
     }
 }
 
@@ -561,6 +562,34 @@ async fn a_fleet_control_start_is_checked_before_the_spawn() {
     let d = st.coord(command).await;
     let s = d.receipt.result.unwrap().session_id.unwrap();
     st.wait_turns(&s, 1).await;
+    st.manager.shutdown(StopMode::Kill).await;
+}
+
+// MCP P4a §4 (rule 3, W1), test 16: a binding of a worker grant is not a
+// coordinator that mutates, so fleet control may target its session; the
+// same binding of an owner grant stays refused.
+#[tokio::test]
+async fn fleet_control_may_target_a_worker_binding() {
+    let mut st = Station::new(4).await;
+    let ws = st.workspace();
+    let s = st.start(&ws, Some("hello")).await;
+    st.wait_turns(&s, 1).await;
+    st.switch(true);
+    let bindings = st.manager.coordinator_bindings().clone();
+    let mut binding = coordinator_binding(&s, &[ToolClass::Mail], BindingState::Active);
+    bindings.insert("digest-a".to_owned(), binding.clone());
+    let d = st.coord(follow_up(&s, "owner")).await;
+    assert_eq!(
+        st.refused(&d).await.1,
+        "the target session is a coordinator"
+    );
+
+    binding.kind = fleetdeck_proto::command::GrantKind::Worker;
+    bindings.insert("digest-a".to_owned(), binding);
+    let d = st.coord(follow_up(&s, "worker")).await;
+    assert_eq!(d.receipt.state, ReceiptState::Accepted, "{:?}", d.receipt);
+    // The binding is still bound: `policy_now` reports it (holds_grant).
+    assert!(bindings.holds_grant(&s));
     st.manager.shutdown(StopMode::Kill).await;
 }
 

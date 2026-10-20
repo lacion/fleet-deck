@@ -266,6 +266,7 @@ fn binding(granted: &[ToolClass]) -> Binding {
         classes: classes(granted),
         state: BindingState::Active,
         control_skill: "SKILL".to_owned(),
+        kind: fleetdeck_proto::command::GrantKind::Coordinator,
         scope: fleetdeck_proto::command::GrantScope::Lineage,
     }
 }

@@ -45,6 +45,7 @@ fn binding(id: &str, grant: &str, state: BindingState) -> Binding {
         scope: GrantScope::Fleet,
         state,
         control_skill: "SKILL \"v1\"\nline two".to_owned(),
+        kind: fleetdeck_proto::command::GrantKind::Coordinator,
     }
 }
 
