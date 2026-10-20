@@ -17,6 +17,7 @@ import {
   taskStatus,
 } from './fleet';
 import { GrantDesktop } from './GrantDesktop';
+import { GrantSpawn, grantTitle, hasCeilings } from './GrantSpawn';
 
 type Props = {
   readonly actions: FleetActions | undefined;
@@ -328,7 +329,7 @@ export function FleetPanel({ actions, sessions, stations }: Props) {
         <ul className="fd-fleet-list" aria-label="Coordinator grants">
           {grants.map((g) => (
             <li key={g.grant_id}>
-              <span className="fd-task-title">Coordinator {g.session_id}</span>{' '}
+              <span className="fd-task-title">{grantTitle(g)}</span>{' '}
               <span className={`fd-task-state fd-grant-${g.state}`}>{grantStatus(g)}</span>
               {grantStations(g, stations) === '' ? null : (
                 <>
@@ -371,6 +372,16 @@ export function FleetPanel({ actions, sessions, stations }: Props) {
                 >
                   Renew
                 </button>
+              ) : null}
+              {hasCeilings(g) ? (
+                <GrantSpawn
+                  grant={g}
+                  actions={actions}
+                  ask={settingsEnv === undefined ? undefined : askElevation}
+                  onChanged={() => {
+                    void actions.grants().then(setGrants);
+                  }}
+                />
               ) : null}
               {g.desktop_cap === undefined ? null : (
                 <GrantDesktop

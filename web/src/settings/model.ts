@@ -35,6 +35,18 @@ const SECTIONS: readonly { readonly title: string; readonly keys: readonly strin
   { title: 'Sharing', keys: ['member_deny'] },
   { title: 'Fleet control', keys: ['fleet_control', 'allow_fleet_control'] },
   {
+    title: 'Worker grants',
+    keys: [
+      'worker_grant.enabled',
+      'worker_grant.stations',
+      'worker_grant.spawn_cap',
+      'worker_grant.claude_mode',
+      'worker_grant.codex_mode',
+      'worker_grant.lifetime_hours',
+      'worker_grant.idle_minutes',
+    ],
+  },
+  {
     title: 'Network',
     keys: ['listen', 'link_listen', 'tailnet_hostname', 'tailscale_bin', 'tailnet_auto'],
   },

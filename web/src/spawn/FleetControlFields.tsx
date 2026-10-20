@@ -47,8 +47,8 @@ const SWITCHES: readonly {
   },
 ];
 
-const CLAUDE_CEILINGS = ['default', 'plan', 'acceptEdits', 'dontAsk', 'auto'] as const;
-const CODEX_CEILINGS = [
+export const CLAUDE_CEILINGS = ['default', 'plan', 'acceptEdits', 'dontAsk', 'auto'] as const;
+export const CODEX_CEILINGS = [
   'untrusted/read-only',
   'untrusted/workspace-write',
   'untrusted/danger-full-access',
