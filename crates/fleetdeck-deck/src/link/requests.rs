@@ -6,6 +6,10 @@
 //! - `coordinator.query` is answered by [`crate::store::coordinator_query`]
 //!   (M3 6-5, ADR-006 §6.6): the result, or `{"reject": ...}`; no receipt.
 //!   An ADR-008 read of a station is served by [`super::coordinator_reads`].
+//! - `fleet.view` (MCP P3, `fleet_view.v1`) is answered by
+//!   [`crate::store::fleet_view`] for every paired station (scope `admin`);
+//!   a refusal is a link error with the code and text of design `mcp-p3.md`
+//!   §2.2.
 //! - Every other method (`link.rotate_key` of a station) answers
 //!   `not_implemented` in this build (DL-050, DL-053).
 //!
@@ -24,6 +28,7 @@ use fleetdeck_proto::{CommandId, Receipt, StationId};
 
 use super::{DeckLink, NOT_IMPLEMENTED};
 use crate::store::coordinator::AuthorityLocal;
+use crate::store::fleet_view::FleetViewError;
 use crate::store::grant_scopes::NOT_COVERED;
 use crate::store::{LinkV2, QueryAnswer};
 
@@ -67,6 +72,8 @@ pub(crate) async fn answer(
         "station.palette" => {
             super::palette::station_palette(ctx, &station, req.params.clone()).await
         }
+        // MCP P3 (`fleet_view.v1`).
+        "fleet.view" => fleet_view(ctx, station, &req).await,
         method => Outcome::Err(WireError::new(
             NOT_IMPLEMENTED,
             format!("the deck does not serve `{method}` in this build"),
@@ -74,6 +81,24 @@ pub(crate) async fn answer(
     };
     if let Err(e) = control.respond(req.id, outcome).await {
         tracing::debug!(error = %e, "response");
+    }
+}
+
+/// `fleet.view`: the refusals of design §2.2 are link errors; a store error
+/// is a `protocol_error`.
+async fn fleet_view(ctx: &DeckLink, station: StationId, req: &InboundRequest) -> Outcome {
+    match ctx.store.fleet_view(&station, req.params.clone()).await {
+        Ok(page) => match serde_json::to_value(page) {
+            Ok(v) => Outcome::Ok(v),
+            Err(e) => Outcome::Err(WireError::new(code::PROTOCOL_ERROR, e.to_string())),
+        },
+        Err(FleetViewError::Refused(refused, text)) => {
+            Outcome::Err(WireError::new(refused, text))
+        }
+        Err(FleetViewError::Store(e)) => {
+            tracing::warn!(error = %e, "fleet view");
+            Outcome::Err(WireError::new(code::PROTOCOL_ERROR, "deck store error"))
+        }
     }
 }
 

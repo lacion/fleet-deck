@@ -241,6 +241,10 @@ pub mod feature {
     /// `desktop_input_mcp.v1`).
     pub const DESKTOP_INPUT_ANY: &str = "desktop_input_any.v1";
 
+    /// `fleet.view`: the fleet view that every session reads, with or without
+    /// a coordinator grant (MCP P3, design `docs/v2/design/mcp-p3.md` §2).
+    pub const FLEET_VIEW: &str = "fleet_view.v1";
+
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
         CONTROL,
@@ -300,6 +304,7 @@ pub mod feature {
         PROVISION_REPORT,
         STATION_TOOLS,
         DESKTOP_TOOL_INSTALL,
+        FLEET_VIEW,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];

@@ -33,7 +33,7 @@ const fn p5a_row(name: &'static str, feature: &'static str) -> MethodSpec {
 use Callers::{DeckToStation, Either, StationToDeck};
 
 /// The last rows of [`crate::methods::METHODS`].
-pub(crate) const TAIL: [MethodSpec; 58] = [
+pub(crate) const TAIL: [MethodSpec; 59] = [
     // Desktop control on the station (R13 P3): the board gates it for the
     // owner; the station checks `allow_desktop` live.
     m(
@@ -280,4 +280,14 @@ pub(crate) const TAIL: [MethodSpec; 58] = [
     p5a_row("maintenance.list", feature::DESKTOP_TOOL_INSTALL),
     p5a_row("maintenance.attach", feature::DESKTOP_TOOL_INSTALL),
     p5a_row("maintenance.resize", feature::DESKTOP_TOOL_INSTALL),
+    // MCP P3 (`fleet_view.v1`): the fleet view that every session reads. A
+    // paired station holds `admin` only; the deck handler checks the caller
+    // session on the calling station (design `mcp-p3.md` §2).
+    m(
+        "fleet.view",
+        StationToDeck,
+        Scope::Admin,
+        Some(feature::FLEET_VIEW),
+        false,
+    ),
 ];
