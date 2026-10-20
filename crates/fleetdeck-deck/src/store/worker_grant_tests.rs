@@ -17,7 +17,7 @@ use fleetdeck_proto::command::{
 use fleetdeck_proto::event::{Event, EventBody, WorkerOutcome};
 use fleetdeck_proto::link::{Scope, StationInfo};
 use fleetdeck_proto::mutation::{
-    CoordinatorBinding, CoordinatorCall, CoordinatorCallEnvelope, CoordinatorOp, CoordinatorTarget,
+    CoordinatorBinding, CoordinatorCall, CoordinatorCallEnvelope, CoordinatorOp,
 };
 use fleetdeck_proto::version::feature;
 use fleetdeck_proto::{
@@ -671,13 +671,6 @@ fn code(r: &Receipt) -> Option<RejectCode> {
     r.reject.as_ref().map(|j| j.code)
 }
 
-fn target(w: &World, session: &str) -> CoordinatorTarget {
-    CoordinatorTarget {
-        station: w.a.clone(),
-        session_id: session.into(),
-    }
-}
-
 fn fleet_grant(w: &World, session: &str) -> NewGrant {
     let mut g = NewGrant::new(w.a.clone(), session.into());
     g.classes = BTreeSet::from([
@@ -827,18 +820,6 @@ async fn fleet_control_approval_of_a_worker_spawn_stays_inside_the_worker_grant(
     })
     .await
     .unwrap();
-    let r = call_as(
-        &w,
-        &fleet,
-        "fa-owner",
-        CoordinatorOp::Send {
-            to: target(&w, "owner-1"),
-            text: "x".to_owned(),
-            delivery: fleetdeck_proto::mutation::CoordinatorDelivery::FollowUp,
-        },
-    )
-    .await;
-    let _ = r;
     let r = call_as(
         &w,
         &fleet,

@@ -434,7 +434,9 @@ impl DeckStore {
 
 /// True when a session holds an active grant with a mutating class (ADR-008
 /// §4.2 rule 3): `state = 'active'`, not past `expires_at`; an idle-expired
-/// row that was not revoked still counts (conservative).
+/// row that was not revoked still counts (conservative). A worker grant
+/// (MCP P4a W1, `kind = 'worker'`) is exempt: it does not make its session a
+/// coordinator.
 pub(super) fn holds_mutating_grant(
     tx: &Connection,
     station: &StationId,

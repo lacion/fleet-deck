@@ -125,24 +125,25 @@ fn apply_bound(
     let ours = &grant.station_id == station
         && (&grant.session_id == session
             || claims_start(tx, &b.grant_id, &grant.session_id, session)?);
-    if ours && grant.kind == GrantKind::Worker && grant.binding.is_none() {
-        if grant.state != GrantState::Active
-            && let Some((ids, now, delivery_ms)) = late
-        {
-            let item = NewOutboxItem {
-                station_id: station.clone(),
-                origin: "board".to_owned(),
-                payload: serde_json::to_value(CommandKind::Session {
-                    command: SessionCommand::CoordinatorRevoke {
-                        session_id: session.clone(),
-                        grant_id: b.grant_id.clone(),
-                    },
-                })?,
-                expires_at: now.saturating_add(delivery_ms),
-            };
-            let id: String = fleetdeck_core::ids::new_id(ids);
-            insert_item(tx, &id, &item, now)?;
-        }
+    if ours
+        && grant.kind == GrantKind::Worker
+        && grant.binding.is_none()
+        && grant.state != GrantState::Active
+        && let Some((ids, now, delivery_ms)) = late
+    {
+        let item = NewOutboxItem {
+            station_id: station.clone(),
+            origin: "board".to_owned(),
+            payload: serde_json::to_value(CommandKind::Session {
+                command: SessionCommand::CoordinatorRevoke {
+                    session_id: session.clone(),
+                    grant_id: b.grant_id.clone(),
+                },
+            })?,
+            expires_at: now.saturating_add(delivery_ms),
+        };
+        let id: String = fleetdeck_core::ids::new_id(ids);
+        insert_item(tx, &id, &item, now)?;
     }
     // A first binding needs no renewal; a higher generation of a bound
     // grant needs the owner's matching pending renewal (25b).
