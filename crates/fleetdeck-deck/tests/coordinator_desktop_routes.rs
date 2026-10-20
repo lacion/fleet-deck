@@ -93,7 +93,7 @@ async fn a_decrease_needs_no_elevation_and_an_increase_does() {
     assert!(
         up.body
             .to_string()
-            .contains("a fleet-control grant needs the owner's elevation")
+            .contains("raising a limit needs the owner's elevation")
     );
     let g = r.f.store.grant(r.grant_id.clone()).await.unwrap().unwrap();
     assert_eq!(g.desktop_cap, Some(100), "nothing changed");

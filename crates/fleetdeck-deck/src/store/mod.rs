@@ -64,6 +64,7 @@ mod fleet_view_paging_tests;
 mod fleet_view_tests;
 pub mod git_snapshots;
 pub mod grant_scopes;
+mod grant_spawn_caps;
 pub mod grants;
 mod grants_input;
 mod grants_lifecycle;

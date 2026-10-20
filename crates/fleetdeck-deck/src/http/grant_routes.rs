@@ -5,6 +5,7 @@
 //! `POST .../caps` changes the desktop caps (R13 P6 §2.2) and
 //! `GET .../desktop-ops` lists the recent desktop operations of a grant.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use axum::Json;
@@ -225,12 +226,16 @@ pub struct CapsBody {
     recording_second_cap: Option<u32>,
     input_cap: Option<u32>,
     input_character_cap: Option<u32>,
+    spawn_cap: Option<u32>,
+    max_modes: Option<BTreeMap<String, String>>,
 }
 
 /// The caps of a grant as JSON, for the audit row. The two recording caps are
 /// in it only for a grant that allows recordings, and the two input caps only
-/// for a grant that allows input (R13 P7 §3.1), so the row of any other grant
-/// keeps its exact JSON.
+/// for a grant that allows input (R13 P7 §3.1); the spawn cap is in it only
+/// for a grant with the class `spawn`, and the mode ceilings only for a grant
+/// with `spawn` or `manage` (MCP P4a §8). The row of any other grant keeps its
+/// exact JSON.
 fn caps_json(g: &Grant) -> serde_json::Value {
     let mut caps = serde_json::json!({
         "desktop_cap": g.desktop_cap,
@@ -245,6 +250,13 @@ fn caps_json(g: &Grant) -> serde_json::Value {
         caps["input_cap"] = g.input_cap.into();
         caps["input_character_cap"] = g.input_character_cap.into();
     }
+    let spawns = g.classes.contains(&GrantClass::Spawn);
+    if spawns {
+        caps["spawn_cap"] = g.spawn_cap.into();
+    }
+    if spawns || g.classes.contains(&GrantClass::Manage) {
+        caps["max_modes"] = serde_json::json!(g.max_modes);
+    }
     caps
 }
 
@@ -256,7 +268,8 @@ fn no_grant() -> ApiError {
 /// decision O12-4 item 16): a decrease needs no elevation, an increase needs
 /// the elevation of the header `x-fleetdeck-elevation`. The caps are the
 /// three desktop limits, the two recording limits and the two input limits
-/// (R13 P7 §9.1; a grant without `allow_input` refuses them). The counters
+/// (R13 P7 §9.1; a grant without `allow_input` refuses them), and the spawn
+/// cap and the mode ceilings (MCP P4a §8). The counters
 /// never change. The audit row `coordinator.grant_caps` holds the old and the new
 /// caps.
 ///
@@ -306,6 +319,8 @@ pub async fn caps(
                     recording_second_cap: req.recording_second_cap,
                     input_cap: req.input_cap,
                     input_character_cap: req.input_character_cap,
+                    spawn_cap: req.spawn_cap,
+                    max_modes: req.max_modes,
                 },
                 is_elevated(&board, &session, token),
             )
@@ -319,7 +334,7 @@ pub async fn caps(
                 CapsError::ElevationRequired => ApiError::new(
                     StatusCode::BAD_REQUEST,
                     "elevation_required",
-                    "a fleet-control grant needs the owner's elevation".to_owned(),
+                    "raising a limit needs the owner's elevation".to_owned(),
                 ),
             })?;
         let after = current_grant(&board, &grant_id).await?;
