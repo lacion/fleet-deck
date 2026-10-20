@@ -19,19 +19,22 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use fleetdeck_link::control::Control;
+use fleetdeck_proto::StationId;
+use fleetdeck_proto::fleet_view::{FleetView, FleetViewRequest};
 use fleetdeck_proto::link::Outcome;
 use fleetdeck_proto::mutation::{
     CoordinatorBinding, CoordinatorCall, CoordinatorCallEnvelope, CoordinatorQuery,
     CoordinatorQueryEnvelope,
 };
 use fleetdeck_proto::orchestration::MAX_WAIT_IDS;
+use fleetdeck_proto::version::feature;
 use fleetdeck_proto::{CommandId, IncarnationId, ProviderInstanceId, Receipt, Reject};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde_json::Value;
 
 use super::bindings::{Bindings, Caller};
 use super::desktop_forward::{DesktopRequest, McpToolResult};
-use super::ingress::Forward;
+use super::ingress::{FLEET_VIEW_UNSERVED, Forward};
 use super::tools::to_op;
 
 /// How long a forwarded call may be retried (`retry_until`, §6.5).
@@ -41,6 +44,8 @@ pub const MAX_QUESTION_CHARS: usize = 4000;
 /// The deadline of a query; `wait_task` waits at most [`WAIT_LIMIT`].
 pub const QUERY_LIMIT: Duration = Duration::from_secs(25);
 pub const WAIT_LIMIT: Duration = Duration::from_secs(55);
+/// The deadline of one `fleet.view` request (MCP P3 §3.1).
+pub const FLEET_VIEW_LIMIT: Duration = Duration::from_secs(10);
 
 /// The request path of a deck link (a [`Control`]; tests use a fake).
 #[async_trait]
@@ -435,6 +440,37 @@ impl Forward for LinkForward {
             );
         }
         self.call_direct(&link, caller, tool, args).await
+    }
+
+    async fn fleet_view(
+        &self,
+        caller: Caller,
+        view: FleetView,
+        cursor: Option<String>,
+        station: Option<StationId>,
+    ) -> Result<Value, String> {
+        let Some(link) = self.link() else {
+            return Err("unavailable: the deck is not connected".to_owned());
+        };
+        // A link without the feature gets no request at all.
+        if !link.transport.has_feature(feature::FLEET_VIEW) {
+            return Err(FLEET_VIEW_UNSERVED.to_owned());
+        }
+        let params = serde_json::to_value(FleetViewRequest {
+            caller: caller.session_id,
+            view,
+            cursor,
+            station,
+        })
+        .map_err(|e| format!("internal: {e}"))?;
+        // No outbox and no lifecycle fence: a read with a fixed deadline.
+        let sent = link.transport.request("fleet.view", None, params);
+        match tokio::time::timeout(FLEET_VIEW_LIMIT, sent).await {
+            Err(_) => Err("deck_unreachable: the fleet view timed out".to_owned()),
+            Ok(Err(e)) => Err(format!("deck_unreachable: {e}")),
+            Ok(Ok(Outcome::Err(e))) => Err(format!("{}: {}", e.code, e.message)),
+            Ok(Ok(Outcome::Ok(v))) => Ok(v),
+        }
     }
 }
 

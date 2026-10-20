@@ -100,6 +100,13 @@ fn set_focus() -> Value {
                  "description": "One line about what you do now. Empty text clears it."}}})
 }
 
+fn fleet_view() -> Value {
+    json!({"type": "object", "required": ["view"], "additionalProperties": false, "properties": {
+        "view": {"type": "string", "enum": ["stations", "projects", "sessions", "me"]},
+        "cursor": {"type": "string", "maxLength": 2048},
+        "station": {"type": "string", "maxLength": 128}}})
+}
+
 /// Every tool. The order is the order of `tools/list`.
 pub const TOOLS: &[Tool] = &[
     Tool {
@@ -187,6 +194,12 @@ pub const TOOLS: &[Tool] = &[
         classes: &[ToolClass::Own],
         description: "Set the one line that Fleet Deck shows on your card (at most 120 characters).",
         schema: set_focus,
+    },
+    Tool {
+        name: "fleet_view",
+        classes: &[ToolClass::Own],
+        description: "Read the fleet: the stations and their platforms, the projects (of one station with station), the live sessions (titles and states), or yourself and your grant. Pages: pass next_cursor back as cursor.",
+        schema: fleet_view,
     },
 ];
 

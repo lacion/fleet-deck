@@ -3,6 +3,8 @@
 //! handshake, `tools/list`, errors, headers) belongs to `rmcp`
 //! (`mcp_server.rs`); this module keeps what the station decides.
 
+use fleetdeck_proto::StationId;
+use fleetdeck_proto::fleet_view::FleetView;
 use serde_json::Value;
 
 use fleetdeck_proto::coordinator_desktop_text::code;
@@ -72,6 +74,20 @@ pub(super) async fn call(
             {
                 CallOutcome::Error(FLEET_CONTROL_OFF.to_owned())
             }
+            // The fleet view is the station's own tool, but the deck answers
+            // it (MCP P3 §3.1): one `fleet.view` for the binding's caller.
+            (BindingState::Active, Some(caller)) if tool.name == "fleet_view" => {
+                let outcome = match fleet_view_args(&args) {
+                    Ok((view, cursor, station)) => {
+                        forward.fleet_view(caller, view, cursor, station).await
+                    }
+                    Err(e) => Err(e),
+                };
+                match outcome {
+                    Ok(v) => CallOutcome::Value(v),
+                    Err(e) => CallOutcome::Error(e),
+                }
+            }
             (BindingState::Active, Some(caller)) => {
                 let outcome = if tool.is_own() {
                     match fleet {
@@ -89,4 +105,49 @@ pub(super) async fn call(
             _ => CallOutcome::Error(NOT_BOUND.to_owned()),
         },
     }
+}
+
+/// The most characters of the `cursor` argument of `fleet_view`.
+const CURSOR_ARG_MAX: usize = 2048;
+/// The most characters of the `station` argument of `fleet_view`.
+const STATION_ARG_MAX: usize = 128;
+
+/// The checked arguments of a `fleet_view` call: `view`, and the optional
+/// `cursor` and `station`. No other key is accepted, so no argument can name
+/// the caller.
+pub(super) fn fleet_view_args(
+    args: &Value,
+) -> Result<(FleetView, Option<String>, Option<StationId>), String> {
+    let Some(obj) = args.as_object() else {
+        return Err("invalid_params: the arguments are not an object".to_owned());
+    };
+    if let Some(key) = obj
+        .keys()
+        .find(|k| !matches!(k.as_str(), "view" | "cursor" | "station"))
+    {
+        return Err(format!("invalid_params: unknown argument `{key}`"));
+    }
+    let view = match obj.get("view").and_then(Value::as_str) {
+        Some("stations") => FleetView::Stations,
+        Some("projects") => FleetView::Projects,
+        Some("sessions") => FleetView::Sessions,
+        Some("me") => FleetView::Me,
+        _ => {
+            return Err(
+                "invalid_params: `view` is one of stations, projects, sessions, me".to_owned(),
+            );
+        }
+    };
+    let text = |key: &str, max: usize| -> Result<Option<String>, String> {
+        match obj.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::String(s)) if s.chars().count() <= max => Ok(Some(s.clone())),
+            Some(_) => Err(format!(
+                "invalid_params: `{key}` is a text of at most {max} characters"
+            )),
+        }
+    };
+    let cursor = text("cursor", CURSOR_ARG_MAX)?;
+    let station = text("station", STATION_ARG_MAX)?.map(StationId::from);
+    Ok((view, cursor, station))
 }

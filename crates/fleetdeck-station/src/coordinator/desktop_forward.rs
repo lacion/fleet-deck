@@ -464,6 +464,16 @@ impl Forward for Rechecked<'_> {
         self.inner.call(caller, tool, args).await
     }
 
+    async fn fleet_view(
+        &self,
+        caller: Caller,
+        view: fleetdeck_proto::fleet_view::FleetView,
+        cursor: Option<String>,
+        station: Option<fleetdeck_proto::StationId>,
+    ) -> Result<Value, String> {
+        self.inner.fleet_view(caller, view, cursor, station).await
+    }
+
     async fn call_desktop(&self, caller: Caller, request: DesktopRequest) -> McpToolResult {
         let original = binding(&caller);
         let session = caller.session_id.clone();

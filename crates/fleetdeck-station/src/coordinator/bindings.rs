@@ -155,6 +155,13 @@ pub struct Bindings {
     /// The digests of reattached bindings whose replay is not finished: the
     /// ingress answers "starting" for them (DL-194 §9.7).
     held: Arc<Mutex<HashSet<String>>>,
+    /// The name and the platform of this station for the generated MCP
+    /// instructions (MCP P3 §3.3): set at the start, the name again at every
+    /// publish of the policy.
+    station: Arc<Mutex<Option<(String, String)>>>,
+    /// The published fleet skill tree `<hash>/` (MCP P3 §4.1), once the
+    /// station published it; `None` for no injection.
+    skill_dir: Arc<Mutex<Option<std::path::PathBuf>>>,
 }
 
 /// What a shim-hosted provider runs for its tools (DL-194 §2.2, §9.3): the
@@ -213,6 +220,54 @@ impl Bindings {
             .endpoint
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(url);
+    }
+
+    /// Records the name and the platform of this station (MCP P3 §3.3).
+    pub fn set_station(&self, name: String, platform: String) {
+        *self
+            .station
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((name, platform));
+    }
+
+    /// Sets the station name and keeps the platform; without a recorded
+    /// station it does nothing (the start records both).
+    pub fn set_station_name(&self, name: String) {
+        if let Some((current, _)) = self
+            .station
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_mut()
+        {
+            *current = name;
+        }
+    }
+
+    /// The name and the platform of this station, once recorded.
+    #[must_use]
+    pub fn station(&self) -> Option<(String, String)> {
+        self.station
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Records the published fleet skill tree (MCP P3 §4.1); `None` means
+    /// no injection.
+    pub fn set_skill_dir(&self, dir: Option<std::path::PathBuf>) {
+        *self
+            .skill_dir
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = dir;
+    }
+
+    /// The published fleet skill tree, when there is one.
+    #[must_use]
+    pub fn skill_dir(&self) -> Option<std::path::PathBuf> {
+        self.skill_dir
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Records the live `allow_fleet_control` of the station (ADR-008 §3).
