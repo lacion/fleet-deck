@@ -1,101 +1,112 @@
 # MCP P4b — live grant changes and live tool lists
 
-- **Status:** Draft revision 2, 2026-10-20 (for the adversary DESIGN REVIEW). Revision 1 (997b107d) was reviewed by the advisor (Codex, `~/fleetdeck-briefs/mcp-p4b-advisor-r1.md`, summarized in §12); revision 2 applies all ten corrections.
+- **Status:** Draft revision 3, 2026-10-20 (for the adversary DESIGN RE-REVIEW round 2). Revision 1 (997b107d): advisor review (`~/fleetdeck-briefs/mcp-p4b-advisor-r1.md`, map §14.1). Revision 2 (6a69bdbe): DESIGN REVIEW round 1 FAIL, 2 BLOCKER and 10 MAJOR (`~/fleetdeck-briefs/mcp-p4b-design-r1-adversary.md`, map §14.2).
 - **Program:** DL-251 (D1), DL-255 (P4a), owner decisions L1–L3 of 2026-10-20 (`~/fleetdeck-briefs/mcp-p3-research-notes.md` §"P4b owner decisions").
 - **Evidence:** spike `spikes/s-events/` (HTTP C1–C5, X1–X3; stdio C6–C8). Claude 2.1.302 re-lists its tools 2–7 ms after `notifications/tools/list_changed`: over HTTP only on a `subscriptions/listen` stream (C1; no TTL refetch, C2), over stdio on a listen stream **or** as an unsolicited line (C6, C7). Codex 0.163.0 never re-lists inside a running process (X1A–X1C).
-- **Out of scope:** live changes of the `desktop`, `capture` and `input` classes, of their caps and allowances, of a grant's scope or stations; `resources/updated`, prompt list changes, progress and cancellation work; Codex live tool lists (impossible in 0.163.0); undoing work that a station already received before a narrowing.
+- **Out of scope:** live changes of the `desktop`, `capture` and `input` classes, of their caps and allowances, of a grant's scope or stations; `resources/updated`, prompt list changes, progress and cancellation; Codex live tool lists (impossible in 0.163.0); a binary downgrade of a station past its migration V42 (§9).
 
 ## 1. Goals
 
-1. **Give (L1).** The owner gives a grant to a session that has no owner grant (running or not: a session started without one, a resumed session, a session started before P4a, a session with a worker grant).
+1. **Give (L1).** The owner gives a grant to a session that has no owner grant in effect (running or not: a session started without one, a resumed session, a session started before P4a, a session with a worker grant).
 2. **Change (L1).** The owner adds or removes the classes `read`, `mail`, `drive`, `spawn`, `inspect`, `manage`, `answer` of a session's owner grant. Every widening needs the owner's elevation, as at creation.
 3. **Live tool list.** A running Claude session sees a change within seconds on both hosts (direct HTTP and shim stdio, L3).
-4. **Grants outlive processes (L2).** An owner grant belongs to the session, not to one provider process: when the process ends (hibernation, crash, exit) and the session starts again (resume, auto-continue), the new process gets the grant at its start. So Codex sees a change at its next start.
-5. **The deck stays the authority.** Every class-gated call is decided by the deck from the stored grant, and a narrowing also stops queued work that the removed classes authorized (§7). The station's tool list decides only what a session *sees*.
+4. **Grants outlive processes (L2).** An owner grant that has a record (§2) belongs to the session, not to one provider process: when the process ends and the session starts again, the new process gets the grant at its start. So Codex sees a change at its next start.
+5. **The deck stays the authority.** Every class-gated call is decided by the deck from the stored grant. A narrowing or a revoke stops every **fleet-control command** at the station's pre-execution authority check (§7). Ordinary work (mail, tasks, drive, spawn) that the deck admitted before a narrowing or a revoke completes, exactly as after a revoke today (§7.3).
 
-## 2. The model: a desired state per session
+## 2. The model: one desired state per session, ordered by one sequence
 
-- **Deck.** The `tokens` row of an owner grant is the desired state. A new column `revision INTEGER NOT NULL DEFAULT 0` counts its changes (give = 1, each change +1, revoke = terminal). A new column `station_revision INTEGER NOT NULL DEFAULT 0` holds the highest revision that the station acknowledged. A new column `epoch INTEGER` (§5) is the execution generation of the current process.
-- **Station.** A new durable table `session_grants` (station migration V42): `session_id PK`, `grant_id`, `revision`, `spec` (JSON: the station form of the `CoordinatorSpec`: classes, scope, control skill, expiry, kind, the allowances that `grant_classes` reads), `epoch`, `state` (`attached` | `ended`), `updated_at`. One row per session; an `ended` row is a tombstone for its `grant_id` (a later message for that grant never revives it). It is independent of credential rows (`shim_bindings`) and of shim cleanup.
-- **The binding of a running process is derived from the record**: at every process start (start, resume, auto-continue resume) and on every accepted change. Credentials keep their own lifecycle (§4).
-- A record exists only when the deck link negotiated `coordinator_live.v1` when the record was written (§9); without a record every rule of today applies unchanged.
+- **Deck.** A new table `session_owner_grant(station_id, session_id, grant_id, seq INTEGER NOT NULL, station_seq INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (station_id, session_id))`. `seq` is a **per-session** counter: every give, change and end of an owner grant of that session takes the next value; it never goes back, also across different grants. `station_seq` is the highest `seq` that the station acknowledged.
+- **Station.** A new durable table `session_grants` (station migration V42): `session_id PRIMARY KEY`, `grant_id`, `seq`, `spec` (JSON: the station form of the `CoordinatorSpec`: classes, scope, control skill, `expires_at`, kind, the allowances that `grant_classes` reads), `generation` (the binding generation of the latest process of this record), `state` (`attached` | `ended`), `ended_reason`, `updated_at`. It is independent of `shim_bindings` and of shim cleanup.
+- **The binding of a running process is derived from the record**, at every process start and on every accepted change. Credentials keep their own lifecycle (§4).
+- Records exist only for grants that a `coordinator_live.v1` deck gave or started (§9); a grant without a record follows every rule of today.
 
 ## 3. One command: `session.coordinator_set`
 
-- Proto: `SessionCommand::CoordinatorSet { session_id, grant_id, revision: u64, spec: Option<Box<CoordinatorSpec>> }` (`session.coordinator_set`). `Some(spec)` is the full desired state (give or change); `None` is the end (revoke). The existing `session.coordinator_revoke` stays for links without the feature.
-- Station rules, in the decision transaction:
-  1. `guard` (paired deck) and `owner` (origin `Board`); `kind` must be `coordinator`; no `desktop`/`capture`/`input` class may differ from the record's (a give may not carry them at all).
-  2. Read the record. `revision <= record.revision` for the same grant → accepted as a duplicate, no change. An `ended` record of the same `grant_id` → refuse `grant_ended`. A record of **another** `grant_id` in state `attached` → refuse `has_grant` (the deck replaces only through an end first, §6.1).
-  3. Write the record (`attached` with the new spec and revision, or `ended`), then apply it to the running binding, if any (§4), in the same transaction (shim: the row rewrite; direct: memory after the commit).
-  4. The receipt's result carries the applied revision; the deck sets `station_revision = max(station_revision, revision)`.
-- Ordering: the deck queues at most one pending `coordinator_set` per grant (a newer one supersedes and cancels the older pending command in the same transaction). Revisions make any reordering harmless; the tombstone makes a delayed give after a revoke harmless.
-- Reconcile: when a link that negotiated `coordinator_live.v1` comes up, the deck queues the latest desired state for every grant of that station whose `station_revision < revision` and that has no pending set.
+- Proto: `SessionCommand::CoordinatorSet { session_id, seq: u64, grant_id, spec: Option<Box<CoordinatorSpec>> }` (`session.coordinator_set`). `Some(spec)` is the full desired state of that grant (give or change); `None` ends it (revoke). The existing `session.coordinator_revoke` stays for grants without a record.
+- **Station rules,** in the decision transaction:
+  1. `guard` (paired deck) and `owner` (origin `Board`); `spec.kind` must be `coordinator`; a give may not carry `desktop`/`capture`/`input` classes, and a change may not change their membership against the record (`invalid_grant`).
+  2. `seq <= record.seq` → accepted as stale, no change (the receipt names the record's `seq`). A new session has `record.seq = 0`.
+  3. `seq > record.seq`: write the record (`attached` with this grant and spec, or `ended` with `ended_reason = revoked` when `spec` is `None` and the grant is the record's). When the record held **another** grant that is still `attached`, that grant ends in the same transaction (`coordinator.ended { old binding, generation, "replaced" }`); the deck already ended it (§6.1).
+  4. Apply the record to the running binding, if any (§4), in the same transaction (shim: the row rewrite; direct: memory after the commit).
+  5. The receipt's result carries the record's `seq`; the deck sets `station_seq = max(station_seq, seq)`.
+- Ordering and reconcile: the deck keeps at most one pending `coordinator_set` per session (a newer one supersedes and cancels the older pending command in the same transaction). When a link that negotiated `coordinator_live.v1` comes up, the deck queues the latest desired state of every session of that station whose `station_seq < seq` and that has no pending set. Because one sequence orders every grant of the session, a delayed message of a replaced or ended grant can never restore it.
 
 ## 4. The running binding
 
 ### 4.1 In-place changes keep the credential
 The provider process holds its token in its environment, so a change of a running session never mints a credential. The binding entry under the same digest is rewritten:
-- **give or change** (record `attached`): `binding_id = "{s}:{grant}"`, `grant_id`, `classes = grant_classes(record.spec, features)`, `scope`, `control_skill`, `kind`, `expires_at` (new field of `Binding`, from the spec). The native identity and the state stay as they are: a `Pending` binding stays `Pending` (it binds later as today); an `Active` one stays `Active`.
-- **end** (record `ended`, a revoke): the entry becomes the session's fleet-only binding in place (`"{s}:fleet"`, empty `grant_id`, classes `{Own}`, scope `Lineage`, the fleet skill, no expiry, every internal allowance cleared), state unchanged. A session then keeps exactly what every grant-less session has (D2).
-- **Shim host, durably:** a new store function rewrites the `shim_bindings` row of the digest (`binding_id`, `grant_id`, `classes`, `scope`, `control_skill`, `kind`, `expires_at`) in the decision transaction; memory is published only after the commit; a failed save leaves the old entry gated (the request answers `starting`) until the next reload. Recovery loads the rewritten row, never the old authority.
-- **Lifecycle events:** a give or a change of an `Active` binding appends `coordinator.bound { binding_id, grant_id, generation: epoch, … }` only for the first attach of that grant in this process (the deck's first bind); a change appends nothing; an end appends `coordinator.ended { old binding_id, epoch, "revoked" }`. A worker binding that a give replaces appends `coordinator.ended { worker binding, generation, "replaced" }` first (§6.1).
-- Never: an in-place rewrite of a `Revoked` or `Expired` entry, of an entry whose shim row is `ended` or `suspended`, or of a fenced digest. Those stay dead; a session whose credential is dead gets the record at its next process start.
+- **attached record:** `binding_id = "{s}:{grant}"`, `grant_id`, `classes = grant_classes(record.spec, features)`, `scope`, `control_skill`, `kind`, `expires_at` (a new field of `Binding`). The native identity and the state stay: `Pending` stays `Pending`, `Active` stays `Active`.
+- **ended record:** the entry becomes the session's fleet-only binding in place (`"{s}:fleet"`, empty `grant_id`, classes `{Own}`, scope `Lineage`, the fleet skill, no expiry, every internal allowance cleared), state unchanged: exactly the grant-less tool set (D2).
+- **A worker binding** that a give replaces is rewritten the same way in the same transaction, with `coordinator.ended { worker binding, generation, "replaced" }`; the deck sends no separate worker revoke for a replacement (§6.1).
+- **Shim host, durably:** a new store function rewrites the `shim_bindings` row of the digest (`binding_id`, `grant_id`, `classes`, `scope`, `control_skill`, `kind`, `expires_at`) in the decision transaction; memory is published only after the commit; a failed save leaves the old entry gated (`starting`) until the next reload. Recovery loads the rewritten row, never the old authority.
+- **Events:** the first attach of a grant to an `Active` binding of this process appends `coordinator.bound { binding_id, grant_id, generation, … }` (the generation of §5); a change appends nothing; an end appends `coordinator.ended { binding, generation, "revoked" }`.
+- **Never** rewritten in place: a `Revoked` or `Expired` entry, an entry whose shim row is `ended` or `suspended`, a fenced digest. Those stay dead; the session gets the record at its next process start.
 
 ### 4.2 Hard invalidation stays
-Rotation (resume), the process end, a fence, a changed native identity, a station-local refusal and the station's own expiry check keep killing the credential exactly as today. Only the deck's revoke of an owner grant with a record becomes the in-place downgrade. A leaked token therefore keeps fleet-only access until its process ends (the same as a grant-less session) and would see a later give to that session; this is accepted (the token never leaves the provider's environment).
+Rotation (resume), the process end, a fence, a changed native identity, a station-local refusal and the station's own expiry check keep killing the credential exactly as today. Only the end of a grant **with a record** becomes the in-place downgrade. A leaked token therefore keeps fleet-only access until its process ends (as a grant-less session) and would see a later give to that session; accepted (the token never leaves the provider's environment).
 
-## 5. Process starts: the execution epoch (L2)
+## 5. Process starts and generations (L2)
 
-- At every process start of a session whose record is `attached` and whose `spec.expires_at` is in the future, `tools_generic` prepares the **grant** binding (not the fleet-only one), with a new credential, `generation = record.epoch + 1`, state `Pending`, and stores the new epoch in the record. The shim host uses the grant row in `store_tools` as at a start; `rotate_out` ends only the previous execution's rows of this session, with reason `rotated` and **without** a `coordinator.ended` for a grant that has a record.
-- When the new process's native identity is known, the binding becomes `Active` and the station appends `coordinator.bound { generation: new epoch }`. For a resume the expected native identity is the session's stored native id: a mismatch revokes (as today) and ends the record (`coordinator.ended "identity_changed"`); until the identity is verified the binding is `Pending` and every gated call is refused (as today for `Pending`).
-- At the process end the binding ends as today (credential dead), but for a grant with a record the station appends `coordinator.ended { …, "process_exit" }` **only** when the record is `ended`; otherwise it appends `coordinator.detached { binding_id, grant_id, generation }` (new event, decoded by an older deck as `Unknown`, only sent on a `coordinator_live.v1` link).
-- **Deck:** `coordinator.detached` of the bound generation sets the grant's binding to detached (the state stays `active`; the idle clock and the lifetime keep running; no call can arrive, there is no credential). A later `coordinator.bound` from the same station and session with `generation > ` the detached generation rebinds the grant (no owner renewal): `epoch = generation`, `invalidate_stale_generation` runs, the usage counters and the idle clock are kept. Every other higher generation still needs the owner's pending renewal (today's rule).
-- **Renewal:** an idle-expired grant with a record renews as today; the station's renew accepts a binding of the current epoch in state `Expired`, and a record whose process is gone (renew then only updates the record; the next process start uses it).
-- **Late or stale work:** every station outbox item and every deck operation is keyed by `(grant_id, generation)`; a new epoch invalidates the old generation's pending work on both sides (`invalidate_stale_generation` on the deck; the station drops outbox items of an older generation of the grant).
+- **One generation counter per grant**, owned by the record (`record.generation`) and acknowledged by the deck (`tokens.bound_generation`). It moves forward on two paths only: a process start and a renewal.
+- **Process start.** At every process start of a session whose record is `attached` and not past `spec.expires_at`, `tools_generic` prepares the grant binding (not the fleet-only one) with a new credential, `generation = record.generation + 1`, state `Pending`, and stores the new generation in the record. Shim host: `store_tools` with the grant row; `rotate_out` ends only rows of earlier processes of the session (reason `rotated`, no `coordinator.ended` for a grant with a record). A record past its expiry ends (`ended_reason = expired`, `coordinator.ended "expired"`) and the process gets the fleet-only binding.
+- **Bind.** When the native identity is known the binding becomes `Active` and the station appends `coordinator.bound { generation }`. A resume expects the session's stored native id; a mismatch revokes the binding, ends the record (`ended_reason = identity_changed`) and appends `coordinator.ended { binding_id, generation, "identity_changed" }` (§6.4 handles it on the deck). Until the identity is verified the binding is `Pending` and every gated call is refused (as today).
+- **Process end.** The binding ends as today (credential dead). For a grant with an `attached` record the station appends **no** `coordinator.ended`; the record stays attached.
+- **Deck rebind rule** (`apply_bound`): a `coordinator.bound` for a grant with a `session_owner_grant` entry, from the grant's station and session, with `generation > bound_generation`, rebinds the grant **when the grant is in effect** (active, inside its lifetime, not idle-expired): `bound_generation = generation`, `invalidate_stale_generation`, the usage counters and the idle clock kept. A grant not in effect ignores it (the owner renews, below). Every other higher generation needs the owner's pending renewal, as today. No detach event and no snapshot change are needed: a missed process end changes nothing, because the next process's higher generation rebinds.
+- **Renewal.** The owner renews an idle-expired grant as today; the deck's pending renewal is `p = bound_generation + 1`. The station's renew of a grant with a record sets `record.generation = g = max(p, record.generation + 1)`; when a process of the session holds the binding, its generation becomes `g` and it appends `coordinator.bound { g }`; otherwise the record keeps `g − 1` as its base so that the next process start binds at `g`. The deck accepts a renewal bound with `generation >= p` (instead of `== p`) for grants with a record.
+- **Stale work:** every deck coordinator operation is keyed by `(grant_id, generation)`; a rebind runs `invalidate_stale_generation`, and the station's authority check (§7.1) compares the generation.
 
-## 6. Deck routes
+## 6. Deck routes and lifecycle
 
 ### 6.1 Give: `POST /api/coordinator/sessions/{station_id}/{session_id}/grant`
 - Owner login only (`403 owner_only` for a member or a token). Body: the board's coordinator request (the JSON of `spec.coordinator` of a board start) without desktop, capture, input, recording or click fields (`400 invalid_grant` "desktop, screenshot and input access is given only at start").
-- Checks: the station link negotiated `coordinator.v1` and `coordinator_live.v1` (`409 not_supported`); the session is known on the deck and not deleted; then the creation checks of `owner_start`, moved into one shared function `check_owner_grant` used by both (classes, `take_spawn_fields`, target stations, the elevation rule, `coordinator.v2` for fleet control).
-- **One owner attachment per session**, reserved in the transaction: a new deck table `session_owner_grant(station_id, session_id PK, grant_id)` holds the session's current owner grant until that grant is revoked or its lifetime ends. A give for a session that has an entry → `409 has_grant` (also when the grant is idle-expired: the owner renews it or revokes it first). Concurrent gives: the second transaction finds the entry.
-- In one transaction: create the grant (`session_id` set, `start_command_id` NULL, `revision = 1`), insert `session_owner_grant`, revoke a worker grant in effect for the session (`replaced`) and queue for it the `coordinator_set { worker grant, end }`-equivalent (the existing worker revoke), queue `coordinator_set { grant, 1, spec }` (commands table; held by the router until the link negotiated `coordinator_live.v1`), audit `coordinator.grant_created` with `live=true`.
-- A failed or rejected give (`commands::finish`) revokes the grant (`attach_failed`) and deletes its `session_owner_grant` entry. A `coordinator.bound` for a revoked owner grant queues `session.coordinator_set { end }` (the P4a late-bound rule, extended to owner grants with a record).
+- Checks: the station link negotiated `coordinator.v1` and `coordinator_live.v1` (`409 not_supported`); the session is known on the deck; then `check_owner_grant`, the creation checks moved out of `owner_start` (classes, `take_spawn_fields`, target stations, the elevation rule, `coordinator.v2` for fleet control).
+- **One owner grant per session:** in the transaction, a `session_owner_grant` row whose grant is in effect **or idle-expired** → `409 has_grant` (renew or revoke it first). A row whose grant is terminal (revoked, lifetime over) is overwritten.
+- In one transaction: create the grant (`session_id` set, `start_command_id` NULL), write `session_owner_grant` with the next `seq`, mark a worker grant in effect for the session revoked (`replaced`) **without** queueing a worker revoke (the station ends it inside the set, §4.1), queue `coordinator_set { seq, grant, spec }` (commands table; the router holds it until the link negotiated `coordinator_live.v1`), audit `coordinator.grant_created` with `live=true`.
+- A failed or rejected give (`commands::finish`) revokes the grant (`attach_failed`); the next give overwrites the row.
 
 ### 6.2 Change: `POST /api/coordinator/grants/{grant_id}/classes`
-- Owner login only. Body `{ classes, spawn_cap?, max_modes?, answer_cap? }`. The grant: kind `coordinator` (`409 worker_grant` for a worker grant: its classes are fixed), not revoked, has a `session_owner_grant` entry or its station negotiated `coordinator_live.v1`.
-- Rules: `desktop`/`capture`/`input` membership unchanged; at least one class; a newly added `spawn` requires `spawn_cap` and `max_modes` (`take_spawn_fields` rules); a newly added `answer` requires `answer_cap`; a new fleet-control class needs `coordinator.v2` on every station of the grant and the fleet-control switch; the caps fields are allowed only with their newly added class (every other cap change goes through the caps route).
-- **Widening, compared with the stored row in the transaction:** any added class; a cap that is higher than the stored one; a new provider family in `max_modes`; a ceiling that is not `mode_within` the stored one (the rules of `grant_spawn_caps.rs`). Widening needs elevation; anything else needs none.
-- In one transaction: write the classes and the caps (the usage counters are never reset; a removed and re-added class keeps its counters), `revision += 1`, audit `coordinator.grant_classes` (old and new classes and caps), `sync_coordinate_scopes`, apply §7 (stop queued work of removed classes), and queue `coordinator_set { grant, revision, spec }` superseding any pending set.
+- Owner login only. Body `{ classes, spawn_cap?, max_modes?, answer_cap? }`. The grant: kind `coordinator` (`409 worker_grant`), not terminal, has a `session_owner_grant` row (a grant without a record: `409 not_supported`).
+- Rules: the `desktop`/`capture`/`input` membership unchanged; at least one class; a newly added `spawn` requires `spawn_cap` and `max_modes`; a newly added `answer` requires `answer_cap`; a new fleet-control class needs `coordinator.v2` on every station of the grant and the fleet-control switch; caps fields only with their newly added class (other cap changes use the caps route).
+- **Widening, compared with the stored row in the transaction:** any added class; a cap higher than the stored one; a new provider family in `max_modes`; a ceiling that is not `mode_within` the stored one (the rules of `grant_spawn_caps.rs`). Widening needs elevation.
+- In one transaction: write the classes and caps (usage counters never reset; a removed and re-added class keeps its counters), the next `seq`, audit `coordinator.grant_classes` (old and new), `sync_coordinate_scopes`, apply §7.2, and queue `coordinator_set { seq, grant, spec }` superseding any pending set.
 
 ### 6.3 Revoke
-Unchanged route. For a grant with a `session_owner_grant` entry on a `coordinator_live.v1` link: `revision += 1`, delete the entry, queue `coordinator_set { end }` instead of `session.coordinator_revoke`.
+Unchanged route. For a grant with a `session_owner_grant` row: the next `seq`, the grant revoked, §7.2, and `coordinator_set { seq, grant, None }` instead of `session.coordinator_revoke`.
 
-## 7. Narrowing stops queued work (advisor correction 2)
+### 6.4 Terminal events from the station
+- For a grant with a `session_owner_grant` row, a `coordinator.ended` from the grant's station with `binding_id = "{s}:{grant}"`, a terminal reason (`identity_changed`, `expired`, `revoked`, `replaced`) and `generation >= bound_generation` makes the grant terminal (revoked with that reason, `expired` for `expired`), applies §7.2, and leaves the row for the next give to overwrite. (Today's exact-generation rule stays for grants without a row.)
+- The late-bound rule of P4a (a `coordinator.bound` for a terminal grant queues an end) extends to owner grants with a row: it queues `coordinator_set { next seq, grant, None }`.
 
-- Every deck coordinator operation and intent that the deck sends to a station on behalf of a grant records `grant_id`, the generation, and the **class that authorized it** (today non-fleet intents carry no command authority: they get it).
-- Before every send and resend (the router and the outbox), and before the deck executes a queued deck-side step (land, move, assign), the deck re-checks that the grant is in effect, at that generation, and still has that class; otherwise the item fails with `authority_removed` and is not sent.
-- A narrowing (§6.2) or a revoke fails, in its own transaction, every pending item of the grant whose class was removed.
-- Work that a station already received is not undone (out of scope); the station executes only commands from its paired deck.
+## 7. Narrowing and execution
+
+### 7.1 Fleet-control commands: the station's pre-execution check
+- Every outbox item and every `land_queue`/move item that carries a `CommandAuthority` also stores, deck-side only, the **full class set** that admitted it (`outbox.required_classes`, the same in the land and move tables; JSON array; the admitting decision's class requirements, for example `{spawn, manage}` for `project_start`).
+- `authority_local` (the deck's answer to the station's `coordinator.authority_check` before a fleet command runs, ADR-008 §6.2) and its land and move fallbacks also require `required_classes ⊆ grant.classes` (besides today's state, generation, coverage and switch). A narrowing or a revoke therefore stops any fleet command that the station has not executed yet, also one already sent: the station executes only after the deck says yes.
+- Items admitted before this change (no `required_classes`) are checked as today.
+
+### 7.2 Narrowing fails pending items at once
+A narrowing (§6.2), a revoke or a terminal event (§6.4), in its own transaction, fails every pending outbox, land and move item of the grant whose `required_classes` is no longer a subset (`authority_removed`), so it is never sent.
+
+### 7.3 Ordinary work
+Ordinary intents (mail, tasks, drive, spawn without fleet control) keep today's semantics: they carry no `CommandAuthority`, the deck admits them against the grant at call time, and work that was admitted before a narrowing or a revoke completes (as after a revoke today). The fleet-control rules (`fleet_control_off`, `coordinator.v2`, strict targets) still apply only to fleet commands.
 
 ## 8. Live tool list transport
 
 ### 8.1 A change signal bound to the credential
-- `authenticate` returns, under the bindings lock, a stable handle: the digest, an entry incarnation number (bumped by `insert`), the current version, and a `watch::Receiver<u64>` registered at the same moment. `BindingExt` carries the handle, not only the snapshot.
-- In-place changes (§4.1) bump the version and keep the watch open (the listener notifies). Hard invalidation (§4.2: revoke of a credential, rotation, removal, expiry, process end, fence) closes the watch; every listen or watch stream on it ends.
-- Receivers coalesce (one notification for many changes).
+- `authenticate` returns, under the bindings lock, a stable handle: the digest, an entry incarnation (bumped by `insert`), and a `watch::Receiver<u64>` registered at the same moment. `BindingExt` carries the handle as well as the snapshot.
+- In-place changes (§4.1) bump the version and keep the watch open. Hard invalidation (§4.2) closes the watch; every listen or watch stream on it ends. Receivers coalesce.
 
-### 8.2 HTTP: rmcp's `subscriptions/listen` (option B)
-- `get_info` adds `.enable_tool_list_changed()`. `StationMcp` implements `accepted_subscription_filter` (only `toolsListChanged`) and `listen(ctx)`: it takes the handle from the request extensions, sends one `notify_tool_list_changed()` right after the acknowledgment when the handle's version is newer than the version the request authenticated with (a change during the reconnect), then loops: version change → notify; watch closed → return `Ok(())` (the final result); `ctx.cancelled()` → return.
-- `McpService::serve` returns, for a modern `subscriptions/listen` only, rmcp's response with its headers (`Content-Type`, `Cache-Control`, `X-Accel-Buffering`) and its body unbuffered; every other request keeps today's collected reply and `PermitSlot` flush rule. The ingress response body is `Either<Full<Bytes>, BoxBody>`.
-- **Admission:** authentication and the rate check are separate from the 8 ordinary request permits. A listen takes a listen permit (at most 2 per binding, 256 per station, acquired atomically) that the **body** owns for its whole life (not `PermitSlot`); the unauthenticated intake permit is released after the handshake. The connection limit becomes 512, of which listens may hold at most 256.
-- **Stalls:** a notification frame that cannot be written within 30 s ends the stream; rmcp's 15 s keep-alive stays; there is no lifetime limit for a healthy listener.
+### 8.2 HTTP: rmcp's `subscriptions/listen`
+- `get_info` adds `.enable_tool_list_changed()`. `StationMcp` implements `accepted_subscription_filter` (only `toolsListChanged`) and `listen(ctx)`: it takes the handle from the request extensions, sends **one `notify_tool_list_changed()` right after every acknowledgment** (the client re-lists once; this covers every change before the listen, also a change before the reconnect authenticated), then loops: version change → notify; watch closed → return `Ok(())` (rmcp's final result); `ctx.cancelled()` → return.
+- `McpService::serve` returns, for a modern `subscriptions/listen` only, rmcp's response with its headers (`Content-Type`, `Cache-Control`, `X-Accel-Buffering`) and its body unbuffered; every other request keeps today's collected reply and `PermitSlot` flush rule. The ingress response body becomes `Either<Full<Bytes>, BoxBody>`.
+- **Admission:** authentication and the rate check are separate from the 8 ordinary request permits. A listen takes a listen permit (2 per binding, 256 per station, atomic) that the body owns for its whole life; the unauthenticated intake permit is released after the handshake. The connection limit becomes 512, of which listens hold at most 256.
+- **Stalls:** a frame that cannot be written within 30 s ends the stream; rmcp's 15 s keep-alive stays; no lifetime limit for a healthy listener.
 - A legacy-era `subscriptions/listen` keeps today's method-not-found answer.
 
 ### 8.3 Stdio: a push line through the bridge
-- **Socket.** First line `WATCH <token>`. The station answers one line: `OK watch.v1` (registered, with the handle of §8.1), `ERR unauthorized` (dead credential), `ERR starting`, `ERR limited`; an older station answers `ERR bad_request`. Limits: 2 watches per binding, 128 per station, `MAX_CONNECTIONS` 64 → 256 with at most 128 watches. After `OK` the station writes only the line `{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}` per coalesced change (a write stalled for 30 s closes); it reads with a bounded buffer and closes on EOF or on any client byte. A closed watch closes the connection.
-- **Bridge.** It starts the watch task only after it relayed the first successful answer to `server/discover` or `initialize`. Then: connect, `WATCH`, expect `OK watch.v1`; write each received line that is exactly the notification (at most 256 bytes; anything else closes the connection) to stdout through `emit`, coalescing (at most one pending). On `ERR unauthorized` or `ERR bad_request` (unsupported) the task stops for good; on `ERR starting`, `ERR limited` or a connection error it retries with backoff 1 s → 30 s plus jitter; after a reconnect that follows a lost **established** watch it writes one notification. The task stops when stdin closes.
-- A `subscriptions/listen` that arrives through the socket is answered at once with JSON-RPC error `-32601` (before the collecting path). A shim session started before the upgrade runs the old bridge and gets no push; it gets the record's tools at its next process start.
+- **Socket.** First line `WATCH <token>`. Answer: `OK watch.v1` (registered with the handle of §8.1), `ERR unauthorized`, `ERR starting`, `ERR limited`; an older station answers `ERR bad_request`. Limits: 2 watches per binding, 128 per station; `MAX_CONNECTIONS` 64 → 256 with at most 128 watches. After `OK`, the station writes the line `{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}` **once at once** (a refresh for every change before the registration) and then once per coalesced change; a write stalled 30 s closes; it reads with a bounded buffer and closes on EOF or any client byte; a closed watch closes the connection.
+- **Bridge.** It starts the watch task only after it relayed the first successful answer to `server/discover` or `initialize`. Connect, `WATCH`, expect `OK watch.v1`; write each received line that is exactly the notification (at most 256 bytes; anything else closes) to stdout through `emit`, coalescing (at most one pending). `ERR unauthorized` or `ERR bad_request` stop the task for good; `ERR starting`, `ERR limited` or a connection error retry with backoff 1 s → 30 s plus jitter. The station's first line after every `OK` is the refresh, so the bridge never synthesizes one. The task stops when stdin closes.
+- A `subscriptions/listen` through the socket is answered at once with `-32601` (before the collecting path). A shim session started before the upgrade runs the old bridge and gets no push; it gets the record's tools at its next process start.
 
 ### 8.4 Codex
 Unchanged: legacy era, no listen, no re-list; the record reaches it at its next process start (§5).
@@ -103,61 +114,84 @@ Unchanged: legacy era, no listen, no re-list; the record reaches it at its next 
 ## 9. Versions and feature gating
 
 - Feature `coordinator_live.v1` (`version.rs`, after `WORKER_GRANT`). The deck sends `coordinator_set` only on a link that negotiated it; the router holds it otherwise; the give and change routes refuse with `409 not_supported`; the board hides the actions.
-- The station writes a record only from a `coordinator_set` (or from a start whose deck link negotiated the feature: a start-time owner grant then gets a record too, so it also outlives its process); the station's behaviour for a grant **without** a record is exactly today's (process end → `coordinator.ended process_exit`, revoke kills the credential). So every new lifecycle rule is tied to a record that only a `coordinator_live.v1` deck creates, and is persisted with it.
-- `coordinator.detached` is sent only for grants with a record; the projection of the snapshot gets no new variant (a detached grant is absent from the binding projection; the deck keeps its state).
-- WATCH is negotiated by its own `OK watch.v1` answer; an old station never causes synthetic refreshes.
+- A start-time owner grant of a deck link that negotiated the feature also gets a record (the deck writes a `session_owner_grant` row with `seq = 1` when the start's receipt names the session; the station writes the record when it prepares the start's grant binding, with `seq = 1`). Every new station lifecycle rule (no `coordinator.ended` at the process end, the downgrade, the rebind at a start) is tied to a record, which only such a deck creates.
+- The deck's new rules (rebind, `>=` renewal, terminal events by binding id) apply only to grants with a `session_owner_grant` row.
+- WATCH is negotiated by its own `OK watch.v1`; an old station never causes a synthetic refresh.
+- **Downgrade:** station migrations are forward-only (an older station binary refuses a newer database, `DbError::TooNew`), as for every earlier migration. A binary downgrade past V42 is not supported; the release notes say so. A deck downgrade keeps the station's records harmless: an older deck never sends `coordinator_set`, and the station keeps applying its records at process starts (the older deck sees ordinary `coordinator.bound` events at higher generations and, without the rebind rule, ignores them, so the grant's calls are refused until the owner renews it).
 
 ## 10. Authorization invariants
 
 1. Only the owner login gives, changes or ends a grant; no coordinator tool can.
-2. Every widening (class, cap, family, ceiling) needs the owner's elevation, compared with the stored row in the transaction; a removed and re-added class keeps its usage counters.
-3. The deck decides every class-gated call from the stored grant; a narrowing fails queued work of the removed classes before any send; already-sent work is not undone.
-4. A worker grant is never widened; a give replaces it.
-5. One owner grant per session (reserved in the transaction); a tombstone stops a delayed give after a revoke; revisions order every change.
-6. In-place changes keep the credential; hard invalidation keeps killing it; a dead credential is never revived; a new process gets a new credential and a new epoch that the deck acknowledges.
-7. Listen and watch streams are authenticated, bounded per binding and per station, own their permits, detect stalls and EOF, and end with their credential.
+2. Every widening (class, cap, family, ceiling) needs the owner's elevation, compared with the stored row in the transaction; a removed and re-added class keeps its usage counters. Worker grants: their classes never change; their caps can be raised with elevation within the worker bounds (P4a §8, unchanged).
+3. The deck decides every class-gated call from the stored grant. A fleet command runs only after the deck's pre-execution check confirms its full class set, generation and state (§7.1). Ordinary admitted work completes (§7.3).
+4. One owner grant per session; one per-session sequence orders every give, change and end, so a delayed message never restores a replaced or ended grant.
+5. In-place changes keep the credential; hard invalidation keeps killing it; a dead credential is never revived; a new process gets a new credential and a higher generation that the deck accepts only for a grant in effect.
+6. Listen and watch streams are authenticated, bounded per binding and per station, own their permits, refresh once at registration, detect stalls and EOF, and end with their credential.
 
 ## 11. Tests (names are binding)
 
 Station:
-1. `a_change_bumps_the_watch_and_hard_invalidation_closes_it` (in-place keeps it open; revoke-of-credential, rotation, expiry, process end close; registration is race-free with the authenticate handle).
-2. `a_listen_stream_notifies_and_ends_with_the_credential` (HTTP modern era: ack, a change, a downgrade keeps it open, a rotation ends it with the final result; permits: 8 busy request permits do not block a listen, the 3rd listen of a binding is refused, the 257th of the station is refused; a stalled reader ends after 30 s; a legacy listen gets method-not-found; the socket listen gets -32601).
-3. `a_watch_connection_pushes_lines_and_closes_with_the_credential` (OK, unauthorized, starting, limited, bad_request from an old station; EOF and client bytes close; limits).
-4. `the_bridge_starts_its_watch_after_discovery_and_reconnects_with_backoff` (no line before the first answer; one line after a lost established watch; stops on unauthorized, on bad_request and on stdin close; coalescing; oversize line closes).
-5. `coordinator_set_orders_revisions_and_keeps_tombstones` (older revision ignored, duplicate accepted, `grant_ended` after an end, `has_grant`, desktop classes refused, `kind worker` refused).
-6. `a_set_rewrites_the_running_binding_in_place_on_both_hosts` (the same token sees the new tools; a pending binding stays pending; a worker binding is replaced with `replaced`; a revoke downgrades to fleet-only and keeps the token; a dead credential is never rewritten; a station restart reloads the rewritten row; a failed row save stays gated).
-7. `a_grant_with_a_record_returns_at_every_process_start_with_a_new_epoch` (hibernate + resume, crash + auto-continue resume, both hosts; `coordinator.detached` at the end; a changed native identity revokes and ends the record; an expired record gives the fleet binding; a grant without a record behaves as today).
-8. `the_old_epoch_work_is_dropped_after_a_new_process_start`.
+1. `a_change_bumps_the_watch_and_hard_invalidation_closes_it` (in-place keeps it open; revoke of a credential, rotation, expiry, process end close; race-free registration with the handle).
+2. `a_listen_stream_refreshes_notifies_and_ends_with_the_credential` (HTTP modern era: the ack and the refresh, a change, a downgrade keeps it, a rotation ends it with the final result; 8 busy request permits do not block a listen; the 3rd listen of a binding and the 257th of the station are refused; a stalled reader ends after 30 s; a legacy listen gets method-not-found; the socket listen gets -32601).
+3. `a_watch_connection_refreshes_pushes_and_closes_with_the_credential` (OK + the first line, unauthorized, starting, limited, bad_request from an old station; EOF and client bytes close; limits).
+4. `the_bridge_starts_its_watch_after_discovery_and_reconnects_with_backoff` (no line before the first answer; stops on unauthorized, bad_request and stdin close; coalescing; an oversize line closes).
+5. `coordinator_set_orders_by_the_session_sequence` (stale seq ignored, a replacement ends the old grant with `replaced`, a delayed set of a replaced or ended grant is ignored, desktop classes refused, `kind worker` refused).
+6. `a_set_rewrites_the_running_binding_in_place_on_both_hosts` (the same token sees the new tools; a pending binding stays pending; a worker binding replaced in the same transaction; an end downgrades to fleet-only and keeps the token; a dead credential is never rewritten; a station restart reloads the rewritten row; a failed row save stays gated).
+7. `a_grant_with_a_record_returns_at_every_process_start_with_a_higher_generation` (hibernate + resume, crash + auto-continue resume, both hosts; no `coordinator.ended` at the process end; an identity mismatch ends the record with `identity_changed`; an expired record ends with `expired` and gives the fleet binding; a renewal while no process runs; a grant without a record behaves as today).
 Deck:
-9. `the_owner_gives_a_grant_to_a_running_or_hibernated_session` (elevation rules from `check_owner_grant`; `has_grant` also for an idle-expired grant; concurrent gives; a worker grant replaced; desktop fields refused; held until the feature; a failed give revokes and frees the session).
-10. `class_and_cap_changes_need_elevation_for_every_widening` (an added class, a higher cap with the same classes, a new family, an incomparable ceiling; counters kept across remove and re-add; worker grants refused).
-11. `a_narrowing_fails_queued_work_of_the_removed_class` (a queued `manage` command after `manage` is removed; a resend; a deck-side land or move step).
-12. `detached_and_rebound_epochs_keep_the_grant_without_a_renewal` (detached → bound at a higher generation rebinds; any other higher generation still needs a renewal; idle expiry while detached; the late-bound rule queues an end for a revoked owner grant).
-13. `revisions_reconcile_after_a_reconnect_and_a_newer_set_supersedes` (reordered sets; the reconnect queues the latest state).
-14. `a_member_or_a_token_cannot_give_change_or_end_a_grant`.
-15. Migrations: deck `tokens.revision`, `station_revision`, `epoch`, `session_owner_grant`; station V42 `session_grants`.
-Board: 16. the Fleet access form (give, change, elevation for widening, the Codex note, hidden without the feature).
+8. `the_owner_gives_a_grant_to_a_running_or_hibernated_session` (`check_owner_grant` elevation; `has_grant` also for an idle-expired grant; a terminal grant's row overwritten; concurrent gives; a worker grant replaced without a worker revoke command; desktop fields refused; held until the feature; a failed give revokes).
+9. `class_and_cap_changes_need_elevation_for_every_widening` (an added class, a higher cap with the same classes, a new family, an incomparable ceiling; counters kept across remove and re-add; worker grants refused).
+10. `a_narrowing_or_a_revoke_stops_fleet_commands_before_execution` (a sent `manage` command fails the station's authority check after `manage` is removed while `inspect` stays; `project_start` under `{spawn, manage}` fails when either is removed; land and move fallbacks; pending items fail with `authority_removed`; ordinary admitted mail completes).
+11. `the_rebind_rule_accepts_a_higher_generation_only_for_a_grant_in_effect` (a missed process end, a snapshot recovery, an idle-expired grant ignored then renewed with `>=`; a grant without a row keeps today's rules; `identity_changed` with a higher generation revokes and fails pending items).
+12. `the_session_sequence_reconciles_after_a_reconnect_and_supersedes_pending_sets` (revoke A then give B in either delivery order; a delayed A set after B; the reconnect queues the latest state).
+13. `a_member_or_a_token_cannot_give_change_or_end_a_grant`.
+14. Migrations: deck `session_owner_grant`, `outbox.required_classes` (and the land/move tables); station V42 `session_grants`.
+Board: 15. the Fleet access form (give, change, elevation for widening, the Codex note, hidden without the feature).
 Live (architect): a running Claude session on a shim station gets `spawn` from the board and lists the spawn tools without a restart; a Codex session gets them after a hibernation and resume; a revoke leaves the fleet tools.
 
-## 12. Advisor review map (revision 1 → 2)
+## 12. Phases and module splits
 
-| Advisor correction | Section |
+- **P4b-0 (done, merge 5c674eeb):** the module splits.
+- **P4b-1 (station transport):** §8; tests 1–4.
+- **P4b-2 (station desired state):** proto §3 and the feature; station §2–§5; tests 5–7.
+- **P4b-3 (deck):** §6, §7, the deck side of §5 and §9; tests 8–14.
+- **P4b-4 (board):** the Fleet access form; test 15.
+
+## 13. Accepted limits
+
+- Ordinary work admitted before a narrowing or a revoke completes (§7.3), as for a revoke today.
+- A leaked token keeps fleet-only access until its process ends (§4.2).
+- No binary downgrade past station V42 (§9).
+- A shim session started before the upgrade gets no push until its next process start (§8.3).
+
+## 14. Review maps
+
+### 14.1 Advisor (revision 1 → 2)
+| Advisor correction | Where (revision 3) |
 | --- | --- |
-| 1. Elevation bypass through caps and ceilings | §6.2 widening rule; test 10 |
-| 2. Narrowing must stop queued work | §7; test 11 |
-| 3. Do not reuse `suspended` for parking | §2 the `session_grants` record; §5 (no parking state at all) |
-| 4. Explicit execution transition at a resume | §5 the epoch, `coordinator.detached`, deck rebind; tests 7, 8, 12 |
+| 1. Elevation bypass through caps and ceilings | §6.2; test 9 |
+| 2. Narrowing must stop queued work | §7; test 10 |
+| 3. Do not reuse `suspended` for parking | §2 the record; §5 (no parking state) |
+| 4. Explicit execution transition at a resume | §5 generations and the rebind rule; tests 7, 11 |
 | 5. Durable downgrade, keep hard invalidation | §4.1, §4.2; test 6 |
-| 6. Ordered desired state, one attachment per session | §2, §3 revisions and tombstones, §6.1 `session_owner_grant`; tests 5, 9, 13 |
-| 7. Race-free registration; downgrade keeps the stream | §8.1; tests 1, 2 |
-| 8. Separate admission, owned permits, stalls, EOF | §8.2, §8.3; tests 2, 3, 4 |
-| 9. Gate lifecycle semantics; negotiate WATCH; no early notification | §9, §8.3; tests 3, 4 |
-| 10. Adversarial tests; module splits | §11; §13 |
+| 6. Ordered desired state, one attachment per session | §2, §3 the session sequence; §6.1; tests 5, 8, 12 |
+| 7. Race-free registration; downgrade keeps the stream | §8.1; tests 1–3 |
+| 8. Admission, owned permits, stalls, EOF | §8.2, §8.3; tests 2–4 |
+| 9. Gate lifecycle semantics; negotiate WATCH | §9, §8.3 |
+| 10. Adversarial tests; module splits | §11; §12 (P4b-0 done) |
 
-## 13. Phases and module splits
-
-- **P4b-0 (refactor, no behaviour change):** split `coordinator_start.rs` (799 lines), `bindings.rs` (778) and `grant_routes.rs` (748) by topic before any feature work; move `owner_start`'s checks into `check_owner_grant`.
-- **P4b-1 (station transport):** §8 (handle, listen, watch, bridge); tests 1–4.
-- **P4b-2 (station desired state):** proto §3, §9; station §2, §3, §4, §5; tests 5–8.
-- **P4b-3 (deck):** §6, §7, deck side of §5; tests 9–15.
-- **P4b-4 (board):** the Fleet access form; test 16.
+### 14.2 DESIGN REVIEW round 1 (revision 2 → 3)
+| Finding | Where |
+| --- | --- |
+| BLOCKER — narrowing not serialized with dispatch | §7.1 the station's pre-execution check (`authority_local` and its land and move fallbacks) checks the stored class set; test 10 |
+| BLOCKER — one class cannot express compound authority | §7.1 the full `required_classes` set; test 10 |
+| MAJOR — caps route widens worker grants | §10.2 restated: P4a §8 lets the owner raise worker caps within the worker bounds with elevation; classes stay fixed |
+| MAJOR — authority on ordinary intents breaks fleet-control rules | §7.3 ordinary intents get no `CommandAuthority`; their limit is stated (§13) |
+| MAJOR — worker revoke kills the credential before the owner set | §4.1 and §6.1: the worker is replaced inside the set; no separate worker revoke |
+| MAJOR — per-grant revisions do not order replacement | §2, §3 one per-session sequence; test 12 |
+| MAJOR — lifetime expiry frees the deck but not the station | §5 a record past expiry ends at the next start; §6.1 a terminal grant's row is overwritten by the next give (no early release); §6.4 terminal events |
+| MAJOR — snapshots cannot recover a missed detach | §5 no detach event: a higher generation rebinds a grant in effect; test 11 |
+| MAJOR — identity failure in an unbound epoch | §6.4 terminal events with `generation >= bound_generation` by binding id; test 11 |
+| MAJOR — renewal and process generations share a counter | §5 one counter in the record, renewal `max(p, record + 1)`, deck accepts `>= p`; tests 7, 11 |
+| MAJOR — registration misses changes before authentication | §8.2, §8.3 a refresh after every acknowledgment and every `OK watch.v1`; tests 2, 3 |
+| MAJOR — no downgrade path | §9 forward-only migrations, no binary downgrade past V42; deck downgrade harmless; §13 |
