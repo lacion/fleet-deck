@@ -56,6 +56,12 @@ pub mod fleet;
 pub mod fleet_git_prefs;
 pub mod fleet_git_schema;
 pub mod fleet_git_start;
+pub mod fleet_view;
+mod fleet_view_build;
+#[cfg(test)]
+mod fleet_view_paging_tests;
+#[cfg(test)]
+mod fleet_view_tests;
 pub mod git_snapshots;
 pub mod grant_scopes;
 pub mod grants;
@@ -271,6 +277,8 @@ struct Inner {
     sentence_jobs: Mutex<Vec<conflicts::SentenceJob>>,
     /// The `ask_coordinator` calls of the workers in the last hour (R2.3).
     ask_limits: coordinator_fleet::AskLimiter,
+    /// The limiters and the projection caches of the fleet view (MCP P3).
+    fleet_view: fleet_view::FleetViewState,
     /// The stations whose derived `coordinate` scope changed and whose link
     /// cache entry is not refreshed yet (`grant_scopes`).
     scope_dirty: Mutex<BTreeSet<StationId>>,
@@ -408,6 +416,7 @@ impl DeckStore {
                 sockets: std::sync::atomic::AtomicU64::new(1),
                 sentence_jobs: Mutex::default(),
                 ask_limits: coordinator_fleet::AskLimiter::default(),
+                fleet_view: fleet_view::FleetViewState::default(),
                 scope_dirty: Mutex::default(),
                 scope_changes: watch::channel(0).0,
                 snapshot_marks: Mutex::default(),

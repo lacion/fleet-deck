@@ -35,6 +35,7 @@ pub mod execution_stop;
 pub mod files;
 pub mod fleet_git;
 pub mod fleet_summary;
+pub mod fleet_view;
 pub mod fold;
 pub mod history;
 pub mod ids;

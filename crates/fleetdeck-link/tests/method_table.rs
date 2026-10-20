@@ -96,8 +96,8 @@ fn the_code_method_table_equals_the_adr_method_table() {
     let adr = adr_table(&adr());
     let code = code_table();
     // 135 + 2 (BG4-1 execution stop) + 3 (BG2-2 installer repair)
-    // + 6 (BG1-1 desktop tools and maintenance).
-    assert_eq!(adr.len(), 146, "{:?}", adr.keys());
+    // + 6 (BG1-1 desktop tools and maintenance) + 1 (MCP P3 `fleet.view`).
+    assert_eq!(adr.len(), 147, "{:?}", adr.keys());
     for (name, row) in &adr {
         assert_eq!(code.get(name), Some(row), "{name}");
     }
@@ -149,6 +149,16 @@ fn the_desktop_tool_rows_need_their_features_and_scope() {
         assert_eq!(row.feature.as_deref(), Some(feature), "{name}");
         assert!(!row.mutating, "{name}");
     }
+}
+
+#[test]
+fn the_fleet_view_row_needs_its_feature_and_scope() {
+    let code = code_table();
+    let row = code.get("fleet.view").expect("fleet.view missing");
+    assert_eq!(row.callers, "station → deck");
+    assert_eq!(row.scope, "admin");
+    assert_eq!(row.feature.as_deref(), Some("fleet_view.v1"));
+    assert!(!row.mutating);
 }
 
 #[test]
