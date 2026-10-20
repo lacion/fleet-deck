@@ -112,6 +112,7 @@ async fn queue(s: &Store, det: &Det, id: &str) -> Effect {
             Ok(CommandResult {
                 session_id: Some("s1".into()),
                 input_id: None,
+                seq: None,
             })
         })
         .await

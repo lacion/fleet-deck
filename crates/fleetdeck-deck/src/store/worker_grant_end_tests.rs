@@ -27,6 +27,7 @@ async fn accept_start(w: &World, id: &str, session: &str) {
         CommandResult {
             session_id: Some(session.into()),
             input_id: None,
+            seq: None,
         },
         w.s.now_ms(),
     );

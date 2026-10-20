@@ -238,6 +238,7 @@ pub(super) fn accepted(id: &str, input: &str) -> Settle {
         CommandResult {
             session_id: None,
             input_id: Some(InputId::from(input)),
+            seq: None,
         },
         0,
     ))

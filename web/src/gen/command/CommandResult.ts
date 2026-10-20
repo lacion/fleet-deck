@@ -5,4 +5,9 @@ import type { SessionId } from "../ids/SessionId";
 /**
  * What an accepted command created.
  */
-export type CommandResult = { session_id: SessionId | null, input_id: InputId | null, };
+export type CommandResult = { session_id: SessionId | null, input_id: InputId | null, 
+/**
+ * The record sequence that a `session.coordinator_set` left on the
+ * station (MCP P4b §3).
+ */
+seq?: number, };

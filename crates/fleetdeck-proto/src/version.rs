@@ -249,6 +249,9 @@ pub mod feature {
     /// `kind: worker` from the paired deck (MCP P4a, design
     /// `docs/v2/design/mcp-p4a.md` §6.1).
     pub const WORKER_GRANT: &str = "worker_grant.v1";
+    /// `session.coordinator_set`: live changes of a session's grant and the
+    /// per-session grant record (MCP P4b §9).
+    pub const COORDINATOR_LIVE: &str = "coordinator_live.v1";
 
     /// Every feature that this build offers.
     pub const ALL: &[&str] = &[
@@ -307,6 +310,7 @@ pub mod feature {
         DESKTOP_INPUT_ANY,
         FLEET_VIEW,
         WORKER_GRANT,
+        COORDINATOR_LIVE,
         EXECUTION_STOP,
         PROVISION_REPORT,
         STATION_TOOLS,
@@ -500,6 +504,19 @@ mod tests {
                 .features
                 .iter()
                 .any(|f| f == "worker_grant.v1")
+        );
+    }
+
+    #[test]
+    fn the_coordinator_live_feature_has_its_name_and_follows_the_worker_grant_in_all() {
+        assert_eq!(feature::COORDINATOR_LIVE, "coordinator_live.v1");
+        let at = |f: &str| feature::ALL.iter().position(|x| *x == f).unwrap();
+        assert_eq!(at(feature::COORDINATOR_LIVE), at(feature::WORKER_GRANT) + 1);
+        assert!(
+            VersionOffer::this_build()
+                .features
+                .iter()
+                .any(|f| f == "coordinator_live.v1")
         );
     }
 

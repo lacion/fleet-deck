@@ -73,6 +73,7 @@ pub const SESSION_METHODS: &[&str] = &[
     "session.set_auto_continue",
     "session.coordinator_renew",
     "session.coordinator_revoke",
+    "session.coordinator_set",
     "session.worktree_trash",
     "session.worktree_restore",
     "session.worktree_purge",

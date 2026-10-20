@@ -119,6 +119,7 @@ impl Station {
                 Ok(CommandResult {
                     session_id: Some(owner.clone()),
                     input_id: None,
+                    seq: None,
                 })
             })
             .await

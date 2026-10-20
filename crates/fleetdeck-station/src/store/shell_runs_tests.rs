@@ -73,6 +73,7 @@ async fn queue(s: &Store, det: &Det, id: &str, root: &'static str) -> String {
             Ok(CommandResult {
                 session_id: Some(S1.into()),
                 input_id: None,
+                seq: None,
             })
         })
         .await

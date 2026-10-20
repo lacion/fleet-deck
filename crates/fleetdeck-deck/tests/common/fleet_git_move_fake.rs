@@ -503,6 +503,7 @@ fn receipt(req: &InboundRequest, session: Option<&str>, reject: Option<(&str, &s
             result: Some(CommandResult {
                 session_id: session.map(Into::into),
                 input_id: None,
+                seq: None,
             }),
             reject: None,
             at: 0,

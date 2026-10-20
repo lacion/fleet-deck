@@ -158,6 +158,10 @@ pub fn decide(
             session_id,
             grant_id,
         } => super::coordinator_command::revoke(d, bindings, origin, &session_id, &grant_id),
+        SessionCommand::CoordinatorSet { .. } => Err(reject(
+            RejectCode::Unsupported,
+            "session.coordinator_set is not part of this station build yet",
+        )),
         SessionCommand::Prompt { session_id, input } => {
             refuse_resume_while_restarting(d, restarting, &session_id, origin_run)?;
             if let Some(resumed) = resume_hibernated(d, policy, &session_id, origin_run, &input)? {
@@ -359,6 +363,7 @@ pub(super) fn result(session_id: &SessionId, input_id: Option<InputId>) -> Comma
     CommandResult {
         session_id: Some(session_id.clone()),
         input_id,
+        seq: None,
     }
 }
 

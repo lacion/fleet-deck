@@ -105,6 +105,7 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `auto_continue.v1` | `session.set_auto_continue` (M3, ADR-007, DL-127; the per-session restart auto-continuation preference, events `session.auto_continue_changed` and `session.auto_continue_skipped`, input origin `continuation`) |
 | `import.v1` | `session.import` (M3, DL-308; a new driven session that continues an existing native CLI session id) |
 | `coordinator.v1` | `session.coordinator_renew`, `session.coordinator_revoke`, `coordinator.query`, `coordinator.call` (M3, ADR-006 §6.1 `coordinator_v1`, DL-212, DL-214; the owner's renewal and revocation of a coordinator binding) |
+| `coordinator_live.v1` | Live grant changes: `session.coordinator_set` and the per-session grant record (MCP P4b) |
 | `coordinator.v2` | `coordinator.authority_check`, `coordinator.policy_now` (ADR-008 fleet control: the new coordinator ops and queries, `authority` on routed session commands, `coordinator.authority_check` and `coordinator.policy_now`) |
 | `files.v1` | `files.list`, `files.read`, `files.search`, `files.diff` (M3, DL-088; PLAN §6.6 file browse, search, read and per-turn diffs) |
 | `workspace.worktrees.v1` | `workspace.worktrees` (DL-142; the read-only inventory of the worktrees that the station created for sessions) |
@@ -352,7 +353,7 @@ Per link (these values replace §2.7 "at most 256 open streams"):
 
 | Methods | `params` type | Payload field | Holder |
 | --- | --- | --- | --- |
-| `session.start`, `session.resume`, `session.import`, `session.fork`, `session.prompt`, `session.steer`, `session.follow_up`, `session.interrupt`, `session.set_mode`, `session.set_model`, `session.stop`, `session.revert`, `session.rename`, `session.resolve_revert`, `session.set_auto_continue`, `session.coordinator_renew`, `session.coordinator_revoke`, `session.worktree_trash`, `session.worktree_restore`, `session.worktree_purge`, `session.worktree_release`, `session.reconcile_execution`, `session.stop_execution`, `session.shell_command`, `session.release_shell`, `session.land`, `session.move_out`, `session.move_in`, `session.move_finish`, `session.move_undo`, `approval.answer` | `CommandEnvelope` | `command` | station |
+| `session.start`, `session.resume`, `session.import`, `session.fork`, `session.prompt`, `session.steer`, `session.follow_up`, `session.interrupt`, `session.set_mode`, `session.set_model`, `session.stop`, `session.revert`, `session.rename`, `session.resolve_revert`, `session.set_auto_continue`, `session.coordinator_renew`, `session.coordinator_revoke`, `session.coordinator_set`, `session.worktree_trash`, `session.worktree_restore`, `session.worktree_purge`, `session.worktree_release`, `session.reconcile_execution`, `session.stop_execution`, `session.shell_command`, `session.release_shell`, `session.land`, `session.move_out`, `session.move_in`, `session.move_finish`, `session.move_undo`, `approval.answer` | `CommandEnvelope` | `command` | station |
 | `station.configure` | `StationConfigureEnvelope` | `change` | station |
 | `link.rotate_key` | `KeyRotationEnvelope` | `rotation` | receiver |
 | `shell.open`, `shell.resize`, `shell.close`, `shell.handover`, `shell.release` | `ShellEnvelope` | `change` | station |
@@ -455,6 +456,7 @@ close             { reason, detail }
 | `session.import` | deck → station | drive | `import.v1` | yes |
 | `session.coordinator_renew` | deck → station | drive | `coordinator.v1` | yes |
 | `session.coordinator_revoke` | deck → station | drive | `coordinator.v1` | yes |
+| `session.coordinator_set` | deck → station | drive | `coordinator_live.v1` | yes |
 | `session.worktree_trash`, `session.worktree_restore`, `session.worktree_purge`, `session.worktree_release` | deck → station | admin | `workspace.trash.v1` | yes |
 | `session.execution_check` | deck → station | read | `shim.resume.v1` | no |
 | `session.reconcile_execution` | deck → station | admin | `shim.resume.v1` | yes |

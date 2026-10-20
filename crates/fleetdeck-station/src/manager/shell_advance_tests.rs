@@ -59,6 +59,7 @@ async fn store_with_a_settled_row(det: &Det) -> Store {
             Ok(CommandResult {
                 session_id: Some(SESSION.into()),
                 input_id: None,
+                seq: None,
             })
         })
         .await

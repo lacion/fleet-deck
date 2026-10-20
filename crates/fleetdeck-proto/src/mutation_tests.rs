@@ -88,6 +88,10 @@ pub(crate) fn sample(method: &str) -> Value {
                     json!({"op": op, "session_id": s, "grant_id": "g-1", "generation": 2})
                 }
                 "coordinator_revoke" => json!({"op": op, "session_id": s, "grant_id": "g-1"}),
+                "coordinator_set" => json!({"op": op, "session_id": s, "seq": 3,
+                    "grant_id": "g-1", "spec": {"grant_id": "g-1", "classes": ["observe"],
+                    "idle_ttl_ms": 60_000, "expires_at": 4_102_444_800_000_i64,
+                    "control_skill": {"version": "1", "text": "You coordinate the fleet."}}}),
                 "reconcile_execution" => {
                     json!({"op": op, "session_id": s, "shim_id": "01J0000000000000000000000H"})
                 }
@@ -157,7 +161,7 @@ fn every_mutating_method_parses_its_envelope_and_names_its_method() {
             count += 1;
         }
     }
-    assert_eq!(count, 40);
+    assert_eq!(count, 41);
 }
 
 #[test]

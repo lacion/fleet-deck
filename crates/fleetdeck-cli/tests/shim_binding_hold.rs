@@ -201,6 +201,7 @@ impl Rig {
                 Ok(CommandResult {
                     session_id: Some("s1".into()),
                     input_id: None,
+                    seq: None,
                 })
             })
             .await
