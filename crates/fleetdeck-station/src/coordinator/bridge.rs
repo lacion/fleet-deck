@@ -21,6 +21,7 @@ use tokio::net::UnixStream;
 use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
 
+use super::bridge_watch::Watch;
 use super::ingress::Limits;
 use super::socket::{Line, discard_line, read_bounded};
 
@@ -77,6 +78,10 @@ where
     let socket: Arc<Path> = Arc::from(socket);
     let token: Arc<str> = Arc::from(token);
     let slots = Arc::new(Semaphore::new(IN_FLIGHT));
+    // The watch task starts after the first discovery answer and ends with
+    // this function, also when the future is dropped.
+    let watch = Arc::new(Watch::default());
+    let _stop_watch = StopWatch(watch.clone());
     let mut tasks = JoinSet::new();
     let mut reader = BufReader::new(input);
     let line_max = Limits::default().body_bytes;
@@ -114,10 +119,12 @@ where
             break;
         };
         let (out, socket, token) = (out.clone(), socket.clone(), token.clone());
+        let watch = watch.clone();
         tasks.spawn(async move {
             let _slot = slot;
             if let Some(answer) = answer_for(&socket, &token, &line, &msg).await {
                 emit(&out, &answer).await;
+                watch.after_answer(&msg, &answer, &socket, &token, &out);
             }
         });
     }
@@ -131,6 +138,15 @@ where
     .await;
     if drained.is_err() {
         eprintln!("fleetdeck mcp-bridge: calls still running at the end of input were dropped");
+    }
+}
+
+/// Stops the watch task of the bridge when dropped.
+struct StopWatch(Arc<Watch>);
+
+impl Drop for StopWatch {
+    fn drop(&mut self) {
+        self.0.stop();
     }
 }
 
@@ -198,7 +214,7 @@ fn error_answer(msg: &Value, code: i64, message: &str) -> Option<Vec<u8>> {
 }
 
 /// Writes one line to the output under the lock, so lines never mix.
-async fn emit<W: AsyncWrite + Unpin>(out: &Mutex<W>, line: &[u8]) {
+pub(super) async fn emit<W: AsyncWrite + Unpin>(out: &Mutex<W>, line: &[u8]) {
     let mut bytes = Vec::with_capacity(line.len() + 1);
     bytes.extend_from_slice(line);
     bytes.push(b'\n');

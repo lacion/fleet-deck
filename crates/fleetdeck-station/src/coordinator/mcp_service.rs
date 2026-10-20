@@ -6,21 +6,24 @@
 //! the request of an authenticated binding to `rmcp`, which answers the
 //! protocol of both MCP eras, and returns the reply as plain data.
 
+use std::convert::Infallible;
 use std::sync::Arc;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
-use http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HOST};
+use http::header::{ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, HOST};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode};
+use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full};
+use hyper::body::{Body, Frame, SizeHint};
 use rmcp::transport::streamable_http_server::session::never::NeverSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use serde_json::Value;
 
-use super::bindings::{Binding, Bindings};
+use super::bindings::{Binding, BindingHandle, Bindings, StreamPermits};
 use super::ingress::{FleetTools, Forward};
-use super::mcp_server::{BindingExt, StationMcp};
+use super::mcp_server::{BindingExt, ListenHandle, StationMcp};
 
 /// The largest request body that `rmcp` takes; the same as the station
 /// limit of the outer checks.
@@ -39,6 +42,61 @@ pub(super) struct Reply {
     pub status: StatusCode,
     pub content_type: Option<HeaderValue>,
     pub body: Bytes,
+}
+
+/// The header that stops a proxy from buffering an event stream.
+const X_ACCEL_BUFFERING: HeaderName = HeaderName::from_static("x-accel-buffering");
+
+/// The reply of `rmcp` to a `subscriptions/listen` request (MCP P4b §8.2).
+pub(super) enum ListenReply {
+    /// `rmcp` answered with a content type other than an event stream (for
+    /// example the refusal of a legacy-era listen): collected, like
+    /// [`Reply`] of an ordinary request.
+    Reply(Reply),
+    /// The event stream, unbuffered. `headers` keeps only `Content-Type`,
+    /// `Cache-Control` and `X-Accel-Buffering`.
+    Stream {
+        status: StatusCode,
+        headers: HeaderMap,
+        body: BoxBody<Bytes, Infallible>,
+    },
+}
+
+/// The body of an event stream. It owns the stream permits of its binding
+/// and its station: they drop with the body, when the stream ended or the
+/// connection closed.
+pub(super) struct ListenBody {
+    inner: BoxBody<Bytes, Infallible>,
+    _permits: StreamPermits,
+}
+
+impl ListenBody {
+    pub(super) fn new(inner: BoxBody<Bytes, Infallible>, permits: StreamPermits) -> Self {
+        Self {
+            inner,
+            _permits: permits,
+        }
+    }
+}
+
+impl Body for ListenBody {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<Frame<Bytes>, Infallible>>> {
+        std::pin::Pin::new(&mut self.inner).poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.inner.size_hint()
+    }
 }
 
 /// The `rmcp` service of a station.
@@ -80,42 +138,95 @@ impl McpService {
     /// The returned future is cancel-safe: when the caller drops it (the
     /// client closed the connection), `rmcp` cancels the request context.
     pub(super) async fn serve(&self, binding: Binding, body: Bytes, headers: &HeaderMap) -> Reply {
+        let request = request_of(binding, body, headers);
+        let response = self.service().handle(request).await;
+        collect(response).await
+    }
+
+    /// Answers a `subscriptions/listen` request of an authenticated binding
+    /// (MCP P4b §8.2). The request is built as [`Self::serve`] builds it; the
+    /// change handle goes into the extensions too. An event stream is
+    /// returned unbuffered; any other reply is collected.
+    ///
+    /// The returned future is cancel-safe, like [`Self::serve`].
+    pub(super) async fn serve_listen(
+        &self,
+        binding: Binding,
+        handle: BindingHandle,
+        body: Bytes,
+        headers: &HeaderMap,
+    ) -> ListenReply {
+        let mut request = request_of(binding, body, headers);
+        request.extensions_mut().insert(ListenHandle(handle));
+        let response = self.service().handle(request).await;
+        let is_stream = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("text/event-stream"));
+        if !is_stream {
+            return ListenReply::Reply(collect(response).await);
+        }
+        let (head, body) = response.into_parts();
+        let mut kept = HeaderMap::new();
+        for name in [CONTENT_TYPE, CACHE_CONTROL, X_ACCEL_BUFFERING] {
+            if let Some(value) = head.headers.get(&name) {
+                kept.insert(name, value.clone());
+            }
+        }
+        ListenReply::Stream {
+            status: head.status,
+            headers: kept,
+            body,
+        }
+    }
+
+    fn service(&self) -> StreamableHttpService<StationMcp, NeverSessionManager> {
         let server = self.server.clone();
-        let service = StreamableHttpService::new(
+        StreamableHttpService::new(
             move || Ok(server.clone()),
             Arc::new(NeverSessionManager::default()),
             self.config.clone(),
+        )
+    }
+}
+
+/// The request for `rmcp`: the binding goes into the extensions and nowhere
+/// else.
+fn request_of(binding: Binding, body: Bytes, headers: &HeaderMap) -> Request<Full<Bytes>> {
+    let mut request = Request::new(Full::new(body));
+    *request.method_mut() = Method::POST;
+    *request.uri_mut() = http::Uri::from_static("/mcp");
+    for (name, value) in headers {
+        // The credential is for the station only.
+        if name != AUTHORIZATION {
+            request.headers_mut().append(name.clone(), value.clone());
+        }
+    }
+    if !request.headers().contains_key(ACCEPT) {
+        request.headers_mut().insert(
+            ACCEPT,
+            HeaderValue::from_static("application/json, text/event-stream"),
         );
-        let mut request = Request::new(Full::new(body));
-        *request.method_mut() = Method::POST;
-        *request.uri_mut() = http::Uri::from_static("/mcp");
-        for (name, value) in headers {
-            // The credential is for the station only.
-            if name != AUTHORIZATION {
-                request.headers_mut().append(name.clone(), value.clone());
-            }
-        }
-        if !request.headers().contains_key(ACCEPT) {
-            request.headers_mut().insert(
-                ACCEPT,
-                HeaderValue::from_static("application/json, text/event-stream"),
-            );
-        }
-        request
-            .extensions_mut()
-            .insert(BindingExt(Arc::new(binding)));
-        let response = service.handle(request).await;
-        let (head, body) = response.into_parts();
-        let content_type = head.headers.get(CONTENT_TYPE).cloned();
-        let body = match body.collect().await {
-            Ok(collected) => collected.to_bytes(),
-            Err(never) => match never {},
-        };
-        Reply {
-            status: head.status,
-            content_type,
-            body,
-        }
+    }
+    request
+        .extensions_mut()
+        .insert(BindingExt(Arc::new(binding)));
+    request
+}
+
+/// The whole reply of `rmcp` as plain data.
+async fn collect(response: http::Response<BoxBody<Bytes, Infallible>>) -> Reply {
+    let (head, body) = response.into_parts();
+    let content_type = head.headers.get(CONTENT_TYPE).cloned();
+    let body = match body.collect().await {
+        Ok(collected) => collected.to_bytes(),
+        Err(never) => match never {},
+    };
+    Reply {
+        status: head.status,
+        content_type,
+        body,
     }
 }
 

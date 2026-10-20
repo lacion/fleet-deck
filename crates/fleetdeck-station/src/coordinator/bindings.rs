@@ -5,6 +5,7 @@
 //! environment; it is never stored, logged or sent.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -14,7 +15,7 @@ use fleetdeck_proto::command::{GrantKind, GrantScope};
 use fleetdeck_proto::event::ProviderKind;
 use fleetdeck_proto::mutation::CoordinatorBinding;
 use ring::rand::{SecureRandom, SystemRandom};
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, watch};
 
 use super::fence::Fence;
 use super::forward::Transport;
@@ -28,6 +29,14 @@ pub const TOKEN_ENV: &str = "FLEETDECK_COORDINATOR_TOKEN";
 pub const BINDING_CONCURRENCY: usize = 8;
 /// Requests per second of one binding (§5.1).
 pub const BINDING_RATE: u32 = 20;
+/// `subscriptions/listen` streams of one binding (MCP P4b §8.2).
+pub const LISTENS_PER_BINDING: usize = 2;
+/// `subscriptions/listen` streams of one station (MCP P4b §8.2).
+pub const LISTENS_PER_STATION: usize = 256;
+/// `WATCH` connections of one binding (MCP P4b §8.3).
+pub const WATCHES_PER_BINDING: usize = 2;
+/// `WATCH` connections of one station (MCP P4b §8.3).
+pub const WATCHES_PER_STATION: usize = 128;
 
 /// The state of a binding (§5.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,6 +132,62 @@ struct Entry {
     /// only. It is per binding, never shared, and gives no authority. The
     /// entry holds it, so removing or replacing the binding clears it.
     legacy_version: Option<String>,
+    /// The change signal of the credential (MCP P4b §8.1): a version that an
+    /// in-place change bumps. A hard invalidation replaces the sender, which
+    /// closes every receiver.
+    changes: watch::Sender<u64>,
+    /// The incarnation of this entry: bumped by every `insert`.
+    incarnation: u64,
+    /// The listen streams and the watch connections of this binding.
+    listens: Arc<Semaphore>,
+    watches: Arc<Semaphore>,
+}
+
+impl Entry {
+    /// Ends every listen stream and watch connection of this entry: the old
+    /// receivers see `changed()` fail.
+    fn close_watchers(&mut self) {
+        self.changes = watch::channel(0).0;
+    }
+
+    /// Closes the watchers when the binding ended (`Revoked`, `Expired`).
+    fn close_if_ended(&mut self) {
+        if matches!(
+            self.binding.state,
+            BindingState::Revoked | BindingState::Expired
+        ) {
+            self.close_watchers();
+        }
+    }
+}
+
+/// The stable handle of an authenticated stream (MCP P4b §8.1): the digest,
+/// the incarnation of the entry and a receiver that was registered under the
+/// same lock as the authentication.
+#[derive(Debug, Clone)]
+pub(crate) struct BindingHandle {
+    // Read by the in-place change of MCP P4b-2; P4b-1 only carries them.
+    #[allow(dead_code, reason = "read by MCP P4b-2")]
+    pub digest: String,
+    #[allow(dead_code, reason = "read by MCP P4b-2")]
+    pub incarnation: u64,
+    pub changes: watch::Receiver<u64>,
+}
+
+/// The station-wide limits of the listen streams and the watch connections.
+#[derive(Clone)]
+pub(super) struct StationStreams {
+    pub(super) listens: Arc<Semaphore>,
+    pub(super) watches: Arc<Semaphore>,
+}
+
+impl Default for StationStreams {
+    fn default() -> Self {
+        Self {
+            listens: Arc::new(Semaphore::new(LISTENS_PER_STATION)),
+            watches: Arc::new(Semaphore::new(WATCHES_PER_STATION)),
+        }
+    }
 }
 
 /// The serial of a deck link and its request path.
@@ -165,6 +230,10 @@ pub struct Bindings {
     /// The published fleet skill tree `<hash>/` (MCP P3 §4.1), once the
     /// station published it; `None` for no injection.
     pub(super) skill_dir: Arc<Mutex<Option<std::path::PathBuf>>>,
+    /// The counter of entry incarnations (MCP P4b §8.1).
+    incarnations: Arc<AtomicU64>,
+    /// The station-wide limits of the streams (MCP P4b §8.2, §8.3).
+    pub(super) station_streams: StationStreams,
 }
 
 /// What a shim-hosted provider runs for its tools (DL-194 §2.2, §9.3): the
@@ -395,6 +464,10 @@ impl Bindings {
             inflight: Arc::new(Semaphore::new(BINDING_CONCURRENCY)),
             window: (Instant::now(), 0),
             legacy_version: None,
+            changes: watch::channel(0).0,
+            incarnation: self.incarnations.fetch_add(1, Ordering::SeqCst) + 1,
+            listens: Arc::new(Semaphore::new(LISTENS_PER_BINDING)),
+            watches: Arc::new(Semaphore::new(WATCHES_PER_BINDING)),
         };
         let mut map = self.lock();
         map.retain(|_, e| e.binding.binding_id != entry.binding.binding_id);
@@ -407,6 +480,30 @@ impl Bindings {
         match self.lock().get_mut(digest) {
             Some(e) => {
                 f(&mut e.binding);
+                e.close_if_ended();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Change the binding of a credential digest in place and signal it to
+    /// the open streams (MCP P4b §8.1): a binding that stays alive bumps the
+    /// version of its change signal; a binding that ended closes it. Returns
+    /// false for an unknown digest.
+    #[cfg_attr(not(test), allow(dead_code, reason = "used by MCP P4b-2"))]
+    pub(crate) fn rewrite(&self, digest: &str, f: impl FnOnce(&mut Binding)) -> bool {
+        match self.lock().get_mut(digest) {
+            Some(e) => {
+                f(&mut e.binding);
+                if matches!(
+                    e.binding.state,
+                    BindingState::Revoked | BindingState::Expired
+                ) {
+                    e.close_watchers();
+                } else {
+                    e.changes.send_modify(|version| *version += 1);
+                }
                 true
             }
             None => false,
@@ -428,6 +525,7 @@ impl Bindings {
         {
             Some(e) => {
                 f(&mut e.binding);
+                e.close_if_ended();
                 true
             }
             None => false,
@@ -483,6 +581,7 @@ impl Bindings {
         for e in self.lock().values_mut() {
             if &e.binding.session_id == session_id && e.binding.state != BindingState::Revoked {
                 e.binding.state = BindingState::Revoked;
+                e.close_watchers();
                 out.push(e.binding.clone());
             }
         }
@@ -494,6 +593,7 @@ impl Bindings {
         for e in self.lock().values_mut() {
             if &e.binding.session_id == session_id {
                 e.binding.state = BindingState::Revoked;
+                e.close_watchers();
             }
         }
     }
@@ -599,5 +699,9 @@ mod auth;
 #[path = "bindings_handoff.rs"]
 mod handoff;
 
-pub(crate) use auth::Auth;
+#[cfg(test)]
+#[path = "bindings_watch_tests.rs"]
+mod watch_tests;
+
 pub use auth::{AUTHORITY_CHECK_DEADLINE, Authority};
+pub(crate) use auth::{Auth, StreamAuth, StreamKind, StreamPermits};

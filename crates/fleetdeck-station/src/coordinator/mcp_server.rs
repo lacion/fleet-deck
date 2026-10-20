@@ -18,13 +18,14 @@ use rmcp::model::{
     GetPromptResponse, Implementation, InitializeRequestParams, InitializeResult,
     ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
     PaginatedRequestParams, ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse,
-    ReadResourceResult, ResourceContents, ResultType, ServerCapabilities, ServerConfig, Tool,
+    ReadResourceResult, ResourceContents, ResultType, ServerCapabilities, ServerConfig,
+    SubscriptionFilter, Tool,
 };
-use rmcp::service::RequestContext;
+use rmcp::service::{RequestContext, SubscriptionContext};
 use rmcp::{ErrorData as McpError, RoleServer, ServerHandler};
 use serde_json::{Map, Value, json};
 
-use super::bindings::{Binding, BindingState, Bindings, ToolClass};
+use super::bindings::{Binding, BindingHandle, BindingState, Bindings, ToolClass};
 use super::desktop_forward::Rechecked;
 use super::ingress::{FleetTools, Forward};
 use super::jsonrpc::{self, CallOutcome, NOT_BOUND};
@@ -35,6 +36,12 @@ use super::tools;
 /// newtype, so that no other code inserts a binding by accident.
 #[derive(Clone)]
 pub(super) struct BindingExt(pub Arc<Binding>);
+
+/// The change handle of a `subscriptions/listen` request, in the request
+/// extensions next to [`BindingExt`] (MCP P4b §8.2). Only the listen path of
+/// the ingress puts it there.
+#[derive(Clone)]
+pub(super) struct ListenHandle(pub BindingHandle);
 
 /// The protocol versions that the station serves: the legacy versions that
 /// the providers use and the stateless version of 2026-07-28. Not
@@ -156,6 +163,7 @@ impl ServerHandler for StationMcp {
         ServerConfig::new(
             ServerCapabilities::builder()
                 .enable_tools()
+                .enable_tool_list_changed()
                 .enable_resources()
                 .enable_prompts()
                 .build(),
@@ -165,6 +173,44 @@ impl ServerHandler for StationMcp {
 
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
         Cow::Borrowed(&SUPPORTED[..])
+    }
+
+    /// Only `toolsListChanged` is served (MCP P4b §8.2).
+    fn accepted_subscription_filter(
+        &self,
+        requested: &SubscriptionFilter,
+    ) -> Option<SubscriptionFilter> {
+        (requested.tools_list_changed == Some(true))
+            .then(|| requested.supported_by(&self.get_info().capabilities))
+    }
+
+    /// One `tools/list_changed` right after the acknowledgment (the client
+    /// re-lists once: this covers every change before the listen), then one
+    /// per version change of the credential. The stream ends with rmcp's
+    /// final result when the credential ended or the client left.
+    async fn listen(&self, ctx: SubscriptionContext) -> Result<(), McpError> {
+        let Some(mut changes) = ctx
+            .request_context()
+            .extensions
+            .get::<http::request::Parts>()
+            .and_then(|parts| parts.extensions.get::<ListenHandle>())
+            .map(|handle| handle.0.changes.clone())
+        else {
+            return Ok(());
+        };
+        if ctx.sink().notify_tool_list_changed().await.is_err() {
+            return Ok(());
+        }
+        loop {
+            tokio::select! {
+                () = ctx.cancelled() => return Ok(()),
+                changed = changes.changed() => {
+                    if changed.is_err() || ctx.sink().notify_tool_list_changed().await.is_err() {
+                        return Ok(());
+                    }
+                }
+            }
+        }
     }
 
     async fn initialize(

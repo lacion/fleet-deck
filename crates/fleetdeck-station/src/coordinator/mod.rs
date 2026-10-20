@@ -9,6 +9,7 @@
 mod annotations;
 pub mod bindings;
 pub mod bridge;
+mod bridge_watch;
 pub mod desktop_forward;
 pub mod desktop_tools;
 pub mod fence;
@@ -24,6 +25,7 @@ mod mcp_service;
 pub mod outbox;
 mod permit_io;
 pub mod socket;
+mod socket_watch;
 mod tool_class;
 pub mod tools;
 
