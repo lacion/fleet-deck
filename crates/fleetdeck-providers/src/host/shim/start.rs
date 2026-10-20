@@ -249,6 +249,45 @@ impl ShimHost {
         prepared: Prepared,
         secrets: Option<LaunchSecrets>,
     ) -> Result<ShimRecord, HostError> {
+        let secrets = match secrets {
+            Some(secrets) => Some((secrets, self.exe_digest(&prepared.program).await?)),
+            None => None,
+        };
+        self.start_with_digest(prepared, secrets).await
+    }
+
+    /// The SHA-256 of the shim executable (cached after the first call),
+    /// hashed on a blocking thread. `program` names the provider in the
+    /// error. The station hashes before its final authority check and then
+    /// calls [`Self::start_with_digest`] (MCP P4b §7.1).
+    ///
+    /// # Errors
+    /// [`HostError::Spawn`] when the executable cannot be hashed.
+    pub async fn exe_digest(&self, program: &str) -> Result<String, HostError> {
+        let config = self.config().clone();
+        tokio::task::spawn_blocking(move || config.exe_digest())
+            .await
+            .map_err(io::Error::other)
+            .and_then(|hashed| hashed)
+            .map_err(|e| {
+                tracing::debug!(error = %e, "the shim executable cannot be hashed");
+                HostError::Spawn {
+                    program: program.to_owned(),
+                    source: io::Error::other("the shim executable cannot be hashed"),
+                }
+            })
+    }
+
+    /// [`Self::start_with`] after the hash: `secrets` holds the token and
+    /// the executable hash that [`Self::exe_digest`] returned.
+    ///
+    /// # Errors
+    /// As [`Self::start_with`].
+    pub async fn start_with_digest(
+        &self,
+        prepared: Prepared,
+        secrets: Option<(LaunchSecrets, String)>,
+    ) -> Result<ShimRecord, HostError> {
         let c = self.config();
         let Prepared {
             mut record,
@@ -261,19 +300,10 @@ impl ShimHost {
             program: program.clone(),
             source,
         };
-        let launched = if let Some(secrets) = secrets {
+        let launched = if let Some((secrets, expected)) = secrets {
             spec.args
                 .extend(secrets.extra_args.iter().map(|a| a.as_bytes().to_vec()));
             spec.secrets = true;
-            let config = c.clone();
-            let expected = tokio::task::spawn_blocking(move || config.exe_digest())
-                .await
-                .map_err(io::Error::other)
-                .and_then(|hashed| hashed)
-                .map_err(|e| {
-                    tracing::debug!(error = %e, "the shim executable cannot be hashed");
-                    spawn_error(io::Error::other("the shim executable cannot be hashed"))
-                })?;
             client::launch_with(
                 &c.exe,
                 &spec,

@@ -8,6 +8,8 @@
 #![allow(clippy::unwrap_used)]
 
 use std::path::PathBuf;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use fleetdeck_core::ChildEnv;
 use fleetdeck_proto::command::SessionSpec;
@@ -19,11 +21,12 @@ use fleetdeck_testkit::Det;
 use super::super::coordinator_start::{
     BridgeStart, prepare_bridge_fleet, revoke_stored, store_tools, unless_unsaved,
 };
+use super::super::shim_stdin::Gate;
 use super::{LaunchError, launch_shim_for, reason};
 use crate::coordinator::fence::{Fence, FenceState};
 use crate::coordinator::{BindingState, Bindings, BridgeEndpoint};
 use crate::store::shim_bindings::RowState;
-use crate::store::{NewSession, OfflineApprovalPolicy, Store, StoreConfig};
+use crate::store::{Dispatch, NewSession, OfflineApprovalPolicy, ShimState, Store, StoreConfig};
 
 fn verified(_: ProviderKind, _: Option<&str>) -> Result<(), &'static str> {
     Ok(())
@@ -39,9 +42,22 @@ struct Rig {
 
 impl Rig {
     async fn new() -> Self {
+        Self::with_exe(false).await
+    }
+
+    /// With `hashable`, the shim executable is a file that can be hashed
+    /// (it is never started: no test here launches it).
+    async fn with_exe(hashable: bool) -> Self {
         let det = Det::new();
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir(tmp.path().join("station")).unwrap();
+        let exe = if hashable {
+            let exe = tmp.path().join("fleetdeck-exe");
+            std::fs::write(&exe, b"not a real shim").unwrap();
+            exe
+        } else {
+            PathBuf::from("/nonexistent/fleetdeck")
+        };
         let store = Store::open_in_memory(det.clock(), det.ids(), StoreConfig::default())
             .await
             .unwrap();
@@ -61,7 +77,7 @@ impl Rig {
             .await
             .unwrap();
         let mut config = ShimHostConfig::new(
-            PathBuf::from("/nonexistent/fleetdeck"),
+            exe,
             tmp.path().join("station"),
             store.incarnation().as_str().to_owned(),
         );
@@ -104,6 +120,11 @@ impl Rig {
     }
 
     async fn launch(&self, tools: BridgeStart) -> Result<(), LaunchError> {
+        self.launch_gated(tools, &|| Box::pin(std::future::ready(None)))
+            .await
+    }
+
+    async fn launch_gated(&self, tools: BridgeStart, gate: &Gate<'_>) -> Result<(), LaunchError> {
         launch_shim_for(
             &self.store,
             &self.host,
@@ -111,7 +132,7 @@ impl Rig {
             &self.spec,
             AckMode::Manual,
             None,
-            &|| Box::pin(std::future::ready(None)),
+            gate,
             &self.bindings,
             Some(tools),
         )
@@ -322,4 +343,75 @@ async fn a_durable_cleanup_or_a_failed_settlement_passes_through_without_a_kill(
     let out = unless_unsaved(false, failed, kill).await;
     assert!(matches!(out, Err(LaunchError::Settled { ref error, .. }) if error == "x"));
     assert!(!killed.get());
+}
+
+/// MCP P4b §7.1 (test 10): the early check lets the launch go, the final
+/// check refuses. No shim starts, the stored row ends, its token is refused
+/// and the shim row is `never_started`.
+#[tokio::test]
+async fn a_refusal_after_the_early_check_stops_the_shim_launch() {
+    let rig = Rig::with_exe(true).await;
+    let tools = rig.tools();
+    let digest = tools.digest.clone();
+    let calls = AtomicUsize::new(0);
+    let gate = || -> std::pin::Pin<Box<dyn Future<Output = Option<Dispatch>> + Send>> {
+        let n = calls.fetch_add(1, Ordering::SeqCst);
+        Box::pin(std::future::ready(
+            (n >= 1).then(|| Dispatch::NotDispatched("refused".to_owned())),
+        ))
+    };
+    // A launch would end in `Settled` (the executable is no shim).
+    let Err(LaunchError::Refused(Dispatch::NotDispatched(why))) =
+        rig.launch_gated(tools, &gate).await
+    else {
+        panic!("the launch must be refused");
+    };
+    assert_eq!(why, "refused");
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    let rows = rig.store.shim_bindings_load().await.unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].state, RowState::Ended);
+    assert_eq!(
+        rig.bindings.get_digest(&digest).unwrap().state,
+        BindingState::Revoked
+    );
+    let shim = rig.store.shim(rows[0].shim_id.clone()).await.unwrap();
+    let shim = shim.unwrap();
+    assert_eq!(shim.state, ShimState::NeverStarted);
+    assert_eq!(shim.reason.as_deref(), Some(reason::SHIM_NEVER_STARTED));
+}
+
+/// MCP P4b §7.1 (test 10): with tools the order is the early check, the
+/// credential save, the executable hash, the final check.
+#[tokio::test]
+async fn the_final_check_runs_after_the_executable_hash() {
+    let rig = Rig::with_exe(true).await;
+    let tools = rig.tools();
+    let calls = AtomicUsize::new(0);
+    let seen: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let note = |text: String| seen.lock().unwrap().push(text);
+    let gate = || -> std::pin::Pin<Box<dyn Future<Output = Option<Dispatch>> + Send>> {
+        let n = calls.fetch_add(1, Ordering::SeqCst);
+        let rig = &rig;
+        let note = &note;
+        Box::pin(async move {
+            let rows = rig.store.shim_bindings_load().await.unwrap().len();
+            if n == 0 {
+                note(format!("early: rows={rows}"));
+                return None;
+            }
+            // The hash is cached only if the launch hashed before this
+            // check: the file is gone now.
+            std::fs::remove_file(&rig.host.config().exe).unwrap();
+            let hashed = rig.host.config().exe_digest().is_ok();
+            note(format!("final: rows={rows} hashed={hashed}"));
+            Some(Dispatch::NotDispatched("refused".to_owned()))
+        })
+    };
+    let out = rig.launch_gated(tools, &gate).await;
+    assert!(matches!(out, Err(LaunchError::Refused(_))), "{out:?}");
+    assert_eq!(
+        *seen.lock().unwrap(),
+        ["early: rows=0", "final: rows=1 hashed=true"]
+    );
 }
