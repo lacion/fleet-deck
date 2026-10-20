@@ -783,6 +783,8 @@ pub fn migrations() -> Migrations<'static> {
         M::up(super::worker_grant::tokens_kind_schema::SQL),
         M::up(super::worker_grant::schedules_author_schema::SQL),
         M::up(super::worker_grant::worker_attach_schema::SQL),
+        // V46 (MCP P4b): `session_owner_grant` and `required_classes`.
+        M::up(super::grants::owner_grant_schema::SQL),
     ])
 }
 

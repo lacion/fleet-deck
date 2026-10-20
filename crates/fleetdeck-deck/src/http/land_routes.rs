@@ -91,6 +91,7 @@ async fn land_inner(
                 station_id: rec.station_id.0,
                 session_id: session.to_owned(),
                 authority: None,
+                required_classes: None,
             })
             .await
             .map_err(ApiError::internal)?;

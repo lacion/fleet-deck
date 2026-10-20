@@ -4,7 +4,7 @@
 //! spawn-cap check and increment, and the intent rows (outbox item, mail,
 //! task, lineage) commit together with the receipt.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 
@@ -89,8 +89,8 @@ fn no(code: RejectCode, message: impl Into<String>) -> Result<Decision> {
 }
 
 /// The classes that an op needs (§6.3, ADR-008 §4.1): all of them.
-fn classes_of(op: &CoordinatorOp) -> Vec<GrantClass> {
-    match op {
+pub(super) fn classes_of(op: &CoordinatorOp) -> BTreeSet<GrantClass> {
+    let classes = match op {
         CoordinatorOp::Send { .. }
         | CoordinatorOp::Assign { .. }
         | CoordinatorOp::AssignAuto { .. }
@@ -106,7 +106,8 @@ fn classes_of(op: &CoordinatorOp) -> Vec<GrantClass> {
         CoordinatorOp::ProjectStart { .. } => vec![GrantClass::Spawn, GrantClass::Manage],
         CoordinatorOp::Answer { .. } => vec![GrantClass::Answer],
         CoordinatorOp::Land { .. } | CoordinatorOp::Move { .. } => vec![GrantClass::Manage],
-    }
+    };
+    classes.into_iter().collect()
 }
 
 /// True for a mode that skips the permission checks (ADR-008 §5.2): Claude
@@ -238,6 +239,11 @@ pub(crate) fn decide(
             (true, Some(a)) => Some(serde_json::to_string(&a)?),
             _ => None,
         };
+        // The full class set that admitted the call (MCP P4b §7.1).
+        let required = authority
+            .as_ref()
+            .map(|_| serde_json::to_string(&classes_of(op)))
+            .transpose()?;
         let ttl = if fleet {
             FLEET_INTENT_TTL_MS
         } else {
@@ -245,10 +251,10 @@ pub(crate) fn decide(
         };
         // The item of the call and the items of a group mail (`<id>-<n>`).
         tx.execute(
-            "UPDATE outbox SET call_id = ?2, authority = ?3,
+            "UPDATE outbox SET call_id = ?2, authority = ?3, required_classes = ?5,
                  expires_at = MIN(expires_at, created_at + ?4)
              WHERE outbox_id = ?1 OR substr(outbox_id, 1, length(?1) + 1) = ?1 || '-'",
-            params![ctx.outbox_id, command_id, authority, ttl],
+            params![ctx.outbox_id, command_id, authority, ttl, required],
         )?;
     }
     Ok(decision)
@@ -262,10 +268,8 @@ fn decide_op(
     command_id: &str,
     now: i64,
 ) -> Result<Decision> {
-    if let Some(class) = classes_of(op)
-        .into_iter()
-        .find(|c| !grant.classes.contains(c))
-    {
+    let required = classes_of(op);
+    if let Some(class) = required.iter().find(|c| !grant.classes.contains(c)) {
         return no(
             RejectCode::Forbidden,
             format!("the grant has no `{class:?}` class"),
@@ -436,7 +440,14 @@ fn decide_op(
         CoordinatorOp::Land {
             station,
             session_id,
-        } => super::coordinator_git::land(tx, grant, ctx, (station, session_id), (command_id, now)),
+        } => super::coordinator_git::land(
+            tx,
+            grant,
+            ctx,
+            (station, session_id),
+            (command_id, now),
+            required,
+        ),
         CoordinatorOp::Move {
             station,
             session_id,
@@ -447,6 +458,7 @@ fn decide_op(
             ctx,
             (station, session_id, to_station),
             (command_id, now),
+            required,
         ),
         CoordinatorOp::AssignAuto { task, requirements } => {
             if let Some(d) = check_text(task) {

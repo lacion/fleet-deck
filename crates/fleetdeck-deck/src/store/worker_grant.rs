@@ -24,6 +24,7 @@ use fleetdeck_proto::version::feature;
 use fleetdeck_proto::{CommandEnvelope, CommandId, StationId};
 use rusqlite::{Connection, OptionalExtension, params};
 
+use super::coordinator::grant_narrowing::{self, Removal};
 use super::display_directives_coordinator::invalidate_coordinator_directives;
 use super::grant_scopes::{active_grants, in_effect, sync_coordinate_scopes};
 use super::grants::{
@@ -702,6 +703,10 @@ pub(super) fn revoke_tx(
          WHERE grant_id = ?1 AND state != 'revoked'",
         params![grant_id, reason],
     )?;
+    if n == 1 {
+        let none = BTreeSet::new(); // a revoked grant allows nothing (MCP P4b §7.2)
+        grant_narrowing::fail_removed_tx(tx, grant_id, &none, Removal::Revoked, now)?;
+    }
     invalidate_coordinator_directives(tx, grant_id)?;
     Ok((n == 1, sync_coordinate_scopes(tx, now)?))
 }

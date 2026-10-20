@@ -79,6 +79,12 @@ pub(super) fn authority_local(
     }) else {
         return Ok(Err("unknown_command"));
     };
+    if !super::coordinator::grant_narrowing::required_hold(
+        row.required_classes.as_deref(),
+        &grant.classes,
+    ) {
+        return Ok(Err("class_removed"));
+    }
     let session = SessionId::from(row.session_id);
     let excluded =
         super::coordinator::strict_refusal(tx, grant, (station, &session), (false, now))?.is_some();

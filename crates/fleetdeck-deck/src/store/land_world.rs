@@ -147,6 +147,7 @@ impl World {
                 station_id: self.st.0.clone(),
                 session_id: session.to_owned(),
                 authority: None,
+                required_classes: None,
             })
             .await
             .unwrap()

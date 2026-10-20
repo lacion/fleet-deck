@@ -411,6 +411,7 @@ async fn grant_land(s: &Setup) -> (CommandAuthority, String) {
                 station_id: s.f.station.0.clone(),
                 session_id: "s1".to_owned(),
                 authority: Some(authority.clone()),
+                required_classes: None,
             })
             .await
             .unwrap();

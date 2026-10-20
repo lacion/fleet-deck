@@ -670,12 +670,12 @@ impl DeckStore {
                 generation: check.generation,
             };
             let tx = conn.transaction()?;
-            let row: Option<(String, Option<String>)> = tx
+            let row: Option<(String, Option<String>, Option<String>)> = tx
                 .query_row(
-                    "SELECT payload, authority FROM outbox
+                    "SELECT payload, authority, required_classes FROM outbox
                      WHERE command_id = ?1 AND station_id = ?2",
                     params![check.command_id.as_str(), station.as_str()],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
                 )
                 .optional()?;
             let now = super::now_ms(&clock);
@@ -689,7 +689,7 @@ impl DeckStore {
             if !on {
                 return Ok(Err("fleet_control_off"));
             }
-            let Some((payload, authority)) = row else {
+            let Some((payload, authority, required)) = row else {
                 // A land command is in `land_queue` (FG-8, design §11.2).
                 return super::session_moves::authority_local(&tx, &station, &check, &grant, now);
             };
@@ -705,6 +705,10 @@ impl DeckStore {
                 .is_none_or(|s| s == &check.target_session);
             if !same || !same_target {
                 return Ok(Err("unknown_command"));
+            }
+            // A narrowing removed a class of the call (MCP P4b §7.1).
+            if !grant_narrowing::required_hold(required.as_deref(), &grant.classes) {
+                return Ok(Err("class_removed"));
             }
             // A command that launches a provider needs the real launch mode.
             // A station that sends none is older than the deck (version
@@ -739,6 +743,8 @@ impl DeckStore {
 
 #[path = "coordinator_gate.rs"]
 mod gate;
+#[path = "grant_narrowing.rs"]
+pub(super) mod grant_narrowing;
 pub(super) use gate::{fleet_gate, v2_refusal};
 
 #[cfg(test)]

@@ -114,6 +114,7 @@ impl Moves {
             src_session: session.to_owned(),
             dst_station: self.bravo.0.clone(),
             authority: None,
+            required_classes: None,
         }
     }
 
@@ -784,3 +785,5 @@ async fn a_move_out_check_excludes_a_target_outside_the_grant() {
 
 #[path = "session_moves_more_tests.rs"]
 mod more;
+#[path = "session_moves_narrowing_tests.rs"]
+mod narrowing;

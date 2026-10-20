@@ -792,3 +792,6 @@ async fn an_intent_of_a_fleet_control_grant_carries_its_authority_and_expires_in
     );
     assert_eq!(item.expires_at - item.created_at, 24 * 60 * 60 * 1000);
 }
+
+#[path = "fleet_control_narrowing_tests.rs"]
+mod narrowing;

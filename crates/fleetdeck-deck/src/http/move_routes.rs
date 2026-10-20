@@ -140,6 +140,7 @@ async fn move_inner(
             src_session: session.to_owned(),
             dst_station: dst.station_id.0.clone(),
             authority: None,
+            required_classes: None,
         };
         match board
             .store

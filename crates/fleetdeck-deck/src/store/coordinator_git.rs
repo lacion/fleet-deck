@@ -23,7 +23,7 @@ use super::branch_map::{SYNC_OFF, UNVERIFIED};
 use super::coordinator::strict_target;
 use super::coordinator_ops::{Context, Decision};
 use super::coordinator_query::{QueryAnswer, ReadShape, StationRead};
-use super::grants::Grant;
+use super::grants::{Grant, GrantClass};
 use super::land_queue::{LandRefusal, LandRequest, LandRequested, request_in_tx};
 use super::land_ready::Env;
 use super::session_moves::{
@@ -81,6 +81,7 @@ pub(super) fn land(
     ctx: &Context,
     (station, session): (&StationId, &SessionId),
     (command_id, now): (&str, i64),
+    required: BTreeSet<GrantClass>,
 ) -> Result<Decision> {
     if let Some(d) = strict_target(tx, grant, (station, session), (true, now))? {
         return Ok(d);
@@ -108,6 +109,7 @@ pub(super) fn land(
         station_id: station.as_str().to_owned(),
         session_id: session.as_str().to_owned(),
         authority: grant.authority(),
+        required_classes: Some(required),
     };
     match request_in_tx(tx, &env, (land_id, land_command), &req, now)? {
         LandRequested::Queued { .. } => {
@@ -130,6 +132,7 @@ pub(super) fn move_to(
     ctx: &Context,
     (station, session, to): (&StationId, &SessionId, &StationId),
     (command_id, now): (&str, i64),
+    required: BTreeSet<GrantClass>,
 ) -> Result<Decision> {
     if let Some(d) = strict_target(tx, grant, (station, session), (true, now))? {
         return Ok(d);
@@ -165,6 +168,7 @@ pub(super) fn move_to(
         src_session: session.as_str().to_owned(),
         dst_station: to.as_str().to_owned(),
         authority: grant.authority(),
+        required_classes: Some(required),
     };
     match move_request_in_tx(tx, &env, (move_id, part), &req, now)? {
         MoveRequested::Started { .. } => {
