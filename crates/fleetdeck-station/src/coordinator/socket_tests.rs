@@ -43,6 +43,7 @@ pub(crate) async fn rig() -> Rig {
             classes: [ToolClass::Read, ToolClass::Mail].into_iter().collect(),
             state: BindingState::Active,
             control_skill: "SKILL v1".to_owned(),
+            kind: fleetdeck_proto::command::GrantKind::Coordinator,
             scope: fleetdeck_proto::command::GrantScope::Lineage,
         },
     );

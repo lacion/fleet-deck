@@ -625,6 +625,7 @@ fn bound() -> Bindings {
             scope: fleetdeck_proto::command::GrantScope::Lineage,
             state: BindingState::Active,
             control_skill: String::new(),
+            kind: fleetdeck_proto::command::GrantKind::Coordinator,
         },
     );
     bindings

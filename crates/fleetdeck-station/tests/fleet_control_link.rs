@@ -136,6 +136,7 @@ fn grant(session: &str, state: BindingState) -> Binding {
         scope: fleetdeck_proto::command::GrantScope::Fleet,
         state,
         control_skill: "skill".to_owned(),
+        kind: fleetdeck_proto::command::GrantKind::Coordinator,
     }
 }
 

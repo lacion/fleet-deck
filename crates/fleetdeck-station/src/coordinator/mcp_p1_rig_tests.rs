@@ -64,6 +64,7 @@ pub(super) fn binding(id: &str, state: BindingState, classes: &[ToolClass]) -> B
         classes: classes.iter().copied().collect(),
         state,
         control_skill: SKILL.to_owned(),
+        kind: fleetdeck_proto::command::GrantKind::Coordinator,
         scope: fleetdeck_proto::command::GrantScope::Lineage,
     }
 }

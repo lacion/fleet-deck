@@ -33,6 +33,7 @@ fn row(digest: &str, state: RowState, native: Option<&str>) -> BindingRow {
         scope: "{\"scope\":\"own\"}".to_owned(),
         state,
         control_skill: "{\"skill\":1}".to_owned(),
+        kind: fleetdeck_proto::command::GrantKind::Coordinator,
         expires_at: Some(99),
         created_at: 5,
     }
@@ -612,6 +613,7 @@ async fn the_memory_sink_binds_a_pending_binding_and_never_revives_a_terminal_on
         scope: fleetdeck_proto::command::GrantScope::default(),
         state,
         control_skill: String::new(),
+        kind: fleetdeck_proto::command::GrantKind::Coordinator,
     };
     bindings.insert("d1".to_owned(), binding("b1", BindingState::Pending));
     bindings.insert("d2".to_owned(), binding("b2", BindingState::Revoked));

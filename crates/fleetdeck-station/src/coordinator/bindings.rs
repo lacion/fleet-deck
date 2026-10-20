@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use fleetdeck_core::secret::Secret;
 use fleetdeck_proto::SessionId;
-use fleetdeck_proto::command::GrantScope;
+use fleetdeck_proto::command::{GrantKind, GrantScope};
 use fleetdeck_proto::event::ProviderKind;
 use fleetdeck_proto::mutation::CoordinatorBinding;
 use ring::rand::{SecureRandom, SystemRandom};
@@ -54,6 +54,9 @@ pub struct Binding {
     pub state: BindingState,
     /// The cached control skill (§7.1), served as MCP `instructions`.
     pub control_skill: String,
+    /// The kind of the grant (MCP P4a §4). A fleet-only binding has no
+    /// grant: it is `Coordinator` and the field is unused.
+    pub kind: GrantKind,
 }
 
 /// The identity of an authenticated caller. It comes from the binding only.
@@ -293,13 +296,15 @@ impl Bindings {
     }
 
     /// True when the session holds an active binding with a mutating class
-    /// on this station: it is a coordinator (ADR-008 §4.2 rule 3).
+    /// on this station: it is a coordinator (ADR-008 §4.2 rule 3). A binding
+    /// of a worker grant does not count (MCP P4a §4, W1).
     #[must_use]
     pub fn holds_mutating(&self, session_id: &SessionId) -> bool {
         self.lock().values().any(|e| {
             let b = &e.binding;
             &b.session_id == session_id
                 && b.state == BindingState::Active
+                && b.kind != GrantKind::Worker
                 && b.classes.iter().any(|c| c.is_mutating())
         })
     }

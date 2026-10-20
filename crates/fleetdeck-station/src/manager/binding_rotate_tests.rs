@@ -33,6 +33,7 @@ fn binding(grant: &str) -> Binding {
         scope: GrantScope::Lineage,
         state: BindingState::Active,
         control_skill: String::new(),
+        kind: fleetdeck_proto::command::GrantKind::Coordinator,
     }
 }
 

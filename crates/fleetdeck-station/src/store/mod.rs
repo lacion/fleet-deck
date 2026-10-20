@@ -75,6 +75,7 @@ mod schema_v37;
 mod schema_v38;
 mod schema_v39;
 mod schema_v40;
+mod schema_v41;
 pub mod session_files;
 pub mod session_holds;
 pub mod setup_runs;

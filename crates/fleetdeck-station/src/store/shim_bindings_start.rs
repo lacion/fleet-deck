@@ -63,6 +63,7 @@ impl BindingRow {
             control_skill: serde_json::Value::String(binding.control_skill.clone()).to_string(),
             expires_at,
             created_at,
+            kind: binding.kind,
         }
     }
 
@@ -100,6 +101,7 @@ impl BindingRow {
                 RowState::Ended | RowState::Suspended => BindingState::Revoked,
             },
             control_skill,
+            kind: self.kind,
         })
     }
 }

@@ -67,6 +67,7 @@ mod task_stop;
 pub mod trash;
 mod turn_rows;
 pub mod turns;
+mod worker_grant;
 pub mod workspaces;
 pub use adapters::{adapters_from_config, setup_envs_from_config};
 pub use shim_configs::durable_configs;
@@ -791,3 +792,7 @@ mod shell_run_tests;
 #[cfg(test)]
 #[path = "session_holds_wired_tests.rs"]
 mod session_holds_wired_tests;
+
+#[cfg(test)]
+#[path = "worker_grant_tests.rs"]
+mod worker_grant_tests;
