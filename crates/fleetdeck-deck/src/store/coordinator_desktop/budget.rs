@@ -1,11 +1,15 @@
 //! The image reservation, the query rate and the cap change of the
-//! coordinator desktop tools (R13 P6 §8.1, §8.2, §2.2).
+//! coordinator desktop tools (R13 P6 §8.1, §8.2, §2.2), and the spawn cap and
+//! the mode ceilings (MCP P4a §8).
+
+use std::collections::BTreeMap;
 
 use fleetdeck_proto::coordinator_desktop_text::{code, limits};
 use fleetdeck_proto::coordinator_desktop_wire::CoordinatorContext;
 use rusqlite::params;
 
 use super::rate;
+use crate::store::grant_spawn_caps::spawn_caps;
 use crate::store::grants::{
     GrantClass, GrantState, check_desktop_caps, check_input_grant, check_recording_caps, get_grant,
 };
@@ -18,8 +22,9 @@ pub struct CapsChanged {
     pub increased: bool,
 }
 
-/// The caps that a change sets; `None` keeps the stored value.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// The caps that a change sets, and the spawn cap and the mode ceilings
+/// (MCP P4a §8); `None` keeps the stored value.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CapsChange {
     pub desktop_cap: Option<u32>,
     pub capture_cap: Option<u32>,
@@ -29,6 +34,10 @@ pub struct CapsChange {
     /// R13 P7 §9.1: the input count and the typed-character caps.
     pub input_cap: Option<u32>,
     pub input_character_cap: Option<u32>,
+    /// MCP P4a §8: the spawn cap (needs the class `spawn`).
+    pub spawn_cap: Option<u32>,
+    /// MCP P4a §8: the mode ceilings; a given map replaces the stored one.
+    pub max_modes: Option<BTreeMap<String, String>>,
 }
 
 /// Why a cap change was refused.
@@ -150,7 +159,8 @@ impl DeckStore {
         .await
     }
 
-    /// Changes the caps of a grant (§2.2). A `None` field of the change keeps
+    /// Changes the caps of a grant (§2.2), and the spawn cap and the mode
+    /// ceilings (MCP P4a §8). A `None` field of the change keeps
     /// the stored value. A decrease needs no elevation; an increase needs
     /// `allow_increase`. The counters never change here.
     ///
@@ -215,20 +225,25 @@ impl DeckStore {
             ) {
                 return Ok(Err(CapsError::Invalid(text)));
             }
+            let spawn = match spawn_caps(&grant, change.spawn_cap, change.max_modes.as_ref()) {
+                Ok(spawn) => spawn,
+                Err(text) => return Ok(Err(CapsError::Invalid(text))),
+            };
             let increased = desktop_new.unwrap_or(0) > grant.desktop_cap.unwrap_or(0)
                 || capture_new.unwrap_or(0) > grant.capture_cap.unwrap_or(0)
                 || image_new.unwrap_or(0) > grant.image_byte_cap.unwrap_or(0)
                 || recording_new > grant.recording_cap
                 || second_new > grant.recording_second_cap
                 || input_new > grant.input_cap
-                || input_character_new > grant.input_character_cap;
+                || input_character_new > grant.input_character_cap
+                || spawn.widens;
             if increased && !allow_increase {
                 return Ok(Err(CapsError::ElevationRequired));
             }
             tx.execute(
                 "UPDATE tokens SET desktop_cap = ?2, capture_cap = ?3, image_byte_cap = ?4,
                  recording_cap = ?5, recording_second_cap = ?6, input_cap = ?7,
-                 input_character_cap = ?8
+                 input_character_cap = ?8, spawn_cap = ?9, max_modes = ?10
                  WHERE grant_id = ?1",
                 params![
                     grant_id,
@@ -239,7 +254,9 @@ impl DeckStore {
                     recording_new,
                     second_new,
                     input_new,
-                    input_character_new
+                    input_character_new,
+                    spawn.spawn_cap,
+                    serde_json::to_string(&spawn.max_modes)?
                 ],
             )?;
             tx.commit()?;

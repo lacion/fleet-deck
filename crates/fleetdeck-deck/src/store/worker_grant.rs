@@ -45,7 +45,7 @@ pub const WORKER_GRANT_CAP: usize = 200;
 /// The most stations of one worker grant (the limit of an owner grant).
 const MAX_WORKER_STATIONS: usize = 16;
 /// The highest spawn cap of a worker grant (§2).
-const MAX_WORKER_SPAWN_CAP: u32 = 10;
+pub(crate) const MAX_WORKER_SPAWN_CAP: u32 = 10;
 /// How long the retention keeps a terminal worker grant and a `none`
 /// decision (§7).
 pub const RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1000;
