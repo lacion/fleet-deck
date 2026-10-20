@@ -5,6 +5,8 @@
 //! reads the deck or the clock.
 
 use std::collections::BTreeSet;
+use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use fleetdeck_proto::StationId;
 use fleetdeck_proto::fleet_view::{FleetView, FleetViewPage};
@@ -14,7 +16,7 @@ use rmcp::model::{
 };
 use serde_json::{Value, json};
 
-use super::bindings::Binding;
+use super::bindings::{Binding, Bindings};
 use super::tools;
 
 /// The URI of the guide resource.
@@ -28,6 +30,44 @@ pub(super) const GUIDE_TTL_MS: u64 = 60_000;
 /// The sentence that the guide of a binding without a grant adds (§5.2).
 const GUIDE_TAIL: &str =
     "To work on another station, call fleet_view and ask your coordinator or the owner.";
+
+impl Bindings {
+    /// Records the name and the platform of this station (MCP P3 §3.3).
+    pub fn set_station(&self, name: String, platform: String) {
+        *locked(&self.station) = Some((name, platform));
+    }
+
+    /// Sets the station name and keeps the platform; without a recorded
+    /// station it does nothing (the start records both).
+    pub fn set_station_name(&self, name: String) {
+        if let Some((current, _)) = locked(&self.station).as_mut() {
+            *current = name;
+        }
+    }
+
+    /// The name and the platform of this station, once recorded.
+    #[must_use]
+    pub fn station(&self) -> Option<(String, String)> {
+        locked(&self.station).clone()
+    }
+
+    /// Records the published fleet skill tree (MCP P3 §4.1); `None` means
+    /// no injection.
+    pub fn set_skill_dir(&self, dir: Option<PathBuf>) {
+        *locked(&self.skill_dir) = dir;
+    }
+
+    /// The published fleet skill tree, when there is one.
+    #[must_use]
+    pub fn skill_dir(&self) -> Option<PathBuf> {
+        locked(&self.skill_dir).clone()
+    }
+}
+
+/// The value behind a mutex that a panic may have poisoned.
+fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// The names of the tools in the catalog of `binding`.
 pub(super) fn catalog_names(binding: &Binding) -> BTreeSet<String> {

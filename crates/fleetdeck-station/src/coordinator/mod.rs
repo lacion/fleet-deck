@@ -74,5 +74,8 @@ mod mcp_p1_tests;
 #[path = "mcp_p3_tests.rs"]
 mod mcp_p3_tests;
 #[cfg(test)]
+#[path = "mcp_p3_text_tests.rs"]
+mod mcp_p3_text_tests;
+#[cfg(test)]
 #[path = "outbox_tests.rs"]
 mod outbox_tests;
