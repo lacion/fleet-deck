@@ -65,8 +65,7 @@ fn envelope(det: &Det, id: &str) -> CommandEnvelope {
 fn accepted() -> CommandResult {
     CommandResult {
         session_id: Some(S1.into()),
-        input_id: None,
-        seq: None,
+        ..CommandResult::default()
     }
 }
 
