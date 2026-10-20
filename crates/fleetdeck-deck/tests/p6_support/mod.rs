@@ -32,7 +32,7 @@ use fleetdeck_deck::{DeckNode, DeckStore, NodeError};
 use fleetdeck_link::reconnect::BackoffPolicy;
 use fleetdeck_proto::StationId;
 use fleetdeck_proto::command::GrantScope;
-use fleetdeck_proto::coordinator_spec::InputScope;
+use fleetdeck_proto::coordinator_spec::{GrantKind, InputScope};
 use fleetdeck_proto::event::{Event, ProviderKind};
 use fleetdeck_proto::mutation::CoordinatorBinding;
 use fleetdeck_proto::version::feature;
@@ -603,6 +603,7 @@ impl World {
                 state: BindingState::Active,
                 control_skill: "skill".to_owned(),
                 scope: GrantScope::Lineage,
+                kind: GrantKind::Coordinator,
             },
         );
         self.grant_id = grant.grant_id;

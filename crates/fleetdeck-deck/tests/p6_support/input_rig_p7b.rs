@@ -17,7 +17,7 @@ use std::path::Path;
 
 use fleetdeck_deck::store::{GrantClass, NewGrant};
 use fleetdeck_proto::command::GrantScope;
-use fleetdeck_proto::coordinator_spec::InputScope;
+use fleetdeck_proto::coordinator_spec::{GrantKind, InputScope};
 use fleetdeck_proto::event::ProviderKind;
 use fleetdeck_proto::mutation::CoordinatorBinding;
 use fleetdeck_station::coordinator::{Binding, BindingState, ToolClass, mint};
@@ -314,6 +314,7 @@ impl World {
                 state: BindingState::Active,
                 control_skill: "skill".to_owned(),
                 scope: GrantScope::Lineage,
+                kind: GrantKind::Coordinator,
             },
         );
         Mcp {
