@@ -8,9 +8,10 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use fleetdeck_proto::StationId;
-use fleetdeck_proto::SessionId;
 use fleetdeck_proto::CardStatus;
+use fleetdeck_proto::SessionId;
+use fleetdeck_proto::SessionSummary;
+use fleetdeck_proto::StationId;
 use fleetdeck_proto::event::ProviderKind;
 use fleetdeck_proto::fleet_view::{
     CALLSIGN_MAX_CHARS, GRANT_CLASSES_MAX, GRANT_STATIONS_MAX, ID_MAX_BYTES, ITEM_MAX_BYTES,
@@ -20,7 +21,6 @@ use fleetdeck_proto::fleet_view::{
     TITLE_MAX_CHARS, cut,
 };
 use fleetdeck_proto::link::StationInfo;
-use fleetdeck_proto::SessionSummary;
 use rusqlite::{OptionalExtension, params};
 use serde::Serialize;
 
@@ -63,7 +63,10 @@ fn entry(key: Vec<String>, item: &impl Serialize, stations: Vec<StationId>) -> O
 fn id_fits(id: &str) -> bool {
     let fits = id.len() <= ID_MAX_BYTES;
     if !fits {
-        tracing::debug!(bytes = id.len(), "fleet view: an item with a long ID is left out");
+        tracing::debug!(
+            bytes = id.len(),
+            "fleet view: an item with a long ID is left out"
+        );
     }
     fits
 }
@@ -225,7 +228,10 @@ impl DeckStore {
                 continue;
             };
             let station = cut(station, NAME_MAX_CHARS);
-            let callsign = cut(summary.callsign.as_deref().unwrap_or(""), CALLSIGN_MAX_CHARS);
+            let callsign = cut(
+                summary.callsign.as_deref().unwrap_or(""),
+                CALLSIGN_MAX_CHARS,
+            );
             let item = SessionItem {
                 station_id: session.station_id.clone(),
                 station: station.clone(),
@@ -336,7 +342,10 @@ impl DeckStore {
             station_id: station.clone(),
             station: cut(&name, NAME_MAX_CHARS),
             session_id: summary.session_id.clone(),
-            callsign: cut(summary.callsign.as_deref().unwrap_or(""), CALLSIGN_MAX_CHARS),
+            callsign: cut(
+                summary.callsign.as_deref().unwrap_or(""),
+                CALLSIGN_MAX_CHARS,
+            ),
             title: summary.title.as_deref().map(|t| cut(t, TITLE_MAX_CHARS)),
             provider: summary.provider.unwrap_or(ProviderKind::Unknown),
             model: summary.model.as_deref().map(|m| cut(m, MODEL_MAX_CHARS)),

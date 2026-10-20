@@ -184,7 +184,9 @@ fn page_of(
     after: Option<&[String]>,
     station: Option<&StationId>,
 ) -> FleetViewPage {
-    let start = after.map_or(0, |key| entries.partition_point(|e| e.key.as_slice() <= key));
+    let start = after.map_or(0, |key| {
+        entries.partition_point(|e| e.key.as_slice() <= key)
+    });
     let rest: Vec<&Entry> = entries[start..]
         .iter()
         .filter(|e| station.is_none_or(|s| e.stations.contains(s)))
@@ -233,7 +235,10 @@ impl DeckStore {
         };
         // 3. The station limit, counted also for a refused request.
         if !state.stations.admit(station, self.now_ms(), STATION_LIMIT) {
-            return Err(FleetViewError::Refused(STATION_LIMITED.0, STATION_LIMITED.1));
+            return Err(FleetViewError::Refused(
+                STATION_LIMITED.0,
+                STATION_LIMITED.1,
+            ));
         }
         let Ok(request) = serde_json::from_value::<FleetViewRequest>(params) else {
             return Err(FleetViewError::Refused(BAD_PARAMS.0, BAD_PARAMS.1));
@@ -250,7 +255,10 @@ impl DeckStore {
         // 5. The session limit, counted after step 4.
         let key = (station.clone(), request.caller.clone());
         if !state.sessions.admit(&key, self.now_ms(), SESSION_LIMIT) {
-            return Err(FleetViewError::Refused(SESSION_LIMITED.0, SESSION_LIMITED.1));
+            return Err(FleetViewError::Refused(
+                SESSION_LIMITED.0,
+                SESSION_LIMITED.1,
+            ));
         }
         // 7. A debug line: the station, the caller and the view only.
         tracing::debug!(
@@ -325,7 +333,11 @@ impl DeckStore {
     #[cfg(test)]
     pub(crate) async fn fleet_view_expire(&self) {
         let state = &self.inner.fleet_view;
-        for cache in [&state.cache_stations, &state.cache_projects, &state.cache_sessions] {
+        for cache in [
+            &state.cache_stations,
+            &state.cache_projects,
+            &state.cache_sessions,
+        ] {
             *cache.slot.lock().await = None;
         }
     }

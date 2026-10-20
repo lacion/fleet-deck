@@ -92,9 +92,7 @@ async fn fleet_view(ctx: &DeckLink, station: StationId, req: &InboundRequest) ->
             Ok(v) => Outcome::Ok(v),
             Err(e) => Outcome::Err(WireError::new(code::PROTOCOL_ERROR, e.to_string())),
         },
-        Err(FleetViewError::Refused(refused, text)) => {
-            Outcome::Err(WireError::new(refused, text))
-        }
+        Err(FleetViewError::Refused(refused, text)) => Outcome::Err(WireError::new(refused, text)),
         Err(FleetViewError::Store(e)) => {
             tracing::warn!(error = %e, "fleet view");
             Outcome::Err(WireError::new(code::PROTOCOL_ERROR, "deck store error"))

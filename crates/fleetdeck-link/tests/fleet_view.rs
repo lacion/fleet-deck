@@ -46,7 +46,7 @@ async fn fleet_view_is_refused_for_a_wrong_role_a_missing_admin_scope_or_a_missi
 
         // A station with the scope `admin` reaches the deck, with no
         // `coordinate` and no `command_id` (not mutating).
-        deck.grants.grant(fp.clone(), [Scope::Admin]);
+        deck.grants.grant(fp, [Scope::Admin]);
         let c = at_station.control.clone();
         let call = tokio::spawn(async move { c.request("fleet.view", None, params()).await });
         let answer = json!({"items": [], "next_cursor": null});

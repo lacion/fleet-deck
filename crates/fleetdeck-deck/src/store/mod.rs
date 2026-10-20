@@ -59,6 +59,8 @@ pub mod fleet_git_start;
 pub mod fleet_view;
 mod fleet_view_build;
 #[cfg(test)]
+mod fleet_view_paging_tests;
+#[cfg(test)]
 mod fleet_view_tests;
 pub mod git_snapshots;
 pub mod grant_scopes;

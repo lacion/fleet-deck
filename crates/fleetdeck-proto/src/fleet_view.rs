@@ -240,7 +240,10 @@ impl PartLimit {
 #[must_use]
 pub const fn cursor_parts(view: FleetView) -> &'static [PartLimit] {
     match view {
-        FleetView::Stations => &[PartLimit::Chars(NAME_MAX_CHARS), PartLimit::Bytes(ID_MAX_BYTES)],
+        FleetView::Stations => &[
+            PartLimit::Chars(NAME_MAX_CHARS),
+            PartLimit::Bytes(ID_MAX_BYTES),
+        ],
         FleetView::Projects => &[
             PartLimit::Chars(PROJECT_NAME_MAX_CHARS),
             PartLimit::Bytes(ID_MAX_BYTES),
@@ -367,7 +370,9 @@ mod tests {
         assert!(decode_cursor(FleetView::Stations, "A").is_err());
         assert!(decode_cursor(FleetView::Stations, "").is_err());
         // Not UTF-8.
-        assert!(decode_cursor(FleetView::Stations, &b64_encode(&[0xff, 0xfe, b'\n', 0xfd])).is_err());
+        assert!(
+            decode_cursor(FleetView::Stations, &b64_encode(&[0xff, 0xfe, b'\n', 0xfd])).is_err()
+        );
         // A part above its limit.
         let long = encode_cursor(&["n".repeat(NAME_MAX_CHARS + 1), "i".to_owned()]);
         assert!(decode_cursor(FleetView::Stations, &long).is_err());

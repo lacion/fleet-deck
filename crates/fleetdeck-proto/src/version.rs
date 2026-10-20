@@ -300,11 +300,11 @@ pub mod feature {
         DESKTOP_INPUT_MCP,
         DESKTOP_CLICK_MCP,
         DESKTOP_INPUT_ANY,
+        FLEET_VIEW,
         EXECUTION_STOP,
         PROVISION_REPORT,
         STATION_TOOLS,
         DESKTOP_TOOL_INSTALL,
-        FLEET_VIEW,
     ];
     /// Features without which a link is refused.
     pub const REQUIRED: &[&str] = &[CONTROL];
