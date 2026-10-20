@@ -175,7 +175,7 @@ pub(super) const NOT_NEW_CHILD: &str = "a coordinator session starts only as a n
 /// The input features that the current deck link negotiated (R13 P7 §3.2,
 /// R13 P7b §4). No deck link gives `false` for each.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-struct DeckFeatures {
+pub(super) struct DeckFeatures {
     /// `desktop_input_mcp.v1`.
     input_mcp: bool,
     /// `desktop_click_mcp.v1`.
@@ -185,7 +185,7 @@ struct DeckFeatures {
 }
 
 impl DeckFeatures {
-    fn of(bindings: &Bindings) -> Self {
+    pub(super) fn of(bindings: &Bindings) -> Self {
         bindings.deck().map_or_else(Self::default, |deck| Self {
             input_mcp: deck.has_feature(feature::DESKTOP_INPUT_MCP),
             click_mcp: deck.has_feature(feature::DESKTOP_CLICK_MCP),
@@ -206,7 +206,7 @@ impl DeckFeatures {
 /// `input_enabled`, `allow_click` and `features.click_mcp`. `input_any`
 /// needs `input_enabled` and the scope `any_window`. A spec that names an
 /// internal class is refused too.
-fn grant_classes(
+pub(super) fn grant_classes(
     coordinator: &CoordinatorSpec,
     features: DeckFeatures,
 ) -> Result<std::collections::BTreeSet<ToolClass>, String> {

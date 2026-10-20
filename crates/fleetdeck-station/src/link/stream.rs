@@ -304,10 +304,10 @@ impl Pump {
         // Before the first frame: the deck cannot acknowledge it earlier.
         let _ = self.first_snapshot.set(watermark);
         // The binding projection right after the summaries were read.
-        let coordinator = self
-            .coordinator
-            .as_ref()
-            .map(crate::coordinator::Bindings::projection);
+        let coordinator = match &self.coordinator {
+            Some(bindings) => Some(bindings.projection_with(&self.store.session_grants().await?)),
+            None => None,
+        };
         self.control
             .send(ControlFrame::SnapshotBegin {
                 incarnation: incarnation.clone(),

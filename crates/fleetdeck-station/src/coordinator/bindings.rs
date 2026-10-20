@@ -20,6 +20,7 @@ use tokio::sync::{Semaphore, watch};
 use super::fence::Fence;
 use super::forward::Transport;
 pub use super::tool_class::ToolClass;
+use crate::store::session_grants::{GrantRecord, RecordState};
 
 /// The prefix of a coordinator credential.
 pub const TOKEN_PREFIX: &str = "fdc1_";
@@ -491,7 +492,6 @@ impl Bindings {
     /// the open streams (MCP P4b §8.1): a binding that stays alive bumps the
     /// version of its change signal; a binding that ended closes it. Returns
     /// false for an unknown digest.
-    #[cfg_attr(not(test), allow(dead_code, reason = "used by MCP P4b-2"))]
     pub(crate) fn rewrite(&self, digest: &str, f: impl FnOnce(&mut Binding)) -> bool {
         match self.lock().get_mut(digest) {
             Some(e) => {
@@ -606,34 +606,119 @@ impl Bindings {
             .map(|e| e.binding.clone())
     }
 
+    /// The one live (`Pending` or `Active`) entry of a session: its digest
+    /// and a copy of its binding (MCP P4b §4.1). `None` when the session has
+    /// none, or more than one (logged: no entry is chosen).
+    pub(crate) fn live_of_session(&self, session_id: &SessionId) -> Option<(String, Binding)> {
+        let map = self.lock();
+        let mut live = map.iter().filter(|(_, e)| {
+            &e.binding.session_id == session_id
+                && matches!(
+                    e.binding.state,
+                    BindingState::Pending | BindingState::Active
+                )
+        });
+        let first = live.next()?;
+        if live.next().is_some() {
+            tracing::warn!(session = %session_id, "a session has more than one live binding; none is rewritten");
+            return None;
+        }
+        Some((first.0.clone(), first.1.binding.clone()))
+    }
+
+    /// True when an entry other than `digest` is live (`Pending` or
+    /// `Active`) under `binding_id`.
+    pub(crate) fn id_live_elsewhere(&self, digest: &str, binding_id: &str) -> bool {
+        self.lock().iter().any(|(d, e)| {
+            d != digest
+                && e.binding.binding_id == binding_id
+                && matches!(
+                    e.binding.state,
+                    BindingState::Pending | BindingState::Active
+                )
+        })
+    }
+
+    /// Before a rewrite of `digest` to `binding_id` (MCP P4b-2b): removes
+    /// every other entry with that id that is `Revoked` or `Expired`.
+    /// Returns false, removing nothing, when another entry with it is live.
+    pub(crate) fn claim_binding_id(&self, digest: &str, binding_id: &str) -> bool {
+        if self.id_live_elsewhere(digest, binding_id) {
+            return false;
+        }
+        self.lock()
+            .retain(|d, e| d == digest || e.binding.binding_id != binding_id);
+        true
+    }
+
     /// The binding projection of a coordinator-capable snapshot (ADR-006
     /// §6.1): every binding with its fields and lifecycle state, sorted by
     /// binding id. No secret.
     #[must_use]
     pub fn projection(&self) -> Vec<fleetdeck_proto::CoordinatorBindingState> {
+        self.projection_with(&[])
+    }
+
+    /// The projection that follows the records of the sessions (MCP P4b §5):
+    /// a dead credential of an `Attached` record is left out, and an `Ended`
+    /// record that memory does not hold gives a synthetic `Revoked` entry
+    /// (`Expired` for the reason `expired`). A grant without a record is
+    /// projected as by [`Self::projection`].
+    #[must_use]
+    pub fn projection_with(
+        &self,
+        records: &[GrantRecord],
+    ) -> Vec<fleetdeck_proto::CoordinatorBindingState> {
         use fleetdeck_proto::CoordinatorBindingPhase as Phase;
-        let mut out: Vec<_> = self
-            .lock()
+        use fleetdeck_proto::CoordinatorBindingState as Row;
+        let id = |r: &GrantRecord| format!("{}:{}", r.session_id, r.grant_id);
+        let attached: HashSet<String> = records
+            .iter()
+            .filter(|r| r.state == RecordState::Attached)
+            .map(id)
+            .collect();
+        let map = self.lock();
+        let mut out: Vec<Row> = map
             .values()
-            .filter(|e| !e.binding.is_fleet_only())
-            .map(|e| {
-                let b = &e.binding;
-                fleetdeck_proto::CoordinatorBindingState {
-                    binding_id: b.binding_id.clone(),
-                    grant_id: b.grant_id.clone(),
-                    session_id: b.session_id.clone(),
-                    generation: b.generation,
-                    provider_instance: b.provider_instance.clone(),
-                    native_id: b.native_id.clone(),
-                    state: match b.state {
-                        BindingState::Pending => Phase::Pending,
-                        BindingState::Active => Phase::Active,
-                        BindingState::Expired => Phase::Expired,
-                        BindingState::Revoked => Phase::Revoked,
-                    },
-                }
+            .map(|e| &e.binding)
+            .filter(|b| !b.is_fleet_only())
+            .filter(|b| {
+                !(attached.contains(&b.binding_id)
+                    && matches!(b.state, BindingState::Revoked | BindingState::Expired))
+            })
+            .map(|b| Row {
+                binding_id: b.binding_id.clone(),
+                grant_id: b.grant_id.clone(),
+                session_id: b.session_id.clone(),
+                generation: b.generation,
+                provider_instance: b.provider_instance.clone(),
+                native_id: b.native_id.clone(),
+                state: match b.state {
+                    BindingState::Pending => Phase::Pending,
+                    BindingState::Active => Phase::Active,
+                    BindingState::Expired => Phase::Expired,
+                    BindingState::Revoked => Phase::Revoked,
+                },
             })
             .collect();
+        for r in records.iter().filter(|r| r.state == RecordState::Ended) {
+            if map.values().any(|e| e.binding.binding_id == id(r)) {
+                continue;
+            }
+            out.push(Row {
+                binding_id: id(r),
+                grant_id: r.grant_id.clone(),
+                session_id: r.session_id.clone(),
+                generation: r.generation,
+                provider_instance: String::new(),
+                native_id: None,
+                state: if r.ended_reason.as_deref() == Some("expired") {
+                    Phase::Expired
+                } else {
+                    Phase::Revoked
+                },
+            });
+        }
         out.sort_by(|a, b| a.binding_id.cmp(&b.binding_id));
         out
     }

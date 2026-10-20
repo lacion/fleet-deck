@@ -19,7 +19,10 @@ use fleetdeck_proto::{Event, RejectCode, SessionId};
 use super::decide::{reject, result};
 use crate::coordinator::{Binding, BindingState, Bindings};
 use crate::store::shim_bindings::RowState;
-use crate::store::{Caller, DecideError, Decision};
+use crate::store::{Caller, DecideError, Decided, Decision, Store, StoreError};
+
+#[path = "coordinator_set.rs"]
+pub(super) mod set;
 
 fn forbidden() -> DecideError {
     reject(
@@ -58,11 +61,76 @@ pub fn guard(command: &SessionCommand, caller: &Caller) -> Result<(), DecideErro
     Ok(())
 }
 
-fn owner(origin: CommandOrigin) -> Result<(), DecideError> {
+pub(super) fn owner(origin: CommandOrigin) -> Result<(), DecideError> {
     if origin == CommandOrigin::Board {
         Ok(())
     } else {
         Err(forbidden())
+    }
+}
+
+/// The session of a `session.coordinator_set`: its memory is published after
+/// the commit ([`after_commit`]).
+pub(super) fn set_session(command: &SessionCommand) -> Option<SessionId> {
+    match command {
+        SessionCommand::CoordinatorSet { session_id, .. } => Some(session_id.clone()),
+        _ => None,
+    }
+}
+
+/// The decision of a `session.coordinator_set` command (`decide` passes the
+/// command whole to keep its size).
+///
+/// # Errors
+/// A stored rejection, or a database error.
+pub(super) fn set_command(
+    d: &mut Decision<'_>,
+    bindings: &Bindings,
+    origin: CommandOrigin,
+    command: SessionCommand,
+) -> Result<CommandResult, DecideError> {
+    let SessionCommand::CoordinatorSet {
+        session_id,
+        seq,
+        grant_id,
+        spec,
+    } = command
+    else {
+        return Err(reject(RejectCode::InvalidCommand, "not a coordinator_set"));
+    };
+    set::set(
+        d,
+        bindings,
+        origin,
+        &session_id,
+        seq,
+        &grant_id,
+        spec.as_deref(),
+    )
+}
+
+/// What follows the commit of a decision. A revoke wrote a fence entry: it
+/// is removed now (DL-194 §2.3 step 4; a failure leaves it, which is
+/// harmless). An accepted, new `session.coordinator_set` publishes the
+/// running binding of its session to memory (MCP P4b §4.1). A crash between
+/// the commit and the publish leaves the shim row rewritten; the next reload
+/// restores memory from the row. A direct-host session does not outlive the
+/// station.
+pub(super) async fn after_commit(
+    store: &Store,
+    bindings: &Bindings,
+    set: Option<SessionId>,
+    decided: &Result<Decided, StoreError>,
+) {
+    if let Some(fence) = bindings.fence() {
+        fence.settle(store).await;
+    }
+    if let Some(session_id) = set
+        && decided.as_ref().is_ok_and(|d| {
+            d.receipt.state == fleetdeck_proto::command::ReceiptState::Accepted && !d.duplicate
+        })
+    {
+        set::publish(store, bindings, &session_id).await;
     }
 }
 

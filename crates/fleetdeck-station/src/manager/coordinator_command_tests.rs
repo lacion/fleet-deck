@@ -264,10 +264,10 @@ async fn a_station_local_request_or_a_coordinator_operation_cannot_create_renew_
     assert!(st.lifecycle_events().await.is_empty());
 }
 
-/// MCP P4b-2a: `session.coordinator_set` is a placeholder until P4b-2b.
+/// MCP P4b-2b: a deck link without `coordinator_live.v1` refuses the set.
 #[tokio::test]
-async fn a_coordinator_set_from_a_paired_deck_is_refused_as_unsupported_and_a_local_one_as_forbidden()
- {
+async fn a_coordinator_set_from_a_deck_without_the_feature_is_refused_and_a_local_one_as_forbidden()
+{
     let mut st = Station::new(4).await;
     let s = st.start(&st.workspace(), Some("hello")).await;
     let deck = st.deck().await;
@@ -294,11 +294,8 @@ async fn a_coordinator_set_from_a_paired_deck_is_refused_as_unsupported_and_a_lo
             )
             .await;
         let reject = d.receipt.reject.unwrap();
-        assert_eq!(reject.code, RejectCode::Unsupported);
-        assert_eq!(
-            reject.message,
-            "session.coordinator_set is not part of this station build yet"
-        );
+        assert_eq!(reject.code, RejectCode::InvalidState);
+        assert_eq!(reject.message, "the deck link has no coordinator_live.v1");
     }
     // The local socket never sets a grant.
     let local = SessionCommand::CoordinatorSet {
