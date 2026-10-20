@@ -15,6 +15,7 @@ pub(crate) mod binding_rotate;
 pub mod binding_start;
 pub mod coordinator_command;
 mod coordinator_start;
+mod coordinator_tools;
 pub mod decide;
 mod decide_rename;
 pub mod drain;
