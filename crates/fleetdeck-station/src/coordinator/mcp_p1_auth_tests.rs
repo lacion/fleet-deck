@@ -124,7 +124,7 @@ async fn the_transport_never_lets_a_field_change_the_caller_or_the_grant() {
                            "clientInfo": {"name": "victim-1", "version": "binding:b-9"}}),
                 );
                 let answer = r.http(Some(&token), &[], &init).await.json();
-                assert_eq!(answer["result"]["instructions"], "SKILL v1", "{label}");
+                super::mcp_p1_rig_tests::assert_generated(&answer["result"]["instructions"]);
             }
 
             // A class denial.

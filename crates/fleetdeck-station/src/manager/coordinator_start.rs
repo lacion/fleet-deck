@@ -118,7 +118,49 @@ pub(super) fn prepare(
         handoff.digest.clone(),
         grant_binding(session_id, spec, coordinator, classes),
     );
-    Ok(handoff.into_launch())
+    Ok(with_skill(
+        bindings,
+        provider,
+        session_id,
+        handoff.into_launch(),
+    ))
+}
+
+/// `launch` with the fleet skill tree of the station (MCP P3 §4.2), when the
+/// tree is published and the probed version of every instance of the
+/// provider family is at or above the verified minimum for the skill (the
+/// rule of the handoff gate). Otherwise the launch keeps `skill_dir: None`
+/// and the station logs one line for this start.
+fn with_skill(
+    bindings: &Bindings,
+    provider: ProviderKind,
+    session_id: &SessionId,
+    mut launch: CoordinatorLaunch,
+) -> CoordinatorLaunch {
+    let Some(dir) = bindings.skill_dir() else {
+        tracing::info!(session = %session_id, provider = ?provider, "no fleet skill: the tree is not published");
+        return launch;
+    };
+    let versions = bindings.versions(provider);
+    let verified = !versions.is_empty()
+        && versions
+            .iter()
+            .all(|v| fleetdeck_providers::coordinator::skill_injection_verified(provider, Some(v)));
+    if verified {
+        launch.skill_dir = Some(dir);
+    } else {
+        let probed = if versions.is_empty() {
+            "unknown".to_owned()
+        } else {
+            versions.join(", ")
+        };
+        tracing::info!(
+            session = %session_id,
+            provider = ?provider,
+            "no fleet skill: provider version not verified for the skill ({probed})"
+        );
+    }
+    launch
 }
 
 /// The refusal of a coordinator start that is not a new child.
@@ -268,7 +310,7 @@ pub(super) fn prepare_bridge(
     let handoff = Handoff::prepare_bridge(provider, &bridge).map_err(|e| e.to_string())?;
     let digest = handoff.digest.clone();
     Ok(BridgeStart {
-        launch: handoff.into_launch(),
+        launch: with_skill(bindings, provider, session_id, handoff.into_launch()),
         digest,
         binding: grant_binding(session_id, spec, coordinator, classes),
         expires_at: Some(coordinator.expires_at),
@@ -304,9 +346,16 @@ pub(super) async fn store_tools(
         return (None, None);
     }
     bindings.insert(t.digest.clone(), t.binding);
+    // A shim-hosted Claude gets the plugin directory and the skill rule
+    // through `claude_args`; Codex gets its skill root in the handshake.
+    let args = if t.provider == ProviderKind::Claude {
+        t.launch.claude_args()
+    } else {
+        t.launch.args
+    };
     let secrets = LaunchSecrets {
         token: t.launch.token,
-        extra_args: t.launch.args.into_iter().map(OsString::from).collect(),
+        extra_args: args.into_iter().map(OsString::from).collect(),
     };
     (Some((secrets, t.provider)), Some((t.digest, t.provider)))
 }
@@ -454,7 +503,12 @@ pub(super) fn prepare_fleet(
     let url = bindings.endpoint().ok_or(NoTools::NoEndpoint)?;
     let handoff = Handoff::prepare(provider, &url).map_err(|_| NoTools::Refused)?;
     bindings.insert(handoff.digest.clone(), fleet_binding(session_id, spec));
-    Ok(handoff.into_launch())
+    Ok(with_skill(
+        bindings,
+        provider,
+        session_id,
+        handoff.into_launch(),
+    ))
 }
 
 /// [`NoTools::Unverified`] with the probed versions of `provider`.
@@ -484,7 +538,7 @@ pub(super) fn prepare_bridge_fleet(
     let handoff = Handoff::prepare_bridge(provider, &bridge).map_err(|_| NoTools::Refused)?;
     let digest = handoff.digest.clone();
     Ok(BridgeStart {
-        launch: handoff.into_launch(),
+        launch: with_skill(bindings, provider, session_id, handoff.into_launch()),
         digest,
         binding: fleet_binding(session_id, spec),
         expires_at: None,

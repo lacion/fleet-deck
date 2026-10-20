@@ -250,7 +250,7 @@ async fn a_pending_binding_discovers_the_fixed_granted_catalog_and_every_executi
     let reply = rpc(&r, Some(&r.token), init).await;
     let v: Value = serde_json::from_str(&reply.body).unwrap();
     assert_eq!(v["result"]["protocolVersion"], "2025-06-18");
-    assert_eq!(v["result"]["instructions"], "SKILL v1");
+    super::mcp_p1_rig_tests::assert_generated(&v["result"]["instructions"]);
     let bad = initialize("2024-11-05");
     let v: Value = serde_json::from_str(&rpc(&r, Some(&r.token), bad).await.body).unwrap();
     // `rmcp` negotiates an unsupported version down to the newest legacy
@@ -544,7 +544,12 @@ async fn a_fleet_only_binding_sees_its_own_tools_and_the_station_answers_them() 
     };
     assert_eq!(
         names(&send(list()).await),
-        ["ask_coordinator", "publish_artifact", "set_focus"]
+        [
+            "ask_coordinator",
+            "publish_artifact",
+            "set_focus",
+            "fleet_view"
+        ]
     );
     let reply = send(call("set_focus", json!({"text": "reading the tests"}))).await;
     assert!(!tool_result(&reply).0, "{}", reply.body);

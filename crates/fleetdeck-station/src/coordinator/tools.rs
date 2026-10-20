@@ -198,7 +198,7 @@ pub const TOOLS: &[Tool] = &[
     Tool {
         name: "fleet_view",
         classes: &[ToolClass::Own],
-        description: "Read the fleet: the stations and their platforms, the projects (of one station with station), the live sessions (titles and states), or yourself and your grant. Pages: pass next_cursor back as cursor.",
+        description: "Read the fleet: stations and platforms, projects (one station with station), live sessions (titles, states), or yourself and your grant. Pass next_cursor back as cursor.",
         schema: fleet_view,
     },
 ];

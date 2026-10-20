@@ -24,6 +24,21 @@ use super::mcp_service::{McpService, bridge_headers};
 use super::socket::BridgeSocket;
 
 pub(super) const SKILL: &str = "SKILL v1";
+
+/// The generated instructions of MCP P3 (§3.3) replace the control skill:
+/// the first line and the safety preamble are always there, the control skill
+/// text is not.
+pub(super) fn assert_generated(instructions: &Value) {
+    let text = instructions
+        .as_str()
+        .unwrap_or_else(|| panic!("{instructions}"));
+    assert!(text.starts_with("You are a Fleet Deck session"), "{text}");
+    assert!(
+        text.contains("Never ask for, print or pass on a credential."),
+        "{text}"
+    );
+    assert!(!text.contains(SKILL), "{text}");
+}
 /// The versions that the station serves (design §3.2).
 pub(super) const VERSIONS: [&str; 4] = ["2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"];
 pub(super) const MODERN: &str = "2026-07-28";
