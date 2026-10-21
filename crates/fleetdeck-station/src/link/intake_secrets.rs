@@ -1,5 +1,5 @@
-//! `project.secret_scan`, `project.secret_read` and `project.secret_write`
-//! (Fleet Sync FS-3, design `docs/v2/design/fleet-sync.md` §3). The control
+//! `project.secret_scan`, `project.secret_read`, `project.secret_write` and
+//! `project.secret_browse` (Fleet Sync FS-3, design `docs/v2/design/fleet-sync.md` §3). The control
 //! channel already checked the method, the scope and the feature. The logic
 //! is in `workspace::fleet_git::secrets`; this file turns its result into the
 //! link outcome. A refusal never holds a part of the params.
@@ -9,11 +9,14 @@ use fleetdeck_proto::link::{Outcome, WireError};
 use super::StationLink;
 use crate::workspace::fleet_git::secret_call;
 
-/// Whether `method` is one of the three secret file methods.
+/// Whether `method` is one of the four secret file methods.
 pub(super) fn has(method: &str) -> bool {
     matches!(
         method,
-        "project.secret_scan" | "project.secret_read" | "project.secret_write"
+        "project.secret_scan"
+            | "project.secret_read"
+            | "project.secret_write"
+            | "project.secret_browse"
     )
 }
 

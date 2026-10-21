@@ -1,22 +1,24 @@
 //! The secret files of a project (Fleet Sync FS-3, design §3.6): the list
 //! (`GET` and `PUT /api/projects/{id}/secret-files`) and the sync run
-//! (`POST /api/projects/{id}/secret-files/sync`). Owner's board login only,
-//! CSRF on the writes, audited. The board never receives a content.
+//! (`POST /api/projects/{id}/secret-files/sync`), and the browse of a home
+//! (`GET /api/projects/{id}/secret-files/browse`, a read, not audited).
+//! Owner's board login only, CSRF on the writes, audited. The board never
+//! receives a content.
 
 use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Extension, Path, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
-use fleetdeck_proto::CommandId;
 use fleetdeck_proto::fleet_git_secrets::{
-    MAX_SECRET_FILES, SECRET_HIDDEN_TEXT, SECRET_PATH_TEXT, SecretFilesView, SecretPathError,
-    SecretSyncReport, check_secret_path,
+    MAX_SECRET_FILES, SECRET_HIDDEN_TEXT, SECRET_PATH_TEXT, SecretBrowseAnswer, SecretFilesView,
+    SecretPathError, SecretSyncReport, check_secret_path,
 };
+use fleetdeck_proto::{CommandId, StationId};
 use serde::Deserialize;
 
-use crate::fleet_git_secrets::{SyncError, lock_project, sync_project};
+use crate::fleet_git_secrets::{BrowseError, SyncError, browse, lock_project, sync_project};
 use crate::http::Board;
 use crate::http::guard::{ApiError, owner_only};
 use crate::http::project_home_routes::{audit, check_command_id, known_project};
@@ -208,4 +210,93 @@ pub async fn sync(
     })
     .await;
     result.map(Json)
+}
+
+/// The query of the browse: `station` is a station id, `dir` a relative
+/// folder (absent: the home folder).
+#[derive(Debug, Deserialize)]
+pub struct BrowseQuery {
+    #[serde(default)]
+    pub station: Option<String>,
+    #[serde(default)]
+    pub dir: Option<String>,
+}
+
+fn conflict(code: &'static str, text: impl Into<String>) -> ApiError {
+    ApiError::new(StatusCode::CONFLICT, code, text)
+}
+
+/// The answer of the deck to a refusal of the browse. A station refusal has a
+/// static code and the text of the station.
+fn browse_error(e: BrowseError) -> ApiError {
+    match e {
+        BrowseError::UnknownProject => {
+            ApiError::new(StatusCode::NOT_FOUND, "unknown_project", "Unknown project.")
+        }
+        BrowseError::NotAHome => conflict(
+            "not_a_home",
+            "This station has no ready home of the project.",
+        ),
+        BrowseError::NeedsRemote => conflict("needs_remote", "Set the forge of the project first."),
+        BrowseError::Unsupported => conflict(
+            "fleet_git_unsupported",
+            "Update this station to browse its files.",
+        ),
+        BrowseError::Unavailable => ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "station_unavailable",
+            "The station did not answer.",
+        ),
+        BrowseError::Station { code, message } => match code.as_str() {
+            "invalid_path" => ApiError::new(StatusCode::BAD_REQUEST, "invalid_path", message),
+            "missing" => conflict("missing", message),
+            "symlink" => conflict("symlink", message),
+            "not_a_home" | "stale_generation" => conflict("not_a_home", message),
+            "not_this_repo" => conflict("not_this_repo", message),
+            "unreadable" => conflict("unreadable", message),
+            _ => ApiError::new(
+                StatusCode::BAD_GATEWAY,
+                "station_error",
+                "The station refused the request.",
+            ),
+        },
+        BrowseError::Store(e) => ApiError::internal(e),
+    }
+}
+
+/// `GET /api/projects/{id}/secret-files/browse?station=<id>&dir=<folder>`: one
+/// folder of a ready home, hidden entries included, with the files that can
+/// be secret files marked. Not audited (a read).
+///
+/// # Errors
+/// 400 `invalid_station` / `invalid_path`; 403 `owner_only`; 404
+/// `unknown_project`; 409 `not_a_home` / `needs_remote` /
+/// `fleet_git_unsupported` / `missing` / `symlink` / `not_this_repo` /
+/// `unreadable`; 502 `station_unavailable` / `station_error`.
+pub async fn browse_home(
+    State(board): State<Arc<Board>>,
+    Extension(principal): Extension<Principal>,
+    Path(id): Path<String>,
+    Query(query): Query<BrowseQuery>,
+) -> Result<Json<SecretBrowseAnswer>, ApiError> {
+    owner_only(&principal, "browses the secret files")?;
+    known_project(&board, &id).await?;
+    let station = query.station.filter(|s| !s.is_empty()).ok_or_else(|| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_station",
+            "Choose a station.",
+        )
+    })?;
+    let dir = query.dir.unwrap_or_default();
+    browse(
+        &board.store,
+        &board.link,
+        &id,
+        &StationId::from(station),
+        &dir,
+    )
+    .await
+    .map(Json)
+    .map_err(browse_error)
 }

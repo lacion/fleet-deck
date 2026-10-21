@@ -647,6 +647,9 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         fgs::SecretStationReport::export_all(&cfg),
         fgs::SecretStationState::export_all(&cfg),
         fgs::SecretOutcome::export_all(&cfg),
+        fgs::SecretBrowseAnswer::export_all(&cfg),
+        fgs::SecretBrowseEntry::export_all(&cfg),
+        fgs::SecretEntryKind::export_all(&cfg),
     ];
     for result in results {
         result.map_err(io::Error::other)?;

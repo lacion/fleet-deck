@@ -178,6 +178,9 @@ pub mod feature {
     /// (Fleet Sync FS-3).
     pub const FLEET_GIT_SECRETS: &str = "fleet_git.secrets.v1";
 
+    /// `project.secret_browse` (Fleet Sync).
+    pub const FLEET_GIT_SECRETS_BROWSE: &str = "fleet_git.secrets_browse.v1";
+
     /// `desktop.act` with an `authority` param: the deck authorizes each
     /// desktop action, the station checks it right before the first side
     /// effect (R13 §5E item 1, §5F, §5G).
@@ -303,6 +306,7 @@ pub mod feature {
         FLEET_GIT_BRANCHES,
         FLEET_GIT_MOVE,
         FLEET_GIT_SECRETS,
+        FLEET_GIT_SECRETS_BROWSE,
         DESKTOP_AUTHORITY,
         DISPLAY_CHANGES,
         DESKTOP_SHELL,

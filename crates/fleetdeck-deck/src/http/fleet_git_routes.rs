@@ -95,4 +95,8 @@ pub fn routes() -> Router<Arc<Board>> {
             "/api/projects/{project}/secret-files/sync",
             post(secret_file_routes::sync),
         )
+        .route(
+            "/api/projects/{project}/secret-files/browse",
+            get(secret_file_routes::browse_home),
+        )
 }

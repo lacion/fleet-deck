@@ -145,6 +145,29 @@ describe('the body of the section', () => {
     expect(body({}, { busy: 'save' })).toMatch(off);
   });
 
+  test('Browse… shows next to Save when the project has a ready home and the page can browse', () => {
+    const button = '>Browse…</button>';
+    expect(body({}, { onBrowse: () => {} })).toContain(button);
+    expect(body()).not.toContain(button);
+    expect(
+      body({}, { onBrowse: () => {}, project: project({ homes: [homeA, homeB()] }) }),
+    ).toContain(button);
+    expect(
+      body(
+        {},
+        {
+          onBrowse: () => {},
+          project: project({ homes: [{ ...homeA, state: 'failed' }] }),
+        },
+      ),
+    ).not.toContain(button);
+  });
+
+  test('the browser panel shows below the buttons', () => {
+    const html = body({}, { browser: <div className="fd-secret-browse">panel</div> });
+    expect(html).toContain('<div class="fd-secret-browse">panel</div>');
+  });
+
   test('while a sync runs the button says Syncing…', () => {
     expect(body({}, { busy: 'sync' })).toMatch(/<button[^>]*disabled=""[^>]*>Syncing…<\/button>/);
   });

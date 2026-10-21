@@ -21,9 +21,10 @@ use std::time::Duration;
 use fleetdeck_proto::StationId;
 use fleetdeck_proto::fleet_git::GitHomeState;
 use fleetdeck_proto::fleet_git_secrets::{
-    SecretFileKey, SecretFileReport, SecretFileState, SecretOutcome, SecretPresence,
-    SecretReadAnswer, SecretReadParams, SecretScanAnswer, SecretScanParams, SecretStationReport,
-    SecretStationState, SecretSyncReport, SecretWriteAnswer, SecretWriteParams,
+    SecretBrowseAnswer, SecretBrowseParams, SecretFileKey, SecretFileReport, SecretFileState,
+    SecretOutcome, SecretPresence, SecretReadAnswer, SecretReadParams, SecretScanAnswer,
+    SecretScanParams, SecretStationReport, SecretStationState, SecretSyncReport, SecretWriteAnswer,
+    SecretWriteParams,
 };
 use fleetdeck_proto::link::Outcome;
 use fleetdeck_proto::version::feature;
@@ -46,6 +47,7 @@ const DIGEST_PREFIX: usize = 12;
 const METHOD_SCAN: &str = "project.secret_scan";
 const METHOD_READ: &str = "project.secret_read";
 const METHOD_WRITE: &str = "project.secret_write";
+const METHOD_BROWSE: &str = "project.secret_browse";
 
 #[path = "fleet_git_secrets_decide.rs"]
 mod decide_part;
@@ -579,6 +581,94 @@ pub async fn sync_project(
         files.push(result.report);
     }
     Ok(SecretSyncReport { files })
+}
+
+/// Why a browse of a home did not give an answer.
+#[derive(Debug, thiserror::Error)]
+pub enum BrowseError {
+    #[error("unknown project")]
+    UnknownProject,
+    /// The station is not a home of the project, or its home is not ready.
+    #[error("the station has no ready home of the project")]
+    NotAHome,
+    /// The project has no `remote_dest`: the station cannot check the
+    /// repository.
+    #[error("the project has no repository destination")]
+    NeedsRemote,
+    /// The station did not negotiate `fleet_git.secrets_browse.v1`.
+    #[error("the station does not support browsing")]
+    Unsupported,
+    /// No link, a link that ended, no answer in time, or an answer that does
+    /// not parse.
+    #[error("the station did not answer")]
+    Unavailable,
+    /// The station refused the request: its code and its text.
+    #[error("the station refused the request: {code}")]
+    Station { code: String, message: String },
+    #[error(transparent)]
+    Store(#[from] DeckError),
+}
+
+/// Browses one folder of the home of `project` on `station` (`dir` is `""` or
+/// a relative path; the station checks it). The checks, in order: the
+/// project, a ready home on the station, `needs_remote`, the negotiated
+/// feature. The station never sends a file content.
+///
+/// # Errors
+/// A [`BrowseError`].
+pub async fn browse(
+    store: &DeckStore,
+    links: &Arc<DeckLink>,
+    project: &str,
+    station: &StationId,
+    dir: &str,
+) -> Result<SecretBrowseAnswer, BrowseError> {
+    let Some(found) = store.project(project.to_owned()).await? else {
+        return Err(BrowseError::UnknownProject);
+    };
+    let Some(home) = found
+        .homes
+        .iter()
+        .find(|h| h.station_id == *station && h.state == GitHomeState::Ready)
+    else {
+        return Err(BrowseError::NotAHome);
+    };
+    let Some(dest) = found.remote_dest.clone() else {
+        return Err(BrowseError::NeedsRemote);
+    };
+    if store.link_feature(station, feature::FLEET_GIT_SECRETS_BROWSE) != LinkFeature::Negotiated {
+        return Err(BrowseError::Unsupported);
+    }
+    let params = SecretBrowseParams {
+        project_id: project.to_owned(),
+        generation: home.generation,
+        dest,
+        remote_name: found.git.push_remote.clone(),
+        dir: dir.to_owned(),
+    };
+    let value = serde_json::to_value(&params).map_err(|_| BrowseError::Unavailable)?;
+    let Some(control) = links.control_for(station) else {
+        return Err(BrowseError::Unavailable);
+    };
+    let outcome = tokio::time::timeout(STEP, control.request(METHOD_BROWSE, None, value)).await;
+    let answer = match outcome {
+        Ok(Ok(Outcome::Ok(value))) => value,
+        Ok(Ok(Outcome::Err(e))) => {
+            tracing::debug!(project, station = %station, code = %e.code, "secret browse refused");
+            return Err(BrowseError::Station {
+                code: e.code,
+                message: e.message,
+            });
+        }
+        Ok(Err(_)) | Err(_) => {
+            tracing::debug!(project, station = %station, "secret browse without an answer");
+            return Err(BrowseError::Unavailable);
+        }
+    };
+    serde_json::from_value::<SecretBrowseAnswer>(answer).map_err(|_| {
+        tracing::debug!(project, station = %station, "secret browse answer does not parse");
+        BrowseError::Unavailable
+    })
 }
 
 /// Starts the periodic task: the first run 60 s after the start, then one

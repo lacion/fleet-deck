@@ -1,6 +1,6 @@
 //! The secret files of a project on the station (Fleet Sync FS-3, design
 //! `docs/v2/design/fleet-sync.md` §3): `project.secret_scan`,
-//! `project.secret_read` and `project.secret_write`.
+//! `project.secret_read`, `project.secret_write` and `project.secret_browse`.
 //!
 //! The station is the only judge of a path: no link is followed, Git must
 //! ignore the file, and a content, digest or salt is never logged.
@@ -18,9 +18,10 @@ use base64::engine::general_purpose::STANDARD;
 use fleetdeck_core::launch_dir::open_root;
 use fleetdeck_proto::fleet_git::{GitSettings, LocalRemotes, check_settings, remote_identity};
 use fleetdeck_proto::fleet_git_secrets::{
-    MAX_SECRET_BYTES, MAX_SECRET_FILES, SECRET_HIDDEN_TEXT, SECRET_PATH_TEXT, SecretFileKey,
-    SecretFileState, SecretPathError, SecretPresence, SecretReadAnswer, SecretReadParams,
-    SecretScanAnswer, SecretScanParams, SecretWriteAnswer, SecretWriteParams, check_secret_path,
+    MAX_SECRET_BYTES, MAX_SECRET_FILES, SECRET_HIDDEN_TEXT, SECRET_PATH_TEXT, SecretBrowseParams,
+    SecretFileKey, SecretFileState, SecretPathError, SecretPresence, SecretReadAnswer,
+    SecretReadParams, SecretScanAnswer, SecretScanParams, SecretWriteAnswer, SecretWriteParams,
+    check_secret_path,
 };
 use rustix::fs::{Mode, OFlags};
 use rustix::io::Errno;
@@ -34,6 +35,8 @@ use crate::manager::policy::Policy;
 use crate::store::Store;
 use crate::workspace::{GitOptions, PrivatePaths};
 
+#[path = "secrets_browse.rs"]
+mod browse;
 #[path = "secrets_write.rs"]
 mod write;
 
@@ -65,6 +68,7 @@ errors! {
     TOO_LARGE = "too_large", "Larger than 512 KiB.";
     UNREADABLE = "unreadable", "The file cannot be read.";
     MISSING = "missing", "The file is missing.";
+    MISSING_FOLDER = "missing", "The folder is missing.";
     PRIVATE_FILE = "private_file", "This file is a private file of the station, or it has more than one hard link.";
     CHANGED = "changed_meanwhile", "The file changed during the sync.";
     DIGEST_MISMATCH = "digest_mismatch", "The content does not match its digest.";
@@ -586,6 +590,11 @@ pub async fn secret_call(
             let (project, path) = (p.project_id.clone(), Some(p.path.clone()));
             (project, path, write_call(&env, p).await)
         }
+        "project.secret_browse" => {
+            let p: SecretBrowseParams = parse(params)?;
+            let dir = Some(p.dir.clone());
+            (p.project_id.clone(), dir, browse::browse(&env, p).await)
+        }
         _ => return Err(UNKNOWN_METHOD),
     };
     // The outcome code, never a content, a digest or a salt (decision 17).
@@ -606,3 +615,7 @@ mod tests;
 #[cfg(test)]
 #[path = "secrets_write_tests.rs"]
 mod write_tests;
+
+#[cfg(test)]
+#[path = "secrets_browse_tests.rs"]
+mod browse_tests;
