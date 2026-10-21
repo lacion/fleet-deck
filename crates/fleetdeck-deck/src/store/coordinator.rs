@@ -670,12 +670,12 @@ impl DeckStore {
                 generation: check.generation,
             };
             let tx = conn.transaction()?;
-            let row: Option<(String, Option<String>, Option<String>)> = tx
+            let row: Option<(String, Option<String>, Option<String>, String)> = tx
                 .query_row(
-                    "SELECT payload, authority, required_classes FROM outbox
+                    "SELECT payload, authority, required_classes, state FROM outbox
                      WHERE command_id = ?1 AND station_id = ?2",
                     params![check.command_id.as_str(), station.as_str()],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
                 )
                 .optional()?;
             let now = super::now_ms(&clock);
@@ -689,7 +689,7 @@ impl DeckStore {
             if !on {
                 return Ok(Err("fleet_control_off"));
             }
-            let Some((payload, authority, required)) = row else {
+            let Some((payload, authority, required, state)) = row else {
                 // A land command is in `land_queue` (FG-8, design §11.2).
                 return super::session_moves::authority_local(&tx, &station, &check, &grant, now);
             };
@@ -705,6 +705,11 @@ impl DeckStore {
                 .is_none_or(|s| s == &check.target_session);
             if !same || !same_target {
                 return Ok(Err("unknown_command"));
+            }
+            // The deck gave the item up (a narrowing, a revoke, its expiry):
+            // a class that comes back later never revives it (MCP P4b §7.2).
+            if state == "dead" {
+                return Ok(Err("command_canceled"));
             }
             // A narrowing removed a class of the call (MCP P4b §7.1).
             if !grant_narrowing::required_hold(required.as_deref(), &grant.classes) {

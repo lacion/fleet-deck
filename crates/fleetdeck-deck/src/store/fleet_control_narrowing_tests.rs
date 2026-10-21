@@ -393,3 +393,27 @@ fn a_class_set_holds_only_when_every_class_is_still_in_the_grant() {
     assert!(!required_hold(Some("not json"), &grant));
     assert!(!required_hold(Some(r#"["nonsense"]"#), &grant));
 }
+
+/// PRE-PR R1 BLOCKER 1: a sent command that a narrowing canceled stays
+/// canceled when the class comes back before the station's final check.
+#[tokio::test]
+async fn a_canceled_command_stays_canceled_when_its_class_comes_back() {
+    let w = world().await;
+    let b = grant_of(&w, "coord-1", &ALL, |g| g.scope = GrantScope::Fleet).await;
+    let rename = CoordinatorOp::Rename {
+        station: w.alpha.clone(),
+        session_id: "w1".into(),
+        title: "a".to_owned(),
+    };
+    assert!(code(&call(&w, &b, "rn", rename).await).is_none());
+    let item = item_of(&w, "rn").await;
+    let cmd = send(&w, &item).await;
+    assert_eq!(verdict(&w, &b, &cmd, None).await, Ok(()));
+    // The narrowing cancels the sent item.
+    set_classes(&w, &b.grant_id, &without(&[GrantClass::Manage])).await;
+    fail_removed(&w, &b.grant_id, &without(&[GrantClass::Manage])).await;
+    assert_eq!(state_of(&w, &item.outbox_id).await.0, OutboxState::Dead);
+    // `manage` comes back before the final check: the item stays canceled.
+    set_classes(&w, &b.grant_id, &ALL).await;
+    assert_eq!(verdict(&w, &b, &cmd, None).await, Err("command_canceled"));
+}
