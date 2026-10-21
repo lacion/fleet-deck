@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet Deck · New session</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script>
+const t = new URLSearchParams(location.search).get('theme');
+if (t === 'alt') document.documentElement.dataset.theme = 'alt';
+</script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="fleet.html"><span class="logo">FD</span><b>Fleet Deck</b></a>
+  <nav class="nav" aria-label="Main">
+    <a href="fleet.html">Fleet</a>
+    <a href="#">Watch</a>
+    <a href="#">Activity</a>
+    <a href="#">Stations</a>
+    <a href="#">More <i data-lucide="chevron-down"></i></a>
+  </nav>
+  <div class="tb-right">
+    <div class="search"><i data-lucide="search"></i><span>Search sessions</span><kbd class="kbd">⌘K</kbd></div>
+    <button class="btn btn-icon btn-ghost" aria-label="Switch theme"><i data-lucide="sun-moon"></i></button>
+    <button class="btn btn-ink" aria-current="page"><i data-lucide="plus"></i>New session <kbd class="kbd">N</kbd></button>
+    <span class="live">Live</span>
+    <span class="avatar" title="Account">LM</span>
+  </div>
+</header>
+
+<main class="new-main">
+  <form class="nform" onsubmit="return false">
+
+    <h1 class="n-q">What should the agent do?</h1>
+    <div class="task" role="textbox" aria-label="Task" aria-multiline="true">
+      <div>Add a dark mode toggle to the settings page</div>
+    </div>
+
+    <h2 class="n-h">Where it runs</h2>
+    <div class="stations" role="radiogroup" aria-label="Station">
+      <button type="button" class="scard sel st-lighting" role="radio" aria-checked="true">
+        <span class="tab"></span><span class="chk"><i data-lucide="check"></i></span>
+        <h3>Lighting</h3>
+        <span class="sub">Online · Linux · x86_64</span>
+        <span class="bar"><i style="width:25%"></i></span>
+        <span class="free"><b>9 free</b> · 3 of 12 in use</span>
+      </button>
+      <button type="button" class="scard st-dev1" role="radio" aria-checked="false">
+        <span class="tab"></span>
+        <h3>dev1</h3>
+        <span class="sub">Online · Omarchy · x86_64</span>
+        <span class="bar"><i style="width:16.7%"></i></span>
+        <span class="free"><b>10 free</b> · 2 of 12 in use</span>
+      </button>
+      <button type="button" class="scard st-mac" role="radio" aria-checked="false">
+        <span class="tab"></span>
+        <h3>mac-m4</h3>
+        <span class="sub">Online · macOS · arm64</span>
+        <span class="bar"><i style="width:16.7%"></i></span>
+        <span class="free"><b>10 free</b> · 2 of 12 in use</span>
+      </button>
+    </div>
+
+    <div class="frow">
+      <label>Workspace</label>
+      <div class="choices">
+        <span class="ch on">Work in this directory</span>
+        <span class="ch">New worktree from a branch</span>
+        <span class="ch">Existing worktree</span>
+      </div>
+    </div>
+    <div class="frow">
+      <label>Directory</label>
+      <div class="field mono grow"><i data-lucide="folder"></i>~/projects/obsurvive/fleet-deck</div>
+      <button type="button" class="btn"><i data-lucide="folder-open"></i>Browse…</button>
+    </div>
+
+    <h2 class="n-h">Agent</h2>
+    <div class="frow">
+      <label>Provider</label>
+      <div class="choices">
+        <span class="ch on">Claude <span class="v">2.1.306</span></span>
+        <span class="ch">Codex <span class="v">0.163.0</span></span>
+      </div>
+      <span class="lab" style="margin-left:auto">Model</span>
+      <span class="select">Opus 5.5 <i data-lucide="chevron-down"></i></span>
+    </div>
+    <div class="frow">
+      <label>Permission mode</label>
+      <div class="choices">
+        <span class="ch">Station default</span>
+        <span class="ch">Ask</span>
+        <span class="ch on">Accept edits</span>
+        <span class="ch">Plan</span>
+        <span class="ch risk"><i data-lucide="triangle-alert"></i>Bypass</span>
+      </div>
+    </div>
+    <div class="frow">
+      <label>Title</label>
+      <div class="field grow"><span class="ph">Optional</span></div>
+      <span class="bat"><span class="sw" role="switch" aria-checked="false" aria-label="Batch"></span><b>Batch</b><span class="muted">One session in its own worktree for each line</span></span>
+    </div>
+
+    <div class="more"><i data-lucide="chevron-down"></i>More options<span class="muted" style="font-weight:400">Environment, project, attach plan</span></div>
+
+    <div class="n-foot">
+      <button type="submit" class="btn btn-ink btn-lg">Start session <kbd class="kbd">⌘↵</kbd></button>
+      <button type="button" class="btn btn-ghost btn-lg" style="box-shadow:none">Cancel</button>
+    </div>
+  </form>
+</main>
+
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<script>lucide.createIcons({ attrs: { 'stroke-width': 1.75 } });</script>
+</body>
+</html>
