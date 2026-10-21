@@ -70,11 +70,41 @@ pub(super) fn owner(origin: CommandOrigin) -> Result<(), DecideError> {
     }
 }
 
-/// The session of a `session.coordinator_set`: its memory is published after
-/// the commit ([`after_commit`]).
-pub(super) fn set_session(command: &SessionCommand) -> Option<SessionId> {
+/// What a decision publishes to memory after its commit ([`after_commit`]).
+pub(super) enum After {
+    /// A `session.coordinator_set` of the session.
+    Set(SessionId),
+    /// A `session.coordinator_renew` of the session and its grant.
+    Renew(SessionId, String),
+}
+
+/// The publish that follows the commit of `command`, if any.
+pub(super) fn after_of(command: &SessionCommand) -> Option<After> {
     match command {
-        SessionCommand::CoordinatorSet { session_id, .. } => Some(session_id.clone()),
+        SessionCommand::CoordinatorSet { session_id, .. } => Some(After::Set(session_id.clone())),
+        SessionCommand::CoordinatorRenew {
+            session_id,
+            grant_id,
+            ..
+        } => Some(After::Renew(session_id.clone(), grant_id.clone())),
+        _ => None,
+    }
+}
+
+/// The session lock of a `session.coordinator_set` or a
+/// `session.coordinator_renew` (MCP P4b PRE-PR R1): the caller holds it from
+/// before the decision until after [`after_commit`], so a process start
+/// cannot run between the record read and the installation of its binding.
+/// `None` for every other command.
+pub(super) async fn session_lock(
+    bindings: &Bindings,
+    command: &SessionCommand,
+) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+    match command {
+        SessionCommand::CoordinatorSet { session_id, .. }
+        | SessionCommand::CoordinatorRenew { session_id, .. } => {
+            Some(bindings.session_locks().lock(session_id).await)
+        }
         _ => None,
     }
 }
@@ -113,25 +143,31 @@ pub(super) fn set_command(
 /// What follows the commit of a decision. A revoke wrote a fence entry: it
 /// is removed now (DL-194 §2.3 step 4; a failure leaves it, which is
 /// harmless). An accepted, new `session.coordinator_set` publishes the
-/// running binding of its session to memory (MCP P4b §4.1). A crash between
-/// the commit and the publish leaves the shim row rewritten; the next reload
-/// restores memory from the row. A direct-host session does not outlive the
-/// station.
+/// running binding of its session to memory (MCP P4b §4.1), and an accepted,
+/// new `session.coordinator_renew` publishes the renewal of a grant with a
+/// record ([`set::record::publish_renew`]). A crash between the commit and
+/// the publish leaves the shim row rewritten; the next reload restores memory
+/// from the row. A direct-host session does not outlive the station.
 pub(super) async fn after_commit(
     store: &Store,
     bindings: &Bindings,
-    set: Option<SessionId>,
+    after: Option<After>,
     decided: &Result<Decided, StoreError>,
 ) {
     if let Some(fence) = bindings.fence() {
         fence.settle(store).await;
     }
-    if let Some(session_id) = set
-        && decided.as_ref().is_ok_and(|d| {
-            d.receipt.state == fleetdeck_proto::command::ReceiptState::Accepted && !d.duplicate
-        })
-    {
-        set::publish(store, bindings, &session_id).await;
+    let fresh = decided.as_ref().is_ok_and(|d| {
+        d.receipt.state == fleetdeck_proto::command::ReceiptState::Accepted && !d.duplicate
+    });
+    match after {
+        Some(After::Set(session_id)) if fresh => {
+            set::publish(store, bindings, &session_id).await;
+        }
+        Some(After::Renew(session_id, grant_id)) if fresh => {
+            set::record::publish_renew(store, bindings, &session_id, &grant_id).await;
+        }
+        _ => {}
     }
 }
 

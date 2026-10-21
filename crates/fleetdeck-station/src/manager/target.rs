@@ -324,13 +324,14 @@ impl SessionTarget {
             .then(|| self.durable_launch(&adapter, spec))
             .flatten();
         let shim_host = (resume.is_some() && self.shims.is_some()) || durable.is_some();
-        let tools = match self
+        let mut tools = match self
             .start_tools(effect, adapter.kind(), spec, shim_host, resume)
             .await
         {
             Ok(tools) => tools,
             Err(refused) => return refused,
         };
+        target_tools::pass_lock(&mut tools);
         let (bridge, coordinator, worker_skip) = (tools.bridge, tools.launch, tools.worker_skip);
         // A skipped worker grant is a start without a grant (MCP P4a §6.2).
         super::worker_grant::record(&self.store, &session_id, worker_skip.as_ref()).await;
