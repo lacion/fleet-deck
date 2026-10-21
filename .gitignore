@@ -12,3 +12,8 @@ spikes/**/node_modules/
 /.agents/
 /.claude/skills/
 /skills-lock.json
+
+# Local secrets (Fleet Sync secret files): never tracked.
+.env
+.env.*
+!.env.example
