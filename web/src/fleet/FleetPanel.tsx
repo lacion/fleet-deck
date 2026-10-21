@@ -8,6 +8,7 @@ import {
   type FleetResult,
   grantStations,
   grantStatus,
+  NOT_LIVE,
   nextSends,
   type SendEntry,
   type SendIntent,
@@ -16,6 +17,7 @@ import {
   sameIntent,
   taskStatus,
 } from './fleet';
+import { ChangeAccess, GiveAccess } from './GrantAccess';
 import { GrantDesktop } from './GrantDesktop';
 import { GrantSpawn, grantTitle, hasCeilings } from './GrantSpawn';
 
@@ -33,7 +35,6 @@ const AUDIENCES: readonly { readonly id: Audience; readonly label: string }[] = 
   { id: 'repo', label: 'Repo' },
   { id: 'all', label: 'Everyone' },
 ];
-const NOT_LIVE: readonly DeckSession['status'][] = ['ended', 'lost', 'unreachable'];
 
 type ManyResult = {
   readonly ok: number;
@@ -325,6 +326,18 @@ export function FleetPanel({ actions, sessions, stations }: Props) {
           ))}
         </ul>
       )}
+      {settingsEnv === undefined || !stations.some((s) => s.coordinator_live === true) ? null : (
+        <GiveAccess
+          sessions={sessions}
+          stations={stations}
+          grants={grants}
+          actions={actions}
+          ask={askElevation}
+          onChanged={() => {
+            void actions.grants().then(setGrants);
+          }}
+        />
+      )}
       {grants.length === 0 ? null : (
         <ul className="fd-fleet-list" aria-label="Coordinator grants">
           {grants.map((g) => (
@@ -372,6 +385,21 @@ export function FleetPanel({ actions, sessions, stations }: Props) {
                 >
                   Renew
                 </button>
+              ) : null}
+              {g.live === true && g.state !== 'revoked' ? (
+                <ChangeAccess
+                  grant={g}
+                  actions={actions}
+                  ask={settingsEnv === undefined ? undefined : askElevation}
+                  codex={
+                    sessions.find(
+                      (s) => s.station_id === g.station_id && s.summary.session_id === g.session_id,
+                    )?.summary.provider === 'codex'
+                  }
+                  onChanged={() => {
+                    void actions.grants().then(setGrants);
+                  }}
+                />
               ) : null}
               {hasCeilings(g) ? (
                 <GrantSpawn

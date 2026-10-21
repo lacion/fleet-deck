@@ -18,6 +18,8 @@ import {
 type Props = {
   readonly fleet: FleetControl;
   readonly onChange: (next: FleetControl) => void;
+  /** MCP P4b-4: a live grant has no desktop, screenshot, recording, input or click switch. */
+  readonly live?: boolean;
 };
 
 const SWITCHES: readonly {
@@ -135,8 +137,23 @@ export function LimitInput({ label, value, max, problem, onChange }: LimitProps)
   );
 }
 
+/** The desktop, screenshot, recording, input and click fields of a live form: always off. */
+const NO_DESKTOP = {
+  desktop: false,
+  capture: false,
+  recording: false,
+  input: false,
+  click: false,
+  anyWindow: false,
+  anyAck: false,
+} as const;
+
 /** ADR-008 §3: the fleet-control switches under the Coordinator checkbox (owner only). */
-export function FleetControlFields({ fleet, onChange }: Props) {
+export function FleetControlFields({ fleet: given, onChange, live = false }: Props) {
+  const fleet: FleetControl = live ? { ...given, ...NO_DESKTOP } : given;
+  const switches = live
+    ? SWITCHES.filter((s) => s.key !== 'desktop' && s.key !== 'capture')
+    : SWITCHES;
   return (
     <fieldset className="fd-spawn-fleet">
       <legend>Fleet control</legend>
@@ -192,7 +209,7 @@ export function FleetControlFields({ fleet, onChange }: Props) {
           </>
         ) : null}
       </fieldset>
-      {SWITCHES.map((s) => (
+      {switches.map((s) => (
         <label key={s.key} className="fd-spawn-opt">
           <input
             type="checkbox"
