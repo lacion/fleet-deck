@@ -179,4 +179,11 @@ pub const API_GIT: &[ApiMethod] = &[
         Some(Scope::Admin),
         true,
     ),
+    m(
+        "projects.secret_browse",
+        Method::GET,
+        "/api/projects/{project}/secret-files/browse",
+        Some(Scope::Admin),
+        false,
+    ),
 ];

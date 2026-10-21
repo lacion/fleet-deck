@@ -24,6 +24,7 @@ import type {
   ProviderKind,
   PushNowAnswer,
   ReviewBody,
+  SecretBrowseAnswer,
   SecretFilesView,
   SecretSyncReport,
   StartedSessions,
@@ -316,6 +317,8 @@ export type IntegrationActions = {
   setSecretFiles(id: string, paths: string[]): Promise<SecretFilesView>;
   /** FS-3 (§3.6): copies the secret files between the homes now. */
   syncSecretFiles(id: string): Promise<SecretSyncReport>;
+  /** Fleet Sync: one folder of a ready home (hidden entries included); `dir` is `''` for the home folder. */
+  browseSecretFiles(id: string, station: string, dir: string): Promise<SecretBrowseAnswer>;
   /** FG-6 (§9.3): the stations for `count` new sessions, best first. */
   place(body: PlacementBody): Promise<string[]>;
   /** FG-11 (§14.3): the preferences of Fleet Git (the config reference station). */
@@ -564,6 +567,14 @@ export function integrationActions(
         await io.post(`${projectPath(id)}/secret-files/sync`, { command_id: commandId() }),
         ['files'],
         'secret sync',
+      ),
+    browseSecretFiles: async (id, station, dir) =>
+      shaped<SecretBrowseAnswer>(
+        await io.get(
+          `${projectPath(id)}/secret-files/browse?station=${seg(station)}&dir=${seg(dir)}`,
+        ),
+        ['dir', 'entries', 'truncated'],
+        'secret browse',
       ),
     setRemote: async (id, remoteUrl, rebind) => {
       try {

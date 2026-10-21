@@ -3,6 +3,9 @@
 //! `project.secret_scan`, `project.secret_read` and `project.secret_write`,
 //! and the report types of the board.
 //!
+//! `project.secret_browse` lists one folder of a home, with the files that can
+//! be secret files marked.
+//!
 //! A secret file is an ignored file (`.env` and similar) that the owner
 //! lists. The content crosses the deck as base64 in a read answer and a write
 //! request only. The `Debug` of both types hides it.
@@ -293,6 +296,65 @@ pub struct SecretFilesView {
 #[ts(export_to = "fleet_git/")]
 pub struct SecretSyncReport {
     pub files: Vec<SecretFileReport>,
+}
+
+/// Params of `project.secret_browse`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "fleet_git/")]
+pub struct SecretBrowseParams {
+    pub project_id: String,
+    pub generation: u64,
+    pub dest: String,
+    pub remote_name: String,
+    /// `""` (the home folder) or a relative folder path below it.
+    pub dir: String,
+}
+
+/// What one entry of a browsed folder is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "fleet_git/")]
+pub enum SecretEntryKind {
+    Dir,
+    File,
+    Other,
+    /// A kind of a newer station.
+    #[serde(other)]
+    Unknown,
+}
+
+/// One entry of a browsed folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "fleet_git/")]
+pub struct SecretBrowseEntry {
+    pub name: String,
+    pub kind: SecretEntryKind,
+    /// A file that can be a secret file.
+    pub eligible: bool,
+    /// Not eligible: `not_ignored`, `not_member_hidden`, `too_large`,
+    /// `symlink`, `private_file`, `not_regular`, `invalid_path` or
+    /// `unreadable`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reason: Option<String>,
+    /// Regular files only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub size: Option<u64>,
+}
+
+/// The answer of `project.secret_browse`: the folders first, then the rest,
+/// each group by name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export_to = "fleet_git/")]
+pub struct SecretBrowseAnswer {
+    pub dir: String,
+    pub entries: Vec<SecretBrowseEntry>,
+    /// More than 500 entries: only the first 500 names are shown.
+    pub truncated: bool,
 }
 
 #[cfg(test)]

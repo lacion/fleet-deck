@@ -161,6 +161,7 @@ export function fakeActions(extra: Partial<IntegrationActions> = {}): Integratio
     secretFiles: never,
     setSecretFiles: never,
     syncSecretFiles: never,
+    browseSecretFiles: never,
     place: never,
     fleetGitPrefs: never,
     setDriftReference: never,

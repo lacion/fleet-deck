@@ -133,6 +133,7 @@ Every step after TLS has the bound `NodeConfig::handshake_timeout` (default 10 s
 | `fleet_git.v1` | `fleet_git.projects_set`, `fleet_git.push_now`, `fleet_git` on `session.start`, and the events `workspace.base_stale`, `workspace.include_skipped`, `session.push`, `session.cleanup` (Fleet Git phase 1, ADR-009; the Git settings of a project, fetch before a start, push, cleanup and worktree bootstrap) |
 | `fleet_git.homes.v1` | `project.ensure_home`, `project.home_status`, `fleet_git.artifact_authorize`, `fleet_git.share_verdict`, the file root `artifacts` of `files.v1`, and the events `artifacts.ready`, `artifacts.unavailable`, `artifacts.revoked` (Fleet Git phase 2, ADR-009; homes of a project on many stations, the artifact share verdicts) |
 | `fleet_git.secrets.v1` | `project.secret_scan`, `project.secret_read`, `project.secret_write` (Fleet Sync FS-3) |
+| `fleet_git.secrets_browse.v1` | `project.secret_browse` (Fleet Sync; one folder of a home, hidden entries included, with the files that can be secret files marked) |
 | `fleet_git.land.v1` | `project.radar`, `session.land`, `fleet_git.land_status`, `fleet_git.land_abandon` and the event `session.land` (Fleet Git phase 3, ADR-009; the predictive conflict radar and the land flow) |
 | `fleet_git.branches.v1` | `project.branches`, `project.fetch` (Fleet Git phase 4, ADR-009; the branches of other stations in a project) |
 | `fleet_git.move.v1` | `session.move_out`, `session.move_export`, `session.move_prepare`, `session.move_in`, `session.move_finish`, `session.move_release`, `session.move_abort`, `session.move_discard`, `session.move_status`, `session.move_fail`, `session.move_undo`, the stream purposes `move-export:` and `move-import:`, and the events `session.moved`, `session.move_in`, `session.move_undone` (Fleet Git phase 4, ADR-009; move a session to another station) |
@@ -498,6 +499,7 @@ close             { reason, detail }
 | `project.secret_scan` | deck → station | admin | `fleet_git.secrets.v1` | no |
 | `project.secret_read` | deck → station | admin | `fleet_git.secrets.v1` | no |
 | `project.secret_write` | deck → station | admin | `fleet_git.secrets.v1` | no |
+| `project.secret_browse` | deck → station | admin | `fleet_git.secrets_browse.v1` | no |
 | `fleet_git.artifact_authorize` | station → deck | admin | `fleet_git.homes.v1` | no |
 | `fleet_git.share_verdict` | deck → station | read | `fleet_git.homes.v1` | no |
 | `project.radar` | deck → station | read | `fleet_git.land.v1` | no |

@@ -1,9 +1,10 @@
 // FS-3 (design §3.6, §3.7): the "Secret files" section of the project page: the list of paths, the
 // "Sync now" button and the table of the last report of each file.
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, type ReactNode, useEffect, useRef, useState } from 'react';
 import { stationName } from '../board/fleet';
 import type {
   Project,
+  SecretBrowseAnswer,
   SecretFileReport,
   SecretFilesView,
   SecretStationReport,
@@ -11,6 +12,7 @@ import type {
 } from '../gen';
 import { ApiError } from '../runtime/api';
 import { useIntegrations } from './context';
+import { SecretBrowser } from './SecretBrowser';
 import { message } from './useLoad';
 
 /** The paths of the text area: one for each line, trimmed, without the empty lines. */
@@ -79,6 +81,10 @@ type Props = {
   readonly onDraft: (text: string) => void;
   readonly onSave: () => void;
   readonly onSync: () => void;
+  /** Opens the browser of a home; absent: no "Browse…" button. */
+  readonly onBrowse?: (() => void) | undefined;
+  /** The browser panel, when it is open. */
+  readonly browser?: ReactNode;
 };
 
 /** Everything below the heading text: the text area, the buttons, the table and the alerts. */
@@ -93,6 +99,8 @@ export function SecretFilesBody({
   onDraft,
   onSave,
   onSync,
+  onBrowse,
+  browser = null,
 }: Props) {
   const homes = [...(project.homes ?? [])].sort((a, b) => a.position - b.position);
   const ready = homes.filter((h) => h.state === 'ready').length;
@@ -117,10 +125,16 @@ export function SecretFilesBody({
         <button type="button" className="fd-ghost" disabled={busy !== null} onClick={onSave}>
           Save
         </button>
+        {onBrowse === undefined || ready === 0 ? null : (
+          <button type="button" className="fd-ghost" onClick={onBrowse}>
+            Browse…
+          </button>
+        )}
         <button type="button" className="fd-ghost" disabled={cannotSync} onClick={onSync}>
           {busy === 'sync' ? 'Syncing…' : 'Sync now'}
         </button>
       </div>
+      {browser}
       {error === null ? null : (
         <p role="alert" className="fd-formerror">
           {error}
@@ -175,6 +189,20 @@ export function SecretFilesBody({
   );
 }
 
+/** The draft with `path` as a new last line. */
+export function appendPath(draft: string, path: string): string {
+  if (draft === '') return path;
+  return `${draft}${draft.endsWith('\n') ? '' : '\n'}${path}`;
+}
+
+/** What the browser panel shows; `null` is a closed panel. */
+type Browse = {
+  readonly station: string;
+  readonly answer: SecretBrowseAnswer | null;
+  readonly error: string | null;
+  readonly busy: boolean;
+};
+
 /** The section; it shows nothing without the admin login. */
 export function SecretFiles({
   project,
@@ -192,6 +220,8 @@ export function SecretFiles({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
+  const [browse, setBrowse] = useState<Browse | null>(null);
+  const turn = useRef(0);
   const admin = actions?.canAdmin === true;
   useEffect(() => {
     if (actions === undefined || !admin) return undefined;
@@ -226,6 +256,38 @@ export function SecretFiles({
         else setError(message(e));
       })
       .finally(() => setBusy(null));
+  };
+  const homes = [...(project.homes ?? [])]
+    .filter((h) => h.state === 'ready')
+    .sort((a, b) => a.position - b.position)
+    .map((h) => ({
+      station_id: h.station_id,
+      name: stationName(h.station_id, stations),
+      path: h.path ?? '',
+    }));
+  // One read of a folder. A newer read makes the answer of an older one useless.
+  const load = (station: string, dir: string, keep: SecretBrowseAnswer | null) => {
+    const mine = ++turn.current;
+    setBrowse({ station, answer: keep, error: null, busy: true });
+    actions.browseSecretFiles(id, station, dir).then(
+      (answer) => {
+        if (mine === turn.current) setBrowse({ station, answer, error: null, busy: false });
+      },
+      (e: unknown) => {
+        if (mine === turn.current) {
+          setBrowse({ station, answer: keep, error: message(e), busy: false });
+        }
+      },
+    );
+  };
+  const toggleBrowse = () => {
+    if (browse !== null) {
+      turn.current += 1;
+      setBrowse(null);
+      return;
+    }
+    const first = homes[0];
+    if (first !== undefined) load(first.station_id, '', null);
   };
   const sync = () => {
     if (busy !== null) return;
@@ -266,6 +328,26 @@ export function SecretFiles({
           onDraft={setDraft}
           onSave={save}
           onSync={sync}
+          onBrowse={toggleBrowse}
+          browser={
+            browse === null ? null : (
+              <SecretBrowser
+                homes={homes}
+                station={browse.station}
+                answer={browse.answer}
+                error={browse.error}
+                busy={browse.busy}
+                draft={draft}
+                onStation={(station) => load(station, '', null)}
+                onDir={(dir) => load(browse.station, dir, browse.answer)}
+                onAdd={(path) => setDraft(appendPath(draft, path))}
+                onClose={() => {
+                  turn.current += 1;
+                  setBrowse(null);
+                }}
+              />
+            )
+          }
         />
       )}
     </section>

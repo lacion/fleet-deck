@@ -368,12 +368,13 @@ impl FakeGit {
                 "body_markdown": "body", "estimate": null, "comments": [],
                 "linked_prs": [], "images": []
             })),
-            "project.secret_scan" | "project.secret_read" | "project.secret_write" => {
-                match lock(&self.secret).as_ref() {
-                    Some(f) => f(&req.method, &req.params),
-                    None => Outcome::Err(WireError::new("not_implemented", "the fake")),
-                }
-            }
+            "project.secret_scan"
+            | "project.secret_read"
+            | "project.secret_write"
+            | "project.secret_browse" => match lock(&self.secret).as_ref() {
+                Some(f) => f(&req.method, &req.params),
+                None => Outcome::Err(WireError::new("not_implemented", "the fake")),
+            },
             "project.ensure_home" => self.ensure_home(&req.params),
             "project.home_status" => self.home_status(&req.params),
             "fleet_git.push_now" => match *lock(&self.push) {

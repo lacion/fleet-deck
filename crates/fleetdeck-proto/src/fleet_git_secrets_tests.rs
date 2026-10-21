@@ -245,3 +245,67 @@ fn the_secrets_feature_is_offered_and_not_required() {
     assert!(feature::ALL.contains(&"fleet_git.secrets.v1"));
     assert!(!feature::REQUIRED.contains(&"fleet_git.secrets.v1"));
 }
+
+#[test]
+fn the_browse_types_round_trip_and_leave_out_an_absent_option() {
+    round_trip(&SecretBrowseParams {
+        project_id: "p1".into(),
+        generation: 3,
+        dest: "d".into(),
+        remote_name: "origin".into(),
+        dir: "config".into(),
+    });
+    let file = SecretBrowseEntry {
+        name: ".env".into(),
+        kind: SecretEntryKind::File,
+        eligible: true,
+        reason: None,
+        size: Some(12),
+    };
+    round_trip(&file);
+    let json = serde_json::to_value(&file).unwrap();
+    assert!(json.get("reason").is_none());
+    let folder = SecretBrowseEntry {
+        name: ".hidden".into(),
+        kind: SecretEntryKind::Dir,
+        eligible: false,
+        reason: None,
+        size: None,
+    };
+    round_trip(&folder);
+    let json = serde_json::to_value(&folder).unwrap();
+    assert!(json.get("size").is_none());
+    round_trip(&SecretBrowseEntry {
+        name: "README.md".into(),
+        kind: SecretEntryKind::File,
+        eligible: false,
+        reason: Some("not_ignored".into()),
+        size: Some(3),
+    });
+    round_trip(&SecretBrowseAnswer {
+        dir: "config".into(),
+        entries: vec![file, folder],
+        truncated: true,
+    });
+}
+
+#[test]
+fn a_kind_of_a_newer_station_reads_as_unknown() {
+    let got: SecretEntryKind = serde_json::from_value(json!("socket")).unwrap();
+    assert_eq!(got, SecretEntryKind::Unknown);
+    assert_eq!(
+        serde_json::to_value(SecretEntryKind::Dir).unwrap(),
+        json!("dir")
+    );
+}
+
+#[test]
+fn the_browse_feature_is_offered_and_not_required() {
+    use crate::version::feature;
+    assert_eq!(
+        feature::FLEET_GIT_SECRETS_BROWSE,
+        "fleet_git.secrets_browse.v1"
+    );
+    assert!(feature::ALL.contains(&"fleet_git.secrets_browse.v1"));
+    assert!(!feature::REQUIRED.contains(&"fleet_git.secrets_browse.v1"));
+}

@@ -97,8 +97,9 @@ fn the_code_method_table_equals_the_adr_method_table() {
     let code = code_table();
     // 135 + 2 (BG4-1 execution stop) + 3 (BG2-2 installer repair)
     // + 6 (BG1-1 desktop tools and maintenance) + 1 (MCP P3 `fleet.view`)
-    // + 1 (MCP P4b `session.coordinator_set`) + 3 (Fleet Sync FS-3 secret files).
-    assert_eq!(adr.len(), 151, "{:?}", adr.keys());
+    // + 1 (MCP P4b `session.coordinator_set`) + 3 (Fleet Sync FS-3 secret files)
+    // + 1 (Fleet Sync `project.secret_browse`).
+    assert_eq!(adr.len(), 152, "{:?}", adr.keys());
     for (name, row) in &adr {
         assert_eq!(code.get(name), Some(row), "{name}");
     }
@@ -254,6 +255,18 @@ fn the_fleet_sync_secret_methods_need_their_feature_and_scope() {
         );
         assert!(!row.mutating, "{name}");
     }
+}
+
+#[test]
+fn the_secret_browse_method_needs_its_feature_and_scope() {
+    let code = code_table();
+    let row = code
+        .get("project.secret_browse")
+        .expect("project.secret_browse missing");
+    assert_eq!(row.callers, "deck → station");
+    assert_eq!(row.scope, "admin");
+    assert_eq!(row.feature.as_deref(), Some("fleet_git.secrets_browse.v1"));
+    assert!(!row.mutating);
 }
 
 #[test]

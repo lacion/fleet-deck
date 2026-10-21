@@ -421,3 +421,94 @@ a.fd-int-projectchip:hover {
     padding-left: 0;
   }
 }
+
+/* ---------- the "Browse…" panel of the secret files ---------- */
+
+.fd-secret-browse {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding: var(--sp-3);
+  background: var(--code);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-ctl);
+}
+.fd-secret-browse > * {
+  margin: 0;
+}
+.fd-secret-browse label {
+  display: grid;
+  gap: var(--sp-1);
+  color: var(--dim);
+  font-size: 12px;
+}
+.fd-secret-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-data);
+  font-size: 12px;
+}
+.fd-secret-crumbs li {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.fd-secret-crumbs li + li::before {
+  content: "/";
+  color: var(--faint);
+}
+.fd-secret-crumbs button {
+  height: auto;
+  min-height: 0;
+  padding: 2px 6px;
+  font-family: var(--font-data);
+  font-size: 12px;
+}
+.fd-secret-crumbs button[aria-current="location"] {
+  color: var(--text);
+  font-weight: 500;
+}
+.fd-secret-entries {
+  display: grid;
+  gap: 1px;
+  max-height: 260px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+.fd-secret-entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding: var(--sp-1) 0;
+  font-family: var(--font-data);
+  font-size: 12px;
+}
+.fd-secret-entry > button:only-child {
+  width: 100%;
+  justify-content: flex-start;
+  background: transparent;
+  border-color: transparent;
+  font-family: var(--font-data);
+  font-size: 12px;
+  font-weight: 400;
+}
+.fd-secret-entry .fd-icon {
+  color: var(--faint);
+}
+.fd-secret-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.fd-secret-entry[data-muted="true"] {
+  color: var(--faint);
+}
