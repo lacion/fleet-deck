@@ -464,17 +464,24 @@ async fn a_revocation_before_the_first_input_of_a_durable_start_stops_the_write(
     let command = rig.start_command("hello");
     let decided = rig.send(true, command).await;
     let session = decided.receipt.result.unwrap().session_id.unwrap();
-    // The first hold is the launch gate, after the `starting` row.
+    // The first hold is the early launch gate, after the `starting` row.
     tokio::time::timeout(WAIT, hook.reached.notified())
         .await
-        .expect("the launch reaches its gate");
+        .expect("the launch reaches its early gate");
+    // The final launch gate (MCP P4b §7.1, the late check) comes after the
+    // credential save and the executable hash.
+    hook.arm();
+    hook.release.notify_one();
+    tokio::time::timeout(WAIT, hook.reached.notified())
+        .await
+        .expect("the launch reaches its final gate");
     // Hold the first-input gate too, then let the launch go on.
     hook.arm();
     hook.release.notify_one();
     tokio::time::timeout(WAIT, hook.reached.notified())
         .await
         .expect("the first input reaches its gate");
-    assert_eq!(deck.asked().len(), 1, "only the launch gate was asked");
+    assert_eq!(deck.asked().len(), 2, "only the two launch gates were asked");
     assert_eq!(rig.turn_starts(), 0, "no input was written yet");
     deck.revoke();
     hook.release.notify_one();
@@ -484,7 +491,7 @@ async fn a_revocation_before_the_first_input_of_a_durable_start_stops_the_write(
             .any(|e| matches!(e, Event::Error { code, .. } if code == "authority_lost"))
     })
     .await;
-    assert_eq!(deck.asked().len(), 2);
+    assert_eq!(deck.asked().len(), 3);
     for check in deck.asked() {
         let launch = check
             .launch
