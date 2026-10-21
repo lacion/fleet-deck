@@ -41,4 +41,10 @@ info_at: number | null,
  * The reduced resources that a wall display gets in place of `info`
  * (R13 §5D item 10). Always `None` for an owner or a member.
  */
-display_resources?: DisplayResources, };
+display_resources?: DisplayResources, 
+/**
+ * MCP P4b §9: the station's current link negotiated `coordinator_live.v1`,
+ * so a grant can be given and changed live. Absent in an old answer:
+ * false.
+ */
+coordinator_live?: boolean, };

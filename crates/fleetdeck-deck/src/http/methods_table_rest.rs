@@ -405,6 +405,20 @@ pub const API_REST: &[ApiMethod] = &[
         true,
     ),
     m(
+        "coordinator.grant_give",
+        Method::POST,
+        "/api/coordinator/sessions/{station_id}/{session_id}/grant",
+        Some(Scope::Drive),
+        true,
+    ),
+    m(
+        "coordinator.grant_classes",
+        Method::POST,
+        "/api/coordinator/grants/{grant_id}/classes",
+        Some(Scope::Drive),
+        true,
+    ),
+    m(
         "coordinator.desktop_ops",
         Method::GET,
         "/api/coordinator/grants/{grant_id}/desktop-ops",

@@ -469,6 +469,11 @@ pub struct GrantView {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[ts(optional, as = "Option<BTreeMap<String, String>>")]
     pub max_modes: BTreeMap<String, String>,
+    /// MCP P4b §6: true when a `session_owner_grant` row names this grant, so
+    /// the owner can change its classes live. Absent in an old answer: false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(optional, as = "Option<bool>")]
+    pub live: bool,
 }
 
 #[cfg(test)]

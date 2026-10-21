@@ -215,6 +215,12 @@ pub struct StationView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub display_resources: Option<crate::display_event::DisplayResources>,
+    /// MCP P4b §9: the station's current link negotiated `coordinator_live.v1`,
+    /// so a grant can be given and changed live. Absent in an old answer:
+    /// false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(optional, as = "Option<bool>")]
+    pub coordinator_live: bool,
 }
 
 /// `POST /api/stations/invite`: an invitation for a station that dials the

@@ -45,6 +45,7 @@ fn view(name: &str, live: u64) -> StationView {
         }),
         info_at: None,
         display_resources: None,
+        coordinator_live: false,
     }
 }
 
