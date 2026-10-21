@@ -297,8 +297,11 @@ export type IntegrationActions = {
   saveGit(id: string, body: GitSettingsPut): Promise<GitSaveResult>;
   /** FG-2 (§5.8): the push of the session is due at once. */
   pushNow(station: string, session: string): Promise<PushNowAnswer>;
-  /** FG-5 (§8.4): adds a home of the project on a station; the station clones in the background. */
-  addHome(id: string, station: string): Promise<HomeStarted>;
+  /**
+   * FG-5 (§8.4): adds a home of the project on a station; the station clones in the background.
+   * With `path`, the station adopts that existing folder instead and never clones into it.
+   */
+  addHome(id: string, station: string, path?: string): Promise<HomeStarted>;
   /** FG-5 (§8.4): retries the failed home of a station. */
   retryHome(id: string, station: string): Promise<HomeStarted>;
   /** FG-5 (§8.4): removes the home of a station; no file is deleted. */
@@ -517,9 +520,13 @@ export function integrationActions(
         throw e;
       }
     },
-    addHome: async (id, station) =>
+    addHome: async (id, station, path) =>
       shaped<HomeStarted>(
-        await io.post(`${projectPath(id)}/homes`, { station, command_id: commandId() }),
+        await io.post(`${projectPath(id)}/homes`, {
+          station,
+          command_id: commandId(),
+          ...(path === undefined ? {} : { path }),
+        }),
         ['generation', 'attempt_id'],
         'home answer',
       ),

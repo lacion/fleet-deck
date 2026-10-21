@@ -43,6 +43,12 @@ pub struct EnsureHomeParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub retry_of: Option<String>,
+    /// An absolute folder on the station to adopt instead of a new clone in
+    /// `clone_root` (needs `fleet_git.homes_adopt.v1`). The station never
+    /// clones into it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub adopt_path: Option<String>,
 }
 
 /// Params of `project.home_status`.

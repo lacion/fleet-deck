@@ -19,6 +19,8 @@ struct DigestInput<'a> {
     remote_name: &'a str,
     generation: u64,
     retry_of: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    adopt_path: Option<&'a str>,
 }
 
 /// The lower-case hex SHA-256 of the canonical JSON of `params` (FG-5).
@@ -33,6 +35,7 @@ pub fn ensure_home_digest(params: &EnsureHomeParams) -> String {
         remote_name: &params.remote_name,
         generation: params.generation,
         retry_of: params.retry_of.as_deref(),
+        adopt_path: params.adopt_path.as_deref(),
     };
     let bytes = serde_json::to_vec(&input).unwrap_or_default();
     crate::settings::revision_of(&bytes)
@@ -79,6 +82,7 @@ mod tests {
             attempt_id: "ha-1".into(),
             request_digest: String::new(),
             retry_of: None,
+            adopt_path: None,
         }
     }
 
@@ -101,9 +105,24 @@ mod tests {
     }
 
     #[test]
+    fn a_digest_without_adopt_path_keeps_its_old_value() {
+        // The value that the code gave before `adopt_path` existed.
+        assert_eq!(
+            ensure_home_digest(&params()),
+            "2c5eac8d0873fe3a75920ff8bb5778ba5ff6d29266bd99233929de41f4ad3386"
+        );
+        let mut adopt = params();
+        adopt.adopt_path = Some("/srv/app".into());
+        assert_ne!(
+            ensure_home_digest(&adopt),
+            "2c5eac8d0873fe3a75920ff8bb5778ba5ff6d29266bd99233929de41f4ad3386"
+        );
+    }
+
+    #[test]
     fn each_covered_param_changes_the_digest() {
         let base = ensure_home_digest(&params());
-        let changes: [fn(&mut EnsureHomeParams); 8] = [
+        let changes: [fn(&mut EnsureHomeParams); 9] = [
             |p| p.project_id = "p2".into(),
             |p| p.project_name = "App2".into(),
             |p| p.folder = "App2".into(),
@@ -112,6 +131,7 @@ mod tests {
             |p| p.remote_name = "upstream".into(),
             |p| p.generation = 2,
             |p| p.retry_of = Some("ha-0".into()),
+            |p| p.adopt_path = Some("/srv/app".into()),
         ];
         for change in changes {
             let mut p = params();

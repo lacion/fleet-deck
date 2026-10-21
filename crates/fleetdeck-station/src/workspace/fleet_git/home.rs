@@ -28,6 +28,10 @@ use crate::workspace::{Git, GitOptions};
 const SMALL_CAP: usize = 4 * 1024;
 /// The text of the code `unknown_attempt` (design S3).
 const UNKNOWN_ATTEMPT: &str = "The station does not know this home attempt.";
+/// The code of an adopt path whose folder does not exist (never cloned into).
+const HOME_MISSING: &str = "home_missing";
+/// The most bytes of an adopt path.
+const ADOPT_PATH_MAX: usize = 4096;
 
 fn refusal(code: &'static str, text: impl Into<String>) -> HomeRefusal {
     HomeRefusal {
@@ -79,6 +83,11 @@ fn validate(policy: &Policy, params: &EnsureHomeParams) -> Result<(), HomeRefusa
     }
     if params.folder != home_folder_name(name) {
         return Err(invalid("The folder name does not match the project name."));
+    }
+    if let Some(p) = &params.adopt_path
+        && (!p.starts_with('/') || p.len() > ADOPT_PATH_MAX || p.contains('\0'))
+    {
+        return Err(invalid("Give an absolute folder path."));
     }
     let remote_settings = GitSettings {
         push_remote: params.remote_name.clone(),
@@ -160,8 +169,16 @@ pub async fn ensure_home(
     params: EnsureHomeParams,
 ) -> Result<HomeStatus, HomeRefusal> {
     validate(&policy, &params)?;
-    let root = clone_root(&policy)?;
-    let dest = root.join(&params.folder);
+    // An adopt path is used as given and never gets a clone; else the folder
+    // is below the `clone_root`.
+    let (root, dest) = match &params.adopt_path {
+        Some(p) => (None, PathBuf::from(p)),
+        None => {
+            let root = clone_root(&policy)?;
+            let dest = root.join(&params.folder);
+            (Some(root), dest)
+        }
+    };
     let begin = store
         .home_begin(NewHomeAttempt {
             attempt_id: params.attempt_id.clone(),
@@ -188,6 +205,17 @@ pub async fn ensure_home(
         };
         return finish(store, &row.attempt_id, outcome).await;
     }
+    let Some(root) = root else {
+        // An adopt path that does not exist: nothing is cloned or made.
+        let outcome = failed(Failure {
+            code: HOME_MISSING,
+            text: format!(
+                "The folder {} does not exist on this station.",
+                dest.display()
+            ),
+        });
+        return finish(store, &row.attempt_id, outcome).await;
+    };
     // Step 7: the clone runs in a task; the answer is `cloning`.
     let task_store = store.clone();
     tokio::spawn(async move {

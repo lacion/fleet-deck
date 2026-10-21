@@ -7,7 +7,13 @@ import { station } from '../testing/fleet';
 import { integrationActions } from './actions';
 import { IntegrationsProvider } from './context';
 import { fakeActions, project } from './fixtures';
-import { homeCandidates, homeFolderName, homeText, ProjectHomes } from './ProjectHomes';
+import {
+  AddHomeDialog,
+  homeCandidates,
+  homeFolderName,
+  homeText,
+  ProjectHomes,
+} from './ProjectHomes';
 
 const home = (extra: Partial<ProjectHome> = {}): ProjectHome => ({
   station_id: 'station-b',
@@ -137,6 +143,47 @@ describe('the Homes section', () => {
   });
 });
 
+describe('the Add home dialog', () => {
+  const dialog = (initialChoice: 'clone' | 'adopt') => {
+    const p = project({
+      remote_url: 'https://h.example/acme/atlas.git',
+      repo: 'h.example/acme/atlas',
+    });
+    return renderToStaticMarkup(
+      <AddHomeDialog
+        project={p}
+        candidates={homeCandidates({ homes: [] }, stations)}
+        actions={fakeActions()}
+        onDone={() => undefined}
+        onClose={() => undefined}
+        initialChoice={initialChoice}
+      />,
+    );
+  };
+
+  test('it offers two choices and clones a new copy by default', () => {
+    const html = dialog('clone');
+    expect(html).toContain('Clone a new copy');
+    expect(html).toContain('Use an existing folder on that station');
+    expect(html).toMatch(/<input[^>]*type="radio"[^>]*checked=""[^>]*\/>\s*Clone a new copy/);
+    expect(html).toContain(
+      'The station clones https://h.example/acme/atlas.git into /srv/projects/',
+    );
+    expect(html).not.toContain('Folder path');
+  });
+
+  test('the existing folder choice asks for a path and keeps Add home off until it is absolute', () => {
+    const html = dialog('adopt');
+    expect(html).toContain('Folder path');
+    expect(html).toContain('placeholder="/home/you/projects/app"');
+    expect(html).toContain(
+      'The station checks that this folder is a complete clone of h.example/acme/atlas. It never clones into it.',
+    );
+    expect(html).not.toContain('The station clones');
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Add home/);
+  });
+});
+
 describe('the calls', () => {
   const rig = (reply: unknown = {}, fail?: ApiError) => {
     const calls: [string, string, unknown][] = [];
@@ -168,6 +215,14 @@ describe('the calls', () => {
     expect(add.station).toBe('st-b');
     expect(add.command_id).toMatch(/^[0-9a-f]{32}$/);
     expect(calls[1]?.[2]).toMatchObject({ command_id: expect.stringMatching(/^[0-9a-f]{32}$/) });
+  });
+
+  test('addHome sends the path only when it is given', async () => {
+    const { calls, actions } = rig({ generation: 2, attempt_id: 'ha-1' });
+    await actions.addHome('p1', 'st-b');
+    await actions.addHome('p1', 'st-b', '/home/you/projects/app');
+    expect(Object.keys(calls[0]?.[2] as object).sort()).toEqual(['command_id', 'station']);
+    expect(calls[1]?.[2]).toMatchObject({ station: 'st-b', path: '/home/you/projects/app' });
   });
 
   test('a refusal of a home is thrown with its message', async () => {
