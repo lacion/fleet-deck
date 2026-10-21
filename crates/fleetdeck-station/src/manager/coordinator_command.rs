@@ -102,7 +102,8 @@ pub(super) async fn session_lock(
 ) -> Option<tokio::sync::OwnedMutexGuard<()>> {
     match command {
         SessionCommand::CoordinatorSet { session_id, .. }
-        | SessionCommand::CoordinatorRenew { session_id, .. } => {
+        | SessionCommand::CoordinatorRenew { session_id, .. }
+        | SessionCommand::CoordinatorRevoke { session_id, .. } => {
             Some(bindings.session_locks().lock(session_id).await)
         }
         _ => None,

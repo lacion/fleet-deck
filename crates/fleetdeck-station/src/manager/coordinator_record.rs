@@ -280,14 +280,24 @@ pub(in crate::manager) async fn publish_renew(
                 return;
             }
         };
-        if row.is_some_and(|r| r.generation != record.generation) {
-            tracing::warn!(session = %session_id, binding = %binding.binding_id, "the binding row does not hold the renewed generation; memory is not changed");
+        // An ended or suspended row is a dead credential: a renewal never
+        // revives it (PRE-PR R2).
+        if row.is_some_and(|r| {
+            !matches!(r.state, RowState::Pending | RowState::Active)
+                || r.generation != record.generation
+        }) {
+            tracing::warn!(session = %session_id, binding = %binding.binding_id, "the binding row is ended or does not hold the renewed generation; memory is not changed");
             return;
         }
     }
+    // Checked again under the bindings lock: a revoke or another change
+    // since the read above wins (PRE-PR R2).
+    let seen = binding.generation;
     bindings.update(&binding.binding_id, |b| {
-        b.state = BindingState::Active;
-        b.generation = record.generation;
+        if matches!(b.state, BindingState::Active | BindingState::Expired) && b.generation == seen {
+            b.state = BindingState::Active;
+            b.generation = record.generation;
+        }
     });
 }
 

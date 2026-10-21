@@ -481,3 +481,41 @@ async fn a_failed_renewal_leaves_memory_and_the_projection_unchanged() {
         }
     }
 }
+
+/// PRE-PR R2: the publish of a committed renewal never revives a binding that
+/// a revoke ended meanwhile (memory `Revoked`, or the shim row `ended`).
+#[tokio::test]
+async fn a_renewal_never_revives_a_binding_that_a_revoke_ended() {
+    // Memory revoked after the renewal's commit.
+    let mut rig = Rig::new().await;
+    rig.put(2).await;
+    let (_, digest) = mint().unwrap();
+    rig.bindings
+        .insert(digest.clone(), binding(BindingState::Active, 1));
+    rig.bindings
+        .update(BINDING, |b| b.state = BindingState::Revoked);
+    super::publish_renew(rig.store(), &rig.bindings, &"s1".into(), GRANT).await;
+    let got = rig.bindings.get(BINDING).unwrap();
+    assert_eq!((got.state, got.generation), (BindingState::Revoked, 1));
+
+    // The shim row ended, memory not yet revoked.
+    let rig = Rig::new().await;
+    let mut rig = rig;
+    rig.put(2).await;
+    let (_, digest) = mint().unwrap();
+    let b = binding(BindingState::Active, 1);
+    rig.bindings.insert(digest.clone(), b.clone());
+    let mut row = BindingRow::from_binding(
+        digest.clone(),
+        "shim1".to_owned(),
+        &b,
+        Some(coordinator_spec().expires_at),
+        1,
+    );
+    row.state = RowState::Ended;
+    row.generation = 2;
+    rig.store().shim_binding_insert(row).await.unwrap();
+    super::publish_renew(rig.store(), &rig.bindings, &"s1".into(), GRANT).await;
+    let got = rig.bindings.get(BINDING).unwrap();
+    assert_eq!((got.state, got.generation), (BindingState::Active, 1));
+}
