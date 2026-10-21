@@ -6,7 +6,8 @@ import { answerCapProblem, type FleetControl, spawnCapProblem } from '../spawn/f
 import { targetChoices } from '../spawn/TargetStations';
 
 export const CODEX_NOTE = 'Codex sees the change when the session resumes.';
-const ALWAYS_NOTE = 'Always: read the fleet, send mail and tasks, and drive the sessions it starts.';
+const ALWAYS_NOTE =
+  'Always: read the fleet, send mail and tasks, and drive the sessions it starts.';
 const LOCKED_NOTE = 'To change the stations, revoke the access and give it again.';
 const CEILING_NOTE = 'Sessions that it starts, resumes or changes never get a higher mode.';
 
@@ -47,7 +48,13 @@ type StationsProps = {
 };
 
 /** The "Stations" section: the own station (always on) and one box for each other station. */
-export function AccessStations({ stations, ownId, picked, onPicked, locked = false }: StationsProps) {
+export function AccessStations({
+  stations,
+  ownId,
+  picked,
+  onPicked,
+  locked = false,
+}: StationsProps) {
   return (
     <section className="fd-access-sec">
       <h4 className="fd-access-h">Stations</h4>

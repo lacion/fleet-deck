@@ -133,6 +133,24 @@ describe('the session select', () => {
     expect(html).toContain('Give access');
   });
 
+  test('the give form lists the stations: the own one fixed, the others to pick', () => {
+    const html = renderToStaticMarkup(
+      <GiveAccess
+        sessions={sessions}
+        stations={[live, old]}
+        grants={[]}
+        actions={actions()}
+        ask={async () => null}
+        onChanged={() => {}}
+      />,
+    );
+    expect(html).toContain('<h4 class="fd-access-h">Stations</h4>');
+    expect(html).toContain('Alpha <span class="fd-access-desc">this session</span>');
+    expect(html).toContain(
+      '<label class="fd-access-row"><input type="checkbox"/><span class="fd-access-title">Beta</span></label>',
+    );
+  });
+
   test('with no candidate it shows the note and no form', () => {
     const html = renderToStaticMarkup(
       <GiveAccess
@@ -170,6 +188,12 @@ describe('the live form', () => {
     );
     expect(normal).toContain('Desktop:');
     expect(normal).toContain('Screenshots:');
+  });
+
+  test('liveGrantFields sends the stations only when targets are given', () => {
+    expect(liveGrantFields(START_LIVE, ['b']).stations).toEqual(['b']);
+    expect(liveGrantFields(START_LIVE, [])).not.toHaveProperty('stations');
+    expect(liveGrantFields(START_LIVE)).not.toHaveProperty('stations');
   });
 
   test('liveGrantFields has no desktop field, whatever the form holds', () => {
@@ -222,6 +246,15 @@ describe('give', () => {
     expect(await giveAccess(session, START_LIVE, a, k.ask)).toBeNull();
     expect(k.labels).toEqual([['Starting sessions']]);
     expect(a.gives).toEqual([]);
+  });
+
+  test('targets are sent as stations and ask the Fleet control label', async () => {
+    const a = actions();
+    const k = asker('9');
+    await giveAccess(session, NO_FLEET, a, k.ask, ['station-b']);
+    expect(k.labels).toEqual([['Fleet control']]);
+    expect(a.gives[0]?.body.stations).toEqual(['station-b']);
+    expect(a.gives[0]?.elevation).toBe('9');
   });
 
   test('a form with nothing on asks nothing and sends no elevation', async () => {
