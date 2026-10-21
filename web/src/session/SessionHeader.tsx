@@ -47,6 +47,8 @@ import { useIntegrations, useProjects } from '../integrations/context';
 import { GitPullRequest } from '../integrations/icons';
 import { projectOfSession } from '../integrations/model';
 import { OpenPrDialog } from '../integrations/OpenPrDialog';
+import type { FleetActions } from '../fleet/fleet';
+import { SessionAccessDialog } from '../fleet/SessionAccess';
 import { Badges, Place } from './HeaderBadges';
 import { MoveDialog } from './MoveDialog';
 import { MoveToProject } from './MoveToProject';
@@ -80,6 +82,8 @@ type Props = {
   readonly onCheckExecution?: (() => void) | undefined;
   /** FG-9: a move started from the menu; the session view reads the move again. */
   readonly onMoveStarted?: (() => void) | undefined;
+  /** The fleet calls: the menu offers "Fleet access…" when given (admin only). */
+  readonly fleet?: FleetActions | undefined;
 };
 
 /** The status update that "Ask for a status update" sends. */
@@ -157,6 +161,7 @@ export function SessionHeader({
   models = null,
   onCheckExecution,
   onMoveStarted,
+  fleet,
 }: Props) {
   const s = session.summary;
   const caps = s.capabilities;
@@ -184,6 +189,8 @@ export function SessionHeader({
     syncProject?.git.sync === true &&
     s.moved_to === undefined;
   const [movingStation, setMovingStation] = useState(false);
+  const canAccess = fleet !== undefined && !guest && actions?.canAdmin === true;
+  const [accessOpen, setAccessOpen] = useState(false);
   const run = (name: string, call: (a: SessionActions) => Promise<Outcome>) => {
     if (actions) controller.act(name, () => call(actions));
   };
@@ -381,6 +388,17 @@ export function SessionHeader({
           }}
         >
           <Icon of={Server} /> Move to station…
+        </button>
+      ) : null}
+      {canAccess ? (
+        <button
+          type="button"
+          onClick={() => {
+            close();
+            setAccessOpen(true);
+          }}
+        >
+          <Icon of={Users} /> Fleet access…
         </button>
       ) : null}
       {guest ? null : (
@@ -752,6 +770,14 @@ export function SessionHeader({
           session={session}
           onClose={() => setMovingStation(false)}
           onStarted={() => onMoveStarted?.()}
+        />
+      ) : null}
+      {accessOpen && fleet !== undefined ? (
+        <SessionAccessDialog
+          session={session}
+          stations={stations}
+          actions={fleet}
+          onClose={() => setAccessOpen(false)}
         />
       ) : null}
       {prOpen && prProject !== undefined ? (

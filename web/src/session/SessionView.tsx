@@ -18,6 +18,7 @@ import { ChatView } from '../chat/ChatView';
 import { SubagentWork } from '../chat/SubagentWork';
 import { useSessionHistory } from '../chat/history';
 import type { DeckSession, StationView } from '../gen';
+import type { FleetActions } from '../fleet/fleet';
 import type { Freshness, Timeline } from '../runtime/state';
 import { isShared, usePeople } from '../sharing/context';
 import { sessionKey } from '../runtime/state';
@@ -78,6 +79,8 @@ export type SessionViewProps = {
   readonly onTerminalOpened?: () => void;
   /** Opens a shell in the workspace; the session menu offers it when given. */
   readonly onNewShell?: (() => void) | undefined;
+  /** The fleet calls: the session menu offers "Fleet access…" when given. */
+  readonly fleet?: FleetActions | undefined;
 };
 
 const noop = () => {};
@@ -394,6 +397,7 @@ export function SessionView(props: SessionViewProps) {
           guest === null && actions?.canAdmin === true ? () => setChecking(true) : undefined
         }
         onMoveStarted={move.reload}
+        fleet={props.fleet}
       />
       <MoveBanner
         session={session}

@@ -683,6 +683,7 @@ export function App({
             navigate={back}
             onTerminalOpened={phone ? toTerminals : undefined}
             onNewShell={newShell}
+            fleet={fleet}
           />
         );
       }
