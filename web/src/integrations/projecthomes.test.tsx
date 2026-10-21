@@ -182,6 +182,24 @@ describe('the Add home dialog', () => {
     expect(html).not.toContain('The station clones');
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Add home/);
   });
+
+  test('the existing folder has Browse… when the board can read the station folders', () => {
+    const p = project({ remote_url: 'https://h.example/acme/atlas.git' });
+    const render = (list?: () => Promise<never>) =>
+      renderToStaticMarkup(
+        <AddHomeDialog
+          project={p}
+          candidates={homeCandidates({ homes: [] }, stations)}
+          actions={fakeActions()}
+          list={list}
+          onDone={() => undefined}
+          onClose={() => undefined}
+          initialChoice="adopt"
+        />,
+      );
+    expect(render(() => new Promise<never>(() => {}))).toContain('Browse…');
+    expect(render()).not.toContain('Browse…');
+  });
 });
 
 describe('the calls', () => {

@@ -613,6 +613,7 @@ export function App({
             id={route.id}
             stations={stations}
             sessions={sessions}
+            list={folderList}
             onFixChecks={(station, cwd, prompt) => {
               setPlanPrompt(prompt);
               setPlanId(null);

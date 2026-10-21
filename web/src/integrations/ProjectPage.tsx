@@ -15,6 +15,7 @@ import { SecretFiles } from './SecretFiles';
 import { PrsTab } from './PrsTab';
 import { ProjectSessions } from './ProjectSessions';
 import type { Freshness } from '../runtime/state';
+import type { ListWorkspaces } from '../ui/FolderPicker';
 
 type Tab = 'sessions' | 'issues' | 'prs';
 
@@ -30,6 +31,8 @@ type Props = {
   /** Unix ms of "now" (tests). */
   readonly now?: number;
   readonly initialTab?: Tab;
+  /** Reads the folders of a station, for "Browse…" in "Add home". */
+  readonly list?: ListWorkspaces | undefined;
 };
 
 export function ProjectPage({
@@ -41,6 +44,7 @@ export function ProjectPage({
   freshness = 'live',
   now: givenNow,
   initialTab = 'sessions',
+  list,
 }: Props) {
   const env = useIntegrations();
   const now = useNow(givenNow, 30_000);
@@ -89,7 +93,7 @@ export function ProjectPage({
       </p>
       <ProjectChips project={project} />
       <SameRepository project={project} stations={stations} />
-      <ProjectHomes project={project} stations={stations} />
+      <ProjectHomes project={project} stations={stations} list={list} />
       <SecretFiles project={project} stations={stations} />
       <ProjectLands project={project} stations={stations} sessions={sessions} />
       <div className="fd-pane-tabs" role="tablist" aria-label="Project views">

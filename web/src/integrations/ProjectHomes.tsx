@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { stationName } from '../board/fleet';
 import type { Project, ProjectHome, StationView } from '../gen';
+import { FolderPicker, type ListWorkspaces } from '../ui/FolderPicker';
 import { Icon, Plus } from '../ui/icons';
 import type { IntegrationActions } from './actions';
 import { useIntegrations } from './context';
@@ -61,10 +62,12 @@ export function AddHomeDialog({
   onDone,
   onClose,
   initialChoice = 'clone',
+  list,
 }: {
   readonly project: Project;
   readonly candidates: readonly StationView[];
   readonly actions: IntegrationActions;
+  readonly list?: ListWorkspaces | undefined;
   readonly onDone: () => void;
   readonly onClose: () => void;
   readonly initialChoice?: AddChoice;
@@ -132,15 +135,14 @@ export function AddHomeDialog({
           </div>
           {adopt ? (
             <>
-              <label>
-                Folder path
-                <input
-                  type="text"
-                  value={path}
-                  placeholder="/home/you/projects/app"
-                  onChange={(e) => setPath(e.target.value)}
-                />
-              </label>
+              <FolderPicker
+                stationId={station}
+                value={path}
+                onChange={setPath}
+                list={list}
+                label="Folder path"
+                placeholder="/home/you/projects/app"
+              />
               <p className="fd-note">
                 The station checks that this folder is a complete clone of {project.repo ?? ''}. It
                 never clones into it.
@@ -176,9 +178,12 @@ export function AddHomeDialog({
 export function ProjectHomes({
   project,
   stations,
+  list,
 }: {
   readonly project: Project;
   readonly stations: readonly StationView[];
+  /** Reads the folders of a station ("Browse…" of an existing folder). */
+  readonly list?: ListWorkspaces | undefined;
 }) {
   const env = useIntegrations();
   const [adding, setAdding] = useState(false);
@@ -279,6 +284,7 @@ export function ProjectHomes({
           project={project}
           candidates={homeCandidates(project, stations)}
           actions={actions}
+          list={list}
           onDone={env.reload}
           onClose={() => setAdding(false)}
         />
