@@ -197,6 +197,10 @@ fn finish(
         Some(why) => super::worker_grant::revoke_for_start(conn, id, why, now)?,
         None => BTreeSet::new(),
     };
+    // The owner grants of the session (MCP P4b §3, §6.1, §9).
+    scopes.extend(super::grants::owner_grants::settle_tx(
+        conn, id, state, receipt, reason, now,
+    )?);
     // A session that ended before its receipt was stored (MCP P4a PRE-PR R2).
     let named = receipt
         .filter(|r| r.state == ReceiptState::Accepted)

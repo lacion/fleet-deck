@@ -31,8 +31,7 @@ const PRE_COMMIT: [MoveState; 4] = [
 /// (`authority_lost`, `grant_revoked`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Removal {
-    /// The class change route (P4b-3b) uses it; only the tests do until then.
-    #[allow(dead_code)]
+    /// The class change of an owner grant (`owner_grants::change_tx`).
     Narrowed,
     Revoked,
 }
