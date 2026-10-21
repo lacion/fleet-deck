@@ -17,4 +17,10 @@ url: string, remote: RemoteIdentity,
 /**
  * The remote that the clone creates (`push_remote` at the add).
  */
-remote_name: string, generation: number, attempt_id: string, request_digest: string, retry_of?: string, };
+remote_name: string, generation: number, attempt_id: string, request_digest: string, retry_of?: string, 
+/**
+ * An absolute folder on the station to adopt instead of a new clone in
+ * `clone_root` (needs `fleet_git.homes_adopt.v1`). The station never
+ * clones into it.
+ */
+adopt_path?: string, };

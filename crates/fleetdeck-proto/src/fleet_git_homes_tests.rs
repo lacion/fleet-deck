@@ -14,6 +14,14 @@ fn the_homes_feature_is_offered_and_not_required() {
 }
 
 #[test]
+fn the_homes_adopt_feature_is_offered_and_not_required() {
+    use crate::version::feature;
+    assert_eq!(feature::FLEET_GIT_HOMES_ADOPT, "fleet_git.homes_adopt.v1");
+    assert!(feature::ALL.contains(&"fleet_git.homes_adopt.v1"));
+    assert!(!feature::REQUIRED.contains(&"fleet_git.homes_adopt.v1"));
+}
+
+#[test]
 fn ensure_home_params_and_status_have_their_wire_shapes() {
     let params = EnsureHomeParams {
         project_id: "p1".into(),
@@ -29,9 +37,11 @@ fn ensure_home_params_and_status_have_their_wire_shapes() {
         attempt_id: "ha-1".into(),
         request_digest: "ab".repeat(32),
         retry_of: None,
+        adopt_path: None,
     };
     let v = serde_json::to_value(&params).unwrap();
     assert!(!v.as_object().unwrap().contains_key("retry_of"));
+    assert!(!v.as_object().unwrap().contains_key("adopt_path"));
     assert_eq!(v["generation"], 2);
     let back: EnsureHomeParams = serde_json::from_value(v).unwrap();
     assert_eq!(back, params);
@@ -42,6 +52,14 @@ fn ensure_home_params_and_status_have_their_wire_shapes() {
     let back: EnsureHomeParams =
         serde_json::from_value(serde_json::to_value(&retry).unwrap()).unwrap();
     assert_eq!(back.retry_of.as_deref(), Some("ha-0"));
+    let adopt = EnsureHomeParams {
+        adopt_path: Some("/home/you/projects/app".into()),
+        ..retry
+    };
+    let v = serde_json::to_value(&adopt).unwrap();
+    assert_eq!(v["adopt_path"], "/home/you/projects/app");
+    let back: EnsureHomeParams = serde_json::from_value(v).unwrap();
+    assert_eq!(back.adopt_path.as_deref(), Some("/home/you/projects/app"));
     let status = HomeStatus {
         attempt_id: "ha-1".into(),
         generation: 2,

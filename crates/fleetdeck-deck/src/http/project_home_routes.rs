@@ -38,6 +38,9 @@ const REMOVE: &str = "project.home_remove";
 pub struct AddBody {
     pub station: String,
     pub command_id: String,
+    /// An absolute folder on the station to adopt instead of a new clone.
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 /// The body of the retry route.
@@ -51,7 +54,9 @@ pub struct RetryBody {
 fn status_of(code: &str) -> StatusCode {
     match code {
         "unknown_project" | "unknown_station" | "unknown_home" => StatusCode::NOT_FOUND,
-        "needs_remote" | "invalid_git_settings" | "invalid_body" => StatusCode::BAD_REQUEST,
+        "needs_remote" | "invalid_git_settings" | "invalid_body" | "invalid_path" => {
+            StatusCode::BAD_REQUEST
+        }
         _ => StatusCode::CONFLICT,
     }
 }
@@ -161,7 +166,12 @@ async fn add_inner(
         known_station(board, &body.station).await?;
         board
             .store
-            .home_add(id.to_owned(), body.station.clone(), body.command_id.clone())
+            .home_add(
+                id.to_owned(),
+                body.station.clone(),
+                body.command_id.clone(),
+                body.path.clone(),
+            )
             .await
             .map_err(ApiError::internal)?
             .map_err(refusal)
@@ -172,7 +182,8 @@ async fn add_inner(
 /// `POST /api/projects/{id}/homes`.
 ///
 /// # Errors
-/// 400 `invalid_body` / `invalid_command_id` / `needs_remote`; 403
+/// 400 `invalid_body` / `invalid_command_id` / `needs_remote` /
+/// `invalid_path`; 403
 /// `owner_only`; 404 `unknown_project` / `unknown_station`; 409
 /// `command_id_reused` / `home_exists` / `station_offline` /
 /// `fleet_git_unsupported` / `remote_local_refused` / `station_info_missing`
@@ -185,13 +196,23 @@ pub async fn add(
 ) -> Result<(StatusCode, Json<HomeAttemptStarted>), ApiError> {
     owner_only(&principal, "adds a home")?;
     let station = body.as_ref().ok().map(|b| b.station.clone());
+    let path = body
+        .as_ref()
+        .ok()
+        .and_then(|b| b.path.as_deref())
+        .map(|p| p.trim().to_owned());
     let (command, result) = add_inner(&board, &id, body).await;
     audit(&board, &principal, ADD, &id, command, &result, |done| {
-        format!(
+        let mut detail = format!(
             "station {} generation {}",
             station.as_deref().unwrap_or_default(),
             done.generation
-        )
+        );
+        if let Some(path) = &path {
+            detail.push_str(" path ");
+            detail.push_str(path);
+        }
+        detail
     })
     .await;
     let started = result?;

@@ -134,7 +134,16 @@ impl Rig {
             attempt_id: attempt.to_owned(),
             request_digest: String::new(),
             retry_of: None,
+            adopt_path: None,
         };
+        sign(&mut p);
+        p
+    }
+
+    /// Params of a home that adopts the folder `path` (any path).
+    fn adopt_params(&self, project: &str, attempt: &str, path: &str) -> EnsureHomeParams {
+        let mut p = self.params(project, "app", attempt, &self.url());
+        p.adopt_path = Some(path.to_owned());
         sign(&mut p);
         p
     }
@@ -215,6 +224,81 @@ async fn an_existing_complete_clone_is_adopted_and_no_clone_runs() {
     assert_eq!(status.state, HomeAttemptState::Adopted, "{status:?}");
     assert_eq!(status.path.as_deref(), dest.to_str());
     assert_eq!(fs::metadata(&marker).unwrap().modified().unwrap(), before);
+}
+
+#[tokio::test]
+async fn an_adopt_path_outside_clone_root_adopts_a_complete_clone() {
+    let Some(rig) = Rig::new().await else { return };
+    let dest = rig.root.join("elsewhere").join("mine");
+    rig.clone_to(&dest);
+    let status = rig
+        .ensure(rig.adopt_params("p1", "a1", dest.to_str().unwrap()))
+        .await
+        .unwrap();
+    assert_eq!(status.state, HomeAttemptState::Adopted, "{status:?}");
+    assert_eq!(status.path.as_deref(), dest.to_str());
+    // `clone_root` was not needed: it was not made, and nothing was cloned.
+    assert!(!rig.projects().exists());
+}
+
+#[tokio::test]
+async fn an_adopt_path_that_does_not_exist_is_home_missing_and_is_never_cloned() {
+    let Some(rig) = Rig::new().await else { return };
+    let dest = rig.root.join("elsewhere").join("nope");
+    let status = rig
+        .ensure(rig.adopt_params("p1", "a1", dest.to_str().unwrap()))
+        .await
+        .unwrap();
+    assert_eq!(status.state, HomeAttemptState::Failed, "{status:?}");
+    assert_eq!(status.code.as_deref(), Some("home_missing"));
+    assert_eq!(
+        status.message.unwrap(),
+        format!(
+            "The folder {} does not exist on this station.",
+            dest.display()
+        )
+    );
+    assert!(!dest.exists() && !dest.parent().unwrap().exists());
+    assert!(!rig.projects().exists());
+}
+
+#[tokio::test]
+async fn a_bad_adopt_path_is_invalid_params() {
+    let Some(rig) = Rig::new().await else { return };
+    let long = format!("/{}", "x".repeat(4096));
+    for (i, path) in ["", "relative/app", "/tmp/a\0b", long.as_str()]
+        .into_iter()
+        .enumerate()
+    {
+        let p = rig.adopt_params("p1", &format!("a{i}"), path);
+        assert_eq!(
+            invalid_text(rig.ensure(p).await),
+            "Give an absolute folder path."
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_adopt_path_with_another_origin_is_a_conflict() {
+    let Some(rig) = Rig::new().await else { return };
+    let other = rig.root.join("other.git");
+    rig.make_bare(&other, true);
+    let dest = rig.root.join("elsewhere").join("theirs");
+    fs::create_dir_all(dest.parent().unwrap()).unwrap();
+    rig.git(
+        &rig.root,
+        &[
+            "clone",
+            &format!("file://{}", other.display()),
+            &dest.to_string_lossy(),
+        ],
+    );
+    let status = rig
+        .ensure(rig.adopt_params("p1", "a1", dest.to_str().unwrap()))
+        .await
+        .unwrap();
+    assert_eq!(status.state, HomeAttemptState::Failed, "{status:?}");
+    assert_eq!(status.code.as_deref(), Some(code::HOME_CONFLICT));
 }
 
 #[tokio::test]

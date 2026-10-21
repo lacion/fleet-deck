@@ -51,30 +51,42 @@ export function homeCandidates(
   return stations.filter((s) => s.info?.fleet_git !== undefined && !taken.has(s.station_id));
 }
 
-function AddHomeDialog({
+/** How the new home is made: a new clone below the clone root, or an existing folder. */
+export type AddChoice = 'clone' | 'adopt';
+
+export function AddHomeDialog({
   project,
   candidates,
   actions,
   onDone,
   onClose,
+  initialChoice = 'clone',
 }: {
   readonly project: Project;
   readonly candidates: readonly StationView[];
   readonly actions: IntegrationActions;
   readonly onDone: () => void;
   readonly onClose: () => void;
+  readonly initialChoice?: AddChoice;
 }) {
   const [station, setStation] = useState(candidates[0]?.station_id ?? '');
+  const [choice, setChoice] = useState<AddChoice>(initialChoice);
+  const [path, setPath] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const chosen = candidates.find((s) => s.station_id === station);
   const root = chosen?.info?.fleet_git?.clone_root ?? '';
+  const folder = path.trim();
+  const adopt = choice === 'adopt';
+  const ready = chosen !== undefined && (!adopt || folder.startsWith('/'));
   const submit = () => {
-    if (busy || chosen === undefined) return;
+    if (busy || chosen === undefined || !ready) return;
     setBusy(true);
     setError(null);
-    actions
-      .addHome(project.project_id, chosen.station_id)
+    (adopt
+      ? actions.addHome(project.project_id, chosen.station_id, folder)
+      : actions.addHome(project.project_id, chosen.station_id)
+    )
       .then(() => {
         onDone();
         onClose();
@@ -98,11 +110,49 @@ function AddHomeDialog({
               ))}
             </select>
           </label>
-          <p className="fd-note">
-            The station clones {project.remote_url ?? ''} into {root}/{homeFolderName(project.name)}
-            . When that folder is already a complete clone of {project.repo ?? ''}, the station uses
-            it.
-          </p>
+          <div role="radiogroup" aria-label="How to add the home">
+            <label>
+              <input
+                type="radio"
+                name="add-home-choice"
+                checked={!adopt}
+                onChange={() => setChoice('clone')}
+              />{' '}
+              Clone a new copy
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="add-home-choice"
+                checked={adopt}
+                onChange={() => setChoice('adopt')}
+              />{' '}
+              Use an existing folder on that station
+            </label>
+          </div>
+          {adopt ? (
+            <>
+              <label>
+                Folder path
+                <input
+                  type="text"
+                  value={path}
+                  placeholder="/home/you/projects/app"
+                  onChange={(e) => setPath(e.target.value)}
+                />
+              </label>
+              <p className="fd-note">
+                The station checks that this folder is a complete clone of {project.repo ?? ''}. It
+                never clones into it.
+              </p>
+            </>
+          ) : (
+            <p className="fd-note">
+              The station clones {project.remote_url ?? ''} into {root}/
+              {homeFolderName(project.name)}. When that folder is already a complete clone of{' '}
+              {project.repo ?? ''}, the station uses it.
+            </p>
+          )}
         </>
       )}
       {error === null ? null : (
@@ -114,12 +164,7 @@ function AddHomeDialog({
         <button type="button" className="fd-ghost" onClick={onClose}>
           Cancel
         </button>
-        <button
-          type="button"
-          className="fd-primary"
-          disabled={busy || chosen === undefined}
-          onClick={submit}
-        >
+        <button type="button" className="fd-primary" disabled={busy || !ready} onClick={submit}>
           {busy ? 'Adding…' : 'Add home'}
         </button>
       </div>

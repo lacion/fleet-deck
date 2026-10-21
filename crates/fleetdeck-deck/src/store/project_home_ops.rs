@@ -83,7 +83,10 @@ impl DeckStore {
     /// same `command_id` for the same request returns the first answer. The
     /// checks, in order: `needs_remote`, `home_exists`, the station link,
     /// `fleet_git_unsupported`, `remote_local_refused`,
-    /// `station_info_missing`, `slug_taken`.
+    /// `station_info_missing`, `slug_taken`. With `adopt_path` the station
+    /// adopts that folder instead of a new clone: the trimmed path must be
+    /// absolute (`invalid_path`) and the station must have negotiated
+    /// `fleet_git.homes_adopt.v1` (`fleet_git_unsupported`).
     ///
     /// # Errors
     /// A database or stored-JSON error.
@@ -92,9 +95,17 @@ impl DeckStore {
         project: String,
         station: String,
         command_id: String,
+        adopt_path: Option<String>,
     ) -> Result<Refusable<HomeAttemptStarted>> {
+        let adopt_path = adopt_path.map(|p| p.trim().to_owned());
+        if let Some(p) = &adopt_path
+            && (!p.starts_with('/') || p.len() > 4096 || p.contains('\0'))
+        {
+            return Ok(refuse("invalid_path", "Give an absolute folder path."));
+        }
         let sid = StationId::from(station.clone());
         let link = self.link_feature(&sid, feature::FLEET_GIT_HOMES);
+        let adopt_link = self.link_feature(&sid, feature::FLEET_GIT_HOMES_ADOPT);
         let info = self.station_info(&sid).map(|(info, _)| {
             (
                 info.name.clone(),
@@ -137,6 +148,12 @@ impl DeckStore {
                 return Ok(refuse(
                     "fleet_git_unsupported",
                     "This station does not support Fleet Git. Update it first.",
+                ));
+            }
+            if adopt_path.is_some() && adopt_link != LinkFeature::Negotiated {
+                return Ok(refuse(
+                    "fleet_git_unsupported",
+                    "Update this station to use an existing folder.",
                 ));
             }
             let local_remote = p.remote_dest.as_deref().is_some_and(|d| d.starts_with("file://"));
@@ -185,6 +202,7 @@ impl DeckStore {
                 attempt_id: attempt_id.clone(),
                 request_digest: String::new(),
                 retry_of: None,
+                adopt_path,
             };
             request.request_digest = ensure_home_digest(&request);
             let position: i64 = tx.query_row(
@@ -266,15 +284,15 @@ impl DeckStore {
                 .as_ref()
                 .map(|a| a.attempt_id.clone())
                 .or_else(|| home.attempt_id.clone());
-            let remote_name = match stored {
-                Some(old) => old.request.remote_name,
+            let (remote_name, adopt_path) = match stored {
+                Some(old) => (old.request.remote_name, old.request.adopt_path),
                 None => match failed
                     .as_deref()
                     .map(|id| find_attempt(&tx, id))
                     .transpose()?
                 {
-                    Some(Some(old)) => old.request.remote_name,
-                    _ => p.git.push_remote.clone(),
+                    Some(Some(old)) => (old.request.remote_name, old.request.adopt_path),
+                    _ => (p.git.push_remote.clone(), None),
                 },
             };
             let mut request = EnsureHomeParams {
@@ -291,6 +309,7 @@ impl DeckStore {
                 attempt_id: attempt_id.clone(),
                 request_digest: String::new(),
                 retry_of: failed,
+                adopt_path,
             };
             request.request_digest = ensure_home_digest(&request);
             insert_attempt(&tx, &station, &request, &command_id, now)?;

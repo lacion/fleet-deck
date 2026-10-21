@@ -155,6 +155,9 @@ pub mod feature {
     /// ADR-009).
     pub const FLEET_GIT_HOMES: &str = "fleet_git.homes.v1";
 
+    /// `project.ensure_home` with `adopt_path` (Fleet Sync).
+    pub const FLEET_GIT_HOMES_ADOPT: &str = "fleet_git.homes_adopt.v1";
+
     /// `project.radar`, `session.land`, `fleet_git.land_status`,
     /// `fleet_git.land_abandon` and the `session.land` event (Fleet Git
     /// phase 3, ADR-009).
@@ -295,6 +298,7 @@ pub mod feature {
         DESKTOP,
         FLEET_GIT,
         FLEET_GIT_HOMES,
+        FLEET_GIT_HOMES_ADOPT,
         FLEET_GIT_LAND,
         FLEET_GIT_BRANCHES,
         FLEET_GIT_MOVE,
