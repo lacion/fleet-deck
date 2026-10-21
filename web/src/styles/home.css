@@ -1209,3 +1209,123 @@
   right: 12px;
   left: auto;
 }
+
+/* Fleet access: the dialog of the session menu and the stations of the Fleet page give form */
+.fd-access-sec {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-access-sec:not(:first-child) {
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
+}
+.fd-access-h {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+label.fd-access-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0 var(--sp-2);
+  align-items: start;
+  min-width: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  font-size: var(--fs-body);
+  color: var(--text);
+  cursor: pointer;
+}
+label.fd-access-row > input {
+  grid-row: 1 / span 2;
+  margin: 2px 0 0;
+}
+label.fd-access-row:hover,
+label.fd-access-row:has(input:checked) {
+  border-color: var(--act);
+}
+label.fd-access-row:has(input:disabled) {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+label.fd-access-row:has(input:focus-visible) {
+  outline: 2px solid var(--act);
+  outline-offset: 2px;
+}
+.fd-access-title {
+  grid-column: 2;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.fd-access-desc {
+  grid-column: 2;
+  color: var(--dim);
+  font-size: var(--fs-12);
+  font-weight: 400;
+}
+.fd-access-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-2) var(--sp-3);
+}
+.fd-access-grid > div {
+  min-width: 0;
+}
+.fd-access-grid label {
+  display: grid;
+  gap: var(--sp-1);
+  min-width: 0;
+  font-size: var(--fs-body);
+  color: var(--dim);
+}
+.fd-access-grid input,
+.fd-access-grid select {
+  width: 100%;
+  min-width: 0;
+}
+@media (max-width: 520px) {
+  .fd-access-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.fd-access-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+.fd-access-sum {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--sp-1) var(--sp-3);
+  margin: 0;
+  font-size: var(--fs-body);
+}
+.fd-access-sum dt {
+  color: var(--dim);
+}
+.fd-access-sum dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.fd-access-sum .fd-chip {
+  border-color: var(--border);
+  background: var(--border-soft);
+  color: var(--text);
+}
+.fd-access-sub {
+  margin: 0;
+  color: var(--dim);
+  overflow-wrap: anywhere;
+}
