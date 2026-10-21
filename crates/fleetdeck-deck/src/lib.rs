@@ -19,6 +19,7 @@ pub mod fleet_git_move_after;
 pub mod fleet_git_move_pipe;
 pub mod fleet_git_move_send;
 pub mod fleet_git_radar;
+pub mod fleet_git_secrets;
 pub mod fleet_summary;
 pub mod http;
 pub mod knobs;

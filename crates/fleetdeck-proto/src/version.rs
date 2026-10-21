@@ -170,6 +170,11 @@ pub mod feature {
     /// events `session.moved`, `session.move_in`, `session.move_undone` (Fleet
     /// Git phase 4, ADR-009).
     pub const FLEET_GIT_MOVE: &str = "fleet_git.move.v1";
+
+    /// `project.secret_scan`, `project.secret_read`, `project.secret_write`
+    /// (Fleet Sync FS-3).
+    pub const FLEET_GIT_SECRETS: &str = "fleet_git.secrets.v1";
+
     /// `desktop.act` with an `authority` param: the deck authorizes each
     /// desktop action, the station checks it right before the first side
     /// effect (R13 §5E item 1, §5F, §5G).
@@ -293,6 +298,7 @@ pub mod feature {
         FLEET_GIT_LAND,
         FLEET_GIT_BRANCHES,
         FLEET_GIT_MOVE,
+        FLEET_GIT_SECRETS,
         DESKTOP_AUTHORITY,
         DISPLAY_CHANGES,
         DESKTOP_SHELL,

@@ -526,6 +526,7 @@ async fn read(ctx: &StationLink, control: &Control, req: InboundRequest) -> Outc
         "project.fetch" => intake_fleet_git::fetch(&ctx.manager, &ctx.fleet_git, req.params).await,
         "project.ensure_home" => intake_fleet_git::ensure_home(ctx, req.params).await,
         "project.home_status" => intake_fleet_git::home_status(ctx, req.params).await,
+        m if super::intake_secrets::has(m) => super::intake_secrets::call(ctx, m, req.params).await,
         "fleet.summary" => intake_summary::fleet_summary(ctx, req.params),
         "session.branches" | "files.branch_diff" => {
             branch_method(ctx, &req.method, req.params).await

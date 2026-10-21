@@ -785,6 +785,8 @@ pub fn migrations() -> Migrations<'static> {
         M::up(super::worker_grant::worker_attach_schema::SQL),
         // V46 (MCP P4b): `session_owner_grant` and `required_classes`.
         M::up(super::grants::owner_grant_schema::SQL),
+        // V47 (Fleet Sync FS-3): secret_files.
+        M::up(super::secret_files::SQL),
     ])
 }
 

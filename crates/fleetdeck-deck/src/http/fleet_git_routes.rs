@@ -25,6 +25,9 @@ pub mod project_branch_routes;
 // The radar route (FG-7), declared here for the same reason.
 #[path = "radar_routes.rs"]
 pub mod radar_routes;
+// The secret files of a project (Fleet Sync FS-3).
+#[path = "secret_file_routes.rs"]
+pub mod secret_file_routes;
 
 /// The routes of this part; the caller adds the guard.
 pub fn routes() -> Router<Arc<Board>> {
@@ -76,5 +79,13 @@ pub fn routes() -> Router<Arc<Board>> {
         .route(
             "/api/fleet-git/drift-reference",
             put(fleet_git_pref_routes::set_reference),
+        )
+        .route(
+            "/api/projects/{project}/secret-files",
+            get(secret_file_routes::list).put(secret_file_routes::set),
+        )
+        .route(
+            "/api/projects/{project}/secret-files/sync",
+            post(secret_file_routes::sync),
         )
 }

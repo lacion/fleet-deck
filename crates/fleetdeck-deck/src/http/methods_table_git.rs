@@ -150,4 +150,26 @@ pub const API_GIT: &[ApiMethod] = &[
         Some(Scope::Admin),
         true,
     ),
+    // Fleet Sync FS-3: the secret files. Owner only.
+    m(
+        "projects.secret_files",
+        Method::GET,
+        "/api/projects/{project}/secret-files",
+        Some(Scope::Admin),
+        false,
+    ),
+    m(
+        "projects.secret_files_set",
+        Method::PUT,
+        "/api/projects/{project}/secret-files",
+        Some(Scope::Admin),
+        true,
+    ),
+    m(
+        "projects.secret_sync",
+        Method::POST,
+        "/api/projects/{project}/secret-files/sync",
+        Some(Scope::Admin),
+        true,
+    ),
 ];

@@ -103,6 +103,7 @@ pub mod review_send;
 pub mod review_text;
 pub mod schedules;
 pub mod schema;
+pub mod secret_files;
 mod session_idle_schema;
 pub mod session_moves;
 mod session_moves_ready;

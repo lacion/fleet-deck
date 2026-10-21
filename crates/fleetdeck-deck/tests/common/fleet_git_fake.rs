@@ -4,7 +4,12 @@
 //! request. The deck sends the snapshot after the first `station.info`, so
 //! this fake answers it (the plain `Fixture::connect` leaves it unanswered).
 
-#![allow(dead_code, clippy::unwrap_used, clippy::expect_used)]
+#![allow(
+    dead_code,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::type_complexity
+)]
 
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -150,6 +155,8 @@ pub struct FakeGit {
     pub fetch: Mutex<GitReply>,
     /// The answer of `files.list`: `Err((code, message))` is a link error.
     pub files: Mutex<Result<Value, (&'static str, &'static str)>>,
+    /// The answers of the secret file methods (Fleet Sync FS-3): none, none.
+    pub secret: Mutex<Option<Box<dyn Fn(&str, &Value) -> Outcome + Send + Sync>>>,
     /// The `station.info` answer (the setters change it).
     info: Mutex<Value>,
     pub control: Control,
@@ -316,6 +323,7 @@ impl FakeGit {
             files: Mutex::new(Ok(json!({
                 "root": "/artifacts", "path": "", "entries": [], "truncated": false
             }))),
+            secret: Mutex::new(None),
             info: Mutex::new(info.clone()),
             control: station.control.clone(),
         });
@@ -360,6 +368,12 @@ impl FakeGit {
                 "body_markdown": "body", "estimate": null, "comments": [],
                 "linked_prs": [], "images": []
             })),
+            "project.secret_scan" | "project.secret_read" | "project.secret_write" => {
+                match lock(&self.secret).as_ref() {
+                    Some(f) => f(&req.method, &req.params),
+                    None => Outcome::Err(WireError::new("not_implemented", "the fake")),
+                }
+            }
             "project.ensure_home" => self.ensure_home(&req.params),
             "project.home_status" => self.home_status(&req.params),
             "fleet_git.push_now" => match *lock(&self.push) {

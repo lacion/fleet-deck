@@ -33,7 +33,7 @@ const fn p5a_row(name: &'static str, feature: &'static str) -> MethodSpec {
 use Callers::{DeckToStation, Either, StationToDeck};
 
 /// The last rows of [`crate::methods::METHODS`].
-pub(crate) const TAIL: [MethodSpec; 59] = [
+pub(crate) const TAIL: [MethodSpec; 62] = [
     // Desktop control on the station (R13 P3): the board gates it for the
     // owner; the station checks `allow_desktop` live.
     m(
@@ -191,6 +191,27 @@ pub(crate) const TAIL: [MethodSpec; 59] = [
         DeckToStation,
         Scope::Read,
         Some(feature::FLEET_GIT_HOMES),
+        false,
+    ),
+    m(
+        "project.secret_scan",
+        DeckToStation,
+        Scope::Admin,
+        Some(feature::FLEET_GIT_SECRETS),
+        false,
+    ),
+    m(
+        "project.secret_read",
+        DeckToStation,
+        Scope::Admin,
+        Some(feature::FLEET_GIT_SECRETS),
+        false,
+    ),
+    m(
+        "project.secret_write",
+        DeckToStation,
+        Scope::Admin,
+        Some(feature::FLEET_GIT_SECRETS),
         false,
     ),
     m(

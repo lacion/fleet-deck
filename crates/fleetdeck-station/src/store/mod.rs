@@ -77,6 +77,7 @@ mod schema_v39;
 mod schema_v40;
 mod schema_v41;
 mod schema_v42;
+pub mod secret_homes;
 pub mod session_files;
 pub mod session_grants;
 pub mod session_holds;

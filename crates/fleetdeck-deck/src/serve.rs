@@ -500,6 +500,7 @@ impl RunningDeck {
             crate::artifact_deletions::spawn(store.clone(), Arc::clone(node.link()), rx.clone());
         let desktop_captures =
             crate::desktop_capture::spawn(store.clone(), Arc::clone(node.link()), rx.clone());
+        crate::fleet_git_secrets::spawn(store.clone(), Arc::clone(node.link()), rx.clone());
         let scheduler = crate::scheduler::spawn(store.clone(), Arc::clone(node.link()), rx);
         Ok(Self {
             node,

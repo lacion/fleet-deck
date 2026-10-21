@@ -348,7 +348,7 @@ fn the_v46_migration_adds_the_table_and_the_columns_and_old_rows_read_null() {
     let version: i64 = conn
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 46);
+    assert_eq!(version, 47);
     for table in ["outbox", "land_queue", "session_moves"] {
         assert!(has(&conn, table, "required_classes"), "{table}");
         let value: Option<String> = conn

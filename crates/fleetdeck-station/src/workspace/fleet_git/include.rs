@@ -38,7 +38,7 @@ fn skip(path: &str, reason: &str) -> SkippedFile {
     }
 }
 
-fn dir_flags() -> OFlags {
+pub(super) fn dir_flags() -> OFlags {
     OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC
 }
 
@@ -182,7 +182,7 @@ fn find_matches(root: &OwnedFd, patterns: &[String]) -> (Vec<String>, Vec<Skippe
 /// `git check-ignore -z --stdin` prints only paths that are ignored and not
 /// tracked. A failure of the command gives an empty set, so every match is
 /// skipped (fail closed).
-async fn ignored_among(
+pub(super) async fn ignored_among(
     options: &GitOptions,
     home: &Path,
     candidates: &[String],
@@ -209,7 +209,11 @@ async fn ignored_among(
 /// Opens `names` below `root`, one folder at a time, without following a
 /// link. With `make`, a missing folder is made (mode 0700). The error:
 /// `exists` (a link or a file is in the way) or `unreadable`.
-fn open_chain(root: BorrowedFd<'_>, names: &[&str], make: bool) -> Result<OwnedFd, &'static str> {
+pub(super) fn open_chain(
+    root: BorrowedFd<'_>,
+    names: &[&str],
+    make: bool,
+) -> Result<OwnedFd, &'static str> {
     let mut dir =
         rustix::fs::openat(root, ".", dir_flags(), Mode::empty()).map_err(|_| "unreadable")?;
     for name in names {

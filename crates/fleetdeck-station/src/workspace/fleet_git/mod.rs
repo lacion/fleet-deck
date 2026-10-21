@@ -15,6 +15,7 @@
 //! - `move_export`, `move_layout`, `move_stream`: the files of a session move (§12.3).
 //! - `move_import`, `move_fetch`: the target side of a move, the staging and the Git work (§12.3).
 //! - `home`: `project.ensure_home` and `project.home_status` (§8.4).
+//! - `secrets`: `project.secret_scan`, `project.secret_read` and `project.secret_write` (Fleet Sync FS-3).
 
 mod fetch;
 mod home;
@@ -34,6 +35,7 @@ mod push_outcome;
 mod radar;
 mod redact;
 mod remote_branches;
+mod secrets;
 
 pub use fetch::{BaseStale, StartPoint, fetch_for_start};
 pub use home::{ensure_home, git_version, home_status};
@@ -70,3 +72,4 @@ pub use push_outcome::{PushOutcome, push_outcome};
 pub use radar::{RadarEnv, RadarGuard, branch_name_ok, check_branches, run_radar};
 pub use redact::redact;
 pub use remote_branches::{fetch_project, list_branches, note_fetched};
+pub use secrets::{SecretError, secret_call};

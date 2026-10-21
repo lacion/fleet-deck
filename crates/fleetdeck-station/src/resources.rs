@@ -41,6 +41,12 @@ pub fn set_data_dir(dir: PathBuf) {
     }
 }
 
+/// The station data directory, once it is set.
+#[must_use]
+pub fn data_dir() -> Option<PathBuf> {
+    DATA_DIR.get().cloned()
+}
+
 /// The resources of this host, from the cache or a new gather. `None` when
 /// nothing could be measured or the gather took too long.
 pub async fn current(policy: &Policy) -> Option<StationResources> {
