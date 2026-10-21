@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fleet Deck UI refresh: concepts</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { margin: 0; background: #0f1115; color: #e8eaee; font: 15px/1.5 system-ui, sans-serif; }
+      header { padding: 32px 40px 8px; max-width: 1200px; }
+      h1 { margin: 0 0 6px; font-size: 26px; }
+      header p { margin: 0; color: #a3a9b4; }
+      nav { position: sticky; top: 0; z-index: 1; display: flex; gap: 8px; padding: 12px 40px; background: #0f1115e6; backdrop-filter: blur(8px); border-bottom: 1px solid #23262d; }
+      nav a, nav button { color: #e8eaee; background: #1a1d23; border: 1px solid #2a2e36; border-radius: 999px; padding: 6px 14px; text-decoration: none; font: inherit; font-size: 14px; cursor: pointer; }
+      nav button[aria-pressed="true"] { background: #e8eaee; color: #0f1115; }
+      section { padding: 28px 40px 8px; }
+      h2 { margin: 0 0 4px; font-size: 21px; }
+      section > p { margin: 0 0 16px; color: #a3a9b4; max-width: 80ch; }
+      .row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+      .phones { display: grid; grid-template-columns: repeat(2, minmax(0, 280px)); gap: 16px; margin-top: 16px; }
+      figure { margin: 0; }
+      figure img { width: 100%; display: block; border-radius: 10px; border: 1px solid #2a2e36; cursor: zoom-in; }
+      figcaption { color: #a3a9b4; font-size: 13px; margin-top: 6px; }
+      body[data-view="compare"] section { display: none; }
+      #compare { display: none; padding: 28px 40px; }
+      body[data-view="compare"] #compare { display: block; }
+      #compare .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+      #compare h3 { margin: 24px 0 8px; font-size: 16px; color: #a3a9b4; }
+      dialog { padding: 0; border: 0; background: transparent; max-width: 96vw; max-height: 96vh; }
+      dialog img { max-width: 96vw; max-height: 96vh; display: block; }
+      dialog::backdrop { background: rgba(0, 0, 0, 0.8); }
+    </style>
+  </head>
+  <body data-view="by-direction">
+    <header>
+      <h1>Fleet Deck UI refresh: three directions</h1>
+      <p>The same scenario (3 stations, 7 sessions, 2 need you) in each direction. Click a picture to see it full size. The baseline is today's board.</p>
+    </header>
+    <nav>
+      <button type="button" data-view="by-direction" aria-pressed="true">By direction</button>
+      <button type="button" data-view="compare" aria-pressed="false">Side by side</button>
+      <a href="#a">A Flight Deck</a><a href="#b">B Graphite</a><a href="#c">C Signal</a><a href="#base">Baseline</a>
+    </nav>
+    <main id="main"></main>
+    <div id="compare"></div>
+    <dialog id="zoom"><img alt="" /></dialog>
+    <script>
+      const DIRS = [
+        { id: 'a', name: 'A · Flight Deck', text: 'Sessions are flight strips in station bays; carrier-deck jersey colors as semantics (yellow needs you, green working, purple fuel/usage, red hazard). Mona Sans with its width axis, dark first.' },
+        { id: 'b', name: 'B · Graphite', text: 'Quiet, neutral graphite with one signal color; list rows with status glyphs, a properties panel, New session as a modal. Geist. The low-risk modern option.' },
+        { id: 'c', name: 'C · Signal', text: 'Light first and colorful: every station owns a hue; a top bar, a hero line, station lanes side by side. Bricolage Grotesque with Instrument Sans.' },
+      ];
+      const DESK = [['fleet', 'Fleet home'], ['fleet-alt', 'Fleet home, other mode'], ['session', 'Session'], ['new', 'New session']];
+      const PHONE = [['phone-home', 'Phone home'], ['phone-session', 'Phone session']];
+      const BASE = [['desktop-home', 'Home'], ['desktop-session-chat', 'Session'], ['desktop-new-session-dark', 'New session'], ['desktop-stations-dark', 'Stations'], ['phone-home', 'Phone home'], ['phone-session-chat', 'Phone session']];
+      const fig = (src, cap) => `<figure><img loading="lazy" src="${src}" alt="${cap}" onerror="this.closest('figure').style.opacity=.3"><figcaption>${cap}</figcaption></figure>`;
+      const main = document.getElementById('main');
+      main.innerHTML = DIRS.map((d) => `<section id="${d.id}"><h2>${d.name}</h2><p>${d.text}</p>
+        <div class="row">${DESK.map(([f, c]) => fig(`${d.id}/shots/${f}.png`, c)).join('')}</div>
+        <div class="phones">${PHONE.map(([f, c]) => fig(`${d.id}/shots/${f}.png`, c)).join('')}</div></section>`).join('')
+        + `<section id="base"><h2>Baseline (today)</h2><p>The current board, for reference.</p><div class="row">${BASE.map(([f, c]) => fig(`baseline/${f}.png`, c)).join('')}</div></section>`;
+      document.getElementById('compare').innerHTML = [...DESK, ...PHONE].map(([f, c]) => `<h3>${c}</h3><div class="grid">${DIRS.map((d) => fig(`${d.id}/shots/${f}.png`, d.name)).join('')}</div>`).join('');
+      for (const b of document.querySelectorAll('nav button')) {
+        b.addEventListener('click', () => {
+          document.body.dataset.view = b.dataset.view;
+          for (const o of document.querySelectorAll('nav button')) o.setAttribute('aria-pressed', String(o === b));
+        });
+      }
+      const zoom = document.getElementById('zoom');
+      document.addEventListener('click', (e) => {
+        if (e.target instanceof HTMLImageElement && e.target.closest('figure')) { zoom.querySelector('img').src = e.target.src; zoom.showModal(); }
+        else if (e.target === zoom || e.target.closest('dialog')) zoom.close();
+      });
+    </script>
+  </body>
+</html>

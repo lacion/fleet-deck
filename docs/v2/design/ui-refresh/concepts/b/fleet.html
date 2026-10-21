@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet · Fleet Deck</title>
+<script>
+  var q = new URLSearchParams(location.search).get('theme');
+  document.documentElement.dataset.theme = q === 'alt' ? 'alt' : 'dark';
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="g-working" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M7 7V3.5A3.5 3.5 0 1 1 3.5 7Z" fill="currentColor"/></symbol>
+    <symbol id="g-verifying" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M7 7V3.5A3.5 3.5 0 0 1 7 10.5Z" fill="currentColor"/></symbol>
+    <symbol id="g-needs" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6.5" fill="currentColor" stroke="var(--signal-edge)" stroke-width="1"/><path d="M7 3.7V7.5" stroke="var(--signal-ink)" stroke-width="1.7" stroke-linecap="round"/><circle cx="7" cy="10.2" r="1" fill="var(--signal-ink)"/></symbol>
+    <symbol id="g-queued" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2.4 2.3"/></symbol>
+    <symbol id="g-idle" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+    <symbol id="g-ended" viewBox="0 0 14 14"><circle cx="7" cy="7" r="7" fill="currentColor"/><path d="M4.2 7.3 6.2 9.2 9.9 5.2" fill="none" stroke="var(--canvas)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="g-lost" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3.2 10.8 10.8 3.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="mark" viewBox="0 0 18 18"><path d="M9 2.4 15.6 9 9 15.6 2.4 9Z" fill="currentColor" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/><path d="M9 6.3 11.7 9 9 11.7 6.3 9Z" fill="var(--side)" stroke="var(--side)" stroke-width="0.8" stroke-linejoin="round"/></symbol>
+  </defs>
+</svg>
+
+<div class="app">
+
+  <!-- sidebar -->
+  <aside class="side">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 18 18"><use href="#mark"/></svg>
+      <span class="brand-name">Fleet Deck</span>
+      <span class="live"><i class="dot"></i>Live</span>
+    </div>
+    <div class="side-actions">
+      <a class="btn btn--ink" href="new.html"><i data-lucide="plus"></i>New session<kbd class="kbd-end">N</kbd></a>
+      <button class="btn btn--out" aria-label="Search sessions"><i data-lucide="search"></i><kbd>⌘K</kbd></button>
+    </div>
+    <nav class="nav" aria-label="Main">
+      <a class="nav-item" href="#"><i data-lucide="inbox"></i>Inbox<span class="end"><span class="count-signal">2</span></span></a>
+      <a class="nav-item is-active" href="#" aria-current="page"><i data-lucide="layout-grid"></i>Fleet</a>
+      <a class="nav-item" href="#"><i data-lucide="eye"></i>Watch</a>
+      <a class="nav-item" href="#"><i data-lucide="activity"></i>Activity</a>
+      <a class="nav-item" href="#"><i data-lucide="server"></i>Stations</a>
+      <a class="nav-item" href="#" aria-expanded="true"><i data-lucide="chevron-down"></i>More</a>
+      <div class="nav-sub">
+        <a class="nav-item" href="#"><i data-lucide="clipboard-list"></i>Plans</a>
+        <a class="nav-item" href="#"><i data-lucide="workflow"></i>Automations</a>
+        <a class="nav-item" href="#"><i data-lucide="package"></i>Artifacts</a>
+        <a class="nav-item" href="#"><i data-lucide="folders"></i>Projects</a>
+        <a class="nav-item" href="#"><i data-lucide="folder-tree"></i>Files</a>
+        <a class="nav-item" href="#"><i data-lucide="share-2"></i>Shares</a>
+        <a class="nav-item" href="#"><i data-lucide="square-terminal"></i>Terminals</a>
+      </div>
+    </nav>
+    <div class="side-label"><span>Live</span><span>6</span></div>
+    <div class="side-list">
+      <a class="s-row" href="session.html"><svg class="g g-needs"><use href="#g-needs"/></svg><span class="trunc">Fix flaky shim test</span></a>
+      <a class="s-row" href="#"><svg class="g g-needs"><use href="#g-needs"/></svg><span class="trunc">Stripe webhooks</span></a>
+      <a class="s-row" href="#"><svg class="g g-working"><use href="#g-working"/></svg><span class="trunc">Fleet Deck UI</span></a>
+      <a class="s-row" href="#"><svg class="g g-working"><use href="#g-working"/></svg><span class="trunc">Rannoch checkout flow</span></a>
+      <a class="s-row" href="#"><svg class="g g-working"><use href="#g-working"/></svg><span class="trunc">Journzy iOS build</span></a>
+      <a class="s-row" href="#"><svg class="g g-idle"><use href="#g-idle"/></svg><span class="trunc">Omarchy integration docs</span></a>
+    </div>
+    <div class="side-foot">
+      <a class="btn btn--ghost" href="#"><i data-lucide="settings"></i>Settings</a>
+      <span class="spacer"></span>
+      <button class="btn btn--ghost btn--icon" aria-label="Theme"><i data-lucide="sun-moon"></i></button>
+      <span class="avatar" title="Account">LM</span>
+    </div>
+  </aside>
+
+  <!-- main -->
+  <main class="main">
+    <header class="bar">
+      <h1 class="page-title">Fleet</h1>
+      <span class="bar-sub">6 live sessions on 3 stations</span>
+      <div class="bar-actions">
+        <div class="seg" role="tablist" aria-label="View">
+          <span class="is-on"><i data-lucide="list"></i>List</span>
+          <span><i data-lucide="columns-3"></i>Board</span>
+        </div>
+        <button class="btn btn--ghost"><i data-lucide="list-filter"></i>Filter</button>
+        <button class="btn btn--ghost"><i data-lucide="sliders-horizontal"></i>Display</button>
+      </div>
+    </header>
+
+    <div class="fleet-body">
+
+      <!-- needs you -->
+      <section class="needs" aria-label="Needs you">
+        <div class="needs-head">
+          <h2>Needs you</h2>
+          <span class="count-signal">2</span>
+          <div class="keys">
+            <span><span class="pair"><kbd>[</kbd><kbd>]</kbd></span>Move</span>
+            <span><kbd>a</kbd>Allow</span>
+            <span><kbd>d</kbd>Deny</span>
+          </div>
+        </div>
+
+        <div class="need is-current">
+          <svg class="g g-needs"><use href="#g-needs"/></svg>
+          <div class="who"><b class="trunc">Fix flaky shim test</b><span>otter-n1rr · Lighting</span></div>
+          <div class="ask">
+            <small><b>Permission</b> · Bash · 2 min</small>
+            <p class="trunc"><code>cargo nextest run -p fleetdeck-station -E 'test(shim)'</code></p>
+          </div>
+          <div class="acts">
+            <button class="btn btn--signal">Allow<kbd>a</kbd></button>
+            <button class="btn btn--out">Deny<kbd>d</kbd></button>
+          </div>
+        </div>
+
+        <div class="need">
+          <svg class="g g-needs"><use href="#g-needs"/></svg>
+          <div class="who"><b class="trunc">Stripe webhooks</b><span>kite-x81d · dev1</span></div>
+          <div class="ask">
+            <small><b>Question</b> · 6 min</small>
+            <p class="trunc">Use the test key or the live key for the webhook secret?</p>
+          </div>
+          <div class="acts">
+            <button class="btn btn--out">Test key</button>
+            <button class="btn btn--out">Live key</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Lighting -->
+      <section class="group" aria-label="Lighting">
+        <div class="group-head">
+          <h3>Lighting</h3><span class="sub">Linux · x86_64</span>
+          <span class="online"><i class="dot"></i>Online</span><span class="slots">3 of 12</span>
+          <span class="chev"><i data-lucide="chevron-down" class="ic-sm"></i></span>
+        </div>
+        <a class="srow" href="session.html">
+          <svg class="g g-needs"><use href="#g-needs"/></svg>
+          <span class="callsign">otter-n1rr</span>
+          <span class="s-title trunc">Fix flaky shim test</span>
+          <span class="s-now"><span class="now is-need trunc"><i data-lucide="terminal"></i>Permission · Bash</span></span>
+          <span class="s-branch"><i data-lucide="git-branch"></i><code class="trunc">fleet-sync</code></span>
+          <span class="diff"><span class="add">+9</span> <span class="del">−3</span></span>
+          <span class="s-model">Sonnet 5.5</span>
+          <span class="s-age">2m</span>
+        </a>
+        <a class="srow" href="#">
+          <svg class="g g-working"><use href="#g-working"/></svg>
+          <span class="callsign">falcon-vf9n</span>
+          <span class="s-title trunc">Fleet Deck UI</span>
+          <span class="s-now"><span class="now trunc"><i data-lucide="file-pen"></i><b>Write</b><code class="trunc">BRIEF.md</code></span></span>
+          <span class="s-branch"><i data-lucide="git-branch"></i><code class="trunc">ui-refresh</code></span>
+          <span class="diff"><span class="add">+412</span> <span class="del zero">−0</span></span>
+          <span class="s-model">Opus 5.5</span>
+          <span class="s-age">14m</span>
+        </a>
+        <a class="srow" href="#">
+          <svg class="g g-idle"><use href="#g-idle"/></svg>
+          <span class="callsign">heron-mc2q</span>
+          <span class="s-title trunc">Omarchy integration docs</span>
+          <span class="s-now"><span class="now is-quote trunc">“The docs build passes. Next?”</span></span>
+          <span class="s-branch"><i data-lucide="git-branch"></i><code class="trunc">docs/omarchy-integration</code></span>
+          <span class="diff"><span class="add">+260</span> <span class="del">−31</span></span>
+          <span class="s-model">GPT-6.1 Codex</span>
+          <span class="s-age">2h</span>
+        </a>
+      </section>
+
+      <!-- dev1 -->
+      <section class="group" aria-label="dev1">
+        <div class="group-head">
+          <h3>dev1</h3><span class="sub">Omarchy · x86_64</span>
+          <span class="online"><i class="dot"></i>Online</span><span class="slots">2 of 12</span>
+          <span class="chip"><i data-lucide="monitor"></i>Desktop</span>
+          <span class="chev"><i data-lucide="chevron-down" class="ic-sm"></i></span>
+        </div>
+        <a class="srow" href="#">
+          <svg class="g g-needs"><use href="#g-needs"/></svg>
+          <span class="callsign">kite-x81d</span>
+          <span class="s-title trunc">Stripe webhooks</span>
+          <span class="s-now"><span class="now is-need trunc"><i data-lucide="circle-help"></i>Question</span></span>
+          <span class="s-branch"><i data-lucide="git-branch"></i><code class="trunc">rannoch/webhooks</code></span>
+          <span class="diff"><span class="zero">—</span></span>
+          <span class="s-model">GPT-6.1 Codex</span>
+          <span class="s-age">6m</span>
+        </a>
+        <a class="srow" href="#">
+          <svg class="g g-working"><use href="#g-working"/></svg>
+          <span class="callsign">lynx-4kq2</span>
+          <span class="s-title trunc">Rannoch checkout flow</span>
+          <span class="s-now">
+            <span class="now trunc"><i data-lucide="pencil"></i><b>Edit</b><code class="trunc">cart.ts</code></span>
+            <span class="tag tag--pr" title="Pull request #128">#128</span>
+            <span class="tag">2 subagents</span>
+          </span>
+          <span class="s-branch"><i data-lucide="git-branch"></i><code class="trunc">rannoch/checkout</code></span>
+          <span class="diff"><span class="add">+142</span> <span class="del">−37</span></span>
+          <span class="s-model">Opus 5.5</span>
+          <span class="s-age">38m</span>
+        </a>
+      </section>
+
+      <!-- mac-m4 -->
+      <section class="group" aria-label="mac-m4">
+        <div class="group-head">
+          <h3>mac-m4</h3><span class="sub">macOS · arm64</span>
+          <span class="online"><i class="dot"></i>Online</span><span class="slots">2 of 12</span>
+          <span class="chev"><i data-lucide="chevron-down" class="ic-sm"></i></span>
+        </div>
+        <a class="srow" href="#">
+          <svg class="g g-working"><use href="#g-working"/></svg>
+          <span class="callsign">wren-77ta</span>
+          <span class="s-title trunc">Journzy iOS build</span>
+          <span class="s-now"><span class="now trunc"><i data-lucide="terminal"></i><b>Bash</b><code class="trunc">xcodebuild -scheme Journzy test</code></span></span>
+          <span class="s-branch"><i data-lucide="git-branch"></i><code class="trunc">journzy/ios-ci</code></span>
+          <span class="diff"><span class="add">+18</span> <span class="del">−4</span></span>
+          <span class="s-model">Sonnet 5.5</span>
+          <span class="s-age">9m</span>
+        </a>
+        <a class="ended-row" href="#">
+          <svg class="g g-ended"><use href="#g-ended"/></svg>
+          <b>1 ended</b><span class="trunc">swift-0p3e · Release notes 2.0 · landed into <code>v2</code> · 1 d</span>
+          <span class="end"><i data-lucide="chevron-right" class="ic-sm"></i></span>
+        </a>
+      </section>
+
+    </div>
+
+    <footer class="hintbar">
+      <span><kbd>N</kbd>New session</span>
+      <span><kbd>/</kbd>Search sessions</span>
+      <span><kbd>⌘K</kbd>Commands</span>
+    </footer>
+  </main>
+
+  <!-- right panel -->
+  <aside class="panel" aria-label="Usage and radar">
+    <div class="bar"><h2>Usage</h2><span class="bar-sub">Rate limits</span></div>
+
+    <section class="psec">
+      <div class="meter">
+        <div class="meter-top"><span>Claude · 5-hour window</span><b>62%</b></div>
+        <div class="track"><i style="width:62%"></i></div>
+        <div class="meter-sub">Resets in 1 h 48 min</div>
+      </div>
+      <div class="meter">
+        <div class="meter-top"><span>Claude · weekly</span><b>31%</b></div>
+        <div class="track"><i style="width:31%"></i></div>
+        <div class="meter-sub">Resets Mon</div>
+      </div>
+      <div class="meter">
+        <div class="meter-top"><span>Codex · 5-hour window</span><b>18%</b></div>
+        <div class="track"><i style="width:18%"></i></div>
+      </div>
+      <div class="totals">
+        <div><b>4.2 M</b><span>Input tokens</span></div>
+        <div><b>610 k</b><span>Output tokens</span></div>
+        <div><b>$38.40</b><span>Cost today</span></div>
+      </div>
+    </section>
+
+    <section class="psec">
+      <div class="psec-head">Conflict radar<span class="n">1</span></div>
+      <div class="pitem">
+        <i data-lucide="git-compare-arrows"></i>
+        <div>
+          <div class="t"><code>web/src/styles/tokens.css</code></div>
+          <div class="s"><code>falcon-vf9n</code> and <code>heron-mc2q</code> changed it in the last hour <span class="dim">· fleet-deck</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="psec">
+      <div class="psec-head">Mail &amp; tasks<span class="n">2</span></div>
+      <div class="pitem">
+        <i data-lucide="mail"></i>
+        <div>
+          <div class="t">1 mail waiting for delivery</div>
+          <div class="s">To <code>heron-mc2q</code></div>
+        </div>
+      </div>
+      <div class="pitem">
+        <i data-lucide="list-checks"></i>
+        <div>
+          <div class="t">Add webhook retry tests</div>
+          <div class="s">Assigned to <code>kite-x81d</code> <span class="dim">· open</span></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="panel-foot">
+      <button class="btn btn--ghost"><i data-lucide="activity"></i>Activity</button>
+      <button class="btn btn--ghost"><i data-lucide="send"></i>Assign</button>
+    </div>
+  </aside>
+
+</div>
+
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<script>lucide.createIcons({ attrs: { 'stroke-width': 1.75 } });</script>
+</body>
+</html>
