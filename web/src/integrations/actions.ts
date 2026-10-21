@@ -24,6 +24,8 @@ import type {
   ProviderKind,
   PushNowAnswer,
   ReviewBody,
+  SecretFilesView,
+  SecretSyncReport,
   StartedSessions,
   StartSessions,
   TransitionBody,
@@ -303,6 +305,14 @@ export type IntegrationActions = {
   removeHome(id: string, station: string): Promise<void>;
   /** FG-5 (§8.4): changes the remote URL; `rebind` confirms another repository. */
   setRemote(id: string, remoteUrl: string, rebind: boolean): Promise<RemoteSaveResult>;
+  /** FS-2 (§2.1): merges the project `from` into the project `id`; the answer is the target. */
+  mergeProject(id: string, from: string): Promise<Project>;
+  /** FS-3 (§3.6): the secret file paths of the project and the last report of each file. */
+  secretFiles(id: string): Promise<SecretFilesView>;
+  /** FS-3 (§3.6): replaces the secret file paths of the project. */
+  setSecretFiles(id: string, paths: string[]): Promise<SecretFilesView>;
+  /** FS-3 (§3.6): copies the secret files between the homes now. */
+  syncSecretFiles(id: string): Promise<SecretSyncReport>;
   /** FG-6 (§9.3): the stations for `count` new sessions, best first. */
   place(body: PlacementBody): Promise<string[]>;
   /** FG-11 (§14.3): the preferences of Fleet Git (the config reference station). */
@@ -524,6 +534,30 @@ export function integrationActions(
     removeHome: async (id, station) => {
       await io.del(`${projectPath(id)}/homes/${seg(station)}`);
     },
+    mergeProject: async (id, from) =>
+      shaped<Project>(
+        await io.post(`${projectPath(id)}/merge`, { from, command_id: commandId() }),
+        ['project_id', 'name'],
+        'project',
+      ),
+    secretFiles: async (id) =>
+      shaped<SecretFilesView>(
+        await io.get(`${projectPath(id)}/secret-files`),
+        ['paths', 'files'],
+        'secret files',
+      ),
+    setSecretFiles: async (id, paths) =>
+      shaped<SecretFilesView>(
+        await io.put(`${projectPath(id)}/secret-files`, { paths, command_id: commandId() }),
+        ['paths', 'files'],
+        'secret files',
+      ),
+    syncSecretFiles: async (id) =>
+      shaped<SecretSyncReport>(
+        await io.post(`${projectPath(id)}/secret-files/sync`, { command_id: commandId() }),
+        ['files'],
+        'secret sync',
+      ),
     setRemote: async (id, remoteUrl, rebind) => {
       try {
         const answer = shaped<RemoteChanged>(

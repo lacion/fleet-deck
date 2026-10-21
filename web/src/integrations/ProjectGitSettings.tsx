@@ -350,23 +350,6 @@ export function ProjectGitSettings({
               />
             </Field>
             <Field
-              label="Remote URL"
-              hint="Filled from the origin of the first home. Check it. Fleet Deck compares the exact URL form (user@host:path and ssh://user@host/path are different)."
-              span={2}
-              error={problems.remote_url}
-            >
-              <input
-                value={draft.remoteUrl}
-                autoComplete="off"
-                onChange={(e) => set({ remoteUrl: e.target.value }, 'remote_url')}
-              />
-            </Field>
-            {project.remote_ssh_user === null || project.remote_ssh_user === undefined ? null : (
-              <p className="fd-note fd-fieldwrap" data-span="2">
-                SSH login: {project.remote_ssh_user}
-              </p>
-            )}
-            <Field
               label="Push branches"
               hint="Fleet Deck pushes only fd/<station>/… branches that it made."
               error={problems.push}
@@ -524,6 +507,29 @@ export function ProjectGitSettings({
                 </select>
               </Field>
             )}
+            <div className="fd-fieldwrap" data-span="2">
+              <details className="fd-int-advanced" open={problems.remote_url !== undefined}>
+                <summary>Advanced</summary>
+                <Field
+                  label="Remote URL"
+                  hint="Built from the forge. Change it only for a mirror or a self-hosted server."
+                  span={2}
+                  error={problems.remote_url}
+                >
+                  <input
+                    value={draft.remoteUrl}
+                    autoComplete="off"
+                    onChange={(e) => set({ remoteUrl: e.target.value }, 'remote_url')}
+                  />
+                </Field>
+                {project.remote_ssh_user === null ||
+                project.remote_ssh_user === undefined ? null : (
+                  <p className="fd-note fd-fieldwrap" data-span="2">
+                    SSH login: {project.remote_ssh_user}
+                  </p>
+                )}
+              </details>
+            </div>
           </FormGrid>
           <FormActions>
             {failure === null ? null : (

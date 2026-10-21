@@ -352,6 +352,62 @@ a.fd-int-projectchip:hover {
   list-style: none;
 }
 
+/* ---------- Fleet Sync: same repository, secret files, advanced remote ---------- */
+
+.fd-int-same,
+.fd-int-secrets {
+  display: grid;
+  gap: var(--sp-3);
+  min-width: 0;
+  padding: var(--sp-3);
+}
+.fd-int-same > *,
+.fd-int-secrets > * {
+  margin: 0;
+}
+.fd-int-secrets textarea {
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+.fd-int-secret-scroll {
+  overflow-x: auto;
+  min-width: 0;
+}
+.fd-int-secret-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.fd-int-secret-table th,
+.fd-int-secret-table td {
+  padding: var(--sp-1) var(--sp-2);
+  text-align: left;
+  vertical-align: top;
+}
+.fd-int-secret-table thead th {
+  color: var(--dim);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.fd-int-secret-table tbody th {
+  font-weight: 400;
+}
+.fd-int-advanced > summary {
+  color: var(--dim);
+  cursor: pointer;
+}
+.fd-int-advanced[open] > summary {
+  margin-bottom: var(--sp-2);
+}
+@media (max-width: 640px) {
+  .fd-int-secret-table {
+    min-width: 480px;
+  }
+}
+
 /* ---------- a phone: one pane at a time ---------- */
 
 @media (max-width: 640px) {

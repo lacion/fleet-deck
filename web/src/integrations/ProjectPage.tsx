@@ -10,6 +10,8 @@ import { IssuesTab } from './IssuesTab';
 import { ProjectChips } from './ProjectsPage';
 import { ProjectHomes } from './ProjectHomes';
 import { ProjectLands } from './ProjectLands';
+import { SameRepository } from './SameRepository';
+import { SecretFiles } from './SecretFiles';
 import { PrsTab } from './PrsTab';
 import { ProjectSessions } from './ProjectSessions';
 import type { Freshness } from '../runtime/state';
@@ -86,7 +88,9 @@ export function ProjectPage({
         {stationName(project.station_id, stations)} · <code>{project.path}</code>
       </p>
       <ProjectChips project={project} />
+      <SameRepository project={project} stations={stations} />
       <ProjectHomes project={project} stations={stations} />
+      <SecretFiles project={project} stations={stations} />
       <ProjectLands project={project} stations={stations} sessions={sessions} />
       <div className="fd-pane-tabs" role="tablist" aria-label="Project views">
         <button
