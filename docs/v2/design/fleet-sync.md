@@ -1,6 +1,6 @@
 # Fleet Sync: forge identity, project merge, secret files (FS-1 to FS-3)
 
-Revision 1, 2026-10-21. Owner decisions: DL-257 (this design). Builds on Fleet Git (`fleet-git.md`, FG-1 to FG-12).
+Revision 2, 2026-10-21 (§7 lists the changes of the design review). Owner decisions: DL-257 (this design). Builds on Fleet Git (`fleet-git.md`, FG-1 to FG-12).
 
 ## 0. Why
 
@@ -77,7 +77,7 @@ Answer 200: the target `Project` (after the merge). After the commit, the deck s
 |---|---|---|
 | 1 | `id` and `from` exist | 404 `unknown_project` |
 | 2 | `id != from` | 400 `invalid_body`, "Choose another project." |
-| 3 | Both projects have `remote_dest` (after §1.3 derivation) | 409 `needs_remote`, "Set the forge or the remote URL of both projects first." |
+| 3 | Both projects have `remote_dest` (after §1.3 derivation) | 400 `needs_remote`, "Set the forge or the remote URL of both projects first." |
 | 4 | `remote_dest` of both projects is equal | 409 `not_same_repo`, "<from name> uses <from repo>, not <repo>." |
 | 5 | `from` has sync off | 409 `merge_sync_on`, "Turn sync off in <from name> first." |
 | 6 | No station has a home of both projects | 409 `home_exists`, "Both projects have a home on <station name>. Remove one of the homes first." |
@@ -116,7 +116,7 @@ No new station code. The snapshot of each station of `from` now lists the home u
 - R1. Opt-in for each project: the owner lists the files. No list, no traffic.
 - R2. A secret file is a relative path in the home (for example `.env`, `apps/web/.env.local`). Path rules: 1 to 256 bytes, UTF-8, no NUL, not absolute, no empty segment, no `.` or `..` segment, no `\`. At most 20 paths in a project. No glob.
 - R3. The file must be ignored by Git and untracked in that home (`git check-ignore -z --stdin`, the FG-4 rule). Else the station refuses it (`not_ignored`) and never reads or writes it.
-- R4. Regular file only, opened without link following at every segment (`openat` `O_NOFOLLOW`, as FG-4). At most 1 MiB for each file.
+- R4. Regular file only, opened without link following at every segment (`openat` `O_NOFOLLOW`, as FG-4). At most 512 KiB for each file (a link control frame is at most 1 MiB, and base64 adds a third).
 - R5. The deck holds content only in memory, during one relay. It never writes content to its database, a log, an audit row, an event or an error text. The link transport (mTLS) carries it. The board never receives content.
 - R6. Digests: `HMAC-SHA256(key = salt, message = content)`, lower-case hex. `salt` is 32 random bytes for each `(project, path)`, made by the deck at the first sync and stored in `secret_files.salt`. An audit row and the board show only the first 12 hex characters.
 - R7. Only the owner can list, sync or see the state. Members and tokens are refused (scope `admin`, owner only).
@@ -279,3 +279,26 @@ T1 and T2 run in parallel (their shared files: the route list and the method tab
 - The station is the only judge of a path: the deck never names a host path, only `(project_id, generation, relative path)`.
 - A compromised deck can already start sessions on every station; the secret methods give it read and write access to listed ignored files in homes. They do not widen what an owner-level deck can do.
 - Forge canonicalization joins only URL forms that GitHub and GitLab resolve to one repository; every other host keeps the strict rule.
+
+## 7. Revision 2: changes from the design review (round 1, `~/fleetdeck-briefs/fleet-sync-design-r1-adversary.md`)
+
+The briefs `~/fleetdeck-briefs/fleet-sync-t1-brief.md` and `fleet-sync-t2-brief.md` (section "REVISION 2") hold the exact rules. Summary:
+
+| Finding | Change |
+|---|---|
+| Hard links to credentials (BLOCKER) | Every opened secret file passes `PrivatePaths::is_private_opened` (registered private inodes, more than one hard link): `private_file`. |
+| Member file APIs (BLOCKER) | A secret path must be hidden by the default member deny list (`.env*`, `*.pem`, `*.key`, `secrets*`, …): `not_member_hidden`. No `.git` segment. |
+| Unverified or foreign homes (BLOCKER) | Only `ready` homes take part. Each request carries the project `dest` and `push_remote`; the station checks the home's push URL against `dest` (`not_this_repo`). |
+| Lost edit during a write (BLOCKER) | One station lock for each file; a missing target is installed with `RENAME_NOREPLACE`; an existing target is first moved aside, then checked, backed up and replaced with `NOREPLACE`. An edit in the window is kept (`changed_meanwhile`). |
+| Refused or new home reverts a value; relay timestamps (BLOCKERs) | The global baseline is replaced by a seen digest for each home (`secret_file_homes`). Only a copy that differs from its own seen digest counts as changed; a relay-written copy is "seen". |
+| Push leases after the upgrade (MAJOR) | `same_dest(a, b)` compares a stored dest with a new one through `remote_identity`, at every comparison. |
+| Case of the repository key (MAJOR) | A forge URL also gets a lower-case `repo` key, so land locks and slugs of aliases match. |
+| Sync off is not "no Fleet Git state" (MAJOR) | Merge refuses a `from` project with `git_revision > 0` (`merge_sync_used`). |
+| Frame size (MAJOR) | 512 KiB limit. |
+| Nested transaction (MAJOR) | The merge repeats the delete statements inside its own transaction. |
+| Fixed point of `.git.git` (MAJOR) | The forge path grammar is `[A-Za-z0-9._-]` segments, one `.git` removed case-insensitively, and a second `.git` keeps the strict dest. |
+| `.git` metadata (MAJOR) | No `.git` segment in a secret path. |
+| List changes during a run (MAJOR) | The list PUT takes the run's project lock; each file re-checks its salt; updates use `WHERE salt = ?`. |
+| Transport payload tracing (UNVERIFIED) | The hard log deny also covers `tungstenite` and `tokio_tungstenite`. |
+
+Open items (accepted): a crash between the move-aside and the install can leave `.<name>.fleetdeck-old-<hex>` in the home (it is not ignored by Git unless `.gitignore` covers it); a lease row written before the upgrade with a strict dest and a new row with the canonical dest for the same ref are not merged (`same_dest` makes each check pass, but the unique key differs).
