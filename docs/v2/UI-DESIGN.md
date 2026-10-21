@@ -1,5 +1,7 @@
 # Board visual design (DL-141)
 
+> **Superseded for the visual layer (2026-10-22):** see `docs/v2/DESIGN-SYSTEM.md` ("Flight Deck", v3). The structure below still holds.
+
 *Written 2026-10-12 on `v2` @ `3a3c616`. The structure of DL-140 (UI-PLAN.md) stays: sidebar, chat-first session, terminal dock, phone stack navigation. This file replaces the visual layer. Every worker brief copies from it. When a brief and this file disagree, the brief wins.*
 
 ## 0. The problem
