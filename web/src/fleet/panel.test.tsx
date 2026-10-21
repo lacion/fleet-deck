@@ -14,6 +14,8 @@ const actions: FleetActions = {
   renew: async () => ({ ok: true, text: 'Renewed.' }),
   caps: async () => ({ ok: true, text: 'Limits changed.' }),
   desktopOps: async () => [],
+  give: async () => ({ ok: true, text: '' }),
+  changeAccess: async () => ({ ok: true, text: '' }),
 };
 
 describe('fleet panel mail form', () => {

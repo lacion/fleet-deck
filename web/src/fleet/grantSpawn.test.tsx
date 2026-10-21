@@ -47,6 +47,8 @@ const actions = (): FleetActions & { readonly calls: Call[] } => {
     revoke: async () => ({ ok: true, text: '' }),
     renew: async () => ({ ok: true, text: '' }),
     desktopOps: async () => [],
+    give: async () => ({ ok: true, text: '' }),
+    changeAccess: async () => ({ ok: true, text: '' }),
     caps: async (grantId, caps, elevation) => {
       calls.push({ grantId, caps, elevation });
       return { ok: true, text: 'Limits changed.' };

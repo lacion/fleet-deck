@@ -62,6 +62,8 @@ const actions = (): FleetActions & {
       return { ok: true, text: 'Limits changed.' };
     },
     desktopOps: async () => [],
+    give: async () => ({ ok: true, text: '' }),
+    changeAccess: async () => ({ ok: true, text: '' }),
   };
 };
 

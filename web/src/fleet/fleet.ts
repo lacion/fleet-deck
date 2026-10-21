@@ -2,7 +2,7 @@
 // mail or a task once and its outbox delivers the framed text to the target
 // session; a task stays open until the session (or the owner) completes it.
 import { stationName } from '../board/fleet';
-import type { GrantView, StationView, TaskView } from '../gen';
+import type { DeckSession, GrantView, StationView, TaskView } from '../gen';
 import { commandId } from '../session/commands';
 
 type Get = (path: string) => Promise<unknown>;
@@ -10,7 +10,20 @@ type Post = (path: string, body: unknown, headers?: Record<string, string>) => P
 
 export type FleetTarget = { readonly stationId: string; readonly sessionId: string };
 
+/** The statuses of a session that the board cannot reach. */
+export const NOT_LIVE: readonly DeckSession['status'][] = ['ended', 'lost', 'unreachable'];
+
 export type FleetResult = { readonly ok: boolean; readonly text: string };
+
+/** The body of a live give (MCP P4b-4): the coordinator request of a start without the desktop fields. */
+export type GrantBody = {
+  classes: string[];
+  scope?: 'fleet';
+  answer_cap?: number;
+  stations?: string[];
+  spawn_cap?: number;
+  max_modes?: { [key in string]: string };
+};
 
 export type FleetActions = {
   /** `mailId` is the `mail_id` of the request; a retry sends the id of its first try. */
@@ -39,6 +52,24 @@ export type FleetActions = {
   ): Promise<FleetResult>;
   /** The recent desktop operations of a grant, newest first (R13 P6). */
   desktopOps(grantId: string): Promise<readonly DesktopOpRow[]>;
+  /** Gives fleet access to a running session without a live grant (MCP P4b-4); `elevation` is needed when the deck asks. */
+  give(
+    stationId: string,
+    sessionId: string,
+    body: GrantBody,
+    elevation?: string,
+  ): Promise<FleetResult>;
+  /** Changes the classes of a live grant (MCP P4b-4); `elevation` is needed for a widening. */
+  changeAccess(
+    grantId: string,
+    body: {
+      classes: string[];
+      spawn_cap?: number;
+      max_modes?: { [key in string]: string };
+      answer_cap?: number;
+    },
+    elevation?: string,
+  ): Promise<FleetResult>;
 };
 
 /** One recent desktop operation of a grant (`GET .../desktop-ops`). */
@@ -271,6 +302,30 @@ export function fleetActions(get: Get, post: Post, newId: () => string = command
         return { ok: true, text: 'Limits changed.' };
       } catch (error) {
         return failed('Change limits', error);
+      }
+    },
+    give: async (stationId, sessionId, body, elevation) => {
+      try {
+        await post(
+          `/api/coordinator/sessions/${encodeURIComponent(stationId)}/${encodeURIComponent(sessionId)}/grant`,
+          body,
+          elevation === undefined ? undefined : { 'x-fleetdeck-elevation': elevation },
+        );
+        return { ok: true, text: 'Fleet access given.' };
+      } catch (error) {
+        return failed('Give fleet access', error);
+      }
+    },
+    changeAccess: async (grantId, body, elevation) => {
+      try {
+        await post(
+          `/api/coordinator/grants/${encodeURIComponent(grantId)}/classes`,
+          body,
+          elevation === undefined ? undefined : { 'x-fleetdeck-elevation': elevation },
+        );
+        return { ok: true, text: 'Access changed.' };
+      } catch (error) {
+        return failed('Change access', error);
       }
     },
     desktopOps: async (grantId) => {
