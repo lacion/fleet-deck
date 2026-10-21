@@ -772,7 +772,8 @@ fn the_first_init_with_the_v1_plugin_emits_a_notice_right_after_the_session_star
 fn an_init_without_the_v1_plugin_emits_no_notice() {
     let mut core = ClaudeCore::new(config(false));
     let frame = json!({"type":"system","subtype":"init","session_id":"s-1",
-        "plugins":[{"name":"other","path":"/p/other","source":"other@m"}]});
+        "plugins":[{"name":"other","path":"/p/other","source":"other@m"},
+            {"name":"fleetdeck","path":"/d/share/fleet-skill/0a1b"}]});
     let events = emits(&feed(&mut core, frame));
     assert_eq!(events.len(), 1);
     assert!(matches!(events[0], Event::SessionStarted { .. }));

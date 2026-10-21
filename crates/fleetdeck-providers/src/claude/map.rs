@@ -188,14 +188,24 @@ fn on_system(core: &mut ClaudeCore, subtype: &str, body: &Map<String, Value>) ->
 const V1_PLUGIN_NOTICE_CODE: &str = "v1_plugin";
 const V1_PLUGIN_NOTICE_TEXT: &str = "The Fleet Deck v1 plugin is active in this session. Its hooks slow every stop and report the session to the v1 board. Remove the plugin in Claude Code (/plugin) after the cutover.";
 
-/// True when the `init` frame's `plugins` list has a plugin named `fleetdeck`.
+/// The folder of the v2 Fleet skill that the station passes with
+/// `--plugin-dir` (`<data>/share/fleet-skill/<hash>`, `fleet_skill.rs`): its
+/// plugin is also named `fleetdeck` and is not the v1 plugin.
+const V2_SKILL_DIR: &str = "fleet-skill";
+
+/// True when the `init` frame's `plugins` list has a plugin named `fleetdeck`
+/// that is not the station's own v2 Fleet skill.
 fn has_v1_plugin(body: &Map<String, Value>) -> bool {
     body.get("plugins")
         .and_then(Value::as_array)
         .is_some_and(|plugins| {
-            plugins
-                .iter()
-                .any(|p| p.get("name").and_then(Value::as_str) == Some("fleetdeck"))
+            plugins.iter().any(|p| {
+                p.get("name").and_then(Value::as_str) == Some("fleetdeck")
+                    && !p
+                        .get("path")
+                        .and_then(Value::as_str)
+                        .is_some_and(|path| path.split('/').any(|c| c == V2_SKILL_DIR))
+            })
         })
 }
 
