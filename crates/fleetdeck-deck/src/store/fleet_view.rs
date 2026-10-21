@@ -30,7 +30,7 @@ use fleetdeck_proto::{SessionId, StationId};
 use tokio::sync::Semaphore;
 
 use super::fleet_view_build::Entry;
-use super::{DeckError, DeckStore, call, coordinator_ops};
+use super::{DeckError, DeckStore, call, coordinator, coordinator_ops};
 
 /// The most fleet views that the deck builds at the same time (step 2).
 pub const BUSY_PERMITS: usize = 8;
@@ -286,15 +286,26 @@ impl DeckStore {
             None => None,
         };
         let entries = self.projection(request.view).await?;
-        let station_filter = match request.view {
-            FleetView::Projects => request.station.as_ref(),
+        let mut station_filter = match request.view {
+            FleetView::Projects => request.station,
             _ => None,
         };
+        // A filter by station name is the filter by its id.
+        if let Some(filter) = &mut station_filter {
+            let value = filter.as_str().to_owned();
+            let id = call(&self.inner.db, move |conn| {
+                coordinator::names::resolve_station(conn, &value)
+            })
+            .await?;
+            if let Some(id) = id {
+                *filter = StationId::from(id);
+            }
+        }
         Ok(page_of(
             request.view,
             &entries,
             after.as_deref(),
-            station_filter,
+            station_filter.as_ref(),
         ))
     }
 

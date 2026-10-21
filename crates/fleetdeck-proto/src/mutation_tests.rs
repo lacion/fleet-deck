@@ -302,3 +302,103 @@ fn the_shell_commands_round_trip_with_their_method_and_session() {
     assert!(crate::version::feature::ALL.contains(&crate::version::feature::SHELL_COMMAND));
     assert_eq!(crate::version::feature::SHELL_COMMAND, "shell_command.v1");
 }
+
+/// `stations_mut` returns every station that an op names, in order, and a
+/// write through it changes the op.
+#[test]
+fn stations_mut_returns_every_station_field_of_a_variant() {
+    let s = "01J0000000000000000000000S";
+    let spec = json!({"provider_instance": "claude", "cwd": "/w", "mode": null,
+                      "model": null, "title": null});
+    // Each op, with the JSON pointers of its station fields.
+    let with_station: Vec<(Value, Vec<&str>)> = vec![
+        (
+            json!({"op": "spawn", "station": "n1", "spec": spec, "prompt": null}),
+            vec!["/station"],
+        ),
+        (
+            json!({"op": "send", "to": {"station": "n1", "session_id": s}, "text": "hi",
+                   "delivery": "follow_up"}),
+            vec!["/to/station"],
+        ),
+        (
+            json!({"op": "interrupt", "station": "n1", "session_id": s}),
+            vec!["/station"],
+        ),
+        (
+            json!({"op": "stop", "station": "n1", "session_id": s}),
+            vec!["/station"],
+        ),
+        (
+            json!({"op": "assign", "task": "t", "to": {"station": "n1", "session_id": s}}),
+            vec!["/to/station"],
+        ),
+        (
+            json!({"op": "resume", "station": "n1", "session_id": s}),
+            vec!["/station"],
+        ),
+        (
+            json!({"op": "rename", "station": "n1", "session_id": s, "title": "x"}),
+            vec!["/station"],
+        ),
+        (
+            json!({"op": "set_mode", "station": "n1", "session_id": s, "mode": "plan"}),
+            vec!["/station"],
+        ),
+        (
+            json!({"op": "project_assign", "station": "n1", "session_id": s,
+                   "target": {"kind": "none"}}),
+            vec!["/station"],
+        ),
+        (
+            json!({"op": "answer", "station": "n1", "session_id": s, "request_id": "r1"}),
+            vec!["/station"],
+        ),
+        (
+            json!({"op": "land", "station": "n1", "session_id": s}),
+            vec!["/station"],
+        ),
+        (
+            json!({"op": "move", "station": "n1", "session_id": s, "to_station": "n2"}),
+            vec!["/station", "/to_station"],
+        ),
+    ];
+    for (value, pointers) in with_station {
+        let name = value["op"].as_str().unwrap().to_owned();
+        let mut op: CoordinatorOp = serde_json::from_value(value.clone()).unwrap();
+        let seen: Vec<String> = op
+            .stations_mut()
+            .into_iter()
+            .map(|st| st.as_str().to_owned())
+            .collect();
+        let expected: Vec<String> = pointers
+            .iter()
+            .map(|p| value.pointer(p).unwrap().as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(seen, expected, "{name}");
+        for st in op.stations_mut() {
+            *st = StationId::from("changed");
+        }
+        let after = serde_json::to_value(&op).unwrap();
+        for p in &pointers {
+            assert_eq!(after.pointer(p).unwrap(), "changed", "{name} {p}");
+        }
+    }
+}
+
+/// An op without a station returns an empty list.
+#[test]
+fn stations_mut_is_empty_for_an_op_without_a_station() {
+    let without = [
+        json!({"op": "assign_auto", "task": "t", "requirements": {}}),
+        json!({"op": "complete_task", "task_id": "t", "result": null}),
+        json!({"op": "ask_coordinator", "question": "q?"}),
+        json!({"op": "send_group", "group": "@idle", "text": "hi", "delivery": "steer"}),
+        json!({"op": "project_start", "project_id": "p", "prompt": "go", "worktree": true}),
+    ];
+    for value in without {
+        let name = value["op"].as_str().unwrap().to_owned();
+        let mut op: CoordinatorOp = serde_json::from_value(value).unwrap();
+        assert!(op.stations_mut().is_empty(), "{name}");
+    }
+}

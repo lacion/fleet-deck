@@ -277,15 +277,18 @@ impl DeckStore {
                 if let Err(reject) = admitted {
                     return Ok(Receipt::rejected(command_id.clone(), reject, now));
                 }
+                // A station named by its name is its id from here on; the
+                // receipt and its payload digest keep the op as received.
+                let resolved = names::resolve_station_names(&tx, &op)?;
                 let decision = match &grant {
-                    Some(grant) => decide(&tx, grant, &op, &ctx, command_id.as_str(), now)?,
+                    Some(grant) => decide(&tx, grant, &resolved, &ctx, command_id.as_str(), now)?,
                     None => {
                         let decision = decide_worker(
                             &tx,
                             &inner.ask_limits,
                             &ctx,
                             (&station, &caller_session),
-                            &op,
+                            &resolved,
                             command_id.as_str(),
                             now,
                         )?;
@@ -750,6 +753,8 @@ impl DeckStore {
 mod gate;
 #[path = "grant_narrowing.rs"]
 pub(super) mod grant_narrowing;
+#[path = "coordinator_names.rs"]
+pub(super) mod names;
 pub(super) use gate::{fleet_gate, v2_refusal};
 
 #[cfg(test)]
@@ -759,3 +764,7 @@ mod tests;
 #[cfg(test)]
 #[path = "coordinator_p0_tests.rs"]
 mod p0_tests;
+
+#[cfg(test)]
+#[path = "coordinator_names_tests.rs"]
+mod names_tests;
