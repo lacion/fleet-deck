@@ -290,6 +290,38 @@ describe('desktop usage and operations (R13 P6)', () => {
       },
     ]);
   });
+  test('give posts a whole CoordinatorSpec that the deck completes', async () => {
+    const posts: { path: string; body: unknown; headers: unknown }[] = [];
+    const a = fleetActions(
+      async () => [],
+      async (path, body, headers) => {
+        posts.push({ path, body, headers });
+        return {};
+      },
+    );
+    expect(
+      await a.give(
+        'st/1',
+        's1',
+        { classes: ['read', 'mail', 'drive', 'spawn'], spawn_cap: 3 },
+        'c',
+      ),
+    ).toEqual({ ok: true, text: 'Fleet access given.' });
+    expect(posts).toEqual([
+      {
+        path: '/api/coordinator/sessions/st%2F1/s1/grant',
+        body: {
+          grant_id: '',
+          classes: ['read', 'mail', 'drive', 'spawn'],
+          spawn_cap: 3,
+          idle_ttl_ms: 0,
+          expires_at: 0,
+          control_skill: { version: '', text: '' },
+        },
+        headers: { 'x-fleetdeck-elevation': 'c' },
+      },
+    ]);
+  });
   test('a refused caps call says so', async () => {
     const bad = fleetActions(
       async () => [],

@@ -308,7 +308,15 @@ export function fleetActions(get: Get, post: Post, newId: () => string = command
       try {
         await post(
           `/api/coordinator/sessions/${encodeURIComponent(stationId)}/${encodeURIComponent(sessionId)}/grant`,
-          body,
+          // The deck reads a `CoordinatorSpec` and fills in the grant id, the
+          // expiry and the control skill (as for a start); 0 means its default.
+          {
+            grant_id: '',
+            ...body,
+            idle_ttl_ms: 0,
+            expires_at: 0,
+            control_skill: { version: '', text: '' },
+          },
           elevation === undefined ? undefined : { 'x-fleetdeck-elevation': elevation },
         );
         return { ok: true, text: 'Fleet access given.' };
