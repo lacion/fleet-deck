@@ -28,7 +28,12 @@ export default defineConfig({
     },
     {
       name: 'desktop',
-      testMatch: ['**/desktop.spec.ts', '**/handover.spec.ts', '**/screens.spec.ts'],
+      testMatch: [
+        '**/desktop.spec.ts',
+        '**/handover.spec.ts',
+        '**/screens.spec.ts',
+        '**/gallery.spec.ts',
+      ],
       use: { viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false },
     },
     {
