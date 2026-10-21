@@ -481,7 +481,11 @@ async fn a_revocation_before_the_first_input_of_a_durable_start_stops_the_write(
     tokio::time::timeout(WAIT, hook.reached.notified())
         .await
         .expect("the first input reaches its gate");
-    assert_eq!(deck.asked().len(), 2, "only the two launch gates were asked");
+    assert_eq!(
+        deck.asked().len(),
+        2,
+        "only the two launch gates were asked"
+    );
     assert_eq!(rig.turn_starts(), 0, "no input was written yet");
     deck.revoke();
     hook.release.notify_one();
