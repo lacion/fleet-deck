@@ -55,9 +55,12 @@ pub fn env_filter(default: &str) -> Result<EnvFilter, LogError> {
 }
 
 /// Whether `target` belongs to the MCP SDK; its events never reach a log
-/// (MCP P1 §3.5).
+/// (MCP P1 §3.5). The WebSocket crates can log whole frames, which can carry
+/// secret files (Fleet Sync R5), so their targets are denied too.
 pub fn is_sdk_target(target: &str) -> bool {
-    target == "rmcp" || target.starts_with("rmcp::")
+    ["rmcp", "tungstenite", "tokio_tungstenite"]
+        .iter()
+        .any(|name| target == *name || target.starts_with(&format!("{name}::")))
 }
 
 /// A subscriber that writes to `writer`. Tests pass a buffer. `ansi` adds
@@ -174,6 +177,25 @@ mod tests {
             assert!(is_sdk_target(t), "{t}");
         }
         for t in ["rmcpx", "fleetdeck_station::rmcp", "rmc"] {
+            assert!(!is_sdk_target(t), "{t}");
+        }
+    }
+
+    #[test]
+    fn the_websocket_crates_are_denied_like_the_sdk() {
+        for t in [
+            "tungstenite",
+            "tungstenite::protocol",
+            "tokio_tungstenite",
+            "tokio_tungstenite::compat",
+        ] {
+            assert!(is_sdk_target(t), "{t}");
+        }
+        for t in [
+            "tungstenitex",
+            "fleetdeck_link::tungstenite",
+            "tokio_tungstenitex",
+        ] {
             assert!(!is_sdk_target(t), "{t}");
         }
     }

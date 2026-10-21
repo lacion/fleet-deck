@@ -11,6 +11,7 @@
 //!   slow decision never delays acks or the stream (G3, G5).
 
 mod intake;
+mod intake_secrets;
 pub mod peers;
 pub mod ready;
 pub mod runtime;

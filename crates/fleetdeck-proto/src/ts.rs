@@ -62,6 +62,7 @@ use crate::files::{
     FileSearchQuery, SessionDiff, SessionDiffQuery, TurnDiff, TurnDiffQuery,
 };
 use crate::fleet_git as fg;
+use crate::fleet_git_secrets as fgs;
 use crate::fleet_summary::{
     DeckState, FleetSummary, NeedsYouItem, SummaryCounts, SummaryStation, SummaryUsage,
 };
@@ -640,6 +641,12 @@ pub fn export_all(out_dir: &Path) -> io::Result<()> {
         fg::RemoteBranches::export_all(&cfg),
         fg::FetchParams::export_all(&cfg),
         fg::FetchAnswer::export_all(&cfg),
+        fgs::SecretFilesView::export_all(&cfg),
+        fgs::SecretSyncReport::export_all(&cfg),
+        fgs::SecretFileReport::export_all(&cfg),
+        fgs::SecretStationReport::export_all(&cfg),
+        fgs::SecretStationState::export_all(&cfg),
+        fgs::SecretOutcome::export_all(&cfg),
     ];
     for result in results {
         result.map_err(io::Error::other)?;

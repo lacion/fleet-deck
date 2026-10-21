@@ -17,7 +17,7 @@
 use rusqlite::Connection;
 
 const DECK_V2_LAST: usize = 25;
-const DECK_LATEST: i64 = 46;
+const DECK_LATEST: i64 = 47;
 const STATION_V2_LAST: usize = 27;
 const STATION_LATEST: i64 = 42;
 
