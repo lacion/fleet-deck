@@ -18,10 +18,11 @@ import {
   NO_FLEET,
   spawnCapProblem,
 } from '../spawn/fleetControl';
+import { AccessStations, CODEX_NOTE } from './AccessForm';
 import { type FleetActions, type FleetResult, type GrantBody, NOT_LIVE } from './fleet';
 import { NOT_ALLOWED } from './GrantSpawn';
 
-export const CODEX_NOTE = 'Codex sees the change when the session resumes.';
+export { CODEX_NOTE };
 const NONE_NOTE = 'No running session can receive fleet access.';
 
 /** The classes that a live change can add or remove, in the order of the form. */
@@ -40,9 +41,12 @@ export const FIXED: readonly string[] = ['desktop', 'capture', 'input'];
 /** The fleet form of a live give: nothing on except the session limit, as the spawn form starts. */
 export const START_LIVE: FleetControl = { ...NO_FLEET, spawn: true };
 
-/** The coordinator request of a start without the desktop, screenshot, recording, input and click fields. */
-export function liveGrantFields(f: FleetControl): GrantBody {
-  const g = grantFields(f);
+/**
+ * The coordinator request of a start without the desktop, screenshot, recording, input and click
+ * fields. `targets` are the picked stations other than the session's own.
+ */
+export function liveGrantFields(f: FleetControl, targets: readonly string[] = []): GrantBody {
+  const g = grantFields(f, targets);
   return {
     classes: g.classes.filter((c) => !FIXED.includes(c)),
     ...(g.scope === undefined ? {} : { scope: g.scope }),
@@ -54,7 +58,7 @@ export function liveGrantFields(f: FleetControl): GrantBody {
 }
 
 const keyOf = (s: DeckSession) => `${s.station_id}/${s.summary.session_id}`;
-const titleOf = (s: DeckSession) =>
+export const titleOf = (s: DeckSession) =>
   s.summary.title === null || s.summary.title === '' ? s.summary.session_id : s.summary.title;
 
 /** The running sessions of stations that can change grants live and that have no live grant. */
@@ -82,20 +86,22 @@ export function giveCandidates(
 
 /**
  * Gives the access of the form to a session. The elevation is asked as the spawn form asks it; a
- * cancelled dialog sends nothing and answers `null`.
+ * cancelled dialog sends nothing and answers `null`. `targets` are the picked stations other than
+ * the session's own.
  */
 export async function giveAccess(
   session: DeckSession,
   fleet: FleetControl,
   actions: Pick<FleetActions, 'give'>,
   ask: ElevationAsk,
+  targets: readonly string[] = [],
 ): Promise<FleetResult | null> {
-  const gate = await fleetElevation({ coordinator: true, importing: false, fleet }, ask);
+  const gate = await fleetElevation({ coordinator: true, importing: false, fleet, targets }, ask);
   if (!gate.ok) return null;
   return actions.give(
     session.station_id,
     session.summary.session_id,
-    liveGrantFields(fleet),
+    liveGrantFields(fleet, targets),
     gate.elevation,
   );
 }
@@ -114,6 +120,7 @@ type GiveProps = {
 export function GiveAccess({ sessions, stations, grants, actions, ask, onChanged }: GiveProps) {
   const [pick, setPick] = useState('');
   const [fleet, setFleet] = useState<FleetControl>(START_LIVE);
+  const [picked, setPicked] = useState<readonly string[]>([]);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<FleetResult | null>(null);
   const candidates = giveCandidates(sessions, stations, grants);
@@ -122,12 +129,14 @@ export function GiveAccess({ sessions, stations, grants, actions, ask, onChanged
   const give = () => {
     if (chosen === undefined || problem !== null || busy) return;
     setBusy(true);
-    void giveAccess(chosen, fleet, actions, ask)
+    const targets = picked.filter((id) => id !== chosen.station_id);
+    void giveAccess(chosen, fleet, actions, ask, targets)
       .then((r) => {
         if (r === null) return;
         setResult(r);
         if (r.ok) {
           setFleet(START_LIVE);
+          setPicked([]);
           setPick('');
           onChanged();
         }
@@ -158,6 +167,12 @@ export function GiveAccess({ sessions, stations, grants, actions, ask, onChanged
             </select>
           </label>
           <FleetControlFields fleet={fleet} onChange={setFleet} live />
+          <AccessStations
+            stations={stations}
+            ownId={chosen.station_id}
+            picked={picked}
+            onPicked={setPicked}
+          />
           {chosen.summary.provider === 'codex' ? <p className="fd-note">{CODEX_NOTE}</p> : null}
           <div className="fd-fleet-actions">
             <button type="submit" disabled={busy || problem !== null}>
