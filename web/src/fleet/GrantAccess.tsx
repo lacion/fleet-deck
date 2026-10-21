@@ -21,7 +21,7 @@ import {
 import { type FleetActions, type FleetResult, type GrantBody, NOT_LIVE } from './fleet';
 import { NOT_ALLOWED } from './GrantSpawn';
 
-const CODEX_NOTE = 'Codex sees the change when the session resumes.';
+export const CODEX_NOTE = 'Codex sees the change when the session resumes.';
 const NONE_NOTE = 'No running session can receive fleet access.';
 
 /** The classes that a live change can add or remove, in the order of the form. */

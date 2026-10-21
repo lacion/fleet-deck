@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import type { DeckSession, SessionKey, StationView } from '../gen';
 import type { Freshness, Timeline } from '../runtime/state';
+import type { FleetActions } from '../fleet/fleet';
 import type { SessionActions } from '../session/commands';
 import { SessionView } from '../session/SessionView';
 import type { ShellActions } from '../shell/shell';
@@ -29,6 +30,7 @@ export type PaneProps = {
   readonly onBack?: () => void;
   readonly onTerminalOpened?: () => void;
   readonly onNewShell?: () => void;
+  readonly fleet?: FleetActions | undefined;
 };
 
 type SessionRouteValue = Extract<Route, { name: 'session' }>;
@@ -47,6 +49,7 @@ type BuildInput = {
   readonly navigate: Navigate;
   readonly onTerminalOpened?: (() => void) | undefined;
   readonly onNewShell?: (() => void) | undefined;
+  readonly fleet?: FleetActions | undefined;
 };
 
 /**
@@ -102,6 +105,7 @@ type Props = {
   readonly navigate: Navigate;
   readonly onTerminalOpened?: (() => void) | undefined;
   readonly onNewShell?: (() => void) | undefined;
+  readonly fleet?: FleetActions | undefined;
 };
 
 /** One open session: computes the pane props and renders the session view. */
