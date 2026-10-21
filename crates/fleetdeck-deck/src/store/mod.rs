@@ -87,6 +87,7 @@ pub mod plans;
 pub mod presence;
 pub mod project_home_ops;
 pub mod project_homes;
+mod project_merge;
 pub mod project_sessions;
 pub mod projects;
 pub mod projects_git;

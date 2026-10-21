@@ -403,10 +403,12 @@ async fn the_add_checks_run_in_order_with_their_codes_and_texts() {
     assert!(r.beta_fake.requests("project.ensure_home").is_empty());
     assert_eq!(r.s.app().await.homes.len(), 1);
     // 1. A project without a remote.
+    let mut no_forge = input("Bare", "/work/bare");
+    no_forge.forge = None;
     let bare =
         r.s.f
             .store
-            .create_project(r.s.f.station.0.clone(), input("Bare", "/work/bare"))
+            .create_project(r.s.f.station.0.clone(), no_forge)
             .await
             .unwrap();
     let needs =

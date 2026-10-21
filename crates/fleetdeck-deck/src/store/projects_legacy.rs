@@ -68,6 +68,7 @@ pub(super) fn create_project(
     station_id: &str,
     input: &ProjectInput,
     now: i64,
+    clone_ssh: bool,
 ) -> Result<Project> {
     let tx = conn.transaction()?;
     tx.execute(
@@ -100,6 +101,7 @@ pub(super) fn create_project(
         now,
     )?;
     set_copy(&tx, id)?;
+    super::projects_git::derive_remote(&tx, id, clone_ssh)?;
     let project =
         find(&tx, id)?.ok_or_else(|| DeckError::Corrupt("a new project is missing".into()))?;
     tx.commit()?;
@@ -158,6 +160,7 @@ pub(super) fn update_project(
     input: &ProjectInput,
     live: &[String],
     now: i64,
+    clone_ssh: bool,
 ) -> Result<Option<Project>> {
     let tx = conn.transaction()?;
     let old: Option<(String, String)> = tx
@@ -198,6 +201,7 @@ pub(super) fn update_project(
         super::git_snapshots::clear_checks(&tx, id)?;
     }
     set_copy(&tx, id)?;
+    super::projects_git::derive_remote(&tx, id, clone_ssh)?;
     let found = find(&tx, id)?;
     tx.commit()?;
     Ok(found)

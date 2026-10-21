@@ -8,7 +8,7 @@
 //! `git_pushes` rows (the branch success and "Push now" after a land) and the
 //! fence of an abandonment.
 
-use fleetdeck_proto::fleet_git::{LandPhase, LandState, PushState, code};
+use fleetdeck_proto::fleet_git::{LandPhase, LandState, PushState, code, same_dest};
 use fleetdeck_proto::{Event, EventEnvelope, SessionId};
 use rusqlite::{Connection, OptionalExtension, named_params, params};
 
@@ -268,7 +268,7 @@ fn upsert_push(
     let existing = push_row(conn, &up.session_id)?;
     if existing
         .as_ref()
-        .is_some_and(|r| r.target_dest != up.target_dest)
+        .is_some_and(|r| !same_dest(&r.target_dest, &up.target_dest))
     {
         return Ok(false);
     }

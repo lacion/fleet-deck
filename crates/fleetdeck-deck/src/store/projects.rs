@@ -154,8 +154,9 @@ impl DeckStore {
     pub async fn create_project(&self, station_id: String, input: ProjectInput) -> Result<Project> {
         let id: String = new_id(self.inner.ids.as_ref());
         let now = self.now_ms();
+        let clone_ssh = self.knobs().clone_ssh;
         let out = call(&self.inner.db, move |conn| {
-            super::projects_legacy::create_project(conn, &id, &station_id, &input, now)
+            super::projects_legacy::create_project(conn, &id, &station_id, &input, now, clone_ssh)
         })
         .await;
         // A card's automatic project depends on the projects (DL-176).
@@ -183,8 +184,17 @@ impl DeckStore {
             }
             _ => Vec::new(),
         };
+        let clone_ssh = self.knobs().clone_ssh;
         let out = call(&self.inner.db, move |conn| {
-            super::projects_legacy::update_project(conn, &id, &station_id, &input, &live, now)
+            super::projects_legacy::update_project(
+                conn,
+                &id,
+                &station_id,
+                &input,
+                &live,
+                now,
+                clone_ssh,
+            )
         })
         .await;
         self.board_changed();

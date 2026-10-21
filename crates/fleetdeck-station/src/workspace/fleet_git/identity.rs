@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use fleetdeck_proto::fleet_git::{
     GitProjectView, HomeCheck, HomeCheckState, IdentityError, LocalRemotes, RemoteIdentity,
-    RewriteRule, code, effective_url, parse_rewrite_rules, remote_identity,
+    RewriteRule, code, effective_url, parse_rewrite_rules, remote_identity, same_dest,
 };
 
 use super::redact::redact;
@@ -332,10 +332,10 @@ async fn resolve(
     if fetch_id.dest != push_id.dest {
         check_local(options, &fetch_id.dest).await?;
     }
-    if push_id.dest != project.dest {
+    if !same_dest(&push_id.dest, &project.dest) {
         return Err(Unverified::Mismatch(push_id));
     }
-    if fetch_id.dest != project.dest {
+    if !same_dest(&fetch_id.dest, &project.dest) {
         return Err(Unverified::Mismatch(fetch_id));
     }
     Ok(Resolved {
@@ -490,7 +490,7 @@ pub async fn effective_push_url(
                 Unverified::Mismatch(_) => mismatch(name, &home.to_string(), &project.repo),
                 Unverified::Refused(refusal) => refusal,
             })?;
-            if resolved.push_dest != target_dest {
+            if !same_dest(&resolved.push_dest, target_dest) {
                 return Err(mismatch(name, &home.to_string(), &project.repo));
             }
             Ok(VerifiedUrl {
@@ -506,7 +506,7 @@ pub async fn effective_push_url(
                 .map_err(|detail| Refusal::internal(&detail))?;
             let effective = effective_url(url, &rules, true);
             let identity = remote_identity(&effective, local).map_err(|e| identity_refusal(&e))?;
-            if identity.dest != target_dest || rewritten_again(&effective, &rules) {
+            if !same_dest(&identity.dest, target_dest) || rewritten_again(&effective, &rules) {
                 return Err(Refusal::new(
                     code::REMOTE_REWRITTEN,
                     format!(

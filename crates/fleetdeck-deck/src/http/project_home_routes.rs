@@ -51,7 +51,7 @@ pub struct RetryBody {
 fn status_of(code: &str) -> StatusCode {
     match code {
         "unknown_project" | "unknown_station" | "unknown_home" => StatusCode::NOT_FOUND,
-        "needs_remote" | "invalid_git_settings" => StatusCode::BAD_REQUEST,
+        "needs_remote" | "invalid_git_settings" | "invalid_body" => StatusCode::BAD_REQUEST,
         _ => StatusCode::CONFLICT,
     }
 }

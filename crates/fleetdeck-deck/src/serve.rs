@@ -229,6 +229,7 @@ impl RunningDeck {
         store.set_fleet_control(config.fleet_control);
         let knobs = crate::knobs::DeckKnobs::of(config);
         store.set_knobs(knobs);
+        store.derive_forge_remotes().await?;
         // The stored idle deadlines never outlast the configured idle
         // limits (this also replaces the fixed defaults of the V42 backfill
         // and covers a crash after a settings write). A failure stops the

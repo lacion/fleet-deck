@@ -60,7 +60,18 @@ async fn the_owner_saves_the_settings_and_the_project_list_reads_them_back() {
 #[tokio::test]
 async fn the_remote_url_is_scrubbed_and_split_and_sync_needs_it() {
     let s = setup().await;
-    let r = s.save(json!({ "sync": true }), None).await;
+    // A project with a forge has its remote derived (Fleet Sync §1.3); a
+    // project without a forge and a remote needs the URL for sync.
+    let mut bare = input("Bare", "/work/bare");
+    bare.forge = None;
+    let bare =
+        s.f.store
+            .create_project(s.f.station.0.clone(), bare)
+            .await
+            .unwrap();
+    let r = s
+        .put(&bare.project_id, body(json!({ "sync": true }), 0, None))
+        .await;
     invalid(&r, "sync", "Set the remote URL first.");
 
     let r = s.save(json!({ "sync": true }), Some(REMOTE)).await;
@@ -71,7 +82,7 @@ async fn the_remote_url_is_scrubbed_and_split_and_sync_needs_it() {
     assert_eq!(p.repo.as_deref(), Some("github.com/acme/app"));
     assert_eq!(
         p.remote_dest.as_deref(),
-        Some("ssh://git@github.com:22/~/acme/app.git")
+        Some("https://github.com:443/acme/app")
     );
     // No link yet: the home is not verified.
     assert_eq!(
@@ -149,7 +160,11 @@ async fn each_rule_refuses_with_its_field_and_changes_nothing() {
     assert_eq!(r.status, 200, "{}", r.body);
     // Every refusal left the stored state alone: one save, revision 1.
     assert_eq!(s.app().await.git_revision, 1);
-    assert_eq!(s.app().await.remote_url, None);
+    // The remote was derived from the forge when the project was created.
+    assert_eq!(
+        s.app().await.remote_url.as_deref(),
+        Some("https://github.com/acme/app.git")
+    );
 }
 
 #[tokio::test]
@@ -294,7 +309,7 @@ async fn a_new_link_gets_the_snapshot_and_a_verified_check_makes_the_home_ready(
     assert!(view.settings.sync);
     assert_eq!(view.settings_revision, 1);
     assert_eq!(view.remote.repo, "github.com/acme/app");
-    assert_eq!(view.remote.dest, "ssh://git@github.com:22/~/acme/app.git");
+    assert_eq!(view.remote.dest, "https://github.com:443/acme/app");
     assert_eq!(view.clone_url, REMOTE);
     assert_eq!(view.forge.as_ref().unwrap().repo, "acme/app");
     assert_eq!(
@@ -508,7 +523,7 @@ async fn start_of_value(s: &Setup) -> Value {
         "settings_revision": p.git_revision,
         "home_generation": 1,
         "home_path": "/work/app",
-        "remote": { "repo": "github.com/acme/app", "dest": "ssh://git@github.com:22/~/acme/app.git" },
+        "remote": { "repo": "github.com/acme/app", "dest": "https://github.com:443/acme/app" },
         "slug": "someone-else",
         "forge": null,
         "clone_url": REMOTE

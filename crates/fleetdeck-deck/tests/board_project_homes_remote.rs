@@ -130,7 +130,7 @@ async fn the_same_destination_updates_the_url_parts_and_changes_no_home() {
     assert_eq!(r.body["remote_url"], "https://GITHUB.com:443/acme/app.git");
     assert_eq!(r.body["remote_ssh_user"], Value::Null);
     assert_eq!(r.body["repo"], "github.com/acme/app");
-    assert_eq!(r.body["remote_dest"], "https://github.com:443/acme/app.git");
+    assert_eq!(r.body["remote_dest"], "https://github.com:443/acme/app");
     assert_eq!(r.body["git_revision"], before.git_revision + 1);
     let after = t.s.app().await;
     assert_eq!(after.homes, before.homes, "no home changed");
@@ -246,10 +246,7 @@ async fn a_rebind_keeps_the_homes_of_a_sync_off_project_ready_and_a_busy_home_re
         .unwrap();
     let r = t.remote(RENAMED, true, "r2").await;
     assert_eq!(r.status, 200, "{}", r.body);
-    assert_eq!(
-        r.body["remote_dest"],
-        "https://github.com:443/acme/renamed.git"
-    );
+    assert_eq!(r.body["remote_dest"], "https://github.com:443/acme/renamed");
     for h in &t.s.app().await.homes {
         assert_eq!((h.state, h.code.clone()), (GitHomeState::Ready, None));
     }

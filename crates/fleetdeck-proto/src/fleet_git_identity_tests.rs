@@ -46,19 +46,19 @@ fn a_tilde_user_path_keeps_its_form() {
 fn the_github_forms_are_two_destinations_of_one_repo() {
     let scp = id("git@github.com:acme/app.git");
     let url = id("ssh://git@github.com/acme/app.git");
-    assert_eq!(scp.dest, "ssh://git@github.com:22/~/acme/app.git");
-    assert_eq!(url.dest, "ssh://git@github.com:22/acme/app.git");
+    assert_eq!(scp.dest, "https://github.com:443/acme/app");
+    assert_eq!(url.dest, "https://github.com:443/acme/app");
     assert_eq!(scp.repo, "github.com/acme/app");
     assert_eq!(url.repo, "github.com/acme/app");
 }
 
 #[test]
-fn https_keeps_the_final_dot_git_in_dest_and_drops_it_in_repo() {
+fn a_forge_https_dest_and_repo_drop_the_final_dot_git() {
     let with = id("https://github.com/acme/app.git");
     let without = id("https://github.com/acme/app");
-    assert_eq!(with.dest, "https://github.com:443/acme/app.git");
+    assert_eq!(with.dest, "https://github.com:443/acme/app");
     assert_eq!(without.dest, "https://github.com:443/acme/app");
-    assert_ne!(with.dest, without.dest);
+    assert_eq!(with.dest, without.dest);
     assert_eq!(with.repo, "github.com/acme/app");
     assert_eq!(without.repo, with.repo);
     // One trailing slash goes, for https only.
@@ -306,4 +306,131 @@ fn a_rewritten_url_can_change_the_dest() {
     let url = "https://wip.example/acme/app.git";
     let effective = effective_url(url, &rules, true);
     assert_ne!(id(&effective).dest, id(url).dest);
+}
+
+const FORGE_URLS: [&str; 5] = [
+    "git@github.com:Lacion/Fleet-Deck.git",
+    "ssh://git@github.com/lacion/fleet-deck",
+    "ssh://git@github.com:22/~/lacion/fleet-deck.git/",
+    "https://github.com/lacion/fleet-deck",
+    "https://GitHub.com/lacion/fleet-deck.git",
+];
+
+#[test]
+fn forge_urls_of_one_repository_share_one_dest() {
+    for url in FORGE_URLS {
+        assert_eq!(
+            id(url).dest,
+            "https://github.com:443/lacion/fleet-deck",
+            "{url}"
+        );
+    }
+}
+
+#[test]
+fn a_forge_dest_is_a_fixed_point() {
+    for url in FORGE_URLS {
+        let dest = id(url).dest;
+        assert_eq!(id(&dest).dest, dest, "{url}");
+    }
+}
+
+#[test]
+fn other_logins_ports_and_hosts_keep_the_strict_dest() {
+    let cases = [
+        (
+            "alice@github.com:lacion/fleet-deck",
+            "ssh://alice@github.com:22/~/lacion/fleet-deck",
+        ),
+        (
+            "ssh://git@github.com:2222/lacion/fleet-deck",
+            "ssh://git@github.com:2222/lacion/fleet-deck",
+        ),
+        (
+            "https://github.com:8443/lacion/fleet-deck",
+            "https://github.com:8443/lacion/fleet-deck",
+        ),
+        ("https://github.com/lacion", "https://github.com:443/lacion"),
+        (
+            "git@gitlab.example.com:a/b",
+            "ssh://git@gitlab.example.com:22/~/a/b",
+        ),
+    ];
+    for (url, dest) in cases {
+        let got = id(url).dest;
+        assert!(
+            !got.starts_with("https://github.com:443/lacion/fleet-deck"),
+            "{url}"
+        );
+        assert_eq!(got, dest, "{url}");
+    }
+}
+
+#[test]
+fn the_forge_path_grammar_keeps_a_fixed_point() {
+    // A second `.git` keeps the strict dest.
+    assert_eq!(
+        id("https://github.com/g/r.git.git").dest,
+        "https://github.com:443/g/r.git.git"
+    );
+    // The final `.git` is removed without regard to case.
+    assert_eq!(
+        id("https://github.com/g/r.GIT").dest,
+        "https://github.com:443/g/r"
+    );
+    // A character outside `[A-Za-z0-9._-]` and a `~` segment keep the strict dest.
+    assert_eq!(
+        id("https://github.com/g/r+x").dest,
+        "https://github.com:443/g/r+x"
+    );
+    assert_eq!(
+        id("ssh://git@github.com/~carol/repo").dest,
+        "ssh://git@github.com:22/~carol/repo"
+    );
+    for url in [
+        "https://github.com/g/r.git.git",
+        "https://github.com/g/r.GIT",
+        "https://github.com/g/r+x",
+        "https://gitlab.com/a/b/c.git",
+        "ssh://git@github.com/g.git/r",
+    ] {
+        let dest = id(url).dest;
+        assert_eq!(id(&dest).dest, dest, "{url}");
+    }
+}
+
+#[test]
+fn forge_aliases_share_one_repo_and_one_dest() {
+    let a = id("git@github.com:Acme/App.git");
+    let b = id("https://github.com/acme/app");
+    assert_eq!(a.repo, "github.com/acme/app");
+    assert_eq!(a, b);
+    // Another host keeps the repo of today's rule.
+    assert_eq!(
+        id("git@gitlab.example.com:Acme/App.git").repo,
+        "gitlab.example.com/Acme/App"
+    );
+}
+
+#[test]
+fn same_dest_reads_an_old_strict_dest_as_the_canonical_one() {
+    assert!(same_dest(
+        "ssh://git@github.com:22/~/acme/app.git",
+        "https://github.com:443/acme/app"
+    ));
+    assert!(same_dest(
+        "https://github.com:443/acme/app.git",
+        "https://github.com:443/acme/app"
+    ));
+    assert!(same_dest("file:///srv/a.git", "file:///srv/a.git"));
+    assert!(same_dest("ssh://host:22/~/repo", "ssh://host:22/~/repo"));
+    assert!(!same_dest(
+        "ssh://git@github.com:22/~/acme/app.git",
+        "https://github.com:443/acme/other"
+    ));
+    assert!(!same_dest(
+        "https://github.com:443/a/b",
+        "ssh://host:22/~/a/b"
+    ));
+    assert!(!same_dest("not a url", "https://github.com:443/a/b"));
 }
