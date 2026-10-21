@@ -225,6 +225,20 @@ fn the_debug_of_a_content_type_never_prints_the_content() {
 }
 
 #[test]
+fn the_staging_names_of_a_secret_write_are_hidden_from_members() {
+    // The station stages a write as `secrets.fleetdeck-tmp-<16 hex>` and
+    // `secrets.fleetdeck-old-<16 hex>` in the folder of the file (pre-PR
+    // finding 1): the default deny list must hide both, at the root and below.
+    let deny = crate::member_deny::MemberDeny::default();
+    for stage in ["tmp", "old"] {
+        let name = format!("secrets.fleetdeck-{stage}-0123456789abcdef");
+        assert!(deny.denies(&name), "{name}");
+        let nested = format!("apps/web/{name}");
+        assert!(deny.denies(&nested), "{nested}");
+    }
+}
+
+#[test]
 fn the_secrets_feature_is_offered_and_not_required() {
     use crate::version::feature;
     assert_eq!(feature::FLEET_GIT_SECRETS, "fleet_git.secrets.v1");

@@ -394,6 +394,7 @@ async fn the_list_keeps_the_salt_and_the_seen_digest_of_a_kept_path() {
                 id.clone(),
                 ".env".into(),
                 rows[1].salt.clone(),
+                Some("dg".into()),
                 vec![("st-1".into(), "dg".into()), ("st-2".into(), "dg".into())],
             )
             .await
@@ -405,6 +406,7 @@ async fn the_list_keeps_the_salt_and_the_seen_digest_of_a_kept_path() {
                 id.clone(),
                 "k.pem".into(),
                 rows[2].salt.clone(),
+                None,
                 vec![("st-1".into(), "kk".into())],
             )
             .await
@@ -431,6 +433,7 @@ async fn the_list_keeps_the_salt_and_the_seen_digest_of_a_kept_path() {
     assert!(kept.last_synced_at.is_some());
     assert_eq!(kept.last_report.outcome, SecretOutcome::Copied);
     assert_eq!(kept.seen.len(), 2);
+    assert_eq!(kept.accepted.as_deref(), Some("dg"));
     assert_eq!(after[2].salt, rows[0].salt);
     assert_ne!(after[1].salt, rows[2].salt);
     // The removed path took its seen digests with it.
@@ -446,6 +449,7 @@ async fn the_list_keeps_the_salt_and_the_seen_digest_of_a_kept_path() {
         .unwrap()
         .unwrap();
     assert_eq!(back.seen, []);
+    assert_eq!(back.accepted, None);
     assert_ne!(back.salt, rows[2].salt);
     // An unknown project.
     assert_eq!(
@@ -496,6 +500,7 @@ async fn a_changed_salt_stops_the_writes_of_a_run() {
                 id.clone(),
                 ENV.into(),
                 wrong,
+                Some("dg".into()),
                 vec![("st".into(), "dg".into())]
             )
             .await
@@ -507,6 +512,7 @@ async fn a_changed_salt_stops_the_writes_of_a_run() {
         .unwrap()
         .unwrap();
     assert_eq!(same.last_digest, None);
+    assert_eq!(same.accepted, None);
     assert_eq!(same.seen, []);
     // A row that no longer exists.
     assert!(
@@ -515,6 +521,7 @@ async fn a_changed_salt_stops_the_writes_of_a_run() {
                 id,
                 "gone".into(),
                 row.salt,
+                None,
                 vec![("st".into(), "dg".into())]
             )
             .await

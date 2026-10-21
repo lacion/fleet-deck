@@ -5,8 +5,9 @@
 
 use fleetdeck_proto::event::SessionState;
 use fleetdeck_proto::fleet_git::{
-    GitSettings, GitSettingsPut, LandPhase, LandState, LandStatus, LandStatusAnswer,
+    GitSettings, GitSettingsPut, LandMode, LandPhase, LandState, LandStatus, LandStatusAnswer,
 };
+use fleetdeck_proto::integrations::{ForgeBinding, ForgeKind};
 use fleetdeck_proto::version::feature;
 use std::time::Duration;
 
@@ -146,6 +147,44 @@ async fn a_pull_request_land_needs_the_branch_on_the_forge() {
         text,
         "Pull request mode needs the branch on github.com/acme/app, but pushes go to github.com/acme/wip. Choose Merge in the project settings, or clear the WIP remote."
     );
+}
+
+#[tokio::test]
+async fn a_pull_request_land_is_admitted_for_a_mixed_case_forge() {
+    let w = world(&["/work/app"]).await;
+    w.show(vec![session("s1", "/work/app", SessionState::Exited)])
+        .await;
+    let (id, folder) = w.projects[0].clone();
+    // The forge keeps its case; the remote is the scp-like URL of the same
+    // repository.
+    let mut forge = input("App0", &folder);
+    forge.forge = Some(ForgeBinding {
+        kind: ForgeKind::Github,
+        host: "github.com".into(),
+        repo: "Acme/App".into(),
+    });
+    w.s.update_project(id.clone(), w.st.0.clone(), forge)
+        .await
+        .unwrap()
+        .unwrap();
+    w.s.db()
+        .call(move |conn| {
+            conn.execute(
+                "UPDATE projects SET remote_url = 'github.com:acme/app.git',
+                     remote_ssh_user = 'git' WHERE project_id = ?1",
+                [id],
+            )
+            .map_err(Into::into)
+        })
+        .await
+        .unwrap();
+    let a = w.queued("c1", "s1").await;
+    w.admit().await;
+    let row = w.row(&a).await;
+    assert_eq!(row.state, "running");
+    let plan = row.plan.unwrap();
+    assert_eq!(plan.mode, LandMode::Pr);
+    assert_eq!(plan.remote.repo, "github.com/acme/app");
 }
 
 // ----- admission -----

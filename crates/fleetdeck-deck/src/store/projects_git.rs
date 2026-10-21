@@ -167,6 +167,41 @@ pub(super) fn derive_remote(conn: &Connection, project: &str, ssh: bool) -> Resu
     }
 }
 
+/// The repository key of a project changed from `old` to `new`: the slug
+/// reservations and the open land locks of the old key move to the new one
+/// (pre-PR finding 4). A collision keeps the row that already has the new key;
+/// the row that stays is logged. The caller holds the transaction.
+fn move_repo_key(tx: &Connection, project: &str, old: &str, new: &str) -> Result<()> {
+    tx.execute(
+        "UPDATE OR IGNORE slug_reservations SET repo = ?2 WHERE repo = ?1",
+        params![old, new],
+    )?;
+    let kept_slugs: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM slug_reservations WHERE repo = ?1",
+        [old],
+        |r| r.get(0),
+    )?;
+    if kept_slugs > 0 {
+        tracing::warn!(project, "slug_reservation_kept");
+    }
+    tx.execute(
+        "UPDATE OR IGNORE land_queue SET lock_key = ?2
+         WHERE lock_key = ?1 AND state IN ('queued', 'running')",
+        params![old, new],
+    )?;
+    let kept_locks: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM land_queue
+         WHERE lock_key = ?1 AND state IN ('queued', 'running')",
+        [old],
+        |r| r.get(0),
+    )?;
+    if kept_locks > 0 {
+        tracing::warn!(project, "land_lock_kept");
+    }
+    tracing::warn!(project, "repo_key_moved");
+    Ok(())
+}
+
 impl DeckStore {
     /// Whether a local remote is allowed for `project` (decision B10): every
     /// home station of the project (any state) reports
@@ -254,6 +289,9 @@ impl DeckStore {
                         params![id, i.repo, i.dest],
                     )?;
                     tracing::warn!(project = %id, "remote_dest_recomputed");
+                    if let Some(old) = repo.as_deref().filter(|old| *old != i.repo) {
+                        move_repo_key(&tx, &id, old, &i.repo)?;
+                    }
                     changed = true;
                 }
             }

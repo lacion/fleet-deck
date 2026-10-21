@@ -29,6 +29,7 @@ use fleetdeck_proto::link::Outcome;
 use fleetdeck_proto::version::feature;
 use tokio::sync::watch;
 
+pub use self::decide_part::{Decision, Scanned, Winner, decide};
 use crate::link::DeckLink;
 use crate::store::secret_files::SecretFileRow;
 use crate::store::{AuditResult, DeckError, DeckStore, LinkFeature, NewAudit};
@@ -46,6 +47,9 @@ const METHOD_SCAN: &str = "project.secret_scan";
 const METHOD_READ: &str = "project.secret_read";
 const METHOD_WRITE: &str = "project.secret_write";
 
+#[path = "fleet_git_secrets_decide.rs"]
+mod decide_part;
+
 /// Why a run did not start.
 #[derive(Debug, thiserror::Error)]
 pub enum SyncError {
@@ -57,159 +61,6 @@ pub enum SyncError {
     NeedsRemote,
     #[error(transparent)]
     Store(#[from] DeckError),
-}
-
-/// The copy that wins.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Winner {
-    pub digest: String,
-    pub source: StationId,
-    /// Two homes changed the file; the newest copy won.
-    pub conflict: bool,
-}
-
-/// The outcome of [`decide`] for one file.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Decision {
-    pub winner: Option<Winner>,
-    /// The stations that get the winning copy, in position order, with the
-    /// digest that the write must find (`None`: the file must be missing).
-    pub targets: Vec<(StationId, Option<String>)>,
-}
-
-/// One station as [`decide`] sees it: its id and position, the digest that
-/// the relay last saw or wrote there (`seen`) and the scanned state.
-pub type Scanned = (StationId, u32, Option<String>, SecretFileState);
-
-/// The newest copy of `copies` (`(position, mtime, digest, station)`): the
-/// highest `mtime_ms`; a tie goes to the lowest position.
-fn newest<'a>(copies: &[&'a Copy]) -> Option<&'a Copy> {
-    copies
-        .iter()
-        .copied()
-        .max_by_key(|c| (c.mtime_ms, std::cmp::Reverse(c.position)))
-}
-
-/// A present copy with a digest.
-#[derive(Debug)]
-struct Copy {
-    station: StationId,
-    position: u32,
-    seen: Option<String>,
-    digest: String,
-    size: u64,
-    mtime_ms: i64,
-}
-
-/// Picks the winning copy of one file (revision R5), without any I/O.
-///
-/// - Candidates are the present copies. An empty file is a candidate only
-///   when no copy has content.
-/// - One distinct digest wins.
-/// - Else `changed` are the candidates that differ from the digest that the
-///   relay last saw on that station (all of them at a first sync: no station
-///   has a seen digest). One distinct digest in `changed` wins; several: the
-///   newest wins and the file has a conflict.
-/// - Else the newest of the `settled` copies (equal to their seen digest)
-///   wins; with none, the newest copy.
-///
-/// A tie of `mtime_ms` goes to the lowest position. The source is the newest
-/// copy that has the winning digest. The targets are every present copy with
-/// another digest (also an empty file) and every missing copy.
-#[must_use]
-pub fn decide(states: &[Scanned]) -> Decision {
-    let copies: Vec<Copy> = states
-        .iter()
-        .filter(|(_, _, _, s)| s.state == SecretPresence::Present)
-        .filter_map(|(station, position, seen, s)| {
-            Some(Copy {
-                station: station.clone(),
-                position: *position,
-                seen: seen.clone(),
-                digest: s.digest.clone()?,
-                size: s.size.unwrap_or(0),
-                mtime_ms: s.mtime_ms.unwrap_or(0),
-            })
-        })
-        .collect();
-    let any_content = copies.iter().any(|c| c.size > 0);
-    let candidates: Vec<&Copy> = copies
-        .iter()
-        .filter(|c| !any_content || c.size > 0)
-        .collect();
-    if candidates.is_empty() {
-        return Decision {
-            winner: None,
-            targets: Vec::new(),
-        };
-    }
-    let mut distinct: Vec<&str> = candidates.iter().map(|c| c.digest.as_str()).collect();
-    distinct.sort_unstable();
-    distinct.dedup();
-    let (digest, conflict) = if let [only] = distinct.as_slice() {
-        ((*only).to_owned(), false)
-    } else {
-        let first_sync = states.iter().all(|(_, _, seen, _)| seen.is_none());
-        let changed: Vec<&Copy> = candidates
-            .iter()
-            .copied()
-            .filter(|c| first_sync || c.seen.as_deref().is_some_and(|s| s != c.digest))
-            .collect();
-        if changed.is_empty() {
-            let settled: Vec<&Copy> = candidates
-                .iter()
-                .copied()
-                .filter(|c| c.seen.as_deref() == Some(c.digest.as_str()))
-                .collect();
-            let pool = if settled.is_empty() {
-                &candidates
-            } else {
-                &settled
-            };
-            (newest_digest(pool), false)
-        } else {
-            let mut kinds: Vec<&str> = changed.iter().map(|c| c.digest.as_str()).collect();
-            kinds.sort_unstable();
-            kinds.dedup();
-            (newest_digest(&changed), kinds.len() > 1)
-        }
-    };
-    let same: Vec<&Copy> = candidates
-        .iter()
-        .copied()
-        .filter(|c| c.digest == digest)
-        .collect();
-    let Some(source) = newest(&same) else {
-        return Decision {
-            winner: None,
-            targets: Vec::new(),
-        };
-    };
-    let mut targets: Vec<(u32, StationId, Option<String>)> = states
-        .iter()
-        .filter_map(|(station, position, _, s)| match s.state {
-            SecretPresence::Present => match &s.digest {
-                Some(d) if *d != digest => Some((*position, station.clone(), Some(d.clone()))),
-                _ => None,
-            },
-            SecretPresence::Missing => Some((*position, station.clone(), None)),
-            _ => None,
-        })
-        .collect();
-    targets.sort_by_key(|(position, _, _)| *position);
-    Decision {
-        winner: Some(Winner {
-            digest,
-            source: source.station.clone(),
-            conflict,
-        }),
-        targets: targets.into_iter().map(|(_, s, e)| (s, e)).collect(),
-    }
-}
-
-/// The digest of the newest of `pool` (a tie: the lowest position).
-fn newest_digest(pool: &[&Copy]) -> String {
-    newest(pool).map(|c| c.digest.clone()).unwrap_or_default()
 }
 
 type ProjectLocks = Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>;
@@ -515,7 +366,7 @@ impl Run<'_> {
                 }
             }
         }
-        let decision = decide(&states);
+        let decision = decide(row.accepted.as_deref(), &states);
         let mut written: Vec<StationId> = Vec::new();
         let mut failures: BTreeMap<StationId, CallError> = BTreeMap::new();
         if let Some(winner) = &decision.winner
@@ -562,6 +413,9 @@ impl Run<'_> {
             .as_ref()
             .filter(|_| complete && !refused)
             .map(|w| (w.digest.clone(), w.source.to_string()));
+        // The winner for a station that got it or already had it; a loser that
+        // the run did not write keeps its own copy as the seen one, so that it
+        // is not a new edit on the next run (pre-PR finding 3).
         let seen = match &decision.winner {
             Some(winner) => states
                 .iter()
@@ -569,6 +423,13 @@ impl Run<'_> {
                     written.contains(station) || state.digest.as_deref() == Some(&winner.digest)
                 })
                 .map(|(station, ..)| (station.to_string(), winner.digest.clone()))
+                .chain(
+                    decision
+                        .losers
+                        .iter()
+                        .filter(|(station, _)| !written.contains(station))
+                        .map(|(station, digest)| (station.to_string(), digest.clone())),
+                )
                 .collect(),
             None => Vec::new(),
         };
@@ -703,9 +564,15 @@ pub async fn sync_project(
                 result.report.clone(),
             )
             .await?;
-        if !result.seen.is_empty() {
+        if let Some(accepted) = result.digest {
             store
-                .secret_seen_set(project.to_owned(), current.path.clone(), salt, result.seen)
+                .secret_seen_set(
+                    project.to_owned(),
+                    current.path.clone(),
+                    salt,
+                    Some(accepted),
+                    result.seen,
+                )
                 .await?;
         }
         tracing::debug!(project, path = %current.path, outcome = ?result.report.outcome, "secret file run");
