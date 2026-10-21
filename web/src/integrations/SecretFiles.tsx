@@ -67,6 +67,14 @@ export function fileNote(f: SecretFileReport, stations: readonly StationView[]):
     );
   }
   if (f.outcome === 'partial') parts.push('Some homes did not get the file.');
+  if (f.outcome === 'copied')
+    parts.push('Copied to every home that was missing it or had an older copy.');
+  if (f.outcome === 'same') parts.push('Every home has the same copy.');
+  if (f.outcome === 'nothing') {
+    parts.push(
+      'No home has this file yet, so there is nothing to copy. Create it in one home, then sync again.',
+    );
+  }
   return parts.join(' ');
 }
 

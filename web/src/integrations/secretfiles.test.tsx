@@ -104,8 +104,15 @@ describe('fileNote', () => {
 
   test('a synced file shows the time and the source station', () => {
     expect(fileNote(report({ synced_at: at, source: 'station-a' }), stations)).toBe(
-      `Last sync ${new Date(at).toLocaleString()} from Alpha`,
+      `Last sync ${new Date(at).toLocaleString()} from Alpha Copied to every home that was missing it or had an older copy.`,
     );
+  });
+
+  test('a run with nothing to copy and a run where all homes agree say so', () => {
+    expect(fileNote(report({ outcome: 'nothing' }), stations)).toBe(
+      'No home has this file yet, so there is nothing to copy. Create it in one home, then sync again.',
+    );
+    expect(fileNote(report({ outcome: 'same' }), stations)).toBe('Every home has the same copy.');
   });
 
   test('a file that never ran says so', () => {
