@@ -30,10 +30,17 @@ pub(in crate::manager) struct StartTools {
     pub worker_skip: Option<WorkerSkip>,
     /// The start binds a grant with a record (a resume gets the grant tools).
     pub record_start: bool,
+    /// The lock of the session (MCP P4b PRE-PR R1), taken before the record
+    /// read: always `Some` from [`start_tools`]. The caller holds it until the
+    /// binding is installed (the direct host drops it at once; the shim host
+    /// moves it into the [`BridgeStart`]).
+    pub lock: Option<tokio::sync::OwnedMutexGuard<()>>,
 }
 
-/// The tools of a start or a resume (DL-165, DL-194): [`plan`] first, then
-/// the tools of the effective spec.
+/// The tools of a start or a resume (DL-165, DL-194): the session lock first
+/// (a `session.coordinator_set` cannot run between the record read and the
+/// installation of the binding), then [`plan`], then the tools of the
+/// effective spec.
 ///
 /// # Errors
 /// The reason that the start fails with.
@@ -50,6 +57,7 @@ pub(in crate::manager) async fn start_tools(
     resume: Option<&str>,
     command_id: Option<CommandId>,
 ) -> Result<StartTools, String> {
+    let lock = bindings.session_locks().lock(session_id).await;
     let planned = plan(store, session_id, spec, resume).await?;
     let (effective, record) = match &planned {
         Some((effective, record)) => (effective, Some(record)),
@@ -75,6 +83,7 @@ pub(in crate::manager) async fn start_tools(
         launch,
         worker_skip,
         record_start: record.is_some(),
+        lock: Some(lock),
     })
 }
 
@@ -152,8 +161,9 @@ pub(in crate::manager) async fn plan(
 /// `p = generation` of the command, `g = max(p, record.generation + 1)`:
 ///
 /// - A live binding of the grant that is `Active` or `Expired` gets
-///   generation `g` and the state `Active` (memory, and the shim row), a
-///   `coordinator.bound { g }` is appended, and the record takes `g`.
+///   generation `g` and the state `Active` in the shim row, a
+///   `coordinator.bound { g }` is appended, and the record takes `g`. Memory
+///   changes only after the commit ([`publish_renew`]).
 /// - Without a live binding (the process is gone) the record takes `g - 1`:
 ///   the next process start binds at `g`.
 /// - A `Pending` binding is not bound yet and is refused.
@@ -204,13 +214,12 @@ pub(in crate::manager) fn renew(
             "the binding is not bound yet",
         ));
     };
-    bindings.update(&binding.binding_id, |b| {
-        b.state = BindingState::Active;
-        b.generation = g;
-    });
-    if let (Some(digest), Some(row), Some(renewed)) =
-        (&digest, &row, bindings.get(&binding.binding_id))
-    {
+    // The order: the shim row, the event, the record. Memory stays as it is
+    // until the commit.
+    if let (Some(digest), Some(row)) = (&digest, &row) {
+        let mut renewed = binding.clone();
+        renewed.state = BindingState::Active;
+        renewed.generation = g;
         d.shim_binding_rewrite(digest, &renewed, row.expires_at)?;
     }
     d.append(
@@ -229,6 +238,59 @@ pub(in crate::manager) fn renew(
     Ok(result(session_id, None))
 }
 
+/// Publishes the renewal of a grant with a record to memory, after its
+/// commit (MCP P4b PRE-PR R1). The live binding of the grant gets the
+/// generation of the record and the state `Active` when it is behind the
+/// record and its shim row (if any) already holds the generation of the
+/// record; otherwise nothing changes. A failure is logged: the row (shim
+/// host) is already right, and the next reload restores memory from it.
+pub(in crate::manager) async fn publish_renew(
+    store: &Store,
+    bindings: &Bindings,
+    session_id: &SessionId,
+    grant_id: &str,
+) {
+    let record = match store.session_grant(session_id.clone()).await {
+        Ok(Some(record))
+            if record.state == RecordState::Attached && record.grant_id == grant_id =>
+        {
+            record
+        }
+        Ok(_) => return,
+        Err(error) => {
+            tracing::error!(%error, session = %session_id, "the grant record was not read after a renewal");
+            return;
+        }
+    };
+    let Some(binding) = bindings
+        .find(session_id, grant_id)
+        .filter(|b| b.state != BindingState::Revoked)
+    else {
+        return;
+    };
+    if binding.generation >= record.generation {
+        tracing::warn!(session = %session_id, binding = %binding.binding_id, "the binding is not behind the record; memory is not changed after the renewal");
+        return;
+    }
+    if let Some(digest) = bindings.digest_of(&binding.binding_id) {
+        let row = match store.shim_bindings_load().await {
+            Ok(rows) => rows.into_iter().find(|r| r.digest == digest),
+            Err(error) => {
+                tracing::error!(%error, session = %session_id, "the binding rows were not read after a renewal");
+                return;
+            }
+        };
+        if row.is_some_and(|r| r.generation != record.generation) {
+            tracing::warn!(session = %session_id, binding = %binding.binding_id, "the binding row does not hold the renewed generation; memory is not changed");
+            return;
+        }
+    }
+    bindings.update(&binding.binding_id, |b| {
+        b.state = BindingState::Active;
+        b.generation = record.generation;
+    });
+}
+
 #[cfg(test)]
 #[path = "coordinator_epochs_tests.rs"]
 mod epochs_tests;
@@ -236,3 +298,7 @@ mod epochs_tests;
 #[cfg(test)]
 #[path = "coordinator_renew_tests.rs"]
 mod renew_tests;
+
+#[cfg(test)]
+#[path = "coordinator_race_tests.rs"]
+mod race_tests;

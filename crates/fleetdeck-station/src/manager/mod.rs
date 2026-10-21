@@ -626,7 +626,8 @@ impl SessionManager {
         // writer transaction; the decision rechecks only the row state
         // (DL-182 §4.2).
         let check = self.reconcile_check(&command).await;
-        let set = coordinator_command::set_session(&command);
+        let after = coordinator_command::after_of(&command);
+        let _session = coordinator_command::session_lock(&self.coordinator, &command).await;
         let decided = self
             .store
             .decide(envelope, caller, move |d| {
@@ -666,7 +667,7 @@ impl SessionManager {
                 }
             })
             .await;
-        coordinator_command::after_commit(&self.store, &self.coordinator, set, &decided).await;
+        coordinator_command::after_commit(&self.store, &self.coordinator, after, &decided).await;
         // B8: a release settled a row; its advance follows.
         if is_release
             && decided

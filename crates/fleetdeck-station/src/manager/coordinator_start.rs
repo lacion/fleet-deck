@@ -371,6 +371,9 @@ pub(crate) struct BridgeStart {
     pub grant_id: Option<String>,
     /// The start command of that worker grant.
     pub start_command_id: Option<CommandId>,
+    /// The session lock of the start (MCP P4b PRE-PR R1): the launch holds it
+    /// until the row and the binding are stored, and drops it right after.
+    pub lock: Option<tokio::sync::OwnedMutexGuard<()>>,
 }
 
 /// The bridge form of [`prepare`]: it mints the credential and builds the
@@ -401,6 +404,7 @@ pub(super) fn prepare_bridge(
         provider,
         grant_id: None,
         start_command_id: None,
+        lock: None,
     })
 }
 

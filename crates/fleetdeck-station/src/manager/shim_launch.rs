@@ -73,7 +73,13 @@ pub(crate) async fn launch_shim_for(
             .await?;
         return Err(LaunchError::Refused(refused));
     }
+    // The session lock of the start (MCP P4b PRE-PR R1) drops right after the
+    // row and the binding are stored; a path that leaves earlier drops it
+    // with the start.
+    let mut tools = tools;
+    let session_lock = tools.as_mut().and_then(|t| t.lock.take());
     let (secrets, stored) = store_tools(store, bindings, &shim_id, tools).await;
+    drop(session_lock);
     // A failure after a stored row ends the row and refuses its token
     // before the launch is settled (DL-194 §2.3). The cleanup is durable
     // (the fence or the row), or the start fails even when the settlement

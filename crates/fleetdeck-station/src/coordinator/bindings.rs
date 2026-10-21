@@ -20,7 +20,6 @@ use tokio::sync::{Semaphore, watch};
 use super::fence::Fence;
 use super::forward::Transport;
 pub use super::tool_class::ToolClass;
-use crate::store::session_grants::{GrantRecord, RecordState};
 
 /// The prefix of a coordinator credential.
 pub const TOKEN_PREFIX: &str = "fdc1_";
@@ -235,6 +234,9 @@ pub struct Bindings {
     incarnations: Arc<AtomicU64>,
     /// The station-wide limits of the streams (MCP P4b §8.2, §8.3).
     pub(super) station_streams: StationStreams,
+    /// The one lock of each session that orders a process start with a live
+    /// grant change.
+    session_locks: SessionLocks,
 }
 
 /// What a shim-hosted provider runs for its tools (DL-194 §2.2, §9.3): the
@@ -657,78 +659,6 @@ impl Bindings {
         true
     }
 
-    /// The binding projection of a coordinator-capable snapshot (ADR-006
-    /// §6.1): every binding with its fields and lifecycle state, sorted by
-    /// binding id. No secret.
-    #[must_use]
-    pub fn projection(&self) -> Vec<fleetdeck_proto::CoordinatorBindingState> {
-        self.projection_with(&[])
-    }
-
-    /// The projection that follows the records of the sessions (MCP P4b §5):
-    /// a dead credential of an `Attached` record is left out, and an `Ended`
-    /// record that memory does not hold gives a synthetic `Revoked` entry
-    /// (`Expired` for the reason `expired`). A grant without a record is
-    /// projected as by [`Self::projection`].
-    #[must_use]
-    pub fn projection_with(
-        &self,
-        records: &[GrantRecord],
-    ) -> Vec<fleetdeck_proto::CoordinatorBindingState> {
-        use fleetdeck_proto::CoordinatorBindingPhase as Phase;
-        use fleetdeck_proto::CoordinatorBindingState as Row;
-        let id = |r: &GrantRecord| format!("{}:{}", r.session_id, r.grant_id);
-        let attached: HashSet<String> = records
-            .iter()
-            .filter(|r| r.state == RecordState::Attached)
-            .map(id)
-            .collect();
-        let map = self.lock();
-        let mut out: Vec<Row> = map
-            .values()
-            .map(|e| &e.binding)
-            .filter(|b| !b.is_fleet_only())
-            .filter(|b| {
-                !(attached.contains(&b.binding_id)
-                    && matches!(b.state, BindingState::Revoked | BindingState::Expired))
-            })
-            .map(|b| Row {
-                binding_id: b.binding_id.clone(),
-                grant_id: b.grant_id.clone(),
-                session_id: b.session_id.clone(),
-                generation: b.generation,
-                provider_instance: b.provider_instance.clone(),
-                native_id: b.native_id.clone(),
-                state: match b.state {
-                    BindingState::Pending => Phase::Pending,
-                    BindingState::Active => Phase::Active,
-                    BindingState::Expired => Phase::Expired,
-                    BindingState::Revoked => Phase::Revoked,
-                },
-            })
-            .collect();
-        for r in records.iter().filter(|r| r.state == RecordState::Ended) {
-            if map.values().any(|e| e.binding.binding_id == id(r)) {
-                continue;
-            }
-            out.push(Row {
-                binding_id: id(r),
-                grant_id: r.grant_id.clone(),
-                session_id: r.session_id.clone(),
-                generation: r.generation,
-                provider_instance: String::new(),
-                native_id: None,
-                state: if r.ended_reason.as_deref() == Some("expired") {
-                    Phase::Expired
-                } else {
-                    Phase::Revoked
-                },
-            });
-        }
-        out.sort_by(|a, b| a.binding_id.cmp(&b.binding_id));
-        out
-    }
-
     /// Records the protocol version that a successful `initialize` of the
     /// binding negotiated (MCP P1 §3.4). Returns false for an unknown
     /// binding id.
@@ -753,6 +683,12 @@ impl Bindings {
             .values()
             .find(|e| e.binding.binding_id == binding_id)
             .and_then(|e| e.legacy_version.clone())
+    }
+
+    /// The lock of each session that orders a process start (its record read
+    /// until its binding is installed) with a live grant change.
+    pub(crate) fn session_locks(&self) -> &SessionLocks {
+        &self.session_locks
     }
 
     /// A copy of a binding by id.
@@ -789,6 +725,12 @@ impl Binding {
 mod auth;
 #[path = "bindings_handoff.rs"]
 mod handoff;
+#[path = "bindings_projection.rs"]
+mod projection;
+#[path = "session_locks.rs"]
+mod session_locks;
+
+use session_locks::SessionLocks;
 
 #[cfg(test)]
 #[path = "bindings_watch_tests.rs"]

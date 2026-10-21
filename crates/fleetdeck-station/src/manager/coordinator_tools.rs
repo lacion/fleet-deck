@@ -126,6 +126,7 @@ pub(super) fn prepare_bridge_fleet(
         provider,
         grant_id: None,
         start_command_id: None,
+        lock: None,
     })
 }
 
