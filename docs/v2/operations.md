@@ -1496,7 +1496,7 @@ Run `fleetdeck doctor` first. It changes nothing. It prints one line for each ch
 
 Fleet Git makes one Git repository work across the stations of the fleet. The design is [design/fleet-git.md](./design/fleet-git.md). The link changes are in [ADR-009](./adr/ADR-009-fleet-git-link.md). This section tells the owner how to turn it on and how to run it.
 
-What is built: fetch before a start (FG-1), push (FG-2), cleanup (FG-3), worktree bootstrap (FG-4), homes on many stations (FG-5), placement by traits (FG-6), the conflict radar (FG-7), land (FG-8), branches of other stations and the coordinator tools (FG-10), the config drift report (FG-11) and Taildrive artifacts (FG-12). **Move a session to another station (FG-9) is not built.** It waits for an owner decision (DL-227). Nothing in this section is available for it.
+What is built: fetch before a start (FG-1), push (FG-2), cleanup (FG-3), worktree bootstrap (FG-4), homes on many stations (FG-5), placement by traits (FG-6), the conflict radar (FG-7), land (FG-8), move a session to another station (FG-9, "Move to station…" on the session menu), branches of other stations and the coordinator tools (FG-10), the config drift report (FG-11) and Taildrive artifacts (FG-12).
 
 ### 13.1 Rules that always hold
 
