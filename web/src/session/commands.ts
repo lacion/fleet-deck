@@ -118,6 +118,7 @@ const METHODS: Record<SessionCommand['op'], string> = {
   resolve_revert: 'session.resolve_revert',
   coordinator_renew: 'session.coordinator_renew',
   coordinator_revoke: 'session.coordinator_revoke',
+  coordinator_set: 'session.coordinator_set',
   worktree_trash: 'session.worktree_trash',
   worktree_restore: 'session.worktree_restore',
   worktree_purge: 'session.worktree_purge',
