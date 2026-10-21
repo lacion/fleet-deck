@@ -2,11 +2,11 @@
 //! grant for each session, ordered by the per-session sequence of
 //! `session.coordinator_set`. The record is independent of `shim_bindings`.
 
-use fleetdeck_proto::SessionId;
 use fleetdeck_proto::command::CoordinatorSpec;
+use fleetdeck_proto::{Event, SessionId};
 use rusqlite::{Connection, OptionalExtension as _, params};
 
-use super::{Decision, Result, Store, StoreError, call, to_i64, to_u64};
+use super::{Decision, NewEvent, Result, Store, StoreError, call, log, to_i64, to_u64};
 
 const COLUMNS: &str =
     "session_id, grant_id, seq, spec, generation, state, ended_reason, updated_at";
@@ -94,7 +94,7 @@ fn decode(raw: RawRecord) -> Result<GrantRecord> {
     })
 }
 
-fn get(conn: &Connection, session: &SessionId) -> Result<Option<GrantRecord>> {
+pub(super) fn get(conn: &Connection, session: &SessionId) -> Result<Option<GrantRecord>> {
     conn.query_row(
         &format!("SELECT {COLUMNS} FROM session_grants WHERE session_id = ?1"),
         [session.as_str()],
@@ -103,6 +103,32 @@ fn get(conn: &Connection, session: &SessionId) -> Result<Option<GrantRecord>> {
     .optional()?
     .map(decode)
     .transpose()
+}
+
+/// The grant of the `Attached` record of `session`, if any (MCP P4b §5).
+pub(super) fn attached_grant(conn: &Connection, session: &SessionId) -> Result<Option<String>> {
+    Ok(get(conn, session)?
+        .filter(|r| r.state == RecordState::Attached)
+        .map(|r| r.grant_id))
+}
+
+/// Ends the `Attached` record of `session` with `reason` and returns it as
+/// it was. `None` when there is no such record; nothing changes then.
+pub(super) fn end_attached(
+    conn: &Connection,
+    session: &SessionId,
+    reason: &str,
+    now: i64,
+) -> Result<Option<GrantRecord>> {
+    let Some(before) = get(conn, session)?.filter(|r| r.state == RecordState::Attached) else {
+        return Ok(None);
+    };
+    conn.execute(
+        "UPDATE session_grants SET state = 'ended', ended_reason = ?2, updated_at = ?3
+         WHERE session_id = ?1",
+        params![session.as_str(), reason, now],
+    )?;
+    Ok(Some(before))
 }
 
 impl Decision<'_> {
@@ -149,6 +175,53 @@ impl Decision<'_> {
 }
 
 impl Store {
+    /// Stores the generation of the latest process of the `Attached` record
+    /// of `session` (MCP P4b §5). `false` when the session has no such
+    /// record.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn session_grant_generation(
+        &self,
+        session: SessionId,
+        generation: u32,
+    ) -> Result<bool> {
+        self.write(move |conn, now, _| {
+            let changed = conn.execute(
+                "UPDATE session_grants SET generation = ?2, updated_at = ?3
+                 WHERE session_id = ?1 AND state = 'attached'",
+                params![session.as_str(), generation, now],
+            )?;
+            Ok(changed > 0)
+        })
+        .await
+        .map(|(changed, _)| changed)
+    }
+
+    /// Ends the `Attached` record of `session` with `reason` and appends
+    /// `coordinator.ended { "{session}:{grant}", generation, reason }` to
+    /// the session, in one write. `false` when the session has no such
+    /// record; nothing changes then.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn session_grant_end(&self, session: SessionId, reason: String) -> Result<bool> {
+        self.write(move |conn, now, out| {
+            let Some(before) = end_attached(conn, &session, &reason, now)? else {
+                return Ok(false);
+            };
+            let event = NewEvent::from(Event::CoordinatorEnded {
+                binding_id: format!("{session}:{}", before.grant_id),
+                generation: before.generation,
+                reason,
+            });
+            out.push(log::append_one(conn, &session, event, now)?);
+            Ok(true)
+        })
+        .await
+        .map(|(ended, _)| ended)
+    }
+
     /// The record of `session`, if any.
     ///
     /// # Errors

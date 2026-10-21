@@ -24,8 +24,9 @@ use fleetdeck_providers::host::shim::host::Attached;
 use fleetdeck_providers::host::shim::start::LaunchSecrets;
 
 use crate::coordinator::{Binding, BindingState, Bindings, Handoff, ToolClass};
-use crate::store::shim_bindings::{BindingRow, RowState};
-use crate::store::{NewEvent, Store};
+use crate::store::session_grants::RecordState;
+use crate::store::shim_bindings::{BindingRow, REASON_IDENTITY_CHANGED, RowState};
+use crate::store::{NewEvent, Store, StoreError};
 
 pub(super) use super::coordinator_tools::{
     NoTools, Tools, bridge_verified, log_attached, log_no_tools, tools_generic,
@@ -36,16 +37,40 @@ pub(super) use super::coordinator_tools::{prepare_bridge_fleet, prepare_fleet, t
 /// The reason of `coordinator.ended` at the end of the process (§5.5).
 pub(super) const REASON_PROCESS_EXIT: &str = "process_exit";
 
+/// What a process start takes from the grant record of its session (MCP P4b
+/// §5): the generation that the start stored first, and, for a resume, the
+/// native id that the resumed process must report.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct RecordStart {
+    pub generation: u32,
+    pub expected_native: Option<String>,
+}
+
+/// What [`bound_events`] found in a batch.
+#[derive(Debug, Default)]
+pub(super) struct Bound {
+    /// The `coordinator.bound` and `coordinator.ended` events to store.
+    pub events: Vec<NewEvent>,
+    /// A binding of the `attached` record's grant was revoked for a changed
+    /// native identity: the record ends (`identity_changed`) and
+    /// `Store::session_grant_end` writes the event, not `events`.
+    pub identity_changed: bool,
+}
+
 /// The binding facts of a stored event batch (DL-217): the native
 /// identity of `session.started` binds each pending binding of the
-/// session (`coordinator.bound`, generation 1), or revokes an active
-/// binding whose root identity changed (`coordinator.ended`).
+/// session (`coordinator.bound`, at the generation of the binding, at least
+/// 1), or revokes a binding whose root identity changed
+/// (`coordinator.ended`). `attached` is the grant of the session's
+/// `attached` record: a revoked binding of that grant gives no event here
+/// (see [`Bound::identity_changed`]).
 pub(super) fn bound_events(
     bindings: &Bindings,
     session_id: &SessionId,
     observed: &[Event],
-) -> Vec<NewEvent> {
-    let mut out = Vec::new();
+    attached: Option<&str>,
+) -> Bound {
+    let mut out = Bound::default();
     for event in observed {
         let Event::SessionStarted { provider_refs, .. } = event else {
             continue;
@@ -63,7 +88,11 @@ pub(super) fn bound_events(
             if b.is_fleet_only() {
                 continue;
             }
-            out.push(NewEvent::from(match b.state {
+            if b.state != BindingState::Active && attached == Some(b.grant_id.as_str()) {
+                out.identity_changed = true;
+                continue;
+            }
+            out.events.push(NewEvent::from(match b.state {
                 BindingState::Active => Event::CoordinatorBound {
                     binding_id: b.binding_id,
                     grant_id: b.grant_id,
@@ -83,12 +112,18 @@ pub(super) fn bound_events(
 }
 
 /// Revokes the bindings of a session whose process ended and returns
-/// their `coordinator.ended` events (DL-217).
-pub(super) fn ended_events(bindings: &Bindings, session_id: &SessionId) -> Vec<NewEvent> {
+/// their `coordinator.ended` events (DL-217). A binding of the grant
+/// `attached` (the grant of the session's `attached` record) gives none: the
+/// grant belongs to the session, not to the process (MCP P4b §5).
+pub(super) fn ended_events(
+    bindings: &Bindings,
+    session_id: &SessionId,
+    attached: Option<&str>,
+) -> Vec<NewEvent> {
     bindings
         .end_session(session_id)
         .into_iter()
-        .filter(|b| !b.is_fleet_only())
+        .filter(|b| !b.is_fleet_only() && attached != Some(b.grant_id.as_str()))
         .map(|b| {
             NewEvent::from(Event::CoordinatorEnded {
                 binding_id: b.binding_id,
@@ -99,7 +134,55 @@ pub(super) fn ended_events(bindings: &Bindings, session_id: &SessionId) -> Vec<N
         .collect()
 }
 
-/// Prepares the handoff of one start and adds its pending binding.
+/// The grant of the `attached` record of `session_id`, if any (MCP P4b §5).
+/// A record that cannot be read gives `None` and an error line: the usual
+/// events of a grant without a record then apply.
+pub(super) async fn attached_grant(store: &Store, session_id: &SessionId) -> Option<String> {
+    match store.session_grant(session_id.clone()).await {
+        Ok(record) => record
+            .filter(|r| r.state == RecordState::Attached)
+            .map(|r| r.grant_id),
+        Err(error) => {
+            tracing::error!(%error, session = %session_id, "the grant record was not read; the events of a grant without a record apply");
+            None
+        }
+    }
+}
+
+/// Stores the binding facts of a batch of observed events (DL-217). A
+/// revoked binding of the grant of the session's `attached` record ends the
+/// record (`identity_changed`) with its one `coordinator.ended`, in one write
+/// (MCP P4b §5).
+///
+/// # Errors
+/// A store error.
+pub(super) async fn store_bound(
+    store: &Store,
+    bindings: &Bindings,
+    session_id: &SessionId,
+    observed: &[Event],
+) -> Result<(), StoreError> {
+    if !observed
+        .iter()
+        .any(|e| matches!(e, Event::SessionStarted { .. }))
+    {
+        return Ok(());
+    }
+    let attached = attached_grant(store, session_id).await;
+    let found = bound_events(bindings, session_id, observed, attached.as_deref());
+    if !found.events.is_empty() {
+        store.append(session_id.clone(), found.events).await?;
+    }
+    if found.identity_changed {
+        store
+            .session_grant_end(session_id.clone(), REASON_IDENTITY_CHANGED.to_owned())
+            .await?;
+    }
+    Ok(())
+}
+
+/// Prepares the handoff of one start and adds its pending binding. A start
+/// that `record` prepared binds at the generation of the record.
 ///
 /// # Errors
 /// The reason that the start fails with.
@@ -110,6 +193,7 @@ pub(super) fn prepare(
     spec: &SessionSpec,
     coordinator: &CoordinatorSpec,
     resumed: bool,
+    record: Option<&RecordStart>,
 ) -> Result<CoordinatorLaunch, String> {
     if resumed {
         return Err(NOT_NEW_CHILD.to_owned());
@@ -122,7 +206,7 @@ pub(super) fn prepare(
     let handoff = Handoff::prepare(provider, &url).map_err(|e| e.to_string())?;
     bindings.insert(
         handoff.digest.clone(),
-        grant_binding(session_id, spec, coordinator, classes),
+        grant_binding(session_id, spec, coordinator, classes, record),
     );
     Ok(with_skill(
         bindings,
@@ -243,20 +327,23 @@ pub(super) fn grant_classes(
     Ok(classes)
 }
 
-/// The pending binding of a coordinator grant.
+/// The pending binding of a coordinator grant: generation 0 and no native
+/// identity, or, for a start of a grant with a record, the generation of the
+/// record and the native id that a resume expects.
 fn grant_binding(
     session_id: &SessionId,
     spec: &SessionSpec,
     coordinator: &CoordinatorSpec,
     classes: std::collections::BTreeSet<ToolClass>,
+    record: Option<&RecordStart>,
 ) -> Binding {
     Binding {
         binding_id: format!("{session_id}:{}", coordinator.grant_id),
         grant_id: coordinator.grant_id.clone(),
         session_id: session_id.clone(),
         provider_instance: spec.provider_instance.to_string(),
-        native_id: None,
-        generation: 0,
+        native_id: record.and_then(|r| r.expected_native.clone()),
+        generation: record.map_or(0, |r| r.generation),
         classes,
         scope: coordinator.scope,
         state: BindingState::Pending,
@@ -273,7 +360,7 @@ pub(crate) struct BridgeStart {
     pub launch: CoordinatorLaunch,
     /// The digest of the token.
     pub digest: String,
-    /// The `Pending` binding (generation 0).
+    /// The `Pending` binding (generation 0, or the generation of a record).
     pub binding: Binding,
     /// The grant expiry for the row; `None` for a fleet-only binding.
     pub expires_at: Option<i64>,
@@ -297,6 +384,7 @@ pub(super) fn prepare_bridge(
     session_id: &SessionId,
     spec: &SessionSpec,
     coordinator: &CoordinatorSpec,
+    record: Option<&RecordStart>,
 ) -> Result<BridgeStart, String> {
     bindings.handoff(provider, None).map_err(str::to_owned)?;
     let bridge = bindings
@@ -308,7 +396,7 @@ pub(super) fn prepare_bridge(
     Ok(BridgeStart {
         launch: with_skill(bindings, provider, session_id, handoff.into_launch()),
         digest,
-        binding: grant_binding(session_id, spec, coordinator, classes),
+        binding: grant_binding(session_id, spec, coordinator, classes, record),
         expires_at: Some(coordinator.expires_at),
         provider,
         grant_id: None,

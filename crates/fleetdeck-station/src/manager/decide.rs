@@ -579,6 +579,9 @@ fn start(
         title: spec.title.clone(),
         offline_approval_policy: policy.offline(),
     })?;
+    // MCP P4b §9: an owner grant of a live deck gets its record at once.
+    let record_seq =
+        super::coordinator_command::set::record_start(d, bindings, &session_id, &spec)?;
     d.append(
         &session_id,
         fleetdeck_proto::event::Event::SessionNamed { callsign, worktree }.into(),
@@ -636,7 +639,9 @@ fn start(
         },
     };
     d.enqueue(&session_id, payload)?;
-    Ok(result(&session_id, input_id))
+    let mut done = result(&session_id, input_id);
+    done.seq = record_seq;
+    Ok(done)
 }
 
 /// The session's projection, if it can take `op` now: it exists, has not

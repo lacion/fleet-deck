@@ -11,7 +11,8 @@ use fleetdeck_proto::command::GrantScope;
 use fleetdeck_proto::{Event, EventEnvelope};
 use rusqlite::{Connection, OptionalExtension as _, params};
 
-use super::shim_bindings::{BindingRow, COLUMNS, RawRow, RowState, row};
+use super::session_grants::{attached_grant, end_attached};
+use super::shim_bindings::{BindingRow, COLUMNS, REASON_PROCESS_EXIT, RawRow, RowState, row};
 use super::{NewEvent, Result, Store, StoreError, log};
 use crate::coordinator::{Binding, BindingState, ToolClass};
 
@@ -122,7 +123,9 @@ fn row_of(conn: &Connection, digest: &str) -> Result<Option<BindingRow>> {
 }
 
 /// Appends `coordinator.ended` for a binding with a grant. A row whose
-/// session is gone gives no event (logged).
+/// session is gone gives no event (logged). A rotation or a process end of a
+/// row whose grant has an `attached` record gives none: the grant belongs to
+/// the session, not to the process (MCP P4b §5).
 fn ended_event(
     conn: &Connection,
     now: i64,
@@ -131,6 +134,11 @@ fn ended_event(
     reason: &str,
 ) -> Result<()> {
     if row.is_fleet_only() {
+        return Ok(());
+    }
+    if matches!(reason, REASON_PROCESS_EXIT | REASON_ROTATED)
+        && attached_grant(conn, &row.session_id)?.is_some_and(|grant| grant == row.grant_id)
+    {
         return Ok(());
     }
     let event = NewEvent::from(Event::CoordinatorEnded {
@@ -171,14 +179,26 @@ fn end_row(
 impl Store {
     /// Ends the row of an expired grant at the station start (§9.1) and
     /// appends `coordinator.ended { reason: "expired" }` for a binding with
-    /// a grant. `false` when the row is missing or not open.
+    /// a grant. When the grant has an `attached` record, the record ends too
+    /// (`ended_reason = expired`, MCP P4b §5), in the same transaction and
+    /// with the same one event. `false` when the row is missing or not open.
     ///
     /// # Errors
     /// A database error.
     pub async fn shim_binding_expire(&self, digest: String) -> Result<bool> {
-        self.write(move |conn, now, out| end_row(conn, now, out, &digest, REASON_EXPIRED))
-            .await
-            .map(|(ended, _)| ended)
+        self.write(move |conn, now, out| {
+            let before = row_of(conn, &digest)?;
+            let ended = end_row(conn, now, out, &digest, REASON_EXPIRED)?;
+            if let (true, Some(row)) = (ended, before)
+                && !row.is_fleet_only()
+                && attached_grant(conn, &row.session_id)?.is_some_and(|grant| grant == row.grant_id)
+            {
+                end_attached(conn, &row.session_id, REASON_EXPIRED, now)?;
+            }
+            Ok(ended)
+        })
+        .await
+        .map(|(ended, _)| ended)
     }
 
     /// Ends the open rows of `digests` after a rotation, in one
@@ -241,13 +261,7 @@ impl Store {
                     params![found.digest],
                 )?;
                 if open(found.state) {
-                    ended_event(
-                        conn,
-                        now,
-                        out,
-                        &found,
-                        super::shim_bindings::REASON_PROCESS_EXIT,
-                    )?;
+                    ended_event(conn, now, out, &found, REASON_PROCESS_EXIT)?;
                 }
                 dropped.push(found);
             }
@@ -272,3 +286,7 @@ impl super::Decision<'_> {
 #[cfg(test)]
 #[path = "shim_bindings_start_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "shim_bindings_record_tests.rs"]
+mod record_tests;

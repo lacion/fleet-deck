@@ -23,6 +23,7 @@ use fleetdeck_providers::host::shim::wire::ProviderIdentity;
 use rusqlite::{Connection, OptionalExtension as _, Row, params};
 
 use super::requests::RequestTime;
+use super::session_grants;
 use super::shim_bindings::{self, IdentitySignal};
 use super::{NewEvent, Result, Store, StoreError, call, log, to_i64, to_u64};
 
@@ -487,8 +488,20 @@ impl Store {
                         out.push(log::append_at(conn, &found.session_id, event, now, time)?);
                     }
                     shim_bindings::write_changes(conn, &ts)?;
-                    for event in shim_bindings::lifecycle_events(&rows, &ts) {
+                    let attached = session_grants::attached_grant(conn, &found.session_id)?;
+                    let evented = shim_bindings::evented(&rows, &ts, attached.as_deref());
+                    for event in shim_bindings::lifecycle_events(&rows, &evented) {
                         out.push(log::append_at(conn, &found.session_id, event, now, time)?);
+                    }
+                    // A resume that reports another native id ends the
+                    // record of its grant (MCP P4b §5).
+                    if shim_bindings::ends_record(&rows, &evented, attached.as_deref()) {
+                        session_grants::end_attached(
+                            conn,
+                            &found.session_id,
+                            shim_bindings::REASON_IDENTITY_CHANGED,
+                            now,
+                        )?;
                     }
                     if let Some(text) = &checkpoint {
                         store_checkpoint(conn, &shim_id, text, now)?;

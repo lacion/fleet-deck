@@ -7,7 +7,9 @@ use fleetdeck_proto::command::{GrantKind, GrantScope, SessionSpec};
 use fleetdeck_proto::event::ProviderKind;
 use fleetdeck_providers::coordinator::CoordinatorLaunch;
 
-use super::coordinator_start::{BridgeStart, NOT_NEW_CHILD, prepare, prepare_bridge, with_skill};
+use super::coordinator_start::{
+    BridgeStart, NOT_NEW_CHILD, RecordStart, prepare, prepare_bridge, with_skill,
+};
 use crate::coordinator::{Binding, BindingState, Bindings, Handoff, ToolClass};
 
 /// The pending binding of a session without a grant (DL-165).
@@ -157,7 +159,7 @@ pub(super) fn tools_for(
 ) -> Result<Tools, String> {
     let start = super::worker_grant::tools_for_start;
     start(
-        bindings, provider, session_id, spec, shim_host, resumed, None,
+        bindings, provider, session_id, spec, shim_host, resumed, None, None,
     )
     .map(|(t, _)| t)
 }
@@ -174,7 +176,8 @@ pub(super) fn bridge_verified(bindings: &Bindings, provider: ProviderKind) -> bo
 }
 
 /// [`tools_for`] without the worker rules: the owner grant and the
-/// fleet-only forms.
+/// fleet-only forms. A start that `record` prepared (MCP P4b §5) is not
+/// refused as a resume.
 ///
 /// # Errors
 /// The reason that an owner grant start fails with.
@@ -185,6 +188,7 @@ pub(super) fn tools_generic(
     spec: &SessionSpec,
     shim_host: bool,
     resumed: bool,
+    record: Option<&RecordStart>,
 ) -> Result<Tools, String> {
     let bridge_ok = bridge_verified(bindings, provider);
     let Some(coordinator) = spec.coordinator.as_deref() else {
@@ -200,12 +204,20 @@ pub(super) fn tools_generic(
             Tools::None
         }));
     };
-    if resumed {
+    if resumed && record.is_none() {
         return Err(NOT_NEW_CHILD.to_owned());
     }
     if !shim_host {
-        return prepare(bindings, provider, session_id, spec, coordinator, false)
-            .map(Tools::Direct);
+        return prepare(
+            bindings,
+            provider,
+            session_id,
+            spec,
+            coordinator,
+            false,
+            record,
+        )
+        .map(Tools::Direct);
     }
     if !bridge_ok {
         return Err(
@@ -213,7 +225,7 @@ pub(super) fn tools_generic(
                 .to_owned(),
         );
     }
-    prepare_bridge(bindings, provider, session_id, spec, coordinator).map(Tools::Bridge)
+    prepare_bridge(bindings, provider, session_id, spec, coordinator, record).map(Tools::Bridge)
 }
 
 /// The info line of a session that got its tools (a start or a resume).

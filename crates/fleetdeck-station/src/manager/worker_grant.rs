@@ -18,7 +18,9 @@ use fleetdeck_proto::event::{ProviderKind, RunOrigin, WorkerOutcome};
 use fleetdeck_proto::{CommandId, Event, SessionId};
 
 use super::coordinator_command::check_structure;
-use super::coordinator_start::{Tools, bridge_verified, prepare, prepare_bridge, tools_generic};
+use super::coordinator_start::{
+    RecordStart, Tools, bridge_verified, prepare, prepare_bridge, tools_generic,
+};
 use crate::coordinator::Bindings;
 use crate::store::{DecideError, NewEvent, Store};
 
@@ -140,10 +142,15 @@ pub(super) fn admit(
 /// worker grant never fails the start: every refusal that would fail an
 /// owner grant drops the grant and prepares the fleet-only tools (only when
 /// the fleet handoff is verified, else none), and returns the skip to
-/// record. `start_command_id` is the command of the start effect.
+/// record. `start_command_id` is the command of the start effect. `record`
+/// is the start of a grant with a record (MCP P4b §5); its spec is an owner
+/// grant, never a worker grant.
 ///
 /// # Errors
 /// The reason that an owner grant start fails with.
+// The start needs the host, the session, its spec, the resume flag, the
+// start command and the record.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn tools_for_start(
     bindings: &Bindings,
     provider: ProviderKind,
@@ -152,10 +159,13 @@ pub(super) fn tools_for_start(
     shim_host: bool,
     resumed: bool,
     start_command_id: Option<CommandId>,
+    record: Option<&RecordStart>,
 ) -> Result<(Tools, Option<WorkerSkip>), String> {
     let Some(worker) = worker_of(spec) else {
-        return tools_generic(bindings, provider, session_id, spec, shim_host, resumed)
-            .map(|tools| (tools, None));
+        return tools_generic(
+            bindings, provider, session_id, spec, shim_host, resumed, record,
+        )
+        .map(|tools| (tools, None));
     };
     match grant_tools(
         bindings, provider, session_id, spec, worker, shim_host, resumed,
@@ -171,7 +181,9 @@ pub(super) fn tools_for_start(
             tracing::info!(session = %session_id, reason, "the worker grant is skipped at launch");
             let mut fleet = spec.clone();
             fleet.coordinator = None;
-            let tools = tools_generic(bindings, provider, session_id, &fleet, shim_host, resumed)?;
+            let tools = tools_generic(
+                bindings, provider, session_id, &fleet, shim_host, resumed, None,
+            )?;
             let skip = WorkerSkip {
                 grant_id: worker.grant_id.clone(),
                 start_command_id,
@@ -200,14 +212,14 @@ fn grant_tools(
         return Err(HANDOFF_UNVERIFIED);
     }
     if !shim_host {
-        return prepare(bindings, provider, session_id, spec, worker, false)
+        return prepare(bindings, provider, session_id, spec, worker, false, None)
             .map(Tools::Direct)
             .map_err(|_| PREPARE_FAILED);
     }
     if !bridge_verified(bindings, provider) || bindings.bridge().is_none() {
         return Err(BRIDGE_UNVERIFIED);
     }
-    prepare_bridge(bindings, provider, session_id, spec, worker)
+    prepare_bridge(bindings, provider, session_id, spec, worker, None)
         .map(Tools::Bridge)
         .map_err(|_| PREPARE_FAILED)
 }

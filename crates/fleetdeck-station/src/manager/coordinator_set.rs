@@ -8,7 +8,7 @@
 use std::collections::BTreeSet;
 
 use fleetdeck_proto::command::{
-    CommandOrigin, CommandResult, CoordinatorSpec, GrantKind, GrantScope,
+    CommandOrigin, CommandResult, CoordinatorSpec, GrantKind, GrantScope, SessionSpec,
 };
 use fleetdeck_proto::event::RunOrigin;
 use fleetdeck_proto::version::feature;
@@ -240,6 +240,53 @@ fn live_events(record: &GrantRecord, live: &Binding, form: &Binding) -> Vec<Even
     out
 }
 
+/// The sequence of the record that a start writes (MCP P4b §9).
+const START_SEQ: u64 = 1;
+
+/// True when the deck link negotiated `coordinator_live.v1`.
+fn live_deck(bindings: &Bindings) -> bool {
+    bindings
+        .deck()
+        .is_some_and(|deck| deck.has_feature(feature::COORDINATOR_LIVE))
+}
+
+/// The start-time record (MCP P4b §9), written in the decision of a start
+/// right after the session exists: an owner grant (`kind` coordinator, never
+/// a worker) on a deck link that negotiated `coordinator_live.v1` gets an
+/// `attached` record at generation 0 and `seq` 1. Returns that `seq`, for the
+/// receipt of the start; `None` when the start has no record.
+///
+/// # Errors
+/// A database error.
+pub(in crate::manager) fn record_start(
+    d: &mut Decision<'_>,
+    bindings: &Bindings,
+    session_id: &SessionId,
+    spec: &SessionSpec,
+) -> Result<Option<u64>, DecideError> {
+    let Some(coordinator) = spec
+        .coordinator
+        .as_deref()
+        .filter(|c| c.kind == GrantKind::Coordinator)
+    else {
+        return Ok(None);
+    };
+    if !live_deck(bindings) {
+        return Ok(None);
+    }
+    d.session_grant_put(&GrantRecord {
+        session_id: session_id.clone(),
+        grant_id: coordinator.grant_id.clone(),
+        seq: START_SEQ,
+        spec: Some(coordinator.clone()),
+        generation: 0,
+        state: RecordState::Attached,
+        ended_reason: None,
+        updated_at: d.now(),
+    })?;
+    Ok(Some(START_SEQ))
+}
+
 /// The decision of `session.coordinator_set`: the record, then the running
 /// binding (shim row in this transaction, memory after the commit).
 ///
@@ -255,10 +302,7 @@ pub(in crate::manager) fn set(
     spec: Option<&CoordinatorSpec>,
 ) -> Result<CommandResult, DecideError> {
     owner(origin)?;
-    if !bindings
-        .deck()
-        .is_some_and(|deck| deck.has_feature(feature::COORDINATOR_LIVE))
-    {
+    if !live_deck(bindings) {
         return Err(reject(
             RejectCode::InvalidState,
             "the deck link has no coordinator_live.v1",
@@ -394,6 +438,9 @@ pub(super) async fn publish(store: &Store, bindings: &Bindings, session_id: &Ses
     }
     bindings.rewrite(&digest, |b| apply(b, &form));
 }
+
+#[path = "coordinator_record.rs"]
+pub(in crate::manager) mod record;
 
 #[cfg(test)]
 #[path = "coordinator_set_tests.rs"]
