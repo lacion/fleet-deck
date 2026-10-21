@@ -11,5 +11,6 @@ export type RemoteIdentity = {
 repo: string, 
 /**
  * The write authority, for example `https://github.com:443/acme/app.git`.
+ * github.com and gitlab.com remotes get one canonical https dest (Fleet Sync §1.1).
  */
 dest: string, };

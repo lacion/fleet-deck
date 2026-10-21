@@ -6,7 +6,9 @@
 use std::collections::BTreeMap;
 
 use fleetdeck_core::fleet_git_digest::{ensure_home_digest, home_folder_name};
-use fleetdeck_proto::fleet_git::{EnsureHomeParams, GitHomeState, RemoteIdentity, station_slug};
+use fleetdeck_proto::fleet_git::{
+    EnsureHomeParams, GitHomeState, RemoteIdentity, same_dest, station_slug,
+};
 use fleetdeck_proto::version::feature;
 use fleetdeck_proto::{CardStatus, StationId};
 use rusqlite::{Connection, params};
@@ -396,7 +398,7 @@ impl DeckStore {
             let changes_dest = p
                 .remote_dest
                 .as_deref()
-                .is_some_and(|d| d != write.identity.dest);
+                .is_some_and(|d| !same_dest(d, &write.identity.dest));
             if changes_dest {
                 if !rebind {
                     return Ok(refuse(

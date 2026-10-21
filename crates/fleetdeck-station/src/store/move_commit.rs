@@ -8,7 +8,7 @@ use std::collections::HashSet;
 
 use fleetdeck_proto::command::UserInput;
 use fleetdeck_proto::event::ProviderKind;
-use fleetdeck_proto::fleet_git::{MoveInState, PushState};
+use fleetdeck_proto::fleet_git::{MoveInState, PushState, same_dest};
 use fleetdeck_proto::{Event, EventEnvelope, InputId, SessionId};
 use rusqlite::{Connection, params};
 
@@ -362,11 +362,17 @@ impl Store {
     /// A database error.
     pub async fn git_push_refs(&self, dest: String) -> Result<HashSet<String>> {
         call(&self.inner.db, move |conn| {
-            let mut stmt = conn.prepare("SELECT ref FROM git_pushes WHERE target_dest = ?1")?;
-            let refs = stmt
-                .query_map([dest], |r| r.get::<_, String>(0))?
-                .collect::<rusqlite::Result<HashSet<_>>>()?;
-            Ok(refs)
+            // A stored `dest` can be in the form of an older release, so the
+            // rows are compared with `same_dest` (Fleet Sync §1.1, R3).
+            let mut stmt = conn.prepare("SELECT target_dest, ref FROM git_pushes")?;
+            let rows = stmt
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows
+                .into_iter()
+                .filter(|(stored, _)| same_dest(stored, &dest))
+                .map(|(_, publish_ref)| publish_ref)
+                .collect::<HashSet<_>>())
         })
         .await
     }

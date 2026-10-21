@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use fleetdeck_core::config::DeckConfig;
+use fleetdeck_core::config::{CloneTransport, DeckConfig};
 
 use crate::fleet_git_radar::RadarOptions;
 use crate::store::DeckStore;
@@ -44,6 +44,8 @@ pub struct DeckKnobs {
     pub audit_max_rows: i64,
     /// A mail or a task that the board sends expires after this time.
     pub delivery_ms: i64,
+    /// `clone_transport = "ssh"`: a remote derived from the forge uses `git@host:repo.git` (Fleet Sync §1.3).
+    pub clone_ssh: bool,
 }
 
 impl Default for DeckKnobs {
@@ -62,6 +64,7 @@ impl Default for DeckKnobs {
             audit_retention_ms: 90 * DAY_MS,
             audit_max_rows: 200_000,
             delivery_ms: 24 * HOUR_MS,
+            clone_ssh: false,
         }
     }
 }
@@ -85,6 +88,7 @@ impl DeckKnobs {
             audit_retention_ms: i64::from(config.retention.audit_days) * DAY_MS,
             audit_max_rows: i64::from(config.retention.audit_max_rows),
             delivery_ms: i64::from(config.limits.delivery_hours) * HOUR_MS,
+            clone_ssh: config.clone_transport == CloneTransport::Ssh,
         }
     }
 }
@@ -193,6 +197,7 @@ mod tests {
         config.retention.audit_days = 11;
         config.retention.audit_max_rows = 12_000;
         config.limits.delivery_hours = 13;
+        config.clone_transport = CloneTransport::Ssh;
         let day = 24 * 60 * 60 * 1000;
         assert_eq!(
             DeckKnobs::of(&config),
@@ -210,6 +215,7 @@ mod tests {
                 audit_retention_ms: 11 * day,
                 audit_max_rows: 12_000,
                 delivery_ms: 13 * 60 * 60 * 1000,
+                clone_ssh: true,
             }
         );
     }

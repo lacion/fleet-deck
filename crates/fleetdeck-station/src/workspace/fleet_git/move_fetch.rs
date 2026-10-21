@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 use std::time::Duration;
 
-use fleetdeck_proto::fleet_git::{MovePublication, code};
+use fleetdeck_proto::fleet_git::{MovePublication, code, same_dest};
 
 use super::fetch::namespace_check;
 use super::identity::{
@@ -112,7 +112,7 @@ pub async fn check_publication(
 ) -> Result<VerifiedUrl, Refusal> {
     check_publication_values(publication)?;
     let url = effective_push_url(options, home, destination, own_dest, allow_local_remotes).await?;
-    if url.dest != publication.dest {
+    if !same_dest(&url.dest, &publication.dest) {
         return Err(Refusal::new(
             code::MOVE_PUBLICATION_MISMATCH,
             format!(

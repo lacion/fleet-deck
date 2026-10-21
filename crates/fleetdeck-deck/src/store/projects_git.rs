@@ -8,6 +8,7 @@ use fleetdeck_proto::fleet_git::{
     GitHomeState, GitSettingsAnswer, GitSettingsPut, IdentityError, LocalRemotes, RemoteIdentity,
     SettingsError, check_settings, remote_identity,
 };
+use fleetdeck_proto::integrations::ForgeBinding;
 use rusqlite::{Connection, params};
 
 use super::git_snapshots::clear_checks;
@@ -127,6 +128,45 @@ pub fn remote_write(
     })
 }
 
+/// The remote URL of a forge binding (Fleet Sync §1.3): `git@host:repo.git`
+/// with `ssh`, else `https://host/repo.git`.
+#[must_use]
+pub fn forge_remote(forge: &ForgeBinding, ssh: bool) -> String {
+    if ssh {
+        format!("git@{}:{}.git", forge.host, forge.repo)
+    } else {
+        format!("https://{}/{}.git", forge.host, forge.repo)
+    }
+}
+
+/// Derives the remote of a project from its forge when it has a forge and no
+/// remote URL (Fleet Sync §1.3). A forge repo that `remote_identity` refuses
+/// stores nothing. Returns whether the remote was stored.
+pub(super) fn derive_remote(conn: &Connection, project: &str, ssh: bool) -> Result<bool> {
+    let Some(p) = super::projects::find(conn, project)? else {
+        return Ok(false);
+    };
+    let (Some(forge), None) = (&p.forge, &p.remote_url) else {
+        return Ok(false);
+    };
+    match remote_write(&forge_remote(forge, ssh), LocalRemotes::Deny) {
+        Ok(w) => {
+            conn.execute(
+                "UPDATE projects SET remote_url = ?2, remote_ssh_user = ?3, repo = ?4,
+                     remote_dest = ?5
+                 WHERE project_id = ?1 AND remote_url IS NULL",
+                params![project, w.url, w.user, w.identity.repo, w.identity.dest],
+            )?;
+            tracing::info!(project, "remote_derived_from_forge");
+            Ok(true)
+        }
+        Err(_) => {
+            tracing::warn!(project, "remote_not_derived");
+            Ok(false)
+        }
+    }
+}
+
 impl DeckStore {
     /// Whether a local remote is allowed for `project` (decision B10): every
     /// home station of the project (any state) reports
@@ -160,6 +200,71 @@ impl DeckStore {
         } else {
             LocalRemotes::Deny
         }
+    }
+
+    /// Deck start (Fleet Sync §1.3): derives the remote of every project that
+    /// has a forge and no remote URL, then recomputes `repo` and `remote_dest`
+    /// of every project with a remote URL. A changed value is written and
+    /// logged (`remote_dest_recomputed`). One transaction.
+    ///
+    /// # Errors
+    /// A database error.
+    pub async fn derive_forge_remotes(&self) -> Result<()> {
+        let ssh = self.knobs().clone_ssh;
+        let changed = call(&self.inner.db, move |conn| {
+            let tx = conn.transaction()?;
+            let ids = tx
+                .prepare("SELECT project_id FROM projects ORDER BY project_id")?
+                .query_map([], |r| r.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            let mut changed = false;
+            for id in &ids {
+                changed |= derive_remote(&tx, id, ssh)?;
+            }
+            type Stored = (
+                String,
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+            );
+            let stored = tx
+                .prepare(
+                    "SELECT project_id, remote_url, remote_ssh_user, repo, remote_dest
+                     FROM projects WHERE remote_url IS NOT NULL ORDER BY project_id",
+                )?
+                .query_map([], |r| {
+                    Ok::<Stored, rusqlite::Error>((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            for (id, url, user, repo, dest) in stored {
+                let Ok(i) = remote_identity(&clone_url(&url, user.as_deref()), LocalRemotes::Allow)
+                else {
+                    continue;
+                };
+                if (Some(&i.repo), Some(&i.dest)) != (repo.as_ref(), dest.as_ref()) {
+                    tx.execute(
+                        "UPDATE projects SET repo = ?2, remote_dest = ?3 WHERE project_id = ?1",
+                        params![id, i.repo, i.dest],
+                    )?;
+                    tracing::warn!(project = %id, "remote_dest_recomputed");
+                    changed = true;
+                }
+            }
+            tx.commit()?;
+            Ok(changed)
+        })
+        .await?;
+        if changed {
+            self.board_changed();
+        }
+        Ok(())
     }
 
     /// Saves the Git settings of a project (design §3.1, §17.1). In one
@@ -374,3 +479,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "projects_git_derive_tests.rs"]
+mod derive_tests;

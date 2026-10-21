@@ -20,7 +20,7 @@ use std::time::Duration;
 use fleetdeck_proto::command::{CommandOrigin, CommandResult, SessionCommand};
 use fleetdeck_proto::event::SessionState;
 use fleetdeck_proto::fleet_git::{
-    HomeCheckState, LandMode, LandPlan, LandState, LocalRemotes, code, remote_identity,
+    HomeCheckState, LandMode, LandPlan, LandState, LocalRemotes, code, remote_identity, same_dest,
 };
 use fleetdeck_proto::{Event, RejectCode, SessionId};
 use tokio::sync::{Notify, watch};
@@ -262,7 +262,7 @@ fn plan_checks(
     if facts
         .push_dest
         .as_deref()
-        .is_some_and(|dest| dest != plan.branch_target.dest)
+        .is_some_and(|dest| !same_dest(dest, &plan.branch_target.dest))
     {
         return Err(refuse(
             code::REMOTE_MISMATCH,

@@ -3,6 +3,8 @@
 //! write authority (`dest`), and [`effective_url`] applies the `insteadOf`
 //! rewrite rules of Git (the WIP rule, §3.8 rule 2).
 //!
+//! github.com and gitlab.com remotes get one canonical https dest (Fleet Sync §1.1).
+//!
 //! The functions are pure. They read no file and run no Git. The checks that
 //! need the station (a canonical local path, a bare repository) are in the
 //! station's home check.
@@ -18,6 +20,7 @@ pub struct RemoteIdentity {
     /// `host/path`: the O16 grouping key. Two aliases can share it.
     pub repo: String,
     /// The write authority, for example `https://github.com:443/acme/app.git`.
+    /// github.com and gitlab.com remotes get one canonical https dest (Fleet Sync §1.1).
     pub dest: String,
 }
 
@@ -270,7 +273,55 @@ pub fn remote_identity(url: &str, local: LocalRemotes) -> Result<RemoteIdentity,
     }
 }
 
+/// The hosts whose remotes get one canonical `dest` (Fleet Sync §1.1).
+pub const FORGE_HOSTS: &[&str] = &["github.com", "gitlab.com"];
+
+/// The lower-case path `owner/repo` of a forge URL, or `None` for any other
+/// URL (Fleet Sync §1.1, revision 2 R1).
+fn forge_path(ssh: bool, user: Option<&str>, host: &str, port: u16, path: &str) -> Option<String> {
+    let form_ok = if ssh {
+        port == 22 && user == Some("git")
+    } else {
+        port == 443 && user.is_none()
+    };
+    if !FORGE_HOSTS.contains(&host) || !form_ok {
+        return None;
+    }
+    let p = path
+        .strip_prefix("/~/")
+        .or_else(|| path.strip_prefix('/'))
+        .unwrap_or(path);
+    let p = p.strip_suffix('/').unwrap_or(p);
+    let ends_git = |text: &str| {
+        text.len() >= 4
+            && text.is_char_boundary(text.len() - 4)
+            && text[text.len() - 4..].eq_ignore_ascii_case(".git")
+    };
+    let p = if ends_git(p) { &p[..p.len() - 4] } else { p };
+    if p.is_empty() || ends_git(p) {
+        return None;
+    }
+    let segments: Vec<&str> = p.split('/').collect();
+    let segment_ok = |s: &&str| {
+        !s.is_empty()
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    };
+    if segments.len() < 2 || !segments.iter().all(segment_ok) {
+        return None;
+    }
+    Some(p.to_ascii_lowercase())
+}
+
 fn identity(ssh: bool, user: Option<&str>, host: &str, port: u16, path: &str) -> RemoteIdentity {
+    if let Some(p) = forge_path(ssh, user, host, port, path) {
+        // A forge URL: one canonical `dest`, and `repo` is the lower-case
+        // `host/owner/repo` (Fleet Sync §1.1, R2).
+        return RemoteIdentity {
+            repo: format!("{host}/{p}"),
+            dest: format!("https://{host}:443/{p}"),
+        };
+    }
     let dest = if ssh {
         let login = user.map(|u| format!("{u}@")).unwrap_or_default();
         format!("ssh://{login}{host}:{port}{path}")
@@ -280,6 +331,24 @@ fn identity(ssh: bool, user: Option<&str>, host: &str, port: u16, path: &str) ->
     RemoteIdentity {
         repo: format!("{host}/{}", repo_path(path)),
         dest,
+    }
+}
+
+/// Whether two destinations name the same repository. A stored `dest` can be
+/// in the form of an older release: `a == b`, else both are read again with
+/// [`remote_identity`] and their `dest` values are equal (Fleet Sync §1.1,
+/// revision 2 R3).
+#[must_use]
+pub fn same_dest(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    match (
+        remote_identity(a, LocalRemotes::Allow),
+        remote_identity(b, LocalRemotes::Allow),
+    ) {
+        (Ok(a), Ok(b)) => a.dest == b.dest,
+        _ => false,
     }
 }
 

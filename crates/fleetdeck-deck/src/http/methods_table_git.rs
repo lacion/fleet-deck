@@ -150,4 +150,11 @@ pub const API_GIT: &[ApiMethod] = &[
         Some(Scope::Admin),
         true,
     ),
+    m(
+        "projects.merge",
+        Method::POST,
+        "/api/projects/{project}/merge",
+        Some(Scope::Admin),
+        true,
+    ),
 ];

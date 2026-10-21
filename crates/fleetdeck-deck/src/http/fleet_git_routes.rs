@@ -22,6 +22,9 @@ pub mod move_routes;
 // The branches of other stations (FG-10).
 #[path = "project_branch_routes.rs"]
 pub mod project_branch_routes;
+// Merge into project (Fleet Sync FS-2).
+#[path = "project_merge_routes.rs"]
+pub mod project_merge_routes;
 // The radar route (FG-7), declared here for the same reason.
 #[path = "radar_routes.rs"]
 pub mod radar_routes;
@@ -76,5 +79,9 @@ pub fn routes() -> Router<Arc<Board>> {
         .route(
             "/api/fleet-git/drift-reference",
             put(fleet_git_pref_routes::set_reference),
+        )
+        .route(
+            "/api/projects/{project}/merge",
+            post(project_merge_routes::merge),
         )
 }
