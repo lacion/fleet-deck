@@ -100,4 +100,9 @@ kind?: GrantKind,
  * MCP P4a §4: the native mode ceilings of the grant (keys `claude`,
  * `codex`). Absent in an old answer: empty.
  */
-max_modes?: { [key in string]: string }, };
+max_modes?: { [key in string]: string }, 
+/**
+ * MCP P4b §6: true when a `session_owner_grant` row names this grant, so
+ * the owner can change its classes live. Absent in an old answer: false.
+ */
+live?: boolean, };

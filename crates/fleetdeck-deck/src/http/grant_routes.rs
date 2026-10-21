@@ -29,7 +29,7 @@ pub(crate) use super::grant_spawn::audit_detail;
 /// The most stations that one grant names (its own station included).
 pub const MAX_GRANT_STATIONS: usize = 16;
 
-fn view(g: Grant) -> GrantView {
+pub(super) fn view(g: Grant, live: bool) -> GrantView {
     let (kind, max_modes) = (g.kind, g.max_modes.clone());
     let class = |c: &GrantClass| {
         match c {
@@ -90,6 +90,7 @@ fn view(g: Grant) -> GrantView {
         allow_click: input.then_some(g.allow_click),
         kind,
         max_modes,
+        live,
     }
 }
 
@@ -103,7 +104,20 @@ pub async fn list(State(board): State<Arc<Board>>) -> Result<Json<Vec<GrantView>
         .grants(LIST_PAGE)
         .await
         .map_err(ApiError::internal)?;
-    Ok(Json(grants.into_iter().map(view).collect()))
+    let live = board
+        .store
+        .live_grant_ids()
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Json(
+        grants
+            .into_iter()
+            .map(|g| {
+                let row = live.contains(&g.grant_id);
+                view(g, row)
+            })
+            .collect(),
+    ))
 }
 
 /// `POST /api/coordinator/grants/{grant_id}/revoke`. A revoked grant stays
@@ -123,11 +137,21 @@ pub async fn revoke(
             .grant(grant_id.clone())
             .await
             .map_err(ApiError::internal)?;
-        board
+        // A grant with a `session_owner_grant` row ends through the session
+        // sequence (MCP P4b §6.3): the store queues `session.coordinator_set`
+        // with no spec, so no `session.coordinator_revoke` goes out.
+        let has_row = board
             .store
-            .revoke_grant(grant_id.clone(), "owner".to_owned())
+            .revoke_with_row(grant_id.clone(), "owner".to_owned())
             .await
             .map_err(ApiError::internal)?;
+        if !has_row {
+            board
+                .store
+                .revoke_grant(grant_id.clone(), "owner".to_owned())
+                .await
+                .map_err(ApiError::internal)?;
+        }
         // The stations that lost `coordinate` leave the link cache at once.
         board
             .link
@@ -138,7 +162,7 @@ pub async fn revoke(
         // The deck refuses at once; the station learns it through
         // `session.coordinator_revoke` when its link is up (ADR-006 §7,
         // DL-212). A second revoke sends nothing.
-        if let Some(g) = before.filter(|g| g.state != GrantState::Revoked) {
+        if let Some(g) = before.filter(|g| !has_row && g.state != GrantState::Revoked) {
             let command = fleetdeck_proto::SessionCommand::CoordinatorRevoke {
                 session_id: g.session_id.clone(),
                 grant_id: g.grant_id.clone(),
@@ -345,7 +369,11 @@ pub async fn caps(
             .detail(e.code),
     };
     board.store.audit_or_log(row).await;
-    result.map(|(_, after)| Json(view(after)))
+    let live = match &result {
+        Ok((_, after)) => live_row(&board, &after.grant_id).await?,
+        Err(_) => false,
+    };
+    result.map(|(_, after)| Json(view(after, live)))
 }
 
 /// How many recent operations `GET .../desktop-ops` returns.
@@ -420,21 +448,36 @@ fn owner_only(principal: &Principal) -> Result<(), ApiError> {
     super::guard::owner_only(principal, "revokes or renews a coordinator grant")
 }
 
-async fn current_grant(board: &Board, grant_id: &str) -> Result<Grant, ApiError> {
+/// The 404 of a grant that does not exist (or that a change finds terminal).
+pub(super) fn unknown_grant(grant_id: &str) -> ApiError {
+    ApiError::new(
+        StatusCode::NOT_FOUND,
+        "unknown_grant",
+        format!("no grant `{grant_id}`"),
+    )
+}
+
+pub(super) async fn current_grant(board: &Board, grant_id: &str) -> Result<Grant, ApiError> {
     board
         .store
         .grant(grant_id.to_owned())
         .await
         .map_err(ApiError::internal)?
-        .ok_or_else(|| {
-            ApiError::new(
-                StatusCode::NOT_FOUND,
-                "unknown_grant",
-                format!("no grant `{grant_id}`"),
-            )
-        })
+        .ok_or_else(|| unknown_grant(grant_id))
+}
+
+/// True when a `session_owner_grant` row names the grant.
+async fn live_row(board: &Board, grant_id: &str) -> Result<bool, ApiError> {
+    let live = board
+        .store
+        .live_grant_ids()
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(live.contains(grant_id))
 }
 
 async fn current(board: &Board, grant_id: &str) -> Result<GrantView, ApiError> {
-    current_grant(board, grant_id).await.map(view)
+    let g = current_grant(board, grant_id).await?;
+    let live = live_row(board, grant_id).await?;
+    Ok(view(g, live))
 }

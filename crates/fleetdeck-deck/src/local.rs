@@ -14,6 +14,7 @@ use fleetdeck_core::Secret;
 use fleetdeck_core::localsock::{self, BindError, LineClient, read_line, send};
 use fleetdeck_proto::command::CommandOrigin;
 use fleetdeck_proto::settings::{SettingsChange, SettingsSaved, SettingsView};
+use fleetdeck_proto::version::feature;
 use serde::{Deserialize, Serialize};
 use tokio::io::BufReader;
 use tokio::net::{UnixListener, UnixStream};
@@ -24,7 +25,8 @@ pub use fleetdeck_core::localsock::InvitationText;
 use crate::link::{CommandKind, DeckNode};
 use crate::local_auth::{self, AuthRequest, AuthResponse, LOCAL_ACTOR};
 use crate::store::{
-    AuditResult, DeckCommand, DeckError, DeckSession, DeckStore, Direction, NewAudit, StationRecord,
+    AuditResult, DeckCommand, DeckError, DeckSession, DeckStore, Direction, LinkFeature, NewAudit,
+    StationRecord,
 };
 
 /// What the socket serves.
@@ -127,6 +129,8 @@ pub fn station_view(st: &StationRecord, store: &DeckStore) -> StationView {
         info_at: info.as_ref().map(|(_, at)| *at),
         info: info.map(|(i, _)| i),
         display_resources: None,
+        coordinator_live: store.link_feature(&st.station_id, feature::COORDINATOR_LIVE)
+            == LinkFeature::Negotiated,
     }
 }
 

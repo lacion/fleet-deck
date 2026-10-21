@@ -59,6 +59,7 @@ fn station(name: &str, reachable: bool, max: Option<u32>, live: u64, auth: &str)
         }),
         info_at: None,
         display_resources: None,
+        coordinator_live: false,
     }
 }
 

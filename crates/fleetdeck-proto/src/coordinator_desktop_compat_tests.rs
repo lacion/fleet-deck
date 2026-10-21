@@ -224,6 +224,7 @@ fn a_grant_view_writes_kind_and_max_modes_only_when_set_and_old_answers_decode()
         allow_click: None,
         kind: GrantKind::Coordinator,
         max_modes: Default::default(),
+        live: false,
     };
     let old = serde_json::to_value(&view).unwrap();
     assert!(old.get("kind").is_none() && old.get("max_modes").is_none());
@@ -271,6 +272,7 @@ fn a_grant_view_writes_the_p6_counters_only_when_set() {
         allow_click: None,
         kind: GrantKind::Coordinator,
         max_modes: Default::default(),
+        live: false,
     };
     let v = serde_json::to_value(&view).unwrap();
     for key in [
@@ -361,6 +363,7 @@ fn a_grant_view_writes_the_recording_counters_only_when_set() {
         allow_click: None,
         kind: GrantKind::Coordinator,
         max_modes: Default::default(),
+        live: false,
     };
     let v = serde_json::to_value(&view).unwrap();
     assert_eq!(v["recording_cap"], 5);
@@ -453,6 +456,7 @@ fn a_grant_view_writes_the_input_fields_only_when_set() {
         allow_click: None,
         kind: GrantKind::Coordinator,
         max_modes: Default::default(),
+        live: false,
     };
     let v = serde_json::to_value(&view).unwrap();
     for key in [
@@ -573,6 +577,7 @@ fn a_grant_view_writes_the_click_allowance_only_when_set() {
         allow_click: None,
         kind: GrantKind::Coordinator,
         max_modes: Default::default(),
+        live: false,
     };
     let v = serde_json::to_value(&view).unwrap();
     assert!(!v.as_object().unwrap().contains_key("allow_click"));

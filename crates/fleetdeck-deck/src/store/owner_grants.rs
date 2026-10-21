@@ -783,6 +783,15 @@ impl DeckStore {
         }
         Ok(queued)
     }
+    /// The ids of the grants that a `session_owner_grant` row names.
+    pub async fn live_grant_ids(&self) -> Result<BTreeSet<String>> {
+        call(&self.inner.db, |conn| {
+            let mut stmt = conn.prepare("SELECT grant_id FROM session_owner_grant")?;
+            let rows = stmt.query_map([], |r| r.get(0))?;
+            Ok(rows.collect::<rusqlite::Result<_>>()?)
+        })
+        .await
+    }
 }
 
 #[cfg(test)]

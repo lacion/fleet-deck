@@ -38,6 +38,8 @@ pub mod fleet_answers_routes;
 pub mod fleet_git_pref_routes;
 pub mod fleet_git_routes;
 pub mod fleet_routes;
+mod grant_check;
+pub mod grant_live_routes;
 mod grant_owner_start;
 pub mod grant_routes;
 mod grant_spawn;
@@ -384,6 +386,14 @@ pub fn router(board: Arc<Board>) -> Router {
         .route(
             "/api/coordinator/grants/{grant_id}/caps",
             post(grant_routes::caps),
+        )
+        .route(
+            "/api/coordinator/grants/{grant_id}/classes",
+            post(grant_live_routes::classes),
+        )
+        .route(
+            "/api/coordinator/sessions/{station_id}/{session_id}/grant",
+            post(grant_live_routes::give),
         )
         .route(
             "/api/coordinator/grants/{grant_id}/desktop-ops",
