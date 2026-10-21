@@ -52,7 +52,7 @@ describe('the Git sync section', () => {
       'Environment for agents and setup',
       'PATH, HOME, LD_*, DYLD_* and provider keys are not allowed.',
       'Remote URL',
-      'Filled from the origin of the first home. Check it. Fleet Deck compares the exact URL form (user@host:path and ssh://user@host/path are different).',
+      'Built from the forge. Change it only for a mirror or a self-hosted server.',
       'Artifact share (optional)',
       'A Taildrive share as &lt;machine&gt;/&lt;share&gt;.',
       'Save Git settings',
@@ -70,6 +70,21 @@ describe('the Git sync section', () => {
     ]) {
       expect(html).toContain(text);
     }
+  });
+
+  test('the Remote URL field is inside a closed Advanced fold', () => {
+    const html = section({ remote_url: 'https://git.test/acme/atlas.git', remote_ssh_user: 'git' });
+    const fold = /<details class="fd-int-advanced"([^>]*)>(.*?)<\/details>/s.exec(html);
+    expect(fold).not.toBeNull();
+    expect(fold?.[1]).not.toContain('open');
+    expect(fold?.[2]).toContain('<summary>Advanced</summary>');
+    expect(fold?.[2]).toContain('Remote URL');
+    expect(fold?.[2]).toContain('SSH login: git');
+    expect(fold?.[2]).toContain('value="https://git.test/acme/atlas.git"');
+    expect(html).toContain('<div class="fd-fieldwrap" data-span="2"><details');
+    // The Remote URL field is only in the fold.
+    expect(html.indexOf('Remote URL')).toBeGreaterThan(html.indexOf('<details'));
+    expect(html).not.toContain('Filled from the origin of the first home');
   });
 
   test('the hours field is disabled while cleanup is off', () => {

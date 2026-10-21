@@ -25,6 +25,21 @@ type Props = {
   readonly sessions?: readonly DeckSession[] | undefined;
 };
 
+/**
+ * One group for each non-null `remote_dest` that two or more projects share, in the order of the
+ * first project of the group. `repo` is the `repo` of that first project, else the `remote_dest`.
+ */
+export function sameRepoGroups(projects: readonly Project[]): { repo: string; count: number }[] {
+  const groups = new Map<string, { repo: string; count: number }>();
+  for (const p of projects) {
+    if (typeof p.remote_dest !== 'string') continue;
+    const group = groups.get(p.remote_dest);
+    if (group === undefined) groups.set(p.remote_dest, { repo: p.repo ?? p.remote_dest, count: 1 });
+    else group.count += 1;
+  }
+  return [...groups.values()].filter((g) => g.count >= 2);
+}
+
 /** The chips of a project: its forge and its trackers. */
 export function ProjectChips({ project }: { readonly project: Project }) {
   return (
@@ -151,6 +166,11 @@ export function ProjectsPage({
     >
       {env.error === null ? null : <p role="alert">{env.error}</p>}
       {error === null ? null : <p role="alert">{error}</p>}
+      {sameRepoGroups(list ?? []).map((g) => (
+        <p key={g.repo} className="fd-note" role="note">
+          {g.count} projects use {g.repo}. Open one of them to merge them.
+        </p>
+      ))}
       {form === null ? null : (
         <ProjectForm
           key={form.id ?? 'new'}
