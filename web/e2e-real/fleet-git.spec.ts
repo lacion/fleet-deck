@@ -53,6 +53,8 @@ test('the project Git settings save in the board and the station verifies the ho
   const form = page.getByRole('form', { name: 'Git sync' });
   await expect(form).toBeVisible();
   await form.getByLabel('Sync this project across stations').check();
+  // Fleet Sync: the remote URL is in the closed "Advanced" part.
+  await form.getByText('Advanced', { exact: true }).click();
   await form.getByLabel('Remote URL', { exact: true }).fill(rig.remoteUrl);
   await form.getByLabel('Push branches').selectOption('on_turn');
   expect(await phone.fitsWidth()).toBe(true);

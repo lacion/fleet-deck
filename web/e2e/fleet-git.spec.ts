@@ -310,6 +310,8 @@ test('a changed remote URL asks for the rebind before it saves', async ({ page }
     .getByRole('button', { name: 'Edit' })
     .click();
   const form = page.getByRole('form', { name: 'Git sync' });
+  // Fleet Sync: the remote URL is in the closed "Advanced" part.
+  await form.getByText('Advanced', { exact: true }).click();
   await expect(form.getByText('SSH login: git')).toBeVisible();
   await expect(form.getByLabel('Remote URL', { exact: true })).toHaveValue(
     'https://git.test/acme/atlas.git',
