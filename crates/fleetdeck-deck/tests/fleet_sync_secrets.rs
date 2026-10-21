@@ -734,3 +734,60 @@ async fn the_sync_route_runs_the_project_and_audits_it() {
     assert_eq!(view.body["paths"], json!([ENV]));
     assert_eq!(view.body["files"][0]["outcome"], "copied");
 }
+
+#[tokio::test]
+async fn a_failed_conflict_write_never_lets_the_older_copy_win_on_the_retry() {
+    let w = world(2, &[ENV]).await;
+    let row = w.row(ENV).await;
+    let salt = hex(&row.salt);
+    // Both homes last saw the version A.
+    let seen = w
+        .stations
+        .iter()
+        .map(|s| (s.to_string(), "version-a".to_owned()))
+        .collect();
+    let stored =
+        w.s.f
+            .store
+            .secret_seen_set(w.project(), ENV.to_owned(), row.salt.clone(), None, seen)
+            .await
+            .unwrap();
+    assert!(stored);
+    // The first home became B (time 10), the second C (time 20).
+    w.put(0, ENV, "V=B\n", 10);
+    w.put(1, ENV, "V=C\n", 20);
+    // C wins with a conflict; the write to the first home fails.
+    w.fs[0].lock().unwrap().fail_write = Some("backup_failed".to_owned());
+    let report = w.run().await;
+    let file = &report.files[0];
+    assert!(file.conflict);
+    assert_eq!(file.outcome, SecretOutcome::Partial);
+    assert_eq!(file.source.as_deref(), Some(w.stations[1].as_str()));
+    assert_eq!(
+        station_states(file),
+        [SecretStationState::Failed, SecretStationState::Same]
+    );
+    assert_eq!(w.content(0, ENV).unwrap(), b"V=B\n");
+    let (b, c) = (digest(&salt, b"V=B\n"), digest(&salt, b"V=C\n"));
+    let row = w.row(ENV).await;
+    assert_eq!(row.accepted.as_deref(), Some(c.as_str()));
+    let seen_of = |i: usize| {
+        row.seen
+            .iter()
+            .find(|(s, _)| *s == w.stations[i].as_str())
+            .map(|(_, d)| d.as_str())
+    };
+    // The home that was not written keeps its own copy as the seen one.
+    assert_eq!(seen_of(0), Some(b.as_str()));
+    assert_eq!(seen_of(1), Some(c.as_str()));
+    // The retry: C wins again, without a conflict, and reaches the first home.
+    w.fs[0].lock().unwrap().fail_write = None;
+    let again = w.run().await;
+    let file = &again.files[0];
+    assert_eq!(file.outcome, SecretOutcome::Copied);
+    assert!(!file.conflict);
+    assert_eq!(file.source.as_deref(), Some(w.stations[1].as_str()));
+    assert_eq!(w.content(0, ENV).unwrap(), b"V=C\n");
+    assert_eq!(w.content(1, ENV).unwrap(), b"V=C\n");
+    assert_eq!(w.row(ENV).await.accepted.as_deref(), Some(c.as_str()));
+}

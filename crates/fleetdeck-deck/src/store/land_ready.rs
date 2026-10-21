@@ -213,7 +213,16 @@ fn plan(
                 "Pull request mode needs a forge. Bind the project to a forge or choose Merge.",
             );
         };
-        let want = format!("{}/{}", forge.host.to_lowercase(), forge.repo);
+        // The same function that made `target_repo`, so a mixed-case forge
+        // path compares as the repository key does (pre-PR finding 6).
+        let want = remote_identity(
+            &format!("https://{}/{}", forge.host, forge.repo),
+            LocalRemotes::Deny,
+        )
+        .map_or_else(
+            |_| format!("{}/{}", forge.host.to_lowercase(), forge.repo),
+            |identity| identity.repo,
+        );
         if target_repo != want {
             return refuse(
                 "land_pr_needs_forge_branch",

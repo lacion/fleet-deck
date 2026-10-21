@@ -215,3 +215,137 @@ async fn the_deck_start_derives_a_missing_remote_and_recomputes_a_stale_dest() {
     s.derive_forge_remotes().await.unwrap();
     assert_eq!(get(&s, &stale.project_id).await, stale);
 }
+
+async fn count(s: &DeckStore, sql: &'static str, arg: &str) -> i64 {
+    let arg = arg.to_owned();
+    s.db()
+        .call(move |conn| conn.query_row(sql, [arg], |r| r.get(0)).map_err(Into::into))
+        .await
+        .unwrap()
+}
+
+const SLUGS: &str = "SELECT COUNT(*) FROM slug_reservations WHERE repo = ?1";
+const LOCKS: &str = "SELECT COUNT(*) FROM land_queue WHERE lock_key = ?1";
+
+async fn reserve(s: &DeckStore, repo: &str, slug: &str) {
+    exec(
+        s,
+        "INSERT INTO slug_reservations (repo, slug, station_id, first_used_at)
+         VALUES (?1, ?2, 'st-1', 1)",
+        vec![repo.to_owned(), slug.to_owned()],
+    )
+    .await;
+}
+
+async fn land(s: &DeckStore, id: &str, project: &str, lock_key: &str, state: &'static str) {
+    exec(
+        s,
+        "INSERT INTO land_queue (land_id, command_id, requested_by, request_command_id,
+             project_id, lock_key, station_id, session_id, state, created_at)
+         VALUES (?1, ?1, 'owner', ?1, ?2, ?3, 'st-1', ?1, ?4, 1)",
+        vec![
+            id.to_owned(),
+            project.to_owned(),
+            lock_key.to_owned(),
+            state.to_owned(),
+        ],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_repaired_repo_key_moves_the_reservations_and_the_open_land_locks() {
+    let s = store().await;
+    let p = s
+        .create_project("st-1".into(), input("App", Some("acme/app")))
+        .await
+        .unwrap();
+    const OLD: &str = "github.com/Acme/App";
+    const NEW: &str = "github.com/acme/app";
+    // A mixed-case key of an older release, with state under it.
+    exec(
+        &s,
+        "UPDATE projects SET repo = ?2 WHERE project_id = ?1",
+        vec![p.project_id.clone(), OLD.to_owned()],
+    )
+    .await;
+    reserve(&s, OLD, "alpha").await;
+    land(&s, "l-queued", &p.project_id, OLD, "queued").await;
+    land(&s, "l-ended", &p.project_id, OLD, "landed").await;
+
+    s.derive_forge_remotes().await.unwrap();
+
+    assert_eq!(get(&s, &p.project_id).await.repo.as_deref(), Some(NEW));
+    assert_eq!(
+        (count(&s, SLUGS, OLD).await, count(&s, SLUGS, NEW).await),
+        (0, 1)
+    );
+    // The open land moves; an ended land keeps its key.
+    assert_eq!(
+        (count(&s, LOCKS, NEW).await, count(&s, LOCKS, OLD).await),
+        (1, 1)
+    );
+    let moved = count(
+        &s,
+        "SELECT COUNT(*) FROM land_queue WHERE land_id = ?1 AND lock_key = 'github.com/acme/app'",
+        "l-queued",
+    )
+    .await;
+    assert_eq!(moved, 1);
+}
+
+#[tokio::test]
+async fn a_collision_of_the_repaired_repo_key_keeps_the_existing_rows() {
+    let s = store().await;
+    let p = s
+        .create_project("st-1".into(), input("App", Some("acme/app")))
+        .await
+        .unwrap();
+    const OLD: &str = "github.com/Acme/App";
+    const NEW: &str = "github.com/acme/app";
+    exec(
+        &s,
+        "UPDATE projects SET repo = ?2 WHERE project_id = ?1",
+        vec![p.project_id.clone(), OLD.to_owned()],
+    )
+    .await;
+    // The slug `alpha` is reserved under both keys, `beta` only under the old
+    // one. A running land of another project holds the new lock key.
+    reserve(&s, OLD, "alpha").await;
+    reserve(&s, OLD, "beta").await;
+    reserve(&s, NEW, "alpha").await;
+    land(&s, "l-old-running", &p.project_id, OLD, "running").await;
+    land(&s, "l-old-queued", &p.project_id, OLD, "queued").await;
+    land(&s, "l-new-running", "other", NEW, "running").await;
+
+    s.derive_forge_remotes().await.unwrap();
+
+    // `beta` moved; the old `alpha` stays, and the existing new `alpha` too.
+    assert_eq!(
+        (count(&s, SLUGS, OLD).await, count(&s, SLUGS, NEW).await),
+        (1, 2)
+    );
+    // The queued land moved; the running land keeps the old key, because the
+    // new key already has a running land.
+    let key_of = |land: &'static str| {
+        let s = s.clone();
+        async move {
+            s.db()
+                .call(move |conn| {
+                    conn.query_row(
+                        "SELECT lock_key FROM land_queue WHERE land_id = ?1",
+                        [land],
+                        |r| r.get::<_, String>(0),
+                    )
+                    .map_err(Into::into)
+                })
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(key_of("l-old-queued").await, NEW);
+    assert_eq!(key_of("l-old-running").await, OLD);
+    assert_eq!(key_of("l-new-running").await, NEW);
+    // The deck start did not fail, and the project has the new key.
+    assert_eq!(get(&s, &p.project_id).await.repo.as_deref(), Some(NEW));
+}

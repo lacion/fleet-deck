@@ -14,27 +14,28 @@ use fleetdeck_proto::fleet_git::{GitSnapshot, StationHome};
 use fleetdeck_testkit::Det;
 use serde_json::{Value, json};
 
+use super::write::backup_folder;
 use super::*;
 use crate::store::OfflineApprovalPolicy;
 use crate::store::git_state::tests::store as new_store;
 use crate::workspace::branches::parse_git_version;
 
-const SALT: &str = "abababababababababababababababababababababababababababababababab";
+pub(super) const SALT: &str = "abababababababababababababababababababababababababababababababab";
 const URL: &str = "https://github.com/acme/app.git";
 
-struct Rig {
+pub(super) struct Rig {
     _tmp: tempfile::TempDir,
-    home: PathBuf,
-    data: PathBuf,
+    pub(super) home: PathBuf,
+    pub(super) data: PathBuf,
     program: PathBuf,
-    store: Store,
-    policy: Arc<Policy>,
-    dest: String,
+    pub(super) store: Store,
+    pub(super) policy: Arc<Policy>,
+    pub(super) dest: String,
 }
 
 impl Rig {
     /// `None` (with a printed reason) when the Git of the machine is too old.
-    async fn new() -> Option<Self> {
+    pub(super) async fn new() -> Option<Self> {
         let out = Command::new("git").arg("--version").output().unwrap();
         if parse_git_version(&String::from_utf8_lossy(&out.stdout)).is_none_or(|v| v < (2, 45)) {
             eprintln!("skipped: Fleet Git needs Git 2.45 or newer");
@@ -84,7 +85,7 @@ impl Rig {
         Some(rig)
     }
 
-    fn git(&self, args: &[&str]) {
+    pub(super) fn git(&self, args: &[&str]) {
         let out = Command::new(&self.program)
             .current_dir(&self.home)
             .args(args)
@@ -101,7 +102,7 @@ impl Rig {
         );
     }
 
-    async fn set_home(&self, path: &Path, generation: u64) {
+    pub(super) async fn set_home(&self, path: &Path, generation: u64) {
         let snapshot = GitSnapshot {
             revision: generation,
             projects: Vec::new(),
@@ -118,7 +119,7 @@ impl Rig {
             .unwrap();
     }
 
-    fn options(&self) -> GitOptions {
+    pub(super) fn options(&self) -> GitOptions {
         GitOptions {
             program: self.program.clone(),
             timeout: Duration::from_secs(60),
@@ -127,13 +128,13 @@ impl Rig {
         }
     }
 
-    fn write(&self, rel: &str, content: &[u8]) {
+    pub(super) fn write(&self, rel: &str, content: &[u8]) {
         let path = self.home.join(rel);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, content).unwrap();
     }
 
-    async fn call_with(
+    pub(super) async fn call_with(
         &self,
         method: &str,
         params: Value,
@@ -151,12 +152,12 @@ impl Rig {
         .await
     }
 
-    async fn call(&self, method: &str, params: Value) -> Result<Value, SecretError> {
+    pub(super) async fn call(&self, method: &str, params: Value) -> Result<Value, SecretError> {
         let data = self.data.clone();
         self.call_with(method, params, Some(&data)).await
     }
 
-    fn base(&self) -> Value {
+    pub(super) fn base(&self) -> Value {
         json!({
             "project_id": "p1",
             "generation": 1,
@@ -165,7 +166,7 @@ impl Rig {
         })
     }
 
-    async fn scan(&self, paths: &[&str]) -> Vec<SecretFileState> {
+    pub(super) async fn scan(&self, paths: &[&str]) -> Vec<SecretFileState> {
         let mut params = self.base();
         params["files"] = paths
             .iter()
@@ -177,11 +178,11 @@ impl Rig {
             .files
     }
 
-    async fn scan_one(&self, path: &str) -> SecretFileState {
+    pub(super) async fn scan_one(&self, path: &str) -> SecretFileState {
         self.scan(&[path]).await.remove(0)
     }
 
-    async fn read(&self, path: &str, digest: &str) -> Result<Value, SecretError> {
+    pub(super) async fn read(&self, path: &str, digest: &str) -> Result<Value, SecretError> {
         let mut params = self.base();
         params["path"] = json!(path);
         params["salt"] = json!(SALT);
@@ -189,7 +190,7 @@ impl Rig {
         self.call("project.secret_read", params).await
     }
 
-    fn write_params(&self, path: &str, content: &[u8], expect: Option<&str>) -> Value {
+    pub(super) fn write_params(&self, path: &str, content: &[u8], expect: Option<&str>) -> Value {
         let mut params = self.base();
         params["path"] = json!(path);
         params["salt"] = json!(SALT);
@@ -201,7 +202,7 @@ impl Rig {
         params
     }
 
-    async fn put(
+    pub(super) async fn put(
         &self,
         path: &str,
         content: &[u8],
@@ -213,11 +214,11 @@ impl Rig {
             .map(|v| v["backup"].as_bool().unwrap())
     }
 
-    fn digest(content: &[u8]) -> String {
+    pub(super) fn digest(content: &[u8]) -> String {
         secret_digest(SALT, content).unwrap()
     }
 
-    fn backups(&self, path: &str) -> Vec<PathBuf> {
+    pub(super) fn backups(&self, path: &str) -> Vec<PathBuf> {
         let folder = backup_folder(&self.data, "p1", path).unwrap();
         let mut files: Vec<PathBuf> = fs::read_dir(folder)
             .map(|d| d.map(|e| e.unwrap().path()).collect())
@@ -227,7 +228,7 @@ impl Rig {
     }
 
     /// The files of the home that a failed write could leave.
-    fn leftovers(&self) -> Vec<String> {
+    pub(super) fn leftovers(&self) -> Vec<String> {
         let mut found = Vec::new();
         let mut stack = vec![self.home.clone()];
         while let Some(dir) = stack.pop() {
@@ -250,11 +251,11 @@ impl Rig {
     }
 }
 
-fn mode_of(path: &Path) -> u32 {
+pub(super) fn mode_of(path: &Path) -> u32 {
     fs::metadata(path).unwrap().permissions().mode() & 0o777
 }
 
-fn code_of(e: Result<impl std::fmt::Debug, SecretError>) -> &'static str {
+pub(super) fn code_of(e: Result<impl std::fmt::Debug, SecretError>) -> &'static str {
     e.unwrap_err().code
 }
 
@@ -418,219 +419,6 @@ async fn a_read_checks_the_digest() {
 }
 
 #[tokio::test]
-async fn a_write_makes_a_new_file_and_its_folders() {
-    let Some(rig) = Rig::new().await else { return };
-    let backup = rig.put("deep/er/.env", b"A=1\n", None).await.unwrap();
-    assert!(!backup);
-    let file = rig.home.join("deep/er/.env");
-    assert_eq!(fs::read(&file).unwrap(), b"A=1\n");
-    assert_eq!(mode_of(&file), 0o600);
-    assert_eq!(mode_of(&rig.home.join("deep")), 0o700);
-    assert_eq!(mode_of(&rig.home.join("deep/er")), 0o700);
-    assert!(rig.leftovers().is_empty(), "{:?}", rig.leftovers());
-    assert!(rig.backups("deep/er/.env").is_empty());
-}
-
-#[tokio::test]
-async fn a_write_replaces_with_a_backup() {
-    let Some(rig) = Rig::new().await else { return };
-    rig.write(".env", b"OLD=1\n");
-    fs::set_permissions(rig.home.join(".env"), fs::Permissions::from_mode(0o644)).unwrap();
-    let backup = rig
-        .put(".env", b"NEW=2\n", Some(&Rig::digest(b"OLD=1\n")))
-        .await
-        .unwrap();
-    assert!(backup);
-    assert_eq!(fs::read(rig.home.join(".env")).unwrap(), b"NEW=2\n");
-    assert_eq!(mode_of(&rig.home.join(".env")), 0o600);
-    let kept = rig.backups(".env");
-    assert_eq!(kept.len(), 1);
-    assert_eq!(fs::read(&kept[0]).unwrap(), b"OLD=1\n");
-    assert_eq!(mode_of(&kept[0]), 0o600);
-    assert_eq!(mode_of(kept[0].parent().unwrap()), 0o700);
-    assert!(rig.leftovers().is_empty(), "{:?}", rig.leftovers());
-    // The backup is in the data folder, never in the repository.
-    assert!(kept[0].starts_with(&rig.data));
-}
-
-#[tokio::test]
-async fn a_write_refuses_a_changed_file() {
-    let Some(rig) = Rig::new().await else { return };
-    rig.write(".env", b"OLD=1\n");
-    // A wrong `expect`.
-    let e = rig
-        .put(".env", b"NEW=2\n", Some(&Rig::digest(b"OTHER\n")))
-        .await;
-    assert_eq!(code_of(e), "changed_meanwhile");
-    assert_eq!(fs::read(rig.home.join(".env")).unwrap(), b"OLD=1\n");
-    // `None` with an existing file.
-    assert_eq!(
-        code_of(rig.put(".env", b"NEW=2\n", None).await),
-        "changed_meanwhile"
-    );
-    assert_eq!(fs::read(rig.home.join(".env")).unwrap(), b"OLD=1\n");
-    // `Some` with a missing file.
-    let e = rig
-        .put(".env.local", b"NEW=2\n", Some(&Rig::digest(b"OLD=1\n")))
-        .await;
-    assert_eq!(code_of(e), "changed_meanwhile");
-    assert!(!rig.home.join(".env.local").exists());
-    assert!(rig.leftovers().is_empty(), "{:?}", rig.leftovers());
-    assert!(rig.backups(".env").is_empty());
-}
-
-#[tokio::test]
-async fn a_write_refuses_a_content_that_does_not_match_its_digest() {
-    let Some(rig) = Rig::new().await else { return };
-    let mut params = rig.write_params(".env", b"A=1\n", None);
-    params["content_b64"] = json!(STANDARD.encode(b"A=2\n"));
-    let e = rig.call("project.secret_write", params).await.unwrap_err();
-    assert_eq!(e.code, "digest_mismatch");
-    assert_eq!(e.text, DIGEST_MISMATCH.text);
-    assert!(!rig.home.join(".env").exists());
-    // Bad base64 and a too large content.
-    let mut params = rig.write_params(".env", b"A=1\n", None);
-    params["content_b64"] = json!("***");
-    let e = rig.call("project.secret_write", params).await;
-    assert_eq!(code_of(e), "invalid_params");
-    let big = vec![b'a'; 512 * 1024 + 1];
-    let e = rig
-        .call("project.secret_write", rig.write_params(".env", &big, None))
-        .await;
-    assert_eq!(code_of(e), "too_large");
-    assert!(!rig.home.join(".env").exists());
-}
-
-#[tokio::test]
-async fn seven_writes_keep_five_backups() {
-    let Some(rig) = Rig::new().await else { return };
-    rig.write(".env", b"V=0\n");
-    for n in 0..7 {
-        let old = format!("V={n}\n");
-        let new = format!("V={}\n", n + 1);
-        let made = rig
-            .put(".env", new.as_bytes(), Some(&Rig::digest(old.as_bytes())))
-            .await
-            .unwrap();
-        assert!(made);
-    }
-    assert_eq!(fs::read(rig.home.join(".env")).unwrap(), b"V=7\n");
-    let mut kept: Vec<String> = rig
-        .backups(".env")
-        .iter()
-        .map(|p| fs::read_to_string(p).unwrap())
-        .collect();
-    kept.sort();
-    // The backups hold the 5 newest old contents: V=2 to V=6.
-    assert_eq!(kept, ["V=2\n", "V=3\n", "V=4\n", "V=5\n", "V=6\n"]);
-}
-
-#[tokio::test]
-async fn a_failed_backup_writes_nothing_and_leaves_no_temp_file() {
-    let Some(rig) = Rig::new().await else { return };
-    rig.write(".env", b"OLD=1\n");
-    let params = rig.write_params(".env", b"NEW=2\n", Some(&Rig::digest(b"OLD=1\n")));
-    // No data folder: the station cannot keep a copy.
-    let e = rig
-        .call_with("project.secret_write", params, None)
-        .await
-        .unwrap_err();
-    assert_eq!(e.code, "backup_failed");
-    assert_eq!(e.text, BACKUP_FAILED.text);
-    assert_eq!(fs::read(rig.home.join(".env")).unwrap(), b"OLD=1\n");
-    assert!(rig.leftovers().is_empty(), "{:?}", rig.leftovers());
-}
-
-/// A `commit` with `expect` in a plain folder, where an editor makes a new
-/// `.env` right after the old one moved aside. Returns the error code, the
-/// content of `.env` and the names that the station left in the folder.
-fn window(expect: &[u8], data: bool) -> (&'static str, Vec<u8>, Vec<String>, Vec<Vec<u8>>) {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path().canonicalize().unwrap();
-    let data_dir = home.join("data");
-    fs::write(home.join(".env"), b"OLD=1\n").unwrap();
-    let root = open_root(&home).unwrap();
-    let private = PrivatePaths::default();
-    let job = Job {
-        parent: root.as_fd(),
-        name: ".env",
-        rel: ".env",
-        salt: SALT,
-        project_id: "p1",
-        private: &private,
-        data_dir: data.then_some(data_dir.as_path()),
-    };
-    let e = commit(&job, b"NEW=2\n", Some(&Rig::digest(expect)), || {
-        fs::write(home.join(".env"), b"EDITED=3\n").unwrap();
-    })
-    .unwrap_err();
-    let names = fs::read_dir(&home)
-        .unwrap()
-        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-        .filter(|n| n.contains(".fleetdeck-"))
-        .collect();
-    let folder = backup_folder(&data_dir, "p1", ".env").unwrap();
-    let backups = fs::read_dir(folder)
-        .map(|d| d.map(|e| fs::read(e.unwrap().path()).unwrap()).collect())
-        .unwrap_or_default();
-    (e.code, fs::read(home.join(".env")).unwrap(), names, backups)
-}
-
-#[test]
-fn an_edit_in_the_window_of_a_replace_is_kept() {
-    // The old file is the expected one: its content is in the backup.
-    let (code, now, names, backups) = window(b"OLD=1\n", true);
-    assert_eq!(
-        (code, now.as_slice()),
-        ("changed_meanwhile", &b"EDITED=3\n"[..])
-    );
-    assert_eq!(backups, [b"OLD=1\n".to_vec()]);
-    assert!(names.is_empty(), "{names:?}");
-    // The old file is not the expected one: the same, from the other branch.
-    let (code, now, names, backups) = window(b"OTHER\n", true);
-    assert_eq!(
-        (code, now.as_slice()),
-        ("changed_meanwhile", &b"EDITED=3\n"[..])
-    );
-    assert_eq!(backups, [b"OLD=1\n".to_vec()]);
-    assert!(names.is_empty(), "{names:?}");
-}
-
-#[test]
-fn a_failed_backup_in_the_window_keeps_the_old_file_aside() {
-    // R12 b: no data folder, so no backup. The old file stays aside, the temp
-    // file goes, and the edit stays in place.
-    let (code, now, names, backups) = window(b"OTHER\n", false);
-    assert_eq!(
-        (code, now.as_slice()),
-        ("changed_meanwhile", &b"EDITED=3\n"[..])
-    );
-    assert!(backups.is_empty());
-    assert_eq!(names.len(), 1, "{names:?}");
-    assert!(names[0].contains(".fleetdeck-old-"), "{names:?}");
-}
-
-#[tokio::test]
-async fn a_write_does_not_follow_a_link() {
-    let Some(rig) = Rig::new().await else { return };
-    fs::create_dir(rig.home.join("real")).unwrap();
-    symlink(rig.home.join("real"), rig.home.join("config")).unwrap();
-    let e = rig.put("config/.env.local", b"A=1\n", None).await;
-    assert_eq!(code_of(e), "symlink");
-    assert!(!rig.home.join("real/.env.local").exists());
-    // A link at the file name.
-    rig.write("target.txt", b"T");
-    symlink(rig.home.join("target.txt"), rig.home.join(".env")).unwrap();
-    let e = rig.put(".env", b"A=1\n", None).await;
-    assert_eq!(code_of(e), "changed_meanwhile");
-    assert_eq!(fs::read(rig.home.join("target.txt")).unwrap(), b"T");
-    // A file where a folder must be.
-    rig.write("flat", b"F");
-    let e = rig.put("flat/.env", b"A=1\n", None).await;
-    assert_eq!(code_of(e), "symlink");
-}
-
-#[tokio::test]
 async fn the_home_and_the_repository_are_checked_first() {
     let Some(rig) = Rig::new().await else { return };
     rig.write(".env", b"A=1\n");
@@ -783,16 +571,84 @@ async fn the_logs_hold_no_content_digest_or_salt() {
     }
 }
 
-#[test]
-fn a_backup_name_sorts_by_its_number_and_its_suffix() {
-    assert_eq!(backup_key("1700000000000"), Some((1_700_000_000_000, 0)));
-    assert_eq!(backup_key("1700000000000-2"), Some((1_700_000_000_000, 2)));
-    for bad in ["", "-1", "1-", "a", "1-a", "1.5", "1-2-3", ".tmp"] {
-        assert_eq!(backup_key(bad), None, "{bad}");
+fn env_of<'a>(rig: &'a Rig, options: &'a GitOptions) -> Env<'a> {
+    Env {
+        store: &rig.store,
+        policy: &rig.policy,
+        private: Arc::new(PrivatePaths::default()),
+        options,
+        data_dir: None,
     }
-    let data = Path::new("/d");
-    assert!(backup_folder(data, "abc_DEF-123", ".env").is_some());
-    for bad in ["", "a/b", "..", "a b", &"a".repeat(65)] {
-        assert_eq!(backup_folder(data, bad, ".env"), None, "{bad}");
-    }
+}
+
+/// Moves the home aside and puts a bare repository in its place.
+fn swap_home(rig: &Rig) {
+    fs::rename(&rig.home, rig.home.with_extension("old")).unwrap();
+    fs::create_dir(&rig.home).unwrap();
+    rig.git(&["init", "--bare", "-q"]);
+}
+
+#[tokio::test]
+async fn a_home_swapped_before_the_open_is_not_this_repo() {
+    let Some(rig) = Rig::new().await else { return };
+    let options = rig.options();
+    let env = env_of(&rig, &options);
+    let result = begin_with(
+        &env,
+        ("p1", 1),
+        (&rig.dest, "origin"),
+        vec![".env".to_owned()],
+        || swap_home(&rig),
+        || {},
+    )
+    .await;
+    // The open takes the replacement; the check runs there and refuses it.
+    assert_eq!(result.err(), Some(NOT_THIS_REPO));
+}
+
+#[tokio::test]
+async fn a_home_swapped_after_the_check_is_not_a_home() {
+    let Some(rig) = Rig::new().await else { return };
+    let options = rig.options();
+    let env = env_of(&rig, &options);
+    let result = begin_with(
+        &env,
+        ("p1", 1),
+        (&rig.dest, "origin"),
+        vec![".env".to_owned()],
+        || {},
+        || swap_home(&rig),
+    )
+    .await;
+    assert_eq!(result.err(), Some(NOT_A_HOME));
+}
+
+#[tokio::test]
+async fn an_unchanged_home_passes_the_pin() {
+    let Some(rig) = Rig::new().await else { return };
+    let options = rig.options();
+    let env = env_of(&rig, &options);
+    let result = begin_with(
+        &env,
+        ("p1", 1),
+        (&rig.dest, "origin"),
+        vec![".env".to_owned()],
+        || {},
+        || {},
+    )
+    .await;
+    assert_eq!(result.map(|(home, ..)| home).ok(), Some(rig.home.clone()));
+}
+
+#[tokio::test]
+async fn a_generation_change_before_the_commit_is_stale() {
+    let Some(rig) = Rig::new().await else { return };
+    let options = rig.options();
+    let env = env_of(&rig, &options);
+    assert_eq!(env.recheck("p1", 1).await, Ok(()));
+    rig.set_home(&rig.home.clone(), 2).await;
+    assert_eq!(env.recheck("p1", 1).await, Err(STALE_GENERATION));
+    assert_eq!(env.recheck("p1", 2).await, Ok(()));
+    // A project without a home counts as another generation.
+    assert_eq!(env.recheck("p9", 2).await, Err(STALE_GENERATION));
 }

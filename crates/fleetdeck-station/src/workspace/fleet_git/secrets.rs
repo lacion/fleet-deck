@@ -7,12 +7,11 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, Metadata};
-use std::io::{Read, Write};
+use std::io::Read;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, PoisonError};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
@@ -23,16 +22,20 @@ use fleetdeck_proto::fleet_git_secrets::{
     SecretFileState, SecretPathError, SecretPresence, SecretReadAnswer, SecretReadParams,
     SecretScanAnswer, SecretScanParams, SecretWriteAnswer, SecretWriteParams, check_secret_path,
 };
-use rustix::fs::{AtFlags, Mode, OFlags, RenameFlags};
+use rustix::fs::{Mode, OFlags};
 use rustix::io::Errno;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+use self::write::{Job, commit};
 use super::identity::{READ_TIMEOUT, read, read_git};
 use super::include::{dir_flags, ignored_among, open_chain};
 use crate::manager::policy::Policy;
 use crate::store::Store;
 use crate::workspace::{GitOptions, PrivatePaths};
+
+#[path = "secrets_write.rs"]
+mod write;
 
 /// A refused call: the wire code and a fixed text (never a part of the params).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,7 +74,6 @@ errors! {
     UNKNOWN_METHOD = "unknown_method", "The station does not know this method.";
 }
 
-const KEEP_BACKUPS: usize = 5;
 const URL_CAP: usize = 4 * 1024;
 
 fn path_error(e: SecretPathError) -> SecretError {
@@ -107,15 +109,6 @@ pub fn secret_digest(salt_hex: &str, content: &[u8]) -> Option<String> {
     let salt = decode_salt(salt_hex)?;
     let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &salt);
     Some(lower_hex(ring::hmac::sign(&key, content).as_ref()))
-}
-
-fn random_hex() -> Result<String, SecretError> {
-    use ring::rand::SecureRandom;
-    let mut bytes = [0u8; 8];
-    ring::rand::SystemRandom::new()
-        .fill(&mut bytes)
-        .map_err(|_| WRITE_FAILED)?;
-    Ok(lower_hex(&bytes))
 }
 
 type FileLocks = Mutex<HashMap<(String, String), Arc<tokio::sync::Mutex<()>>>>;
@@ -166,28 +159,45 @@ fn check_remote_name(name: &str) -> Result<(), SecretError> {
 }
 
 impl Env<'_> {
-    /// The home folder (decision 11) and the repository check (R3).
-    async fn home(
-        &self,
-        project_id: &str,
-        generation: u64,
-        dest: &str,
-        remote_name: &str,
-    ) -> Result<PathBuf, SecretError> {
-        let stored = self
-            .store
+    /// The generation and the path that the station stored for the project.
+    async fn stored_home(&self, project_id: &str) -> Result<Option<(u64, String)>, SecretError> {
+        self.store
             .station_home(project_id.to_owned())
             .await
             .map_err(|e| {
                 tracing::warn!(error = %e, "secret files: the home list");
                 INTERNAL
-            })?;
-        let (stored_generation, path) = stored.ok_or(NOT_A_HOME)?;
-        if stored_generation != generation {
+            })
+    }
+
+    /// The home folder (decision 11): the stored generation must be
+    /// `generation`. The repository check is [`Self::same_repo`], after the
+    /// open.
+    async fn home(&self, project_id: &str, generation: u64) -> Result<PathBuf, SecretError> {
+        let (stored, path) = self.stored_home(project_id).await?.ok_or(NOT_A_HOME)?;
+        if stored != generation {
             return Err(STALE_GENERATION);
         }
-        let home = self.policy.workspace(&path).map_err(|_| NOT_A_HOME)?;
-        let git = read_git(self.options, &home, READ_TIMEOUT);
+        self.policy.workspace(&path).map_err(|_| NOT_A_HOME)
+    }
+
+    /// The generation must still be `generation`; a home that is gone counts
+    /// as another generation. Used right before a write is installed.
+    async fn recheck(&self, project_id: &str, generation: u64) -> Result<(), SecretError> {
+        match self.stored_home(project_id).await? {
+            Some((stored, _)) if stored == generation => Ok(()),
+            _ => Err(STALE_GENERATION),
+        }
+    }
+
+    /// The repository check (R3): the home points to the repository `dest`.
+    async fn same_repo(
+        &self,
+        home: &Path,
+        dest: &str,
+        remote_name: &str,
+    ) -> Result<(), SecretError> {
+        let git = read_git(self.options, home, READ_TIMEOUT);
         let args = ["remote", "get-url", "--push", "--all", "--", remote_name];
         let same = match read(&git, &args, URL_CAP).await {
             Ok((0, out, _)) => {
@@ -201,7 +211,7 @@ impl Env<'_> {
             }
             _ => false,
         };
-        if same { Ok(home) } else { Err(NOT_THIS_REPO) }
+        if same { Ok(()) } else { Err(NOT_THIS_REPO) }
     }
 }
 
@@ -363,14 +373,45 @@ type Start = (PathBuf, Arc<OwnedFd>, Vec<tokio::sync::OwnedMutexGuard<()>>);
 
 async fn begin(
     env: &Env<'_>,
+    project: (&str, u64),
+    repo: (&str, &str),
+    paths: Vec<String>,
+) -> Result<Start, SecretError> {
+    begin_with(env, project, repo, paths, || {}, || {}).await
+}
+
+/// The same `(dev, ino)`: the folder that was opened is the folder that the
+/// path names now.
+fn same_folder(root: &OwnedFd, home: &Path) -> bool {
+    let pinned = root.try_clone().map(File::from).and_then(|f| f.metadata());
+    match (pinned, std::fs::metadata(home)) {
+        (Ok(a), Ok(b)) => (a.dev(), a.ino()) == (b.dev(), b.ino()),
+        _ => false,
+    }
+}
+
+/// The home is pinned before any check (pre-PR finding 5): read the stored
+/// home, take the file locks, open the folder, run the push URL check by path,
+/// and require that the path still names the folder that was opened.
+/// `before_open` and `before_compare` are test hooks.
+async fn begin_with(
+    env: &Env<'_>,
     (project, generation): (&str, u64),
     (dest, remote): (&str, &str),
     paths: Vec<String>,
+    before_open: impl FnOnce(),
+    before_compare: impl FnOnce(),
 ) -> Result<Start, SecretError> {
     check_remote_name(remote)?;
-    let home = env.home(project, generation, dest, remote).await?;
+    let home = env.home(project, generation).await?;
     let guards = lock_files(project, paths).await;
+    before_open();
     let root = Arc::new(open_root(&home).map_err(|_| NOT_A_HOME)?);
+    env.same_repo(&home, dest, remote).await?;
+    before_compare();
+    if !same_folder(&root, &home) {
+        return Err(NOT_A_HOME);
+    }
     Ok((home, root, guards))
 }
 
@@ -456,248 +497,6 @@ async fn read_call(env: &Env<'_>, p: &SecretReadParams) -> Result<Value, SecretE
     })
 }
 
-struct Job<'a> {
-    parent: BorrowedFd<'a>,
-    name: &'a str,
-    rel: &'a str,
-    salt: &'a str,
-    project_id: &'a str,
-    private: &'a PrivatePaths,
-    data_dir: Option<&'a Path>,
-}
-
-fn remove(parent: BorrowedFd<'_>, name: &str) {
-    if let Err(e) = rustix::fs::unlinkat(parent, name, AtFlags::empty()) {
-        tracing::debug!(code = ?e, "secret files: a temporary file stays");
-    }
-}
-
-/// Renames `from` to `to`, never over an existing file.
-fn restore(parent: BorrowedFd<'_>, from: &str, to: &str) -> Result<(), Errno> {
-    rustix::fs::renameat_with(parent, from, parent, to, RenameFlags::NOREPLACE)
-}
-
-/// `<data>/secret-backups/<project>/<16 hex of SHA-256(path)>`; `None` for a
-/// project id outside `^[A-Za-z0-9_-]{1,64}$`.
-fn backup_folder(data_dir: &Path, project_id: &str, path: &str) -> Option<PathBuf> {
-    let id_ok = (1..=64).contains(&project_id.len())
-        && project_id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'));
-    let hash = ring::digest::digest(&ring::digest::SHA256, path.as_bytes());
-    let dir = data_dir.join("secret-backups").join(project_id);
-    id_ok.then(|| dir.join(&lower_hex(hash.as_ref())[..16]))
-}
-
-/// The sort key of a backup name: `<ms>` or `<ms>-<n>`. `None`: not a backup.
-fn backup_key(name: &str) -> Option<(u64, u64)> {
-    let number = |s: &str| {
-        if s.bytes().all(|b| b.is_ascii_digit()) {
-            s.parse().ok()
-        } else {
-            None
-        }
-    };
-    let (ms, n) = name.split_once('-').unwrap_or((name, "0"));
-    Some((number(ms)?, number(n)?))
-}
-
-/// Keeps the five newest backups of a folder (decision 16).
-fn prune_backups(folder: &Path) {
-    let Ok(entries) = std::fs::read_dir(folder) else {
-        return tracing::debug!("secret files: the backup folder cannot be listed");
-    };
-    let mut found: Vec<_> = entries
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let key = backup_key(entry.file_name().to_str()?)?;
-            let regular = std::fs::symlink_metadata(entry.path()).is_ok_and(|m| m.is_file());
-            regular.then(|| (key, entry.path()))
-        })
-        .collect();
-    found.sort();
-    let old = found.len().saturating_sub(KEEP_BACKUPS);
-    for (_, path) in found.into_iter().take(old) {
-        if let Err(e) = std::fs::remove_file(&path) {
-            tracing::debug!(code = ?e.kind(), "secret files: an old backup stays");
-        }
-    }
-}
-
-/// Keeps a copy of the old content in the data folder (decision 16).
-fn backup(job: &Job<'_>, content: &[u8]) -> Result<(), SecretError> {
-    let folder = job
-        .data_dir
-        .and_then(|dir| backup_folder(dir, job.project_id, job.rel))
-        .ok_or(BACKUP_FAILED)?;
-    let made = std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(&folder);
-    made.map_err(|_| BACKUP_FAILED)?;
-    let ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis());
-    for attempt in 0..1000u32 {
-        let name = if attempt == 0 {
-            ms.to_string()
-        } else {
-            format!("{ms}-{attempt}")
-        };
-        let opened = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .custom_flags(OFlags::NOFOLLOW.bits() as i32)
-            .mode(0o600)
-            .open(folder.join(&name));
-        match opened {
-            Ok(mut file) => {
-                let saved = file.write_all(content).and_then(|()| file.sync_all());
-                saved.map_err(|_| BACKUP_FAILED)?;
-                prune_backups(&folder);
-                return Ok(());
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(_) => break,
-        }
-    }
-    Err(BACKUP_FAILED)
-}
-
-/// Writes the new content to a temporary file next to the target.
-fn write_temp(job: &Job<'_>, tmp: &str, content: &[u8]) -> Result<(), SecretError> {
-    let fd = rustix::fs::openat(
-        job.parent,
-        tmp,
-        OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::from_raw_mode(0o600),
-    )
-    .map_err(|_| WRITE_FAILED)?;
-    let mut file = File::from(fd);
-    let written = rustix::fs::fchmod(&file, Mode::from_raw_mode(0o600))
-        .map_err(std::io::Error::from)
-        .and_then(|()| file.write_all(content))
-        .and_then(|()| file.sync_all());
-    if written.is_err() {
-        remove(job.parent, tmp);
-        return Err(WRITE_FAILED);
-    }
-    Ok(())
-}
-
-fn place_new(job: &Job<'_>, tmp: &str) -> Result<bool, SecretError> {
-    match restore(job.parent, tmp, job.name) {
-        Ok(()) => sync_folder(job).map(|()| false),
-        Err(e) => {
-            remove(job.parent, tmp);
-            Err(refusal(e, Errno::EXIST))
-        }
-    }
-}
-
-/// `CHANGED` when the rename failed with `busy` (the file is not as it was),
-/// else `WRITE_FAILED`.
-fn refusal(e: Errno, busy: Errno) -> SecretError {
-    if e == busy { CHANGED } else { WRITE_FAILED }
-}
-
-fn sync_folder(job: &Job<'_>) -> Result<(), SecretError> {
-    rustix::fs::fsync(job.parent).map_err(|_| WRITE_FAILED)
-}
-
-/// `expect = Some(digest)` (R4): the old file moves aside first, so the compare
-/// cannot lose an edit. `between` runs after the move (a test hook).
-fn replace(
-    job: &Job<'_>,
-    tmp: &str,
-    digest: &str,
-    between: impl FnOnce(),
-) -> Result<bool, SecretError> {
-    let aside = format!(".{}.fleetdeck-old-{}", job.name, random_hex()?);
-    match rustix::fs::renameat(job.parent, job.name, job.parent, aside.as_str()) {
-        Ok(()) => {}
-        Err(e) => {
-            remove(job.parent, tmp);
-            return Err(refusal(e, Errno::NOENT));
-        }
-    }
-    between();
-    let current = read_file(job.parent, &aside, job.rel, job.private, job.salt);
-    if let Ok(Some(old)) = &current
-        && old.digest == digest
-    {
-        return replace_matching(job, tmp, &aside, old);
-    }
-    // The file is not the one that the scan saw: it goes back.
-    let mut outcome = match &current {
-        Err(e) if e.code == "private_file" => PRIVATE_FILE,
-        _ => CHANGED,
-    };
-    match restore(job.parent, &aside, job.name) {
-        Ok(()) => {}
-        Err(Errno::EXIST) => {
-            // An editor made a new file in the window: keep the old content.
-            let kept = current.as_ref().ok().and_then(Option::as_ref);
-            match kept.map(|old| backup(job, &old.bytes)) {
-                Some(Ok(())) => remove(job.parent, &aside),
-                _ => tracing::debug!("secret files: the old file stays aside"),
-            }
-        }
-        Err(e) => {
-            tracing::debug!(code = ?e, "secret files: the old file stays aside");
-            outcome = WRITE_FAILED;
-        }
-    }
-    remove(job.parent, tmp);
-    Err(outcome)
-}
-
-fn replace_matching(
-    job: &Job<'_>,
-    tmp: &str,
-    aside: &str,
-    old: &Content,
-) -> Result<bool, SecretError> {
-    let put_back = |code: SecretError| {
-        if let Err(e) = restore(job.parent, aside, job.name) {
-            tracing::debug!(code = ?e, "secret files: the old file stays aside");
-        }
-        remove(job.parent, tmp);
-        Err(code)
-    };
-    if let Err(e) = backup(job, &old.bytes) {
-        return put_back(e);
-    }
-    match restore(job.parent, tmp, job.name) {
-        Ok(()) => {
-            remove(job.parent, aside);
-            sync_folder(job).map(|()| true)
-        }
-        Err(Errno::EXIST) => {
-            // An editor made a new file in the window; the old content is in
-            // the backup.
-            remove(job.parent, tmp);
-            remove(job.parent, aside);
-            Err(CHANGED)
-        }
-        Err(_) => put_back(WRITE_FAILED),
-    }
-}
-
-fn commit(
-    job: &Job<'_>,
-    content: &[u8],
-    expect: Option<&str>,
-    between: impl FnOnce(),
-) -> Result<bool, SecretError> {
-    let tmp = format!(".{}.fleetdeck-tmp-{}", job.name, random_hex()?);
-    write_temp(job, &tmp, content)?;
-    match expect {
-        None => place_new(job, &tmp),
-        Some(digest) => replace(job, &tmp, digest, between),
-    }
-}
-
 async fn write_call(env: &Env<'_>, p: SecretWriteParams) -> Result<Value, SecretError> {
     if decode_salt(&p.salt).is_none() {
         return Err(INVALID_PARAMS);
@@ -719,25 +518,33 @@ async fn write_call(env: &Env<'_>, p: SecretWriteParams) -> Result<Value, Secret
     )
     .await?;
     readable_parent(env, &home, &root, &p.path).await?;
+    let path = p.path.clone();
+    let parent = joined(
+        tokio::task::spawn_blocking(move || {
+            let parents = split(&path).0;
+            open_chain(root.as_fd(), &parents, true).map_err(|e| match e {
+                "exists" => SYMLINK,
+                _ => UNREADABLE,
+            })
+        })
+        .await,
+    )??;
+    // The generation must not change between the open and the install.
+    env.recheck(&p.project_id, p.generation).await?;
     let private = Arc::clone(&env.private);
     let data_dir = env.data_dir.map(Path::to_path_buf);
     let made = joined(
         tokio::task::spawn_blocking(move || {
-            let (parents, name) = split(&p.path);
-            let parent = open_chain(root.as_fd(), &parents, true).map_err(|e| match e {
-                "exists" => SYMLINK,
-                _ => UNREADABLE,
-            })?;
             let job = Job {
                 parent: parent.as_fd(),
-                name,
+                name: split(&p.path).1,
                 rel: &p.path,
                 salt: &p.salt,
                 project_id: &p.project_id,
                 private: &private,
                 data_dir: data_dir.as_deref(),
             };
-            commit(&job, &content, p.expect.as_deref(), || {})
+            commit(&job, &content, p.expect.as_deref(), || {}, || {})
         })
         .await,
     )??;
@@ -795,3 +602,7 @@ pub async fn secret_call(
 #[cfg(test)]
 #[path = "secrets_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "secrets_write_tests.rs"]
+mod write_tests;

@@ -3,8 +3,10 @@
 //!
 //! `secret_files` holds the list of a project with the salt of each file and
 //! the display facts of the last run. `secret_file_homes` holds, for each
-//! home station, the digest that the relay last saw or wrote there. The
-//! tables never hold a content. A digest is a keyed hash and is never logged.
+//! home station, the digest that the relay last saw or wrote there, and
+//! `secret_files.accepted_digest` holds the digest of the winner of the last
+//! run that had one (pre-PR finding 3). The tables never hold a content. A
+//! digest is a keyed hash and is never logged.
 //!
 //! Forward only. To reverse the migration (V47), drop `secret_file_homes`
 //! and then `secret_files`; the rows are derived state that the next run
@@ -26,6 +28,7 @@ CREATE TABLE secret_files (
     last_source    TEXT,                      -- the station id of the last winner (display)
     last_synced_at INTEGER,
     last_report    TEXT    NOT NULL DEFAULT '{}', -- SecretFileReport JSON of the last run (no content)
+    accepted_digest TEXT,                     -- the digest of the winner of the last run that had one
     PRIMARY KEY (project_id, path)
 ) STRICT;
 CREATE TABLE secret_file_homes (              -- the digest that the relay last saw or wrote on a station
@@ -48,6 +51,9 @@ pub struct SecretFileRow {
     pub last_source: Option<String>,
     pub last_synced_at: Option<i64>,
     pub last_report: SecretFileReport,
+    /// The digest of the winner of the last run that had a winner. When no
+    /// copy changed, a copy with this digest wins again.
+    pub accepted: Option<String>,
     /// `(station id, digest)` that the relay last saw or wrote there.
     pub seen: Vec<(String, String)>,
 }
@@ -64,7 +70,8 @@ fn not_run(path: &str) -> SecretFileReport {
     }
 }
 
-const COLUMNS: &str = "path, salt, last_digest, last_source, last_synced_at, last_report";
+const COLUMNS: &str =
+    "path, salt, last_digest, last_source, last_synced_at, last_report, accepted_digest";
 
 struct Raw {
     path: String,
@@ -73,6 +80,7 @@ struct Raw {
     last_source: Option<String>,
     last_synced_at: Option<i64>,
     last_report: String,
+    accepted: Option<String>,
 }
 
 fn raw(r: &Row<'_>) -> rusqlite::Result<Raw> {
@@ -83,6 +91,7 @@ fn raw(r: &Row<'_>) -> rusqlite::Result<Raw> {
         last_source: r.get(3)?,
         last_synced_at: r.get(4)?,
         last_report: r.get(5)?,
+        accepted: r.get(6)?,
     })
 }
 
@@ -100,6 +109,7 @@ impl Raw {
             last_source: self.last_source,
             last_synced_at: self.last_synced_at,
             last_report,
+            accepted: self.accepted,
             seen,
         })
     }
@@ -262,7 +272,8 @@ impl DeckStore {
         .await
     }
 
-    /// Sets the seen digest of each `(station id, digest)` of a file. It
+    /// Sets the accepted digest of a file (`None`: it stays as it is) and the
+    /// seen digest of each `(station id, digest)`, in one transaction. It
     /// changes nothing and answers `false` when the row is gone or its salt
     /// is not `salt` (R6).
     ///
@@ -273,6 +284,7 @@ impl DeckStore {
         project: String,
         path: String,
         salt: Vec<u8>,
+        accepted: Option<String>,
         seen: Vec<(String, String)>,
     ) -> Result<bool> {
         call(&self.inner.db, move |conn| {
@@ -286,6 +298,13 @@ impl DeckStore {
                 .optional()?;
             if same.is_none() {
                 return Ok(false);
+            }
+            if let Some(digest) = &accepted {
+                tx.execute(
+                    "UPDATE secret_files SET accepted_digest = ?4
+                     WHERE project_id = ?1 AND path = ?2 AND salt = ?3",
+                    params![project, path, salt, digest],
+                )?;
             }
             for (station, digest) in &seen {
                 tx.execute(
