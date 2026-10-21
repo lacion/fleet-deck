@@ -53,10 +53,13 @@ pub(super) async fn pump(
         }
         // The events are in the log first: `turn.completed` never waits for
         // a checkpoint (L13).
-        let bound =
-            super::super::coordinator_start::bound_events(&coordinator, &session_id, &observed);
-        if !bound.is_empty()
-            && let Err(e) = store.append(session_id.clone(), bound).await
+        if let Err(e) = super::super::coordinator_start::store_bound(
+            &store,
+            &coordinator,
+            &session_id,
+            &observed,
+        )
+        .await
         {
             tracing::error!(error = %e, "coordinator binding facts not stored; closing the session");
             break;
@@ -72,7 +75,12 @@ pub(super) async fn pump(
     }
     drop(rx);
     // The process is gone: its coordinator credential ends with it (§5.5).
-    let gone = super::super::coordinator_start::ended_events(&coordinator, &session_id);
+    let attached = super::super::coordinator_start::attached_grant(&store, &session_id).await;
+    let gone = super::super::coordinator_start::ended_events(
+        &coordinator,
+        &session_id,
+        attached.as_deref(),
+    );
     if !gone.is_empty()
         && let Err(e) = store.append(session_id.clone(), gone).await
     {

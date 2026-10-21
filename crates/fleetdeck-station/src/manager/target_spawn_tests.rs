@@ -194,6 +194,7 @@ async fn run(resume: Option<&str>, refuse: bool, fleet_only: bool) -> Run {
         resume,
         launch,
         fleet_only,
+        record_start: false,
     }
     .run(&dynamic, sink)
     .await;

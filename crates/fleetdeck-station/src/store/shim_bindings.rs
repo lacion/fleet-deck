@@ -24,6 +24,9 @@ use crate::coordinator::{BindingState, Bindings};
 pub const REASON_PROCESS_EXIT: &str = "process_exit";
 /// The reason of `coordinator.ended` when the root native identity changed.
 pub const REASON_NATIVE_REPLACED: &str = "native_replaced";
+/// The reason of `coordinator.ended` when a resume reports another native
+/// identity than the one it expects (MCP P4b §5).
+pub const REASON_IDENTITY_CHANGED: &str = "identity_changed";
 
 pub(super) const COLUMNS: &str =
     "digest, shim_id, session_id, binding_id, grant_id, provider_instance,
@@ -127,12 +130,26 @@ struct Work<'a> {
 
 fn bind(work: &mut [Work<'_>], native_id: &str, out: &mut Vec<Transition>) {
     for w in work.iter_mut().filter(|w| w.state == RowState::Pending) {
+        // A pending row that holds a native id expects it (a resume of a
+        // grant with a record, MCP P4b §5): another id ends the row.
+        if w.native
+            .as_deref()
+            .is_some_and(|expected| expected != native_id)
+        {
+            w.state = RowState::Ended;
+            out.push(Transition::Ended {
+                digest: w.row.digest.clone(),
+                reason: REASON_IDENTITY_CHANGED.to_owned(),
+            });
+            continue;
+        }
         w.state = RowState::Active;
         w.native = Some(native_id.to_owned());
         out.push(Transition::Bound {
             digest: w.row.digest.clone(),
             native_id: native_id.to_owned(),
-            generation: 1,
+            // The row's own generation when a start prepared one.
+            generation: w.row.generation.max(1),
         });
     }
 }
@@ -167,8 +184,9 @@ fn started_native(event: &NewEvent) -> Option<&str> {
 /// merges `events` and `identities` by `after`, keeps a working copy of
 /// each row, and ends the open rows at the end of the batch when `exited`.
 ///
-/// - `session.started` with a native id binds each pending row (generation
-///   1).
+/// - `session.started` with a native id binds each pending row (at the
+///   generation of the row, at least 1). A pending row that holds another
+///   native id ends (`identity_changed`).
 /// - An identity signal binds each pending row, and ends each active row
 ///   whose native id differs (`native_replaced`).
 /// - `ended` and `suspended` rows never change.
@@ -269,6 +287,45 @@ pub fn lifecycle_events(rows: &[BindingRow], ts: &[Transition]) -> Vec<NewEvent>
         }
     }
     out
+}
+
+/// The transitions of `ts` that write a lifecycle event, for the rows of a
+/// session whose record is `attached` for the grant `attached` (MCP P4b §5):
+/// the process end of such a row writes none (the grant belongs to the
+/// session, not to the process), and a changed native identity ends it with
+/// the reason `identity_changed`.
+#[must_use]
+pub fn evented(rows: &[BindingRow], ts: &[Transition], attached: Option<&str>) -> Vec<Transition> {
+    ts.iter()
+        .filter_map(|t| match t {
+            Transition::Ended { digest, reason } if of_record(rows, digest, attached) => {
+                match reason.as_str() {
+                    REASON_PROCESS_EXIT => None,
+                    REASON_NATIVE_REPLACED => Some(Transition::Ended {
+                        digest: digest.clone(),
+                        reason: REASON_IDENTITY_CHANGED.to_owned(),
+                    }),
+                    _ => Some(t.clone()),
+                }
+            }
+            _ => Some(t.clone()),
+        })
+        .collect()
+}
+
+/// True when a transition of `evented` ends the record of the `attached`
+/// grant for a changed native identity.
+#[must_use]
+pub fn ends_record(rows: &[BindingRow], evented: &[Transition], attached: Option<&str>) -> bool {
+    evented.iter().any(|t| {
+        matches!(t, Transition::Ended { digest, reason }
+            if reason == REASON_IDENTITY_CHANGED && of_record(rows, digest, attached))
+    })
+}
+
+fn of_record(rows: &[BindingRow], digest: &str, attached: Option<&str>) -> bool {
+    rows.iter()
+        .any(|r| r.digest == digest && attached == Some(r.grant_id.as_str()))
 }
 
 /// The memory side of the bindings, called by the output transaction.

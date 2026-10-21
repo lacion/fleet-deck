@@ -97,6 +97,7 @@ fn worker_tools(
         shim_host,
         resumed,
         command_id(),
+        None,
     )
     .unwrap()
 }
@@ -257,6 +258,7 @@ fn a_resumed_worker_start_drops_the_grant_and_keeps_the_fleet_tools() {
         false,
         true,
         command_id(),
+        None,
     )
     .err()
     .expect("a refusal");
@@ -315,6 +317,7 @@ fn an_unverified_provider_or_bridge_skips_the_worker_grant_at_launch_on_the_shim
         true,
         false,
         command_id(),
+        None,
     )
     .err()
     .expect("a refusal");
@@ -647,6 +650,7 @@ fn rule_3_ignores_a_worker_binding_and_keeps_an_owner_binding() {
         &session_spec(Some(owner.clone())),
         &owner,
         false,
+        None,
     )
     .unwrap();
     bindings.update(&format!("{other}:grant-1"), |b| {
@@ -696,6 +700,7 @@ async fn a_shim_reattach_keeps_the_worker_kind() {
         &"s-1".into(),
         &session_spec(Some(owner_spec.clone())),
         &owner_spec,
+        None,
     )
     .unwrap();
     for (shim, start) in [("shim-w", &start), ("shim-o", &owner)] {

@@ -18,6 +18,7 @@ use fleetdeck_proto::{Event, RejectCode, SessionId};
 
 use super::decide::{reject, result};
 use crate::coordinator::{Binding, BindingState, Bindings};
+use crate::store::session_grants::RecordState;
 use crate::store::shim_bindings::RowState;
 use crate::store::{Caller, DecideError, Decided, Decision, Store, StoreError};
 
@@ -240,6 +241,13 @@ pub fn renew(
     owner(origin)?;
     d.summary(session_id)?
         .ok_or_else(|| reject(RejectCode::UnknownSession, "no such session"))?;
+    // A grant with an attached record belongs to the session (MCP P4b §5).
+    if let Some(record) = d
+        .session_grant(session_id)?
+        .filter(|r| r.state == RecordState::Attached && r.grant_id == grant_id)
+    {
+        return set::record::renew(d, bindings, session_id, &record, generation);
+    }
     let binding = bindings.find(session_id, grant_id).ok_or_else(|| {
         reject(
             RejectCode::InvalidCommand,

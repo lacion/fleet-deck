@@ -25,11 +25,9 @@ use fleetdeck_providers::{EventSink, LiveSession, ProviderAdapter, ProviderError
 use tokio::sync::{Mutex, oneshot, watch};
 
 use super::auto_continue::recheck;
-use super::coordinator_start::Tools;
 use super::durable::host_input;
 pub use super::shells_slot::ShellsSlot;
 use super::turns::SessionTurns;
-use super::worker_grant::tools_for_start;
 use crate::history::subagent::LaunchFacts;
 use crate::store::{Dispatch, Effect, EffectPayload, InputRecord, ProcessIncarnation, Store};
 use crate::worker::EffectTarget;
@@ -326,23 +324,14 @@ impl SessionTarget {
             .then(|| self.durable_launch(&adapter, spec))
             .flatten();
         let shim_host = (resume.is_some() && self.shims.is_some()) || durable.is_some();
-        let (bridge, coordinator, worker_skip) = match tools_for_start(
-            &self.coordinator,
-            adapter.kind(),
-            &session_id,
-            spec,
-            shim_host,
-            resume.is_some(),
-            effect.command_id.clone(),
-        ) {
-            Ok((Tools::Direct(launch), skip)) => (None, Some(launch), skip),
-            Ok((Tools::Bridge(start), skip)) => (Some(start), None, skip),
-            Ok((Tools::None, skip)) => (None, None, skip),
-            Err(why) => {
-                self.start_failed(&session_id, &why).await;
-                return Dispatch::NotDispatched(format!("coordinator: {why}"));
-            }
+        let tools = match self
+            .start_tools(effect, adapter.kind(), spec, shim_host, resume)
+            .await
+        {
+            Ok(tools) => tools,
+            Err(refused) => return refused,
         };
+        let (bridge, coordinator, worker_skip) = (tools.bridge, tools.launch, tools.worker_skip);
         // A skipped worker grant is a start without a grant (MCP P4a §6.2).
         super::worker_grant::record(&self.store, &session_id, worker_skip.as_ref()).await;
         if let (Some(native), Some(shims)) = (resume, self.shims.clone()) {
@@ -394,6 +383,7 @@ impl SessionTarget {
             resume,
             launch: coordinator,
             fleet_only: spec.coordinator.is_none() || worker_skip.is_some(),
+            record_start: tools.record_start,
         }
         .run(&adapter, sink)
         .await;
@@ -783,6 +773,9 @@ mod launch_tests;
 
 #[path = "target_spawn.rs"]
 mod target_spawn;
+
+#[path = "target_tools.rs"]
+mod target_tools;
 
 #[cfg(test)]
 #[path = "target_spawn_tests.rs"]

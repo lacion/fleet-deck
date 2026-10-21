@@ -532,15 +532,21 @@ impl Bindings {
         }
     }
 
-    /// Bind the native identity: `pending` → `active` with generation 1,
-    /// or revoke an active binding whose root identity changed (§5.6).
+    /// Bind the native identity: `pending` → `active` at the generation the
+    /// start prepared (1 when it prepared none), or revoke an active binding
+    /// whose root identity changed (§5.6). A pending binding that holds the
+    /// native id it expects (a resume of a grant with a record, MCP P4b §5)
+    /// is revoked by another id.
     pub fn native_identity(&self, binding_id: &str, native_id: &str) -> Option<BindingState> {
         let mut out = None;
         self.update(binding_id, |b| {
             match (b.state, b.native_id.as_deref()) {
+                (BindingState::Pending, Some(expected)) if expected != native_id => {
+                    b.state = BindingState::Revoked;
+                }
                 (BindingState::Pending, _) => {
                     b.native_id = Some(native_id.to_owned());
-                    b.generation = 1;
+                    b.generation = b.generation.max(1);
                     b.state = BindingState::Active;
                 }
                 (BindingState::Active | BindingState::Expired, Some(old)) if old != native_id => {

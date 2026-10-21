@@ -25,6 +25,9 @@ pub(super) struct Spawn<'a> {
     pub launch: Option<CoordinatorLaunch>,
     /// The session has no coordinator grant: it may start without tools.
     pub fleet_only: bool,
+    /// The start binds a grant with a record (MCP P4b §5): a resume gets the
+    /// grant tools through the coordinated resume too.
+    pub record_start: bool,
 }
 
 impl Spawn<'_> {
@@ -43,12 +46,13 @@ impl Spawn<'_> {
             resume,
             launch,
             fleet_only,
+            record_start,
         } = self;
         let kind = adapter.kind();
         let native = resume.map(|n| NativeSessionId(n.to_owned()));
         let spec = spec.clone();
         let coordinated = match (&native, launch) {
-            (Some(native), Some(launch)) if fleet_only => Some(
+            (Some(native), Some(launch)) if fleet_only || record_start => Some(
                 adapter
                     .resume_coordinated(native, spec.clone(), sink.clone(), launch)
                     .await,

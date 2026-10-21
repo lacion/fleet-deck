@@ -318,6 +318,7 @@ fn the_start_effect_rechecks_the_handoff_and_the_endpoint() {
         &spec,
         &grant,
         false,
+        None,
     )
     .unwrap_err();
     assert_eq!(err, fleetdeck_providers::coordinator::UNVERIFIED);
@@ -329,15 +330,24 @@ fn the_start_effect_rechecks_the_handoff_and_the_endpoint() {
             &session,
             &spec,
             &grant,
-            false
+            false,
+            None
         )
         .is_err()
     );
     let ok = Bindings::default().with_handoff(verified);
     ok.set_endpoint(URL.to_owned());
     assert!(
-        coordinator_start::prepare(&ok, ProviderKind::Claude, &session, &spec, &grant, true)
-            .is_err(),
+        coordinator_start::prepare(
+            &ok,
+            ProviderKind::Claude,
+            &session,
+            &spec,
+            &grant,
+            true,
+            None
+        )
+        .is_err(),
         "a resume or a shim-hosted start is refused"
     );
     assert!(!ok.has_digest("x"));
@@ -395,9 +405,13 @@ fn a_session_without_a_grant_gets_a_fleet_only_binding_when_the_handoff_works() 
             .unwrap()
             .clone(),
     };
-    assert!(coordinator_start::bound_events(&ok, &session, &[started]).is_empty());
+    assert!(
+        coordinator_start::bound_events(&ok, &session, &[started], None)
+            .events
+            .is_empty()
+    );
     assert_eq!(ok.get("s-1:fleet").unwrap().state, BindingState::Active);
-    assert!(coordinator_start::ended_events(&ok, &session).is_empty());
+    assert!(coordinator_start::ended_events(&ok, &session, None).is_empty());
     assert_eq!(ok.get("s-1:fleet").unwrap().state, BindingState::Revoked);
     // Without the handoff, the start goes on without the tools.
     let other: SessionId = "s-2".into();
@@ -463,13 +477,13 @@ fn a_resume_on_the_direct_host_gets_a_launch_and_replaces_the_old_binding() {
             .unwrap()
             .clone(),
     };
-    coordinator_start::bound_events(&bindings, &session, &[started("native-1")]);
+    coordinator_start::bound_events(&bindings, &session, &[started("native-1")], None);
     assert_eq!(
         bindings.get("s-4:fleet").unwrap().state,
         BindingState::Active
     );
     // The process ends (stop), then the session resumes in the same run.
-    assert!(coordinator_start::ended_events(&bindings, &session).is_empty());
+    assert!(coordinator_start::ended_events(&bindings, &session, None).is_empty());
     assert_eq!(
         bindings.get("s-4:fleet").unwrap().state,
         BindingState::Revoked
@@ -485,11 +499,11 @@ fn a_resume_on_the_direct_host_gets_a_launch_and_replaces_the_old_binding() {
     // The old credential fails: its entry is gone.
     assert!(!bindings.has_digest(&digest(first.token.expose())));
     // The resumed `session.started` activates the new binding.
-    coordinator_start::bound_events(&bindings, &session, &[started("native-1")]);
+    coordinator_start::bound_events(&bindings, &session, &[started("native-1")], None);
     let b = bindings.get("s-4:fleet").unwrap();
     assert_eq!(b.state, BindingState::Active);
     assert_eq!(b.native_id.as_deref(), Some("native-1"));
-    assert!(coordinator_start::ended_events(&bindings, &session).is_empty());
+    assert!(coordinator_start::ended_events(&bindings, &session, None).is_empty());
     assert_eq!(
         bindings.get("s-4:fleet").unwrap().state,
         BindingState::Revoked
