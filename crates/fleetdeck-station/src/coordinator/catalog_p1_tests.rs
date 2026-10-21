@@ -126,7 +126,8 @@ fn the_full_catalog_stays_within_the_budget_and_is_deterministic() {
     let first = serde_json::to_vec(&tools::catalog(&classes)).unwrap();
     let second = serde_json::to_vec(&tools::catalog(&classes)).unwrap();
     eprintln!("catalog size: {} bytes", first.len());
-    assert!(first.len() <= 26_112, "{} bytes", first.len());
+    // Fleet Sync: station id or name descriptions.
+    assert!(first.len() <= 26_240, "{} bytes", first.len());
     assert_eq!(first, second);
 }
 

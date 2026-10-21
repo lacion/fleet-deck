@@ -64,7 +64,7 @@ fn tasks() -> Value {
 
 fn spawn() -> Value {
     json!({"type": "object", "required": ["station", "spec"], "properties": {
-        "station": {"type": "string"},
+        "station": {"type": "string", "description": "Station id or name."},
         "spec": {"type": "object", "required": ["provider_instance", "cwd"], "properties": {
             "provider_instance": {"type": "string"}, "cwd": {"type": "string"},
             "mode": {"type": "string"}, "model": {"type": "string"}, "title": {"type": "string"}}},
@@ -104,7 +104,7 @@ fn fleet_view() -> Value {
     json!({"type": "object", "required": ["view"], "additionalProperties": false, "properties": {
         "view": {"type": "string", "enum": ["stations", "projects", "sessions", "me"]},
         "cursor": {"type": "string", "maxLength": 4096},
-        "station": {"type": "string", "maxLength": 128}}})
+        "station": {"type": "string", "maxLength": 128, "description": "Station id or name."}}})
 }
 
 /// Every tool. The order is the order of `tools/list`.

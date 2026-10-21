@@ -367,6 +367,37 @@ pub enum CoordinatorOp {
     },
 }
 
+impl CoordinatorOp {
+    /// Every station that the op names, as mutable references: the `station`
+    /// of a variant, the `station` of each [`CoordinatorTarget`] it holds,
+    /// and the `to_station` of a `Move`. A variant without a station returns
+    /// an empty list. The deck resolves a station name to its id with it.
+    pub fn stations_mut(&mut self) -> Vec<&mut StationId> {
+        match self {
+            Self::Spawn { station, .. }
+            | Self::Interrupt { station, .. }
+            | Self::Stop { station, .. }
+            | Self::Resume { station, .. }
+            | Self::Rename { station, .. }
+            | Self::SetMode { station, .. }
+            | Self::ProjectAssign { station, .. }
+            | Self::Answer { station, .. }
+            | Self::Land { station, .. } => vec![station],
+            Self::Send { to, .. } | Self::Assign { to, .. } => vec![&mut to.station],
+            Self::Move {
+                station,
+                to_station,
+                ..
+            } => vec![station, to_station],
+            Self::AssignAuto { .. }
+            | Self::CompleteTask { .. }
+            | Self::AskCoordinator { .. }
+            | Self::SendGroup { .. }
+            | Self::ProjectStart { .. } => Vec::new(),
+        }
+    }
+}
+
 /// Where `project_assign` moves a session (ADR-008 §4.1).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
