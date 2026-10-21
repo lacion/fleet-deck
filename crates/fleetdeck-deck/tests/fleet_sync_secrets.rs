@@ -641,7 +641,15 @@ async fn an_answer_that_does_not_parse_is_offline_or_bad_answer() {
 #[tokio::test]
 async fn a_run_needs_a_remote_and_a_known_project() {
     let s = setup().await;
-    let r = sync_project(&s.f.store, &s.f.ctx, &s.app.project_id, "owner").await;
+    // A project with a forge gets its remote from the forge (Fleet Sync §1.3).
+    let mut bare = common::fleet_git_fake::input("Bare", "/work/bare");
+    bare.forge = None;
+    let bare =
+        s.f.store
+            .create_project(s.f.station.0.clone(), bare)
+            .await
+            .unwrap();
+    let r = sync_project(&s.f.store, &s.f.ctx, &bare.project_id, "owner").await;
     assert!(matches!(r, Err(SyncError::NeedsRemote)));
     let r = sync_project(&s.f.store, &s.f.ctx, "nope", "owner").await;
     assert!(matches!(r, Err(SyncError::UnknownProject)));

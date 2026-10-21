@@ -269,8 +269,19 @@ async fn the_bodies_and_the_project_are_checked() {
 async fn a_sync_without_a_remote_is_refused_and_one_without_files_is_empty() {
     let s = setup().await;
     let sync = format!("{}/sync", url(&s));
-    // The project of the fixture has a forge but no remote yet.
-    let r = s.c.post(&sync, &s.h(), json!({ "command_id": "s1" })).await;
+    // A project without a forge has no remote (Fleet Sync §1.3 derives one
+    // from a forge).
+    let mut bare = common::fleet_git_fake::input("Bare", "/work/bare");
+    bare.forge = None;
+    let bare =
+        s.f.store
+            .create_project(s.f.station.0.clone(), bare)
+            .await
+            .unwrap();
+    let bare_sync = format!("/api/projects/{}/secret-files/sync", bare.project_id);
+    let r =
+        s.c.post(&bare_sync, &s.h(), json!({ "command_id": "s1" }))
+            .await;
     expect(&r, 409, "needs_remote");
     assert_eq!(r.body["message"], "Set the forge of the project first.");
     let refused =
