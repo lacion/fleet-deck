@@ -220,6 +220,21 @@ pub async fn serve(ctx: Arc<DeckLink>, link: LiveLink) -> Closing {
         Ok(params) => sync.start("events.replay", json!(params)),
         Err(e) => control.close(code::PROTOCOL_ERROR, &format!("deck store: {e}")),
     }
+    // MCP P4b §3: a link that negotiated `coordinator_live.v1` gets the latest
+    // desired state of every owner-grant session that the station did not
+    // acknowledge, before the pending commands go out.
+    if control
+        .params()
+        .negotiated
+        .has(fleetdeck_proto::version::feature::COORDINATOR_LIVE)
+    {
+        match ctx.store.reconcile_owner_grants(sync.station.clone()).await {
+            Ok(queued) => {
+                tracing::debug!(station = %sync.station, queued, "owner grants reconciled")
+            }
+            Err(e) => tracing::error!(station = %sync.station, error = %e, "owner grant reconcile"),
+        }
+    }
     // Resend the pending commands of this station on the new link (G3).
     let router = Arc::clone(&ctx);
     let pending_of = sync.station.clone();

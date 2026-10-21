@@ -28,6 +28,10 @@ use super::{DeckStore, Result, call, new_id};
 mod fleet_answers;
 #[path = "owner_grant_schema.rs"]
 pub(super) mod owner_grant_schema;
+#[path = "owner_grants.rs"]
+pub(crate) mod owner_grants;
+#[path = "owner_spec.rs"]
+pub mod owner_spec;
 pub use fleet_answers::FleetAnswers;
 
 /// The default spawn cap (ADR-006 §4).

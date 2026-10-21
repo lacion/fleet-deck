@@ -482,6 +482,16 @@ impl DeckLink {
         {
             return;
         }
+        // A `session.coordinator_set` goes only to a link that negotiated
+        // `coordinator_live.v1`; otherwise it waits for a compatible link or
+        // its expiry (MCP P4b §9).
+        if holds(
+            &cmd.method,
+            self.store
+                .link_feature(&cmd.station_id, feature::COORDINATOR_LIVE),
+        ) {
+            return;
+        }
         // A mail of a member checks its share before every send and resend
         // (NV-17).
         match self.store.gate_member_mail(cmd.command_id.clone()).await {
@@ -575,6 +585,13 @@ fn worker_start(envelope: &serde_json::Value) -> bool {
     })
 }
 
+/// True when a command waits for a better link: a `session.coordinator_set`
+/// whose station link did not negotiate `coordinator_live.v1` (MCP P4b §9).
+#[must_use]
+fn holds(method: &str, live: LinkFeature) -> bool {
+    method == "session.coordinator_set" && live != LinkFeature::Negotiated
+}
+
 /// True for a stored `session.import` envelope that carries a `transcript`
 /// pin (B7 PRE-PR r1).
 #[must_use]
@@ -627,6 +644,15 @@ mod tests {
         });
         assert!(!pinned_import(&interrupt));
         assert!(!pinned_import(&serde_json::json!({"nonsense": true})));
+    }
+
+    #[test]
+    fn a_coordinator_set_waits_for_a_link_with_coordinator_live() {
+        for live in [LinkFeature::Down, LinkFeature::Without] {
+            assert!(holds("session.coordinator_set", live));
+            assert!(!holds("session.coordinator_revoke", live));
+        }
+        assert!(!holds("session.coordinator_set", LinkFeature::Negotiated));
     }
 
     #[tokio::test]
