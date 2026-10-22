@@ -109,11 +109,14 @@
   padding: 0;
   border: 0;
 }
-/* On the sheet fill, a plain button is an outlined secondary button (Browse…, Check access). */
+/* On the --raised sheet, a plain button (Browse…, Check access, Open the new session) has the
+   sheet's fill and the --btn-edge-raised edge (§3; --border is never the edge of a control, §2.1).
+   On a phone the sheet has no fill: the button sits on --bg with the --btn-edge of a panel button,
+   the same as Browse… in Settings (below). */
 .fd-spawn :is(.fd-folder-row > button:not(.fd-iconbtn), .fd-spawn-browse, .fd-spawn-check),
 .fd-spawn .fd-outcome > button {
-  background: transparent;
-  border-color: var(--border);
+  background: var(--raised);
+  border-color: var(--btn-edge-raised);
   color: var(--text);
 }
 .fd-spawn
@@ -122,7 +125,7 @@
   ),
 .fd-spawn .fd-outcome > button:hover:not(:disabled) {
   background: var(--raised-hi);
-  border-color: var(--border);
+  border-color: var(--btn-edge-raised);
 }
 
 /* ── title and task: no border at rest ──────────────────────────── */
@@ -207,7 +210,7 @@
   gap: var(--sp-3);
   min-width: 0;
   padding-top: var(--sp-4);
-  border-top: 1px solid var(--border-soft);
+  border-top: 1px solid var(--border);
 }
 .fd-spawn form:has(.fd-spawn-task > textarea:focus) .fd-spawn-props {
   border-top: 2px solid var(--focus);
@@ -342,7 +345,8 @@
 
 /* The stations: radio pills with the name, the reach and the free slots. At rest a pill has the
    --surface fill of a segment track and no edge (--border is never the edge of a control, §2.1).
-   The chosen one is --raised-hi with a 1px --focus ring (the selection marker). */
+   The chosen one has the look of a pressed .fd-seg segment (the provider and Where choices of the
+   same sheet): a --pressed-bg fill, a 1px inset --ctl-edge ring, --shadow-lift and weight 600. */
 .fd-spawn-stations {
   display: flex;
   flex-wrap: wrap;
@@ -375,9 +379,12 @@
   color: var(--text);
 }
 .fd-spawn-station:has(> input:checked) {
-  background: var(--raised-hi);
-  box-shadow: inset 0 0 0 1px var(--focus);
+  background: var(--pressed-bg);
+  box-shadow:
+    inset 0 0 0 1px var(--ctl-edge),
+    var(--shadow-lift);
   color: var(--text);
+  font-weight: 600;
 }
 .fd-spawn-station > input[type="radio"] {
   position: absolute;
@@ -561,7 +568,7 @@
   gap: var(--sp-2) var(--sp-4);
   margin: 0 calc(-1 * var(--sp-5)) calc(-1 * var(--sp-5));
   padding: var(--sp-3) var(--sp-5);
-  border-top: 1px solid var(--border-soft);
+  border-top: 1px solid var(--border);
 }
 .fd-spawn .fd-spawn-batch {
   display: inline-flex;
@@ -670,18 +677,58 @@
     flex: 1 1 100%;
     order: 1;
   }
+  /* The stations: two equal columns that fill the line, like the provider list and the Where
+     segment. Without the sheet fill a pill at rest sits on --bg: it takes the --raised fill and
+     --shadow-lift of a 44px tap target (hover and the pressed look stay). */
+  .fd-spawn-fields > .fd-spawn-stations {
+    flex: 1 1 100%;
+  }
+  .fd-spawn-stations {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .fd-spawn-station {
+    justify-content: flex-start;
+    min-width: 0;
+    background: var(--raised);
+    box-shadow: var(--shadow-lift);
+  }
+  /* A plain button on --bg: the --btn-edge of a panel button (settings.css .fd-set-grid). */
+  .fd-spawn :is(.fd-folder-row > button:not(.fd-iconbtn), .fd-spawn-browse, .fd-spawn-check),
+  .fd-spawn .fd-outcome > button,
+  .fd-spawn
+    :is(.fd-folder-row > button:not(.fd-iconbtn), .fd-spawn-browse, .fd-spawn-check):hover:not(
+      :disabled
+    ),
+  .fd-spawn .fd-outcome > button:hover:not(:disabled) {
+    border-color: var(--btn-edge);
+  }
   .fd-spawn-options > :not(summary) {
     margin-left: 0;
   }
+  /* The sticky footer joins the --surface bottom bar as one docked layer, with a visible top rule.
+     While the page scrolls on under it (`data-more`), the form fades out over the last 24px above
+     the rule, so a field cut at the edge reads as "more below", not as a glitch (the fade of the
+     help body, shell.css; the page scrolls here, so the fade is a --bg gradient, not a mask). */
   .fd-spawn-foot {
     position: sticky;
     bottom: calc(60px + env(safe-area-inset-bottom));
     z-index: 4;
     margin: 0 calc(-1 * var(--sp-4));
     padding: var(--sp-2) var(--sp-4);
-    background: var(--bg);
+    background: var(--surface);
     border-top: 0;
-    box-shadow: 0 -1px 0 var(--border-soft);
+    box-shadow: 0 -1px 0 var(--border);
+  }
+  .fd-spawn-foot[data-more="true"]::before {
+    content: "";
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 1px);
+    left: 0;
+    height: 24px;
+    background: linear-gradient(to bottom, transparent, var(--bg));
+    pointer-events: none;
   }
   .fd-spawn-status {
     flex-basis: 100%;

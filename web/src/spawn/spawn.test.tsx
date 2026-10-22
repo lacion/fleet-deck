@@ -657,7 +657,13 @@ describe('spawn form (P4-4)', () => {
       expect(html).toContain('<option value="opus" title="The opus.">OPUS</option>');
       expect(html).toContain('<option value="haiku" title="The haiku.">HAIKU</option>');
       expect(html).toContain('<option value="__other__">Other…</option>');
-      expect(html).toContain('From the last session of this provider on this station.');
+      // The source of the list is the accessible description of the select, not only a tooltip.
+      const note =
+        /<span id="([^"]+)" class="fd-vh">From the last session of this provider on this station\.<\/span>/.exec(
+          html,
+        );
+      expect(note).not.toBeNull();
+      expect(html).toContain(`aria-describedby="${note?.[1]}"`);
       expect(html).not.toContain('Model id or alias');
     });
 
@@ -667,6 +673,7 @@ describe('spawn form (P4-4)', () => {
       const other = '<option value="__other__">Other…</option></select>';
       expect(html).toContain(`<option value="" selected="">Default model</option>${other}`);
       expect(html).not.toContain('From the last session');
+      expect(html).not.toContain('class="fd-vh">From');
       expect(html).not.toContain('Model id or alias'); // the input shows only after "Other…"
     });
   });
