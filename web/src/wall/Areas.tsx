@@ -173,9 +173,14 @@ function StationRow({ station }: { readonly station: StationView }) {
   ].filter((t): t is string => t !== null);
   return (
     <li className="fd-wall-station" data-reachable={station.reachable ? 'true' : 'false'}>
-      <span className="fd-wall-reach" aria-hidden="true" />
+      {/* The reach glyph and the words of the board (fleet lanes, Stations page). */}
+      <span
+        className="fd-dot"
+        data-status={station.reachable ? 'online' : 'unreachable'}
+        aria-hidden="true"
+      />
       <span className="fd-wall-station-name">{station.name}</span>
-      <span className="fd-wall-note">{station.reachable ? 'Link up' : 'Unreachable'}</span>
+      <span className="fd-wall-note">{station.reachable ? 'Online' : 'Offline'}</span>
       {stats.length === 0 ? null : (
         <span className="fd-wall-station-stats">{stats.join(' · ')}</span>
       )}
