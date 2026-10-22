@@ -3,13 +3,13 @@ import { useIntegrations } from '../integrations/context';
 import { useSettings } from '../settings/context';
 import { FolderGit2 } from '../integrations/icons';
 import {
+  Activity,
   CircleHelp,
   Eye,
   FileText,
   Folder,
   Icon,
   LogOut,
-  MessagesSquare,
   Paperclip,
   Search,
   Server,
@@ -65,7 +65,7 @@ export function More({
             <>
               <li>
                 <a href="#/activity">
-                  <Icon of={MessagesSquare} />
+                  <Icon of={Activity} />
                   Activity
                 </a>
               </li>

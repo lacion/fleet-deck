@@ -78,10 +78,6 @@
 .fd-home-search {
   width: 200px;
 }
-/* Local fix until base.css has it: `.fd-sm` resets the select's padding and the chevron overlaps the text. */
-.fd-home-head select.fd-home-group {
-  padding-right: 28px;
-}
 .fd-home[data-rail="false"] .fd-home-head {
   padding-right: 60px;
 }

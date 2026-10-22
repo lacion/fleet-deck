@@ -249,7 +249,7 @@ test('the worktree list of a station shows the evidence and copies the remove co
   await expect(clean).toHaveAttribute('data-verdict', 'clean');
   await expect(clean.locator('.fd-badge').first()).toHaveText('Clean');
   await expect(clean).toContainText('0 changed · 3 ignored · 0 commits not on a remote');
-  await expect(clean).toContainText('last commit “Fix it” 2h');
+  await expect(clean).toContainText('last commit “Fix it” 2 h');
   await expect(clean.getByRole('link', { name: 'Fix the login' })).toHaveAttribute(
     'href',
     '#/s/st-alpha/s1',

@@ -67,6 +67,12 @@
   .fd-page-head {
     min-height: 52px;
   }
+  /* The title stays first; the actions take the next line. */
+  .fd-page-actions {
+    order: 2;
+    flex-basis: 100%;
+    margin-left: 0;
+  }
 }
 
 /* ── links ──────────────────────────────────────────────────────── */
@@ -510,17 +516,4 @@
 .fd-folder-foot > .fd-note {
   flex: 1;
   min-width: 0;
-}
-
-/* ── watch filters in one row ───────────────────────────────────── */
-.fd-wbar .fd-chip {
-  height: var(--ctl-h);
-  padding: 0 var(--sp-3);
-  color: var(--dim);
-}
-.fd-wbar .fd-chip[aria-pressed="true"] {
-  color: var(--text);
-}
-.fd-wbar > .fd-count {
-  margin-left: auto;
 }

@@ -13,6 +13,7 @@ test:
 	cargo test --workspace
 # The web checks only (dependencies from the local bun cache).
 test-web:
+	sh tools/design-check.sh
 	bun install --cwd web --frozen-lockfile --offline --ignore-scripts
 	bun run --cwd web typecheck
 	bun run --cwd web lint

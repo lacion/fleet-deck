@@ -222,6 +222,24 @@ body {
 a.fd-btn {
   text-decoration: none;
 }
+/* A plain button keeps an edge where its fill would match the layer under it: in a panel the edge
+   is --btn-edge (transparent on the dark deck, a hairline in the light theme); in a --raised
+   dialog it is --border in both themes. Variants (.fd-primary, .fd-ghost, …), tabs and area
+   classes keep no edge. */
+:where(.fd-panel)
+:where(
+  button:not([class]):not([role]),
+  :is(button, a.fd-btn).fd-sm:not(.fd-primary, .fd-decide, .fd-ghost, .fd-danger, .fd-iconbtn)
+) {
+  border-color: var(--btn-edge);
+}
+:where(.fd-dialog, [role="dialog"])
+  :where(
+    button:not([class]):not([role]),
+    :is(button, a.fd-btn).fd-sm:not(.fd-primary, .fd-decide, .fd-ghost, .fd-danger, .fd-iconbtn)
+  ) {
+  border-color: var(--border);
+}
 :where(button, a.fd-btn):where(:hover:not(:disabled)) {
   background: var(--raised-hi);
 }
@@ -281,6 +299,10 @@ a.fd-btn {
   height: var(--ctl-h-sm);
   padding: 0 8px;
   font-size: var(--fs-meta);
+}
+/* A select keeps room for its chevron when .fd-sm sets the padding of a button. */
+:where(select:not([multiple]):not([size])).fd-sm {
+  padding-right: 28px;
 }
 .fd-iconbtn {
   width: var(--ctl-h);
@@ -648,7 +670,7 @@ a.fd-btn {
   height: 20px;
   padding: 0 7px;
   border-radius: var(--r-chip);
-  background: var(--raised-hi);
+  background: var(--badge-bg);
   color: var(--dim);
   font-family: var(--font-ui);
   font-size: var(--fs-meta);
@@ -700,7 +722,7 @@ a.fd-btn {
   height: 18px;
   padding: 0 5px;
   border-radius: var(--r-pill);
-  background: var(--raised-hi);
+  background: var(--badge-bg);
   color: var(--dim);
   font-family: var(--font-ui);
   font-size: var(--fs-micro);
@@ -781,6 +803,15 @@ a.fd-btn {
 .fd-dot[data-status="ended"] {
   background: var(--faint-decor);
   border-color: var(--faint-decor);
+}
+/* online: a small, still, filled green dot: a station link or a provider sign-in. A link is not
+   work, so it never turns. */
+.fd-dot[data-status="online"] {
+  width: 8px;
+  height: 8px;
+  margin: 0 2px;
+  background: var(--ok);
+  border-color: var(--ok);
 }
 /* lost, unreachable: a red ring with a slash. */
 .fd-dot[data-status="lost"],
@@ -962,6 +993,18 @@ a.fd-btn {
 }
 .fd-menu > summary.fd-iconbtn:hover,
 .fd-menu[open] > summary.fd-iconbtn {
+  background: var(--raised);
+  border-color: transparent;
+  color: var(--text);
+}
+/* A menu summary that looks like a ghost button (the chat Show and Agents menus). */
+.fd-menu > summary.fd-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--dim);
+}
+.fd-menu > summary.fd-ghost:hover,
+.fd-menu[open] > summary.fd-ghost {
   background: var(--raised);
   border-color: transparent;
   color: var(--text);

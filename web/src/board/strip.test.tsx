@@ -132,7 +132,7 @@ describe('strip markup', () => {
     expect(html).toMatch(/class="fd-strip-call fd-callsign"[^>]*>falcon-899q</);
     expect(html).toContain('>Fix the test<');
     expect(html).toContain('class="fd-strip-model" data-family="opus">Opus 4.1<');
-    expect(html).toContain('>4m<');
+    expect(html).toContain('>4 min<');
     // no callsign: the first 8 characters of the id
     expect(html).toMatch(/class="fd-strip-call fd-callsign"[^>]*>nocall</);
     expect(html).not.toContain('fd-dot');

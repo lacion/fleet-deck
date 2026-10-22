@@ -40,6 +40,10 @@ The token **names** of DL-141 stay the public API: every area CSS file and `ui/p
 | `--faint-decor` | `#5B6779` | `#9AA5B4` | decoration only (hollow rings, ticks), never text |
 | `--ink-fill` *(new)* | `#E9EEF4` | `#111821` | fill of the general primary button |
 | `--ink-on` *(new)* | `#111821` | `#FFFFFF` | text on `--ink-fill` |
+| `--badge-bg` *(new)* | `var(--raised-hi)` | `var(--border-soft)` | fill of a neutral `.fd-badge` and `.fd-count` (`--raised-hi` does not show on the light `--bg`) |
+| `--btn-edge` *(new)* | `transparent` | `var(--border)` | edge of a plain button in a panel (a white button on the light `--surface` needs a hairline) |
+
+`.fd-scope-dark` *(new)*: a part that stays dark in every theme (the wall ambient mode). `tokens.css` gives it the dark color block (`:root, .fd-scope-dark`).
 
 ### 2.2 Semantic colors (the jersey colors)
 
@@ -61,6 +65,8 @@ The token **names** of DL-141 stay the public API: every area CSS file and `ui/p
 | `--focus-bg` *(new)* | `#13253A` | `#E5EFFC` | | selected tab or row tint |
 | `--add-bg` / `--del-bg` | `rgba(61,220,151,.10)` / `rgba(255,98,87,.10)` | `rgba(11,122,77,.10)` / `rgba(196,47,38,.08)` | | diff line fills |
 | `--free-bg` | `#10291F` | `#E3F5EC` | | free slot / allowed tint |
+| `--term-selection` | `rgba(102,184,255,.3)` | `rgba(26,95,191,.22)` | | terminal selection (blue) |
+| `--term-cyan` *(new)* | `#5CCFE6` | `#0E7490` | | terminal ANSI cyan (the terminal palette only; ANSI blue = `--focus`, magenta = `--fuel`) |
 
 Rules:
 
@@ -86,8 +92,11 @@ Fonts are bundled (offline LAN rule, DL-141): `@fontsource-variable/mona-sans/st
 | `--fs-chat` | 14px: chat prose, line-height 1.6 |
 | `--fs-title` | 14px: card and strip titles (weight 600) |
 | `--fs-heading` | 15px: section and station headings (wide) |
+| `--fs-strip-title` *(new)* | 17px: the session header title (weight 640) |
+| `--fs-code` *(new)* | 12.5px: code blocks and inline code in chat prose |
 | `--fs-page` *(new)* | 20px: page title (wide, weight 640, letter-spacing −0.01em) |
 | `--fs-hero` *(new)* | 26px: phone large title |
+| `--fs-display` *(new)* | 56px: display numbers read across a room (wall ambient counts, the pairing code) |
 | `--fs-12`, `--fs-13`, `--fs-15`, `--fs-18`, `--fs-24` | 12, 13, 15, 18, 24 px (kept for old CSS) |
 
 Width utilities (in `base.css`):
@@ -121,6 +130,7 @@ Weights: 400 body, 500 UI emphasis, 600 titles, 640–680 page titles and callsi
 ### 2.5 Elevation and motion
 
 - `--shadow-pop`: dark `0 1px 0 rgba(255,255,255,.04) inset, 0 16px 40px rgba(0,0,0,.45)`; light `0 12px 32px rgba(17,24,33,.12)`. Only on floating layers: menus, dialogs, popovers, the approval card, the composer, toasts, bottom sheets.
+- `--scrim` *(new)*: dark `rgba(6,10,15,.6)`; light `rgba(17,24,33,.28)` — the one dim layer behind every dialog, the drawer and a sheet.
 - `--shadow-lift` *(new)*: dark `none`; light `0 1px 2px rgba(17,24,33,.07)` — strips and cards in the light theme.
 - `--t-fast` 120ms ease-out (hover, press), `--t-move` 200ms ease (expand, slide), `--t-drawer` 220ms ease-out.
 - `--pulse-needs` 2400ms: the needs-you glow breathes (opacity of the glow only). `--pulse-working` 2400ms: the working glyph arc turns. Nothing else moves without a user action. `@media (prefers-reduced-motion: reduce)` stops every animation.
@@ -133,12 +143,12 @@ Area CSS uses these and never restyles them. Class names of DL-141 stay; their l
 
 | Primitive | Look |
 | --- | --- |
-| `button` (bare) | `--ctl-h`, padding 0 10px, `--raised` fill, no border, `--r-ctl`, 13px weight 500, `--text`; hover `--raised-hi`; focus-visible 2px `--focus` outline offset 2px; disabled opacity .45 |
+| `button` (bare) | `--ctl-h`, padding 0 10px, `--raised` fill, no border, `--r-ctl`, 13px weight 500, `--text`; hover `--raised-hi`; focus-visible 2px `--focus` outline offset 2px; disabled opacity .45. A plain button (no class, or only `.fd-sm`) in a `.fd-panel` has a `--btn-edge` edge; in a dialog (`.fd-dialog`, `[role=dialog]`, a `--raised` layer) a `--border` edge |
 | `.fd-primary` | **general primary**: `--ink-fill`, `--ink-on` text, weight 600 |
 | `.fd-decide` *(new)* | **decision primary**: `--act-fill`, `--act-ink`, weight 600 |
 | `.fd-ghost` | transparent, `--dim`; hover `--raised` + `--text` |
 | `.fd-danger` | transparent, `--hazard` text; hover `--hazard-bg` |
-| `.fd-sm` | 24px, padding 0 8px, 12px |
+| `.fd-sm` | 24px, padding 0 8px, 12px; on a `<select>` the padding-right stays 28px (the chevron) |
 | `.fd-iconbtn` | square ghost (28 or 24), icon 16px |
 | `input`, `select`, `textarea` | `--raised` fill, 1px `--border` edge, `--r-ctl`, 13px; focus: edge `--focus` + 3px `--focus-bg` ring; placeholder `--faint`. `select`: `appearance: none` + a chevron (CSS mask of Lucide `chevron-down`) at the right, padding-right 28px |
 | `input[type=checkbox]`, `input[type=radio]` | `appearance: none`, 16px, `--raised` fill, 1px `--border`; checked: `--ink-fill` fill with an `--ink-on` check (mask) / dot; radius 4px / 50% |
@@ -147,12 +157,12 @@ Area CSS uses these and never restyles them. Class names of DL-141 stay; their l
 | `.fd-chip` | filter toggle: 24px pill, transparent, `--dim`; pressed `--raised-hi` + `--text` |
 | `.fd-badge` | 20px, padding 0 7px, `--r-chip`, `--raised-hi` fill, `--dim`, 12px weight 500, sans (not mono). `data-tone`: `act` (`--act-bg`/`--act`), `hazard`, `ok`, `info` (`--focus-bg`/`--focus`), `fuel`, `muted`. `data-family`/`data-provider`: neutral (no hue) |
 | `.fd-count` *(restyled)* | 18px pill, `--raised-hi`, 11px weight 600; `data-tone="act"`: `--act-fill`/`--act-ink` |
-| `.fd-dot` | the **status glyph** (12px, CSS only, shape + color): `working` ring `--ok` with a 3/4 arc (conic gradient) that turns slowly; `verifying` ring with half arc `--focus`; `needs_you` filled `--act-fill` circle with a dark "!" (pseudo-element); `queued` dashed ring `--focus`; `idle` hollow ring `--faint`; `ended` filled `--faint-decor`; `lost`, `unreachable` `--hazard` ring with a slash |
+| `.fd-dot` | the **status glyph** (12px, CSS only, shape + color): `working` ring `--ok` with a 3/4 arc (conic gradient) that turns slowly; `verifying` ring with half arc `--focus`; `needs_you` filled `--act-fill` circle with a dark "!" (pseudo-element); `queued` dashed ring `--focus`; `idle` hollow ring `--faint`; `ended` filled `--faint-decor`; `lost`, `unreachable` `--hazard` ring with a slash; `online` *(new)* a small (8px) still filled `--ok` dot — a station link or a provider sign-in (a link is not work: it never turns) |
 | `.fd-holder` *(new)* | the 3px status bar at the left edge of a strip, `data-status` colors: needs_you `--act`, working `--ok`, verifying/queued `--focus`, idle `--faint-decor`, ended transparent with a 1px `--faint-decor` edge, lost/unreachable `--hazard` |
 | `.fd-glow` *(new)* | the needs-you outline and glow of a strip or card: 1px `--act-line` outline, a 3px `--act-glow` ring that breathes (`--pulse-needs`) on `::after`. The element must be positioned |
 | `.fd-label` | section label: 12px weight 600 `--dim`, sentence case (no capitals, no tracking) |
 | `.fd-kbd` | 18px, padding 0 5px, `--r-chip`, `--raised-hi`, 11px `--faint`, sans |
-| `.fd-menu` / `.fd-menu-body` | popover: `--raised` (light `--raised`), `--r-panel`, `--shadow-pop`, padding 4px; rows 28px ghost, left-aligned, icon 14px |
+| `.fd-menu` / `.fd-menu-body` | popover: `--raised` (light `--raised`), `--r-panel`, `--shadow-pop`, padding 4px; rows 28px ghost, left-aligned, icon 14px. `.fd-menu > summary.fd-ghost` *(new)*: a summary that looks like a ghost button (transparent, `--dim`; hover and open `--raised` + `--text`) |
 | `.fd-panel` | `--surface`, `--r-panel`, no border |
 | `.fd-code` | mono 12px, `--code`, `--r-card`, padding 10px 12px |
 | `.fd-diff` / `.fd-dl[data-kind]` | mono 12px; `add` `--ok` on `--add-bg`; `del` `--hazard` on `--del-bg`; `hunk` `--focus`; `meta` `--faint`; `file` `--surface` weight 600 |
@@ -258,6 +268,8 @@ From concept A: top bar 52px (mark, page title `.fd-wide` 18px, Live, avatar); n
 
 The wall keeps its own layout (R13) and uses the same tokens and the strip; type one step larger (`--fs-ui` 15px) for distance reading.
 
+The wall scope (`.fd-wall-root` in `wall.css`) re-declares the size tokens (`--fs-*`, `--sp-*`, `--r-*`, `--ctl-h*`, `--row-h`, `--strip-h`) as multiples of the wall unit `--fd-wall-u` (1px on a 1080p screen at scale 1; `clamp(14px, 100dvh/80, 28px)` × scale / 14). The type is the board scale × 15/13. The fixed-size primitives (`.fd-dot`, `.fd-holder`, `.fd-mark`) zoom by `--fd-wall-k`, which `WallPage` sets. The ambient mode adds `.fd-scope-dark` and stays dark in the light theme.
+
 ---
 
 ## 5. Copy
@@ -276,3 +288,12 @@ When an agent adds a token, a primitive or a component pattern (see the skill, "
 | --- | --- | --- | --- |
 | 2026-10-22 | v3 tokens and primitives (this file) | the UI refresh | everywhere |
 | 2026-10-22 | `.fd-glow`, keyframes `fd-turn` and `fd-breathe`; `.fd-switch` moved from settings.css to base.css | one needs-you glow for every needs-you strip and card; the switch is a primitive (§3) | fleet, sidebar, session approval card; every switch |
+| 2026-10-22 | `--scrim` | one dim layer behind every dialog, drawer and sheet (was raw rgba in shell.css and spawn.css) | shell.css `.fd-overlay`, `.fd-drawer-backdrop` |
+| 2026-10-22 | `--fs-strip-title` (17px) | §4.5 asks for a 17px session title and no token had that size | session header (session.css `.fd-sh-title`) |
+| 2026-10-22 | `--fs-code` (12.5px) | §4.5 says code is mono 12.5px and no token had that size | chat code blocks, inline code (chat.css `.fd-md`) |
+| 2026-10-22 | `--fs-display` (56px), the wall scope of the size tokens, `.fd-scope-dark` | the wall is read from a distance and scales with the screen; ambient stays dark in every theme | wall, pair page, ambient |
+| 2026-10-22 | `--term-cyan` | the terminal ANSI cyan had no token after the `--m-*` model hues became `--dim` aliases | Terminal.tsx `termTheme` |
+| 2026-10-22 | `.fd-dot[data-status=online]` | a link or a sign-in is not work: the turning working arc was wrong for it | stations page header and provider rows |
+| 2026-10-22 | `.fd-menu > summary.fd-ghost` | a menu summary that looks like a ghost button; `.fd-menu > summary` beat `.fd-ghost` | chat Show and Agents menus, the station config drift menu |
+| 2026-10-22 | `select.fd-sm` keeps padding-right 28px | `.fd-sm` reset the select padding and the chevron overlapped the text | fleet Group by, session files search |
+| 2026-10-22 | `--badge-bg`, `--btn-edge` | in the light theme a neutral badge (`--raised-hi`) vanished on `--bg`, and a white plain button vanished on `--surface` and on a `--raised` dialog | every neutral badge and count; plain buttons in panels and dialogs |

@@ -170,7 +170,7 @@ describe('issues', () => {
     expect(html).toContain('In Progress');
     expect(html).toContain('Ana');
     expect(html).toContain('Unassigned');
-    expect(html).toContain('5m');
+    expect(html).toContain('5 min');
     expect(html).toContain('aria-label="Select PROJ-1"');
     expect(html).toMatch(/aria-label="Select PROJ-2"[^>]*checked/);
   });
@@ -549,7 +549,7 @@ describe('pull requests', () => {
     expect(html).toContain('checks failing');
     expect(html).toContain('checks pending');
     expect(html).toContain('checks passing');
-    expect(html).toContain('2h');
+    expect(html).toContain('2 h');
   });
 
   test('a session chip shows for a branch match and a ticket key match, on the same station only', () => {

@@ -111,7 +111,7 @@
   min-width: 0;
   margin: 0;
   overflow: hidden;
-  font-size: 17px; /* ds-exception: pending token --fs-strip-title (§4.5 session title 17px) */
+  font-size: var(--fs-strip-title);
   font-weight: 640;
   letter-spacing: -0.005em;
   line-height: 1.15;
@@ -1776,10 +1776,6 @@ button.fd-cchip:hover:not(:disabled) {
   flex: 1;
   min-width: 0;
 }
-/* `.fd-sm` sets the padding of a button; the select keeps room for its chevron. */
-.fd-files-bar select {
-  padding-right: 28px;
-}
 .fd-pane-side .fd-files {
   margin-bottom: 0;
 }
@@ -1880,45 +1876,7 @@ button.fd-cchip:hover:not(:disabled) {
   text-decoration: underline;
 }
 
-/* the Files page */
-.fd-screen.fd-files-page {
-  display: grid;
-  gap: var(--sp-3);
-  max-width: 1100px;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.fd-files-page .fd-screen-title {
-  margin: 0;
-}
-.fd-files-folder,
-.fd-files-view {
-  display: grid;
-  gap: var(--sp-3);
-  min-width: 0;
-  padding: var(--sp-4);
-}
-.fd-files-folder form {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: var(--sp-2);
-}
-.fd-files-folder label {
-  display: grid;
-  gap: 6px;
-  color: var(--dim);
-  font-size: var(--fs-meta);
-}
-.fd-files-folder .fd-files-folder-path {
-  flex: 1 1 240px;
-  min-width: 0;
-}
-.fd-files-folder input,
-.fd-files-folder select {
-  width: 100%;
-  min-width: 0;
-}
+/* the Files page: views.css lays it out; the file view in it has no bottom margin */
 .fd-files-view .fd-files {
   margin-bottom: 0;
 }

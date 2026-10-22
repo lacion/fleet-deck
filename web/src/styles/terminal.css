@@ -1,14 +1,6 @@
 /* The terminal layer (DESIGN-SYSTEM.md §4.5, last bullet): the xterm view on --code, the touch key
    bar, and the terminal dock: a --surface bar of 32px with tabs like the session tabs. */
 
-/* The ANSI colors that no board token carries (Terminal.tsx termTheme reads them). */
-:root {
-  --term-cyan: #5ccfe6; /* ds-exception: the terminal's ANSI palette */
-}
-[data-theme="light"] {
-  --term-cyan: #0e7490; /* ds-exception: the terminal's ANSI palette */
-}
-
 /* ── terminal ───────────────────────────────────────────────────── */
 .fd-term {
   position: relative;

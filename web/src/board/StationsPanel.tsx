@@ -538,7 +538,7 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                 >
                   <span
                     className="fd-dot"
-                    data-status={up ? 'working' : 'unreachable'}
+                    data-status={up ? 'online' : 'unreachable'}
                     aria-hidden="true"
                   />
                   {freshness === 'stale'
@@ -652,7 +652,11 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                                   : 'muted'
                             }
                           >
-                            <span className="fd-dot" aria-hidden="true" />
+                            <span
+                              className="fd-dot"
+                              data-status={p.auth === 'signed_in' ? 'online' : undefined}
+                              aria-hidden="true"
+                            />
                             {authLabel(p.auth)}
                           </span>
                         </li>

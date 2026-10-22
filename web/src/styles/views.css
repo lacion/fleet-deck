@@ -51,6 +51,10 @@
   margin: 0;
 }
 
+.fd-wbar > .fd-count {
+  margin-left: auto;
+}
+
 .fd-wfilter {
   display: inline-flex;
   min-width: 0;

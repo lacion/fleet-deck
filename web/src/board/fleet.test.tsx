@@ -185,7 +185,7 @@ describe('station projections', () => {
       />,
     );
     expect(html).toContain(
-      '<span class="fd-station-health fd-health" data-health="up"><span class="fd-dot" data-status="working" aria-hidden="true"></span>Link up</span>',
+      '<span class="fd-station-health fd-health" data-health="up"><span class="fd-dot" data-status="online" aria-hidden="true"></span>Link up</span>',
     );
     expect(html).toContain(
       '<span class="fd-station-health fd-health" data-health="down"><span class="fd-dot" data-status="unreachable" aria-hidden="true"></span>Unreachable</span>',
@@ -320,7 +320,7 @@ describe('station projections', () => {
     for (const text of [
       '0 of 4 sessions',
       '<dt>Version</dt><dd>0.2.0</dd>',
-      '<li data-instance="personal" title="personal"><span>Claude 2.1.5</span><span class="fd-station-auth" data-auth="ok"><span class="fd-dot" aria-hidden="true"></span>signed in</span></li>',
+      '<li data-instance="personal" title="personal"><span>Claude 2.1.5</span><span class="fd-station-auth" data-auth="ok"><span class="fd-dot" data-status="online" aria-hidden="true"></span>signed in</span></li>',
       '<li data-instance="work" title="work"><span>Codex</span><span class="fd-station-auth" data-auth="muted"><span class="fd-dot" aria-hidden="true"></span>sign-in unknown</span></li>',
     ])
       expect(html).toContain(text);
@@ -625,7 +625,7 @@ describe('worktree rows (DL-142)', () => {
     expect(html).toContain('href="#/s/station-a/s1"');
     expect(html).toContain('>Fix the login<');
     expect(html).toContain('2 changed · 5 ignored · 1 commits not on a remote');
-    expect(html).toContain('last commit “wip” 3h');
+    expect(html).toContain('last commit “wip” 3 h');
     expect(html).toContain('Copy the remove command');
   });
 
@@ -696,7 +696,7 @@ describe('worktree rows with the trash buttons (DL-150)', () => {
     expect(html).toContain('data-tone="muted">In the trash<');
     expect(html).toContain('Restore');
     expect(html).toContain('Delete permanently');
-    expect(html).toContain('In the trash since 3h ago');
+    expect(html).toContain('In the trash since 3 h ago');
     expect(html).toContain('title="/w/.trash/s1-abc">/w/.trash/s1-abc<');
     expect(html).not.toContain('Move to trash');
     expect(html).not.toContain('Copy the remove command');

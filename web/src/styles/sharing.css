@@ -4,22 +4,12 @@
 
 /* ---------- the share dialog ---------- */
 
-/* §4.7 dialogs: --raised, --r-panel, --shadow-pop, 20px padding, a 15px title. */
+/* The frame (§4.7: --raised, --r-panel, --shadow-pop, 20px, a 15px/640 title) is the shared
+   .fd-dialog of shell.css. */
 .fd-overlay .fd-dialog.fd-share {
   position: relative;
   gap: var(--sp-4);
   width: min(520px, 92vw);
-  padding: 20px;
-  background: var(--raised);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--r-panel);
-  box-shadow: var(--shadow-pop);
-}
-.fd-dialog.fd-share > h2 {
-  margin: 0;
-  font-size: var(--fs-heading);
-  font-weight: 640;
-  line-height: 1.15;
 }
 :where(.fd-dialog.fd-share > h2) + .fd-note {
   margin-top: calc(var(--sp-3) * -1);

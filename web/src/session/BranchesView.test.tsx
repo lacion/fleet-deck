@@ -36,7 +36,7 @@ describe('the branch list (DL-191)', () => {
     expect(html).toContain('2 ahead');
     expect(html).toContain('3 behind');
     expect(html).toContain('Add the thing');
-    expect(html).toContain('>3h</span>');
+    expect(html).toContain('>3 h</span>');
     expect(html).not.toContain('merged');
   });
 

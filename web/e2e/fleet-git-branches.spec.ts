@@ -97,7 +97,7 @@ test('Other stations lists the branches of other stations, fetches and refreshes
   );
   await expect(rows.nth(1)).toContainText('legacy branch');
   await expect(rows.nth(1)).toContainText('no session');
-  await expect(group).toContainText('Fetched 5m ago');
+  await expect(group).toContainText('Fetched 5 min ago');
   expect(await fitsWidth(page)).toBe(true);
 
   git.fetch = { status: 200, body: { fetched_at: Date.now() } };

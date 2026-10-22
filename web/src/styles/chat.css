@@ -441,7 +441,7 @@
 
 /* ── Markdown ────────────────────────────────────────────────────── */
 .fd-md {
-  --md-code: 12.5px; /* ds-exception: pending token --fs-code (§4.5 code is 12.5px) */
+  --md-code: var(--fs-code);
   line-height: 1.6;
   overflow-wrap: anywhere;
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { STATUS_LANES } from '../board/fleet';
 import type { DeckSession, StationView } from '../gen';
 import {
+  Activity,
   Archive,
   ChevronDown,
   CircleUser,
@@ -12,7 +13,6 @@ import {
   Icon,
   LayoutGrid,
   LogOut,
-  MessagesSquare,
   FileText,
   Plus,
   Search,
@@ -342,7 +342,7 @@ function BoardLinks({
       {guest ? null : (
         <>
           <a href="#/activity" aria-current={route.name === 'activity' ? 'page' : undefined}>
-            <Icon of={MessagesSquare} />
+            <Icon of={Activity} />
             Activity
           </a>
           <a href="#/stations" aria-current={route.name === 'stations' ? 'page' : undefined}>

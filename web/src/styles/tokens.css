@@ -3,7 +3,9 @@
    ui/palette.ts (Omarchy palettes). This is the only file with raw values. */
 
 /* ── color · dark (default): the night deck ───────────────────────── */
-:root {
+/* .fd-scope-dark: a part that stays dark in every theme (the wall ambient mode). */
+:root,
+.fd-scope-dark {
   color-scheme: dark;
 
   /* surfaces and ink (§2.1) */
@@ -20,6 +22,8 @@
   --faint-decor: #5b6779; /* decoration only (hollow rings, ticks), never text */
   --ink-fill: #e9eef4; /* fill of the general primary button */
   --ink-on: #111821; /* text on --ink-fill */
+  --badge-bg: var(--raised-hi); /* fill of a neutral .fd-badge and .fd-count */
+  --btn-edge: transparent; /* edge of a plain button (the fill steps are enough on the dark deck) */
 
   /* semantic colors: the jersey colors (§2.2) */
   --act: #ffd43b; /* yellow: needs you (text, icon, line, holder) */
@@ -40,6 +44,8 @@
   --del-bg: rgba(255, 98, 87, 0.1); /* diff line fill: deletion */
   --free-bg: #10291f; /* free slot / allowed tint */
   --term-selection: rgba(102, 184, 255, 0.3); /* terminal selection (a selection is blue) */
+  --term-cyan: #5ccfe6; /* terminal ANSI cyan (the terminal palette only) */
+  --scrim: rgba(6, 10, 15, 0.6); /* dims the page behind a dialog, the drawer and a sheet */
 
   /* elevation (§2.5) */
   --shadow-pop:
@@ -64,6 +70,8 @@
   --faint-decor: #9aa5b4;
   --ink-fill: #111821;
   --ink-on: #ffffff;
+  --badge-bg: var(--border-soft); /* --raised-hi does not show on the light --bg */
+  --btn-edge: var(--border); /* a white button on a light --surface needs a hairline */
 
   --act: #8a6400;
   --act-fill: #ffd43b;
@@ -83,6 +91,8 @@
   --del-bg: rgba(196, 47, 38, 0.08);
   --free-bg: #e3f5ec;
   --term-selection: rgba(26, 95, 191, 0.22);
+  --term-cyan: #0e7490;
+  --scrim: rgba(17, 24, 33, 0.28);
 
   --shadow-pop: 0 12px 32px rgba(17, 24, 33, 0.12);
   --shadow-lift: 0 1px 2px rgba(17, 24, 33, 0.07);
@@ -127,8 +137,11 @@
   --fs-chat: 14px; /* chat prose, line-height 1.6 */
   --fs-title: 14px; /* card and strip titles (weight 600) */
   --fs-heading: 15px; /* section and station headings (wide) */
+  --fs-strip-title: 17px; /* the session header title (weight 640, §4.5) */
+  --fs-code: 12.5px; /* code blocks and inline code in chat prose (§4.5) */
   --fs-page: 20px; /* page title (wide, weight 640) */
   --fs-hero: 26px; /* phone large title */
+  --fs-display: 56px; /* display numbers read across a room: wall ambient counts, the pairing code */
   --fs-12: 12px; /* kept for old CSS */
   --fs-13: 13px;
   --fs-15: 15px;

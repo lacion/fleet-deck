@@ -106,6 +106,8 @@ guard_count "rust tests" "$log" "$MIN_RUST_TESTS"
 run cargo deny check
 # The module size rule (fewer than 800 lines per module, M3 goal).
 run sh tools/module-size.sh
+# The design system check (docs/v2/DESIGN-SYSTEM.md): tokens only in the style sheets.
+run sh tools/design-check.sh
 
 # TS-types drift (PLAN §11): web/src/gen must equal a fresh export. The second
 # test of the file proves that the check fails on stale, missing and extra

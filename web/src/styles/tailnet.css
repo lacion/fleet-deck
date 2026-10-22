@@ -84,22 +84,10 @@
 }
 
 /* ═══════════════════════ the guided Add station dialog ═══════════════════════ */
-/* The dialog frame (§4.7): --raised, --r-panel, --shadow-pop, 20px padding, title 15px 640.
-   Scoped to this dialog until the shared .fd-dialog frame follows the same rule. */
+/* The dialog frame (§4.7) comes from the shared .fd-dialog in shell.css. */
 .fd-overlay .fd-dialog:has(> .fd-add-dialog) {
   gap: var(--sp-4);
   width: min(560px, 92vw);
-  padding: 20px;
-  background: var(--raised);
-  border: 0;
-  border-radius: var(--r-panel);
-  box-shadow: var(--shadow-pop);
-}
-.fd-overlay .fd-dialog:has(> .fd-add-dialog) > h2 {
-  margin: 0;
-  font-size: var(--fs-heading);
-  font-weight: 640;
-  line-height: 1.15;
 }
 .fd-int-dialog > :where(*) {
   min-width: 0;
@@ -111,10 +99,6 @@
 }
 .fd-add-dialog > :where(*) {
   min-width: 0;
-}
-/* A plain button on the --raised dialog keeps an edge, so that it stays a button. */
-.fd-add-dialog :where(button:not([class])) {
-  border-color: var(--border);
 }
 .fd-add-dialog :where(button:not([class])):hover:not(:disabled) {
   background: var(--raised-hi);

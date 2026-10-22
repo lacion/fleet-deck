@@ -277,20 +277,7 @@
   color: var(--hazard);
 }
 
-/* The reach glyph. A link is not work: an online station shows a still, filled --ok dot
-   (the concept's "● online"), never the turning working arc. */
-.fd-station-health[data-health="up"] .fd-dot {
-  /* ds-exception: pending primitive .fd-dot[data-status="online"] */
-  width: 8px;
-  height: 8px;
-  margin: 0 2px;
-  background: var(--ok);
-  border-color: var(--ok);
-}
-
-.fd-station-health[data-health="up"] .fd-dot::before {
-  content: none;
-}
+/* The reach glyph: an online station shows the still .fd-dot[data-status="online"] (base.css). */
 
 /* A stale board does not know the link: a hollow ring. */
 .fd-station-health[data-health="stale"] .fd-dot {
@@ -442,16 +429,8 @@
   color: var(--faint);
 }
 
-/* Signed in: a filled --ok dot; signed out: the --hazard ring with a slash; unknown: hollow. */
-.fd-station-auth[data-auth="ok"] .fd-dot {
-  /* ds-exception: pending primitive .fd-dot[data-status="online"] */
-  width: 8px;
-  height: 8px;
-  margin: 0 2px;
-  background: var(--ok);
-  border-color: var(--ok);
-}
-
+/* Signed in: the .fd-dot[data-status="online"] dot; signed out: the --hazard ring with a slash;
+   unknown: hollow. */
 .fd-station-auth[data-auth="hazard"] .fd-dot {
   border-color: var(--hazard);
 }

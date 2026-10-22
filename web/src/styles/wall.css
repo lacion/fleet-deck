@@ -24,6 +24,8 @@
   --fs-chat: calc(var(--fd-wall-t) * 14);
   --fs-title: calc(var(--fd-wall-t) * 14);
   --fs-heading: calc(var(--fd-wall-t) * 15);
+  --fs-strip-title: calc(var(--fd-wall-t) * 17);
+  --fs-code: calc(var(--fd-wall-t) * 12.5);
   --fs-page: calc(var(--fd-wall-t) * 20);
   --fs-hero: calc(var(--fd-wall-t) * 26);
   --fs-12: calc(var(--fd-wall-t) * 12);
@@ -912,24 +914,8 @@
 }
 
 /* ── ambient: dark in every theme, low motion ─────────────────────────────────────────────── */
-/* A wall in the light theme keeps the night deck here (the screen idles, often in a dark room).
-   ds-exception lines: pending the `.fd-scope-dark` selector in tokens.css (see the report). */
-[data-theme="light"] .fd-scope-dark {
-  --bg: #111821; /* ds-exception: pending token scope .fd-scope-dark */
-  --surface: #161e29; /* ds-exception: pending token scope .fd-scope-dark */
-  --raised: #1c2532; /* ds-exception: pending token scope .fd-scope-dark */
-  --code: #0e141c; /* ds-exception: pending token scope .fd-scope-dark */
-  --text: #e9eef4; /* ds-exception: pending token scope .fd-scope-dark */
-  --dim: #a5b0bf; /* ds-exception: pending token scope .fd-scope-dark */
-  --faint: #8896a7; /* ds-exception: pending token scope .fd-scope-dark */
-  --faint-decor: #5b6779; /* ds-exception: pending token scope .fd-scope-dark */
-  --ink-fill: #e9eef4; /* ds-exception: pending token scope .fd-scope-dark */
-  --ink-on: #111821; /* ds-exception: pending token scope .fd-scope-dark */
-  --act: #ffd43b; /* ds-exception: pending token scope .fd-scope-dark */
-  --ok: #3ddc97; /* ds-exception: pending token scope .fd-scope-dark */
-  --hazard: #ff6257; /* ds-exception: pending token scope .fd-scope-dark */
-  --fuel: #b79cff; /* ds-exception: pending token scope .fd-scope-dark */
-}
+/* A wall in the light theme keeps the night deck here (the screen idles, often in a dark room):
+   WallPage adds .fd-scope-dark, and tokens.css gives that scope the dark color tokens. */
 
 .fd-wall-root[data-mode="ambient"] {
   color-scheme: dark;

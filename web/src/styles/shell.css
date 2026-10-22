@@ -840,11 +840,7 @@ body:has(.fd-app[data-layout="tablet"]) {
   padding: 0;
   border: 0;
   border-radius: 0;
-  background: var(--scrim, rgba(6, 10, 15, 0.6)); /* ds-exception: pending token --scrim */
-}
-
-[data-theme="light"] .fd-app .fd-drawer-backdrop {
-  background: var(--scrim, rgba(17, 24, 33, 0.28)); /* ds-exception: pending token --scrim */
+  background: var(--scrim);
 }
 
 .fd-drawer {
@@ -890,11 +886,7 @@ body:has(.fd-app[data-layout="tablet"]) {
   align-items: flex-start;
   justify-content: center;
   padding: 12dvh var(--sp-3) var(--sp-3);
-  background: var(--scrim, rgba(6, 10, 15, 0.6)); /* ds-exception: pending token --scrim */
-}
-
-[data-theme="light"] .fd-overlay {
-  background: var(--scrim, rgba(17, 24, 33, 0.28)); /* ds-exception: pending token --scrim */
+  background: var(--scrim);
 }
 
 /* A dialog: a --raised card. The pairing dialog also uses .fd-dialog inline; the float and
@@ -1169,7 +1161,6 @@ body:has(.fd-app[data-layout="tablet"]) {
 }
 
 .fd-screen-title,
-.fd-spawn > h2,
 .fd-plans > h2,
 .fd-stations > h2 {
   margin: 0 0 var(--sp-1);
