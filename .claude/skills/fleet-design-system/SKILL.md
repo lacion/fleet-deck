@@ -21,7 +21,8 @@ The board has one design system: **`docs/v2/DESIGN-SYSTEM.md`** ("Flight Deck", 
 - **Type.** Mona Sans for words. `.fd-callsign` for every callsign, `.fd-wide` for station names and page titles. Mono (`--font-data`) only for paths, branches, commands, code, diffs and ids — never for times, counts, models or labels. Sentence case; no capitals, no letter-spaced labels.
 - **Sessions are strips** (§4.1): holder + fields with rules. Status uses `.fd-dot` (glyph: shape + color) or `.fd-holder`, never a bare colored text.
 - **Depth from fills.** No border around a panel, no box inside a box. Shadows only on floating layers (`--shadow-pop`).
-- **Density.** Desktop controls `--ctl-h` 28px, rows `--row-h` 36px, strips `--strip-h` 44px. Touch: 44px (`pointer: coarse`).
+- **Density.** Desktop controls `--ctl-h` 28px, rows `--row-h` 36px, strips `--strip-h` 44px. Touch: 44px (`pointer: coarse`): controls `--tap-min`, list rows `--row-h-touch`. The touch rule of `base.css` has zero specificity: if an area rule sets `min-height: 0` on a button or a summary, give the 44px back in a `@media (pointer: coarse)` rule for the same selector (`tools/design-check.sh` checks it).
+- **Edges.** A plain button on a `--raised` surface (a dialog, a strip, a card) has the same fill as the surface: give it `border-color: var(--btn-edge-raised)`.
 - **Native controls are styled** by `base.css` (select chevron, checkbox, radio, switch, details marker). Do not add a second style for them.
 - **Behavior and tests stay.** Keep roles, accessible names, visible texts and the class names that tests use (`rg "\.fd-" web/e2e`). Add classes; do not rename tested ones. If a test asserts a text you must change, change the test in the same commit and say why.
 - **Every state** has a look: hover, focus-visible, pressed/selected, disabled, loading, empty, error — in the dark and the light theme, on desktop and phone.
