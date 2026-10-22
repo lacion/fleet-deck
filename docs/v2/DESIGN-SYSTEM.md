@@ -56,7 +56,7 @@ The token **names** of DL-141 stay the public API: every area CSS file and `ui/p
 
 | Token | Dark | Light | Jersey | Meaning |
 | --- | --- | --- | --- | --- |
-| `--act` | `#FFD43B` | `#8A6400` | yellow (directs) | **needs you**: text, icon, line, holder |
+| `--act` | `#FFD43B` | `#7F5C00` | yellow (directs) | **needs you**: text, icon, line, holder (light: 4.5:1 also on `--badge-bg` and the `--add-bg`/`--del-bg` diff lines) |
 | `--act-fill` *(new)* | `#FFD43B` | `#FFD43B` | | fill of the decision primary (Allow), needs-you badge |
 | `--act-ink` | `#1B1600` | `#1B1600` | | text on `--act-fill` |
 | `--act-bg` | `#2A2410` | `#FFF6D6` | | tint behind a needs-you row |
@@ -66,14 +66,18 @@ The token **names** of DL-141 stay the public API: every area CSS file and `ui/p
 | `--ok-bg` *(new)* | `#10291F` | `#E3F5EC` | | tint behind ok |
 | `--hazard` | `#FF6257` | `#B52A22` | red (crash, ordnance) | errors, deny, deletions, offline, conflicts, bypass mode (light: 4.5:1 also on the `--del-bg` diff line) |
 | `--hazard-bg` | `#2C1517` | `#FDE8E6` | | tint behind hazard |
-| `--fuel` *(new)* | `#B79CFF` | `#6E4FE0` | purple (fuel) | usage, tokens, cost, rate limits, model help |
-| `--fuel-bg` *(new)* | `#2A2348` | `#EFEAFE` | | track of a fuel meter (dark: a visible track on `--surface` and `--raised`) |
+| `--fuel` *(new)* | `#B79CFF` | `#6447D6` | purple (fuel) | usage, tokens, cost, rate limits, model help (light: 4.5:1 also on `--badge-bg`, `--fuel-bg` and the diff lines) |
+| `--fuel-bg` *(new)* | `#2A2348` | `#E2DAFC` | | track of a fuel meter (a visible track on `--surface` and `--raised` in both themes) |
 | `--focus` *(new)* | `#66B8FF` | `#1A5FBF` | blue (handling) | focus ring, selection marker, links, queued, verifying |
 | `--focus-bg` *(new)* | `#13253A` | `#E5EFFC` | | selected tab or row tint |
 | `--add-bg` / `--del-bg` | `rgba(61,220,151,.10)` / `rgba(255,98,87,.10)` | `rgba(10,112,72,.10)` / `rgba(181,42,34,.08)` | | diff line fills |
 | `--free-bg` | `#10291F` | `#E3F5EC` | | free slot / allowed tint |
 | `--term-selection` | `rgba(102,184,255,.3)` | `rgba(26,95,191,.22)` | | terminal selection (blue) |
 | `--term-cyan` *(new)* | `#5CCFE6` | `#0E7490` | | terminal ANSI cyan (the terminal palette only; ANSI blue = `--focus`, magenta = `--fuel`) |
+| `--term-black` / `--term-white` *(new)* | `var(--bg)` / `var(--text)` | `var(--text)` / `var(--dim)` | | terminal ANSI black and white (aliases, so they follow an Omarchy palette; light: both are dark ink, 4.5:1 on `--code`) |
+| `--term-bright-black` *(new)* | `var(--faint)` | `var(--faint)` | | terminal ANSI bright black |
+| `--term-bright-{red,green,yellow,blue,magenta,cyan}` *(new)* | `#FF8A76`, `#7BD3A6`, `#F6BE6A`, `#AECFFA`, `#D8CBFF`, `#9AE4DD` | `#8F1D17`, `#075C3B`, `#6E5000`, `#154C99`, `#5A3CC4`, `#0B5F75` | | terminal ANSI bright colors (light: each 4.5:1 on `--code` `#F1F5F9`) |
+| `--term-bright-white` *(new)* | `#FFFFFF` | `var(--text)` | | terminal ANSI bright white (light: the ink, not white) |
 
 Rules:
 
@@ -94,7 +98,8 @@ Fonts are bundled (offline LAN rule, DL-141): `@fontsource-variable/mona-sans/st
 | `--fs-micro` | 11px: kbd hints, tiny captions |
 | `--fs-meta` *(new)* | 12px: metadata, timestamps, counts, chips |
 | `--fs-data` | 12px: mono values in rows (paths, branches) |
-| `--fs-ui` | 13px: interface text, rows, buttons, inputs (the default) |
+| `--fs-ui` | 13px: interface text, rows, buttons (the default) |
+| `--fs-field` *(new)* | the text of a field (`input`, `select`, `textarea`): 13px; 16px with `pointer: coarse` (iOS Safari zooms the page into a field under 16px, and the page stays zoomed). An area rule that sets a field's font size uses it; a larger field (the New session title) keeps its size; a mono path field keeps `--fs-data` on a desktop and uses `max(var(--fs-data), var(--fs-field))` in a coarse rule |
 | `--fs-body` | 13px |
 | `--fs-chat` | 14px: chat prose, line-height 1.6 |
 | `--fs-title` | 14px: card and strip titles (weight 600) |
@@ -158,8 +163,8 @@ Area CSS uses these and never restyles them. Class names of DL-141 stay; their l
 | `.fd-ghost` | transparent, `--dim`; hover `--raised` + `--text` |
 | `.fd-danger` | transparent, `--hazard` text; hover `--hazard-bg` |
 | `.fd-sm` | 24px, padding 0 8px, 12px; on a `<select>` the padding-right stays 28px (the chevron) |
-| `.fd-iconbtn` | square ghost (28 or 24), icon 16px |
-| `input`, `select`, `textarea` | `--raised` fill, 1px `--ctl-edge` edge, `--r-ctl`, 13px; focus: edge `--focus` + a 1px `--focus` ring (a 2px blue edge; `--focus-bg` is never a focus cue) and a 2px transparent outline (forced colors paint it); placeholder `--faint`. `select`: `appearance: none` + a chevron (CSS mask of Lucide `chevron-down`) at the right, padding-right 28px |
+| `.fd-iconbtn` | square ghost (28 or 24), icon 16px. A toggle (`aria-pressed=true`, a panel toggle, compact cards) looks like a pressed segment: `--pressed-bg` fill + a 1px inset `--ctl-edge` ring + `--shadow-lift` + `--text` |
+| `input`, `select`, `textarea` | `--raised` fill, 1px `--ctl-edge` edge, `--r-ctl`, `--fs-field` (13px; 16px on touch); focus: edge `--focus` + a 1px `--focus` ring (a 2px blue edge; `--focus-bg` is never a focus cue) and a 2px transparent outline (forced colors paint it); placeholder `--faint`. `select`: `appearance: none` + a chevron (CSS mask of Lucide `chevron-down`) at the right, padding-right 28px |
 | `input[type=checkbox]`, `input[type=radio]` | `appearance: none`, 16px (24px with `pointer: coarse`), `--raised` fill, 1px `--ctl-edge` (hover `--faint`); checked: `--ink-fill` fill with an `--ink-on` check (mask) / dot; radius 4px / 50% |
 | `.fd-switch` (role=switch) | 32×18 track, `--ctl-edge` off / `--ok` on, 14px knob: off `--switch-knob`, on `--ink-on`, shadow `--knob-shadow` |
 | `.fd-seg` *(new)* | segmented control: a `--surface` track (2px padding, `--r-ctl`), segments 24px, the pressed one (`aria-pressed=true` or `aria-selected=true` or `:checked`) `--pressed-bg` fill + a 1px inset `--ctl-edge` ring + `--shadow-lift` + `--text` weight 600, others `--dim` |
@@ -177,11 +182,12 @@ Area CSS uses these and never restyles them. Class names of DL-141 stay; their l
 | `.fd-diff` / `.fd-dl[data-kind]` | mono 12px; an inline-size container with one grid column `minmax(max-content, 1fr)`, so that every line fill reaches the end of the longest line when the diff scrolls sideways (a thread or an editor inside the diff does not widen it: it wraps at the visible width, `100cqi`, and sticks to the left edge); `add` `--ok` on `--add-bg`; `del` `--hazard` on `--del-bg`; `hunk` `--focus`; `meta` `--faint`; `file` `--surface` weight 600, a sticky 28px header row (icon, mono path, a `.fd-badge` status for a new (`ok`), deleted (`hazard`) or mode-changed (neutral) file, +/− counts; the git plumbing lines are not drawn) with a `--border-soft` rule, at most the visible width (`100cqi`): the folders of the path ellipsize and the counts stay at the right edge; with review, two number gutters (old, new; only new on a phone) |
 | `.fd-meter` *(new)* | 6px bar, `--fuel-bg` track, `--fuel` fill, radius 3px; over 80 % the fill is `--act`. Markup: one child with an inline `width` (the percent); `data-level="high"` on the meter over 80 % |
 | `.fd-slots` *(new)* | slot meter: a row of 6×12px ticks (gap 2px), used a filled `--ok` bar, needs-you an `--act` "!" (a 7px bar, a 2px gap, a 3px dot: the sign of the needs-you `.fd-dot`), free a hollow 1px `--ctl-edge` outline (shape, not color alone). Markup: one child per slot with `data-slot="used"` or `"needs_you"` (none = free) |
-| `.fd-avatar` *(new)* | the account avatar: 24px circle, `--badge-bg` fill with a 1px inset `--btn-edge` ring, `--text` 11px weight 600 initials |
+| `.fd-avatar` *(new)* | the account avatar: 24px circle, `--badge-bg` fill with a 1px inset `--btn-edge` ring, `--text` 11px weight 600 initials. An area file never copies it: a stack (sharing `.fd-avatars`) only adds an overlap and a `--surface` gap ring to `.fd-avatars > .fd-avatar` |
 | `.fd-callsign`, `.fd-wide` | §2.3 |
 | `.fd-note`, `.fd-empty`, `.fd-vh` | dim small text; faint text; visually hidden |
 | `<details>` summary | no native marker: a `chevron-right` mask that turns 90° when open |
 | `@media (pointer: coarse)` | buttons, summaries, inputs, selects, segments, chips, `.fd-tap`: min-height 44px (`--tap-min`); `.fd-iconbtn` 44px; checkbox and radio 24px. The rule has zero specificity (`:where()`): an area rule that sets `min-height: 0` on a button, a summary or a button class must give the target back in a `@media (pointer: coarse)` rule of the same file for the same selector (`tools/design-check.sh` fails otherwise; inline controls in a line of text are on its allowlist) |
+| scrollbars | 8px, thumb `--ctl-edge` (3:1 on `--bg` and `--surface`, WCAG 1.4.11), transparent track; Firefox: `scrollbar-color` |
 | links | `--focus`, no underline; underline on hover and focus. A link without a class, or with only `.fd-tap`, inside prose (`.fd-note`, `.fd-md`, `p`) is always underlined (1px, offset 2px): color alone does not mark it (WCAG 1.4.1) |
 
 ---
@@ -293,7 +299,7 @@ Sentence case; plain verbs; one name per action across a flow (Allow → "Allowe
 
 ## 6. Accessibility floor
 
-Text 4.5:1 (large text and icons 3:1) in both themes and with an Omarchy palette; focus visible on every control (`--focus` 2px outline); state never by color alone (glyph shapes, holder + text); touch targets 44px; `prefers-reduced-motion` honored; every icon-only button has an `aria-label`. In forced-colors mode (Windows High Contrast) `base.css` keeps the glyphs, holders, slots and meters in their own colors (`forced-color-adjust: none`); gives a `Highlight` ring to the pressed segment and chip, the selected tab (`[role=tab][aria-selected=true]`) and the current nav or session row (`[aria-current=page]`); draws the switch and a checked checkbox or radio in `Highlight`/`HighlightText`; draws the summary chevron in `CanvasText` and the select chevron as an `url()` image; and gives key hints, badges and counts a 1px `CanvasText` edge. An area part whose edge or selection is only a `box-shadow` or a fill adds its own `@media (forced-colors: active)` rule. Check it with Playwright `page.emulateMedia({ forcedColors: "active" })`.
+Text 4.5:1 (large text and icons 3:1) in both themes and with an Omarchy palette (`ui/palette.ts` computes the palette tokens and steps them until they pass); focus visible on every control (`--focus` 2px outline); state never by color alone (glyph shapes, holder + text); touch targets 44px; `prefers-reduced-motion` honored; every icon-only button has an `aria-label`. In forced-colors mode (Windows High Contrast) `base.css` keeps the glyphs, holders, slots and meters in their own colors (`forced-color-adjust: none`); gives a `Highlight` ring to the pressed segment, chip and toggle (any `aria-pressed=true` button), the selected tab (`[role=tab][aria-selected=true]`), the selected option of a list box (`[role=option][aria-selected=true]`), the current nav or session row (`[aria-current=page]`), the current subagent row (`[aria-current=true]`) and the needs-you keyboard cursor (`.fd-q[data-selected=true]`); draws the switch and a checked checkbox or radio in `Highlight`/`HighlightText`; draws the summary chevron in `CanvasText` and the select chevron as an `url()` image; and gives key hints, badges, counts and the avatar a 1px `CanvasText` edge. An area part whose edge or selection is only a `box-shadow` or a fill adds its own `@media (forced-colors: active)` rule. The chat flight path (its line and nodes) keeps its own colors (`forced-color-adjust: none` in chat.css), so that a filled node and a ring still differ by fill. Check it with Playwright `page.emulateMedia({ forcedColors: "active" })`.
 
 ## 7. Expansion log
 
@@ -339,5 +345,15 @@ When an agent adds a token, a primitive or a component pattern (see the skill, "
 | 2026-10-22 | scroll body fade (mask to `--text`, only while more is below) | a scrolled dialog cut its last heading at the rounded edge with no cue | help dialog, desktop sidebar session list |
 | 2026-10-22 | the dock stops at the ops panel (≥ 1280px, `--fd-dock-h` from Layout) | §4.5 rule for the right panel, applied to the fleet home ops panel | fleet home with the terminal dock |
 | 2026-10-22 | `.fd-num` table column (right-aligned numbers) | §2.3 says a column of numbers aligns right; tables had no class for it | Shares table (Uses left) |
-| 2026-10-22 | forced colors in area files: composer outline, selected station pill outline, reach dots keep their color | the forced-colors run (e2e/polish.spec.ts 4a–4c): these parts drew their edge or state only with a box-shadow or a fill | session composer, New session station pills, fleet lanes, sidebar, connection pill |
+| 2026-10-22 | forced colors in area files: composer outline, selected station pill outline, reach dots and the chat flight path (line and nodes) keep their color | the forced-colors run (e2e/polish.spec.ts 4a–4c): these parts drew their edge or state only with a box-shadow or a fill | session composer, New session station pills, fleet lanes, sidebar, connection pill |
 | 2026-10-22 | diff file status badge (`.fd-dl-status`) | the hidden git plumbing lines also hid that a file was new, deleted or changed its mode | every diff (chat, review, wall) |
+| 2026-10-22 | `.fd-iconbtn[aria-pressed=true]` (the pressed-segment look); its forced-colors `Highlight` ring; the session.css and shell.css copies removed | the pressed Properties toggle was `--raised-hi` on `--raised` (1.1:1 dark, 1.07:1 light), and the sidebar compact toggle had a second look for the same state | session header panel toggles, sidebar compact cards, needs-you notifications toggle |
+| 2026-10-22 | light `--fuel-bg` `#E2DAFC` | the light meter track (`#EFEAFE`) was 1.04:1 on `--surface`: the meter had no scale | usage meters, fuel badges |
+| 2026-10-22 | `--fs-field` (13px; 16px on touch) | fields were 12–15px on a phone: iOS Safari zooms the page into a field under 16px and stays zoomed | every input, select and textarea; the area rules that set a field size (spawn, page, settings, …) |
+| 2026-10-22 | `.fd-avatar` is never copied: the sharing stack only adds its overlap; the avatar gets a forced-colors edge | sharing.css copied the primitive and overrode it (no `--btn-edge` ring, invisible in light; a second ring in forced colors) | sidebar footer, phone top bar, sharing avatars |
+| 2026-10-22 | `--term-black`, `--term-white`, `--term-bright-*` | the light terminal used `--bg` for black (1.05:1) and dark-theme pastels for the bright colors (bright yellow 1.6:1, bright white invisible) | Terminal.tsx `termTheme` |
+| 2026-10-22 | forced colors: the chat flight path (line and nodes) keeps its colors | a filled ok node and a waiting ring differed only by stroke width, and the line vanished (§6: state never by fill alone) | session chat |
+| 2026-10-22 | `ui/palette.ts` computes the palette tokens as hex and steps them to the floor | fixed mix steps and raw palette colors gave 1.8–4.3:1 text with Catppuccin Latte, Rose Pine Dawn and Tokyo Night; text tokens now reach 4.5:1 and `--ctl-edge` 3:1 on `--raised-hi`; semantic colors darken (light) or lighten (dark) to keep their hue; a palette whose foreground fails gives no tokens | every screen with an Omarchy palette |
+| 2026-10-22 | forced colors: `Highlight` ring for any pressed toggle, selected option, `aria-current=true` row and the needs-you cursor | these states were only a fill or a box-shadow | session header toggles, terminal Ctrl key, session Mode buttons, subagent menu, composer slash menu, palette, home needs-you cursor |
+| 2026-10-22 | light `--act` `#7F5C00`, `--fuel` `#6447D6` | they were 4.41 and 4.46:1 on `--badge-bg`, and 4.2–4.4:1 on the diff line fills | needs-you text, fuel badges and numbers, diffs |
+| 2026-10-22 | scrollbar thumb `--ctl-edge` (Firefox `scrollbar-color`) | the `--border` thumb was 1.3:1, under 3:1 for an operable control (WCAG 1.4.11) | every scroll area |

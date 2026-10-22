@@ -54,6 +54,17 @@
   --free-bg: #10291f; /* free slot / allowed tint */
   --term-selection: rgba(102, 184, 255, 0.3); /* terminal selection (a selection is blue) */
   --term-cyan: #5ccfe6; /* terminal ANSI cyan (the terminal palette only) */
+  /* the rest of the terminal ANSI palette (Terminal.tsx termTheme; blue = --focus, magenta = --fuel) */
+  --term-black: var(--bg); /* #111821; the aliases follow an Omarchy palette */
+  --term-white: var(--text); /* #e9eef4 */
+  --term-bright-black: var(--faint); /* #8896a7 */
+  --term-bright-red: #ff8a76;
+  --term-bright-green: #7bd3a6;
+  --term-bright-yellow: #f6be6a;
+  --term-bright-blue: #aecffa;
+  --term-bright-magenta: #d8cbff;
+  --term-bright-cyan: #9ae4dd;
+  --term-bright-white: #ffffff;
   --scrim: rgba(6, 10, 15, 0.6); /* dims the page behind a dialog, the drawer and a sheet */
 
   /* elevation (§2.5) */
@@ -92,7 +103,7 @@
   --selected-bg: var(--raised); /* --raised-hi does not show on the light --bg and --surface */
   --selected-lift: var(--shadow-lift);
 
-  --act: #8a6400;
+  --act: #7f5c00; /* 4.5:1 also on --badge-bg and the add/del diff fills */
   --act-fill: #ffd43b;
   --act-ink: #1b1600;
   --act-bg: #fff6d6;
@@ -102,8 +113,8 @@
   --ok-bg: #e3f5ec;
   --hazard: #b52a22; /* 4.5:1 also on the --del-bg diff line */
   --hazard-bg: #fde8e6;
-  --fuel: #6e4fe0;
-  --fuel-bg: #efeafe;
+  --fuel: #6447d6; /* 4.5:1 also on --badge-bg and the add/del diff fills */
+  --fuel-bg: #e2dafc; /* a visible meter track on --surface and --raised; --fuel text 4.5:1 on it */
   --focus: #1a5fbf;
   --focus-bg: #e5effc;
   --add-bg: rgba(10, 112, 72, 0.1);
@@ -111,6 +122,17 @@
   --free-bg: #e3f5ec;
   --term-selection: rgba(26, 95, 191, 0.22);
   --term-cyan: #0e7490;
+  /* every ANSI color is 4.5:1 on the light --code: white and the bright colors are dark here */
+  --term-black: var(--text); /* #111821 */
+  --term-white: var(--dim); /* #4a5666 */
+  --term-bright-black: var(--faint); /* #596575 */
+  --term-bright-red: #8f1d17;
+  --term-bright-green: #075c3b;
+  --term-bright-yellow: #6e5000;
+  --term-bright-blue: #154c99;
+  --term-bright-magenta: #5a3cc4;
+  --term-bright-cyan: #0b5f75;
+  --term-bright-white: var(--text); /* #111821 */
   --scrim: rgba(17, 24, 33, 0.28);
 
   --shadow-pop: 0 12px 32px rgba(17, 24, 33, 0.12);
@@ -151,7 +173,8 @@
   --fs-micro: 11px; /* kbd hints, tiny captions */
   --fs-meta: 12px; /* metadata, timestamps, counts, chips */
   --fs-data: 12px; /* mono values in rows (paths, branches) */
-  --fs-ui: 13px; /* interface text, rows, buttons, inputs (the default) */
+  --fs-ui: 13px; /* interface text, rows, buttons (the default) */
+  --fs-field: 13px; /* the text of a field (input, select, textarea); 16px on a touch screen */
   --fs-body: 13px;
   --fs-chat: 14px; /* chat prose, line-height 1.6 */
   --fs-title: 14px; /* card and strip titles (weight 600) */
@@ -202,6 +225,8 @@
   :root {
     --ctl-h: 44px;
     --ctl-h-sm: 44px;
+    /* iOS Safari zooms the page into a field under 16px, and the page stays zoomed */
+    --fs-field: 16px;
   }
 }
 
