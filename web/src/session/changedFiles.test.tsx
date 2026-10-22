@@ -117,10 +117,11 @@ describe('the changed files section', () => {
     renderToStaticMarkup(
       <ChangedFilesList
         changed={{
-          paths: ['src/a.ts', 'README.md'],
+          paths: ['src/a.ts', 'README.md', 'src/b.ts'],
           changes: {
             'src/a.ts': { kind: 'M', insertions: 9, deletions: 3 },
             'README.md': { kind: 'A', insertions: 4, deletions: 0 },
+            'src/b.ts': { kind: 'R', insertions: 0, deletions: 0 },
           },
           truncated,
         }}
@@ -135,25 +136,33 @@ describe('the changed files section', () => {
     expect(out).toContain('<span class="fd-files-name">a.ts</span>');
     expect(out).toContain('<span class="fd-files-dir">src</span>');
     expect(out).toContain('<span class="fd-files-name">README.md</span>');
-    expect(out.match(/<button/g)).toHaveLength(2);
+    expect(out.match(/<button/g)).toHaveLength(3);
   });
 
-  test('each row shows its +/− counts and its change kind at the right', () => {
+  test('each row shows its +/− counts and the badge of a diff file header at the right', () => {
     const out = html(false);
+    // A modified file has no badge (as a diff file header); its kind is a hidden name.
     expect(out).toContain(
       '<span class="fd-files-stat"><span class="fd-add">+9</span><span class="fd-del">−3</span>' +
-        '<span class="fd-badge" data-tone="muted" title="modified"><span aria-hidden="true">M</span>' +
-        '<span class="fd-vh">modified</span></span></span>',
+        '<span class="fd-vh">modified</span></span>',
     );
-    // No deletions: no −0.
+    // A new file: the ok "new" badge. No deletions: no −0.
     expect(out).toContain(
-      '<span class="fd-files-stat"><span class="fd-add">+4</span><span class="fd-badge"',
+      '<span class="fd-files-stat"><span class="fd-add">+4</span>' +
+        '<span class="fd-badge" data-tone="ok" title="New file"><span aria-hidden="true">new</span>' +
+        '<span class="fd-vh">added</span></span></span>',
+    );
+    // A renamed file: a neutral word.
+    expect(out).toContain(
+      '<span class="fd-badge" title="Renamed file"><span aria-hidden="true">renamed</span>' +
+        '<span class="fd-vh">renamed</span></span>',
     );
     expect(out).not.toContain('−0');
+    expect(out).not.toContain('data-tone="muted"');
   });
 
   test('a file at the root has no folder', () => {
-    expect(html(false).match(/fd-files-dir/g)).toHaveLength(1);
+    expect(html(false).match(/fd-files-dir/g)).toHaveLength(2);
   });
 
   test('the cut line shows only when truncated', () => {

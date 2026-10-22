@@ -30,6 +30,11 @@
   border-radius: var(--r-card);
   box-shadow: var(--shadow-lift);
 }
+/* An open menu of the header (Terminal, the session menu) hangs below the strip: the strip does
+   not clip it (the menu body is positioned in its .fd-menu, inside the strip). */
+.fd-sh:has(.fd-menu[open]) {
+  overflow: visible;
+}
 .fd-sh > .fd-holder {
   border-radius: var(--r-card) 0 0 var(--r-card);
 }
@@ -80,9 +85,9 @@
   flex: 1;
   flex-direction: column;
   justify-content: center;
-  gap: 5px;
+  gap: 3px;
   min-width: 0;
-  padding: var(--sp-2) var(--sp-4);
+  padding: 6px var(--sp-4);
 }
 .fd-sh-line {
   display: flex;
@@ -94,7 +99,10 @@
 .fd-sh-line > .fd-iconbtn {
   flex: none;
 }
+/* The rename button (24px) overlaps the padding by 2px at the top and the bottom, so that the
+   title line is 20px and the header stays 56px (§4.5). */
 .fd-sh-line > .fd-iconbtn {
+  margin-block: -2px;
   opacity: 0;
   transition: opacity var(--t-fast);
 }
@@ -202,17 +210,6 @@
   gap: var(--sp-1);
   padding: 0 var(--sp-2) 0 var(--sp-3);
   border-left: 1px solid var(--border);
-}
-/* The Terminal menu summary is a ghost button like Interrupt (local modifier: base.css has no
-   ghost summary; requested as `.fd-menu > summary.fd-ghost`). */
-.fd-sh-actions .fd-menu > summary:not(.fd-iconbtn) {
-  background: transparent;
-  color: var(--dim);
-}
-.fd-sh-actions .fd-menu > summary:not(.fd-iconbtn):hover,
-.fd-sh-actions .fd-menu[open] > summary:not(.fd-iconbtn) {
-  background: var(--raised-hi);
-  color: var(--text);
 }
 .fd-sh .fd-menu-body {
   width: max-content;
@@ -655,6 +652,7 @@
 .fd-props-files {
   display: grid;
   flex-basis: 100%;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   margin: 2px 0 0;
   padding: 0;
@@ -1221,6 +1219,12 @@ button.fd-composer-model > .fd-icon {
   cursor: default;
   font-family: var(--font-ui);
   font-size: var(--fs-meta);
+}
+/* The composer bar of the sheet foot keeps the 16px column of the sheet: Queue follow-up ends 16px
+   from the edge, under the stacked buttons, and the 16px attach glyph (14px into its 44px button)
+   starts on the same 16px line. */
+.fd-pane[data-layout="phone"] .fd-dock-approvals + .fd-composer .fd-composer-bar {
+  padding: var(--sp-1) var(--sp-4) var(--sp-2) 2px;
 }
 .fd-pane[data-layout="phone"] .fd-composer-bar .fd-composer-note {
   white-space: normal;
@@ -1916,8 +1920,8 @@ button.fd-cchip:hover:not(:disabled) {
 .fd-files .fd-files-changed > ul {
   grid-template-columns: minmax(0, 1fr);
 }
-/* The change of a file in "Changed since the session started": `+9 −3` and the kind letter at
-   the right of its row (the Properties panel order). */
+/* The change of a file in "Changed since the session started": `+9 −3` and the badge of its kind
+   at the right of its row (the Properties panel order; the badge of a diff file header). */
 .fd-files-stat {
   display: inline-flex;
   flex: none;
@@ -1939,9 +1943,26 @@ button.fd-cchip:hover:not(:disabled) {
 }
 .fd-files-stat > .fd-badge {
   align-self: center;
-  justify-content: center;
-  min-width: 2ch;
-  padding: 0;
+}
+/* With a listing that has the publish slot (24px, 44px on touch), the changed-file rows keep the
+   same trailing slot: their change ends on the edge of the sizes of the listing. */
+.fd-files:has(.fd-files-item) .fd-files-changed li {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+.fd-files:has(.fd-files-item) .fd-files-changed li > .fd-files-row {
+  flex: 1;
+}
+.fd-files:has(.fd-files-item) .fd-files-changed li::after {
+  content: "";
+  flex: none;
+  width: var(--ctl-h-sm);
+}
+@media (pointer: coarse) {
+  .fd-files:has(.fd-files-item) .fd-files-changed li::after {
+    width: var(--tap-min);
+  }
 }
 /* The crumbs: the root icon on the column of the row icons. The row is one list row high (the
    same rhythm as the file rows under it: --row-h, 44px on touch) and has the same divider. */
@@ -2133,10 +2154,13 @@ button.fd-cchip:hover:not(:disabled) {
   color: var(--faint);
   font-size: var(--fs-micro);
 }
-.fd-modes button[aria-pressed="true"] {
-  background: var(--raised-hi);
-  border-color: var(--border);
-  color: var(--text);
+/* The modes are a .fd-seg (base.css owns the pressed look); in the menu width the track wraps. */
+.fd-modes > .fd-seg {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+/* The current mode cannot be set again (disabled), but it shows its pressed state in full. */
+.fd-modes > .fd-seg > button[aria-pressed="true"]:disabled {
   opacity: 1;
 }
 .fd-model {

@@ -2,12 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import { useArtifacts } from '../artifacts/context';
 import { publishedText, PublishDialog } from '../artifacts/PublishDialog';
 import { artifactHref, publishable } from '../artifacts/kinds';
+import { fileStatusBadge } from '../chat/Diff';
 import { Markdown } from '../chat/Markdown';
 import type { ArtifactPublished, FileContent, FileListing, FileSearch } from '../gen';
 import { FileText, Folder, Icon, Search, Upload } from '../ui/icons';
 import { type ChangedFiles, type ChangeKind, type FileChange, loadChanged } from './changedFiles';
 import { CopyButton } from './SessionHeader';
-import { type FileActions, joinPath, parentPath, type SearchModeName } from './workspace';
+import {
+  type FileActions,
+  joinPath,
+  mergeDiffPaths,
+  parentPath,
+  type SearchModeName,
+} from './workspace';
 
 type View =
   | { readonly kind: 'idle' }
@@ -93,16 +100,32 @@ export function FileView({
 
 const KIND_NAME: Record<ChangeKind, string> = { A: 'added', M: 'modified', R: 'renamed' };
 
-/** The change of one file at the right of its row: `+9 −3` and the kind letter (`M`). */
+/**
+ * The badge of a change kind, the same as the status badge of a diff file header (§3 `.fd-diff`):
+ * none for a modified file, an ok "new" for an added file, a neutral word for a renamed one. (A
+ * deleted file is not in the list: it cannot be opened.)
+ */
+const KIND_BADGE: Record<ChangeKind, ReturnType<typeof fileStatusBadge> | null> = {
+  A: fileStatusBadge({ kind: 'added' }),
+  M: null,
+  R: { text: 'renamed', title: 'Renamed file', tone: undefined },
+};
+
+/** The change of one file at the right of its row: `+9 −3` and the badge of its kind. */
 function ChangeStat({ change }: { readonly change: FileChange }) {
+  const badge = KIND_BADGE[change.kind];
   return (
     <span className="fd-files-stat">
       {change.insertions > 0 ? <span className="fd-add">+{change.insertions}</span> : null}
       {change.deletions > 0 ? <span className="fd-del">−{change.deletions}</span> : null}
-      <span className="fd-badge" data-tone="muted" title={KIND_NAME[change.kind]}>
-        <span aria-hidden="true">{change.kind}</span>
+      {badge === null ? (
         <span className="fd-vh">{KIND_NAME[change.kind]}</span>
-      </span>
+      ) : (
+        <span className="fd-badge" data-tone={badge.tone} title={badge.title}>
+          <span aria-hidden="true">{badge.text}</span>
+          <span className="fd-vh">{KIND_NAME[change.kind]}</span>
+        </span>
+      )}
     </span>
   );
 }
@@ -157,6 +180,7 @@ export function FilesPanel({
   variant = 'tab',
   request,
   root = null,
+  diffRef,
 }: {
   readonly files: FileActions | null;
   readonly variant?: 'tab' | 'side';
@@ -164,6 +188,8 @@ export function FilesPanel({
   readonly request?: { readonly path: string; readonly seq: number } | undefined;
   /** The session directory; "Copy the path" puts it before the path. */
   readonly root?: string | null;
+  /** The session (`<station>/<session>`) whose Properties panel also lists the changed files. */
+  readonly diffRef?: string | undefined;
 }) {
   const [view, setView] = useState<View>(files ? { kind: 'loading' } : { kind: 'idle' });
   /** The last requested folder; the crumbs show it. */
@@ -194,12 +220,18 @@ export function FilesPanel({
     );
   }, [has]);
   const [changed, setChanged] = useState<ChangedFiles | null>(null);
+  const changedRef = useRef(diffRef);
+  changedRef.current = diffRef;
   useEffect(() => {
     const current = latest.current;
     if (!has || !current) return;
     let live = true;
     void loadChanged(current).then((found) => {
-      if (live) setChanged(found);
+      if (!live) return;
+      setChanged(found);
+      if (found !== null && changedRef.current !== undefined) {
+        mergeDiffPaths(changedRef.current, found.paths);
+      }
     });
     return () => {
       live = false;

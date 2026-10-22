@@ -15,10 +15,12 @@ import {
   fileActions,
   finalizedTurns,
   joinPath,
+  mergeDiffPaths,
   parentPath,
   revertBlock,
   revertText,
   setDiffTotal,
+  useDiffPaths,
   useDiffTotal,
   workspaceFiles,
 } from './workspace';
@@ -239,8 +241,10 @@ describe('turns and reverts (DL-097)', () => {
       summary: summary('s1', 'idle', 1, { capabilities: claudeCaps() }),
     };
     const html = view(s, [finalized('t1')]);
-    expect(html).toContain('This provider cannot roll back its conversation');
-    expect(html).toContain('A file-only restore is not a revert.');
+    expect(html).toContain(
+      'This provider cannot roll back its conversation, so the board offers no revert.',
+    );
+    expect(html).not.toContain('file-only restore');
     expect(html).not.toContain('Revert to here');
   });
 
@@ -362,6 +366,21 @@ describe('the diff since the session started (R1.2)', () => {
     setDiffTotal('station-a/s1', { files_changed: 2, insertions: 5, deletions: 1 });
     expect(totalOf('station-a/s1')).toBe('<b>2/5/1</b>');
     expect(totalOf('station-a/other')).toBe('<b>none</b>');
+  });
+
+  test('a turn diff or the Files list adds its paths; the session diff replaces them', () => {
+    const pathsOf = (ref: string) => {
+      function Probe() {
+        return <b>{useDiffPaths(ref)?.join(',') ?? 'none'}</b>;
+      }
+      return renderToStaticMarkup(<Probe />);
+    };
+    mergeDiffPaths('station-a/m1', ['b.ts', 'a.ts', 'b.ts']);
+    expect(pathsOf('station-a/m1')).toBe('<b>b.ts,a.ts</b>');
+    mergeDiffPaths('station-a/m1', ['a.ts', 'c.ts']);
+    expect(pathsOf('station-a/m1')).toBe('<b>b.ts,a.ts,c.ts</b>');
+    setDiffTotal('station-a/m1', { files_changed: 1, insertions: 1, deletions: 0 }, ['c.ts']);
+    expect(pathsOf('station-a/m1')).toBe('<b>c.ts</b>');
   });
 });
 

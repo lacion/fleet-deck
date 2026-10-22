@@ -345,9 +345,9 @@ function header(
 
 /** The markup of the "Terminal" menu of the header, or '' without one. */
 function terminalMenu(html: string): string {
-  const match = /<details class="fd-menu"><summary aria-label="Terminal">[\s\S]*?<\/details>/.exec(
-    html,
-  );
+  // The Terminal summary is a ghost button (base.css `.fd-menu > summary.fd-ghost`).
+  const terminal = /<details class="fd-menu"><summary class="fd-ghost" aria-label="Terminal">/;
+  const match = new RegExp(`${terminal.source}[\\s\\S]*?<\\/details>`).exec(html);
   return match?.[0] ?? '';
 }
 
