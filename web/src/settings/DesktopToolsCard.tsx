@@ -25,6 +25,7 @@ import {
 import type { ElevationAsk } from './elevation';
 import { DeckError } from './http';
 import { MaintenancePanel } from './MaintenancePanel';
+import { NoticeIcon } from './NoticeIcon';
 import { guarded } from './OmarchyCard';
 
 export type ToolsState =
@@ -240,6 +241,7 @@ export function DesktopToolsView(props: ViewProps) {
   } else if (tools.kind === 'error') {
     body = (
       <div className="fd-set-notice" data-tone="error" role="alert">
+        <NoticeIcon tone="error" />
         <span>{READ_ERROR_TEXT}</span>
         <button type="button" className="fd-sm" disabled={busy} onClick={props.onRefresh}>
           Refresh diagnostics

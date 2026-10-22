@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon, RefreshCw } from '../ui/icons';
 import type { ElevationAsk } from './elevation';
+import { NoticeIcon } from './NoticeIcon';
 import { DeckError } from './http';
 import {
   buttons,
@@ -238,6 +239,7 @@ export function OmarchyView({
   } else if (state.kind === 'error') {
     body = (
       <div className="fd-set-notice" data-tone="error" role="alert">
+        <NoticeIcon tone="error" />
         <span>{READ_ERROR_TEXT}</span>
         <button type="button" className="fd-sm" onClick={onRetryRead}>
           <Icon of={RefreshCw} size={14} /> Retry
@@ -266,6 +268,7 @@ export function OmarchyView({
             data-tone={failure.tone ?? 'error'}
             role={failure.tone === 'ok' ? 'status' : 'alert'}
           >
+            <NoticeIcon tone={failure.tone ?? 'error'} />
             <span>{failure.text}</span>
             <FileLines lines={failure.lines ?? []} />
             {failure.message === null ? null : <pre>{failure.message}</pre>}

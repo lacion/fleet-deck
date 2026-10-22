@@ -9,6 +9,7 @@ import { RestartDialog, RestartOverlay, type RestartView, SecretDialog, waitStep
 import { useElevation } from './elevation';
 import { relaySecret, tryRestart, trySave, UNSUPPORTED_TEXT } from './flow';
 import { describe } from './http';
+import { NoticeIcon } from './NoticeIcon';
 import { OmarchyCard } from './OmarchyCard';
 import type { DesktopToolsActions } from './desktopTools';
 import { DesktopToolsCard } from './DesktopToolsCard';
@@ -62,6 +63,7 @@ export function Notice({
       data-tone={item.tone}
       role={item.tone === 'error' ? 'alert' : 'status'}
     >
+      <NoticeIcon tone={item.tone} />
       <span>{item.text}</span>
       {action}
     </div>
@@ -209,6 +211,7 @@ export function SettingsTab({
       <p role="status">Loading settings…</p>
     ) : (
       <div className="fd-set-notice" data-tone="error" role="alert">
+        <NoticeIcon tone="error" />
         <span>{loadError}</span>
         <button type="button" className="fd-sm" onClick={load}>
           <Icon of={RefreshCw} size={14} /> Try again
