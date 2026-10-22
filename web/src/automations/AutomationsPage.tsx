@@ -81,7 +81,7 @@ function RunHistory({
   if (runs === null) return <p role="status">Loading runs…</p>;
   if (runs.length === 0) return <p className="fd-note">No runs yet.</p>;
   return (
-    <ol className="fd-plan-list">
+    <ol className="fd-auto-runs">
       {runs.map((r) => (
         <li key={r.run_id} data-run-state={r.state}>
           <RunBadge run={r} />{' '}
@@ -267,7 +267,7 @@ export function AutomationsPage({
           body="Add one to run a triage, a nightly test fix or a review sweep."
         />
       ) : (
-        <ol className="fd-plan-list">
+        <ol className="fd-auto-list">
           {list.map(({ schedule: s, next_run_at: next, last_run: last }) => {
             const linked = stations.find((st) => st.station_id === s.station_id)?.reachable;
             return (
@@ -283,7 +283,7 @@ export function AutomationsPage({
                   </h3>
                   <p className="fd-plan-meta">
                     {describeCron(s.cron)} · {s.timezone} · {stationName(s.station_id, stations)} ·{' '}
-                    {s.path}
+                    <code>{s.path}</code>
                   </p>
                   <p className="fd-plan-meta">
                     Next run:{' '}
@@ -324,6 +324,7 @@ export function AutomationsPage({
                   <div className="fd-plan-actions">
                     <button
                       type="button"
+                      className="fd-sm"
                       disabled={!can || busy === s.schedule_id || linked === false}
                       title={linked === false ? 'The station is not linked.' : undefined}
                       onClick={() => runNow(s)}
@@ -332,6 +333,7 @@ export function AutomationsPage({
                     </button>
                     <button
                       type="button"
+                      className="fd-sm"
                       disabled={!can || form !== null}
                       onClick={() => {
                         setSaveError(null);
@@ -342,6 +344,7 @@ export function AutomationsPage({
                     </button>
                     <button
                       type="button"
+                      className="fd-ghost fd-sm"
                       disabled={!can || busy === s.schedule_id}
                       onClick={() => toggle(s)}
                     >
@@ -352,6 +355,7 @@ export function AutomationsPage({
                         <span>Delete this automation and its history?</span>
                         <button
                           type="button"
+                          className="fd-danger fd-sm"
                           disabled={!can || busy === s.schedule_id}
                           onClick={() => {
                             setConfirming(null);
@@ -363,7 +367,7 @@ export function AutomationsPage({
                         </button>
                         <button
                           type="button"
-                          className="fd-ghost"
+                          className="fd-ghost fd-sm"
                           onClick={() => setConfirming(null)}
                         >
                           Keep
@@ -372,7 +376,7 @@ export function AutomationsPage({
                     ) : (
                       <button
                         type="button"
-                        className="fd-ghost"
+                        className="fd-ghost fd-sm"
                         disabled={!can}
                         onClick={() => setConfirming(s.schedule_id)}
                       >

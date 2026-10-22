@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Markdown } from '../chat/Markdown';
 import type { DeckArtifactDetail } from '../gen';
-import { ArrowDown, Icon, Link as LinkIcon } from '../ui/icons';
+import { ArrowDown, ChevronLeft, Icon, Link as LinkIcon } from '../ui/icons';
 import { type ArtifactActions, rawPath } from './actions';
 import {
   CONFIRM_TEXT,
@@ -114,12 +114,12 @@ function DeletionNotes({ deletion }: { readonly deletion: DeletionView }) {
   const { phase } = deletion;
   if (phase.kind === 'confirm') {
     return (
-      <div className="fd-disp-confirm" role="alertdialog" aria-label="Confirm">
+      <div className="fd-disp-confirm fd-art-confirm" role="alertdialog" aria-label="Confirm">
         <p>{CONFIRM_TEXT}</p>
-        <button type="button" className="fd-primary" onClick={deletion.onConfirm}>
+        <button type="button" className="fd-danger fd-sm" onClick={deletion.onConfirm}>
           Confirm
         </button>
-        <button type="button" className="fd-ghost" onClick={deletion.onCancel}>
+        <button type="button" className="fd-ghost fd-sm" onClick={deletion.onCancel}>
           Cancel
         </button>
       </div>
@@ -141,12 +141,12 @@ export function ArtifactViewerView({
 }: ViewProps) {
   const back =
     variant === 'page' ? (
-      <a className="fd-ghost fd-sm fd-art-back" href="#/artifacts">
-        All artifacts
+      <a className="fd-btn fd-ghost fd-sm fd-art-back" href="#/artifacts">
+        <Icon of={ChevronLeft} size={14} /> All artifacts
       </a>
     ) : (
       <button type="button" className="fd-ghost fd-sm fd-art-back" onClick={onBack}>
-        Back to the list
+        <Icon of={ChevronLeft} size={14} /> Back to the list
       </button>
     );
   if (data.kind !== 'ok') {
@@ -189,7 +189,7 @@ export function ArtifactViewerView({
         </label>
         {viewUrl === null ? null : (
           <a
-            className="fd-ghost fd-sm fd-art-action"
+            className="fd-btn fd-ghost fd-sm fd-art-action"
             href={viewUrl}
             target="_blank"
             rel="noopener noreferrer"
@@ -199,7 +199,7 @@ export function ArtifactViewerView({
         )}
         {main === undefined ? null : (
           <a
-            className="fd-ghost fd-sm fd-art-action"
+            className="fd-btn fd-ghost fd-sm fd-art-action"
             href={rawPath(artifact.station_id, artifact.artifact_id, ready.version, main)}
             download={fileName(main)}
           >

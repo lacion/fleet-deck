@@ -202,7 +202,7 @@ export function ProjectsPage({
       ) : (
         <div className="fd-panel fd-tablepanel">
           <div className="fd-tablewrap">
-            <table className="fd-table" aria-label="Projects">
+            <table className="fd-table fd-int-projects" aria-label="Projects">
               <thead>
                 <tr>
                   <th scope="col">Name</th>

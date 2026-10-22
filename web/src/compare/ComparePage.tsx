@@ -286,7 +286,7 @@ function Column({
         ) : (
           <button
             type="button"
-            className="fd-primary"
+            className="fd-compare-keep"
             disabled={!canKeep || busy}
             title={keepNote ?? undefined}
             onClick={onAskKeep}

@@ -36,7 +36,7 @@ describe('Files page (DL-141)', () => {
     const html = renderToStaticMarkup(
       <FilesPage stations={[station()]} sessions={[]} filesFor={undefined} />,
     );
-    expect(html).toContain('<h1 class="fd-screen-title">Files</h1>');
+    expect(html).toContain('<h1 class="fd-page-title">Files</h1>');
     expect(html).toContain('Files need a live board with the drive scope.');
     expect(html).not.toContain('<form');
   });

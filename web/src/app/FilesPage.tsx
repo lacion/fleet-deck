@@ -74,10 +74,9 @@ export function FilesPage({
   const [folder, setFolder] = useState(opened?.folder ?? '');
   if (!filesFor) {
     return (
-      <section className="fd-screen fd-files-page" aria-label="Files">
-        <h1 className="fd-screen-title">Files</h1>
+      <Page title="Files" className="fd-files-page">
         <p className="fd-note">Files need a live board with the drive scope.</p>
-      </section>
+      </Page>
     );
   }
   const open = (at: string, path: string) => {
@@ -120,7 +119,7 @@ export function FilesPage({
           </label>
           <button
             type="submit"
-            className="fd-primary fd-sm"
+            className="fd-primary"
             disabled={folder.trim() === '' || station === ''}
           >
             Open

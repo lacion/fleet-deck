@@ -116,11 +116,17 @@ export function Tile({
       </span>
       <span className="fd-wtile-where">
         {where}
-        {s.branch !== null && s.branch !== ''
-          ? ` · ${s.branch}`
-          : s.cwd != null
-            ? ` · ${basename(s.cwd)}`
-            : ''}
+        {s.branch !== null && s.branch !== '' ? (
+          <>
+            {' · '}
+            <code>{s.branch}</code>
+          </>
+        ) : s.cwd != null ? (
+          <>
+            {' · '}
+            <code>{basename(s.cwd)}</code>
+          </>
+        ) : null}
       </span>
       <FocusLine summary={s} />
       {unavailable ? (
@@ -147,13 +153,14 @@ export function Tile({
   );
   return (
     <li
-      className="fd-wtile"
+      className={card.status === 'needs_you' ? 'fd-wtile fd-glow' : 'fd-wtile'}
       data-status={card.status}
       data-focused={focused ? 'true' : undefined}
       data-session={s.session_id}
       data-ref={readOnly ? `${card.station_id}/${s.session_id}` : undefined}
       tabIndex={readOnly ? 0 : undefined}
     >
+      <span className="fd-holder" data-status={card.status} aria-hidden="true" />
       {readOnly ? (
         <div className="fd-wtile-open">{body}</div>
       ) : (
@@ -172,7 +179,7 @@ export function Tile({
                 <button
                   key={o.option_id}
                   type="button"
-                  className={n === 0 ? 'fd-primary fd-sm' : 'fd-sm'}
+                  className={n === 0 ? 'fd-decide fd-sm' : 'fd-sm'}
                   disabled={busy}
                   aria-label={`${o.label}: ${ask.request.title} in ${s.title ?? s.session_id}`}
                   onClick={() => answer(ask.request.request_id, o.option_id)}
