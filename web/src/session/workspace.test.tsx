@@ -8,6 +8,7 @@ import { station } from '../testing/fleet';
 import { summary } from '../testing/summary';
 import { envelopes } from '../testing/timeline';
 import { sessionActions } from './commands';
+import { checkpointText } from './checkpoint';
 import { type PaneTab, SessionView } from './SessionView';
 import { DiffFlight, diffOpen, SinceNotes } from './TurnsPanel';
 import {
@@ -144,7 +145,10 @@ describe('turns and reverts (DL-097)', () => {
       'The turn is reverted.',
     );
     expect(revertBlock({ ...turn, start: gone('queued_input') }, quiet, codexCaps())).toBe(
-      'No start checkpoint: queued_input.',
+      'No snapshot at the start of this turn: a queued message started next.',
+    );
+    expect(revertBlock({ ...turn, start: gone('submodule') }, quiet, codexCaps())).toBe(
+      'No snapshot at the start of this turn.',
     );
     expect(revertBlock(turn, { ...quiet, revert: recon }, codexCaps())).toBe(
       'Another revert holds the session.',
@@ -162,15 +166,52 @@ describe('turns and reverts (DL-097)', () => {
       /data-turn="t1" data-reverted="false"><span class="fd-turn-name">Turn 1<\/span><span class="fd-turn-stat"><span class="fd-add">\+2<\/span><span class="fd-del">−1<\/span><span class="fd-turn-files">1 file<\/span><\/span>/,
     );
     expect(html).toContain('<span class="fd-turn-name">Turn 2</span>');
+    // The reason in plain words; the station code stays in the title.
     expect(html).toContain(
-      '<span class="fd-turn-stat">no completion checkpoint: queued_input</span>',
+      '<span class="fd-turn-stat" title="queued_input">No snapshot: a queued message started next</span>',
     );
+    expect(html).not.toContain('data-note="no-snapshots"');
     expect(html).toContain('Show the diff');
     expect(html).toMatch(/<button type="button" class="fd-sm">Revert to here<\/button>/);
     expect(html).not.toContain('cannot roll back its conversation, so the board');
     expect(html).not.toContain('aria-label="Files"');
     const files = view(codex(), [finalized('t1')], undefined, 'files');
     expect(files).toContain('aria-label="Files"');
+  });
+
+  test('turns without any snapshot: the reason once above the list, "No snapshot" on the rows', () => {
+    const outside = gone('not_a_git_worktree');
+    const html = view(codex(), [
+      finalized('t1', outside, gone('background_writers')),
+      finalized('t2', outside, outside),
+    ]);
+    // A folder outside Git explains every turn, also the one that background work stopped.
+    expect(html).toContain(
+      '<p class="fd-note" data-note="no-snapshots">The board keeps no file snapshots for this session: the folder is not a Git repository.</p>',
+    );
+    expect(html).toContain(
+      '<span class="fd-turn-stat" title="background_writers">No snapshot</span>',
+    );
+    expect(html).toContain(
+      '<span class="fd-turn-stat" title="not_a_git_worktree">No snapshot</span>',
+    );
+    expect(html).not.toContain('No snapshot:');
+    expect(html).not.toContain('not_a_git_worktree<');
+    // Background work on two of three turns: that reason once; the other row keeps its own words.
+    const busy = view(codex(), [
+      finalized('t1', ok('a'), gone('background_writers')),
+      finalized('t2', ok('b'), gone('queued_input')),
+      finalized('t3', ok('c'), gone('background_writers')),
+    ]);
+    expect(busy).toContain(
+      'The board kept no file snapshots for these turns: background work was running.',
+    );
+    expect(busy).toContain(
+      'title="queued_input">No snapshot: a queued message started next</span>',
+    );
+    // One turn, or a turn with changes: no note.
+    expect(view(codex(), [finalized('t1', ok('a'), outside)])).not.toContain('no-snapshots');
+    expect(checkpointText('submodule')).toBe('No snapshot of the files for this turn');
   });
 
   test('the diff button: a loaded diff hides; nothing or a failed load shows (and retries)', () => {
@@ -289,13 +330,16 @@ describe('the diff since the session started (R1.2)', () => {
     inferred: false,
   };
 
-  test('with a base the Changes tab opens "Since spawn", also before the first turn', () => {
+  test('with a base the Changes tab opens "Whole session", also before the first turn', () => {
     const html = view(codex({ base }), []);
     expect(html).toContain('aria-label="Changes view"');
-    expect(html).toMatch(/aria-pressed="true"[^>]*>Since spawn</);
+    expect(html).toMatch(/aria-pressed="true"[^>]*>Whole session</);
     expect(html).toMatch(/aria-pressed="false"[^>]*>By turn</);
-    expect(html).toContain('Since the session started');
-    expect(html).toContain('<code>main</code> <code>01234567</code>');
+    // One sentence (the period on its last word), then the Refresh icon button.
+    expect(html).toContain(
+      '<span>Changes since the session started from <code>main</code> at <code>01234567</code>.</span>',
+    );
+    expect(html).toMatch(/<button type="button" class="fd-iconbtn fd-sm" aria-label="Refresh"/);
     expect(html).toContain('Loading the diff');
   });
 
@@ -305,20 +349,20 @@ describe('the diff since the session started (R1.2)', () => {
       [finalized('t1')],
     );
     expect(guessed).toContain('aria-label="Changes view"');
-    expect(guessed).toMatch(/aria-pressed="false"[^>]*>Since spawn</);
+    expect(guessed).toMatch(/aria-pressed="false"[^>]*>Whole session</);
     expect(guessed).toMatch(/aria-pressed="true"[^>]*>By turn</);
     expect(guessed).toContain('Show the diff');
-    expect(guessed).not.toContain('Since the session started');
+    expect(guessed).not.toContain('Changes since the session started');
     const plain = view(codex(), [finalized('t1')]);
     // DL-191: the owner has the Branches view, so the toggle shows without a base.
     expect(plain).toContain('Changes view');
-    expect(plain).not.toContain('Since spawn');
+    expect(plain).not.toContain('Whole session');
     expect(plain).toMatch(/aria-pressed="true"[^>]*>By turn</);
     expect(plain).toMatch(/aria-pressed="false"[^>]*>Branches</);
     expect(plain).toContain('Show the diff');
   });
 
-  test('the "Since spawn" view says when the start commit was guessed', () => {
+  test('the "Whole session" view says when the start commit was guessed', () => {
     const html = renderToStaticMarkup(
       <SinceNotes
         base={{ git_ref: 'origin/HEAD', oid: base.oid, inferred: true }}

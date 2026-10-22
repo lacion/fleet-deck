@@ -1,10 +1,10 @@
-// ADR-008 §5.3 "Owner visibility": the chip, the dialog and the session action.
+// ADR-008 §5.3 "Owner visibility": the fleet-control fact, the dialog and the session action.
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { sessionActions } from './commands';
-import { chipText, type FleetAnswers, resultText } from './fleetAnswers';
+import { type SessionActions, sessionActions } from './commands';
+import { answersText, type FleetAnswers, resultText } from './fleetAnswers';
 import { FleetAnswersDialog } from './FleetAnswersDialog';
-import { FleetChipButton, FleetControlChip } from './FleetControlChip';
+import { FleetChipButton, useFleetControl } from './FleetControlChip';
 
 const key = { station_id: 'station a', session_id: 's/1' };
 
@@ -33,16 +33,28 @@ const data = (extra: Partial<FleetAnswers> = {}): FleetAnswers => ({
   ...extra,
 });
 
-describe('fleet control chip', () => {
-  test('the text for 0, 1 and 2 answers', () => {
-    expect(chipText(0)).toBe('Fleet control · 0 answers in the last hour');
-    expect(chipText(1)).toBe('Fleet control · 1 answer in the last hour');
-    expect(chipText(2)).toBe('Fleet control · 2 answers in the last hour');
+/** The fact that the hook gives, rendered as the panel or the menu renders it. */
+function Fact({ actions }: { readonly actions: SessionActions | null }) {
+  const fleet = useFleetControl(actions);
+  return (
+    <>
+      {fleet.link?.()}
+      {fleet.dialog}
+    </>
+  );
+}
+
+describe('fleet control fact', () => {
+  test('the value for 0, 1 and 2 answers is a link button, not a filter chip', () => {
+    expect(answersText(0)).toBe('0 answers in the last hour');
+    expect(answersText(1)).toBe('1 answer in the last hour');
+    expect(answersText(2)).toBe('2 answers in the last hour');
     const html = renderToStaticMarkup(
       <FleetChipButton data={data({ last_hour: 1 })} onOpen={() => {}} />,
     );
-    expect(html).toContain('class="fd-chip fd-fleet-chip"');
-    expect(html).toContain('Fleet control · 1 answer in the last hour');
+    expect(html).toContain('class="fd-link fd-props-link fd-fleet-link"');
+    expect(html).not.toContain('fd-chip');
+    expect(html).toContain('>1 answer in the last hour</button>');
   });
 
   test('nothing without a fleet-control grant', () => {
@@ -53,9 +65,10 @@ describe('fleet control chip', () => {
     ).toBe('');
   });
 
-  test('nothing while loading', () => {
+  test('nothing while loading, and nothing without actions', () => {
     const actions = sessionActions(async () => ({}), key, ['admin']);
-    expect(renderToStaticMarkup(<FleetControlChip actions={actions} />)).toBe('');
+    expect(renderToStaticMarkup(<Fact actions={actions} />)).toBe('');
+    expect(renderToStaticMarkup(<Fact actions={null} />)).toBe('');
   });
 });
 

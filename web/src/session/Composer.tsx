@@ -55,6 +55,11 @@ type Props = {
   readonly onModel?: () => void;
   /** The callsign of the session: the placeholder names it (`Message otter-n1rr…`). */
   readonly callsign?: string | null;
+  /**
+   * The phone layout: Send is a round icon button at the right (concept A), and the Resume bar has
+   * the one primary of the screen (the phone header shows no Resume next to it).
+   */
+  readonly phone?: boolean;
 };
 
 /** The most rows the text box grows to. */
@@ -444,12 +449,13 @@ export function Composer(props: Props) {
       : `Message ${target}…`;
 
   if (!props.enabled && props.onResume) {
+    // The desktop header has the primary Resume; the bar repeats it as a plain button (§2.2).
     return (
       <div className="fd-composer-resume">
         <span className="fd-composer-note">{props.disabledReason || 'The session ended.'}</span>
         <button
           type="button"
-          className="fd-primary"
+          className={props.phone === true ? 'fd-primary' : undefined}
           disabled={props.resumeBusy === true}
           onClick={props.onResume}
         >
@@ -607,6 +613,16 @@ export function Composer(props: Props) {
                 </span>
               </button>
             </>
+          ) : props.phone === true ? (
+            <button
+              type="submit"
+              className="fd-iconbtn fd-primary fd-composer-go"
+              aria-label="Send"
+              title="Send"
+              disabled={blocked}
+            >
+              <Icon of={ArrowUp} />
+            </button>
           ) : (
             <button type="submit" className="fd-primary" disabled={blocked}>
               <Icon of={ArrowUp} size={14} /> Send

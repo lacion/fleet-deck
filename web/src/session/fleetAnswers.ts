@@ -22,9 +22,9 @@ export const isFleetAnswers = (v: unknown): v is FleetAnswers =>
   typeof (v as Record<string, unknown>)['fleet_control'] === 'boolean' &&
   Array.isArray((v as Record<string, unknown>)['answers']);
 
-/** The text of the chip: "Fleet control · 2 answers in the last hour". */
-export function chipText(lastHour: number): string {
-  return `Fleet control · ${lastHour} ${lastHour === 1 ? 'answer' : 'answers'} in the last hour`;
+/** The value of the "Fleet control" fact: "2 answers in the last hour". */
+export function answersText(lastHour: number): string {
+  return `${lastHour} ${lastHour === 1 ? 'answer' : 'answers'} in the last hour`;
 }
 
 /** The text of the result column. */

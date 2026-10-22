@@ -274,7 +274,13 @@ describe('composer menus (DL-174)', () => {
     const bar = composer({ enabled: false, onResume: noop });
     expect(bar).toContain('<div class="fd-composer-resume">');
     expect(bar).toContain('<span class="fd-composer-note">The session ended.</span>');
-    expect(bar).toMatch(/<button type="button" class="fd-primary">.*Resume<\/button>/);
+    // The desktop header has the primary Resume: the bar repeats it as a plain button (§2.2).
+    expect(bar).toMatch(/<button type="button">.*Resume<\/button>/);
+    expect(bar).not.toContain('fd-primary');
+    // On the phone the header shows no Resume: the bar has the one primary.
+    expect(composer({ enabled: false, onResume: noop, phone: true })).toMatch(
+      /<button type="button" class="fd-primary">.*Resume<\/button>/,
+    );
     expect(bar).not.toContain('<textarea');
     expect(bar).not.toContain('Add image');
     // the reason of the session replaces the default text
@@ -379,7 +385,10 @@ describe('session header (DL-140)', () => {
     // Stop and Force stop are items of the session menu
     expect(html).toContain('aria-label="Session menu"');
     expect(html).toMatch(/<button[^>]*>(<svg[\s\S]*?<\/svg>)? Stop<\/button>/);
-    expect(html).toContain('Force stop…');
+    // Force stop has its icon, so its text starts on the column of the other items.
+    expect(html).toMatch(
+      /class="fd-danger"[^>]*><svg[^>]*lucide-octagon-alert[^>]*>[\s\S]*?<\/svg> Force stop…/,
+    );
     expect(html).toContain('Fix login');
     expect(html).toContain('Alpha');
     expect(html).not.toContain('Resume');
@@ -491,6 +500,13 @@ describe('session header (DL-140)', () => {
       expect(html).toContain(`<span class="fd-sh-status" data-status="${status}">`);
       expect(html).toContain(`${word}</span>`);
     }
+    // The card says working for background work too: without a run no turn is active.
+    const background = header(session({ current_run: null }, 'working'));
+    expect(background).toContain(
+      '<span class="fd-sh-status" data-status="working" title="Background work runs; no turn is active.">',
+    );
+    expect(background).toContain('Working in background</span>');
+    expect(background).not.toContain('Interrupt');
     const html = header(session({ model: 'claude-sonnet-4-5' }));
     expect(html).toContain('class="fd-sh-model" data-family="sonnet"');
     expect(html).toContain('class="fd-sh-provider"');
@@ -505,13 +521,14 @@ describe('session header (DL-140)', () => {
     expect(html).toContain('default model');
   });
 
-  test('a long cwd is shortened in the middle and kept whole in the title', () => {
+  test('the folder chip shows the home-short path (it fits its room by whole folders) and its title', () => {
     const cwd = `/home/someone/${'deep/'.repeat(20)}repo`;
     const html = header(session({ cwd, branch: 'main' }));
-    expect(html).toContain(`title="${cwd}"`);
+    expect(html).toContain(
+      `<span class="fd-badge fd-sh-chip" data-mono="" data-folder="" title="${cwd}">`,
+    );
+    expect(html).toContain(`<bdi>~/${'deep/'.repeat(20)}repo</bdi>`);
     expect(html).toContain('main');
-    expect(html).toMatch(/…/);
-    expect(html).not.toContain(`>${cwd}<`);
   });
 
   test('a stale board says the controls are off', () => {
@@ -549,6 +566,24 @@ describe('session header (DL-140)', () => {
     expect(html).toContain('aria-label="Session menu"');
     expect(html).not.toContain('aria-label="Session settings"');
     expect(html).toContain('Mode (most restrictive first)');
+    // The modes are menu rows with their names; the title keeps the raw id.
+    expect(html).toContain('<div class="fd-modes-list">');
+    expect(html).not.toContain('class="fd-seg"');
+    const names: readonly (readonly [string, string])[] = [
+      ['default', 'Default'],
+      ['plan', 'Plan'],
+      ['acceptEdits', 'Accept edits'],
+      ['dontAsk', "Don't ask"],
+      ['auto', 'Auto'],
+    ];
+    for (const [id, name] of names) {
+      expect(html).toMatch(
+        new RegExp(`class="fd-mode-row fd-selbar" title="${id}" aria-pressed="(true|false)"`),
+      );
+      expect(html).toContain(`</span>${name.replace("'", '&#x27;')}`);
+    }
+    // A mode that skips the approvals has the shield-alert icon in its leading slot.
+    expect(html).toMatch(/<span class="fd-mode-lead" data-risky="true"><svg[^>]*shield-alert/);
     expect(html).toContain('Set model');
     expect(html).toContain('Continue after a station restart');
   });
@@ -558,12 +593,14 @@ describe('session header (DL-140)', () => {
       session({ callsign: 'falcon', worktree: '/wt/fix', session_seq: 42, updated_at: Date.now() }),
     );
     expect(html).toContain('class="fd-sh-details"');
-    expect(html).toContain('<dt>Session</dt><dd><span>s1</span>');
+    expect(html).toContain('<dt>Session</dt><dd><span class="fd-sh-sid" title="s1">s1</span>');
     expect(html).toContain('aria-label="Copy the session id"');
     expect(html).toContain('<dt>Callsign</dt><dd>falcon</dd>');
     expect(html).toContain('<dt>Worktree</dt><dd>/wt/fix</dd>');
     expect(html).toContain('<dt>Updated</dt><dd>now</dd>');
     expect(html).toContain('<dt>Events</dt><dd>42</dd>');
+    // A big count has a thousands separator.
+    expect(header(session({ session_seq: 7405 }))).toContain('<dt>Events</dt><dd>7,405</dd>');
     const bare = header(session());
     expect(bare).not.toContain('<dt>Callsign</dt>');
     expect(bare).not.toContain('<dt>Worktree</dt>');

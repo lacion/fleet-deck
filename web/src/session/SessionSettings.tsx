@@ -2,6 +2,8 @@
 // settings menu of the session header (SessionView keeps its own copies until wave 2).
 import { type FormEvent, useId, useState } from 'react';
 import type { ModelChoice } from '../gen';
+import { isRiskyMode, modeLabel } from '../ui/format';
+import { Check, Icon, ShieldAlert } from '../ui/icons';
 
 export function ModeLadder(props: {
   modes: readonly string[];
@@ -13,19 +15,30 @@ export function ModeLadder(props: {
   return (
     <fieldset className="fd-modes">
       <legend>Mode (most restrictive first)</legend>
-      {/* The modes are the segments of a .fd-seg: the pressed one is the current mode. */}
-      <div className="fd-seg">
-        {props.modes.map((m) => (
-          <button
-            key={m}
-            type="button"
-            aria-pressed={m === props.current}
-            disabled={!props.enabled || m === props.current}
-            onClick={() => props.onSet(m)}
-          >
-            {m}
-          </button>
-        ))}
+      {/* One menu row per mode, with its sentence-case name (the title keeps the raw id): a mode
+          that skips the approvals has the shield-alert icon, the current mode is pressed and has
+          a check. A wrapped segmented control did not read as one control in the menu. */}
+      <div className="fd-modes-list">
+        {props.modes.map((m) => {
+          const current = m === props.current;
+          return (
+            <button
+              key={m}
+              type="button"
+              className="fd-mode-row fd-selbar"
+              title={m}
+              aria-pressed={current}
+              disabled={!props.enabled || current}
+              onClick={() => props.onSet(m)}
+            >
+              <span className="fd-mode-lead" data-risky={isRiskyMode(m) || undefined}>
+                {isRiskyMode(m) ? <Icon of={ShieldAlert} size={14} /> : null}
+              </span>
+              {modeLabel(m)}
+              {current ? <Icon of={Check} size={14} /> : null}
+            </button>
+          );
+        })}
       </div>
     </fieldset>
   );

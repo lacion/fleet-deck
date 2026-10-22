@@ -1,4 +1,5 @@
 // DL-140: the facts, the place chips and the details of a session header ("Flight Deck" §4.5).
+import type { ReactNode } from 'react';
 import { relativeAge } from '../app/sessions';
 import { providerLabel } from '../board/lanes';
 import { limitChip, rateMeters } from '../board/usage';
@@ -7,10 +8,19 @@ import { useProjects } from '../integrations/context';
 import { IssueChip } from '../integrations/IssueChip';
 import { PrChip } from '../integrations/PrChip';
 import { digestLines } from '../ui/generated';
-import { Folder, GitBranch, Icon, Pencil, Server, Shield, ShieldAlert } from '../ui/icons';
+import { GitBranch, Icon, Pencil, Server, Shield, ShieldAlert } from '../ui/icons';
 import { isRiskyMode, modeLabel, modelFamily, shortModel } from '../ui/format';
 import { isHibernated } from '../views/hibernate';
-import { CopyButton, homeShort, MAX_PATH_CHARS, shortenMiddle } from './CopyButton';
+import { CopyButton } from './CopyButton';
+import { FolderChip } from './PathFit';
+
+/**
+ * The card says `working` for background work too (an `activity: background` without a run): then
+ * no turn runs, so there is nothing to interrupt and the composer sends a new prompt.
+ */
+function inBackground(session: DeckSession): boolean {
+  return session.status === 'working' && session.summary.current_run === null;
+}
 
 /** The word of the status fact. A hibernated session says so. */
 export function statusWord(session: DeckSession): string {
@@ -19,7 +29,7 @@ export function statusWord(session: DeckSession): string {
     case 'needs_you':
       return 'Needs you';
     case 'working':
-      return 'Working';
+      return inBackground(session) ? 'Working in background' : 'Working';
     case 'verifying':
       return 'Verifying';
     case 'queued':
@@ -44,7 +54,11 @@ export function modeTone(mode: string): 'plan' | 'hazard' | undefined {
 /** The status glyph and word of a session. */
 export function StatusFact({ session }: { readonly session: DeckSession }) {
   return (
-    <span className="fd-sh-status" data-status={session.status}>
+    <span
+      className="fd-sh-status"
+      data-status={session.status}
+      title={inBackground(session) ? 'Background work runs; no turn is active.' : undefined}
+    >
       <span className="fd-dot" data-status={session.status} aria-hidden="true" />
       {statusWord(session)}
     </span>
@@ -152,19 +166,25 @@ export function Place({
           <span>{branch}</span>
         </span>
       ) : null}
-      {cwd ? (
-        <span className="fd-badge fd-sh-chip" data-mono="" title={cwd}>
-          <Icon of={Folder} size={13} />
-          <span>{shortenMiddle(homeShort(cwd), MAX_PATH_CHARS)}</span>
-        </span>
-      ) : null}
+      {cwd ? <FolderChip cwd={cwd} /> : null}
       {session === undefined ? null : <ModeFact session={session} />}
     </span>
   );
 }
 
-/** The facts of a session: its id (with a copy button), callsign, worktree, age and event count. */
-export function Details({ session, now }: { readonly session: DeckSession; readonly now: number }) {
+/**
+ * The facts of a session: its id (with a copy button), callsign, worktree, age and event count;
+ * `fleet` is the fleet-control fact of a coordinator (when the Properties panel does not show it).
+ */
+export function Details({
+  session,
+  now,
+  fleet,
+}: {
+  readonly session: DeckSession;
+  readonly now: number;
+  readonly fleet?: ReactNode;
+}) {
   const s = session.summary;
   const digest = digestLines(s.digest);
   return (
@@ -172,7 +192,9 @@ export function Details({ session, now }: { readonly session: DeckSession; reado
       <div>
         <dt>Session</dt>
         <dd>
-          <span>{s.session_id}</span>
+          <span className="fd-sh-sid" title={s.session_id}>
+            {s.session_id}
+          </span>
           <CopyButton text={s.session_id} label="Copy the session id" />
         </dd>
       </div>
@@ -206,8 +228,14 @@ export function Details({ session, now }: { readonly session: DeckSession; reado
       </div>
       <div>
         <dt>Events</dt>
-        <dd>{s.session_seq}</dd>
+        <dd>{s.session_seq.toLocaleString('en-US')}</dd>
       </div>
+      {fleet == null ? null : (
+        <div data-field="fleet">
+          <dt>Fleet control</dt>
+          <dd>{fleet}</dd>
+        </div>
+      )}
     </dl>
   );
 }
