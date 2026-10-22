@@ -137,7 +137,12 @@ export function sidebarModel(
 
 /** The live sessions in the order of the station groups, each once (the j/k order). */
 export function sidebarOrder(model: SidebarModel): readonly DeckSession[] {
-  return model.groups.flatMap((g) => g.live);
+  // The order of the rows: the "Needs you" group lists those sessions first, once.
+  if (model.needs.length === 0) return model.groups.flatMap((g) => g.live);
+  return [
+    ...model.needs,
+    ...model.groups.flatMap((g) => g.live.filter((c) => c.status !== 'needs_you')),
+  ];
 }
 
 /** Sessions for the palette: needs you first, then the newest; at most `max`. */

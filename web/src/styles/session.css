@@ -826,18 +826,6 @@
 .fd-q-dock .fd-options > button:not(.fd-decide):not(.fd-danger):hover:not(:disabled) {
   background: var(--border);
 }
-/* The key hints of the card: a and d (the touch layout has none). */
-.fd-q-dock-kbd {
-  margin-left: var(--sp-1);
-}
-.fd-pane[data-layout="phone"] .fd-q-dock-kbd {
-  display: none;
-}
-@media (pointer: coarse) {
-  .fd-q-dock-kbd {
-    display: none;
-  }
-}
 /* On the phone the request is a bottom sheet (§4.8): full width, round top corners, a 4px top
    bar and stacked 44px buttons; the composer under it is the foot of the sheet. */
 .fd-pane[data-layout="phone"] .fd-dock-approvals {

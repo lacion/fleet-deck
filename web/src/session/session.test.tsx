@@ -412,10 +412,8 @@ describe('session pane (DL-140)', () => {
     expect(html).toContain('This provider has no approval controls.');
     expect(html).not.toContain('>Allow<');
     const answerable = view(session({ capabilities: codexCaps(), open_requests: [req] }));
-    // The decision primary carries its key hint `a` (hidden from the accessible name).
-    expect(answerable).toContain(
-      '>Allow<span class="fd-kbd fd-q-dock-kbd" aria-hidden="true">a</span></button>',
-    );
+    // The decision primary has no key hint: the session page has no a/d keys.
+    expect(answerable).toContain('>Allow</button>');
     // The dock sits above the composer.
     expect(answerable.indexOf('Needs you')).toBeLessThan(
       answerable.indexOf('aria-label="Composer"'),

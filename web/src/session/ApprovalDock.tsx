@@ -33,7 +33,6 @@ export function optionClass(option: Pick<ApprovalOption, 'kind'>, n: number): st
 }
 
 /** The key hints of the card (§4.5): `a` on the decision primary, `d` on the deny. */
-const KEY_HINT: Readonly<Record<string, string>> = { 'fd-decide': 'a', 'fd-danger': 'd' };
 
 export function ApprovalDock(props: Props) {
   const now = useNow(undefined, 30000);
@@ -81,7 +80,6 @@ export function ApprovalDock(props: Props) {
                     <div className="fd-options">
                       {r.options.map((o, n) => {
                         const look = optionClass(o, n);
-                        const key = KEY_HINT[look ?? ''];
                         return (
                           <button
                             key={o.option_id}
@@ -91,11 +89,6 @@ export function ApprovalDock(props: Props) {
                             onClick={() => props.onAnswer(r.request_id, o.option_id, null)}
                           >
                             {o.label}
-                            {key === undefined ? null : (
-                              <span className="fd-kbd fd-q-dock-kbd" aria-hidden="true">
-                                {key}
-                              </span>
-                            )}
                           </button>
                         );
                       })}

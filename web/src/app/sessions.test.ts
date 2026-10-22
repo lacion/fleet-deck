@@ -95,6 +95,16 @@ describe('sidebar model', () => {
     expect(ids(sidebarOrder(sidebarModel(sessions, stations, '')))).toEqual(['n1', 'w1', 'i1']);
   });
 
+  test('the j/k order follows the rows: the needs-you group first, then the stations', () => {
+    const two = [station('station-a'), station('station-b')];
+    const list = [
+      card('a-idle', 'idle', 'station-a'),
+      card('b-needs', 'needs_you', 'station-b'),
+      card('b-idle', 'idle', 'station-b'),
+    ];
+    expect(ids(sidebarOrder(sidebarModel(list, two, '')))).toEqual(['b-needs', 'a-idle', 'b-idle']);
+  });
+
   test('a station that is not in the list gets a group with its id', () => {
     const model = sidebarModel([card('x', 'working', 'station-z')], [], '');
     expect(model.groups.map((g) => g.id)).toEqual(['station-z']);
