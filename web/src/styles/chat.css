@@ -75,6 +75,10 @@
 .fd-chat-mark[data-status="denied"] {
   border-color: var(--hazard);
 }
+/* waiting: the call waits for your answer (a yellow ring). */
+.fd-chat-mark[data-status="waiting"] {
+  border: 1.5px solid var(--act);
+}
 
 /* ── run: the owner's prompt ─────────────────────────────────────── */
 .fd-chat-run {
@@ -251,11 +255,34 @@
 .fd-chat-tool > summary > .fd-badge {
   flex: none;
 }
+/* The result at the right: `ok` quiet, a failure red, a wait for your answer yellow. */
+.fd-chat-tool-result {
+  flex: none;
+  margin-left: auto;
+  color: var(--faint);
+  font-family: var(--font-ui);
+  font-size: var(--fs-meta);
+  white-space: nowrap;
+}
+.fd-chat-tool-result[data-tone="hazard"] {
+  color: var(--hazard);
+}
+.fd-chat-tool-result[data-tone="act"] {
+  color: var(--act);
+  font-weight: 600;
+}
+/* The row of a call that waits for you: the needs-you outline (one state for the row). */
+.fd-chat-tool[data-waiting] > summary {
+  box-shadow: inset 0 0 0 1px var(--act-line);
+}
 .fd-chat-chev {
   display: inline-flex;
   flex: none;
   margin-left: auto;
   color: var(--faint);
+}
+.fd-chat-tool-result + .fd-chat-chev {
+  margin-left: 0;
 }
 .fd-chat-tool-body {
   display: flex;
@@ -622,30 +649,152 @@
   }
 }
 
-/* A file name of a diff opens the file in the Files panel: a link. */
+/* ── the diff view (chat/Diff.tsx) ────────────────────────────────── */
+/* The header row of a file: icon, path (mono), +/− (sans). It stays at the top while its
+   hunks scroll (the diff is the scroll box). The git plumbing lines are not rendered. */
+.fd-diff > .fd-dl[data-kind="file"] {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 28px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.fd-diff > .fd-dl[data-kind="file"] > .fd-icon {
+  color: var(--faint);
+}
+/* A file name opens the file in the Files panel: a button that reads as the path. A long path
+   gives up its folders first (an ellipsis), never the file name. */
 .fd-dl-file {
+  display: inline-flex;
+  justify-content: flex-start;
+  gap: 0;
+  min-width: 0;
   height: auto;
   min-height: 0;
+  overflow: hidden;
   padding: 0;
   background: none;
   border: 0;
   border-radius: 0;
-  color: var(--focus);
+  color: var(--text);
   font: inherit;
+}
+.fd-dl-path {
+  display: inline-flex;
+  min-width: 0;
+  overflow: hidden;
+}
+.fd-dl-dir {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fd-dl-base {
+  flex: none;
 }
 .fd-dl-file:hover:not(:disabled) {
   background: none;
   border-color: transparent;
+  color: var(--focus);
   text-decoration: underline;
 }
-
-/* DL-175: the Show menu, right-aligned above the scroll area. The menu body must not be clipped. */
-.fd-chat-filters {
-  position: relative;
+.fd-dl-stat {
+  display: inline-flex;
   flex: none;
+  gap: var(--sp-1);
+  font-family: var(--font-ui);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+}
+.fd-dl-stat > [data-sign="add"] {
+  color: var(--ok);
+}
+.fd-dl-stat > [data-sign="del"] {
+  color: var(--hazard);
+}
+/* DL-179: two number gutters, old then new; a deleted line leaves the new one blank and an
+   added line the old one. The comment target (.fd-dl-n) sits in the gutter of its side. */
+.fd-dl-g {
+  display: inline-block;
+  width: var(--dl-digits, 3ch);
+  color: var(--faint);
+  text-align: right;
+  user-select: none;
+  vertical-align: top;
+}
+.fd-dl-g[data-side="new"] {
+  margin: 0 var(--sp-3) 0 var(--sp-2);
+}
+.fd-dl-g > .fd-dl-n {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  color: inherit;
+}
+.fd-dl-g > button.fd-dl-n:hover:not(:disabled) {
+  color: var(--text);
+}
+/* A phone shows only the new gutter: blank on a deleted line, where the old-side comment target
+   keeps its place without a number. */
+[data-layout="phone"] .fd-dl:not([data-kind="del"]) > .fd-dl-g[data-side="old"],
+[data-layout="phone"] .fd-dl[data-kind="del"] > .fd-dl-g[data-side="new"] {
+  display: none;
+}
+[data-layout="phone"] .fd-dl[data-kind="del"] > .fd-dl-g[data-side="old"] {
+  margin: 0 var(--sp-3) 0 0;
+  color: transparent;
+}
+[data-layout="phone"] .fd-dl-g[data-side="new"] {
+  margin-left: 0;
+}
+
+/* DL-175: the Show menu floats at the top right of the chat column: a sticky layer of no
+   height at the top of the scroll area, so it takes no row. The column starts under it. */
+.fd-chat-scroll > .fd-chat-filters {
+  position: sticky;
+  top: 0;
+  z-index: 3;
   display: flex;
   justify-content: flex-end;
-  padding: var(--sp-1) var(--sp-5);
+  height: 0;
+  max-width: calc(var(--chat-w) + 2 * var(--sp-5));
+  margin: 0 auto;
+  padding: 0 var(--sp-5);
+}
+.fd-chat-scroll > .fd-chat-filters > .fd-chat-show {
+  margin-top: var(--sp-1);
+  height: max-content;
+}
+/* The transcript scrolls under it: a floating pill, like "Jump to latest". */
+.fd-chat-scroll > .fd-chat-filters > .fd-chat-show > summary {
+  position: relative;
+  height: var(--sp-5);
+  min-height: 0;
+  padding: 0 var(--sp-3);
+  background: var(--raised);
+  border-radius: var(--r-pill);
+  box-shadow: var(--shadow-pop);
+}
+/* On touch the pill keeps its look; an invisible edge makes the tap target 44px. */
+@media (pointer: coarse) {
+  .fd-chat-scroll > .fd-chat-filters > .fd-chat-show > summary::before {
+    content: "";
+    position: absolute;
+    inset: calc((var(--sp-5) - var(--tap-min)) / 2) calc(-1 * var(--sp-1));
+  }
+}
+.fd-chat-scroll > .fd-chat-filters > .fd-chat-show > summary:hover,
+.fd-chat-scroll > .fd-chat-filters > .fd-chat-show[open] > summary {
+  background: var(--raised-hi);
+  color: var(--text);
+}
+.fd-chat-scroll > .fd-chat-filters + .fd-chat-column {
+  padding-top: var(--sp-6);
 }
 .fd-chat-show .fd-menu-body {
   min-width: 200px;
@@ -703,10 +852,10 @@
   outline: 2px solid var(--focus);
   outline-offset: -2px;
 }
-[data-layout="phone"] .fd-chat-filters {
-  padding: var(--sp-1) var(--sp-3);
+[data-layout="phone"] .fd-chat-scroll > .fd-chat-filters {
+  padding: 0 var(--sp-3);
 }
-[data-layout="phone"] .fd-chat-show {
+[data-layout="phone"] .fd-chat-filters > .fd-chat-show {
   position: static;
 }
 [data-layout="phone"] .fd-chat-show .fd-menu-body {
@@ -787,10 +936,13 @@
   align-self: center;
 }
 
-/* B6: the agents switcher and the agent view. */
+/* B6: the agents switcher and the agent view. The bar spans the chat column, not the pane. */
 .fd-chat-bar {
   position: relative;
   flex: none;
+  align-self: center;
+  width: 100%;
+  max-width: calc(var(--chat-w) + 2 * var(--sp-5));
   display: flex;
   flex-wrap: wrap;
   align-items: center;

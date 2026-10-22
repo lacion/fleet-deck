@@ -1,5 +1,6 @@
-import { Fragment, useMemo, useState } from 'react';
+import { type CSSProperties, Fragment, type ReactNode, useMemo, useState } from 'react';
 import { CommentEditor } from '../review/CommentEditor';
+import type { DiffRow } from '../review/diffModel';
 import { arrange, rowIndex } from '../review/diffThreads';
 import {
   type EditorState,
@@ -13,20 +14,68 @@ import {
 import { Thread } from '../review/Thread';
 import { ThreadLists } from '../review/ThreadLists';
 import type { DiffReview } from '../review/types';
-import { diffLineKind } from './diffLines';
+import { FileText, Icon } from '../ui/icons';
+import {
+  diffLineKind,
+  type FileHead,
+  fileHeads,
+  isPlumbing,
+  type LineNo,
+  lineNumbers,
+} from './diffLines';
 
 export type { DiffReview } from '../review/types';
+export { splitDiffFileLine } from './diffLines';
 
-const FILE_LINE = /^(diff --git a\/.* b\/)(.+)$/;
+/** The narrowest number gutter, in digits. */
+const GUTTER_MIN = 3;
 
-/** The parts of a `diff --git a/X b/Y` line: the text before the path Y, and Y; `null` for another shape. */
-export function splitDiffFileLine(
-  line: string,
-): { readonly head: string; readonly path: string } | null {
-  const match = FILE_LINE.exec(line);
-  return match?.[1] !== undefined && match[2] !== undefined
-    ? { head: match[1], path: match[2] }
-    : null;
+/** A path as its folders (they give way to an ellipsis first) and its file name. */
+function PathText({ path }: { readonly path: string }) {
+  const cut = path.lastIndexOf('/') + 1;
+  return (
+    <>
+      {cut > 0 ? <span className="fd-dl-dir">{path.slice(0, cut)}</span> : null}
+      <span className="fd-dl-base">{path.slice(cut)}</span>
+    </>
+  );
+}
+
+/** The header row of a file: icon, path (a button with `onOpenFile`), and its +/− counts. */
+function FileHeader({
+  head,
+  onOpenFile,
+}: {
+  readonly head: FileHead;
+  readonly onOpenFile: ((path: string) => void) | undefined;
+}) {
+  return (
+    <span className="fd-dl" data-kind="file">
+      <Icon of={FileText} size={14} />
+      {onOpenFile ? (
+        // The label keeps the path whole: the two parts are flex items (a screen reader would
+        // read a space between them).
+        <button
+          type="button"
+          className="fd-dl-file"
+          aria-label={head.path}
+          onClick={() => onOpenFile(head.path)}
+        >
+          <PathText path={head.path} />
+        </button>
+      ) : (
+        <span className="fd-dl-path">
+          <PathText path={head.path} />
+        </span>
+      )}
+      {head.add > 0 || head.del > 0 ? (
+        <span className="fd-dl-stat">
+          {head.add > 0 ? <span data-sign="add">{`+${head.add}`}</span> : null}
+          {head.del > 0 ? <span data-sign="del">{`\u2212${head.del}`}</span> : null}
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 /**
@@ -47,7 +96,7 @@ export function Diff({
   readonly onOpenFile?: ((path: string) => void) | undefined;
   readonly review?: DiffReview | undefined;
 }) {
-  const lines = patch.split('\n');
+  const lines = useMemo(() => patch.split('\n'), [patch]);
   const threads = review?.threads;
   const snapshot = review?.snapshot;
   const arranged = useMemo(
@@ -62,56 +111,68 @@ export function Diff({
     editor !== null && arranged !== null
       ? rowIndex(arranged.rows, editor.state.side, editor.state.path, editor.state.end)
       : undefined;
+  const heads = useMemo(() => fileHeads(lines), [lines]);
+  // DL-179: with review, each hunk line shows its old and its new number in two gutters.
+  const numbered = review !== undefined && arranged !== null;
+  const numbers = useMemo(() => (numbered ? lineNumbers(patch) : null), [patch, numbered]);
+  const digits = useMemo(() => {
+    let most = 0;
+    for (const n of numbers?.values() ?? []) most = Math.max(most, n.old ?? 0, n.new ?? 0);
+    return Math.max(GUTTER_MIN, String(most).length);
+  }, [numbers]);
+  const target = (row: NonNullable<DiffRow>): ReactNode =>
+    review?.canWrite ? (
+      <button
+        type="button"
+        className="fd-dl-n"
+        aria-label={spotLabel(row)}
+        onClick={() =>
+          setEditor((now) => {
+            const next = nextEditor(now?.state ?? null, row, (now?.text ?? '') !== '');
+            return next === null
+              ? null
+              : next === now?.state
+                ? now
+                : { state: next, text: now?.text ?? '' };
+          })
+        }
+      >
+        {row.line}
+      </button>
+    ) : (
+      <span className="fd-dl-n">{row.line}</span>
+    );
+  /** The old and the new gutter: the comment target sits in the gutter of its side. */
+  const gutters = (row: DiffRow, no: LineNo | undefined): ReactNode => (
+    <>
+      <span className="fd-dl-g" data-side="old">
+        {row?.side === 'old' ? target(row) : (no?.old ?? null)}
+      </span>
+      <span className="fd-dl-g" data-side="new">
+        {row?.side === 'new' ? target(row) : (no?.new ?? null)}
+      </span>
+    </>
+  );
+  const style = numbers ? ({ '--dl-digits': `${digits}ch` } as CSSProperties) : undefined;
   const pre = (
-    <pre className="fd-diff" data-diff={id}>
+    <pre className="fd-diff" data-diff={id} data-numbers={numbers ? '' : undefined} style={style}>
       {lines.map((line, n) => {
         const kind = diffLineKind(line);
-        const file = kind === 'file' && onOpenFile ? splitDiffFileLine(line) : null;
+        const head = kind === 'file' ? heads.get(n) : undefined;
         const row = review && arranged ? (arranged.rows[n] ?? null) : null;
         const here = arranged?.under.get(n);
+        // The git plumbing (index, ---, +++) is left out: the file header row says the same.
+        const shown = kind !== 'meta' || !isPlumbing(line);
         return (
           <Fragment key={n}>
-            <span className="fd-dl" data-kind={kind}>
-              {review && row ? (
-                review.canWrite ? (
-                  <button
-                    type="button"
-                    className="fd-dl-n"
-                    aria-label={spotLabel(row)}
-                    onClick={() =>
-                      setEditor((now) => {
-                        const next = nextEditor(now?.state ?? null, row, (now?.text ?? '') !== '');
-                        return next === null
-                          ? null
-                          : next === now?.state
-                            ? now
-                            : { state: next, text: now?.text ?? '' };
-                      })
-                    }
-                  >
-                    {row.line}
-                  </button>
-                ) : (
-                  <span className="fd-dl-n">{row.line}</span>
-                )
-              ) : null}
-              {file ? (
-                <>
-                  {file.head}
-                  <button
-                    type="button"
-                    className="fd-dl-file"
-                    onClick={() => onOpenFile?.(file.path)}
-                  >
-                    {file.path}
-                  </button>
-                </>
-              ) : line === '' ? (
-                ' '
-              ) : (
-                line
-              )}
-            </span>
+            {head ? (
+              <FileHeader head={head} onOpenFile={onOpenFile} />
+            ) : shown ? (
+              <span className="fd-dl" data-kind={kind}>
+                {numbers && kind !== 'meta' ? gutters(row, numbers.get(n)) : null}
+                {line === '' ? ' ' : line}
+              </span>
+            ) : null}
             {review && here
               ? here.map((t) => (
                   <Thread
