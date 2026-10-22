@@ -720,6 +720,7 @@ export function App({
         onOpenFailure={(f) => open(f.key)}
         onDismissFailure={(f) => setDismissed((set) => new Set(set).add(f.ref))}
         dock={dock}
+        chrome={chrome}
         onTerminalsBack={() => {
           if (typeof window !== 'undefined' && window.history.length > 1) window.history.back();
           else navigate({ name: 'home' });

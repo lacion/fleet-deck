@@ -441,12 +441,6 @@ a.fd-int-projectchip:hover {
 .fd-cardwrap > .fd-int-projectchip {
   margin: 4px 0 0 12px;
 }
-.fd-sidebar-group {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-1);
-  align-items: center;
-}
 /* The sessions of a project are strips: one column, 6px apart (§4.1). */
 .fd-int-sessions {
   display: grid;

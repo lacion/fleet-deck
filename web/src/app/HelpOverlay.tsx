@@ -1,5 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { Fragment, useEffect, useRef } from 'react';
 import { useDismiss } from '../ui/dismiss';
+import { Icon, X } from '../ui/icons';
 import { trapTab, useFocusReturn } from './focus';
 import { useOverlay } from './overlay';
 
@@ -17,7 +18,7 @@ export const SHORTCUTS: readonly Row[] = [
   { keys: 'Ctrl+K or ⌘K', does: 'Go to session' },
 ];
 
-/** The keys of the fleet home (the needs-you rail). */
+/** The keys of the fleet home (the Needs you panel). */
 export const FLEET_SHORTCUTS: readonly Row[] = [
   { keys: '[ ]', does: 'Select the previous or next request' },
   { keys: 'a', does: 'Answer the selected request with its first option' },
@@ -37,7 +38,7 @@ const CONCEPTS: readonly (readonly [string, string])[] = [
   ],
   [
     'Needs you',
-    'A session waits for an approval or an answer. Answer it in the rail, the dock, or with the keys.',
+    'A session waits for an approval or an answer. Answer it in the Needs you panel, the session, or with the keys.',
   ],
   [
     'Chat and terminal',
@@ -55,11 +56,26 @@ const CONCEPTS: readonly (readonly [string, string])[] = [
 ];
 
 const PAGES: readonly (readonly [string, string])[] = [
-  ['Fleet', 'Every session by status, with the rail of requests and the activity feed'],
+  ['Fleet', 'Every session by status, with the Needs you panel and the activity feed'],
   ['Plans', 'Proposed plans'],
   ['Stations', 'Machines, providers and shells'],
   ['New session', 'Start an agent on a station'],
 ];
+
+/** One key chip for each key: "Ctrl+K or ⌘K" is two chips, "[ ]" is two chips. */
+function Keys({ keys }: { readonly keys: string }) {
+  return keys.split(' or ').map((group, at) => (
+    <Fragment key={group}>
+      {at > 0 ? ' or ' : null}
+      {group.split(' ').map((key, i) => (
+        <Fragment key={key}>
+          {i > 0 ? ' ' : null}
+          <kbd className="fd-kbd">{key}</kbd>
+        </Fragment>
+      ))}
+    </Fragment>
+  ));
+}
 
 function KeyTable({ rows, label }: { readonly rows: readonly Row[]; readonly label: string }) {
   return (
@@ -74,7 +90,7 @@ function KeyTable({ rows, label }: { readonly rows: readonly Row[]; readonly lab
         {rows.map((row) => (
           <tr key={row.keys}>
             <td>
-              <kbd className="fd-kbd">{row.keys}</kbd>
+              <Keys keys={row.keys} />
             </td>
             <td>{row.does}</td>
           </tr>
@@ -104,7 +120,7 @@ export function HelpOverlay({ onClose }: { readonly onClose: () => void }) {
   useFocusReturn(root, close);
   useOverlay();
   useDismiss(root, true, onClose);
-  // The Close button has the focus; the long dialog still opens at its top.
+  // The Close button of the header has the focus; the long dialog still opens at its top.
   useEffect(() => root.current?.scrollTo({ top: 0 }), []);
   return (
     <div className="fd-overlay">
@@ -121,7 +137,19 @@ export function HelpOverlay({ onClose }: { readonly onClose: () => void }) {
           } else trapTab(e, root.current);
         }}
       >
-        <h2>Keyboard and help</h2>
+        <div className="fd-help-head">
+          <h2>Keyboard and help</h2>
+          <button
+            ref={close}
+            type="button"
+            className="fd-iconbtn"
+            aria-label="Close"
+            title="Close"
+            onClick={onClose}
+          >
+            <Icon of={X} />
+          </button>
+        </div>
         <section aria-label="Keys">
           <h3 className="fd-label">Keys</h3>
           <KeyTable rows={SHORTCUTS} label="General keys" />
@@ -136,9 +164,6 @@ export function HelpOverlay({ onClose }: { readonly onClose: () => void }) {
           <h3 className="fd-label">Pages</h3>
           <Terms items={PAGES} />
         </section>
-        <button ref={close} type="button" onClick={onClose}>
-          Close
-        </button>
       </div>
     </div>
   );

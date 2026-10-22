@@ -15,8 +15,9 @@
   width: 100%;
   max-width: calc(var(--page-w) + 2 * var(--page-pad));
   min-width: 0;
-  margin: 0 auto;
-  padding: var(--sp-4) var(--page-pad) 48px;
+  /* Left-aligned: every page starts at the same gutter; only the max width changes. */
+  margin: 0;
+  padding: var(--sp-2) var(--page-pad) 48px;
 }
 .fd-page[data-wide="true"] {
   --page-w: 1280px;
@@ -25,35 +26,47 @@
   min-width: 0;
 }
 
-/* The page header (§4.3): the title (wide), its count and the actions on one line; the one
-   summary sentence under the title; a soft rule closes it. */
+/* The page header (§4.3): at the left a column of the title row (title + count, --header-h)
+   and the one summary sentence under it; at the right the actions, level with the title row; a
+   soft rule closes it. */
 .fd-page-head {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  column-gap: var(--sp-2);
-  row-gap: var(--sp-1);
+  align-items: flex-start;
+  gap: var(--sp-2) var(--sp-4);
   min-width: 0;
-  min-height: var(--header-h);
-  padding: var(--sp-2) 0 var(--sp-3);
+  padding-bottom: var(--sp-3);
   border-bottom: 1px solid var(--border-soft);
 }
-.fd-page-head > .fd-page-title {
+.fd-page-titles {
+  flex: 1 1 auto;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.fd-page-titlerow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  min-height: var(--header-h);
+}
+.fd-page-titlerow > .fd-page-title {
   min-width: 0;
   overflow-wrap: anywhere;
 }
 .fd-page-actions {
+  flex: none;
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: var(--sp-2);
+  min-height: var(--header-h);
   margin-left: auto;
 }
 .fd-page-desc {
-  flex: 1 0 100%;
-  order: 1;
   max-width: 80ch;
-  margin: 0;
+  margin: calc(-1 * var(--sp-2)) 0 0;
   color: var(--dim);
   font-size: var(--fs-ui);
   line-height: 1.45;
@@ -62,15 +75,19 @@
   .fd-page {
     --page-pad: var(--sp-4);
     gap: var(--sp-4);
-    padding-top: var(--sp-1);
+    padding-top: var(--sp-3);
   }
+  /* The title column stays first; the actions take the next line. */
   .fd-page-head {
-    min-height: 52px;
+    flex-wrap: wrap;
   }
-  /* The title stays first; the actions take the next line. */
-  .fd-page-actions {
-    order: 2;
+  .fd-page-titles {
     flex-basis: 100%;
+  }
+  .fd-page-actions {
+    flex-basis: 100%;
+    justify-content: flex-start;
+    min-height: 0;
     margin-left: 0;
   }
 }
@@ -333,10 +350,15 @@
 .fd-table .fd-cell-actions > * + * {
   margin-left: var(--sp-1);
 }
+/* A secondary value of a cell (a role, a kind): plain dim text, not a badge. */
+.fd-table .fd-cell-dim {
+  color: var(--dim);
+}
 .fd-cellbadges {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--sp-1);
+  align-items: center;
+  gap: var(--sp-1) var(--sp-2);
 }
 .fd-tablepanel {
   padding: 0;
@@ -365,7 +387,7 @@
     display: none;
   }
   .fd-table tr {
-    padding: 10px var(--sp-3);
+    padding: var(--sp-3);
     border-bottom: 1px solid var(--border-soft);
   }
   .fd-table tbody tr:last-child {
@@ -375,19 +397,31 @@
   .fd-tablepanel .fd-table td:first-child,
   .fd-tablepanel .fd-table td:last-child {
     height: auto;
-    padding: 3px 0;
+    padding: 2px 0;
     border: 0;
   }
   .fd-table td:empty {
     display: none;
   }
+  /* A labelled cell is a two-column row: the column name at the left, the value at the right. */
+  .fd-table td[data-label] {
+    display: flex;
+    align-items: baseline;
+    min-height: 28px;
+    padding: var(--sp-1) 0;
+  }
+  .fd-table td[data-label] > * {
+    min-width: 0;
+  }
   .fd-table td[data-label]::before {
     content: attr(data-label);
-    display: block;
+    flex: none;
+    width: 96px;
+    margin-right: var(--sp-3);
     font-family: var(--font-ui);
-    font-size: var(--fs-micro);
-    font-weight: 600;
-    color: var(--faint);
+    font-size: var(--fs-meta);
+    font-weight: 500;
+    color: var(--dim);
   }
   .fd-table .fd-cell-actions {
     margin-top: 6px;

@@ -20,8 +20,9 @@ type PageProps = {
 };
 
 /**
- * The page frame: padding, a centered column, and the page header (DESIGN-SYSTEM §4.3): the title,
- * its count and the actions on one line, the description under them, then a rule.
+ * The page frame: padding, a left-aligned column, and the page header (DESIGN-SYSTEM §4.3): the
+ * title and its count with the description under them at the left, the actions at the right, then
+ * a rule.
  */
 export function Page({
   title,
@@ -40,13 +41,17 @@ export function Page({
       aria-label={label ?? title}
     >
       <header className="fd-page-head">
-        <h1 className="fd-page-title">{title}</h1>
-        {count === undefined ? null : <span className="fd-count">{count}</span>}
+        <div className="fd-page-titles">
+          <div className="fd-page-titlerow">
+            <h1 className="fd-page-title">{title}</h1>
+            {count === undefined ? null : <span className="fd-count">{count}</span>}
+          </div>
+          {description === undefined || description === null ? null : (
+            <p className="fd-page-desc">{description}</p>
+          )}
+        </div>
         {actions === undefined || actions === null ? null : (
           <div className="fd-page-actions">{actions}</div>
-        )}
-        {description === undefined || description === null ? null : (
-          <p className="fd-page-desc">{description}</p>
         )}
       </header>
       {children}
