@@ -2,10 +2,11 @@
 // labels that the station needs, three preferences, and "Spread over stations" for a batch.
 import type { Prefer, ProjectHome, ProviderKind, StationView } from '../gen';
 import { AUTO } from './spawn';
+import { Seg, StationPills } from './SpawnSheet';
 
 /**
- * The Station select; for a project start (`homes` is not `null`) the Home select: the ready homes
- * as "<station> · <path>". `auto` adds "Auto (best station)".
+ * The Station radio pills; for a project start (`homes` is not `null`) the Home select pill: the
+ * ready homes as "<station> · <path>". `auto` adds "Auto (best station)".
  */
 export function StationChoice({
   homes,
@@ -20,25 +21,24 @@ export function StationChoice({
   readonly auto: boolean;
   readonly onChange: (id: string) => void;
 }) {
+  if (homes === null) {
+    return <StationPills targets={targets} value={value} auto={auto} onChange={onChange} />;
+  }
   const name = (id: string) => targets.find((t) => t.station_id === id)?.name ?? id;
   return (
-    <label>
-      {homes === null ? 'Station' : 'Home'}
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
-        {homes === null
-          ? targets.map((s) => (
-              <option key={s.station_id} value={s.station_id}>
-                {s.name}
-              </option>
-            ))
-          : homes.map((h) => (
-              <option key={h.station_id} value={h.station_id}>
-                {`${name(h.station_id)} · ${h.path}`}
-              </option>
-            ))}
-        {auto ? <option value={AUTO}>Auto (best station)</option> : null}
-      </select>
-    </label>
+    <select
+      aria-label="Home"
+      className="fd-sm fd-spawn-pill"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    >
+      {homes.map((h) => (
+        <option key={h.station_id} value={h.station_id}>
+          {`${name(h.station_id)} · ${h.path}`}
+        </option>
+      ))}
+      {auto ? <option value={AUTO}>Auto (best station)</option> : null}
+    </select>
   );
 }
 
@@ -53,16 +53,12 @@ export function KindChoice({
   readonly onChange: (kind: ProviderKind) => void;
 }) {
   return (
-    <label>
-      Provider
-      <select value={value} onChange={(event) => onChange(event.target.value as ProviderKind)}>
-        {kinds.map((k) => (
-          <option key={k} value={k}>
-            {k.charAt(0).toUpperCase() + k.slice(1)}
-          </option>
-        ))}
-      </select>
-    </label>
+    <Seg
+      label="Provider"
+      value={value}
+      options={kinds.map((k) => ({ value: k, label: k.charAt(0).toUpperCase() + k.slice(1) }))}
+      onChange={onChange}
+    />
   );
 }
 
@@ -140,25 +136,32 @@ export function PlacementFields({
   );
 }
 
-/** The directory under "Auto (best station)" without a project: typed, the same on each station. */
+/**
+ * The directory under "Auto (best station)" without a project: typed, the same on each station.
+ * `describedBy` names the note that says what is missing; `invalid`: the text is not an absolute path.
+ */
 export function TypedDirectory({
   value,
   onChange,
+  invalid,
+  describedBy,
 }: {
   readonly value: string;
   readonly onChange: (path: string) => void;
+  readonly invalid: boolean;
+  readonly describedBy: string | undefined;
 }) {
   return (
-    <label>
-      Directory
-      <input
-        value={value}
-        aria-label="Directory path"
-        placeholder="/work/repo"
-        spellCheck={false}
-        autoCapitalize="off"
-        onChange={(event) => onChange(event.target.value)}
-      />
-    </label>
+    <input
+      className="fd-spawn-dir"
+      value={value}
+      aria-label="Directory path"
+      placeholder="Type an absolute path"
+      spellCheck={false}
+      autoCapitalize="off"
+      aria-invalid={invalid ? true : undefined}
+      aria-describedby={describedBy}
+      onChange={(event) => onChange(event.target.value)}
+    />
   );
 }

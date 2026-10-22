@@ -22,7 +22,7 @@ import type {
   WorkspaceListing,
   WorkspaceRequest,
 } from '../gen';
-import { limitSuffix, type RateMeter } from '../board/usage';
+import { type RateMeter, resetsText, WARN_PERCENT } from '../board/usage';
 import type { PlacementBody } from '../integrations/actions';
 import { commandId, type Outcome, outcomeOf } from '../session/commands';
 import { nativeActions, type NativeActions } from './nativeSessions';
@@ -488,17 +488,27 @@ export function providerLabel(p: StationProvider): string {
 }
 
 /**
- * The option text of the provider select (R4.3): the label, the tightest
- * limit of the instance ("42% of five_hour, resets in 1 h") and "(most room)".
+ * The names of the rate-limit windows, the same as the usage glance of the fleet home (UsageGlance):
+ * never the raw protocol scope such as `five_hour`.
  */
-export function providerChoiceLabel(
-  p: StationProvider,
+const SCOPE_TEXT: Readonly<Record<string, string>> = {
+  five_hour: '5-hour window',
+  weekly: 'weekly',
+};
+
+/**
+ * The fuel badge next to the provider choice (R4.3): the tightest limit of the chosen instance,
+ * "84% of 5-hour window", from WARN_PERCENT on; below it, nothing. The title adds the reset time.
+ */
+export function limitBadge(
   limit: RateMeter | null,
   now: number,
-  mostRoom: boolean,
-): string {
-  const suffix = limitSuffix(limit, now);
-  return `${providerLabel(p)}${suffix === '' ? '' : `, ${suffix}`}${mostRoom ? ' (most room)' : ''}`;
+): { readonly text: string; readonly title: string } | null {
+  if (limit === null || limit.usedPercent === null || limit.usedPercent < WARN_PERCENT) return null;
+  const scope = SCOPE_TEXT[limit.scope] ?? limit.scope.replace(/_/g, ' ');
+  const text = `${Math.round(limit.usedPercent)}% of ${scope}`;
+  const title = limit.resetsAt === null ? text : `${text}, ${resetsText(limit.resetsAt, now)}`;
+  return { text, title };
 }
 
 /** The warning under the provider select for a CLI version that the station
