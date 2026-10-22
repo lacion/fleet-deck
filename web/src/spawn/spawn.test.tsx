@@ -153,8 +153,8 @@ describe('spawn form (P4-4)', () => {
     expect(html).toContain('<option value="" selected="">Station default</option>');
     expect(html).toContain('<option value="plan">plan</option>');
     expect(html).toContain('aria-label="Directory path"');
-    // The placeholder is an example path (mono), not a second "choose a folder".
-    expect(html).toContain('placeholder="/path/to/project"');
+    // The placeholder is words (sans), not an example path and not a second "choose a folder".
+    expect(html).toContain('placeholder="Folder on the station"');
     // No directory yet: the start button is off and the note under the directory says why.
     expect(html).toContain(
       `<button type="submit" class="fd-primary" disabled="" aria-describedby="fd-spawn-need" aria-keyshortcuts="Meta+Enter Control+Enter">Start session<span class="fd-kbd" aria-hidden="true">${submitKeyHint()}</span></button>`,
@@ -667,14 +667,15 @@ describe('spawn form (P4-4)', () => {
       expect(html).not.toContain('Model id or alias');
     });
 
-    test('without a known list the field is the same select pill with the default and Other…', () => {
+    test('without a known list the field is a text pill: the owner types a model at once', () => {
       const html = render([withModels('a', list('opus'), 10, 'codex')]);
-      expect(html).toContain('<select aria-label="Model (optional)" class="fd-spawn-pill"');
-      const other = '<option value="__other__">Other…</option></select>';
-      expect(html).toContain(`<option value="" selected="">Default model</option>${other}`);
+      expect(html).toContain(
+        '<input class="fd-spawn-pill" aria-label="Model (optional)" placeholder="Default model"',
+      );
+      expect(html).not.toContain('<select aria-label="Model (optional)"');
+      expect(html).not.toContain('Other…');
       expect(html).not.toContain('From the last session');
-      expect(html).not.toContain('class="fd-vh">From');
-      expect(html).not.toContain('Model id or alias'); // the input shows only after "Other…"
+      expect(html).not.toContain('Model id or alias');
     });
   });
 
