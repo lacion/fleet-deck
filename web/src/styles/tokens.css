@@ -50,8 +50,10 @@
   --fuel-bg: #2a2348; /* track of a fuel meter (visible on --surface and --raised) */
   --focus: #66b8ff; /* blue: focus ring, selection marker, links, queued, verifying */
   --focus-bg: #13253a; /* selected tab or row tint */
-  --add-bg: rgba(61, 220, 151, 0.1); /* diff line fill: addition */
-  --del-bg: rgba(255, 98, 87, 0.1); /* diff line fill: deletion */
+  /* diff line fill: addition; diff fills sit on --code or --bg only; never on --raised (--faint 4.17:1) */
+  --add-bg: rgba(61, 220, 151, 0.1);
+  /* diff line fill: deletion; diff fills sit on --code or --bg only; never on --raised (--faint 4.17:1, --hazard 4.27:1) */
+  --del-bg: rgba(255, 98, 87, 0.1);
   --free-bg: #10291f; /* free slot / allowed tint */
   --term-selection: rgba(102, 184, 255, 0.3); /* terminal selection (a selection is blue) */
   --term-cyan: #5ccfe6; /* terminal ANSI cyan (the terminal palette only) */
@@ -116,7 +118,7 @@
   --hazard: #b52a22; /* 4.5:1 also on the --del-bg diff line */
   --hazard-bg: #fde8e6;
   --fuel: #6447d6; /* 4.5:1 also on --badge-bg and the add/del diff fills */
-  --fuel-bg: #e2dafc; /* a visible meter track on --surface and --raised; --fuel text 4.5:1 on it */
+  --fuel-bg: #e6dffc; /* a visible meter track on --surface and --raised; --fuel (4.78:1) and --faint (4.61:1) text on it */
   --focus: #1a5fbf;
   --focus-bg: #e5effc;
   --add-bg: rgba(10, 112, 72, 0.1);

@@ -122,6 +122,7 @@ export const PALETTE_VARS = [
   '--act-glow',
   '--ink-fill',
   '--ink-on',
+  '--ok',
   '--ok-bg',
   '--fuel',
   '--fuel-bg',
@@ -170,20 +171,37 @@ export function contrast(a: string, b: string): number {
   return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
 }
 
-/** The first percent from `p` up (in steps of 2) where `mix(fg, pct, bg)` reaches `ratio` on `surface`. */
-function rampPct(fg: string, bg: string, p: number, surface: string, ratio: number): number {
+/**
+ * The first percent from `p` up (in steps of 2) where `mix(fg, pct, bg)` reaches `ratio` on every
+ * one of `surfaces`.
+ */
+function rampPct(
+  fg: string,
+  bg: string,
+  p: number,
+  surfaces: readonly string[],
+  ratio: number,
+): number {
+  const low = (pct: number) => surfaces.some((s) => contrast(mixHex(fg, pct, bg), s) < ratio);
   let pct = Math.min(100, p);
-  while (pct < 100 && contrast(mixHex(fg, pct, bg), surface) < ratio) pct = Math.min(100, pct + 2);
+  while (pct < 100 && low(pct)) pct = Math.min(100, pct + 2);
   return pct;
 }
 
 /**
  * `color` as it is, or mixed in 5 % steps toward `ink` (black on a light deck, white on a dark
- * one, so that the hue stays) until it reaches 4.5:1 on `surface`.
+ * one, so that the hue stays) until it reaches `ratio` on every one of `surfaces`: 4.5:1 for a
+ * text (a tone text sits on `--raised-hi` and on every tint, DESIGN-SYSTEM §6), 3:1 for a line.
  */
-function readable(color: string, ink: string, surface: string): string {
+export function readableAll(
+  color: string,
+  ink: string,
+  surfaces: readonly string[],
+  ratio = 4.5,
+): string {
+  const low = (c: string) => surfaces.some((s) => contrast(c, s) < ratio);
   let pct = 0;
-  while (pct < 100 && contrast(mixHex(ink, pct, color), surface) < 4.5) pct += 5;
+  while (pct < 100 && low(mixHex(ink, pct, color))) pct += 5;
   return mixHex(ink, pct, color);
 }
 
@@ -191,9 +209,11 @@ function readable(color: string, ink: string, surface: string): string {
  * The token values of a palette (decision 1), as `#rrggbb` (or `#rrggbbaa` for the glow). Every
  * color is checked again: a palette with a bad color gives `{}`, so that nothing is applied.
  * Palette colors and fixed mix steps do not keep the accessibility floor (DESIGN-SYSTEM §6), so the
- * text tokens step until they reach 4.5:1 on `--raised-hi` (the surface nearest to the text), and
- * `--ctl-edge` until it reaches 3:1 there. A palette whose foreground is under 4.5:1 on
- * `--raised-hi` gives `{}`.
+ * text tokens step until they reach 4.5:1 on `--raised-hi` (the surface nearest to the text) and
+ * on every tint (`--act-bg`, `--hazard-bg`, `--ok-bg`, `--fuel-bg`, `--focus-bg`: a badge or a
+ * selected row puts text on them), `--ctl-edge` until it reaches 3:1 on `--raised-hi`, and
+ * `--act-line` until it reaches 3:1 on `--bg`, `--raised` and `--act-bg`. A palette whose
+ * foreground is under 4.5:1 on `--raised-hi` gives `{}`.
  */
 export function paletteVars(p: Palette): Record<string, string> {
   const c = p.colors;
@@ -202,18 +222,28 @@ export function paletteVars(p: Palette): Record<string, string> {
   const bg = c.background.toLowerCase();
   const yellow = c.yellow.toLowerCase();
   const red = c.red.toLowerCase();
+  const accent = c.accent.toLowerCase();
   const raisedHi = mixHex(fg, 12, bg);
+  const raised = mixHex(fg, 8, bg);
   if (contrast(fg, raisedHi) < 4.5) return {};
   // The ink extreme on the side of the foreground: semantic colors darken (or lighten) toward it.
   const ink = luminance(fg) < luminance(bg) ? '#000000' : '#ffffff';
+  // The tints: 14 % of the tone on --bg (fuel 16 %). --focus-bg tints the accent as it reads on
+  // --raised-hi; the palette `selection` color is a terminal selection, not a text surface.
+  const actBg = mixHex(yellow, 14, bg);
+  const hazardBg = mixHex(red, 14, bg);
+  const okBg = mixHex(OK[p.mode], 14, bg);
+  const fuelBg = mixHex(FUEL[p.mode], 16, bg);
+  const focusBg = mixHex(readableAll(accent, ink, [raisedHi]), 14, bg);
+  const surfaces = [raisedHi, actBg, hazardBg, okBg, fuelBg, focusBg];
   // --faint starts at 58 %, --dim at 72 %. When --faint must climb, --dim stays a step over it
   // (14 points, or half the way to the foreground), so that the three text steps stay apart.
-  const faintPct = rampPct(fg, bg, 58, raisedHi, 4.5);
+  const faintPct = rampPct(fg, bg, 58, surfaces, 4.5);
   const dimPct = rampPct(
     fg,
     bg,
     Math.max(72, faintPct + Math.min(14, Math.round((100 - faintPct) / 2))),
-    raisedHi,
+    surfaces,
     4.5,
   );
   // --act-ink: bg or fg on the yellow fill, whichever reads better; else black or white.
@@ -226,30 +256,32 @@ export function paletteVars(p: Palette): Record<string, string> {
     '--text': fg,
     '--code': c.dark_background.toLowerCase(),
     '--surface': mixHex(fg, 4, bg),
-    '--raised': mixHex(fg, 8, bg),
+    '--raised': raised,
     '--border': mixHex(fg, 18, bg),
     '--border-soft': mixHex(fg, 10, bg),
     // The edge of a form control: 3:1 on every surface up to --raised-hi (WCAG 1.4.11).
-    '--ctl-edge': mixHex(fg, rampPct(fg, bg, 50, raisedHi, 3), bg),
+    '--ctl-edge': mixHex(fg, rampPct(fg, bg, 50, [raisedHi], 3), bg),
     '--dim': mixHex(fg, dimPct, bg),
     '--faint': mixHex(fg, faintPct, bg),
     '--faint-decor': mixHex(fg, 40, bg),
-    '--hazard': readable(red, ink, raisedHi),
-    '--act': readable(yellow, ink, raisedHi),
-    '--act-bg': mixHex(yellow, 14, bg),
-    '--hazard-bg': mixHex(red, 14, bg),
+    '--hazard': readableAll(red, ink, surfaces),
+    '--act': readableAll(yellow, ink, surfaces),
+    '--act-bg': actBg,
+    '--hazard-bg': hazardBg,
     '--act-ink': actInk,
     '--raised-hi': raisedHi,
     '--act-fill': yellow,
-    '--act-line': yellow,
+    // The needs-you outline is a state line: 3:1 where a needs-you strip or card sits (1.4.11).
+    '--act-line': readableAll(yellow, ink, [bg, raised, actBg], 3),
     '--act-glow': `${yellow}33`, // 20 % alpha
     '--ink-fill': fg,
     '--ink-on': bg,
-    '--ok-bg': mixHex(OK[p.mode], 14, bg),
-    '--fuel': readable(FUEL[p.mode], ink, raisedHi),
-    '--fuel-bg': mixHex(FUEL[p.mode], 16, bg),
-    '--focus': readable(c.accent.toLowerCase(), ink, raisedHi),
-    '--focus-bg': c.selection.toLowerCase(),
+    '--ok': readableAll(OK[p.mode], ink, surfaces),
+    '--ok-bg': okBg,
+    '--fuel': readableAll(FUEL[p.mode], ink, surfaces),
+    '--fuel-bg': fuelBg,
+    '--focus': readableAll(accent, ink, surfaces),
+    '--focus-bg': focusBg,
   };
 }
 
@@ -285,14 +317,34 @@ export function removePalette(root: PaletteRoot, mode: PaletteMode): void {
   root.dataset['theme'] = mode;
 }
 
+const FORCED = '(forced-colors: active)';
+
+/** The forced-colors query of the page, or null without one (a test, a server). */
+const forcedQuery = (): MediaQueryList | null =>
+  typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia(FORCED)
+    : null;
+
+/** The palette of the last `showPalette` call: shown again when forced colors change. */
+let wanted: Palette | null = null;
+let watching = false;
+
 /**
  * Shows `palette` on the page, or the normal theme for `null` (or for a palette that is refused).
- * While a palette shows, its mode is the `data-theme` of the page (`setThemeOverride`).
+ * While a palette shows, its mode is the `data-theme` of the page (`setThemeOverride`). In forced
+ * colors no palette shows: the page takes the OS color scheme (`resolvedTheme`, DESIGN-SYSTEM §6),
+ * and the palette comes back when forced colors end.
  */
 export function showPalette(palette: Palette | null): void {
   if (typeof document === 'undefined') return;
+  wanted = palette;
+  const forced = forcedQuery();
+  if (forced !== null && !watching) {
+    watching = true;
+    forced.addEventListener('change', () => showPalette(wanted));
+  }
   const root = document.documentElement;
-  if (palette !== null && applyPalette(root, palette)) {
+  if (palette !== null && forced?.matches !== true && applyPalette(root, palette)) {
     setThemeOverride(palette.mode);
     return;
   }

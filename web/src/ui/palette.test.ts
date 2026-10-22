@@ -90,11 +90,12 @@ describe('paletteVars', () => {
       '--act-glow': '#e0af6833',
       '--ink-fill': '#c0caf5',
       '--ink-on': '#1a1b26',
+      '--ok': '#3ddc97',
       '--ok-bg': '#1f3636',
       '--fuel': '#b79cff',
       '--fuel-bg': '#333049',
       '--focus': '#7aa2f7',
-      '--focus-bg': '#283457',
+      '--focus-bg': '#272e43',
     });
   });
 
@@ -108,25 +109,26 @@ describe('paletteVars', () => {
       '--border': '#d2d4dc',
       '--border-soft': '#dfe1e7',
       '--ctl-edge': '#7a7c90',
-      '--dim': '#545770',
-      '--faint': '#5c5f77',
+      '--dim': '#53556f',
+      '--faint': '#595c74',
       '--faint-decor': '#aeb0bd',
-      '--hazard': '#bd0e33',
-      '--act': '#865511',
+      '--hazard': '#b30d30',
+      '--act': '#7b4e10',
       '--act-bg': '#ede3d7',
       '--hazard-bg': '#ebd1db',
       '--act-ink': '#000000',
       '--raised-hi': '#dbdee4',
       '--act-fill': '#df8e1d',
-      '--act-line': '#df8e1d',
+      '--act-line': '#b27217',
       '--act-glow': '#df8e1d33',
       '--ink-fill': '#4c4f69',
       '--ink-on': '#eff1f5',
+      '--ok': '#0a6a44',
       '--ok-bg': '#cfdfdd',
-      '--fuel': '#6447d6',
+      '--fuel': '#5f43cb',
       '--fuel-bg': '#d9d6f0',
-      '--focus': '#1a57d0',
-      '--focus-bg': '#acb0be',
+      '--focus': '#1852c4',
+      '--focus-bg': '#d1dbf0',
     });
   });
 
@@ -140,7 +142,9 @@ describe('paletteVars', () => {
 
   // DESIGN-SYSTEM §6: text 4.5:1 and control edges 3:1, also with an Omarchy palette. Each of
   // these palettes failed with the fixed mix steps (Latte --act 2.3:1, Rose Pine Dawn --act
-  // 1.8:1, Tokyo Night --faint 3.1:1 on --raised).
+  // 1.8:1, Tokyo Night --faint 3.1:1 on --raised), and with the tints of the palette (Latte: every
+  // text on the `selection` color under 3.7:1, --hazard on --hazard-bg 4.48:1, --fuel on --fuel-bg
+  // 4.34:1; the needs-you outline 2.31:1 on --bg).
   const floor: Record<string, Palette> = {
     'Catppuccin Latte': light,
     'Rose Pine Dawn': {
@@ -156,26 +160,33 @@ describe('paletteVars', () => {
     },
     'Tokyo Night': dark,
   };
+  // A text sits on --raised-hi (the surface nearest to it) and on every tint: a tone badge, a
+  // tinted row, a selected option.
+  const TEXTS = ['--text', '--dim', '--faint', '--act', '--hazard', '--ok', '--fuel', '--focus'];
+  const SURFACES = ['--raised-hi', '--act-bg', '--hazard-bg', '--ok-bg', '--fuel-bg', '--focus-bg'];
   for (const [name, palette] of Object.entries(floor)) {
-    test(`${name}: every text token is 4.5:1 and --ctl-edge 3:1 on --raised-hi`, () => {
+    test(`${name}: every text token is 4.5:1 on --raised-hi and on every tint`, () => {
+      const v = paletteVars(palette);
+      for (const surface of SURFACES) {
+        for (const token of TEXTS) {
+          const ratio = contrast(v[token] ?? '', v[surface] ?? '');
+          expect({ token, surface, pass: ratio >= 4.5 }).toEqual({ token, surface, pass: true });
+        }
+      }
+    });
+
+    test(`${name}: --ctl-edge and --act-line are 3:1, --act-ink 4.5:1 on the fill`, () => {
       const v = paletteVars(palette);
       const surface = v['--raised-hi'] ?? '';
-      for (const token of [
-        '--text',
-        '--dim',
-        '--faint',
-        '--act',
-        '--hazard',
-        '--fuel',
-        '--focus',
-      ]) {
-        expect({ token, ratio: contrast(v[token] ?? '', surface) >= 4.5 }).toEqual({
-          token,
-          ratio: true,
-        });
-      }
       expect(contrast(v['--ctl-edge'] ?? '', surface)).toBeGreaterThanOrEqual(3);
       expect(contrast(v['--ctl-edge'] ?? '', v['--bg'] ?? '')).toBeGreaterThanOrEqual(3);
+      // The needs-you outline (.fd-glow) on a strip or card on --bg, --raised or its own tint.
+      for (const under of ['--bg', '--raised', '--act-bg']) {
+        expect({ under, pass: contrast(v['--act-line'] ?? '', v[under] ?? '') >= 3 }).toEqual({
+          under,
+          pass: true,
+        });
+      }
       expect(contrast(v['--act-ink'] ?? '', v['--act-fill'] ?? '')).toBeGreaterThanOrEqual(4.5);
       // The three text steps stay apart: --dim reads above --faint.
       expect(contrast(v['--dim'] ?? '', surface)).toBeGreaterThan(
