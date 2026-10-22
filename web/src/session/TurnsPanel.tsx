@@ -419,7 +419,7 @@ export function TurnsPanel(props: Props) {
           const block = revertBlock(t, summary, caps);
           const diff = diffs[t.turnId];
           return (
-            <li key={t.turnId} className="fd-panel" data-turn={t.turnId} data-reverted={t.reverted}>
+            <li key={t.turnId} data-turn={t.turnId} data-reverted={t.reverted}>
               <span className="fd-turn-name">Turn {i + 1}</span>
               {t.diff && hasChanges(t.diff) ? (
                 <span className="fd-turn-stat">

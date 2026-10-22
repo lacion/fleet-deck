@@ -744,21 +744,15 @@
 
 /* The Files panel inside the page: the search row has the page control height, the same as the
    folder row above it (the .fd-sm size stays in the session side panel). */
-.fd-files-page .fd-files-bar :is(input, select, button).fd-sm {
+.fd-files-page .fd-files-bar :is(input, select).fd-sm {
   height: var(--ctl-h);
   padding-right: 10px;
-  padding-left: 10px;
   font-size: var(--fs-ui);
 }
 
 .fd-files-page .fd-files-bar select.fd-sm {
   padding-right: 28px;
-}
-
-/* The crumbs sit 8px above the list, the root icon on the column of the row icons. */
-.fd-files-page .fd-files-crumbs {
-  margin-bottom: calc(var(--sp-2) - var(--sp-3));
-  padding: 0 var(--sp-2);
+  padding-left: 10px;
 }
 
 @media (max-width: 640px) {
@@ -769,19 +763,9 @@
     grid-template-columns: 56px minmax(0, 1fr);
   }
 
-  /* The search row wraps: the input on its own line, Names and Search under it. */
+  /* The search row: the field takes the width, Names stays at its size. */
   .fd-files-page .fd-files-bar form {
-    flex-wrap: wrap;
     max-width: none;
-  }
-
-  .fd-files-page .fd-files-bar input {
-    flex: 1 1 100%;
-  }
-
-  .fd-files-page .fd-files-bar form > :is(select, button) {
-    flex: 1 1 0;
-    min-width: 0;
   }
 
   .fd-files-page .fd-files-folder label > :is(input, select) {
@@ -797,7 +781,6 @@
 .fd-files-changed {
   display: grid;
   gap: 4px;
-  margin-bottom: 8px;
 }
 
 .fd-files-changed h4 {
