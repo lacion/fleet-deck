@@ -159,11 +159,15 @@ describe('App', () => {
     expect(needs).toBeLessThan(alpha);
     expect(alpha).toBeGreaterThan(-1);
     expect(alpha).toBeLessThan(beta);
-    // the sidebar lists the needs-you session once, in "Needs you"; its station still counts it
+    // the sidebar lists the needs-you session once, in "Needs you"; the count of its station is
+    // the rows shown under it, and the station total moves to the title
     const sidebar = html.slice(html.indexOf('<aside class="fd-sidebar"'), html.indexOf('</aside>'));
     expect(sidebar.match(/Needs me/g)?.length).toBe(1);
     expect(html.slice(beta, html.indexOf('</h3>', beta))).toContain(
-      '<span class="fd-count">1</span>',
+      '<span class="fd-count" title="1 session on Beta">0</span>',
+    );
+    expect(html.slice(alpha, html.indexOf('</h3>', alpha))).toContain(
+      '<span class="fd-count" title="2 sessions on Alpha">1</span>',
     );
   });
 

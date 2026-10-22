@@ -224,8 +224,9 @@ function Groups({
   starred: ReadonlySet<string>;
 }) {
   const [showArchived, setShowArchived] = useState(false);
-  // A session that needs you lists once: in "Needs you"; its station keeps it in the count.
+  // A session that needs you lists once: in "Needs you". The count of a group is its shown rows.
   const needsApart = withNeeds && model.needs.length > 0;
+  const placeWord = by === 'project' ? 'in' : 'on';
   return (
     <>
       {needsApart ? (
@@ -239,60 +240,63 @@ function Groups({
           <Rows cards={model.needs} route={route} now={now} starred={starred} />
         </section>
       ) : null}
-      {model.groups.map((group) => (
-        <section
-          key={group.id}
-          className="fd-sgroup"
-          data-station={by === 'station' ? group.id : undefined}
-          data-project={by === 'project' ? group.id : undefined}
-          aria-label={`${by === 'project' ? 'Project' : 'Station'} ${group.name}`}
-        >
-          <h3 className="fd-sgroup-title">
-            <span className="fd-sgroup-name fd-wide">{group.name}</span>
-            {by === 'project' ? null : (
-              <span
-                className="fd-rdot"
-                data-reachable={group.reachable ? 'true' : 'false'}
-                aria-hidden="true"
-              />
-            )}
-            {by === 'project' ? null : (
-              <span className="fd-vh">{group.reachable ? 'reachable' : 'unreachable'}</span>
-            )}
-            <span className="fd-count">{group.count}</span>
-          </h3>
-          <Rows
-            cards={
-              needsApart ? group.live.filter((card) => card.status !== 'needs_you') : group.live
-            }
-            route={route}
-            now={now}
-            starred={starred}
-          />
-          {group.ended.length > 0 ? (
-            <details className="fd-sended">
-              <summary className="fd-label">
-                Ended <span className="fd-count">{group.ended.length}</span>
-              </summary>
-              <Rows cards={group.ended} route={route} now={now} starred={starred} />
-              <button
-                type="button"
-                className="fd-ghost fd-sm fd-sended-clear"
-                aria-label={`Archive the ended sessions of ${group.name}`}
-                onClick={() =>
-                  archivedSet.add(
-                    group.ended
-                      .filter((c) => c.status === 'ended' || c.status === 'lost')
-                      .map((c) => sessionRef(c.station_id, c.summary.session_id)),
-                  )
-                }
-              >
-                <Icon of={Archive} size={14} /> Clear
-              </button>
-            </details>
-          ) : null}
-        </section>
-      ))}
+      {model.groups.map((group) => {
+        const live = needsApart ? group.live.filter((c) => c.status !== 'needs_you') : group.live;
+        // The station total (with its needs-you and ended sessions) goes in the title only.
+        const total =
+          group.count === live.length
+            ? undefined
+            : `${group.count} ${group.count === 1 ? 'session' : 'sessions'} ${placeWord} ${group.name}`;
+        return (
+          <section
+            key={group.id}
+            className="fd-sgroup"
+            data-station={by === 'station' ? group.id : undefined}
+            data-project={by === 'project' ? group.id : undefined}
+            aria-label={`${by === 'project' ? 'Project' : 'Station'} ${group.name}`}
+          >
+            <h3 className="fd-sgroup-title">
+              <span className="fd-sgroup-name fd-wide">{group.name}</span>
+              {by === 'project' ? null : (
+                <span
+                  className="fd-rdot"
+                  data-reachable={group.reachable ? 'true' : 'false'}
+                  aria-hidden="true"
+                />
+              )}
+              {by === 'project' ? null : (
+                <span className="fd-vh">{group.reachable ? 'reachable' : 'unreachable'}</span>
+              )}
+              <span className="fd-count" title={total}>
+                {live.length}
+              </span>
+            </h3>
+            <Rows cards={live} route={route} now={now} starred={starred} />
+            {group.ended.length > 0 ? (
+              <details className="fd-sended">
+                <summary className="fd-label">
+                  Ended <span className="fd-count">{group.ended.length}</span>
+                </summary>
+                <Rows cards={group.ended} route={route} now={now} starred={starred} />
+                <button
+                  type="button"
+                  className="fd-ghost fd-sm fd-sended-clear"
+                  aria-label={`Archive the ended sessions of ${group.name}`}
+                  onClick={() =>
+                    archivedSet.add(
+                      group.ended
+                        .filter((c) => c.status === 'ended' || c.status === 'lost')
+                        .map((c) => sessionRef(c.station_id, c.summary.session_id)),
+                    )
+                  }
+                >
+                  <Icon of={Archive} size={14} /> Clear
+                </button>
+              </details>
+            ) : null}
+          </section>
+        );
+      })}
       {model.archived.length > 0 ? (
         <section className="fd-sgroup" data-group="archived" aria-label="Archived">
           <button
@@ -488,6 +492,25 @@ export function Sidebar({
   // DL-172: the settings are the owner's login only (no token, no member).
   const settingsLink = useSettings() !== undefined;
   const guest = usePeople().member !== null;
+  // DL-176: the grouping (Station | Project), only while the board knows a project.
+  const groupSeg =
+    projects.length > 0 ? (
+      <div className="fd-seg fd-sidebar-group" role="group" aria-label="Group sessions by">
+        {(['station', 'project'] as const).map((choice) => (
+          <button
+            key={choice}
+            type="button"
+            aria-pressed={by === choice}
+            onClick={() => {
+              setGroup(choice);
+              writeGroup(choice);
+            }}
+          >
+            {choice === 'station' ? 'Station' : 'Project'}
+          </button>
+        ))}
+      </div>
+    ) : null;
   return (
     <aside className="fd-sidebar" aria-label="Sessions" data-variant={variant}>
       <div className="fd-sidebar-top">
@@ -526,6 +549,8 @@ export function Sidebar({
             /
           </span>
         </div>
+        {/* The phone: the grouping sits in the search row; the list has no head row. */}
+        {full ? null : groupSeg}
         {/* The phone: New session sits in the search row (§4.2 row 2), as on the desktop. */}
         {full || guest ? null : (
           <button
@@ -550,26 +575,10 @@ export function Sidebar({
         />
       ) : null}
       <div className="fd-sidebar-list">
-        {full || projects.length > 0 ? (
+        {full ? (
           <div className="fd-sidebar-listhead">
-            <span className={full ? 'fd-label' : 'fd-vh'}>Sessions</span>
-            {projects.length > 0 ? (
-              <div className="fd-seg" role="group" aria-label="Group sessions by">
-                {(['station', 'project'] as const).map((choice) => (
-                  <button
-                    key={choice}
-                    type="button"
-                    aria-pressed={by === choice}
-                    onClick={() => {
-                      setGroup(choice);
-                      writeGroup(choice);
-                    }}
-                  >
-                    {choice === 'station' ? 'Station' : 'Project'}
-                  </button>
-                ))}
-              </div>
-            ) : null}
+            <span className="fd-label">Sessions</span>
+            {groupSeg}
           </div>
         ) : null}
         {empty ? (
