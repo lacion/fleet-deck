@@ -32,7 +32,7 @@ The token **names** of DL-141 stay the public API: every area CSS file and `ui/p
 | `--raised` | `#1C2532` | `#FFFFFF` | strips, rows, inputs, buttons, cards ("strip") |
 | `--raised-hi` *(new)* | `#232E3D` | `#EEF4FB` | hover, selected row, pressed segment |
 | `--code` | `#0E141C` | `#F1F5F9` | code blocks, diffs, terminal frame |
-| `--border` | `#2A3545` | `#D8E0E9` | strip field rules, section rules, input edge |
+| `--border` | `#2A3545` | `#D8E0E9` | strip field rules, section rules, dividers (never the edge of a form control) |
 | `--border-soft` | `#212B39` | `#E4E9F0` | the faintest divider (list separators) |
 | `--text` | `#E9EEF4` | `#111821` | primary text |
 | `--dim` | `#A5B0BF` | `#4A5666` | secondary text |
@@ -42,6 +42,10 @@ The token **names** of DL-141 stay the public API: every area CSS file and `ui/p
 | `--ink-on` *(new)* | `#111821` | `#FFFFFF` | text on `--ink-fill` |
 | `--badge-bg` *(new)* | `var(--raised-hi)` | `var(--border-soft)` | fill of a neutral `.fd-badge` and `.fd-count` (`--raised-hi` does not show on the light `--bg`) |
 | `--btn-edge` *(new)* | `transparent` | `var(--border)` | edge of a plain button in a panel (a white button on the light `--surface` needs a hairline) |
+| `--ctl-edge` *(new)* | `#6B778A` | `#788496` | edge of a form control (input, select, textarea, checkbox, radio, the off switch track) and the ring of a pressed segment or chip: ≥ 3:1 on `--bg`, `--surface`, `--raised`, `--raised-hi` (WCAG 1.4.11) |
+| `--pressed-bg` *(new)* | `var(--raised-hi)` | `var(--raised)` | fill of a pressed `.fd-seg` segment (light: a white segment with `--shadow-lift` on the track) |
+| `--switch-knob` *(new)* | `var(--text)` (`#E9EEF4`) | `var(--raised)` (`#FFFFFF`) | knob of an off `.fd-switch` (the on knob is `--ink-on`) |
+| `--knob-shadow` *(new)* | `none` | `0 1px 2px rgba(17,24,33,.25)` | shadow of the switch knob |
 
 `.fd-scope-dark` *(new)*: a part that stays dark in every theme (the wall ambient mode). `tokens.css` gives it the dark color block (`:root, .fd-scope-dark`).
 
@@ -53,17 +57,17 @@ The token **names** of DL-141 stay the public API: every area CSS file and `ui/p
 | `--act-fill` *(new)* | `#FFD43B` | `#FFD43B` | | fill of the decision primary (Allow), needs-you badge |
 | `--act-ink` | `#1B1600` | `#1B1600` | | text on `--act-fill` |
 | `--act-bg` | `#2A2410` | `#FFF6D6` | | tint behind a needs-you row |
-| `--act-line` *(new)* | `#FFD43B` | `#E8B900` | | outline of a needs-you strip or card |
+| `--act-line` *(new)* | `#FFD43B` | `#A67C00` | | outline of a needs-you strip or card (light: 3:1 on `--bg`, `--raised`, `--act-bg`) |
 | `--act-glow` *(new)* | `rgba(255,212,59,.18)` | `rgba(232,185,0,.22)` | | the needs-you glow (only there) |
-| `--ok` | `#3DDC97` | `#0B7A4D` | green (launch) | working, ok, online, additions |
+| `--ok` | `#3DDC97` | `#0A7048` | green (launch) | working, ok, online, additions (light: 4.5:1 also on the `--add-bg` diff line) |
 | `--ok-bg` *(new)* | `#10291F` | `#E3F5EC` | | tint behind ok |
-| `--hazard` | `#FF6257` | `#C42F26` | red (crash, ordnance) | errors, deny, deletions, offline, conflicts, bypass mode |
+| `--hazard` | `#FF6257` | `#B52A22` | red (crash, ordnance) | errors, deny, deletions, offline, conflicts, bypass mode (light: 4.5:1 also on the `--del-bg` diff line) |
 | `--hazard-bg` | `#2C1517` | `#FDE8E6` | | tint behind hazard |
 | `--fuel` *(new)* | `#B79CFF` | `#6E4FE0` | purple (fuel) | usage, tokens, cost, rate limits, model help |
-| `--fuel-bg` *(new)* | `#211B38` | `#EFEAFE` | | track of a fuel meter |
+| `--fuel-bg` *(new)* | `#2A2348` | `#EFEAFE` | | track of a fuel meter (dark: a visible track on `--surface` and `--raised`) |
 | `--focus` *(new)* | `#66B8FF` | `#1A5FBF` | blue (handling) | focus ring, selection marker, links, queued, verifying |
 | `--focus-bg` *(new)* | `#13253A` | `#E5EFFC` | | selected tab or row tint |
-| `--add-bg` / `--del-bg` | `rgba(61,220,151,.10)` / `rgba(255,98,87,.10)` | `rgba(11,122,77,.10)` / `rgba(196,47,38,.08)` | | diff line fills |
+| `--add-bg` / `--del-bg` | `rgba(61,220,151,.10)` / `rgba(255,98,87,.10)` | `rgba(10,112,72,.10)` / `rgba(181,42,34,.08)` | | diff line fills |
 | `--free-bg` | `#10291F` | `#E3F5EC` | | free slot / allowed tint |
 | `--term-selection` | `rgba(102,184,255,.3)` | `rgba(26,95,191,.22)` | | terminal selection (blue) |
 | `--term-cyan` *(new)* | `#5CCFE6` | `#0E7490` | | terminal ANSI cyan (the terminal palette only; ANSI blue = `--focus`, magenta = `--fuel`) |
@@ -103,7 +107,7 @@ Width utilities (in `base.css`):
 
 - `.fd-callsign`: `font-family: var(--font-ui); font-stretch: 78%; font-weight: 680; letter-spacing: 0;` — every callsign.
 - `.fd-wide`: `font-stretch: 115%; font-weight: 620;` — station names, page titles, the wordmark.
-- Numbers: `font-variant-numeric: tabular-nums` on the `body`.
+- Numbers: the proportional figures of Mona Sans everywhere (no `tabular-nums` on the `body`). The tabular figures of Mona Sans draw a slashed zero, so `2.0`, `20 min` and `01:59` read as code (principle 5). A column of numbers aligns with `text-align: right` (or `justify-content: flex-end`) and a min-width in the area CSS.
 
 Weights: 400 body, 500 UI emphasis, 600 titles, 640–680 page titles and callsigns. Line height: 1.4 UI, 1.6 chat prose, 1.15 titles.
 
@@ -150,28 +154,29 @@ Area CSS uses these and never restyles them. Class names of DL-141 stay; their l
 | `.fd-danger` | transparent, `--hazard` text; hover `--hazard-bg` |
 | `.fd-sm` | 24px, padding 0 8px, 12px; on a `<select>` the padding-right stays 28px (the chevron) |
 | `.fd-iconbtn` | square ghost (28 or 24), icon 16px |
-| `input`, `select`, `textarea` | `--raised` fill, 1px `--border` edge, `--r-ctl`, 13px; focus: edge `--focus` + 3px `--focus-bg` ring; placeholder `--faint`. `select`: `appearance: none` + a chevron (CSS mask of Lucide `chevron-down`) at the right, padding-right 28px |
-| `input[type=checkbox]`, `input[type=radio]` | `appearance: none`, 16px, `--raised` fill, 1px `--border`; checked: `--ink-fill` fill with an `--ink-on` check (mask) / dot; radius 4px / 50% |
-| `.fd-switch` (role=switch) | 32×18 track, `--border` off / `--ok` on, 14px knob `--text` |
-| `.fd-seg` *(new)* | segmented control: a `--surface` track (2px padding, `--r-ctl`), segments 24px, the pressed one (`aria-pressed=true` or `aria-selected=true` or `:checked`) `--raised-hi` fill + `--text`, others `--dim` |
-| `.fd-chip` | filter toggle: 24px pill, transparent, `--dim`; pressed `--raised-hi` + `--text` |
-| `.fd-badge` | 20px, padding 0 7px, `--r-chip`, `--raised-hi` fill, `--dim`, 12px weight 500, sans (not mono). `data-tone`: `act` (`--act-bg`/`--act`), `hazard`, `ok`, `info` (`--focus-bg`/`--focus`), `fuel`, `muted`. `data-family`/`data-provider`: neutral (no hue) |
+| `input`, `select`, `textarea` | `--raised` fill, 1px `--ctl-edge` edge, `--r-ctl`, 13px; focus: edge `--focus` + a 1px `--focus` ring (a 2px blue edge; `--focus-bg` is never a focus cue); placeholder `--faint`. `select`: `appearance: none` + a chevron (CSS mask of Lucide `chevron-down`) at the right, padding-right 28px |
+| `input[type=checkbox]`, `input[type=radio]` | `appearance: none`, 16px (24px with `pointer: coarse`), `--raised` fill, 1px `--ctl-edge` (hover `--faint`); checked: `--ink-fill` fill with an `--ink-on` check (mask) / dot; radius 4px / 50% |
+| `.fd-switch` (role=switch) | 32×18 track, `--ctl-edge` off / `--ok` on, 14px knob: off `--switch-knob`, on `--ink-on`, shadow `--knob-shadow` |
+| `.fd-seg` *(new)* | segmented control: a `--surface` track (2px padding, `--r-ctl`), segments 24px, the pressed one (`aria-pressed=true` or `aria-selected=true` or `:checked`) `--pressed-bg` fill + a 1px inset `--ctl-edge` ring + `--shadow-lift` + `--text` weight 600, others `--dim` |
+| `.fd-chip` | filter toggle: 24px pill (44px with `pointer: coarse`), transparent, `--dim`; pressed `--badge-bg` + 1px `--ctl-edge` edge + `--text` weight 600 |
+| `.fd-badge` | 20px, padding 0 7px, `--r-chip`, `--raised-hi` fill, `--dim`, 12px weight 500, sans (not mono). `data-tone`: `act` (`--act-bg`/`--act`), `hazard`, `ok`, `info` (`--focus-bg`/`--focus`), `fuel`, `muted` (a quiet text badge: no fill, no edge, no side padding, `--faint`). `data-family`/`data-provider`: neutral (no hue) |
 | `.fd-count` *(restyled)* | 18px pill, `--raised-hi`, 11px weight 600; `data-tone="act"`: `--act-fill`/`--act-ink` |
-| `.fd-dot` | the **status glyph** (12px, CSS only, shape + color): `working` ring `--ok` with a 3/4 arc (conic gradient) that turns slowly; `verifying` ring with half arc `--focus`; `needs_you` filled `--act-fill` circle with a dark "!" (pseudo-element); `queued` dashed ring `--focus`; `idle` hollow ring `--faint`; `ended` filled `--faint-decor`; `lost`, `unreachable` `--hazard` ring with a slash; `online` *(new)* a small (8px) still filled `--ok` dot — a station link or a provider sign-in (a link is not work: it never turns) |
+| `.fd-dot` | the **status glyph** (12px, CSS only, shape + color): `working` ring `--ok` with a 3/4 arc (conic gradient) that turns slowly; `verifying` ring with half arc `--focus`; `needs_you` filled `--act-fill` circle with an `--act` edge and a dark "!" (pseudo-element); `queued` dashed ring `--focus`; `idle` hollow ring `--faint`; `ended` filled `--faint`; `lost`, `unreachable` `--hazard` ring with a slash; `online` *(new)* a small (8px) still filled `--ok` dot — a station link or a provider sign-in (a link is not work: it never turns) |
 | `.fd-holder` *(new)* | the 3px status bar at the left edge of a strip, `data-status` colors: needs_you `--act`, working `--ok`, verifying/queued `--focus`, idle `--faint-decor`, ended transparent with a 1px `--faint-decor` edge, lost/unreachable `--hazard` |
 | `.fd-glow` *(new)* | the needs-you outline and glow of a strip or card: 1px `--act-line` outline, a 3px `--act-glow` ring that breathes (`--pulse-needs`) on `::after`. The element must be positioned |
 | `.fd-label` | section label: 12px weight 600 `--dim`, sentence case (no capitals, no tracking) |
-| `.fd-kbd` | 18px, padding 0 5px, `--r-chip`, `--raised-hi`, 11px `--faint`, sans |
+| `.fd-kbd` | 18px, padding 0 5px, `--r-chip`, `--badge-bg`, 11px `--faint`, sans |
 | `.fd-menu` / `.fd-menu-body` | popover: `--raised` (light `--raised`), `--r-panel`, `--shadow-pop`, padding 4px; rows 28px ghost, left-aligned, icon 14px. `.fd-menu > summary.fd-ghost` *(new)*: a summary that looks like a ghost button (transparent, `--dim`; hover and open `--raised` + `--text`) |
 | `.fd-panel` | `--surface`, `--r-panel`, no border |
 | `.fd-code` | mono 12px, `--code`, `--r-card`, padding 10px 12px |
-| `.fd-diff` / `.fd-dl[data-kind]` | mono 12px; `add` `--ok` on `--add-bg`; `del` `--hazard` on `--del-bg`; `hunk` `--focus`; `meta` `--faint`; `file` `--surface` weight 600 |
+| `.fd-diff` / `.fd-dl[data-kind]` | mono 12px; an inline-size container with one grid column `minmax(max-content, 1fr)`, so that every line fill reaches the end of the longest line when the diff scrolls sideways (a thread or an editor inside the diff does not widen it: it wraps at the visible width, `100cqi`, and sticks to the left edge); `add` `--ok` on `--add-bg`; `del` `--hazard` on `--del-bg`; `hunk` `--focus`; `meta` `--faint`; `file` `--surface` weight 600 |
 | `.fd-meter` *(new)* | 6px bar, `--fuel-bg` track, `--fuel` fill, radius 3px; over 80 % the fill is `--act`. Markup: one child with an inline `width` (the percent); `data-level="high"` on the meter over 80 % |
 | `.fd-slots` *(new)* | slot meter: a row of 6×12px ticks (gap 2px), used `--ok`, needs-you `--act`, free `--border`. Markup: one child per slot with `data-slot="used"` or `"needs_you"` (none = free) |
 | `.fd-callsign`, `.fd-wide` | §2.3 |
 | `.fd-note`, `.fd-empty`, `.fd-vh` | dim small text; faint text; visually hidden |
 | `<details>` summary | no native marker: a `chevron-right` mask that turns 90° when open |
-| `@media (pointer: coarse)` | buttons, summaries, inputs, selects, segments: min-height 44px; `.fd-iconbtn` 44px |
+| `@media (pointer: coarse)` | buttons, summaries, inputs, selects, segments, chips, `.fd-tap`: min-height 44px (`--tap-min`); `.fd-iconbtn` 44px; checkbox and radio 24px |
+| links | `--focus`, no underline; underline on hover and focus. A link without a class inside prose (`.fd-note`, `.fd-md`, `p`) is always underlined (1px, offset 2px): color alone does not mark it (WCAG 1.4.1) |
 
 ---
 
@@ -297,3 +302,9 @@ When an agent adds a token, a primitive or a component pattern (see the skill, "
 | 2026-10-22 | `.fd-menu > summary.fd-ghost` | a menu summary that looks like a ghost button; `.fd-menu > summary` beat `.fd-ghost` | chat Show and Agents menus, the station config drift menu |
 | 2026-10-22 | `select.fd-sm` keeps padding-right 28px | `.fd-sm` reset the select padding and the chevron overlapped the text | fleet Group by, session files search |
 | 2026-10-22 | `--badge-bg`, `--btn-edge` | in the light theme a neutral badge (`--raised-hi`) vanished on `--bg`, and a white plain button vanished on `--surface` and on a `--raised` dialog | every neutral badge and count; plain buttons in panels and dialogs |
+| 2026-10-22 | `--ctl-edge` | the `--border` edge of inputs, selects, checkboxes, radios and the off switch was 1.1–1.4:1 (WCAG 1.4.11 asks 3:1); `--border` stays for dividers | every form control; the ring of a pressed segment and chip; Omarchy mapping `mix(fg 50%, bg)` |
+| 2026-10-22 | `--pressed-bg`; pressed `.fd-seg` and `.fd-chip` get a `--ctl-edge` ring and weight 600; `.fd-kbd` on `--badge-bg` | in the light theme `--raised-hi` vanished on `--bg` and `--surface`: the selected segment, chip and the key hints did not show | theme segments, sidebar group chips, filter chips, key hints |
+| 2026-10-22 | `--switch-knob`, `--knob-shadow`; on knob `--ink-on` | the light knob was near-black (`--text`), and the dark on knob was 1.5:1 on `--ok` | every switch |
+| 2026-10-22 | light `--ok` `#0A7048`, `--hazard` `#B52A22`, `--act-line` `#A67C00`; dark `--fuel-bg` `#2A2348` | diff text on its line tint was under 4.5:1; the needs-you outline was under 3:1; the dark meter track did not show on `--surface` | diffs, needs-you strips and cards, usage meters |
+| 2026-10-22 | no `tabular-nums` on the `body` (§2.3) | the tabular figures of Mona Sans draw a slashed zero: prose numbers looked like code | everywhere |
+| 2026-10-22 | `.fd-diff` grid column; prose links underlined; input focus 2px blue edge; needs-you dot `--act` edge; ended dot `--faint`; muted badge without edge; coarse chips and `.fd-tap` 44px, checkbox and radio 24px | accessibility review: state by fill alone, link by color alone, 16px and 36px targets, glyphs under 3:1 | every diff, prose link, input, status glyph and touch control |
