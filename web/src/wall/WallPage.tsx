@@ -232,7 +232,14 @@ function Wall({
     switch (mode) {
       case 'mission':
         return (
-          <div className="fd-wall-grid">
+          <div
+            className="fd-wall-grid"
+            style={
+              grid === null
+                ? undefined
+                : ({ '--fd-wall-tile-k': grid.k.toFixed(3) } as CSSProperties)
+            }
+          >
             <NeedsArea needs={needs} stations={stations} origin={pageOrigin} now={clock} />
             <TilesArea
               cards={tiles}

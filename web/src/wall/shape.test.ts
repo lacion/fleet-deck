@@ -55,6 +55,8 @@ describe('tileGrid', () => {
     // 526 / 308 = 1.71: the type grows to the limit.
     expect(three.k).toBe(TILE_GROW_MAX);
     expect(tileGrid(1, 2000, 1000, 14, 1, GAP)).toEqual({ columns: 1, k: TILE_GROW_MAX });
+    // The needs area grows by the same factor: the cap keeps it inside its column.
+    expect(TILE_GROW_MAX).toBe(1.25);
   });
 
   test('a full area keeps the columns that fit, and the type grows only by the room left', () => {
