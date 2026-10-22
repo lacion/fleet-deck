@@ -149,14 +149,15 @@ Area CSS uses these and never restyles them. Class names of DL-141 stay; their l
 | `.fd-count` *(restyled)* | 18px pill, `--raised-hi`, 11px weight 600; `data-tone="act"`: `--act-fill`/`--act-ink` |
 | `.fd-dot` | the **status glyph** (12px, CSS only, shape + color): `working` ring `--ok` with a 3/4 arc (conic gradient) that turns slowly; `verifying` ring with half arc `--focus`; `needs_you` filled `--act-fill` circle with a dark "!" (pseudo-element); `queued` dashed ring `--focus`; `idle` hollow ring `--faint`; `ended` filled `--faint-decor`; `lost`, `unreachable` `--hazard` ring with a slash |
 | `.fd-holder` *(new)* | the 3px status bar at the left edge of a strip, `data-status` colors: needs_you `--act`, working `--ok`, verifying/queued `--focus`, idle `--faint-decor`, ended transparent with a 1px `--faint-decor` edge, lost/unreachable `--hazard` |
+| `.fd-glow` *(new)* | the needs-you outline and glow of a strip or card: 1px `--act-line` outline, a 3px `--act-glow` ring that breathes (`--pulse-needs`) on `::after`. The element must be positioned |
 | `.fd-label` | section label: 12px weight 600 `--dim`, sentence case (no capitals, no tracking) |
 | `.fd-kbd` | 18px, padding 0 5px, `--r-chip`, `--raised-hi`, 11px `--faint`, sans |
 | `.fd-menu` / `.fd-menu-body` | popover: `--raised` (light `--raised`), `--r-panel`, `--shadow-pop`, padding 4px; rows 28px ghost, left-aligned, icon 14px |
 | `.fd-panel` | `--surface`, `--r-panel`, no border |
 | `.fd-code` | mono 12px, `--code`, `--r-card`, padding 10px 12px |
 | `.fd-diff` / `.fd-dl[data-kind]` | mono 12px; `add` `--ok` on `--add-bg`; `del` `--hazard` on `--del-bg`; `hunk` `--focus`; `meta` `--faint`; `file` `--surface` weight 600 |
-| `.fd-meter` *(new)* | 6px bar, `--fuel-bg` track, `--fuel` fill, radius 3px; over 80 % the fill is `--act` |
-| `.fd-slots` *(new)* | slot meter: a row of 6×12px ticks (gap 2px), used `--ok`, needs-you `--act`, free `--border` |
+| `.fd-meter` *(new)* | 6px bar, `--fuel-bg` track, `--fuel` fill, radius 3px; over 80 % the fill is `--act`. Markup: one child with an inline `width` (the percent); `data-level="high"` on the meter over 80 % |
+| `.fd-slots` *(new)* | slot meter: a row of 6×12px ticks (gap 2px), used `--ok`, needs-you `--act`, free `--border`. Markup: one child per slot with `data-slot="used"` or `"needs_you"` (none = free) |
 | `.fd-callsign`, `.fd-wide` | §2.3 |
 | `.fd-note`, `.fd-empty`, `.fd-vh` | dim small text; faint text; visually hidden |
 | `<details>` summary | no native marker: a `chevron-right` mask that turns 90° when open |
@@ -274,3 +275,4 @@ When an agent adds a token, a primitive or a component pattern (see the skill, "
 | Date | Addition | Why | Used in |
 | --- | --- | --- | --- |
 | 2026-10-22 | v3 tokens and primitives (this file) | the UI refresh | everywhere |
+| 2026-10-22 | `.fd-glow`, keyframes `fd-turn` and `fd-breathe`; `.fd-switch` moved from settings.css to base.css | one needs-you glow for every needs-you strip and card; the switch is a primitive (§3) | fleet, sidebar, session approval card; every switch |

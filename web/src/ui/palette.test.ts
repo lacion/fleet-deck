@@ -72,6 +72,17 @@ describe('paletteVars', () => {
       '--act-bg': 'color-mix(in srgb, #e0af68 14%, #1a1b26)',
       '--hazard-bg': 'color-mix(in srgb, #f7768e 14%, #1a1b26)',
       '--act-ink': '#1a1b26',
+      '--raised-hi': 'color-mix(in srgb, #c0caf5 12%, #1a1b26)',
+      '--act-fill': '#e0af68',
+      '--act-line': '#e0af68',
+      '--act-glow': 'color-mix(in srgb, #e0af68 20%, transparent)',
+      '--ink-fill': '#c0caf5',
+      '--ink-on': '#1a1b26',
+      '--ok-bg': 'color-mix(in srgb, var(--ok) 14%, #1a1b26)',
+      '--fuel': '#b79cff',
+      '--fuel-bg': 'color-mix(in srgb, #b79cff 16%, #1a1b26)',
+      '--focus': '#7aa2f7',
+      '--focus-bg': '#283457',
     });
   });
 
@@ -92,6 +103,17 @@ describe('paletteVars', () => {
       '--act-bg': 'color-mix(in srgb, #e0af68 14%, #e1e2e7)',
       '--hazard-bg': 'color-mix(in srgb, #f52a65 14%, #e1e2e7)',
       '--act-ink': '#e1e2e7',
+      '--raised-hi': 'color-mix(in srgb, #3760bf 12%, #e1e2e7)',
+      '--act-fill': '#e0af68',
+      '--act-line': '#e0af68',
+      '--act-glow': 'color-mix(in srgb, #e0af68 20%, transparent)',
+      '--ink-fill': '#3760bf',
+      '--ink-on': '#e1e2e7',
+      '--ok-bg': 'color-mix(in srgb, var(--ok) 14%, #e1e2e7)',
+      '--fuel': '#6e4fe0',
+      '--fuel-bg': 'color-mix(in srgb, #6e4fe0 16%, #e1e2e7)',
+      '--focus': '#7aa2f7',
+      '--focus-bg': '#283457',
     });
   });
 

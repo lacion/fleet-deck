@@ -115,7 +115,24 @@ export const PALETTE_VARS = [
   '--act-bg',
   '--hazard-bg',
   '--act-ink',
+  '--raised-hi',
+  '--act-fill',
+  '--act-line',
+  '--act-glow',
+  '--ink-fill',
+  '--ink-on',
+  '--ok-bg',
+  '--fuel',
+  '--fuel-bg',
+  '--focus',
+  '--focus-bg',
 ] as const;
+
+/**
+ * The fuel color (usage, tokens, cost) of each mode. A palette has no purple: fuel keeps the
+ * design system color, so that it never takes the meaning of another color.
+ */
+const FUEL: Record<PaletteMode, string> = { dark: '#b79cff', light: '#6e4fe0' };
 
 /**
  * The token values of a palette (decision 1). Every color is checked again: a palette with a bad
@@ -143,6 +160,17 @@ export function paletteVars(p: Palette): Record<string, string> {
     '--act-bg': mix(c.yellow, 14, bg),
     '--hazard-bg': mix(c.red, 14, bg),
     '--act-ink': bg,
+    '--raised-hi': mix(fg, 12, bg),
+    '--act-fill': c.yellow,
+    '--act-line': c.yellow,
+    '--act-glow': mix(c.yellow, 20, 'transparent'),
+    '--ink-fill': fg,
+    '--ink-on': bg,
+    '--ok-bg': mix('var(--ok)', 14, bg),
+    '--fuel': FUEL[p.mode],
+    '--fuel-bg': mix(FUEL[p.mode], 16, bg),
+    '--focus': c.accent,
+    '--focus-bg': c.selection,
   };
 }
 
