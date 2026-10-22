@@ -6,6 +6,7 @@ import {
   countText,
   errorSentence,
   homeShort,
+  homeShortIn,
   isRiskyMode,
   modelFamily,
   pathParts,
@@ -172,6 +173,14 @@ describe('paths (DESIGN-SYSTEM §5)', () => {
     expect(homeShort('/home/me2x/a')).toBe('~/a');
     expect(homeShort('/srv/data')).toBe('/srv/data');
     expect(homeShort('/home')).toBe('/home');
+  });
+
+  test('homeShortIn shortens every home folder that starts a word of a text', () => {
+    expect(homeShortIn('cat /home/me/a.txt')).toBe('cat ~/a.txt');
+    expect(homeShortIn('/home/me/x && ls /Users/you')).toBe('~/x && ls ~');
+    expect(homeShortIn("--dir=/home/me/x '/home/me/y' (/home/me/z)")).toBe("--dir=~/x '~/y' (~/z)");
+    expect(homeShortIn('a/home/me/b /home /srv/home/me')).toBe('a/home/me/b /home /srv/home/me');
+    expect(homeShortIn('cargo test')).toBe('cargo test');
   });
 
   test('pathParts gives the name and the parent from its root', () => {

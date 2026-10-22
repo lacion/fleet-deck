@@ -175,6 +175,15 @@ export function homeShort(path: string): string {
 }
 
 /**
+ * Every home folder in a text (a command, a tool target) as `~`: `cat /home/me/a.txt` →
+ * `cat ~/a.txt`, `--dir=/home/me/x` → `--dir=~/x`. A path must start the text or follow a space,
+ * a quote, `=`, `:` or `(`; display only (a copy action copies the raw text).
+ */
+export function homeShortIn(text: string): string {
+  return text.replace(/(^|[\s'"=:(])\/(?:home|Users)\/[^/\s'"()]+(?=[/\s'")]|$)/g, '$1~');
+}
+
+/**
  * A folder for a list row: its name and its parent folder, from the root (`~/` or `/`).
  * `/home/me/fleet/v2` → `{ base: 'v2', parent: '~/fleet/' }`; the home folder is `~` with no
  * parent; `/` is `/`. The full path stays for the title and the copy actions.
