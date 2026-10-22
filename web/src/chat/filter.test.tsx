@@ -37,7 +37,17 @@ const tool = (
 const read = (n: number, status: Tool['status'] = 'ok') => tool(n, 'Read', 'read', status);
 const bash = (n: number, status: Tool['status'] = 'ok') => tool(n, 'Bash', 'shell', status);
 const message: Item = { type: 'message', key: 'm', text: 'hello', done: true };
-const thinking: Item = { type: 'reasoning', key: 'r', turn_id: 't', text: 'hmm', done: true };
+// With the times of its deltas (session/timeline.ts).
+const reasoning = {
+  type: 'reasoning',
+  key: 'r',
+  turn_id: 't',
+  text: 'hmm',
+  done: true,
+  started_at: 0,
+  ended_at: 0,
+} as const;
+const thinking: Item = reasoning;
 const notice = (tone: 'info' | 'error'): Item => ({
   type: 'notice',
   key: `n-${tone}`,

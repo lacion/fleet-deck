@@ -24,7 +24,8 @@ import {
 import { ArtifactChip, SuggestedChip } from '../artifacts/ArtifactChips';
 import { memberName } from '../sharing/member';
 import { clock } from '../sharing/people';
-import { runLabel } from './labels';
+import { homeShort } from '../session/CopyButton';
+import { argText, homeTilde, runLabel, thinkingText, toolName } from './labels';
 import { applyChatFilter, compactRuns, type Tool, useChatFilter, type ChatFilter } from './filter';
 import { FilterBar } from './FilterBar';
 import type { HistoryView } from './history';
@@ -94,8 +95,6 @@ const KIND_ICON: Record<Tool['tool_kind'], LucideIcon> = {
   other: Wrench,
 };
 
-const firstLine = (text: string): string => text.split('\n')[0] ?? '';
-
 /**
  * The node of a finished tool call on the flight path (DESIGN-SYSTEM §4.5): its shape and color
  * come from `data-status` (chat.css); a running call shows the working glyph instead.
@@ -112,6 +111,15 @@ const RESULT: Partial<Record<Tool['status'], { text: string; tone?: 'hazard' }>>
 };
 
 const basename = (path: string): string => path.split('/').filter(Boolean).pop() ?? path;
+
+/**
+ * The fades of the log (chat.css): away from its top it fades under the tab row
+ * (`data-scrolled`); with more below it fades above the composer (`data-more-below`).
+ */
+function markEdges(el: HTMLElement) {
+  el.toggleAttribute('data-scrolled', el.scrollTop > 0);
+  el.toggleAttribute('data-more-below', el.scrollHeight - el.scrollTop - el.clientHeight > 1);
+}
 
 type ItemsProps = {
   items: readonly Item[];
@@ -187,7 +195,9 @@ function ToolFold(
 
 /** A tool call. `waitingFor`: the title of the open request of the call (it waits for you). */
 function ToolView({ tool, waitingFor }: { tool: Tool; waitingFor?: string | undefined }) {
-  const target = tool.input ? firstLine(tool.input) : '';
+  // The row shows the input as one line (a JSON object as its values); the body keeps it raw.
+  const target = argText(tool.input);
+  const { name, server } = toolName(tool.title);
   // One file that the target already names is not repeated as a badge.
   const named =
     tool.files.length === 1 && tool.files[0] !== undefined && target.includes(tool.files[0]);
@@ -219,15 +229,20 @@ function ToolView({ tool, waitingFor }: { tool: Tool; waitingFor?: string | unde
         <span className="fd-chat-kind" title={tool.tool_kind}>
           <Icon of={KIND_ICON[tool.tool_kind]} size={14} />
         </span>
-        <span className="fd-chat-tool-title">{tool.title}</span>
-        {tool.input ? (
+        <span className="fd-chat-tool-title" title={server === null ? undefined : tool.title}>
+          {name}
+        </span>
+        {server === null ? null : <span className="fd-chat-tool-server">{server}</span>}
+        {target !== '' ? (
+          // A home folder reads as `~`, the same as in the prose and the session header.
           <span className="fd-chat-tool-arg" data-path={isPath ? '' : undefined}>
-            {isPath ? <PathTail path={target} /> : <bdi>{target}</bdi>}
+            {isPath ? <PathTail path={homeShort(target)} /> : <bdi>{homeTilde(target)}</bdi>}
           </span>
         ) : null}
         {shown.map((path) => (
-          <span key={path} className="fd-badge" title={path}>
-            {basename(path)}
+          <span key={path} className="fd-badge fd-chat-file" title={path}>
+            {/* The name gives way with an ellipsis on a narrow row (chat.css). */}
+            <span>{basename(path)}</span>
           </span>
         ))}
         {more > 0 ? <span className="fd-badge">{`+${more}`}</span> : null}
@@ -368,7 +383,7 @@ function ItemView(props: Omit<ItemsProps, 'items'> & { item: Item; waiting?: Wai
         <details className="fd-chat-reasoning">
           <summary className={item.done ? undefined : 'fd-chat-pulse'}>
             <Icon of={ChevronRight} size={12} />
-            {item.done ? 'Thinking' : 'Thinking…'}
+            {thinkingText(item)}
           </summary>
           <div className="fd-chat-reasoning-text">{item.text}</div>
         </details>
@@ -453,6 +468,7 @@ export function ChatView(props: ChatViewProps) {
   const { items, working, ready, error } = props;
   const provider = props.provider ?? null;
   const scroller = useRef<HTMLDivElement>(null);
+  const column = useRef<HTMLDivElement>(null);
   const stick = useRef(true); // the user is near the bottom
   const [behind, setBehind] = useState(false);
   const [filter, setFilter] = useChatFilter(props.initialFilter);
@@ -527,11 +543,22 @@ export function ChatView(props: ChatViewProps) {
     else if (fresh) setBehind(true);
   }, [items, shown, working]);
 
+  // The log also changes its height without a scroll (new rows, an opened row, a filter, a
+  // resized window): the fades follow it.
+  useEffect(() => {
+    const el = scroller.current;
+    const body = column.current;
+    if (!el || !body || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => markEdges(el));
+    observer.observe(el);
+    observer.observe(body);
+    return () => observer.disconnect();
+  }, []);
+
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
-    // Away from its top, the log fades under the tab row (chat.css `[data-scrolled]`).
-    el.toggleAttribute('data-scrolled', el.scrollTop > 0);
+    markEdges(el);
     const near = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX;
     stick.current = near;
     if (near) setBehind(false);
@@ -599,7 +626,7 @@ export function ChatView(props: ChatViewProps) {
       )}
       {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a keyboard user scrolls the log */}
       <div className="fd-chat-scroll" role="log" ref={scroller} onScroll={onScroll} tabIndex={0}>
-        <div className="fd-chat-column">
+        <div className="fd-chat-column" ref={column}>
           {history === undefined ? null : (
             <>
               {history.view.more ? (

@@ -45,15 +45,18 @@ export function AgentsMenu(props: AgentsMenuProps) {
     close();
     onChoose(choice);
   };
+  // The summary always says what the menu holds: what runs now, else how many it lists.
   return (
     <Menu
       summaryClass="fd-ghost fd-sm"
       summary={
         <>
-          Agents
+          Agents{' '}
           {running > 0 ? (
             <span className="fd-badge" data-tone="ok">{`${running} running`}</span>
-          ) : null}
+          ) : (
+            <span className="fd-count">{subagents.length + commands.length}</span>
+          )}
         </>
       }
     >
