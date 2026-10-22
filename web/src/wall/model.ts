@@ -2,7 +2,8 @@
 // mode cycle and the counts of the ambient view.
 import { WALL_MODES, type WallMode, type WallRoute } from '../app/routes';
 import { repoName } from '../board/fleet';
-import type { DeckSession, OpenRequest } from '../gen';
+import { type RateMeter, scopeText } from '../board/usage';
+import type { DeckSession, OpenRequest, RequestKind } from '../gen';
 import type { ReviewState } from '../review/useReview';
 import { emptyWatchFilter, refOf, watchSessions } from '../watch/tiles';
 import type { Ask } from './autofocus';
@@ -40,6 +41,20 @@ export function needsList(sessions: readonly DeckSession[]): readonly Need[] {
       a.request.requested_at - b.request.requested_at ||
       a.request.request_id.localeCompare(b.request.request_id),
   );
+}
+
+/** The badge of a request on the wall: what kind of answer it waits for. */
+export const NEED_LABEL: Readonly<Record<RequestKind, string>> = {
+  question: 'Question',
+  command: 'Permission',
+  file_change: 'Permission',
+  tool: 'Permission',
+};
+
+/** The usage line of the wall: "Claude 5-hour window · 62%" (no raw scope key). */
+export function usageLine(meter: RateMeter): string {
+  const who = meter.instance.charAt(0).toUpperCase() + meter.instance.slice(1);
+  return `${who} ${scopeText(meter.scope)} · ${Math.round(meter.usedPercent ?? 0)}%`;
 }
 
 /** The requests as the auto-focus function reads them. */

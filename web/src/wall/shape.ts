@@ -31,5 +31,40 @@ export function tileLimit(
   return Math.min(MAX_TILES, columns * rows);
 }
 
-/** The base font of the root, in px: `clamp(14px, height / 80, 28px)`. */
-export const baseRemPx = (heightPx: number): number => Math.min(28, Math.max(14, heightPx / 80));
+/** The base font of the root, in px: `clamp(14px, height / 80, 28px)`; an ultra wall is read from
+ * further away, so its lower limit is 16 px (the same values as `--fd-wall-rem` in wall.css). */
+export const baseRemPx = (heightPx: number, shape?: WallShape): number =>
+  Math.min(28, Math.max(shape === 'ultra' ? 16 : 14, heightPx / 80));
+
+/** The most that the tile type grows when there are few tiles. */
+export const TILE_GROW_MAX = 1.5;
+
+/**
+ * How `n` tiles fill an area: the column count that gives the largest tiles, and `k`, how much the
+ * tile type grows (1 at the smallest tile, at most `TILE_GROW_MAX`). The rows share the height.
+ */
+export function tileGrid(
+  n: number,
+  areaWidthPx: number,
+  areaHeightPx: number,
+  remPx: number,
+  scale: number,
+  gapPx: number,
+): { readonly columns: number; readonly k: number } {
+  const tileW = 22 * remPx * scale;
+  const tileH = 11 * remPx * scale;
+  const fit = Math.max(1, Math.floor((areaWidthPx + gapPx) / (tileW + gapPx)));
+  let best = { columns: Math.min(fit, Math.max(1, n)), k: 1 };
+  let bestGrow = 0;
+  for (let columns = 1; columns <= Math.min(fit, Math.max(1, n)); columns += 1) {
+    const rows = Math.ceil(Math.max(1, n) / columns);
+    const w = (areaWidthPx - (columns - 1) * gapPx) / columns;
+    const h = (areaHeightPx - (rows - 1) * gapPx) / rows;
+    const grow = Math.min(w / tileW, h / tileH);
+    if (grow > bestGrow) {
+      bestGrow = grow;
+      best = { columns, k: Math.min(TILE_GROW_MAX, Math.max(1, grow)) };
+    }
+  }
+  return best;
+}
