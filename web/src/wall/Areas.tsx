@@ -5,7 +5,7 @@ import type { WallRoute } from '../app/routes';
 import { relativeAge } from '../app/sessions';
 import { stationName } from '../board/fleet';
 import { gb, usedShare } from '../board/resources';
-import { rateMeters, resetsText, tightest } from '../board/usage';
+import { rateMeters, resetsText, tightest, WARN_PERCENT } from '../board/usage';
 import type { ActivityItem, DeckSession, StationView } from '../gen';
 import { prChipTitle, prStateText } from '../integrations/PrChip';
 import { usePrs, useProjects } from '../integrations/context';
@@ -34,7 +34,14 @@ export function NeedsArea({
 }) {
   return (
     <section className="fd-wall-area" data-area="needs" aria-label="Needs you">
-      <h2 className="fd-wall-h">Needs you</h2>
+      <h2 className="fd-wall-h">
+        Needs you
+        {needs.length === 0 ? null : (
+          <span className="fd-count" data-tone="act">
+            {needs.length}
+          </span>
+        )}
+      </h2>
       {needs.length === 0 ? (
         <p className="fd-wall-note">Nothing needs you.</p>
       ) : (
@@ -42,19 +49,27 @@ export function NeedsArea({
           {needs.map(({ card, request }) => {
             const s = card.summary;
             return (
-              <li key={`${refOf(card)}/${request.request_id}`} className="fd-wall-need">
+              <li
+                key={`${refOf(card)}/${request.request_id}`}
+                className="fd-wall-need fd-glow"
+                data-kind={request.request_kind}
+              >
+                <span className="fd-holder" data-status="needs_you" aria-hidden="true" />
                 <div className="fd-wall-need-text">
                   <p className="fd-wall-need-head">
-                    <strong>{s.callsign ?? s.title ?? s.session_id}</strong>{' '}
+                    <strong className="fd-callsign">{s.callsign ?? s.title ?? s.session_id}</strong>{' '}
                     <span>{stationName(card.station_id, stations)}</span>
                   </p>
                   <p className="fd-wall-need-what">
-                    <span className="fd-badge">{request.request_kind}</span> {request.title}
+                    <span className="fd-badge" data-tone="act">
+                      {request.request_kind}
+                    </span>{' '}
+                    {request.title}
                   </p>
                   {request.details.trim() === '' ? null : (
                     <p className="fd-wall-need-sum">{oneLine(request.details)}</p>
                   )}
-                  <p className="fd-wall-note">
+                  <p className="fd-wall-note fd-wall-need-age">
                     <time dateTime={new Date(request.requested_at).toISOString()}>
                       {relativeAge(request.requested_at, now)}
                     </time>
@@ -137,24 +152,27 @@ function StationRow({ station }: { readonly station: StationView }) {
   );
   return (
     <li className="fd-wall-station" data-reachable={station.reachable ? 'true' : 'false'}>
+      <span className="fd-wall-reach" aria-hidden="true" />
       <span className="fd-wall-station-name">{station.name}</span>
       <span className="fd-wall-note">{station.reachable ? 'Link up' : 'Unreachable'}</span>
-      {r?.cpu == null ? null : (
-        <span className="fd-wall-note">
-          CPU load {(r.cpu.load5_x100 / 100).toFixed(1)} on {r.cpu.cores} cores
-        </span>
-      )}
-      {r?.memory == null ? null : (
-        <span className="fd-wall-note">
-          Memory {gb(r.memory.available_bytes)} free of {gb(r.memory.total_bytes)}
-        </span>
-      )}
-      {fullest == null ? null : (
-        <span className="fd-wall-note">
-          Disk{fullest.label === undefined ? '' : ` ${fullest.label}`}: {gb(fullest.free_bytes)}{' '}
-          free of {gb(fullest.total_bytes)}
-        </span>
-      )}
+      <span className="fd-wall-station-stats">
+        {r?.cpu == null ? null : (
+          <span className="fd-wall-note">
+            CPU load {(r.cpu.load5_x100 / 100).toFixed(1)} on {r.cpu.cores} cores
+          </span>
+        )}
+        {r?.memory == null ? null : (
+          <span className="fd-wall-note">
+            Memory {gb(r.memory.available_bytes)} free of {gb(r.memory.total_bytes)}
+          </span>
+        )}
+        {fullest == null ? null : (
+          <span className="fd-wall-note">
+            Disk{fullest.label === undefined ? '' : ` ${fullest.label}`}: {gb(fullest.free_bytes)}{' '}
+            free of {gb(fullest.total_bytes)}
+          </span>
+        )}
+      </span>
     </li>
   );
 }
@@ -186,6 +204,13 @@ export function SideArea({
           <p>
             {meter.label} · {meter.scope}: {Math.round(meter.usedPercent)}% used
           </p>
+          <span
+            className="fd-meter"
+            data-level={meter.usedPercent >= WARN_PERCENT ? 'high' : undefined}
+            aria-hidden="true"
+          >
+            <span style={{ width: `${Math.min(100, Math.max(0, meter.usedPercent))}%` }} />
+          </span>
           {meter.resetsAt === null ? null : (
             <p className="fd-wall-note">{resetsText(meter.resetsAt, now)}</p>
           )}
@@ -281,6 +306,7 @@ export function StreamArea({
     .reverse();
   return (
     <section className="fd-wall-area" data-area="stream" aria-label="Activity">
+      <h2 className="fd-wall-h">Activity</h2>
       {error !== null ? <p className="fd-wall-note">{error}</p> : null}
       {items === null ? (
         error === null ? (

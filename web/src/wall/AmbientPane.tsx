@@ -26,7 +26,7 @@ export function AmbientPane({
           <dt>Running</dt>
           <dd>{counts.running}</dd>
         </div>
-        <div>
+        <div data-tone={counts.needs > 0 ? 'act' : undefined}>
           <dt>Needs you</dt>
           <dd>{counts.needs}</dd>
         </div>

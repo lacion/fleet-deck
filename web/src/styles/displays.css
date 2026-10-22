@@ -1,7 +1,7 @@
-/* R13 P2c, P3c: the pair page and the wall display card (em of the wall font), the Displays page
-   of the settings and the Desktop panel of a station card (board tokens). */
+/* R13 P2c, P3c: the pair page and the wall display card (the wall scope of wall.css), the Displays
+   page of the settings and the Desktop panel of a station card (board tokens, DESIGN-SYSTEM §4.7). */
 
-/* the pair page: a large code, centered at any width */
+/* ── the pair page: the code on a plate, centered at any width ────────────────────────────── */
 .fd-pair {
   place-items: center;
   text-align: center;
@@ -12,29 +12,45 @@
   flex-direction: column;
   align-items: center;
   gap: var(--sp-4);
+  width: 100%;
   max-width: 100%;
+  padding: var(--sp-6) 0;
 }
 
 .fd-pair-title {
   margin: 0;
-  font-size: 1.6em;
-  font-weight: 600;
+  font-size: var(--fs-hero);
+  font-stretch: 115%;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
 }
 
 .fd-pair-code {
-  margin: 0;
+  margin: var(--sp-2) 0;
   max-width: 100%;
+  padding: var(--sp-4) clamp(var(--sp-4), 4dvw, var(--sp-6));
+  background: var(--raised);
+  border-radius: var(--r-sheet);
+  box-shadow: var(--shadow-lift);
   font-family: var(--font-data);
-  font-size: min(8em, 22dvw);
+  font-size: min(calc(var(--fs-display) * 2), 14dvw);
+  font-variant-ligatures: none;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   line-height: 1;
+  white-space: nowrap;
 }
 
 .fd-pair-line {
+  max-width: 40ch;
   margin: 0;
-  font-size: 1.2em;
   color: var(--dim);
+  font-size: var(--fs-heading);
+}
+
+.fd-pair .fd-wall-note {
+  font-size: var(--fs-ui);
 }
 
 /* the card of an artifact that a wall cannot show */
@@ -43,7 +59,8 @@
   place-items: center;
   height: 100%;
   margin: 0;
-  font-size: 1.6em;
+  color: var(--dim);
+  font-size: var(--fs-page);
   text-align: center;
 }
 
@@ -60,84 +77,219 @@
   overflow: hidden;
 }
 
-/* the Displays page */
+/* ── the Displays page (Settings › Displays) ──────────────────────────────────────────────── */
 .fd-disp {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-4);
+  gap: var(--sp-5);
+  min-width: 0;
 }
 
 .fd-disp-section {
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
+  min-width: 0;
+}
+
+.fd-disp-title {
+  font-size: var(--fs-heading);
+  font-weight: 600;
 }
 
 .fd-disp-list {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--sp-3);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-@media (min-width: 900px) {
-  .fd-disp-list {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
+/* A display, a waiting pairing and the add form: one panel each (they have their own actions). */
 .fd-disp-row,
 .fd-disp-pending,
 .fd-disp-add {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2);
+  gap: var(--sp-3);
   min-width: 0;
+  padding: var(--sp-4);
+  container-type: inline-size;
+}
+
+.fd-disp-row p,
+.fd-disp-pending p,
+.fd-disp-add p {
+  margin: 0;
 }
 
 .fd-disp-head {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: var(--sp-2);
+  justify-content: space-between;
+  gap: var(--sp-1) var(--sp-3);
+  min-width: 0;
 }
 
 .fd-disp-name {
   margin: 0;
+  font-size: var(--fs-heading);
+  font-weight: 600;
 }
 
+.fd-disp-seen {
+  color: var(--faint);
+}
+
+.fd-disp-source {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+}
+
+.fd-disp-source > strong {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  font-variant-ligatures: none;
+  font-weight: 600;
+}
+
+.fd-disp-agent {
+  overflow-wrap: anywhere;
+  color: var(--faint);
+}
+
+/* the station choices and the display choice: a legend, then the choices in one row */
 .fd-disp-stations,
 .fd-disp-modes {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-1);
+  gap: var(--sp-2);
+  min-width: 0;
   margin: 0;
   padding: 0;
   border: 0;
 }
 
-.fd-disp-check {
+.fd-disp-stations > legend,
+.fd-disp-modes > legend {
+  padding: 0;
+  margin-bottom: var(--sp-2);
+}
+
+.fd-disp-modes > .fd-seg {
+  align-self: flex-start;
+}
+
+.fd-disp-choices {
   display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-4);
+}
+
+.fd-disp-check {
+  display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
+  min-height: var(--ctl-h);
+  cursor: pointer;
 }
 
 .fd-disp-bind {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  gap: var(--sp-2);
+  gap: var(--sp-3);
+}
+
+.fd-disp-bind > .fd-fieldwrap {
+  flex: 1 1 12rem;
+}
+
+.fd-disp-code {
+  max-width: 12ch;
+  font-family: var(--font-data);
+  font-variant-ligatures: none;
+  letter-spacing: 0.12em;
+}
+
+/* In a wide panel a field is a row: the label in a 200px column, then the control (§4.7). */
+@container (min-width: 640px) {
+  .fd-disp-row .fd-fieldcontrol,
+  .fd-disp-pending .fd-fieldcontrol,
+  .fd-disp-add .fd-fieldcontrol {
+    grid-template-columns: 200px minmax(0, 420px);
+    align-items: center;
+    column-gap: var(--sp-3);
+  }
+
+  .fd-disp-row .fd-fieldhint,
+  .fd-disp-pending .fd-fieldhint,
+  .fd-disp-add .fd-fieldhint,
+  .fd-disp-row .fd-fieldwrap > .fd-fielderror {
+    margin-left: calc(200px + var(--sp-3));
+  }
+
+  .fd-disp-stations,
+  .fd-disp-modes {
+    display: grid;
+    grid-template-columns: 200px minmax(0, 1fr);
+    align-items: center;
+    column-gap: var(--sp-3);
+  }
+
+  .fd-disp-stations > legend,
+  .fd-disp-modes > legend {
+    float: left;
+    margin: 0;
+  }
+
+  .fd-disp-stations > .fd-note,
+  .fd-disp-stations > .fd-disp-choices,
+  .fd-disp-modes > .fd-seg {
+    grid-column: 2;
+  }
+
+  .fd-disp-row > .fd-disp-check {
+    margin-left: calc(200px + var(--sp-3));
+  }
+
+  .fd-disp-bind {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .fd-disp-bind > .fd-fieldwrap {
+    flex: none;
+  }
+
+  .fd-disp-bind > button {
+    align-self: flex-start;
+    margin-left: calc(200px + var(--sp-3));
+  }
 }
 
 .fd-disp-link {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--sp-2) var(--sp-4);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border-soft);
+}
+
+.fd-disp-link > :not(.fd-disp-qr) {
+  grid-column: 1;
 }
 
 .fd-disp-url {
+  display: block;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--code);
+  border-radius: var(--r-ctl);
+  font-size: var(--fs-data);
   overflow-wrap: anywhere;
 }
 
@@ -149,68 +301,191 @@
   gap: var(--sp-2);
 }
 
-.fd-disp-qr .fd-wall-qr {
-  width: 12rem;
-  height: 12rem;
+.fd-disp-qr {
+  grid-column: 2;
+  grid-row: 1 / span 3;
 }
 
-/* the Desktop panel */
+.fd-disp-qr .fd-wall-qr {
+  display: block;
+  width: 160px;
+  height: 160px;
+  border-radius: var(--r-ctl);
+}
+
+@media (max-width: 639px) {
+  .fd-disp-link {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fd-disp-qr {
+    grid-column: 1;
+    grid-row: auto;
+  }
+}
+
+/* A confirmation in place: a raised row with its text and the two answers. */
+.fd-disp-confirm {
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--raised);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-lift);
+}
+
+.fd-disp-confirm > p {
+  flex: 1 1 12rem;
+  margin: 0;
+}
+
+/* ── the Desktop panel of a station card (Computer Use) ───────────────────────────────────── */
 .fd-desk {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2);
+  gap: var(--sp-3);
+  min-width: 0;
   margin-top: var(--sp-2);
 }
 
 .fd-desk > summary {
+  display: flex;
+  align-items: center;
   cursor: pointer;
   font-weight: 600;
 }
 
-.fd-desk-facts {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
-  gap: var(--sp-2);
+.fd-desk p {
   margin: 0;
 }
 
+/* The facts: one row each, the name at the left and the value at the right. */
+.fd-desk-facts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  margin: 0;
+}
+
+.fd-desk-facts > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  min-height: 28px;
+  padding: var(--sp-1) 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
 .fd-desk-facts dt {
-  color: var(--faint);
+  color: var(--dim);
 }
 
 .fd-desk-facts dd {
   margin: 0;
+  text-align: right;
 }
 
 .fd-desk-monitors,
 .fd-desk-walls {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-1);
+  gap: 0;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.fd-desk-monitors li,
-.fd-desk-walls li {
+.fd-desk-monitors > li,
+.fd-desk-walls > li {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-2);
+  min-height: var(--row-h);
+  padding: var(--sp-2) 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.fd-desk-monitor {
+  min-width: 0;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+
+.fd-desk-monitor > strong {
+  color: var(--text);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+  font-variant-ligatures: none;
+  font-weight: 600;
 }
 
 .fd-desk-buttons {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--sp-2);
+  gap: var(--sp-1) var(--sp-3);
 }
 
-.fd-desk-form {
+/* The switches of the desktop: one row each. */
+.fd-desk > .fd-desk-buttons > .fd-disp-check {
+  flex: 1 0 100%;
+}
+
+.fd-desk-record {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
-  max-width: 28rem;
+}
+
+.fd-desk-record input[type="number"] {
+  width: 6rem;
+}
+
+.fd-desk-result,
+.fd-desk-shot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.fd-desk-shot .fd-art-image {
+  max-width: 100%;
+  border-radius: var(--r-card);
+}
+
+.fd-desk-window {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--dim);
+}
+
+/* The four forms: each a section under a rule; the fields share a row when the card is wide. */
+.fd-desk-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  align-items: end;
+  gap: var(--sp-2) var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border-soft);
+}
+
+.fd-desk-form:has(textarea) > .fd-fieldwrap:has(input),
+.fd-desk-form > .fd-fieldwrap:has(textarea),
+.fd-desk-form > .fd-fielderror {
+  grid-column: 1 / -1;
+}
+
+.fd-desk-form > button {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.fd-desk-previews {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border-soft);
 }

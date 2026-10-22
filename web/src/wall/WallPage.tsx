@@ -9,6 +9,7 @@ import type { DeckSession, SessionKey, StationView } from '../gen';
 import type { Freshness, Timeline } from '../runtime/state';
 import type { ViewsActions } from '../runtime/views';
 import type { SessionActions } from '../session/commands';
+import { Mark } from '../ui/Mark';
 import { useNow } from '../ui/useNow';
 import { refOf } from '../watch/tiles';
 import { MAX_TILES } from '../watch/tiles';
@@ -216,9 +217,11 @@ function Wall({
   const live = freshness === 'live';
   const minute = Math.floor(clock / 60_000);
   const offset = ambientOffset(minute);
+  // The font and the size tokens follow `--fd-wall-scale` in wall.css; `--fd-wall-k` is the same
+  // factor as a number, for the primitives with a fixed size (wall.css, "the wall scope").
   const style = {
     '--fd-wall-scale': route.scale,
-    fontSize: 'calc(clamp(14px, 100dvh / 80, 28px) * var(--fd-wall-scale))',
+    '--fd-wall-k': (baseRemPx(size.h) / 14) * route.scale,
   } as CSSProperties;
   const pageOrigin = origin ?? (typeof window === 'undefined' ? '' : window.location.origin);
 
@@ -349,14 +352,17 @@ function Wall({
   return (
     <div
       ref={root}
-      className="fd-wall-root"
+      className={mode === 'ambient' ? 'fd-wall-root fd-scope-dark' : 'fd-wall-root'}
       data-shape={shape}
       data-mode={mode}
       data-testid="wall"
       style={style}
     >
       <p className="fd-wall-corner">
-        <span>Fleet Deck wall</span>{' '}
+        <span className="fd-wall-brand">
+          <Mark size={20} />
+          Fleet Deck wall
+        </span>{' '}
         <span role="status" data-state={live ? 'live' : 'reconnecting'}>
           {live ? 'Live' : 'Reconnecting'}
         </span>

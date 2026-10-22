@@ -33,6 +33,7 @@ export default defineConfig({
         '**/handover.spec.ts',
         '**/screens.spec.ts',
         '**/gallery.spec.ts',
+        '**/gallery-wall.spec.ts',
       ],
       use: { viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false },
     },
