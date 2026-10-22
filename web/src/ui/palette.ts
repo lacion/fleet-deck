@@ -107,6 +107,7 @@ export const PALETTE_VARS = [
   '--raised',
   '--border',
   '--border-soft',
+  '--ctl-edge',
   '--dim',
   '--faint',
   '--faint-decor',
@@ -152,6 +153,8 @@ export function paletteVars(p: Palette): Record<string, string> {
     '--raised': mix(fg, 8, bg),
     '--border': mix(fg, 18, bg),
     '--border-soft': mix(fg, 10, bg),
+    // The edge of a form control: 3:1 on the deck (WCAG 1.4.11).
+    '--ctl-edge': mix(fg, 50, bg),
     '--dim': mix(fg, 72, bg),
     '--faint': mix(fg, 58, bg),
     '--faint-decor': mix(fg, 40, bg),

@@ -16,6 +16,8 @@ body,
   height: 100%;
   margin: 0;
 }
+/* Numbers keep the proportional figures of Mona Sans: its tabular figures draw a slashed zero,
+   which reads as code (§2.3). A number column aligns with text-align and a min-width. */
 body {
   background: var(--bg);
   color: var(--text);
@@ -23,7 +25,6 @@ body {
   font-size: var(--fs-ui);
   font-weight: 400;
   line-height: 1.4;
-  font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
@@ -37,6 +38,8 @@ body {
 
 /* ── links ──────────────────────────────────────────────────────── */
 /* A link is the focus blue, with no underline; the underline shows on hover and on focus.
+   A link inside prose (a note, chat markdown, a paragraph) is always underlined: color alone
+   does not mark it (WCAG 1.4.1). Navigation links, rows and cards have a class and no underline.
    `:where()` keeps the rules at zero specificity: a class of a card, a row or a nav item
    still sets its own look. */
 :where(a, a:visited, .fd-note a, .fd-note a:visited) {
@@ -45,6 +48,11 @@ body {
 }
 :where(a:hover, a:focus-visible) {
   text-decoration: underline;
+}
+:where(.fd-note, .fd-md, p) :where(a:not([class])) {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
 }
 
 /* ── focus ──────────────────────────────────────────────────────── */
@@ -330,7 +338,7 @@ a.fd-btn {
   padding: 0 10px;
   background-color: var(--raised);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--ctl-edge);
   border-radius: var(--r-ctl);
   font-family: var(--font-ui);
   font-size: var(--fs-ui);
@@ -343,7 +351,7 @@ a.fd-btn {
   padding: 8px 10px;
   background-color: var(--raised);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--ctl-edge);
   border-radius: var(--r-ctl);
   font-family: var(--font-ui);
   font-size: var(--fs-ui);
@@ -358,7 +366,7 @@ a.fd-btn {
   textarea
 ):focus {
   border-color: var(--focus);
-  box-shadow: 0 0 0 3px var(--focus-bg);
+  box-shadow: 0 0 0 1px var(--focus); /* with the edge: a 2px blue ring */
   outline: none;
 }
 :where(
@@ -415,7 +423,7 @@ a.fd-btn {
   margin: 0;
   padding: 0;
   background: var(--raised);
-  border: 1px solid var(--border);
+  border: 1px solid var(--ctl-edge);
   border-radius: 4px;
   vertical-align: -3px;
   cursor: pointer;
@@ -466,7 +474,7 @@ a.fd-btn {
 :where(input[type="checkbox"]:not([role="switch"]):not(.fd-switch), input[type="radio"]):hover:not(
   :disabled
 ):not(:checked) {
-  border-color: var(--faint-decor);
+  border-color: var(--faint);
 }
 
 /* The switch: a checkbox with role="switch" (`.fd-switch`). */
@@ -479,7 +487,7 @@ a.fd-btn {
   min-height: 0;
   margin: 0;
   padding: 0;
-  background: var(--border);
+  background: var(--ctl-edge);
   border: 0;
   border-radius: var(--r-pill);
   cursor: pointer;
@@ -492,14 +500,16 @@ a.fd-btn {
   left: 2px;
   width: 14px;
   height: 14px;
-  background: var(--text);
+  background: var(--switch-knob);
   border-radius: 50%;
+  box-shadow: var(--knob-shadow);
   transition: transform var(--t-fast);
 }
 .fd-switch:checked {
   background: var(--ok);
 }
 .fd-switch:checked::after {
+  background: var(--ink-on);
   transform: translateX(14px);
 }
 .fd-switch:focus-visible {
@@ -547,7 +557,7 @@ a.fd-btn {
   min-width: 18px;
   height: 18px;
   padding: 0 5px;
-  background: var(--raised-hi);
+  background: var(--badge-bg);
   color: var(--faint);
   border-radius: var(--r-chip);
   font-family: var(--font-ui);
@@ -580,7 +590,9 @@ a.fd-btn {
 
 /* ── segmented control ──────────────────────────────────────────── */
 /* A --surface track with segments. The pressed segment: aria-pressed, aria-selected, or a
-   label around a checked radio (the radio itself is visually hidden). */
+   label around a checked radio (the radio itself is visually hidden). It shows with a fill step,
+   a --ctl-edge ring and weight 600 (not by the fill alone); in the light theme it is a white,
+   lifted segment. */
 .fd-seg {
   display: inline-flex;
   align-items: center;
@@ -617,8 +629,12 @@ a.fd-btn {
 }
 .fd-seg > :is([aria-pressed="true"], [aria-selected="true"], :has(> input:checked)),
 .fd-seg > :is([aria-pressed="true"], [aria-selected="true"], :has(> input:checked)):hover {
-  background: var(--raised-hi);
+  background: var(--pressed-bg);
   color: var(--text);
+  box-shadow:
+    inset 0 0 0 1px var(--ctl-edge),
+    var(--shadow-lift);
+  font-weight: 600;
 }
 .fd-seg > label > input[type="radio"] {
   position: absolute;
@@ -655,10 +671,13 @@ a.fd-btn {
   background: var(--raised);
   color: var(--text);
 }
+/* Pressed: a fill step, a --ctl-edge edge and weight 600 (not by the fill alone). */
 .fd-chip[aria-pressed="true"],
 .fd-chip[aria-selected="true"] {
-  background: var(--raised-hi);
+  background: var(--badge-bg);
+  border-color: var(--ctl-edge);
   color: var(--text);
+  font-weight: 600;
 }
 
 /* ── badges and counts ──────────────────────────────────────────── */
@@ -702,9 +721,11 @@ a.fd-btn {
   background: var(--fuel-bg);
   color: var(--fuel);
 }
+/* A quiet text badge: no fill, no edge. */
 .fd-badge[data-tone="muted"] {
+  padding-inline: 0;
   background: transparent;
-  box-shadow: inset 0 0 0 1px var(--border-soft);
+  box-shadow: none;
   color: var(--faint);
 }
 .fd-caps {
@@ -775,10 +796,11 @@ a.fd-btn {
 .fd-dot[data-status="verifying"]::before {
   background: conic-gradient(var(--focus) 0 180deg, transparent 0);
 }
-/* needs you: a filled yellow circle with a dark "!". */
+/* needs you: a filled yellow circle with a dark "!". The edge is --act, so that the circle keeps
+   its shape on a light fill. */
 .fd-dot[data-status="needs_you"] {
   background: var(--act-fill);
-  border-color: var(--act-fill);
+  border-color: var(--act);
 }
 .fd-dot[data-status="needs_you"]::after {
   content: "";
@@ -801,8 +823,8 @@ a.fd-btn {
 }
 /* ended: a filled quiet circle. */
 .fd-dot[data-status="ended"] {
-  background: var(--faint-decor);
-  border-color: var(--faint-decor);
+  background: var(--faint);
+  border-color: var(--faint);
 }
 /* online: a small, still, filled green dot: a station link or a provider sign-in. A link is not
    work, so it never turns. */
@@ -1096,7 +1118,15 @@ a.fd-btn {
   white-space: pre;
   overflow: auto;
 }
+/* One grid column as wide as the longest line (at least the visible width): the add and del
+   fills reach the end of every line when the diff scrolls sideways. The diff is an inline-size
+   container, so that a thread inside it can take the visible width (100cqi). */
 .fd-diff {
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr);
+  align-content: start;
+  min-width: 0;
   margin: 0;
   background: var(--code);
   border: 0;
@@ -1111,6 +1141,14 @@ a.fd-btn {
   display: block;
   padding: 0 12px;
   white-space: pre;
+}
+/* A review thread or a comment editor inside a diff does not widen the column: its text wraps
+   at the visible width, and it stays at the left edge when the lines scroll. */
+.fd-diff > :not(.fd-dl) {
+  contain: inline-size;
+  position: sticky;
+  left: 0;
+  max-width: 100cqi;
 }
 .fd-dl[data-kind="file"] {
   background: var(--surface);
@@ -1152,7 +1190,20 @@ a.fd-btn {
   }
   /* After the rule above, so that it wins at the same specificity. */
   .fd-chip {
-    min-height: 36px;
+    min-height: var(--tap-min);
+  }
+  /* A checkbox or radio that no label wraps still has a 24px target (WCAG 2.5.8). */
+  :where(input[type="checkbox"]:not([role="switch"]):not(.fd-switch), input[type="radio"]) {
+    width: 24px;
+    height: 24px;
+  }
+  :where(input[type="checkbox"]:not([role="switch"]):not(.fd-switch))::before {
+    width: 16px;
+    height: 16px;
+  }
+  :where(input[type="radio"])::before {
+    width: 10px;
+    height: 10px;
   }
   .fd-switch {
     min-height: 0;
@@ -1172,6 +1223,6 @@ a.fd-btn {
   .fd-wt > summary.fd-label {
     display: inline-flex;
     align-items: center;
-    min-height: 36px;
+    min-height: var(--tap-min);
   }
 }
