@@ -209,7 +209,7 @@ describe('shares page (R11.4)', () => {
     for (const head of ['Role', 'Members', 'Uses left', 'Expires']) expect(html).toContain(head);
     expect(html).toContain('data-label="Members">Ana, Bo</td>');
     expect(html).toContain('data-label="Uses left" class="fd-num">3</td>');
-    expect(html).toContain('in 5 days');
+    expect(html).toContain('in 5 d<');
     expect(html).toContain('title="2026-10-18"');
     expect(html).toContain('aria-label="Revoke the share of Alpha / Review"');
   });

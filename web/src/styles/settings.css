@@ -5,15 +5,24 @@
 
 /* ── the tabs ───────────────────────────────────────────────────── */
 /* A 36px row under the page header: the selected tab has --text and a 2px --text underline
-   (§4.5: never yellow). The tabs line up with the left edge of the page. */
+   (§4.5: never yellow). The tab labels have no side padding: they line up with the left edge of
+   the page (the title, the section headings). The row scrolls sideways, so it clips an outward
+   focus ring: the ring goes inside the tab, and the focused tab grows by --sp-1 at each side (a
+   negative margin keeps the row still) so that the ring does not touch the label. The row keeps
+   --sp-1 of room at each side for that ring (a negative margin keeps the labels on the page
+   edge); its rule is drawn inside that room, so that it starts and ends on the page edges. */
 .fd-set-tabs {
   display: flex;
   gap: var(--sp-5);
   height: 36px;
-  padding: 0;
+  margin-inline: calc(-1 * var(--sp-1));
+  padding: 0 var(--sp-1);
   overflow-x: auto;
   overflow-y: hidden;
-  border-bottom: 1px solid var(--border-soft);
+  border-bottom: 1px solid transparent;
+  background:
+    linear-gradient(var(--border-soft) 0 0) var(--sp-1) 100% / calc(100% - 2 * var(--sp-1)) 1px
+    no-repeat border-box;
   scrollbar-width: none;
 }
 .fd-set-tabs::-webkit-scrollbar {
@@ -24,7 +33,7 @@
   flex: none;
   height: 100%;
   margin-bottom: -1px;
-  padding: 0 2px;
+  padding: 0;
   background: none;
   border: 0;
   border-bottom: 2px solid transparent;
@@ -44,10 +53,40 @@
   border-bottom-color: var(--text);
   color: var(--text);
 }
-.fd-set-tabs [role="tab"]:focus-visible {
+.fd-set-tabs [role="tab"]:focus-visible,
+.fd-set-tabs [role="tab"]:focus-visible:hover:not(:disabled) {
+  margin-inline: calc(-1 * var(--sp-1));
+  padding-inline: var(--sp-1);
   outline: 2px solid var(--focus);
   outline-offset: -2px;
   border-radius: var(--r-chip);
+}
+/* Forced colors: the transparent underline of a tab and the gradient rule of the row are not
+   drawn as they are. An unselected tab hides its underline (Canvas), the selected tab draws it in
+   Highlight, and the row draws its rule as a real edge (without the room at its sides). The tabs
+   get --sp-1 of side padding, so that the Highlight ring of the selected tab (base.css) and the
+   focus ring do not touch the label. */
+@media (forced-colors: active) {
+  .fd-set-tabs {
+    margin-inline: 0;
+    padding: 0;
+    border-bottom-color: CanvasText;
+  }
+  .fd-set-tabs [role="tab"],
+  .fd-set-tabs [role="tab"]:hover:not(:disabled),
+  .fd-set-tabs [role="tab"]:focus-visible,
+  .fd-set-tabs [role="tab"]:focus-visible:hover:not(:disabled) {
+    margin-inline: 0;
+    padding: 0 var(--sp-1);
+  }
+  .fd-set-tabs [role="tab"]:not([aria-selected="true"]),
+  .fd-set-tabs [role="tab"]:not([aria-selected="true"]):hover:not(:disabled) {
+    border-bottom-color: Canvas;
+  }
+  .fd-set-tabs [role="tab"][aria-selected="true"],
+  .fd-set-tabs [role="tab"][aria-selected="true"]:hover:not(:disabled) {
+    border-bottom-color: Highlight;
+  }
 }
 @media (pointer: coarse) {
   .fd-set-tabs {
@@ -473,9 +512,12 @@ input[data-mono="true"] {
   color: var(--ok);
 }
 /* Forced colors drop the box-shadow holder: a real edge takes its place (§6). */
+/* The edge is straight: only the right corners keep the --r-card radius (a rounded left corner
+   would bend the edge into a bracket). */
 @media (forced-colors: active) {
   .fd-set-notice {
     border-left: 3px solid CanvasText;
+    border-radius: 0 var(--r-card) var(--r-card) 0;
   }
 }
 
