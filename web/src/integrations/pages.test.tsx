@@ -42,8 +42,8 @@ describe('projects page', () => {
     expect(html).toContain('Atlas');
     expect(html).toContain('Alpha');
     expect(html).toContain('/work/atlas');
-    expect(html).toContain('github acme/atlas');
-    expect(html).toContain('jira jira-main PROJ');
+    expect(html).toContain('GitHub acme/atlas');
+    expect(html).toContain('Jira jira-main PROJ');
     expect(html).toContain('href="#/project/p1"');
     for (const button of ['New project', 'Edit', 'Check', 'Delete…']) {
       expect(html).toContain(button);
@@ -757,7 +757,7 @@ describe('shell', () => {
     expect(html).toContain('role="tablist"');
     expect(html).toContain('>Issues<');
     expect(html).toContain('>Pull requests<');
-    expect(html).toContain('github acme/atlas');
+    expect(html).toContain('GitHub acme/atlas');
     const prs = provide(
       <ProjectPage
         id="p1"

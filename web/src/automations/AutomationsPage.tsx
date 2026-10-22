@@ -324,8 +324,9 @@ export function AutomationsPage({
                     </span>
                     <span>{s.timezone}</span>
                     <span>{stationName(s.station_id, stations)}</span>
-                    {/* A span: the drawn dot before it stays in the sans of the line. */}
-                    <span>
+                    {/* A span: the drawn dot before it stays in the sans of the line. A phone
+                        puts it on its own line (views.css .fd-auto-path). */}
+                    <span className="fd-auto-path">
                       <code>{s.path}</code>
                     </span>
                   </p>

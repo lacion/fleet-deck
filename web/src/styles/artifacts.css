@@ -166,16 +166,19 @@
   .fd-art-row:hover:not(:disabled) {
     background: transparent;
   }
-  /* The search field on its own line, then the three selects in equal columns: the row stays
-     inside a 390px screen. */
+  /* The search field on its own line, then Kind and Station in two equal columns and Session
+     across the row: each select shows its full "All …" label inside a 390px screen. */
   .fd-art-filters {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     flex: 1 1 100%;
     width: 100%;
   }
-  .fd-art-filters .fd-art-search {
+  .fd-art-filters .fd-art-search,
+  .fd-art-filters label:last-child {
     grid-column: 1 / -1;
+  }
+  .fd-art-filters .fd-art-search {
     width: auto;
   }
   .fd-art-filters label {

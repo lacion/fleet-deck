@@ -64,6 +64,18 @@
   max-width: 100%;
 }
 
+/* A phone: the two selects share the full first row (half each), so the filter row ends on the
+   right edge of the tiles; the chips wrap to the next row. */
+@media (max-width: 640px) {
+  .fd-wfilter {
+    flex: 1 1 calc(50% - var(--sp-1));
+  }
+
+  .fd-wfilter select {
+    width: 100%;
+  }
+}
+
 /* ── Watch: the wall of tiles ───────────────────────────────────── */
 /* The tiles of one grid row share the height of the tallest one, so the row ends on one line
    (Focus shows one tile in one column). */
@@ -533,7 +545,9 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0 var(--sp-1);
+  /* No column gap: the 6px padding of the drawn dot (stations.css .fd-plan-meta) spaces each
+     part, the same as on Plans. */
+  gap: 0;
   margin: 0;
   color: var(--dim);
   font-size: var(--fs-meta);
@@ -554,15 +568,22 @@
   min-width: 0;
 }
 
-/* The flex gaps on both sides space the dot: 4px each side, the width of the text dots. */
+/* The dot of a "Last run" part is a flex item of the part: take back the part's own 4px gap after
+   it, so that the dot has 6px on each side as on the first line. */
 .fd-auto-list .fd-plan-meta > .fd-auto-when::before {
-  padding: 0;
+  margin-right: calc(-1 * var(--sp-1));
 }
 
-/* Under 760px stations.css drops the drawn dots: the parts sit 12px apart. */
+/* A phone: the path goes on its own line without a dot, so that no wrapped line starts with a
+   dot; the cron, zone and station stay on the first line. */
 @media (max-width: 760px) {
-  .fd-auto-list .fd-plan-meta {
-    column-gap: var(--sp-3);
+  .fd-auto-list .fd-plan-meta > .fd-auto-path {
+    flex-basis: 100%;
+  }
+
+  /* The :not() parts repeat those of the dot rule of stations.css, so that this rule wins. */
+  .fd-auto-list .fd-plan-meta > :not(.fd-plan-status):not(.fd-badge) + .fd-auto-path::before {
+    content: none;
   }
 }
 
