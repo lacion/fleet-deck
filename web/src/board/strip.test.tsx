@@ -296,7 +296,7 @@ describe('flight deck fixes', () => {
   test('a folded board puts the ended strips of a lane in a collapsed Ended group with its tools', () => {
     const html = board([card('a'), card('e', 'ended'), card('l', 'lost')], { foldEnded: true });
     expect(html).toContain(
-      '<details class="fd-lane-ended"><summary><span class="fd-dot" data-status="ended" aria-hidden="true"></span>Ended · 2</summary>',
+      '<details class="fd-lane-ended"><summary>Ended <span class="fd-count">2</span></summary>',
     );
     expect(html).toMatch(
       /<details class="fd-lane-ended">[\s\S]*data-session="e"[\s\S]*Resume all \(0\)[\s\S]*Clear \(2\)[\s\S]*<\/details>/,
