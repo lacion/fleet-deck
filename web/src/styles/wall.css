@@ -225,17 +225,18 @@
   grid-area: stream;
 }
 
-/* The needs area takes the height of its requests; the area under it takes the rest. */
+/* The left column: the needs area takes the height of its requests, the side blocks (usage,
+   stations, pull requests, load) take the rest under it. The right column is the Activity stream
+   alone, at full height: more rows, and each row has the whole column. */
 .fd-wall-root[data-shape="ultra"] .fd-wall-grid {
   grid-template-columns: 22% minmax(0, 1fr) 22%;
   grid-template-rows: minmax(0, auto) minmax(0, 1fr);
-  /* Activity sits under the side blocks: a 22% column cut every row to about 40 characters. */
   grid-template-areas:
-    "needs tiles side"
-    "needs tiles stream";
+    "needs tiles stream"
+    "side tiles stream";
 }
 
-/* The needs area spans the left column but takes only the height of its requests. */
+/* The needs area takes only the height of its requests. */
 .fd-wall-root[data-shape="ultra"] .fd-wall-grid > [data-area="needs"] {
   align-self: start;
 }
@@ -587,6 +588,14 @@
   flex: none;
 }
 
+/* The request icon has the size of the request text (the board draws it at 12px): it grows with
+   the wall type and sits on the text line. */
+.fd-wall-root .fd-wtile-ask .fd-icon {
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.125em;
+}
+
 .fd-wall-root .fd-wtile:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
@@ -701,17 +710,6 @@
   width: 100%;
 }
 
-.fd-wall-reach {
-  width: calc(var(--fd-wall-u) * 8);
-  height: calc(var(--fd-wall-u) * 8);
-  border-radius: 50%;
-  background: var(--ok);
-}
-
-.fd-wall-station[data-reachable="false"] .fd-wall-reach {
-  background: var(--hazard);
-}
-
 .fd-wall-station-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -817,7 +815,8 @@
   color: var(--dim);
 }
 
-.fd-wall-load li[data-heat="high"] .fd-wall-load-value {
+/* --dim on the mid fill is under 4.5:1 in the dark theme (4.37:1); --text passes in both. */
+.fd-wall-load li:is([data-heat="mid"], [data-heat="high"]) .fd-wall-load-value {
   color: var(--text);
 }
 
@@ -831,12 +830,15 @@
   flex: none;
 }
 
+/* The list shows whole rows only: a row that does not fit wraps into a second column, out of
+   view, so the last row in view is never cut through its text. */
 .fd-wall-stream {
   display: flex;
   flex: 1 1 auto;
   /* the list runs newest first, from the top down (the DOM order is the reading order) */
-  flex-direction: column;
+  flex-flow: column wrap;
   justify-content: flex-start;
+  align-content: flex-start;
   min-height: 0;
   overflow: hidden;
   margin: 0;
@@ -845,16 +847,29 @@
   color: var(--dim);
   /* one step larger than the board, as every wall text (§4.9) */
   font-size: var(--fs-ui);
-  /* the oldest rows fade out at the bottom */
-  mask-image: linear-gradient(to top, transparent, black calc(var(--fd-wall-u) * 16));
+  /* the oldest rows fade out at the bottom: the fade is taller than one row (about 26 units) */
+  mask-image: linear-gradient(to top, transparent, black calc(var(--fd-wall-u) * 40));
 }
 
 .fd-wall-stream li {
   flex: none;
+  width: 100%;
   padding: 2px 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* An ultra wall gives the stream a whole column of height but only 22 % of the width: a row wraps
+   onto a second line (under the name, not under the time) rather than end in an ellipsis. */
+.fd-wall-root[data-shape="ultra"] .fd-wall-stream li {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  padding-left: calc(6ch + var(--sp-2));
+  text-indent: calc(-6ch - var(--sp-2));
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .fd-wall-stream li + li {
@@ -865,6 +880,8 @@
 .fd-wall-stream time {
   display: inline-block;
   min-width: 6ch;
+  /* an inline block: it must not take the hanging indent of an ultra row */
+  text-indent: 0;
   margin-right: var(--sp-2);
   color: var(--faint);
   text-align: right;
@@ -941,14 +958,17 @@
   mask-image: linear-gradient(to bottom, transparent, black calc(var(--fd-wall-u) * 24));
 }
 
+/* One column width for every line (the chat column of the board, in wall units): the prompt
+   bubble at the right ends on the same edge as the prose, the code and the tables. */
 .fd-wall-chatlines {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
+  width: 100%;
+  max-width: calc(var(--fd-wall-u) * 720);
 }
 
 .fd-wall-chatline {
-  max-width: var(--chat-w);
   margin: 0;
   font-size: var(--fs-chat);
   line-height: 1.55;
@@ -958,7 +978,6 @@
 
 /* The agent text: the chat Markdown (read-only), drawn at the size of the wall. */
 .fd-wall-chatline[data-kind="message"] {
-  max-width: calc(var(--fd-wall-u) * 720);
   white-space: normal;
 }
 
@@ -1308,7 +1327,11 @@
     overflow: visible;
   }
 
+  /* The list is as tall as its rows, up to a cap. A wrapping column needs that height given
+     (max-content): from the area alone, it wraps its rows into the minimum row of the grid. */
   .fd-wall-root[data-shape="portrait"] .fd-wall-stream {
+    flex: none;
+    height: max-content;
     max-height: calc(var(--fd-wall-u) * 320);
   }
 }
