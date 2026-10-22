@@ -16,17 +16,28 @@ type Props = {
 /** How many conflicts get their own line in the strip. */
 const SHOWN = 3;
 
+/** The last answer of each loader: a home that opens again shows it until its own load ends. */
+const lastAnswer = new WeakMap<ConflictLoader, FileConflict[]>();
+
+/** Keeps `list` as the last answer of `load` (`useConflicts` starts from it). */
+export function rememberConflicts(load: ConflictLoader, list: FileConflict[]): void {
+  lastAnswer.set(load, list);
+}
+
 /** Loads the conflicts again when `version` changes (the fleet changed). */
 export function useConflicts(
   load: ConflictLoader | undefined,
   version: string,
 ): { readonly list: FileConflict[] | null; readonly problem: string | null } {
-  const [list, setList] = useState<FileConflict[] | null>(null);
+  const [list, setList] = useState<FileConflict[] | null>(() =>
+    load === undefined ? null : (lastAnswer.get(load) ?? null),
+  );
   const [problem, setProblem] = useState<string | null>(null);
   const refresh = useCallback(() => {
     if (load === undefined) return;
     load().then(
       (next) => {
+        rememberConflicts(load, next);
         setList(next);
         setProblem(null);
       },

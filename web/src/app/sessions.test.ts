@@ -197,4 +197,34 @@ describe('palette matches', () => {
     expect(ids(paletteMatches(list, '', 2))).toEqual(['c', 'b']);
     expect(ids(paletteMatches(list, 'a'))).toEqual(['a']);
   });
+
+  test('the needs-you sessions list the longest wait first, as the Needs you panel', () => {
+    const asks = (at: number) => [
+      {
+        request_id: `r${at}`,
+        node_id: null,
+        request_kind: 'tool' as const,
+        title: 'Run it?',
+        details: '',
+        input: null,
+        options: [],
+        response: 'rpc_reply' as const,
+        requested_at: at,
+      },
+    ];
+    // "new" asked 2 min ago and updated last; "old" asked 6 min ago.
+    const list = [
+      card('new', 'needs_you', 'station-a', { updated_at: 9, open_requests: asks(8) }),
+      card('old', 'needs_you', 'station-a', { updated_at: 5, open_requests: asks(4) }),
+      card('w', 'working', 'station-a', { updated_at: 10 }),
+    ];
+    expect(ids(paletteMatches(list, ''))).toEqual(['old', 'new', 'w']);
+    expect(ids(sidebarModel(list, [station()], '').needs)).toEqual(['old', 'new']);
+    // Starred stays the first key.
+    const starred = sidebarModel(list, [station()], '', {
+      starred: new Set(['station-a/new']),
+      archived: new Set(),
+    });
+    expect(ids(starred.needs)).toEqual(['new', 'old']);
+  });
 });

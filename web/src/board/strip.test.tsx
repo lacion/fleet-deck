@@ -10,9 +10,13 @@ import {
 } from '../app/FleetHome';
 import type { FleetActions } from '../fleet/fleet';
 import type { DeckSession, OpenRequest } from '../gen';
+import { sessionActions } from '../session/commands';
+import { claudeCaps } from '../testing/capabilities';
 import { card, station } from '../testing/fleet';
 import { priority } from '../ui/localSet';
 import { emptyFilter } from './fleet';
+import { rememberConflicts } from './ConflictRadar';
+import type { ConflictLoader } from './conflicts';
 import { FleetBoard, STRIP_ORDER, stripCards } from './FleetBoard';
 import { HomePanel } from './HomePanel';
 import { UsageGlance } from './UsageGlance';
@@ -200,12 +204,19 @@ describe('strip markup', () => {
     expect(ended).not.toContain('fd-focus');
   });
 
-  test('the station name prefixes the title for a repo grouping only', () => {
-    const cards = [card('a', 'working', 'station-a', { title: 'T' })];
+  test('a repo grouping puts the station under the branch in the where cell, not in the title', () => {
+    const cards = [card('a', 'working', 'station-a', { title: 'T', branch: 'fix/x' })];
     expect(board(cards)).not.toContain('fd-strip-station');
-    expect(board(cards, { group: 'repo' })).toContain(
-      '<span class="fd-strip-station">Alpha</span><span class="fd-strip-text">T</span>',
+    expect(board(cards)).not.toContain('data-showstation');
+    const repo = board(cards, { group: 'repo' });
+    expect(repo).toContain('<span class="fd-strip-text">T</span>');
+    expect(repo).not.toMatch(/fd-strip-title[\s\S]*fd-strip-station[\s\S]*fd-strip-text/);
+    expect(repo).toMatch(
+      /<span class="fd-strip-where" title="Branch: fix\/x" data-station="true"><span class="fd-strip-wline"><svg[^>]*lucide-git-branch[\s\S]*?<\/svg><span class="fd-strip-path">fix\/x<\/span><\/span><span class="fd-strip-station">Alpha<\/span><\/span>/,
     );
+    // The chips line starts after an invisible copy of the name (the visible one is in the link).
+    expect(repo).toContain('<span class="fd-strip-spacer" aria-hidden="true">Alpha</span>');
+    expect(repo).toContain('data-showstation="true"');
   });
 });
 
@@ -287,7 +298,56 @@ describe('phone board', () => {
     expect(html).not.toContain('fd-phone-col');
     expect(html).not.toContain('aria-label="Group by"');
     expect(html).not.toContain('fd-strip-station');
-    expect(html).toContain('Offline sessions');
+    // The phone folds the ended strips of a lane as the desktop does (§4.2).
+    expect(html).toContain(
+      '<details class="fd-lane-ended"><summary>Ended <span class="fd-count">1</span></summary>',
+    );
+    expect(html).not.toContain('Offline sessions');
+  });
+
+  test('the phone shows the conflict radar under its header, above the lanes', () => {
+    const load: ConflictLoader = async () => [];
+    rememberConflicts(load, [
+      {
+        repo: null,
+        file: 'src/lib.rs',
+        touches: [
+          {
+            station_id: 'station-a',
+            session_id: 'a',
+            session_title: 'A',
+            path: 'src/lib.rs',
+            touched_at: 1,
+          },
+          {
+            station_id: 'station-a',
+            session_id: 'b',
+            session_title: 'B',
+            path: 'src/lib.rs',
+            touched_at: 2,
+          },
+        ],
+      },
+    ]);
+    const html = renderToStaticMarkup(
+      <FleetHome
+        sessions={[card('a'), card('b')]}
+        stations={[station()]}
+        freshness="live"
+        assign={undefined}
+        fleet={undefined}
+        conflicts={load}
+        feed={[]}
+        layout="phone"
+        onOpen={() => {}}
+        onSpawn={() => {}}
+      />,
+    );
+    expect(html).toContain('<span class="fd-home-conf">1 conflict</span>');
+    const radar = html.indexOf('aria-label="Conflict radar"');
+    expect(radar).toBeGreaterThan(html.indexOf('</header>'));
+    expect(radar).toBeLessThan(html.indexOf('aria-label="Fleet board"'));
+    expect(html.match(/aria-label="Conflict radar"/g)).toHaveLength(1);
   });
 });
 
@@ -322,6 +382,48 @@ describe('flight deck fixes', () => {
     const flat = board([card('a'), card('e', 'ended')]);
     expect(flat).not.toContain('fd-lane-ended');
     expect(flat).toContain('Offline sessions');
+  });
+
+  test('a folded lane counts its shown strips; the Ended row carries the ended count', () => {
+    const cards = [card('a'), card('e', 'ended'), card('b', 'working', 'station-b')];
+    const html = board(cards, { foldEnded: true });
+    expect(html).toContain(
+      '<h2 class="fd-lane-name fd-wide">Alpha</h2><span class="fd-count" title="2 sessions on Alpha">1</span>',
+    );
+    expect(html).toContain('<summary>Ended <span class="fd-count">1</span></summary>');
+    expect(html).toContain(
+      '<h2 class="fd-lane-name fd-wide">Beta</h2><span class="fd-count">1</span>',
+    );
+  });
+
+  test('a folded board has one Resume all for the ended sessions of every lane', () => {
+    const resumable = (id: string, stationId: string) =>
+      card(id, 'ended', stationId, { state: 'exited', capabilities: claudeCaps() });
+    const actions = (key: { station_id: string; session_id: string }) =>
+      sessionActions(async () => ({}), key, ['read', 'drive']);
+    const html = board([resumable('e1', 'station-a'), resumable('e2', 'station-b')], {
+      foldEnded: true,
+      sessionActions: actions,
+    });
+    expect(html.match(/<details class="fd-lane-ended">/g)).toHaveLength(2);
+    const outside = html.replace(/<details class="fd-lane-ended">[\s\S]*?<\/details>/g, '');
+    expect(outside).toContain('<span class="fd-label">Offline sessions</span>');
+    expect(outside).toContain('Resume all (2)');
+    expect(outside).toContain('Clear (2)');
+    // One lane to resume: its Ended row has the tools, so no second Resume all.
+    const one = board([resumable('e1', 'station-a'), card('b', 'working', 'station-b')], {
+      foldEnded: true,
+      sessionActions: actions,
+    });
+    expect(one).not.toContain('Offline sessions');
+    expect(one.match(/Resume all \(1\)/g)).toHaveLength(1);
+    // An unreachable station cannot resume a session: no dead row.
+    const away = board([card('u', 'unreachable'), card('v', 'unreachable', 'station-b')], {
+      foldEnded: true,
+      sessionActions: actions,
+    });
+    expect(away).not.toContain('Offline sessions');
+    expect(away).not.toContain('Resume all');
   });
 
   test('the status filter: Working holds queued and verifying, Needs you an open request', () => {
@@ -368,7 +470,8 @@ describe('flight deck fixes', () => {
     expect(html).toContain('<span class="fd-home-bell"></span>');
     const phone = home([card('a')], 'phone');
     expect(phone).not.toContain('fd-home-status');
-    expect(phone).not.toContain('fd-home-bell');
+    // The phone header has the slot too: with nothing waiting, the switch goes there.
+    expect(phone).toContain('<span class="fd-home-bell"></span></header>');
   });
 
   test('wide, the ops panel has a Mail & tasks section and Activity, Assign and All usage foot buttons', () => {
