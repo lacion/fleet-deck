@@ -251,15 +251,17 @@
   gap: 6px;
 }
 
-/* The plain answers sit on the tile fill: one step up, with the light-theme hairline. Deny is a
-   .fd-danger button (the ApprovalDock rule). */
+/* The plain answers sit on the tile fill: one step up, with the edge of a plain button on a
+   --raised card (the approval card rule). Hover: the --raised-hi fill and the --ctl-edge edge of
+   a plain answer (§4.1). Deny is a .fd-danger button (the ApprovalDock rule). */
 .fd-wtile-ask .fd-options > button:not(.fd-decide):not(.fd-danger) {
   background: var(--raised-hi);
-  border-color: var(--btn-edge);
+  border-color: var(--btn-edge-raised);
 }
 
 .fd-wtile-ask .fd-options > button:not(.fd-decide):not(.fd-danger):hover:not(:disabled) {
-  background: color-mix(in srgb, var(--raised-hi) 60%, var(--border));
+  background: var(--raised-hi);
+  border-color: var(--ctl-edge);
 }
 
 /* A phone: the answers are 44px buttons on a two-column grid: Allow and Deny side by side, a
@@ -530,7 +532,9 @@
   margin: 0;
   font-size: var(--fs-title);
   font-weight: 600;
-  line-height: var(--ctl-h-sm);
+  /* The UI line height of a title (the same as a plan title): never a control height, which is
+     44px on touch. */
+  line-height: 1.4;
   overflow-wrap: anywhere;
 }
 
@@ -627,6 +631,27 @@
   font-size: var(--fs-meta);
 }
 
+/* One column at the width of the Plans rows (stations.css, 760px): the actions go under the meta
+   line, Run now across the row, then the other actions in a left-aligned wrapped row (the layout
+   of "Start a session with this plan"). After the base rules, so that it wins. */
+@media (max-width: 760px) {
+  .fd-auto-list article {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fd-auto-list .fd-plan-actions {
+    grid-column: 1;
+    grid-row: auto;
+    justify-content: flex-start;
+    margin-top: var(--sp-1);
+  }
+
+  .fd-auto-list .fd-plan-actions > button:first-child {
+    flex-basis: 100%;
+    justify-content: center;
+  }
+}
+
 @media (max-width: 720px) {
   .fd-awrap {
     grid-template-columns: minmax(0, 1fr);
@@ -720,17 +745,6 @@
 
   .fd-auto-list {
     padding: 0 var(--sp-3);
-  }
-
-  .fd-auto-list article {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .fd-auto-list .fd-plan-actions {
-    grid-column: 1;
-    grid-row: auto;
-    justify-content: flex-start;
-    margin-top: var(--sp-1);
   }
 }
 

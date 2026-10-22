@@ -24,12 +24,15 @@
   border-bottom: 0;
 }
 
-/* One artifact: a 36px row. Kind icon, title, where, kind, version and age in fixed columns. */
+/* One artifact: a 36px row. Kind icon, title, where, kind, version and age in fixed columns.
+   The texts share one baseline (the 12px where and age sit on the line of the 13px title); the
+   icon and the kind badge are boxes and stay centered. */
 .fd-art-row {
   display: grid;
   grid-template-columns: 14px minmax(0, 1fr) minmax(0, 320px) 96px 36px 48px;
   grid-template-areas: "icon title where kind version age";
-  align-items: center;
+  align-items: baseline;
+  align-content: center;
   gap: var(--sp-3);
   width: 100%;
   height: auto;
@@ -65,6 +68,7 @@
 .fd-art-kind {
   display: inline-flex;
   grid-area: icon;
+  align-self: center;
   margin-right: calc(-1 * var(--sp-1));
   color: var(--faint);
 }
@@ -78,6 +82,7 @@
 }
 .fd-art-row > .fd-badge {
   grid-area: kind;
+  align-self: center;
   justify-self: start;
   max-width: 100%;
 }
