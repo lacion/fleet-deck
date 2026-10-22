@@ -68,6 +68,22 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A narrow board: the sentence takes a second line before it cuts a word ("All clear." stays
+   whole next to Group by and Share). */
+@container fleet (max-width: 1100px) {
+  .fd-home:not([data-layout="phone"]) .fd-home-counts {
+    display: -webkit-box;
+    line-height: 1.3;
+    white-space: normal;
+    text-wrap: balance;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  /* A line breaks between the parts of the sentence, never inside "2 need you". */
+  .fd-home:not([data-layout="phone"]) .fd-home-counts > span {
+    white-space: nowrap;
+  }
+}
 .fd-home-head > :not(.fd-home-titles) {
   flex: none;
 }
@@ -1210,9 +1226,11 @@
 .fd-ops-h + .fd-glance-span {
   margin-top: 0;
 }
+/* The cost keeps its whole value ("$255,730.38", cents everywhere, §5): its column is as wide as
+   its value, and the token columns share the rest. */
 .fd-glance-totals {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) max-content;
   gap: var(--sp-2);
   margin: 0;
 }
