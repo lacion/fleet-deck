@@ -280,7 +280,7 @@ describe('the bar and the compact row', () => {
       />,
     );
 
-  test('the bar has a chip for each kind, then Compact tools', () => {
+  test('the bar has a checkbox row for each kind, then Compact tools', () => {
     const html = view([message, read(1)], DEFAULT_FILTER);
     for (const label of [
       'Reads',
@@ -291,11 +291,15 @@ describe('the bar and the compact row', () => {
       'Thinking',
       'Notices',
     ]) {
-      expect(html).toContain(`>${label}</button>`);
+      expect(html).toMatch(
+        new RegExp(
+          `<label class="fd-chat-show-item"><input type="checkbox"[^>]*/>${label}</label>`,
+        ),
+      );
     }
     expect(html.indexOf('Notices')).toBeLessThan(html.indexOf('Compact tools'));
-    expect(html).toContain('aria-pressed="true"');
-    expect(html).toMatch(/aria-pressed="false"[^>]*>Compact tools</);
+    expect(html).toMatch(/<input type="checkbox" checked=""\/>Reads</);
+    expect(html).toMatch(/<input type="checkbox"\/>Compact tools</);
   });
 
   test('the bar is a Show menu with the group inside, and counts the hidden kinds', () => {
@@ -316,9 +320,9 @@ describe('the bar and the compact row', () => {
     expect(view([])).not.toContain('Compact tools');
   });
 
-  test('a hidden kind shows its count on the chip and its rows are gone', () => {
+  test('a hidden kind shows its count in its row and its rows are gone', () => {
     const html = view([message, read(1), read(2), bash(3)], hide('reads'));
-    expect(html).toMatch(/aria-pressed="false"[^>]*>Reads<span[^>]*>2<\/span>/);
+    expect(html).toMatch(/<input type="checkbox"\/>Reads<span[^>]*>2<\/span>/);
     expect(html).toContain('Bash');
     expect(html).not.toContain('>Read<');
   });
