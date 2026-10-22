@@ -166,16 +166,20 @@
   .fd-art-row:hover:not(:disabled) {
     background: transparent;
   }
+  /* The search field on its own line, then the three selects in equal columns: the row stays
+     inside a 390px screen. */
   .fd-art-filters {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     flex: 1 1 100%;
-    justify-content: flex-start;
+    width: 100%;
   }
   .fd-art-filters .fd-art-search {
-    flex-basis: 100%;
+    grid-column: 1 / -1;
     width: auto;
   }
-  .fd-art-filters label:not(.fd-art-search) {
-    flex: 1 1 0;
+  .fd-art-filters label {
+    min-width: 0;
   }
   .fd-art-filters select {
     width: 100%;

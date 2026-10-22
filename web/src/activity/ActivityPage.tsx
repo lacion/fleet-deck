@@ -9,15 +9,7 @@ import { stationName } from '../board/fleet';
 import type { ActivityItem, DeckSession, StationView } from '../gen';
 import type { FleetActions } from '../fleet/fleet';
 import type { ViewsActions } from '../runtime/views';
-import {
-  Icon,
-  Mail,
-  MessageSquare,
-  MessagesSquare,
-  Play,
-  TriangleAlert,
-  Wrench,
-} from '../ui/icons';
+import { Icon, Mail, MessageSquare, MessagesSquare, Play, Shield, Wrench } from '../ui/icons';
 import { EmptyState, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import {
@@ -52,7 +44,8 @@ type Props = {
 const KIND_ICON = {
   message: MessageSquare,
   tool: Wrench,
-  approval: TriangleAlert,
+  // The same icon as the needs-you strips of the fleet (TriangleAlert means a conflict there).
+  approval: Shield,
   mail: Mail,
   lifecycle: Play,
 } as const;
@@ -60,6 +53,35 @@ const KIND_ICON = {
 /** The repository without its forge host: "github.com/lacion/fleet-deck" → "lacion/fleet-deck". A
  * first part without a dot is not a host and stays. */
 const repoLabel = (repo: string) => repo.replace(/^[^/]*\.[^/]*\//, '');
+
+/** The tools whose target is a command or a path (principle 5: mono for those). */
+const TOOL_NAMES: ReadonlySet<string> = new Set([
+  'Bash',
+  'Edit',
+  'Write',
+  'Read',
+  'Search',
+  'Grep',
+  'Glob',
+]);
+const TOOL_TEXT = /^((?:Permission: |Question: )?(\S+)) (.+)$/;
+
+/**
+ * The text of a row. A tool or approval row of a known tool ("Edit src/a.ts", "Permission: Bash
+ * cargo test") shows its target in mono; every other text stays one plain string.
+ */
+export function RowText({ item }: { readonly item: ActivityItem }) {
+  const m = item.kind === 'tool' || item.kind === 'approval' ? TOOL_TEXT.exec(item.text) : null;
+  const [, head, name, target] = m ?? [];
+  if (head === undefined || name === undefined || target === undefined || !TOOL_NAMES.has(name)) {
+    return <span className="fd-arow-text">{item.text}</span>;
+  }
+  return (
+    <span className="fd-arow-text">
+      {head} <code className="fd-arow-target">{target}</code>
+    </span>
+  );
+}
 
 function Row({
   item,
@@ -86,7 +108,7 @@ function Row({
         <a className="fd-arow-session" href={href}>
           {item.session_title ?? item.session_id}
         </a>
-        <span className="fd-arow-text">{item.text}</span>
+        <RowText item={item} />
       </span>
       <span className="fd-arow-meta">
         <span
@@ -240,7 +262,12 @@ export function ActivityPage({
   }, [views, live, id, load]);
 
   return (
-    <Page title="Activity" className="fd-activity" wide>
+    <Page
+      title="Activity"
+      description="What the sessions did, newest first."
+      className="fd-activity"
+      wide
+    >
       <div className="fd-awrap">
         <nav className="fd-achans" aria-label="Channels">
           <ChannelButton

@@ -147,6 +147,27 @@ describe('the activity page', () => {
     expect(none).toContain('Nothing happened here yet');
   });
 
+  test('a tool or approval row of a known tool shows its target in mono; other texts stay plain', () => {
+    const html = page({
+      initialItems: [
+        item({ kind: 'approval', text: 'Permission: Bash cargo nextest run -p x', station_seq: 1 }),
+        item({ kind: 'tool', text: 'Edit src/checkout/cart.ts', station_seq: 2 }),
+        item({ kind: 'approval', text: 'Question: Which port should it use?', station_seq: 3 }),
+        item({ kind: 'message', text: 'Write the docs next', station_seq: 4 }),
+      ],
+    });
+    expect(html).toContain(
+      'Permission: Bash <code class="fd-arow-target">cargo nextest run -p x</code>',
+    );
+    expect(html).toContain('Edit <code class="fd-arow-target">src/checkout/cart.ts</code>');
+    expect(html).toContain('<span class="fd-arow-text">Question: Which port should it use?</span>');
+    expect(html).toContain('<span class="fd-arow-text">Write the docs next</span>');
+  });
+
+  test('the header has its summary sentence', () => {
+    expect(page()).toContain('<p class="fd-page-desc">What the sessions did, newest first.</p>');
+  });
+
   test('before the first answer the page says it loads, and offline it says so', () => {
     expect(page()).toContain('Loading…');
     expect(page({ live: false })).toContain('The stream needs a live connection.');

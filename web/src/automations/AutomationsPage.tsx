@@ -286,6 +286,12 @@ export function AutomationsPage({
           sessions={sessions}
         />
       )}
+      {list !== null && list.length > 0 ? (
+        // The skip rule stays in view after the first automation (the empty state says it too).
+        <p className="fd-note">
+          A check on the station can run first; a non-zero exit skips the run.
+        </p>
+      ) : null}
       {list === null ? (
         actions === undefined ? null : (
           <p role="status">Loading automations…</p>

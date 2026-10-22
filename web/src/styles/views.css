@@ -49,6 +49,12 @@
   font-weight: 600;
 }
 
+/* Focus waits while the pointer or the keyboard is in the shown tile. */
+.fd-watch-paused {
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+
 .fd-wfilter {
   display: inline-flex;
   min-width: 0;
@@ -59,12 +65,12 @@
 }
 
 /* ── Watch: the wall of tiles ───────────────────────────────────── */
-/* Each tile keeps the height of its content (no empty block under a short tile); only the wall
-   display (wall.css, `.fd-wall-tiles[data-grid=fill]`) stretches its tiles to the row. */
+/* The tiles of one grid row share the height of the tallest one, so the row ends on one line
+   (Focus shows one tile in one column). */
 .fd-wall {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
-  align-items: start;
+  align-items: stretch;
   gap: var(--sp-2);
   margin: 0;
   padding: 0;
@@ -377,6 +383,11 @@
   transition: background-color var(--t-fast);
 }
 
+/* Rules only between the rows, the same as the artifacts list and the tables. */
+.fd-arow:last-child {
+  border-bottom: 0;
+}
+
 @media (hover: hover) {
   .fd-arow:hover {
     background: var(--raised);
@@ -419,6 +430,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--dim);
+}
+
+/* The command or path of a tool row (principle 5): mono, the same as Watch and the chat. */
+.fd-arow-target {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
   color: var(--dim);
 }
 

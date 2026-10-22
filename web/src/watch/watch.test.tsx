@@ -323,6 +323,54 @@ describe('the read-only tile (R13 P1)', () => {
     expect(html).not.toContain('Loading…');
   });
 
+  test('a running tool or a focus line replaces No chat yet.', () => {
+    const ready = {
+      incarnation: 'i',
+      cursor: 0,
+      events: [],
+      freshness: 'live' as const,
+      error: null,
+      ready: true,
+    };
+    const running = tile({
+      timeline: ready,
+      card: waiting('w1', 10, {
+        running_tools: [
+          { node_id: 'n1', tool_kind: 'shell', title: 'Bash', input_summary: 'xcodebuild' },
+        ],
+      }),
+    });
+    expect(running).not.toContain('No chat yet.');
+    expect(running).toContain('<code>xcodebuild</code>');
+    const focused = tile({
+      timeline: ready,
+      card: waiting('w1', 10, { focus: 'Writing the brief' } as Partial<DeckSession['summary']>),
+    });
+    expect(focused).not.toContain('No chat yet.');
+    expect(focused).toContain('Writing the brief');
+    // Loading stays while the timeline loads, with or without a tool.
+    expect(
+      tile({
+        card: waiting('w1', 10, {
+          running_tools: [
+            { node_id: 'n1', tool_kind: 'shell', title: 'Bash', input_summary: 'xcodebuild' },
+          ],
+        }),
+      }),
+    ).toContain('Loading…');
+  });
+
+  test('a request has the needs-you icon of the fleet: a shield, or a bubble for a question', () => {
+    const permission = tile();
+    expect(permission).toContain('lucide-shield');
+    expect(permission).not.toContain('lucide-triangle-alert');
+    const question = tile({
+      card: waiting('w1', 10, { open_requests: [request(10, { request_kind: 'question' })] }),
+    });
+    expect(question).toContain('lucide-message-square');
+    expect(question).not.toContain('lucide-shield');
+  });
+
   test('the answers have the ApprovalDock look: Allow decides, Deny is a danger button', () => {
     const options = [
       { option_id: 'allow', label: 'Allow', kind: 'allow_once' as const },

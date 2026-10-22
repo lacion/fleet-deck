@@ -306,6 +306,14 @@ describe('automations page', () => {
     expect(page({ initial: [] })).toContain('No automations yet');
   });
 
+  test('the skip rule stays above the list once an automation exists', () => {
+    const rule = 'A check on the station can run first; a non-zero exit skips the run.';
+    const html = page({ initial: [view()] });
+    expect(html).toContain(`<p class="fd-note">${rule}</p>`);
+    expect(html.indexOf(rule)).toBeLessThan(html.indexOf('fd-auto-list'));
+    expect(page({ initial: [] })).not.toContain(`<p class="fd-note">${rule}</p>`);
+  });
+
   test('the board has an Automations screen and links to it', () => {
     const html = renderToStaticMarkup(
       <App initialRoute={{ name: 'automations' }} stations={[linked()]} freshness="live" />,

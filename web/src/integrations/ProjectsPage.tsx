@@ -324,6 +324,10 @@ export function ProjectsPage({
           </div>
         </div>
       )}
+      {list !== null && list.length > 0 ? (
+        // The token rule stays in view after the first project (the empty state says it too).
+        <p className="fd-note">The deck stores the bindings only; the station holds the tokens.</p>
+      ) : null}
     </Page>
   );
 }
