@@ -7,6 +7,7 @@ import { TailnetPairing } from '../tailnet/TailnetPairing';
 import { InviteView } from './InviteView';
 import { ListenView } from './ListenView';
 import type { StationActions } from './pairing';
+import { ChevronRight, Globe, Icon, type LucideIcon, Send } from '../ui/icons';
 
 type Props = {
   readonly actions: StationActions;
@@ -51,19 +52,23 @@ function Start({
   }, [tailnet]);
   return (
     <>
-      <h3>Where is the new station?</h3>
-      {env === undefined ? null : (
-        <button type="button" className="fd-add-choice" onClick={() => onPick('tailnet')}>
-          <span className="fd-add-choice-title">A computer on my tailnet</span>
-          <span className="fd-add-choice-note">{countText(count)}</span>
-        </button>
-      )}
-      <button type="button" className="fd-add-choice" onClick={() => onPick('invite')}>
-        <span className="fd-add-choice-title">Any computer, with a one-time invitation</span>
-        <span className="fd-add-choice-note">
-          The new station connects to this deck. It works behind a router or a firewall.
-        </span>
-      </button>
+      <h3 className="fd-add-question">Where is the new station?</h3>
+      <div className="fd-add-choices">
+        {env === undefined ? null : (
+          <Choice
+            icon={Globe}
+            title="A computer on my tailnet"
+            note={countText(count)}
+            onClick={() => onPick('tailnet')}
+          />
+        )}
+        <Choice
+          icon={Send}
+          title="Any computer, with a one-time invitation"
+          note="The new station connects to this deck. It works behind a router or a firewall."
+          onClick={() => onPick('invite')}
+        />
+      </div>
       <details className="fd-add-fold">
         <summary>Other ways</summary>
         <button type="button" className="fd-add-text-btn" onClick={() => onPick('listen')}>
@@ -71,6 +76,32 @@ function Start({
         </button>
       </details>
     </>
+  );
+}
+
+/** One way to add a station: an icon tile, the title and a note, and a chevron. */
+function Choice({
+  icon,
+  title,
+  note,
+  onClick,
+}: {
+  readonly icon: LucideIcon;
+  readonly title: string;
+  readonly note: string;
+  readonly onClick: () => void;
+}) {
+  return (
+    <button type="button" className="fd-add-choice" onClick={onClick}>
+      <span className="fd-add-choice-icon">
+        <Icon of={icon} />
+      </span>
+      <span className="fd-add-choice-text">
+        <span className="fd-add-choice-title">{title}</span>
+        <span className="fd-add-choice-note">{note}</span>
+      </span>
+      <Icon of={ChevronRight} />
+    </button>
   );
 }
 
@@ -100,31 +131,35 @@ export function PairingDialog({ actions, stations, onClose }: Props) {
 
   return (
     <Dialog title="Add station" onClose={close}>
-      {view === 'start' ? null : (
-        <div>
-          <button type="button" className="fd-add-text-btn" onClick={back}>
-            ← Back
+      <div className="fd-add-dialog">
+        {view === 'start' ? null : (
+          <div className="fd-add-back">
+            <button type="button" className="fd-ghost fd-sm" onClick={back}>
+              ← Back
+            </button>
+          </div>
+        )}
+        {view === 'start' ? <Start env={env} onPick={setView} /> : null}
+        {view === 'tailnet' && env !== undefined ? (
+          <TailnetPairing env={env} onInvite={() => setView('invite')} />
+        ) : null}
+        {view === 'invite' ? (
+          <InviteView
+            actions={actions}
+            stations={stations}
+            invitation={invitation}
+            setInvitation={setInvitation}
+          />
+        ) : null}
+        {view === 'listen' ? (
+          <ListenView actions={actions} pasted={pasted} setPasted={setPasted} />
+        ) : null}
+        <div className="fd-add-foot">
+          <button type="button" className="fd-ghost" onClick={close}>
+            Close
           </button>
         </div>
-      )}
-      {view === 'start' ? <Start env={env} onPick={setView} /> : null}
-      {view === 'tailnet' && env !== undefined ? (
-        <TailnetPairing env={env} onInvite={() => setView('invite')} />
-      ) : null}
-      {view === 'invite' ? (
-        <InviteView
-          actions={actions}
-          stations={stations}
-          invitation={invitation}
-          setInvitation={setInvitation}
-        />
-      ) : null}
-      {view === 'listen' ? (
-        <ListenView actions={actions} pasted={pasted} setPasted={setPasted} />
-      ) : null}
-      <button type="button" onClick={close}>
-        Close
-      </button>
+      </div>
     </Dialog>
   );
 }
