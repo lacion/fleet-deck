@@ -44,11 +44,16 @@ const subscribeNarrow = (cb: () => void): (() => void) => {
   return () => list.removeEventListener('change', cb);
 };
 
-/** True while the sheet has its phone layout (sticky footer). Without a window: false. */
+const narrowNow = (): boolean =>
+  typeof window !== 'undefined' &&
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia(NARROW).matches;
+
+/**
+ * True while the sheet has its phone layout (sticky footer). Without a window: false. The board
+ * never renders on a server, so the server snapshot is the same query: a static render in a test
+ * with a mocked `matchMedia` gets the phone layout.
+ */
 export function useNarrow(): boolean {
-  return useSyncExternalStore(
-    subscribeNarrow,
-    () => typeof window.matchMedia === 'function' && window.matchMedia(NARROW).matches,
-    () => false,
-  );
+  return useSyncExternalStore(subscribeNarrow, narrowNow, narrowNow);
 }

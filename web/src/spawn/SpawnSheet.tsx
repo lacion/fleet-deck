@@ -238,6 +238,7 @@ export function SpawnFoot({
   batch,
   onBatch,
   missing,
+  notes = [],
   need = null,
   grantProblem = null,
   describedBy,
@@ -252,6 +253,11 @@ export function SpawnFoot({
   readonly onBatch: (on: boolean) => void;
   /** The missing steps without a note at their field (empty while a start runs). */
   readonly missing: readonly string[];
+  /**
+   * The board and scope notes (`fd-spawn-live`, `fd-spawn-scope`) when the form shows them in the
+   * footer (a phone), where the disabled button is in view.
+   */
+  readonly notes?: readonly { readonly id: string; readonly text: string }[];
   /** The directory note (`fd-spawn-need`) when the form shows it in the footer (a phone). */
   readonly need?: string | null;
   /** The first problem of the fleet grant fields: a hidden copy that the button description reads. */
@@ -286,6 +292,11 @@ export function SpawnFoot({
         </span>
       )}
       <div className="fd-spawn-status">
+        {notes.map((note) => (
+          <p key={note.id} className="fd-note" id={note.id}>
+            {note.text}
+          </p>
+        ))}
         {need === null ? null : (
           <p className="fd-note fd-spawn-need" id="fd-spawn-need">
             {need}

@@ -295,9 +295,16 @@ export function SpawnForm({
       : cwd === null
         ? 'Choose a folder to start.'
         : 'Type an absolute path (it starts with /).';
-  // A phone shows the directory note in the sticky footer, where the disabled button is in view.
+  // A phone shows the directory, board and scope notes in the sticky footer, where the disabled
+  // button is in view (the form scrolls under the footer).
   const needInFoot = useNarrow();
   const scopeNote = actions !== undefined && !canDrive;
+  const topNotes = [
+    scopeNote ? { id: 'fd-spawn-scope', text: 'Starting sessions needs the drive scope.' } : null,
+    live ? null : { id: 'fd-spawn-live', text: 'The form is off until the board is live.' },
+  ].filter((note) => note !== null);
+  // Without providers there is no form and no footer: the notes stay at the top.
+  const notesInFoot = needInFoot && targets.length > 0;
   const missing = (
     busy
       ? []
@@ -332,16 +339,13 @@ export function SpawnForm({
   return (
     <section className="fd-spawn" aria-label="New session">
       <SheetHead station={auto ? undefined : station} />
-      {scopeNote ? (
-        <p className="fd-note" id="fd-spawn-scope">
-          Starting sessions needs the drive scope.
-        </p>
-      ) : null}
-      {live ? null : (
-        <p className="fd-note" id="fd-spawn-live">
-          The form is off until the board is live.
-        </p>
-      )}
+      {notesInFoot
+        ? null
+        : topNotes.map((note) => (
+            <p key={note.id} className="fd-note" id={note.id}>
+              {note.text}
+            </p>
+          ))}
       {targets.length === 0 ? (
         <p className="fd-empty">No linked station has reported its providers yet.</p>
       ) : (
@@ -621,7 +625,7 @@ export function SpawnForm({
                     list={actions?.list}
                     sessions={sessions}
                     label="Directory path"
-                    placeholder="/path/to/project"
+                    placeholder="Folder on the station"
                     invalid={cwd !== null && !cwdOk}
                     describedBy={dirNote === null ? undefined : NEED_ID}
                     browseDisabled={!live || !canDrive}
@@ -740,6 +744,7 @@ export function SpawnForm({
             batch={batch}
             onBatch={setBatch}
             missing={missing}
+            notes={notesInFoot ? topNotes : []}
             need={needInFoot ? dirNote : null}
             grantProblem={fleetBad ? fleetProblem(fleet) : null}
             describedBy={describedBy}

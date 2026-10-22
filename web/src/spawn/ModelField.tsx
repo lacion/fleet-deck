@@ -31,10 +31,11 @@ export function PillWrap({
 
 /**
  * The model field of the spawn form (DL-151): a compact pill in the Agent row of the sheet
- * (DESIGN-SYSTEM §4.6). A select with "Default model", the models that the provider reported (when
- * it reported a list) and "Other…", which shows the free-text input. The field name is the
- * `aria-label`: the row has no captions. The parent gives the component a `key` of the station
- * and the provider instance, so a change of either closes "Other…".
+ * (DESIGN-SYSTEM §4.6). Without a reported list it is a text pill: the owner types a model id or
+ * alias at once. With a list it is a select with "Default model", the models that the provider
+ * reported and "Other…", which shows the free-text input. The field name is the `aria-label`: the
+ * row has no captions. The parent gives the component a `key` of the station and the provider
+ * instance, so a change of either closes "Other…".
  */
 export function ModelField(props: {
   value: string;
@@ -43,18 +44,33 @@ export function ModelField(props: {
 }) {
   const { value, models, onChange } = props;
   const noteId = useId();
-  // A value that is not in the list (typed before a station change) stays visible under "Other…".
-  const [other, setOther] = useState(
-    () => value !== '' && !(models ?? []).some((m) => m.value === value),
-  );
+  const [otherChosen, setOther] = useState(false);
+  if (models === null) {
+    return (
+      <PillWrap icon={Sparkles}>
+        <input
+          className="fd-spawn-pill"
+          aria-label="Model (optional)"
+          placeholder="Default model"
+          spellCheck={false}
+          autoCapitalize="off"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </PillWrap>
+    );
+  }
+  // A value that is not in the list (typed before the list came, or before a station change)
+  // stays visible under "Other…".
+  const other = otherChosen || (value !== '' && !models.some((m) => m.value === value));
   return (
     <>
       <PillWrap icon={Sparkles}>
         <select
           aria-label="Model (optional)"
           className="fd-spawn-pill"
-          title={models === null ? 'Model' : FROM}
-          aria-describedby={models === null ? undefined : noteId}
+          title={FROM}
+          aria-describedby={noteId}
           value={other ? OTHER : value}
           onChange={(event) => {
             const next = event.target.value;
@@ -68,7 +84,7 @@ export function ModelField(props: {
           }}
         >
           <option value="">Default model</option>
-          {(models ?? []).map((m) => (
+          {models.map((m) => (
             <option key={m.value} value={m.value} title={m.description ?? undefined}>
               {m.label}
             </option>
@@ -76,11 +92,9 @@ export function ModelField(props: {
           <option value={OTHER}>Other…</option>
         </select>
       </PillWrap>
-      {models === null ? null : (
-        <span id={noteId} className="fd-vh">
-          {FROM}
-        </span>
-      )}
+      <span id={noteId} className="fd-vh">
+        {FROM}
+      </span>
       {other ? (
         <input
           className="fd-spawn-pill fd-spawn-model"

@@ -87,7 +87,8 @@
   min-width: 0;
   font-weight: 400;
 }
-/* A placeholder is words, never a path: it must not look like a filled value. */
+/* A placeholder is words, never a path: it must not look like a filled value. The directory
+   placeholder is words too ("Folder on the station"), so it is sans in the mono path field. */
 .fd-spawn input::placeholder,
 .fd-spawn .fd-folder-row > input::placeholder {
   font-family: var(--font-ui);
@@ -328,10 +329,13 @@
 .fd-spawn select.fd-spawn-pill {
   field-sizing: content;
 }
-.fd-spawn .fd-spawn-pillwrap > select.fd-spawn-pill {
+.fd-spawn .fd-spawn-pillwrap > :is(select, input).fd-spawn-pill {
   padding-left: 26px;
 }
-.fd-spawn input.fd-spawn-model {
+/* The typed model: the "Other…" input, or the model pill itself when the provider has not
+   reported a list (the phone rule below, of the same specificity, makes it fill its column). */
+.fd-spawn input.fd-spawn-model,
+.fd-spawn .fd-spawn-pillwrap > input {
   width: 200px;
 }
 /* The directory: the value is mono (a path). */
@@ -403,6 +407,17 @@
   .fd-spawn-station:has(> input:checked):not(:has(> input:focus-visible)) {
     outline: 2px solid Highlight;
     outline-offset: -2px;
+  }
+  /* Forced colors drop the --surface fill: an unchosen pill gets an edge, so it reads as a
+     choice and not as plain text. */
+  .fd-spawn-station:not(:has(> input:checked)):not(:has(> input:focus-visible)) {
+    outline: 1px solid ButtonText;
+    outline-offset: -1px;
+  }
+  /* Forced colors paint the transparent edge of the borderless title and task fields: keep
+     their text off that edge. */
+  .fd-spawn .fd-spawn-compose > label > :is(input, textarea) {
+    padding-inline: var(--sp-2);
   }
 }
 .fd-spawn-station > .fd-wide {
@@ -665,7 +680,7 @@
     flex: 1 1 0;
   }
   .fd-spawn .fd-spawn-pills > input,
-  .fd-spawn .fd-spawn-pillwrap > select {
+  .fd-spawn .fd-spawn-pillwrap > :is(select, input) {
     width: 100%;
     min-width: 0;
   }
