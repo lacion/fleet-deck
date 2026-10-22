@@ -24,6 +24,16 @@ export function compactCount(n: number): string {
 
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
+/** True when the glance has a known meter or total to show (else it renders nothing). */
+export function hasGlance(
+  sessions: readonly DeckSession[],
+  stations: readonly StationView[],
+): boolean {
+  if (rateMeters(sessions, stations).some((m) => m.usedPercent !== null)) return true;
+  const usage = fleetUsage(sessions);
+  return usage.input.known !== null || usage.output.known !== null || usage.cost.known !== null;
+}
+
 export function UsageGlance({
   sessions,
   stations,

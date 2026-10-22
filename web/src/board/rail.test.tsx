@@ -169,4 +169,38 @@ describe('needs-you rail', () => {
     );
     expect(strip).toBe('');
   });
+
+  test('the where cell shows the branch over the station, and the bell goes to the header slot', () => {
+    const html = renderToStaticMarkup(
+      <NeedsYouRail
+        sessions={[
+          card('s1', 'needs_you', 'station-a', {
+            title: 'Fix login',
+            branch: 'fix/login',
+            capabilities: claudeCaps(),
+            open_requests: [request()],
+          }),
+        ]}
+        stations={[station()]}
+        variant="side"
+        freshness="live"
+        onOpen={() => {}}
+      />,
+    );
+    expect(html).toMatch(
+      /<span class="fd-q-where"><span class="fd-q-place" title="Branch: fix\/login"><svg[^>]*lucide-git-branch[\s\S]*?<\/svg><span class="fd-q-path">fix\/login<\/span><\/span><span class="fd-q-station">Alpha<\/span><\/span>/,
+    );
+    // nothing waits and the header slot is not mounted yet: no switch in place
+    const idle = renderToStaticMarkup(
+      <NeedsYouRail
+        sessions={[card('s1')]}
+        stations={[station()]}
+        variant="side"
+        freshness="live"
+        onOpen={() => {}}
+        bellSlot={null}
+      />,
+    );
+    expect(idle).toBe('');
+  });
 });

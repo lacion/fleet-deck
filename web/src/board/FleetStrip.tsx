@@ -63,7 +63,9 @@ function Ico({
 /**
  * One session strip (DESIGN-SYSTEM §4.1): the holder, the callsign over the model, the title and
  * what the session does now, the facts, where it works, its changes and its age. The whole strip
- * is the link to the session; the chips that are links of their own sit on a line under it.
+ * is the link to the session; the chips that are links of their own lie over the where cell (a
+ * second line under the branch, as in concept A). A strip without known changes has no changes
+ * cell: its where cell spans the two columns, so the age stays in its column.
  */
 export function FleetStrip({
   card,
@@ -103,6 +105,7 @@ export function FleetStrip({
         : null;
   const mail = extra?.mail_pending ?? 0;
   const title = s.title ?? '';
+  const changed = total !== undefined && hasChanges(total) ? total : null;
   const links: ReactNode[] = [
     <CompareChip key="compare" card={card} count={batchCount} />,
     <IssueChip key="issue" summary={s} projects={projects} station={card.station_id} />,
@@ -124,6 +127,7 @@ export function FleetStrip({
         data-status={card.status}
         data-contested={contested === undefined ? undefined : 'true'}
         data-archived={cleared ? 'true' : undefined}
+        data-nochanges={changed === null ? 'true' : undefined}
       >
         <span className="fd-holder" data-status={card.status} aria-hidden="true" />
         <span className="fd-strip-id">
@@ -139,6 +143,7 @@ export function FleetStrip({
             className="fd-strip-title"
             title={digest === null ? undefined : `Summary: ${digest}`}
           >
+            <span className="fd-dot" data-status={card.status} aria-hidden="true" />
             {showStation ? (
               <span className="fd-strip-station">{stationName(card.station_id, stations)}</span>
             ) : null}
@@ -224,19 +229,17 @@ export function FleetStrip({
             </>
           )}
         </span>
-        <span className="fd-strip-changes">
-          {total === undefined || !hasChanges(total) ? null : (
-            <>
-              <span className="fd-strip-diff" title="Changed since the session started">
-                <span className="fd-add">+{total.insertions}</span>{' '}
-                <span className="fd-del">−{total.deletions}</span>
-              </span>
-              <span className="fd-strip-files">
-                {total.files_changed === 1 ? '1 file' : `${total.files_changed} files`}
-              </span>
-            </>
-          )}
-        </span>
+        {changed === null ? null : (
+          <span className="fd-strip-changes">
+            <span className="fd-strip-diff" title="Changed since the session started">
+              <span className="fd-add">+{changed.insertions}</span>{' '}
+              <span className="fd-del">−{changed.deletions}</span>
+            </span>
+            <span className="fd-strip-files">
+              {changed.files_changed === 1 ? '1 file' : `${changed.files_changed} files`}
+            </span>
+          </span>
+        )}
         <span className="fd-strip-age" title={cost === null ? undefined : `Cost ${cost}`}>
           {relativeAge(s.updated_at, now)}
         </span>

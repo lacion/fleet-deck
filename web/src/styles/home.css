@@ -39,7 +39,7 @@
   position: relative;
   flex: none;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--sp-2);
   min-height: var(--header-h);
@@ -49,16 +49,27 @@
 }
 .fd-home-titles {
   display: flex;
-  flex-wrap: wrap;
+  flex: 1 1 auto;
   align-items: baseline;
   gap: 2px var(--sp-3);
-  min-width: 0;
+  min-width: 72px;
   margin-right: auto;
+  overflow: hidden;
+}
+.fd-home-titles > .fd-page-title {
+  flex: none;
 }
 .fd-home-counts {
+  min-width: 0;
   margin: 0;
+  overflow: hidden;
   color: var(--dim);
   font-size: var(--fs-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fd-home-head > :not(.fd-home-titles) {
+  flex: none;
 }
 .fd-home-counts .fd-badge {
   vertical-align: 1px;
@@ -78,14 +89,72 @@
 .fd-home-search {
   width: 200px;
 }
-.fd-home[data-rail="false"] .fd-home-head {
-  padding-right: 60px;
+@media (max-width: 1439px) {
+  .fd-home-search {
+    width: 180px;
+  }
 }
-/* No waiting request: only the notification switch stays, in the corner of the header. */
+/* A narrow board (the main column under 1100px: every desktop with the ops column under about
+   1650px) keeps the counts readable: the search folds to its icon until it has the focus or a
+   text, Share board shows its icon only, and from 841 to 960px the sentence drops "on N
+   stations". */
+@container fleet (max-width: 1100px) {
+  .fd-home:not([data-layout="phone"]) .fd-home-search {
+    width: calc(var(--ctl-h) + 6px);
+    transition: width var(--t-move);
+  }
+  .fd-home:not([data-layout="phone"]) .fd-home-search > input:not(:focus):placeholder-shown {
+    background: transparent;
+    border-color: transparent;
+    color: transparent;
+    cursor: pointer;
+  }
+  .fd-home:not([data-layout="phone"])
+    .fd-home-search
+    > input:not(:focus):placeholder-shown::placeholder {
+    color: transparent;
+  }
+  .fd-home:not([data-layout="phone"]) .fd-home-search:hover > input:not(:focus):placeholder-shown {
+    background: var(--raised);
+  }
+  .fd-home:not([data-layout="phone"]) .fd-home-search:hover > .fd-icon {
+    color: var(--text);
+  }
+  .fd-home:not([data-layout="phone"])
+    .fd-home-search:is(:focus-within, :has(> input:not(:placeholder-shown))) {
+    width: 180px;
+  }
+  .fd-home:not([data-layout="phone"]) .fd-home-share {
+    padding: 0 6px;
+  }
+  .fd-home:not([data-layout="phone"]) .fd-home-share-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+@container fleet (min-width: 841px) and (max-width: 960px) {
+  .fd-home:not([data-layout="phone"]) .fd-home-on {
+    display: none;
+  }
+}
+/* Under 840px (a 1280px window, a tablet) the controls take a second row of the header. */
+@container fleet (max-width: 840px) {
+  .fd-home:not([data-layout="phone"]) .fd-home-head {
+    flex-wrap: wrap;
+    row-gap: var(--sp-2);
+  }
+  .fd-home:not([data-layout="phone"]) .fd-home-titles {
+    flex-basis: 100%;
+  }
+}
+/* No waiting request: the notification switch is the last item of the header. */
+.fd-home-bell,
 .fd-rail-mini {
-  position: absolute;
-  top: 10px;
-  right: var(--sp-5);
+  display: contents;
 }
 
 /* ── filters ────────────────────────────────────────────────────── */
@@ -192,8 +261,15 @@
   box-shadow: var(--shadow-lift);
   transition: background-color var(--t-fast);
 }
-.fd-q[data-selected="true"] {
-  background: var(--raised-hi);
+/* The keyboard cursor of the list ([ and ]): a focus line inside the yellow outline of the glow
+   (2px, the outer pixel lies under the outline). A fine pointer only, never on the phone. */
+@media (pointer: fine) {
+  .fd-home:not([data-layout="phone"]) .fd-q[data-selected="true"] {
+    background: var(--raised);
+    box-shadow:
+      var(--shadow-lift),
+      inset 0 0 0 2px var(--focus);
+  }
 }
 .fd-q > .fd-holder {
   grid-row: 1 / span 2;
@@ -250,7 +326,27 @@
   font-size: var(--fs-meta);
   font-weight: 500;
 }
-.fd-q-where {
+.fd-q-place {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+.fd-q-place > .fd-icon {
+  flex: none;
+  color: var(--faint);
+}
+.fd-q-path,
+.fd-q-station {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fd-q-station {
   color: var(--dim);
   font-size: var(--fs-meta);
 }
@@ -348,6 +444,9 @@
   line-height: 1.15;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.fd-lane-name + .fd-count {
+  margin-left: calc(-1 * var(--sp-1));
 }
 .fd-lane-reach {
   display: inline-flex;
@@ -727,6 +826,9 @@
 .fd-strip-title > :not(.fd-strip-text) {
   flex: none;
 }
+.fd-strip-title > .fd-dot {
+  margin-right: 2px;
+}
 .fd-strip-text {
   flex: 0 1 auto;
   min-width: 0;
@@ -787,6 +889,10 @@
 .fd-strip-where > .fd-icon {
   color: var(--faint);
 }
+/* No known changes: the where cell takes the changes column too, so the age stays aligned. */
+.fd-strip[data-nochanges="true"] > .fd-strip-where {
+  grid-column: span 2;
+}
 .fd-strip > .fd-strip-changes {
   flex-direction: column;
   align-items: flex-start;
@@ -813,20 +919,74 @@
   font-size: var(--fs-meta);
   white-space: nowrap;
 }
-/* The chips that are links of their own: a line under the strip, under its title. */
+/* The chips that are links of their own (PR, issue, project, compare) lie in the strip row: the
+   second line of the where cell (as the PR chip of concept A). The where column starts 320px
+   from the right edge (where 168 + changes 88 + age 64). */
 .fd-strip-links {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-1) 6px;
-  padding: 0 var(--sp-3) var(--sp-2) calc(3px + 104px + var(--sp-3));
+  flex-wrap: nowrap;
+  gap: 6px;
 }
 .fd-strip-links:empty {
   display: none;
 }
 .fd-stripwrap .fd-strip-links > * {
+  flex: none;
   margin: 0;
 }
+.fd-stripwrap > .fd-strip-links {
+  position: absolute;
+  z-index: 1;
+  bottom: 3px;
+  left: calc(100% - 320px + var(--sp-3));
+  max-width: calc(168px - 2 * var(--sp-3));
+  overflow: hidden;
+}
+.fd-stripwrap:has(> .fd-strip[data-nochanges="true"]) > .fd-strip-links {
+  max-width: calc(168px + 88px - 2 * var(--sp-3));
+}
+.fd-stripwrap:has(> .fd-strip-links:not(:empty)) > .fd-strip > .fd-strip-where {
+  align-items: flex-start;
+  padding-top: 4px;
+}
 
+/* The ended and lost strips of a lane: a collapsed "Ended · N" row (as in the sidebar). */
+.fd-lane-ended {
+  margin-top: 6px;
+}
+.fd-strips + .fd-lane-ended {
+  margin-top: var(--sp-1);
+}
+.fd-lane-ended > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: max-content;
+  height: var(--ctl-h);
+  padding: 0 var(--sp-2) 0 2px;
+  border-radius: var(--r-ctl);
+  color: var(--faint);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  transition: color var(--t-fast);
+}
+.fd-lane-ended > summary::before {
+  margin-right: 0;
+}
+.fd-lane-ended > summary:hover {
+  color: var(--dim);
+}
+.fd-lane-ended > summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.fd-lane-ended > .fd-strips {
+  margin-top: var(--sp-1);
+}
+.fd-offline-tools[data-variant="lane"] {
+  margin-top: 6px;
+  padding: 0;
+}
 /* States. Needs you in a lane: the holder and the request in yellow (the glow is the panel's). */
 .fd-strip[data-status="ended"],
 .fd-strip[data-status="lost"] {
@@ -889,8 +1049,11 @@
   .fd-strip-age {
     grid-area: age;
   }
-  .fd-strip-links {
-    padding-left: calc(3px + var(--sp-3));
+  .fd-stripwrap > .fd-strip-links {
+    position: static;
+    max-width: none;
+    flex-wrap: wrap;
+    padding: 0 var(--sp-3) var(--sp-2) calc(3px + var(--sp-3));
   }
   .fd-q-row {
     grid-template-columns: auto minmax(0, 1fr) auto;
@@ -1134,7 +1297,21 @@
   display: none;
 }
 
-/* From 1280 px the ops panel is the right column; the tabs sit at its foot and open upward. */
+.fd-ops > .fd-homepanel[data-wide="true"] {
+  border-top: 0;
+}
+.fd-ops-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  height: var(--tap-min);
+  padding: 0 var(--sp-3);
+  border-top: 1px solid var(--border-soft);
+}
+/* From 1280 px the ops panel is the right column: Usage, Conflict radar, Mail & tasks, then a
+   44px foot row with the Activity and Assign buttons; an open one shows its panel above the
+   foot. */
 @media (min-width: 1280px) {
   .fd-home[data-layout="desktop"],
   .fd-home[data-layout="tablet"] {
@@ -1158,7 +1335,34 @@
     height: auto;
     min-height: 0;
   }
+  .fd-home:not([data-layout="phone"]) .fd-homepanel[data-wide="true"][data-open="true"] {
+    flex: 1 0 240px;
+  }
+  /* The foot stays in view while the column scrolls. */
+  .fd-home:not([data-layout="phone"]) .fd-ops-foot {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    background: var(--surface);
+  }
 }
+.fd-homepanel[data-wide="true"] > .fd-homepanel-body {
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--border-soft);
+}
+.fd-ops-foot > button {
+  flex: 1 1 0;
+  justify-content: center;
+  gap: 6px;
+}
+.fd-ops-foot > button[aria-expanded="true"] {
+  background: var(--raised);
+  color: var(--text);
+}
+.fd-ops-mail:empty {
+  display: none;
+}
+
 /* Under 1280 px the ops panel folds under the board: the radar and the tabs only. */
 @media (max-width: 1279px) {
   .fd-home:not([data-layout="phone"]) .fd-glance {
@@ -1407,12 +1611,92 @@
   margin: 0;
 }
 
+/* Mail & tasks as a section of the wide column: rows, then the form folded. */
+.fd-fleet[data-layout="section"] {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: var(--sp-3);
+}
+.fd-fleet[data-layout="section"] > * {
+  flex: none;
+}
+.fd-fleet[data-layout="section"] > .fd-ops-h {
+  margin: 0;
+}
+.fd-ops-h > .fd-count {
+  margin-left: auto;
+}
+.fd-ops-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fd-fleet .fd-ops-rows > li {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--sp-3);
+}
+.fd-ops-rows > li > .fd-icon {
+  margin-top: 1px;
+  color: var(--dim);
+}
+.fd-ops-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.fd-ops-row-title {
+  min-width: 0;
+  color: var(--text);
+  font-size: var(--fs-ui);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.fd-ops-row-sub {
+  min-width: 0;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  overflow-wrap: anywhere;
+}
+.fd-fleet-compose > summary {
+  display: flex;
+  align-items: center;
+  width: max-content;
+  height: var(--ctl-h);
+  padding: 0 var(--sp-2) 0 0;
+  border-radius: var(--r-ctl);
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  transition: color var(--t-fast);
+}
+.fd-fleet-compose > summary:hover {
+  color: var(--text);
+}
+.fd-fleet-compose > summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.fd-fleet-compose[open] > summary {
+  margin-bottom: var(--sp-2);
+}
+.fd-fleet[data-layout="section"] .fd-fleet-form {
+  flex: none;
+  max-width: none;
+}
 /* ── phone (§4.8) ───────────────────────────────────────────────── */
 .fd-home[data-layout="phone"] {
   container: fleet / inline-size;
   padding-bottom: calc(60px + env(safe-area-inset-bottom) + var(--sp-4));
 }
 .fd-home[data-layout="phone"] .fd-home-head {
+  flex-wrap: wrap;
   gap: var(--sp-2);
   padding: var(--sp-3) var(--sp-4);
   border-bottom: 0;
@@ -1422,6 +1706,9 @@
   flex-direction: column;
   gap: 2px;
   margin-right: 0;
+}
+.fd-home[data-layout="phone"] .fd-home-counts {
+  white-space: normal;
 }
 .fd-home[data-layout="phone"] .fd-page-title {
   font-size: var(--fs-hero);
@@ -1467,16 +1754,27 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* Full-width 44px answers, two side by side (Allow | Deny); a permission's middle answer
+   ("Allow for this session") takes a third row of its own. */
 .fd-home[data-layout="phone"] .fd-q-answer {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  grid-template-columns: 1fr 1fr;
   flex-basis: 100%;
   margin: 0;
+}
+.fd-home[data-layout="phone"]
+  .fd-q[data-kind="permission"]
+  .fd-q-answer
+  > :nth-child(2):not(:last-child) {
+  grid-column: 1 / -1;
+  order: 3;
 }
 .fd-home[data-layout="phone"] .fd-q-answer > button {
   min-width: 0;
   min-height: var(--tap-min);
-  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .fd-home[data-layout="phone"] .fd-q-open {
   flex-basis: 100%;
@@ -1522,6 +1820,28 @@
 }
 :root[data-density="compact"] .fd-strips {
   gap: var(--sp-1);
+}
+/* A one-line strip has no second line in its where cell: the chips sit at its right end. */
+@container fleet (min-width: 721px) {
+  :root[data-density="compact"] .fd-stripwrap > .fd-strip-links {
+    top: 50%;
+    bottom: auto;
+    left: auto;
+    right: calc(88px + 64px + var(--sp-3));
+    transform: translateY(-50%);
+  }
+  :root[data-density="compact"]
+    .fd-stripwrap:has(> .fd-strip[data-nochanges="true"])
+    > .fd-strip-links {
+    right: calc(64px + var(--sp-3));
+  }
+  :root[data-density="compact"]
+    .fd-stripwrap:has(> .fd-strip-links:not(:empty))
+    > .fd-strip
+    > .fd-strip-where {
+    align-items: center;
+    padding-top: 0;
+  }
 }
 :root[data-density="compact"] .fd-card {
   gap: 3px;

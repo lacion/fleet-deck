@@ -1,13 +1,23 @@
-// The tabbed part of the fleet home's ops panel (DL-141, DESIGN-SYSTEM §4.4): Activity, Mail &
-// tasks, Assign and Usage. On a wide screen it is the foot of the right ops column and opens
-// upward; under 1280 px and on the phone it folds under the board.
-import { useEffect, useRef, useState } from 'react';
+// The secondary part of the fleet home's ops panel (DL-141, DESIGN-SYSTEM §4.4): Activity, Mail &
+// tasks, Assign and Usage. From 1280 px (the wide ops column) Mail & tasks is an always-visible
+// section, and Activity and Assign are ghost buttons in a foot row that open their panel above
+// it. Under 1280 px and on the phone the panel folds under the board as tabs.
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { AssignActions } from '../assign/assign';
 import { AssignBar } from '../assign/AssignBar';
 import type { FleetActions } from '../fleet/fleet';
-import { FleetPanel } from '../fleet/FleetPanel';
+import { FleetPanel, type MailWaiting } from '../fleet/FleetPanel';
 import type { DeckSession, SessionKey, StationView } from '../gen';
-import { ChevronDown, ChevronUp, Icon } from '../ui/icons';
+import {
+  Activity,
+  ChevronDown,
+  ChevronUp,
+  Fuel,
+  Icon,
+  type LucideIcon,
+  Mail,
+  Send,
+} from '../ui/icons';
 import type { FeedItem } from './feed';
 import { Feed } from './FeedPanel';
 import { UsageMeters } from './UsageMeters';
@@ -17,6 +27,26 @@ type PanelState = { readonly open: boolean; readonly tab: PanelTab };
 const PANEL_KEY = 'fd-home-panel';
 const PANEL_DEFAULT: PanelState = { open: false, tab: 'activity' };
 const PANEL_TABS: readonly PanelTab[] = ['activity', 'mail', 'assign', 'usage'];
+
+/** The width from which the ops panel is the right column (home.css uses the same query). */
+const WIDE = '(min-width: 1280px)';
+
+function subscribeWide(cb: () => void): () => void {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return () => {};
+  const list = window.matchMedia(WIDE);
+  list.addEventListener('change', cb);
+  return () => list.removeEventListener('change', cb);
+}
+
+const wideNow = () =>
+  typeof window !== 'undefined' &&
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia(WIDE).matches;
+
+/** True from 1280 px: the ops panel is the right column. Without a window: false (the tabs). */
+export function useWideOps(): boolean {
+  return useSyncExternalStore(subscribeWide, wideNow, () => false);
+}
 
 function readPanel(hasAssign: boolean): PanelState {
   try {
@@ -48,7 +78,15 @@ const PANEL_LABEL: Record<PanelTab, string> = {
   usage: 'Usage',
 };
 
-/** The tabs of the ops panel, and the body of the open tab. */
+const PANEL_ICON: Record<PanelTab, LucideIcon> = {
+  activity: Activity,
+  mail: Mail,
+  assign: Send,
+  usage: Fuel,
+};
+
+/** The tabs of the ops panel and the body of the open tab; or, wide, the Mail & tasks section
+ * and the foot buttons. */
 export function HomePanel({
   hasAssign,
   guest,
@@ -62,6 +100,9 @@ export function HomePanel({
   onSpawn,
   request,
   onState,
+  wide = false,
+  usageShown = false,
+  waiting = [],
 }: {
   hasAssign: boolean;
   /** A guest has no mail and no assign tab (the deck refuses the calls). */
@@ -77,9 +118,16 @@ export function HomePanel({
   request: { readonly tab: PanelTab; readonly seq: number } | undefined;
   /** Tells the ops column which tab is open (`null`: the panel is closed). */
   onState?: ((open: PanelTab | null) => void) | undefined;
+  /** The wide ops column (from 1280 px): the Mail & tasks section and the foot buttons. */
+  wide?: boolean | undefined;
+  /** The usage glance shows above (wide): no Usage button in the foot. */
+  usageShown?: boolean | undefined;
+  /** The waiting mail rows of the Mail & tasks section (wide). */
+  waiting?: readonly MailWaiting[] | undefined;
 }) {
   const [state, setState] = useState<PanelState>(() => readPanel(hasAssign));
   const seen = useRef<number | null>(null);
+  const mailRef = useRef<HTMLDivElement>(null);
   const seq = request?.seq;
   const asked = request?.tab;
   useEffect(() => {
@@ -91,7 +139,9 @@ export function HomePanel({
     };
     setState(next);
     writePanel(next);
-  }, [seq, asked, hasAssign]);
+    // Wide, Mail & tasks is a section of the column: bring it into view.
+    if (wide && next.tab === 'mail') mailRef.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [seq, asked, hasAssign, wide]);
   const set = (next: PanelState) => {
     setState(next);
     writePanel(next);
@@ -100,9 +150,68 @@ export function HomePanel({
     (state.tab === 'assign' && !hasAssign) || (guest && state.tab === 'mail')
       ? 'activity'
       : state.tab;
-  const shown = state.open ? tab : null;
-  useEffect(() => onState?.(shown), [onState, shown]);
   const tabs = PANEL_TABS.filter((t) => (t !== 'assign' || hasAssign) && !(guest && t === 'mail'));
+  // Wide: Mail & tasks is a section, and Usage is the glance when it shows.
+  const foot = tabs.filter((t) => t !== 'mail' && !(usageShown && t === 'usage'));
+  const shown = state.open && (!wide || foot.includes(tab)) ? tab : null;
+  useEffect(() => onState?.(shown), [onState, shown]);
+  const body = (
+    <>
+      {shown === 'activity' ? <Feed items={feed} onOpen={onOpen} /> : null}
+      {shown === 'mail' && !guest ? (
+        <FleetPanel actions={fleet} sessions={sessions} stations={stations} />
+      ) : null}
+      {shown === 'assign' && assign !== undefined ? (
+        <AssignBar actions={assign} onSpawn={onSpawn} />
+      ) : null}
+      {shown === 'usage' ? <UsageMeters sessions={visible} stations={stations} /> : null}
+    </>
+  );
+  if (wide) {
+    return (
+      <>
+        {guest ? null : (
+          <div className="fd-ops-mail" ref={mailRef}>
+            <FleetPanel
+              actions={fleet}
+              sessions={sessions}
+              stations={stations}
+              layout="section"
+              waiting={waiting}
+            />
+          </div>
+        )}
+        <section
+          className="fd-homepanel"
+          data-wide="true"
+          data-open={shown !== null}
+          aria-label="Fleet panel"
+        >
+          {shown === null ? null : (
+            <div id="fd-homepanel-body" className="fd-homepanel-body">
+              {body}
+            </div>
+          )}
+          <div className="fd-ops-foot">
+            {foot.map((t) => (
+              <button
+                key={t}
+                type="button"
+                className="fd-ghost"
+                aria-expanded={shown === t}
+                aria-controls={shown === t ? 'fd-homepanel-body' : undefined}
+                onClick={() =>
+                  set(shown === t ? { ...state, open: false } : { open: true, tab: t })
+                }
+              >
+                <Icon of={PANEL_ICON[t]} size={16} /> {PANEL_LABEL[t]}
+              </button>
+            ))}
+          </div>
+        </section>
+      </>
+    );
+  }
   return (
     <section className="fd-homepanel" data-open={state.open} aria-label="Fleet panel">
       <div className="fd-homepanel-head">

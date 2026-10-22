@@ -65,6 +65,13 @@ type Props = {
   readonly sessionActions?: ((key: SessionKey) => SessionActions) | undefined;
   /** DL-141: the card extras (mail, touched files), by `sessionRef`. */
   readonly extras?: ReadonlyMap<string, SessionExtras> | undefined;
+  /**
+   * DESIGN-SYSTEM §4.4: the ended and lost strips of each lane fold into a collapsed
+   * "Ended · N" group with their Resume all and Clear; the board-wide offline row then shows
+   * only for unreachable sessions that can resume. Off: the ended strips stay in their lane and
+   * one offline row closes the board (the phone).
+   */
+  readonly foldEnded?: boolean | undefined;
 };
 
 /** The five columns of the board; a column holds one or more deck statuses, in this order. */
@@ -144,6 +151,8 @@ export function stripCards(
 
 const isOffline = (c: DeckSession) =>
   c.status === 'ended' || c.status === 'unreachable' || c.status === 'lost';
+
+const isDone = (c: DeckSession) => c.status === 'ended' || c.status === 'lost';
 
 /** One session card: the whole card is the link to the session. */
 export function FleetCard({
@@ -330,15 +339,21 @@ const isCleared = (card: DeckSession, refs: ReadonlySet<string>) =>
 /** How long the Resume all result stays on the screen. */
 const RESUMED_MS = 6000;
 
-/** The offline tools row at the end of the board: Resume all, Clear, and Restore all (DL-141). */
+/**
+ * The offline tools: Resume all, Clear, and Restore all (DL-141). `row`: the labelled row at the
+ * end of the board; `lane`: the buttons inside a lane's Ended group; `resumable`: the row only
+ * while a session of `cards` can resume (unreachable stations on a folded board).
+ */
 export function OfflineTools({
   cards,
   freshness,
   sessionActions,
+  variant = 'row',
 }: {
   readonly cards: readonly DeckSession[];
   readonly freshness: Freshness;
   readonly sessionActions?: ((key: SessionKey) => SessionActions) | undefined;
+  readonly variant?: 'row' | 'lane' | 'resumable';
 }) {
   const refs = archived.use();
   const [running, setRunning] = useState(false);
@@ -371,9 +386,10 @@ export function OfflineTools({
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setReport(null), RESUMED_MS);
   };
+  if (variant === 'resumable' && resumable.length === 0 && report === null && !running) return null;
   return (
-    <div className="fd-offline-tools">
-      <span className="fd-label">Offline sessions</span>
+    <div className="fd-offline-tools" data-variant={variant}>
+      {variant === 'lane' ? null : <span className="fd-label">Offline sessions</span>}
       <button
         type="button"
         className="fd-ghost fd-sm"
@@ -530,6 +546,7 @@ export function FleetBoard({
   contested,
   sessionActions,
   extras,
+  foldEnded = false,
 }: Props) {
   const now = useNow(given, 30000);
   const starred = priority.use();
@@ -537,7 +554,22 @@ export function FleetBoard({
   const batches = batchCounts(sessions);
   const all = lanesOf(sessions, stations, group, projects);
   const lanes = [...all.filter((l) => !settled(l)), ...all.filter(settled)];
-  const offline = sessions.filter(isOffline);
+  const offline = foldEnded
+    ? sessions.filter((c) => c.status === 'unreachable')
+    : sessions.filter(isOffline);
+  const strip = (card: DeckSession) => (
+    <FleetStrip
+      key={cardKey(card)}
+      card={card}
+      stations={stations}
+      freshness={freshness}
+      now={now}
+      showStation={group !== 'station'}
+      contested={contested?.get(sessionRef(card.station_id, card.summary.session_id))}
+      extra={extras?.get(sessionRef(card.station_id, card.summary.session_id))}
+      batchCount={batchCountOf(card, batches)}
+    />
+  );
   return (
     <main className="fd-board" aria-label="Fleet board">
       {lanes.map((lane) => {
@@ -550,6 +582,9 @@ export function FleetBoard({
         const view =
           group === 'station' ? stations.find((s) => s.station_id === lane.id) : undefined;
         const warnings = group === 'station' ? resourceWarnings(view?.info?.resources) : [];
+        const ordered = stripCards(lane.cards, starred);
+        const live = foldEnded ? ordered.filter((c) => !isDone(c)) : ordered;
+        const done = foldEnded ? ordered.filter(isDone) : [];
         return (
           <section
             key={lane.id}
@@ -561,11 +596,8 @@ export function FleetBoard({
           >
             <div className="fd-lane-head">
               <h2 className="fd-lane-name fd-wide">{lane.name}</h2>
-              {view === undefined ? (
-                <span className="fd-count">{lane.cards.length}</span>
-              ) : (
-                <StationFacts station={view} freshness={freshness} />
-              )}
+              <span className="fd-count">{lane.cards.length}</span>
+              {view === undefined ? null : <StationFacts station={view} freshness={freshness} />}
               {warnings.length > 0 ? (
                 <span className="fd-lane-warn" title={warnings.map((w) => w.text).join('\n')}>
                   ▲ Low resources
@@ -576,26 +608,32 @@ export function FleetBoard({
               ) : null}
               {view === undefined ? null : <LaneSlots station={view} cards={lane.cards} />}
             </div>
-            <ul className="fd-strips">
-              {stripCards(lane.cards, starred).map((card) => (
-                <FleetStrip
-                  key={cardKey(card)}
-                  card={card}
-                  stations={stations}
+            {live.length === 0 ? null : <ul className="fd-strips">{live.map(strip)}</ul>}
+            {done.length === 0 ? null : (
+              <details className="fd-lane-ended">
+                <summary>
+                  <span className="fd-dot" data-status="ended" aria-hidden="true" />
+                  {`Ended · ${done.length}`}
+                </summary>
+                <ul className="fd-strips">{done.map(strip)}</ul>
+                <OfflineTools
+                  cards={done}
                   freshness={freshness}
-                  now={now}
-                  showStation={group !== 'station'}
-                  contested={contested?.get(sessionRef(card.station_id, card.summary.session_id))}
-                  extra={extras?.get(sessionRef(card.station_id, card.summary.session_id))}
-                  batchCount={batchCountOf(card, batches)}
+                  sessionActions={sessionActions}
+                  variant="lane"
                 />
-              ))}
-            </ul>
+              </details>
+            )}
           </section>
         );
       })}
       {offline.length === 0 ? null : (
-        <OfflineTools cards={offline} freshness={freshness} sessionActions={sessionActions} />
+        <OfflineTools
+          cards={offline}
+          freshness={freshness}
+          sessionActions={sessionActions}
+          variant={foldEnded ? 'resumable' : 'row'}
+        />
       )}
     </main>
   );
