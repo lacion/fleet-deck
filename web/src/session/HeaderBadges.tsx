@@ -74,7 +74,7 @@ function ModeFact({ session }: { readonly session: DeckSession }) {
   if (!s.mode || s.mode === 'default') return null;
   const tone = modeTone(s.mode);
   return (
-    <span className="fd-sh-mode" data-tone={tone} title={`Permission mode: ${s.mode}`}>
+    <span className="fd-badge fd-sh-mode" data-tone={tone} title={`Permission mode: ${s.mode}`}>
       <Icon
         of={tone === 'hazard' ? ShieldAlert : s.mode === 'acceptEdits' ? Pencil : Shield}
         size={13}

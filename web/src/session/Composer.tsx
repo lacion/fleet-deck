@@ -102,6 +102,36 @@ function coarsePointer(): boolean {
   return typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches === true;
 }
 
+/** The keys of one key press that the composer reads. */
+export type SendKey = {
+  readonly key: string;
+  readonly ctrlKey: boolean;
+  readonly metaKey: boolean;
+  readonly shiftKey: boolean;
+};
+
+/**
+ * What a key press in the text box sends, or `null` (not a send key: Shift+↵, or ↵ on a touch
+ * screen, is a newline). ↵ sends the prompt, or queues a follow-up while a turn runs. §4.5:
+ * ⌘↵ (Ctrl+↵) is "Steer now" while a turn runs and the provider can steer (`steerable`, never for
+ * a `!` shell command); else it is the same as ↵.
+ */
+export function enterSend(
+  event: SendKey,
+  at: { readonly working: boolean; readonly steerable: boolean; readonly coarse: boolean },
+): InputKind | null {
+  if (event.key !== 'Enter') return null;
+  const force = event.ctrlKey || event.metaKey;
+  if (!force && (event.shiftKey || at.coarse)) return null;
+  if (force && at.steerable) return 'steer';
+  return at.working ? 'follow_up' : 'prompt';
+}
+
+/** `steerable` of {@link enterSend}: a turn runs, the provider steers and the text is no shell command. */
+export function canSteer(working: boolean, steer: boolean, shell: boolean): boolean {
+  return working && steer && !shell;
+}
+
 /** The wait after the last key before the `@` search starts. */
 const AT_DELAY_MS = 200;
 
@@ -208,7 +238,7 @@ export function Composer(props: Props) {
     (problem !== null && !bangOn) ||
     (meaning.kind === 'shell' && (props.working || meaning.command === ''));
   // "Steer now" is offered: a turn runs, the provider can steer, the text is a prompt.
-  const steerable = props.working && props.steer && !bangOn;
+  const steerable = canSteer(props.working, props.steer, bangOn);
   const commands = props.slashCommands ?? [];
   const hasCommands = commands.length > 0;
   const slash = hasCommands ? matchSlash(text, commands, props.skills) : null;
@@ -392,16 +422,14 @@ export function Composer(props: Props) {
         return;
       }
     }
-    if (event.key !== 'Enter') return;
-    const force = event.ctrlKey || event.metaKey;
-    if (!force && (event.shiftKey || coarsePointer())) return;
+    const kind = enterSend(event, {
+      working: props.working,
+      steerable,
+      coarse: coarsePointer(),
+    });
+    if (kind === null) return;
     event.preventDefault();
-    // §4.5: ⌘↵ (Ctrl+↵) is "Steer now" while a turn runs and the provider can steer.
-    if (force && steerable) {
-      if (!blocked) send('steer');
-      return;
-    }
-    submit();
+    if (!blocked) send(kind);
   };
 
   const reason = !props.enabled && props.disabledReason ? props.disabledReason : null;

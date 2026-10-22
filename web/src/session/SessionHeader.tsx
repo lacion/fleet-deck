@@ -1,6 +1,6 @@
 // DL-140: the header of a session: title, status, provider, model, where it
 // runs, and the actions (interrupt, resume, terminal) with one overflow menu (DL-141).
-import { useState } from 'react';
+import { type RefObject, useEffect, useRef, useState } from 'react';
 import { formatHash } from '../app/routes';
 import { stationName } from '../board/fleet';
 import type { DeckSession, ModelChoice, StationView } from '../gen';
@@ -25,7 +25,6 @@ import {
   Server,
   Send,
   CircleStop,
-  Square,
   SquareTerminal,
   Star,
   TriangleAlert,
@@ -54,7 +53,7 @@ import { MoveDialog } from './MoveDialog';
 import { MoveToProject } from './MoveToProject';
 import { RenameForm } from './RenameForm';
 import { SendToWall } from '../wall/SendToWall';
-import { ModeLadder, ModelPicker } from './SessionSettings';
+import { ModeLadder, ModelPicker, openPicker } from './SessionSettings';
 
 export { CopyButton } from './CopyButton';
 
@@ -86,6 +85,8 @@ type Props = {
   readonly onMoveStarted?: (() => void) | undefined;
   /** The fleet calls: the menu offers "Fleet access…" when given (admin only). */
   readonly fleet?: FleetActions | undefined;
+  /** The header puts here the call that opens the menu on its model picker (the composer chip). */
+  readonly openModel?: RefObject<(() => void) | null> | undefined;
 };
 
 /** The status update that "Ask for a status update" sends. */
@@ -116,6 +117,7 @@ export function SessionHeader({
   onCheckExecution,
   onMoveStarted,
   fleet,
+  openModel,
 }: Props) {
   const s = session.summary;
   const caps = s.capabilities;
@@ -159,6 +161,14 @@ export function SessionHeader({
   const hasModes = !guest && caps?.set_mode === true && caps.modes.length > 0;
   const hasModel = !guest && caps?.set_model === true;
   const hasAuto = !guest && caps?.resume === true;
+  const modelControl = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (openModel === undefined) return undefined;
+    openModel.current = () => openPicker(modelControl.current);
+    return () => {
+      openModel.current = null;
+    };
+  }, [openModel]);
   const place = (
     <Place
       station={stationName(session.station_id, stations)}
@@ -386,6 +396,9 @@ export function SessionHeader({
               models={models}
               enabled={settingsEnabled}
               onSet={(m) => run('model', (a) => a.setModel(m))}
+              controlRef={(control) => {
+                modelControl.current = control;
+              }}
             />
           ) : null}
           {hasAuto ? (
@@ -642,7 +655,7 @@ export function SessionHeader({
                 disabled={busy !== null}
                 onClick={() => run('interrupt', (a) => a.interrupt())}
               >
-                <Icon of={Square} size={14} /> Interrupt
+                <Icon of={CircleStop} size={14} /> Interrupt
               </button>
             )
           ) : null}
