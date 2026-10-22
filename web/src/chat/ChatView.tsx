@@ -30,6 +30,7 @@ import { FilterBar } from './FilterBar';
 import type { HistoryView } from './history';
 import { HistoryBlock } from './HistoryBlock';
 import { Markdown } from './Markdown';
+import { PathTail } from './PathTail';
 import { SubagentWork } from './SubagentWork';
 import { isShellTool, ShellCard, type ShellEnv, unfoldShells } from './ShellCard';
 import { PromptBubble } from './PromptBubble';
@@ -192,7 +193,8 @@ function ToolView({ tool, waitingFor }: { tool: Tool; waitingFor?: string | unde
     tool.files.length === 1 && tool.files[0] !== undefined && target.includes(tool.files[0]);
   const shown = named ? [] : tool.files.slice(0, MAX_FILE_CHIPS);
   const more = named ? 0 : tool.files.length - shown.length;
-  // A file target loses its start, not its end: the end names the file (chat.css `[data-path]`).
+  // A file target loses its leading folders, not its end: the end names the file (PathTail, with
+  // the start ellipsis of chat.css `[data-path]` as the fallback).
   const isPath =
     (tool.files.length === 1 && target === tool.files[0]) ||
     tool.tool_kind === 'read' ||
@@ -220,7 +222,7 @@ function ToolView({ tool, waitingFor }: { tool: Tool; waitingFor?: string | unde
         <span className="fd-chat-tool-title">{tool.title}</span>
         {tool.input ? (
           <span className="fd-chat-tool-arg" data-path={isPath ? '' : undefined}>
-            <bdi>{target}</bdi>
+            {isPath ? <PathTail path={target} /> : <bdi>{target}</bdi>}
           </span>
         ) : null}
         {shown.map((path) => (
@@ -528,6 +530,8 @@ export function ChatView(props: ChatViewProps) {
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
+    // Away from its top, the log fades under the tab row (chat.css `[data-scrolled]`).
+    el.toggleAttribute('data-scrolled', el.scrollTop > 0);
     const near = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX;
     stick.current = near;
     if (near) setBehind(false);

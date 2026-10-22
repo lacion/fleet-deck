@@ -23,6 +23,12 @@
   min-height: 0;
   overflow-y: auto;
 }
+/* Scroll body fade (DESIGN-SYSTEM §7): away from its top, the log fades out over 16px under the
+   tab row, so that a row does not end in a hard cut at the rule (ChatView sets `data-scrolled`).
+   The mask reads only the alpha. */
+.fd-chat-scroll[data-scrolled] {
+  mask-image: linear-gradient(to bottom, transparent, var(--text) var(--sp-4));
+}
 .fd-chat-scroll:focus-visible,
 .fd-chat summary:focus-visible,
 .fd-md a:focus-visible {
@@ -808,12 +814,15 @@
   width: auto;
   max-width: none;
   height: calc(var(--chat-tabs-h) - 1px);
-  padding: 0 var(--sp-4) 0 var(--sp-2);
+  /* The tab labels center above their 2px underline, and this 12px text is one step smaller
+     than their 13px: 1px at the bottom puts the summary text on their baseline (measured). */
+  padding: 0 var(--sp-4) 1px var(--sp-2);
   background: var(--bg); /* a tab that scrolls under it (phone) does not show through */
 }
 @media (pointer: coarse) {
   .fd-pane-chat > .fd-chat:first-child > .fd-chat-filters {
     --chat-tabs-h: var(--tap-min);
+    padding-bottom: 0; /* the 44px summary is already on the baseline of the 44px tabs */
   }
 }
 /* The phone tab row keeps the measured width of the menu clear (session.css, tabReserve.ts). */
@@ -1245,9 +1254,21 @@
   background: var(--surface);
 }
 
-/* Forced colors: the flight path keeps its colors, so that a filled ok node and a waiting ring
-   still differ by fill, and the line stays (DESIGN-SYSTEM §6). */
+/* Forced colors (DESIGN-SYSTEM §6): the Show chevron and the code block frame get a system color;
+   the flight path keeps its colors, so that a filled ok node and a waiting ring still differ by
+   fill, and the line stays. */
 @media (forced-colors: active) {
+  /* The Show chevron is a mask on a background color: draw it in CanvasText, the same as the
+     summary chevrons of base.css (`currentColor` would be the unforced --dim). */
+  .fd-chat-filters > .fd-chat-show > summary::after {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+  /* The code block frame is an inset box-shadow, which forced colors drop. */
+  .fd-md-code {
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
   .fd-chat-mark,
   :is(.fd-chat-column, .fd-chat-nested, .fd-chat-toolgroup-body)
     > :is(.fd-chat-reasoning, .fd-chat-toolgroup)
