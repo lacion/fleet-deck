@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef } from 'react';
+import { Fragment, type RefObject, useEffect, useRef, useState } from 'react';
 import { useDismiss } from '../ui/dismiss';
 import { Icon, X } from '../ui/icons';
 import { trapTab, useFocusReturn } from './focus';
@@ -113,15 +113,36 @@ function Terms({ items }: { readonly items: readonly (readonly [string, string])
   );
 }
 
+/** True while the element can scroll further down (the cue of a scroll body). */
+function useMoreBelow(ref: RefObject<HTMLElement | null>): boolean {
+  const [more, setMore] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (el === null) return undefined;
+    const update = () => setMore(el.scrollTop + el.clientHeight < el.scrollHeight - 1);
+    update();
+    el.addEventListener('scroll', update, { passive: true });
+    const sizes = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+    sizes?.observe(el);
+    return () => {
+      el.removeEventListener('scroll', update);
+      sizes?.disconnect();
+    };
+  }, [ref]);
+  return more;
+}
+
 /** The keys, the concepts and the pages of the board. Focus moves in and goes back on close. */
 export function HelpOverlay({ onClose }: { readonly onClose: () => void }) {
   const root = useRef<HTMLDivElement>(null);
   const close = useRef<HTMLButtonElement>(null);
+  const body = useRef<HTMLDivElement>(null);
+  const more = useMoreBelow(body);
   useFocusReturn(root, close);
   useOverlay();
   useDismiss(root, true, onClose);
-  // The Close button of the header has the focus; the long dialog still opens at its top.
-  useEffect(() => root.current?.scrollTo({ top: 0 }), []);
+  // The Close button of the header has the focus; the long body still opens at its top.
+  useEffect(() => body.current?.scrollTo({ top: 0 }), []);
   return (
     <div className="fd-overlay">
       <div
@@ -150,20 +171,30 @@ export function HelpOverlay({ onClose }: { readonly onClose: () => void }) {
             <Icon of={X} />
           </button>
         </div>
-        <section aria-label="Keys">
-          <h3 className="fd-label">Keys</h3>
-          <KeyTable rows={SHORTCUTS} label="General keys" />
-          <h4 className="fd-label">On the fleet home</h4>
-          <KeyTable rows={FLEET_SHORTCUTS} label="Keys on the fleet home" />
-        </section>
-        <section aria-label="Concepts">
-          <h3 className="fd-label">Concepts</h3>
-          <Terms items={CONCEPTS} />
-        </section>
-        <section aria-label="Pages">
-          <h3 className="fd-label">Pages</h3>
-          <Terms items={PAGES} />
-        </section>
+        {/* The body scrolls under the fixed header; its bottom fades while more is below. */}
+        <div ref={body} className="fd-help-body" data-more={more ? 'true' : undefined}>
+          <section aria-label="Keys">
+            <h3 className="fd-label">Keys</h3>
+            <div className="fd-help-keys">
+              <div className="fd-help-keygroup">
+                <h4 className="fd-label">On every page</h4>
+                <KeyTable rows={SHORTCUTS} label="General keys" />
+              </div>
+              <div className="fd-help-keygroup">
+                <h4 className="fd-label">On the fleet home</h4>
+                <KeyTable rows={FLEET_SHORTCUTS} label="Keys on the fleet home" />
+              </div>
+            </div>
+          </section>
+          <section aria-label="Concepts">
+            <h3 className="fd-label">Concepts</h3>
+            <Terms items={CONCEPTS} />
+          </section>
+          <section aria-label="Pages">
+            <h3 className="fd-label">Pages</h3>
+            <Terms items={PAGES} />
+          </section>
+        </div>
       </div>
     </div>
   );

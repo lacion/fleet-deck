@@ -81,7 +81,20 @@ export const isHidden = (card: DeckSession, archived: ReadonlySet<string>): bool
   archived.has(refOf(card));
 
 /**
- * The sidebar groups: needs you, then one group per station sorted by name. Starred rows first.
+ * The order of the station groups: the stations in the order of the station list, then the other
+ * station ids by id. It is the lane order of the fleet board (FleetBoard `laneOrder`), so that the
+ * sidebar and the lanes list the stations in one order.
+ */
+export function stationOrder(ids: readonly string[], stations: readonly StationView[]): string[] {
+  const present = new Set(ids);
+  const known = stations.map((s) => s.station_id).filter((id) => present.has(id));
+  const rest = [...present].filter((id) => !known.includes(id)).sort();
+  return [...new Set([...known, ...rest])];
+}
+
+/**
+ * The sidebar groups: needs you, then one group per station in the lane order of the board
+ * (`stationOrder`). Starred rows first.
  * With `projects` (DL-176) the groups are the projects that hold a shown session, by name, and "No
  * project" last; their `reachable` is always true.
  */
@@ -109,9 +122,10 @@ export function sidebarModel(
     live: own.filter(isLive).sort((a, b) => starFirst(a, b) || rank(a) - rank(b) || byNewest(a, b)),
     ended: own.filter((c) => !isLive(c)).sort((a, b) => starFirst(a, b) || byNewest(a, b)),
   });
-  const ids = [
-    ...new Set([...stations.map((s) => s.station_id), ...sessions.map((s) => s.station_id)]),
-  ];
+  const ids = stationOrder(
+    [...stations.map((s) => s.station_id), ...sessions.map((s) => s.station_id)],
+    stations,
+  );
   const groups =
     projects === undefined
       ? ids
@@ -124,7 +138,6 @@ export function sidebarModel(
             ),
           )
           .filter((g) => query.trim() === '' || g.count > 0)
-          .sort((a, b) => a.name.localeCompare(b.name))
       : projectGroups(shown, projects).map((g) => group(g.id, g.name, true, g.cards));
   return {
     needs: shown

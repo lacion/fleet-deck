@@ -82,6 +82,28 @@ body:has(.fd-app[data-layout="tablet"]) {
   flex-direction: column;
 }
 
+/* The terminal dock and the right ops panel of the fleet home (§4.4, §4.5; from 1280px): the dock
+   stops at the panel, and the panel column goes on to the window bottom. The route keeps the full
+   height; the dock lies over the main column only, and the main column of the home ends at the
+   top of the dock (`--fd-dock-h`, the dock height that Layout measures). */
+@media (min-width: 1280px) {
+  .fd-app[data-layout="desktop"] .fd-main:has(> .fd-route > .fd-home > .fd-ops) {
+    position: relative;
+  }
+
+  .fd-app[data-layout="desktop"] .fd-main:has(> .fd-route > .fd-home > .fd-ops) > .fd-tdock {
+    position: absolute;
+    right: var(--rail-w);
+    bottom: 0;
+    left: 0;
+    z-index: 2;
+  }
+
+  .fd-app[data-layout="desktop"] .fd-main:has(> .fd-tdock) > .fd-route > .fd-home > .fd-home-main {
+    padding-bottom: var(--fd-dock-h, 0px);
+  }
+}
+
 /* ---------- Sidebar (§4.2) ---------- */
 
 /* The bay: a --surface column; the fill step separates it from the deck (no edge). */
@@ -151,9 +173,24 @@ body:has(.fd-app[data-layout="tablet"]) {
   background: var(--act);
 }
 
+/* One row (§4.2): New session, then the search. */
+.fd-sidebar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.fd-sidebar-search {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 /* New session: the general primary of the board (solid ink), its key hint at the right. */
 .fd-newbtn {
-  width: 100%;
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
   justify-content: flex-start;
   padding: 0 6px 0 var(--sp-2);
 }
@@ -162,15 +199,77 @@ body:has(.fd-app[data-layout="tablet"]) {
   margin-left: auto;
 }
 
+.fd-newbtn-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Next to New session the search folds to a ghost icon button with its "/" hint; the input stays
+   (its name, "/" and a click focus it) and opens on the focus or with a text (`data-query`, set by
+   the Sidebar: a `:has()` inside a `:has()` is not valid CSS). New session then folds to its
+   icon; its words stay its name. */
+.fd-newbtn + .fd-sidebar-search {
+  flex: 0 0 calc(var(--ctl-h) + 24px);
+}
+
+.fd-newbtn + .fd-sidebar-search > input:not(:focus):placeholder-shown {
+  padding-right: 0;
+  background: transparent;
+  border-color: transparent;
+  color: transparent;
+  cursor: pointer;
+}
+
+.fd-newbtn + .fd-sidebar-search > input:not(:focus):placeholder-shown::placeholder {
+  color: transparent;
+}
+
+.fd-newbtn + .fd-sidebar-search:hover > input:not(:focus):placeholder-shown {
+  background: var(--raised);
+}
+
+.fd-sidebar-actions:is([data-query="true"], :has(> .fd-sidebar-search:focus-within))
+  > .fd-newbtn
+  + .fd-sidebar-search {
+  flex: 1 1 0;
+}
+
+.fd-sidebar-actions:is([data-query="true"], :has(> .fd-sidebar-search:focus-within)) > .fd-newbtn {
+  flex: 0 0 var(--ctl-h);
+  justify-content: center;
+  padding: 0;
+}
+
+.fd-sidebar-actions:is([data-query="true"], :has(> .fd-sidebar-search:focus-within))
+  > .fd-newbtn
+  > :is(.fd-newbtn-text, .fd-kbd) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* The search of the sidebar sits on the bay: one step up, like a strip. */
-.fd-sidebar-top > .fd-field > input:not(:focus) {
+.fd-sidebar-search > input:not(:focus) {
   border-color: var(--border-soft);
 }
 
-/* A touch screen has no "/" key at hand: the hint goes. */
+/* A touch screen has no "/" key at hand: the hint goes, and the folded search is a square. */
 @media (pointer: coarse) {
-  .fd-sidebar-top > .fd-field > .fd-kbd {
+  .fd-sidebar-search > .fd-kbd {
     display: none;
+  }
+
+  .fd-newbtn + .fd-sidebar-search {
+    flex-basis: var(--ctl-h);
+  }
+
+  .fd-newbtn + .fd-sidebar-search:not(:focus-within):has(> input:placeholder-shown) > svg {
+    left: calc((var(--ctl-h) - 16px) / 2);
   }
 }
 
@@ -275,6 +374,12 @@ body:has(.fd-app[data-layout="tablet"]) {
   min-height: 0;
   overflow-y: auto;
   padding: 0 var(--sp-3) var(--sp-3);
+}
+
+/* The desktop list scrolls under the footer rule: its last 16px fade out, so that a row cut at
+   the edge reads as "more below", not as a glitch. (The mask needs an opaque color: --text.) */
+.fd-sidebar[data-variant="full"] .fd-sidebar-list {
+  mask-image: linear-gradient(to bottom, var(--text) calc(100% - 16px), transparent);
 }
 
 /* The head of the list: the "Sessions" label, and the grouping (Station | Project) at the right. */
@@ -585,6 +690,24 @@ body:has(.fd-app[data-layout="tablet"]) {
   padding: 0;
 }
 
+/* Compact cards: a plain icon toggle, not a track with one segment. Pressed, it looks like a
+   pressed segment: the --pressed-bg fill, a 1px inset --ctl-edge ring and --text. */
+.fd-sidebar-density[aria-pressed="true"],
+.fd-sidebar-density[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--pressed-bg);
+  color: var(--text);
+  box-shadow:
+    inset 0 0 0 1px var(--ctl-edge),
+    var(--shadow-lift);
+}
+
+@media (forced-colors: active) {
+  .fd-sidebar-density[aria-pressed="true"] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+
 .fd-sidebar[data-variant="full"] .fd-sidebar-prefs > .fd-seg {
   background: var(--bg);
 }
@@ -595,24 +718,17 @@ body:has(.fd-app[data-layout="tablet"]) {
 
 /* ---------- Phone session list (the home of the phone, §4.8) ---------- */
 
-/* The phone list has the top bar of the layout above it: the search and New, then the groups. */
+/* The phone list has the top bar of the layout above it: the search row, then the groups. */
 .fd-sidebar[data-variant="list"] .fd-sidebar-top {
-  display: flex;
-  align-items: center;
   padding: var(--sp-1) var(--sp-4) var(--sp-2);
 }
 
-.fd-sidebar[data-variant="list"] .fd-sidebar-top > .fd-field {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
 /* The phone has no list head: the grouping (Station | Project) sits in the search row. */
-.fd-sidebar[data-variant="list"] .fd-sidebar-top > .fd-seg {
+.fd-sidebar[data-variant="list"] .fd-sidebar-actions > .fd-seg {
   flex: none;
 }
 
-.fd-sidebar[data-variant="list"] .fd-sidebar-top > .fd-seg > * {
+.fd-sidebar[data-variant="list"] .fd-sidebar-actions > .fd-seg > * {
   padding: 0 var(--sp-2);
   font-size: var(--fs-meta);
 }
@@ -680,6 +796,12 @@ body:has(.fd-app[data-layout="tablet"]) {
 
 .fd-sidebar[data-variant="list"] .fd-srow > .fd-focus {
   font-style: normal;
+}
+
+/* Every phone row is a title and one meta line (the strip rhythm of §4.8): the agent's focus,
+   when it has one, takes the place of the model and branch line. */
+.fd-sidebar[data-variant="list"] .fd-srow:has(> .fd-focus) > .fd-srow-meta {
+  display: none;
 }
 
 .fd-sidebar[data-variant="list"] .fd-sidebar-list > .fd-empty {
@@ -1056,45 +1178,72 @@ a.fd-phonebar-back {
   color: var(--ok);
 }
 
-/* The help: a sticky header with Close, then the keys, the concepts and the pages. */
+/* The help: a fixed header with Close, then a body that scrolls (the keys, the concepts and the
+   pages). The dialog does not scroll itself, so its shadow stays; the body fades at its bottom
+   edge while more is below (`data-more`), the cue that it scrolls. */
 .fd-overlay:has(> .fd-help) {
   padding-bottom: var(--sp-6);
 }
 
 .fd-overlay .fd-help {
+  display: flex;
+  flex-direction: column;
   width: min(640px, 100%);
   max-height: min(100%, calc(100dvh - 2 * var(--sp-6)));
-  gap: var(--sp-4);
-  padding-top: 0;
-  padding-bottom: var(--sp-5);
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
 }
 
 .fd-help-head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-3);
-  margin: 0 -20px;
   padding: var(--sp-4) var(--sp-3) var(--sp-3) 20px;
-  background: var(--raised);
   border-bottom: 1px solid var(--border-soft);
 }
 
-.fd-help section {
+.fd-help-body {
+  display: grid;
+  gap: var(--sp-4);
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-4) 20px var(--sp-5);
+}
+
+.fd-help-body[data-more="true"] {
+  mask-image: linear-gradient(to bottom, var(--text) calc(100% - 24px), transparent);
+}
+
+.fd-help section,
+.fd-help-keys,
+.fd-help-keygroup {
   display: grid;
   gap: var(--sp-2);
+}
+
+/* The key groups: stacked with a step of space, or side by side in a wide window. */
+.fd-help-keys {
+  gap: var(--sp-4) var(--sp-5);
+}
+
+/* A wide window shows the two key tables side by side: more of the help in the first view. */
+@media (min-width: 900px) {
+  .fd-overlay .fd-help {
+    width: min(880px, 100%);
+  }
+
+  .fd-help-keys {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
 }
 
 .fd-help h3,
 .fd-help h4 {
   margin: 0;
-}
-
-.fd-help h4 {
-  margin-top: var(--sp-2);
 }
 
 .fd-keys {
@@ -1296,6 +1445,12 @@ a.fd-phonebar-back {
   gap: var(--sp-4);
 }
 
+/* The pages, then the tools: two groups with the gap of the page between them. */
+.fd-more-nav {
+  display: grid;
+  gap: var(--sp-4);
+}
+
 /* One grouped list on the bay: 44px rows divided by the faintest rule. */
 .fd-more-links {
   display: grid;
@@ -1374,6 +1529,11 @@ a.fd-phonebar-back {
 
 .fd-more-row .fd-sidebar-prefs {
   justify-content: flex-end;
+}
+
+/* Compact cards: the whole row is the label of its switch. */
+.fd-more-switch {
+  cursor: pointer;
 }
 
 /* The group is --surface: the tracks step down to the deck to show. */

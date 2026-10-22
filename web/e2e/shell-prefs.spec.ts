@@ -44,15 +44,17 @@ test('the compact switch sets the density and survives a reload', async ({ page 
   await deck.install(page);
   await logIn(page);
   await openMorePage(page);
-  const compact = page.getByRole('button', { name: 'Compact cards' });
-  await expect(compact).toHaveAttribute('aria-pressed', 'false');
+  // The More page has a labelled switch (the sidebar footer has the icon toggle).
+  const compact = page.getByRole('switch', { name: 'Compact cards' });
+  await expect(compact).not.toBeChecked();
   await compact.click();
-  await expect(compact).toHaveAttribute('aria-pressed', 'true');
+  await expect(compact).toBeChecked();
   await expect(page.locator('html')).toHaveAttribute('data-density', 'compact');
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-density', 'compact');
   await openMorePage(page);
-  await page.getByRole('button', { name: 'Compact cards' }).click();
+  await expect(page.getByRole('switch', { name: 'Compact cards' })).toBeChecked();
+  await page.getByRole('switch', { name: 'Compact cards' }).click();
   await expect(page.locator('html')).not.toHaveAttribute('data-density', 'compact');
 });
 

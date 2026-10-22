@@ -8,6 +8,7 @@ import {
   sessionTitle,
   sidebarModel,
   sidebarOrder,
+  stationOrder,
 } from './sessions';
 
 const ids = (cards: readonly { summary: { session_id: string } }[]) =>
@@ -80,9 +81,18 @@ describe('sidebar model', () => {
     expect(alpha?.count).toBe(3);
   });
 
-  test('station groups are sorted by name', () => {
+  test('station groups follow the station list, the lane order of the fleet board', () => {
     const model = sidebarModel(sessions, stations, '');
-    expect(model.groups.map((g) => g.name)).toEqual(['Alpha', 'Beta']);
+    expect(model.groups.map((g) => g.name)).toEqual(['Beta', 'Alpha']);
+  });
+
+  test('the station order: the station list first, then the other ids by id', () => {
+    expect(stationOrder(['zeta', 'station-a', 'beta', 'station-b', 'zeta'], stations)).toEqual([
+      'station-b',
+      'station-a',
+      'beta',
+      'zeta',
+    ]);
   });
 
   test('stations without sessions show only when there is no query', () => {
@@ -92,7 +102,7 @@ describe('sidebar model', () => {
   });
 
   test('the j/k order is the live sessions of the groups, each once', () => {
-    expect(ids(sidebarOrder(sidebarModel(sessions, stations, '')))).toEqual(['n1', 'w1', 'i1']);
+    expect(ids(sidebarOrder(sidebarModel(sessions, stations, '')))).toEqual(['n1', 'i1', 'w1']);
   });
 
   test('the j/k order follows the rows: the needs-you group first, then the stations', () => {
