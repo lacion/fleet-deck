@@ -16,8 +16,8 @@ const request = (extra: Partial<OpenRequest> = {}): OpenRequest => ({
   details: 'cargo test',
   input: null,
   options: [
-    { option_id: 'allow', label: 'Allow' },
-    { option_id: 'deny', label: 'Deny' },
+    { option_id: 'allow', label: 'Allow', kind: 'allow_once' },
+    { option_id: 'deny', label: 'Deny', kind: 'deny' },
   ],
   response: 'rpc_reply',
   requested_at: 1,
@@ -62,6 +62,22 @@ describe('needs-you rail', () => {
     );
     expect(html).not.toContain('Open session');
     expect(html.match(/aria-label="(Allow|Deny): /g)).toHaveLength(2);
+  });
+
+  test('deny is marked by its kind, not by its place (the same rule as the approval dock)', () => {
+    const html = rail(
+      request({
+        options: [
+          { option_id: 'allow', label: 'Allow', kind: 'allow_once' },
+          { option_id: 'deny', label: 'Deny', kind: 'deny' },
+          { option_id: 'amend', label: 'Amend', kind: 'amend' },
+        ],
+      }),
+    );
+    expect(html).toMatch(/<button type="button" class="fd-danger" aria-label="Deny: /);
+    // The last option amends: it is a plain button, not a danger one.
+    expect(html).toMatch(/<button type="button" aria-label="Amend: /);
+    expect(html).not.toMatch(/class="fd-danger" aria-label="Amend: /);
   });
 
   test('the first request is selected and the options carry their key hints', () => {

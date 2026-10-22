@@ -196,8 +196,16 @@ describe('strip markup', () => {
     expect(withFocus).toContain('class="fd-focus" title="writing the changelog"');
     expect(withFocus).not.toContain('data-note="working"');
     const asking = board([card('g', 'working', 'station-a', { ...focus, open_requests: [ask] })]);
-    expect(asking).toContain('Run it?');
+    // A permission names its kind, as the Needs you panel does; a question shows its text alone.
+    expect(asking).toContain('Permission · Run it?');
     expect(asking).not.toContain('fd-focus');
+    const question = board([
+      card('q', 'working', 'station-a', {
+        open_requests: [{ ...ask, request_kind: 'question', title: 'Which branch?' }],
+      }),
+    ]);
+    expect(question).toContain('Which branch?');
+    expect(question).not.toContain('Permission ·');
     // An ended session shows its state, not the last focus of the agent.
     const ended = board([card('h', 'ended', 'station-a', focus)]);
     expect(ended).toContain('data-note="ended"');
@@ -305,7 +313,7 @@ describe('phone board', () => {
     expect(html).not.toContain('Offline sessions');
   });
 
-  test('the phone shows the conflict radar under its header, above the lanes', () => {
+  test('the phone shows the conflict radar under the Needs you strip, above the lanes', () => {
     const load: ConflictLoader = async () => [];
     rememberConflicts(load, [
       {
@@ -331,7 +339,11 @@ describe('phone board', () => {
     ]);
     const html = renderToStaticMarkup(
       <FleetHome
-        sessions={[card('a'), card('b')]}
+        sessions={[
+          card('a'),
+          card('b'),
+          card('n', 'needs_you', 'station-a', { open_requests: [ask] }),
+        ]}
         stations={[station()]}
         freshness="live"
         assign={undefined}
@@ -346,6 +358,9 @@ describe('phone board', () => {
     expect(html).toContain('<span class="fd-home-conf">1 conflict</span>');
     const radar = html.indexOf('aria-label="Conflict radar"');
     expect(radar).toBeGreaterThan(html.indexOf('</header>'));
+    // The requests come first (§4.8): the radar follows the Needs you strip.
+    expect(html.indexOf('aria-label="Needs you rail"')).toBeGreaterThan(html.indexOf('</header>'));
+    expect(radar).toBeGreaterThan(html.indexOf('aria-label="Needs you rail"'));
     expect(radar).toBeLessThan(html.indexOf('aria-label="Fleet board"'));
     expect(html.match(/aria-label="Conflict radar"/g)).toHaveLength(1);
   });
@@ -424,6 +439,17 @@ describe('flight deck fixes', () => {
     });
     expect(away).not.toContain('Offline sessions');
     expect(away).not.toContain('Resume all');
+  });
+
+  test('a folded board has one Clear for the ended sessions of every lane, also when none resumes', () => {
+    const html = board([card('e1', 'ended', 'station-a'), card('e2', 'lost', 'station-b')], {
+      foldEnded: true,
+    });
+    expect(html.match(/<details class="fd-lane-ended">/g)).toHaveLength(2);
+    const outside = html.replace(/<details class="fd-lane-ended">[\s\S]*?<\/details>/g, '');
+    expect(outside).toContain('<span class="fd-label">Offline sessions</span>');
+    expect(outside.match(/Clear \(2\)/g)).toHaveLength(1);
+    expect(outside).toContain('Resume all (0)');
   });
 
   test('the status filter: Working holds queued and verifying, Needs you an open request', () => {

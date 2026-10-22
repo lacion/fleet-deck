@@ -69,7 +69,8 @@ type Props = {
    * DESIGN-SYSTEM §4.2, §4.4: the ended and lost strips of each lane fold into a collapsed
    * "Ended" group (the word and a count pill, as in the sidebar) with their Resume all and Clear,
    * and the lane count is the shown live strips. The board-wide offline row then shows only while
-   * the ended or lost sessions of two or more lanes can resume (one Resume all for every lane).
+   * two or more lanes have ended or lost sessions (one Resume all, Clear and Restore all for every
+   * lane).
    * Off: the ended strips stay in their lane, the lane count is every strip, and one offline row
    * for the ended, lost and unreachable sessions closes the board.
    */
@@ -343,9 +344,7 @@ const RESUMED_MS = 6000;
 
 /**
  * The offline tools: Resume all, Clear, and Restore all (DL-141). `row`: the labelled row at the
- * end of the board; `lane`: the buttons inside a lane's Ended group; `resumable`: the labelled row
- * only while a session of `cards` can resume (a folded board: the ended and lost sessions of every
- * lane, `boardResumable`, so that one press resumes them all after a station restart).
+ * end of the board; `lane`: the buttons inside a lane's Ended group.
  */
 export function OfflineTools({
   cards,
@@ -356,7 +355,7 @@ export function OfflineTools({
   readonly cards: readonly DeckSession[];
   readonly freshness: Freshness;
   readonly sessionActions?: ((key: SessionKey) => SessionActions) | undefined;
-  readonly variant?: 'row' | 'lane' | 'resumable';
+  readonly variant?: 'row' | 'lane';
 }) {
   const refs = archived.use();
   const [running, setRunning] = useState(false);
@@ -389,7 +388,6 @@ export function OfflineTools({
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setReport(null), RESUMED_MS);
   };
-  if (variant === 'resumable' && resumable.length === 0 && report === null && !running) return null;
   return (
     <div className="fd-offline-tools" data-variant={variant}>
       {variant === 'lane' ? null : <span className="fd-label">Offline sessions</span>}
@@ -541,23 +539,15 @@ function LaneSlots({
 
 /**
  * The cards of the board-wide offline row of a folded board: every ended or lost session, when
- * sessions of two or more lanes can resume (after a station restart, one press resumes them all).
- * With one such lane, its Ended row has the same tools: no row. An unreachable session never
- * resumes, so it makes no row.
+ * two or more lanes have one. One press then resumes, clears or restores the ended sessions of
+ * every station (after a station restart, or to tidy the board), without opening each Ended
+ * fold. With one such lane, its Ended row has the same tools: no row. An unreachable session is
+ * not ended, so it makes no row.
  */
-export function boardResumable(
+export function boardEnded(
   lanes: readonly { readonly cards: readonly DeckSession[] }[],
-  freshness: Freshness,
-  sessionActions: ((key: SessionKey) => SessionActions) | undefined,
 ): DeckSession[] {
-  const canResume = (c: DeckSession) =>
-    isDone(c) &&
-    sessionFlags(
-      c,
-      freshness,
-      sessionActions?.({ station_id: c.station_id, session_id: c.summary.session_id }) ?? null,
-    ).canResume;
-  if (lanes.filter((lane) => lane.cards.some(canResume)).length < 2) return [];
+  if (lanes.filter((lane) => lane.cards.some(isDone)).length < 2) return [];
   const done = lanes.flatMap((lane) => lane.cards.filter(isDone));
   return done.filter((c, i) => done.findIndex((d) => cardKey(d) === cardKey(c)) === i);
 }
@@ -580,9 +570,7 @@ export function FleetBoard({
   const batches = batchCounts(sessions);
   const all = lanesOf(sessions, stations, group, projects);
   const lanes = [...all.filter((l) => !settled(l)), ...all.filter(settled)];
-  const offline = foldEnded
-    ? boardResumable(lanes, freshness, sessionActions)
-    : sessions.filter(isOffline);
+  const offline = foldEnded ? boardEnded(lanes) : sessions.filter(isOffline);
   const strip = (card: DeckSession) => (
     <FleetStrip
       key={cardKey(card)}
@@ -665,7 +653,7 @@ export function FleetBoard({
           cards={offline}
           freshness={freshness}
           sessionActions={sessionActions}
-          variant={foldEnded ? 'resumable' : 'row'}
+          variant="row"
         />
       )}
     </main>
