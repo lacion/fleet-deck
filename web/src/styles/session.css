@@ -25,7 +25,9 @@
   flex-wrap: nowrap;
   align-items: stretch;
   min-height: 56px;
-  overflow: hidden;
+  /* Visible: the session menu (⋯) opens below the header. The title and the chips truncate on
+     their own, and the holder carries the left corners. */
+  overflow: visible;
   background: var(--raised);
   border-radius: var(--r-card);
   box-shadow: var(--shadow-lift);

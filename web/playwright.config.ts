@@ -33,6 +33,7 @@ export default defineConfig({
         '**/handover.spec.ts',
         '**/screens.spec.ts',
         '**/gallery.spec.ts',
+        '**/menus-clip.spec.ts',
         '**/gallery-wall.spec.ts',
         '**/polish.spec.ts',
       ],
