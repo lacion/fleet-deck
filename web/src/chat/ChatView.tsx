@@ -568,17 +568,18 @@ export function ChatView(props: ChatViewProps) {
 
   return (
     <section className="fd-chat" aria-label="Conversation">
-      {/* B6: with the agents switcher, the filters share its bar; alone, they float at the
-          top right of the chat column (sticky, no row of their own). */}
+      {/* B6: with the agents switcher, the filters share its bar; alone, they sit at the right
+          end of the session tab row (chat.css), out of the transcript. */}
       {toolbar ? (
         <div className="fd-chat-bar">
           <div className="fd-chat-toolbar">{props.toolbar}</div>
           {filterBar}
         </div>
-      ) : null}
+      ) : (
+        filterBar
+      )}
       {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a keyboard user scrolls the log */}
       <div className="fd-chat-scroll" role="log" ref={scroller} onScroll={onScroll} tabIndex={0}>
-        {toolbar ? null : filterBar}
         <div className="fd-chat-column">
           {history === undefined ? null : (
             <>

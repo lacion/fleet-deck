@@ -742,48 +742,61 @@
   margin-left: 0;
 }
 
-/* DL-175: the Show menu floats at the top right of the chat column: a sticky layer of no
-   height at the top of the scroll area, so it takes no row. The column starts under it. */
-.fd-chat-scroll > .fd-chat-filters {
-  position: sticky;
-  top: 0;
-  z-index: 3;
+/* DL-175: the Show menu. Alone (no Agents bar), it sits at the right end of the session tab row,
+   which is empty there: it never covers the transcript, where every tool row shows its result at
+   the right. The menu is a sibling of the scroll area: it does not scroll with the log. */
+.fd-chat > .fd-chat-filters {
   display: flex;
+  flex: none;
   justify-content: flex-end;
-  height: 0;
+  align-self: center;
+  width: 100%;
   max-width: calc(var(--chat-w) + 2 * var(--sp-5));
-  margin: 0 auto;
-  padding: 0 var(--sp-5);
+  padding: var(--sp-1) var(--sp-5) 0;
 }
-.fd-chat-scroll > .fd-chat-filters > .fd-chat-show {
-  margin-top: var(--sp-1);
-  height: max-content;
+/* Under the session tab row (session.css .fd-pane-tabs: 36px with its 1px rule, 44px on touch),
+   the menu moves up into that row, at the right end of the chat panel. */
+.fd-pane-chat > .fd-chat:first-child > .fd-chat-filters {
+  --chat-tabs-h: 36px; /* the session tab row, its rule included */
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 1px); /* above the rule of the tab row */
+  z-index: 3;
+  align-items: center;
+  width: auto;
+  max-width: none;
+  height: calc(var(--chat-tabs-h) - 1px);
+  padding: 0 var(--sp-4) 0 var(--sp-2);
+  background: var(--bg); /* a tab that scrolls under it (phone) does not show through */
 }
-/* The transcript scrolls under it: a floating pill, like "Jump to latest". */
-.fd-chat-scroll > .fd-chat-filters > .fd-chat-show > summary {
-  position: relative;
-  height: var(--sp-5);
-  min-height: 0;
-  padding: 0 var(--sp-3);
-  background: var(--raised);
-  border-radius: var(--r-pill);
-  box-shadow: var(--shadow-pop);
-}
-/* On touch the pill keeps its look; an invisible edge makes the tap target 44px. */
 @media (pointer: coarse) {
-  .fd-chat-scroll > .fd-chat-filters > .fd-chat-show > summary::before {
-    content: "";
-    position: absolute;
-    inset: calc((var(--sp-5) - var(--tap-min)) / 2) calc(-1 * var(--sp-1));
+  .fd-pane-chat > .fd-chat:first-child > .fd-chat-filters {
+    --chat-tabs-h: var(--tap-min);
   }
 }
-.fd-chat-scroll > .fd-chat-filters > .fd-chat-show > summary:hover,
-.fd-chat-scroll > .fd-chat-filters > .fd-chat-show[open] > summary {
-  background: var(--raised-hi);
-  color: var(--text);
+[data-layout="phone"] .fd-pane-chat > .fd-chat:first-child > .fd-chat-filters {
+  padding-right: var(--sp-2);
 }
-.fd-chat-scroll > .fd-chat-filters + .fd-chat-column {
-  padding-top: var(--sp-6);
+/* A menu: the ghost summary gets a small chevron after its text. */
+.fd-chat-filters > .fd-chat-show > summary::after {
+  content: "";
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-right: -2px;
+  background: currentColor;
+  mask:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  transition: transform var(--t-fast);
+}
+.fd-chat-filters > .fd-chat-show[open] > summary::after {
+  transform: rotate(180deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .fd-chat-filters > .fd-chat-show > summary::after {
+    transition: none;
+  }
 }
 .fd-chat-show .fd-menu-body {
   min-width: 200px;
@@ -842,16 +855,8 @@
   outline: 2px solid var(--focus);
   outline-offset: -2px;
 }
-[data-layout="phone"] .fd-chat-scroll > .fd-chat-filters {
-  padding: 0 var(--sp-3);
-}
-[data-layout="phone"] .fd-chat-filters > .fd-chat-show {
-  position: static;
-}
-[data-layout="phone"] .fd-chat-show .fd-menu-body {
-  left: var(--sp-3);
-  right: var(--sp-3);
-  min-width: 0;
+[data-layout="phone"] .fd-chat > .fd-chat-filters {
+  padding-inline: var(--sp-3);
 }
 .fd-chat-filter-count {
   margin-left: auto;

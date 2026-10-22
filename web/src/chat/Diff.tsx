@@ -16,7 +16,7 @@ import { ThreadLists } from '../review/ThreadLists';
 import type { DiffReview } from '../review/types';
 import { FileText, Icon } from '../ui/icons';
 import {
-  diffLineKind,
+  diffLineKinds,
   type FileHead,
   fileHeads,
   isPlumbing,
@@ -111,6 +111,7 @@ export function Diff({
     editor !== null && arranged !== null
       ? rowIndex(arranged.rows, editor.state.side, editor.state.path, editor.state.end)
       : undefined;
+  const kinds = useMemo(() => diffLineKinds(lines), [lines]);
   const heads = useMemo(() => fileHeads(lines), [lines]);
   // DL-179: with review, each hunk line shows its old and its new number in two gutters.
   const numbered = review !== undefined && arranged !== null;
@@ -157,11 +158,12 @@ export function Diff({
   const pre = (
     <pre className="fd-diff" data-diff={id} data-numbers={numbers ? '' : undefined} style={style}>
       {lines.map((line, n) => {
-        const kind = diffLineKind(line);
+        const kind = kinds[n] ?? 'ctx';
         const head = kind === 'file' ? heads.get(n) : undefined;
         const row = review && arranged ? (arranged.rows[n] ?? null) : null;
         const here = arranged?.under.get(n);
-        // The git plumbing (index, ---, +++) is left out: the file header row says the same.
+        // The git plumbing (index, ---, +++) of a file header is left out: the file header row
+        // says the same. In a hunk every line shows (`diffLineKinds` makes its -/+ lines del/add).
         const shown = kind !== 'meta' || !isPlumbing(line);
         return (
           <Fragment key={n}>
