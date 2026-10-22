@@ -174,7 +174,7 @@ export function HelpOverlay({ onClose }: { readonly onClose: () => void }) {
         {/* The body scrolls under the fixed header; its bottom fades while more is below. */}
         <div ref={body} className="fd-help-body" data-more={more ? 'true' : undefined}>
           <section aria-label="Keys">
-            <h3 className="fd-label">Keys</h3>
+            <h3 className="fd-help-section">Keys</h3>
             <div className="fd-help-keys">
               <div className="fd-help-keygroup">
                 <h4 className="fd-label">On every page</h4>
@@ -187,11 +187,11 @@ export function HelpOverlay({ onClose }: { readonly onClose: () => void }) {
             </div>
           </section>
           <section aria-label="Concepts">
-            <h3 className="fd-label">Concepts</h3>
+            <h3 className="fd-help-section">Concepts</h3>
             <Terms items={CONCEPTS} />
           </section>
           <section aria-label="Pages">
-            <h3 className="fd-label">Pages</h3>
+            <h3 className="fd-help-section">Pages</h3>
             <Terms items={PAGES} />
           </section>
         </div>

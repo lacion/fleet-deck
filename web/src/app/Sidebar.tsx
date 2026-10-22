@@ -257,6 +257,10 @@ function Groups({
           >
             <h3 className="fd-sgroup-title">
               <span className="fd-sgroup-name fd-wide">{group.name}</span>
+              {/* The count right after the name, as in the Needs you group and the fleet lanes. */}
+              <span className="fd-count" title={total}>
+                {live.length}
+              </span>
               {by === 'project' ? null : (
                 <span
                   className="fd-rdot"
@@ -267,9 +271,6 @@ function Groups({
               {by === 'project' ? null : (
                 <span className="fd-vh">{group.reachable ? 'reachable' : 'unreachable'}</span>
               )}
-              <span className="fd-count" title={total}>
-                {live.length}
-              </span>
             </h3>
             <Rows cards={live} route={route} now={now} starred={starred} />
             {group.ended.length > 0 ? (
@@ -349,14 +350,19 @@ function BoardLinks({
   return (
     <nav className="fd-sidebar-links" aria-label="Board pages">
       {/* The home and the Fleet page are the same screen on a desktop. */}
+      {/* The name says what the number means: "Fleet, 3 need you". (A text inside the pill would
+          read "Fleet , 3": the pill is a flex item, and the name gets a space before it.) */}
       <a
         href="#/fleet"
+        aria-label={
+          needs > 0 ? `Fleet, ${needs} ${needs === 1 ? 'needs you' : 'need you'}` : undefined
+        }
         aria-current={route.name === 'fleet' || route.name === 'home' ? 'page' : undefined}
       >
         <Icon of={LayoutGrid} />
         Fleet
         {needs > 0 ? (
-          <span className="fd-count" data-tone="act">
+          <span className="fd-count" data-tone="act" aria-hidden="true">
             {needs}
           </span>
         ) : null}
@@ -589,18 +595,19 @@ export function Sidebar({
       </div>
       {full ? (
         <div className="fd-sidebar-foot">
+          {/* §4.2 item 5: settings, the theme segments, the compact toggle, then the avatar. */}
+          {settingsLink && !guest ? (
+            <a
+              href="#/settings"
+              className="fd-iconbtn fd-sidebar-settings"
+              aria-label="Settings"
+              aria-current={route.name === 'settings' ? 'page' : undefined}
+            >
+              <Icon of={Settings} />
+            </a>
+          ) : null}
           <PrefsRow stations={stations} getPalette={chrome?.getPalette} />
           <div className="fd-sidebar-account">
-            {settingsLink && !guest ? (
-              <a
-                href="#/settings"
-                className="fd-iconbtn"
-                aria-label="Settings"
-                aria-current={route.name === 'settings' ? 'page' : undefined}
-              >
-                <Icon of={Settings} />
-              </a>
-            ) : null}
             {chrome === undefined ? null : (
               <Menu summary={<Avatar />} summaryClass="fd-iconbtn" label="Account">
                 {(close) => (

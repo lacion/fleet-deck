@@ -227,22 +227,35 @@ const PHONE_TITLES: Partial<Record<Route['name'], string>> = {
   compare: 'Compare',
 };
 
+/** The parent of a detail page of the More tab: Back goes to its list (or the fleet), not More. */
+const PARENT: Partial<Record<Route['name'], { href: string; label: string }>> = {
+  artifact: { href: '#/artifacts', label: 'Back to Artifacts' },
+  project: { href: '#/projects', label: 'Back to Projects' },
+  compare: { href: '#/fleet', label: 'Back to Fleet' },
+};
+
+const BACK_TO_MORE = { href: '#/more', label: 'Back to More' };
+
 /**
- * The phone top bar (§4.8, 52px): the mark (or Back to More on a page of the More tab), the page
- * name, the connection and the avatar. The page keeps its own heading for screen readers.
+ * The phone top bar (§4.8, 52px): the mark (or Back on a page of the More tab: to its parent
+ * list, else to More), the page name, the connection and the avatar. The page keeps its own
+ * heading for screen readers.
  */
-function PhoneBar({
+export function PhoneBar({
   route,
   chrome,
 }: {
   readonly route: Route;
   readonly chrome: Chrome | undefined;
 }) {
-  const back = route.name !== 'more' && MORE_TAB.includes(route.name);
+  const back =
+    route.name !== 'more' && MORE_TAB.includes(route.name)
+      ? (PARENT[route.name] ?? BACK_TO_MORE)
+      : undefined;
   return (
     <header className="fd-phonebar">
-      {back ? (
-        <a href="#/more" className="fd-iconbtn fd-phonebar-back" aria-label="Back to More">
+      {back !== undefined ? (
+        <a href={back.href} className="fd-iconbtn fd-phonebar-back" aria-label={back.label}>
           <Icon of={ChevronLeft} />
         </a>
       ) : (

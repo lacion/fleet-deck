@@ -442,17 +442,16 @@ body:has(.fd-app[data-layout="tablet"]) {
   font-weight: 600;
 }
 
+/* One rule for every group header (the fleet lanes do the same): the count sits inline, right
+   after the name; the reach dot of a station follows the count. */
 .fd-sgroup-title .fd-count {
-  margin-left: auto;
+  flex: none;
+  margin-left: 0;
 }
 
 /* "Needs you" first: the name in --text and the yellow count right after it (§4.2). */
 .fd-sgroup[data-group="needs"] .fd-sgroup-name {
   color: var(--text);
-}
-
-.fd-sgroup[data-group="needs"] .fd-sgroup-title .fd-count {
-  margin-left: 0;
 }
 
 /* Reachability dot: 6px, with a hidden word next to it. */
@@ -632,12 +631,13 @@ body:has(.fd-app[data-layout="tablet"]) {
   color: var(--faint);
 }
 
-/* The footer (44px): theme and density at the left; Settings and the account at the right. */
+/* The footer (44px, §4.2 item 5): Settings, the theme segments and the compact toggle at the
+   left; the account avatar at the right. */
 .fd-sidebar-foot {
   flex: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   flex-wrap: wrap;
   gap: var(--sp-1) var(--sp-2);
   min-height: 44px;
@@ -649,9 +649,10 @@ body:has(.fd-app[data-layout="tablet"]) {
   display: flex;
   align-items: center;
   gap: var(--sp-1);
+  margin-left: auto;
 }
 
-.fd-sidebar-account a.fd-iconbtn {
+.fd-sidebar-settings.fd-iconbtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -660,7 +661,7 @@ body:has(.fd-app[data-layout="tablet"]) {
   text-decoration: none;
 }
 
-.fd-sidebar-account a.fd-iconbtn[aria-current="page"] {
+.fd-sidebar-settings.fd-iconbtn[aria-current="page"] {
   background: var(--raised-hi);
   color: var(--text);
 }
@@ -765,10 +766,6 @@ body:has(.fd-app[data-layout="tablet"]) {
   font-weight: 600;
 }
 
-.fd-sidebar[data-variant="list"] .fd-sgroup[data-group="needs"] .fd-count {
-  margin-left: var(--sp-1);
-}
-
 .fd-sidebar[data-variant="list"] .fd-srows {
   gap: 6px;
 }
@@ -857,7 +854,7 @@ body:has(.fd-app[data-layout="tablet"]) {
 
 /* ---------- Phone top bar (§4.8) ---------- */
 
-/* 52px on the deck: the mark (or Back to More), the page name, the connection, the avatar. */
+/* 52px on the deck: the mark (or Back), the page name, the connection, the avatar. */
 .fd-phonebar {
   flex: none;
   display: flex;
@@ -1253,6 +1250,16 @@ a.fd-phonebar-back {
   margin: 0;
 }
 
+/* Two heading levels (§4.7): a section (Keys, Concepts, Pages) is a 15px heading in --text; a
+   sub-heading inside it (On every page) stays a 12px .fd-label. */
+.fd-help-section {
+  font-family: var(--font-ui);
+  font-size: var(--fs-heading);
+  font-weight: 600;
+  line-height: 1.15;
+  color: var(--text);
+}
+
 .fd-keys {
   border-collapse: collapse;
   width: 100%;
@@ -1363,8 +1370,24 @@ a.fd-phonebar-back {
   cursor: pointer;
 }
 
-.fd-palette [role="option"][aria-selected="true"] {
+.fd-palette [role="option"]:hover {
   background: var(--raised-hi);
+}
+
+/* The active option (the row that Enter opens) is the selection (§2.2): the --focus-bg tint and a
+   2px --focus bar at the left edge, the marker of the sidebar nav. A fill step alone does not
+   show on the --raised dialog. */
+.fd-palette [role="option"][aria-selected="true"] {
+  background: var(--focus-bg);
+  box-shadow: inset 2px 0 0 var(--focus);
+}
+
+/* Forced colors drop the tint and the bar: a Highlight ring marks the active option. */
+@media (forced-colors: active) {
+  .fd-palette [role="option"][aria-selected="true"] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
 }
 
 .fd-palette [role="option"] > .fd-dot {

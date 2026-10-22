@@ -4,6 +4,7 @@ import { card, station } from '../testing/fleet';
 import { readDensity } from '../ui/density';
 import { readTheme } from '../ui/theme';
 import { HelpOverlay } from './HelpOverlay';
+import { PhoneBar } from './Layout';
 import { More } from './More';
 import { PrefsRow } from './Prefs';
 import { Sidebar } from './Sidebar';
@@ -49,6 +50,14 @@ describe('preferences row (DL-141)', () => {
     );
     expect(html.match(/class="fd-seg/g)?.length).toBe(1);
     expect(renderToStaticMarkup(<PrefsRow density={false} />)).not.toContain('Compact cards');
+  });
+
+  test('the theme icons are 14px in the sidebar and 16px in the touch rows of More', () => {
+    const sidebar = renderToStaticMarkup(<PrefsRow />);
+    expect(sidebar.match(/width="14"/g)?.length).toBe(4);
+    const more = renderToStaticMarkup(<More stationCount={0} terminalCount={0} />);
+    const prefs = more.slice(more.indexOf('class="fd-sidebar-prefs"'));
+    expect(prefs.slice(0, prefs.indexOf('</div></div>')).match(/width="16"/g)?.length).toBe(3);
   });
 
   test('the More page has a Compact cards switch in place of the toggle', () => {
@@ -143,6 +152,33 @@ describe('help overlay (DL-141)', () => {
     expect(body).toBeGreaterThan(head);
     expect(html).toContain('<div class="fd-help-keys"><div class="fd-help-keygroup">');
     expect(html.match(/class="fd-help-keygroup"/g)?.length).toBe(2);
+  });
+
+  test('two heading levels: section headings over .fd-label sub-headings', () => {
+    for (const name of ['Keys', 'Concepts', 'Pages'])
+      expect(html).toContain(`<h3 class="fd-help-section">${name}</h3>`);
+    expect(html).toContain('<h4 class="fd-label">On every page</h4>');
+    expect(html).toContain('<h4 class="fd-label">On the fleet home</h4>');
+    expect(html).not.toContain('<h3 class="fd-label">');
+  });
+});
+
+describe('the phone top bar (§4.8)', () => {
+  const bar = (route: Parameters<typeof PhoneBar>[0]['route']) =>
+    renderToStaticMarkup(<PhoneBar route={route} chrome={undefined} />);
+
+  test('a detail page goes back to its list, not to More', () => {
+    const html = bar({ name: 'artifact', station: 'station-a', id: 'a1', version: null });
+    expect(html).toContain('href="#/artifacts"');
+    expect(html).toContain('aria-label="Back to Artifacts"');
+    expect(html).not.toContain('Back to More');
+  });
+
+  test('a list page of the More tab goes back to More; the More page shows the mark', () => {
+    const html = bar({ name: 'stations' });
+    expect(html).toContain('href="#/more"');
+    expect(html).toContain('aria-label="Back to More"');
+    expect(bar({ name: 'more' })).not.toContain('fd-phonebar-back');
   });
 });
 
