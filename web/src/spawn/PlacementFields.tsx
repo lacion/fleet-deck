@@ -28,7 +28,7 @@ export function StationChoice({
   return (
     <select
       aria-label="Home"
-      className="fd-sm fd-spawn-pill"
+      className="fd-spawn-pill"
       value={value}
       onChange={(event) => onChange(event.target.value)}
     >

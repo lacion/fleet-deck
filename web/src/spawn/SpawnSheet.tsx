@@ -4,6 +4,7 @@
 import { type ReactNode, useId } from 'react';
 import type { StationView } from '../gen';
 import { ChevronRight, Icon, Server } from '../ui/icons';
+import { submitKeyHint } from './keyHint';
 import { AUTO, type SpawnOutcome } from './spawn';
 
 /** The head of the sheet: a breadcrumb "<station> › New session" (the station when one is chosen). */
@@ -188,7 +189,11 @@ export function CloneFields({
         </label>
         {access}
       </div>
-      <p className="fd-note" role={repoError !== null && repoAlert ? 'alert' : undefined}>
+      <p
+        className="fd-note"
+        id="fd-spawn-repo"
+        role={repoError !== null && repoAlert ? 'alert' : undefined}
+      >
         {repoError ?? `Clones ${cloneUrl}`}
       </p>
       <label>
@@ -201,13 +206,17 @@ export function CloneFields({
 
 /**
  * The footer of the sheet, one line: the Batch switch at the left; the outcome, and the missing
- * steps that have no field of their own to show them; Cancel and the primary start button (kbd ⌘↵).
+ * steps that have no field of their own to show them; Cancel and the primary start button (kbd ⌘↵
+ * or Ctrl+↵). On a phone the directory note (`need`) sits here too, in view above the sticky
+ * buttons; on the desktop it stays under its field.
  */
 export function SpawnFoot({
   batchShown,
   batch,
   onBatch,
   missing,
+  need = null,
+  grantProblem = null,
   describedBy,
   outcome,
   onOpenNew,
@@ -220,6 +229,10 @@ export function SpawnFoot({
   readonly onBatch: (on: boolean) => void;
   /** The missing steps without a note at their field (empty while a start runs). */
   readonly missing: readonly string[];
+  /** The directory note (`fd-spawn-need`) when the form shows it in the footer (a phone). */
+  readonly need?: string | null;
+  /** The first problem of the fleet grant fields: a hidden copy that the button description reads. */
+  readonly grantProblem?: string | null;
   /** The ids of the notes that say why the button is off (the directory note, the missing line). */
   readonly describedBy: string | undefined;
   readonly outcome: SpawnOutcome | null;
@@ -243,7 +256,17 @@ export function SpawnFoot({
           Batch: one session per line
         </label>
       ) : null}
+      {grantProblem === null ? null : (
+        <span hidden id="fd-spawn-grant-error">
+          {grantProblem}
+        </span>
+      )}
       <div className="fd-spawn-status">
+        {need === null ? null : (
+          <p className="fd-note fd-spawn-need" id="fd-spawn-need">
+            {need}
+          </p>
+        )}
         {missing.length === 0 ? null : (
           <p className="fd-note" id="fd-spawn-missing" data-missing>
             To start: {missing.join('; ')}.
@@ -273,7 +296,7 @@ export function SpawnFoot({
         >
           {label}
           <span className="fd-kbd" aria-hidden="true">
-            ⌘↵
+            {submitKeyHint()}
           </span>
         </button>
       </div>

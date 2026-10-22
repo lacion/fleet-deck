@@ -150,6 +150,11 @@
   border-color: transparent;
   box-shadow: inset 0 -2px 0 var(--focus);
 }
+/* The task field ends near the rule of the property rows: its focus is that rule in blue (below),
+   not a second line above it. */
+.fd-spawn .fd-spawn-compose > .fd-spawn-task > textarea:focus {
+  box-shadow: none;
+}
 .fd-spawn .fd-spawn-title > input {
   height: 36px;
   font-size: var(--fs-18);
@@ -203,6 +208,10 @@
   min-width: 0;
   padding-top: var(--sp-4);
   border-top: 1px solid var(--border-soft);
+}
+.fd-spawn form:has(.fd-spawn-task > textarea:focus) .fd-spawn-props {
+  border-top: 2px solid var(--focus);
+  padding-top: calc(var(--sp-4) - 1px);
 }
 .fd-spawn-prop {
   display: grid;
@@ -284,6 +293,7 @@
   font-size: var(--fs-meta);
   font-weight: 400;
   text-align: right;
+  text-wrap: balance;
 }
 /* The model and the mode: one pill look (concept B), as wide as their value, a leading icon
    (sparkles, shield) inside the pill. */
@@ -616,6 +626,18 @@
   }
   .fd-spawn-seg:not(:has(.fd-spawn-seg-meta)) > label {
     flex: 1 1 0;
+  }
+  /* With the limits: the name over its limit, both at the left, so that a long limit does not wrap
+     ragged at the right edge. */
+  .fd-spawn-seg:has(.fd-spawn-seg-meta) > label {
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 2px;
+    padding-block: var(--sp-1);
+  }
+  .fd-spawn-seg-meta {
+    text-align: left;
   }
   /* The model and the mode share one line. */
   .fd-spawn-fields > .fd-spawn-pills {
