@@ -34,6 +34,7 @@ export default defineConfig({
         '**/screens.spec.ts',
         '**/gallery.spec.ts',
         '**/gallery-wall.spec.ts',
+        '**/polish.spec.ts',
       ],
       use: { viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false },
     },
