@@ -13,7 +13,10 @@ export type LoadCell = {
   readonly key: string;
   readonly station: string;
   readonly session: string;
+  /** The title of the session, as on its tile; else its callsign; else 8 characters of its id. */
   readonly name: string;
+  /** The name is the callsign (`.fd-callsign`), not a title. */
+  readonly callsign: boolean;
   readonly cpu: number | null;
   readonly rss: number | null;
   /** Grid columns: 1 under 100%, 2 from 100% to 799%, 3 from 800%. `None` is 1. */
@@ -41,9 +44,12 @@ export function heatOf(cpu: number | null, cores: number | null): Heat {
   return share >= 0.25 ? 'mid' : 'low';
 }
 
+/** The name of the block: the cells are the CPU of each session. */
+export const LOAD_TITLE = 'CPU by session';
+
 /** The heading of the block. It counts the cells that are not shown, so it is never clipped. */
 export function loadHeading(notShown: number): string {
-  return notShown > 0 ? `Session load (+${notShown} more)` : 'Session load';
+  return notShown > 0 ? `${LOAD_TITLE} (+${notShown} more)` : LOAD_TITLE;
 }
 
 /** The tooltip text. A value that is `None` is "unknown". */
@@ -89,12 +95,15 @@ export function loadMap(
     for (const load of r.sessions) {
       const card = cards.get(`${st.station_id}\n${load.session_id}`);
       if (card === undefined) continue;
-      const name = card.summary.callsign ?? card.summary.title ?? load.session_id.slice(0, 8);
+      // The tiles of the same wall name a session by its title: a cell uses the same name.
+      const { title, callsign } = card.summary;
+      const name = title ?? callsign ?? load.session_id.slice(0, 8);
       all.push({
         key: `${st.station_id}\n${load.session_id}`,
         station: st.station_id,
         session: load.session_id,
         name,
+        callsign: title == null && callsign != null,
         cpu: load.cpu_pct,
         rss: load.rss_bytes,
         size: sizeOf(load.cpu_pct),

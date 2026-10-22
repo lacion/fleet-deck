@@ -17,8 +17,8 @@ import {
   type DisplayActions,
 } from './actions';
 import { AddDisplay, COST_TEXT } from './AddDisplay';
-import { DisplayRow, changeOf } from './DisplayRow';
-import { DisplaysTab } from './DisplaysTab';
+import { DisplayRow, changeOf, isDirty } from './DisplayRow';
+import { ADD_TEXT, DisplaysTab, DisplaysView } from './DisplaysTab';
 import { ELEVATION_LABELS, withElevation } from './elevate';
 import { PendingPairings } from './PendingPairings';
 
@@ -214,8 +214,8 @@ describe('the pending pairings', () => {
       />,
     );
 
-  test('an empty list says so', () => {
-    expect(view([])).toContain('No display waits for a code.');
+  test('with no pairing the section is absent', () => {
+    expect(view([])).toBe('');
   });
 
   test('a row shows the source and the agent, never the code', () => {
@@ -307,32 +307,87 @@ describe('a display row', () => {
     });
   });
 
-  test('the row shows its controls', () => {
-    const html = renderToStaticMarkup(
+  test('a draft is dirty when it has a change or a problem', () => {
+    expect(isDirty(base, draft())).toBe(false);
+    expect(isDirty(base, draft({ name: 'Wall ' }))).toBe(false);
+    expect(isDirty(base, draft({ ceiling: ['station-a'] }))).toBe(false);
+    expect(isDirty(base, draft({ wake: false }))).toBe(true);
+    expect(isDirty(base, draft({ name: '' }))).toBe(true);
+    expect(isDirty(base, draft({ bindMonitor: '' }))).toBe(true);
+  });
+
+  const row = (d: DisplayView, stations: StationView[] = stationsList) =>
+    renderToStaticMarkup(
       <ul>
         <DisplayRow
-          display={base}
-          stations={stationsList}
+          display={d}
+          stations={stations}
           actions={{} as DisplayActions}
           settings={{} as SettingsActions}
           ask={async () => null}
           onDone={() => {}}
-          now={61_000}
+          now={3 * 86_400_000 + 1_000}
         />
       </ul>,
     );
+
+  test('the row shows its controls, the actions in its menu and no save bar at rest', () => {
+    const html = row(base);
     for (const text of [
-      'Show code changes (patches)',
-      'Wake the screen when a session needs you',
-      'Local time of the bound station. Empty: none.',
-      'Clear binding',
-      'Show Mission',
-      'Revoke',
-      'Save',
-      'never used',
+      'Show code changes',
+      'The wall shows the changed lines of a session, not only its changed files.',
+      'Wake the screen',
+      'Turn on the bound monitor when a session needs you, except in quiet hours.',
+      'Hours when the screen stays dark, for example 22:00-07:00, in the local time of the bound station.',
+      'placeholder="Off"',
+      'aria-label="Clear binding"',
+      'Bound monitor',
+      'aria-label="Display actions"',
+      'Switch to Mission view',
+      'Revoke…',
+      'Added 3 d ago · never used',
     ]) {
       expect(html).toContain(text);
     }
+    expect(html).not.toContain('(patches)');
+    expect(html).not.toContain('Discard');
+    expect(html).not.toContain('>Save<');
+    expect(html).not.toContain('Revoke this display?');
+  });
+
+  test('the last use says ago, and "now" stays "now"', () => {
+    expect(row(display({ last_seen: 2 * 86_400_000 }))).toContain('last seen 1 d ago');
+    expect(row(display({ last_seen: 3 * 86_400_000 }))).toContain('last seen now');
+  });
+
+  test('an unbound display has no monitor row and no clear button', () => {
+    const html = row(display());
+    expect(html).toContain('Bound station');
+    expect(html).not.toContain('Bound monitor');
+    expect(html).not.toContain('Clear binding');
+  });
+
+  test('a station that reports monitors gives a list, and a stored name not in it says so', () => {
+    const monitor = (name: string) => ({
+      name,
+      description: name === 'DP-1' ? 'Main' : '',
+      width: 1920,
+      height: 1080,
+      scale_pct: 100,
+      refresh_hz: 60,
+      focused: false,
+      dpms_on: true,
+    });
+    const withMonitors = (names: string[]): StationView =>
+      station('station-a', {
+        info: { desktop: { monitors: names.map(monitor) } } as unknown as StationView['info'],
+      });
+    const listed = row(base, [withMonitors(['DP-1', 'HDMI-A-1'])]);
+    expect(listed).toContain('DP-1 — Main');
+    expect(listed).toContain('HDMI-A-1');
+    expect(listed).not.toContain('(not connected)');
+    const gone = row(base, [withMonitors(['HDMI-A-1'])]);
+    expect(gone).toContain('DP-1 (not connected)');
   });
 });
 
@@ -347,14 +402,41 @@ describe('the Displays page', () => {
     deletion: {} as never,
   } as SettingsEnv;
 
-  test('the first render has the add form with the cost text and waits for the list', () => {
+  const page = (displays: DisplayView[], pending: PendingPairing[] = []) =>
+    renderToStaticMarkup(
+      <DisplaysView
+        state={{ kind: 'ready', list: { displays, pending } }}
+        refresh={() => {}}
+        env={env}
+        stations={stationsList}
+        ask={async () => null}
+        now={61_000}
+      />,
+    );
+
+  test('the first render has the add button, not the form, and waits for the list', () => {
     const html = renderToStaticMarkup(<DisplaysTab env={env} stations={stationsList} live />);
-    expect(html).toContain('Add a wall display');
-    expect(html).toContain(COST_TEXT);
+    expect(html).toContain(`${ADD_TEXT}</button>`);
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain(COST_TEXT);
     expect(html).toContain('Loading…');
   });
 
-  test('the add form needs a name and a station', () => {
+  test('the displays come first, then the pairings that wait', () => {
+    const html = page([display()], [pairing()]);
+    expect(html.indexOf('Wall displays')).toBeLessThan(html.indexOf('Waiting for a code'));
+    expect(html).toContain(`${ADD_TEXT}</button>`);
+    expect(page([display()])).not.toContain('Waiting for a code');
+  });
+
+  test('with no display the empty state has the one add button', () => {
+    const html = page([]);
+    expect(html).toContain('No wall display yet');
+    expect(html).toContain('Add one to show the fleet on a screen.');
+    expect(html.split(`${ADD_TEXT}</button>`)).toHaveLength(2);
+  });
+
+  test('the add panel has the cost text, Cancel and the pairing link button', () => {
     const html = renderToStaticMarkup(
       <AddDisplay
         actions={{} as DisplayActions}
@@ -362,11 +444,15 @@ describe('the Displays page', () => {
         ask={async () => null}
         stations={stationsList}
         onDone={() => {}}
+        onClose={() => {}}
       />,
     );
+    expect(html).toContain(COST_TEXT);
     expect(html).toContain('Stations that it may show');
     expect(html).toContain('Alpha');
     expect(html).toContain('Beta');
+    expect(html).toContain('Cancel');
+    expect(html).toContain('Make a pairing link');
     expect(html).not.toMatch(/checked=""/);
   });
 

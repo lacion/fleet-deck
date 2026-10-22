@@ -10,6 +10,7 @@ import { card, station } from '../testing/fleet';
 import { envelopes } from '../testing/timeline';
 import { StreamArea } from './Areas';
 import { ChatPane } from './ChatPane';
+import { bytesShort, stationStats } from './stationStats';
 import { WallPage } from './WallPage';
 import {
   ambientCounts,
@@ -420,5 +421,40 @@ describe('the focus chat pane', () => {
     );
     expect(ended).toContain('data-state="ended"');
     expect(ended).toContain('<span class="fd-vh"> · Ended</span>');
+  });
+});
+
+describe('the figures of a station row', () => {
+  test('a size is whole MB under 1 GB, whole GB under 1 TB, then TB with one decimal', () => {
+    expect(bytesShort(340e6)).toBe('340 MB');
+    expect(bytesShort(216.9e9)).toBe('217 GB');
+    expect(bytesShort(999.4e9)).toBe('999 GB');
+    expect(bytesShort(999.6e9)).toBe('1.0 TB');
+    expect(bytesShort(1e12)).toBe('1.0 TB');
+    expect(bytesShort(1204.7e9)).toBe('1.2 TB');
+    expect(bytesShort(2912.5e9)).toBe('2.9 TB');
+  });
+
+  test('the CPU is a share of all cores, the memory whole GB, the disk ends in free', () => {
+    expect(
+      stationStats({
+        cpu: { cores: 32, load1_x100: 0, load5_x100: 30 },
+        memory: { total_bytes: 46.8e9, available_bytes: 40.8e9 },
+        disks: [
+          { total_bytes: 2000e9, free_bytes: 1204.7e9 },
+          { total_bytes: 500e9, free_bytes: 216.9e9 },
+        ],
+      }),
+    ).toEqual(['CPU 1%', 'Mem 6/47 GB', 'Disk 217 GB free']);
+    expect(
+      stationStats({ cpu: { cores: 4, load1_x100: 0, load5_x100: 600 }, memory: null, disks: [] }),
+    ).toEqual(['CPU 150%']);
+  });
+
+  test('a part that the station does not report is left out', () => {
+    expect(stationStats(null)).toEqual([]);
+    expect(
+      stationStats({ cpu: { cores: 0, load1_x100: 0, load5_x100: 50 }, memory: null, disks: [] }),
+    ).toEqual([]);
   });
 });

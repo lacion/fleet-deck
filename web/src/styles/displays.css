@@ -92,6 +92,17 @@
   min-width: 0;
 }
 
+/* The heading row of a section: the heading, and "Add a wall display" at the right. The row keeps
+   the height of the button when the empty state holds it. */
+.fd-disp-section > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+  min-height: var(--ctl-h-sm);
+}
+
 .fd-disp-title {
   font-size: var(--fs-heading);
   font-weight: 600;
@@ -124,22 +135,38 @@
   margin: 0;
 }
 
+/* The cost of a wall: a readable measure, not one line across the panel. */
+.fd-disp-add > .fd-note {
+  max-width: 72ch;
+}
+
+/* The heading of a display: its name, the ages and the menu. On a narrow card the ages take a
+   line of their own under the name, and the menu stays at the top right. */
 .fd-disp-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   gap: var(--sp-1) var(--sp-3);
   min-width: 0;
 }
 
 .fd-disp-name {
+  grid-row: 1;
+  min-width: 0;
   margin: 0;
+  overflow-wrap: anywhere;
   font-size: var(--fs-heading);
   font-weight: 600;
 }
 
+.fd-disp-head > .fd-menu {
+  grid-row: 1;
+  grid-column: 2;
+}
+
 .fd-disp-seen {
+  grid-row: 2;
+  grid-column: 1 / -1;
   color: var(--faint);
 }
 
@@ -197,15 +224,31 @@
   cursor: pointer;
 }
 
-.fd-disp-bind {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: var(--sp-3);
+/* A switch keeps its own width in the control column. */
+.fd-disp-row .fd-fieldcontrol > .fd-switch {
+  justify-self: start;
 }
 
-.fd-disp-bind > .fd-fieldwrap {
-  flex: 1 1 12rem;
+/* A narrow card: the switch ends its label row, as on a narrow station tab. */
+.fd-disp-row .fd-fieldcontrol:has(> .fd-switch) {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+/* The bound station and the X that clears the binding. */
+.fd-disp-bindctl {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.fd-disp-bindctl > select {
+  flex: 1 1 auto;
+}
+
+.fd-disp-bindctl > .fd-iconbtn {
+  flex: none;
 }
 
 .fd-disp-code {
@@ -215,21 +258,56 @@
   letter-spacing: 0.12em;
 }
 
-/* In a wide panel a field is a row: the label in a 200px column, then the control (§4.7). */
+/* In a wide panel a field is a row, as on a station tab (§4.7): the label (13px --text, weight
+   500) in a 200px column, 24px, then the control (at most 360px) and its hint under it. */
 @container (min-width: 640px) {
+  .fd-disp-head {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .fd-disp-seen {
+    grid-row: 1;
+    grid-column: 2;
+  }
+
+  .fd-disp-head > .fd-menu {
+    grid-column: 3;
+  }
+
   .fd-disp-row .fd-fieldcontrol,
   .fd-disp-pending .fd-fieldcontrol,
-  .fd-disp-add .fd-fieldcontrol {
-    grid-template-columns: 200px minmax(0, 420px);
+  .fd-disp-add .fd-fieldcontrol,
+  .fd-disp-row .fd-fieldcontrol:has(> .fd-switch) {
+    grid-template-columns: 200px minmax(0, 360px);
     align-items: center;
-    column-gap: var(--sp-3);
+    column-gap: var(--sp-5);
+  }
+
+  /* The X of the binding sits after the 360px select, 8px away. */
+  .fd-disp-row .fd-disp-bindrow > .fd-fieldcontrol {
+    grid-template-columns: 200px minmax(0, calc(360px + var(--sp-2) + var(--ctl-h-sm)));
+  }
+
+  .fd-disp-bindctl > select {
+    max-width: 360px;
+  }
+
+  .fd-disp-row .fd-fieldlabel,
+  .fd-disp-pending .fd-fieldlabel,
+  .fd-disp-add .fd-fieldlabel {
+    color: var(--text);
+    font-size: var(--fs-ui);
+    font-weight: 500;
+    line-height: 1.25;
   }
 
   .fd-disp-row .fd-fieldhint,
   .fd-disp-pending .fd-fieldhint,
   .fd-disp-add .fd-fieldhint,
   .fd-disp-row .fd-fieldwrap > .fd-fielderror {
-    margin-left: calc(200px + var(--sp-3));
+    max-width: 72ch;
+    margin-left: calc(200px + var(--sp-5));
+    line-height: 1.45;
   }
 
   .fd-disp-stations,
@@ -237,7 +315,7 @@
     display: grid;
     grid-template-columns: 200px minmax(0, 1fr);
     align-items: center;
-    column-gap: var(--sp-3);
+    column-gap: var(--sp-5);
   }
 
   .fd-disp-stations > legend,
@@ -251,33 +329,14 @@
   .fd-disp-modes > .fd-seg {
     grid-column: 2;
   }
-
-  .fd-disp-row > .fd-disp-check {
-    margin-left: calc(200px + var(--sp-3));
-  }
-
-  .fd-disp-bind {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .fd-disp-bind > .fd-fieldwrap {
-    flex: none;
-  }
-
-  .fd-disp-bind > button {
-    align-self: flex-start;
-    margin-left: calc(200px + var(--sp-3));
-  }
 }
 
+/* The link that the add panel made: the text, the URL and its actions, the QR code at the right. */
 .fd-disp-link {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
   gap: var(--sp-2) var(--sp-4);
-  padding-top: var(--sp-3);
-  border-top: 1px solid var(--border-soft);
 }
 
 .fd-disp-link > :not(.fd-disp-qr) {
@@ -335,6 +394,11 @@
 .fd-disp-confirm > p {
   flex: 1 1 12rem;
   margin: 0;
+}
+
+/* The ghost answer on the --raised row: the --raised hover would be the fill of the row (1:1). */
+.fd-disp-confirm > .fd-ghost:hover:not(:disabled) {
+  background-color: var(--badge-bg);
 }
 
 /* ── the Desktop panel of a station card (Computer Use) ───────────────────────────────────── */
