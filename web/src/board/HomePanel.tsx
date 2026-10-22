@@ -1,6 +1,6 @@
 // The secondary part of the fleet home's ops panel (DL-141, DESIGN-SYSTEM §4.4): Activity, Mail &
 // tasks, Assign and Usage. From 1280 px (the wide ops column) Mail & tasks is an always-visible
-// section, and Activity and Assign are ghost buttons in a foot row that open their panel above
+// section, and Activity, Assign and Usage are ghost buttons in a foot row that open their panel above
 // it. Under 1280 px and on the phone the panel folds under the board as tabs.
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { AssignActions } from '../assign/assign';
@@ -101,7 +101,6 @@ export function HomePanel({
   request,
   onState,
   wide = false,
-  usageShown = false,
   waiting = [],
 }: {
   hasAssign: boolean;
@@ -120,14 +119,14 @@ export function HomePanel({
   onState?: ((open: PanelTab | null) => void) | undefined;
   /** The wide ops column (from 1280 px): the Mail & tasks section and the foot buttons. */
   wide?: boolean | undefined;
-  /** The usage glance shows above (wide): no Usage button in the foot. */
-  usageShown?: boolean | undefined;
   /** The waiting mail rows of the Mail & tasks section (wide). */
   waiting?: readonly MailWaiting[] | undefined;
 }) {
   const [state, setState] = useState<PanelState>(() => readPanel(hasAssign));
   const seen = useRef<number | null>(null);
   const mailRef = useRef<HTMLDivElement>(null);
+  /** Counts the wide requests for Mail & tasks: each one opens the new-mail form (the `c` key). */
+  const [composeSeq, setComposeSeq] = useState(0);
   const seq = request?.seq;
   const asked = request?.tab;
   useEffect(() => {
@@ -139,8 +138,11 @@ export function HomePanel({
     };
     setState(next);
     writePanel(next);
-    // Wide, Mail & tasks is a section of the column: bring it into view.
-    if (wide && next.tab === 'mail') mailRef.current?.scrollIntoView?.({ block: 'nearest' });
+    // Wide, Mail & tasks is a section of the column: open its form and bring it into view.
+    if (wide && next.tab === 'mail') {
+      setComposeSeq((n) => n + 1);
+      mailRef.current?.scrollIntoView?.({ block: 'nearest' });
+    }
   }, [seq, asked, hasAssign, wide]);
   const set = (next: PanelState) => {
     setState(next);
@@ -151,8 +153,9 @@ export function HomePanel({
       ? 'activity'
       : state.tab;
   const tabs = PANEL_TABS.filter((t) => (t !== 'assign' || hasAssign) && !(guest && t === 'mail'));
-  // Wide: Mail & tasks is a section, and Usage is the glance when it shows.
-  const foot = tabs.filter((t) => t !== 'mail' && !(usageShown && t === 'usage'));
+  // Wide: Mail & tasks is a section. Usage stays in the foot: the glance shows only the tightest
+  // meters, and the Usage panel keeps every meter and the unknown parts.
+  const foot: readonly PanelTab[] = tabs.filter((t) => t !== 'mail');
   const shown = state.open && (!wide || foot.includes(tab)) ? tab : null;
   useEffect(() => onState?.(shown), [onState, shown]);
   const body = (
@@ -177,6 +180,7 @@ export function HomePanel({
               sessions={sessions}
               stations={stations}
               layout="section"
+              composeSeq={composeSeq}
               waiting={waiting}
             />
           </div>

@@ -37,6 +37,8 @@ type Props = {
   readonly layout?: 'tab' | 'section' | undefined;
   /** The waiting mail rows of the section layout. */
   readonly waiting?: readonly MailWaiting[] | undefined;
+  /** Section layout: each new value opens the "New mail or task" fold and focuses its text. */
+  readonly composeSeq?: number | undefined;
 };
 
 /** Who gets the mail: one session, a station, a repository, or everyone. */
@@ -58,7 +60,14 @@ const keyOf = (s: DeckSession) => `${s.station_id}/${s.summary.session_id}`;
 const nameOf = (s: DeckSession) => s.summary.callsign ?? s.summary.title ?? s.summary.session_id;
 
 /** Mail and tasks for one session of the fleet (M3 6-2 / 6-4). */
-export function FleetPanel({ actions, sessions, stations, layout = 'tab', waiting = [] }: Props) {
+export function FleetPanel({
+  actions,
+  sessions,
+  stations,
+  layout = 'tab',
+  waiting = [],
+  composeSeq,
+}: Props) {
   const live = sessions.filter((s) => s.status !== 'ended');
   const [target, setTarget] = useState('');
   const [text, setText] = useState('');
@@ -75,6 +84,23 @@ export function FleetPanel({ actions, sessions, stations, layout = 'tab', waitin
   const settingsEnv = useSettings();
   const { ask: askElevation, node: elevationNode } = useFleetElevation(settingsEnv);
   const [, redraw] = useState(0);
+  const [composeOpen, setComposeOpen] = useState(false);
+  const textRef = useRef<HTMLTextAreaElement>(null);
+  // The value at mount is not a request: a request is a change after it.
+  const composeSeen = useRef(composeSeq);
+  const composeFocus = useRef(false);
+  useEffect(() => {
+    if (composeSeq === undefined || composeSeq === composeSeen.current) return;
+    composeSeen.current = composeSeq;
+    composeFocus.current = true;
+    setComposeOpen(true);
+  }, [composeSeq]);
+  // Focus the text after the fold is open (a closed fold hides its form).
+  useEffect(() => {
+    if (!composeOpen || !composeFocus.current) return;
+    composeFocus.current = false;
+    textRef.current?.focus();
+  }, [composeOpen, composeSeq]);
   useEffect(() => {
     if (actions === undefined) return undefined;
     let current = true;
@@ -192,6 +218,14 @@ export function FleetPanel({ actions, sessions, stations, layout = 'tab', waitin
       })
       .finally(() => setBusy(false));
   };
+  // The outcome of a send, a revoke or a renew. The section layout shows it outside the fold, so
+  // that a grant's outcome shows while the form is closed.
+  const resultNote =
+    result === null ? null : (
+      <p className="fd-note" role="status">
+        {result.text}
+      </p>
+    );
   const form = (
     <form
       className="fd-fleet-form"
@@ -256,7 +290,12 @@ export function FleetPanel({ actions, sessions, stations, layout = 'tab', waitin
       )}
       <label>
         Text
-        <textarea value={text} onChange={(event) => setText(event.target.value)} rows={2} />
+        <textarea
+          ref={textRef}
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          rows={2}
+        />
       </label>
       <label className="fd-check">
         <input type="checkbox" checked={steer} onChange={(e) => setSteer(e.target.checked)} />
@@ -289,11 +328,7 @@ export function FleetPanel({ actions, sessions, stations, layout = 'tab', waitin
       {audience !== 'one' && targets.length === 0 && owed === null ? (
         <p className="fd-note">No live session matches.</p>
       ) : null}
-      {result === null ? null : (
-        <p className="fd-note" role="status">
-          {result.text}
-        </p>
-      )}
+      {layout === 'tab' ? resultNote : null}
       {many === null ? null : (
         <>
           <p className="fd-note" role="status">
@@ -479,12 +514,17 @@ export function FleetPanel({ actions, sessions, stations, layout = 'tab', waitin
             ))}
           </ul>
         )}
-        <details className="fd-fleet-compose">
+        <details
+          className="fd-fleet-compose"
+          open={composeOpen}
+          onToggle={(e) => setComposeOpen(e.currentTarget.open)}
+        >
           <summary>New mail or task</summary>
           {form}
         </details>
         {access}
         {grantList}
+        {resultNote}
         {elevationNode}
       </section>
     );

@@ -101,7 +101,7 @@ describe('usage meters (DL-303)', () => {
     expect(html).not.toContain('aria-label="Usage"');
   });
 
-  test('a reset time reads as a countdown, or as a clock time after a day (R4.1)', () => {
+  test('a reset time reads as a countdown, or as a weekday and a clock time after a day (R4.1)', () => {
     const min = 60_000;
     expect(resetsText(NOW + 5 * min, NOW)).toBe('resets in 5 min');
     expect(resetsText(NOW + 60 * min, NOW)).toBe('resets in 1 h');
@@ -109,7 +109,8 @@ describe('usage meters (DL-303)', () => {
     expect(resetsText(NOW - 1, NOW)).toBe('reset due');
     const later = new Date(NOW + 30 * 60 * min);
     const hhmm = `${String(later.getHours()).padStart(2, '0')}:${String(later.getMinutes()).padStart(2, '0')}`;
-    expect(resetsText(later.getTime(), NOW)).toBe(`resets at ${hhmm}`);
+    const day = later.toLocaleDateString(undefined, { weekday: 'short' });
+    expect(resetsText(later.getTime(), NOW)).toBe(`resets ${day} ${hhmm}`);
   });
 
   test('the warning chip starts at 80% and turns to a hazard at 100% (R4.2)', () => {

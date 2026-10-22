@@ -147,8 +147,8 @@ const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
 
 /**
- * When a window resets: "resets in 2 h 10 min", "resets at 14:30" (local
- * time) when it is more than a day away, "reset due" when the time is past (R4.1).
+ * When a window resets: "resets in 2 h 10 min", "resets Mon 14:30" (local
+ * weekday and time) when it is more than a day away, "reset due" when the time is past (R4.1).
  */
 export function resetsText(resetsAt: number, now: number): string {
   const ms = resetsAt - now;
@@ -156,7 +156,8 @@ export function resetsText(resetsAt: number, now: number): string {
   if (ms > DAY_MS) {
     const d = new Date(resetsAt);
     const pad = (n: number) => String(n).padStart(2, '0');
-    return `resets at ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const day = d.toLocaleDateString(undefined, { weekday: 'short' });
+    return `resets ${day} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
   const minutes = Math.ceil(ms / MINUTE_MS);
   const h = Math.floor(minutes / 60);

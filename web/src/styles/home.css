@@ -1719,6 +1719,21 @@
   width: auto;
   min-width: 0;
 }
+/* The phone header has no room for the label: Share board is a 44px icon button, and the text
+   stays as its accessible name (§4.3). */
+.fd-home[data-layout="phone"] .fd-home-share {
+  flex: none;
+  width: var(--tap-min);
+  padding: 0;
+}
+.fd-home[data-layout="phone"] .fd-home-share-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 .fd-home[data-layout="phone"] .fd-filters-menu .fd-menu-body {
   top: calc(100% - 4px);
   left: var(--sp-4);

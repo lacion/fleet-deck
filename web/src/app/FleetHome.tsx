@@ -18,7 +18,7 @@ import { record } from '../board/activity';
 import { FleetBoard, type FleetGroup } from '../board/FleetBoard';
 import { HomePanel, type PanelTab, useWideOps } from '../board/HomePanel';
 import { NeedsYouRail } from '../board/NeedsYouRail';
-import { hasGlance, UsageGlance } from '../board/UsageGlance';
+import { UsageGlance } from '../board/UsageGlance';
 import { limitChip, rateMeters } from '../board/usage';
 import type { FleetActions } from '../fleet/fleet';
 import type { DeckSession, SessionKey, StationView } from '../gen';
@@ -453,7 +453,7 @@ export function FleetHome({
       {canShare(people) ? (
         <button
           type="button"
-          className="fd-ghost fd-sm fd-home-share"
+          className={phone ? 'fd-iconbtn fd-home-share' : 'fd-ghost fd-sm fd-home-share'}
           title="Share board…"
           onClick={() =>
             openShare({ kind: 'board', target: '', label: 'Every session of the deck' })
@@ -560,7 +560,6 @@ export function FleetHome({
       request={panelRequest}
       onState={setOpenTab}
       wide={wide}
-      usageShown={wide && hasGlance(visible, stations)}
       waiting={waitingMail}
     />
   );

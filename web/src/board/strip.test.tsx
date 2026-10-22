@@ -331,7 +331,7 @@ describe('flight deck fixes', () => {
     expect(phone).not.toContain('fd-home-bell');
   });
 
-  test('wide, the ops panel has a Mail & tasks section and Activity and Assign foot buttons', () => {
+  test('wide, the ops panel has a Mail & tasks section and Activity, Assign and Usage foot buttons', () => {
     const actions: FleetActions = {
       mail: async () => ({ ok: true, text: '' }),
       task: async () => ({ ok: true, text: '' }),
@@ -344,26 +344,23 @@ describe('flight deck fixes', () => {
       give: async () => ({ ok: true, text: '' }),
       changeAccess: async () => ({ ok: true, text: '' }),
     };
-    const panel = (usageShown: boolean) =>
-      renderToStaticMarkup(
-        <HomePanel
-          hasAssign
-          guest={false}
-          stations={[station()]}
-          sessions={[card('a')]}
-          visible={[card('a')]}
-          feed={[]}
-          fleet={actions}
-          assign={undefined}
-          onOpen={() => {}}
-          onSpawn={() => {}}
-          request={undefined}
-          wide
-          usageShown={usageShown}
-          waiting={[{ key: 'station-a/a', name: 'heron-mc2q', count: 1 }]}
-        />,
-      );
-    const html = panel(true);
+    const html = renderToStaticMarkup(
+      <HomePanel
+        hasAssign
+        guest={false}
+        stations={[station()]}
+        sessions={[card('a')]}
+        visible={[card('a')]}
+        feed={[]}
+        fleet={actions}
+        assign={undefined}
+        onOpen={() => {}}
+        onSpawn={() => {}}
+        request={undefined}
+        wide
+        waiting={[{ key: 'station-a/a', name: 'heron-mc2q', count: 1 }]}
+      />,
+    );
     expect(html).toContain('data-layout="section" aria-label="Mail and tasks"');
     expect(html).toContain('<span class="fd-count">1</span>');
     expect(html).toContain('1 mail waiting');
@@ -375,8 +372,7 @@ describe('flight deck fixes', () => {
     );
     expect(html).toContain('</svg> Activity</button>');
     expect(html).toContain('</svg> Assign</button>');
-    expect(html).not.toContain('Usage</button>');
-    // no usage glance: the foot keeps a Usage button
-    expect(panel(false)).toContain('</svg> Usage</button>');
+    // The glance shows only the tightest meters: the foot keeps the full Usage panel.
+    expect(html).toContain('</svg> Usage</button>');
   });
 });
