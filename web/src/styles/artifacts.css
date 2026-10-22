@@ -14,15 +14,14 @@
   margin: 0;
   padding: 0;
   list-style: none;
-  border-top: 1px solid var(--border-soft);
 }
 
+/* Rules only between the rows: the page header or the tab row draws the rule above the list. */
 .fd-art-list > li {
   border-bottom: 1px solid var(--border-soft);
 }
-/* The page header already draws a rule over the global list: no second rule. */
-.fd-art-page .fd-art-list {
-  border-top: 0;
+.fd-art-list > li:last-child {
+  border-bottom: 0;
 }
 
 /* One artifact: a 36px row. Kind icon, title, where, kind, version and age in fixed columns. */
@@ -105,15 +104,8 @@
   color: var(--dim);
 }
 
-/* The filters sit in the page header at the right of the title (§4.3): the search field, then
-   the three selects. A narrow main column wraps them under the title. */
-.fd-art-page > .fd-page-head {
-  flex-wrap: wrap;
-}
-.fd-art-page > .fd-page-head > .fd-page-actions {
-  flex: 0 1 auto;
-  min-width: 0;
-}
+/* The filters sit in the Page filters slot (page.css .fd-page-filters, §4.3): the search field,
+   then the three selects. A narrow main column wraps them under the title. */
 .fd-art-filters {
   display: flex;
   flex-wrap: wrap;

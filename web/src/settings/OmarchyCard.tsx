@@ -160,7 +160,7 @@ export function gateActions(actions: OmarchyActions, gate: Gate): OmarchyActions
 
 /** Something runs on the station: an action, or the provisioning. */
 export const stationBusy = (status: OmarchyStatus): boolean =>
-  status.running !== null || (status.provision !== null && status.provision.bootstrap_running);
+  status.running !== null || status.provision?.bootstrap_running === true;
 
 export type WatchEnv = {
   readonly sleep: (ms: number) => Promise<void>;

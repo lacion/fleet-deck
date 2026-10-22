@@ -372,7 +372,7 @@ export function WatchPage({
     </>
   );
   return (
-    <Page title="Watch" className="fd-watch" description={summary} actions={filters} wide>
+    <Page title="Watch" className="fd-watch" description={summary} filters={filters} wide>
       {matching.length > MAX_TILES && !focusOn ? (
         <p className="fd-note">
           Showing {MAX_TILES} of {matching.length} sessions. Filter to see the others.

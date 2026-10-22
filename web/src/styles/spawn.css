@@ -381,6 +381,13 @@
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
+/* Forced colors drop the box-shadow ring of the selected station pill: give it an outline. */
+@media (forced-colors: active) {
+  .fd-spawn-station:has(> input:checked):not(:has(> input:focus-visible)) {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
 .fd-spawn-station > .fd-wide {
   font-size: var(--fs-ui);
 }

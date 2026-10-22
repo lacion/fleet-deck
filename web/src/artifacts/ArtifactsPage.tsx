@@ -230,7 +230,7 @@ function Loaded({
     </form>
   );
   return (
-    <Page title="Artifacts" className="fd-art-page" actions={filterForm} wide>
+    <Page title="Artifacts" className="fd-art-page" filters={filterForm} wide>
       <ArtifactsListBody
         state={state}
         filtered={filtered}

@@ -1231,17 +1231,11 @@ button.fd-composer-model > .fd-icon {
   max-width: none;
 }
 /* The Artifacts tab (§4.7, concept B list rows): the kind badge and the version follow the title,
-   the age stays at the right. Only separators between the rows: no rule above the first row and
-   none under the last, so that one artifact is not a box. */
+   the age stays at the right. artifacts.css draws only separators between the rows, so that one
+   artifact is not a box. */
 .fd-pane-body[data-tab="artifacts"] .fd-art-row:not(:has(> .fd-art-where)) {
   grid-template-columns: 14px auto auto auto minmax(0, 1fr) 48px;
   grid-template-areas: "icon title kind version . age";
-}
-.fd-pane-body[data-tab="artifacts"] .fd-art-list {
-  border-top: 0;
-}
-.fd-pane-body[data-tab="artifacts"] .fd-art-list > li:last-child {
-  border-bottom: 0;
 }
 .fd-pane[data-layout="phone"] .fd-pane-body {
   padding: var(--sp-3);
@@ -1521,13 +1515,13 @@ span.fd-dl-n {
   margin-inline: var(--sp-4) var(--sp-2);
 }
 /* A plain button on the --raised turn strip ("Hide the diff", "Revert to here", Cancel) is one
-   fill step up (--raised-hi), so that it shows on the strip in the dark theme, where --btn-edge is
-   transparent; the light theme also keeps the hairline edge that a panel gives it. Hover steps
-   once more toward the text. */
+   fill step up (--raised-hi) and has the --btn-edge-raised edge of a plain button on a --raised
+   layer (§2.1), so that it shows on the strip in both themes. Hover steps once more toward the
+   text. */
 .fd-turns li > button.fd-sm:not(.fd-danger),
 .fd-turns li > .fd-confirm > button.fd-sm:not(.fd-danger) {
   background: var(--raised-hi);
-  border-color: var(--btn-edge);
+  border-color: var(--btn-edge-raised);
 }
 .fd-turns li > button.fd-sm:not(.fd-danger):hover:not(:disabled),
 .fd-turns li > .fd-confirm > button.fd-sm:not(.fd-danger):hover:not(:disabled) {
@@ -2043,7 +2037,7 @@ button.fd-cchip:hover:not(:disabled) {
 @media (pointer: coarse) {
   .fd-files-row,
   .fd-files-crumbs {
-    min-height: var(--row-h-touch, var(--tap-min));
+    min-height: var(--row-h-touch);
   }
   .fd-files-go {
     width: var(--tap-min);
@@ -2213,4 +2207,16 @@ button.fd-cchip:hover:not(:disabled) {
 }
 .fd-fleet-answers-time {
   white-space: nowrap;
+}
+
+/* Forced colors drop the box-shadow edge of the composer: give it an outline. */
+@media (forced-colors: active) {
+  .fd-composer {
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
+  .fd-composer:focus-within {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
 }

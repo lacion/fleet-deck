@@ -112,6 +112,7 @@
   background: var(--surface);
   border-top: 1px solid var(--border-soft);
   overflow-x: auto;
+  scroll-padding-inline: var(--sp-3);
   scrollbar-width: none;
   /* the keys go on past the right edge: a 24px fade says so (the mask reads only the alpha) */
   mask-image: linear-gradient(to right, var(--text) calc(100% - var(--sp-5)), transparent);

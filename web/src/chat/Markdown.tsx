@@ -123,6 +123,13 @@ const components: Components = {
 
 const stillComponents: Components = {
   ...components,
+  // The wall has no control: a link is its text, an image its alt text (or its address).
+  a: ({ node: _node, children }: ComponentProps<'a'> & { node?: unknown }) => (
+    <span>{children}</span>
+  ),
+  img: ({ node: _node, alt, src }: ComponentProps<'img'> & { node?: unknown }) => (
+    <span>{alt || src || ''}</span>
+  ),
   pre: ({ node: _node, children }: ComponentProps<'pre'> & { node?: unknown }) => (
     <StillCodeBlock>{children}</StillCodeBlock>
   ),
@@ -131,7 +138,8 @@ const stillComponents: Components = {
 /**
  * `comments` (DL-179): the short ids of the comments that the caller may see. A token of one of
  * them in the text becomes a chip; `onComment` opens the thread. Without `comments` nothing changes.
- * `readOnly`: the code blocks have no copy button (the wall display has no control).
+ * `readOnly`: the code blocks have no copy button, and links and images are plain text (the wall
+ * display has no control).
  */
 export const Markdown = memo(function Markdown({
   text,

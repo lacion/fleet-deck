@@ -139,7 +139,7 @@ function ShareRow({
       </td>
       <td data-label="Role">
         <span className="fd-cellbadges">
-          <span className="fd-cell-dim">{ROLE[share.role]}</span>
+          <span>{ROLE[share.role]}</span>
           {share.role !== 'viewer' ? (
             <span className="fd-badge" data-tone="muted">
               {share.steering === 'mob' ? 'Mob' : 'Open'}
@@ -156,7 +156,9 @@ function ShareRow({
       <td data-label="Members">
         {share.members.length === 0 ? 'No members yet' : share.members.join(', ')}
       </td>
-      <td data-label="Uses left">{share.uses_left}</td>
+      <td data-label="Uses left" className="fd-num">
+        {share.uses_left}
+      </td>
       <td
         data-label="Expires"
         title={day(state === 'revoked' ? (share.revoked_at ?? 0) : share.expires_at)}
@@ -321,7 +323,9 @@ export function SharesView({
                 <th scope="col">Shared</th>
                 <th scope="col">Role</th>
                 <th scope="col">Members</th>
-                <th scope="col">Uses left</th>
+                <th scope="col" className="fd-num">
+                  Uses left
+                </th>
                 <th scope="col">Expires</th>
                 <th scope="col">
                   <span className="fd-vh">Actions</span>
@@ -357,7 +361,6 @@ export function SharesView({
   return (
     <Page
       title="Shares"
-      wide
       description={
         <>
           People join through a link. A revoke ends the link and every login that came from it. See{' '}

@@ -84,7 +84,7 @@
   margin-left: 0;
 }
 .fd-page-desc {
-  max-width: 80ch;
+  max-width: min(80ch, 100%);
   margin: calc(-1 * var(--sp-2)) 0 0;
   color: var(--dim);
   font-size: var(--fs-ui);
@@ -94,7 +94,7 @@
 }
 /* A wide page (tables, the wall) has room for a longer summary line. */
 .fd-page[data-wide="true"] .fd-page-desc {
-  max-width: 110ch;
+  max-width: min(110ch, 100%);
 }
 @media (max-width: 640px) {
   .fd-page {

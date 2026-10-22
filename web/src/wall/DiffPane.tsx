@@ -1,7 +1,7 @@
 // R13 P1: the read-only diff of the focus and review modes: the working tree of a session against
 // its base commit. The review mode adds the sent review comments; no comment control shows.
 import { useMemo } from 'react';
-import { Diff } from '../chat/Diff';
+import { Diff, FileStatusBadge } from '../chat/Diff';
 import { diffLineKinds, fileHeads, isPlumbing } from '../chat/diffLines';
 import type { DeckSession } from '../gen';
 import type { ReviewActions } from '../review/api';
@@ -49,6 +49,7 @@ function WallDiff({ patch, truncated }: { readonly patch: string; readonly trunc
               <span className="fd-dl-path">
                 <PathText path={head.path} />
               </span>
+              <FileStatusBadge status={head.status} />
               {head.add > 0 || head.del > 0 ? (
                 <span className="fd-dl-stat">
                   {head.add > 0 ? <span data-sign="add">{`+${head.add}`}</span> : null}

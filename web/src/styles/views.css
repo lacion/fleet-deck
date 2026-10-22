@@ -43,17 +43,7 @@
 }
 
 /* ── Watch: the header (§4.3) ───────────────────────────────────── */
-/* The filters sit in the page header at the right of the title; a narrow main column wraps them
-   under the title. */
-.fd-watch > .fd-page-head {
-  flex-wrap: wrap;
-}
-
-.fd-watch > .fd-page-head > .fd-page-actions {
-  flex: 0 1 auto;
-  min-width: 0;
-}
-
+/* The filters sit in the Page filters slot (page.css .fd-page-filters). */
 .fd-watch-needs {
   color: var(--act);
   font-weight: 600;
@@ -630,6 +620,11 @@
     width: auto;
     border-radius: var(--r-pill);
     padding: 0 var(--sp-3);
+  }
+
+  /* The pill strip scrolls sideways, so it clips an outward ring: the ring goes inside the pill. */
+  .fd-achan:focus-visible {
+    outline-offset: -2px;
   }
 
   /* the phone pill: the pressed-chip look of base.css (fill, control edge, weight 600) */

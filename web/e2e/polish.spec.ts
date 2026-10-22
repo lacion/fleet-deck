@@ -239,11 +239,8 @@ test('4a: in forced colors the home renders and its controls keep an edge', asyn
 });
 
 test('4b: in forced colors the session renders and its controls keep an edge', async ({ page }) => {
-  // DEFECT (session area, web/src/styles/session.css `.fd-composer`): the composer dock draws its
-  // edge with a box-shadow ring and its textarea has `border: 0`. Forced colors drop box-shadow,
-  // so the composer has no visible edge in Windows High Contrast. Remove test.fail() when the
-  // dock (or its textarea) keeps a border or an outline in `@media (forced-colors: active)`.
-  test.fail();
+  // The composer dock draws its edge with a box-shadow ring and its textarea has `border: 0`.
+  // Forced colors drop box-shadow, so session.css gives the dock an outline there.
   await forcedColors(page);
   await goTo(page, `#/s/${LIGHTING}/${OTTER}`);
   const pane = page.getByRole('region', { name: 'Session' });

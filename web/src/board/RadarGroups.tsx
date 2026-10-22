@@ -27,7 +27,7 @@ type Props = {
 
 /** Whether the panel groups by project: some group belongs to a project. */
 export const hasProjectGroups = (radar: RadarAnswer | null): radar is RadarAnswer =>
-  radar !== null && radar.groups.some((g) => g.project_id !== null);
+  radar?.groups.some((g) => g.project_id !== null) === true;
 
 /** `<remote>/<default>` of a project, as the "Will conflict" row names the default branch. */
 function defaultName(project: Project | undefined): string {

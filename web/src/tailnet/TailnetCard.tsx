@@ -108,7 +108,6 @@ function CertificateSection({
   const line = certificateLine(cert);
   return (
     <div className="fd-tailnet-cert">
-      <h3>Trusted certificate</h3>
       {cert?.owner_files === true ? (
         <p className="fd-note" data-note="owner-files">
           Your own certificate files (board.crt) are used for every name. Remove them to use the

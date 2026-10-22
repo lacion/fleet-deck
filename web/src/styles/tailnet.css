@@ -43,25 +43,21 @@
   grid-column: 2;
 }
 .fd-tailnet-auto > :not(label),
-.fd-tailnet-cert > :not(label, h3) {
+.fd-tailnet-cert > :not(label) {
   margin-left: calc(200px + var(--sp-5));
   font-size: var(--fs-meta);
   line-height: 1.45;
 }
-/* Narrow screens: the label goes above its switch, like the settings fields. */
+/* Narrow screens: the switch ends the label row (touch settings), like the settings fields; the
+   help and the state lines go under both. */
 @media (max-width: 720px) {
   .fd-tailnet label.fd-tailnet-switch {
-    grid-template-columns: minmax(0, 1fr);
-    row-gap: 6px;
+    grid-template-columns: minmax(0, 1fr) auto;
     color: var(--dim);
     font-size: var(--fs-meta);
   }
-  .fd-tailnet label.fd-tailnet-switch > .fd-switch {
-    grid-row: 2;
-    grid-column: 1;
-  }
   .fd-tailnet-auto > :not(label),
-  .fd-tailnet-cert > :not(label, h3) {
+  .fd-tailnet-cert > :not(label) {
     margin-left: 0;
   }
 }
@@ -81,8 +77,9 @@
   padding-top: var(--sp-3);
   border-top: 1px solid var(--border-soft);
 }
-/* The addresses: rows 36px, faint dividers, a dim header (§4.7 tables). The columns hug their
-   values, 32px apart; an address never breaks. */
+/* The addresses: rows 36px, faint dividers, a dim header (§4.7 tables). The row names take the
+   label column of the field grid, so that "Board address" starts on the switch column; the
+   address columns hug their values, 32px apart; an address never breaks. */
 .fd-tailnet-table {
   justify-self: start;
   width: auto;
@@ -102,7 +99,7 @@
   padding-right: 0;
 }
 .fd-tailnet-table th:first-child {
-  width: 120px;
+  width: calc(200px + var(--sp-5));
 }
 .fd-tailnet-table thead th {
   height: 28px;

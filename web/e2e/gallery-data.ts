@@ -643,7 +643,7 @@ export const stationFields: FieldMeta[] = [
     danger: true,
     help: 'Sessions and shells can work only inside these folders.',
   }),
-  meta('model_help.enabled', 'Model help', 'bool', {
+  meta('model_help.enabled', 'Write titles and digests', 'bool', {
     help: 'A small model writes session titles and digests.',
   }),
 ];

@@ -795,7 +795,7 @@
     --chat-tabs-h: var(--tap-min);
   }
 }
-/* The phone tab row keeps 136px clear for the menu (session.css); "Show (7 hidden)" fits. */
+/* The phone tab row keeps the measured width of the menu clear (session.css, tabReserve.ts). */
 [data-layout="phone"] .fd-pane-chat > .fd-chat:first-child > .fd-chat-filters {
   padding-right: var(--sp-2);
   padding-left: var(--sp-1);

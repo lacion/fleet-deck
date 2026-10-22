@@ -973,6 +973,28 @@
 
 /* ── the phone: the slots join the meta line, the property label sits above its values ── */
 @media (max-width: 640px) {
+  /* A plan row: the note that explains Start comes before the actions; the general action takes
+     the full width, the other actions an even two-column grid under it. */
+  .fd-plan-list article > .fd-note {
+    order: 2;
+  }
+
+  .fd-plan-list article > .fd-plan-actions {
+    grid-column: 1 / -1;
+    grid-row: auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    order: 3;
+  }
+
+  .fd-plan-list article > .fd-plan-actions > :first-child {
+    grid-column: 1 / -1;
+  }
+
+  .fd-plan-list article > :is([role="status"], [role="alert"], .fd-plan-assign) {
+    order: 4;
+  }
+
   /* The no-desktop note takes its own line under the toggles (after every open fold). */
   @supports selector(::details-content) {
     .fd-station-folds > .fd-note {

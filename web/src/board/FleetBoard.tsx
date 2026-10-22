@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { formatHash } from '../app/routes';
-import { basename, relativeAge } from '../app/sessions';
+import { basename, relativeAge, stationOrder } from '../app/sessions';
 import type {
   CardStatus,
   DeckSession,
@@ -325,12 +325,12 @@ export function FleetCard({
   );
 }
 
-/** The swimlane order: the known stations first, then the other station ids. */
+/** The swimlane order: the known stations first, then the other station ids (the sidebar order). */
 function laneOrder(sessions: readonly DeckSession[], stations: readonly StationView[]): string[] {
-  const present = new Set(sessions.map((s) => s.station_id));
-  const known = stations.map((s) => s.station_id).filter((id) => present.has(id));
-  const rest = [...present].filter((id) => !known.includes(id)).sort();
-  return [...new Set([...known, ...rest])];
+  return stationOrder(
+    sessions.map((s) => s.station_id),
+    stations,
+  );
 }
 
 const isCleared = (card: DeckSession, refs: ReadonlySet<string>) =>

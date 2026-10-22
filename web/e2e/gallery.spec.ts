@@ -157,6 +157,16 @@ test('08 new session', async ({ page }) => {
   await themed(page, '08', 'new-session');
 });
 
+test('08b new session other model', async ({ page }) => {
+  await setUp(page);
+  await goTo(page, '#/new');
+  const form = page.getByRole('region', { name: 'New session' });
+  await expect(form).toBeVisible();
+  await form.getByLabel('Model (optional)').selectOption('__other__');
+  await form.getByLabel('Model id or alias').fill('sonnet');
+  await themed(page, '08b', 'new-session-other-model');
+});
+
 test('09 stations', async ({ page }) => {
   await setUp(page);
   await goTo(page, '#/stations');
