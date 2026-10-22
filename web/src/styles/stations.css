@@ -1,12 +1,8 @@
-/* The Plans and Stations screens: plans, station cards, shells and the worktree inventory
-   (moved out of shell.css so that an area owns them). The visual primitives come from base.css. */
+/* The Plans and Stations screens ("Flight Deck" v3, docs/v2/DESIGN-SYSTEM.md §4.4 and §4.7):
+   the plan library, the station panels, their folds (Desktop, Details, Shells, Worktrees) and
+   the worktree inventory. The visual primitives come from base.css. */
 
-/* The Add station button does not stretch. */
-.fd-stations > button {
-  justify-self: start;
-}
-
-/* ---------- Plans ---------- */
+/* ════════════════════════════ Plans ════════════════════════════ */
 
 .fd-plans {
   display: grid;
@@ -17,232 +13,402 @@
 .fd-plan-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--sp-2);
+  gap: var(--sp-1);
   align-items: center;
 }
 
+/* The library: one --surface panel, a plan per row, rows divided by the faintest rule. */
 .fd-plan-list {
-  list-style: none;
+  display: grid;
   margin: 0;
   padding: 0;
-  display: grid;
-  gap: var(--sp-3);
-}
-
-.fd-plan-list article {
-  display: grid;
-  gap: var(--sp-3);
-  min-width: 0;
-  padding: var(--sp-4);
+  list-style: none;
   background: var(--surface);
-  border: 1px solid var(--border);
   border-radius: var(--r-panel);
 }
 
-.fd-plan-list h3 {
-  margin: 0;
-  font-size: var(--fs-title);
-  font-weight: 600;
-  overflow-wrap: anywhere;
+.fd-plan-list > :where(li + li) {
+  border-top: 1px solid var(--border-soft);
 }
 
+/* A plan row: the title over the meta at the left, the actions at the right. */
+.fd-plan-list article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px var(--sp-4);
+  min-width: 0;
+  padding: var(--sp-3) var(--sp-4);
+}
+
+:where(.fd-plan-list article > *) {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+:where(.fd-plan-list article) > :is(h3, .fd-plan-meta) {
+  grid-column: 1;
+}
+
+.fd-plan-list article > .fd-plan-actions {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  justify-content: flex-end;
+}
+
+.fd-plan-list article > h3 {
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--fs-title);
+  font-weight: 600;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The meta line: status badge, station, time, the session. The dots are drawn, not text. */
 .fd-plan-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1) 0;
   margin: 0;
   color: var(--dim);
-  font-size: var(--fs-body);
-  overflow-wrap: anywhere;
+  font-size: var(--fs-meta);
+}
+
+.fd-plan-meta > .fd-plan-status {
+  margin-right: var(--sp-2);
+}
+
+.fd-plan-meta > :not(.fd-plan-status) + :not(.fd-plan-status)::before {
+  content: "·";
+  padding: 0 6px;
+  color: var(--faint);
 }
 
 .fd-plan-meta .fd-link {
   display: inline;
+  text-decoration: none;
   height: auto;
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--focus);
+  font-size: inherit;
+  font-weight: 500;
   line-height: inherit;
+  overflow-wrap: anywhere;
+}
+
+.fd-plan-meta .fd-link:hover:not(:disabled) {
+  background: transparent;
+  text-decoration: underline;
+}
+
+.fd-plan-fold {
+  margin-top: var(--sp-1);
+}
+
+.fd-plan-fold > summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--ctl-h-sm);
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+}
+
+.fd-plan-fold > summary:hover {
   color: var(--text);
 }
 
-.fd-plan-list summary {
-  cursor: pointer;
-  color: var(--dim);
-}
-
-.fd-plan-assign {
-  display: grid;
-  gap: var(--sp-2);
-}
-
-.fd-plan-assign label {
-  display: grid;
-  gap: var(--sp-1);
-  font-size: var(--fs-body);
-  color: var(--dim);
-}
-
-.fd-plan-assign p {
-  margin: 0;
+.fd-plan-fold > .fd-note {
+  margin-top: var(--sp-1);
 }
 
 .fd-plan-text {
-  margin: var(--sp-2) 0 0;
-  padding: 8px 10px;
+  margin: var(--sp-1) 0 var(--sp-1);
+  padding: 10px var(--sp-3);
   background: var(--code);
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
+  border-radius: var(--r-card);
   font-family: var(--font-data);
   font-size: var(--fs-data);
+  line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   max-height: 50vh;
   overflow: auto;
 }
 
-/* ---------- Stations ---------- */
+.fd-plan-list article > .fd-note,
+.fd-plan-list article > [role="status"],
+.fd-plan-list article > [role="alert"] {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--fs-meta);
+}
+
+/* The assignment: a short form under the row. */
+.fd-plan-assign {
+  display: grid;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border-soft);
+}
+
+.fd-plan-assign label {
+  display: grid;
+  gap: var(--sp-1);
+  max-width: 560px;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+}
+
+.fd-plan-assign p {
+  margin: 0;
+}
+
+@media (max-width: 760px) {
+  /* A wrapped meta line has no leading dot: the parts sit 12 px apart. */
+  .fd-plan-meta {
+    column-gap: var(--sp-3);
+  }
+
+  .fd-plan-meta > :not(.fd-plan-status) + :not(.fd-plan-status)::before {
+    content: none;
+  }
+
+  .fd-plan-meta > .fd-plan-status {
+    margin-right: 0;
+  }
+
+  .fd-plan-list article {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fd-plan-list article > .fd-plan-actions {
+    grid-column: 1;
+    grid-row: auto;
+    justify-content: flex-start;
+    margin-top: var(--sp-2);
+  }
+
+  .fd-plan-list article > h3 {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
+/* ═══════════════════════════ Stations ══════════════════════════ */
 
 .fd-stations {
-  display: grid;
-  gap: var(--sp-3);
   overflow-wrap: anywhere;
   min-width: 0;
+}
+
+/* The config reference line under the page header. */
+.fd-station-reference {
+  align-items: center;
+  min-height: var(--ctl-h);
+}
+
+.fd-station-reference .fd-note {
+  margin: 0;
 }
 
 .fd-station-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--sp-3);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+/* A station: a --surface panel with a header, the property rows, then the folds. */
 .fd-station {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: var(--sp-3);
   align-content: start;
   min-width: 0;
-  padding: var(--sp-4);
   overflow-wrap: anywhere;
-}
-
-.fd-station-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--sp-2) var(--sp-3);
-}
-
-.fd-station h3.fd-station-name {
-  margin: 0;
-  font-family: var(--font-callsign);
-  font-size: var(--fs-18);
-  font-weight: 600;
-}
-
-.fd-station-health {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-2);
-  font-size: var(--fs-body);
-  color: var(--ok);
-}
-
-.fd-station-health[data-health="down"] {
-  color: var(--hazard);
-}
-
-.fd-station-health[data-health="stale"] {
-  color: var(--dim);
-}
-
-.fd-station-menu {
-  margin-left: auto;
-}
-
-/* The live facts: one line, 16 px apart. */
-.fd-station-live {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--sp-2) var(--sp-4);
-  font-size: var(--fs-body);
-  color: var(--dim);
-}
-
-.fd-station-load {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-2);
-}
-
-/* The disk, memory and CPU rows of a station card (DL-193). */
-.fd-station-res {
-  display: grid;
-  gap: var(--sp-1);
-  margin: 6px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.fd-station-res li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--sp-2);
-  font-size: var(--fs-12);
-  color: var(--dim);
-}
-
-.fd-station-res li[data-low] > span:last-child {
-  color: var(--act);
-}
-
-.fd-station h4 {
-  margin: 0;
-  font-family: var(--font-ui);
-  font-size: var(--fs-micro);
-  font-weight: 500;
-  color: var(--faint);
 }
 
 .fd-station p {
   margin: 0;
 }
 
-/* Facts: a compact two-column grid; a label is faint, a value is mono. */
-.fd-station .fd-facts {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
+/* ── the header: name, platform, reach; the slots and the menu at the right ── */
+.fd-station-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: var(--sp-1) var(--sp-3);
-  margin: 0;
+  min-height: var(--ctl-h);
+  padding: var(--sp-3) var(--sp-3) 0 var(--sp-4);
 }
 
-.fd-station .fd-facts dt {
-  font-family: var(--font-data);
-  font-size: var(--fs-data);
+/* A station name is a place: the wide width (§2.3, the same values as .fd-wide). */
+.fd-station h3.fd-station-name {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--fs-heading);
+  font-stretch: 115%;
+  font-weight: 620;
+  line-height: 1.15;
+}
+
+.fd-station-head > .fd-station-traits {
+  color: var(--dim);
+}
+
+.fd-station-health {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+
+.fd-station-health[data-health="down"] {
+  color: var(--hazard);
+}
+
+/* The reach glyph. A link is not work: an online station shows a still, filled --ok dot
+   (the concept's "● online"), never the turning working arc. */
+.fd-station-health[data-health="up"] .fd-dot {
+  /* ds-exception: pending primitive .fd-dot[data-status="online"] */
+  width: 8px;
+  height: 8px;
+  margin: 0 2px;
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+.fd-station-health[data-health="up"] .fd-dot::before {
+  content: none;
+}
+
+/* A stale board does not know the link: a hollow ring. */
+.fd-station-health[data-health="stale"] .fd-dot {
+  border-color: var(--faint);
+}
+
+.fd-station-health[data-health="stale"] .fd-dot::after {
+  content: none;
+}
+
+/* The session slots: "3 of 12 sessions" with a slot meter. */
+.fd-station-load {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-left: auto;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  white-space: nowrap;
+}
+
+.fd-station-load .fd-load-bar {
+  width: 72px;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.fd-station-load .fd-load-bar > span,
+.fd-station-load .fd-load-bar > span[data-high] {
+  background: var(--ok);
+}
+
+/* Up to 24 slots draw as the ticks of .fd-slots (6×12 px, 2 px apart): a mask cuts the bar
+   into ticks, so the used share fills whole ticks. */
+.fd-station-load .fd-load-bar[data-slots] {
+  width: calc(var(--slots) * 8px - 2px);
+  height: 12px;
+  border-radius: 0;
+  mask:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='12'%3E%3Crect width='6' height='12' rx='1.5'/%3E%3C/svg%3E")
+    0 0 / 8px 12px repeat-x;
+}
+
+.fd-station-menu {
+  display: flex;
+}
+
+/* ── the meta line: last seen, config, the stale note ─────────────── */
+.fd-station-live {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 0;
+  padding: 2px var(--sp-4) var(--sp-3);
+  color: var(--faint);
+  font-size: var(--fs-meta);
+}
+
+.fd-station-live > * + *::before {
+  content: "·";
+  padding: 0 6px;
   color: var(--faint);
 }
 
-.fd-station .fd-facts dd {
+.fd-station-live > .fd-note {
+  color: inherit;
+}
+
+/* ── the property rows: a label column and the values (concept B) ─── */
+.fd-station-props {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
+  gap: var(--sp-2) var(--sp-5);
+  padding: var(--sp-3) var(--sp-4);
+  border-top: 1px solid var(--border-soft);
+}
+
+.fd-station-prop {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: start;
+  gap: 0 var(--sp-3);
+  min-width: 0;
+}
+
+.fd-station-prop-label {
+  margin: 0;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  line-height: 28px;
+}
+
+.fd-station-prop > .fd-note {
+  align-self: center;
+  min-height: 28px;
   display: flex;
   align-items: center;
-  gap: var(--sp-1);
-  min-width: 0;
-  margin: 0;
-  font-family: var(--font-data);
-  font-size: var(--fs-data);
 }
 
-.fd-station .fd-facts dd .fd-iconbtn {
-  flex: none;
-}
-
-.fd-station-providers {
+.fd-station-prop-body {
   display: grid;
   gap: var(--sp-1);
+  min-width: 0;
+}
+
+.fd-station-taildrive,
+.fd-station-prop-note {
+  grid-column: 1 / -1;
+}
+
+/* Providers: name and version, the sign-in state as a glyph and words. */
+.fd-station-providers {
+  display: grid;
   margin: 0;
   padding: 0;
   list-style: none;
-  font-family: var(--font-ui);
-  font-size: 13px;
 }
 
 .fd-station-providers > li {
@@ -250,34 +416,242 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--sp-1) var(--sp-3);
+  gap: 0 var(--sp-3);
+  min-height: 28px;
+  font-weight: 500;
+}
+
+.fd-station-providers > li + li {
+  border-top: 1px solid var(--border-soft);
 }
 
 .fd-station-auth {
   display: inline-flex;
   align-items: center;
-  gap: var(--sp-2);
+  gap: 6px;
   color: var(--dim);
-}
-
-.fd-station-auth[data-auth="ok"] {
-  color: var(--ok);
+  font-size: var(--fs-meta);
+  font-weight: 400;
 }
 
 .fd-station-auth[data-auth="hazard"] {
   color: var(--hazard);
 }
 
-.fd-station-auth .fd-dot {
-  background: currentColor;
-  border-color: currentColor;
+.fd-station-auth[data-auth="muted"] {
+  color: var(--faint);
 }
 
-.fd-shells {
-  margin-top: var(--sp-2);
+/* Signed in: a filled --ok dot; signed out: the --hazard ring with a slash; unknown: hollow. */
+.fd-station-auth[data-auth="ok"] .fd-dot {
+  /* ds-exception: pending primitive .fd-dot[data-status="online"] */
+  width: 8px;
+  height: 8px;
+  margin: 0 2px;
+  background: var(--ok);
+  border-color: var(--ok);
 }
 
-/* The summary names the fold; the section keeps its label for the region. */
+.fd-station-auth[data-auth="hazard"] .fd-dot {
+  border-color: var(--hazard);
+}
+
+.fd-station-auth[data-auth="hazard"] .fd-dot::after {
+  content: "";
+  left: 50%;
+  top: -1.5px;
+  bottom: -1.5px;
+  width: 1.5px;
+  background: var(--hazard);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.fd-station-auth[data-auth="muted"] .fd-dot {
+  border-color: var(--faint-decor);
+}
+
+/* Resources (DL-193): a short bar and the words per disk, memory and CPU. */
+.fd-station-res {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fd-station-res li {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--sp-3);
+  min-height: 28px;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+
+.fd-station-res .fd-load-bar {
+  width: 56px;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.fd-station-res .fd-load-bar > span {
+  background: var(--dim);
+  border-radius: inherit;
+}
+
+.fd-station-res .fd-load-bar > span[data-high] {
+  background: var(--act);
+}
+
+.fd-station-res li[data-low] > span:last-child {
+  color: var(--act);
+}
+
+/* The busiest sessions: a name, then the CPU and the memory in fixed columns. */
+.fd-station-res-head {
+  margin-top: var(--sp-1);
+  color: var(--faint);
+}
+
+.fd-station-busy li {
+  grid-template-columns: minmax(0, 1fr) 56px 72px;
+  min-height: 24px;
+}
+
+.fd-station-res.fd-station-busy li > span {
+  text-align: right;
+}
+
+.fd-station-busy a {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-station-prop .fd-res-warn {
+  margin: var(--sp-1) 0 0;
+}
+
+/* Taildrive shares (FG-12). */
+.fd-station-shares {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fd-station-shares > li {
+  display: grid;
+  gap: 2px;
+  min-height: 28px;
+  padding: 6px 0;
+  align-content: center;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+
+.fd-station-shares > li + li {
+  border-top: 1px solid var(--border-soft);
+}
+
+.fd-station-shares .fd-wt-note {
+  margin: 0;
+  color: var(--faint);
+  font-size: var(--fs-meta);
+}
+
+.fd-station-shares .fd-wt-note[data-tone="act"] {
+  color: var(--act);
+}
+
+/* ── the folds: Desktop, Details, Shells, Worktrees ─────────────────── */
+.fd-station-folds {
+  display: grid;
+  border-top: 1px solid var(--border-soft);
+}
+
+.fd-station-folds > :where(*) {
+  min-width: 0;
+  margin: 0;
+  padding: 0 var(--sp-4);
+}
+
+.fd-station-folds > :where(* + *) {
+  border-top: 1px solid var(--border-soft);
+}
+
+/* The Desktop fold (displays.css) sits flush like the others. */
+.fd-station-folds > .fd-desk {
+  margin-top: 0;
+}
+
+.fd-station-folds > .fd-desk:not([open]) {
+  gap: 0;
+}
+
+.fd-station-folds > details > summary {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  transition: color var(--t-fast);
+}
+
+.fd-station-folds > details > summary:hover,
+.fd-station-folds > details[open] > summary {
+  color: var(--text);
+}
+
+.fd-station-folds > details[open] {
+  padding-bottom: var(--sp-3);
+}
+
+/* A fold without content (no desktop) is a quiet line of the same height. */
+.fd-station-folds > p {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  color: var(--faint);
+}
+
+/* Details: a compact two-column grid; a label is sans, a code-like value is mono. */
+.fd-station .fd-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: var(--sp-1) var(--sp-4);
+  margin: 0;
+}
+
+.fd-station .fd-facts dt {
+  color: var(--faint);
+  font-size: var(--fs-meta);
+}
+
+.fd-station .fd-facts dd {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-width: 0;
+  min-height: var(--ctl-h-sm);
+  margin: 0;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+
+.fd-station .fd-facts dd.fd-facts-text {
+  font-family: var(--font-ui);
+  font-size: var(--fs-ui);
+}
+
+.fd-station .fd-facts dd .fd-iconbtn {
+  flex: none;
+}
+
+/* Shells (PLAN §6.8). The summary names the fold; the section keeps its label for the region. */
 .fd-station-sec .fd-shells > h4 {
   display: none;
 }
@@ -290,6 +664,8 @@
 
 .fd-shells p {
   margin: 0;
+  color: var(--dim);
+  font-size: var(--fs-meta);
 }
 
 .fd-shells form {
@@ -301,45 +677,56 @@
 
 .fd-shells form label {
   display: flex;
-  white-space: nowrap;
   flex: 1 1 14rem;
   align-items: center;
   gap: var(--sp-2);
   min-width: 0;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  white-space: nowrap;
 }
 
 .fd-shells form input {
   flex: 1 1 auto;
   min-width: 0;
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
 }
 
-/* Details and Shells: folds with a summary like the Worktrees one. */
-.fd-station-details > summary,
-.fd-station-sec > summary {
-  cursor: pointer;
-}
-
-.fd-station-sec > .fd-station-foot {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.fd-station-foot p {
-  text-align: right;
-}
-
-/* The human shell (PLAN §6.8): a terminal that fits a phone width. */
+/* The human shell: a terminal that fits a phone width. */
 .fd-shells .fd-terminal {
   width: 100%;
   height: 22rem;
-  margin-top: 0.5rem;
+  margin-top: var(--sp-2);
 }
 
-/* The read-only worktree inventory of a station (DL-142). */
+/* The remove confirm: a notice row with a --hazard holder (§4.7). */
+.fd-station-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
+  min-height: 44px;
+  padding: var(--sp-2) var(--sp-3) var(--sp-2) var(--sp-4);
+  border-top: 1px solid var(--border-soft);
+  box-shadow: inset 3px 0 0 var(--hazard);
+  border-radius: 0 0 0 var(--r-panel);
+}
+
+.fd-station-foot > p {
+  flex: 1 1 16rem;
+}
+
+.fd-station-foot-actions {
+  display: flex;
+  gap: var(--sp-1);
+  margin-left: auto;
+}
+
+/* ── the worktree inventory (DL-142) ────────────────────────────── */
 .fd-wt-body {
   display: grid;
   gap: var(--sp-2);
-  margin-top: var(--sp-2);
 }
 
 .fd-wt-body p {
@@ -352,80 +739,82 @@
 
 .fd-wt-list {
   display: grid;
-  gap: var(--sp-2);
+  gap: 6px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+/* A worktree: a compact --raised row with a verdict holder at the left edge. */
 .fd-wt-row {
   display: grid;
-  gap: 6px;
+  gap: 2px;
   min-width: 0;
-  padding: 10px var(--sp-3);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--faint);
+  padding: var(--sp-2) var(--sp-3) var(--sp-2) 15px;
+  background: var(--raised);
   border-radius: var(--r-card);
+  box-shadow:
+    inset 3px 0 0 var(--faint-decor),
+    var(--shadow-lift);
 }
 
 .fd-wt-row[data-verdict="clean"] {
-  border-left-color: var(--ok);
+  box-shadow:
+    inset 3px 0 0 var(--ok),
+    var(--shadow-lift);
 }
 
 .fd-wt-row[data-verdict="has_work"] {
-  border-left-color: var(--act);
+  box-shadow:
+    inset 3px 0 0 var(--act),
+    var(--shadow-lift);
 }
 
 .fd-wt-row[data-verdict="live"] {
-  border-left-color: var(--m-comet);
+  box-shadow:
+    inset 3px 0 0 var(--focus),
+    var(--shadow-lift);
 }
 
-.fd-wt-row .fd-ghost {
-  justify-self: start;
-}
-
-.fd-wt-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--sp-2);
-}
-
-.fd-wt-confirm {
-  display: grid;
-  gap: var(--sp-2);
-}
-
-.fd-wt-body .fd-wt-path {
-  min-width: 0;
-  overflow: hidden;
-  font-family: var(--font-data);
-  font-size: var(--fs-data);
-  color: var(--faint);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.fd-wt-row[data-verdict="trashed"],
+.fd-wt-row[data-verdict="missing"] {
+  box-shadow:
+    inset 3px 0 0 transparent,
+    inset 0 0 0 1px var(--border-soft);
+  background: transparent;
 }
 
 .fd-wt-line {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--sp-2);
+  gap: var(--sp-1) var(--sp-2);
   min-width: 0;
+  min-height: var(--ctl-h-sm);
 }
 
 .fd-wt-name {
   font-family: var(--font-data);
-  font-size: var(--fs-body);
+  font-size: var(--fs-data);
   font-weight: 600;
   color: var(--text);
 }
 
+.fd-wt-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--dim);
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+
 .fd-wt-session {
   margin-left: auto;
-  font-size: var(--fs-data);
-  color: var(--m-comet);
+  color: var(--focus);
+  font-size: var(--fs-meta);
+  font-weight: 500;
   text-decoration: none;
 }
 
@@ -434,20 +823,67 @@
 }
 
 .fd-wt-body .fd-wt-evidence {
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+
+.fd-wt-body .fd-wt-path {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--faint);
   font-family: var(--font-data);
   font-size: var(--fs-data);
-  color: var(--dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .fd-wt-body .fd-wt-note {
-  font-size: var(--fs-data);
   color: var(--faint);
+  font-size: var(--fs-meta);
 }
 
 .fd-wt-body .fd-wt-note[data-tone="act"] {
   color: var(--act);
 }
 
-.fd-wt summary {
-  cursor: pointer;
+.fd-wt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1);
+  margin: 2px 0 0 -8px;
+}
+
+.fd-wt-confirm {
+  display: grid;
+  gap: var(--sp-2);
+  margin-top: var(--sp-1);
+}
+
+.fd-wt-confirm .fd-wt-actions {
+  margin-left: 0;
+}
+
+.fd-wt-confirm .fd-wt-actions input {
+  font-family: var(--font-data);
+  font-size: var(--fs-data);
+}
+
+/* ── the phone: the header wraps, the property label sits above its values ── */
+@media (max-width: 640px) {
+  .fd-station-head {
+    padding-right: var(--sp-2);
+  }
+
+  .fd-station-prop {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fd-station-prop-label {
+    line-height: 24px;
+  }
+
+  .fd-wt-session {
+    margin-left: 0;
+  }
 }

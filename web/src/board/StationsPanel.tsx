@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import { DesktopPanel } from '../desktop/DesktopPanel';
 import { formatHash } from '../app/routes';
 import { basename, relativeAge } from '../app/sessions';
@@ -10,6 +10,7 @@ import {
   Check,
   Copy,
   Ellipsis,
+  GitBranch,
   Icon,
   Plus,
   RotateCcw,
@@ -42,6 +43,9 @@ type Props = {
 };
 
 const NONE = '—';
+
+/** The most slots that the load meter draws as ticks; a larger station gets a plain bar. */
+const MAX_TICKS = 24;
 
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
@@ -231,7 +235,12 @@ export function WorktreeRow({
         <span className="fd-wt-name" title={w.path}>
           {name}
         </span>
-        {w.branch === null ? null : <span className="fd-badge">{w.branch}</span>}
+        {w.branch === null ? null : (
+          <span className="fd-wt-branch">
+            <Icon of={GitBranch} size={12} />
+            {w.branch}
+          </span>
+        )}
         <a
           className="fd-wt-session"
           href={formatHash({
@@ -278,7 +287,12 @@ export function WorktreeRow({
       {trash !== undefined && IN_PROGRESS[trash.state] !== undefined ? (
         <p className="fd-wt-note">{IN_PROGRESS[trash.state]}</p>
       ) : null}
-      {actions === null ? null : <div className="fd-wt-actions">{actions}</div>}
+      {actions === null && command === null ? null : (
+        <div className="fd-wt-actions">
+          {actions}
+          {command === null ? null : <CopyCommand command={command} />}
+        </div>
+      )}
       {purging && onAction !== undefined ? (
         <div className="fd-wt-confirm">
           <p className="fd-wt-note">
@@ -326,7 +340,6 @@ export function WorktreeRow({
           {outcome.text}
         </p>
       )}
-      {command === null ? null : <CopyCommand command={command} />}
     </li>
   );
 }
@@ -518,6 +531,7 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
             >
               <div className="fd-station-head">
                 <h3 className="fd-station-name">{station.name}</h3>
+                <StationTraits traits={info?.traits} />
                 <span
                   className="fd-station-health fd-health"
                   data-health={freshness === 'stale' ? 'stale' : station.reachable ? 'up' : 'down'}
@@ -532,6 +546,30 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                     : station.reachable
                       ? 'Link up'
                       : 'Unreachable'}
+                </span>
+                <span className="fd-station-load">
+                  {info?.max_sessions == null ? null : (
+                    <span
+                      className="fd-load-bar"
+                      aria-hidden="true"
+                      data-slots={
+                        info.max_sessions > 0 && info.max_sessions <= MAX_TICKS ? '' : undefined
+                      }
+                      style={{ '--slots': info.max_sessions } as CSSProperties}
+                    >
+                      <span
+                        style={{ width: loadWidth(active, info.max_sessions) }}
+                        data-high={
+                          info.max_sessions > 0 && active / info.max_sessions >= 0.9
+                            ? ''
+                            : undefined
+                        }
+                      />
+                    </span>
+                  )}
+                  {info?.max_sessions == null
+                    ? `${active} sessions`
+                    : `${active} of ${info.max_sessions} sessions`}
                 </span>
                 {actions?.canAdmin === true ? (
                   <div className="fd-station-menu">
@@ -570,11 +608,6 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                   </div>
                 ) : null}
               </div>
-              {freshness === 'stale' ? (
-                <p className="fd-note">
-                  Last reported: {station.reachable ? 'link up' : 'unreachable'}.
-                </p>
-              ) : null}
               <div className="fd-station-live">
                 <span
                   title={
@@ -587,122 +620,123 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                   Last seen{' '}
                   {station.last_seen === null ? NONE : relativeAge(station.last_seen, now)}
                 </span>
-                <span className="fd-station-load">
-                  {info?.max_sessions == null ? null : (
-                    <span className="fd-load-bar" aria-hidden="true">
-                      <span
-                        style={{ width: loadWidth(active, info.max_sessions) }}
-                        data-high={
-                          info.max_sessions > 0 && active / info.max_sessions >= 0.9
-                            ? ''
-                            : undefined
-                        }
-                      />
-                    </span>
-                  )}
-                  {info?.max_sessions == null
-                    ? `${active} sessions`
-                    : `${active} of ${info.max_sessions} sessions`}
-                </span>
+                {drift.offered ? (
+                  <StationConfigDrift station={station} reference={reference} />
+                ) : null}
+                {freshness === 'stale' ? (
+                  <span>Last reported: {station.reachable ? 'link up' : 'unreachable'}.</span>
+                ) : null}
               </div>
-              <StationTraits traits={info?.traits} />
-              {drift.offered ? (
-                <StationConfigDrift station={station} reference={reference} />
-              ) : null}
-              <StationResources
-                resources={info?.resources}
-                station={station.station_id}
-                sessions={cards}
-              />
-              <DesktopPanel station={station} />
-              {info === null ? (
-                <p className="fd-note">Reported when the station links to this deck.</p>
-              ) : info.providers.length === 0 ? (
-                <p className="fd-note">No provider configured.</p>
-              ) : (
-                <ul className="fd-station-providers" aria-label="Configured providers">
-                  {info.providers.map((p) => (
-                    <li key={p.instance} data-instance={p.instance} title={p.instance}>
-                      <span>
-                        {capitalize(p.provider)}
-                        {p.version === null ? '' : ` ${p.version}`}
-                      </span>
-                      <span
-                        className="fd-station-auth"
-                        data-auth={
-                          p.auth === 'signed_in'
-                            ? 'ok'
-                            : p.auth === 'signed_out'
-                              ? 'hazard'
-                              : 'muted'
-                        }
-                      >
-                        <span className="fd-dot" aria-hidden="true" />
-                        {authLabel(p.auth)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <StationTaildrive taildrive={info?.taildrive} />
-              <details className="fd-station-details">
-                <summary className="fd-label">Details</summary>
-                <dl className="fd-facts">
-                  <dt>Station ID</dt>
-                  <dd>{station.station_id}</dd>
-                  <dt>Key fingerprint</dt>
-                  <dd>
-                    <Fingerprint value={station.key} />
-                  </dd>
-                  <dt>Direction</dt>
-                  <dd>
-                    {station.direction === 'deck_dials'
-                      ? 'Deck dials station'
-                      : station.direction === 'station_dials'
-                        ? 'Station dials deck'
-                        : NONE}
-                  </dd>
-                  <dt>Link address</dt>
-                  <dd>{station.dial_url ?? 'Not stored, the station dials this deck'}</dd>
-                  {info?.version == null ? null : (
-                    <>
-                      <dt>Version</dt>
-                      <dd>{info.version}</dd>
-                    </>
-                  )}
-                </dl>
-              </details>
-              {actions?.canAdmin === true && actions.shells !== undefined ? (
-                <details className="fd-station-sec">
-                  <summary className="fd-label">Shells</summary>
-                  {info?.allow_shell === false ? (
-                    <section className="fd-shells" aria-label={`Shells on ${station.name}`}>
-                      <p className="fd-note">
-                        Shells are off on this station. Set allow_shell = true in station.toml.
-                      </p>
-                    </section>
+              <div className="fd-station-props">
+                <div className="fd-station-prop">
+                  <h4 className="fd-station-prop-label">Providers</h4>
+                  {info === null ? (
+                    <p className="fd-note">Reported when the station links to this deck.</p>
+                  ) : info.providers.length === 0 ? (
+                    <p className="fd-note">No provider configured.</p>
                   ) : (
-                    <ShellPanel
-                      station={station.name}
-                      actions={actions.shells}
-                      disabled={!canPair || !station.reachable}
-                    />
+                    <ul className="fd-station-providers" aria-label="Configured providers">
+                      {info.providers.map((p) => (
+                        <li key={p.instance} data-instance={p.instance} title={p.instance}>
+                          <span>
+                            {capitalize(p.provider)}
+                            {p.version === null ? '' : ` ${p.version}`}
+                          </span>
+                          <span
+                            className="fd-station-auth"
+                            data-auth={
+                              p.auth === 'signed_in'
+                                ? 'ok'
+                                : p.auth === 'signed_out'
+                                  ? 'hazard'
+                                  : 'muted'
+                            }
+                          >
+                            <span className="fd-dot" aria-hidden="true" />
+                            {authLabel(p.auth)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
                   )}
-                </details>
-              ) : null}
-              {actions?.worktrees === undefined ? null : (
-                <Worktrees
-                  station={station.name}
-                  stationId={station.station_id}
-                  load={actions.worktrees}
-                  act={actions.worktreeAction}
-                  now={now}
+                </div>
+                <StationResources
+                  resources={info?.resources}
+                  station={station.station_id}
+                  sessions={cards}
                 />
-              )}
+                <StationTaildrive taildrive={info?.taildrive} />
+              </div>
+              <div className="fd-station-folds">
+                <DesktopPanel station={station} />
+                <details className="fd-station-details">
+                  <summary className="fd-label">Details</summary>
+                  <dl className="fd-facts">
+                    <dt>Station ID</dt>
+                    <dd>{station.station_id}</dd>
+                    <dt>Key fingerprint</dt>
+                    <dd>
+                      <Fingerprint value={station.key} />
+                    </dd>
+                    <dt>Direction</dt>
+                    <dd className="fd-facts-text">
+                      {station.direction === 'deck_dials'
+                        ? 'Deck dials station'
+                        : station.direction === 'station_dials'
+                          ? 'Station dials deck'
+                          : NONE}
+                    </dd>
+                    <dt>Link address</dt>
+                    <dd className={station.dial_url == null ? 'fd-facts-text' : undefined}>
+                      {station.dial_url ?? 'Not stored, the station dials this deck'}
+                    </dd>
+                    {info?.version == null ? null : (
+                      <>
+                        <dt>Version</dt>
+                        <dd>{info.version}</dd>
+                      </>
+                    )}
+                  </dl>
+                </details>
+                {actions?.canAdmin === true && actions.shells !== undefined ? (
+                  <details className="fd-station-sec">
+                    <summary className="fd-label">Shells</summary>
+                    {info?.allow_shell === false ? (
+                      <section className="fd-shells" aria-label={`Shells on ${station.name}`}>
+                        <p className="fd-note">
+                          Shells are off on this station. Set allow_shell = true in station.toml.
+                        </p>
+                      </section>
+                    ) : (
+                      <ShellPanel
+                        station={station.name}
+                        actions={actions.shells}
+                        disabled={!canPair || !station.reachable}
+                      />
+                    )}
+                  </details>
+                ) : null}
+                {actions?.worktrees === undefined ? null : (
+                  <Worktrees
+                    station={station.name}
+                    stationId={station.station_id}
+                    load={actions.worktrees}
+                    act={actions.worktreeAction}
+                    now={now}
+                  />
+                )}
+              </div>
               {actions?.canAdmin === true && confirm === station.name ? (
                 <div className="fd-station-foot">
-                  <p>
-                    Remove {station.name}? Its link closes and its cards leave the board.{' '}
+                  <p>Remove {station.name}? Its link closes and its cards leave the board.</p>
+                  <div className="fd-station-foot-actions">
+                    <button
+                      type="button"
+                      className="fd-ghost fd-sm"
+                      onClick={() => setConfirm(null)}
+                    >
+                      Cancel
+                    </button>
                     <button
                       type="button"
                       className="fd-danger fd-sm"
@@ -716,11 +750,8 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                       }}
                     >
                       Confirm remove
-                    </button>{' '}
-                    <button type="button" className="fd-sm" onClick={() => setConfirm(null)}>
-                      Cancel
                     </button>
-                  </p>
+                  </div>
                 </div>
               ) : null}
             </li>
