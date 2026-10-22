@@ -94,10 +94,15 @@
     width: 180px;
   }
 }
+/* Share board: its full label, and "Share" on a narrow board (its accessible name stays
+   "Share board…"). */
+.fd-home-share-short {
+  display: none;
+}
 /* A narrow board (the main column under 1100px: every desktop with the ops column under about
    1650px) keeps the counts readable: the search folds to its icon until it has the focus or a
-   text, Share board shows its icon only, and from 841 to 960px the sentence drops "on N
-   stations" and a calm "Nothing needs you." next to a conflict. */
+   text, Share board says "Share", and from 841 to 960px the sentence drops "on N stations" and
+   a calm "Nothing needs you." next to a conflict. */
 @container fleet (max-width: 1100px) {
   .fd-home:not([data-layout="phone"]) .fd-home-search {
     width: calc(var(--ctl-h) + 6px);
@@ -132,16 +137,11 @@
     .fd-home-search:is(:focus-within, :has(> input:not(:placeholder-shown))) {
     width: 180px;
   }
-  .fd-home:not([data-layout="phone"]) .fd-home-share {
-    padding: 0 6px;
-  }
   .fd-home:not([data-layout="phone"]) .fd-home-share-text {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
+    display: none;
+  }
+  .fd-home:not([data-layout="phone"]) .fd-home-share-short {
+    display: inline;
   }
 }
 @container fleet (min-width: 841px) and (max-width: 960px) {
@@ -167,18 +167,21 @@
 }
 
 /* ── filters ────────────────────────────────────────────────────── */
-.fd-filters-menu {
-  position: static;
-}
 .fd-filters-menu .fd-menu-body {
   width: min(480px, calc(100vw - 32px));
   gap: var(--sp-3);
   padding: var(--sp-3);
 }
+/* The menu hangs from its button (the .fd-menu is the containing block): from its left edge
+   when it fits in the main column, else from its right edge (FleetHome filtersAlign). */
 .fd-home:not([data-layout="phone"]) .fd-filters-menu .fd-menu-body {
-  top: calc(100% - 4px);
-  right: var(--sp-5);
+  top: calc(100% + 4px);
+  right: 0;
   left: auto;
+}
+.fd-home:not([data-layout="phone"]) .fd-filters-menu[data-align="start"] .fd-menu-body {
+  right: auto;
+  left: 0;
 }
 .fd-filters-row {
   display: grid;
@@ -504,17 +507,36 @@
   margin-left: auto;
   white-space: nowrap;
 }
+/* "All ended": the tools of the ended sessions of every lane, under the last lane at the lane gap,
+   level with the Ended rows. The counts are pills, as "Ended 2". */
 .fd-offline-tools {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-1) var(--sp-2);
-  margin-top: var(--sp-4);
+  margin-top: var(--sp-5);
   padding: 0 2px;
+}
+.fd-offline-tools > .fd-label {
+  margin-right: var(--sp-1);
+}
+.fd-offline-tools .fd-count {
+  margin-left: 2px;
 }
 .fd-offline-report {
   color: var(--dim);
   font-size: var(--fs-meta);
+}
+/* An online station without a session: its head, one --dim line and New session. */
+.fd-lane-none {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-3);
+  padding: 0 2px;
+}
+.fd-lane-none > .fd-note {
+  margin: 0;
 }
 .fd-lanes-empty {
   display: flex;
@@ -777,9 +799,20 @@
 .fd-stripwrap:hover {
   background: var(--raised-hi);
 }
+/* The where column of every strip of the board (--fd-where-w): 168px, wider on a wide board
+   (16% of the fleet column, at most 260px), so a long branch shows. Every strip of the board has
+   the same container width, so the columns stay aligned. */
+.fd-board {
+  --fd-where-w: 168px;
+}
+@container fleet (min-width: 721px) {
+  .fd-board {
+    --fd-where-w: clamp(168px, 16cqi, 260px);
+  }
+}
 .fd-strip {
   display: grid;
-  grid-template-columns: 104px minmax(0, 1fr) auto 168px 88px 64px;
+  grid-template-columns: 104px minmax(0, 1fr) auto var(--fd-where-w) 88px 64px;
   align-items: stretch;
   min-height: var(--strip-h);
   padding-left: 3px;
@@ -856,6 +889,24 @@
 .fd-strip-title > .fd-dot {
   margin-right: 2px;
 }
+/* Unread on a strip is a 6px --focus dot: a bare number after the title read as a count of
+   something unknown. The count stays in its name and its title ("3 unread"). */
+.fd-strip-title > .fd-unread {
+  width: 6px;
+  min-width: 0;
+  height: 6px;
+  margin-left: 2px;
+  padding: 0;
+  overflow: hidden;
+  background: var(--focus);
+  color: transparent;
+  font-size: 0;
+}
+@media (forced-colors: active) {
+  .fd-strip-title > .fd-unread {
+    forced-color-adjust: none;
+  }
+}
 .fd-strip-text {
   flex: 0 1 auto;
   min-width: 0;
@@ -891,8 +942,12 @@
   gap: var(--sp-2);
   color: var(--dim);
 }
-.fd-strip-meta:empty {
+/* No fact to show: no padding (the project label shows only on a narrow strip). */
+.fd-strip-meta:not(:has(> :not(.fd-strip-proj))) {
   padding: 0;
+}
+.fd-strip-proj {
+  display: none;
 }
 .fd-strip-ico {
   display: inline-flex;
@@ -945,23 +1000,25 @@
   flex: none;
   visibility: hidden;
 }
-/* No known changes: the where cell takes the changes column too, so the age stays aligned. */
+/* No known changes: the where cell takes the changes column too, so the age stays aligned and
+   every where cell of the board starts at one x. */
 .fd-strip[data-nochanges="true"] > .fd-strip-where {
   grid-column: span 2;
 }
-/* A lane where no strip has changes drops the changes column: the main cell gets its 88px, and
-   the ages of the lane (its ended fold too) stay in one column. The chip line of the where cell
-   then starts 232px from the right edge (where 168 + age 64). */
+/* A board where no strip has changes drops the changes column: the main cells get its 88px, and
+   the ages stay in one column. It is a choice of the board, not of each lane, so the columns of
+   every lane line up. The chip line of the where cell then starts at where + age from the right
+   edge. */
 @container fleet (min-width: 721px) {
-  .fd-lane:not(:has(.fd-strip:not([data-nochanges="true"]))) .fd-strip {
-    grid-template-columns: 104px minmax(0, 1fr) auto 168px 64px;
+  .fd-board:not(:has(.fd-strip:not([data-nochanges="true"]))) .fd-strip {
+    grid-template-columns: 104px minmax(0, 1fr) auto var(--fd-where-w) 64px;
   }
-  .fd-lane:not(:has(.fd-strip:not([data-nochanges="true"]))) .fd-strip > .fd-strip-where {
+  .fd-board:not(:has(.fd-strip:not([data-nochanges="true"]))) .fd-strip > .fd-strip-where {
     grid-column: auto;
   }
-  .fd-lane:not(:has(.fd-strip:not([data-nochanges="true"]))) .fd-stripwrap > .fd-strip-links {
-    left: calc(100% - 232px + var(--sp-3));
-    max-width: calc(168px - 2 * var(--sp-3));
+  .fd-board:not(:has(.fd-strip:not([data-nochanges="true"]))) .fd-stripwrap > .fd-strip-links {
+    left: calc(100% - var(--fd-where-w) - 64px + var(--sp-3));
+    max-width: calc(var(--fd-where-w) - 2 * var(--sp-3));
   }
 }
 .fd-strip > .fd-strip-changes {
@@ -991,8 +1048,8 @@
   white-space: nowrap;
 }
 /* The chips that are links of their own (PR, issue, project, compare) lie in the strip row: the
-   second line of the where cell (as the PR chip of concept A). The where column starts 320px
-   from the right edge (where 168 + changes 88 + age 64). */
+   second line of the where cell (as the PR chip of concept A). The where column starts at where
+   + changes 88 + age 64 from the right edge. */
 .fd-strip-links {
   display: flex;
   flex-wrap: nowrap;
@@ -1013,12 +1070,12 @@
   z-index: 1;
   pointer-events: none;
   bottom: 3px;
-  left: calc(100% - 320px + var(--sp-3));
-  max-width: calc(168px - 2 * var(--sp-3));
+  left: calc(100% - var(--fd-where-w) - 88px - 64px + var(--sp-3));
+  max-width: calc(var(--fd-where-w) - 2 * var(--sp-3));
   overflow: hidden;
 }
 .fd-stripwrap:has(> .fd-strip[data-nochanges="true"]) > .fd-strip-links {
-  max-width: calc(168px + 88px - 2 * var(--sp-3));
+  max-width: calc(var(--fd-where-w) + 88px - 2 * var(--sp-3));
 }
 .fd-stripwrap:has(> .fd-strip-links > :not(.fd-strip-spacer)) > .fd-strip > .fd-strip-where {
   align-items: flex-start;
@@ -1159,6 +1216,33 @@
     flex-wrap: wrap;
     padding: 0 var(--sp-3) var(--sp-2) calc(3px + var(--sp-3));
   }
+  /* The project is a quiet label of the meta line (a folder icon and the name), not a chip on a
+     third line: the links row keeps only the PR, issue and compare chips. */
+  .fd-strip-meta > .fd-strip-proj {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    min-width: 0;
+    max-width: 132px;
+    color: var(--dim);
+    font-size: var(--fs-meta);
+  }
+  .fd-strip-proj > .fd-icon {
+    flex: none;
+    color: var(--faint);
+  }
+  .fd-strip-proj-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .fd-stripwrap > .fd-strip-links > .fd-int-projectchip {
+    display: none;
+  }
+  .fd-stripwrap > .fd-strip-links:not(:has(> :not(.fd-strip-spacer, .fd-int-projectchip))) {
+    display: none;
+  }
   /* A lane by repo or project: no where cell, so the station name starts the meta line. */
   .fd-strip[data-showstation="true"] {
     grid-template-columns: auto auto minmax(0, 1fr) auto auto;
@@ -1201,15 +1285,32 @@
 }
 
 /* ── ops panel (§4.4) ───────────────────────────────────────────── */
+/* The column never scrolls sideways: its parts and their fields shrink to the column. */
 .fd-ops {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  overflow-x: hidden;
   background: var(--surface);
 }
-.fd-ops > * + * {
+.fd-ops > *,
+.fd-ops-body > *,
+.fd-ops-mail > * {
+  min-width: 0;
+}
+.fd-ops > * + *,
+.fd-ops-body > * + *,
+.fd-ops-mail > * + * {
   border-top: 1px solid var(--border-soft);
+}
+/* Wide: the sections scroll in the body; the foot (HomePanel) is the second row. */
+.fd-ops-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 .fd-ops-sec {
   padding: var(--sp-4);
@@ -1272,19 +1373,27 @@
   color: var(--faint);
   font-size: var(--fs-meta);
 }
+/* The scope of the totals ("6 sessions · all time"), then the totals. */
+.fd-glance-span {
+  margin: var(--sp-5) 0 var(--sp-2);
+  color: var(--dim);
+  font-size: var(--fs-meta);
+}
+.fd-ops-h + .fd-glance-span {
+  margin-top: 0;
+}
 .fd-glance-totals {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--sp-2);
-  margin: var(--sp-5) 0 0;
+  margin: 0;
 }
-.fd-glance-meters:empty + .fd-glance-totals,
-.fd-ops-h + .fd-glance-totals {
-  margin-top: 0;
-}
+/* The value over its label; the values stay on one line when a label wraps ("new input
+   tokens"). */
 .fd-glance-totals > div {
   display: flex;
   flex-direction: column-reverse;
+  justify-content: flex-end;
   gap: 2px;
   min-width: 0;
 }
@@ -1294,9 +1403,11 @@
 }
 .fd-glance-totals dd {
   margin: 0;
+  overflow: hidden;
   color: var(--fuel);
   font-size: var(--fs-heading);
   font-weight: 600;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -1481,17 +1592,26 @@
   padding: 0 var(--sp-3);
   border-top: 1px solid var(--border-soft);
 }
-/* From 1280 px the ops panel is the right column: Usage, Conflict radar, Mail & tasks, then a
-   44px foot row with the Activity and Assign buttons; an open one shows its panel above the
-   foot. */
+/* From 1280 px the ops panel is the right column: a scrolling body (Usage, Conflict radar, Mail &
+   tasks, Fleet access), then a 44px foot row with the Activity, Assign and All usage buttons that
+   never leaves the screen (a grid row, outside the scroller; a sticky foot could not leave its
+   44px parent). An open one shows its panel above the foot, in the lower half of the column. */
 @media (min-width: 1280px) {
   .fd-home[data-layout="desktop"],
   .fd-home[data-layout="tablet"] {
     grid-template-columns: minmax(0, 1fr) var(--rail-w);
     grid-template-rows: minmax(0, 1fr);
   }
-  .fd-home:not([data-layout="phone"]) .fd-ops {
-    overflow-y: auto;
+  .fd-home:not([data-layout="phone"]) .fd-ops[data-wide="true"] {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    overflow: hidden;
+  }
+  .fd-home:not([data-layout="phone"]) .fd-ops[data-wide="true"][data-tab] {
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .fd-home:not([data-layout="phone"]) .fd-ops[data-wide="true"] > .fd-homepanel {
+    margin-top: 0;
   }
   .fd-home:not([data-layout="phone"]) .fd-homepanel {
     margin-top: auto;
@@ -1506,16 +1626,6 @@
     flex: 1 1 0;
     height: auto;
     min-height: 0;
-  }
-  .fd-home:not([data-layout="phone"]) .fd-homepanel[data-wide="true"][data-open="true"] {
-    flex: 1 0 240px;
-  }
-  /* The foot stays in view while the column scrolls. */
-  .fd-home:not([data-layout="phone"]) .fd-ops-foot {
-    position: sticky;
-    bottom: 0;
-    z-index: 1;
-    background: var(--surface);
   }
 }
 .fd-homepanel[data-wide="true"] > .fd-homepanel-body {
@@ -1731,8 +1841,13 @@
   align-items: center;
   gap: 6px;
 }
-.fd-fleet select,
-.fd-fleet textarea {
+.fd-fleet-form,
+.fd-fleet-form > * {
+  min-width: 0;
+}
+.fd-fleet :is(select, textarea, input:not([type="checkbox"], [type="radio"])) {
+  width: 100%;
+  min-width: 0;
   max-width: 100%;
 }
 .fd-fleet-actions {
@@ -1866,6 +1981,60 @@
   flex: none;
   max-width: none;
 }
+
+/* Fleet access (a section of the wide column, or a block of the Mail & tasks tab): one row for
+   each grant with "Change…", and "Give fleet access…" in the look of the "New mail or task"
+   fold. The forms are in dialogs. */
+.fd-ops-access {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.fd-ops-access > .fd-ops-h {
+  margin: 0;
+}
+.fd-fleet-access {
+  display: flex;
+  flex: 1 1 220px;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.fd-access-tab-h {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0;
+}
+.fd-access-list > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--sp-3);
+}
+.fd-access-list > li > button {
+  margin-top: -2px;
+}
+.fd-fleet-give {
+  align-self: flex-start;
+  height: var(--ctl-h);
+  padding: 0 var(--sp-2) 0 0;
+  background: transparent;
+  color: var(--dim);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  transition: color var(--t-fast);
+}
+.fd-fleet-give > .fd-icon {
+  opacity: 0.7;
+}
+.fd-fleet-give:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
+}
+.fd-fleet-give:focus-visible {
+  outline-offset: 1px;
+}
 /* ── phone (§4.8) ───────────────────────────────────────────────── */
 .fd-home[data-layout="phone"] {
   container: fleet / inline-size;
@@ -1894,20 +2063,41 @@
   width: auto;
   min-width: 0;
 }
-/* The phone header has no room for the label: Share board is a 44px icon button, and the text
-   stays as its accessible name (§4.3). */
-.fd-home[data-layout="phone"] .fd-home-share {
-  flex: none;
-  width: var(--tap-min);
-  padding: 0;
+/* The phone has no tooltips: Share board and the needs-you notification switch are rows of one
+   board menu (an ellipsis button after Filters), not two unlabelled icons (§4.8). */
+.fd-home[data-layout="phone"] .fd-filters-menu {
+  position: static;
 }
-.fd-home[data-layout="phone"] .fd-home-share-text {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
+.fd-menu-switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--ctl-h);
+  padding: 0 8px;
+  border-radius: var(--r-ctl);
+  color: var(--text);
+  font-size: var(--fs-ui);
+  font-weight: 500;
+  cursor: pointer;
+}
+.fd-menu-switch > .fd-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--dim);
+}
+.fd-menu-switch-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.fd-menu-switch:hover {
+  background: var(--badge-bg);
+}
+.fd-menu-switch[data-disabled="true"] {
+  color: var(--dim);
+  cursor: default;
+}
+.fd-menu-switch[data-disabled="true"]:hover {
+  background: transparent;
 }
 .fd-home[data-layout="phone"] .fd-filters-menu .fd-menu-body {
   top: calc(100% - 4px);
@@ -1981,6 +2171,14 @@
 .fd-home[data-layout="phone"] .fd-board {
   padding: 0 var(--sp-4);
 }
+/* One lane gap on the phone: the lane head is not a tap target (no 44px row), and an Ended row
+   (a 44px tap target with its 12px text in the middle) gives back the space under its text. */
+.fd-home[data-layout="phone"] .fd-lane-head {
+  min-height: var(--sp-6);
+}
+.fd-home[data-layout="phone"] .fd-lane > .fd-lane-ended:last-child {
+  margin-bottom: calc(-1 * var(--sp-3));
+}
 .fd-home[data-layout="phone"] .fd-strip {
   min-height: 56px;
 }
@@ -2041,7 +2239,7 @@
     padding-top: 0;
   }
   :root[data-density="compact"]
-    .fd-lane:not(:has(.fd-strip:not([data-nochanges="true"])))
+    .fd-board:not(:has(.fd-strip:not([data-nochanges="true"])))
     .fd-stripwrap
     > .fd-strip-links {
     left: auto;
@@ -2086,76 +2284,94 @@
 .fd-access-sec:not(:first-child) {
   padding-top: var(--sp-5);
 }
+/* A sub-heading of a section (Stations, Permissions, Limits) is a 12px .fd-label: under the
+   15px dialog title and the 13px section headings. */
 .fd-access-h {
   margin: 0;
-  color: var(--text);
-  font-size: var(--fs-heading);
-  font-weight: 600;
+}
+/* One row per station or permission: the title (and its description under it) at the left, the
+   switch at the right, on one line. No fill and no box (no box in a box): a rule between the
+   rows (--border: --border-soft is 1.06:1 on the --raised dialog). */
+.fd-access-rows {
+  display: flex;
+  flex-direction: column;
 }
 label.fd-access-row {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: start;
-  gap: 2px var(--sp-3);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
   min-width: 0;
-  padding: var(--sp-2) var(--sp-3);
-  background: var(--raised);
-  border-radius: var(--r-card);
-  box-shadow: var(--shadow-lift);
+  min-height: var(--row-h);
+  padding: var(--sp-2) 0;
   color: var(--text);
   font-size: var(--fs-ui);
   cursor: pointer;
-  transition: background-color var(--t-fast);
 }
-label.fd-access-row > input {
-  grid-row: 1 / span 2;
-  margin: 2px 0 0;
-}
-label.fd-access-row:hover {
-  background: var(--raised-hi);
-}
-label.fd-access-row:has(input:checked) {
-  background: var(--focus-bg);
-  box-shadow: inset 0 0 0 1px var(--focus);
+label.fd-access-row + label.fd-access-row {
+  border-top: 1px solid var(--border);
 }
 label.fd-access-row:has(input:disabled) {
-  opacity: 0.45;
-  cursor: not-allowed;
+  cursor: default;
 }
-label.fd-access-row:has(input:focus-visible) {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
+.fd-access-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 .fd-access-title {
-  grid-column: 2;
-  font-weight: 600;
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 .fd-access-desc {
-  grid-column: 2;
   color: var(--dim);
   font-size: var(--fs-meta);
   font-weight: 400;
 }
-.fd-access-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--sp-2) var(--sp-3);
-}
-.fd-access-grid > div {
+/* A field of an access form (the session, a limit, a mode): the label over the control. */
+.fd-access-field {
   min-width: 0;
 }
-.fd-access-grid label {
+.fd-access-field > label,
+.fd-access-more label {
   display: grid;
   gap: var(--sp-1);
   min-width: 0;
   color: var(--dim);
   font-size: var(--fs-meta);
 }
-.fd-access-grid input,
-.fd-access-grid select {
+.fd-access-field :is(input, select),
+.fd-access-more :is(input:not([type="checkbox"], [type="radio"]), select) {
   width: 100%;
   min-width: 0;
+}
+.fd-access-field > .fd-note {
+  margin: var(--sp-1) 0 0;
+}
+/* The limits of the permissions that are on: two columns. */
+.fd-access-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-3);
+}
+/* The session rules and the desktop limits of a grant (the Fleet access dialog). */
+.fd-access-more {
+  display: grid;
+  gap: var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
+}
+.fd-access-more > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.fd-access-more .fd-fleet-form {
+  flex-basis: 100%;
+}
+.fd-access-more .fd-fleet-list {
+  flex-basis: 100%;
 }
 @media (max-width: 520px) {
   .fd-access-grid {

@@ -17,6 +17,7 @@ import {
   Archive,
   CloudOff,
   Folder,
+  FolderGit2,
   GitBranch,
   Icon,
   Layers,
@@ -116,6 +117,9 @@ export function FleetStrip({
         ? { text: basename(s.cwd), title: `Folder: ${basename(s.cwd)}`, branch: false }
         : null;
   const mail = extra?.mail_pending ?? 0;
+  // The project of the session: a chip (a link of its own) on a wide strip; on a narrow strip a
+  // quiet label of the meta line, so the strip stays two lines (§4.1, concept A phone).
+  const project = projects.find((p) => p.project_id === card.project_id);
   const title = s.title ?? '';
   const changed = total !== undefined && hasChanges(total) ? total : null;
   // A lane by repo or project names the station of each strip: the second line of the where
@@ -190,6 +194,12 @@ export function FleetStrip({
           </span>
         </span>
         <span className="fd-strip-meta">
+          {project === undefined ? null : (
+            <span className="fd-strip-proj" title={`Project ${project.name}`}>
+              <Icon of={FolderGit2} size={12} />
+              <span className="fd-strip-proj-name">{project.name}</span>
+            </span>
+          )}
           {isRiskyMode(s.mode) ? (
             <Ico
               kind="risky"

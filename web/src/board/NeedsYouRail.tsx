@@ -47,6 +47,8 @@ type Props = {
    * renders nothing.
    */
   readonly bellSlot?: HTMLElement | null | undefined;
+  /** The slot is a row of a menu (the phone header): the switch is a labelled switch row. */
+  readonly bellRow?: boolean | undefined;
 };
 
 /** Where a request's session works: its branch, else its folder. */
@@ -67,6 +69,7 @@ export function NeedsYouRail({
   freshness,
   now: given,
   bellSlot,
+  bellRow = false,
 }: Props) {
   const now = useNow(given, 30000);
   const waiting = sessions
@@ -161,7 +164,7 @@ export function NeedsYouRail({
     if (variant !== 'side' && bellSlot === undefined) return null;
     const mini = (
       <div className="fd-rail-mini">
-        <NotifyToggle on={notify} onChange={setNotify} />
+        <NotifyToggle on={notify} onChange={setNotify} row={bellRow} />
       </div>
     );
     if (bellSlot === undefined) return mini;
@@ -347,13 +350,36 @@ function useNotifications(
   }, [sessions, on, onOpen]);
 }
 
-function NotifyToggle(props: { on: boolean; onChange: (on: boolean) => void }) {
+/** The name of the switch: what it turns on (its state is `aria-pressed`, or the switch's own). */
+const NOTIFY_NAME = 'Needs-you notifications';
+
+/**
+ * The needs-you notification switch: an icon toggle whose tooltip says its state, or (`row`, a row
+ * of the phone header menu) a labelled `.fd-switch` row.
+ */
+function NotifyToggle(props: { on: boolean; onChange: (on: boolean) => void; row?: boolean }) {
   const [state, setState] = useState(permission);
   if (state === 'unsupported' || state === 'denied') {
     const text =
       state === 'unsupported'
         ? 'This browser cannot show notifications'
         : "Notifications are blocked in this browser's settings";
+    if (props.row === true) {
+      return (
+        <label className="fd-menu-switch" data-disabled="true">
+          <Icon of={BellOff} />
+          <span className="fd-menu-switch-text">{text}</span>
+          <input
+            type="checkbox"
+            role="switch"
+            className="fd-switch"
+            aria-checked={false}
+            disabled
+            checked={false}
+          />
+        </label>
+      );
+    }
     return (
       <button type="button" className="fd-iconbtn" disabled title={text} aria-label={text}>
         <Icon of={BellOff} />
@@ -370,13 +396,29 @@ function NotifyToggle(props: { on: boolean; onChange: (on: boolean) => void }) {
     storeNotify(enabled);
     props.onChange(enabled);
   };
+  if (props.row === true) {
+    return (
+      <label className="fd-menu-switch">
+        <Icon of={props.on ? Bell : BellOff} />
+        <span className="fd-menu-switch-text">{NOTIFY_NAME}</span>
+        <input
+          type="checkbox"
+          role="switch"
+          className="fd-switch"
+          aria-checked={props.on}
+          checked={props.on}
+          onChange={(event) => void turn(event.target.checked)}
+        />
+      </label>
+    );
+  }
   return (
     <button
       type="button"
       className="fd-iconbtn"
       aria-pressed={props.on}
-      aria-label="Notifications"
-      title={props.on ? 'Notifications are on' : 'Notifications are off'}
+      aria-label={NOTIFY_NAME}
+      title={props.on ? `${NOTIFY_NAME}: on` : `${NOTIFY_NAME}: off`}
       onClick={() => void turn(!props.on)}
     >
       <Icon of={props.on ? Bell : BellOff} />

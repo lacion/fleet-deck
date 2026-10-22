@@ -5,14 +5,13 @@ import type { GrantView } from '../gen';
 import { type SettingsEnv, SettingsProvider } from '../settings/context';
 import { FleetControlFields } from '../spawn/FleetControlFields';
 import { NO_FLEET } from '../spawn/fleetControl';
+import { accessRows, FleetAccess, grantState } from './FleetAccess';
 import { card, station } from '../testing/fleet';
 import type { FleetActions, GrantBody } from './fleet';
 import { FleetPanel } from './FleetPanel';
 import {
-  AccessForm,
   accessBody,
   accessValues,
-  ChangeAccess,
   GiveAccess,
   giveAccess,
   giveCandidates,
@@ -121,6 +120,7 @@ describe('the session select', () => {
         actions={actions()}
         ask={async () => null}
         onChanged={() => {}}
+        onClose={() => {}}
       />,
     );
     expect(html).toContain('aria-label="Give fleet access"');
@@ -142,13 +142,22 @@ describe('the session select', () => {
         actions={actions()}
         ask={async () => null}
         onChanged={() => {}}
+        onClose={() => {}}
       />,
     );
-    expect(html).toContain('<h4 class="fd-access-h">Stations</h4>');
-    expect(html).toContain('Alpha <span class="fd-access-desc">this session</span>');
+    // The form of the session menu's dialog (AccessFields): .fd-label sub-headings, switch rows.
+    expect(html).toContain('<h4 class="fd-label fd-access-h">Stations</h4>');
     expect(html).toContain(
-      '<label class="fd-access-row"><input type="checkbox"/><span class="fd-access-title">Beta</span></label>',
+      '<span class="fd-access-title">Alpha</span><span class="fd-access-desc">The station of this session: always in the access.</span>',
     );
+    expect(html).toContain(
+      '<label class="fd-access-row"><span class="fd-access-text"><span class="fd-access-title">Beta</span></span><input type="checkbox" role="switch" class="fd-switch" aria-checked="false"/></label>',
+    );
+    // Not the spawn form's fleet control fields: no framed boxes.
+    expect(html).not.toContain('<fieldset');
+    expect(html).not.toContain('Sessions it may start');
+    expect(html).not.toContain('Allow starting sessions');
+    expect(html).toContain('<span class="fd-access-title">Start sessions</span>');
   });
 
   test('with no candidate it shows the note and no form', () => {
@@ -160,6 +169,7 @@ describe('the session select', () => {
         actions={actions()}
         ask={async () => null}
         onChanged={() => {}}
+        onClose={() => {}}
       />,
     );
     expect(html).toContain('No running session can receive fleet access.');
@@ -331,61 +341,10 @@ describe('change', () => {
       classes: ['read', 'mail', 'drive', 'spawn', 'desktop', 'capture'],
     });
   });
-
-  test('the form shows the fixed classes disabled and the limits only for new classes', () => {
-    const show = (values: ReturnType<typeof accessValues>, codex = false) =>
-      renderToStaticMarkup(
-        <AccessForm
-          grant={grant}
-          values={values}
-          busy={false}
-          codex={codex}
-          onChange={() => {}}
-          onSave={() => {}}
-          onCancel={() => {}}
-        />,
-      );
-    const base = show(accessValues(grant));
-    expect(base).toContain('aria-label="Change access"');
-    expect(base).toMatch(
-      /<input type="checkbox" disabled="" readOnly="" checked=""\/>desktop \(given only at start\)/,
-    );
-    expect(base).toContain('capture (given only at start)');
-    expect(base).not.toContain('input (given only at start)');
-    expect(base).not.toContain('Session limit');
-    expect(base).not.toContain('Highest Claude mode');
-    expect(base).toContain('Save');
-    expect(base).toContain('Cancel');
-    const more = show({
-      ...accessValues(grant),
-      classes: [...accessValues(grant).classes, 'answer', 'manage'],
-    });
-    expect(more).toContain('Answer limit');
-    expect(more).toContain('Highest Claude mode');
-    expect(more).toContain('<option value="">not allowed</option>');
-    expect(more).not.toContain('Session limit');
-  });
 });
 
 describe('the Codex note', () => {
   const NOTE = 'Codex sees the change when the session resumes.';
-
-  test('the change form shows it for a Codex session only', () => {
-    const show = (codex: boolean) =>
-      renderToStaticMarkup(
-        <AccessForm
-          grant={grant}
-          values={accessValues(grant)}
-          busy={false}
-          codex={codex}
-          onChange={() => {}}
-          onSave={() => {}}
-          onCancel={() => {}}
-        />,
-      );
-    expect(show(true)).toContain(NOTE);
-    expect(show(false)).not.toContain(NOTE);
-  });
 
   test('the give form shows it when the chosen session is a Codex session', () => {
     const html = (provider: 'codex' | 'claude') =>
@@ -397,24 +356,11 @@ describe('the Codex note', () => {
           actions={actions()}
           ask={async () => null}
           onChanged={() => {}}
+          onClose={() => {}}
         />,
       );
     expect(html('codex')).toContain(NOTE);
     expect(html('claude')).not.toContain(NOTE);
-  });
-});
-
-describe('the Change access button', () => {
-  const button = (g: GrantView, ask: (() => Promise<string | null>) | undefined) =>
-    renderToStaticMarkup(
-      <ChangeAccess grant={g} actions={actions()} ask={ask} codex={false} onChanged={() => {}} />,
-    );
-
-  test('shows for a live grant with an ask, and not for a revoked, a non-live or no-ask grant', () => {
-    expect(button(grant, async () => null)).toContain('Change access');
-    expect(button({ ...grant, state: 'revoked' }, async () => null)).not.toContain('Change access');
-    expect(button({ ...grant, live: false }, async () => null)).not.toContain('Change access');
-    expect(button(grant, undefined)).not.toContain('Change access');
   });
 });
 
@@ -435,13 +381,82 @@ describe('the fleet panel', () => {
     );
   };
 
-  test('GiveAccess shows for the owner with a coordinator_live station', () => {
-    expect(render([live], true)).toContain('aria-label="Give fleet access"');
+  test('Give fleet access… shows for the owner with a coordinator_live station', () => {
+    const html = render([live], true);
+    expect(html).toContain('aria-label="Fleet access"');
+    expect(html).toContain('</svg> Give fleet access…</button>');
+    // The form is in a dialog: the panel shows only the button.
+    expect(html).not.toContain('aria-label="Give fleet access"');
+    expect(html).not.toContain('fd-switch');
   });
 
-  test('GiveAccess is not rendered without a coordinator_live station, or for a login that is not the owner', () => {
+  test('Give fleet access… is not rendered without a coordinator_live station, or for a login that is not the owner', () => {
     expect(render([old], true)).not.toContain('Give fleet access');
     expect(render([station('station-a')], true)).not.toContain('Give fleet access');
     expect(render([live], false)).not.toContain('Give fleet access');
+  });
+});
+
+describe('the fleet access rows', () => {
+  const rows = (grants: readonly GrantView[], owner = true) =>
+    renderToStaticMarkup(
+      <SettingsProvider env={owner ? ({} as SettingsEnv) : (undefined as never)}>
+        <FleetAccess
+          sessions={[card('coord-1', 'working', 'station-a', { title: 'Plan the release' })]}
+          stations={[live]}
+          grants={grants}
+          actions={actions()}
+          layout="section"
+          onChanged={() => {}}
+        />
+      </SettingsProvider>,
+    );
+
+  test('lists the grants that are not revoked, with the count in the heading', () => {
+    expect(accessRows([grant, { ...grant, grant_id: 'r', state: 'revoked' }])).toEqual([grant]);
+    const html = rows([grant, { ...grant, grant_id: 'r', state: 'revoked' }]);
+    expect(html).toContain('<section class="fd-ops-sec fd-ops-access" aria-label="Fleet access">');
+    expect(html).toMatch(
+      /<h2 class="fd-ops-h"><svg[\s\S]*?<\/svg> Fleet access<span class="fd-count">1<\/span><\/h2>/,
+    );
+    expect(html).toContain('aria-label="Coordinator grants"');
+    expect(html).toContain(
+      '<span class="fd-ops-row-title" id="fd-grant-g">Plan the release</span>',
+    );
+    // A short row: the kind and the state; the classes and limits are its title and its dialog.
+    expect(html).toContain(
+      '<span class="fd-ops-row-sub" data-state="active">Coordinator · active</span>',
+    );
+    expect(html).toContain(
+      'title="read, mail, drive, spawn, desktop, capture, spawned 0 of 3: active"',
+    );
+  });
+
+  test('the rows: active grants first; the state says waiting, active, expired (idle)', () => {
+    const waiting: GrantView = { ...grant, grant_id: 'w', generation: null };
+    const idle: GrantView = { ...grant, grant_id: 'i', state: 'expired', revoked_reason: 'idle' };
+    expect(accessRows([idle, grant, waiting]).map((g) => g.grant_id)).toEqual(['g', 'w', 'i']);
+    expect(grantState(waiting)).toBe('waiting for its session');
+    expect(grantState(idle)).toBe('expired (idle)');
+    expect(grantState({ ...idle, revoked_reason: 'ttl' })).toBe('expired');
+  });
+
+  test('a row opens the session dialog with Change…; no inline Revoke, Renew or form', () => {
+    const html = rows([grant]);
+    expect(html).toContain('aria-describedby="fd-grant-g">Change…</button>');
+    for (const text of ['Revoke', 'Renew', 'Change access', 'Change session rules', '<form'])
+      expect(html).not.toContain(text);
+  });
+
+  test('a grant of a session that is not on the board has its row and Change… too', () => {
+    const html = rows([{ ...grant, session_id: 'gone' }]);
+    expect(html).toContain(
+      '<span class="fd-ops-row-title" id="fd-grant-g">Coordinator gone</span>',
+    );
+    expect(html).toContain('aria-describedby="fd-grant-g">Change…</button>');
+  });
+
+  test('no grant and nothing to give: no section', () => {
+    expect(rows([{ ...grant, state: 'revoked' }], false)).toBe('');
   });
 });
