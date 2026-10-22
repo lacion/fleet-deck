@@ -423,31 +423,35 @@ describe('spawn form (P4-4)', () => {
     expect(JSON.stringify(posts[2])).not.toContain('workspace');
   });
 
-  test('the form is a column of panels with a head each and a primary submit button (DL-141)', () => {
+  test('the form is a sheet: title, task, property rows, options and a footer (DESIGN-SYSTEM §4.6)', () => {
     const html = form([reported()]);
-    for (const head of ['Where', 'Agent', 'Task']) {
+    for (const head of ['Agent', 'Where']) {
       expect(html).toContain(`<h3 class="fd-label">${head}</h3>`);
     }
-    // The task comes first: the prompt, then the title, then the batch option.
+    // The title, then the task, then the property rows, the options and the footer.
     const order = [
-      '>Task<',
-      'What should the agent do? (optional)',
       'Title (optional)',
-      'Batch:',
-      '>Where<',
+      'What should the agent do? (optional)',
       '>Agent<',
+      '>Where<',
       'More options',
+      'Batch: one session per line',
+      '>Cancel<',
+      '>Start session<',
     ].map((t) => html.indexOf(t));
     expect(order.every((at) => at >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
-    expect(html).toContain('<textarea rows="5"');
+    expect(html).toContain('placeholder="Session title (optional)"');
+    expect(html).toContain('<textarea rows="6" placeholder="What should the agent do?"');
     expect(html).not.toContain('First prompt');
-    // Where and Agent pickers sit in one row each; the options are folded and closed.
-    expect(html.match(/class="fd-spawn-row"/g)).toHaveLength(2);
+    // Agent and Where are one property row each; the options are folded and closed.
+    expect(html.match(/class="fd-spawn-prop"/g)).toHaveLength(2);
     expect(html).toContain(
-      '<details class="fd-panel fd-spawn-options"><summary class="fd-label">More options</summary>',
+      '<details class="fd-spawn-options"><summary class="fd-label">More options</summary>',
     );
-    expect(html).toContain('<label class="fd-spawn-opt"><input type="checkbox"/>Batch:');
+    // Batch is a switch in the footer; Cancel goes back to the fleet.
+    expect(html).toMatch(/<input type="checkbox" role="switch" class="fd-switch"[^>]*\/>Batch:/);
+    expect(html).toContain('<a class="fd-btn fd-ghost" href="#/">Cancel</a>');
     expect(html).not.toContain('fd-batch-preview');
     expect(html).not.toContain('fd-recent');
   });

@@ -1,6 +1,15 @@
-/* The terminal layer (DL-141, UI-DESIGN §6): xterm view, touch key bar, terminal dock. */
+/* The terminal layer (DESIGN-SYSTEM.md §4.5, last bullet): the xterm view on --code, the touch key
+   bar, and the terminal dock: a --surface bar of 32px with tabs like the session tabs. */
 
-/* terminal */
+/* The ANSI colors that no board token carries (Terminal.tsx termTheme reads them). */
+:root {
+  --term-cyan: #5ccfe6; /* ds-exception: the terminal's ANSI palette */
+}
+[data-theme="light"] {
+  --term-cyan: #0e7490; /* ds-exception: the terminal's ANSI palette */
+}
+
+/* ── terminal ───────────────────────────────────────────────────── */
 .fd-term {
   position: relative;
   display: flex;
@@ -18,7 +27,7 @@
 }
 .fd-term-screen {
   position: absolute;
-  inset: 8px 4px 8px 10px;
+  inset: var(--sp-2) var(--sp-1) var(--sp-2) var(--sp-3);
 }
 .fd-term-screen .xterm {
   height: 100%;
@@ -31,8 +40,9 @@
 }
 .fd-term-screen .xterm-viewport {
   scrollbar-width: thin;
-  scrollbar-color: var(--faint) transparent;
+  scrollbar-color: var(--border) transparent;
 }
+/* Connecting, or the shell ended: one quiet line and its actions in the middle. */
 .fd-term-overlay {
   position: absolute;
   inset: 0;
@@ -44,28 +54,29 @@
   background: var(--code);
   color: var(--dim);
   font-family: var(--font-ui);
-  font-size: var(--fs-body);
+  font-size: var(--fs-ui);
 }
 .fd-term-overlay p {
   margin: 0;
 }
+/* A floating note over the terminal (an image paste). */
 .fd-term-note {
   position: absolute;
   top: var(--sp-2);
-  right: var(--sp-2);
-  max-width: calc(100% - 2 * var(--sp-2));
-  padding: var(--sp-1) var(--sp-2);
-  border: 1px solid var(--border);
-  border-radius: var(--r-ctl);
-  background: var(--surface);
-  color: var(--dim);
-  font-family: var(--font-ui);
-  font-size: var(--fs-body);
-  pointer-events: none;
+  right: var(--sp-3);
   z-index: 1;
+  max-width: calc(100% - 2 * var(--sp-3));
+  padding: var(--sp-1) var(--sp-3);
+  background: var(--raised);
+  color: var(--dim);
+  border-radius: var(--r-ctl);
+  box-shadow: var(--shadow-pop);
+  font-family: var(--font-ui);
+  font-size: var(--fs-meta);
+  line-height: 20px;
+  pointer-events: none;
 }
 .fd-term-note[data-tone="error"] {
-  border-color: var(--hazard);
   background: var(--hazard-bg);
   color: var(--hazard);
 }
@@ -73,38 +84,45 @@
   display: flex;
   gap: var(--sp-2);
 }
-/* The ask bar over the terminal: a program asks to copy text (NV-06). */
+/* The ask bar over the terminal: a program asks to copy text (NV-06). A notice with a holder. */
 .fd-term-copy {
   flex: none;
   display: flex;
   flex-direction: column;
-  gap: var(--sp-1);
-  padding: var(--sp-2);
-  border-bottom: 1px solid var(--border);
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
   background: var(--surface);
+  border-bottom: 1px solid var(--border-soft);
+  box-shadow: inset 3px 0 0 var(--focus);
   color: var(--dim);
   font-family: var(--font-ui);
-  font-size: var(--fs-body);
+  font-size: var(--fs-ui);
 }
 .fd-term-copy p {
   margin: 0;
 }
 .fd-term-copy-preview {
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--code);
+  border-radius: var(--r-chip);
+  color: var(--text);
   font-family: var(--font-data);
   font-size: var(--fs-data);
-  color: var(--text);
   overflow-wrap: anywhere;
 }
-
-/* key bar */
+/* ── key bar (touch) ────────────────────────────────────────────── */
 .fd-keybar {
   display: flex;
-  gap: 6px;
-  padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
-  border-top: 1px solid var(--border-soft);
-  background: var(--surface);
   flex-wrap: nowrap;
+  gap: var(--sp-1);
+  padding: var(--sp-1) var(--sp-2) calc(var(--sp-1) + env(safe-area-inset-bottom));
+  background: var(--surface);
+  border-top: 1px solid var(--border-soft);
   overflow-x: auto;
+  scrollbar-width: none;
+}
+.fd-keybar::-webkit-scrollbar {
+  display: none;
 }
 .fd-keybar-key {
   flex: 1 0 auto;
@@ -112,15 +130,21 @@
   height: 36px;
   min-height: 36px;
   padding: 0 var(--sp-3);
-  font-family: var(--font-data);
-  font-size: 12px;
+  background: var(--raised);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-meta);
+  font-weight: 500;
 }
-.fd-keybar-key[aria-pressed="true"] {
-  border-color: var(--text);
-  background: var(--border);
+/* Ctrl is armed: the selected look (a fill step and the blue edge). */
+.fd-keybar-key[aria-pressed="true"],
+.fd-keybar-key[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--focus-bg);
+  color: var(--focus);
+  box-shadow: inset 0 0 0 1px var(--focus);
 }
 
-/* dock */
+/* ── dock ───────────────────────────────────────────────────────── */
 .fd-tdock {
   position: relative;
   display: flex;
@@ -138,16 +162,16 @@
   display: none;
 }
 
-/* resize handle: a 6 px hit area, a 2 px amber line on hover and focus */
+/* The resize handle: a 6px hit area, a 2px blue line on hover and focus. */
 .fd-tdock-handle {
   position: absolute;
   top: -3px;
   left: 0;
   right: 0;
+  z-index: 2;
   height: 6px;
   cursor: row-resize;
   touch-action: none;
-  z-index: 2;
   outline: none;
 }
 .fd-tdock-handle::after {
@@ -157,7 +181,7 @@
   right: 0;
   top: 2px;
   height: 2px;
-  background: var(--act);
+  background: var(--focus);
   opacity: 0;
   transition: opacity var(--t-fast);
 }
@@ -166,13 +190,17 @@
   opacity: 1;
 }
 
-/* bar */
+/* The bar: tabs at the left, tools at the right. */
 .fd-tdock-bar {
   display: flex;
   align-items: stretch;
-  height: 34px;
+  height: 32px;
   background: var(--surface);
   border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+}
+.fd-tdock[data-open="false"] .fd-tdock-bar {
+  border-bottom: 0;
 }
 .fd-tdock[data-layout="full"] .fd-tdock-bar {
   height: var(--tap-min);
@@ -181,31 +209,38 @@
 .fd-tdock-tabs {
   display: flex;
   flex: 1 1 auto;
+  gap: var(--sp-1);
   min-width: 0;
+  padding: 0 var(--sp-2);
   overflow-x: auto;
   scrollbar-width: none;
 }
 .fd-tdock-tabs::-webkit-scrollbar {
   display: none;
 }
+/* A tab like a session tab: the selected one is --text with a 2px --text underline. */
 .fd-tdock-tabwrap {
   position: relative;
   display: flex;
-  align-items: center;
   flex: 0 0 auto;
-  padding: 0 6px 0 10px;
+  align-items: center;
+  gap: 2px;
+  padding: 0 0 0 var(--sp-2);
   color: var(--dim);
   font-family: var(--font-ui);
-  font-size: 12px;
+  font-size: var(--fs-ui);
+  transition: color var(--t-fast);
+}
+.fd-tdock-tabwrap:hover {
+  color: var(--text);
 }
 .fd-tdock-tabwrap[data-selected="true"] {
-  background: var(--code);
   color: var(--text);
-  box-shadow: inset 0 2px 0 var(--act);
+  box-shadow: inset 0 -2px 0 var(--text);
 }
 .fd-tdock-tab {
   align-self: stretch;
-  max-width: 220px;
+  max-width: 240px;
   height: auto;
   min-height: 0;
   padding: 0;
@@ -216,7 +251,19 @@
   color: inherit;
   font-family: inherit;
   font-size: inherit;
-  font-weight: 400;
+  font-weight: 500;
+}
+.fd-tdock-tab:hover:not(:disabled) {
+  background: transparent;
+}
+.fd-tdock-tab:focus-visible {
+  outline-offset: -2px;
+}
+.fd-tdock-tab > .fd-icon {
+  color: var(--faint);
+}
+.fd-tdock-tabwrap[data-selected="true"] .fd-tdock-tab > .fd-icon {
+  color: var(--dim);
 }
 .fd-tdock-title {
   overflow: hidden;
@@ -225,11 +272,11 @@
 }
 .fd-tdock-station {
   color: var(--faint);
-  font-size: 11px;
+  font-size: var(--fs-meta);
+  font-weight: 400;
   white-space: nowrap;
 }
 .fd-tdock-detach {
-  margin-left: 4px;
   opacity: 0;
 }
 .fd-tdock-tabwrap:hover .fd-tdock-detach,
@@ -246,13 +293,21 @@
   }
 }
 
-/* tools */
+/* The tools: open a shell, the terminal menu or "Return to board control", hide. */
 .fd-tdock-tools {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: var(--sp-1);
-  padding: 0 6px;
+  gap: 2px;
+  padding: 0 var(--sp-1);
+}
+.fd-tdock[data-layout="dock"] .fd-tdock-tools :is(.fd-iconbtn, .fd-menu > summary.fd-iconbtn) {
+  width: var(--ctl-h-sm);
+  height: var(--ctl-h-sm);
+}
+.fd-tdock[data-layout="dock"] .fd-tdock-tools .fd-icon {
+  width: 14px;
+  height: 14px;
 }
 /* The bar sits at the bottom of the window, so the menu opens upward. */
 .fd-tdock[data-layout="dock"] .fd-menu-body {
@@ -260,7 +315,7 @@
   bottom: calc(100% + 4px);
 }
 
-/* error strip */
+/* The error line: a notice with a hazard holder. */
 .fd-tdock-error {
   display: flex;
   align-items: center;
@@ -269,10 +324,11 @@
   padding: 0 var(--sp-3);
   background: var(--hazard-bg);
   color: var(--hazard);
-  font-size: 12px;
+  box-shadow: inset 3px 0 0 var(--hazard);
+  font-size: var(--fs-meta);
 }
 
-/* body */
+/* The body: the terminal of the selected tab. */
 .fd-tdock-body {
   flex: 1;
   min-height: 0;
