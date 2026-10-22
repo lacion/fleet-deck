@@ -158,6 +158,11 @@ function RowNow({ card }: { card: DeckSession }) {
   );
 }
 
+/** True when the rows hold the session that the route opens. */
+const holdsOpen = (cards: readonly DeckSession[], route: Route): boolean =>
+  route.name === 'session' &&
+  cards.some((c) => c.station_id === route.station && c.summary.session_id === route.session);
+
 /** The phone list order of a station's rows: starred first, then the last activity first. */
 const byActivity = (starred: ReadonlySet<string>) => (a: DeckSession, b: DeckSession) =>
   Number(starred.has(sessionRef(b.station_id, b.summary.session_id))) -
@@ -265,7 +270,12 @@ function Groups({
   starred: ReadonlySet<string>;
   list: boolean;
 }) {
-  const [showArchived, setShowArchived] = useState(false);
+  // The Archived fold opens while it holds the open session, as an Ended fold does.
+  const currentArchived = holdsOpen(model.archived, route);
+  const [showArchived, setShowArchived] = useState(currentArchived);
+  useEffect(() => {
+    if (currentArchived) setShowArchived(true);
+  }, [currentArchived]);
   // A session that needs you lists once: in "Needs you". The count of a group is its shown rows.
   const needsApart = withNeeds && model.needs.length > 0;
   const placeWord = by === 'project' ? 'in' : 'on';
@@ -373,11 +383,7 @@ function EndedFold({
   starred: ReadonlySet<string>;
   list: boolean;
 }) {
-  const current =
-    route.name === 'session' &&
-    group.ended.some(
-      (c) => c.station_id === route.station && c.summary.session_id === route.session,
-    );
+  const current = holdsOpen(group.ended, route);
   const [open, setOpen] = useState(current);
   useEffect(() => {
     if (current) setOpen(true);
