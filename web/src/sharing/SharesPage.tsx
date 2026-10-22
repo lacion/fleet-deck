@@ -109,15 +109,13 @@ function ShareRow({
     <tr data-state={state} data-dim={state === 'live' ? undefined : 'true'}>
       <td>
         <span className="fd-cellbadges">
-          <span className="fd-badge" data-tone="info">
-            {share.kind}
-          </span>
+          <span className="fd-badge">{share.kind}</span>
           <span className="fd-cell-name">{where}</span>
         </span>
       </td>
       <td data-label="Role">
         <span className="fd-cellbadges">
-          <span className="fd-badge" data-tone={share.role === 'viewer' ? 'muted' : 'act'}>
+          <span className="fd-badge" data-tone={share.role === 'viewer' ? 'muted' : undefined}>
             {roleLabel(share.role)}
           </span>
           {share.role !== 'viewer' ? (
@@ -125,11 +123,7 @@ function ShareRow({
               {share.steering === 'mob' ? 'mob' : 'open'}
             </span>
           ) : null}
-          {share.history ? (
-            <span className="fd-badge" data-tone="info">
-              History shared
-            </span>
-          ) : null}
+          {share.history ? <span className="fd-badge">History shared</span> : null}
           {state === 'live' ? null : (
             <span className="fd-badge" data-tone="muted">
               {state === 'revoked' ? 'Revoked' : 'Expired'}
@@ -140,9 +134,7 @@ function ShareRow({
       <td data-label="Members">
         {share.members.length === 0 ? 'No members yet' : share.members.join(', ')}
       </td>
-      <td className="fd-cell-path" data-label="Uses left">
-        {share.uses_left}
-      </td>
+      <td data-label="Uses left">{share.uses_left}</td>
       <td
         data-label="Expires"
         title={day(state === 'revoked' ? (share.revoked_at ?? 0) : share.expires_at)}
@@ -151,7 +143,7 @@ function ShareRow({
       </td>
       <td className="fd-cell-actions">
         {state !== 'live' ? null : confirming ? (
-          <span role="group" aria-label="Revoke the share">
+          <span className="fd-share-confirm" role="group" aria-label="Revoke the share">
             <span>Revoke this share? The members lose access at once.</span>
             <button
               type="button"
@@ -167,7 +159,7 @@ function ShareRow({
             </button>
           </span>
         ) : historyConfirming ? (
-          <span role="group" aria-label="Share the earlier history">
+          <span className="fd-share-confirm" role="group" aria-label="Share the earlier history">
             <span>{HISTORY_WARNING}</span>
             <button
               type="button"

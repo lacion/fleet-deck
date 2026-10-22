@@ -86,12 +86,7 @@ export function TrackerBlock({
         <button type="button" onClick={onSetup}>
           {builtin ? 'Set up your own OAuth app…' : 'Set up the OAuth app…'}
         </button>
-        <button
-          type="button"
-          className="fd-primary"
-          disabled={app === undefined && !builtin}
-          onClick={onConnect}
-        >
+        <button type="button" disabled={app === undefined && !builtin} onClick={onConnect}>
           Connect {label}
         </button>
         <button type="button" className="fd-ghost" onClick={onToken}>

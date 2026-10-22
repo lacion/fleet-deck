@@ -271,7 +271,7 @@ export function DesktopToolsView(props: ViewProps) {
     );
   }
   return (
-    <section className="fd-panel fd-desktop-tools" aria-label="Desktop tools">
+    <section className="fd-set-sec fd-desktop-tools" aria-label="Desktop tools">
       <h2>Desktop tools</h2>
       {body}
     </section>
