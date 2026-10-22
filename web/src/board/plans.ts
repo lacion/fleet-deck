@@ -84,9 +84,14 @@ export function liveProposer(
   );
 }
 
-/** The note under a proposed plan whose proposer session still runs. */
-export const proposerNote = (callsign: string) =>
-  `The proposer session ${callsign} is still running; this starts a new session.`;
+/**
+ * The note under a proposed plan whose proposer session still runs: the text before and after the
+ * proposer's callsign, which the library shows as a `.fd-callsign`.
+ */
+export const PROPOSER_NOTE = {
+  before: 'The proposer session ',
+  after: ' is still running; this starts a new session.',
+} as const;
 
 /**
  * `spawn`, where a start that returned ok also marks the plan `executed` (R7.2). A failed start

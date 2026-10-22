@@ -22,7 +22,8 @@ type Count = 'loading' | 'unavailable' | number;
 function countText(count: Count): string {
   if (count === 'loading') return 'Checking Tailscale…';
   if (count === 'unavailable') return 'Tailscale is not available on this deck';
-  if (count === 0) return 'No computer can be added now';
+  // The cause and the next step (§5): the tailnet view lists each computer and why it is not free.
+  if (count === 0) return 'No computer on your tailnet is free to add. Choose it to see why.';
   return count === 1 ? '1 computer can be added' : `${count} computers can be added`;
 }
 

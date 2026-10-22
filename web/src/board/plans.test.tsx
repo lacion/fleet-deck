@@ -76,7 +76,7 @@ describe('plan library (DL-301)', () => {
     expect(html).not.toContain('<script>');
     expect(html).toContain('keeps only the start');
     // Without drive the actions are disabled.
-    expect(html).toMatch(/<button type="button" disabled="">Start a session with this plan/);
+    expect(html).toMatch(/<button type="button" class="fd-sm" disabled="">Start a session with this plan/);
   });
 
   test('a proposed plan offers an assignment only when the board can send mail', () => {

@@ -6,7 +6,7 @@ import { App } from '../App';
 import { FleetBoard } from '../board/FleetBoard';
 import type { SpawnActions } from '../spawn/spawn';
 import { markOnStart, type PlanActions } from '../board/plans';
-import { liveProposer, proposerNote } from '../board/plans';
+import { liveProposer } from '../board/plans';
 import { PlanLibrary } from '../board/PlanLibrary';
 import { deckPlan } from '../board/plans.test';
 import type { DeckSession } from '../gen';
@@ -143,7 +143,9 @@ describe('plan execute (R7.2)', () => {
           onExecute={() => {}}
         />,
       );
-    expect(render([live])).toContain(proposerNote('Falcon'));
+    expect(render([live])).toContain(
+      'The proposer session <span class="fd-callsign">Falcon</span> is still running; this starts a new session.',
+    );
     expect(render([card('s1', 'ended')])).not.toContain('is still running');
   });
 });

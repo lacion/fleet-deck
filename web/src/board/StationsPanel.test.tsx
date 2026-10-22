@@ -34,6 +34,12 @@ describe('the station header meta', () => {
     expect(html).not.toContain('Last seen');
     expect(html).toContain('<div class="fd-station-live"></div>');
   });
+  test('the page title has no count: the summary sentence carries it (§4.3)', () => {
+    const html = renderToStaticMarkup(
+      <StationsPanel stations={[station('station-a')]} sessions={[]} freshness="live" />,
+    );
+    expect(html).toContain('<h1 class="fd-page-title">Stations</h1></div>');
+  });
   test('an offline station renders "Last seen"', () => {
     const html = renderToStaticMarkup(
       <StationsPanel
@@ -86,7 +92,7 @@ describe('the page summary sentence (§4.3)', () => {
 });
 
 describe('the desktop of a station card', () => {
-  test('a station with info and no desktop says so', () => {
+  test('a station with info and no desktop has no Desktop fold and no note', () => {
     const view = station('station-a', {
       info: {
         name: 'alpha-host',
@@ -105,6 +111,9 @@ describe('the desktop of a station card', () => {
         <StationsPanel stations={[view]} sessions={[]} freshness="live" />
       </SettingsProvider>,
     );
-    expect(html).toContain('<p class="fd-note">This station reports no desktop.</p>');
+    expect(html).not.toContain('This station reports no desktop.');
+    expect(html).not.toContain('fd-desk');
+    // The folds are toggles (base.css summary[data-variant=toggle]).
+    expect(html).toContain('<summary class="fd-label" data-variant="toggle">Details</summary>');
   });
 });

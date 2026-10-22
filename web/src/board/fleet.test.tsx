@@ -199,7 +199,7 @@ describe('station projections', () => {
       <StationsPanel stations={[station()]} sessions={[]} freshness="live" />,
     );
     const details = /<details class="fd-station-details">([\s\S]*?)<\/details>/.exec(html)?.[1];
-    expect(details).toContain('<summary class="fd-label">Details</summary>');
+    expect(details).toContain('<summary class="fd-label" data-variant="toggle">Details</summary>');
     for (const text of ['Station ID', 'Key fingerprint', 'Direction', 'Link address'])
       expect(details).toContain(`<dt>${text}</dt>`);
     // The ids are not in the head or in the live facts.

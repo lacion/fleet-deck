@@ -414,7 +414,7 @@ function Worktrees({
         if (event.currentTarget.open && state.kind === 'idle') run();
       }}
     >
-      <summary className="fd-label">
+      <summary className="fd-label" data-variant="toggle">
         Worktrees{state.kind === 'ready' ? ` (${state.worktrees.length})` : ''}
       </summary>
       <div className="fd-wt-body">
@@ -487,7 +487,6 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
   return (
     <Page
       title="Stations"
-      count={stations.length}
       description={stationsSummary(stations, freshness)}
       className="fd-stations"
       actions={
@@ -681,7 +680,9 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
               </div>
               <div className="fd-station-folds">
                 <details className="fd-station-details">
-                  <summary className="fd-label">Details</summary>
+                  <summary className="fd-label" data-variant="toggle">
+                    Details
+                  </summary>
                   <dl className="fd-facts">
                     <dt>Station ID</dt>
                     <dd>{station.station_id}</dd>
@@ -711,7 +712,9 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                 </details>
                 {actions?.canAdmin === true && actions.shells !== undefined ? (
                   <details className="fd-station-sec">
-                    <summary className="fd-label">Shells</summary>
+                    <summary className="fd-label" data-variant="toggle">
+                      Shells
+                    </summary>
                     {info?.allow_shell === false ? (
                       <section className="fd-shells" aria-label={`Shells on ${station.name}`}>
                         <p className="fd-note">
@@ -736,7 +739,8 @@ export function StationsPanel({ stations, sessions, freshness, actions }: Props)
                     now={now}
                   />
                 )}
-                <DesktopPanel station={station} />
+                {/* A station without a desktop has no Desktop fold (§1 principle 7). */}
+                {info?.desktop == null ? null : <DesktopPanel station={station} />}
               </div>
               {actions?.canAdmin === true && confirm === station.name ? (
                 <div className="fd-station-foot">
