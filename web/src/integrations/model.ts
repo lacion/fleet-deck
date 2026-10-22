@@ -42,12 +42,13 @@ export function systemLabel(system: string): string {
   }
 }
 
-/** The chip of a forge: `github owner/repo`. */
-export const forgeChip = (forge: ForgeBinding): string => `${forge.kind} ${forge.repo}`;
+/** The chip of a forge: `GitHub owner/repo` (the product name, then the repository as is). */
+export const forgeChip = (forge: ForgeBinding): string =>
+  `${systemLabel(forge.kind)} ${forge.repo}`;
 
-/** The chip of a tracker binding: `jira acme PROJ`. */
+/** The chip of a tracker binding: `Jira acme PROJ` (the tracker name and the key as is). */
 export const trackerChip = (t: { tracker: string; kind: TrackerKind; key: string }): string =>
-  `${t.kind} ${t.tracker} ${t.key}`;
+  `${systemLabel(t.kind)} ${t.tracker} ${t.key}`;
 
 export const CHECKS_LABEL: Readonly<Record<ChecksState, string>> = {
   passing: 'passing',

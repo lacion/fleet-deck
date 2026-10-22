@@ -10,7 +10,16 @@ import type { ActivityItem, DeckSession, StationView } from '../gen';
 import type { FleetActions } from '../fleet/fleet';
 import type { ViewsActions } from '../runtime/views';
 import { toolParts } from '../ui/format';
-import { Icon, Mail, MessageSquare, MessagesSquare, Play, Shield, Wrench } from '../ui/icons';
+import {
+  Icon,
+  type LucideIcon,
+  Mail,
+  MessageSquare,
+  MessagesSquare,
+  Play,
+  Shield,
+  Wrench,
+} from '../ui/icons';
 import { EmptyState, Page } from '../ui/page';
 import { useNow } from '../ui/useNow';
 import {
@@ -51,6 +60,21 @@ const KIND_ICON = {
   lifecycle: Play,
 } as const;
 
+/**
+ * A question request has no kind of its own in the stream (`ActivityItem.kind` is `approval`), so
+ * its text tells: "Question: …", the board's "Needs you: AskUserQuestion" (Claude) and the display
+ * stream's "Needs you: Answer a question".
+ */
+const QUESTION_TEXT = /^(?:Question:|Needs you: (?:AskUserQuestion|Answer a question)\b)/;
+
+/** The icon of a row: a question has the message-square of the fleet strips, the Watch tiles and
+ * the wall; a permission keeps the shield. */
+export function rowIcon(item: Pick<ActivityItem, 'kind' | 'text'>): LucideIcon {
+  return item.kind === 'approval' && QUESTION_TEXT.test(item.text)
+    ? MessageSquare
+    : KIND_ICON[item.kind];
+}
+
 /** The repository without its forge host: "github.com/lacion/fleet-deck" → "lacion/fleet-deck". A
  * first part without a dot is not a host and stays. */
 const repoLabel = (repo: string) => repo.replace(/^[^/]*\.[^/]*\//, '');
@@ -88,7 +112,7 @@ function Row({
   return (
     <li className="fd-arow" data-kind={item.kind}>
       <span className="fd-arow-kind">
-        <Icon of={KIND_ICON[item.kind]} size={14} />
+        <Icon of={rowIcon(item)} size={14} />
         <span className="fd-vh">{item.kind}</span>
       </span>
       <span className="fd-arow-main">

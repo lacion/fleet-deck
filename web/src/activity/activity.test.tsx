@@ -5,7 +5,8 @@ import type { FleetActions } from '../fleet/fleet';
 import type { ActivityItem } from '../gen';
 import type { ViewsActions } from '../runtime/views';
 import { card, station } from '../testing/fleet';
-import { ActivityPage } from './ActivityPage';
+import { MessageSquare, Shield, Wrench } from '../ui/icons';
+import { ActivityPage, rowIcon } from './ActivityPage';
 import { ALL_CHANNEL, channelList, channelQuery, inChannel, mailTargets } from './channels';
 
 const NOW = 1_760_000_000_000;
@@ -162,6 +163,18 @@ describe('the activity page', () => {
     expect(html).toContain('Edit <code class="fd-arow-target">src/checkout/cart.ts</code>');
     expect(html).toContain('<span class="fd-arow-text">Question: Which port should it use?</span>');
     expect(html).toContain('<span class="fd-arow-text">Write the docs next</span>');
+  });
+
+  test('a question row has the message-square of the fleet strips; a permission keeps the shield', () => {
+    const icon = (kind: ActivityItem['kind'], text: string) => rowIcon({ kind, text });
+    expect(icon('approval', 'Question: Which port should it use?')).toBe(MessageSquare);
+    expect(icon('approval', 'Needs you: AskUserQuestion')).toBe(MessageSquare);
+    expect(icon('approval', 'Needs you: Answer a question')).toBe(MessageSquare);
+    expect(icon('approval', 'Permission: Bash cargo test')).toBe(Shield);
+    expect(icon('approval', 'Needs you: Bash')).toBe(Shield);
+    expect(icon('approval', 'Needs you: AskUserQuestionnaire')).toBe(Shield);
+    expect(icon('message', 'Question: is not a request')).toBe(MessageSquare);
+    expect(icon('tool', 'Question: in a tool row')).toBe(Wrench);
   });
 
   test('the header has its summary sentence', () => {
