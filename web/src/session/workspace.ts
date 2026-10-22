@@ -158,6 +158,19 @@ export function setDiffTotal(ref: string, summary: DiffSummary, paths?: readonly
   for (const l of diffListeners) l();
 }
 
+/**
+ * Adds the changed paths of a diff that only shows a part of the session (a turn diff, the Files
+ * "changed" list) to the paths of a session: the known paths first, then the new ones in patch
+ * order. Nothing new: no notice.
+ */
+export function mergeDiffPaths(ref: string, paths: readonly string[]): void {
+  const known = diffPaths.get(ref) ?? [];
+  const added = paths.filter((p, i) => !known.includes(p) && paths.indexOf(p) === i);
+  if (added.length === 0) return;
+  diffPaths.set(ref, [...known, ...added]);
+  for (const l of diffListeners) l();
+}
+
 /** The changed paths of the loaded session diff of one session, or `undefined`. */
 export function useDiffPaths(ref: string): readonly string[] | undefined {
   return useSyncExternalStore(

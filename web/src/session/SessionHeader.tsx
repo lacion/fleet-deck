@@ -524,6 +524,7 @@ export function SessionHeader({
           <Icon of={SquareTerminal} /> <span className="fd-sh-wide">Terminal</span>
         </>
       }
+      summaryClass="fd-ghost"
       label="Terminal"
       onClosed={() => setTermConfirm(false)}
     >

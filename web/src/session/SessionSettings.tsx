@@ -13,18 +13,20 @@ export function ModeLadder(props: {
   return (
     <fieldset className="fd-modes">
       <legend>Mode (most restrictive first)</legend>
-      {props.modes.map((m) => (
-        <button
-          key={m}
-          type="button"
-          className="fd-sm"
-          aria-pressed={m === props.current}
-          disabled={!props.enabled || m === props.current}
-          onClick={() => props.onSet(m)}
-        >
-          {m}
-        </button>
-      ))}
+      {/* The modes are the segments of a .fd-seg: the pressed one is the current mode. */}
+      <div className="fd-seg">
+        {props.modes.map((m) => (
+          <button
+            key={m}
+            type="button"
+            aria-pressed={m === props.current}
+            disabled={!props.enabled || m === props.current}
+            onClick={() => props.onSet(m)}
+          >
+            {m}
+          </button>
+        ))}
+      </div>
     </fieldset>
   );
 }

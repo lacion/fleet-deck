@@ -22,6 +22,7 @@ import {
   type FinalizedTurn,
   revertBlock,
   revertHolds,
+  mergeDiffPaths,
   revertText,
   setDiffTotal,
 } from './workspace';
@@ -168,6 +169,7 @@ function SinceSpawn({
   onOpenFile,
   onRefresh,
   target,
+  onTargetShown,
 }: {
   readonly summary: SessionSummary;
   readonly actions: SessionActions | undefined;
@@ -177,6 +179,8 @@ function SinceSpawn({
   readonly onRefresh: () => void;
   /** The file to scroll to and focus when the diff shows (a Properties panel request). */
   readonly target?: FileRequest | undefined;
+  /** The target file got the focus: the request is spent (a later load does not move again). */
+  readonly onTargetShown?: (() => void) | undefined;
 }) {
   const [state, setState] = useState<{
     readonly diff: SessionDiff | null;
@@ -219,8 +223,10 @@ function SinceSpawn({
     if (diff === null || target === undefined) return;
     const heads = box.current?.querySelectorAll<HTMLElement>('.fd-dl-file') ?? [];
     const head = [...heads].find((h) => h.getAttribute('aria-label') === target.path);
-    head?.scrollIntoView({ block: 'start' });
-    head?.focus({ preventScroll: true });
+    if (head === undefined) return;
+    head.scrollIntoView({ block: 'start' });
+    head.focus({ preventScroll: true });
+    if (document.activeElement === head) onTargetShown?.();
   }, [diff, shown]);
   return (
     <div className="fd-since" data-view="spawn" ref={box}>
@@ -377,6 +383,10 @@ export function TurnsPanel(props: Props) {
     const settle = (shown: LoadedDiff | string) => {
       if (flight.current.finish(turnId)) setDiffs((all) => ({ ...all, [turnId]: shown }));
       setFlights((n) => n + 1);
+      // §4.5: the files of the turn also list in the Changes row of the Properties panel.
+      if (typeof shown !== 'string' && station !== undefined) {
+        mergeDiffPaths(sessionRef(station, summary.session_id), changedPaths(shown.diff.patch));
+      }
     };
     load.then(settle, (e: unknown) =>
       settle(e instanceof Error ? e.message : 'The diff request failed.'),
@@ -470,6 +480,7 @@ export function TurnsPanel(props: Props) {
           onOpenFile={onOpenFile}
           onRefresh={() => setLoads((n) => n + 1)}
           target={target}
+          onTargetShown={() => setTarget(undefined)}
         />
         <Bar review={review} />
       </section>
@@ -491,8 +502,7 @@ export function TurnsPanel(props: Props) {
       <h3 className="fd-vh">Turns</h3>
       {caps?.rollback === true ? null : (
         <p className="fd-note">
-          This provider cannot roll back its conversation, so the board offers no revert. A
-          file-only restore is not a revert.
+          This provider cannot roll back its conversation, so the board offers no revert.
         </p>
       )}
       <ol>

@@ -20,7 +20,7 @@ import { SessionView } from './SessionView';
 
 const key = { station_id: 'station-a', session_id: 's1' };
 
-function session(): DeckSession {
+function session(held = false): DeckSession {
   return {
     station_id: 'station-a',
     status: 'working',
@@ -30,14 +30,15 @@ function session(): DeckSession {
       models: [{ value: 'claude-sonnet-5-5', label: 'Sonnet 5.5', description: null }],
       model: 'claude-sonnet-5-5',
       current_run: 'run-1',
+      ...(held ? { terminal: { shell_id: 'tui-7', pid: 42, since: 1, reason: null } } : {}),
     }),
   };
 }
 
-const view = () =>
+const view = (held = false) =>
   renderToStaticMarkup(
     <SessionView
-      session={session()}
+      session={session(held)}
       stations={[station()]}
       freshness="live"
       timeline={{
@@ -134,6 +135,17 @@ describe('composer model chip (§4.5)', () => {
       />,
     );
     expect(html).toContain('aria-label="Model: Sonnet 5.5"');
+  });
+
+  test('the chip is a button while the model can be changed', () => {
+    const html = view();
+    expect(html).toMatch(/<button[^>]*aria-label="Model: Sonnet 5\.5"/);
+  });
+
+  test('a held session (a terminal holds it) shows the model as plain text, not a button', () => {
+    const html = view(true);
+    expect(html).toContain('<span class="fd-composer-model">Sonnet 5.5</span>');
+    expect(html).not.toContain('aria-label="Model: ');
   });
 
   test('the session menu holds the model select that the chip opens', () => {

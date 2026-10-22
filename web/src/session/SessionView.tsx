@@ -58,6 +58,7 @@ import { buildTimeline, sessionModels, slashCommands } from './timeline';
 import { type FileRequest, RevertStatus, TurnsPanel } from './TurnsPanel';
 import { finalizedTurns } from './workspace';
 import { shortModel } from '../ui/format';
+import { sessionRef } from '../ui/localSet';
 
 export type PaneTab = 'chat' | 'changes' | 'files' | 'artifacts' | 'people';
 
@@ -344,6 +345,7 @@ export function SessionView(props: SessionViewProps) {
   const panelAct = (call: Parameters<typeof controller.act>[1]) => controller.act('turns', call);
   // A viewer has no drive scope but sees the files of the shared session.
   const filesReady = flags.live && (actions?.canDrive === true || guest !== null);
+  const changesRef = sessionRef(session.station_id, s.session_id);
   const files = actions?.files ?? null;
   // DL-174: the `@` menu of the composer searches the file names of the session root.
   const searchFiles =
@@ -656,7 +658,10 @@ export function SessionView(props: SessionViewProps) {
                       draftKey={`${session.station_id}/${s.session_id}`}
                       model={shortModel(s.model)}
                       callsign={s.callsign}
-                      {...(guest === null && caps?.set_model === true
+                      {...(guest === null &&
+                      caps?.set_model === true &&
+                      flags.drive &&
+                      busy === null
                         ? { onModel: () => openModel.current?.() }
                         : {})}
                     />
@@ -716,7 +721,12 @@ export function SessionView(props: SessionViewProps) {
           ) : null}
           {tab === 'files' ? (
             filesReady ? (
-              <FilesPanel files={actions?.files ?? null} request={fileRequest} root={s.cwd} />
+              <FilesPanel
+                files={actions?.files ?? null}
+                request={fileRequest}
+                root={s.cwd}
+                diffRef={changesRef}
+              />
             ) : (
               <p className="fd-note">
                 Files are available when the board is live and you have the drive scope.
@@ -752,6 +762,7 @@ export function SessionView(props: SessionViewProps) {
                 variant="side"
                 request={fileRequest}
                 root={s.cwd}
+                diffRef={changesRef}
               />
             ) : (
               <p className="fd-note">
